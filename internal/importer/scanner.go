@@ -24,14 +24,18 @@ type Scanner struct {
 	authors      *db.AuthorRepo
 	history      *db.HistoryRepo
 	renamer      *Renamer
+	remapper     *Remapper
 	libraryDir   string
 	audiobookDir string
 }
 
-// NewScanner creates an import scanner.
+// NewScanner creates an import scanner. downloadPathRemap is an optional
+// comma-separated list of `from:to` pairs applied to paths reported by the
+// download client so bindery can find files moved from a SAB-visible mount
+// point to its own (see Remapper).
 func NewScanner(downloads *db.DownloadRepo, clients *db.DownloadClientRepo,
 	books *db.BookRepo, authors *db.AuthorRepo, history *db.HistoryRepo,
-	libraryDir, audiobookDir, namingTemplate, audiobookTemplate string) *Scanner {
+	libraryDir, audiobookDir, namingTemplate, audiobookTemplate, downloadPathRemap string) *Scanner {
 	if audiobookDir == "" {
 		audiobookDir = libraryDir
 	}
@@ -42,6 +46,7 @@ func NewScanner(downloads *db.DownloadRepo, clients *db.DownloadClientRepo,
 		authors:      authors,
 		history:      history,
 		renamer:      NewRenamerWithAudiobook(namingTemplate, audiobookTemplate),
+		remapper:     ParseRemap(downloadPathRemap),
 		libraryDir:   libraryDir,
 		audiobookDir: audiobookDir,
 	}
@@ -72,9 +77,13 @@ func (s *Scanner) CheckDownloads(ctx context.Context) {
 		switch slot.Status {
 		case "Completed":
 			if dl.Status == models.DownloadStatusDownloading || dl.Status == models.DownloadStatusQueued {
-				slog.Info("download completed", "title", dl.Title, "path", slot.Path)
+				localPath := s.remapper.Apply(slot.Path)
+				if localPath != slot.Path {
+					slog.Debug("remapped download path", "sab", slot.Path, "local", localPath)
+				}
+				slog.Info("download completed", "title", dl.Title, "path", localPath)
 				s.downloads.UpdateStatus(ctx, dl.ID, models.DownloadStatusCompleted)
-				s.tryImport(ctx, sab, dl, slot.NzoID, slot.Path)
+				s.tryImport(ctx, sab, dl, slot.NzoID, localPath)
 			}
 		case "Failed":
 			if dl.Status != models.DownloadStatusFailed {

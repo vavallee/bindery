@@ -36,6 +36,13 @@ env:
   BINDERY_LOG_LEVEL: info
   BINDERY_DOWNLOAD_DIR: /downloads
   BINDERY_LIBRARY_DIR: /books
+  # Separate destination for audiobook imports. Leave unset to fall back
+  # to BINDERY_LIBRARY_DIR.
+  # BINDERY_AUDIOBOOK_DIR: /audiobooks
+  # Comma-separated from:to pairs rewriting paths reported by the download
+  # client into paths bindery can see. Needed when SAB and bindery run in
+  # separate pods with different mount points for the same storage.
+  # BINDERY_DOWNLOAD_PATH_REMAP: /downloads/complete:/media/complete
 
 resources:
   requests:

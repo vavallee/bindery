@@ -106,6 +106,7 @@ func main() {
 	importScanner := importer.NewScanner(
 		downloadRepo, dlClientRepo, bookRepo, authorRepo, historyRepo,
 		cfg.LibraryDir, cfg.AudiobookDir, namingTemplate, audiobookTemplate,
+		cfg.DownloadPathRemap,
 	)
 
 	// Scheduler

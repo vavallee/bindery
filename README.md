@@ -181,6 +181,7 @@ Bindery is configured through the web UI. Key screens under **Settings**:
 | `BINDERY_DOWNLOAD_DIR` | `/downloads` | Where SABnzbd places completed downloads |
 | `BINDERY_LIBRARY_DIR` | `/books` | Destination for imported ebook files |
 | `BINDERY_AUDIOBOOK_DIR` *(development)* | falls back to `BINDERY_LIBRARY_DIR` | Destination for imported audiobook folders |
+| `BINDERY_DOWNLOAD_PATH_REMAP` *(development)* | _(empty)_ | Comma-separated `from:to` pairs rewriting paths reported by the download client into paths bindery can see. Needed when SAB and bindery run in separate containers with the shared storage mounted at different paths (e.g. `/downloads:/media`). Longest-prefix match wins. |
 
 ## Metadata Sources
 
