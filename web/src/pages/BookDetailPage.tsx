@@ -40,6 +40,8 @@ export default function BookDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [asinDraft, setAsinDraft] = useState('')
   const [enriching, setEnriching] = useState(false)
+  const [deletingFile, setDeletingFile] = useState(false)
+  const [deletingBook, setDeletingBook] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -109,6 +111,42 @@ export default function BookDetailPage() {
     }
   }
 
+  const deleteFile = async () => {
+    if (!book || !book.filePath) return
+    const label = book.mediaType === 'audiobook' ? 'the audiobook folder' : 'this file'
+    if (!window.confirm(`Permanently delete ${label} from disk?\n\n${book.filePath}\n\nThe book record stays; it will flip back to "wanted".`)) return
+    setDeletingFile(true)
+    setError(null)
+    try {
+      const updated = await api.deleteBookFile(book.id)
+      setBook(updated)
+      const h = await api.listHistory({ bookId: book.id }).catch(() => events)
+      setEvents(h)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Delete failed')
+    } finally {
+      setDeletingFile(false)
+    }
+  }
+
+  const deleteBook = async () => {
+    if (!book) return
+    const hasFiles = !!book.filePath
+    const msg = hasFiles
+      ? `Delete "${book.title}" AND its files on disk?\n\n${book.filePath}\n\nThis cannot be undone.`
+      : `Delete "${book.title}"?\n\nThis cannot be undone.`
+    if (!window.confirm(msg)) return
+    setDeletingBook(true)
+    setError(null)
+    try {
+      await api.deleteBook(book.id, hasFiles)
+      navigate(`/author/${book.authorId}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Delete failed')
+      setDeletingBook(false)
+    }
+  }
+
   const enrich = async () => {
     if (!book || !book.asin) return
     setEnriching(true)
@@ -175,13 +213,35 @@ export default function BookDetailPage() {
             <p className="mt-4 text-sm text-slate-700 dark:text-zinc-300 leading-relaxed">{book.description}</p>
           )}
           {book.filePath && (
-            <a
-              href={`/api/v1/book/${book.id}/file`}
-              className="mt-3 inline-block text-sm text-emerald-500 hover:text-emerald-400"
-            >
-              Download file
-            </a>
+            <div className="mt-3 flex items-center gap-4 text-sm">
+              <a
+                href={`/api/v1/book/${book.id}/file`}
+                className="text-emerald-500 hover:text-emerald-400"
+              >
+                Download file
+              </a>
+              <button
+                onClick={deleteFile}
+                disabled={deletingFile || deletingBook}
+                className="text-red-500 hover:text-red-400 disabled:opacity-40"
+                title={`Remove ${book.mediaType === 'audiobook' ? 'folder' : 'file'} from disk; keep the book record`}
+              >
+                {deletingFile ? 'Deleting…' : 'Delete file'}
+              </button>
+            </div>
           )}
+          <div className="mt-3 text-xs text-slate-500 dark:text-zinc-500 break-all">
+            {book.filePath}
+          </div>
+          <div className="mt-3">
+            <button
+              onClick={deleteBook}
+              disabled={deletingBook || deletingFile}
+              className="text-xs text-red-600 dark:text-red-500 hover:text-red-500 dark:hover:text-red-400 disabled:opacity-40"
+            >
+              {deletingBook ? 'Deleting book…' : book.filePath ? 'Delete book + files' : 'Delete book'}
+            </button>
+          </div>
         </div>
       </div>
 

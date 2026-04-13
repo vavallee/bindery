@@ -40,7 +40,9 @@ export const api = {
   },
   getBook: (id: number) => request<Book>(`/book/${id}`),
   updateBook: (id: number, data: Partial<Book>) => request<Book>(`/book/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-  deleteBook: (id: number) => request<void>(`/book/${id}`, { method: 'DELETE' }),
+  deleteBook: (id: number, deleteFiles = false) =>
+    request<void>(`/book/${id}${deleteFiles ? '?deleteFiles=true' : ''}`, { method: 'DELETE' }),
+  deleteBookFile: (id: number) => request<Book>(`/book/${id}/file`, { method: 'DELETE' }),
   searchBook: (id: number) => request<SearchResult[]>(`/book/${id}/search`, { method: 'POST' }),
   enrichAudiobook: (id: number) => request<Book>(`/book/${id}/enrich-audiobook`, { method: 'POST' }),
 

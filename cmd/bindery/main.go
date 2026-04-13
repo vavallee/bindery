@@ -121,7 +121,7 @@ func main() {
 	// API handlers
 	searchHandler := api.NewSearchHandler(metaAgg)
 	authorHandler := api.NewAuthorHandler(authorRepo, bookRepo, metaAgg, settingsRepo)
-	bookHandler := api.NewBookHandler(bookRepo, metaAgg)
+	bookHandler := api.NewBookHandler(bookRepo, metaAgg, historyRepo)
 	indexerHandler := api.NewIndexerHandler(indexerRepo, bookRepo, authorRepo, idxSearcher, settingsRepo, blocklistRepo)
 	dlClientHandler := api.NewDownloadClientHandler(dlClientRepo)
 	queueHandler := api.NewQueueHandler(downloadRepo, dlClientRepo, bookRepo, historyRepo)
@@ -185,6 +185,7 @@ func main() {
 		r.Get("/book/{id}", bookHandler.Get)
 		r.Put("/book/{id}", bookHandler.Update)
 		r.Delete("/book/{id}", bookHandler.Delete)
+		r.Delete("/book/{id}/file", bookHandler.DeleteFile)
 		r.Post("/book/{id}/enrich-audiobook", bookHandler.EnrichAudiobook)
 		r.Post("/book/{id}/search", indexerHandler.SearchBook)
 		r.Get("/book/{id}/file", fileHandler.Download)

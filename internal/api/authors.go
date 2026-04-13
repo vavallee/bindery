@@ -216,10 +216,24 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author) {
 		seenTitles[strings.ToLower(eb.Title)] = true
 	}
 
-	var added, skippedLang int
+	normalizedAuthor := strings.ToLower(strings.TrimSpace(author.Name))
+
+	var added, skippedLang, skippedJunk int
 	for _, b := range books {
 		b.AuthorID = author.ID
 		b.Monitored = author.Monitored
+
+		// Filter out OpenLibrary "works" whose title is empty or is just the
+		// author name — a recurring OL data-quality problem where the Work
+		// record was never titled and falls back to the author's name.
+		// Letting these through pollutes the Wanted page and produces
+		// nonsense destination folders like "Jared M. Diamond/Jared M. Diamond ()".
+		normalizedTitle := strings.ToLower(strings.TrimSpace(b.Title))
+		if normalizedTitle == "" || normalizedTitle == normalizedAuthor {
+			skippedJunk++
+			slog.Debug("skipping junk-title OL work", "title", b.Title, "foreignId", b.ForeignID)
+			continue
+		}
 
 		// Filter by language: skip books whose language is known and doesn't match.
 		// Books with an empty language (data unavailable) are always kept.
@@ -236,7 +250,6 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author) {
 		}
 
 		// Skip duplicate titles (OpenLibrary often has multiple works for the same book)
-		normalizedTitle := strings.ToLower(b.Title)
 		if seenTitles[normalizedTitle] {
 			continue
 		}
@@ -248,5 +261,5 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author) {
 		}
 		added++
 	}
-	slog.Info("author books synced", "author", author.Name, "added", added, "skipped_language", skippedLang, "total", len(books))
+	slog.Info("author books synced", "author", author.Name, "added", added, "skipped_language", skippedLang, "skipped_junk", skippedJunk, "total", len(books))
 }

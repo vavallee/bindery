@@ -74,4 +74,5 @@ const (
 	HistoryEventDownloadFailed       = "downloadFailed"
 	HistoryEventBookRenamed          = "bookRenamed"
 	HistoryEventDownloadFolderImport = "downloadFolderImported"
+	HistoryEventBookFileDeleted      = "bookFileDeleted"
 )
