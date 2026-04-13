@@ -6,15 +6,15 @@ import "os"
 
 // Config holds the application configuration loaded from environment variables.
 type Config struct {
-	Port         string
-	DBPath       string
-	DataDir      string
-	LogLevel     string
-	APIKey       string
-	DownloadDir        string
-	LibraryDir         string
-	AudiobookDir       string
-	DownloadPathRemap  string
+	Port              string
+	DBPath            string
+	DataDir           string
+	LogLevel          string
+	APIKey            string
+	DownloadDir       string
+	LibraryDir        string
+	AudiobookDir      string
+	DownloadPathRemap string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
