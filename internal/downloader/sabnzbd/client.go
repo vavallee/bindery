@@ -139,6 +139,22 @@ func (c *Client) Delete(ctx context.Context, nzoID string, deleteFiles bool) err
 	return c.apiCall(ctx, params, &resp)
 }
 
+// DeleteHistory removes a finished job from SABnzbd's history. When deleteFiles
+// is true, SAB also wipes the on-disk completed folder — bindery's importer has
+// typically already moved the contents, so callers usually pass false.
+func (c *Client) DeleteHistory(ctx context.Context, nzoID string, deleteFiles bool) error {
+	params := url.Values{
+		"mode":  {"history"},
+		"name":  {"delete"},
+		"value": {nzoID},
+	}
+	if deleteFiles {
+		params.Set("del_files", "1")
+	}
+	var resp SimpleResponse
+	return c.apiCall(ctx, params, &resp)
+}
+
 func (c *Client) apiCall(ctx context.Context, params url.Values, target interface{}) error {
 	params.Set("apikey", c.apiKey)
 	params.Set("output", "json")

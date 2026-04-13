@@ -74,7 +74,7 @@ func (s *Scanner) CheckDownloads(ctx context.Context) {
 			if dl.Status == models.DownloadStatusDownloading || dl.Status == models.DownloadStatusQueued {
 				slog.Info("download completed", "title", dl.Title, "path", slot.Path)
 				s.downloads.UpdateStatus(ctx, dl.ID, models.DownloadStatusCompleted)
-				s.tryImport(ctx, dl, slot.Path)
+				s.tryImport(ctx, sab, dl, slot.NzoID, slot.Path)
 			}
 		case "Failed":
 			if dl.Status != models.DownloadStatusFailed {
@@ -93,7 +93,9 @@ func (s *Scanner) CheckDownloads(ctx context.Context) {
 }
 
 // tryImport attempts to import a completed download into the library.
-func (s *Scanner) tryImport(ctx context.Context, dl *models.Download, downloadPath string) {
+// sab is used to clear the SABnzbd history entry once bindery has taken
+// ownership of the files; nzoID is the history slot's NZO identifier.
+func (s *Scanner) tryImport(ctx context.Context, sab *sabnzbd.Client, dl *models.Download, nzoID, downloadPath string) {
 	if s.libraryDir == "" {
 		slog.Warn("no library directory configured, skipping import")
 		return
@@ -138,7 +140,7 @@ func (s *Scanner) tryImport(ctx context.Context, dl *models.Download, downloadPa
 	// Audiobook path: move the entire download directory as a unit so
 	// multi-part m4b/mp3 files, cover art, and cue sheets stay together.
 	if book != nil && book.MediaType == models.MediaTypeAudiobook {
-		destDir := s.renamer.AudiobookDestDir(s.audiobookDir, author, book)
+		destDir := UniqueDir(s.renamer.AudiobookDestDir(s.audiobookDir, author, book))
 		slog.Info("importing audiobook folder", "src", downloadPath, "dst", destDir)
 		if err := MoveDir(downloadPath, destDir); err != nil {
 			slog.Error("failed to import audiobook folder", "src", downloadPath, "error", err)
@@ -155,9 +157,11 @@ func (s *Scanner) tryImport(ctx context.Context, dl *models.Download, downloadPa
 			SourceTitle: dl.Title,
 			Data:        string(eventData),
 		})
+		s.clearSABHistory(ctx, sab, nzoID)
 		return
 	}
 
+	var imported, failed int
 	for _, srcFile := range bookFiles {
 		if book == nil {
 			// Try to match from filename
@@ -171,8 +175,10 @@ func (s *Scanner) tryImport(ctx context.Context, dl *models.Download, downloadPa
 
 		if err := MoveFile(srcFile, destPath); err != nil {
 			slog.Error("failed to import", "src", srcFile, "error", err)
+			failed++
 			continue
 		}
+		imported++
 
 		// Update book status and file path
 		s.books.SetFilePath(ctx, book.ID, destPath)
@@ -186,6 +192,30 @@ func (s *Scanner) tryImport(ctx context.Context, dl *models.Download, downloadPa
 			SourceTitle: dl.Title,
 			Data:        string(eventData),
 		})
+	}
+
+	// A clean run leaves the SABnzbd job folder holding only non-book
+	// byproducts (par2, nfo, sfv, sample) — bindery has no further use
+	// for them, so drop the folder and the matching history entry so
+	// the completed-downloads view doesn't accumulate stale rows.
+	if imported > 0 && failed == 0 {
+		if err := os.RemoveAll(downloadPath); err != nil {
+			slog.Warn("failed to remove download folder after import", "path", downloadPath, "error", err)
+		}
+		s.clearSABHistory(ctx, sab, nzoID)
+	}
+}
+
+// clearSABHistory tells SABnzbd to drop the history entry for a job bindery
+// has finished importing. deleteFiles=false because the importer has already
+// moved the contents; asking SAB to delete would either no-op or wipe files
+// that were moved cross-filesystem and are still resolving.
+func (s *Scanner) clearSABHistory(ctx context.Context, sab *sabnzbd.Client, nzoID string) {
+	if sab == nil || nzoID == "" {
+		return
+	}
+	if err := sab.DeleteHistory(ctx, nzoID, false); err != nil {
+		slog.Warn("failed to delete SABnzbd history entry", "nzoID", nzoID, "error", err)
 	}
 }
 

@@ -95,3 +95,31 @@ func TestMoveFile(t *testing.T) {
 		t.Errorf("content mismatch: got %q", string(content))
 	}
 }
+
+func TestUniqueDir(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "Author", "Title (2020)")
+
+	// Nothing there yet — returned unchanged.
+	if got := UniqueDir(target); got != target {
+		t.Errorf("free path should return unchanged, got %q want %q", got, target)
+	}
+
+	// Occupy the target; next call should append " (2)".
+	if err := os.MkdirAll(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	want := target + " (2)"
+	if got := UniqueDir(target); got != want {
+		t.Errorf("first collision: got %q want %q", got, want)
+	}
+
+	// Occupy "(2)" too — next call should pick " (3)".
+	if err := os.MkdirAll(want, 0755); err != nil {
+		t.Fatal(err)
+	}
+	want = target + " (3)"
+	if got := UniqueDir(target); got != want {
+		t.Errorf("second collision: got %q want %q", got, want)
+	}
+}

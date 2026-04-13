@@ -134,6 +134,39 @@ func TestGetCategories(t *testing.T) {
 	}
 }
 
+func TestDeleteHistory(t *testing.T) {
+	var gotMode, gotName, gotValue, gotDelFiles string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		gotMode = q.Get("mode")
+		gotName = q.Get("name")
+		gotValue = q.Get("value")
+		gotDelFiles = q.Get("del_files")
+		json.NewEncoder(w).Encode(SimpleResponse{Status: true})
+	}))
+	defer srv.Close()
+
+	c := New("127.0.0.1", 0, "testkey", false)
+	c.baseURL = srv.URL
+
+	if err := c.DeleteHistory(context.Background(), "SABnzbd_nzo_def456", false); err != nil {
+		t.Fatalf("delete history: %v", err)
+	}
+	if gotMode != "history" || gotName != "delete" || gotValue != "SABnzbd_nzo_def456" {
+		t.Errorf("unexpected params: mode=%s name=%s value=%s", gotMode, gotName, gotValue)
+	}
+	if gotDelFiles != "" {
+		t.Errorf("del_files should be unset when deleteFiles=false, got %q", gotDelFiles)
+	}
+
+	if err := c.DeleteHistory(context.Background(), "nzo_xyz", true); err != nil {
+		t.Fatalf("delete history with files: %v", err)
+	}
+	if gotDelFiles != "1" {
+		t.Errorf("del_files should be 1 when deleteFiles=true, got %q", gotDelFiles)
+	}
+}
+
 func TestTest(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(CategoriesResponse{

@@ -203,6 +203,24 @@ func DefaultNamingTemplate() string {
 	return defaultNamingTemplate
 }
 
+// UniqueDir returns dst if nothing exists there; otherwise appends
+// " (2)", " (3)", ... until a free path is found. MoveDir refuses an
+// existing destination, so callers that import the same title twice
+// (duplicate grab, reprocessed history, second edition) resolve the
+// collision here before the move rather than failing silently.
+func UniqueDir(dst string) string {
+	if _, err := os.Stat(dst); os.IsNotExist(err) {
+		return dst
+	}
+	for i := 2; i < 1000; i++ {
+		candidate := fmt.Sprintf("%s (%d)", dst, i)
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			return candidate
+		}
+	}
+	return dst
+}
+
 // NowYear returns the current year as a string, used as fallback.
 func NowYear() string {
 	return fmt.Sprintf("%d", time.Now().Year())
