@@ -420,3 +420,63 @@ func TestCascadeDeleteAuthorBooks(t *testing.T) {
 		t.Errorf("expected 0 books after cascade delete, got %d", len(books))
 	}
 }
+
+// Regression for https://github.com/vavallee/bindery/issues/8 — deleting an
+// author failed with SQLITE_CONSTRAINT_FOREIGNKEY (787) because the
+// `downloads` table had bare `REFERENCES books(id)` (NO ACTION) and blocked
+// the author→book cascade whenever any download pointed at the book. After
+// migration 007 the reference is `ON DELETE SET NULL`, so the audit row
+// survives but loses its link.
+func TestDeleteAuthorWithDownload(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	authorRepo := NewAuthorRepo(database)
+	bookRepo := NewBookRepo(database)
+
+	author := &models.Author{
+		ForeignID: "OL13A", Name: "Delete Me", SortName: "Me, Delete",
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{
+		ForeignID: "OL13W", AuthorID: author.ID, Title: "Stuck Book", SortTitle: "Stuck Book",
+		Status: "wanted", Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert a download pointing at the book, bypassing the repo to keep the
+	// test schema-level (the repo layer may add defaults we don't need here).
+	_, err = database.ExecContext(ctx, `
+		INSERT INTO downloads (guid, book_id, title, nzb_url)
+		VALUES ('test-guid-1', ?, 'release.nzb', 'https://example/1')`, book.ID)
+	if err != nil {
+		t.Fatalf("seed download: %v", err)
+	}
+
+	if err := authorRepo.Delete(ctx, author.ID); err != nil {
+		t.Fatalf("delete author must succeed even with dependent download: %v", err)
+	}
+
+	var downloadCount int
+	var linkedBookID *int64
+	if err := database.QueryRowContext(ctx,
+		`SELECT COUNT(*), book_id FROM downloads WHERE guid = 'test-guid-1'`,
+	).Scan(&downloadCount, &linkedBookID); err != nil {
+		t.Fatalf("inspect download: %v", err)
+	}
+	if downloadCount != 1 {
+		t.Errorf("download row should survive parent delete, got count=%d", downloadCount)
+	}
+	if linkedBookID != nil {
+		t.Errorf("download.book_id should be NULL after cascade, got %d", *linkedBookID)
+	}
+}
