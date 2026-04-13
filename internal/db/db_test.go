@@ -2,6 +2,10 @@ package db
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -11,6 +15,40 @@ func testDB(t *testing.T) *context.Context {
 	t.Helper()
 	ctx := context.Background()
 	return &ctx
+}
+
+func TestPreflightCreatesMissingParent(t *testing.T) {
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "nested", "sub", "bindery.db")
+	if err := preflight(dbPath); err != nil {
+		t.Fatalf("preflight should create missing parents: %v", err)
+	}
+	if _, err := os.Stat(filepath.Dir(dbPath)); err != nil {
+		t.Fatalf("parent directory was not created: %v", err)
+	}
+}
+
+func TestPreflightReadOnlyParent(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("requires POSIX + non-root (root ignores directory mode bits)")
+	}
+	tmp := t.TempDir()
+	parent := filepath.Join(tmp, "readonly")
+	if err := os.Mkdir(parent, 0o555); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Restore perms so t.TempDir()'s cleanup can delete the tree.
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o755) })
+
+	err := preflight(filepath.Join(parent, "bindery.db"))
+	if err == nil {
+		t.Fatal("expected preflight to fail on read-only parent")
+	}
+	// The message must name the path and mention writability; that's the
+	// whole point of the check.
+	if !strings.Contains(err.Error(), parent) || !strings.Contains(err.Error(), "writable") {
+		t.Errorf("error should mention path and writability, got: %v", err)
+	}
 }
 
 func TestOpenMemory(t *testing.T) {

@@ -5,10 +5,14 @@ package db
 import (
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	_ "modernc.org/sqlite"
 )
@@ -18,14 +22,17 @@ var migrationsFS embed.FS
 
 // Open creates a new database connection and runs migrations.
 func Open(dbPath string) (*sql.DB, error) {
+	if err := preflight(dbPath); err != nil {
+		return nil, err
+	}
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
+		return nil, fmt.Errorf("open database %q: %w", dbPath, err)
 	}
 
 	if err := setPragmas(db); err != nil {
 		db.Close()
-		return nil, err
+		return nil, annotateCantOpen(dbPath, err)
 	}
 
 	db.SetMaxOpenConns(1)
@@ -58,6 +65,84 @@ func OpenMemory() (*sql.DB, error) {
 	}
 
 	return db, nil
+}
+
+// preflight validates that the directory containing dbPath exists, is a
+// directory, and is writable by the current process before handing off to
+// SQLite. SQLite's own error for "can't create the file" is cryptic
+// (`SQLITE_CANTOPEN` → "unable to open database file (14)"), so we check
+// first and emit a much clearer message with the resolved absolute path,
+// parent-directory permissions, and ownership.
+func preflight(dbPath string) error {
+	abs, err := filepath.Abs(dbPath)
+	if err != nil {
+		abs = dbPath
+	}
+	parent := filepath.Dir(abs)
+
+	// Accept parent missing: create it so the first-run flow just works when
+	// a host operator forgot to mkdir the mount target.
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return fmt.Errorf("create database parent directory %q: %w (check volume is writable by the container user)", parent, err)
+	}
+
+	info, err := os.Stat(parent)
+	if err != nil {
+		return fmt.Errorf("stat database parent directory %q: %w", parent, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("database parent %q is not a directory", parent)
+	}
+
+	// Try a round-trip write to catch read-only mounts / wrong-owner PVCs.
+	// os.CreateTemp respects directory permissions and gives us EACCES/EROFS
+	// exactly where those errors happen.
+	probe, err := os.CreateTemp(parent, ".bindery-write-probe-*")
+	if err != nil {
+		return fmt.Errorf("database parent directory %q is not writable: %w (%s)", parent, err, describeDir(parent, info))
+	}
+	probeName := probe.Name()
+	_ = probe.Close()
+	_ = os.Remove(probeName)
+
+	slog.Debug("database preflight ok", "path", abs, "parent", parent, "perm", info.Mode().Perm().String())
+	return nil
+}
+
+// annotateCantOpen wraps SQLite's SQLITE_CANTOPEN with a one-line remediation
+// hint so operators don't have to look up error codes.
+func annotateCantOpen(dbPath string, err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "unable to open database file") &&
+		!strings.Contains(msg, "SQLITE_CANTOPEN") &&
+		!errors.Is(err, syscall.EACCES) && !errors.Is(err, syscall.EROFS) {
+		return err
+	}
+	abs, _ := filepath.Abs(dbPath)
+	parent := filepath.Dir(abs)
+	info, statErr := os.Stat(parent)
+	hint := fmt.Sprintf("check that %q exists and is writable by the container user", parent)
+	if statErr == nil {
+		hint = describeDir(parent, info)
+	}
+	return fmt.Errorf("open database %q: %w — %s", abs, err, hint)
+}
+
+// describeDir renders the parent directory's permissions + ownership in a
+// form most Linux operators read fluently (matches `ls -ld`'s mode column
+// plus a "uid:gid" tail). We skip username lookup to keep this cheap and
+// dependency-free; numeric IDs are unambiguous anyway.
+func describeDir(path string, info os.FileInfo) string {
+	uid, gid := "?", "?"
+	if st, ok := info.Sys().(*syscall.Stat_t); ok {
+		uid = fmt.Sprintf("%d", st.Uid)
+		gid = fmt.Sprintf("%d", st.Gid)
+	}
+	return fmt.Sprintf("%s mode=%s owner=%s:%s — ensure this directory is writable by the UID running bindery (distroless nonroot is 65532)",
+		path, info.Mode().Perm().String(), uid, gid)
 }
 
 func setPragmas(db *sql.DB) error {
