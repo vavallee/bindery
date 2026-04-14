@@ -266,40 +266,45 @@ func insertMergeAlias(ctx context.Context, tx *sql.Tx, targetID int64, name, for
 // applyMergeFieldCopy carries source.monitored / profile / root_folder onto
 // target when target's current value is the seeded default. Returns true
 // when any column was actually written.
+//
+// Each field is UPDATEd individually with a fixed SQL literal (rather than
+// a single dynamically-composed UPDATE) to keep the SQL out of gosec's
+// concatenation heuristic and to keep the code trivially auditable.
 func applyMergeFieldCopy(ctx context.Context, tx *sql.Tx, source, target *mergeAuthor) (bool, error) {
-	var (
-		sets []string
-		args []any
-	)
+	now := time.Now().UTC()
+	var wrote bool
+
+	apply := func(query string, args ...any) error {
+		if _, err := tx.ExecContext(ctx, query, append(args, now, target.ID)...); err != nil {
+			return fmt.Errorf("copy merge fields onto target: %w", err)
+		}
+		wrote = true
+		return nil
+	}
+
 	// Target monitored=true is the seeded default (migration 001); if the
 	// user explicitly unmonitored the target, keep it.
 	if target.Monitored && !source.Monitored {
-		sets = append(sets, "monitored = ?")
-		args = append(args, 0)
+		if err := apply("UPDATE authors SET monitored = 0, updated_at = ? WHERE id = ?"); err != nil {
+			return false, err
+		}
 	}
 	if target.QualityProfileID == nil && source.QualityProfileID != nil {
-		sets = append(sets, "quality_profile_id = ?")
-		args = append(args, *source.QualityProfileID)
+		if err := apply("UPDATE authors SET quality_profile_id = ?, updated_at = ? WHERE id = ?", *source.QualityProfileID); err != nil {
+			return false, err
+		}
 	}
 	if target.MetadataProfileID == nil && source.MetadataProfileID != nil {
-		sets = append(sets, "metadata_profile_id = ?")
-		args = append(args, *source.MetadataProfileID)
+		if err := apply("UPDATE authors SET metadata_profile_id = ?, updated_at = ? WHERE id = ?", *source.MetadataProfileID); err != nil {
+			return false, err
+		}
 	}
 	if target.RootFolderID == nil && source.RootFolderID != nil {
-		sets = append(sets, "root_folder_id = ?")
-		args = append(args, *source.RootFolderID)
+		if err := apply("UPDATE authors SET root_folder_id = ?, updated_at = ? WHERE id = ?", *source.RootFolderID); err != nil {
+			return false, err
+		}
 	}
-	if len(sets) == 0 {
-		return false, nil
-	}
-	sets = append(sets, "updated_at = ?")
-	args = append(args, time.Now().UTC())
-	args = append(args, target.ID)
-	q := "UPDATE authors SET " + strings.Join(sets, ", ") + " WHERE id = ?"
-	if _, err := tx.ExecContext(ctx, q, args...); err != nil {
-		return false, fmt.Errorf("copy merge fields onto target: %w", err)
-	}
-	return true, nil
+	return wrote, nil
 }
 
 // mergeAuthor is the slim row shape Merge needs — just the id + fields it
