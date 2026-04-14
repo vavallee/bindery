@@ -227,9 +227,9 @@ func TestSearchBooks_HTTP_Error(t *testing.T) {
 
 func TestGetAuthor_HTTP(t *testing.T) {
 	resp := authorResponse{
-		Key:     "/authors/OL123A",
-		Name:    "Frank Herbert",
-		Photos:  []int{98765},
+		Key:    "/authors/OL123A",
+		Name:   "Frank Herbert",
+		Photos: []int{98765},
 	}
 	resp.Bio = "American science fiction author"
 
@@ -316,10 +316,10 @@ func TestGetEditions_HTTP(t *testing.T) {
 				ISBN10:         []string{"0441013597"},
 				PhysicalFormat: "Paperback",
 				NumberOfPages:  412,
-				Languages:      []struct {
-				Key string `json:"key"`
-			}{{Key: "/languages/eng"}},
-				Covers:         []int{54321},
+				Languages: []struct {
+					Key string `json:"key"`
+				}{{Key: "/languages/eng"}},
+				Covers: []int{54321},
 			},
 		},
 	}
@@ -470,7 +470,7 @@ func TestGetBook_HTTP_WithAuthor(t *testing.T) {
 		Authors: []workAuthor{{Author: struct {
 			Key string `json:"key"`
 		}{Key: "/authors/OL26320A"}}},
-		Series:   []string{"The Shining #1"},
+		Series: []string{"The Shining #1"},
 	}
 	authorResp := authorResponse{
 		Key:    "/authors/OL26320A",
@@ -479,8 +479,8 @@ func TestGetBook_HTTP_WithAuthor(t *testing.T) {
 	}
 
 	c := newClientWithPaths(t, map[string]interface{}{
-		"/works/OL20617889W.json":  jsonStr(workResp),
-		"/authors/OL26320A.json":   jsonStr(authorResp),
+		"/works/OL20617889W.json": jsonStr(workResp),
+		"/authors/OL26320A.json":  jsonStr(authorResp),
 	})
 
 	book, err := c.GetBook(context.Background(), "OL20617889W")
@@ -560,10 +560,10 @@ func TestGetAuthorWorks_HTTP(t *testing.T) {
 		Size: 2,
 		Entries: []authorWorkEntry{
 			{
-				Key:     "/works/OL456W",
-				Title:   "Dune",
-				Covers:  []int{12345},
-				Series:  []string{"Dune Chronicles #1"},
+				Key:      "/works/OL456W",
+				Title:    "Dune",
+				Covers:   []int{12345},
+				Series:   []string{"Dune Chronicles #1"},
 				Subjects: []string{"Sci-Fi"},
 			},
 			{

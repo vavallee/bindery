@@ -118,7 +118,7 @@ func TestAggregator_GetAuthor_Cached(t *testing.T) {
 	origGetAuthor := primary.getAuthor
 
 	_, _ = agg.GetAuthor(context.Background(), "OL999A")
-	calls++ // first call
+	calls++                 // first call
 	primary.getAuthor = nil // second call should use cache, not nil author
 	got, err := agg.GetAuthor(context.Background(), "OL999A")
 	if err != nil {
@@ -151,7 +151,7 @@ func TestAggregator_GetBook_LongDescription(t *testing.T) {
 
 	enricherCalled := false
 	enricher := &mockProvider{
-		name: "gb",
+		name:        "gb",
 		searchBooks: []models.Book{{Description: "Should not be used"}},
 	}
 	// We'll detect if enricher was called by overriding its SearchBooks
@@ -418,7 +418,7 @@ func TestAggregator_EnrichBook_SkipsOnSearchError(t *testing.T) {
 		getBook: &models.Book{Title: "Error Test", Description: "x"},
 	}
 	enricher := &mockProvider{
-		name:         "hc",
+		name:          "hc",
 		searchBookErr: errors.New("hardcover unavailable"),
 	}
 	agg := &Aggregator{

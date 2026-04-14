@@ -124,14 +124,14 @@ func TestSearchBooks_Success(t *testing.T) {
 		data := map[string]interface{}{
 			"books": []map[string]interface{}{
 				{
-					"id":           42,
-					"title":        "Mistborn",
-					"slug":         "mistborn",
-					"description":  "A fantasy novel",
-					"release_year": year,
-					"rating":       4.2,
+					"id":            42,
+					"title":         "Mistborn",
+					"slug":          "mistborn",
+					"description":   "A fantasy novel",
+					"release_year":  year,
+					"rating":        4.2,
 					"ratings_count": 8000,
-					"image":        map[string]interface{}{"url": "https://img.example.com/m.jpg"},
+					"image":         map[string]interface{}{"url": "https://img.example.com/m.jpg"},
 					"contributions": []map[string]interface{}{
 						{"author": map[string]interface{}{"id": 1, "name": "Brandon Sanderson", "slug": "brandon-sanderson"}},
 					},
@@ -244,11 +244,11 @@ func TestGetBook_Found(t *testing.T) {
 		data := map[string]interface{}{
 			"books": []map[string]interface{}{
 				{
-					"id":          99,
-					"title":       "American Gods",
-					"slug":        "american-gods",
-					"description": "A novel about gods in America.",
-					"rating":      4.1,
+					"id":            99,
+					"title":         "American Gods",
+					"slug":          "american-gods",
+					"description":   "A novel about gods in America.",
+					"rating":        4.1,
 					"ratings_count": 12000,
 				},
 			},
