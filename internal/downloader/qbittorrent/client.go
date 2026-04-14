@@ -86,8 +86,10 @@ func (c *Client) Login(ctx context.Context) error {
 
 // Test verifies connectivity by fetching the application version.
 func (c *Client) Test(ctx context.Context) error {
-	_, err := c.get(ctx, "/api/v2/app/version")
-	return err
+	if _, err := c.get(ctx, "/api/v2/app/version"); err != nil {
+		return fmt.Errorf("could not reach qBittorrent at %s — %w (in Docker use the service/container name, not localhost)", c.baseURL, err)
+	}
+	return nil
 }
 
 // AddTorrent submits a magnet link or torrent URL to qBittorrent for download.

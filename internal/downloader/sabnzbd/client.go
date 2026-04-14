@@ -34,8 +34,10 @@ func New(host string, port int, apiKey string, useSSL bool) *Client {
 
 // Test verifies connectivity by fetching categories.
 func (c *Client) Test(ctx context.Context) error {
-	_, err := c.GetCategories(ctx)
-	return err
+	if _, err := c.GetCategories(ctx); err != nil {
+		return fmt.Errorf("could not reach SABnzbd at %s — %w (in Docker use the service/container name, not localhost)", c.baseURL, err)
+	}
+	return nil
 }
 
 // AddURL sends an NZB URL to SABnzbd for download.
