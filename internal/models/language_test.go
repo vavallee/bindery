@@ -37,12 +37,12 @@ func TestIsLanguageAllowed(t *testing.T) {
 		allowed []string
 		want    bool
 	}{
-		{"eng", nil, true},                 // no filter
-		{"", []string{"eng"}, true},        // unknown language = keep
-		{"eng", []string{"eng"}, true},     // exact match
-		{"ENG", []string{"eng"}, true},     // case-insensitive
-		{" eng ", []string{"eng"}, true},   // whitespace-tolerant
-		{"fre", []string{"eng"}, false},    // mismatch drops
+		{"eng", nil, true},               // no filter
+		{"", []string{"eng"}, true},      // unknown language = keep
+		{"eng", []string{"eng"}, true},   // exact match
+		{"ENG", []string{"eng"}, true},   // case-insensitive
+		{" eng ", []string{"eng"}, true}, // whitespace-tolerant
+		{"fre", []string{"eng"}, false},  // mismatch drops
 		{"fre", []string{"eng", "fre"}, true},
 		{"ger", []string{"eng", "fre"}, false},
 	}
