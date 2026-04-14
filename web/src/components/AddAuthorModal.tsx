@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { api, Author } from '../api/client'
+import { useEffect, useState } from 'react'
+import { api, Author, MetadataProfile } from '../api/client'
 
 interface Props {
   onClose: () => void
@@ -11,6 +11,18 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
   const [results, setResults] = useState<Author[]>([])
   const [searching, setSearching] = useState(false)
   const [adding, setAdding] = useState<string | null>(null)
+  const [profiles, setProfiles] = useState<MetadataProfile[]>([])
+  const [profileId, setProfileId] = useState<number | null>(null)
+
+  useEffect(() => {
+    api.listMetadataProfiles().then(ps => {
+      setProfiles(ps)
+      // Default to the first profile — which is the seeded "Standard"
+      // profile on a fresh install — so the language filter kicks in
+      // without the user having to pick one.
+      if (ps.length > 0) setProfileId(ps[0].id)
+    }).catch(console.error)
+  }, [])
 
   const search = async () => {
     if (!query.trim()) return
@@ -33,6 +45,7 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
         authorName: author.authorName,
         monitored: true,
         searchOnAdd: true,
+        metadataProfileId: profileId,
       })
       onAdded()
       onClose()
@@ -51,6 +64,20 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
         </div>
 
         <div className="p-4 flex-1 overflow-y-auto">
+          {profiles.length > 1 && (
+            <div className="mb-3">
+              <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Metadata profile</label>
+              <select
+                value={profileId ?? ''}
+                onChange={e => setProfileId(e.target.value ? Number(e.target.value) : null)}
+                className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+              >
+                {profiles.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="flex gap-2">
             <input
               type="text"

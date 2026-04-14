@@ -16,6 +16,7 @@ type Author struct {
 	AverageRating         float64    `json:"averageRating"`
 	Monitored             bool       `json:"monitored"`
 	QualityProfileID      *int64     `json:"qualityProfileId"`
+	MetadataProfileID     *int64     `json:"metadataProfileId"`
 	RootFolderID          *int64     `json:"rootFolderId"`
 	MetadataProvider      string     `json:"metadataProvider"`
 	LastMetadataRefreshAt *time.Time `json:"lastMetadataRefreshAt"`

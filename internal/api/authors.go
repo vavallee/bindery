@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -19,10 +20,11 @@ type AuthorHandler struct {
 	books    *db.BookRepo
 	meta     *metadata.Aggregator
 	settings *db.SettingsRepo
+	profiles *db.MetadataProfileRepo
 }
 
-func NewAuthorHandler(authors *db.AuthorRepo, books *db.BookRepo, meta *metadata.Aggregator, settings *db.SettingsRepo) *AuthorHandler {
-	return &AuthorHandler{authors: authors, books: books, meta: meta, settings: settings}
+func NewAuthorHandler(authors *db.AuthorRepo, books *db.BookRepo, meta *metadata.Aggregator, settings *db.SettingsRepo, profiles *db.MetadataProfileRepo) *AuthorHandler {
+	return &AuthorHandler{authors: authors, books: books, meta: meta, settings: settings, profiles: profiles}
 }
 
 func (h *AuthorHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -65,12 +67,13 @@ func (h *AuthorHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ForeignID        string `json:"foreignAuthorId"`
-		Name             string `json:"authorName"`
-		QualityProfileID *int64 `json:"qualityProfileId"`
-		RootFolderID     *int64 `json:"rootFolderId"`
-		Monitored        bool   `json:"monitored"`
-		SearchOnAdd      bool   `json:"searchOnAdd"`
+		ForeignID         string `json:"foreignAuthorId"`
+		Name              string `json:"authorName"`
+		QualityProfileID  *int64 `json:"qualityProfileId"`
+		MetadataProfileID *int64 `json:"metadataProfileId"`
+		RootFolderID      *int64 `json:"rootFolderId"`
+		Monitored         bool   `json:"monitored"`
+		SearchOnAdd       bool   `json:"searchOnAdd"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -102,6 +105,16 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 	author.Monitored = req.Monitored
 	author.QualityProfileID = req.QualityProfileID
 	author.RootFolderID = req.RootFolderID
+	// Default to the seeded "Standard" profile (id=1) so the language filter
+	// has something to consult when the UI didn't send an explicit choice.
+	// The client can opt out by sending a profile whose allowed_languages is
+	// empty or "any".
+	if req.MetadataProfileID != nil {
+		author.MetadataProfileID = req.MetadataProfileID
+	} else {
+		def := models.DefaultMetadataProfileID
+		author.MetadataProfileID = &def
+	}
 
 	if err := h.authors.Create(r.Context(), author); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -130,9 +143,10 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Monitored        *bool  `json:"monitored"`
-		QualityProfileID *int64 `json:"qualityProfileId"`
-		RootFolderID     *int64 `json:"rootFolderId"`
+		Monitored         *bool  `json:"monitored"`
+		QualityProfileID  *int64 `json:"qualityProfileId"`
+		MetadataProfileID *int64 `json:"metadataProfileId"`
+		RootFolderID      *int64 `json:"rootFolderId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -143,6 +157,9 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.QualityProfileID != nil {
 		author.QualityProfileID = req.QualityProfileID
+	}
+	if req.MetadataProfileID != nil {
+		author.MetadataProfileID = req.MetadataProfileID
 	}
 	if req.RootFolderID != nil {
 		author.RootFolderID = req.RootFolderID
@@ -196,18 +213,9 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author) {
 		return
 	}
 
-	// Read preferred language setting; default to "eng" (English only)
-	preferredLang := "eng"
-	if s, _ := h.settings.Get(ctx, "search.preferredLanguage"); s != nil {
-		switch s.Value {
-		case "any":
-			preferredLang = "any"
-		case "en":
-			preferredLang = "eng"
-		default:
-			preferredLang = s.Value
-		}
-	}
+	// Resolve the author's metadata profile (falling back to the seeded
+	// default) and parse its allowed_languages CSV. Nil means "no filter".
+	allowedLangs := h.resolveAllowedLanguages(ctx, author)
 
 	// Track titles we've already added (case-insensitive) to avoid OL duplicates
 	existingBooks, _ := h.books.ListByAuthor(ctx, author.ID)
@@ -235,11 +243,12 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author) {
 			continue
 		}
 
-		// Filter by language: skip books whose language is known and doesn't match.
-		// Books with an empty language (data unavailable) are always kept.
-		if preferredLang != "any" && b.Language != "" && b.Language != preferredLang {
+		// Filter by the author's metadata-profile allowed_languages.
+		// Books with an empty language (data unavailable) are always kept so
+		// an unclassified release doesn't get dropped by accident.
+		if !models.IsLanguageAllowed(b.Language, allowedLangs) {
 			skippedLang++
-			slog.Debug("skipping non-preferred-language book", "title", b.Title, "language", b.Language, "preferred", preferredLang)
+			slog.Debug("skipping non-allowed-language book", "title", b.Title, "language", b.Language, "allowed", allowedLangs)
 			continue
 		}
 
@@ -262,4 +271,22 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author) {
 		added++
 	}
 	slog.Info("author books synced", "author", author.Name, "added", added, "skipped_language", skippedLang, "skipped_junk", skippedJunk, "total", len(books))
+}
+
+// resolveAllowedLanguages returns the parsed allowed-language set for an
+// author's metadata profile. Authors without an explicit profile use the
+// seeded "Standard" profile (id=1). If neither can be loaded we fall back to
+// English-only so existing behaviour is preserved; returning nil here would
+// silently disable the filter, which is the opposite of what users with a
+// default install expect.
+func (h *AuthorHandler) resolveAllowedLanguages(ctx context.Context, author *models.Author) []string {
+	id := models.DefaultMetadataProfileID
+	if author.MetadataProfileID != nil {
+		id = *author.MetadataProfileID
+	}
+	p, err := h.profiles.GetByID(ctx, id)
+	if err != nil || p == nil {
+		return []string{"eng"}
+	}
+	return models.ParseAllowedLanguages(p.AllowedLanguages)
 }

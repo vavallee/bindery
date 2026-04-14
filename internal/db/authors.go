@@ -18,11 +18,13 @@ func NewAuthorRepo(db *sql.DB) *AuthorRepo {
 	return &AuthorRepo{db: db}
 }
 
+const authorSelectCols = `id, foreign_id, name, sort_name, description, image_url, disambiguation,
+	       ratings_count, average_rating, monitored, quality_profile_id, metadata_profile_id, root_folder_id,
+	       metadata_provider, last_metadata_refresh_at, created_at, updated_at`
+
 func (r *AuthorRepo) List(ctx context.Context) ([]models.Author, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, foreign_id, name, sort_name, description, image_url, disambiguation,
-		       ratings_count, average_rating, monitored, quality_profile_id, root_folder_id,
-		       metadata_provider, last_metadata_refresh_at, created_at, updated_at
+		SELECT `+authorSelectCols+`
 		FROM authors ORDER BY sort_name`)
 	if err != nil {
 		return nil, fmt.Errorf("list authors: %w", err)
@@ -42,9 +44,7 @@ func (r *AuthorRepo) List(ctx context.Context) ([]models.Author, error) {
 
 func (r *AuthorRepo) GetByID(ctx context.Context, id int64) (*models.Author, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, foreign_id, name, sort_name, description, image_url, disambiguation,
-		       ratings_count, average_rating, monitored, quality_profile_id, root_folder_id,
-		       metadata_provider, last_metadata_refresh_at, created_at, updated_at
+		SELECT `+authorSelectCols+`
 		FROM authors WHERE id = ?`, id)
 
 	a, err := scanAuthorRow(row)
@@ -59,9 +59,7 @@ func (r *AuthorRepo) GetByID(ctx context.Context, id int64) (*models.Author, err
 
 func (r *AuthorRepo) GetByForeignID(ctx context.Context, foreignID string) (*models.Author, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, foreign_id, name, sort_name, description, image_url, disambiguation,
-		       ratings_count, average_rating, monitored, quality_profile_id, root_folder_id,
-		       metadata_provider, last_metadata_refresh_at, created_at, updated_at
+		SELECT `+authorSelectCols+`
 		FROM authors WHERE foreign_id = ?`, foreignID)
 
 	a, err := scanAuthorRow(row)
@@ -78,11 +76,11 @@ func (r *AuthorRepo) Create(ctx context.Context, a *models.Author) error {
 	now := time.Now().UTC()
 	result, err := r.db.ExecContext(ctx, `
 		INSERT INTO authors (foreign_id, name, sort_name, description, image_url, disambiguation,
-		                     ratings_count, average_rating, monitored, quality_profile_id, root_folder_id,
+		                     ratings_count, average_rating, monitored, quality_profile_id, metadata_profile_id, root_folder_id,
 		                     metadata_provider, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ForeignID, a.Name, a.SortName, a.Description, a.ImageURL, a.Disambiguation,
-		a.RatingsCount, a.AverageRating, a.Monitored, a.QualityProfileID, a.RootFolderID,
+		a.RatingsCount, a.AverageRating, a.Monitored, a.QualityProfileID, a.MetadataProfileID, a.RootFolderID,
 		a.MetadataProvider, now, now)
 	if err != nil {
 		return fmt.Errorf("create author: %w", err)
@@ -103,11 +101,12 @@ func (r *AuthorRepo) Update(ctx context.Context, a *models.Author) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE authors SET name=?, sort_name=?, description=?, image_url=?, disambiguation=?,
 		                   ratings_count=?, average_rating=?, monitored=?, quality_profile_id=?,
-		                   root_folder_id=?, metadata_provider=?, last_metadata_refresh_at=?, updated_at=?
+		                   metadata_profile_id=?, root_folder_id=?, metadata_provider=?,
+		                   last_metadata_refresh_at=?, updated_at=?
 		WHERE id=?`,
 		a.Name, a.SortName, a.Description, a.ImageURL, a.Disambiguation,
 		a.RatingsCount, a.AverageRating, a.Monitored, a.QualityProfileID,
-		a.RootFolderID, a.MetadataProvider, a.LastMetadataRefreshAt, now, a.ID)
+		a.MetadataProfileID, a.RootFolderID, a.MetadataProvider, a.LastMetadataRefreshAt, now, a.ID)
 	if err != nil {
 		return fmt.Errorf("update author %d: %w", a.ID, err)
 	}
@@ -128,7 +127,7 @@ func scanAuthor(rows *sql.Rows) (models.Author, error) {
 	var monitored int
 	err := rows.Scan(&a.ID, &a.ForeignID, &a.Name, &a.SortName, &a.Description, &a.ImageURL,
 		&a.Disambiguation, &a.RatingsCount, &a.AverageRating, &monitored,
-		&a.QualityProfileID, &a.RootFolderID, &a.MetadataProvider,
+		&a.QualityProfileID, &a.MetadataProfileID, &a.RootFolderID, &a.MetadataProvider,
 		&a.LastMetadataRefreshAt, &a.CreatedAt, &a.UpdatedAt)
 	a.Monitored = monitored == 1
 	return a, err
@@ -139,7 +138,7 @@ func scanAuthorRow(row *sql.Row) (models.Author, error) {
 	var monitored int
 	err := row.Scan(&a.ID, &a.ForeignID, &a.Name, &a.SortName, &a.Description, &a.ImageURL,
 		&a.Disambiguation, &a.RatingsCount, &a.AverageRating, &monitored,
-		&a.QualityProfileID, &a.RootFolderID, &a.MetadataProvider,
+		&a.QualityProfileID, &a.MetadataProfileID, &a.RootFolderID, &a.MetadataProvider,
 		&a.LastMetadataRefreshAt, &a.CreatedAt, &a.UpdatedAt)
 	a.Monitored = monitored == 1
 	return a, err

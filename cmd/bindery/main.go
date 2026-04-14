@@ -136,7 +136,7 @@ func main() {
 	// API handlers
 	authHandler := api.NewAuthHandler(userRepo, settingsRepo, loginLimiter)
 	searchHandler := api.NewSearchHandler(metaAgg)
-	authorHandler := api.NewAuthorHandler(authorRepo, bookRepo, metaAgg, settingsRepo)
+	authorHandler := api.NewAuthorHandler(authorRepo, bookRepo, metaAgg, settingsRepo, metadataProfileRepo)
 	bookHandler := api.NewBookHandler(bookRepo, metaAgg, historyRepo)
 	indexerHandler := api.NewIndexerHandler(indexerRepo, bookRepo, authorRepo, idxSearcher, settingsRepo, blocklistRepo)
 	dlClientHandler := api.NewDownloadClientHandler(dlClientRepo)

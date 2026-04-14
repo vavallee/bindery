@@ -169,6 +169,7 @@ export const api = {
   // Metadata Profiles
   listMetadataProfiles: () => request<MetadataProfile[]>('/metadataprofile'),
   addMetadataProfile: (data: Partial<MetadataProfile>) => request<MetadataProfile>('/metadataprofile', { method: 'POST', body: JSON.stringify(data) }),
+  updateMetadataProfile: (id: number, data: Partial<MetadataProfile>) => request<MetadataProfile>(`/metadataprofile/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteMetadataProfile: (id: number) => request<void>(`/metadataprofile/${id}`, { method: 'DELETE' }),
 
   // Delay Profiles
@@ -194,6 +195,9 @@ export interface Author {
   ratingsCount: number
   averageRating: number
   monitored: boolean
+  qualityProfileId?: number | null
+  metadataProfileId?: number | null
+  rootFolderId?: number | null
   books?: Book[]
   statistics?: { bookCount: number; availableBookCount: number; wantedBookCount: number }
 }
@@ -271,6 +275,9 @@ export interface AddAuthorRequest {
   authorName: string
   monitored: boolean
   searchOnAdd: boolean
+  metadataProfileId?: number | null
+  qualityProfileId?: number | null
+  rootFolderId?: number | null
 }
 
 export interface GrabRequest {
