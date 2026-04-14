@@ -117,6 +117,13 @@ linters:
           - errcheck
           - gosec
           - noctx
+      # Calibre integration: launching calibredb with admin-configured paths is
+      # the entire purpose of the package. The binary and library_path come
+      # from validated settings, not untrusted input.
+      - path: internal/calibre/client\.go
+        linters:
+          - gosec
+        text: "G204:"
 
 formatters:
   enable:

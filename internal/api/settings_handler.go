@@ -2,7 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/vavallee/bindery/internal/db"
@@ -74,6 +76,10 @@ func (h *SettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
+	if err := validateSettingValue(key, req.Value); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	if err := h.settings.Set(r.Context(), key, req.Value); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -84,6 +90,44 @@ func (h *SettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s)
+}
+
+// validateSettingValue enforces per-key invariants on writes. We run this
+// inline with Set (rather than a separate middleware) because the settings
+// endpoint is the single place every non-auth key flows through and the
+// validations are both few and cheap. Keys not listed here pass through
+// unchanged — the settings table stays schema-less for anything else.
+func validateSettingValue(key, value string) error {
+	switch key {
+	case SettingCalibreLibraryPath:
+		// Empty = disabled / unset; reject only when the caller provided
+		// a non-empty string that doesn't resolve to an existing dir.
+		if value == "" {
+			return nil
+		}
+		info, err := os.Stat(value)
+		if err != nil {
+			return fmt.Errorf("library_path %q: %w", value, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("library_path %q is not a directory", value)
+		}
+	case SettingCalibreBinaryPath:
+		if value == "" {
+			return nil
+		}
+		info, err := os.Stat(value)
+		if err != nil {
+			return fmt.Errorf("binary_path %q: %w", value, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("binary_path %q is not a regular file", value)
+		}
+		if info.Mode()&0o111 == 0 {
+			return fmt.Errorf("binary_path %q is not executable", value)
+		}
+	}
+	return nil
 }
 
 func (h *SettingsHandler) Delete(w http.ResponseWriter, r *http.Request) {

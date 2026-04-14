@@ -6,15 +6,25 @@ package importer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/downloader/sabnzbd"
 	"github.com/vavallee/bindery/internal/models"
 )
+
+// calibreClient is the subset of *calibre.Client the scanner relies on.
+// Defining it here lets tests and main.go swap implementations without
+// touching the importer surface.
+type calibreClient interface {
+	Enabled() bool
+	Add(ctx context.Context, filePath string) (int64, error)
+}
 
 // Scanner checks for completed downloads and imports them into the library.
 type Scanner struct {
@@ -25,6 +35,7 @@ type Scanner struct {
 	history      *db.HistoryRepo
 	renamer      *Renamer
 	remapper     *Remapper
+	calibre      calibreClient
 	libraryDir   string
 	audiobookDir string
 }
@@ -50,6 +61,38 @@ func NewScanner(downloads *db.DownloadRepo, clients *db.DownloadClientRepo,
 		libraryDir:   libraryDir,
 		audiobookDir: audiobookDir,
 	}
+}
+
+// WithCalibre attaches a Calibre client to the scanner. When the client is
+// enabled the scanner mirrors every successful import into the configured
+// Calibre library and persists the returned id on the book row. Passing a
+// disabled (or nil-interface) client is a no-op.
+func (s *Scanner) WithCalibre(c calibreClient) *Scanner {
+	s.calibre = c
+	return s
+}
+
+// pushToCalibre runs `calibredb add` for a just-imported book. Failures are
+// logged and swallowed — Calibre sync is a best-effort mirror, so a missing
+// binary or unreachable library must never roll back an otherwise-good
+// import. A successful call stores the returned id on the book row.
+func (s *Scanner) pushToCalibre(ctx context.Context, book *models.Book, path string) {
+	if s.calibre == nil || !s.calibre.Enabled() || book == nil {
+		return
+	}
+	id, err := s.calibre.Add(ctx, path)
+	if err != nil {
+		if errors.Is(err, calibre.ErrDisabled) {
+			return
+		}
+		slog.Warn("calibre: add failed, continuing", "bookId", book.ID, "path", path, "error", err)
+		return
+	}
+	if err := s.books.SetCalibreID(ctx, book.ID, id); err != nil {
+		slog.Warn("calibre: persist calibre_id failed", "bookId", book.ID, "calibreId", id, "error", err)
+		return
+	}
+	slog.Info("calibre: book mirrored", "bookId", book.ID, "calibreId", id, "path", path)
 }
 
 // CheckDownloads polls SABnzbd for status changes and updates the local download records.
@@ -159,6 +202,8 @@ func (s *Scanner) tryImport(ctx context.Context, sab *sabnzbd.Client, dl *models
 		s.downloads.UpdateStatus(ctx, dl.ID, models.DownloadStatusImported)
 		slog.Info("audiobook imported", "title", book.Title, "path", destDir)
 
+		s.pushToCalibre(ctx, book, destDir)
+
 		eventData, _ := json.Marshal(map[string]string{"path": destDir})
 		s.history.Create(ctx, &models.HistoryEvent{
 			BookID:      dl.BookID,
@@ -193,6 +238,8 @@ func (s *Scanner) tryImport(ctx context.Context, sab *sabnzbd.Client, dl *models
 		s.books.SetFilePath(ctx, book.ID, destPath)
 		s.downloads.UpdateStatus(ctx, dl.ID, models.DownloadStatusImported)
 		slog.Info("book imported", "title", book.Title, "path", destPath)
+
+		s.pushToCalibre(ctx, book, destPath)
 
 		eventData, _ := json.Marshal(map[string]string{"path": destPath})
 		s.history.Create(ctx, &models.HistoryEvent{

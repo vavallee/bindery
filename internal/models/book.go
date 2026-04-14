@@ -35,6 +35,7 @@ type Book struct {
 	Narrator              string     `json:"narrator"`
 	DurationSeconds       int        `json:"durationSeconds"`
 	ASIN                  string     `json:"asin"`
+	CalibreID             *int64     `json:"calibre_id,omitempty"`
 	MetadataProvider      string     `json:"metadataProvider"`
 	LastMetadataRefreshAt *time.Time `json:"lastMetadataRefreshAt"`
 	CreatedAt             time.Time  `json:"createdAt"`

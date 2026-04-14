@@ -884,6 +884,14 @@ function GeneralTab() {
         </div>
       </section>
 
+      {/* Calibre */}
+      <CalibreSection
+        settings={settings}
+        setSettings={setSettings}
+        saveSetting={saveSetting}
+        saving={saving}
+      />
+
       {/* Backup */}
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">Backup & Restore</h3>
@@ -919,6 +927,130 @@ function GeneralTab() {
 
 function parseCats(s: string): number[] {
   return s.split(',').map(t => parseInt(t.trim(), 10)).filter(n => !isNaN(n))
+}
+
+// CalibreSection renders the three calibre.* settings fields plus a Test
+// button that hits /calibre/test. We deliberately reuse the parent
+// GeneralTab's `settings` / `saving` state so the Save buttons behave the
+// same as every other field in General and the code path stays one-off.
+function CalibreSection({
+  settings,
+  setSettings,
+  saveSetting,
+  saving,
+}: {
+  settings: Record<string, string>
+  setSettings: (fn: (prev: Record<string, string>) => Record<string, string>) => void
+  saveSetting: (key: string) => Promise<void>
+  saving: string | null
+}) {
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null)
+
+  const enabled = (settings['calibre.enabled'] ?? 'false').toLowerCase() === 'true'
+
+  const runTest = async () => {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const r = await api.testCalibre()
+      setTestResult({ ok: true, msg: `${r.message}${r.version ? ' — ' + r.version : ''}` })
+    } catch (err) {
+      setTestResult({ ok: false, msg: err instanceof Error ? err.message : 'Test failed' })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  return (
+    <section>
+      <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">Calibre</h3>
+      <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-4">
+        <p className="text-xs text-slate-600 dark:text-zinc-500 -mt-1">
+          Mirror imported books into a Calibre library by shelling out to{' '}
+          <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">calibredb add</code>.
+          Requires Calibre installed on the host; the Calibre book id is stored on the book row for future OPDS lookups.
+        </p>
+
+        <div className="flex items-center justify-between">
+          <div>
+            <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">Enabled</label>
+            <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">When off, imports behave exactly as before — no Calibre call, no change to book rows.</p>
+          </div>
+          <button
+            onClick={async () => {
+              const next = enabled ? 'false' : 'true'
+              setSettings(s => ({ ...s, 'calibre.enabled': next }))
+              // Persist immediately on toggle — matches the indexer/client
+              // toggles that don't require a separate Save click.
+              await api.setSetting('calibre.enabled', next).catch(console.error)
+            }}
+            className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${enabled ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'}`}
+            title={enabled ? 'Disable' : 'Enable'}
+          >
+            <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${enabled ? 'translate-x-4' : ''}`} />
+          </button>
+        </div>
+
+        <div>
+          <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Library path</label>
+          <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">Directory containing <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">metadata.db</code>. Passed to calibredb as <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">--with-library</code>.</p>
+          <div className="flex gap-2">
+            <input
+              value={settings['calibre.library_path'] ?? ''}
+              onChange={e => setSettings(s => ({ ...s, 'calibre.library_path': e.target.value }))}
+              placeholder="/data/calibre-library"
+              className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+            />
+            <button
+              onClick={() => saveSetting('calibre.library_path')}
+              disabled={saving === 'calibre.library_path'}
+              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium disabled:opacity-50"
+            >
+              {saving === 'calibre.library_path' ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Binary path (optional)</label>
+          <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">Leave blank to resolve <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">calibredb</code> on PATH. Set explicitly when running in a container that bundles Calibre at a pinned location.</p>
+          <div className="flex gap-2">
+            <input
+              value={settings['calibre.binary_path'] ?? ''}
+              onChange={e => setSettings(s => ({ ...s, 'calibre.binary_path': e.target.value }))}
+              placeholder="/usr/bin/calibredb"
+              className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+            />
+            <button
+              onClick={() => saveSetting('calibre.binary_path')}
+              disabled={saving === 'calibre.binary_path'}
+              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium disabled:opacity-50"
+            >
+              {saving === 'calibre.binary_path' ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between pt-1 border-t border-slate-200 dark:border-zinc-800">
+          <div className="text-xs">
+            {testResult && (
+              <span className={testResult.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>
+                {testResult.msg}
+              </span>
+            )}
+          </div>
+          <button
+            onClick={runTest}
+            disabled={testing}
+            className="px-4 py-2 bg-slate-600 hover:bg-slate-500 rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
+          >
+            {testing ? 'Testing…' : 'Test connection'}
+          </button>
+        </div>
+      </div>
+    </section>
+  )
 }
 
 function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onClose: () => void; onSaved: (idx: Indexer) => void }) {

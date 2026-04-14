@@ -21,7 +21,7 @@ func NewBookRepo(db *sql.DB) *BookRepo {
 const bookColumns = `id, foreign_id, author_id, title, sort_title, original_title, description,
 	image_url, release_date, genres, average_rating, ratings_count, monitored, status,
 	any_edition_ok, selected_edition_id, file_path, language, media_type, narrator, duration_seconds, asin,
-	metadata_provider, last_metadata_refresh_at, created_at, updated_at`
+	calibre_id, metadata_provider, last_metadata_refresh_at, created_at, updated_at`
 
 func (r *BookRepo) List(ctx context.Context) ([]models.Book, error) {
 	return r.query(ctx, "SELECT "+bookColumns+" FROM books ORDER BY sort_title", nil)
@@ -126,6 +126,13 @@ func (r *BookRepo) SetFilePath(ctx context.Context, id int64, filePath string) e
 	return err
 }
 
+// SetCalibreID stores the Calibre-assigned book id for the given Bindery
+// book row. Called from the importer after a successful `calibredb add`.
+func (r *BookRepo) SetCalibreID(ctx context.Context, id, calibreID int64) error {
+	_, err := r.db.ExecContext(ctx, "UPDATE books SET calibre_id=? WHERE id=?", calibreID, id)
+	return err
+}
+
 func (r *BookRepo) Delete(ctx context.Context, id int64) error {
 	_, err := r.db.ExecContext(ctx, "DELETE FROM books WHERE id=?", id)
 	return err
@@ -156,7 +163,7 @@ func (r *BookRepo) query(ctx context.Context, q string, args []any) ([]models.Bo
 			&monitored, &b.Status, &anyEditionOK, &b.SelectedEditionID,
 			&b.FilePath, &b.Language, &b.MediaType,
 			&b.Narrator, &b.DurationSeconds, &b.ASIN,
-			&b.MetadataProvider, &b.LastMetadataRefreshAt,
+			&b.CalibreID, &b.MetadataProvider, &b.LastMetadataRefreshAt,
 			&b.CreatedAt, &b.UpdatedAt,
 		)
 		if err != nil {

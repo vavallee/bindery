@@ -13,6 +13,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/api"
 	"github.com/vavallee/bindery/internal/auth"
+	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/config"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/importer"
@@ -139,6 +140,16 @@ func main() {
 		cfg.DownloadPathRemap,
 	)
 
+	// Calibre client: constructed once at boot from the settings table.
+	// The scanner calls Enabled() on every import, so toggling the flag
+	// takes effect without a restart — but a library_path / binary_path
+	// change does require one (same pattern the rest of Bindery uses).
+	calibreClient := calibre.New(api.LoadCalibreConfig(settingsRepo))
+	importScanner.WithCalibre(calibreClient)
+	if calibreClient.Enabled() {
+		slog.Info("calibre integration enabled")
+	}
+
 	// Scheduler
 	sched := scheduler.New(importScanner, idxSearcher, metaAgg,
 		authorRepo, bookRepo, indexerRepo, downloadRepo, dlClientRepo, settingsRepo, blocklistRepo)
@@ -171,6 +182,7 @@ func main() {
 	customFormatHandler := api.NewCustomFormatHandler(customFormatRepo)
 	bulkHandler := api.NewBulkHandler(authorRepo, bookRepo, blocklistRepo, sched)
 	backupHandler := api.NewBackupHandler(cfg.DBPath, cfg.DataDir)
+	calibreHandler := api.NewCalibreHandler(settingsRepo)
 	migrateHandler := api.NewMigrateHandler(
 		authorRepo, indexerRepo, dlClientRepo, blocklistRepo, bookRepo, metaAgg,
 		func(a *models.Author) { authorHandler.FetchAuthorBooks(a) },
@@ -342,6 +354,10 @@ func main() {
 
 		// Library
 		r.Post("/library/scan", libraryHandler.Scan)
+
+		// Calibre integration — settings live under /setting/calibre.*,
+		// this endpoint just validates + probes the configured install.
+		r.Post("/calibre/test", calibreHandler.Test)
 
 		// Migration imports (CSV of author names, or Readarr SQLite DB).
 		r.Post("/migrate/csv", migrateHandler.ImportCSV)
