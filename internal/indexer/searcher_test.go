@@ -415,6 +415,92 @@ func TestTitleMatchesSingleKeyword(t *testing.T) {
 	}
 }
 
+// Regression: the old anyPhraseMatch batch gate caused correctly-titled results
+// to be dropped when an abbreviated result in the same batch happened to have
+// the significant keywords adjacent, setting anyPhraseMatch=true and disabling
+// keyword fallback for the whole batch.
+func TestFilterRelevantAnyPhraseMatchTrap(t *testing.T) {
+	// "The Name of the Wind" — sigWords = ["name", "wind"].
+	// Phrase \bname\W+wind\b fails for "name of the wind" (stop words between).
+	// An abbreviated result "name.wind.epub" would previously trigger
+	// anyPhraseMatch=true, causing the correct release to be dropped.
+	results := toResults(
+		"Patrick.Rothfuss.-.The.Name.of.the.Wind.EPUB",
+		"Name.Wind.Rothfuss.epub", // abbreviated — phrase-matches ["name","wind"]
+		"Completely.Unrelated.Book.epub",
+	)
+	got := filterRelevant(results, "The Name of the Wind", "Patrick Rothfuss")
+
+	if !contains(got, "Patrick.Rothfuss.-.The.Name.of.the.Wind.EPUB") {
+		t.Errorf("correct release dropped by anyPhraseMatch trap; got %v", resultTitles(got))
+	}
+	if !contains(got, "Name.Wind.Rothfuss.epub") {
+		t.Errorf("abbreviated release should also pass; got %v", resultTitles(got))
+	}
+	if contains(got, "Completely.Unrelated.Book.epub") {
+		t.Error("unrelated result should be filtered out")
+	}
+}
+
+// Titles with stop words between significant keywords should pass keyword
+// fallback even when no result has a strict adjacency phrase match.
+func TestFilterRelevantStopWordsBetweenKeywords(t *testing.T) {
+	// "Lord of the Rings" — sigWords = ["lord", "rings"].
+	// Phrase \blord\W+rings\b never matches because "of the" sits between them.
+	// All correct results should pass via keyword fallback.
+	results := toResults(
+		"J.R.R.Tolkien.-.The.Lord.of.the.Rings.EPUB",
+		"Lord.Of.The.Rings.Tolkien.epub",
+		"The.Lord.of.the.Rings.Fellowship.epub",
+		"Lord.of.the.Rings.Unabridged.m4b",
+		"Unrelated.Fantasy.Novel.epub",
+	)
+	got := filterRelevant(results, "The Lord of the Rings", "J.R.R. Tolkien")
+
+	for _, title := range []string{
+		"J.R.R.Tolkien.-.The.Lord.of.the.Rings.EPUB",
+		"Lord.Of.The.Rings.Tolkien.epub",
+		"The.Lord.of.the.Rings.Fellowship.epub",
+		"Lord.of.the.Rings.Unabridged.m4b",
+	} {
+		if !contains(got, title) {
+			t.Errorf("expected %q to pass stop-word keyword fallback; got %v", title, resultTitles(got))
+		}
+	}
+	if contains(got, "Unrelated.Fantasy.Novel.epub") {
+		t.Error("unrelated result should be filtered out")
+	}
+}
+
+// Custom indexer categories (e.g. 7120 for German books) must pass through
+// filterCategoriesForMedia unchanged.
+func TestFilterCategoriesCustomIDs(t *testing.T) {
+	// SceneNZBs-style: 7120 = German books, 3130 = German audio.
+	cats := []int{7020, 7120, 3030, 3130}
+
+	ebook := filterCategoriesForMedia(cats, "ebook")
+	wantEbook := []int{7020, 7120}
+	if len(ebook) != len(wantEbook) {
+		t.Fatalf("ebook cats = %v, want %v", ebook, wantEbook)
+	}
+	for i, v := range wantEbook {
+		if ebook[i] != v {
+			t.Errorf("ebook[%d] = %d, want %d", i, ebook[i], v)
+		}
+	}
+
+	audio := filterCategoriesForMedia(cats, "audiobook")
+	wantAudio := []int{3030, 3130}
+	if len(audio) != len(wantAudio) {
+		t.Fatalf("audio cats = %v, want %v", audio, wantAudio)
+	}
+	for i, v := range wantAudio {
+		if audio[i] != v {
+			t.Errorf("audio[%d] = %d, want %d", i, audio[i], v)
+		}
+	}
+}
+
 func TestIsAudiobookFormat(t *testing.T) {
 	for _, f := range []string{"m4b", "m4a", "mp3", "flac", "ogg"} {
 		if !isAudiobookFormat(f) {

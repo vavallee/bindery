@@ -224,14 +224,21 @@ func titleMatchesResult(normResult string, titleKws []string, surname string, al
 
 // filterRelevant removes results that don't plausibly match the requested book.
 // Strategy:
-//   - Multi-significant-word titles: require a contiguous phrase match. If no
-//     result in the batch matches as a phrase, relax to "every keyword at a
-//     word boundary" so we still surface something for oddly-structured names.
+//   - Multi-significant-word titles: try a contiguous phrase match first; if
+//     the phrase fails, accept the result if every significant keyword appears
+//     at a word boundary (handles titles like "The Name of the Wind" where stop
+//     words between sigWords prevent a direct phrase hit on the release title).
 //   - Single-significant-word titles: require the word AND the author surname
 //     at word boundaries (prevents "sparrow" alone from matching noise).
 //   - Titles with no significant words: fall back to the author surname alone.
 //   - Subtitle handling: if the title has "primary: subtitle", results matching
 //     either the primary-only or the full title form are accepted.
+//
+// Each result is evaluated independently. The previous batch-level
+// anyPhraseMatch gate (which disabled keyword fallback for the whole batch if
+// any result happened to phrase-match) caused correctly-titled releases to be
+// dropped when an abbreviated result set the gate — e.g. "Name.Wind.epub"
+// enabling strict mode that then rejected "Name.of.the.Wind.epub".
 func filterRelevant(results []newznab.SearchResult, title, author string) []newznab.SearchResult {
 	fullKws := sigWords(title)
 	primaryKws := sigWords(primaryTitle(title))
@@ -248,28 +255,16 @@ func filterRelevant(results []newznab.SearchResult, title, author string) []newz
 		normTitles[i] = NormalizeRelease(r.Title)
 	}
 
-	// First pass: strict (no keyword-only fallback). This determines whether
-	// any phrase match exists.
-	anyPhraseMatch := false
-	if len(fullKws) >= 2 {
-		for _, n := range normTitles {
-			if ContainsPhrase(n, fullKws) || (len(primaryKws) >= 2 && ContainsPhrase(n, primaryKws)) {
-				anyPhraseMatch = true
-				break
-			}
-		}
-	}
-
-	allowFallback := !anyPhraseMatch
-
 	filtered := make([]newznab.SearchResult, 0, len(results))
 	for i, r := range results {
 		n := normTitles[i]
 
-		fullOK := titleMatchesResult(n, fullKws, surname, allowFallback)
+		// allowFallback=true: each result gets phrase match first, then keyword
+		// fallback if the phrase fails. No batch-level gate.
+		fullOK := titleMatchesResult(n, fullKws, surname, true)
 		primaryOK := false
 		if !fullOK && len(primaryKws) > 0 && !sameKws(primaryKws, fullKws) {
-			primaryOK = titleMatchesResult(n, primaryKws, surname, allowFallback)
+			primaryOK = titleMatchesResult(n, primaryKws, surname, true)
 		}
 		if fullOK || primaryOK {
 			filtered = append(filtered, r)

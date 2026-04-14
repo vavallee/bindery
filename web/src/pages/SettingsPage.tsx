@@ -917,14 +917,19 @@ function GeneralTab() {
   )
 }
 
+function parseCats(s: string): number[] {
+  return s.split(',').map(t => parseInt(t.trim(), 10)).filter(n => !isNaN(n))
+}
+
 function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onClose: () => void; onSaved: (idx: Indexer) => void }) {
   const [name, setName] = useState(indexer.name)
   const [type, setType] = useState(indexer.type || 'newznab')
   const [url, setUrl] = useState(indexer.url)
   const [apiKey, setApiKey] = useState(indexer.apiKey)
+  const [categories, setCategories] = useState((indexer.categories ?? [7020]).join(', '))
 
   const submit = async () => {
-    const updated = await api.updateIndexer(indexer.id, { ...indexer, name, type, url, apiKey })
+    const updated = await api.updateIndexer(indexer.id, { ...indexer, name, type, url, apiKey, categories: parseCats(categories) })
     onSaved(updated)
   }
 
@@ -939,6 +944,10 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
       </div>
       <input value={url} onChange={e => setUrl(e.target.value)} placeholder="URL" className={inputCls} />
       <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="API Key" type="password" className={inputCls} />
+      <div>
+        <input value={categories} onChange={e => setCategories(e.target.value)} placeholder="Categories (e.g. 7020, 7120, 3030)" className={inputCls} />
+        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Comma-separated Newznab category IDs. 7020 = eBooks, 3030 = Audiobooks. Add custom IDs for indexers with non-standard categories (e.g. 7120 for German books).</p>
+      </div>
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">Cancel</button>
         <button onClick={submit} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium">Save</button>
@@ -1052,10 +1061,10 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
   const [type, setType] = useState<'newznab' | 'torznab'>('newznab')
   const [url, setUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
+  const [categories, setCategories] = useState('7020')
 
   const submit = async () => {
-    const cats = type === 'torznab' ? [7000, 7020] : [7000, 7020]
-    const idx = await api.addIndexer({ name, url, apiKey, type, categories: cats, enabled: true })
+    const idx = await api.addIndexer({ name, url, apiKey, type, categories: parseCats(categories), enabled: true })
     onAdded(idx)
   }
 
@@ -1070,6 +1079,10 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
       </div>
       <input value={url} onChange={e => setUrl(e.target.value)} placeholder="URL (e.g. https://api.nzbgeek.info)" className={inputCls} />
       <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="API Key" type="password" className={inputCls} />
+      <div>
+        <input value={categories} onChange={e => setCategories(e.target.value)} placeholder="Categories (e.g. 7020, 7120, 3030)" className={inputCls} />
+        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Comma-separated Newznab category IDs. 7020 = eBooks, 3030 = Audiobooks. Add custom IDs for indexers with non-standard categories (e.g. 7120 for German books).</p>
+      </div>
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">Cancel</button>
         <button onClick={submit} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium">Save</button>
