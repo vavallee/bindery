@@ -80,7 +80,8 @@ export const api = {
   getAuthor: (id: number) => request<Author>(`/author/${id}`),
   addAuthor: (data: AddAuthorRequest) => request<Author>('/author', { method: 'POST', body: JSON.stringify(data) }),
   updateAuthor: (id: number, data: Partial<Author>) => request<Author>(`/author/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-  deleteAuthor: (id: number) => request<void>(`/author/${id}`, { method: 'DELETE' }),
+  deleteAuthor: (id: number, deleteFiles = false) =>
+    request<void>(`/author/${id}${deleteFiles ? '?deleteFiles=true' : ''}`, { method: 'DELETE' }),
   refreshAuthor: (id: number) => request<void>(`/author/${id}/refresh`, { method: 'POST' }),
 
   // Books

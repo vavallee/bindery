@@ -61,9 +61,13 @@ export default function AuthorDetailPage() {
 
   const handleDelete = async () => {
     if (!author) return
-    if (!confirm(`Delete ${author.authorName} and all their books?`)) return
+    const withFiles = books.filter(b => b.filePath)
+    const msg = withFiles.length > 0
+      ? `Delete ${author.authorName}, all ${books.length} book(s), AND ${withFiles.length} file(s)/folder(s) on disk?\n\nThis cannot be undone.`
+      : `Delete ${author.authorName} and all ${books.length} book(s)?`
+    if (!confirm(msg)) return
     try {
-      await api.deleteAuthor(author.id)
+      await api.deleteAuthor(author.id, withFiles.length > 0)
       navigate('/')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Delete failed')

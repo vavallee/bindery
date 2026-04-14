@@ -178,10 +178,37 @@ func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
 		return
 	}
+
+	// Opt-in `?deleteFiles=true` sweeps every book's on-disk path after the
+	// DB delete. We must collect the paths *before* deleting the author —
+	// the FK cascade removes the book rows along with it, which would leave
+	// us nothing to walk. Per-path errors are logged but don't abort the
+	// response: the author is already gone, and a partial sweep is better
+	// than rolling the whole thing back.
+	var pathsToRemove []string
+	if r.URL.Query().Get("deleteFiles") == "true" {
+		books, err := h.books.ListByAuthor(r.Context(), id)
+		if err != nil {
+			slog.Warn("delete author: failed to list books for file cleanup", "author_id", id, "error", err)
+		}
+		for _, b := range books {
+			if b.FilePath != "" {
+				pathsToRemove = append(pathsToRemove, b.FilePath)
+			}
+		}
+	}
+
 	if err := h.authors.Delete(r.Context(), id); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+
+	for _, p := range pathsToRemove {
+		if err := removeBookPath(p); err != nil {
+			slog.Warn("delete author: failed to remove file", "author_id", id, "path", p, "error", err)
+		}
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 

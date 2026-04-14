@@ -25,8 +25,21 @@ export default function AuthorsPage() {
   useEffect(() => { load() }, [])
 
   const handleDelete = async (id: number) => {
-    if (!confirm('Delete this author and all their books?')) return
-    await api.deleteAuthor(id)
+    // Peek at the author's books so the confirm can offer to sweep files.
+    // Small extra roundtrip, but the list view doesn't otherwise carry
+    // per-book filePaths and we don't want to silently orphan them.
+    let withFiles = 0
+    let total = 0
+    try {
+      const books = await api.listBooks({ authorId: id })
+      total = books.length
+      withFiles = books.filter(b => b.filePath).length
+    } catch { /* fall through to no-file-sweep default */ }
+    const msg = withFiles > 0
+      ? `Delete this author, ${total} book(s), AND ${withFiles} file(s)/folder(s) on disk?\n\nThis cannot be undone.`
+      : `Delete this author and all their books?`
+    if (!confirm(msg)) return
+    await api.deleteAuthor(id, withFiles > 0)
     load()
   }
 
