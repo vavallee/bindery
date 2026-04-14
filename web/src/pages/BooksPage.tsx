@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import ViewToggle from '../components/ViewToggle'
 import { useView } from '../components/useView'
 import { api, Book } from '../api/client'
+import BulkActionBar from '../components/BulkActionBar'
 import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
 
@@ -32,9 +33,16 @@ export default function BooksPage() {
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<SortMode>('title-az')
   const [view, setView] = useView('books', 'grid')
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const selectAllRef = useRef<HTMLInputElement>(null)
+
+  const load = () => {
+    api.listBooks().then(setBooks).catch(console.error).finally(() => setLoading(false))
+  }
 
   useEffect(() => {
-    api.listBooks().then(setBooks).catch(console.error).finally(() => setLoading(false))
+    load()
   }, [])
 
   const filtered = useMemo(() => {
@@ -67,6 +75,40 @@ export default function BooksPage() {
 
   useEffect(() => { reset() }, [statusFilter, mediaFilter, search, sort, reset])
 
+  // Keep the select-all checkbox indeterminate state in sync.
+  const allPageSelected = pageItems.length > 0 && pageItems.every(b => selectedIds.has(b.id))
+  const somePageSelected = pageItems.some(b => selectedIds.has(b.id)) && !allPageSelected
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = somePageSelected
+  }, [somePageSelected])
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const selectAllOnPage = () => setSelectedIds(new Set(pageItems.map(b => b.id)))
+  const clearSelection = () => setSelectedIds(new Set())
+
+  const runBulk = async (action: Parameters<typeof api.bulkActionBooks>[1], mediaType?: 'ebook' | 'audiobook') => {
+    if (selectedIds.size === 0) return
+    if (action === 'delete' && !confirm(`Delete ${selectedIds.size} book(s)?`)) return
+    setBulkBusy(true)
+    try {
+      await api.bulkActionBooks([...selectedIds], action, mediaType)
+      clearSelection()
+      load()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Bulk action failed')
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
   const statusBtnCls = (active: boolean) =>
     `px-3 py-1 rounded-md text-xs font-medium transition-colors ${active ? 'bg-slate-300 dark:bg-zinc-700 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'}`
 
@@ -74,7 +116,7 @@ export default function BooksPage() {
     `px-3 py-1 rounded-md text-xs font-medium transition-colors ${active ? 'bg-slate-300 dark:bg-zinc-700 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/50 dark:hover:bg-zinc-800/50'}`
 
   return (
-    <div>
+    <div className={selectedIds.size > 0 ? 'pb-16' : ''}>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-2xl font-bold">Books</h2>
         <div className="flex items-center gap-3">
@@ -131,6 +173,16 @@ export default function BooksPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-100 dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800">
+                  <th className="px-3 py-2 w-8">
+                    <input
+                      ref={selectAllRef}
+                      type="checkbox"
+                      checked={allPageSelected}
+                      onChange={e => e.target.checked ? selectAllOnPage() : clearSelection()}
+                      className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                      title="Select all on this page"
+                    />
+                  </th>
                   <th className="text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase">Title</th>
                   <th className="text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase hidden md:table-cell">Author</th>
                   <th className="text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase hidden sm:table-cell">Year</th>
@@ -142,9 +194,17 @@ export default function BooksPage() {
                 {pageItems.map(book => (
                   <tr
                     key={book.id}
-                    className="bg-slate-100/50 dark:bg-zinc-900/50 hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 cursor-pointer"
+                    className={`hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 cursor-pointer ${selectedIds.has(book.id) ? 'bg-emerald-500/10 dark:bg-emerald-500/10' : 'bg-slate-100/50 dark:bg-zinc-900/50'}`}
                     onClick={() => (window.location.href = `/book/${book.id}`)}
                   >
+                    <td className="px-3 py-2 w-8" onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(book.id)}
+                        onChange={() => toggleSelect(book.id)}
+                        className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                      />
+                    </td>
                     <td className="px-3 py-2">
                       <Link to={`/book/${book.id}`} className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
                         {book.imageUrl ? (
@@ -184,24 +244,33 @@ export default function BooksPage() {
         ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
           {pageItems.map(book => (
-            <Link
+            <div
               key={book.id}
-              to={`/book/${book.id}`}
-              className="border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden group text-left hover:border-emerald-500 transition-colors block"
+              className={`border rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden group text-left transition-colors ${selectedIds.has(book.id) ? 'border-emerald-500' : 'border-slate-200 dark:border-zinc-800 hover:border-emerald-500'}`}
             >
               <div className="aspect-[2/3] bg-slate-200 dark:bg-zinc-800 relative">
-                {book.imageUrl ? (
-                  <img src={book.imageUrl} alt={book.title} className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center p-3 text-center">
-                    <span className="text-sm text-slate-500 dark:text-zinc-600">{book.title}</span>
-                  </div>
-                )}
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(book.id)}
+                  onChange={() => toggleSelect(book.id)}
+                  className="absolute top-2 left-2 z-10 rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 bg-white/80 dark:bg-zinc-900/80"
+                  title={`Select ${book.title}`}
+                  onClick={e => e.stopPropagation()}
+                />
+                <Link to={`/book/${book.id}`} className="block w-full h-full">
+                  {book.imageUrl ? (
+                    <img src={book.imageUrl} alt={book.title} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center p-3 text-center">
+                      <span className="text-sm text-slate-500 dark:text-zinc-600">{book.title}</span>
+                    </div>
+                  )}
+                </Link>
                 <div className={`absolute top-2 right-2 px-2 py-0.5 rounded text-[10px] font-medium ${statusColors[book.status] || 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400'}`}>
                   {statusLabel[book.status] ?? book.status}
                 </div>
                 {book.mediaType === 'audiobook' && (
-                  <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-600/90 text-white">🎧</div>
+                  <div className="absolute top-2 left-8 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-600/90 text-white">🎧</div>
                 )}
               </div>
               <div className="p-2">
@@ -225,12 +294,26 @@ export default function BooksPage() {
                   )}
                 </div>
               </div>
-            </Link>
+            </div>
           ))}
         </div>
         )
       )}
       <Pagination {...paginationProps} />
+
+      <BulkActionBar
+        count={selectedIds.size}
+        onClear={clearSelection}
+        busy={bulkBusy}
+        actions={[
+          { label: 'Monitor', onClick: () => runBulk('monitor') },
+          { label: 'Unmonitor', onClick: () => runBulk('unmonitor') },
+          { label: 'Search', onClick: () => runBulk('search') },
+          { label: '📖 Set Ebook', onClick: () => runBulk('set_media_type', 'ebook') },
+          { label: '🎧 Set Audiobook', onClick: () => runBulk('set_media_type', 'audiobook') },
+          { label: 'Delete', onClick: () => runBulk('delete'), variant: 'danger' },
+        ]}
+      />
     </div>
   )
 }

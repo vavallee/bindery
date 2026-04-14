@@ -103,6 +103,14 @@ export const api = {
   // Wanted
   listWanted: () => request<Book[]>('/wanted/missing'),
 
+  // Bulk actions
+  bulkActionAuthors: (ids: number[], action: AuthorBulkAction) =>
+    request<BulkResult>('/author/bulk', { method: 'POST', body: JSON.stringify({ ids, action }) }),
+  bulkActionBooks: (ids: number[], action: BookBulkAction, mediaType?: 'ebook' | 'audiobook') =>
+    request<BulkResult>('/book/bulk', { method: 'POST', body: JSON.stringify({ ids, action, ...(mediaType ? { mediaType } : {}) }) }),
+  bulkActionWanted: (ids: number[], action: WantedBulkAction) =>
+    request<BulkResult>('/wanted/bulk', { method: 'POST', body: JSON.stringify({ ids, action }) }),
+
   // Indexers
   listIndexers: () => request<Indexer[]>('/indexer'),
   addIndexer: (data: Partial<Indexer>) => request<Indexer>('/indexer', { method: 'POST', body: JSON.stringify(data) }),
@@ -389,4 +397,12 @@ export interface CustomFormat {
     negate: boolean
     required: boolean
   }>
+}
+
+export type AuthorBulkAction = 'monitor' | 'unmonitor' | 'delete' | 'search'
+export type BookBulkAction = 'monitor' | 'unmonitor' | 'delete' | 'search' | 'set_media_type'
+export type WantedBulkAction = 'search' | 'blocklist' | 'unmonitor'
+
+export interface BulkResult {
+  results: Record<string, { ok: boolean; error?: string }>
 }

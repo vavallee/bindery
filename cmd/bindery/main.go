@@ -169,6 +169,7 @@ func main() {
 	metadataProfileHandler := api.NewMetadataProfileHandler(metadataProfileRepo)
 	delayProfileHandler := api.NewDelayProfileHandler(delayProfileRepo)
 	customFormatHandler := api.NewCustomFormatHandler(customFormatRepo)
+	bulkHandler := api.NewBulkHandler(authorRepo, bookRepo, blocklistRepo, sched)
 	backupHandler := api.NewBackupHandler(cfg.DBPath, cfg.DataDir)
 	migrateHandler := api.NewMigrateHandler(
 		authorRepo, indexerRepo, dlClientRepo, blocklistRepo, bookRepo, metaAgg,
@@ -220,6 +221,7 @@ func main() {
 		// Authors
 		r.Get("/author", authorHandler.List)
 		r.Post("/author", authorHandler.Create)
+		r.Post("/author/bulk", bulkHandler.AuthorsBulk)
 		r.Get("/author/{id}", authorHandler.Get)
 		r.Put("/author/{id}", authorHandler.Update)
 		r.Delete("/author/{id}", authorHandler.Delete)
@@ -227,6 +229,7 @@ func main() {
 
 		// Books
 		r.Get("/book", bookHandler.List)
+		r.Post("/book/bulk", bulkHandler.BooksBulk)
 		r.Get("/book/{id}", bookHandler.Get)
 		r.Put("/book/{id}", bookHandler.Update)
 		r.Delete("/book/{id}", bookHandler.Delete)
@@ -237,6 +240,7 @@ func main() {
 
 		// Wanted
 		r.Get("/wanted/missing", bookHandler.ListWanted)
+		r.Post("/wanted/bulk", bulkHandler.WantedBulk)
 
 		// Indexers
 		r.Get("/indexer", indexerHandler.List)

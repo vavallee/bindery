@@ -1,7 +1,8 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useRef, useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { api, Author } from '../api/client'
 import AddAuthorModal from '../components/AddAuthorModal'
+import BulkActionBar from '../components/BulkActionBar'
 import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
 import ViewToggle from '../components/ViewToggle'
@@ -24,6 +25,9 @@ export default function AuthorsPage() {
     return ''
   })
   const [view, setView] = useView('authors', 'grid')
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const selectAllRef = useRef<HTMLInputElement>(null)
 
   const load = () => {
     setLoading(true)
@@ -37,9 +41,6 @@ export default function AuthorsPage() {
   }, [monitoredFilter])
 
   const handleDelete = async (id: number) => {
-    // Peek at the author's books so the confirm can offer to sweep files.
-    // Small extra roundtrip, but the list view doesn't otherwise carry
-    // per-book filePaths and we don't want to silently orphan them.
     let withFiles = 0
     let total = 0
     try {
@@ -73,7 +74,6 @@ export default function AuthorsPage() {
     }
     if (sort === 'az') list = [...list].sort((a, b) => a.authorName.localeCompare(b.authorName))
     else if (sort === 'za') list = [...list].sort((a, b) => b.authorName.localeCompare(a.authorName))
-    // 'recent' keeps server order (typically by id desc)
     return list
   }, [authors, monitoredFilter, search, sort])
 
@@ -81,11 +81,45 @@ export default function AuthorsPage() {
 
   useEffect(() => { reset() }, [search, sort, monitoredFilter, reset])
 
+  // Keep the select-all checkbox indeterminate state in sync.
+  const allPageSelected = pageItems.length > 0 && pageItems.every(a => selectedIds.has(a.id))
+  const somePageSelected = pageItems.some(a => selectedIds.has(a.id)) && !allPageSelected
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = somePageSelected
+  }, [somePageSelected])
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const selectAllOnPage = () => setSelectedIds(new Set(pageItems.map(a => a.id)))
+  const clearSelection = () => setSelectedIds(new Set())
+
+  const runBulk = async (action: Parameters<typeof api.bulkActionAuthors>[1]) => {
+    if (selectedIds.size === 0) return
+    if (action === 'delete' && !confirm(`Delete ${selectedIds.size} author(s) and all their books?`)) return
+    setBulkBusy(true)
+    try {
+      await api.bulkActionAuthors([...selectedIds], action)
+      clearSelection()
+      load()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Bulk action failed')
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
   const sortBtnCls = (active: boolean) =>
     `px-3 py-1 rounded-md text-xs font-medium transition-colors ${active ? 'bg-slate-300 dark:bg-zinc-700 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/50 dark:hover:bg-zinc-800/50'}`
 
   return (
-    <div>
+    <div className={selectedIds.size > 0 ? 'pb-16' : ''}>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-2xl font-bold">Authors</h2>
         <div className="flex items-center gap-3">
@@ -140,6 +174,16 @@ export default function AuthorsPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-100 dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800">
+                  <th className="px-3 py-2 w-8">
+                    <input
+                      ref={selectAllRef}
+                      type="checkbox"
+                      checked={allPageSelected}
+                      onChange={e => e.target.checked ? selectAllOnPage() : clearSelection()}
+                      className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                      title="Select all on this page"
+                    />
+                  </th>
                   <th className="text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase">Name</th>
                   <th className="text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase">Books</th>
                   <th className="text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase">Rating</th>
@@ -149,7 +193,19 @@ export default function AuthorsPage() {
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-zinc-800">
                 {pageItems.map(author => (
-                  <tr key={author.id} className="bg-slate-100/50 dark:bg-zinc-900/50 hover:bg-slate-200/50 dark:hover:bg-zinc-800/50">
+                  <tr
+                    key={author.id}
+                    className={`hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 ${selectedIds.has(author.id) ? 'bg-emerald-500/10 dark:bg-emerald-500/10' : 'bg-slate-100/50 dark:bg-zinc-900/50'}`}
+                  >
+                    <td className="px-3 py-2 w-8">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(author.id)}
+                        onChange={() => toggleSelect(author.id)}
+                        className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                        onClick={e => e.stopPropagation()}
+                      />
+                    </td>
                     <td className="px-3 py-2">
                       <Link to={`/author/${author.id}`} className="flex items-center gap-2">
                         {author.imageUrl ? (
@@ -197,22 +253,34 @@ export default function AuthorsPage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {pageItems.map(author => (
-            <div key={author.id} className="border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden hover:border-emerald-500 transition-colors">
-              <Link to={`/author/${author.id}`} className="flex gap-3 p-4 hover:bg-slate-200/40 dark:hover:bg-zinc-800/40 transition-colors">
-                {author.imageUrl ? (
-                  <img src={author.imageUrl} alt={author.authorName} className="w-16 h-16 rounded-full object-cover flex-shrink-0" />
-                ) : (
-                  <div className="w-16 h-16 rounded-full bg-slate-200 dark:bg-zinc-800 flex items-center justify-center flex-shrink-0 text-xl font-bold text-slate-500 dark:text-zinc-600">
-                    {author.authorName.charAt(0)}
+            <div
+              key={author.id}
+              className={`border rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden hover:border-emerald-500 transition-colors ${selectedIds.has(author.id) ? 'border-emerald-500' : 'border-slate-200 dark:border-zinc-800'}`}
+            >
+              <div className="relative">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(author.id)}
+                  onChange={() => toggleSelect(author.id)}
+                  className="absolute top-2 left-2 z-10 rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 bg-white/80 dark:bg-zinc-900/80"
+                  title={`Select ${author.authorName}`}
+                />
+                <Link to={`/author/${author.id}`} className="flex gap-3 p-4 hover:bg-slate-200/40 dark:hover:bg-zinc-800/40 transition-colors">
+                  {author.imageUrl ? (
+                    <img src={author.imageUrl} alt={author.authorName} className="w-16 h-16 rounded-full object-cover flex-shrink-0" />
+                  ) : (
+                    <div className="w-16 h-16 rounded-full bg-slate-200 dark:bg-zinc-800 flex items-center justify-center flex-shrink-0 text-xl font-bold text-slate-500 dark:text-zinc-600">
+                      {author.authorName.charAt(0)}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <h3 className="font-semibold truncate">{author.authorName}</h3>
+                    <p className="text-xs text-slate-600 dark:text-zinc-500 mt-1 line-clamp-2">
+                      {author.description || 'No description available'}
+                    </p>
                   </div>
-                )}
-                <div className="min-w-0">
-                  <h3 className="font-semibold truncate">{author.authorName}</h3>
-                  <p className="text-xs text-slate-600 dark:text-zinc-500 mt-1 line-clamp-2">
-                    {author.description || 'No description available'}
-                  </p>
-                </div>
-              </Link>
+                </Link>
+              </div>
               <div className="flex items-center justify-between px-4 py-2 bg-slate-200/50 dark:bg-zinc-800/50 border-t border-slate-200 dark:border-zinc-800">
                 <button
                   onClick={() => handleToggleMonitored(author)}
@@ -241,6 +309,18 @@ export default function AuthorsPage() {
         </div>
       )}
       <Pagination {...paginationProps} />
+
+      <BulkActionBar
+        count={selectedIds.size}
+        onClear={clearSelection}
+        busy={bulkBusy}
+        actions={[
+          { label: 'Monitor', onClick: () => runBulk('monitor') },
+          { label: 'Unmonitor', onClick: () => runBulk('unmonitor') },
+          { label: 'Search', onClick: () => runBulk('search') },
+          { label: 'Delete', onClick: () => runBulk('delete'), variant: 'danger' },
+        ]}
+      />
 
       {showAdd && <AddAuthorModal onClose={() => setShowAdd(false)} onAdded={load} />}
     </div>
