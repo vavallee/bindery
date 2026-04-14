@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { api, Author } from '../api/client'
 import AddAuthorModal from '../components/AddAuthorModal'
+import MergeAuthorsModal from '../components/MergeAuthorsModal'
 import BulkActionBar from '../components/BulkActionBar'
 import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
@@ -15,6 +16,7 @@ export default function AuthorsPage() {
   const [authors, setAuthors] = useState<Author[]>([])
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
+  const [showMerge, setShowMerge] = useState(false)
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<SortMode>('az')
   const [monitoredFilter, setMonitoredFilter] = useState<MonitoredFilter>(() => {
@@ -124,6 +126,14 @@ export default function AuthorsPage() {
         <h2 className="text-2xl font-bold">Authors</h2>
         <div className="flex items-center gap-3">
           <ViewToggle view={view} onChange={setView} />
+          <button
+            onClick={() => setShowMerge(true)}
+            disabled={authors.length < 2}
+            className="px-3 py-2 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm font-medium transition-colors"
+            title="Merge two authors — collapse duplicates into one canonical row"
+          >
+            Merge
+          </button>
           <button
             onClick={() => setShowAdd(true)}
             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-md text-sm font-medium transition-colors"
@@ -323,6 +333,13 @@ export default function AuthorsPage() {
       />
 
       {showAdd && <AddAuthorModal onClose={() => setShowAdd(false)} onAdded={load} />}
+      {showMerge && (
+        <MergeAuthorsModal
+          authors={authors}
+          onClose={() => setShowMerge(false)}
+          onMerged={load}
+        />
+      )}
     </div>
   )
 }

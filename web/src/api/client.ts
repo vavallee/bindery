@@ -83,6 +83,12 @@ export const api = {
   deleteAuthor: (id: number, deleteFiles = false) =>
     request<void>(`/author/${id}${deleteFiles ? '?deleteFiles=true' : ''}`, { method: 'DELETE' }),
   refreshAuthor: (id: number) => request<void>(`/author/${id}/refresh`, { method: 'POST' }),
+  listAuthorAliases: (id: number) => request<AuthorAlias[]>(`/author/${id}/aliases`),
+  mergeAuthors: (targetId: number, sourceId: number, overwriteDefaults = true) =>
+    request<MergeAuthorsResult>(`/author/${targetId}/merge`, {
+      method: 'POST',
+      body: JSON.stringify({ sourceId, overwriteDefaults }),
+    }),
 
   // Books
   listBooks: (params?: { authorId?: number; status?: string }) => {
@@ -215,6 +221,22 @@ export interface Author {
   rootFolderId?: number | null
   books?: Book[]
   statistics?: { bookCount: number; availableBookCount: number; wantedBookCount: number }
+  aliases?: AuthorAlias[]
+}
+
+export interface AuthorAlias {
+  id: number
+  authorId: number
+  name: string
+  sourceOlId?: string
+  createdAt: string
+}
+
+export interface MergeAuthorsResult {
+  BooksReparented: number
+  AliasesMigrated: number
+  AliasesCreated: number
+  TargetUpdated: boolean
 }
 
 export type MediaType = 'ebook' | 'audiobook'

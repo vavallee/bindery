@@ -70,6 +70,7 @@ func main() {
 
 	// Repos
 	authorRepo := db.NewAuthorRepo(database)
+	authorAliasRepo := db.NewAuthorAliasRepo(database)
 	bookRepo := db.NewBookRepo(database)
 	indexerRepo := db.NewIndexerRepo(database)
 	dlClientRepo := db.NewDownloadClientRepo(database)
@@ -162,7 +163,8 @@ func main() {
 	// API handlers
 	authHandler := api.NewAuthHandler(userRepo, settingsRepo, loginLimiter)
 	searchHandler := api.NewSearchHandler(metaAgg)
-	authorHandler := api.NewAuthorHandler(authorRepo, bookRepo, seriesRepo, metaAgg, settingsRepo, metadataProfileRepo, sched)
+	authorHandler := api.NewAuthorHandler(authorRepo, authorAliasRepo, bookRepo, seriesRepo, metaAgg, settingsRepo, metadataProfileRepo, sched)
+	authorAliasHandler := api.NewAuthorAliasHandler(authorRepo, authorAliasRepo)
 	bookHandler := api.NewBookHandler(bookRepo, metaAgg, historyRepo, sched)
 	indexerHandler := api.NewIndexerHandler(indexerRepo, bookRepo, authorRepo, idxSearcher, settingsRepo, blocklistRepo)
 	dlClientHandler := api.NewDownloadClientHandler(dlClientRepo)
@@ -238,6 +240,8 @@ func main() {
 		r.Put("/author/{id}", authorHandler.Update)
 		r.Delete("/author/{id}", authorHandler.Delete)
 		r.Post("/author/{id}/refresh", authorHandler.Refresh)
+		r.Get("/author/{id}/aliases", authorAliasHandler.List)
+		r.Post("/author/{id}/merge", authorAliasHandler.Merge)
 
 		// Books
 		r.Get("/book", bookHandler.List)

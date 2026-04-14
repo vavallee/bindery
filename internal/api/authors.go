@@ -17,6 +17,7 @@ import (
 
 type AuthorHandler struct {
 	authors  *db.AuthorRepo
+	aliases  *db.AuthorAliasRepo
 	books    *db.BookRepo
 	series   *db.SeriesRepo
 	meta     *metadata.Aggregator
@@ -25,8 +26,8 @@ type AuthorHandler struct {
 	searcher BookSearcher
 }
 
-func NewAuthorHandler(authors *db.AuthorRepo, books *db.BookRepo, series *db.SeriesRepo, meta *metadata.Aggregator, settings *db.SettingsRepo, profiles *db.MetadataProfileRepo, searcher BookSearcher) *AuthorHandler {
-	return &AuthorHandler{authors: authors, books: books, series: series, meta: meta, settings: settings, profiles: profiles, searcher: searcher}
+func NewAuthorHandler(authors *db.AuthorRepo, aliases *db.AuthorAliasRepo, books *db.BookRepo, series *db.SeriesRepo, meta *metadata.Aggregator, settings *db.SettingsRepo, profiles *db.MetadataProfileRepo, searcher BookSearcher) *AuthorHandler {
+	return &AuthorHandler{authors: authors, aliases: aliases, books: books, series: series, meta: meta, settings: settings, profiles: profiles, searcher: searcher}
 }
 
 func (h *AuthorHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +65,14 @@ func (h *AuthorHandler) Get(w http.ResponseWriter, r *http.Request) {
 		author.Books = books
 	}
 
+	// Attach aliases so the detail page can show alternate names without a
+	// second round-trip.
+	if h.aliases != nil {
+		if aliases, err := h.aliases.ListByAuthor(r.Context(), id); err == nil {
+			author.Aliases = aliases
+		}
+	}
+
 	writeJSON(w, http.StatusOK, author)
 }
 
@@ -91,6 +100,22 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if existing != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "author already exists"})
 		return
+	}
+
+	// Alias dedupe: if the requested name (or foreign id) already resolves
+	// to a canonical author via the alias table, surface the canonical row
+	// to the client as a 409 with `canonicalAuthorId` so the UI can prompt
+	// for merge instead of creating a duplicate.
+	if h.aliases != nil {
+		if existingID, _ := h.aliases.LookupByName(r.Context(), req.Name); existingID != nil {
+			canonical, _ := h.authors.GetByID(r.Context(), *existingID)
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":             "author name already resolves to an existing author — confirm merge",
+				"canonicalAuthorId": *existingID,
+				"canonicalAuthor":   canonical,
+			})
+			return
+		}
 	}
 
 	// Fetch full author metadata

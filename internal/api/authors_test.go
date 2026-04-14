@@ -131,7 +131,7 @@ func TestDeleteAuthor_WithDeleteFiles(t *testing.T) {
 		}
 	}
 
-	h := NewAuthorHandler(authorRepo, bookRepo, nil, nil, nil, profileRepo, nil)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, nil, nil, profileRepo, nil)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/author/"+strconv.FormatInt(author.ID, 10)+"?deleteFiles=true", nil)
 	rctx := chi.NewRouteContext()
@@ -194,7 +194,7 @@ func TestDeleteAuthor_WithoutDeleteFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := NewAuthorHandler(authorRepo, bookRepo, nil, nil, nil, profileRepo, nil)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, nil, nil, profileRepo, nil)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/author/"+strconv.FormatInt(author.ID, 10), nil)
 	rctx := chi.NewRouteContext()
@@ -245,7 +245,7 @@ func TestFetchAuthorBooks_FiresSearchForMonitoredAuthor(t *testing.T) {
 	agg := metadata.NewAggregator(stub)
 	spy := &searcherSpy{}
 
-	h := NewAuthorHandler(authorRepo, bookRepo, nil, agg, nil, profileRepo, spy)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, nil, profileRepo, spy)
 	h.FetchAuthorBooks(author)
 
 	titles := spy.titles()
@@ -285,7 +285,7 @@ func TestFetchAuthorBooks_SkipsSearchWhenNotMonitored(t *testing.T) {
 	agg := metadata.NewAggregator(stub)
 	spy := &searcherSpy{}
 
-	h := NewAuthorHandler(authorRepo, bookRepo, nil, agg, nil, profileRepo, spy)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, nil, profileRepo, spy)
 	h.FetchAuthorBooks(author)
 
 	if titles := spy.titles(); len(titles) != 0 {

@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, Author, Book } from '../api/client'
 import ViewToggle from '../components/ViewToggle'
+import MergeAuthorsModal from '../components/MergeAuthorsModal'
 import { useView } from '../components/useView'
 
 const statusColors: Record<string, string> = {
@@ -39,8 +40,10 @@ export default function AuthorDetailPage() {
 
   const [author, setAuthor] = useState<Author | null>(null)
   const [books, setBooks] = useState<Book[]>([])
+  const [allAuthors, setAllAuthors] = useState<Author[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [showMerge, setShowMerge] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const [view, setView] = useView('author-detail', 'grid')
@@ -229,14 +232,54 @@ export default function AuthorDetailPage() {
               {refreshing ? 'Refreshing…' : 'Refresh metadata'}
             </button>
             <button
+              onClick={() => {
+                if (allAuthors.length === 0) api.listAuthors().then(setAllAuthors).catch(console.error)
+                setShowMerge(true)
+              }}
+              className="px-3 py-1.5 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded text-xs font-medium"
+              title="Merge another author into this one"
+            >
+              Merge…
+            </button>
+            <button
               onClick={handleDelete}
               className="px-3 py-1.5 text-red-600 dark:text-red-400 hover:text-red-500 text-xs font-medium"
             >
               Delete
             </button>
           </div>
+          {author.aliases && author.aliases.length > 0 && (
+            <div className="mt-4 text-xs">
+              <div className="text-slate-600 dark:text-zinc-500 mb-1">Also known as</div>
+              <div className="flex flex-wrap gap-1.5">
+                {author.aliases.map(a => (
+                  <span
+                    key={a.id}
+                    className="px-2 py-0.5 rounded bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300"
+                    title={a.sourceOlId ? `From ${a.sourceOlId}` : undefined}
+                  >
+                    {a.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
+
+      {showMerge && allAuthors.length > 0 && (
+        <MergeAuthorsModal
+          authors={allAuthors}
+          initialTargetId={author.id}
+          onClose={() => setShowMerge(false)}
+          onMerged={() => {
+            // Reload current author (aliases may have grown) + its books.
+            Promise.all([api.getAuthor(authorId), api.listBooks({ authorId })])
+              .then(([a, bs]) => { setAuthor(a); setBooks(bs) })
+              .catch(console.error)
+          }}
+        />
+      )}
 
       {error && (
         <div className="mb-4 px-3 py-2 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900 rounded text-sm text-red-800 dark:text-red-300">
