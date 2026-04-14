@@ -53,6 +53,10 @@ func main() {
 		"port", cfg.Port,
 	)
 
+	// Fail fast if BINDERY_PUID/PGID is set but the container isn't running
+	// as that UID/GID. See cmd/bindery/uidcheck.go for the full rationale.
+	checkPUIDPGID()
+
 	// Database
 	database, err := db.Open(cfg.DBPath)
 	if err != nil {
