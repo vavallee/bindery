@@ -47,6 +47,7 @@ The short version lives in the [README](../README.md#roadmap). Checked boxes hav
   - [ ] Propagate the profile's languages into indexer queries (Prowlarr's `Categories` + language filters, Jackett `/api?cat=7000&...`) so Newznab-side filtering applies.
   - [ ] Surface the language tag in search-result and wanted-books views.
   - [ ] Persist Hardcover/Google Books' `language` field for editions.
+  - [ ] **DNB (Deutsche Nationalbibliothek) metadata provider** ([#67](https://github.com/vavallee/bindery/issues/67)) — German national library catalogue via SRU/Z39.50 or the public JSON API. Primary use case: German-language ebooks and audiobooks where OpenLibrary coverage is thin. Calibre's DNB plugin ([calibre-dnb](https://github.com/dvdwolfsburg/calibre-dnb)) serves as a reference implementation for field mapping (title, author, ISBN, publisher, language, description).
 
   Relevant to French/Dutch/German users whose libraries are mixed-language and where indexer results in the "wrong" language are currently indistinguishable.
 
