@@ -94,6 +94,15 @@ func (a *Aggregator) GetAuthorWorks(ctx context.Context, authorForeignID string)
 		if err != nil {
 			return nil, err
 		}
+		// Enrich covers for works that OL's works endpoint left without one.
+		// OpenLibrary attaches cover IDs to editions, not always to works, so
+		// many works come back coverless. Google Books and Hardcover have much
+		// higher cover coverage and tend to return the dominant-language edition.
+		for i := range books {
+			if books[i].ImageURL == "" {
+				a.enrichBook(ctx, &books[i])
+			}
+		}
 		a.cache.set(key, books)
 		return books, nil
 	}
@@ -113,8 +122,8 @@ func (a *Aggregator) GetBook(ctx context.Context, foreignID string) (*models.Boo
 		return nil, err
 	}
 
-	// Enrich from secondary providers if description is sparse
-	if len(book.Description) < 50 {
+	// Enrich from secondary providers if description is sparse or cover is missing.
+	if len(book.Description) < 50 || book.ImageURL == "" {
 		a.enrichBook(ctx, book)
 	}
 
@@ -156,24 +165,30 @@ func (a *Aggregator) GetBookByISBN(ctx context.Context, isbn string) (*models.Bo
 }
 
 // enrichBook tries to fill in missing data from secondary providers.
+// It fills Description, AverageRating/RatingsCount, and ImageURL when
+// the primary provider (OpenLibrary) left them empty or sparse.
 func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
 	for _, enricher := range a.enrichers {
-		// Try ISBN search for better match
 		enriched, err := enricher.SearchBooks(ctx, book.Title)
 		if err != nil {
 			slog.Debug("enrichment failed", "provider", enricher.Name(), "error", err)
 			continue
 		}
-		for _, e := range enriched {
-			if len(e.Description) > len(book.Description) {
-				book.Description = e.Description
-				slog.Debug("enriched description", "provider", enricher.Name(), "book", book.Title)
-			}
-			if book.AverageRating == 0 && e.AverageRating > 0 {
-				book.AverageRating = e.AverageRating
-				book.RatingsCount = e.RatingsCount
-			}
-			break // Use first match
+		if len(enriched) == 0 {
+			continue
+		}
+		e := enriched[0]
+		if len(e.Description) > len(book.Description) {
+			book.Description = e.Description
+			slog.Debug("enriched description", "provider", enricher.Name(), "book", book.Title)
+		}
+		if book.AverageRating == 0 && e.AverageRating > 0 {
+			book.AverageRating = e.AverageRating
+			book.RatingsCount = e.RatingsCount
+		}
+		if book.ImageURL == "" && e.ImageURL != "" {
+			book.ImageURL = e.ImageURL
+			slog.Debug("enriched cover", "provider", enricher.Name(), "book", book.Title)
 		}
 	}
 }
