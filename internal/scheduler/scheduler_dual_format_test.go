@@ -13,7 +13,7 @@ import (
 // stubSearcher records how many times SearchBook is called and with which
 // media types, without touching any network.
 type stubSearcher struct {
-	calls     atomic.Int32
+	calls      atomic.Int32
 	mediaTypes []string
 }
 
