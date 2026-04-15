@@ -133,6 +133,40 @@ func (r *BookRepo) SetCalibreID(ctx context.Context, id, calibreID int64) error 
 	return err
 }
 
+// GetByCalibreID returns the Bindery book row that currently points at the
+// given Calibre book id, or nil if none. The library import flow uses this
+// as its primary idempotency key — a second import pass sees the existing
+// row and updates in place instead of duplicating.
+func (r *BookRepo) GetByCalibreID(ctx context.Context, calibreID int64) (*models.Book, error) {
+	books, err := r.query(ctx, "SELECT "+bookColumns+" FROM books WHERE calibre_id = ?", []any{calibreID})
+	if err != nil {
+		return nil, err
+	}
+	if len(books) == 0 {
+		return nil, nil
+	}
+	return &books[0], nil
+}
+
+// FindByAuthorAndTitle locates a book under authorID whose title matches
+// `title` case-insensitively. Used by the Calibre importer as a secondary
+// dedupe path when the existing row has no calibre_id yet but the user
+// (or a previous Bindery ingest) has already filed a book with the same
+// title — re-matching by title links the two rows instead of creating a
+// duplicate.
+func (r *BookRepo) FindByAuthorAndTitle(ctx context.Context, authorID int64, title string) (*models.Book, error) {
+	books, err := r.query(ctx,
+		"SELECT "+bookColumns+" FROM books WHERE author_id = ? AND LOWER(title) = LOWER(?)",
+		[]any{authorID, title})
+	if err != nil {
+		return nil, err
+	}
+	if len(books) == 0 {
+		return nil, nil
+	}
+	return &books[0], nil
+}
+
 func (r *BookRepo) Delete(ctx context.Context, id int64) error {
 	_, err := r.db.ExecContext(ctx, "DELETE FROM books WHERE id=?", id)
 	return err

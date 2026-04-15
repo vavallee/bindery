@@ -10,7 +10,7 @@ The `development` branch carries the in-flight feature set for the next release.
 
 ### Added
 
-- **Calibre drop-folder integration + per-library mode selector** ([#64](https://github.com/vavallee/bindery/issues/64)) — Settings → Calibre gains a three-way **Mode** radio (`off` / `calibredb` / `drop_folder`). The new `drop_folder` mode copies imported files into a Calibre-watched directory as `<folder>/<Author>/<Title>.ext` and then polls the Calibre library's `metadata.db` for the assigned book id, for deployments where `calibredb` isn't reachable from the Bindery process. Existing v0.8.0 installs with `calibre.enabled=true` migrate automatically to `mode=calibredb` so no user action is needed to keep the current flow working.
+- **Calibre library import (closes [#63](https://github.com/vavallee/bindery/issues/63))** — Bindery can now ingest an existing Calibre library via a new **Import library** button in Settings → General → Calibre. The importer opens Calibre's `metadata.db` read-only, streams authors / books / series / editions / ISBNs / covers, and upserts them into Bindery — deduplicating via `books.calibre_id` first and author-alias-aware title match second, so running the import twice is idempotent. Co-authors become alias rows on the canonical author. A polled progress endpoint (`GET /api/v1/calibre/import/status`) drives a live progress bar and a final summary of `{authorsAdded, booksAdded, editionsAdded, duplicatesMerged, skipped}`. A new **Sync on startup** toggle runs the same import on every boot (off by default).
 
 ## [v0.8.0] — 2026-04-14
 

@@ -187,6 +187,8 @@ export const api = {
 
   // Calibre
   testCalibre: () => request<CalibreTestResult>('/calibre/test', { method: 'POST' }),
+  calibreImportStart: () => request<CalibreImportProgress>('/calibre/import', { method: 'POST' }),
+  calibreImportStatus: () => request<CalibreImportProgress>('/calibre/import/status'),
 
   // Metadata Profiles
   listMetadataProfiles: () => request<MetadataProfile[]>('/metadataprofile'),
@@ -283,6 +285,32 @@ export interface CalibreTestResult {
   ok: string
   version: string
   message: string
+}
+
+// CalibreImportStats summarises one completed library import. Present
+// only on the final poll (when progress.running flips false).
+export interface CalibreImportStats {
+  authorsAdded: number
+  authorsLinked: number
+  booksAdded: number
+  booksUpdated: number
+  editionsAdded: number
+  duplicatesMerged: number
+  skipped: number
+}
+
+// CalibreImportProgress is the polled shape for /calibre/import/status.
+// The UI renders a progress bar from total/processed, swaps in the stats
+// summary once running=false, and surfaces any error inline.
+export interface CalibreImportProgress {
+  running: boolean
+  startedAt?: string
+  finishedAt?: string
+  total: number
+  processed: number
+  message?: string
+  error?: string
+  stats?: CalibreImportStats
 }
 
 export interface Indexer {

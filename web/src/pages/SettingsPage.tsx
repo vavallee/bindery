@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react'
-import { api, AuthConfig, AuthStatus, Indexer, DownloadClient, NotificationConfig, QualityProfile, MetadataProfile } from '../api/client'
+import { api, AuthConfig, AuthStatus, Indexer, DownloadClient, NotificationConfig, QualityProfile, MetadataProfile, CalibreImportProgress } from '../api/client'
 import ThemeToggle from '../components/ThemeToggle'
 import { useAuth } from '../auth/AuthContext'
 
@@ -1034,6 +1034,8 @@ function CalibreSection({
 }) {
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null)
+  const [importProgress, setImportProgress] = useState<CalibreImportProgress | null>(null)
+  const [importError, setImportError] = useState<string | null>(null)
 
   // Legacy fallback: a pre-migration DB with `calibre.enabled=true` but no
   // mode set should still render as 'calibredb' so the user's existing
@@ -1046,6 +1048,34 @@ function CalibreSection({
       : legacyEnabled
       ? 'calibredb'
       : 'off'
+  const enabled = mode !== 'off'
+  const syncOnStartup = (settings['calibre.sync_on_startup'] ?? 'false').toLowerCase() === 'true'
+  const lastImportAt = settings['calibre.last_import_at'] ?? ''
+
+  // Hydrate progress on mount so navigating back mid-import still shows
+  // the live bar instead of a dead "Import library" button.
+  useEffect(() => {
+    api.calibreImportStatus().then(setImportProgress).catch(() => {})
+  }, [])
+
+  // Poll while an import is running.
+  useEffect(() => {
+    if (!importProgress?.running) return
+    const id = setInterval(() => {
+      api.calibreImportStatus().then(setImportProgress).catch(() => {})
+    }, 1000)
+    return () => clearInterval(id)
+  }, [importProgress?.running])
+
+  const startImport = async () => {
+    setImportError(null)
+    try {
+      const p = await api.calibreImportStart()
+      setImportProgress(p)
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : 'Import failed to start')
+    }
+  }
 
   const runTest = async () => {
     setTesting(true)
@@ -1194,6 +1224,84 @@ function CalibreSection({
             </button>
           </div>
         )}
+
+        {/* Library import (read side): Calibre → Bindery */}
+        <div className="pt-3 border-t border-slate-200 dark:border-zinc-800 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">Sync on startup</label>
+              <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">Run a library import automatically each time Bindery boots. Safe to leave on — re-imports are incremental.</p>
+            </div>
+            <button
+              onClick={async () => {
+                const next = syncOnStartup ? 'false' : 'true'
+                setSettings(s => ({ ...s, 'calibre.sync_on_startup': next }))
+                await api.setSetting('calibre.sync_on_startup', next).catch(console.error)
+              }}
+              className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${syncOnStartup ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'}`}
+              title={syncOnStartup ? 'Disable' : 'Enable'}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${syncOnStartup ? 'translate-x-4' : ''}`} />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="text-xs text-slate-600 dark:text-zinc-500">
+              {lastImportAt ? (
+                <>Last import: <span className="text-slate-800 dark:text-zinc-200">{new Date(lastImportAt).toLocaleString()}</span></>
+              ) : (
+                <>Never imported.</>
+              )}
+            </div>
+            <button
+              onClick={startImport}
+              disabled={!enabled || importProgress?.running}
+              className="px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
+            >
+              {importProgress?.running ? 'Importing…' : 'Import library'}
+            </button>
+          </div>
+
+          {importError && (
+            <p className="text-xs text-red-600 dark:text-red-400">{importError}</p>
+          )}
+
+          {importProgress && (importProgress.running || importProgress.stats || importProgress.error) && (
+            <div className="rounded border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950 px-3 py-2 space-y-2">
+              {importProgress.running && (
+                <>
+                  <div className="flex justify-between text-xs text-slate-600 dark:text-zinc-400">
+                    <span>{importProgress.message || 'Working…'}</span>
+                    <span>{importProgress.processed} / {importProgress.total || '?'}</span>
+                  </div>
+                  <div className="h-1.5 bg-slate-200 dark:bg-zinc-800 rounded overflow-hidden">
+                    <div
+                      className="h-full bg-sky-600 transition-[width] duration-300"
+                      style={{
+                        width: importProgress.total > 0
+                          ? `${Math.min(100, (importProgress.processed / importProgress.total) * 100)}%`
+                          : '0%',
+                      }}
+                    />
+                  </div>
+                </>
+              )}
+              {!importProgress.running && importProgress.error && (
+                <p className="text-xs text-red-600 dark:text-red-400">Import failed: {importProgress.error}</p>
+              )}
+              {!importProgress.running && importProgress.stats && (
+                <p className="text-xs text-slate-700 dark:text-zinc-300">
+                  Import complete —{' '}
+                  <span className="font-medium">{importProgress.stats.authorsAdded}</span> authors added,{' '}
+                  <span className="font-medium">{importProgress.stats.booksAdded}</span> books added,{' '}
+                  <span className="font-medium">{importProgress.stats.editionsAdded}</span> editions added,{' '}
+                  <span className="font-medium">{importProgress.stats.duplicatesMerged}</span> merged,{' '}
+                  <span className="font-medium">{importProgress.stats.skipped}</span> skipped.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </section>
   )

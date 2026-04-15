@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -73,6 +74,7 @@ func main() {
 	authorRepo := db.NewAuthorRepo(database)
 	authorAliasRepo := db.NewAuthorAliasRepo(database)
 	bookRepo := db.NewBookRepo(database)
+	editionRepo := db.NewEditionRepo(database)
 	indexerRepo := db.NewIndexerRepo(database)
 	dlClientRepo := db.NewDownloadClientRepo(database)
 	downloadRepo := db.NewDownloadRepo(database)
@@ -161,6 +163,26 @@ func main() {
 		slog.Info("calibre integration enabled", "mode", "drop_folder")
 	}
 
+	// Library import (read side). Importer holds live progress state in
+	// memory so the UI can poll /calibre/import/status while a long scan
+	// runs. A single instance is shared between the API handler and the
+	// startup-sync branch below — both paths share the "only one import
+	// at a time" guard.
+	calibreImporter := calibre.NewImporter(authorRepo, authorAliasRepo, bookRepo, editionRepo, settingsRepo)
+	if syncOnStartup(settingsRepo) {
+		cfg := api.LoadCalibreConfig(settingsRepo)
+		if cfg.Enabled && cfg.LibraryPath != "" {
+			slog.Info("calibre sync_on_startup enabled — kicking off library import")
+			go func() {
+				if _, err := calibreImporter.Run(context.Background(), cfg.LibraryPath); err != nil {
+					slog.Warn("calibre startup import failed", "error", err)
+				}
+			}()
+		} else {
+			slog.Info("calibre sync_on_startup is on but integration is not configured — skipping")
+		}
+	}
+
 	// Scheduler
 	sched := scheduler.New(importScanner, idxSearcher, metaAgg,
 		authorRepo, bookRepo, indexerRepo, downloadRepo, dlClientRepo, settingsRepo, blocklistRepo)
@@ -196,6 +218,9 @@ func main() {
 	bulkHandler := api.NewBulkHandler(authorRepo, bookRepo, blocklistRepo, sched)
 	backupHandler := api.NewBackupHandler(cfg.DBPath, cfg.DataDir)
 	calibreHandler := api.NewCalibreHandler(settingsRepo)
+	calibreImportHandler := api.NewCalibreImportHandler(calibreImporter, func() calibre.Config {
+		return api.LoadCalibreConfig(settingsRepo)
+	})
 	migrateHandler := api.NewMigrateHandler(
 		authorRepo, indexerRepo, dlClientRepo, blocklistRepo, bookRepo, metaAgg,
 		// Bulk imports always populate the catalogue but never auto-grab.
@@ -376,6 +401,11 @@ func main() {
 		// this endpoint just validates + probes the configured install.
 		r.Post("/calibre/test", calibreHandler.Test)
 
+		// Calibre library import (read side). Start is fire-and-forget;
+		// the UI polls Status while it runs.
+		r.Post("/calibre/import", calibreImportHandler.Start)
+		r.Get("/calibre/import/status", calibreImportHandler.Status)
+
 		// Migration imports (CSV of author names, or Readarr SQLite DB).
 		r.Post("/migrate/csv", migrateHandler.ImportCSV)
 		r.Post("/migrate/readarr", migrateHandler.ImportReadarr)
@@ -439,6 +469,18 @@ func defaultNamingTemplate(settings *db.SettingsRepo) string {
 		return s.Value
 	}
 	return ""
+}
+
+// syncOnStartup reads the calibre.sync_on_startup setting and returns
+// true iff it's explicitly "true" (case-insensitive). Any other value
+// — including absent — resolves to false so first boots don't kick off
+// work the operator didn't ask for.
+func syncOnStartup(settings *db.SettingsRepo) bool {
+	s, _ := settings.Get(context.Background(), "calibre.sync_on_startup")
+	if s == nil {
+		return false
+	}
+	return strings.EqualFold(s.Value, "true")
 }
 
 func audiobookNamingTemplate(settings *db.SettingsRepo) string {
