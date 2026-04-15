@@ -38,8 +38,11 @@ var (
 
 // NormalizeRelease lowercases s and replaces NZB separators with single spaces.
 // Parentheses, brackets, pipes and repeated separators are all collapsed.
+// Apostrophes are stripped so possessive forms in book titles ("Ender's") match
+// the corresponding release names which typically omit them ("Enders").
 func NormalizeRelease(s string) string {
 	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, "'", "") // "ender's" → "enders", "hitchhiker's" → "hitchhikers"
 	s = separatorRe.ReplaceAllString(s, " ")
 	s = multiSpaceRe.ReplaceAllString(s, " ")
 	return strings.TrimSpace(s)

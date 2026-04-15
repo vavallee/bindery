@@ -190,7 +190,7 @@ export default function AuthorsPage() {
                       type="checkbox"
                       checked={allPageSelected}
                       onChange={e => e.target.checked ? selectAllOnPage() : clearSelection()}
-                      className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                      className="rounded-full border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
                       title="Select all on this page"
                     />
                   </th>
@@ -212,7 +212,7 @@ export default function AuthorsPage() {
                         type="checkbox"
                         checked={selectedIds.has(author.id)}
                         onChange={() => toggleSelect(author.id)}
-                        className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                        className="rounded-full border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
                         onClick={e => e.stopPropagation()}
                       />
                     </td>
@@ -272,7 +272,7 @@ export default function AuthorsPage() {
                   type="checkbox"
                   checked={selectedIds.has(author.id)}
                   onChange={() => toggleSelect(author.id)}
-                  className="absolute top-2 left-2 z-10 rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 bg-white/80 dark:bg-zinc-900/80"
+                  className="absolute top-2 left-2 z-10 rounded-full border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 bg-white/80 dark:bg-zinc-900/80"
                   title={`Select ${author.authorName}`}
                 />
                 <Link to={`/author/${author.id}`} className="flex gap-3 p-4 hover:bg-slate-200/40 dark:hover:bg-zinc-800/40 transition-colors">

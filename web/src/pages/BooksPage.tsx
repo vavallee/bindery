@@ -179,7 +179,7 @@ export default function BooksPage() {
                       type="checkbox"
                       checked={allPageSelected}
                       onChange={e => e.target.checked ? selectAllOnPage() : clearSelection()}
-                      className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                      className="rounded-full border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
                       title="Select all on this page"
                     />
                   </th>
@@ -202,7 +202,7 @@ export default function BooksPage() {
                         type="checkbox"
                         checked={selectedIds.has(book.id)}
                         onChange={() => toggleSelect(book.id)}
-                        className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                        className="rounded-full border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
                       />
                     </td>
                     <td className="px-3 py-2">
@@ -253,7 +253,7 @@ export default function BooksPage() {
                   type="checkbox"
                   checked={selectedIds.has(book.id)}
                   onChange={() => toggleSelect(book.id)}
-                  className="absolute top-2 left-2 z-10 rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 bg-white/80 dark:bg-zinc-900/80"
+                  className="absolute top-2 left-2 z-10 rounded-full border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 bg-white/80 dark:bg-zinc-900/80"
                   title={`Select ${book.title}`}
                   onClick={e => e.stopPropagation()}
                 />
@@ -266,18 +266,20 @@ export default function BooksPage() {
                     </div>
                   )}
                 </Link>
-                <div className={`absolute top-2 right-2 px-2 py-0.5 rounded text-[10px] font-medium ${statusColors[book.status] || 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400'}`}>
-                  {statusLabel[book.status] ?? book.status}
-                </div>
-                {book.mediaType === 'audiobook' && (
-                  <div className="absolute top-2 left-8 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-600/90 text-white">🎧</div>
-                )}
               </div>
               <div className="p-2">
                 <h3 className="text-xs font-medium truncate" title={book.title}>{book.title}</h3>
                 {book.author && (
                   <p className="text-[10px] text-slate-500 dark:text-zinc-500 truncate mt-0.5">{book.author.authorName}</p>
                 )}
+                <div className="flex items-center gap-1 mt-1 flex-wrap">
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${statusColors[book.status] || 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400'}`}>
+                    {statusLabel[book.status] ?? book.status}
+                  </span>
+                  {book.mediaType === 'audiobook' && (
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">🎧 Audio</span>
+                  )}
+                </div>
                 <div className="flex items-center justify-between mt-0.5">
                   {book.releaseDate && (
                     <p className="text-[10px] text-slate-600 dark:text-zinc-500">{new Date(book.releaseDate).getFullYear()}</p>

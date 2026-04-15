@@ -392,17 +392,19 @@ export default function AuthorDetailPage() {
                       <span className="text-sm text-slate-500 dark:text-zinc-600">{book.title}</span>
                     </div>
                   )}
-                  <div className={`absolute top-2 right-2 px-2 py-0.5 rounded text-[10px] font-medium ${statusColors[book.status] || 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400'}`}>
-                    {statusLabel[book.status] ?? book.status}
-                  </div>
-                  {book.mediaType === 'audiobook' && (
-                    <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-600/90 text-white">🎧</div>
-                  )}
                 </div>
                 <div className="p-2">
                   <h4 className="text-xs font-medium truncate" title={book.title}>{book.title}</h4>
+                  <div className="flex items-center gap-1 mt-1 flex-wrap">
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${statusColors[book.status] || 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400'}`}>
+                      {statusLabel[book.status] ?? book.status}
+                    </span>
+                    {book.mediaType === 'audiobook' && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">🎧 Audio</span>
+                    )}
+                  </div>
                   {book.releaseDate && (
-                    <p className="text-[10px] text-slate-600 dark:text-zinc-500">{fmtDate(book.releaseDate)}</p>
+                    <p className="text-[10px] text-slate-600 dark:text-zinc-500 mt-0.5">{fmtDate(book.releaseDate)}</p>
                   )}
                 </div>
               </Link>

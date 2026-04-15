@@ -172,7 +172,7 @@ export default function WantedPage() {
               type="checkbox"
               checked={allPageSelected}
               onChange={e => e.target.checked ? selectAllOnPage() : clearSelection()}
-              className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+              className="rounded-full border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
               title="Select all on this page"
             />
             <span className="text-xs text-slate-500 dark:text-zinc-500">Select all on this page</span>
@@ -187,7 +187,7 @@ export default function WantedPage() {
                       type="checkbox"
                       checked={selectedIds.has(book.id)}
                       onChange={() => toggleSelect(book.id)}
-                      className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 flex-shrink-0"
+                      className="rounded-full border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 flex-shrink-0"
                       title={`Select ${book.title}`}
                     />
                     {book.imageUrl && (

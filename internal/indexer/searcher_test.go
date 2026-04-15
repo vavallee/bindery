@@ -138,6 +138,58 @@ func TestFilterRelevantNoResults(t *testing.T) {
 	}
 }
 
+// TestFilterRelevantApostrophe — regression test for the apostrophe bug (fixes #82).
+// Book titles with possessive apostrophes ("Ender's Game", "The Handmaid's Tale")
+// produce keyword tokens like "ender's". Release filenames never carry apostrophes
+// ("Enders.Game.epub"), so after NormalizeRelease the apostrophe is absent.
+// Before the fix, WordBoundaryRegex("ender's") never matched "enders" and all
+// results were dropped.
+func TestFilterRelevantApostrophe(t *testing.T) {
+	cases := []struct {
+		bookTitle  string
+		author     string
+		releases   []string
+		wantAny    string // at least this release must survive
+	}{
+		{
+			bookTitle: "Ender's Game",
+			author:    "Orson Scott Card",
+			releases: []string{
+				"Orson.Scott.Card.Enders.Game.RETAIL.EPUB",
+				"Enders.Game.epub",
+				"Some.Other.Book.epub",
+			},
+			wantAny: "Orson.Scott.Card.Enders.Game.RETAIL.EPUB",
+		},
+		{
+			bookTitle: "The Handmaid's Tale",
+			author:    "Margaret Atwood",
+			releases: []string{
+				"Margaret.Atwood.The.Handmaids.Tale.EPUB",
+				"Handmaids.Tale.Atwood.mobi",
+			},
+			wantAny: "Margaret.Atwood.The.Handmaids.Tale.EPUB",
+		},
+		{
+			bookTitle: "The Hitchhiker's Guide to the Galaxy",
+			author:    "Douglas Adams",
+			releases: []string{
+				"Douglas.Adams.Hitchhikers.Guide.to.the.Galaxy.epub",
+				"Hitchhikers.Guide.Galaxy.Adams.RETAIL.epub",
+			},
+			wantAny: "Douglas.Adams.Hitchhikers.Guide.to.the.Galaxy.epub",
+		},
+	}
+
+	for _, tc := range cases {
+		got := filterRelevant(toResults(tc.releases...), tc.bookTitle, tc.author)
+		if !contains(got, tc.wantAny) {
+			t.Errorf("filterRelevant(%q, %q): expected %q in results, got %v",
+				tc.bookTitle, tc.author, tc.wantAny, resultTitles(got))
+		}
+	}
+}
+
 func TestRankResultsRetailBeatsScene(t *testing.T) {
 	results := toResults(
 		"The.Sparrow.Russell.SCENE.epub",
