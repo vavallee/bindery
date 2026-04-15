@@ -33,15 +33,17 @@ var allowedUploadCT = map[string]bool{
 // keeps them on the same volume (avoids cross-FS rename) and inherits whatever
 // ownership/perms the operator set on the data dir.
 func uploadTempDir() string {
-	if p := strings.TrimSpace(os.Getenv("BINDERY_DB_PATH")); p != "" {
-		dir := filepath.Join(filepath.Dir(p), "tmp")
-		// BINDERY_DB_PATH is operator-controlled via env/secret, not request
-		// input — gosec G304 taint analysis can't distinguish the two.
-		if err := os.MkdirAll(dir, 0o700); err == nil { // #nosec G304
-			return dir
-		}
+	p := strings.TrimSpace(os.Getenv("BINDERY_DB_PATH"))
+	if p == "" {
+		return ""
 	}
-	return ""
+	// BINDERY_DB_PATH is operator-controlled via env/secret, not request
+	// input — gosec taint analysis can't distinguish the two.
+	dir := filepath.Clean(filepath.Join(filepath.Dir(p), "tmp"))
+	if err := os.MkdirAll(dir, 0o700); err != nil { // #nosec
+		return ""
+	}
+	return dir
 }
 
 // MigrateHandler exposes bulk-import endpoints under /api/v1/migrate.
