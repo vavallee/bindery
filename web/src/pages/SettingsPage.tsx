@@ -12,7 +12,7 @@ const tabCls = (active: boolean) =>
   `px-4 py-2 rounded-md text-sm font-medium transition-colors ${active ? 'bg-slate-200 dark:bg-zinc-800 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/50 dark:hover:bg-zinc-800/50'}`
 
 export default function SettingsPage() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [tab, setTab] = useState<Tab>('indexers')
   const [indexers, setIndexers] = useState<Indexer[]>([])
   const [clients, setClients] = useState<DownloadClient[]>([])
@@ -33,8 +33,6 @@ export default function SettingsPage() {
   const [logFilter, setLogFilter] = useState<string>('all')
   const [logAutoRefresh, setLogAutoRefresh] = useState(true)
   const logBottomRef = useRef<HTMLDivElement>(null)
-  const logAutoRefreshRef = useRef(logAutoRefresh)
-  logAutoRefreshRef.current = logAutoRefresh
 
   useEffect(() => {
     api.listIndexers().then(setIndexers).catch(console.error)
@@ -52,16 +50,14 @@ export default function SettingsPage() {
     }
   }, [tab])
 
-  // Auto-refresh logs every 5 s while the tab is active.
+  // Auto-refresh logs every 5 s while the tab is active and toggle is on.
   useEffect(() => {
-    if (tab !== 'logs') return
+    if (tab !== 'logs' || !logAutoRefresh) return
     const id = setInterval(() => {
-      if (logAutoRefreshRef.current) {
-        api.getLogs(undefined, 200).then(setLogEntries).catch(console.error)
-      }
+      api.getLogs(undefined, 200).then(setLogEntries).catch(console.error)
     }, 5000)
     return () => clearInterval(id)
-  }, [tab])
+  }, [tab, logAutoRefresh])
 
   function formatBytes(bytes: number): string {
     if (bytes === 0) return '0 B'
@@ -444,7 +440,7 @@ export default function SettingsPage() {
 
             {/* Level filter (display) */}
             <div className="flex items-center gap-1.5 text-xs">
-              {(['all', 'info', 'warn', 'error'] as const).map(f => (
+              {(['all', 'debug', 'info', 'warn', 'error'] as const).map(f => (
                 <button
                   key={f}
                   onClick={() => setLogFilter(f)}
@@ -496,44 +492,60 @@ export default function SettingsPage() {
           </div>
 
           {/* Log output */}
-          <div className="font-mono text-xs bg-slate-950 dark:bg-black rounded-lg border border-slate-800 dark:border-zinc-900 overflow-auto max-h-[60vh]">
-            {logEntries.filter(e => {
-              if (logFilter === 'all') return true
-              if (logFilter === 'error') return e.level === 'ERROR'
-              if (logFilter === 'warn') return e.level === 'WARN' || e.level === 'ERROR'
-              return true // 'info' shows everything already filtered by API
-            }).length === 0 ? (
-              <p className="text-zinc-600 p-4 text-center">{t('settings.logs.noEntries')}</p>
-            ) : (
-              <table className="w-full border-collapse">
-                <tbody>
-                  {logEntries
-                    .filter(e => {
-                      if (logFilter === 'all') return true
-                      if (logFilter === 'error') return e.level === 'ERROR'
-                      if (logFilter === 'warn') return e.level === 'WARN' || e.level === 'ERROR'
-                      return true
-                    })
-                    .map((e, i) => {
+          <div className="font-mono text-xs bg-slate-50 dark:bg-black rounded-lg border border-slate-200 dark:border-zinc-900 overflow-auto max-h-[60vh]">
+            {(() => {
+              const matches = (level: string) => {
+                if (logFilter === 'all' || logFilter === 'debug') return true
+                if (logFilter === 'info') return level !== 'DEBUG'
+                if (logFilter === 'warn') return level === 'WARN' || level === 'ERROR'
+                if (logFilter === 'error') return level === 'ERROR'
+                return true
+              }
+              const formatAttr = (k: string, v: unknown) => {
+                const s = String(v)
+                return /[\s=]/.test(s) ? `${k}="${s.replace(/"/g, '\\"')}"` : `${k}=${s}`
+              }
+              const filtered = logEntries.filter(e => matches(e.level))
+              if (filtered.length === 0) {
+                return <p className="text-slate-500 dark:text-zinc-600 p-4 text-center">{t('settings.logs.noEntries')}</p>
+              }
+              return (
+                <table className="w-full border-collapse table-fixed">
+                  <colgroup>
+                    <col className="w-36" />
+                    <col className="w-14" />
+                    <col />
+                    <col className="w-2/5" />
+                  </colgroup>
+                  <tbody>
+                    {filtered.map((e, i) => {
                       const levelCls =
-                        e.level === 'ERROR' ? 'text-red-400' :
-                        e.level === 'WARN'  ? 'text-amber-400' :
-                        e.level === 'DEBUG' ? 'text-zinc-500' :
-                        'text-emerald-400'
-                      const ts = new Date(e.time).toLocaleTimeString('en-GB', { hour12: false })
-                      const attrStr = e.attrs ? Object.entries(e.attrs).map(([k, v]) => `${k}=${v}`).join(' ') : ''
+                        e.level === 'ERROR' ? 'text-red-500 dark:text-red-400' :
+                        e.level === 'WARN'  ? 'text-amber-600 dark:text-amber-400' :
+                        e.level === 'DEBUG' ? 'text-slate-400 dark:text-zinc-500' :
+                        'text-emerald-600 dark:text-emerald-400'
+                      const d = new Date(e.time)
+                      const ts = d.toLocaleString(i18n.resolvedLanguage, {
+                        day: '2-digit', month: '2-digit',
+                        hour: '2-digit', minute: '2-digit', second: '2-digit',
+                        hour12: false,
+                      })
+                      const attrStr = e.attrs
+                        ? Object.entries(e.attrs).map(([k, v]) => formatAttr(k, v)).join(' ')
+                        : ''
                       return (
-                        <tr key={i} className="border-b border-zinc-900 hover:bg-zinc-900/50">
-                          <td className="pl-3 pr-2 py-0.5 text-zinc-600 whitespace-nowrap w-20">{ts}</td>
-                          <td className={`pr-2 py-0.5 whitespace-nowrap w-12 font-semibold ${levelCls}`}>{e.level}</td>
-                          <td className="pr-2 py-0.5 text-zinc-200 break-all">{e.msg}</td>
-                          {attrStr && <td className="pr-3 py-0.5 text-zinc-500 break-all">{attrStr}</td>}
+                        <tr key={i} className="border-b border-slate-200 dark:border-zinc-900 hover:bg-slate-100 dark:hover:bg-zinc-900/50">
+                          <td className="pl-3 pr-2 py-0.5 text-slate-500 dark:text-zinc-600 whitespace-nowrap align-top" title={d.toISOString()}>{ts}</td>
+                          <td className={`pr-2 py-0.5 whitespace-nowrap font-semibold align-top ${levelCls}`}>{e.level}</td>
+                          <td className="pr-2 py-0.5 text-slate-800 dark:text-zinc-200 break-words whitespace-pre-wrap align-top">{e.msg}</td>
+                          <td className="pr-3 py-0.5 text-slate-500 dark:text-zinc-500 break-words whitespace-pre-wrap align-top">{attrStr}</td>
                         </tr>
                       )
                     })}
-                </tbody>
-              </table>
-            )}
+                  </tbody>
+                </table>
+              )
+            })()}
             <div ref={logBottomRef} />
           </div>
           <p className="text-xs text-slate-500 dark:text-zinc-600 mt-2">
