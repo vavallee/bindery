@@ -19,6 +19,7 @@ import (
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/indexer"
+	"github.com/vavallee/bindery/internal/logbuf"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/metadata/googlebooks"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
@@ -48,7 +49,12 @@ func main() {
 	case "error":
 		level = slog.LevelError
 	}
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
+	// Ring buffer captures the last 1000 entries for the UI log viewer.
+	// Tee sends every record to both stdout (JSON) and the ring.
+	ring := logbuf.New(logbuf.DefaultCapacity)
+	ring.SetLevel(level)
+	stdoutHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
+	slog.SetDefault(slog.New(logbuf.NewTee(stdoutHandler, ring)))
 
 	slog.Info("starting bindery",
 		"version", version,
@@ -223,6 +229,7 @@ func main() {
 	bulkHandler := api.NewBulkHandler(authorRepo, bookRepo, blocklistRepo, sched)
 	backupHandler := api.NewBackupHandler(cfg.DBPath, cfg.DataDir)
 	rootFolderHandler := api.NewRootFolderHandler(rootFolderRepo)
+	logHandler := api.NewLogHandler(ring)
 	calibreHandler := api.NewCalibreHandler(settingsRepo)
 	calibreImportHandler := api.NewCalibreImportHandler(calibreImporter, func() calibre.Config {
 		return api.LoadCalibreConfig(settingsRepo)
@@ -403,6 +410,11 @@ func main() {
 		r.Post("/backup", backupHandler.Create)
 		r.Post("/backup/{filename}/restore", backupHandler.Restore)
 		r.Delete("/backup/{filename}", backupHandler.Delete)
+
+		// System logs
+		r.Get("/system/logs", logHandler.List)
+		r.Get("/system/loglevel", logHandler.GetLevel)
+		r.Put("/system/loglevel", logHandler.SetLevel)
 
 		// Library
 		r.Post("/library/scan", libraryHandler.Scan)

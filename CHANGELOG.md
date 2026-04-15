@@ -8,6 +8,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 The `development` branch carries the in-flight feature set for the next release. Images are published as `ghcr.io/vavallee/bindery:development` and `:dev-<sha>`; point ArgoCD at the `development` branch to follow. Treat these features as beta — schema migrations are additive and safe, but UX may still shift before tagging.
 
+### Added
+
+- **Log viewer in Settings → Logs (closes [#93](https://github.com/vavallee/bindery/issues/93))** — the last 1 000 log entries are held in an in-process ring buffer and exposed at `GET /api/v1/system/logs`. The Settings → Logs tab shows the 200 most recent entries colour-coded by severity, auto-refreshes every 5 s, and lets you filter by WARN/ERROR without leaving the UI. A runtime **Level** selector (`PUT /api/v1/system/loglevel`) switches between DEBUG/INFO/WARN/ERROR without restarting the process — useful for capturing verbose output while investigating a problem.
+
 ## [v0.10.0] — 2026-04-15
 
 Minor release adding dual-format support — a single book entry can now track an ebook and an audiobook independently.

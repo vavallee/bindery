@@ -70,6 +70,18 @@ The short version lives in the [README](../README.md#roadmap). ✅ items have la
   - ✅ **Configurable per-library mode** ([#64](https://github.com/vavallee/bindery/issues/64), landed in v0.9.0) — Settings → General → Calibre exposes a mode selector: **Off**, **calibredb CLI** (Path A), or **Drop folder** (Path B). Toggling takes effect without a restart.
   - ✅ **OPDS feed** ([#65](https://github.com/vavallee/bindery/issues/65), landed in v0.9.0) — OPDS 1.2 Atom catalogue at `/opds/v1.2/` so KOReader / Moon+ Reader / etc. can browse and download without running Calibre itself. Authenticated with HTTP Basic Auth (API key as password).
 
+## v2 horizon
+
+These items are too large or architectural for a minor release. They define the v2 milestone — the set of changes that would warrant a major version bump.
+
+- **Multi-user with role separation** — Full multi-tenant model: every author, book, profile, and download history row is scoped to an owner. Admin role retains global access (indexers, download clients, system settings). Library overlap handled by shared "global" authors that any user can monitor. Needs schema migration, API layer changes, and a rewritten Settings page split into per-user and admin sections. Blocked on the token-based OIDC work below (need identity from multiple providers before multi-user makes sense).
+
+- **Native OIDC / SSO with multi-provider discovery** — Sign in against Authelia, Authentik, Keycloak, Google, or GitHub natively without an external reverse proxy. Session tokens issued by Bindery after validating the OIDC callback. Overlaps with the multi-user story: each OIDC subject maps to a Bindery user row.
+
+- **External database (MySQL / Postgres)** ([#86](https://github.com/vavallee/bindery/issues/86)) — The current `modernc.org/sqlite` driver is zero-CGO and ships inside the binary, which is excellent for single-instance homelabs. Multi-replica HA requires a shared external store. SQLite WAL is not a substitute for row-level locking under concurrent writers. The schema is already designed with foreign keys and explicit transactions; porting to `database/sql` + a MySQL/Postgres driver is feasible but requires end-to-end testing against both engines, a migration planner that works per-engine, and probably a connection-pool configurator in Settings.
+
+- **Persistent structured log store** — The current ring buffer (1 000 entries, in-process memory) is a good v1 for the log viewer (Settings → Logs, [#93](https://github.com/vavallee/bindery/issues/93)). A v2 log store would persist entries to the database (or a rolling log file), survive restarts, be queryable across date ranges, and support structured search. Useful for incident retrospectives on long-running instances.
+
 ## Explicitly out of scope
 
 These get asked often enough to warrant a standing answer. They're not on the roadmap and new issues requesting them will be closed with a link here.

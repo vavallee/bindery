@@ -87,6 +87,7 @@
 - **Import lists** — Auto-add authors/books from external sources; exclusion list to skip unwanted entries
 - **Tag system** — Scope indexers/profiles/notifications to specific authors
 - **Backup/restore** — Snapshot the SQLite database on demand
+- **Log viewer** — Settings → Logs shows the last 200 entries from an in-process ring buffer, colour-coded by severity with WARN/ERROR filters and 5 s auto-refresh. Runtime log level switchable to DEBUG without restarting via `PUT /api/v1/system/loglevel`
 - **Authentication** — First-run setup creates an admin account (argon2id password hashing, signed session cookies). Three modes: **Enabled** (always require login), **Local only** (bypass auth for private IPs — home network convenience), **Disabled** (no auth, for trusted reverse-proxy deployments). Per-account API key for external integrations. Per-IP rate limiting on the login endpoint.
 
 ### UI

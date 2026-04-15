@@ -1,9 +1,9 @@
-import { FormEvent, useEffect, useState } from 'react'
-import { api, AuthConfig, AuthStatus, Indexer, DownloadClient, NotificationConfig, QualityProfile, MetadataProfile, CalibreImportProgress, RootFolder } from '../api/client'
+import { FormEvent, useEffect, useRef, useState } from 'react'
+import { api, AuthConfig, AuthStatus, Indexer, DownloadClient, NotificationConfig, QualityProfile, MetadataProfile, CalibreImportProgress, RootFolder, LogEntry } from '../api/client'
 import ThemeToggle from '../components/ThemeToggle'
 import { useAuth } from '../auth/AuthContext'
 
-type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders'
+type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders' | 'logs'
 
 const inputCls = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600'
 const tabCls = (active: boolean) =>
@@ -25,6 +25,13 @@ export default function SettingsPage() {
   const [editingIndexer, setEditingIndexer] = useState<number | null>(null)
   const [editingClient, setEditingClient] = useState<number | null>(null)
   const [editingNotification, setEditingNotification] = useState<number | null>(null)
+  const [logEntries, setLogEntries] = useState<LogEntry[]>([])
+  const [logLevel, setLogLevel] = useState<string>('info')
+  const [logFilter, setLogFilter] = useState<string>('all')
+  const [logAutoRefresh, setLogAutoRefresh] = useState(true)
+  const logBottomRef = useRef<HTMLDivElement>(null)
+  const logAutoRefreshRef = useRef(logAutoRefresh)
+  logAutoRefreshRef.current = logAutoRefresh
 
   useEffect(() => {
     api.listIndexers().then(setIndexers).catch(console.error)
@@ -36,6 +43,21 @@ export default function SettingsPage() {
     if (tab === 'quality') api.listQualityProfiles().then(setQualityProfiles).catch(console.error)
     if (tab === 'metadata') api.listMetadataProfiles().then(setMetadataProfiles).catch(console.error)
     if (tab === 'rootfolders') api.listRootFolders().then(setRootFolders).catch(console.error)
+    if (tab === 'logs') {
+      api.getLogLevel().then(r => setLogLevel(r.level.toLowerCase())).catch(console.error)
+      api.getLogs(undefined, 200).then(setLogEntries).catch(console.error)
+    }
+  }, [tab])
+
+  // Auto-refresh logs every 5 s while the tab is active.
+  useEffect(() => {
+    if (tab !== 'logs') return
+    const id = setInterval(() => {
+      if (logAutoRefreshRef.current) {
+        api.getLogs(undefined, 200).then(setLogEntries).catch(console.error)
+      }
+    }, 5000)
+    return () => clearInterval(id)
   }, [tab])
 
   function formatBytes(bytes: number): string {
@@ -50,7 +72,7 @@ export default function SettingsPage() {
       <h2 className="text-2xl font-bold mb-6">Settings</h2>
 
       <div className="flex flex-wrap gap-2 mb-6">
-        {(['indexers', 'clients', 'notifications', 'quality', 'metadata', 'import', 'rootfolders', 'general'] as Tab[]).map(t => (
+        {(['indexers', 'clients', 'notifications', 'quality', 'metadata', 'import', 'rootfolders', 'logs', 'general'] as Tab[]).map(t => (
           <button key={t} onClick={() => setTab(t)} className={tabCls(tab === t)}>
             {t === 'indexers' ? 'Indexers'
               : t === 'clients' ? 'Download Clients'
@@ -59,6 +81,7 @@ export default function SettingsPage() {
               : t === 'metadata' ? 'Metadata Profiles'
               : t === 'import' ? 'Import'
               : t === 'rootfolders' ? 'Root Folders'
+              : t === 'logs' ? 'Logs'
               : 'General'}
           </button>
         ))}
@@ -417,6 +440,113 @@ export default function SettingsPage() {
               Add Folder
             </button>
           </form>
+        </div>
+      )}
+
+      {tab === 'logs' && (
+        <div>
+          {/* Toolbar */}
+          <div className="flex flex-wrap items-center gap-3 mb-4">
+            <h3 className="text-lg font-semibold mr-auto">Logs</h3>
+
+            {/* Level filter (display) */}
+            <div className="flex items-center gap-1.5 text-xs">
+              {(['all', 'info', 'warn', 'error'] as const).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setLogFilter(f)}
+                  className={`px-2.5 py-1 rounded font-medium transition-colors ${logFilter === f
+                    ? f === 'error' ? 'bg-red-600 text-white'
+                      : f === 'warn' ? 'bg-amber-500 text-white'
+                      : 'bg-slate-700 dark:bg-zinc-600 text-white'
+                    : 'bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'}`}
+                >
+                  {f.toUpperCase()}
+                </button>
+              ))}
+            </div>
+
+            {/* Runtime log level */}
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-slate-500 dark:text-zinc-500">Level:</span>
+              <select
+                value={logLevel}
+                onChange={async e => {
+                  const l = e.target.value
+                  await api.setLogLevel(l).catch(console.error)
+                  setLogLevel(l)
+                }}
+                className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 text-xs"
+              >
+                {['debug', 'info', 'warn', 'error'].map(l => (
+                  <option key={l} value={l}>{l.toUpperCase()}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Auto-refresh toggle */}
+            <button
+              onClick={() => setLogAutoRefresh(v => !v)}
+              className={`text-xs px-2.5 py-1 rounded border transition-colors ${logAutoRefresh
+                ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400'
+                : 'border-slate-300 dark:border-zinc-700 text-slate-500 dark:text-zinc-500'}`}
+            >
+              {logAutoRefresh ? '⏸ Auto' : '▶ Auto'}
+            </button>
+
+            <button
+              onClick={() => api.getLogs(undefined, 200).then(setLogEntries).catch(console.error)}
+              className="text-xs px-2.5 py-1 rounded border border-slate-300 dark:border-zinc-700 text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white"
+            >
+              Refresh
+            </button>
+          </div>
+
+          {/* Log output */}
+          <div className="font-mono text-xs bg-slate-950 dark:bg-black rounded-lg border border-slate-800 dark:border-zinc-900 overflow-auto max-h-[60vh]">
+            {logEntries.filter(e => {
+              if (logFilter === 'all') return true
+              if (logFilter === 'error') return e.level === 'ERROR'
+              if (logFilter === 'warn') return e.level === 'WARN' || e.level === 'ERROR'
+              return true // 'info' shows everything already filtered by API
+            }).length === 0 ? (
+              <p className="text-zinc-600 p-4 text-center">No log entries</p>
+            ) : (
+              <table className="w-full border-collapse">
+                <tbody>
+                  {logEntries
+                    .filter(e => {
+                      if (logFilter === 'all') return true
+                      if (logFilter === 'error') return e.level === 'ERROR'
+                      if (logFilter === 'warn') return e.level === 'WARN' || e.level === 'ERROR'
+                      return true
+                    })
+                    .map((e, i) => {
+                      const levelCls =
+                        e.level === 'ERROR' ? 'text-red-400' :
+                        e.level === 'WARN'  ? 'text-amber-400' :
+                        e.level === 'DEBUG' ? 'text-zinc-500' :
+                        'text-emerald-400'
+                      const ts = new Date(e.time).toLocaleTimeString('en-GB', { hour12: false })
+                      const attrStr = e.attrs ? Object.entries(e.attrs).map(([k, v]) => `${k}=${v}`).join(' ') : ''
+                      return (
+                        <tr key={i} className="border-b border-zinc-900 hover:bg-zinc-900/50">
+                          <td className="pl-3 pr-2 py-0.5 text-zinc-600 whitespace-nowrap w-20">{ts}</td>
+                          <td className={`pr-2 py-0.5 whitespace-nowrap w-12 font-semibold ${levelCls}`}>{e.level}</td>
+                          <td className="pr-2 py-0.5 text-zinc-200 break-all">{e.msg}</td>
+                          {attrStr && <td className="pr-3 py-0.5 text-zinc-500 break-all">{attrStr}</td>}
+                        </tr>
+                      )
+                    })}
+                </tbody>
+              </table>
+            )}
+            <div ref={logBottomRef} />
+          </div>
+          <p className="text-xs text-slate-500 dark:text-zinc-600 mt-2">
+            Shows the most recent 200 entries from the in-process ring buffer (last 1 000 entries).
+            Logs reset on restart. Change <strong>Level</strong> above to capture DEBUG output without restarting.
+          </p>
         </div>
       )}
 
