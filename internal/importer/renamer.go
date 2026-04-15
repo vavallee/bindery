@@ -3,6 +3,7 @@ package importer
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -203,7 +204,7 @@ func HardlinkDir(src, dst string) error {
 	if err := os.MkdirAll(dst, 0o750); err != nil {
 		return fmt.Errorf("create dest dir: %w", err)
 	}
-	err = filepath.Walk(src, func(path string, fi os.FileInfo, err error) error {
+	err = filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -212,8 +213,13 @@ func HardlinkDir(src, dst string) error {
 			return rerr
 		}
 		target := filepath.Join(dst, rel)
-		if fi.IsDir() {
-			return os.MkdirAll(target, fi.Mode())
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o750)
+		}
+		// Skip symlinks — following them in a Walk callback is a TOCTOU risk
+		// (gosec G304). Only hard-link regular files.
+		if !d.Type().IsRegular() {
+			return nil
 		}
 		if err := os.Link(path, target); err != nil {
 			return fmt.Errorf("hardlink %q → %q: %w (download dir and library must be on the same filesystem)", path, target, err)
