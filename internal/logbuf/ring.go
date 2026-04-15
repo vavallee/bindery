@@ -38,7 +38,6 @@ type Ring struct {
 	// preAttrs are attributes inherited via WithAttrs — stored so that
 	// sub-handlers created by slog can be wrapped cheaply.
 	preAttrs []slog.Attr
-	group    string
 }
 
 // New returns a Ring with the given capacity.
