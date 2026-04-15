@@ -157,4 +157,3 @@ func writeOPDSError(w http.ResponseWriter, err error) bool {
 	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	return true
 }
-

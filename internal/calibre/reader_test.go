@@ -3,6 +3,7 @@ package calibre
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -138,11 +139,16 @@ var fixtureSchema = []string{
 
 // fixtureSeed inserts a deterministic tiny library the tests can assert on.
 // Book 1 (Book One): single author (Alice), single format (epub), one series
-//                    position, ISBN.
+//
+//	position, ISBN.
+//
 // Book 2 (Book Two): two authors (Alice primary, Carol secondary), two
-//                    formats (epub + mobi), same series position 2, no ISBN.
+//
+//	formats (epub + mobi), same series position 2, no ISBN.
+//
 // Book 3 (No Cover): different author (Bob), single PDF, no series, no
-//                    cover file on disk.
+//
+//	cover file on disk.
 var fixtureSeed = []string{
 	`INSERT INTO authors (id, name, sort) VALUES
 		(1, 'Alice Author', 'Author, Alice'),
@@ -286,7 +292,7 @@ func TestReader_Books_StopsOnError(t *testing.T) {
 		seen++
 		return abort
 	})
-	if err != abort {
+	if !errors.Is(err, abort) {
 		t.Fatalf("expected abort sentinel, got %v", err)
 	}
 	if seen != 1 {

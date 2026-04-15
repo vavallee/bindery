@@ -62,10 +62,10 @@ type CalibreSeries struct {
 // single book row carry multiple formats (epub + mobi + pdf); each becomes
 // a separate Bindery edition.
 type CalibreFormat struct {
-	Format        string // uppercase file extension: EPUB, MOBI, PDF, ...
-	FileName      string // Calibre's on-disk filename (no extension)
-	AbsolutePath  string // resolved against library root + book path
-	SizeBytes     int64
+	Format       string // uppercase file extension: EPUB, MOBI, PDF, ...
+	FileName     string // Calibre's on-disk filename (no extension)
+	AbsolutePath string // resolved against library root + book path
+	SizeBytes    int64
 }
 
 // Reader opens a Calibre library's metadata.db read-only and returns

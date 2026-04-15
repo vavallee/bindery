@@ -32,13 +32,13 @@ type ImportStats struct {
 // + Processed to fill it, and Stats (populated on completion) for the
 // summary panel.
 type ImportProgress struct {
-	Running   bool      `json:"running"`
-	StartedAt time.Time `json:"startedAt"`
-	Total     int       `json:"total"`
-	Processed int       `json:"processed"`
-	Message   string    `json:"message,omitempty"`
-	Error     string    `json:"error,omitempty"`
-	FinishedAt *time.Time `json:"finishedAt,omitempty"`
+	Running    bool         `json:"running"`
+	StartedAt  time.Time    `json:"startedAt"`
+	Total      int          `json:"total"`
+	Processed  int          `json:"processed"`
+	Message    string       `json:"message,omitempty"`
+	Error      string       `json:"error,omitempty"`
+	FinishedAt *time.Time   `json:"finishedAt,omitempty"`
 	Stats      *ImportStats `json:"stats,omitempty"`
 }
 
@@ -180,7 +180,11 @@ func (i *Importer) run(ctx context.Context, libraryPath string) *ImportStats {
 		i.fail(err)
 		return stats
 	}
-	defer reader.Close()
+	defer func() {
+		if cerr := reader.Close(); cerr != nil {
+			slog.Warn("calibre: close reader", "error", cerr)
+		}
+	}()
 
 	total, err := reader.Count(ctx)
 	if err != nil {
@@ -372,7 +376,7 @@ type bookUpsertResult struct {
 // book. Dedupe order:
 //  1. books.calibre_id == cb.CalibreID   (pure re-import; update in place)
 //  2. author_id + title match            (existing Bindery book adopted
-//                                          into Calibre; link + update)
+//     into Calibre; link + update)
 //  3. Create a fresh row with the Calibre id set.
 //
 // Returns (result, created). result.mergedByTitle is true only for path 2.
