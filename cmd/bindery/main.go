@@ -24,6 +24,7 @@ import (
 	"github.com/vavallee/bindery/internal/metadata/openlibrary"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/notifier"
+	"github.com/vavallee/bindery/internal/opds"
 	"github.com/vavallee/bindery/internal/scheduler"
 	"github.com/vavallee/bindery/internal/webui"
 )
@@ -366,6 +367,23 @@ func main() {
 		// Migration imports (CSV of author names, or Readarr SQLite DB).
 		r.Post("/migrate/csv", migrateHandler.ImportCSV)
 		r.Post("/migrate/readarr", migrateHandler.ImportReadarr)
+	})
+
+	// OPDS 1.2 catalogue — KOReader / Moon+ Reader / Aldiko speak this
+	// natively. Sits on its own auth path (Basic + API key + session) so
+	// headless reading devices don't need cookies.
+	opdsBuilder := opds.NewBuilder(opds.Config{Title: "Bindery", PageSize: 50}, bookRepo, authorRepo, seriesRepo)
+	opdsHandler := api.NewOPDSHandler(opdsBuilder, bookRepo, fileHandler)
+	r.Route("/opds", func(r chi.Router) {
+		r.Use(api.OPDSAuth(authProvider, userRepo))
+		r.Get("/", opdsHandler.Root)
+		r.Get("/authors", opdsHandler.Authors)
+		r.Get("/authors/{id}", opdsHandler.Author)
+		r.Get("/series", opdsHandler.Series)
+		r.Get("/series/{id}", opdsHandler.OneSeries)
+		r.Get("/recent", opdsHandler.Recent)
+		r.Get("/book/{id}", opdsHandler.Book)
+		r.Get("/book/{id}/file", opdsHandler.DownloadFile)
 	})
 
 	// Serve embedded frontend

@@ -95,6 +95,7 @@
 - **Search, filter, sort** — On Authors, Books, Wanted, and History pages. Authors can be filtered by `Monitored / Unmonitored`. Author detail page sorts books by publication date and filters by type, status, or released/upcoming. Books filter chips include `Type: Ebook / Audiobook`; Books view shows the author inline.
 - **Calendar view** — Upcoming book releases from monitored authors, with compact dot-indicator grid on mobile
 - **Full REST API** — Every feature accessible via HTTP for scripting and integration
+- **OPDS 1.2 catalogue at `/opds/`** — browse and download your library from KOReader, Moon+ Reader, or any OPDS-capable reading app without Calibre
 
 ### Packaging
 - **Single binary** — Frontend embedded via `go:embed`. No nginx, no sidecars, no complexity

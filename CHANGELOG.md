@@ -8,6 +8,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 The `development` branch carries the in-flight feature set for the next release. Images are published as `ghcr.io/vavallee/bindery:development` and `:dev-<sha>`; point ArgoCD at the `development` branch to follow. Treat these features as beta — schema migrations are additive and safe, but UX may still shift before tagging.
 
+### Added
+
+- OPDS 1.2 catalogue endpoint (closes [#65](https://github.com/vavallee/bindery/issues/65)) — read-only Atom/OPDS feeds rooted at `/opds/` so KOReader, Moon+ Reader, and other reading apps can browse the Bindery library and download books directly, without Calibre. Navigation feeds for Authors / Series / Recent, acquisition feeds per author / series / single book, and a per-book download link that serves the same bytes as the web UI (audiobook directories are zipped on the fly). The `/opds/*` subtree accepts HTTP Basic, `X-Api-Key`, `?apikey=`, or an existing session cookie; unauthenticated requests get a `401` with a `WWW-Authenticate: Basic realm="Bindery OPDS"` challenge so mobile clients prompt for credentials.
+
 ## [v0.8.0] — 2026-04-14
 
 Major feature release. Calibre users can finally automate the last mile — finished Bindery imports land in Calibre with no manual "Add books" step. Library curation gets a sharper tool: the author list stops fragmenting into "RR Haywood" / "R.R. Haywood" / "R R Haywood" duplicates, and the new **Merge authors** flow reunites them under one canonical row. Backend test coverage continues its climb, with `internal/api` and `internal/importer` both breaking 60%.
