@@ -35,7 +35,9 @@ var allowedUploadCT = map[string]bool{
 func uploadTempDir() string {
 	if p := strings.TrimSpace(os.Getenv("BINDERY_DB_PATH")); p != "" {
 		dir := filepath.Join(filepath.Dir(p), "tmp")
-		if err := os.MkdirAll(dir, 0o700); err == nil {
+		// BINDERY_DB_PATH is operator-controlled via env/secret, not request
+		// input — gosec G304 taint analysis can't distinguish the two.
+		if err := os.MkdirAll(dir, 0o700); err == nil { // #nosec G304
 			return dir
 		}
 	}
@@ -148,7 +150,7 @@ func acceptUpload(w http.ResponseWriter, r *http.Request, maxBytes int64) (io.Re
 		}
 	}
 	if !allowedUploadCT[ct] {
-		f.Close()
+		_ = f.Close()
 		return nil, fmt.Errorf("unsupported content-type %q; expected text/csv or sqlite binary", ct)
 	}
 	return f, nil
