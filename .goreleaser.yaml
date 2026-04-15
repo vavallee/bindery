@@ -60,6 +60,21 @@ archives:
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
 
+# Syft SBOMs (SPDX) accompany every archive. Published alongside the release
+# artifacts and verifiable with `syft`/`grype`. Syft must be on $PATH in CI —
+# the security.yml workflow installs it globally for the container-scan job;
+# the release workflow installs it before invoking goreleaser.
+sboms:
+  - id: archive
+    artifacts: archive
+    documents:
+      - "${artifact}.sbom.spdx.json"
+    cmd: syft
+    args:
+      - "$artifact"
+      - "--output"
+      - "spdx-json=$document"
+
 # The existing CI step creates the GitHub Release with CHANGELOG-derived notes
 # before goreleaser runs; `mode: append` keeps those notes and just attaches
 # the built archives + checksum file.

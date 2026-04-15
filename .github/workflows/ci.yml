@@ -10,6 +10,11 @@ permissions:
   contents: write
   packages: write
   security-events: write
+  # Required for actions/attest-build-provenance to mint SLSA attestations
+  # against the OIDC token of the GitHub-hosted runner. Without this the
+  # provenance step silently produces an unsigned artifact.
+  id-token: write
+  attestations: write
 
 jobs:
   # Single job: test + build + push + deploy
@@ -82,6 +87,7 @@ jobs:
           fi
 
       - uses: docker/build-push-action@v6
+        id: push
         with:
           context: .
           push: true
@@ -94,6 +100,18 @@ jobs:
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # SLSA build provenance — cryptographically binds the image digest we
+      # just pushed to this workflow run. Consumers verify with:
+      #   gh attestation verify oci://ghcr.io/vavallee/bindery@<digest> \
+      #     --repo vavallee/bindery
+      # See docs/security for the full verification recipe.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
 
       # Deploy: bump Helm chart image tag on main and development branches.
       # ArgoCD can track either branch — switch targetRevision to flip
@@ -140,6 +158,13 @@ jobs:
           else
             printf '%s' "$NOTES" | gh release create "$VERSION" --title "$RELEASE_TITLE" --notes-file -
           fi
+
+      # Syft must be on $PATH before goreleaser runs because .goreleaser.yaml
+      # calls out to it for the sboms: block. Anchore's action installs the
+      # latest release into /usr/local/bin.
+      - name: Install Syft
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: anchore/sbom-action/download-syft@v0
 
       # Cross-compile release binaries and attach them to the GitHub Release
       # created above. Runs only on tag push; `release.mode: append` in
