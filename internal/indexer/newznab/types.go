@@ -84,6 +84,6 @@ type SearchResult struct {
 	Grabs       int    `json:"grabs"`
 	Author      string `json:"author"`
 	BookTitle   string `json:"bookTitle"`
-	Protocol    string `json:"protocol"` // "usenet" or "torrent"
+	Protocol    string `json:"protocol"`           // "usenet" or "torrent"
 	Language    string `json:"language,omitempty"` // ISO 639-1 from newznab:attr language (when present)
 }
