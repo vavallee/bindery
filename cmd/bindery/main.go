@@ -213,10 +213,7 @@ func main() {
 	// Recommendation engine (24-hour job, gated on recommendations.enabled).
 	recRepo := db.NewRecommendationRepo(database)
 	recEngine := recommender.New(bookRepo, authorRepo, seriesRepo, recRepo, settingsRepo)
-	// Wire OL client for genre-popular candidates (always available).
 	recEngine.WithOLClient(olClient)
-	// Wire HC client for list-cross candidates if a token is configured.
-	// Token is read once at startup; restart required if the token changes.
 	if s, _ := settingsRepo.Get(context.Background(), "hardcover.api_token"); s != nil && s.Value != "" {
 		recEngine.WithHCClient(hardcover.New().WithToken(s.Value))
 		slog.Info("hardcover wishlist integration enabled for recommendations")
@@ -226,6 +223,7 @@ func main() {
 	// Register the Hardcover list syncer (24-hour job).
 	hcSyncer := hardcoverlistsyncer.New(importListRepo, authorRepo, bookRepo)
 	sched.WithHardcoverSyncer(hcSyncer)
+
 
 	sched.Start()
 	defer sched.Stop()
