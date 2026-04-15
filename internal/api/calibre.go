@@ -13,9 +13,11 @@ import (
 // Calibre settings keys. Centralised so the handler and main.go agree on
 // the exact names and nobody drifts to "calibre_enabled" vs "calibre.enabled".
 const (
-	SettingCalibreEnabled     = "calibre.enabled"
-	SettingCalibreLibraryPath = "calibre.library_path"
-	SettingCalibreBinaryPath  = "calibre.binary_path"
+	SettingCalibreEnabled        = "calibre.enabled"
+	SettingCalibreLibraryPath    = "calibre.library_path"
+	SettingCalibreBinaryPath     = "calibre.binary_path"
+	SettingCalibreMode           = "calibre.mode"
+	SettingCalibreDropFolderPath = "calibre.drop_folder_path"
 )
 
 // CalibreHandler exposes the "test connection" endpoint for the Calibre
@@ -33,6 +35,13 @@ func NewCalibreHandler(settings *db.SettingsRepo) *CalibreHandler {
 // LoadCalibreConfig materialises a calibre.Config from the settings table.
 // Exported so main.go can build the importer's Calibre client at boot and
 // refresh it on each scheduler tick.
+//
+// Enabled is derived from the canonical `calibre.mode` key rather than the
+// legacy `calibre.enabled` boolean: the Client is "enabled" for the
+// purpose of Test / Add when mode is anything other than ModeOff. The
+// mode selector itself is passed separately to the scanner via
+// LoadCalibreMode / LoadDropFolderConfig so the scanner can dispatch
+// between the calibredb and drop-folder paths per import.
 func LoadCalibreConfig(settings *db.SettingsRepo) calibre.Config {
 	ctx := contextBackground()
 	get := func(key string) string {
@@ -42,10 +51,48 @@ func LoadCalibreConfig(settings *db.SettingsRepo) calibre.Config {
 		}
 		return s.Value
 	}
+	mode := LoadCalibreMode(settings)
+	enabled := mode == calibre.ModeCalibredb
+	// Back-compat: if the operator still has the v0.8.0 `calibre.enabled`
+	// boolean set to true but the migration hasn't run yet (e.g. someone
+	// restored an old DB), honour it so the first import doesn't silently
+	// downgrade to off.
+	if !enabled && strings.EqualFold(get(SettingCalibreEnabled), "true") && mode != calibre.ModeDropFolder {
+		enabled = true
+	}
 	return calibre.Config{
-		Enabled:     strings.EqualFold(get(SettingCalibreEnabled), "true"),
+		Enabled:     enabled,
 		LibraryPath: get(SettingCalibreLibraryPath),
 		BinaryPath:  get(SettingCalibreBinaryPath),
+	}
+}
+
+// LoadCalibreMode returns the currently-configured integration mode. The
+// scanner calls this on every import so toggling the radio in Settings
+// takes effect without a restart.
+func LoadCalibreMode(settings *db.SettingsRepo) calibre.Mode {
+	s, _ := settings.Get(contextBackground(), SettingCalibreMode)
+	if s == nil {
+		return calibre.ModeOff
+	}
+	return calibre.ParseMode(s.Value)
+}
+
+// LoadDropFolderConfig materialises the drop-folder-mode settings subset.
+// LibraryPath is shared with calibre.Config because the drop-folder poller
+// reads metadata.db at the same location.
+func LoadDropFolderConfig(settings *db.SettingsRepo) calibre.DropFolderConfig {
+	ctx := contextBackground()
+	get := func(key string) string {
+		s, _ := settings.Get(ctx, key)
+		if s == nil {
+			return ""
+		}
+		return s.Value
+	}
+	return calibre.DropFolderConfig{
+		DropFolderPath: get(SettingCalibreDropFolderPath),
+		LibraryPath:    get(SettingCalibreLibraryPath),
 	}
 }
 

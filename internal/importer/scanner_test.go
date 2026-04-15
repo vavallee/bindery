@@ -57,23 +57,40 @@ func TestTitleMatch(t *testing.T) {
 	}
 }
 
-// fakeCalibre is a stub calibreClient recording every Add invocation. Tests
-// check both the call path and the book-id persistence so a broken wiring
-// change surfaces here rather than in a live import.
-type fakeCalibre struct {
-	enabled bool
-	calls   []string
-	nextID  int64
-	err     error
+// fakeCalibreAdder is a stub calibreAdder recording every Add invocation.
+// Tests check both the call path and the book-id persistence so a broken
+// wiring change surfaces here rather than in a live import.
+type fakeCalibreAdder struct {
+	calls  []string
+	nextID int64
+	err    error
 }
 
-func (f *fakeCalibre) Enabled() bool { return f.enabled }
-func (f *fakeCalibre) Add(_ context.Context, path string) (int64, error) {
+func (f *fakeCalibreAdder) Add(_ context.Context, path string) (int64, error) {
 	f.calls = append(f.calls, path)
 	return f.nextID, f.err
 }
 
-func importScannerFixture(t *testing.T) (*Scanner, *db.BookRepo, *models.Book, context.Context) {
+// fakeDropFolderWriter is a stub calibreDropFolderWriter capturing the
+// title/author/source triple for assertion. Tests inject it via WithCalibre
+// so the real sanitize + polling code is only exercised in its own unit
+// tests.
+type fakeDropFolderWriter struct {
+	calls []dropCall
+	res   calibre.IngestResult
+	err   error
+}
+
+type dropCall struct{ src, title, author string }
+
+func (f *fakeDropFolderWriter) Ingest(_ context.Context, src, title, author string) (calibre.IngestResult, error) {
+	f.calls = append(f.calls, dropCall{src, title, author})
+	return f.res, f.err
+}
+
+func modeFn(m calibre.Mode) func() calibre.Mode { return func() calibre.Mode { return m } }
+
+func importScannerFixture(t *testing.T) (*Scanner, *db.BookRepo, *models.Book, *models.Author, context.Context) {
 	t.Helper()
 	database, err := db.OpenMemory()
 	if err != nil {
@@ -85,12 +102,12 @@ func importScannerFixture(t *testing.T) (*Scanner, *db.BookRepo, *models.Book, c
 	authorRepo := db.NewAuthorRepo(database)
 	bookRepo := db.NewBookRepo(database)
 
-	a := &models.Author{ForeignID: "OLA1", Name: "A", SortName: "A", Monitored: true, MetadataProvider: "openlibrary"}
+	a := &models.Author{ForeignID: "OLA1", Name: "Author A", SortName: "A, Author", Monitored: true, MetadataProvider: "openlibrary"}
 	if err := authorRepo.Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
 	b := &models.Book{
-		ForeignID: "OLB1", AuthorID: a.ID, Title: "T", SortTitle: "T",
+		ForeignID: "OLB1", AuthorID: a.ID, Title: "Title T", SortTitle: "T, Title",
 		Status: models.BookStatusWanted, Monitored: true, AnyEditionOK: true,
 		MetadataProvider: "openlibrary",
 	}
@@ -103,34 +120,41 @@ func importScannerFixture(t *testing.T) (*Scanner, *db.BookRepo, *models.Book, c
 		bookRepo, authorRepo, db.NewHistoryRepo(database),
 		t.TempDir(), "", "", "", "",
 	)
-	return s, bookRepo, b, ctx
+	return s, bookRepo, b, a, ctx
 }
 
-// TestPushToCalibre_Disabled is the regression guard for "integration off"
-// — a user who never touched the Calibre settings must see identical import
-// behaviour to v0.7.2, which means no client call and no calibre_id write.
-func TestPushToCalibre_Disabled(t *testing.T) {
-	s, bookRepo, book, ctx := importScannerFixture(t)
-	fc := &fakeCalibre{enabled: false, nextID: 99}
-	s.WithCalibre(fc)
+// TestPushToCalibre_ModeOff: regression guard for "integration off" —
+// mode=off must mean zero client calls and no calibre_id mutation, matching
+// the v0.7.2 / v0.8.0-with-toggle-off baseline.
+func TestPushToCalibre_ModeOff(t *testing.T) {
+	s, bookRepo, book, author, ctx := importScannerFixture(t)
+	fc := &fakeCalibreAdder{nextID: 99}
+	fd := &fakeDropFolderWriter{}
+	s.WithCalibre(modeFn(calibre.ModeOff), fc, fd)
 
-	s.pushToCalibre(ctx, book, "/library/book.epub")
+	s.pushToCalibre(ctx, book, author, "/library/book.epub")
 
 	if len(fc.calls) != 0 {
-		t.Errorf("Add must not be called when disabled, got %v", fc.calls)
+		t.Errorf("Add must not be called when mode=off, got %v", fc.calls)
+	}
+	if len(fd.calls) != 0 {
+		t.Errorf("Ingest must not be called when mode=off, got %v", fd.calls)
 	}
 	got, _ := bookRepo.GetByID(ctx, book.ID)
 	if got.CalibreID != nil {
-		t.Errorf("calibre_id must stay nil when disabled, got %v", got.CalibreID)
+		t.Errorf("calibre_id must stay nil when mode=off, got %v", got.CalibreID)
 	}
 }
 
-func TestPushToCalibre_HappyPath(t *testing.T) {
-	s, bookRepo, book, ctx := importScannerFixture(t)
-	fc := &fakeCalibre{enabled: true, nextID: 1234}
-	s.WithCalibre(fc)
+// TestPushToCalibre_ModeCalibredbHappyPath: the v0.8.0 regression test —
+// mode=calibredb calls the adder and persists the returned id. Locks in
+// that the new mode-dispatch didn't break Path A.
+func TestPushToCalibre_ModeCalibredbHappyPath(t *testing.T) {
+	s, bookRepo, book, author, ctx := importScannerFixture(t)
+	fc := &fakeCalibreAdder{nextID: 1234}
+	s.WithCalibre(modeFn(calibre.ModeCalibredb), fc, nil)
 
-	s.pushToCalibre(ctx, book, "/library/book.epub")
+	s.pushToCalibre(ctx, book, author, "/library/book.epub")
 
 	if len(fc.calls) != 1 || fc.calls[0] != "/library/book.epub" {
 		t.Errorf("Add calls = %v", fc.calls)
@@ -141,16 +165,14 @@ func TestPushToCalibre_HappyPath(t *testing.T) {
 	}
 }
 
-// TestPushToCalibre_AddFailsDoesNotPoison: a failed calibredb call must not
-// roll back the import or stamp a bogus id. The book row stays file-pathed
-// but calibre_id is still nil, matching the semantics that Calibre sync is
-// a best-effort mirror.
-func TestPushToCalibre_AddFailsDoesNotPoison(t *testing.T) {
-	s, bookRepo, book, ctx := importScannerFixture(t)
-	fc := &fakeCalibre{enabled: true, err: errors.New("exec: calibredb: not found")}
-	s.WithCalibre(fc)
+// TestPushToCalibre_CalibredbFailDoesNotPoison: a failed calibredb call
+// must leave calibre_id at nil (best-effort mirror semantics).
+func TestPushToCalibre_CalibredbFailDoesNotPoison(t *testing.T) {
+	s, bookRepo, book, author, ctx := importScannerFixture(t)
+	fc := &fakeCalibreAdder{err: errors.New("exec: calibredb: not found")}
+	s.WithCalibre(modeFn(calibre.ModeCalibredb), fc, nil)
 
-	s.pushToCalibre(ctx, book, "/library/book.epub")
+	s.pushToCalibre(ctx, book, author, "/library/book.epub")
 
 	got, _ := bookRepo.GetByID(ctx, book.ID)
 	if got.CalibreID != nil {
@@ -158,15 +180,14 @@ func TestPushToCalibre_AddFailsDoesNotPoison(t *testing.T) {
 	}
 }
 
-// TestPushToCalibre_ErrDisabledSilent guards that a mismatched state (client
-// reports Enabled() true but Add returns ErrDisabled) is treated the same as
-// disabled — no warning, no id, no panic.
+// TestPushToCalibre_ErrDisabledSilent — the adder may return ErrDisabled
+// when the client's own config is off; we treat it the same as mode=off.
 func TestPushToCalibre_ErrDisabledSilent(t *testing.T) {
-	s, bookRepo, book, ctx := importScannerFixture(t)
-	fc := &fakeCalibre{enabled: true, err: calibre.ErrDisabled}
-	s.WithCalibre(fc)
+	s, bookRepo, book, author, ctx := importScannerFixture(t)
+	fc := &fakeCalibreAdder{err: calibre.ErrDisabled}
+	s.WithCalibre(modeFn(calibre.ModeCalibredb), fc, nil)
 
-	s.pushToCalibre(ctx, book, "/library/book.epub")
+	s.pushToCalibre(ctx, book, author, "/library/book.epub")
 
 	got, _ := bookRepo.GetByID(ctx, book.ID)
 	if got.CalibreID != nil {
@@ -174,11 +195,101 @@ func TestPushToCalibre_ErrDisabledSilent(t *testing.T) {
 	}
 }
 
-// TestPushToCalibre_NilClient covers the default path — a scanner built
+// TestPushToCalibre_NilResolver covers the default path — a scanner built
 // without WithCalibre() (i.e. calibre not configured at all) must not
 // panic on a nil interface dereference.
-func TestPushToCalibre_NilClient(t *testing.T) {
-	s, _, book, ctx := importScannerFixture(t)
+func TestPushToCalibre_NilResolver(t *testing.T) {
+	s, _, book, author, ctx := importScannerFixture(t)
 	// No WithCalibre call.
-	s.pushToCalibre(ctx, book, "/library/book.epub") // must not panic
+	s.pushToCalibre(ctx, book, author, "/library/book.epub") // must not panic
+}
+
+// TestPushToCalibre_ModeDropFolderHappyPath — mode=drop_folder routes to
+// the drop writer with title + author propagated, and the returned id
+// lands on the book row.
+func TestPushToCalibre_ModeDropFolderHappyPath(t *testing.T) {
+	s, bookRepo, book, author, ctx := importScannerFixture(t)
+	fc := &fakeCalibreAdder{}
+	fd := &fakeDropFolderWriter{res: calibre.IngestResult{DroppedPath: "/drop/A/T.epub", CalibreID: 77, Found: true}}
+	s.WithCalibre(modeFn(calibre.ModeDropFolder), fc, fd)
+
+	s.pushToCalibre(ctx, book, author, "/library/book.epub")
+
+	if len(fc.calls) != 0 {
+		t.Errorf("adder must not be called in drop_folder mode, got %v", fc.calls)
+	}
+	if len(fd.calls) != 1 {
+		t.Fatalf("expected 1 Ingest call, got %d", len(fd.calls))
+	}
+	call := fd.calls[0]
+	if call.src != "/library/book.epub" || call.title != "Title T" || call.author != "Author A" {
+		t.Errorf("Ingest called with %+v, want src=/library/book.epub title=Title T author=Author A", call)
+	}
+	got, _ := bookRepo.GetByID(ctx, book.ID)
+	if got.CalibreID == nil || *got.CalibreID != 77 {
+		t.Errorf("calibre_id = %v, want 77", got.CalibreID)
+	}
+}
+
+// TestPushToCalibre_ModeDropFolderPollTimeout — Calibre didn't pick up the
+// file within the budget. Drop-folder mode must NOT stamp a calibre_id
+// but also MUST NOT surface as an import failure (already logged as warn).
+func TestPushToCalibre_ModeDropFolderPollTimeout(t *testing.T) {
+	s, bookRepo, book, author, ctx := importScannerFixture(t)
+	fd := &fakeDropFolderWriter{res: calibre.IngestResult{DroppedPath: "/drop/A/T.epub", Found: false}}
+	s.WithCalibre(modeFn(calibre.ModeDropFolder), nil, fd)
+
+	s.pushToCalibre(ctx, book, author, "/library/book.epub")
+
+	got, _ := bookRepo.GetByID(ctx, book.ID)
+	if got.CalibreID != nil {
+		t.Errorf("calibre_id must stay nil on poll timeout, got %v", got.CalibreID)
+	}
+}
+
+// TestPushToCalibre_ModeDropFolderIngestError — a hard Ingest error (e.g.
+// disk full writing into the drop folder) is logged but swallowed so the
+// rest of the import pipeline completes.
+func TestPushToCalibre_ModeDropFolderIngestError(t *testing.T) {
+	s, bookRepo, book, author, ctx := importScannerFixture(t)
+	fd := &fakeDropFolderWriter{err: errors.New("disk full")}
+	s.WithCalibre(modeFn(calibre.ModeDropFolder), nil, fd)
+
+	s.pushToCalibre(ctx, book, author, "/library/book.epub")
+
+	got, _ := bookRepo.GetByID(ctx, book.ID)
+	if got.CalibreID != nil {
+		t.Errorf("calibre_id must stay nil on ingest error, got %v", got.CalibreID)
+	}
+}
+
+// TestPushToCalibre_ModeDropFolderUnconfigured — ErrDropFolderNotConfigured
+// is treated as a silent skip (same as ErrDisabled on the calibredb side).
+func TestPushToCalibre_ModeDropFolderUnconfigured(t *testing.T) {
+	s, bookRepo, book, author, ctx := importScannerFixture(t)
+	fd := &fakeDropFolderWriter{err: calibre.ErrDropFolderNotConfigured}
+	s.WithCalibre(modeFn(calibre.ModeDropFolder), nil, fd)
+
+	s.pushToCalibre(ctx, book, author, "/library/book.epub")
+
+	got, _ := bookRepo.GetByID(ctx, book.ID)
+	if got.CalibreID != nil {
+		t.Errorf("calibre_id must stay nil when drop folder unconfigured, got %v", got.CalibreID)
+	}
+}
+
+// TestPushToCalibre_ModeDropFolderFallbackAuthor — if the author lookup
+// failed upstream we still attempt the ingest with a placeholder name so
+// Calibre at least receives the file. The lookup will likely miss but that
+// surfaces cleanly as a poll timeout instead of a nil-deref crash.
+func TestPushToCalibre_ModeDropFolderFallbackAuthor(t *testing.T) {
+	s, _, book, _, ctx := importScannerFixture(t)
+	fd := &fakeDropFolderWriter{res: calibre.IngestResult{Found: false}}
+	s.WithCalibre(modeFn(calibre.ModeDropFolder), nil, fd)
+
+	s.pushToCalibre(ctx, book, nil, "/library/book.epub")
+
+	if len(fd.calls) != 1 || fd.calls[0].author != "Unknown Author" {
+		t.Errorf("fallback author not applied: %+v", fd.calls)
+	}
 }

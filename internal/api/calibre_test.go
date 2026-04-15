@@ -183,3 +183,135 @@ func TestSettings_SetRejectsInvalidCalibrePath(t *testing.T) {
 		t.Error("error field should be non-empty")
 	}
 }
+
+// TestLoadCalibreMode_DefaultsToOff: a fresh DB with no setting row must
+// report mode=off so the scanner doesn't attempt either integration before
+// the operator opts in.
+func TestLoadCalibreMode_DefaultsToOff(t *testing.T) {
+	_, repo, _ := calibreFixture(t)
+	if got := LoadCalibreMode(repo); got != "off" {
+		t.Errorf("LoadCalibreMode default = %q, want off", got)
+	}
+}
+
+// TestLoadCalibreMode_ParsesKnownValues: each canonical mode string must
+// survive a round-trip through the settings table. Regression guard for
+// a typo in the const names breaking the UI's radio group.
+func TestLoadCalibreMode_ParsesKnownValues(t *testing.T) {
+	_, repo, ctx := calibreFixture(t)
+	for _, m := range []string{"off", "calibredb", "drop_folder"} {
+		if err := repo.Set(ctx, SettingCalibreMode, m); err != nil {
+			t.Fatal(err)
+		}
+		if got := string(LoadCalibreMode(repo)); got != m {
+			t.Errorf("LoadCalibreMode for %q = %q", m, got)
+		}
+	}
+}
+
+// TestLoadCalibreConfig_ModeDrivesEnabled: when mode=calibredb the client
+// reports Enabled=true; when mode=drop_folder it reports Enabled=false
+// (the drop-folder path doesn't go through the calibredb client). This is
+// the contract main.go relies on when deciding whether to log "calibre
+// integration enabled" at boot.
+func TestLoadCalibreConfig_ModeDrivesEnabled(t *testing.T) {
+	_, repo, ctx := calibreFixture(t)
+	cases := []struct {
+		mode string
+		want bool
+	}{
+		{"calibredb", true},
+		{"drop_folder", false},
+		{"off", false},
+	}
+	for _, tc := range cases {
+		if err := repo.Set(ctx, SettingCalibreMode, tc.mode); err != nil {
+			t.Fatal(err)
+		}
+		if got := LoadCalibreConfig(repo).Enabled; got != tc.want {
+			t.Errorf("mode=%s Enabled=%v, want %v", tc.mode, got, tc.want)
+		}
+	}
+}
+
+// TestLoadDropFolderConfig_ReadsPaths: LibraryPath is shared with the
+// calibredb client (metadata.db lives there); DropFolderPath is a separate
+// watched directory.
+func TestLoadDropFolderConfig_ReadsPaths(t *testing.T) {
+	_, repo, ctx := calibreFixture(t)
+	lib := t.TempDir()
+	drop := t.TempDir()
+	if err := repo.Set(ctx, SettingCalibreLibraryPath, lib); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Set(ctx, SettingCalibreDropFolderPath, drop); err != nil {
+		t.Fatal(err)
+	}
+	cfg := LoadDropFolderConfig(repo)
+	if cfg.LibraryPath != lib {
+		t.Errorf("LibraryPath = %q, want %q", cfg.LibraryPath, lib)
+	}
+	if cfg.DropFolderPath != drop {
+		t.Errorf("DropFolderPath = %q, want %q", cfg.DropFolderPath, drop)
+	}
+}
+
+func TestValidateSettingValue_CalibreMode(t *testing.T) {
+	if err := validateSettingValue(SettingCalibreMode, ""); err != nil {
+		t.Errorf("empty mode should be accepted (=default off), got %v", err)
+	}
+	for _, m := range []string{"off", "calibredb", "drop_folder"} {
+		if err := validateSettingValue(SettingCalibreMode, m); err != nil {
+			t.Errorf("%q should be accepted: %v", m, err)
+		}
+	}
+	for _, bad := range []string{"enabled", "true", "CALIBREDB", "drop folder"} {
+		if err := validateSettingValue(SettingCalibreMode, bad); err == nil {
+			t.Errorf("%q should be rejected", bad)
+		}
+	}
+}
+
+func TestValidateSettingValue_CalibreDropFolderPath(t *testing.T) {
+	tmp := t.TempDir()
+	if err := validateSettingValue(SettingCalibreDropFolderPath, ""); err != nil {
+		t.Errorf("empty should be accepted: %v", err)
+	}
+	if err := validateSettingValue(SettingCalibreDropFolderPath, tmp); err != nil {
+		t.Errorf("writable dir should be accepted: %v", err)
+	}
+	if err := validateSettingValue(SettingCalibreDropFolderPath, "/no/such/dir"); err == nil {
+		t.Error("missing dir should be rejected")
+	}
+	file := filepath.Join(tmp, "f")
+	if err := os.WriteFile(file, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSettingValue(SettingCalibreDropFolderPath, file); err == nil {
+		t.Error("file should be rejected as drop folder")
+	}
+}
+
+// TestMigrate_LegacyEnabledHonored: the upgrade migration rewrites
+// calibre.enabled=true → calibre.mode=calibredb. In edge cases where the
+// migration hasn't run but the legacy key says true, LoadCalibreConfig
+// should still report Enabled=true so imports don't silently stop
+// mirroring mid-upgrade.
+func TestLoadCalibreConfig_LegacyEnabledHonored(t *testing.T) {
+	_, repo, ctx := calibreFixture(t)
+	if err := repo.Set(ctx, SettingCalibreEnabled, "true"); err != nil {
+		t.Fatal(err)
+	}
+	// Mode left unset (empty → off).
+	if got := LoadCalibreConfig(repo).Enabled; !got {
+		t.Error("legacy calibre.enabled=true must keep Enabled=true")
+	}
+	// But when the operator has explicitly picked drop_folder, the
+	// legacy flag must NOT resurrect the calibredb path.
+	if err := repo.Set(ctx, SettingCalibreMode, "drop_folder"); err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadCalibreConfig(repo).Enabled; got {
+		t.Error("mode=drop_folder must override legacy calibre.enabled")
+	}
+}

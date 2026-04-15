@@ -263,13 +263,20 @@ export interface Book {
   author?: Author
 }
 
-// CalibreSettings mirrors the three `calibre.*` keys stored in the settings
+// CalibreMode selects which integration flow runs after a successful
+// Bindery import. 'off' skips Calibre entirely, 'calibredb' shells out to
+// the calibredb CLI (v0.8.0 path), 'drop_folder' writes the file into a
+// Calibre-watched directory and polls metadata.db for the assigned id.
+export type CalibreMode = 'off' | 'calibredb' | 'drop_folder'
+
+// CalibreSettings mirrors the `calibre.*` keys stored in the settings
 // table. The shape is deliberately flat so SettingsPage can render the
 // fields alongside the other string-keyed settings it already manages.
 export interface CalibreSettings {
-  calibre_enabled: boolean
+  calibre_mode: CalibreMode
   calibre_library_path: string
   calibre_binary_path: string
+  calibre_drop_folder_path: string
 }
 
 export interface CalibreTestResult {

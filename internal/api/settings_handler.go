@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -126,6 +127,41 @@ func validateSettingValue(key, value string) error {
 		if info.Mode()&0o111 == 0 {
 			return fmt.Errorf("binary_path %q is not executable", value)
 		}
+	case SettingCalibreMode:
+		// Canonical values only. An empty string falls through to the
+		// default (off) handled by LoadCalibreMode; anything else must
+		// parse to a known mode so a typo in the UI cannot silently
+		// disable the integration.
+		if value == "" {
+			return nil
+		}
+		if !calibre.Mode(value).Valid() {
+			return fmt.Errorf("calibre.mode %q is not one of off, calibredb, drop_folder", value)
+		}
+	case SettingCalibreDropFolderPath:
+		// Empty is allowed: it's how the user disables the drop-folder
+		// target without flipping the mode. When set, require an existing
+		// writable directory so we fail fast in settings rather than in
+		// the middle of an import goroutine.
+		if value == "" {
+			return nil
+		}
+		info, err := os.Stat(value)
+		if err != nil {
+			return fmt.Errorf("drop_folder_path %q: %w", value, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("drop_folder_path %q is not a directory", value)
+		}
+		// Probe write access: creating a temp file exercises exactly the
+		// EACCES / EROFS surface the importer would hit later.
+		probe, err := os.CreateTemp(value, ".bindery-drop-probe-*")
+		if err != nil {
+			return fmt.Errorf("drop_folder_path %q is not writable: %w", value, err)
+		}
+		name := probe.Name()
+		_ = probe.Close()
+		_ = os.Remove(name)
 	}
 	return nil
 }

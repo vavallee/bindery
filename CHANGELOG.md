@@ -10,7 +10,7 @@ The `development` branch carries the in-flight feature set for the next release.
 
 ### Added
 
-- OPDS 1.2 catalogue endpoint (closes [#65](https://github.com/vavallee/bindery/issues/65)) — read-only Atom/OPDS feeds rooted at `/opds/` so KOReader, Moon+ Reader, and other reading apps can browse the Bindery library and download books directly, without Calibre. Navigation feeds for Authors / Series / Recent, acquisition feeds per author / series / single book, and a per-book download link that serves the same bytes as the web UI (audiobook directories are zipped on the fly). The `/opds/*` subtree accepts HTTP Basic, `X-Api-Key`, `?apikey=`, or an existing session cookie; unauthenticated requests get a `401` with a `WWW-Authenticate: Basic realm="Bindery OPDS"` challenge so mobile clients prompt for credentials.
+- **Calibre drop-folder integration + per-library mode selector** ([#64](https://github.com/vavallee/bindery/issues/64)) — Settings → Calibre gains a three-way **Mode** radio (`off` / `calibredb` / `drop_folder`). The new `drop_folder` mode copies imported files into a Calibre-watched directory as `<folder>/<Author>/<Title>.ext` and then polls the Calibre library's `metadata.db` for the assigned book id, for deployments where `calibredb` isn't reachable from the Bindery process. Existing v0.8.0 installs with `calibre.enabled=true` migrate automatically to `mode=calibredb` so no user action is needed to keep the current flow working.
 
 ## [v0.8.0] — 2026-04-14
 

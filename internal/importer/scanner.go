@@ -20,27 +20,37 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
-// calibreClient is the subset of *calibre.Client the scanner relies on.
-// Defining it here lets tests and main.go swap implementations without
-// touching the importer surface.
-type calibreClient interface {
-	Enabled() bool
+// calibreAdder is the calibredb half of the Calibre integration: it mirrors
+// a just-imported file into Calibre by shelling out to `calibredb add`.
+// The scanner holds a reference to one of these but only invokes it when
+// the mode resolver says we're in ModeCalibredb.
+type calibreAdder interface {
 	Add(ctx context.Context, filePath string) (int64, error)
+}
+
+// calibreDropFolderWriter is the drop-folder half of the integration:
+// writes the file to Calibre's watched directory and polls metadata.db for
+// the resulting book id. Kept as an interface so tests can stub it without
+// touching the filesystem.
+type calibreDropFolderWriter interface {
+	Ingest(ctx context.Context, srcPath, title, author string) (calibre.IngestResult, error)
 }
 
 // Scanner checks for completed downloads and imports them into the library.
 type Scanner struct {
-	downloads    *db.DownloadRepo
-	clients      *db.DownloadClientRepo
-	books        *db.BookRepo
-	authors      *db.AuthorRepo
-	history      *db.HistoryRepo
-	renamer      *Renamer
-	remapper     *Remapper
-	calibre      calibreClient
-	settings     *db.SettingsRepo
-	libraryDir   string
-	audiobookDir string
+	downloads      *db.DownloadRepo
+	clients        *db.DownloadClientRepo
+	books          *db.BookRepo
+	authors        *db.AuthorRepo
+	history        *db.HistoryRepo
+	renamer        *Renamer
+	remapper       *Remapper
+	calibreAdder   calibreAdder
+	calibreDrop    calibreDropFolderWriter
+	calibreMode    func() calibre.Mode
+	settings       *db.SettingsRepo
+	libraryDir     string
+	audiobookDir   string
 }
 
 // NewScanner creates an import scanner. downloadPathRemap is an optional
@@ -66,12 +76,16 @@ func NewScanner(downloads *db.DownloadRepo, clients *db.DownloadClientRepo,
 	}
 }
 
-// WithCalibre attaches a Calibre client to the scanner. When the client is
-// enabled the scanner mirrors every successful import into the configured
-// Calibre library and persists the returned id on the book row. Passing a
-// disabled (or nil-interface) client is a no-op.
-func (s *Scanner) WithCalibre(c calibreClient) *Scanner {
-	s.calibre = c
+// WithCalibre attaches the Calibre integration pieces. The mode resolver
+// is consulted on every import so the operator can switch modes (or turn
+// the integration off) in the UI without restarting Bindery. Passing nil
+// for any argument disables that branch — a nil resolver skips all Calibre
+// calls, a nil adder skips only the calibredb path, a nil drop writer
+// skips only the drop-folder path.
+func (s *Scanner) WithCalibre(mode func() calibre.Mode, adder calibreAdder, drop calibreDropFolderWriter) *Scanner {
+	s.calibreMode = mode
+	s.calibreAdder = adder
+	s.calibreDrop = drop
 	return s
 }
 
@@ -82,15 +96,39 @@ func (s *Scanner) WithSettings(sr *db.SettingsRepo) *Scanner {
 	return s
 }
 
-// pushToCalibre runs `calibredb add` for a just-imported book. Failures are
-// logged and swallowed — Calibre sync is a best-effort mirror, so a missing
-// binary or unreachable library must never roll back an otherwise-good
-// import. A successful call stores the returned id on the book row.
-func (s *Scanner) pushToCalibre(ctx context.Context, book *models.Book, path string) {
-	if s.calibre == nil || !s.calibre.Enabled() || book == nil {
+// pushToCalibre dispatches the just-imported book to the Calibre integration
+// selected by the current mode setting. Failures are logged and swallowed —
+// Calibre sync is a best-effort mirror, so a missing binary, unreachable
+// library, or Calibre-didn't-pick-it-up-in-time must never roll back an
+// otherwise-good Bindery import. A successful call stores the returned
+// Calibre id on the book row.
+//
+// author is required for the drop-folder path (it drives both the filename
+// layout and the metadata.db lookup); the calibredb path tolerates a nil
+// author because calibredb reads metadata from the file itself.
+func (s *Scanner) pushToCalibre(ctx context.Context, book *models.Book, author *models.Author, path string) {
+	if s.calibreMode == nil || book == nil {
 		return
 	}
-	id, err := s.calibre.Add(ctx, path)
+	mode := s.calibreMode()
+	switch mode {
+	case calibre.ModeCalibredb:
+		s.pushCalibredb(ctx, book, path)
+	case calibre.ModeDropFolder:
+		s.pushCalibreDropFolder(ctx, book, author, path)
+	default:
+		// ModeOff or any unknown value: no-op.
+	}
+}
+
+// pushCalibredb is the Path A flow — shell out to calibredb add. Kept as a
+// small helper so the mode-dispatch in pushToCalibre reads linearly.
+func (s *Scanner) pushCalibredb(ctx context.Context, book *models.Book, path string) {
+	if s.calibreAdder == nil {
+		slog.Debug("calibre: mode=calibredb but adder is nil, skipping", "bookId", book.ID)
+		return
+	}
+	id, err := s.calibreAdder.Add(ctx, path)
 	if err != nil {
 		if errors.Is(err, calibre.ErrDisabled) {
 			return
@@ -102,7 +140,46 @@ func (s *Scanner) pushToCalibre(ctx context.Context, book *models.Book, path str
 		slog.Warn("calibre: persist calibre_id failed", "bookId", book.ID, "calibreId", id, "error", err)
 		return
 	}
-	slog.Info("calibre: book mirrored", "bookId", book.ID, "calibreId", id, "path", path)
+	slog.Info("calibre: book mirrored", "mode", "calibredb", "bookId", book.ID, "calibreId", id, "path", path)
+}
+
+// pushCalibreDropFolder is the Path B flow — copy the file into Calibre's
+// watched directory and poll metadata.db for the resulting book id. A poll
+// timeout logs a warning but is not surfaced as a failure, matching the
+// rest of the Calibre integration's best-effort posture.
+func (s *Scanner) pushCalibreDropFolder(ctx context.Context, book *models.Book, author *models.Author, path string) {
+	if s.calibreDrop == nil {
+		slog.Debug("calibre: mode=drop_folder but writer is nil, skipping", "bookId", book.ID)
+		return
+	}
+	authorName := "Unknown Author"
+	if author != nil && author.Name != "" {
+		authorName = author.Name
+	}
+	// Calibre keys off the file's embedded metadata, not its filename, but
+	// we still use the book's title for the lookup on the way back. Use
+	// the Bindery title so a ParseFilename-derived one never leaks in.
+	res, err := s.calibreDrop.Ingest(ctx, path, book.Title, authorName)
+	if err != nil {
+		if errors.Is(err, calibre.ErrDropFolderNotConfigured) {
+			return
+		}
+		slog.Warn("calibre: drop-folder ingest failed, continuing",
+			"bookId", book.ID, "path", path, "error", err)
+		return
+	}
+	if !res.Found {
+		slog.Warn("calibre: drop-folder — Calibre did not ingest within poll budget",
+			"bookId", book.ID, "dropped", res.DroppedPath, "title", book.Title, "author", authorName)
+		return
+	}
+	if err := s.books.SetCalibreID(ctx, book.ID, res.CalibreID); err != nil {
+		slog.Warn("calibre: persist calibre_id failed",
+			"bookId", book.ID, "calibreId", res.CalibreID, "error", err)
+		return
+	}
+	slog.Info("calibre: book mirrored",
+		"mode", "drop_folder", "bookId", book.ID, "calibreId", res.CalibreID, "dropped", res.DroppedPath)
 }
 
 // CheckDownloads polls SABnzbd for status changes and updates the local download records.
@@ -212,7 +289,7 @@ func (s *Scanner) tryImport(ctx context.Context, sab *sabnzbd.Client, dl *models
 		s.downloads.UpdateStatus(ctx, dl.ID, models.DownloadStatusImported)
 		slog.Info("audiobook imported", "title", book.Title, "path", destDir)
 
-		s.pushToCalibre(ctx, book, destDir)
+		s.pushToCalibre(ctx, book, author, destDir)
 
 		eventData, _ := json.Marshal(map[string]string{"path": destDir})
 		s.history.Create(ctx, &models.HistoryEvent{
@@ -249,7 +326,7 @@ func (s *Scanner) tryImport(ctx context.Context, sab *sabnzbd.Client, dl *models
 		s.downloads.UpdateStatus(ctx, dl.ID, models.DownloadStatusImported)
 		slog.Info("book imported", "title", book.Title, "path", destPath)
 
-		s.pushToCalibre(ctx, book, destPath)
+		s.pushToCalibre(ctx, book, author, destPath)
 
 		eventData, _ := json.Marshal(map[string]string{"path": destPath})
 		s.history.Create(ctx, &models.HistoryEvent{

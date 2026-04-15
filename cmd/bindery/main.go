@@ -142,14 +142,23 @@ func main() {
 		cfg.DownloadPathRemap,
 	)
 
-	// Calibre client: constructed once at boot from the settings table.
-	// The scanner calls Enabled() on every import, so toggling the flag
-	// takes effect without a restart — but a library_path / binary_path
-	// change does require one (same pattern the rest of Bindery uses).
+	// Calibre clients: one per integration mode.
+	//   - calibredb client (Path A, v0.8.0) shells out to `calibredb add`
+	//   - drop-folder writer (Path B, v0.8.1) copies files into Calibre's
+	//     watched directory and polls metadata.db for the returned book id
+	// The mode resolver reads the setting on every import so the operator
+	// can switch modes in the UI without restarting. Library_path and the
+	// binary still require a restart to take effect — same pattern as the
+	// rest of Bindery.
 	calibreClient := calibre.New(api.LoadCalibreConfig(settingsRepo))
-	importScanner.WithCalibre(calibreClient)
-	if calibreClient.Enabled() {
-		slog.Info("calibre integration enabled")
+	dropWriter := calibre.NewDropFolderWriter(api.LoadDropFolderConfig(settingsRepo))
+	modeResolver := func() calibre.Mode { return api.LoadCalibreMode(settingsRepo) }
+	importScanner.WithCalibre(modeResolver, calibreClient, dropWriter)
+	switch api.LoadCalibreMode(settingsRepo) {
+	case calibre.ModeCalibredb:
+		slog.Info("calibre integration enabled", "mode", "calibredb")
+	case calibre.ModeDropFolder:
+		slog.Info("calibre integration enabled", "mode", "drop_folder")
 	}
 
 	// Scheduler
