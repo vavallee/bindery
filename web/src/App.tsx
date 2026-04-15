@@ -18,6 +18,7 @@ import SeriesPage from './pages/SeriesPage'
 import CalendarPage from './pages/CalendarPage'
 import BlocklistPage from './pages/BlocklistPage'
 import Logo from './components/Logo'
+import { useTheme } from './theme'
 
 const NAV_KEYS = [
   { to: '/', key: 'authors', end: true },
@@ -32,6 +33,7 @@ const NAV_KEYS = [
 ]
 
 function Shell() {
+  useTheme() // ensures dark class is applied on every mount, not only when Settings is visited
   const { t } = useTranslation()
   const [version, setVersion] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
