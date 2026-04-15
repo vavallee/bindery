@@ -1,0 +1,53 @@
+rules:
+  - id: no-http-default-client
+    message: >-
+      Avoid net/http.DefaultClient — it has no timeout and is shared process-wide.
+      Construct an *http.Client with an explicit Timeout instead.
+    severity: WARNING
+    languages: [go]
+    patterns:
+      - pattern-either:
+          - pattern: http.DefaultClient.Get(...)
+          - pattern: http.DefaultClient.Post(...)
+          - pattern: http.DefaultClient.Do(...)
+          - pattern: http.Get(...)
+          - pattern: http.Post(...)
+          - pattern: http.Head(...)
+    paths:
+      exclude:
+        - "**/*_test.go"
+        - "internal/httpsec/**"
+
+  - id: no-exec-command-string
+    message: >-
+      exec.Command with variable interpolation can turn user input into a shell
+      injection. Split args explicitly (exec.Command(bin, arg1, arg2, ...)).
+    severity: ERROR
+    languages: [go]
+    pattern-either:
+      - pattern: exec.Command(fmt.Sprintf(...))
+      - pattern: exec.CommandContext($CTX, fmt.Sprintf(...))
+    paths:
+      exclude:
+        - "**/*_test.go"
+
+  - id: no-template-unescaped-html
+    message: >-
+      text/template in a web context does not escape HTML. Use html/template
+      for anything rendered to a browser.
+    severity: WARNING
+    languages: [go]
+    pattern: |
+      import "text/template"
+    paths:
+      include:
+        - "internal/api/**"
+        - "cmd/**"
+
+paths:
+  exclude:
+    - web/node_modules
+    - web/dist
+    - "**/*_test.go"
+    - "internal/webui/**"
+    - "tests/security/**"

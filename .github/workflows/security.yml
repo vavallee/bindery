@@ -1,0 +1,449 @@
+name: Security
+
+on:
+  push:
+    branches: [main, development]
+  pull_request:
+  schedule:
+    # Weekly Monday 06:00 UTC
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Go SAST: gosec + govulncheck + golangci-lint ────────────────────────────
+  sast-go:
+    name: SAST – Go
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.9"
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-mod-${{ hashFiles('go.sum') }}
+          restore-keys: go-mod-
+
+      - name: gosec (SARIF)
+        uses: securego/gosec@master
+        with:
+          args: '-no-fail -fmt sarif -out gosec.sarif ./...'
+
+      - name: Upload gosec SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: gosec.sarif
+          category: gosec
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.11.4
+          args: --timeout=5m --out-format=sarif --issues-exit-code=0
+          only-new-issues: false
+
+      - name: Upload golangci-lint SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: results.sarif
+          category: golangci-lint
+
+  # ── Frontend SAST: Semgrep + npm audit + ESLint security ───────────────────
+  sast-frontend:
+    name: SAST – Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --prefix web
+
+      - name: npm audit
+        run: npm audit --audit-level=high --prefix web
+        continue-on-error: true
+
+      - name: Install eslint-plugin-security
+        run: npm install --no-save eslint-plugin-security --prefix web
+
+      - name: ESLint with security plugin
+        run: |
+          cat > /tmp/eslint-security.config.mjs << 'EOF'
+          import security from 'eslint-plugin-security';
+          export default [
+            security.configs.recommended,
+            { files: ['src/**/*.{ts,tsx,js,jsx}'] }
+          ];
+          EOF
+          cd web && npx eslint --no-eslintrc -c /tmp/eslint-security.config.mjs \
+            --format @microsoft/eslint-formatter-sarif \
+            --output-file eslint-security.sarif \
+            src/ || true
+
+      - name: Upload ESLint SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: web/eslint-security.sarif
+          category: eslint-security
+
+      - name: Semgrep
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/react
+            p/typescript
+            p/xss
+          generateSarif: "1"
+        env:
+          SEMGREP_RULES: p/react p/typescript p/xss
+
+      - name: Upload Semgrep SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep-frontend
+
+  # ── Secrets scan: Gitleaks ─────────────────────────────────────────────────
+  secrets-scan:
+    name: Secrets Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+          GITLEAKS_ENABLE_SARIF: true
+
+      - name: Upload Gitleaks SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: results.sarif
+          category: gitleaks
+
+  # ── IaC scan: Hadolint + Helm lint + Kubesec + Checkov ────────────────────
+  iac-scan:
+    name: IaC Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Hadolint (Dockerfile)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          format: sarif
+          output-file: hadolint.sarif
+          no-fail: true
+
+      - name: Upload Hadolint SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: hadolint.sarif
+          category: hadolint
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: latest
+
+      - name: Helm lint
+        run: helm lint --strict charts/bindery
+
+      - name: Render Helm templates for kubesec
+        run: |
+          helm template bindery charts/bindery > /tmp/rendered-manifests.yaml
+
+      - name: Kubesec scan
+        run: |
+          docker run --rm -v /tmp:/tmp kubesec/kubesec:v2 scan /tmp/rendered-manifests.yaml \
+            > /tmp/kubesec-results.json || true
+          cat /tmp/kubesec-results.json
+
+      - name: Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          file: Dockerfile
+          framework: dockerfile,helm,kubernetes
+          output_format: sarif
+          output_file_path: checkov.sarif
+          soft_fail: true
+
+      - name: Upload Checkov SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov.sarif
+          category: checkov
+
+  # ── Container scan: Trivy + Grype + Dockle + Syft SBOM ───────────────────
+  container-scan:
+    name: Container Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-mod-${{ hashFiles('go.sum') }}
+          restore-keys: go-mod-
+
+      - name: Build image
+        run: docker build -t bindery:scan .
+
+      - name: Trivy vulnerability scan (SARIF)
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: bindery:scan
+          format: sarif
+          output: trivy.sarif
+          severity: CRITICAL,HIGH
+          exit-code: '0'
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy.sarif
+          category: trivy
+
+      - name: Grype vulnerability scan (SARIF)
+        uses: anchore/scan-action@v3
+        id: grype
+        with:
+          image: bindery:scan
+          output-format: sarif
+          fail-build: false
+
+      - name: Upload Grype SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: ${{ steps.grype.outputs.sarif }}
+          category: grype
+
+      - name: Dockle CIS Docker benchmark
+        uses: goodwithtech/dockle-action@v0.1.1
+        with:
+          image: bindery:scan
+          exit-code: '0'
+          exit-level: WARN
+
+      - name: Syft SBOM – SPDX
+        uses: anchore/sbom-action@v0.15.0
+        with:
+          image: bindery:scan
+          format: spdx-json
+          output-file: sbom.spdx.json
+          artifact-name: sbom.spdx.json
+          upload-artifact: true
+          upload-artifact-retention: 90
+
+      - name: Syft SBOM – CycloneDX
+        uses: anchore/sbom-action@v0.15.0
+        with:
+          image: bindery:scan
+          format: cyclonedx-json
+          output-file: sbom.cyclonedx.json
+          artifact-name: sbom.cyclonedx.json
+          upload-artifact: true
+          upload-artifact-retention: 90
+
+  # ── DAST: ZAP baseline (passive) ──────────────────────────────────────────
+  dast-api:
+    name: DAST – ZAP Baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-mod-${{ hashFiles('go.sum') }}
+          restore-keys: go-mod-
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.9"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build frontend
+        run: npm ci --prefix web && npm run build --prefix web
+
+      - name: Build Bindery binary
+        run: go build -o bindery-dast ./cmd/bindery
+
+      - name: Start Bindery
+        run: |
+          BINDERY_DB_PATH=/tmp/bindery-dast.db \
+          BINDERY_API_KEY=zap-test-key \
+          ./bindery-dast &
+          # Wait for the service to be ready
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8787/api/v1/health; then
+              echo "Bindery is up"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: 'http://localhost:8787'
+          rules_file_name: '.zap/rules.tsv'
+          issue_title: 'ZAP Baseline Report'
+          fail_action: false
+          allow_issue_writing: false
+
+      - name: Upload ZAP SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: zap-results.sarif
+          category: zap-dast
+
+  # ── OpenSSF Scorecard ──────────────────────────────────────────────────────
+  # Only runs on push-to-main and schedule — not on PRs (no write token for forks)
+  scorecard:
+    name: OpenSSF Scorecard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: >
+      github.event_name == 'schedule' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    permissions:
+      security-events: write
+      id-token: write
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Scorecard
+        uses: ossf/scorecard-action@v2.4.0
+        with:
+          results_file: scorecard.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Upload Scorecard SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: scorecard.sarif
+          category: scorecard
+
+  # ── Helm unit tests ────────────────────────────────────────────────────────
+  # Stream C will add the test fixtures. continue-on-error until they land.
+  policy-test:
+    name: Helm Policy Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: latest
+
+      - name: helm-unittest
+        uses: helm-unittest/helm-unittest-action@v2
+        with:
+          helm-version: latest
+          # tolerates missing test files while Stream C is pending
+          with-subchart: false
+          charts: charts/bindery
+        continue-on-error: true
+
+  # ── Aggregate severity summary ─────────────────────────────────────────────
+  summary:
+    name: Security Summary
+    runs-on: ubuntu-latest
+    needs:
+      - sast-go
+      - sast-frontend
+      - secrets-scan
+      - iac-scan
+      - container-scan
+      - dast-api
+      - policy-test
+    if: always()
+    steps:
+      - name: Write severity summary
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" << 'EOF'
+          ## Security Scan Summary
+
+          | Job | Status |
+          |-----|--------|
+          | SAST – Go (gosec, govulncheck, golangci-lint) | ${{ needs.sast-go.result }} |
+          | SAST – Frontend (Semgrep, npm audit, ESLint) | ${{ needs.sast-frontend.result }} |
+          | Secrets Scan (Gitleaks) | ${{ needs.secrets-scan.result }} |
+          | IaC Scan (Hadolint, Helm lint, Kubesec, Checkov) | ${{ needs.iac-scan.result }} |
+          | Container Scan (Trivy, Grype, Dockle, Syft SBOM) | ${{ needs.container-scan.result }} |
+          | DAST – ZAP Baseline | ${{ needs.dast-api.result }} |
+          | Helm Policy Tests | ${{ needs.policy-test.result }} |
+
+          > Full findings are visible in the **Security** tab → Code scanning alerts.
+          > SBOMs are attached as workflow artifacts (90-day retention).
+          EOF

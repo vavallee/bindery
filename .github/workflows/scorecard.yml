@@ -1,0 +1,51 @@
+name: OpenSSF Scorecard
+
+# Separate workflow: Scorecard requires its own minimal permissions and
+# a separate schedule (one hour after security.yml to avoid rate-limit
+# contention on the GitHub API).
+#
+# See: https://github.com/ossf/scorecard-action#permissions
+on:
+  schedule:
+    # Weekly Monday 07:00 UTC — one hour after security.yml (06:00)
+    - cron: '0 7 * * 1'
+  push:
+    branches: [main]
+
+# These permissions are the *minimum* required by scorecard-action.
+# Do NOT add extra permissions here — keep this workflow minimal.
+permissions:
+  # Required to read Actions workflow definitions (branch-protection analysis)
+  actions: read
+  # Required to read the repo tree
+  contents: read
+  # Required to upload SARIF to the GitHub Security tab
+  security-events: write
+  # Required for Scorecard to sign results with Sigstore (OIDC token)
+  id-token: write
+
+jobs:
+  scorecard:
+    name: Scorecard Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Run Scorecard
+        uses: ossf/scorecard-action@v2.4.0
+        with:
+          results_file: scorecard.sarif
+          results_format: sarif
+          # Publish results to scorecard.dev public dashboard
+          publish_results: true
+
+      - name: Upload Scorecard SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: scorecard.sarif
+          category: ossf-scorecard

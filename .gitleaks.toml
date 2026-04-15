@@ -1,0 +1,68 @@
+# .gitleaks.toml — Bindery-tuned Gitleaks configuration
+# Extends the default gitleaks ruleset with project-specific allowlists.
+# Reference: https://github.com/gitleaks/gitleaks#configuration
+
+title = "Bindery Gitleaks Configuration"
+
+# Extend from the default built-in rules rather than replacing them.
+[extend]
+useDefault = true
+
+# ── Allow-listed paths ────────────────────────────────────────────────────────
+# Test files containing placeholder credentials for fixture/unit-test use.
+[[allowlists]]
+description = "Test fixture files – placeholder keys with SCREAMING_TEST_KEY_ prefix"
+regexes = [
+  # Keys that start with SCREAMING_TEST_KEY_ are fixture placeholders, not real secrets.
+  'SCREAMING_TEST_KEY_[A-Z0-9_]+'
+]
+paths = [
+  # All Go test files in the repo
+  '''.*_test\.go'''
+]
+
+[[allowlists]]
+description = "Demo credential strings in test files only"
+regexes = [
+  # These literal strings appear in fixture/test helpers, not production code.
+  '''admin123''',
+  '''password''',
+  # 'secret' is matched only when surrounded by word boundaries to avoid
+  # hitting legitimate field-names like 'clientSecret' (handled below).
+  '''\bsecret\b'''
+]
+paths = [
+  '''.*_test\.go''',
+  '''.*testdata/.*''',
+  '''.*fixtures/.*'''
+]
+
+[[allowlists]]
+description = "Known safe URL hosts – example.com, localhost, loopback"
+regexes = [
+  # Example domains used in documentation, comments, and test assertions.
+  '''https?://(www\.)?example\.com''',
+  # Localhost addresses are not secrets.
+  '''https?://localhost(:[0-9]+)?''',
+  '''https?://127\.0\.0\.1(:[0-9]+)?''',
+  '''https?://\[?::1\]?(:[0-9]+)?'''
+]
+
+# ── Stopwords ─────────────────────────────────────────────────────────────────
+# Short stopwords that appear in innocuous contexts throughout the codebase.
+[allowlist]
+description = "Global stopwords for common benign patterns"
+stopwords = [
+  "example",
+  "placeholder",
+  "REPLACE_ME",
+  "YOUR_KEY_HERE",
+  "test-only"
+]
+# Paths excluded globally from all rules.
+paths = [
+  '''CHANGELOG\.md''',
+  '''docs/.*''',
+  '''web/dist/.*''',
+  '''web/node_modules/.*'''
+]

@@ -14,6 +14,9 @@ linters:
     - noctx
     - sqlclosecheck
     - revive
+    - rowserrcheck
+    - gocritic
+    - exhaustive
   settings:
     staticcheck:
       checks: ["all"]
