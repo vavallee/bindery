@@ -400,22 +400,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: v3.15.4
-
-      - name: Install helm-unittest plugin (pinned, pre-platformHooks schema)
+      - name: helm-unittest (docker)
         run: |
-          PLUGIN_DIR="$(helm env HELM_PLUGINS)"
-          mkdir -p "$PLUGIN_DIR"
-          git clone --depth 1 --branch v0.7.2 \
-            https://github.com/helm-unittest/helm-unittest \
-            "$PLUGIN_DIR/helm-unittest"
-          (cd "$PLUGIN_DIR/helm-unittest" && make install)
-
-      - name: helm-unittest
-        run: helm unittest charts/bindery
+          docker run --rm -v "$PWD:/apps" \
+            helmunittest/helm-unittest:latest \
+            charts/bindery
         continue-on-error: true
 
   # ── Aggregate severity summary ─────────────────────────────────────────────
