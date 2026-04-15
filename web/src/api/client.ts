@@ -205,6 +205,11 @@ export const api = {
   listCustomFormats: () => request<CustomFormat[]>('/customformat'),
   addCustomFormat: (data: Partial<CustomFormat>) => request<CustomFormat>('/customformat', { method: 'POST', body: JSON.stringify(data) }),
   deleteCustomFormat: (id: number) => request<void>(`/customformat/${id}`, { method: 'DELETE' }),
+
+  // Root Folders
+  listRootFolders: () => request<RootFolder[]>('/rootfolder'),
+  addRootFolder: (path: string) => request<RootFolder>('/rootfolder', { method: 'POST', body: JSON.stringify({ path }) }),
+  deleteRootFolder: (id: number) => request<void>(`/rootfolder/${id}`, { method: 'DELETE' }),
 }
 
 // Types
@@ -477,6 +482,13 @@ export interface CustomFormat {
     negate: boolean
     required: boolean
   }>
+}
+
+export interface RootFolder {
+  id: number
+  path: string
+  freeSpace: number
+  createdAt: string
 }
 
 export type AuthorBulkAction = 'monitor' | 'unmonitor' | 'delete' | 'search'

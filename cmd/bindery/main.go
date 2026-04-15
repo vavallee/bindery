@@ -85,6 +85,7 @@ func main() {
 	qualityProfileRepo := db.NewQualityProfileRepo(database)
 	seriesRepo := db.NewSeriesRepo(database)
 	tagRepo := db.NewTagRepo(database)
+	rootFolderRepo := db.NewRootFolderRepo(database)
 	importListRepo := db.NewImportListRepo(database)
 	metadataProfileRepo := db.NewMetadataProfileRepo(database)
 	delayProfileRepo := db.NewDelayProfileRepo(database)
@@ -205,6 +206,7 @@ func main() {
 	dlClientHandler := api.NewDownloadClientHandler(dlClientRepo)
 	queueHandler := api.NewQueueHandler(downloadRepo, dlClientRepo, bookRepo, historyRepo)
 	importScanner.WithSettings(settingsRepo)
+	importScanner.WithRootFolders(rootFolderRepo)
 	libraryHandler := api.NewLibraryHandler(importScanner).WithSettings(settingsRepo)
 	fileHandler := api.NewFileHandler(bookRepo)
 	historyHandler := api.NewHistoryHandler(historyRepo, blocklistRepo)
@@ -220,6 +222,7 @@ func main() {
 	customFormatHandler := api.NewCustomFormatHandler(customFormatRepo)
 	bulkHandler := api.NewBulkHandler(authorRepo, bookRepo, blocklistRepo, sched)
 	backupHandler := api.NewBackupHandler(cfg.DBPath, cfg.DataDir)
+	rootFolderHandler := api.NewRootFolderHandler(rootFolderRepo)
 	calibreHandler := api.NewCalibreHandler(settingsRepo)
 	calibreImportHandler := api.NewCalibreImportHandler(calibreImporter, func() calibre.Config {
 		return api.LoadCalibreConfig(settingsRepo)
@@ -306,6 +309,11 @@ func main() {
 		r.Delete("/indexer/{id}", indexerHandler.Delete)
 		r.Post("/indexer/{id}/test", indexerHandler.Test)
 		r.Get("/indexer/search", indexerHandler.SearchQuery)
+
+		// Root folders
+		r.Get("/rootfolder", rootFolderHandler.List)
+		r.Post("/rootfolder", rootFolderHandler.Create)
+		r.Delete("/rootfolder/{id}", rootFolderHandler.Delete)
 
 		// Download clients
 		r.Get("/downloadclient", dlClientHandler.List)

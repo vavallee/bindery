@@ -1,9 +1,9 @@
 import { FormEvent, useEffect, useState } from 'react'
-import { api, AuthConfig, AuthStatus, Indexer, DownloadClient, NotificationConfig, QualityProfile, MetadataProfile, CalibreImportProgress } from '../api/client'
+import { api, AuthConfig, AuthStatus, Indexer, DownloadClient, NotificationConfig, QualityProfile, MetadataProfile, CalibreImportProgress, RootFolder } from '../api/client'
 import ThemeToggle from '../components/ThemeToggle'
 import { useAuth } from '../auth/AuthContext'
 
-type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import'
+type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders'
 
 const inputCls = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600'
 const tabCls = (active: boolean) =>
@@ -16,6 +16,9 @@ export default function SettingsPage() {
   const [notifications, setNotifications] = useState<NotificationConfig[]>([])
   const [qualityProfiles, setQualityProfiles] = useState<QualityProfile[]>([])
   const [metadataProfiles, setMetadataProfiles] = useState<MetadataProfile[]>([])
+  const [rootFolders, setRootFolders] = useState<RootFolder[]>([])
+  const [newFolderPath, setNewFolderPath] = useState('')
+  const [folderError, setFolderError] = useState('')
   const [showAddIndexer, setShowAddIndexer] = useState(false)
   const [showAddClient, setShowAddClient] = useState(false)
   const [showAddNotification, setShowAddNotification] = useState(false)
@@ -32,14 +35,22 @@ export default function SettingsPage() {
     if (tab === 'notifications') api.listNotifications().then(setNotifications).catch(console.error)
     if (tab === 'quality') api.listQualityProfiles().then(setQualityProfiles).catch(console.error)
     if (tab === 'metadata') api.listMetadataProfiles().then(setMetadataProfiles).catch(console.error)
+    if (tab === 'rootfolders') api.listRootFolders().then(setRootFolders).catch(console.error)
   }, [tab])
+
+  function formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 B'
+    const units = ['B', 'KB', 'MB', 'GB', 'TB']
+    const i = Math.floor(Math.log(bytes) / Math.log(1024))
+    return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
+  }
 
   return (
     <div>
       <h2 className="text-2xl font-bold mb-6">Settings</h2>
 
       <div className="flex flex-wrap gap-2 mb-6">
-        {(['indexers', 'clients', 'notifications', 'quality', 'metadata', 'import', 'general'] as Tab[]).map(t => (
+        {(['indexers', 'clients', 'notifications', 'quality', 'metadata', 'import', 'rootfolders', 'general'] as Tab[]).map(t => (
           <button key={t} onClick={() => setTab(t)} className={tabCls(tab === t)}>
             {t === 'indexers' ? 'Indexers'
               : t === 'clients' ? 'Download Clients'
@@ -47,6 +58,7 @@ export default function SettingsPage() {
               : t === 'quality' ? 'Quality Profiles'
               : t === 'metadata' ? 'Metadata Profiles'
               : t === 'import' ? 'Import'
+              : t === 'rootfolders' ? 'Root Folders'
               : 'General'}
           </button>
         ))}
@@ -339,6 +351,73 @@ export default function SettingsPage() {
       {/* General */}
       {tab === 'import' && (
         <ImportTab />
+      )}
+
+      {tab === 'rootfolders' && (
+        <div>
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-semibold">Root Folders</h3>
+          </div>
+          <p className="text-sm text-slate-600 dark:text-zinc-400 mb-4">
+            Root folders are the top-level library directories where Bindery moves finished downloads.
+            Each author can be assigned to a specific root folder; authors without one use the default
+            path configured at startup (<code className="font-mono bg-slate-200 dark:bg-zinc-800 px-1 rounded text-xs">BINDERY_LIBRARY_DIR</code>).
+          </p>
+
+          {rootFolders.length > 0 && (
+            <div className="space-y-2 mb-6">
+              {rootFolders.map(rf => (
+                <div key={rf.id} className="flex items-center justify-between p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+                  <div className="min-w-0">
+                    <p className="font-mono text-sm truncate">{rf.path}</p>
+                    <p className="text-xs text-slate-500 dark:text-zinc-500 mt-0.5">{formatBytes(rf.freeSpace)} free</p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      await api.deleteRootFolder(rf.id)
+                      setRootFolders(rootFolders.filter(f => f.id !== rf.id))
+                    }}
+                    className="ml-4 px-3 py-1 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded border border-red-200 dark:border-red-800 flex-shrink-0"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <form
+            onSubmit={async e => {
+              e.preventDefault()
+              setFolderError('')
+              try {
+                const created = await api.addRootFolder(newFolderPath.trim())
+                setRootFolders([...rootFolders, created])
+                setNewFolderPath('')
+              } catch (err: unknown) {
+                setFolderError(err instanceof Error ? err.message : 'Failed to add folder')
+              }
+            }}
+            className="flex gap-2 items-start"
+          >
+            <div className="flex-1">
+              <input
+                value={newFolderPath}
+                onChange={e => { setNewFolderPath(e.target.value); setFolderError('') }}
+                placeholder="/data/books"
+                className={inputCls}
+              />
+              {folderError && <p className="text-xs text-red-500 mt-1">{folderError}</p>}
+            </div>
+            <button
+              type="submit"
+              disabled={!newFolderPath.trim()}
+              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
+            >
+              Add Folder
+            </button>
+          </form>
+        </div>
       )}
 
       {tab === 'general' && (

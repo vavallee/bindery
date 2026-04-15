@@ -38,19 +38,20 @@ type calibreDropFolderWriter interface {
 
 // Scanner checks for completed downloads and imports them into the library.
 type Scanner struct {
-	downloads      *db.DownloadRepo
-	clients        *db.DownloadClientRepo
-	books          *db.BookRepo
-	authors        *db.AuthorRepo
-	history        *db.HistoryRepo
-	renamer        *Renamer
-	remapper       *Remapper
-	calibreAdder   calibreAdder
-	calibreDrop    calibreDropFolderWriter
-	calibreMode    func() calibre.Mode
-	settings       *db.SettingsRepo
-	libraryDir     string
-	audiobookDir   string
+	downloads    *db.DownloadRepo
+	clients      *db.DownloadClientRepo
+	books        *db.BookRepo
+	authors      *db.AuthorRepo
+	history      *db.HistoryRepo
+	rootFolders  *db.RootFolderRepo
+	renamer      *Renamer
+	remapper     *Remapper
+	calibreAdder calibreAdder
+	calibreDrop  calibreDropFolderWriter
+	calibreMode  func() calibre.Mode
+	settings     *db.SettingsRepo
+	libraryDir   string
+	audiobookDir string
 }
 
 // NewScanner creates an import scanner. downloadPathRemap is an optional
@@ -74,6 +75,25 @@ func NewScanner(downloads *db.DownloadRepo, clients *db.DownloadClientRepo,
 		libraryDir:   libraryDir,
 		audiobookDir: audiobookDir,
 	}
+}
+
+// WithRootFolders attaches the root folder repo so the scanner can resolve
+// per-author library directories from their rootFolderId.
+func (s *Scanner) WithRootFolders(rf *db.RootFolderRepo) *Scanner {
+	s.rootFolders = rf
+	return s
+}
+
+// effectiveLibraryDir returns the library root to use for the given author.
+// If the author has a rootFolderId and the repo is configured, that folder's
+// path is returned. Otherwise the global libraryDir is used.
+func (s *Scanner) effectiveLibraryDir(ctx context.Context, author *models.Author) string {
+	if author != nil && author.RootFolderID != nil && s.rootFolders != nil {
+		if rf, err := s.rootFolders.GetByID(ctx, *author.RootFolderID); err == nil && rf != nil {
+			return rf.Path
+		}
+	}
+	return s.libraryDir
 }
 
 // WithCalibre attaches the Calibre integration pieces. The mode resolver
@@ -285,7 +305,11 @@ func (s *Scanner) tryImport(ctx context.Context, sab *sabnzbd.Client, dl *models
 	// Audiobook path: move the entire download directory as a unit so
 	// multi-part m4b/mp3 files, cover art, and cue sheets stay together.
 	if detectedFormat == models.MediaTypeAudiobook {
-		destDir := UniqueDir(s.renamer.AudiobookDestDir(s.audiobookDir, author, book))
+		audiobookRoot := s.audiobookDir
+		if effLib := s.effectiveLibraryDir(ctx, author); effLib != s.libraryDir {
+			audiobookRoot = effLib
+		}
+		destDir := UniqueDir(s.renamer.AudiobookDestDir(audiobookRoot, author, book))
 		slog.Info("importing audiobook folder", "src", downloadPath, "dst", destDir)
 		if err := MoveDir(downloadPath, destDir); err != nil {
 			slog.Error("failed to import audiobook folder", "src", downloadPath, "error", err)
@@ -324,7 +348,7 @@ func (s *Scanner) tryImport(ctx context.Context, sab *sabnzbd.Client, dl *models
 			continue
 		}
 
-		destPath := s.renamer.DestPath(s.libraryDir, author, book, srcFile)
+		destPath := s.renamer.DestPath(s.effectiveLibraryDir(ctx, author), author, book, srcFile)
 		slog.Info("importing book", "src", srcFile, "dst", destPath)
 
 		if err := MoveFile(srcFile, destPath); err != nil {
