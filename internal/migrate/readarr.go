@@ -128,7 +128,10 @@ func importReadarrAuthors(ctx context.Context, src *sql.DB, repo *db.AuthorRepo,
 		res.Added++
 		res.AddedNames = append(res.AddedNames, full.Name)
 
-		if monitored && onSearchOnAdd != nil {
+		// Bulk imports are safe by default: always populate the catalogue
+		// but never auto-grab. The user can trigger grabs manually from the
+		// Wanted page after the import completes.
+		if onSearchOnAdd != nil {
 			go onSearchOnAdd(full)
 		}
 	}

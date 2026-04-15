@@ -148,10 +148,9 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch and store books for this author
-	if req.SearchOnAdd {
-		go h.FetchAuthorBooks(author)
-	}
+	// Fetch and store books for this author. Always populate the catalogue;
+	// pass searchOnAdd so FetchAuthorBooks knows whether to also queue grabs.
+	go h.FetchAuthorBooks(author, req.SearchOnAdd)
 
 	writeJSON(w, http.StatusCreated, author)
 }
@@ -252,11 +251,26 @@ func (h *AuthorHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go h.FetchAuthorBooks(author)
+	// Manual refresh always repopulates the catalogue but never auto-grabs —
+	// the user triggered it to refresh metadata, not to queue downloads.
+	go h.FetchAuthorBooks(author, false)
 	writeJSON(w, http.StatusAccepted, map[string]string{"message": "refresh started"})
 }
 
-func (h *AuthorHandler) FetchAuthorBooks(author *models.Author) {
+// isAutoGrabEnabled reads the autoGrab.enabled setting. Defaults to true when
+// the key is absent so existing installs keep working without any migration.
+func (h *AuthorHandler) isAutoGrabEnabled(ctx context.Context) bool {
+	if h.settings == nil {
+		return true
+	}
+	s, _ := h.settings.Get(ctx, "autoGrab.enabled")
+	if s == nil {
+		return true
+	}
+	return s.Value != "false"
+}
+
+func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool) {
 	ctx := contextBackground()
 	slog.Info("fetching books for author", "author", author.Name, "foreignId", author.ForeignID)
 
@@ -336,8 +350,9 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author) {
 			}
 		}
 
-		// Auto-search the freshly-added wanted book if configured.
-		if h.searcher != nil && author.Monitored {
+		// Auto-search the freshly-added wanted book only when the per-add
+		// flag AND the global auto-grab kill-switch both say yes.
+		if autoSearch && h.searcher != nil && author.Monitored && h.isAutoGrabEnabled(ctx) {
 			h.searcher.SearchAndGrabBook(ctx, b)
 		}
 	}

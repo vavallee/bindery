@@ -165,7 +165,7 @@ func main() {
 	searchHandler := api.NewSearchHandler(metaAgg)
 	authorHandler := api.NewAuthorHandler(authorRepo, authorAliasRepo, bookRepo, seriesRepo, metaAgg, settingsRepo, metadataProfileRepo, sched)
 	authorAliasHandler := api.NewAuthorAliasHandler(authorRepo, authorAliasRepo)
-	bookHandler := api.NewBookHandler(bookRepo, metaAgg, historyRepo, sched)
+	bookHandler := api.NewBookHandler(bookRepo, metaAgg, historyRepo, sched).WithSettings(settingsRepo)
 	indexerHandler := api.NewIndexerHandler(indexerRepo, bookRepo, authorRepo, idxSearcher, settingsRepo, blocklistRepo)
 	dlClientHandler := api.NewDownloadClientHandler(dlClientRepo)
 	queueHandler := api.NewQueueHandler(downloadRepo, dlClientRepo, bookRepo, historyRepo)
@@ -187,7 +187,8 @@ func main() {
 	calibreHandler := api.NewCalibreHandler(settingsRepo)
 	migrateHandler := api.NewMigrateHandler(
 		authorRepo, indexerRepo, dlClientRepo, blocklistRepo, bookRepo, metaAgg,
-		func(a *models.Author) { authorHandler.FetchAuthorBooks(a) },
+		// Bulk imports always populate the catalogue but never auto-grab.
+		func(a *models.Author) { authorHandler.FetchAuthorBooks(a, false) },
 	)
 
 	// Router

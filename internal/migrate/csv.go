@@ -159,13 +159,15 @@ func parseCSVRows(reader io.Reader) ([]csvRow, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		out = append(out, csvRow{name: line, monitored: true, searchOnAdd: true})
+		out = append(out, csvRow{name: line, monitored: true, searchOnAdd: false})
 	}
 	return out, nil
 }
 
 func rowFromFields(fields []string) csvRow {
-	row := csvRow{monitored: true, searchOnAdd: true}
+	// Default searchOnAdd to false — bulk imports should be safe by default.
+	// Users can opt in per-row by passing a third column "true".
+	row := csvRow{monitored: true, searchOnAdd: false}
 	if len(fields) >= 1 {
 		row.name = strings.TrimSpace(fields[0])
 	}

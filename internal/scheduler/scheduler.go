@@ -213,6 +213,16 @@ func (s *Scheduler) SearchAndGrabBook(ctx context.Context, book models.Book) {
 func (s *Scheduler) searchWanted() {
 	ctx := context.Background()
 
+	// Respect the global auto-grab kill-switch. When disabled, the
+	// scheduled wanted-scan is skipped entirely — users manage grabs
+	// manually from the Wanted page.
+	if s.settings != nil {
+		if setting, _ := s.settings.Get(ctx, "autoGrab.enabled"); setting != nil && setting.Value == "false" {
+			slog.Info("job: auto-grab disabled globally, skipping wanted search")
+			return
+		}
+	}
+
 	wanted, err := s.books.ListByStatus(ctx, models.BookStatusWanted)
 	if err != nil {
 		slog.Error("failed to list wanted books", "error", err)

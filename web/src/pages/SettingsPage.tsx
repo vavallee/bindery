@@ -788,6 +788,31 @@ function GeneralTab() {
         </div>
       </section>
 
+      {/* Auto-grab */}
+      <section>
+        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">Auto-grab</h3>
+        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">Enable automatic grabbing</label>
+              <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">When enabled, Bindery automatically sends found books to the download client. When disabled, all searches run but you manually initiate grabs from the Wanted page.</p>
+            </div>
+            <button
+              onClick={async () => {
+                const current = (settings['autoGrab.enabled'] ?? 'true').toLowerCase()
+                const next = current === 'false' ? 'true' : 'false'
+                setSettings(s => ({ ...s, 'autoGrab.enabled': next }))
+                await api.setSetting('autoGrab.enabled', next).catch(console.error)
+              }}
+              className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${(settings['autoGrab.enabled'] ?? 'true') !== 'false' ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'}`}
+              title={(settings['autoGrab.enabled'] ?? 'true') !== 'false' ? 'Disable' : 'Enable'}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${(settings['autoGrab.enabled'] ?? 'true') !== 'false' ? 'translate-x-4' : ''}`} />
+            </button>
+          </div>
+        </div>
+      </section>
+
       {/* Naming */}
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">File Naming</h3>

@@ -79,14 +79,17 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
               </select>
             </div>
           )}
-          <label className="flex items-center gap-2 text-sm mb-3 cursor-pointer select-none">
+          <label className="flex items-start gap-2 text-sm mb-3 cursor-pointer select-none">
             <input
               type="checkbox"
               checked={searchOnAdd}
               onChange={e => setSearchOnAdd(e.target.checked)}
-              className="accent-emerald-500"
+              className="accent-emerald-500 mt-0.5 flex-shrink-0"
             />
-            <span>Start search for books on add</span>
+            <span>
+              <span className="font-medium">Auto-grab books on add</span>
+              <span className="block text-xs text-slate-600 dark:text-zinc-400 mt-0.5">Bindery will always fetch the book catalogue. Enable this to also queue downloads immediately.</span>
+            </span>
           </label>
 
           <div className="flex gap-2">

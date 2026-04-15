@@ -20,10 +20,18 @@ type BookHandler struct {
 	meta     *metadata.Aggregator
 	history  *db.HistoryRepo
 	searcher BookSearcher
+	settings *db.SettingsRepo
 }
 
 func NewBookHandler(books *db.BookRepo, meta *metadata.Aggregator, history *db.HistoryRepo, searcher BookSearcher) *BookHandler {
 	return &BookHandler{books: books, meta: meta, history: history, searcher: searcher}
+}
+
+// WithSettings wires in the settings repo so the book handler can consult the
+// global autoGrab.enabled kill-switch.
+func (h *BookHandler) WithSettings(settings *db.SettingsRepo) *BookHandler {
+	h.settings = settings
+	return h
 }
 
 // EnrichAudiobook fetches audnex data for the book's ASIN and updates
@@ -168,7 +176,16 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 		*req.Status == models.BookStatusWanted && oldStatus != models.BookStatusWanted {
 		b := *book
 		bgCtx := context.WithoutCancel(r.Context())
-		go h.searcher.SearchAndGrabBook(bgCtx, b)
+		// Respect the global auto-grab kill-switch.
+		autoGrabEnabled := true
+		if h.settings != nil {
+			if s, _ := h.settings.Get(bgCtx, "autoGrab.enabled"); s != nil && s.Value == "false" {
+				autoGrabEnabled = false
+			}
+		}
+		if autoGrabEnabled {
+			go h.searcher.SearchAndGrabBook(bgCtx, b)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, book)
