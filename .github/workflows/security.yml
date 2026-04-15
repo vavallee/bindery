@@ -265,11 +265,12 @@ jobs:
           category: grype
 
       - name: Dockle CIS Docker benchmark
-        uses: goodwithtech/dockle-action@v0.1.1
-        with:
-          image: bindery:scan
-          exit-code: '0'
-          exit-level: WARN
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            goodwithtech/dockle:latest \
+            --exit-code 0 --exit-level warn \
+            bindery:scan
 
       - name: Syft SBOM – SPDX
         uses: anchore/sbom-action@v0
