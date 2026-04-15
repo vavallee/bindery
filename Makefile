@@ -1,4 +1,4 @@
-.PHONY: build dev test lint clean docker-build web-build web-dev help security helm-lint sbom
+.PHONY: build dev test lint clean docker-build web-build web-dev help security helm-lint sbom smoke
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -21,8 +21,8 @@ web-dev: ## Run frontend dev server
 web-build: ## Build frontend for embedding
 	cd web && npm ci && npm run build
 
-test: ## Run all tests
-	go test -race -coverprofile=coverage.out -covermode=atomic ./...
+test: ## Run unit tests (use `make smoke` for the HTTP-level smoke suite)
+	go test -race -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/...
 
 test-web: ## Run frontend tests
 	cd web && npm test -- --coverage
@@ -64,6 +64,9 @@ helm-lint: ## Lint Helm chart + run helm-unittest cases
 	@if command -v helm-unittest >/dev/null || helm plugin list 2>/dev/null | grep -q unittest; then \
 	 helm unittest charts/bindery/; else \
 	 echo "helm-unittest not installed; install with: helm plugin install https://github.com/helm-unittest/helm-unittest"; fi
+
+smoke: build ## Boot the real binary and exercise the critical golden paths via HTTP
+	go test -count=1 -timeout=60s ./tests/smoke/...
 
 sbom: build ## Generate an SPDX SBOM for the local binary
 	@command -v syft >/dev/null || (echo "syft not installed; see https://github.com/anchore/syft"; exit 1)
