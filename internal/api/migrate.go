@@ -1,15 +1,46 @@
 package api
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/migrate"
 	"github.com/vavallee/bindery/internal/models"
 )
+
+// allowedUploadCT are the Content-Type values the migrate endpoints accept.
+// Browsers commonly send application/octet-stream for .db files; curl defaults
+// to application/x-sqlite3 or application/vnd.sqlite3 for readarr.db.
+var allowedUploadCT = map[string]bool{
+	"text/csv":                 true,
+	"application/csv":          true,
+	"application/octet-stream": true,
+	"application/x-sqlite3":    true,
+	"application/vnd.sqlite3":  true,
+	"application/x-sqlite":     true,
+	"":                         true, // some multipart clients omit Content-Type per-part
+}
+
+// uploadTempDir returns a directory under the data root for short-lived upload
+// spools, falling back to os.TempDir() only when no data dir is configured.
+// The sticky /tmp default is OK on Linux, but putting spools next to the DB
+// keeps them on the same volume (avoids cross-FS rename) and inherits whatever
+// ownership/perms the operator set on the data dir.
+func uploadTempDir() string {
+	if p := strings.TrimSpace(os.Getenv("BINDERY_DB_PATH")); p != "" {
+		dir := filepath.Join(filepath.Dir(p), "tmp")
+		if err := os.MkdirAll(dir, 0o700); err == nil {
+			return dir
+		}
+	}
+	return ""
+}
 
 // MigrateHandler exposes bulk-import endpoints under /api/v1/migrate.
 type MigrateHandler struct {
@@ -71,7 +102,7 @@ func (h *MigrateHandler) ImportReadarr(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	tmp, err := os.CreateTemp("", "readarr-*.db")
+	tmp, err := os.CreateTemp(uploadTempDir(), "readarr-*.db")
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create temp: " + err.Error()})
 		return
@@ -105,9 +136,20 @@ func acceptUpload(w http.ResponseWriter, r *http.Request, maxBytes int64) (io.Re
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		return nil, err
 	}
-	f, _, err := r.FormFile("file")
+	f, hdr, err := r.FormFile("file")
 	if err != nil {
 		return nil, err
+	}
+	ct := ""
+	if hdr != nil {
+		ct = strings.ToLower(strings.TrimSpace(hdr.Header.Get("Content-Type")))
+		if i := strings.IndexByte(ct, ';'); i >= 0 {
+			ct = strings.TrimSpace(ct[:i])
+		}
+	}
+	if !allowedUploadCT[ct] {
+		f.Close()
+		return nil, fmt.Errorf("unsupported content-type %q; expected text/csv or sqlite binary", ct)
 	}
 	return f, nil
 }

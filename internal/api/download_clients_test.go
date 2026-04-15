@@ -41,8 +41,9 @@ func TestDownloadClientCRUD(t *testing.T) {
 	h, clients := downloadClientFixture(t)
 	ctx := context.Background()
 
-	// Create — valid
-	body := `{"name":"My SAB","host":"localhost","port":8080,"type":"sabnzbd","apiKey":"key1","enabled":true}`
+	// Create — valid. Use RFC1918 IP literal so the SSRF validator's LAN
+	// policy accepts it without needing DNS in the test environment.
+	body := `{"name":"My SAB","host":"10.10.10.10","port":8080,"type":"sabnzbd","apiKey":"key1","enabled":true}`
 	rec := httptest.NewRecorder()
 	h.Create(rec, httptest.NewRequest(http.MethodPost, "/downloadclient", bytes.NewBufferString(body)))
 	if rec.Code != http.StatusCreated {
@@ -79,7 +80,7 @@ func TestDownloadClientCRUD(t *testing.T) {
 	}
 
 	// Update
-	update := `{"name":"Updated SAB","host":"localhost","port":8080,"type":"sabnzbd","apiKey":"key2","enabled":false}`
+	update := `{"name":"Updated SAB","host":"10.10.10.11","port":8080,"type":"sabnzbd","apiKey":"key2","enabled":false}`
 	rec = httptest.NewRecorder()
 	h.Update(rec, withURLParam(httptest.NewRequest(http.MethodPut, "/downloadclient/1", bytes.NewBufferString(update)), "id", idStr))
 	if rec.Code != http.StatusOK {
@@ -117,7 +118,7 @@ func TestDownloadClientCreate_Validation(t *testing.T) {
 func TestDownloadClientCreate_Defaults(t *testing.T) {
 	h, clients := downloadClientFixture(t)
 	ctx := context.Background()
-	body := `{"name":"SAB","host":"localhost"}`
+	body := `{"name":"SAB","host":"10.10.10.10"}`
 	rec := httptest.NewRecorder()
 	h.Create(rec, httptest.NewRequest(http.MethodPost, "/downloadclient", bytes.NewBufferString(body)))
 	if rec.Code != http.StatusCreated {

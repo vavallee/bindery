@@ -43,6 +43,12 @@ func Open(dbPath string) (*sql.DB, error) {
 		return nil, fmt.Errorf("run migrations: %w", err)
 	}
 
+	// The DB file holds auth rows (bcrypt hashes, session secrets, API key).
+	// Lock its mode to 0600 defensively — umask might otherwise leave it 0644.
+	if err := os.Chmod(dbPath, 0o600); err != nil && !os.IsNotExist(err) {
+		slog.Warn("chmod database file", "path", dbPath, "error", err)
+	}
+
 	slog.Info("database ready", "path", dbPath)
 	return db, nil
 }

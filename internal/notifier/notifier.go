@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -29,6 +30,10 @@ const (
 type Notifier struct {
 	repo *db.NotificationRepo
 	http *http.Client
+	// validate is the SSRF guard applied before every send. Overridable so
+	// tests can point at httptest.NewServer (which binds on loopback and
+	// would otherwise be rejected by the production validator).
+	validate func(url string) error
 }
 
 // New creates a Notifier backed by the given repo.
@@ -36,7 +41,17 @@ func New(repo *db.NotificationRepo) *Notifier {
 	return &Notifier{
 		repo: repo,
 		http: &http.Client{Timeout: 10 * time.Second},
+		validate: func(u string) error {
+			policy := httpsec.PolicyFromEnv(httpsec.PolicyStrict, "BINDERY_NOTIFICATIONS_ALLOW_PRIVATE")
+			return httpsec.ValidateOutboundURL(u, policy)
+		},
 	}
+}
+
+// SetValidator overrides the SSRF validator. Intended for tests that need to
+// target httptest.NewServer (loopback). Pass nil to disable validation.
+func (n *Notifier) SetValidator(fn func(string) error) {
+	n.validate = fn
 }
 
 // Send loads all enabled notifications, filters by eventType, and fires HTTP
@@ -95,6 +110,15 @@ func (n *Notifier) matchesEvent(notif *models.Notification, eventType string) bo
 func (n *Notifier) send(ctx context.Context, notif *models.Notification, payload map[string]interface{}) error {
 	if notif.URL == "" {
 		return fmt.Errorf("notification %d has no URL configured", notif.ID)
+	}
+
+	// Revalidate URL at send time. A bad URL should never have reached here
+	// (handlers validate on create/update), but a persisted row could predate
+	// the validator, and DNS can shift after a row was saved.
+	if n.validate != nil {
+		if err := n.validate(notif.URL); err != nil {
+			return fmt.Errorf("url not allowed: %w", err)
+		}
 	}
 
 	body, err := json.Marshal(payload)

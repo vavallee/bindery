@@ -22,7 +22,10 @@ func notificationFixture(t *testing.T) (*NotificationHandler, *db.NotificationRe
 	}
 	t.Cleanup(func() { database.Close() })
 	repo := db.NewNotificationRepo(database)
-	return NewNotificationHandler(repo, notifier.New(repo)), repo
+	n := notifier.New(repo)
+	// Disable SSRF validation so httptest.NewServer (loopback) works in tests.
+	n.SetValidator(nil)
+	return NewNotificationHandler(repo, n), repo
 }
 
 func TestNotificationList_Empty(t *testing.T) {
@@ -40,7 +43,9 @@ func TestNotificationList_Empty(t *testing.T) {
 func TestNotificationCRUD(t *testing.T) {
 	h, _ := notificationFixture(t)
 
-	body := `{"name":"webhook","url":"http://example.invalid/hook","enabled":true,"onGrab":true}`
+	// RFC5737 TEST-NET-3 IP literal: public range, not blocked by Strict policy,
+	// and skips DNS entirely in the test environment.
+	body := `{"name":"webhook","url":"http://203.0.113.1/hook","enabled":true,"onGrab":true}`
 	rec := httptest.NewRecorder()
 	h.Create(rec, httptest.NewRequest(http.MethodPost, "/api/v1/notification", bytes.NewBufferString(body)))
 	if rec.Code != http.StatusCreated {
@@ -77,7 +82,7 @@ func TestNotificationCRUD(t *testing.T) {
 	rec = httptest.NewRecorder()
 	h.Update(rec, withURLParam(
 		httptest.NewRequest(http.MethodPut, "/api/v1/notification/1",
-			bytes.NewBufferString(`{"name":"renamed","url":"http://new.invalid/"}`)),
+			bytes.NewBufferString(`{"name":"renamed","url":"http://203.0.113.2/"}`)),
 		"id", "1"))
 	if rec.Code != http.StatusOK {
 		t.Errorf("update: expected 200, got %d", rec.Code)

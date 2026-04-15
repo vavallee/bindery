@@ -6,12 +6,28 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 )
+
+// CookieSecureMode controls when the Secure flag is set on session cookies.
+// "auto" (default): detect TLS via r.TLS or X-Forwarded-Proto.
+// "always": always set Secure (useful when the proxy doesn't send the header).
+// "never":  never set Secure (legacy plain-HTTP installs with no proxy).
+// Exported so the security regression suite in tests/security can assert
+// the env-var contract without reaching into the package's internals.
+func CookieSecureMode() string {
+	switch v := strings.ToLower(strings.TrimSpace(os.Getenv("BINDERY_COOKIE_SECURE"))); v {
+	case "always", "never":
+		return v
+	default:
+		return "auto"
+	}
+}
 
 // AuthSettings keys in the shared `settings` table.
 // gosec G101 flags these as "potential hardcoded credentials" because of the
@@ -132,7 +148,7 @@ func (h *AuthHandler) Setup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Log the user in immediately.
-	h.issueSession(w, ctx, u.ID, true)
+	h.issueSession(w, r, ctx, u.ID, true)
 	slog.Info("first-run setup complete", "username", u.Username)
 	writeOK(w, map[string]any{"ok": true})
 }
@@ -161,7 +177,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.limiter.Reset(ip)
-	h.issueSession(w, ctx, u.ID, req.RememberMe)
+	h.issueSession(w, r, ctx, u.ID, req.RememberMe)
 	writeOK(w, map[string]any{"ok": true, "username": u.Username})
 }
 
@@ -308,26 +324,35 @@ func (h *AuthHandler) sessionSecret(ctx context.Context) []byte {
 	return []byte(s.Value)
 }
 
-func (h *AuthHandler) issueSession(w http.ResponseWriter, ctx context.Context, userID int64, rememberMe bool) {
+func (h *AuthHandler) issueSession(w http.ResponseWriter, r *http.Request, ctx context.Context, userID int64, rememberMe bool) {
 	dur := auth.SessionDurationShort
 	if rememberMe {
 		dur = auth.SessionDuration
 	}
 	exp := time.Now().Add(dur)
 	value := auth.SignSession(h.sessionSecret(ctx), userID, exp)
+
+	var secure bool
+	switch CookieSecureMode() {
+	case "always":
+		secure = true
+	case "never":
+		secure = false
+	default: // "auto"
+		secure = r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	}
+
 	cookie := &http.Cookie{
 		Name:     auth.SessionCookieName,
 		Value:    value,
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
+		Secure:   secure,
 	}
 	if rememberMe {
 		cookie.Expires = exp
 	}
-	// Leave Secure unset — TLS is typically terminated upstream (Traefik).
-	// Users with direct HTTPS can enable it by fronting with a proxy that
-	// adds Strict-Transport-Security.
 	http.SetCookie(w, cookie)
 }
 

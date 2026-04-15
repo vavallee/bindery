@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/models"
@@ -60,6 +61,10 @@ func (h *IndexerHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and url required"})
 		return
 	}
+	if err := httpsec.ValidateOutboundURL(idx.URL, httpsec.PolicyLAN); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	if idx.Type == "" {
 		idx.Type = "newznab"
 	}
@@ -100,6 +105,12 @@ func (h *IndexerHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&idx); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
+	}
+	if idx.URL != "" {
+		if err := httpsec.ValidateOutboundURL(idx.URL, httpsec.PolicyLAN); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 	}
 	idx.ID = id
 	if err := h.indexers.Update(r.Context(), &idx); err != nil {

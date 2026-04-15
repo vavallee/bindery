@@ -13,10 +13,12 @@ import (
 
 // testNotifier creates a Notifier with a nil repo and a custom HTTP client.
 // Safe for tests that only exercise send() and Test() since those don't use the repo.
+// validate is left nil so loopback URLs from httptest.NewServer are accepted.
 func testNotifier(httpClient *http.Client) *Notifier {
 	return &Notifier{
-		repo: nil,
-		http: httpClient,
+		repo:     nil,
+		http:     httpClient,
+		validate: nil,
 	}
 }
 

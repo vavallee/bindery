@@ -38,6 +38,14 @@ var (
 )
 
 func main() {
+	// Healthcheck subcommand — used by the Docker HEALTHCHECK directive.
+	// Hits the local /api/v1/health endpoint and exits 0 on 200, else 1.
+	// Runs before config load so it works with a minimal environment.
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		runHealthcheck()
+		return
+	}
+
 	cfg := config.Load()
 
 	level := slog.LevelInfo
@@ -246,6 +254,7 @@ func main() {
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Compress(5))
+	r.Use(api.SecurityHeaders)
 
 	// Composite auth: session cookie (UI) OR API key (external apps) OR
 	// local-IP bypass when mode=local-only. Mode, key, and secret are sourced
