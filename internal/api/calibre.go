@@ -18,6 +18,7 @@ const (
 	SettingCalibreBinaryPath     = "calibre.binary_path"
 	SettingCalibreMode           = "calibre.mode"
 	SettingCalibreDropFolderPath = "calibre.drop_folder_path"
+	SettingCalibreSyncOnStartup  = "calibre.sync_on_startup"
 )
 
 // CalibreHandler exposes the "test connection" endpoint for the Calibre
@@ -61,9 +62,10 @@ func LoadCalibreConfig(settings *db.SettingsRepo) calibre.Config {
 		enabled = true
 	}
 	return calibre.Config{
-		Enabled:     enabled,
-		LibraryPath: get(SettingCalibreLibraryPath),
-		BinaryPath:  get(SettingCalibreBinaryPath),
+		Enabled:       enabled,
+		LibraryPath:   get(SettingCalibreLibraryPath),
+		BinaryPath:    get(SettingCalibreBinaryPath),
+		SyncOnStartup: strings.EqualFold(get(SettingCalibreSyncOnStartup), "true"),
 	}
 }
 

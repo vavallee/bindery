@@ -186,6 +186,9 @@ func main() {
 	// Scheduler
 	sched := scheduler.New(importScanner, idxSearcher, metaAgg,
 		authorRepo, bookRepo, indexerRepo, downloadRepo, dlClientRepo, settingsRepo, blocklistRepo)
+	// Register the Calibre importer as the 24-hour sync job. The scheduler
+	// only fires the job when the syncer is non-nil, so no guard needed here.
+	sched.WithCalibreSyncer(calibreImporter)
 	sched.Start()
 	defer sched.Stop()
 
@@ -476,7 +479,7 @@ func defaultNamingTemplate(settings *db.SettingsRepo) string {
 // — including absent — resolves to false so first boots don't kick off
 // work the operator didn't ask for.
 func syncOnStartup(settings *db.SettingsRepo) bool {
-	s, _ := settings.Get(context.Background(), "calibre.sync_on_startup")
+	s, _ := settings.Get(context.Background(), api.SettingCalibreSyncOnStartup)
 	if s == nil {
 		return false
 	}

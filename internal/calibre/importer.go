@@ -483,6 +483,33 @@ func (i *Importer) upsertEdition(ctx context.Context, book *models.Book, cb Cali
 	return prior == nil, nil
 }
 
+// RunSync implements scheduler.CalibreSyncer. It reads the library path from
+// the settings table and runs a full import; errors and progress are logged
+// and stored on the importer's progress state so the UI can surface them
+// via the existing /calibre/import/status polling endpoint.
+//
+// RunSync is intentionally fire-and-forget from the scheduler's perspective:
+// if Calibre is unconfigured or already running, it logs and returns without
+// blocking the job loop.
+func (i *Importer) RunSync(ctx context.Context) {
+	libraryPath := ""
+	if s, _ := i.settings.Get(ctx, "calibre.library_path"); s != nil {
+		libraryPath = s.Value
+	}
+	if libraryPath == "" {
+		slog.Debug("calibre scheduler sync: library_path not set — skipping")
+		return
+	}
+
+	if _, err := i.Run(ctx, libraryPath); err != nil {
+		if errors.Is(err, ErrAlreadyRunning) {
+			slog.Debug("calibre scheduler sync: already running — skipping")
+		} else {
+			slog.Warn("calibre scheduler sync failed", "error", err)
+		}
+	}
+}
+
 func (i *Importer) fail(err error) {
 	slog.Error("calibre import failed", "error", err)
 	i.setProgress(func(p *ImportProgress) {

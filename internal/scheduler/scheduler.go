@@ -19,6 +19,13 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
+// CalibreSyncer is the narrow interface the scheduler calls to trigger a
+// Calibre library import. Implemented by *calibre.Importer; the interface
+// keeps the scheduler package free of a direct import of the calibre package.
+type CalibreSyncer interface {
+	RunSync(ctx context.Context)
+}
+
 // Scheduler runs background jobs on configurable intervals.
 type Scheduler struct {
 	cron     *cron.Cron
@@ -26,13 +33,14 @@ type Scheduler struct {
 	searcher *indexer.Searcher
 	meta     *metadata.Aggregator
 
-	authors   *db.AuthorRepo
-	books     *db.BookRepo
-	indexers  *db.IndexerRepo
-	downloads *db.DownloadRepo
-	clients   *db.DownloadClientRepo
-	settings  *db.SettingsRepo
-	blocklist *db.BlocklistRepo
+	authors       *db.AuthorRepo
+	books         *db.BookRepo
+	indexers      *db.IndexerRepo
+	downloads     *db.DownloadRepo
+	clients       *db.DownloadClientRepo
+	settings      *db.SettingsRepo
+	blocklist     *db.BlocklistRepo
+	calibreSyncer CalibreSyncer // optional; nil if Calibre is not configured
 }
 
 // New creates a new scheduler.
@@ -63,6 +71,12 @@ func New(
 	}
 }
 
+// WithCalibreSyncer registers a CalibreSyncer that the scheduler will call
+// every 24 hours when Calibre is configured. Must be called before Start.
+func (s *Scheduler) WithCalibreSyncer(syncer CalibreSyncer) {
+	s.calibreSyncer = syncer
+}
+
 // Start registers and runs all background jobs.
 func (s *Scheduler) Start() {
 	// Check downloads every 15 seconds so completed imports land quickly
@@ -91,6 +105,14 @@ func (s *Scheduler) Start() {
 		slog.Info("job: scan library")
 		s.scanner.ScanLibrary(context.Background())
 	})
+
+	// Sync Calibre library every 24 hours when a syncer is registered.
+	if s.calibreSyncer != nil {
+		s.cron.AddFunc("@every 24h", func() {
+			slog.Info("job: calibre library sync")
+			s.calibreSyncer.RunSync(context.Background())
+		})
+	}
 
 	s.cron.Start()
 	slog.Info("scheduler started", "jobs", len(s.cron.Entries()))

@@ -25,9 +25,10 @@ var ErrDisabled = errors.New("calibre integration disabled")
 // fresh from the settings repo at the start of each import so toggling the
 // flag in the UI takes effect without a restart.
 type Config struct {
-	Enabled     bool
-	BinaryPath  string // path to `calibredb`; empty means resolve via $PATH
-	LibraryPath string // target Calibre library directory
+	Enabled       bool
+	BinaryPath    string // path to `calibredb`; empty means resolve via $PATH
+	LibraryPath   string // target Calibre library directory
+	SyncOnStartup bool   // run a library import when Bindery starts
 }
 
 // runner is the shape of exec.CommandContext, abstracted for tests.
