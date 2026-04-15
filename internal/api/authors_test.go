@@ -333,6 +333,7 @@ func TestFetchAuthorBooks_SkipsSearchForOwnedBooks(t *testing.T) {
 	}
 	if ownedBook == nil {
 		t.Fatal("expected 'Already Owned' book to be created in DB")
+		return
 	}
 	if ownedBook.FilePath != finder.ownedPath {
 		t.Errorf("expected file path %q, got %q", finder.ownedPath, ownedBook.FilePath)

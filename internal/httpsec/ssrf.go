@@ -2,12 +2,14 @@
 package httpsec
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"os"
 	"strings"
+	"time"
 )
 
 // Policy controls which destinations are permitted for outbound requests.
@@ -30,10 +32,22 @@ type Resolver interface {
 	LookupIP(host string) ([]net.IP, error)
 }
 
-// netResolver delegates to the standard library.
+// netResolver delegates to the standard library with a bounded context.
 type netResolver struct{}
 
-func (netResolver) LookupIP(host string) ([]net.IP, error) { return net.LookupIP(host) }
+func (netResolver) LookupIP(host string) ([]net.IP, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	ips := make([]net.IP, 0, len(addrs))
+	for _, a := range addrs {
+		ips = append(ips, a.IP)
+	}
+	return ips, nil
+}
 
 // defaultResolver is the live resolver used in production.
 var defaultResolver Resolver = netResolver{}

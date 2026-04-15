@@ -233,6 +233,7 @@ func TestAuthorCRUD(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected author, got nil")
+		return
 	}
 	if got.Name != "Test Author" {
 		t.Errorf("expected name 'Test Author', got '%s'", got.Name)

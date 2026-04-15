@@ -60,15 +60,8 @@ jobs:
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.11.4
-          args: --timeout=5m --out-format=sarif --issues-exit-code=0
+          args: --timeout=5m
           only-new-issues: false
-
-      - name: Upload golangci-lint SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: results.sarif
-          category: golangci-lint
 
   # ── Frontend SAST: Semgrep + npm audit + ESLint security ───────────────────
   sast-frontend:
@@ -91,8 +84,12 @@ jobs:
         run: npm audit --audit-level=high --prefix web
         continue-on-error: true
 
-      - name: Install eslint-plugin-security
-        run: npm install --no-save eslint-plugin-security --prefix web
+      - name: Install ESLint security tooling
+        run: |
+          npm install --no-save \
+            eslint-plugin-security \
+            @microsoft/eslint-formatter-sarif \
+            --prefix web
 
       - name: ESLint with security plugin
         run: |
@@ -103,32 +100,29 @@ jobs:
             { files: ['src/**/*.{ts,tsx,js,jsx}'] }
           ];
           EOF
-          cd web && npx eslint --no-eslintrc -c /tmp/eslint-security.config.mjs \
+          cd web && npx eslint \
+            -c /tmp/eslint-security.config.mjs \
             --format @microsoft/eslint-formatter-sarif \
             --output-file eslint-security.sarif \
             src/ || true
 
       - name: Upload ESLint SARIF
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() && hashFiles('web/eslint-security.sarif') != ''
         with:
           sarif_file: web/eslint-security.sarif
           category: eslint-security
 
       - name: Semgrep
-        uses: returntocorp/semgrep-action@v1
-        with:
-          config: >-
-            p/react
-            p/typescript
-            p/xss
-          generateSarif: "1"
-        env:
-          SEMGREP_RULES: p/react p/typescript p/xss
+        run: |
+          python3 -m pip install --user semgrep
+          semgrep scan \
+            --config p/react --config p/typescript --config p/xss \
+            --sarif --output semgrep.sarif . || true
 
       - name: Upload Semgrep SARIF
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() && hashFiles('semgrep.sarif') != ''
         with:
           sarif_file: semgrep.sarif
           category: semgrep-frontend
@@ -239,7 +233,7 @@ jobs:
         run: docker build -t bindery:scan .
 
       - name: Trivy vulnerability scan (SARIF)
-        uses: aquasecurity/trivy-action@0.20.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: bindery:scan
           format: sarif
@@ -277,7 +271,7 @@ jobs:
           exit-level: WARN
 
       - name: Syft SBOM – SPDX
-        uses: anchore/sbom-action@v0.15.0
+        uses: anchore/sbom-action@v0
         with:
           image: bindery:scan
           format: spdx-json
@@ -287,7 +281,7 @@ jobs:
           upload-artifact-retention: 90
 
       - name: Syft SBOM – CycloneDX
-        uses: anchore/sbom-action@v0.15.0
+        uses: anchore/sbom-action@v0
         with:
           image: bindery:scan
           format: cyclonedx-json
@@ -344,20 +338,24 @@ jobs:
           done
 
       - name: ZAP Baseline Scan
-        uses: zaproxy/action-baseline@v0.12.0
-        with:
-          target: 'http://localhost:8787'
-          rules_file_name: '.zap/rules.tsv'
-          issue_title: 'ZAP Baseline Report'
-          fail_action: false
-          allow_issue_writing: false
+        run: |
+          mkdir -p zap-out
+          docker run --rm --network=host \
+            -v "$PWD/zap-out:/zap/wrk" \
+            zaproxy/zap-stable \
+            zap-baseline.py \
+              -t http://localhost:8787 \
+              -J zap-report.json \
+              -r zap-report.html \
+              -I || true
 
-      - name: Upload ZAP SARIF
-        uses: github/codeql-action/upload-sarif@v3
+      - name: Upload ZAP report artifact
+        uses: actions/upload-artifact@v4
         if: always()
         with:
-          sarif_file: zap-results.sarif
-          category: zap-dast
+          name: zap-baseline-report
+          path: zap-out/
+          retention-days: 30
 
   # ── OpenSSF Scorecard ──────────────────────────────────────────────────────
   # Only runs on push-to-main and schedule — not on PRs (no write token for forks)
@@ -406,13 +404,11 @@ jobs:
         with:
           version: latest
 
+      - name: Install helm-unittest plugin
+        run: helm plugin install https://github.com/helm-unittest/helm-unittest
+
       - name: helm-unittest
-        uses: helm-unittest/helm-unittest-action@v2
-        with:
-          helm-version: latest
-          # tolerates missing test files while Stream C is pending
-          with-subchart: false
-          charts: charts/bindery
+        run: helm unittest charts/bindery
         continue-on-error: true
 
   # ── Aggregate severity summary ─────────────────────────────────────────────

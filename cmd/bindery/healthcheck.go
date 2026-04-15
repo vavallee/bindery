@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -16,15 +17,23 @@ func runHealthcheck() {
 	cfg := config.Load()
 	url := fmt.Sprintf("http://127.0.0.1:%s/api/v1/health", cfg.Port)
 
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(url)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "healthcheck: %v\n", err)
 		os.Exit(1)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(os.Stderr, "healthcheck: got %d\n", resp.StatusCode)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "healthcheck: %v\n", err)
+		os.Exit(1)
+	}
+	status := resp.StatusCode
+	_ = resp.Body.Close()
+	if status != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "healthcheck: got %d\n", status)
 		os.Exit(1)
 	}
 }

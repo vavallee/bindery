@@ -50,6 +50,7 @@ func TestNotificationRepoCRUD(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected non-nil result from GetByID")
+		return
 	}
 	if got.Name != "Pushover" {
 		t.Errorf("Name: want 'Pushover', got %q", got.Name)
