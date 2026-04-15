@@ -69,8 +69,8 @@ func TestSearchAuthors(t *testing.T) {
 	p.authorsErr = errors.New("upstream down")
 	rec = httptest.NewRecorder()
 	h.SearchAuthors(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search/author?term=x", nil))
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("error: expected 500, got %d", rec.Code)
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("error: expected 502, got %d", rec.Code)
 	}
 }
 
@@ -96,8 +96,8 @@ func TestSearchBooks(t *testing.T) {
 	p.booksErr = errors.New("upstream down")
 	rec = httptest.NewRecorder()
 	h.SearchBooks(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search/book?term=x", nil))
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("error: expected 500, got %d", rec.Code)
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("error: expected 502, got %d", rec.Code)
 	}
 }
 
@@ -133,7 +133,7 @@ func TestLookupByISBN(t *testing.T) {
 	h3 := NewSearchHandler(metadata.NewAggregator(p3))
 	rec = httptest.NewRecorder()
 	h3.LookupByISBN(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search/isbn?isbn=fail", nil))
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("error: expected 500, got %d", rec.Code)
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("error: expected 502, got %d", rec.Code)
 	}
 }

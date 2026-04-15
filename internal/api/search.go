@@ -15,6 +15,16 @@ func NewSearchHandler(meta *metadata.Aggregator) *SearchHandler {
 	return &SearchHandler{meta: meta}
 }
 
+// writeUpstreamError responds with 502 Bad Gateway and a message that makes
+// it obvious the failure is on the metadata provider side (OpenLibrary,
+// Google Books, Hardcover), not inside Bindery. Using 500 for this conflates
+// provider outages with real server bugs and trains users to ignore 500s.
+func writeUpstreamError(w http.ResponseWriter, err error) {
+	writeJSON(w, http.StatusBadGateway, map[string]string{
+		"error": "metadata provider unavailable: " + err.Error(),
+	})
+}
+
 func (h *SearchHandler) SearchAuthors(w http.ResponseWriter, r *http.Request) {
 	term := r.URL.Query().Get("term")
 	if term == "" {
@@ -24,7 +34,7 @@ func (h *SearchHandler) SearchAuthors(w http.ResponseWriter, r *http.Request) {
 
 	authors, err := h.meta.SearchAuthors(r.Context(), term)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeUpstreamError(w, err)
 		return
 	}
 
@@ -40,7 +50,7 @@ func (h *SearchHandler) SearchBooks(w http.ResponseWriter, r *http.Request) {
 
 	books, err := h.meta.SearchBooks(r.Context(), term)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeUpstreamError(w, err)
 		return
 	}
 
@@ -56,7 +66,7 @@ func (h *SearchHandler) LookupByISBN(w http.ResponseWriter, r *http.Request) {
 
 	book, err := h.meta.GetBookByISBN(r.Context(), isbn)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeUpstreamError(w, err)
 		return
 	}
 	if book == nil {
