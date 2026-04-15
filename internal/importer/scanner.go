@@ -316,7 +316,9 @@ func (s *Scanner) tryImport(ctx context.Context, sab *sabnzbd.Client, dl *models
 			return
 		}
 		if book != nil {
-			s.books.SetFormatFilePath(ctx, book.ID, models.MediaTypeAudiobook, destDir)
+			if err := s.books.SetFormatFilePath(ctx, book.ID, models.MediaTypeAudiobook, destDir); err != nil {
+				slog.Error("failed to update audiobook file path", "bookID", book.ID, "error", err)
+			}
 		}
 		s.downloads.UpdateStatus(ctx, dl.ID, models.DownloadStatusImported)
 		slog.Info("audiobook imported", "title", func() string {
@@ -359,7 +361,9 @@ func (s *Scanner) tryImport(ctx context.Context, sab *sabnzbd.Client, dl *models
 		imported++
 
 		// Update book status and file path
-		s.books.SetFormatFilePath(ctx, book.ID, models.MediaTypeEbook, destPath)
+		if err := s.books.SetFormatFilePath(ctx, book.ID, models.MediaTypeEbook, destPath); err != nil {
+			slog.Error("failed to update ebook file path", "bookID", book.ID, "error", err)
+		}
 		s.downloads.UpdateStatus(ctx, dl.ID, models.DownloadStatusImported)
 		slog.Info("book imported", "title", book.Title, "path", destPath)
 

@@ -44,11 +44,11 @@ func TestBookNeedsEbook(t *testing.T) {
 		ebookFilePath string
 		want          bool
 	}{
-		{MediaTypeEbook, "", true},           // wanted, no file → needed
+		{MediaTypeEbook, "", true},                // wanted, no file → needed
 		{MediaTypeEbook, "/lib/book.epub", false}, // wanted, has file → satisfied
-		{MediaTypeBoth, "", true},            // both wanted, no ebook → needed
-		{MediaTypeBoth, "/lib/book.epub", false}, // both wanted, ebook present
-		{MediaTypeAudiobook, "", false},      // not watching ebook → not needed
+		{MediaTypeBoth, "", true},                 // both wanted, no ebook → needed
+		{MediaTypeBoth, "/lib/book.epub", false},  // both wanted, ebook present
+		{MediaTypeAudiobook, "", false},           // not watching ebook → not needed
 	}
 	for _, c := range cases {
 		b := &Book{MediaType: c.mt, EbookFilePath: c.ebookFilePath}

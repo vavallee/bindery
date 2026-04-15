@@ -146,10 +146,10 @@ func TestFilterRelevantNoResults(t *testing.T) {
 // results were dropped.
 func TestFilterRelevantApostrophe(t *testing.T) {
 	cases := []struct {
-		bookTitle  string
-		author     string
-		releases   []string
-		wantAny    string // at least this release must survive
+		bookTitle string
+		author    string
+		releases  []string
+		wantAny   string // at least this release must survive
 	}{
 		{
 			bookTitle: "Ender's Game",

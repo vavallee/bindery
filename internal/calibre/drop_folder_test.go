@@ -13,9 +13,9 @@ import (
 // fakeLookup returns canned results for the poller. seq indexes one result
 // per call so tests can model "not found → not found → found" sequences.
 type fakeLookup struct {
-	calls   int
-	seq     []fakeLookupResp
-	onCall  func(int) // optional spy for call-count assertions
+	calls  int
+	seq    []fakeLookupResp
+	onCall func(int) // optional spy for call-count assertions
 }
 
 type fakeLookupResp struct {
