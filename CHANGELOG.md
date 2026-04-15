@@ -19,6 +19,17 @@ The `development` branch carries the in-flight feature set for the next release.
 ### Fixed
 
 - **500 on add author (closes [#91](https://github.com/vavallee/bindery/issues/91))** — when a concurrent add-author request caused a UNIQUE-constraint violation at the database layer, the handler returned a raw 500 and leaked the SQLite error message. It now returns 409 with `"author already exists"` and logs the underlying error at ERROR level with full context. A regression test covers this path.
+- **Log viewer defects (closes [#98](https://github.com/vavallee/bindery/issues/98))** — repaired column alignment, light-mode palette, timestamp formatting, attribute rendering, word-boundary wrapping, the DEBUG filter option, and the stale-ref refresh toggle. The log table is now readable in both themes and honours the selected severity filter.
+
+### Security
+
+- **SSRF validation for outbound URLs** — webhooks, indexers, and download-client endpoints now pass through `internal/httpsec.ValidateOutboundURL` before any request is issued. The validator blocks loopback, link-local, cloud-metadata (`169.254.169.254`, `metadata.google.internal`, AWS IPv6), and (for webhooks) RFC1918 ranges; DNS results are re-checked to defeat rebinding attacks. Escape hatch: `BINDERY_NOTIFICATIONS_ALLOW_PRIVATE=1` flips webhooks to the LAN policy for on-network ntfy / Home Assistant installs.
+- **Security headers middleware** — every response emits `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, and a locked-down `Content-Security-Policy` (no `unsafe-eval`, no foreign origins, `frame-ancestors 'none'`). HSTS is emitted only when TLS is detected (direct or via `X-Forwarded-Proto: https`) so plain-HTTP homelab setups don't get locked out.
+- **Session cookie `Secure` auto-detect** — the cookie's `Secure` attribute now flips on automatically behind TLS or a TLS-terminating proxy. Override with `BINDERY_COOKIE_SECURE=auto|always|never`.
+- **Upload hardening** — `/api/v1/migrate/*` now validates the multipart Content-Type against an allowlist and spools uploads to `$BINDERY_DB_PATH/../tmp` (mode `0700`) instead of the world-writable `/tmp`. The database file is chmod'd to `0600` on boot.
+- **Container / supply chain** — Docker base images are digest-pinned (node 22, Go 1.25.9, distroless static); Dependabot keeps them fresh. A `bindery healthcheck` subcommand drives the `HEALTHCHECK` directive. GoReleaser now emits Syft SBOMs (SPDX) alongside release archives. `actions/attest-build-provenance` mints SLSA provenance on every image push, verifiable with `gh attestation verify`.
+- **Helm chart** — dedicated ServiceAccount with `automountServiceAccountToken: false`, managed or externally-referenced Secret for `BINDERY_API_KEY` (no more plain env rendering), opt-in NetworkPolicy, and an opt-in ArgoCD PostSync smoke-test hook against `/api/v1/health`. `helm-unittest` cases guard the posture against regressions.
+- **CI security pipeline** — new `.github/workflows/security.yml` runs gosec, govulncheck, golangci-lint, Semgrep, gitleaks, Trivy, Grype, Dockle, Syft, ZAP baseline, hadolint, Helm lint, and kubesec on every push / PR / weekly cron. `.github/workflows/scorecard.yml` tracks OpenSSF Scorecard. All findings upload to the Security tab as SARIF. `SECURITY.md` documents the disclosure policy.
 
 ## [v0.10.0] — 2026-04-15
 

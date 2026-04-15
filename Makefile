@@ -1,4 +1,4 @@
-.PHONY: build dev test lint clean docker-build web-build web-dev help
+.PHONY: build dev test lint clean docker-build web-build web-dev help security helm-lint sbom
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -47,3 +47,25 @@ docker-push: docker-build ## Build and push Docker image
 clean: ## Remove build artifacts
 	rm -f bindery coverage.out
 	rm -rf web/dist web/node_modules
+
+security: ## Run local security scanners (gosec, govulncheck, gitleaks, npm audit)
+	@command -v gosec >/dev/null || go install github.com/securego/gosec/v2/cmd/gosec@latest
+	@command -v govulncheck >/dev/null || go install golang.org/x/vuln/cmd/govulncheck@latest
+	gosec -quiet ./...
+	govulncheck ./...
+	@if command -v gitleaks >/dev/null; then gitleaks detect --no-banner --redact; \
+	 else echo "gitleaks not installed; skipping (brew install gitleaks)"; fi
+	cd web && npm audit --audit-level=high || true
+	@if command -v trivy >/dev/null; then trivy fs --severity HIGH,CRITICAL --exit-code 1 .; \
+	 else echo "trivy not installed; skipping (brew install trivy)"; fi
+
+helm-lint: ## Lint Helm chart + run helm-unittest cases
+	helm lint charts/bindery/ --strict
+	@if command -v helm-unittest >/dev/null || helm plugin list 2>/dev/null | grep -q unittest; then \
+	 helm unittest charts/bindery/; else \
+	 echo "helm-unittest not installed; install with: helm plugin install https://github.com/helm-unittest/helm-unittest"; fi
+
+sbom: build ## Generate an SPDX SBOM for the local binary
+	@command -v syft >/dev/null || (echo "syft not installed; see https://github.com/anchore/syft"; exit 1)
+	syft ./bindery -o spdx-json=bindery.sbom.spdx.json
+	@echo "SBOM written to bindery.sbom.spdx.json"

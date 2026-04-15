@@ -264,6 +264,35 @@ Otherwise the server responds with `401`. The API key lives in **Settings → Ge
 | **Indexer & download-client recipes** — NZBGeek / DrunkenSlug / Prowlarr / Jackett / SAB / qBit tips | [Wiki](https://github.com/vavallee/bindery/wiki/Indexer-and-downloader-recipes) |
 | **Migrating from Readarr** — step-by-step with known failure modes | [Wiki](https://github.com/vavallee/bindery/wiki/Migrating-from-Readarr) |
 
+## Security
+
+Bindery holds API keys, reaches LAN services, and writes to disk. We take that
+seriously.
+
+<p>
+  <a href="https://github.com/vavallee/bindery/security/code-scanning"><img src="https://img.shields.io/github/actions/workflow/status/vavallee/bindery/security.yml?branch=main&label=security%20scans&logo=github" alt="Security scans" /></a>
+  <a href="https://securityscorecards.dev/viewer/?uri=github.com/vavallee/bindery"><img src="https://api.securityscorecards.dev/projects/github.com/vavallee/bindery/badge" alt="OpenSSF Scorecard" /></a>
+  <a href="https://github.com/vavallee/bindery/security/dependabot"><img src="https://img.shields.io/badge/Dependabot-enabled-brightgreen?logo=dependabot" alt="Dependabot" /></a>
+  <a href="SECURITY.md"><img src="https://img.shields.io/badge/security-policy-blue" alt="Security policy" /></a>
+</p>
+
+Every push and every weekly cron runs gosec, govulncheck, Semgrep, gitleaks,
+Trivy, Grype, Dockle, Syft, ZAP baseline, and OpenSSF Scorecard. Findings
+upload to GitHub's Security tab as SARIF and are public-readable. Release
+images ship with SLSA build provenance and Syft SBOMs.
+
+Highlights of the in-app controls:
+
+- **SSRF guards** on every outbound URL (webhooks, indexers, download clients), with DNS-rebinding defense.
+- **Hardened headers** — CSP, `X-Frame-Options: DENY`, `Referrer-Policy`, auto HSTS when TLS is present.
+- **Cookie `Secure` auto-detect** via TLS or `X-Forwarded-Proto`, overridable.
+- **Distroless, non-root, read-only rootfs** container with all caps dropped and RuntimeDefault seccomp.
+- **Digest-pinned base images** tracked by Dependabot.
+
+To report a vulnerability, follow the process in **[SECURITY.md](SECURITY.md)**.
+The full threat model, control catalogue, and verification recipes live on
+the [wiki Security page](https://github.com/vavallee/bindery/wiki/Security).
+
 ## Contributing
 
 PRs, issues, and feedback welcome. See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the dev setup, the full local check suite, and the PR flow. Tracked feature work lives in **[docs/ROADMAP.md](docs/ROADMAP.md)** — open an issue before starting anything substantial.
