@@ -51,7 +51,14 @@ export default function BooksPage() {
   const filtered = useMemo(() => {
     let list = books
     if (statusFilter) list = list.filter(b => b.status === statusFilter)
-    if (mediaFilter) list = list.filter(b => (b.mediaType || 'ebook') === mediaFilter)
+    if (mediaFilter) {
+      list = list.filter(b => {
+        const mt = b.mediaType || 'ebook'
+        // 'both' books count as both ebook and audiobook so they show up
+        // under either filter.
+        return mt === mediaFilter || mt === 'both'
+      })
+    }
     if (search.trim()) {
       const q = search.trim().toLowerCase()
       list = list.filter(b =>
@@ -231,7 +238,11 @@ export default function BooksPage() {
                     </td>
                     <td className="px-3 py-2 text-slate-600 dark:text-zinc-400 whitespace-nowrap hidden sm:table-cell">{book.releaseDate ? new Date(book.releaseDate).getFullYear() : '—'}</td>
                     <td className="px-3 py-2 text-xs whitespace-nowrap">
-                      {book.mediaType === 'audiobook' ? `🎧 ${t('common.audiobook')}` : `📖 ${t('common.ebook')}`}
+                      {book.mediaType === 'both'
+                        ? `📖🎧 ${t('common.ebook')} + ${t('common.audiobook')}`
+                        : book.mediaType === 'audiobook'
+                          ? `🎧 ${t('common.audiobook')}`
+                          : `📖 ${t('common.ebook')}`}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium ${statusColors[book.status] || 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400'}`}>
@@ -279,8 +290,11 @@ export default function BooksPage() {
                   <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${statusColors[book.status] || 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400'}`}>
                     {statusLabelKeys[book.status] ? t(statusLabelKeys[book.status]) : book.status}
                   </span>
-                  {book.mediaType === 'audiobook' && (
+                  {(book.mediaType === 'audiobook' || book.mediaType === 'both') && (
                     <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">{t('books.audioLabel')}</span>
+                  )}
+                  {book.mediaType === 'both' && (
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">{t('common.ebook')}</span>
                   )}
                 </div>
                 <div className="flex items-center justify-between mt-0.5">
