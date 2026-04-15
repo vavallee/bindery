@@ -1,0 +1,141 @@
+suite: security posture
+templates:
+  - deployment.yaml
+  - serviceaccount.yaml
+  - secret.yaml
+  - networkpolicy.yaml
+
+tests:
+  - it: runs as non-root with a pinned UID
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.securityContext.runAsUser
+          value: 65532
+
+  - it: drops ALL capabilities and enforces a readonly rootfs
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+          content: ALL
+
+  - it: applies RuntimeDefault seccomp profile
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.seccompProfile.type
+          value: RuntimeDefault
+
+  - it: declares CPU and memory requests and limits
+    template: deployment.yaml
+    asserts:
+      - isNotNull:
+          path: spec.template.spec.containers[0].resources.requests.cpu
+      - isNotNull:
+          path: spec.template.spec.containers[0].resources.requests.memory
+      - isNotNull:
+          path: spec.template.spec.containers[0].resources.limits.cpu
+      - isNotNull:
+          path: spec.template.spec.containers[0].resources.limits.memory
+
+  - it: binds a dedicated ServiceAccount with token automount disabled
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: false
+      - isNotEmpty:
+          path: spec.template.spec.serviceAccountName
+
+  - it: creates a dedicated ServiceAccount by default
+    template: serviceaccount.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: automountServiceAccountToken
+          value: false
+
+  - it: does not render a ServiceAccount when serviceAccount.create=false
+    template: serviceaccount.yaml
+    set:
+      serviceAccount.create: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: skips the Secret when neither apiKey nor existingSecret is set
+    template: secret.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders a managed Secret when apiKey is set
+    template: secret.yaml
+    set:
+      auth.apiKey: "test-api-key"
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: metadata.annotations["helm.sh/resource-policy"]
+          value: keep
+
+  - it: wires BINDERY_API_KEY from secretKeyRef when apiKey is set
+    template: deployment.yaml
+    set:
+      auth.apiKey: "test-api-key"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: BINDERY_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: RELEASE-NAME-auth
+                key: api-key
+
+  - it: wires BINDERY_API_KEY from an externally-managed Secret
+    template: deployment.yaml
+    set:
+      auth.existingSecret: my-external-secret
+      auth.apiKeySecretKey: bindery-api-key
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: BINDERY_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: my-external-secret
+                key: bindery-api-key
+
+  - it: does not render a NetworkPolicy by default
+    template: networkpolicy.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders a NetworkPolicy with Ingress + Egress types when enabled
+    template: networkpolicy.yaml
+    set:
+      networkPolicy.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - contains:
+          path: spec.policyTypes
+          content: Ingress
+      - contains:
+          path: spec.policyTypes
+          content: Egress

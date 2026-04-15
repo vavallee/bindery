@@ -18,3 +18,11 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 app.kubernetes.io/name: {{ include "bindery.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
+
+{{- define "bindery.serviceAccountName" -}}
+{{- if .Values.serviceAccount.create -}}
+  {{- default (include "bindery.fullname" .) .Values.serviceAccount.name }}
+{{- else -}}
+  {{- default "default" .Values.serviceAccount.name }}
+{{- end }}
+{{- end }}

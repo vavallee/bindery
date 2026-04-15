@@ -17,6 +17,8 @@ spec:
       labels:
         {{- include "bindery.selectorLabels" . | nindent 8 }}
     spec:
+      serviceAccountName: {{ include "bindery.serviceAccountName" . }}
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -42,6 +44,13 @@ spec:
             {{- range $key, $value := .Values.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}
+            {{- end }}
+            {{- if or .Values.auth.existingSecret .Values.auth.apiKey }}
+            - name: BINDERY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (printf "%s-auth" (include "bindery.fullname" .)) .Values.auth.existingSecret }}
+                  key: {{ .Values.auth.apiKeySecretKey | default "api-key" }}
             {{- end }}
           startupProbe:
             tcpSocket:

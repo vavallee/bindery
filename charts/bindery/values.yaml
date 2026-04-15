@@ -56,3 +56,56 @@ strategy:
   type: Recreate
 
 revisionHistoryLimit: 3
+
+serviceAccount:
+  # If true, chart creates a dedicated SA with token automount disabled.
+  # If false, the pod falls back to the namespace default SA.
+  create: true
+  # Override the generated SA name. Defaults to the chart fullname.
+  name: ""
+
+auth:
+  # If set, the chart does NOT render a Secret — it references this
+  # externally-managed one via envFrom/secretKeyRef. Preferred for GitOps
+  # setups where the key is injected by sealed-secrets or SOPS.
+  existingSecret: ""
+  # Key inside the Secret that holds BINDERY_API_KEY. Matches the default
+  # the chart-managed Secret emits (see templates/secret.yaml).
+  apiKeySecretKey: api-key
+  # Only used when existingSecret is empty. Providing this value tells the
+  # chart to render a managed Secret named "<fullname>-auth". Leaving both
+  # existingSecret AND apiKey empty means Bindery generates its own key on
+  # first boot (stored in the DB, rotatable from the UI).
+  apiKey: ""
+
+networkPolicy:
+  # Opt-in: when enabled, the chart creates a NetworkPolicy that restricts
+  # ingress to the given selector and egress to DNS + explicitly listed
+  # peers. Leave disabled unless your cluster has a NetworkPolicy-capable
+  # CNI (Calico, Cilium, etc).
+  enabled: false
+  # Label selector(s) allowed to reach the Bindery pod on its service port.
+  # Example: { matchLabels: { app.kubernetes.io/part-of: media-stack } }
+  ingressSelector: {}
+  # Additional egress rules beyond DNS. One entry per downstream service —
+  # SABnzbd, qBittorrent, Prowlarr, notification target, etc.
+  egress: []
+  # Example entry — uncomment and adjust to allow egress to a named pod.
+  # egress:
+  #   - to:
+  #       - podSelector:
+  #           matchLabels:
+  #             app.kubernetes.io/name: sabnzbd
+  #     ports:
+  #       - protocol: TCP
+  #         port: 8080
+
+hooks:
+  postsyncSmoke:
+    # ArgoCD PostSync Job that probes /api/v1/health and fails the sync if
+    # the endpoint doesn't return 200 within 10 seconds. Harmless outside
+    # of ArgoCD (it's a one-shot Job that runs and exits).
+    enabled: false
+    # Image used by the smoke-test container. Kept intentionally minimal
+    # (busybox gives us wget + sh). Pin a digest in strict environments.
+    image: busybox:1.37

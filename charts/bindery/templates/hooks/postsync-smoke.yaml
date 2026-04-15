@@ -1,0 +1,51 @@
+{{- if .Values.hooks.postsyncSmoke.enabled -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "bindery.fullname" . }}-postsync-smoke
+  labels:
+    {{- include "bindery.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  ttlSecondsAfterFinished: 120
+  template:
+    metadata:
+      labels:
+        {{- include "bindery.selectorLabels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: smoke
+          image: {{ .Values.hooks.postsyncSmoke.image | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              echo "Running post-sync smoke test..."
+              STATUS=$(wget -q -O /dev/null -S --max-redirect=0 \
+                --timeout=10 \
+                "http://{{ include "bindery.fullname" . }}:{{ .Values.service.port }}/api/v1/health" \
+                2>&1 | grep "HTTP/" | awk '{print $2}' | head -1)
+              if [ "$STATUS" = "200" ]; then
+                echo "Health check passed (HTTP $STATUS)"
+                exit 0
+              else
+                echo "Health check failed (HTTP $STATUS)"
+                exit 1
+              fi
+{{- end }}
