@@ -70,7 +70,10 @@ func (r *MetadataProfileRepo) Create(ctx context.Context, p *models.MetadataProf
 	if err != nil {
 		return fmt.Errorf("create metadata profile: %w", err)
 	}
-	id, _ := result.LastInsertId()
+	id, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("get metadata profile id: %w", err)
+	}
 	p.ID = id
 	return nil
 }

@@ -146,7 +146,7 @@ func TestAddTorrent_Success(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestClient(srv.URL, "admin", "pass")
-	if err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc123", "", ""); err != nil {
+	if _, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc123", "", ""); err != nil {
 		t.Fatalf("AddTorrent: %v", err)
 	}
 }
@@ -167,7 +167,7 @@ func TestAddTorrent_WithCategoryAndSavePath(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestClient(srv.URL, "admin", "pass")
-	if err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", "books", "/downloads"); err != nil {
+	if _, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", "books", "/downloads"); err != nil {
 		t.Fatalf("AddTorrent: %v", err)
 	}
 	if gotCategory != "books" {
@@ -190,7 +190,7 @@ func TestAddTorrent_FailsBody(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestClient(srv.URL, "admin", "pass")
-	if err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", "", ""); err == nil {
+	if _, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", "", ""); err == nil {
 		t.Fatal("expected error on 'Fails.' body")
 	}
 }
@@ -208,7 +208,7 @@ func TestAddTorrent_HTTPError(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestClient(srv.URL, "admin", "pass")
-	if err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", "", ""); err == nil {
+	if _, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", "", ""); err == nil {
 		t.Fatal("expected error on 400")
 	}
 }

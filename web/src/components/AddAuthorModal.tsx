@@ -12,7 +12,7 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Author[]>([])
   const [searching, setSearching] = useState(false)
-  const [searchError, setSearchError] = useState('')
+  const [searchError, setSearchError] = useState<string | null>(null)
   const [adding, setAdding] = useState<string | null>(null)
   const [profiles, setProfiles] = useState<MetadataProfile[]>([])
   const [profileId, setProfileId] = useState<number | null>(null)
@@ -37,7 +37,7 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
   const search = async () => {
     if (!query.trim()) return
     setSearching(true)
-    setSearchError('')
+    setSearchError(null)
     try {
       const authors = await api.searchAuthors(query)
       setResults(authors)

@@ -304,13 +304,17 @@ func (h *BookHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.history != nil {
-		data, _ := json.Marshal(map[string]any{"paths": deletedPaths})
-		_ = h.history.Create(r.Context(), &models.HistoryEvent{
+		data, err := json.Marshal(map[string]any{"paths": deletedPaths})
+		if err != nil {
+			slog.Warn("failed to marshal deleted paths history event", "book_id", book.ID, "error", err)
+		} else if err := h.history.Create(r.Context(), &models.HistoryEvent{
 			BookID:      &book.ID,
 			EventType:   models.HistoryEventBookFileDeleted,
 			SourceTitle: book.Title,
 			Data:        string(data),
-		})
+		}); err != nil {
+			slog.Warn("failed to create deleted paths history event", "book_id", book.ID, "error", err)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, book)

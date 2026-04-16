@@ -10,4 +10,5 @@ type Torrent struct {
 	Category string  `json:"category"`
 	SavePath string  `json:"save_path"`
 	ETA      int     `json:"eta"`
+	AddedOn  int64   `json:"added_on"`
 }

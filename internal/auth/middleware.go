@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 )
 
@@ -117,7 +118,9 @@ func Middleware(p Provider) func(http.Handler) http.Handler {
 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+			if _, err := w.Write([]byte(`{"error":"unauthorized"}`)); err != nil {
+				slog.Warn("failed to write unauthorized response", "error", err)
+			}
 		})
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -23,16 +24,33 @@ type Client struct {
 
 // New creates a Newznab client for a specific indexer.
 func New(baseURL, apiKey string) *Client {
+	parsedURL := normalizeEndpointURL(baseURL)
+	resolvedAPIKey := strings.TrimSpace(apiKey)
+	if u, err := url.Parse(parsedURL); err == nil {
+		q := u.Query()
+		if resolvedAPIKey == "" {
+			if qKey := strings.TrimSpace(q.Get("apikey")); qKey != "" {
+				resolvedAPIKey = qKey
+			}
+		}
+		q.Del("apikey")
+		u.RawQuery = q.Encode()
+		parsedURL = strings.TrimRight(u.String(), "/")
+	}
+
 	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		apiKey:  apiKey,
+		baseURL: parsedURL,
+		apiKey:  resolvedAPIKey,
 		http:    &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
 // Caps fetches the indexer capabilities.
 func (c *Client) Caps(ctx context.Context) (*capsResponse, error) {
-	u := fmt.Sprintf("%s/api?t=caps&apikey=%s", c.baseURL, url.QueryEscape(c.apiKey))
+	u, err := c.buildURL("caps", map[string]string{})
+	if err != nil {
+		return nil, fmt.Errorf("caps: %w", err)
+	}
 	var caps capsResponse
 	if err := c.getXML(ctx, u, &caps); err != nil {
 		return nil, fmt.Errorf("caps: %w", err)
@@ -43,8 +61,14 @@ func (c *Client) Caps(ctx context.Context) (*capsResponse, error) {
 // Search performs a general search with optional category filtering.
 func (c *Client) Search(ctx context.Context, query string, categories []int) ([]SearchResult, error) {
 	cats := intSliceToCSV(categories)
-	u := fmt.Sprintf("%s/api?t=search&apikey=%s&q=%s&cat=%s&limit=100",
-		c.baseURL, url.QueryEscape(c.apiKey), url.QueryEscape(query), cats)
+	u, err := c.buildURL("search", map[string]string{
+		"q":     query,
+		"cat":   cats,
+		"limit": "100",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search: %w", err)
+	}
 
 	var rss rssResponse
 	if err := c.getXML(ctx, u, &rss); err != nil {
@@ -70,13 +94,17 @@ func (c *Client) BookSearch(ctx context.Context, title, author string, categorie
 
 	// Tier 1: structured t=book
 	if author != "" {
-		u := fmt.Sprintf("%s/api?t=book&apikey=%s&title=%s&author=%s&cat=%s&limit=100",
-			c.baseURL, url.QueryEscape(c.apiKey),
-			url.QueryEscape(queryTitle), url.QueryEscape(author), cats)
-
-		var rss rssResponse
-		if err := c.getXML(ctx, u, &rss); err == nil && len(rss.Channel.Items) > 0 && rss.Channel.Response.Total < 1000 {
-			return c.parseResults(rss.Channel.Items), nil
+		u, err := c.buildURL("book", map[string]string{
+			"title":  queryTitle,
+			"author": author,
+			"cat":    cats,
+			"limit":  "100",
+		})
+		if err == nil {
+			var rss rssResponse
+			if err := c.getXML(ctx, u, &rss); err == nil && len(rss.Channel.Items) > 0 && rss.Channel.Response.Total < 1000 {
+				return c.parseResults(rss.Channel.Items), nil
+			}
 		}
 	}
 
@@ -185,6 +213,67 @@ func (c *Client) getXML(ctx context.Context, rawURL string, target interface{}) 
 	}
 
 	return xml.NewDecoder(resp.Body).Decode(target)
+}
+
+func (c *Client) buildURL(command string, params map[string]string) (string, error) {
+	u, err := url.Parse(c.baseURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid indexer URL: %w", err)
+	}
+
+	q := u.Query()
+	q.Del("t")
+	q.Del("q")
+	q.Del("cat")
+	q.Del("limit")
+	q.Del("title")
+	q.Del("author")
+	q.Del("apikey")
+
+	q.Set("t", command)
+	for k, v := range params {
+		q.Set(k, v)
+	}
+	if c.apiKey != "" {
+		q.Set("apikey", c.apiKey)
+	}
+
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
+func normalizeEndpointURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+
+	u, err := url.Parse(trimmed)
+	if err != nil {
+		return strings.TrimRight(trimmed, "/")
+	}
+
+	p := strings.TrimSpace(u.Path)
+	if p == "" || p == "/" {
+		u.Path = "/api"
+		u.RawPath = ""
+		return strings.TrimRight(u.String(), "/")
+	}
+
+	normalized := strings.TrimRight(path.Clean(p), "/")
+	if normalized == "" || normalized == "." {
+		normalized = "/api"
+	}
+	if !strings.HasPrefix(normalized, "/") {
+		normalized = "/" + normalized
+	}
+	if !strings.Contains(strings.ToLower(normalized), "torznab") && !strings.HasSuffix(strings.ToLower(normalized), "/api") {
+		normalized = strings.TrimRight(normalized, "/") + "/api"
+	}
+
+	u.Path = normalized
+	u.RawPath = ""
+	return strings.TrimRight(u.String(), "/")
 }
 
 func intSliceToCSV(ints []int) string {

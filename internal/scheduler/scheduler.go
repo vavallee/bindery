@@ -10,8 +10,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/vavallee/bindery/internal/db"
-	"github.com/vavallee/bindery/internal/downloader/qbittorrent"
-	"github.com/vavallee/bindery/internal/downloader/sabnzbd"
+	"github.com/vavallee/bindery/internal/downloader"
 	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/indexer/newznab"
@@ -189,14 +188,18 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 
 	lang := "en"
 	if s.settings != nil {
-		if langSetting, _ := s.settings.Get(ctx, "search.preferredLanguage"); langSetting != nil {
+		if langSetting, err := s.settings.Get(ctx, "search.preferredLanguage"); err != nil {
+			slog.Warn("failed to load preferred search language", "error", err)
+		} else if langSetting != nil {
 			lang = langSetting.Value
 		}
 	}
 
 	authorName := ""
 	if s.authors != nil {
-		if a, _ := s.authors.GetByID(ctx, book.AuthorID); a != nil {
+		if a, err := s.authors.GetByID(ctx, book.AuthorID); err != nil {
+			slog.Warn("failed to load author for search", "author_id", book.AuthorID, "error", err)
+		} else if a != nil {
 			authorName = a.Name
 		}
 	}
@@ -219,10 +222,20 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 
 	best := results[0]
 
-	candidates, _ := s.clients.GetEnabledByProtocol(ctx, best.Protocol)
+	candidates, err := s.clients.GetEnabledByProtocol(ctx, best.Protocol)
+	if err != nil {
+		slog.Warn("failed to list clients for protocol", "protocol", best.Protocol, "error", err)
+	}
 	client := db.PickClientForMediaType(candidates, mediaType)
 	if client == nil {
+		client, err = s.clients.GetFirstEnabled(ctx)
+		if err != nil {
+			slog.Warn("failed to load fallback download client", "error", err)
+		}
+	}
+	if client == nil {
 		slog.Warn("SearchAndGrabBook: no enabled download client for protocol", "book", book.Title, "protocol", best.Protocol)
+
 		return
 	}
 
@@ -237,7 +250,11 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		"size", best.Size,
 	)
 
-	existing, _ := s.downloads.GetByGUID(ctx, best.GUID)
+	existing, err := s.downloads.GetByGUID(ctx, best.GUID)
+	if err != nil {
+		slog.Warn("failed to check existing download", "guid", best.GUID, "error", err)
+		return
+	}
 	if existing != nil {
 		return
 	}
@@ -260,29 +277,29 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		return
 	}
 
-	if best.Protocol == "torrent" {
-		qbt := qbittorrent.New(client.Host, client.Port, client.URLBase, client.APIKey, client.UseSSL)
-		if err := qbt.AddTorrent(ctx, best.NZBURL, client.Category, ""); err != nil {
-			slog.Error("SearchAndGrabBook: failed to send to qBittorrent", "title", best.Title, "error", err)
-			s.downloads.SetError(ctx, dl.ID, err.Error())
-			return
+	sendRes, err := downloader.SendDownload(ctx, client, best.NZBURL, best.Title)
+	if err != nil {
+		slog.Error("SearchAndGrabBook: failed to send to downloader", "client", client.Type, "title", best.Title, "error", err)
+		if setErr := s.downloads.SetError(ctx, dl.ID, err.Error()); setErr != nil {
+			slog.Warn("failed to persist download error", "download_id", dl.ID, "error", setErr)
 		}
-		s.downloads.UpdateStatus(ctx, dl.ID, models.DownloadStatusDownloading)
-		slog.Info("sent to qBittorrent", "title", best.Title)
-	} else {
-		sab := sabnzbd.New(client.Host, client.Port, client.APIKey, client.UseSSL)
-		resp, err := sab.AddURL(ctx, best.NZBURL, best.Title, client.Category, 0)
-		if err != nil {
-			slog.Error("SearchAndGrabBook: failed to send to SABnzbd", "title", best.Title, "error", err)
-			s.downloads.SetError(ctx, dl.ID, err.Error())
-			return
-		}
-		if len(resp.NzoIDs) > 0 {
-			s.downloads.SetNzoID(ctx, dl.ID, resp.NzoIDs[0])
-		}
-		s.downloads.UpdateStatus(ctx, dl.ID, models.DownloadStatusDownloading)
-		slog.Info("sent to SABnzbd", "title", best.Title)
+		return
 	}
+	if sendRes.RemoteID != "" {
+		if sendRes.UsesTorrentID {
+			if err := s.downloads.SetTorrentID(ctx, dl.ID, sendRes.RemoteID); err != nil {
+				slog.Warn("failed to set torrent ID", "download_id", dl.ID, "error", err)
+			}
+		} else {
+			if err := s.downloads.SetNzoID(ctx, dl.ID, sendRes.RemoteID); err != nil {
+				slog.Warn("failed to set NZO ID", "download_id", dl.ID, "error", err)
+			}
+		}
+	}
+	if err := s.downloads.UpdateStatus(ctx, dl.ID, models.DownloadStatusDownloading); err != nil {
+		slog.Warn("failed to update download status", "download_id", dl.ID, "status", models.DownloadStatusDownloading, "error", err)
+	}
+	slog.Info("sent to downloader", "client", client.Type, "title", best.Title)
 }
 
 func (s *Scheduler) searchWanted() {
@@ -292,7 +309,9 @@ func (s *Scheduler) searchWanted() {
 	// scheduled wanted-scan is skipped entirely — users manage grabs
 	// manually from the Wanted page.
 	if s.settings != nil {
-		if setting, _ := s.settings.Get(ctx, "autoGrab.enabled"); setting != nil && setting.Value == "false" {
+		if setting, err := s.settings.Get(ctx, "autoGrab.enabled"); err != nil {
+			slog.Warn("failed to load auto-grab setting", "error", err)
+		} else if setting != nil && setting.Value == "false" {
 			slog.Info("job: auto-grab disabled globally, skipping wanted search")
 			return
 		}
@@ -320,7 +339,13 @@ func filterBlocklisted(ctx context.Context, bl *db.BlocklistRepo, results []newz
 	}
 	out := make([]newznab.SearchResult, 0, len(results))
 	for _, r := range results {
-		if blocked, _ := bl.IsBlocked(ctx, r.GUID); !blocked {
+		blocked, err := bl.IsBlocked(ctx, r.GUID)
+		if err != nil {
+			slog.Warn("failed to check blocklist", "guid", r.GUID, "error", err)
+			out = append(out, r)
+			continue
+		}
+		if !blocked {
 			out = append(out, r)
 		}
 	}

@@ -45,7 +45,7 @@
 
 ### Search & downloads
 - **Newznab + Torznab** — Query multiple Usenet and torrent indexers in parallel, deduplicated and ranked
-- **SABnzbd + qBittorrent** — Full support for both Usenet and torrent download clients
+- **SABnzbd, qBittorrent, Transmission** — Full support for both Usenet and torrent download clients
 - **Auto-grab** — Scheduler searches for wanted books every 12h and automatically grabs the best result. Adding a new author or flipping a book to `wanted` fires an immediate search — no waiting for the next scheduled pass. Toggle the global kill-switch at **Settings → General → Auto-grab** to pause all automatic grabbing without losing your monitored list.
 - **Interactive search** — Manual per-book search from the Wanted page with full result details; Grab button shows a spinner while in-flight and a ✓ on success
 - **Smart matching** — Four-tier query fallback (`t=book` → `surname+title` → `author+title` → title); word-boundary keyword matching; contiguous-phrase requirement for multi-word titles; dual-author-anchor for ambiguous short titles; subtitle-aware (`Title: Subtitle`)
@@ -190,6 +190,7 @@ No Goodreads scraping. All sources use documented, stable public APIs. Cover ima
 ### Download clients
 - **SABnzbd** — full support (NZB submission, queue/history polling, pause/resume/delete)
 - **qBittorrent** — WebUI API v2 with Username/Password auth (add magnet/URL, list/delete torrents)
+- **Transmission** - WebUI API with Username/Password auth (add magnet/URL, list/delete torrents)
 
 ### Indexers
 - **Newznab** (Usenet) — NZBGeek, NZBFinder, NZBPlanet, DrunkenSlug, etc.

@@ -16,7 +16,9 @@ import (
 
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/downloader/qbittorrent"
 	"github.com/vavallee/bindery/internal/downloader/sabnzbd"
+	"github.com/vavallee/bindery/internal/downloader/transmission"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -228,6 +230,64 @@ func (s *Scanner) CheckDownloads(ctx context.Context) {
 		return
 	}
 
+	switch client.Type {
+	case "transmission":
+		s.checkTransmissionDownloads(ctx, client)
+	case "qbittorrent":
+		s.checkQbittorrentDownloads(ctx, client)
+	default:
+		s.checkSABnzbdDownloads(ctx, client)
+	}
+}
+
+func isTrackedTorrentDownloadForClient(dl models.Download, clientID int64) bool {
+	if dl.DownloadClientID == nil || *dl.DownloadClientID != clientID {
+		return false
+	}
+	if dl.TorrentID == nil {
+		return false
+	}
+	return dl.Status != models.DownloadStatusImported && dl.Status != models.DownloadStatusFailed
+}
+
+func (s *Scanner) setDownloadError(ctx context.Context, id int64, message string) {
+	if err := s.downloads.SetError(ctx, id, message); err != nil {
+		slog.Warn("failed to persist download error", "download_id", id, "error", err)
+	}
+}
+
+func (s *Scanner) updateDownloadStatus(ctx context.Context, id int64, status string) {
+	if err := s.downloads.UpdateStatus(ctx, id, status); err != nil {
+		slog.Warn("failed to update download status", "download_id", id, "status", status, "error", err)
+	}
+}
+
+func (s *Scanner) createHistoryEvent(ctx context.Context, eventType string, sourceTitle string, bookID *int64, data map[string]string) {
+	if s.history == nil {
+		return
+	}
+	dataJSON, err := json.Marshal(data)
+	if err != nil {
+		slog.Warn("failed to marshal history event data", "event_type", eventType, "error", err)
+		return
+	}
+	if err := s.history.Create(ctx, &models.HistoryEvent{
+		BookID:      bookID,
+		EventType:   eventType,
+		SourceTitle: sourceTitle,
+		Data:        string(dataJSON),
+	}); err != nil {
+		slog.Warn("failed to create history event", "event_type", eventType, "error", err)
+	}
+}
+
+func (s *Scanner) markDownloadFailed(ctx context.Context, dl *models.Download, message string) {
+	s.setDownloadError(ctx, dl.ID, message)
+	s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, map[string]string{"guid": dl.GUID, "message": message})
+}
+
+// checkSABnzbdDownloads polls SABnzbd for status changes.
+func (s *Scanner) checkSABnzbdDownloads(ctx context.Context, client *models.DownloadClient) {
 	sab := sabnzbd.New(client.Host, client.Port, client.APIKey, client.UseSSL)
 
 	// Check history for completed downloads (no category filter — match by NZO ID)
@@ -251,29 +311,146 @@ func (s *Scanner) CheckDownloads(ctx context.Context) {
 					slog.Debug("remapped download path", "sab", slot.Path, "local", localPath)
 				}
 				slog.Info("download completed", "title", dl.Title, "path", localPath)
-				s.downloads.UpdateStatus(ctx, dl.ID, models.DownloadStatusCompleted)
-				s.tryImport(ctx, sab, dl, slot.NzoID, localPath)
+				s.updateDownloadStatus(ctx, dl.ID, models.DownloadStatusCompleted)
+				s.tryImportSABnzbd(ctx, sab, dl, slot.NzoID, localPath)
 			}
 		case "Failed":
 			if dl.Status != models.DownloadStatusFailed {
 				slog.Warn("download failed", "title", dl.Title, "message", slot.FailMessage)
-				s.downloads.SetError(ctx, dl.ID, slot.FailMessage)
-				eventData, _ := json.Marshal(map[string]string{"guid": dl.GUID, "message": slot.FailMessage})
-				s.history.Create(ctx, &models.HistoryEvent{
-					BookID:      dl.BookID,
-					EventType:   models.HistoryEventDownloadFailed,
-					SourceTitle: dl.Title,
-					Data:        string(eventData),
-				})
+				s.setDownloadError(ctx, dl.ID, slot.FailMessage)
+				s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, map[string]string{"guid": dl.GUID, "message": slot.FailMessage})
 			}
 		}
 	}
 }
 
-// tryImport attempts to import a completed download into the library.
+// checkTransmissionDownloads polls Transmission for status changes.
+func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models.DownloadClient) {
+	trans := transmission.New(client.Host, client.Port, client.Username, client.Password, client.UseSSL)
+
+	// Get all torrents — Category is used as the download directory filter so
+	// Bindery only sees its own torrents on a shared Transmission instance.
+	torrents, err := trans.GetTorrents(ctx, client.Category)
+	if err != nil {
+		slog.Debug("failed to fetch Transmission torrents", "error", err)
+		return
+	}
+
+	// Get all active downloads from DB (not yet completed/imported)
+	allDownloads, err := s.downloads.List(ctx)
+	if err != nil {
+		slog.Debug("failed to list downloads", "error", err)
+		return
+	}
+	torrentsMap := make(map[string]transmission.Torrent)
+	for _, t := range torrents {
+		torrentsMap[fmt.Sprintf("%d", t.ID)] = t
+	}
+
+	for _, dl := range allDownloads {
+		if !isTrackedTorrentDownloadForClient(dl, client.ID) {
+			continue
+		}
+
+		torrent, ok := torrentsMap[*dl.TorrentID]
+		if !ok {
+			continue
+		}
+
+		// Status codes: 0=stopped, 1=checking, 2=downloading, 3=seeding, 4=allocating, 5=checking, 6=stopped
+		isComplete := torrent.Status == 3 || (torrent.PercentDone >= 1.0)
+		isStopped := torrent.Status == 0 || torrent.Status == 6
+		stopError := strings.TrimSpace(torrent.ErrorString)
+
+		if isComplete && (dl.Status == models.DownloadStatusDownloading || dl.Status == models.DownloadStatusQueued) {
+			// Download is complete
+			slog.Info("download completed", "title", dl.Title, "path", torrent.DownloadDir)
+			s.updateDownloadStatus(ctx, dl.ID, models.DownloadStatusCompleted)
+			s.tryImportTransmission(ctx, &dl, torrent.DownloadDir)
+		} else if isStopped && !isComplete && dl.Status != models.DownloadStatusFailed {
+			if stopError == "" {
+				// Transmission also reports user-paused torrents as stopped.
+				continue
+			}
+			slog.Warn("download failed", "title", dl.Title, "error", stopError)
+			s.markDownloadFailed(ctx, &dl, stopError)
+		}
+	}
+}
+
+// checkQbittorrentDownloads polls qBittorrent for status changes.
+func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.DownloadClient) {
+	qb := qbittorrent.New(client.Host, client.Port, client.Username, client.Password, client.UseSSL)
+
+	torrents, err := qb.GetTorrents(ctx, client.Category)
+	if err != nil {
+		slog.Debug("failed to fetch qBittorrent torrents", "error", err)
+		return
+	}
+
+	allDownloads, err := s.downloads.List(ctx)
+	if err != nil {
+		slog.Debug("failed to list downloads", "error", err)
+		return
+	}
+	torrentsMap := make(map[string]qbittorrent.Torrent)
+	for _, t := range torrents {
+		torrentsMap[strings.ToLower(t.Hash)] = t
+	}
+
+	for _, dl := range allDownloads {
+		if !isTrackedTorrentDownloadForClient(dl, client.ID) {
+			continue
+		}
+
+		torrent, ok := torrentsMap[strings.ToLower(*dl.TorrentID)]
+		if !ok {
+			continue
+		}
+
+		state := strings.ToLower(torrent.State)
+		isComplete := torrent.Progress >= 1.0 || strings.Contains(state, "upload") || strings.Contains(state, "stalledup") || strings.Contains(state, "checkingup")
+		isFailed := strings.Contains(state, "error")
+
+		if isComplete && (dl.Status == models.DownloadStatusDownloading || dl.Status == models.DownloadStatusQueued) {
+			downloadPath := torrent.SavePath
+			candidate := filepath.Join(torrent.SavePath, torrent.Name)
+			if _, err := os.Stat(candidate); err == nil {
+				downloadPath = candidate
+			}
+			downloadPath = s.remapper.Apply(downloadPath)
+
+			slog.Info("download completed", "title", dl.Title, "path", downloadPath)
+			s.updateDownloadStatus(ctx, dl.ID, models.DownloadStatusCompleted)
+			s.tryImportQbittorrent(ctx, &dl, downloadPath)
+		} else if isFailed && dl.Status != models.DownloadStatusFailed {
+			slog.Warn("download failed", "title", dl.Title, "state", torrent.State)
+			s.markDownloadFailed(ctx, &dl, "Torrent failed in qBittorrent")
+		}
+	}
+}
+
+// tryImportSABnzbd attempts to import a completed SABnzbd download into the library.
 // sab is used to clear the SABnzbd history entry once bindery has taken
 // ownership of the files; nzoID is the history slot's NZO identifier.
-func (s *Scanner) tryImport(ctx context.Context, sab *sabnzbd.Client, dl *models.Download, nzoID, downloadPath string) {
+func (s *Scanner) tryImportSABnzbd(ctx context.Context, sab *sabnzbd.Client, dl *models.Download, nzoID, downloadPath string) {
+	s.tryImportInternal(ctx, dl, downloadPath, "sabnzbd", nzoID, func() error {
+		// Clean up SABnzbd history
+		return sab.DeleteHistory(ctx, nzoID, false)
+	})
+}
+
+// tryImportTransmission attempts to import a completed Transmission download into the library.
+func (s *Scanner) tryImportTransmission(ctx context.Context, dl *models.Download, downloadPath string) {
+	s.tryImportInternal(ctx, dl, downloadPath, "transmission", safeRemoteID(dl.TorrentID), nil)
+}
+
+func (s *Scanner) tryImportQbittorrent(ctx context.Context, dl *models.Download, downloadPath string) {
+	s.tryImportInternal(ctx, dl, downloadPath, "qbittorrent", safeRemoteID(dl.TorrentID), nil)
+}
+
+// tryImportInternal is the common import logic shared by SABnzbd and Transmission.
+func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, downloadPath, cleanupClientType, cleanupRemoteID string, cleanupFunc func() error) {
 	if s.libraryDir == "" {
 		slog.Warn("no library directory configured, skipping import")
 		return
@@ -281,7 +458,7 @@ func (s *Scanner) tryImport(ctx context.Context, sab *sabnzbd.Client, dl *models
 
 	// Find book files in the download path
 	var bookFiles []string
-	filepath.Walk(downloadPath, func(path string, info os.FileInfo, err error) error {
+	if err := filepath.Walk(downloadPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
@@ -289,14 +466,16 @@ func (s *Scanner) tryImport(ctx context.Context, sab *sabnzbd.Client, dl *models
 			bookFiles = append(bookFiles, path)
 		}
 		return nil
-	})
+	}); err != nil {
+		slog.Warn("failed to walk download path", "path", downloadPath, "error", err)
+	}
 
 	if len(bookFiles) == 0 {
 		slog.Warn("no book files found in download", "path", downloadPath)
 		return
 	}
 
-	// Resolve the book and author for naming. Lookup errors are not fatal —
+	// Resolve the book and author for naming. Lookup errors are not fatal -
 	// we fall through to the "unmatched import" log below.
 	var book *models.Book
 	var author *models.Author
@@ -349,7 +528,7 @@ func (s *Scanner) tryImport(ctx context.Context, sab *sabnzbd.Client, dl *models
 				slog.Error("failed to update audiobook file path", "bookID", book.ID, "error", err)
 			}
 		}
-		s.downloads.UpdateStatus(ctx, dl.ID, models.DownloadStatusImported)
+		s.updateDownloadStatus(ctx, dl.ID, models.DownloadStatusImported)
 		slog.Info("audiobook imported", "title", func() string {
 			if book != nil {
 				return book.Title
@@ -359,14 +538,12 @@ func (s *Scanner) tryImport(ctx context.Context, sab *sabnzbd.Client, dl *models
 
 		s.pushToCalibre(ctx, book, author, destDir)
 
-		eventData, _ := json.Marshal(map[string]string{"path": destDir})
-		s.history.Create(ctx, &models.HistoryEvent{
-			BookID:      dl.BookID,
-			EventType:   models.HistoryEventBookImported,
-			SourceTitle: dl.Title,
-			Data:        string(eventData),
-		})
-		s.clearSABHistory(ctx, sab, nzoID)
+		s.createHistoryEvent(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, map[string]string{"path": destDir})
+		if cleanupFunc != nil {
+			if err := cleanupFunc(); err != nil {
+				slog.Warn("cleanup failed", cleanupWarnAttrs(cleanupClientType, cleanupRemoteID, err)...)
+			}
+		}
 		return
 	}
 
@@ -403,18 +580,12 @@ func (s *Scanner) tryImport(ctx context.Context, sab *sabnzbd.Client, dl *models
 		if err := s.books.SetFormatFilePath(ctx, book.ID, models.MediaTypeEbook, destPath); err != nil {
 			slog.Error("failed to update ebook file path", "bookID", book.ID, "error", err)
 		}
-		s.downloads.UpdateStatus(ctx, dl.ID, models.DownloadStatusImported)
+		s.updateDownloadStatus(ctx, dl.ID, models.DownloadStatusImported)
 		slog.Info("book imported", "title", book.Title, "path", destPath)
 
 		s.pushToCalibre(ctx, book, author, destPath)
 
-		eventData, _ := json.Marshal(map[string]string{"path": destPath})
-		s.history.Create(ctx, &models.HistoryEvent{
-			BookID:      dl.BookID,
-			EventType:   models.HistoryEventBookImported,
-			SourceTitle: dl.Title,
-			Data:        string(eventData),
-		})
+		s.createHistoryEvent(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, map[string]string{"path": destPath})
 	}
 
 	// A clean run leaves the download folder holding only non-book byproducts
@@ -427,21 +598,30 @@ func (s *Scanner) tryImport(ctx context.Context, sab *sabnzbd.Client, dl *models
 				slog.Warn("failed to remove download folder after import", "path", downloadPath, "error", err)
 			}
 		}
-		s.clearSABHistory(ctx, sab, nzoID)
+		if cleanupFunc != nil {
+			if err := cleanupFunc(); err != nil {
+				slog.Warn("cleanup failed", cleanupWarnAttrs(cleanupClientType, cleanupRemoteID, err)...)
+			}
+		}
 	}
 }
 
-// clearSABHistory tells SABnzbd to drop the history entry for a job bindery
-// has finished importing. deleteFiles=false because the importer has already
-// moved the contents; asking SAB to delete would either no-op or wipe files
-// that were moved cross-filesystem and are still resolving.
-func (s *Scanner) clearSABHistory(ctx context.Context, sab *sabnzbd.Client, nzoID string) {
-	if sab == nil || nzoID == "" {
-		return
+func safeRemoteID(id *string) string {
+	if id == nil {
+		return ""
 	}
-	if err := sab.DeleteHistory(ctx, nzoID, false); err != nil {
-		slog.Warn("failed to delete SABnzbd history entry", "nzoID", nzoID, "error", err)
+	return *id
+}
+
+func cleanupWarnAttrs(clientType, remoteID string, err error) []any {
+	attrs := []any{"error", err}
+	if clientType != "" {
+		attrs = append(attrs, "clientType", clientType)
 	}
+	if remoteID != "" {
+		attrs = append(attrs, "remoteID", remoteID)
+	}
+	return attrs
 }
 
 // detectDownloadFormat inspects a list of file paths and returns the media
@@ -467,7 +647,7 @@ func (s *Scanner) FindExisting(ctx context.Context, title, authorName string) st
 		return ""
 	}
 	var found string
-	filepath.Walk(s.libraryDir, func(path string, info os.FileInfo, err error) error {
+	if err := filepath.Walk(s.libraryDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || found != "" {
 			return nil
 		}
@@ -479,7 +659,9 @@ func (s *Scanner) FindExisting(ctx context.Context, title, authorName string) st
 			found = path
 		}
 		return nil
-	})
+	}); err != nil {
+		slog.Warn("failed to search library for existing file", "path", s.libraryDir, "error", err)
+	}
 	return found
 }
 
@@ -600,7 +782,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 
 	// Collect all book files on disk
 	var foundFiles []string
-	filepath.Walk(s.libraryDir, func(path string, info os.FileInfo, err error) error {
+	if err := filepath.Walk(s.libraryDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
@@ -608,7 +790,9 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 			foundFiles = append(foundFiles, path)
 		}
 		return nil
-	})
+	}); err != nil {
+		slog.Warn("library scan walk encountered errors", "path", s.libraryDir, "error", err)
+	}
 
 	slog.Info("library scan found files", "path", s.libraryDir, "count", len(foundFiles))
 

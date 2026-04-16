@@ -20,6 +20,7 @@ coverage.html
 
 # Frontend
 web/node_modules/
+web/coverage/
 web/dist/
 web/.vite/
 web/tsconfig.tsbuildinfo

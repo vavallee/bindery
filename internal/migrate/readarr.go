@@ -158,7 +158,9 @@ type readarrSettings struct {
 
 func parseSettings(raw string) readarrSettings {
 	var s readarrSettings
-	_ = json.Unmarshal([]byte(raw), &s)
+	if err := json.Unmarshal([]byte(raw), &s); err != nil {
+		slog.Warn("failed to parse readarr settings JSON", "err", err)
+	}
 	return s
 }
 
@@ -247,20 +249,14 @@ func importReadarrDownloadClients(ctx context.Context, src *sql.DB, repo *db.Dow
 			cat = "books"
 		}
 
-		// For qBittorrent, Readarr's Username/Password fields carry creds;
-		// Bindery squashes credentials into the APIKey field for either
-		// client so we don't need a separate Password column.
-		apiKey := s.APIKey
-		if apiKey == "" {
-			apiKey = s.Password
-		}
-
 		c := &models.DownloadClient{
 			Name:     name,
 			Type:     t,
 			Host:     s.Host,
 			Port:     s.Port,
-			APIKey:   apiKey,
+			APIKey:   s.APIKey,
+			Username: s.Username,
+			Password: s.Password,
 			Category: cat,
 			UseSSL:   s.UseSsl,
 			Enabled:  enable,

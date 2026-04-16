@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -56,7 +57,9 @@ func OPDSAuth(p auth.Provider, users *db.UserRepo) func(http.Handler) http.Handl
 			w.Header().Set("WWW-Authenticate", `Basic realm="Bindery OPDS"`)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+			if _, err := w.Write([]byte(`{"error":"unauthorized"}`)); err != nil {
+				slog.Warn("failed to write OPDS unauthorized response", "error", err)
+			}
 		})
 	}
 }

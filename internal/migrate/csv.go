@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/csv"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -128,7 +129,7 @@ func parseCSVRows(reader io.Reader) ([]csvRow, error) {
 	// commas); otherwise treat each line as a bare author name.
 	buf := bufio.NewReader(reader)
 	first, _, err := buf.ReadLine()
-	if err == io.EOF {
+	if errors.Is(err, io.EOF) {
 		return nil, nil
 	}
 	if err != nil {
@@ -137,7 +138,10 @@ func parseCSVRows(reader io.Reader) ([]csvRow, error) {
 	hasComma := strings.Contains(string(first), ",")
 
 	// Push the first line back in front of the rest.
-	remaining, _ := io.ReadAll(buf)
+	remaining, err := io.ReadAll(buf)
+	if err != nil {
+		return nil, fmt.Errorf("read csv remainder: %w", err)
+	}
 	combined := append(append([]byte{}, first...), '\n')
 	combined = append(combined, remaining...)
 

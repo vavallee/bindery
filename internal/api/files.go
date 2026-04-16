@@ -91,7 +91,7 @@ func streamZip(w http.ResponseWriter, srcDir string) {
 			return nil
 		}
 		defer f.Close()
-		_, _ = io.Copy(zf, f)
-		return nil
+		_, err = io.Copy(zf, f)
+		return err
 	})
 }

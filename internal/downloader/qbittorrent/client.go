@@ -92,8 +92,18 @@ func (c *Client) Test(ctx context.Context) error {
 	return nil
 }
 
-// AddTorrent submits a magnet link or torrent URL to qBittorrent for download.
-func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath string) error {
+// AddTorrent submits a magnet link or torrent URL to qBittorrent for download
+// and returns the torrent hash when it can be determined.
+func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath string) (string, error) {
+	// Snapshot existing hashes so we can detect newly-added items when the
+	// source URL is not a magnet with an explicit btih.
+	beforeSet := map[string]struct{}{}
+	if before, err := c.GetTorrents(ctx, category); err == nil {
+		for _, t := range before {
+			beforeSet[strings.ToLower(t.Hash)] = struct{}{}
+		}
+	}
+
 	form := url.Values{"urls": {magnetOrURL}}
 	if category != "" {
 		form.Set("category", category)
@@ -103,20 +113,20 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 	}
 
 	if err := c.ensureLoggedIn(ctx); err != nil {
-		return err
+		return "", err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.baseURL+"/api/v2/torrents/add",
 		strings.NewReader(form.Encode()))
 	if err != nil {
-		return fmt.Errorf("build add request: %w", err)
+		return "", fmt.Errorf("build add request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("add torrent: %w", err)
+		return "", fmt.Errorf("add torrent: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -124,12 +134,52 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 	text := strings.TrimSpace(string(body))
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("add torrent HTTP %d: %s", resp.StatusCode, text)
+		return "", fmt.Errorf("add torrent HTTP %d: %s", resp.StatusCode, text)
 	}
 	if text != "Ok." {
-		return fmt.Errorf("add torrent failed: %s", text)
+		return "", fmt.Errorf("add torrent failed: %s", text)
 	}
-	return nil
+
+	if infoHash := infoHashFromMagnet(magnetOrURL); infoHash != "" {
+		return infoHash, nil
+	}
+
+	after, err := c.GetTorrents(ctx, category)
+	if err != nil {
+		return "", fmt.Errorf("add torrent accepted but hash lookup failed: %w", err)
+	}
+
+	var newest *Torrent
+	for i := range after {
+		t := &after[i]
+		h := strings.ToLower(t.Hash)
+		if _, seen := beforeSet[h]; seen {
+			continue
+		}
+		if newest == nil || t.AddedOn > newest.AddedOn {
+			newest = t
+		}
+	}
+	if newest != nil {
+		return strings.ToLower(newest.Hash), nil
+	}
+	return "", fmt.Errorf("add torrent accepted but hash could not be determined")
+}
+
+func infoHashFromMagnet(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "magnet" {
+		return ""
+	}
+	xt := u.Query().Get("xt")
+	if !strings.HasPrefix(strings.ToLower(xt), "urn:btih:") {
+		return ""
+	}
+	h := strings.TrimSpace(xt[len("urn:btih:"):])
+	if h == "" {
+		return ""
+	}
+	return strings.ToLower(h)
 }
 
 // GetTorrents returns all torrents in the given category (empty = all).

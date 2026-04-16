@@ -88,8 +88,15 @@ func (r *AuthorAliasRepo) createTx(ctx context.Context, exec sqlExecutor, a *mod
 	if err != nil {
 		return fmt.Errorf("create alias %q: %w", name, err)
 	}
-	if affected, _ := result.RowsAffected(); affected > 0 {
-		id, _ := result.LastInsertId()
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check alias insertion %q: %w", name, err)
+	}
+	if affected > 0 {
+		id, err := result.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("get alias id %q: %w", name, err)
+		}
 		a.ID = id
 		a.Name = name
 		a.CreatedAt = now
@@ -181,7 +188,9 @@ func (r *AuthorAliasRepo) Merge(ctx context.Context, sourceID, targetID int64, o
 	if err != nil {
 		return nil, fmt.Errorf("reparent books: %w", err)
 	}
-	result.BooksReparented, _ = booksRes.RowsAffected()
+	if result.BooksReparented, err = booksRes.RowsAffected(); err != nil {
+		return nil, fmt.Errorf("count reparented books: %w", err)
+	}
 
 	// Migrate existing aliases on source to target. Because `name` is UNIQUE,
 	// a collision with a pre-existing alias on target would 2067 us; use
@@ -197,7 +206,9 @@ func (r *AuthorAliasRepo) Merge(ctx context.Context, sourceID, targetID int64, o
 	if err != nil {
 		return nil, fmt.Errorf("migrate aliases: %w", err)
 	}
-	result.AliasesMigrated, _ = migrateRes.RowsAffected()
+	if result.AliasesMigrated, err = migrateRes.RowsAffected(); err != nil {
+		return nil, fmt.Errorf("count migrated aliases: %w", err)
+	}
 
 	// Drop any source aliases that collided with an existing target alias —
 	// their name is already represented and the FK will cascade them when we
@@ -259,7 +270,10 @@ func insertMergeAlias(ctx context.Context, tx *sql.Tx, targetID int64, name, for
 	if err != nil {
 		return false, err
 	}
-	affected, _ := res.RowsAffected()
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("check alias insertion: %w", err)
+	}
 	return affected > 0, nil
 }
 

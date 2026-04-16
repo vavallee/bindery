@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -158,5 +159,76 @@ func TestXMLNamespace(t *testing.T) {
 	}
 	if rss.Channel.Response.Total != 2 {
 		t.Errorf("expected total=2, got %d", rss.Channel.Response.Total)
+	}
+}
+
+func TestCapsWithFullTorznabEndpointURL(t *testing.T) {
+	var gotPath string
+	var gotQuery string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(testCaps))
+	}))
+	defer srv.Close()
+
+	endpoint := srv.URL + "/1/api?apikey=from-url"
+	c := New(endpoint, "")
+	if _, err := c.Caps(context.Background()); err != nil {
+		t.Fatalf("caps: %v", err)
+	}
+
+	if gotPath != "/1/api" {
+		t.Fatalf("expected path /1/api, got %s", gotPath)
+	}
+	if !strings.Contains(gotQuery, "t=caps") {
+		t.Fatalf("expected t=caps in query, got %q", gotQuery)
+	}
+	if !strings.Contains(gotQuery, "apikey=from-url") {
+		t.Fatalf("expected apikey from endpoint URL in query, got %q", gotQuery)
+	}
+}
+
+func TestCapsWithEndpointAndExplicitAPIKeyOverridesURL(t *testing.T) {
+	var gotQuery string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(testCaps))
+	}))
+	defer srv.Close()
+
+	endpoint := srv.URL + "/1/api?apikey=from-url"
+	c := New(endpoint, "from-field")
+	if _, err := c.Caps(context.Background()); err != nil {
+		t.Fatalf("caps: %v", err)
+	}
+
+	if !strings.Contains(gotQuery, "apikey=from-field") {
+		t.Fatalf("expected explicit API key to be used, got %q", gotQuery)
+	}
+}
+
+func TestNewRootURLNormalizesToAPIPath(t *testing.T) {
+	c := New("https://prowlarr.local:9696", "abc")
+	if c.baseURL != "https://prowlarr.local:9696/api" {
+		t.Fatalf("expected normalized baseURL to include /api, got %s", c.baseURL)
+	}
+}
+
+func TestNewExtractsAPIKeyAndStripsItFromStoredBaseURL(t *testing.T) {
+	c := New("https://prowlarr.local:9696/1/api?apikey=from-url&foo=bar", "")
+
+	if c.apiKey != "from-url" {
+		t.Fatalf("expected API key extracted from URL, got %q", c.apiKey)
+	}
+	if strings.Contains(c.baseURL, "apikey=") {
+		t.Fatalf("expected stored baseURL not to contain apikey, got %s", c.baseURL)
+	}
+	if !strings.Contains(c.baseURL, "foo=bar") {
+		t.Fatalf("expected stored baseURL to preserve non-apikey query params, got %s", c.baseURL)
 	}
 }

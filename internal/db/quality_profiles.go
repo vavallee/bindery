@@ -65,7 +65,9 @@ func scanQualityProfile(rows *sql.Rows) (models.QualityProfile, error) {
 		return p, fmt.Errorf("scan quality profile: %w", err)
 	}
 	p.UpgradeAllowed = upgradeAllowed == 1
-	_ = json.Unmarshal([]byte(itemsJSON), &p.Items)
+	if err := json.Unmarshal([]byte(itemsJSON), &p.Items); err != nil {
+		return p, fmt.Errorf("unmarshal quality profile items: %w", err)
+	}
 	if p.Items == nil {
 		p.Items = []models.QualityItem{}
 	}

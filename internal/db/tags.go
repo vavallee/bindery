@@ -40,7 +40,10 @@ func (r *TagRepo) Create(ctx context.Context, t *models.Tag) error {
 	if err != nil {
 		return fmt.Errorf("create tag: %w", err)
 	}
-	id, _ := result.LastInsertId()
+	id, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("get tag id: %w", err)
+	}
 	t.ID = id
 	return nil
 }

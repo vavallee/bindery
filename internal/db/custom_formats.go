@@ -58,21 +58,30 @@ func (r *CustomFormatRepo) GetByID(ctx context.Context, id int64) (*models.Custo
 }
 
 func (r *CustomFormatRepo) Create(ctx context.Context, cf *models.CustomFormat) error {
-	condJSON, _ := json.Marshal(cf.Conditions)
+	condJSON, err := json.Marshal(cf.Conditions)
+	if err != nil {
+		return fmt.Errorf("marshal custom format conditions: %w", err)
+	}
 	result, err := r.db.ExecContext(ctx,
 		"INSERT INTO custom_formats (name, conditions) VALUES (?, ?)",
 		cf.Name, string(condJSON))
 	if err != nil {
 		return fmt.Errorf("create custom format: %w", err)
 	}
-	id, _ := result.LastInsertId()
+	id, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("get custom format id: %w", err)
+	}
 	cf.ID = id
 	return nil
 }
 
 func (r *CustomFormatRepo) Update(ctx context.Context, cf *models.CustomFormat) error {
-	condJSON, _ := json.Marshal(cf.Conditions)
-	_, err := r.db.ExecContext(ctx,
+	condJSON, err := json.Marshal(cf.Conditions)
+	if err != nil {
+		return fmt.Errorf("marshal custom format conditions: %w", err)
+	}
+	_, err = r.db.ExecContext(ctx,
 		"UPDATE custom_formats SET name=?, conditions=? WHERE id=?",
 		cf.Name, string(condJSON), cf.ID)
 	if err != nil {
@@ -96,7 +105,9 @@ func scanCustomFormat(rows *sql.Rows) (models.CustomFormat, error) {
 	if err != nil {
 		return cf, fmt.Errorf("scan custom format: %w", err)
 	}
-	_ = json.Unmarshal([]byte(condJSON), &cf.Conditions)
+	if err = json.Unmarshal([]byte(condJSON), &cf.Conditions); err != nil {
+		return cf, fmt.Errorf("unmarshal custom format conditions: %w", err)
+	}
 	if cf.Conditions == nil {
 		cf.Conditions = []models.CustomCondition{}
 	}

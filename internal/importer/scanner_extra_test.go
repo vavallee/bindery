@@ -2,8 +2,13 @@ package importer
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/db"
@@ -127,6 +132,141 @@ func TestScanLibrary_NonBookFilesIgnored(t *testing.T) {
 func TestCheckDownloads_NoEnabledClient(t *testing.T) {
 	s, _, _, ctx := scannerFixture(t, t.TempDir())
 	s.CheckDownloads(ctx) // no panic, no DB writes
+}
+
+func TestCheckTransmissionDownloads_StoppedWithoutErrorDoesNotFail(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/transmission/rpc" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"result": "success",
+			"arguments": map[string]any{
+				"torrents": []map[string]any{{
+					"id":          7,
+					"status":      0,
+					"percentDone": 0.4,
+					"downloadDir": "/downloads",
+					"errorString": "",
+				}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	s, _, _, ctx := scannerFixture(t, t.TempDir())
+	host, port := scannerTestHostPort(t, srv.URL)
+	client := &models.DownloadClient{
+		Name:    "transmission",
+		Type:    "transmission",
+		Host:    host,
+		Port:    port,
+		Enabled: true,
+	}
+	if err := s.clients.Create(ctx, client); err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	torrentID := "7"
+	dl := &models.Download{
+		GUID:             "guid-paused",
+		DownloadClientID: &client.ID,
+		Title:            "Paused Torrent",
+		NZBURL:           "magnet:?xt=urn:btih:abc",
+		Status:           models.DownloadStatusDownloading,
+		Protocol:         "torrent",
+		TorrentID:        &torrentID,
+	}
+	if err := s.downloads.Create(ctx, dl); err != nil {
+		t.Fatalf("create download: %v", err)
+	}
+
+	s.checkTransmissionDownloads(ctx, client)
+
+	got, err := s.downloads.GetByGUID(ctx, dl.GUID)
+	if err != nil {
+		t.Fatalf("get by guid: %v", err)
+	}
+	if got.Status != models.DownloadStatusDownloading {
+		t.Fatalf("expected status to remain downloading, got %q", got.Status)
+	}
+	if got.ErrorMessage != "" {
+		t.Fatalf("expected no error message, got %q", got.ErrorMessage)
+	}
+}
+
+func TestCheckTransmissionDownloads_StoppedWithErrorMarksFailed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/transmission/rpc" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"result": "success",
+			"arguments": map[string]any{
+				"torrents": []map[string]any{{
+					"id":          9,
+					"status":      6,
+					"percentDone": 0.2,
+					"downloadDir": "/downloads",
+					"errorString": "tracker connection failed",
+				}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	s, _, _, ctx := scannerFixture(t, t.TempDir())
+	host, port := scannerTestHostPort(t, srv.URL)
+	client := &models.DownloadClient{
+		Name:    "transmission",
+		Type:    "transmission",
+		Host:    host,
+		Port:    port,
+		Enabled: true,
+	}
+	if err := s.clients.Create(ctx, client); err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	torrentID := "9"
+	dl := &models.Download{
+		GUID:             "guid-errored",
+		DownloadClientID: &client.ID,
+		Title:            "Errored Torrent",
+		NZBURL:           "magnet:?xt=urn:btih:def",
+		Status:           models.DownloadStatusDownloading,
+		Protocol:         "torrent",
+		TorrentID:        &torrentID,
+	}
+	if err := s.downloads.Create(ctx, dl); err != nil {
+		t.Fatalf("create download: %v", err)
+	}
+
+	s.checkTransmissionDownloads(ctx, client)
+
+	got, err := s.downloads.GetByGUID(ctx, dl.GUID)
+	if err != nil {
+		t.Fatalf("get by guid: %v", err)
+	}
+	if got.Status != models.DownloadStatusFailed {
+		t.Fatalf("expected status failed, got %q", got.Status)
+	}
+	if got.ErrorMessage != "tracker connection failed" {
+		t.Fatalf("expected error message from Transmission, got %q", got.ErrorMessage)
+	}
+}
+
+func scannerTestHostPort(t *testing.T, raw string) (string, int) {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse server url: %v", err)
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatalf("parse server port: %v", err)
+	}
+	return u.Hostname(), port
 }
 
 // TestScanLibrary_NoDuplicateBookAssignment — regression test for issue #81.

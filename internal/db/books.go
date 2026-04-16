@@ -60,7 +60,10 @@ func (r *BookRepo) GetByForeignID(ctx context.Context, foreignID string) (*model
 
 func (r *BookRepo) Create(ctx context.Context, b *models.Book) error {
 	now := time.Now().UTC()
-	genresJSON, _ := json.Marshal(b.Genres)
+	genresJSON, err := json.Marshal(b.Genres)
+	if err != nil {
+		return fmt.Errorf("marshal book genres: %w", err)
+	}
 
 	mediaType := b.MediaType
 	if mediaType == "" {
@@ -95,14 +98,17 @@ func (r *BookRepo) Create(ctx context.Context, b *models.Book) error {
 
 func (r *BookRepo) Update(ctx context.Context, b *models.Book) error {
 	now := time.Now().UTC()
-	genresJSON, _ := json.Marshal(b.Genres)
+	genresJSON, err := json.Marshal(b.Genres)
+	if err != nil {
+		return fmt.Errorf("marshal book genres: %w", err)
+	}
 
 	mediaType := b.MediaType
 	if mediaType == "" {
 		mediaType = models.MediaTypeEbook
 	}
 
-	_, err := r.db.ExecContext(ctx, `
+	_, err = r.db.ExecContext(ctx, `
 		UPDATE books SET title=?, sort_title=?, original_title=?, description=?, image_url=?,
 		                 release_date=?, genres=?, average_rating=?, ratings_count=?,
 		                 monitored=?, status=?, any_edition_ok=?, selected_edition_id=?,

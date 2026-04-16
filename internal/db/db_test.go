@@ -12,12 +12,6 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
-func testDB(t *testing.T) *context.Context {
-	t.Helper()
-	ctx := context.Background()
-	return &ctx
-}
-
 func TestPreflightCreatesMissingParent(t *testing.T) {
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "nested", "sub", "bindery.db")
@@ -565,7 +559,7 @@ func TestPickClientForMediaType(t *testing.T) {
 	}
 }
 
-func TestDownloadClientRepoVirtualCredentials(t *testing.T) {
+func TestDownloadClientRepoCredentialFields(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -575,7 +569,7 @@ func TestDownloadClientRepoVirtualCredentials(t *testing.T) {
 	ctx := context.Background()
 	repo := NewDownloadClientRepo(database)
 
-	// qBittorrent: Username/Password should round-trip via url_base/api_key columns
+	// qBittorrent: Username/Password should round-trip through dedicated fields.
 	qbt := &models.DownloadClient{
 		Name:     "My qBittorrent",
 		Type:     "qbittorrent",
@@ -599,12 +593,11 @@ func TestDownloadClientRepoVirtualCredentials(t *testing.T) {
 	if got.Password != "secret" {
 		t.Errorf("Password: want secret, got %q", got.Password)
 	}
-	// Raw storage columns should mirror the virtual fields
-	if got.URLBase != "admin" {
-		t.Errorf("URLBase (storage): want admin, got %q", got.URLBase)
+	if got.URLBase != "" {
+		t.Errorf("URLBase: want empty, got %q", got.URLBase)
 	}
-	if got.APIKey != "secret" {
-		t.Errorf("APIKey (storage): want secret, got %q", got.APIKey)
+	if got.APIKey != "" {
+		t.Errorf("APIKey: want empty for credential client, got %q", got.APIKey)
 	}
 
 	// sabnzbd: APIKey should survive as-is; Username/Password stay empty

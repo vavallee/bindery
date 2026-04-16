@@ -26,7 +26,10 @@ func (r *BlocklistRepo) Create(ctx context.Context, e *models.BlocklistEntry) er
 	if err != nil {
 		return fmt.Errorf("create blocklist entry: %w", err)
 	}
-	id, _ := result.LastInsertId()
+	id, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("get blocklist entry id: %w", err)
+	}
 	e.ID = id
 	e.CreatedAt = now
 	return nil

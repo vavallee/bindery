@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/xml"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -138,10 +139,15 @@ func baseURL(r *http.Request) string {
 func writeOPDS(w http.ResponseWriter, feed opds.Feed) {
 	w.Header().Set("Content-Type", opds.ContentTypeFeed)
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(xml.Header))
+	if _, err := w.Write([]byte(xml.Header)); err != nil {
+		slog.Warn("failed to write OPDS header", "error", err)
+		return
+	}
 	enc := xml.NewEncoder(w)
 	enc.Indent("", "  ")
-	_ = enc.Encode(feed)
+	if err := enc.Encode(feed); err != nil {
+		slog.Warn("failed to encode OPDS feed", "error", err)
+	}
 }
 
 // writeOPDSError handles known builder errors (currently just ErrNotFound).

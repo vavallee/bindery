@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"testing"
 
@@ -27,14 +29,12 @@ func queueFixture(t *testing.T) (*QueueHandler, *sql.DB, *db.DownloadRepo, *db.D
 	return NewQueueHandler(downloads, clients, books, history), database, downloads, clients, books, context.Background()
 }
 
-// TestQueueGrab_RequiresGUIDAndURL — input validation is the first gate;
-// without it, we'd create an orphaned download row and then 502 on SAB.
 func TestQueueGrab_RequiresGUIDAndURL(t *testing.T) {
 	h, _, _, _, _, _ := queueFixture(t)
 	for _, body := range []string{
 		`{}`,
-		`{"guid":"abc"}`,                    // missing nzbUrl
-		`{"nzbUrl":"http://example/x.nzb"}`, // missing guid
+		`{"guid":"abc"}`,
+		`{"nzbUrl":"http://example/x.nzb"}`,
 	} {
 		rec := httptest.NewRecorder()
 		h.Grab(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/grab", bytes.NewBufferString(body)))
@@ -44,8 +44,6 @@ func TestQueueGrab_RequiresGUIDAndURL(t *testing.T) {
 	}
 }
 
-// TestQueueGrab_RejectsBadJSON keeps the handler from panicking on a
-// malformed client payload.
 func TestQueueGrab_RejectsBadJSON(t *testing.T) {
 	h, _, _, _, _, _ := queueFixture(t)
 	rec := httptest.NewRecorder()
@@ -55,9 +53,6 @@ func TestQueueGrab_RejectsBadJSON(t *testing.T) {
 	}
 }
 
-// TestQueueGrab_NoDownloadClient is the 400 path when the operator hasn't
-// enabled a download client yet. Without this guard the handler would NPE
-// on the nil client pointer.
 func TestQueueGrab_NoDownloadClient(t *testing.T) {
 	h, _, _, _, _, _ := queueFixture(t)
 	body := bytes.NewBufferString(`{"guid":"abc","nzbUrl":"http://example/x.nzb","title":"t"}`)
@@ -68,11 +63,8 @@ func TestQueueGrab_NoDownloadClient(t *testing.T) {
 	}
 }
 
-// TestQueueGrab_DuplicateGUID — the second Grab with the same guid must 409
-// so a double-click doesn't double-spend indexer hit counts.
 func TestQueueGrab_DuplicateGUID(t *testing.T) {
 	h, _, downloads, _, _, ctx := queueFixture(t)
-	// Pre-seed a download to simulate the prior grab.
 	if err := downloads.Create(ctx, &models.Download{
 		GUID: "dup-guid", Title: "T", Status: models.DownloadStatusDownloading, Protocol: "usenet",
 	}); err != nil {
@@ -86,8 +78,6 @@ func TestQueueGrab_DuplicateGUID(t *testing.T) {
 	}
 }
 
-// TestQueueDelete_NotFound — chi URL param resolution is handled by the
-// router; here we verify missing id → 404 rather than a silent 204.
 func TestQueueDelete_NotFound(t *testing.T) {
 	h, _, _, _, _, _ := queueFixture(t)
 	req := withURLParam(httptest.NewRequest(http.MethodDelete, "/api/v1/queue/42", nil), "id", "42")
@@ -98,13 +88,8 @@ func TestQueueDelete_NotFound(t *testing.T) {
 	}
 }
 
-// TestQueueDelete_FlipsBookToWanted is the regression guard: deleting a
-// queued download that owns a book must reset the book to `wanted` so the
-// Wanted page re-surfaces it. Without this the book stays stuck in
-// `downloading` forever.
 func TestQueueDelete_FlipsBookToWanted(t *testing.T) {
 	h, database, downloads, _, books, ctx := queueFixture(t)
-	// Seed an author + book so the FK is satisfied.
 	a := &models.Author{ForeignID: "OL1", Name: "X", SortName: "X", MetadataProvider: "openlibrary", Monitored: true}
 	if err := db.NewAuthorRepo(database).Create(ctx, a); err != nil {
 		t.Fatal(err)
@@ -136,3 +121,315 @@ func TestQueueDelete_FlipsBookToWanted(t *testing.T) {
 		t.Errorf("book status should flip to wanted, got %q", got.Status)
 	}
 }
+
+func TestQueueListLiveOverlaySABnzbd(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("mode") != "queue" {
+			t.Fatalf("expected mode=queue, got %s", r.URL.Query().Get("mode"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"queue": map[string]any{
+				"speed": "2.0 MB/s",
+				"slots": []map[string]any{{
+					"nzo_id":     "nzo123",
+					"percentage": "55",
+					"timeleft":   "0:10:00",
+				}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	h := newQueueTestHandler(t)
+	host, port := testServerHostPort(t, srv.URL)
+	client := createTestDownloadClient(t, h, &models.DownloadClient{
+		Name:     "sab",
+		Type:     "sabnzbd",
+		Host:     host,
+		Port:     port,
+		APIKey:   "testkey",
+		Category: "books",
+		Enabled:  true,
+	})
+	createTestDownload(t, h, &models.Download{
+		GUID:             "guid-sab",
+		DownloadClientID: &client.ID,
+		Title:            "Sab Book",
+		NZBURL:           "https://example.com/book.nzb",
+		Status:           models.DownloadStatusDownloading,
+		Protocol:         "usenet",
+		SABnzbdNzoID:     strPtr("nzo123"),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/queue", nil)
+	rr := httptest.NewRecorder()
+	h.List(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var items []QueueItem
+	if err := json.NewDecoder(rr.Body).Decode(&items); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].Percentage != "55" || items[0].TimeLeft != "0:10:00" || items[0].Speed != "2.0 MB/s" {
+		t.Fatalf("unexpected overlay: %+v", items[0])
+	}
+}
+
+func TestQueueListLiveOverlaySABnzbd_WithHigherPriorityTorrentClient(t *testing.T) {
+	sabSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("mode") != "queue" {
+			t.Fatalf("expected mode=queue, got %s", r.URL.Query().Get("mode"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"queue": map[string]any{
+				"speed": "1.5 MB/s",
+				"slots": []map[string]any{{
+					"nzo_id":     "nzo999",
+					"percentage": "66",
+					"timeleft":   "0:05:00",
+				}},
+			},
+		})
+	}))
+	defer sabSrv.Close()
+
+	transSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/transmission/rpc" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"arguments": map[string]any{"torrents": []map[string]any{}},
+			"result":    "success",
+		})
+	}))
+	defer transSrv.Close()
+
+	h := newQueueTestHandler(t)
+
+	transHost, transPort := testServerHostPort(t, transSrv.URL)
+	_ = createTestDownloadClient(t, h, &models.DownloadClient{
+		Name:     "trans-first",
+		Type:     "transmission",
+		Host:     transHost,
+		Port:     transPort,
+		Priority: 1,
+		Enabled:  true,
+	})
+
+	sabHost, sabPort := testServerHostPort(t, sabSrv.URL)
+	sabClient := createTestDownloadClient(t, h, &models.DownloadClient{
+		Name:     "sab-second",
+		Type:     "sabnzbd",
+		Host:     sabHost,
+		Port:     sabPort,
+		APIKey:   "testkey",
+		Priority: 2,
+		Enabled:  true,
+	})
+
+	createTestDownload(t, h, &models.Download{
+		GUID:             "guid-sab-2",
+		DownloadClientID: &sabClient.ID,
+		Title:            "Sab Book 2",
+		NZBURL:           "https://example.com/book2.nzb",
+		Status:           models.DownloadStatusDownloading,
+		Protocol:         "usenet",
+		SABnzbdNzoID:     strPtr("nzo999"),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/queue", nil)
+	rr := httptest.NewRecorder()
+	h.List(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var items []QueueItem
+	if err := json.NewDecoder(rr.Body).Decode(&items); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].Percentage != "66" || items[0].TimeLeft != "0:05:00" || items[0].Speed != "1.5 MB/s" {
+		t.Fatalf("unexpected overlay when torrent client has higher priority: %+v", items[0])
+	}
+}
+
+func TestQueueListLiveOverlayTransmission(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/transmission/rpc" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"arguments": map[string]any{
+				"torrents": []map[string]any{{
+					"id":           7,
+					"percentDone":  0.42,
+					"eta":          125,
+					"rateDownload": 4096,
+				}},
+			},
+			"result": "success",
+		})
+	}))
+	defer srv.Close()
+
+	h := newQueueTestHandler(t)
+	host, port := testServerHostPort(t, srv.URL)
+	client := createTestDownloadClient(t, h, &models.DownloadClient{
+		Name:     "trans",
+		Type:     "transmission",
+		Host:     host,
+		Port:     port,
+		Username: "user",
+		Password: "pass",
+		Enabled:  true,
+	})
+	createTestDownload(t, h, &models.Download{
+		GUID:             "guid-trans",
+		DownloadClientID: &client.ID,
+		Title:            "Torrent Book",
+		NZBURL:           "magnet:?xt=urn:btih:abc",
+		Status:           models.DownloadStatusDownloading,
+		Protocol:         "torrent",
+		TorrentID:        strPtr("7"),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/queue", nil)
+	rr := httptest.NewRecorder()
+	h.List(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var items []QueueItem
+	if err := json.NewDecoder(rr.Body).Decode(&items); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].Percentage != "42.0" {
+		t.Fatalf("unexpected percentage: %s", items[0].Percentage)
+	}
+	if items[0].TimeLeft == "" || items[0].Speed == "" {
+		t.Fatalf("expected timeLeft and speed, got %+v", items[0])
+	}
+}
+
+func TestQueueListLiveOverlayQbittorrent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
+				"hash":     "ABCDEF",
+				"progress": 0.9,
+				"eta":      300,
+			}})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	h := newQueueTestHandler(t)
+	host, port := testServerHostPort(t, srv.URL)
+	client := createTestDownloadClient(t, h, &models.DownloadClient{
+		Name:     "qb",
+		Type:     "qbittorrent",
+		Host:     host,
+		Port:     port,
+		Username: "user",
+		Password: "pass",
+		Enabled:  true,
+	})
+	createTestDownload(t, h, &models.Download{
+		GUID:             "guid-qb",
+		DownloadClientID: &client.ID,
+		Title:            "QB Book",
+		NZBURL:           "magnet:?xt=urn:btih:abcdef",
+		Status:           models.DownloadStatusDownloading,
+		Protocol:         "torrent",
+		TorrentID:        strPtr("abcdef"),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/queue", nil)
+	rr := httptest.NewRecorder()
+	h.List(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var items []QueueItem
+	if err := json.NewDecoder(rr.Body).Decode(&items); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].Percentage != "90.0" {
+		t.Fatalf("unexpected percentage: %s", items[0].Percentage)
+	}
+	if items[0].TimeLeft == "" {
+		t.Fatalf("expected timeLeft, got %+v", items[0])
+	}
+}
+
+func newQueueTestHandler(t *testing.T) *QueueHandler {
+	t.Helper()
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatalf("open memory db: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	return NewQueueHandler(db.NewDownloadRepo(database), db.NewDownloadClientRepo(database), nil, nil)
+}
+
+func createTestDownloadClient(t *testing.T, h *QueueHandler, client *models.DownloadClient) *models.DownloadClient {
+	t.Helper()
+	if err := h.clients.Create(context.Background(), client); err != nil {
+		t.Fatalf("create download client: %v", err)
+	}
+	return client
+}
+
+func createTestDownload(t *testing.T, h *QueueHandler, dl *models.Download) *models.Download {
+	t.Helper()
+	if err := h.downloads.Create(context.Background(), dl); err != nil {
+		t.Fatalf("create download: %v", err)
+	}
+	return dl
+}
+
+func testServerHostPort(t *testing.T, raw string) (string, int) {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse server url: %v", err)
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatalf("parse server port: %v", err)
+	}
+	return u.Hostname(), port
+}
+
+func strPtr(v string) *string { return &v }

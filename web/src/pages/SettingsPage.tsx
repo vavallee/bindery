@@ -1589,6 +1589,7 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
   const [url, setUrl] = useState(indexer.url)
   const [apiKey, setApiKey] = useState(indexer.apiKey)
   const [categories, setCategories] = useState((indexer.categories ?? [7020]).join(', '))
+  const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const submit = async () => {
     const updated = await api.updateIndexer(indexer.id, { ...indexer, name, type, url, apiKey, categories: parseCats(categories) })
@@ -1598,15 +1599,29 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
   return (
     <div className="mt-1 p-4 border border-slate-300 dark:border-zinc-700 rounded-lg bg-slate-200/50 dark:bg-zinc-800/50 space-y-3">
       <div className="flex gap-2">
-        <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
-        <select value={type} onChange={e => setType(e.target.value)} className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600">
-          <option value="newznab">Newznab (Usenet)</option>
-          <option value="torznab">Torznab (Torrent)</option>
-        </select>
+        <div className="flex-1">
+          <label className={labelCls}>Name</label>
+          <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
+        </div>
+        <div className="w-48">
+          <label className={labelCls}>Indexer Type</label>
+          <select value={type} onChange={e => setType(e.target.value)} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600">
+            <option value="newznab">Newznab (Usenet)</option>
+            <option value="torznab">Torznab (Torrent)</option>
+          </select>
+        </div>
       </div>
-      <input value={url} onChange={e => setUrl(e.target.value)} placeholder="URL" className={inputCls} />
-      <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="API Key" type="password" className={inputCls} />
       <div>
+        <label className={labelCls}>URL</label>
+        <input value={url} onChange={e => setUrl(e.target.value)} placeholder="URL" className={inputCls} />
+        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Use a base Newznab URL (for example: https://api.nzbgeek.info) or a full Torznab endpoint (for example: http://prowlarr:9696/1/api).</p>
+      </div>
+      <div>
+        <label className={labelCls}>API Key</label>
+        <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="API Key" type="password" className={inputCls} />
+      </div>
+      <div>
+        <label className={labelCls}>Categories</label>
         <input value={categories} onChange={e => setCategories(e.target.value)} placeholder="Categories (e.g. 7020, 7120, 3030)" className={inputCls} />
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Comma-separated Newznab category IDs. 7020 = eBooks, 3030 = Audiobooks. Add custom IDs for indexers with non-standard categories (e.g. 7120 for German books).</p>
       </div>
@@ -1623,9 +1638,10 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
   const [type, setType] = useState(client.type || 'sabnzbd')
   const [host, setHost] = useState(client.host)
   const [port, setPort] = useState(String(client.port))
-  const [credential, setCredential] = useState(client.type === 'qbittorrent' ? (client.password || '') : (client.apiKey || ''))
+  const [credential, setCredential] = useState(client.type === 'qbittorrent' || client.type === 'transmission' ? (client.password || '') : (client.apiKey || ''))
   const [username, setUsername] = useState(client.username || '')
   const [category, setCategory] = useState(client.category)
+  const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const handleTypeChange = (newType: string) => {
     setType(newType)
@@ -1634,7 +1650,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
   }
 
   const submit = async () => {
-    const data = type === 'qbittorrent'
+    const data = type === 'qbittorrent' || type === 'transmission'
       ? { ...client, name, type, host, port: parseInt(port), username, password: credential, apiKey: '', category }
       : { ...client, name, type, host, port: parseInt(port), apiKey: credential, username: '', password: '', category }
     const updated = await api.updateDownloadClient(client.id, data)
@@ -1644,24 +1660,42 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
   return (
     <div className="mt-1 p-4 border border-slate-300 dark:border-zinc-700 rounded-lg bg-slate-200/50 dark:bg-zinc-800/50 space-y-3">
       <div className="flex gap-2">
-        <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
-        <select value={type} onChange={e => handleTypeChange(e.target.value)} className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600">
-          <option value="sabnzbd">SABnzbd</option>
-          <option value="qbittorrent">qBittorrent</option>
-        </select>
+        <div className="flex-1">
+          <label className={labelCls}>Name</label>
+          <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
+        </div>
+        <div className="w-40">
+          <label className={labelCls}>Client Type</label>
+          <select value={type} onChange={e => handleTypeChange(e.target.value)} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600">
+            <option value="sabnzbd">SABnzbd</option>
+            <option value="qbittorrent">qBittorrent</option>
+            <option value="transmission">Transmission</option>
+          </select>
+        </div>
       </div>
       <div>
+        <label className={labelCls}>Connection</label>
         <div className="flex gap-2">
           <input value={host} onChange={e => setHost(e.target.value)} placeholder="Host" className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
           <input value={port} onChange={e => setPort(e.target.value)} placeholder="Port" className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
         </div>
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">In Docker, use the service/container name (e.g. <code className="font-mono">sabnzbd</code>) — not <code className="font-mono">localhost</code>.</p>
       </div>
-      {type === 'qbittorrent' && (
-        <input value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" className={inputCls} />
+      {(type === 'qbittorrent' || type === 'transmission') && (
+        <div>
+          <label className={labelCls}>Username</label>
+          <input value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" className={inputCls} />
+        </div>
       )}
-      <input value={credential} onChange={e => setCredential(e.target.value)} placeholder={type === 'qbittorrent' ? 'Password' : 'API Key'} type="password" className={inputCls} />
-      <input value={category} onChange={e => setCategory(e.target.value)} placeholder="Category" className={inputCls} />
+      <div>
+        <label className={labelCls}>{type === 'qbittorrent' || type === 'transmission' ? 'Password' : 'API Key'}</label>
+        <input value={credential} onChange={e => setCredential(e.target.value)} placeholder={type === 'qbittorrent' || type === 'transmission' ? 'Password' : 'API Key'} type="password" className={inputCls} />
+      </div>
+      <div>
+        <label className={labelCls}>{type === 'transmission' ? 'Download Directory' : 'Category'}</label>
+        <input value={category} onChange={e => setCategory(e.target.value)} placeholder={type === 'transmission' ? '/downloads (leave blank for default)' : 'Category'} className={inputCls} />
+        {type === 'transmission' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Optional absolute path override. Leave blank to use Transmission's configured default download directory.</p>}
+      </div>
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">Cancel</button>
         <button onClick={submit} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium">Save</button>
@@ -1727,6 +1761,7 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
   const [url, setUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [categories, setCategories] = useState('7020')
+  const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const submit = async () => {
     const idx = await api.addIndexer({ name, url, apiKey, type, categories: parseCats(categories), enabled: true })
@@ -1736,15 +1771,29 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
   return (
     <div className="mt-4 p-4 border border-slate-300 dark:border-zinc-700 rounded-lg bg-slate-200/50 dark:bg-zinc-800/50 space-y-3">
       <div className="flex gap-2">
-        <input value={name} onChange={e => setName(e.target.value)} placeholder="Name (e.g. NZBGeek)" className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
-        <select value={type} onChange={e => setType(e.target.value as 'newznab' | 'torznab')} className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600">
-          <option value="newznab">Newznab</option>
-          <option value="torznab">Torznab</option>
-        </select>
+        <div className="flex-1">
+          <label className={labelCls}>Name</label>
+          <input value={name} onChange={e => setName(e.target.value)} placeholder="Name (e.g. NZBGeek)" className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
+        </div>
+        <div className="w-40">
+          <label className={labelCls}>Indexer Type</label>
+          <select value={type} onChange={e => setType(e.target.value as 'newznab' | 'torznab')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600">
+            <option value="newznab">Newznab</option>
+            <option value="torznab">Torznab</option>
+          </select>
+        </div>
       </div>
-      <input value={url} onChange={e => setUrl(e.target.value)} placeholder="URL (e.g. https://api.nzbgeek.info)" className={inputCls} />
-      <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="API Key" type="password" className={inputCls} />
       <div>
+        <label className={labelCls}>URL</label>
+        <input value={url} onChange={e => setUrl(e.target.value)} placeholder="URL (e.g. https://api.nzbgeek.info or http://prowlarr:9696/1/api)" className={inputCls} />
+        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">For Prowlarr, paste the Torznab endpoint URL (usually ending in /api) and API key.</p>
+      </div>
+      <div>
+        <label className={labelCls}>API Key</label>
+        <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="API Key" type="password" className={inputCls} />
+      </div>
+      <div>
+        <label className={labelCls}>Categories</label>
         <input value={categories} onChange={e => setCategories(e.target.value)} placeholder="Categories (e.g. 7020, 7120, 3030)" className={inputCls} />
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Comma-separated Newznab category IDs. 7020 = eBooks, 3030 = Audiobooks. Add custom IDs for indexers with non-standard categories (e.g. 7120 for German books).</p>
       </div>
@@ -1758,22 +1807,34 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
 
 function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c: DownloadClient) => void }) {
   const [name, setName] = useState('SABnzbd')
-  const [type, setType] = useState<'sabnzbd' | 'qbittorrent'>('sabnzbd')
+  const [type, setType] = useState<'sabnzbd' | 'qbittorrent' | 'transmission'>('sabnzbd')
   const [host, setHost] = useState('')
   const [port, setPort] = useState('8080')
   const [credential, setCredential] = useState('')
   const [username, setUsername] = useState('')
   const [category, setCategory] = useState('books')
+  const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
-  const handleTypeChange = (newType: 'sabnzbd' | 'qbittorrent') => {
+  const handleTypeChange = (newType: 'sabnzbd' | 'qbittorrent' | 'transmission') => {
     setType(newType)
     setCredential('')
     setUsername('')
-    setName(newType === 'qbittorrent' ? 'qBittorrent' : 'SABnzbd')
+    if (newType === 'qbittorrent') {
+      setName('qBittorrent')
+      setPort('8080')
+      return
+    }
+    if (newType === 'transmission') {
+      setName('Transmission')
+      setPort('9091')
+      return
+    }
+    setName('SABnzbd')
+    setPort('8080')
   }
 
   const submit = async () => {
-    const data = type === 'qbittorrent'
+    const data = type === 'qbittorrent' || type === 'transmission'
       ? { name, host, port: parseInt(port), username, password: credential, apiKey: '', category, type, enabled: true }
       : { name, host, port: parseInt(port), apiKey: credential, username: '', password: '', category, type, enabled: true }
     const c = await api.addDownloadClient(data)
@@ -1783,24 +1844,42 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
   return (
     <div className="mt-4 p-4 border border-slate-300 dark:border-zinc-700 rounded-lg bg-slate-200/50 dark:bg-zinc-800/50 space-y-3">
       <div className="flex gap-2">
-        <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
-        <select value={type} onChange={e => handleTypeChange(e.target.value as 'sabnzbd' | 'qbittorrent')} className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600">
-          <option value="sabnzbd">SABnzbd</option>
-          <option value="qbittorrent">qBittorrent</option>
-        </select>
+        <div className="flex-1">
+          <label className={labelCls}>Name</label>
+          <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
+        </div>
+        <div className="w-40">
+          <label className={labelCls}>Client Type</label>
+          <select value={type} onChange={e => handleTypeChange(e.target.value as 'sabnzbd' | 'qbittorrent' | 'transmission')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600">
+            <option value="sabnzbd">SABnzbd</option>
+            <option value="qbittorrent">qBittorrent</option>
+            <option value="transmission">Transmission</option>
+          </select>
+        </div>
       </div>
       <div>
+        <label className={labelCls}>Connection</label>
         <div className="flex gap-2">
           <input value={host} onChange={e => setHost(e.target.value)} placeholder="Host" className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
           <input value={port} onChange={e => setPort(e.target.value)} placeholder="Port" className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
         </div>
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">In Docker, use the service/container name (e.g. <code className="font-mono">sabnzbd</code>) — not <code className="font-mono">localhost</code>.</p>
       </div>
-      {type === 'qbittorrent' && (
-        <input value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" className={inputCls} />
+      {(type === 'qbittorrent' || type === 'transmission') && (
+        <div>
+          <label className={labelCls}>Username</label>
+          <input value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" className={inputCls} />
+        </div>
       )}
-      <input value={credential} onChange={e => setCredential(e.target.value)} placeholder={type === 'qbittorrent' ? 'Password' : 'API Key'} type="password" className={inputCls} />
-      <input value={category} onChange={e => setCategory(e.target.value)} placeholder="Category" className={inputCls} />
+      <div>
+        <label className={labelCls}>{type === 'qbittorrent' || type === 'transmission' ? 'Password' : 'API Key'}</label>
+        <input value={credential} onChange={e => setCredential(e.target.value)} placeholder={type === 'qbittorrent' || type === 'transmission' ? 'Password' : 'API Key'} type="password" className={inputCls} />
+      </div>
+      <div>
+        <label className={labelCls}>{type === 'transmission' ? 'Download Directory' : 'Category'}</label>
+        <input value={category} onChange={e => setCategory(e.target.value)} placeholder={type === 'transmission' ? '/downloads (leave blank for default)' : 'Category'} className={inputCls} />
+        {type === 'transmission' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Optional absolute path override. Leave blank to use Transmission's configured default download directory.</p>}
+      </div>
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">Cancel</button>
         <button onClick={submit} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium">Save</button>

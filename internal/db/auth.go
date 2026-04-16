@@ -70,7 +70,10 @@ func (r *UserRepo) Create(ctx context.Context, username, passwordHash string) (*
 	if err != nil {
 		return nil, fmt.Errorf("create user: %w", err)
 	}
-	id, _ := res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("get user id: %w", err)
+	}
 	return &User{ID: id, Username: username, PasswordHash: passwordHash, CreatedAt: now, UpdatedAt: now}, nil
 }
 

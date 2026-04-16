@@ -2,10 +2,27 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import AddAuthorModal from './AddAuthorModal'
 
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (key: string, options?: Record<string, unknown>) => {
+      const strings: Record<string, string> = {
+        'addAuthorModal.searchPlaceholder': 'Search by author name...',
+        'addAuthorModal.search': 'Search',
+        'addAuthorModal.noResults': 'No results found',
+      }
+      if (key === 'addAuthorModal.searchError') {
+        return `Could not reach the metadata provider - ${String(options?.error ?? '')}`
+      }
+      return strings[key] ?? key
+    },
+  }),
+}))
+
 // Mock the entire api/client module so no real HTTP calls are made.
 vi.mock('../api/client', () => ({
   api: {
     listMetadataProfiles: vi.fn().mockResolvedValue([]),
+    listRootFolders: vi.fn().mockResolvedValue([]),
     searchAuthors: vi.fn(),
     addAuthor: vi.fn(),
   },
@@ -21,6 +38,7 @@ describe('AddAuthorModal — search error handling', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(api.listMetadataProfiles).mockResolvedValue([])
+    vi.mocked(api.listRootFolders).mockResolvedValue([])
   })
 
   it('shows an error banner when the metadata provider is unreachable', async () => {

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 
 	"github.com/vavallee/bindery/internal/db"
@@ -58,5 +59,7 @@ func (h *LibraryHandler) ScanStatus(w http.ResponseWriter, r *http.Request) {
 	// The value is already a JSON string — write it directly.
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(setting.Value))
+	if _, err := w.Write([]byte(setting.Value)); err != nil {
+		slog.Warn("failed to write library scan status", "error", err)
+	}
 }

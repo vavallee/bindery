@@ -26,7 +26,10 @@ func (r *HistoryRepo) Create(ctx context.Context, e *models.HistoryEvent) error 
 	if err != nil {
 		return fmt.Errorf("create history event: %w", err)
 	}
-	id, _ := result.LastInsertId()
+	id, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("get history event id: %w", err)
+	}
 	e.ID = id
 	e.CreatedAt = now
 	return nil

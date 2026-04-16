@@ -18,11 +18,8 @@ type DownloadClient struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 
 	// Username and Password are used by download clients that authenticate with
-	// credentials rather than an API key (e.g. qBittorrent).
-	// Storage note: for qBittorrent, Username is persisted in the url_base column
-	// and Password is persisted in the api_key column of the download_clients table,
-	// since those fields are unused by qBittorrent. These virtual fields are
-	// populated by the application layer and are not stored as separate DB columns.
+	// credentials rather than an API key (e.g. qBittorrent, Transmission).
+	// These fields are persisted in dedicated download_clients table columns.
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
@@ -38,6 +35,7 @@ type Download struct {
 	NZBURL           string     `json:"nzbUrl"`
 	Size             int64      `json:"size"`
 	SABnzbdNzoID     *string    `json:"sabnzbdNzoId"`
+	TorrentID        *string    `json:"torrentId"`
 	Status           string     `json:"status"`
 	Protocol         string     `json:"protocol"`
 	Quality          string     `json:"quality"`

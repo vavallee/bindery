@@ -29,6 +29,51 @@ Feature release adding configurable import modes, an end-to-end smoke-test suite
 - **Root folders** — multiple root library paths can now be configured under **Settings → Root Folders**. Each author can be assigned to a specific root folder; unassigned authors continue to use the startup default path. Free disk space is shown next to each path.
 - **Language propagation into indexer queries** — search queries now include the author's metadata-profile language filter. For Prowlarr/Jackett, the allowed-language codes are appended to the query so foreign-language releases can be excluded on the indexer side as well as during metadata ingestion. The outgoing query string is visible at DEBUG level in the new log viewer.
 - **Language field from metadata providers** — Google Books and Hardcover now populate the `language` field on book records. Hardcover exposes language via the `editions` GraphQL node; Google Books via the `volumeInfo.language` JSON field. Language pills are surfaced in the Wanted page result rows when the indexer returns `<newznab:attr name="language">`.
+- **Bindery supports Transmission as a torrent downloader** alongside qBittorrent (torrent) and SABnzbd (usenet). Download dispatch and status handling are centralized through the downloader adapter layer.
+
+#### 1. Transmission Downloader Package
+- Location: `internal/downloader/transmission/`
+- Files:
+  - `client.go`:
+    - `New()`
+    - `Test()`
+    - `AddTorrent()`
+    - `GetTorrents()`
+    - `RemoveTorrent()`
+    - Handles Transmission session ID negotiation (`409` + `X-Transmission-Session-Id`)
+  - `types.go`:
+    - RPC payload types including torrent status fields and `errorString`
+
+#### 2. Database Changes
+- Migration: `internal/db/migrations/013_transmission.sql`
+  - Adds `downloads.torrent_id`
+  - Adds index on `downloads.torrent_id`
+- Migration: `internal/db/migrations/014_download_client_credentials.sql`
+  - Adds `download_clients.username` and `download_clients.password`
+  - Backfills credential clients from legacy storage (`url_base`/`api_key`) for compatibility
+
+#### 3. Model and Repository Updates
+- `internal/models/download.go`:
+  - `Download.TorrentID` for torrent remote IDs
+  - `DownloadClient.Username` and `DownloadClient.Password` persisted in dedicated DB columns
+- `internal/db/download_clients.go`:
+  - Reads/writes explicit `username`/`password` fields
+  - Keeps legacy fallback when older rows/payloads still carry credentials in `url_base`/`api_key`
+
+#### 4. Adapter and API Integration
+- `internal/downloader/adapter.go` dispatches by client type for:
+  - Connectivity tests
+  - Send download
+  - Remove download
+  - Live status overlay data
+- `internal/api/queue.go` and `internal/api/download_clients.go` use adapter-based client dispatch.
+
+#### 5. Scanner / Importer Integration
+- `internal/importer/scanner.go`:
+  - `checkTransmissionDownloads()` polls Transmission torrents via `torrent-get`
+  - Imports completed torrents into the library
+  - Failure behavior uses `errorString` for stopped torrents (details below)
+  - Cleanup warning logs include context (`clientType`, `remoteID`) for operations correlation
 - **End-to-end smoke test suite (closes [#97](https://github.com/vavallee/bindery/issues/97))** — `tests/smoke/smoke_test.go` boots the real binary against a scratch data directory and exercises the golden-path HTTP endpoints (health, auth, authors, books, settings, history, OPDS). Runs on every PR and main/development push via the `make smoke` target in CI. Catches wiring regressions (broken route registration, missing migration, bad frontend embed) that unit tests miss.
 
 ### Fixed

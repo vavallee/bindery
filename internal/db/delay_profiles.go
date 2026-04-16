@@ -70,7 +70,10 @@ func (r *DelayProfileRepo) Create(ctx context.Context, p *models.DelayProfile) e
 	if err != nil {
 		return fmt.Errorf("create delay profile: %w", err)
 	}
-	id, _ := result.LastInsertId()
+	id, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("get delay profile id: %w", err)
+	}
 	p.ID = id
 	return nil
 }
