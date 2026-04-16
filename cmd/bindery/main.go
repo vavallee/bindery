@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -265,6 +266,7 @@ func main() {
 	})
 	recHandler := api.NewRecommendationHandler(recRepo, recEngine, authorRepo, bookRepo, sched)
 	imageProxyHandler := api.NewImageProxyHandler(cfg.DataDir)
+	imageProxyHandler.StartEviction(24 * time.Hour)
 	migrateHandler := api.NewMigrateHandler(
 		authorRepo, indexerRepo, dlClientRepo, blocklistRepo, bookRepo, metaAgg,
 		// Bulk imports always populate the catalogue but never auto-grab.
@@ -294,7 +296,11 @@ func main() {
 		})
 		r.Get("/system/status", func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"version":"` + version + `","commit":"` + commit + `","buildDate":"` + date + `"}`))
+			cacheBytes, _ := imageProxyHandler.CacheSize()
+			_, _ = fmt.Fprintf(w,
+				`{"version":"%s","commit":"%s","buildDate":"%s","imageCacheBytes":%d}`,
+				version, commit, date, cacheBytes,
+			)
 		})
 
 		// Auth — status/login/logout/setup are always allowed through the

@@ -4,10 +4,12 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -36,11 +38,13 @@ type ImageProxyHandler struct {
 // NewImageProxyHandler creates a handler that caches images under
 // <dataDir>/image-cache/.
 func NewImageProxyHandler(dataDir string) *ImageProxyHandler {
-	return &ImageProxyHandler{
+	h := &ImageProxyHandler{
 		cacheDir:    filepath.Join(dataDir, "image-cache"),
 		client:      &http.Client{Timeout: 15 * time.Second},
 		validateURL: func(u string) error { return httpsec.ValidateOutboundURL(u, httpsec.PolicyStrict) },
 	}
+	go h.migrateFlatCache()
+	return h
 }
 
 // Serve handles GET /api/v1/images?url=<encoded-external-url>.
@@ -60,7 +64,8 @@ func (h *ImageProxyHandler) Serve(w http.ResponseWriter, r *http.Request) {
 
 	sum := sha256.Sum256([]byte(raw))
 	key := fmt.Sprintf("%x", sum)
-	imgFile := filepath.Join(h.cacheDir, key)
+	shard := key[:2]
+	imgFile := filepath.Join(h.cacheDir, shard, key)
 	ctFile := imgFile + ".ct"
 
 	// Serve from cache if fresh.
@@ -113,15 +118,114 @@ func (h *ImageProxyHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Write to cache (best-effort — a write failure is not fatal).
-	if mkErr := os.MkdirAll(h.cacheDir, imageDirMode); mkErr == nil {
-		_ = os.WriteFile(imgFile, body, imageCacheMode)      // #nosec -- path derived from sha256(url), not user input
-		_ = os.WriteFile(ctFile, []byte(ct), imageCacheMode) // #nosec -- path derived from sha256(url), not user input
+	// Atomic: write to .tmp, then rename so readers never see partial files.
+	if mkErr := os.MkdirAll(filepath.Dir(imgFile), imageDirMode); mkErr == nil {
+		tmp := imgFile + ".tmp"
+		if err := os.WriteFile(tmp, body, imageCacheMode); err == nil { // #nosec
+			_ = os.Rename(tmp, imgFile) // #nosec
+		}
+		ctTmp := ctFile + ".tmp"
+		if err := os.WriteFile(ctTmp, []byte(ct), imageCacheMode); err == nil { // #nosec
+			_ = os.Rename(ctTmp, ctFile) // #nosec
+		}
 	}
 
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Cache-Control", "public, max-age=2592000")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
 	_, _ = w.Write(body)
+}
+
+// hexKeyRe matches a 64-character lowercase hex string (sha256 output).
+var hexKeyRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// migrateFlatCache moves legacy flat-layout cache files into the sharded
+// directory structure (image-cache/<first2chars>/<key>). Runs once at startup.
+func (h *ImageProxyHandler) migrateFlatCache() {
+	entries, err := os.ReadDir(h.cacheDir) // #nosec
+	if err != nil {
+		return // cache dir may not exist yet
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		// Skip .ct sidecars — they'll be moved alongside their parent.
+		if strings.HasSuffix(name, ".ct") {
+			continue
+		}
+		if !hexKeyRe.MatchString(name) {
+			continue
+		}
+		shard := name[:2]
+		dst := filepath.Join(h.cacheDir, shard, name)
+		if err := os.MkdirAll(filepath.Join(h.cacheDir, shard), imageDirMode); err != nil {
+			slog.Warn("image cache migration: mkdir failed", "shard", shard, "error", err)
+			continue
+		}
+		src := filepath.Join(h.cacheDir, name) // #nosec
+		if err := os.Rename(src, dst); err != nil {
+			slog.Warn("image cache migration: rename failed", "src", src, "error", err)
+			continue
+		}
+		// Move the .ct sidecar if it exists.
+		ctSrc := src + ".ct"
+		if _, err := os.Stat(ctSrc); err == nil { // #nosec
+			_ = os.Rename(ctSrc, dst+".ct") // #nosec
+		}
+	}
+}
+
+// StartEviction launches a background goroutine that periodically removes
+// cached images older than imageCacheTTL.
+func (h *ImageProxyHandler) StartEviction(interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			h.evictExpired()
+		}
+	}()
+}
+
+func (h *ImageProxyHandler) evictExpired() {
+	now := time.Now()
+	_ = filepath.WalkDir(h.cacheDir, func(path string, d os.DirEntry, err error) error { // #nosec
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		// Skip .ct sidecars — they're deleted alongside their parent.
+		if strings.HasSuffix(d.Name(), ".ct") {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		if now.Sub(info.ModTime()) > imageCacheTTL {
+			_ = os.Remove(path)         // #nosec
+			_ = os.Remove(path + ".ct") // #nosec
+		}
+		return nil
+	})
+}
+
+// CacheSize returns the total bytes used by the image cache directory.
+func (h *ImageProxyHandler) CacheSize() (int64, error) {
+	var total int64
+	err := filepath.WalkDir(h.cacheDir, func(_ string, d os.DirEntry, err error) error { // #nosec
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		total += info.Size()
+		return nil
+	})
+	return total, err
 }
 
 // ProxyImageURL rewrites a raw external image URL into the local proxy path
