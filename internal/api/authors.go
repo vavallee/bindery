@@ -48,6 +48,9 @@ func (h *AuthorHandler) List(w http.ResponseWriter, r *http.Request) {
 	if authors == nil {
 		authors = []models.Author{}
 	}
+	for i := range authors {
+		proxyAuthorImages(&authors[i])
+	}
 	writeJSON(w, http.StatusOK, authors)
 }
 
@@ -82,6 +85,7 @@ func (h *AuthorHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	proxyAuthorImages(author)
 	writeJSON(w, http.StatusOK, author)
 }
 

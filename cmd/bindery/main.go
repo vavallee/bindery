@@ -242,6 +242,7 @@ func main() {
 	calibreImportHandler := api.NewCalibreImportHandler(calibreImporter, func() calibre.Config {
 		return api.LoadCalibreConfig(settingsRepo)
 	})
+	imageProxyHandler := api.NewImageProxyHandler(cfg.DataDir)
 	migrateHandler := api.NewMigrateHandler(
 		authorRepo, indexerRepo, dlClientRepo, blocklistRepo, bookRepo, metaAgg,
 		// Bulk imports always populate the catalogue but never auto-grab.
@@ -441,6 +442,10 @@ func main() {
 		// Migration imports (CSV of author names, or Readarr SQLite DB).
 		r.Post("/migrate/csv", migrateHandler.ImportCSV)
 		r.Post("/migrate/readarr", migrateHandler.ImportReadarr)
+
+		// Image proxy — caches external cover images locally so the browser
+		// never leaks the user's IP to Goodreads / OpenLibrary / etc.
+		r.Get("/images", imageProxyHandler.Serve)
 	})
 
 	// OPDS 1.2 catalogue — KOReader / Moon+ Reader / Aldiko speak this

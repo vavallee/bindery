@@ -91,6 +91,9 @@ func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
 	if books == nil {
 		books = []models.Book{}
 	}
+	for i := range books {
+		proxyBookImages(&books[i])
+	}
 	writeJSON(w, http.StatusOK, books)
 }
 
@@ -110,6 +113,7 @@ func (h *BookHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
 		return
 	}
+	proxyBookImages(book)
 	writeJSON(w, http.StatusOK, book)
 }
 
