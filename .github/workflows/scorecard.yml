@@ -12,23 +12,20 @@ on:
   push:
     branches: [main]
 
-# These permissions are the *minimum* required by scorecard-action.
-# Do NOT add extra permissions here — keep this workflow minimal.
+# Top-level permissions must be read-only — the Scorecard publish API
+# rejects results from workflows that declare any global write permission.
 permissions:
-  # Required to read Actions workflow definitions (branch-protection analysis)
   actions: read
-  # Required to read the repo tree
   contents: read
-  # Required to upload SARIF to the GitHub Security tab
-  security-events: write
-  # Required for Scorecard to sign results with Sigstore (OIDC token)
-  id-token: write
 
 jobs:
   scorecard:
     name: Scorecard Analysis
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      security-events: write  # upload SARIF to the Security tab
+      id-token: write         # Sigstore OIDC signing for publish_results
     steps:
       - name: Checkout
         uses: actions/checkout@v6

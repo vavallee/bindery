@@ -359,39 +359,6 @@ jobs:
           path: zap-out/
           retention-days: 30
 
-  # ── OpenSSF Scorecard ──────────────────────────────────────────────────────
-  # Only runs on push-to-main and schedule — not on PRs (no write token for forks)
-  scorecard:
-    name: OpenSSF Scorecard
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    if: >
-      github.event_name == 'schedule' ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    permissions:
-      security-events: write
-      id-token: write
-      contents: read
-      actions: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Scorecard
-        uses: ossf/scorecard-action@62b2cac7ed8198b15735ed49ab1e5cf35480ba46 # v2.4.0
-        with:
-          results_file: scorecard.sarif
-          results_format: sarif
-          publish_results: true
-
-      - name: Upload Scorecard SARIF
-        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4.35.2
-        if: always()
-        with:
-          sarif_file: scorecard.sarif
-          category: scorecard
-
   # ── Helm unit tests ────────────────────────────────────────────────────────
   # Stream C will add the test fixtures. continue-on-error until they land.
   policy-test:
