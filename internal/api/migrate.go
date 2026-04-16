@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -114,11 +115,13 @@ func (h *MigrateHandler) ImportReadarr(w http.ResponseWriter, r *http.Request) {
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
 	if _, err := io.Copy(tmp, file); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write temp: " + err.Error()})
 		return
 	}
-	tmp.Close()
+	if err := tmp.Close(); err != nil {
+		slog.Error("failed to close temp file", "path", tmpPath, "error", err)
+	}
 
 	result, err := migrate.ImportReadarr(
 		r.Context(), tmpPath,
