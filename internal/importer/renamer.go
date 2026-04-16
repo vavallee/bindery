@@ -210,13 +210,13 @@ func HardlinkDir(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("open source root: %w", err)
 	}
-	defer srcRoot.Close()
+	defer func() { _ = srcRoot.Close() }()
 
 	dstRoot, err := os.OpenRoot(dst)
 	if err != nil {
 		return fmt.Errorf("open dest root: %w", err)
 	}
-	defer dstRoot.Close()
+	defer func() { _ = dstRoot.Close() }()
 
 	if err := hardlinkDirRooted(srcRoot, dstRoot, "."); err != nil {
 		_ = os.RemoveAll(dst)
@@ -273,13 +273,13 @@ func copyDir(srcDir, dstDir string) error {
 	if err != nil {
 		return fmt.Errorf("open source root: %w", err)
 	}
-	defer srcRoot.Close()
+	defer func() { _ = srcRoot.Close() }()
 
 	dstRoot, err := os.OpenRoot(dstDir)
 	if err != nil {
 		return fmt.Errorf("open dest root: %w", err)
 	}
-	defer dstRoot.Close()
+	defer func() { _ = dstRoot.Close() }()
 
 	return copyDirRooted(srcRoot, dstRoot, ".")
 }
