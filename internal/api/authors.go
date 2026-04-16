@@ -292,6 +292,14 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool)
 	ctx := contextBackground()
 	slog.Info("fetching books for author", "author", author.Name, "foreignId", author.ForeignID)
 
+	// Calibre-imported authors carry a synthetic "calibre:author:N" foreign ID
+	// that has no counterpart in OL/Hardcover. Attempting to fetch works for
+	// them always produces a 404; skip silently.
+	if strings.HasPrefix(author.ForeignID, "calibre:") {
+		slog.Debug("skipping metadata fetch for calibre-native author", "author", author.Name, "foreignId", author.ForeignID)
+		return
+	}
+
 	// Use the dedicated author works endpoint for accurate results
 	books, err := h.meta.GetAuthorWorks(ctx, author.ForeignID)
 	if err != nil {

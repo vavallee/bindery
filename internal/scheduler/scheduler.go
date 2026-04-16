@@ -6,6 +6,7 @@ package scheduler
 import (
 	"context"
 	"log/slog"
+	"strings"
 
 	"github.com/robfig/cron/v3"
 
@@ -389,6 +390,12 @@ func (s *Scheduler) refreshMetadata() {
 
 	for _, author := range authors {
 		if !author.Monitored {
+			continue
+		}
+
+		// Calibre-imported authors have synthetic "calibre:author:N" IDs with
+		// no counterpart in OL/Hardcover; skip to avoid noisy 404 errors.
+		if strings.HasPrefix(author.ForeignID, "calibre:") {
 			continue
 		}
 
