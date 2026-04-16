@@ -3,7 +3,6 @@ package importer
 import (
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -190,6 +189,8 @@ func CopyDir(src, dst string) error {
 // HardlinkDir mirrors a directory tree from src into dst by hard-linking every
 // regular file. Directory entries are created normally. Both trees must be on
 // the same filesystem — no fallback is attempted on cross-filesystem failure.
+//
+// Uses os.Root to scope traversal, preventing symlink-based TOCTOU (gosec G122).
 func HardlinkDir(src, dst string) error {
 	info, err := os.Stat(src)
 	if err != nil {
@@ -204,55 +205,133 @@ func HardlinkDir(src, dst string) error {
 	if err := os.MkdirAll(dst, 0o750); err != nil {
 		return fmt.Errorf("create dest dir: %w", err)
 	}
-	err = filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, rerr := filepath.Rel(src, path)
-		if rerr != nil {
-			return rerr
-		}
-		target := filepath.Join(dst, rel)
-		if d.IsDir() {
-			return os.MkdirAll(target, 0o750)
-		}
-		// Skip symlinks — following them in a Walk callback is a TOCTOU risk
-		// (gosec G304). Only hard-link regular files.
-		if !d.Type().IsRegular() {
-			return nil
-		}
-		if err := os.Link(path, target); err != nil {
-			return fmt.Errorf("hardlink %q → %q: %w (download dir and library must be on the same filesystem)", path, target, err)
-		}
-		return nil
-	})
+
+	srcRoot, err := os.OpenRoot(src)
 	if err != nil {
+		return fmt.Errorf("open source root: %w", err)
+	}
+	defer srcRoot.Close()
+
+	dstRoot, err := os.OpenRoot(dst)
+	if err != nil {
+		return fmt.Errorf("open dest root: %w", err)
+	}
+	defer dstRoot.Close()
+
+	if err := hardlinkDirRooted(srcRoot, dstRoot, "."); err != nil {
 		_ = os.RemoveAll(dst)
 		return err
 	}
 	return nil
 }
 
+func hardlinkDirRooted(srcRoot, dstRoot *os.Root, rel string) error {
+	f, err := srcRoot.Open(rel)
+	if err != nil {
+		return err
+	}
+	entries, err := f.ReadDir(-1)
+	f.Close()
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		child := filepath.Join(rel, e.Name())
+		if !e.Type().IsRegular() && !e.IsDir() {
+			continue // skip symlinks
+		}
+		if e.IsDir() {
+			if err := dstRoot.Mkdir(child, 0o750); err != nil && !os.IsExist(err) {
+				return err
+			}
+			if err := hardlinkDirRooted(srcRoot, dstRoot, child); err != nil {
+				return err
+			}
+			continue
+		}
+		srcPath := filepath.Join(srcRoot.Name(), child)
+		dstPath := filepath.Join(dstRoot.Name(), child)
+		if err := os.Link(srcPath, dstPath); err != nil {
+			return fmt.Errorf("hardlink %q → %q: %w (download dir and library must be on the same filesystem)", srcPath, dstPath, err)
+		}
+	}
+	return nil
+}
+
 // copyDir recursively copies srcDir contents into dstDir, preserving the
 // internal layout. dstDir will be created (including parents).
+//
+// Uses os.Root to scope all filesystem operations, preventing symlink-based
+// TOCTOU traversal (gosec G122). A symlink inside the source tree that
+// points outside the root is rejected by the kernel, not by user-space
+// checks that can race.
 func copyDir(srcDir, dstDir string) error {
 	if err := os.MkdirAll(dstDir, 0o750); err != nil {
 		return err
 	}
-	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
+	srcRoot, err := os.OpenRoot(srcDir)
+	if err != nil {
+		return fmt.Errorf("open source root: %w", err)
+	}
+	defer srcRoot.Close()
+
+	dstRoot, err := os.OpenRoot(dstDir)
+	if err != nil {
+		return fmt.Errorf("open dest root: %w", err)
+	}
+	defer dstRoot.Close()
+
+	return copyDirRooted(srcRoot, dstRoot, ".")
+}
+
+func copyDirRooted(srcRoot, dstRoot *os.Root, rel string) error {
+	f, err := srcRoot.Open(rel)
+	if err != nil {
+		return err
+	}
+	entries, err := f.ReadDir(-1)
+	f.Close()
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		child := filepath.Join(rel, e.Name())
+		if !e.Type().IsRegular() && !e.IsDir() {
+			continue // skip symlinks and other non-regular entries
+		}
+		if e.IsDir() {
+			if err := dstRoot.Mkdir(child, 0o750); err != nil && !os.IsExist(err) {
+				return err
+			}
+			if err := copyDirRooted(srcRoot, dstRoot, child); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := copyFileRooted(srcRoot, dstRoot, child); err != nil {
 			return err
 		}
-		rel, rerr := filepath.Rel(srcDir, path)
-		if rerr != nil {
-			return rerr
-		}
-		target := filepath.Join(dstDir, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode())
-		}
-		return copyFile(path, target)
-	})
+	}
+	return nil
+}
+
+func copyFileRooted(srcRoot, dstRoot *os.Root, rel string) error {
+	in, err := srcRoot.Open(rel)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := dstRoot.OpenFile(rel, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
 }
 
 func copyFile(src, dst string) error {
