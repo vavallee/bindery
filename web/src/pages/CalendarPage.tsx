@@ -69,40 +69,36 @@ export default function CalendarPage() {
 
   const hasReleases = Object.keys(booksByDay).length > 0
 
-  const CalendarHeader = () => (
-    <div className="flex items-center justify-between mb-6">
-      <h2 className="text-2xl font-bold">{t('calendar.title')}</h2>
-      <div className="flex items-center gap-2">
-        {!isCurrentMonth && (
-          <button
-            onClick={goToToday}
-            className="px-3 py-1.5 text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white border border-slate-300 dark:border-zinc-700 rounded transition-colors"
-          >
-            {t('calendar.today')}
-          </button>
-        )}
-        <button
-          onClick={prevMonth}
-          className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded transition-colors"
-        >
-          ‹
-        </button>
-        <span className="text-sm font-medium w-36 text-center">
-          {MONTH_NAMES[viewMonth]} {viewYear}
-        </span>
-        <button
-          onClick={nextMonth}
-          className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded transition-colors"
-        >
-          ›
-        </button>
-      </div>
-    </div>
-  )
-
   return (
     <div>
-      <CalendarHeader />
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-2xl font-bold">{t('calendar.title')}</h2>
+        <div className="flex items-center gap-2">
+          {!isCurrentMonth && (
+            <button
+              onClick={goToToday}
+              className="px-3 py-1.5 text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white border border-slate-300 dark:border-zinc-700 rounded transition-colors"
+            >
+              {t('calendar.today')}
+            </button>
+          )}
+          <button
+            onClick={prevMonth}
+            className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded transition-colors"
+          >
+            ‹
+          </button>
+          <span className="text-sm font-medium w-36 text-center">
+            {MONTH_NAMES[viewMonth]} {viewYear}
+          </span>
+          <button
+            onClick={nextMonth}
+            className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded transition-colors"
+          >
+            ›
+          </button>
+        </div>
+      </div>
 
       {loading ? (
         <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>

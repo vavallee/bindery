@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, HistoryEvent } from '../api/client'
 import Pagination from '../components/Pagination'
@@ -54,18 +54,18 @@ export default function HistoryPage() {
   const [loading, setLoading] = useState(true)
   const [typeFilter, setTypeFilter] = useState('')
 
-  const load = (filter?: string) => {
-    setLoading(true)
+  const load = useCallback((filter?: string) => {
     api.listHistory(filter ? { eventType: filter } : undefined)
       .then(setEvents)
       .catch(console.error)
       .finally(() => setLoading(false))
-  }
+  }, [])
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [load])
 
   const handleFilterChange = (val: string) => {
     setTypeFilter(val)
+    setLoading(true)
     load(val || undefined)
   }
 
