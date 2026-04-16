@@ -1,12 +1,16 @@
 package api
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/vavallee/bindery/internal/models"
 )
 
 // newFakeUpstream starts a test HTTP server that responds with the given
@@ -166,6 +170,95 @@ func TestImageProxy_SizeLimit(t *testing.T) {
 	h.Serve(rr, req)
 	if rr.Code != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502 for oversized image", rr.Code)
+	}
+}
+
+// TestImageProxy_CacheHitMissingCT verifies that a cache hit with a missing
+// or empty .ct sidecar falls back to "image/jpeg" as the content-type.
+func TestImageProxy_CacheHitMissingCT(t *testing.T) {
+	dir := t.TempDir()
+	cacheDir := filepath.Join(dir, "image-cache")
+	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pre-seed the cache with only the body file — no .ct sidecar.
+	const rawURL = "https://example.com/noct.jpg"
+	sum := sha256.Sum256([]byte(rawURL))
+	key := fmt.Sprintf("%x", sum)
+	if err := os.WriteFile(filepath.Join(cacheDir, key), []byte("CACHEDIMG"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewImageProxyHandler(dir)
+	h.validateURL = func(_ string) error { return nil }
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/images?url="+rawURL, nil)
+	rr := httptest.NewRecorder()
+	h.Serve(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "image/jpeg" {
+		t.Errorf("Content-Type = %q, want image/jpeg (default fallback)", ct)
+	}
+}
+
+// TestProxyAuthorImages verifies that proxyAuthorImages rewrites the author's
+// ImageURL and all embedded books' ImageURLs in place.
+func TestProxyAuthorImages(t *testing.T) {
+	a := &models.Author{
+		ImageURL: "https://example.com/author.jpg",
+		Books: []models.Book{
+			{ImageURL: "https://example.com/book1.jpg"},
+			{ImageURL: "/already/relative"},
+			{ImageURL: ""},
+		},
+	}
+	proxyAuthorImages(a)
+
+	if !strings.HasPrefix(a.ImageURL, "/api/v1/images?url=") {
+		t.Errorf("Author.ImageURL not rewritten: %q", a.ImageURL)
+	}
+	if !strings.HasPrefix(a.Books[0].ImageURL, "/api/v1/images?url=") {
+		t.Errorf("Books[0].ImageURL not rewritten: %q", a.Books[0].ImageURL)
+	}
+	if a.Books[1].ImageURL != "/already/relative" {
+		t.Errorf("Books[1].ImageURL should be unchanged: %q", a.Books[1].ImageURL)
+	}
+	if a.Books[2].ImageURL != "" {
+		t.Errorf("Books[2].ImageURL should be empty: %q", a.Books[2].ImageURL)
+	}
+}
+
+// TestProxyBookImages verifies that proxyBookImages rewrites the book's
+// ImageURL and leaves relative/empty URLs untouched.
+func TestProxyBookImages(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string // prefix check: "/" means unchanged, "/api" means rewritten
+	}{
+		{"https://example.com/cover.jpg", "/api/v1/images?url="},
+		{"/local/cover.jpg", "/local/cover.jpg"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		b := &models.Book{ImageURL: tc.in}
+		proxyBookImages(b)
+		if tc.want == "" {
+			if b.ImageURL != "" {
+				t.Errorf("in=%q: want empty, got %q", tc.in, b.ImageURL)
+			}
+		} else if strings.HasPrefix(tc.want, "/api") {
+			if !strings.HasPrefix(b.ImageURL, tc.want) {
+				t.Errorf("in=%q: want prefix %q, got %q", tc.in, tc.want, b.ImageURL)
+			}
+		} else {
+			if b.ImageURL != tc.want {
+				t.Errorf("in=%q: want %q, got %q", tc.in, tc.want, b.ImageURL)
+			}
+		}
 	}
 }
 

@@ -75,8 +75,16 @@ func (h *ImageProxyHandler) Serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch from upstream.
-	resp, err := h.client.Get(raw) //nolint:noctx // timeout set on client
+	// Fetch from upstream. Use NewRequestWithContext so the request respects
+	// the caller's context (cancellation, deadline). The URL has already been
+	// validated by h.validateURL; the nolint suppresses the gosec taint warning
+	// that can't trace through the validateURL indirection.
+	upReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, raw, nil) //nolint:gosec // URL validated above
+	if err != nil {
+		http.Error(w, "upstream fetch failed", http.StatusBadGateway)
+		return
+	}
+	resp, err := h.client.Do(upReq)
 	if err != nil {
 		http.Error(w, "upstream fetch failed", http.StatusBadGateway)
 		return

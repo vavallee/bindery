@@ -185,8 +185,8 @@ func TestImportMode_Settings(t *testing.T) {
 	}{
 		{setValue: "copy", want: "copy"},
 		{setValue: "hardlink", want: "hardlink"},
-		{setValue: "invalid", want: "move"},  // unknown value falls back to move
-		{setValue: "", want: "move"},          // absent key falls back to move
+		{setValue: "invalid", want: "move"}, // unknown value falls back to move
+		{setValue: "", want: "move"},        // absent key falls back to move
 	}
 
 	for _, tc := range cases {
