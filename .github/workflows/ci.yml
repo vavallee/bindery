@@ -7,20 +7,18 @@ on:
   pull_request:
 
 permissions:
-  contents: write
-  packages: write
-  security-events: write
-  # Required for actions/attest-build-provenance to mint SLSA attestations
-  # against the OIDC token of the GitHub-hosted runner. Without this the
-  # provenance step silently produces an unsigned artifact.
-  id-token: write
-  attestations: write
+  contents: read
 
 jobs:
   # Single job: test + build + push + deploy
   # Eliminates inter-job wait times and redundant checkouts
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write      # git push Helm chart image tag
+      packages: write      # docker push to ghcr.io
+      id-token: write      # SLSA attestation OIDC token
+      attestations: write  # actions/attest-build-provenance
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/development' || startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
