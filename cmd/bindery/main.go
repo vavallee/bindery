@@ -224,7 +224,6 @@ func main() {
 	hcSyncer := hardcoverlistsyncer.New(importListRepo, authorRepo, bookRepo)
 	sched.WithHardcoverSyncer(hcSyncer)
 
-
 	sched.Start()
 	defer sched.Stop()
 

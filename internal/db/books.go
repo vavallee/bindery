@@ -245,7 +245,6 @@ func (r *BookRepo) SetExcluded(ctx context.Context, id int64, excluded bool) err
 	return err
 }
 
-
 func (r *BookRepo) Delete(ctx context.Context, id int64) error {
 	_, err := r.db.ExecContext(ctx, "DELETE FROM books WHERE id=?", id)
 	return err
