@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 
 const SHARED_PAGE_SIZE_KEY = 'pageSize:shared'
 
@@ -33,7 +33,7 @@ export function usePagination<T>(items: T[], defaultPageSize = 50, storageKey?: 
   const safePage = Math.min(page, totalPages)
   const paged = useMemo(() => items.slice((safePage - 1) * pageSize, safePage * pageSize), [items, safePage, pageSize])
 
-  const reset = () => setPage(1)
+  const reset = useCallback(() => setPage(1), [])
 
   const handlePageSizeChange = (size: number) => {
     setPageSize(size)
