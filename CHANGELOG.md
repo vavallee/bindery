@@ -6,6 +6,28 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased] — development branch
 
+## [v0.14.0] — 2026-04-16
+
+### Added
+
+- **Transmission BitTorrent downloader** — Bindery now supports Transmission as a second torrent client alongside qBittorrent. Configure it under **Settings → Download Clients** with host, port, optional SSL, and optional HTTP Basic credentials. The client handles Transmission's CSRF session-ID handshake (`409` + `X-Transmission-Session-Id`) transparently, validates all request targets to prevent SSRF, and enforces a redirect policy that refuses to follow redirects outside the configured RPC endpoint. Status polling and torrent removal are fully supported.
+- **Recommendation engine — Discover page** — a new **Discover** page (nav between Calendar and Queue) surfaces personalised book suggestions driven by a local content-based engine. All processing is on-device; no data leaves the instance. Feature is **opt-in** (off by default); enable it under **Settings → General → Recommendations**.
+
+  Five recommendation types:
+  - **Next in series** — detects books missing from series you've started and surfaces the next in sequence.
+  - **New from monitored authors** — highlights works by your monitored authors that aren't yet in your library.
+  - **Because of your genre** — recommends books from series in your library matching your genre profile (TF-IDF weighted).
+  - **Popular in your genres** *(Phase 2)* — queries the OpenLibrary `/subjects/{genre}` API for your top 5 genres (5 API calls per 24 h run) and surfaces well-regarded titles you haven't added.
+  - **From your reading list** *(Phase 2, optional)* — cross-references your Hardcover "Want to Read" shelf against your library and surfaces unowned books. Requires a Hardcover Bearer token in **Settings → `hardcover.api_token`**.
+
+  Cold-start handling: genre scoring requires ≥ 20 books; below that threshold only series and author-new rows appear. A serendipity row (5–10% of results, outside your top genres) prevents filter bubbles. Dismissing a book or excluding an author persists across regeneration cycles. "Add to Wanted" triggers an immediate indexer search.
+
+- **Settings gear icon + Blocklist tab** — the settings link in the navigation bar is now a gear icon (previously labelled text). A **Blocklist** tab has been added to Settings, consolidating all blocklist management in one place. The `/blocklist` URL now redirects to `/settings`.
+
+### Fixed
+
+- **Prowlarr Torznab protocol routing** — torrent releases sourced from Prowlarr Torznab indexers were previously submitted to any enabled download client. They are now dispatched exclusively to torrent-capable clients (Transmission, qBittorrent), preventing silent drops when a torrent URL reached a SABnzbd instance.
+
 ## [v0.13.0] — 2026-04-16
 
 ### Added
