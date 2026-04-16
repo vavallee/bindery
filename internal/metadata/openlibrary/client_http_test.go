@@ -659,6 +659,146 @@ func TestGetAuthorWorks_HTTP_LangPreferEng(t *testing.T) {
 	}
 }
 
+// --- GetSubjectBooks ---
+
+func TestGetSubjectBooks_HTTP(t *testing.T) {
+	coverID := 99999
+	resp := subjectBooksResponse{
+		Name:      "Fantasy",
+		WorkCount: 2,
+		Works: []subjectWork{
+			{
+				Key:              "/works/OL1111W",
+				Title:            "Popular Fantasy",
+				CoverID:          &coverID,
+				FirstPublishYear: 2015,
+				Subject:          []string{"Fantasy", "Adventure"},
+				Authors: []struct {
+					Key  string `json:"key"`
+					Name string `json:"name"`
+				}{
+					{Key: "/authors/OL10A", Name: "Famous Author"},
+				},
+			},
+			{
+				Key:   "/works/OL2222W",
+				Title: "No Cover Work",
+			},
+		},
+	}
+
+	c := newClientWithPaths(t, map[string]interface{}{
+		"/subjects/fantasy.json": jsonStr(resp),
+	})
+
+	candidates, err := c.GetSubjectBooks(context.Background(), "fantasy", 20)
+	if err != nil {
+		t.Fatalf("GetSubjectBooks: %v", err)
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("expected 2 candidates, got %d", len(candidates))
+	}
+
+	first := candidates[0]
+	if first.ForeignID != "OL1111W" {
+		t.Errorf("ForeignID: want 'OL1111W', got %q", first.ForeignID)
+	}
+	if first.Title != "Popular Fantasy" {
+		t.Errorf("Title: want 'Popular Fantasy', got %q", first.Title)
+	}
+	if first.AuthorName != "Famous Author" {
+		t.Errorf("AuthorName: want 'Famous Author', got %q", first.AuthorName)
+	}
+	if first.ReleaseDate == nil || first.ReleaseDate.Year() != 2015 {
+		t.Errorf("ReleaseDate: expected 2015, got %v", first.ReleaseDate)
+	}
+	if !strings.Contains(first.ImageURL, "99999") {
+		t.Errorf("ImageURL should contain cover ID 99999, got %q", first.ImageURL)
+	}
+	if first.MediaType != "ebook" {
+		t.Errorf("MediaType: want 'ebook', got %q", first.MediaType)
+	}
+	if len(first.Genres) != 2 {
+		t.Errorf("Genres: want 2, got %d", len(first.Genres))
+	}
+
+	// Second candidate: no cover, no authors.
+	second := candidates[1]
+	if second.ImageURL != "" {
+		t.Errorf("second ImageURL should be empty, got %q", second.ImageURL)
+	}
+	if second.AuthorName != "" {
+		t.Errorf("second AuthorName should be empty, got %q", second.AuthorName)
+	}
+}
+
+func TestGetSubjectBooks_HTTP_DefaultLimit(t *testing.T) {
+	// Limit <= 0 defaults to 20. Assert the URL passed to the server contains limit=20.
+	var gotURL string
+	c := newClientWithPaths(t, map[string]interface{}{
+		"/subjects/scifi.json": func(r *http.Request) string {
+			gotURL = r.URL.String()
+			return jsonStr(subjectBooksResponse{})
+		},
+	})
+
+	_, err := c.GetSubjectBooks(context.Background(), "scifi", 0)
+	if err != nil {
+		t.Fatalf("GetSubjectBooks: %v", err)
+	}
+	if !strings.Contains(gotURL, "limit=20") {
+		t.Errorf("URL should default limit to 20, got %q", gotURL)
+	}
+}
+
+func TestGetSubjectBooks_HTTP_Error(t *testing.T) {
+	c := newClientWithStatus(t,
+		map[string]interface{}{"/subjects/horror.json": "oops"},
+		map[string]int{"/subjects/horror.json": http.StatusInternalServerError},
+	)
+	_, err := c.GetSubjectBooks(context.Background(), "horror", 5)
+	if err == nil {
+		t.Fatal("expected error on 500")
+	}
+}
+
+func TestGetSubjectBooks_HTTP_Empty(t *testing.T) {
+	c := newClientWithPaths(t, map[string]interface{}{
+		"/subjects/obscure.json": jsonStr(subjectBooksResponse{Name: "Obscure"}),
+	})
+	candidates, err := c.GetSubjectBooks(context.Background(), "obscure", 5)
+	if err != nil {
+		t.Fatalf("GetSubjectBooks: %v", err)
+	}
+	if len(candidates) != 0 {
+		t.Errorf("expected 0 candidates, got %d", len(candidates))
+	}
+}
+
+func TestGetSubjectBooks_HTTP_NegativeCover(t *testing.T) {
+	// OpenLibrary sometimes returns cover_id=-1 meaning "no cover". Must not build a URL.
+	negCover := -1
+	resp := subjectBooksResponse{
+		Works: []subjectWork{
+			{Key: "/works/OL9W", Title: "No Cover", CoverID: &negCover},
+		},
+	}
+	c := newClientWithPaths(t, map[string]interface{}{
+		"/subjects/romance.json": jsonStr(resp),
+	})
+
+	candidates, err := c.GetSubjectBooks(context.Background(), "romance", 5)
+	if err != nil {
+		t.Fatalf("GetSubjectBooks: %v", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("expected 1 candidate, got %d", len(candidates))
+	}
+	if candidates[0].ImageURL != "" {
+		t.Errorf("negative cover ID should produce empty ImageURL, got %q", candidates[0].ImageURL)
+	}
+}
+
 // --- Helper functions ---
 
 func TestName_OL(t *testing.T) {

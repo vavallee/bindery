@@ -462,6 +462,186 @@ func TestSortName(t *testing.T) {
 	}
 }
 
+// --- WithToken / GetUserWishlist ---
+
+func TestWithToken(t *testing.T) {
+	c := New()
+	if c.token != "" {
+		t.Errorf("fresh client should have no token, got %q", c.token)
+	}
+	c2 := c.WithToken("secret-jwt")
+	if c2.token != "secret-jwt" {
+		t.Errorf("WithToken: want 'secret-jwt', got %q", c2.token)
+	}
+	// Original client must be unchanged.
+	if c.token != "" {
+		t.Errorf("WithToken should return a copy; original mutated to %q", c.token)
+	}
+	// Shared underlying HTTP client.
+	if c.http != c2.http {
+		t.Error("expected WithToken to share the underlying http.Client")
+	}
+}
+
+func TestGetUserWishlist_NoToken(t *testing.T) {
+	// Without a token, GetUserWishlist must return (nil, nil) without calling the API.
+	called := false
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		called = true
+		return gqlResponse(t, http.StatusOK, map[string]interface{}{}), nil
+	})
+
+	candidates, err := c.GetUserWishlist(context.Background(), 100)
+	if err != nil {
+		t.Fatalf("GetUserWishlist: %v", err)
+	}
+	if candidates != nil {
+		t.Errorf("expected nil candidates without token, got %v", candidates)
+	}
+	if called {
+		t.Error("GetUserWishlist must not call the API without a token")
+	}
+}
+
+func TestGetUserWishlist_Success(t *testing.T) {
+	var gotAuth string
+	year := 2019
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		gotAuth = r.Header.Get("Authorization")
+		data := map[string]interface{}{
+			"me": map[string]interface{}{
+				"user_books": []map[string]interface{}{
+					{
+						"book": map[string]interface{}{
+							"id":            101,
+							"title":         "Project Hail Mary",
+							"slug":          "project-hail-mary",
+							"description":   "An astronaut wakes up alone.",
+							"release_year":  year,
+							"rating":        4.7,
+							"ratings_count": 50000,
+							"image":         map[string]interface{}{"url": "https://img.example.com/phm.jpg"},
+							"contributions": []map[string]interface{}{
+								{"author": map[string]interface{}{"id": 7, "name": "Andy Weir", "slug": "andy-weir"}},
+							},
+						},
+					},
+					{
+						"book": map[string]interface{}{
+							"id":    102,
+							"title": "Dune",
+							"slug":  "dune",
+						},
+					},
+				},
+			},
+		}
+		return gqlResponse(t, http.StatusOK, data), nil
+	})
+	c = c.WithToken("my-jwt")
+
+	candidates, err := c.GetUserWishlist(context.Background(), 100)
+	if err != nil {
+		t.Fatalf("GetUserWishlist: %v", err)
+	}
+	if gotAuth != "Bearer my-jwt" {
+		t.Errorf("Authorization header: want 'Bearer my-jwt', got %q", gotAuth)
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("expected 2 candidates, got %d", len(candidates))
+	}
+
+	first := candidates[0]
+	if first.ForeignID != "hc:project-hail-mary" {
+		t.Errorf("ForeignID: want 'hc:project-hail-mary', got %q", first.ForeignID)
+	}
+	if first.Title != "Project Hail Mary" {
+		t.Errorf("Title: want 'Project Hail Mary', got %q", first.Title)
+	}
+	if first.AuthorName != "Andy Weir" {
+		t.Errorf("AuthorName: want 'Andy Weir', got %q", first.AuthorName)
+	}
+	if first.Rating != 4.7 {
+		t.Errorf("Rating: want 4.7, got %f", first.Rating)
+	}
+	if first.RatingsCount != 50000 {
+		t.Errorf("RatingsCount: want 50000, got %d", first.RatingsCount)
+	}
+	if first.ReleaseDate == nil || first.ReleaseDate.Year() != 2019 {
+		t.Errorf("ReleaseDate: expected 2019, got %v", first.ReleaseDate)
+	}
+	if first.MediaType != "ebook" {
+		t.Errorf("MediaType: want 'ebook', got %q", first.MediaType)
+	}
+	if first.ImageURL != "https://img.example.com/phm.jpg" {
+		t.Errorf("ImageURL: got %q", first.ImageURL)
+	}
+
+	// Second candidate: no contributions/image → empty author, empty URL.
+	second := candidates[1]
+	if second.AuthorName != "" {
+		t.Errorf("second AuthorName should be empty, got %q", second.AuthorName)
+	}
+	if second.ImageURL != "" {
+		t.Errorf("second ImageURL should be empty, got %q", second.ImageURL)
+	}
+}
+
+func TestGetUserWishlist_DefaultLimit(t *testing.T) {
+	// limit <= 0 must be coerced to 100 in the GraphQL variables.
+	var gotVars map[string]any
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(r.Body)
+		var req gqlRequest
+		_ = json.Unmarshal(body, &req)
+		gotVars = req.Variables
+		return gqlResponse(t, http.StatusOK, map[string]interface{}{
+			"me": map[string]interface{}{"user_books": []interface{}{}},
+		}), nil
+	})
+	c = c.WithToken("t")
+
+	_, err := c.GetUserWishlist(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("GetUserWishlist: %v", err)
+	}
+	// JSON numbers decode as float64.
+	if v, ok := gotVars["limit"].(float64); !ok || v != 100 {
+		t.Errorf("limit variable: want 100, got %v", gotVars["limit"])
+	}
+}
+
+func TestGetUserWishlist_Empty(t *testing.T) {
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		return gqlResponse(t, http.StatusOK, map[string]interface{}{
+			"me": map[string]interface{}{"user_books": []interface{}{}},
+		}), nil
+	}).WithToken("t")
+
+	candidates, err := c.GetUserWishlist(context.Background(), 50)
+	if err != nil {
+		t.Fatalf("GetUserWishlist: %v", err)
+	}
+	if len(candidates) != 0 {
+		t.Errorf("expected 0 candidates, got %d", len(candidates))
+	}
+}
+
+func TestGetUserWishlist_HTTPError(t *testing.T) {
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusUnauthorized,
+			Body:       io.NopCloser(strings.NewReader("bad token")),
+			Header:     make(http.Header),
+		}, nil
+	}).WithToken("bad-token")
+
+	_, err := c.GetUserWishlist(context.Background(), 10)
+	if err == nil {
+		t.Fatal("expected error on 401")
+	}
+}
+
 func TestQuery_RequestFormat(t *testing.T) {
 	var gotBody []byte
 	c := newMockClient(func(r *http.Request) (*http.Response, error) {
