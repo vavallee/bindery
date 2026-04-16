@@ -773,28 +773,41 @@ func authorMatch(bookAuthor, parsedAuthor string) bool {
 	return len(lastName) >= 3 && strings.Contains(strings.ToLower(bookAuthor), lastName)
 }
 
-// ScanLibrary walks the library directory for book files not yet tracked in the database
-// and reconciles found files with existing "wanted" book records.
+// ScanLibrary walks the library directory (and the separate audiobook directory
+// when configured) for book files not yet tracked in the database and reconciles
+// found files with existing "wanted" book records.
 func (s *Scanner) ScanLibrary(ctx context.Context) {
 	if s.libraryDir == "" {
 		return
 	}
 
-	// Collect all book files on disk
-	var foundFiles []string
-	if err := filepath.Walk(s.libraryDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+	// walkDir appends all book files found under root to foundFiles, tracking
+	// which root each file belongs to so the author-inference fallback can
+	// strip the correct prefix.
+	walkDir := func(root string) []string {
+		var files []string
+		if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			if IsBookFile(path) {
+				files = append(files, path)
+			}
 			return nil
+		}); err != nil {
+			slog.Warn("library scan walk encountered errors", "path", root, "error", err)
 		}
-		if IsBookFile(path) {
-			foundFiles = append(foundFiles, path)
-		}
-		return nil
-	}); err != nil {
-		slog.Warn("library scan walk encountered errors", "path", s.libraryDir, "error", err)
+		return files
 	}
 
-	slog.Info("library scan found files", "path", s.libraryDir, "count", len(foundFiles))
+	foundFiles := walkDir(s.libraryDir)
+
+	// Also scan the audiobook directory when it is configured separately.
+	if s.audiobookDir != "" && s.audiobookDir != s.libraryDir {
+		foundFiles = append(foundFiles, walkDir(s.audiobookDir)...)
+	}
+
+	slog.Info("library scan found files", "paths", []string{s.libraryDir, s.audiobookDir}, "count", len(foundFiles))
 
 	if len(foundFiles) == 0 {
 		s.writeScanResult(ctx, len(foundFiles), 0, 0)
@@ -847,14 +860,21 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 
 		// Parse the filename for title/author hints. If the filename alone
 		// doesn't yield an author (e.g. the file is named just "book.epub"),
-		// fall back to the first directory component relative to libraryDir —
-		// most library layouts are {Author}/{Title}/filename.ext.
+		// fall back to the first directory component relative to whichever
+		// library root contains the file — most layouts are
+		// {Author}/{Title}/filename.ext.
 		parsed := ParseFilename(path)
 		if parsed.Author == "" {
-			if rel, err := filepath.Rel(s.libraryDir, path); err == nil {
-				parts := strings.SplitN(rel, string(filepath.Separator), 2)
-				if len(parts) >= 2 {
-					parsed.Author = parts[0]
+			for _, root := range []string{s.libraryDir, s.audiobookDir} {
+				if root == "" {
+					continue
+				}
+				if rel, err := filepath.Rel(root, path); err == nil && !strings.HasPrefix(rel, "..") {
+					parts := strings.SplitN(rel, string(filepath.Separator), 2)
+					if len(parts) >= 2 {
+						parsed.Author = parts[0]
+						break
+					}
 				}
 			}
 		}
