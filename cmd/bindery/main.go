@@ -21,6 +21,7 @@ import (
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/logbuf"
 	"github.com/vavallee/bindery/internal/metadata"
+	"github.com/vavallee/bindery/internal/metadata/dnb"
 	"github.com/vavallee/bindery/internal/metadata/googlebooks"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/metadata/openlibrary"
@@ -128,6 +129,8 @@ func main() {
 	}
 	enrichers = append(enrichers, hardcover.New())
 	slog.Info("hardcover enrichment enabled")
+	enrichers = append(enrichers, dnb.New())
+	slog.Info("dnb enrichment enabled")
 	metaAgg := metadata.NewAggregator(olClient, enrichers...)
 
 	// Optional CLI subcommand: `bindery migrate {csv,readarr} <path>`.
