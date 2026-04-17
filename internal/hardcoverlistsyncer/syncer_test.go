@@ -85,10 +85,10 @@ func TestSortName(t *testing.T) {
 		in, want string
 	}{
 		{"", ""},
-		{"Cher", "Cher"},                        // single token → unchanged
-		{"Andy Weir", "Weir, Andy"},             // two tokens
+		{"Cher", "Cher"},            // single token → unchanged
+		{"Andy Weir", "Weir, Andy"}, // two tokens
 		{"Ursula K. Le Guin", "Guin, Ursula K. Le"}, // 4 tokens: last → front
-		{"  Andy   Weir  ", "Weir, Andy"},       // whitespace normalised
+		{"  Andy   Weir  ", "Weir, Andy"},           // whitespace normalised
 	}
 	for _, tt := range tests {
 		if got := sortName(tt.in); got != tt.want {
