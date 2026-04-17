@@ -215,11 +215,12 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 }
 
 // resolveAllowedLanguages returns the parsed allowed-language list for an
-// author's metadata profile, falling back to English-only if the profile
-// cannot be loaded (preserves existing filtering behaviour for new installs).
+// author's metadata profile. Returns empty (no filter) when the profile
+// cannot be loaded — imposing English-only as a fallback silently breaks
+// users whose indexers return language-tagged releases.
 func (h *IndexerHandler) resolveAllowedLanguages(ctx context.Context, author *models.Author) []string {
 	if h.profiles == nil {
-		return []string{"eng"}
+		return []string{}
 	}
 	id := models.DefaultMetadataProfileID
 	if author.MetadataProfileID != nil {
@@ -227,7 +228,7 @@ func (h *IndexerHandler) resolveAllowedLanguages(ctx context.Context, author *mo
 	}
 	p, err := h.profiles.GetByID(ctx, id)
 	if err != nil || p == nil {
-		return []string{"eng"}
+		return []string{}
 	}
 	return models.ParseAllowedLanguages(p.AllowedLanguages)
 }

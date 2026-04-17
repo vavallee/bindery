@@ -314,8 +314,8 @@ export interface Book {
 
 // CalibreMode selects which integration flow runs after a successful
 // Bindery import. 'off' skips Calibre entirely, 'calibredb' shells out to
-// the calibredb CLI.
-export type CalibreMode = 'off' | 'calibredb'
+// the calibredb CLI, 'plugin' posts to the Bindery Bridge Calibre plugin.
+export type CalibreMode = 'off' | 'calibredb' | 'plugin'
 
 // CalibreSettings mirrors the `calibre.*` keys stored in the settings table.
 export interface CalibreSettings {

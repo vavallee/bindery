@@ -15,6 +15,11 @@ const (
 	// Requires calibredb to be accessible from the Bindery process (same
 	// container or a shared volume mount).
 	ModeCalibredb Mode = "calibredb"
+
+	// ModePlugin posts imported files to the Bindery Bridge Calibre plugin
+	// over HTTP. Used when calibredb is not reachable from the Bindery
+	// process (e.g. Calibre runs in a separate pod in Kubernetes).
+	ModePlugin Mode = "plugin"
 )
 
 // ParseMode coerces the raw settings-table string into a known Mode. Unknown
@@ -32,6 +37,8 @@ func ParseMode(s string) Mode {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case string(ModeCalibredb):
 		return ModeCalibredb
+	case string(ModePlugin):
+		return ModePlugin
 	default:
 		return ModeOff
 	}
@@ -42,7 +49,7 @@ func ParseMode(s string) Mode {
 // uninterpretable state.
 func (m Mode) Valid() bool {
 	switch m {
-	case ModeOff, ModeCalibredb:
+	case ModeOff, ModeCalibredb, ModePlugin:
 		return true
 	}
 	return false

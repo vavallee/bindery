@@ -1529,8 +1529,8 @@ function CalibreSection({
   // setup is visible in the UI.
   const rawMode = settings['calibre.mode'] ?? ''
   const legacyEnabled = (settings['calibre.enabled'] ?? 'false').toLowerCase() === 'true'
-  const mode: 'off' | 'calibredb' =
-    rawMode === 'calibredb' || rawMode === 'off'
+  const mode: 'off' | 'calibredb' | 'plugin' =
+    rawMode === 'calibredb' || rawMode === 'off' || rawMode === 'plugin'
       ? rawMode
       : legacyEnabled
       ? 'calibredb'
@@ -1577,7 +1577,7 @@ function CalibreSection({
     }
   }
 
-  const setMode = async (next: 'off' | 'calibredb') => {
+  const setMode = async (next: 'off' | 'calibredb' | 'plugin') => {
     setSettings(s => ({ ...s, 'calibre.mode': next }))
     await api.setSetting('calibre.mode', next).catch(console.error)
   }
@@ -1598,6 +1598,7 @@ function CalibreSection({
             {([
               { v: 'off',       label: 'Off',           desc: 'No Calibre call on import.' },
               { v: 'calibredb', label: 'calibredb CLI', desc: 'Shell out to calibredb add --with-library. Requires calibredb reachable from the Bindery process.' },
+              { v: 'plugin',    label: 'Calibre Bridge plugin', desc: 'POST imported files to the Bindery Bridge plugin running inside Calibre. Use when Calibre runs in a separate container/pod.' },
             ] as const).map(opt => (
               <label key={opt.v} className="flex items-start gap-2 cursor-pointer">
                 <input
@@ -1669,7 +1670,62 @@ function CalibreSection({
           </div>
         )}
 
-        {mode === 'calibredb' && (
+        {mode === 'plugin' && (
+          <div>
+            <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Plugin URL</label>
+            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+              Base URL of the Bindery Bridge plugin&rsquo;s HTTP server running inside Calibre.
+            </p>
+            <div className="flex gap-2">
+              <input
+                value={settings['calibre.plugin_url'] ?? ''}
+                onChange={e => setSettings(s => ({ ...s, 'calibre.plugin_url': e.target.value }))}
+                placeholder="http://calibre.default.svc:8099"
+                className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+              />
+              <button
+                onClick={() => saveSettingWithError('calibre.plugin_url')}
+                disabled={saving === 'calibre.plugin_url'}
+                className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium disabled:opacity-50"
+              >
+                {saving === 'calibre.plugin_url' ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+            {saveError?.key === 'calibre.plugin_url' && (
+              <p className="text-xs text-red-600 dark:text-red-400 mt-1">{saveError.msg}</p>
+            )}
+          </div>
+        )}
+
+        {mode === 'plugin' && (
+          <div>
+            <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">API key</label>
+            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+              Bearer token configured in the plugin&rsquo;s Calibre Preferences dialog.
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="password"
+                value={settings['calibre.plugin_api_key'] ?? ''}
+                onChange={e => setSettings(s => ({ ...s, 'calibre.plugin_api_key': e.target.value }))}
+                placeholder="plugin api key"
+                className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+              />
+              <button
+                onClick={() => saveSettingWithError('calibre.plugin_api_key')}
+                disabled={saving === 'calibre.plugin_api_key'}
+                className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium disabled:opacity-50"
+              >
+                {saving === 'calibre.plugin_api_key' ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+            {saveError?.key === 'calibre.plugin_api_key' && (
+              <p className="text-xs text-red-600 dark:text-red-400 mt-1">{saveError.msg}</p>
+            )}
+          </div>
+        )}
+
+        {(mode === 'calibredb' || mode === 'plugin') && (
           <div className="flex items-center justify-between pt-1 border-t border-slate-200 dark:border-zinc-800">
             <div className="text-xs">
               {testResult && (

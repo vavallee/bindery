@@ -29,6 +29,8 @@ type Config struct {
 	BinaryPath    string // path to `calibredb`; empty means resolve via $PATH
 	LibraryPath   string // target Calibre library directory
 	SyncOnStartup bool   // run a library import when Bindery starts
+	PluginURL     string // base URL of the Bindery Bridge Calibre plugin (mode=plugin)
+	PluginAPIKey  string // bearer token for the plugin's HTTP API (mode=plugin)
 }
 
 // runner is the shape of exec.CommandContext, abstracted for tests.
