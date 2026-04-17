@@ -228,7 +228,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		}
 	}
 
-	lang := "en"
+	lang := ""
 	if s.settings != nil {
 		if langSetting, err := s.settings.Get(ctx, "search.preferredLanguage"); err != nil {
 			slog.Warn("failed to load preferred search language", "error", err)
