@@ -83,6 +83,10 @@ export const api = {
   searchBooks: (term: string) => request<Book[]>(`/search/book?term=${encodeURIComponent(term)}`),
   lookupISBN: (isbn: string) => request<Book>(`/book/lookup?isbn=${encodeURIComponent(isbn)}`),
 
+  // Add a single book to wanted (adds author silently if new)
+  addBook: (data: { foreignBookId: string; foreignAuthorId: string; authorName?: string; searchOnAdd?: boolean }) =>
+    request<Book>('/author/book', { method: 'POST', body: JSON.stringify(data) }),
+
   // Authors
   listAuthors: () => request<Author[]>('/author'),
   getAuthor: (id: number) => request<Author>(`/author/${id}`),

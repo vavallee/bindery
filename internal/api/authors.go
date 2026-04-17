@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -402,6 +403,105 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool)
 // resolveAllowedLanguages returns the parsed allowed-language set for an
 // author's metadata profile. Authors without an explicit profile use the
 // seeded "Standard" profile (id=1). If neither can be loaded we fall back to
+// AddBook adds a single book to the wanted list by its metadata foreign ID.
+// If the author is not yet in Bindery it is added as unmonitored and its
+// books are fetched in the background; the endpoint then polls until the
+// requested book appears and marks it monitored before responding.
+func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ForeignBookID   string `json:"foreignBookId"`
+		ForeignAuthorID string `json:"foreignAuthorId"`
+		AuthorName      string `json:"authorName"`
+		SearchOnAdd     bool   `json:"searchOnAdd"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if req.ForeignBookID == "" || req.ForeignAuthorID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "foreignBookId and foreignAuthorId required"})
+		return
+	}
+
+	ctx := r.Context()
+
+	// 1. Find or create the author (unmonitored if new so we don't auto-want all books).
+	author, _ := h.authors.GetByForeignID(ctx, req.ForeignAuthorID)
+	if author == nil {
+		name := req.AuthorName
+		if name == "" {
+			name = req.ForeignAuthorID
+		}
+		fetched, err := h.meta.GetAuthor(ctx, req.ForeignAuthorID)
+		if err != nil || fetched == nil {
+			fetched = &models.Author{
+				ForeignID:        req.ForeignAuthorID,
+				Name:             name,
+				SortName:         sortName(name),
+				MetadataProvider: "openlibrary",
+			}
+		}
+		fetched.Monitored = false
+		def := models.DefaultMetadataProfileID
+		fetched.MetadataProfileID = &def
+		if err := h.authors.Create(ctx, fetched); err != nil {
+			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+				// Race: another request created it between our check and insert.
+				author, _ = h.authors.GetByForeignID(ctx, req.ForeignAuthorID)
+			} else {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+		} else {
+			author = fetched
+			go h.FetchAuthorBooks(author, false)
+		}
+	}
+	if author == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not resolve author"})
+		return
+	}
+
+	// 2. Poll until the book appears (FetchAuthorBooks runs asynchronously).
+	deadline := time.Now().Add(15 * time.Second)
+	var book *models.Book
+	for {
+		b, _ := h.books.GetByForeignID(ctx, req.ForeignBookID)
+		if b != nil {
+			book = b
+			break
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": "request cancelled"})
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+
+	if book == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found after author sync — try again shortly"})
+		return
+	}
+
+	// 3. Mark the book monitored (wanted).
+	book.Monitored = true
+	if err := h.books.Update(ctx, book); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// 4. Optionally trigger an indexer search.
+	if req.SearchOnAdd && h.searcher != nil {
+		go h.searcher.SearchAndGrabBook(context.Background(), *book)
+	}
+
+	writeJSON(w, http.StatusCreated, book)
+}
+
 // English-only so existing behaviour is preserved; returning nil here would
 // silently disable the filter, which is the opposite of what users with a
 // default install expect.

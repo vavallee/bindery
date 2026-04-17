@@ -311,6 +311,7 @@ func main() {
 		// Authors
 		r.Get("/author", authorHandler.List)
 		r.Post("/author", authorHandler.Create)
+		r.Post("/author/book", authorHandler.AddBook)
 		r.Post("/author/bulk", bulkHandler.AuthorsBulk)
 		r.Get("/author/{id}", authorHandler.Get)
 		r.Put("/author/{id}", authorHandler.Update)

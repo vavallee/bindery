@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api, Author } from '../api/client'
 import AddAuthorModal from '../components/AddAuthorModal'
+import AddBookModal from '../components/AddBookModal'
 import MergeAuthorsModal from '../components/MergeAuthorsModal'
 import BulkActionBar from '../components/BulkActionBar'
 import Pagination from '../components/Pagination'
@@ -18,6 +19,7 @@ export default function AuthorsPage() {
   const [authors, setAuthors] = useState<Author[]>([])
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
+  const [showAddBook, setShowAddBook] = useState(false)
   const [showMerge, setShowMerge] = useState(false)
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<SortMode>('az')
@@ -140,6 +142,12 @@ export default function AuthorsPage() {
             title={t('authors.mergeTip')}
           >
             {t('authors.merge')}
+          </button>
+          <button
+            onClick={() => setShowAddBook(true)}
+            className="px-4 py-2 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded-md text-sm font-medium transition-colors"
+          >
+            Add Book
           </button>
           <button
             onClick={() => setShowAdd(true)}
@@ -340,6 +348,7 @@ export default function AuthorsPage() {
       />
 
       {showAdd && <AddAuthorModal onClose={() => setShowAdd(false)} onAdded={load} />}
+      {showAddBook && <AddBookModal onClose={() => setShowAddBook(false)} onAdded={() => setShowAddBook(false)} />}
       {showMerge && (
         <MergeAuthorsModal
           authors={authors}
