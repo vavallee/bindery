@@ -100,6 +100,7 @@ func main() {
 	settingsRepo := db.NewSettingsRepo(database)
 	historyRepo := db.NewHistoryRepo(database)
 	blocklistRepo := db.NewBlocklistRepo(database)
+	pendingReleaseRepo := db.NewPendingReleaseRepo(database)
 	notificationRepo := db.NewNotificationRepo(database)
 	qualityProfileRepo := db.NewQualityProfileRepo(database)
 	seriesRepo := db.NewSeriesRepo(database)
@@ -225,6 +226,8 @@ func main() {
 	sched := scheduler.New(importScanner, idxSearcher, metaAgg,
 		authorRepo, bookRepo, indexerRepo, downloadRepo, dlClientRepo, settingsRepo, blocklistRepo)
 	sched.WithHistory(historyRepo)
+	sched.WithDelayProfiles(delayProfileRepo)
+	sched.WithPendingReleases(pendingReleaseRepo)
 	// Register the Calibre importer as the 24-hour sync job. The scheduler
 	// only fires the job when the syncer is non-nil, so no guard needed here.
 	sched.WithCalibreSyncer(calibreImporter)
@@ -258,6 +261,7 @@ func main() {
 	indexerHandler := api.NewIndexerHandler(indexerRepo, bookRepo, authorRepo, metadataProfileRepo, idxSearcher, settingsRepo, blocklistRepo)
 	dlClientHandler := api.NewDownloadClientHandler(dlClientRepo)
 	queueHandler := api.NewQueueHandler(downloadRepo, dlClientRepo, bookRepo, historyRepo).WithNotifier(notif)
+	pendingHandler := api.NewPendingHandler(pendingReleaseRepo, queueHandler, downloadRepo, bookRepo)
 	importScanner.WithSettings(settingsRepo)
 	importScanner.WithRootFolders(rootFolderRepo)
 	libraryHandler := api.NewLibraryHandler(importScanner).WithSettings(settingsRepo)
@@ -401,6 +405,9 @@ func main() {
 		r.Get("/queue", queueHandler.List)
 		r.Post("/queue/grab", queueHandler.Grab)
 		r.Delete("/queue/{id}", queueHandler.Delete)
+		r.Get("/pending", pendingHandler.List)
+		r.Delete("/pending/{id}", pendingHandler.Delete)
+		r.Post("/pending/{id}/grab", pendingHandler.Grab)
 
 		// History
 		r.Get("/history", historyHandler.List)

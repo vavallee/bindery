@@ -64,6 +64,8 @@ type Scheduler struct {
 	history       *db.HistoryRepo
 	settings      *db.SettingsRepo
 	blocklist     *db.BlocklistRepo
+	delayProfiles *db.DelayProfileRepo
+	pending       *db.PendingReleaseRepo
 	calibreSyncer CalibreSyncer        // optional; nil if Calibre is not configured
 	recommender   RecommendationEngine // optional; generates recommendations
 	hcSyncer      HCListSyncer         // optional; syncs Hardcover import lists
@@ -95,6 +97,18 @@ func New(
 		settings:  settings,
 		blocklist: blocklist,
 	}
+}
+
+// WithDelayProfiles attaches the delay profile repo used when evaluating releases.
+// Must be called before Start.
+func (s *Scheduler) WithDelayProfiles(dp *db.DelayProfileRepo) {
+	s.delayProfiles = dp
+}
+
+// WithPendingReleases attaches the pending releases repo so delay-rejected
+// results are stored for re-evaluation. Must be called before Start.
+func (s *Scheduler) WithPendingReleases(pr *db.PendingReleaseRepo) {
+	s.pending = pr
 }
 
 // WithHistory attaches a HistoryRepo so stall events can be recorded.
@@ -265,20 +279,36 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 			specs = append(specs, decision.NewBlocklistedSpec(entries))
 		}
 	}
+	var delayProfile *models.DelayProfile
+	if s.delayProfiles != nil {
+		if profiles, err := s.delayProfiles.List(ctx); err == nil && len(profiles) > 0 {
+			delayProfile = &profiles[0]
+			specs = append(specs, decision.DelayProfileSpec{Profile: delayProfile})
+		}
+	}
 	dm := decision.New(specs...)
 	releases := make([]decision.Release, len(results))
 	for i, res := range results {
 		releases[i] = decision.ReleaseFromSearchResult(res)
 	}
+
 	var best *newznab.SearchResult
 	for i, d := range dm.Evaluate(releases, book) {
 		if d.Approved {
 			best = &results[i]
 			break
 		}
+		// Store delay-rejected releases so they can be re-evaluated next sweep.
+		if s.pending != nil && strings.Contains(d.Rejection, "delay not met") {
+			s.storePending(ctx, book.ID, results[i], d.Rejection)
+		}
 	}
 	if best == nil {
-		return
+		// Re-evaluate any existing pending releases for this book with the current age.
+		best = s.checkPendingReleases(ctx, book, dm)
+		if best == nil {
+			return
+		}
 	}
 
 	candidates, err := s.clients.GetEnabledByProtocol(ctx, best.Protocol)
@@ -359,6 +389,63 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		slog.Warn("failed to update download status", "download_id", dl.ID, "status", models.StateDownloading, "error", err)
 	}
 	slog.Info("sent to downloader", "client", client.Type, "title", best.Title)
+	if s.pending != nil {
+		_ = s.pending.DeleteByBook(ctx, book.ID)
+	}
+}
+
+// storePending records a delay-rejected release in pending_releases.
+func (s *Scheduler) storePending(ctx context.Context, bookID int64, res newznab.SearchResult, reason string) {
+	blob, err := json.Marshal(res)
+	if err != nil {
+		return
+	}
+	pr := &models.PendingRelease{
+		BookID:      bookID,
+		Title:       res.Title,
+		GUID:        res.GUID,
+		Protocol:    res.Protocol,
+		Size:        res.Size,
+		AgeMinutes:  decision.PubDateToAge(res.PubDate),
+		Quality:     indexer.ParseRelease(res.Title).Format,
+		Reason:      reason,
+		ReleaseJSON: string(blob),
+	}
+	if res.IndexerID != 0 {
+		id := res.IndexerID
+		pr.IndexerID = &id
+	}
+	if err := s.pending.Upsert(ctx, pr); err != nil {
+		slog.Warn("failed to store pending release", "guid", res.GUID, "error", err)
+	}
+}
+
+// checkPendingReleases re-evaluates existing pending releases for a book.
+// If any now passes the decision engine it is returned for immediate grab.
+func (s *Scheduler) checkPendingReleases(ctx context.Context, book models.Book, dm *decision.DecisionMaker) *newznab.SearchResult {
+	if s.pending == nil {
+		return nil
+	}
+	pendingList, err := s.pending.ListByBook(ctx, book.ID)
+	if err != nil || len(pendingList) == 0 {
+		return nil
+	}
+
+	// Re-hydrate stored releases and re-evaluate with current age.
+	for i := range pendingList {
+		var res newznab.SearchResult
+		if err := json.Unmarshal([]byte(pendingList[i].ReleaseJSON), &res); err != nil {
+			continue
+		}
+		// Age is recalculated from PubDate by ReleaseFromSearchResult.
+		rel := decision.ReleaseFromSearchResult(res)
+		decisions := dm.Evaluate([]decision.Release{rel}, book)
+		if len(decisions) > 0 && decisions[0].Approved {
+			_ = s.pending.DeleteByID(ctx, pendingList[i].ID)
+			return &res
+		}
+	}
+	return nil
 }
 
 func (s *Scheduler) searchWanted() {

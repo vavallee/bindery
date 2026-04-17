@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/downloader"
@@ -109,8 +110,21 @@ func (h *QueueHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, items)
 }
 
+// grabRequest is the payload for grab operations (HTTP handler and pending force-grab).
+type grabRequest struct {
+	GUID      string `json:"guid"`
+	Title     string `json:"title"`
+	NZBURL    string `json:"nzbUrl"`
+	Size      int64  `json:"size"`
+	BookID    int64  `json:"bookId"`
+	IndexerID *int64 `json:"indexerId"`
+	Protocol  string `json:"protocol"`
+	MediaType string `json:"mediaType"`
+}
+
 func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
-	var req struct {
+	// Intermediate struct to handle optional bookId from the HTTP body.
+	var body struct {
 		GUID      string `json:"guid"`
 		Title     string `json:"title"`
 		NZBURL    string `json:"nzbUrl"`
@@ -120,16 +134,28 @@ func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
 		Protocol  string `json:"protocol"`
 		MediaType string `json:"mediaType"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
-	if req.GUID == "" || req.NZBURL == "" {
+	if body.GUID == "" || body.NZBURL == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "guid and nzbUrl required"})
 		return
 	}
-	if req.Protocol == "" {
-		req.Protocol = "usenet"
+
+	var bookID int64
+	if body.BookID != nil {
+		bookID = *body.BookID
+	}
+	req := grabRequest{
+		GUID:      body.GUID,
+		Title:     body.Title,
+		NZBURL:    body.NZBURL,
+		Size:      body.Size,
+		BookID:    bookID,
+		IndexerID: body.IndexerID,
+		Protocol:  body.Protocol,
+		MediaType: body.MediaType,
 	}
 
 	existing, err := h.downloads.GetByGUID(r.Context(), req.GUID)
@@ -142,72 +168,17 @@ func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client, err := h.selectClient(r.Context(), req.Protocol, req.MediaType)
-	if err != nil || client == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no enabled download client configured"})
-		return
-	}
-
-	protocol := downloader.ProtocolForClient(client.Type)
-	dl := &models.Download{
-		GUID:             req.GUID,
-		BookID:           req.BookID,
-		IndexerID:        req.IndexerID,
-		DownloadClientID: &client.ID,
-		Title:            req.Title,
-		NZBURL:           req.NZBURL,
-		Size:             req.Size,
-		Status:           models.StateGrabbed,
-		Protocol:         protocol,
-		Quality:          indexer.ParseRelease(req.Title).Format,
-	}
-	if err := h.downloads.Create(r.Context(), dl); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-
-	sendRes, err := downloader.SendDownload(r.Context(), client, req.NZBURL, req.Title)
+	dl, err := h.grab(r.Context(), req)
 	if err != nil {
-		slog.Error("failed to send download", "client_type", client.Type, "error", err, "title", req.Title)
-		if setErr := h.downloads.SetError(r.Context(), dl.ID, err.Error()); setErr != nil {
-			slog.Warn("failed to persist download error", "download_id", dl.ID, "error", setErr)
+		status := http.StatusBadGateway
+		if strings.Contains(err.Error(), "no enabled download client") {
+			status = http.StatusBadRequest
 		}
-		h.recordHistory(r.Context(), models.HistoryEventDownloadFailed, req.Title, req.BookID, map[string]any{"guid": req.GUID, "message": err.Error()})
-		if h.notif != nil {
-			h.notif.Send(r.Context(), notifier.EventDownloadFailed, map[string]any{"title": req.Title, "message": err.Error()})
-		}
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "failed to send to downloader: " + err.Error()})
+		writeJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
 
-	if remoteID := sendRes.RemoteID; remoteID != "" {
-		if sendRes.UsesTorrentID {
-			if err := h.downloads.SetTorrentID(r.Context(), dl.ID, remoteID); err != nil {
-				slog.Warn("failed to set torrent ID", "download_id", dl.ID, "error", err)
-			}
-			dl.TorrentID = &remoteID
-		} else {
-			if err := h.downloads.SetNzoID(r.Context(), dl.ID, remoteID); err != nil {
-				slog.Warn("failed to set NZO ID", "download_id", dl.ID, "error", err)
-			}
-			dl.SABnzbdNzoID = &remoteID
-		}
-	}
-	if err := h.downloads.UpdateStatus(r.Context(), dl.ID, models.StateDownloading); err != nil {
-		slog.Warn("failed to update download status", "download_id", dl.ID, "status", models.StateDownloading, "error", err)
-	}
-	dl.Status = models.StateDownloading
-
-	h.recordHistory(r.Context(), models.HistoryEventGrabbed, req.Title, req.BookID, map[string]any{
-		"guid":      req.GUID,
-		"size":      req.Size,
-		"indexerId": req.IndexerID,
-	})
-	if h.notif != nil {
-		h.notif.Send(r.Context(), notifier.EventGrabbed, map[string]any{"title": req.Title, "size": req.Size})
-	}
-
-	slog.Info("download grabbed", "title", req.Title, "client", client.Type)
+	slog.Info("download grabbed", "title", req.Title)
 	writeJSON(w, http.StatusAccepted, dl)
 }
 
@@ -223,6 +194,77 @@ func (h *QueueHandler) selectClient(ctx context.Context, protocol, mediaType str
 		return nil, fmt.Errorf("no enabled %s download client configured", protocol)
 	}
 	return db.PickClientForMediaType(candidates, mediaType), nil
+}
+
+// grab executes the core grab logic: creates a download record and sends to the client.
+// It is called by both the HTTP Grab handler and PendingHandler.Grab.
+func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Download, error) {
+	if req.Protocol == "" {
+		req.Protocol = "usenet"
+	}
+	client, err := h.selectClient(ctx, req.Protocol, req.MediaType)
+	if err != nil || client == nil {
+		return nil, fmt.Errorf("no enabled download client configured")
+	}
+
+	protocol := downloader.ProtocolForClient(client.Type)
+	bookID := req.BookID
+	dl := &models.Download{
+		GUID:             req.GUID,
+		BookID:           &bookID,
+		IndexerID:        req.IndexerID,
+		DownloadClientID: &client.ID,
+		Title:            req.Title,
+		NZBURL:           req.NZBURL,
+		Size:             req.Size,
+		Status:           models.StateGrabbed,
+		Protocol:         protocol,
+		Quality:          indexer.ParseRelease(req.Title).Format,
+	}
+	if err := h.downloads.Create(ctx, dl); err != nil {
+		return nil, err
+	}
+
+	sendRes, err := downloader.SendDownload(ctx, client, req.NZBURL, req.Title)
+	if err != nil {
+		slog.Error("failed to send download", "client_type", client.Type, "error", err, "title", req.Title)
+		if setErr := h.downloads.SetError(ctx, dl.ID, err.Error()); setErr != nil {
+			slog.Warn("failed to persist download error", "download_id", dl.ID, "error", setErr)
+		}
+		h.recordHistory(ctx, models.HistoryEventDownloadFailed, req.Title, &bookID, map[string]any{"guid": req.GUID, "message": err.Error()})
+		if h.notif != nil {
+			h.notif.Send(ctx, notifier.EventDownloadFailed, map[string]any{"title": req.Title, "message": err.Error()})
+		}
+		return nil, fmt.Errorf("failed to send to downloader: %w", err)
+	}
+
+	if remoteID := sendRes.RemoteID; remoteID != "" {
+		if sendRes.UsesTorrentID {
+			if err := h.downloads.SetTorrentID(ctx, dl.ID, remoteID); err != nil {
+				slog.Warn("failed to set torrent ID", "download_id", dl.ID, "error", err)
+			}
+			dl.TorrentID = &remoteID
+		} else {
+			if err := h.downloads.SetNzoID(ctx, dl.ID, remoteID); err != nil {
+				slog.Warn("failed to set NZO ID", "download_id", dl.ID, "error", err)
+			}
+			dl.SABnzbdNzoID = &remoteID
+		}
+	}
+	if err := h.downloads.UpdateStatus(ctx, dl.ID, models.StateDownloading); err != nil {
+		slog.Warn("failed to update download status", "download_id", dl.ID, "status", models.StateDownloading, "error", err)
+	}
+	dl.Status = models.StateDownloading
+
+	h.recordHistory(ctx, models.HistoryEventGrabbed, req.Title, &bookID, map[string]any{
+		"guid":      req.GUID,
+		"size":      req.Size,
+		"indexerId": req.IndexerID,
+	})
+	if h.notif != nil {
+		h.notif.Send(ctx, notifier.EventGrabbed, map[string]any{"title": req.Title, "size": req.Size})
+	}
+	return dl, nil
 }
 
 // recordHistory is a helper to write a history event, swallowing errors.

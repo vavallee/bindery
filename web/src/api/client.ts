@@ -166,6 +166,11 @@ export const api = {
   grab: (data: GrabRequest) => request<Download>('/queue/grab', { method: 'POST', body: JSON.stringify(data) }),
   deleteFromQueue: (id: number) => request<void>(`/queue/${id}`, { method: 'DELETE' }),
 
+  // Pending releases
+  listPending: () => request<PendingRelease[]>('/pending'),
+  dismissPending: (id: number) => request<void>(`/pending/${id}`, { method: 'DELETE' }),
+  grabPending: (id: number) => request<Download>(`/pending/${id}/grab`, { method: 'POST' }),
+
   // History
   listHistory: (params?: { bookId?: number; eventType?: string }) => {
     const q = new URLSearchParams()
@@ -377,6 +382,22 @@ export interface Indexer {
   categories: number[]
   enabled: boolean
   prowlarrInstanceId?: number
+}
+
+export interface PendingRelease {
+  id: number
+  bookId: number
+  title: string
+  indexerId?: number
+  guid: string
+  protocol: string
+  size: number
+  ageMinutes: number
+  quality?: string
+  customScore: number
+  reason: string
+  firstSeen: string
+  releaseJson: string
 }
 
 export interface ProwlarrInstance {
