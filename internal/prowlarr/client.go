@@ -30,20 +30,13 @@ func New(baseURL, apiKey string) *Client {
 
 // remoteIndexer is the shape of each element in GET /api/v1/indexer.
 type remoteIndexer struct {
-	ID             int           `json:"id"`
-	Name           string        `json:"name"`
-	Protocol       string        `json:"protocol"` // "usenet" or "torrent"
-	SupportsRSS    bool          `json:"supportsRss"`
-	SupportsSearch bool          `json:"supportsSearch"`
-	Fields         []remoteField `json:"fields"`
+	ID             int    `json:"id"`
+	Name           string `json:"name"`
+	Protocol       string `json:"protocol"` // "usenet" or "torrent"
+	SupportsSearch bool   `json:"supportsSearch"`
 	Categories     []struct {
 		ID int `json:"id"`
 	} `json:"categories"`
-}
-
-type remoteField struct {
-	Name  string `json:"name"`
-	Value any    `json:"value"`
 }
 
 // IndexerInfo holds the information needed to create a Bindery indexer from a
