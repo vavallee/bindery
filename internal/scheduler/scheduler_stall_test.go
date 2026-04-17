@@ -111,7 +111,7 @@ func TestCheckStalledDownloads_SkipsNewDownloads(t *testing.T) {
 
 	dl := &models.Download{
 		GUID: "g1", Title: "fresh", DownloadClientID: &client.ID,
-		Status: models.DownloadStatusQueued, Protocol: "torrent",
+		Status: models.StateGrabbed, Protocol: "torrent",
 	}
 	if err := downloadsRepo.Create(ctx, dl); err != nil {
 		t.Fatalf("create download: %v", err)
@@ -189,7 +189,7 @@ func TestCheckStalledDownloads_DisabledClientSkipped(t *testing.T) {
 	old := time.Now().UTC().Add(-3 * time.Hour)
 	dl := &models.Download{
 		GUID: "g-old", Title: "old", DownloadClientID: &client.ID,
-		Status: models.DownloadStatusQueued, Protocol: "torrent",
+		Status: models.StateGrabbed, Protocol: "torrent",
 	}
 	if err := downloadsRepo.Create(ctx, dl); err != nil {
 		t.Fatalf("create download: %v", err)
@@ -248,7 +248,7 @@ func TestCheckStalledDownloads_QBitNoStalls(t *testing.T) {
 	tid := "abcdef"
 	dl := &models.Download{
 		GUID: "g1", Title: "Active Book", DownloadClientID: &client.ID,
-		Status: models.DownloadStatusQueued, Protocol: "torrent",
+		Status: models.StateGrabbed, Protocol: "torrent",
 		TorrentID: &tid,
 	}
 	if err := downloadsRepo.Create(ctx, dl); err != nil {
@@ -343,7 +343,7 @@ func TestCheckStalledDownloads_QBitStalledTorrent(t *testing.T) {
 	dl := &models.Download{
 		GUID: "g-stalled", Title: "Stalled Release", BookID: &book.ID,
 		IndexerID: &idx.ID, DownloadClientID: &client.ID,
-		Status: models.DownloadStatusQueued, Protocol: "torrent",
+		Status: models.StateGrabbed, Protocol: "torrent",
 		TorrentID: &tid,
 	}
 	if err := downloadsRepo.Create(ctx, dl); err != nil {

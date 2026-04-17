@@ -26,7 +26,7 @@ func (r *DownloadRepo) List(ctx context.Context) ([]models.Download, error) {
 	return r.query(ctx, "SELECT "+downloadSelectColumns+" FROM downloads ORDER BY added_at DESC")
 }
 
-func (r *DownloadRepo) ListByStatus(ctx context.Context, status string) ([]models.Download, error) {
+func (r *DownloadRepo) ListByStatus(ctx context.Context, status models.DownloadState) ([]models.Download, error) {
 	return r.query(ctx, "SELECT "+downloadSelectColumns+" FROM downloads WHERE status=? ORDER BY added_at DESC", status)
 }
 
@@ -76,24 +76,29 @@ func (r *DownloadRepo) Create(ctx context.Context, d *models.Download) error {
 	return nil
 }
 
-func (r *DownloadRepo) UpdateStatus(ctx context.Context, id int64, status string) error {
-	now := time.Now().UTC()
-	// Status-to-column allow-list. The SQL strings are fixed literals so no
-	// user input ever reaches the query text.
-	switch status {
-	case models.DownloadStatusDownloading:
-		_, err := r.db.ExecContext(ctx, "UPDATE downloads SET status=?, grabbed_at=? WHERE id=?", status, now, id)
-		return err
-	case models.DownloadStatusCompleted:
-		_, err := r.db.ExecContext(ctx, "UPDATE downloads SET status=?, completed_at=? WHERE id=?", status, now, id)
-		return err
-	case models.DownloadStatusImported:
-		_, err := r.db.ExecContext(ctx, "UPDATE downloads SET status=?, imported_at=? WHERE id=?", status, now, id)
-		return err
-	default:
-		_, err := r.db.ExecContext(ctx, "UPDATE downloads SET status=? WHERE id=?", status, id)
-		return err
+func (r *DownloadRepo) UpdateStatus(ctx context.Context, id int64, next models.DownloadState) error {
+	// Look up the current state to validate the transition.
+	var current models.DownloadState
+	err := r.db.QueryRowContext(ctx, "SELECT status FROM downloads WHERE id=?", id).Scan(&current)
+	if err != nil {
+		return fmt.Errorf("lookup current state: %w", err)
 	}
+	if !current.CanTransitionTo(next) {
+		return models.ErrInvalidTransition{From: current, To: next}
+	}
+
+	now := time.Now().UTC()
+	switch next {
+	case models.StateDownloading:
+		_, err = r.db.ExecContext(ctx, "UPDATE downloads SET status=?, grabbed_at=? WHERE id=?", next, now, id)
+	case models.StateCompleted:
+		_, err = r.db.ExecContext(ctx, "UPDATE downloads SET status=?, completed_at=? WHERE id=?", next, now, id)
+	case models.StateImported:
+		_, err = r.db.ExecContext(ctx, "UPDATE downloads SET status=?, imported_at=? WHERE id=?", next, now, id)
+	default:
+		_, err = r.db.ExecContext(ctx, "UPDATE downloads SET status=? WHERE id=?", next, id)
+	}
+	return err
 }
 
 func (r *DownloadRepo) SetNzoID(ctx context.Context, id int64, nzoID string) error {
@@ -109,7 +114,7 @@ func (r *DownloadRepo) SetTorrentID(ctx context.Context, id int64, torrentID str
 func (r *DownloadRepo) SetError(ctx context.Context, id int64, errMsg string) error {
 	_, err := r.db.ExecContext(ctx,
 		"UPDATE downloads SET status=?, error_message=? WHERE id=?",
-		models.DownloadStatusFailed, errMsg, id)
+		models.StateFailed, errMsg, id)
 	return err
 }
 

@@ -18,7 +18,7 @@ func TestDownloadRepo_TorrentIDRoundTrip(t *testing.T) {
 
 	dl := &models.Download{
 		GUID: "torrent-guid", Title: "torrent.release", NZBURL: "magnet:?xt=urn:btih:abc",
-		Size: 2048, Status: models.DownloadStatusQueued, Protocol: "torrent",
+		Size: 2048, Status: models.StateGrabbed, Protocol: "torrent",
 	}
 	if err := repo.Create(ctx, dl); err != nil {
 		t.Fatalf("create: %v", err)

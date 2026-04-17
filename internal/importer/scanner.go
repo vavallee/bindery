@@ -181,7 +181,7 @@ func isTrackedTorrentDownloadForClient(dl models.Download, clientID int64) bool 
 	if dl.TorrentID == nil {
 		return false
 	}
-	return dl.Status != models.DownloadStatusImported && dl.Status != models.DownloadStatusFailed
+	return dl.Status != models.StateImported && dl.Status != models.StateFailed
 }
 
 func (s *Scanner) setDownloadError(ctx context.Context, id int64, message string) {
@@ -190,7 +190,7 @@ func (s *Scanner) setDownloadError(ctx context.Context, id int64, message string
 	}
 }
 
-func (s *Scanner) updateDownloadStatus(ctx context.Context, id int64, status string) {
+func (s *Scanner) updateDownloadStatus(ctx context.Context, id int64, status models.DownloadState) {
 	if err := s.downloads.UpdateStatus(ctx, id, status); err != nil {
 		slog.Warn("failed to update download status", "download_id", id, "status", status, "error", err)
 	}
@@ -239,17 +239,17 @@ func (s *Scanner) checkSABnzbdDownloads(ctx context.Context, client *models.Down
 
 		switch slot.Status {
 		case "Completed":
-			if dl.Status == models.DownloadStatusDownloading || dl.Status == models.DownloadStatusQueued {
+			if dl.Status == models.StateDownloading || dl.Status == models.StateGrabbed {
 				localPath := s.remapper.Apply(slot.Path)
 				if localPath != slot.Path {
 					slog.Debug("remapped download path", "sab", slot.Path, "local", localPath)
 				}
 				slog.Info("download completed", "title", dl.Title, "path", localPath)
-				s.updateDownloadStatus(ctx, dl.ID, models.DownloadStatusCompleted)
+				s.updateDownloadStatus(ctx, dl.ID, models.StateCompleted)
 				s.tryImportSABnzbd(ctx, sab, dl, slot.NzoID, localPath)
 			}
 		case "Failed":
-			if dl.Status != models.DownloadStatusFailed {
+			if dl.Status != models.StateFailed {
 				slog.Warn("download failed", "title", dl.Title, "message", slot.FailMessage)
 				s.setDownloadError(ctx, dl.ID, slot.FailMessage)
 				s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, map[string]string{"guid": dl.GUID, "message": slot.FailMessage})
@@ -296,12 +296,12 @@ func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models
 		isStopped := torrent.Status == 0 || torrent.Status == 6
 		stopError := strings.TrimSpace(torrent.ErrorString)
 
-		if isComplete && (dl.Status == models.DownloadStatusDownloading || dl.Status == models.DownloadStatusQueued) {
+		if isComplete && (dl.Status == models.StateDownloading || dl.Status == models.StateGrabbed) {
 			// Download is complete
 			slog.Info("download completed", "title", dl.Title, "path", torrent.DownloadDir)
-			s.updateDownloadStatus(ctx, dl.ID, models.DownloadStatusCompleted)
+			s.updateDownloadStatus(ctx, dl.ID, models.StateCompleted)
 			s.tryImportTransmission(ctx, &dl, torrent.DownloadDir)
-		} else if isStopped && !isComplete && dl.Status != models.DownloadStatusFailed {
+		} else if isStopped && !isComplete && dl.Status != models.StateFailed {
 			if stopError == "" {
 				// Transmission also reports user-paused torrents as stopped.
 				continue
@@ -346,7 +346,7 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 		isComplete := torrent.Progress >= 1.0 || strings.Contains(state, "upload") || strings.Contains(state, "stalledup") || strings.Contains(state, "checkingup")
 		isFailed := strings.Contains(state, "error")
 
-		if isComplete && (dl.Status == models.DownloadStatusDownloading || dl.Status == models.DownloadStatusQueued) {
+		if isComplete && (dl.Status == models.StateDownloading || dl.Status == models.StateGrabbed) {
 			downloadPath := torrent.SavePath
 			candidate := filepath.Join(torrent.SavePath, torrent.Name)
 			if _, err := os.Stat(candidate); err == nil {
@@ -355,9 +355,9 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 			downloadPath = s.remapper.Apply(downloadPath)
 
 			slog.Info("download completed", "title", dl.Title, "path", downloadPath)
-			s.updateDownloadStatus(ctx, dl.ID, models.DownloadStatusCompleted)
+			s.updateDownloadStatus(ctx, dl.ID, models.StateCompleted)
 			s.tryImportQbittorrent(ctx, &dl, downloadPath)
-		} else if isFailed && dl.Status != models.DownloadStatusFailed {
+		} else if isFailed && dl.Status != models.StateFailed {
 			slog.Warn("download failed", "title", dl.Title, "state", torrent.State)
 			s.markDownloadFailed(ctx, &dl, "Torrent failed in qBittorrent")
 		}
@@ -387,8 +387,12 @@ func (s *Scanner) tryImportQbittorrent(ctx context.Context, dl *models.Download,
 func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, downloadPath, cleanupClientType, cleanupRemoteID string, cleanupFunc func() error) {
 	if s.libraryDir == "" {
 		slog.Warn("no library directory configured, skipping import")
+		// Not writable/configured — needs user action before import can proceed.
+		s.updateDownloadStatus(ctx, dl.ID, models.StateImportBlocked)
 		return
 	}
+
+	s.updateDownloadStatus(ctx, dl.ID, models.StateImportPending)
 
 	// Find book files in the download path
 	var bookFiles []string
@@ -406,8 +410,12 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 
 	if len(bookFiles) == 0 {
 		slog.Warn("no book files found in download", "path", downloadPath)
+		// No files — retryable if the downloader hasn't flushed them yet.
+		s.updateDownloadStatus(ctx, dl.ID, models.StateImportFailed)
 		return
 	}
+
+	s.updateDownloadStatus(ctx, dl.ID, models.StateImporting)
 
 	// Resolve the book and author for naming. Lookup errors are not fatal -
 	// we fall through to the "unmatched import" log below.
@@ -455,6 +463,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		}
 		if dirErr != nil {
 			slog.Error("failed to import audiobook folder", "src", downloadPath, "mode", mode, "error", dirErr)
+			s.updateDownloadStatus(ctx, dl.ID, models.StateImportBlocked)
 			return
 		}
 		if book != nil {
@@ -462,7 +471,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				slog.Error("failed to update audiobook file path", "bookID", book.ID, "error", err)
 			}
 		}
-		s.updateDownloadStatus(ctx, dl.ID, models.DownloadStatusImported)
+		s.updateDownloadStatus(ctx, dl.ID, models.StateImported)
 		slog.Info("audiobook imported", "title", func() string {
 			if book != nil {
 				return book.Title
@@ -514,12 +523,19 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		if err := s.books.SetFormatFilePath(ctx, book.ID, models.MediaTypeEbook, destPath); err != nil {
 			slog.Error("failed to update ebook file path", "bookID", book.ID, "error", err)
 		}
-		s.updateDownloadStatus(ctx, dl.ID, models.DownloadStatusImported)
+		s.updateDownloadStatus(ctx, dl.ID, models.StateImported)
 		slog.Info("book imported", "title", book.Title, "path", destPath)
 
 		s.pushToCalibre(ctx, book, author, destPath)
 
 		s.createHistoryEvent(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, map[string]string{"path": destPath})
+	}
+
+	// If every file failed to copy/move, the destination is likely not writable —
+	// mark as blocked so the user knows manual intervention is needed.
+	if imported == 0 && failed > 0 {
+		s.updateDownloadStatus(ctx, dl.ID, models.StateImportBlocked)
+		return
 	}
 
 	// A clean run leaves the download folder holding only non-book byproducts

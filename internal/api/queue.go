@@ -3,15 +3,15 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
-
-	"fmt"
 
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/downloader"
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/notifier"
 )
 
 type QueueHandler struct {
@@ -19,10 +19,17 @@ type QueueHandler struct {
 	clients   *db.DownloadClientRepo
 	books     *db.BookRepo
 	history   *db.HistoryRepo
+	notif     *notifier.Notifier
 }
 
 func NewQueueHandler(downloads *db.DownloadRepo, clients *db.DownloadClientRepo, books *db.BookRepo, history *db.HistoryRepo) *QueueHandler {
 	return &QueueHandler{downloads: downloads, clients: clients, books: books, history: history}
+}
+
+// WithNotifier attaches a notifier so grab/failure events fire webhooks.
+func (h *QueueHandler) WithNotifier(n *notifier.Notifier) *QueueHandler {
+	h.notif = n
+	return h
 }
 
 // QueueItem combines local download record with live downloader status.
@@ -150,7 +157,7 @@ func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
 		Title:            req.Title,
 		NZBURL:           req.NZBURL,
 		Size:             req.Size,
-		Status:           models.DownloadStatusQueued,
+		Status:           models.StateGrabbed,
 		Protocol:         protocol,
 		Quality:          indexer.ParseRelease(req.Title).Format,
 	}
@@ -165,7 +172,10 @@ func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
 		if setErr := h.downloads.SetError(r.Context(), dl.ID, err.Error()); setErr != nil {
 			slog.Warn("failed to persist download error", "download_id", dl.ID, "error", setErr)
 		}
-		h.recordHistory(r.Context(), models.HistoryEventDownloadFailed, req.Title, req.BookID, map[string]interface{}{"guid": req.GUID, "message": err.Error()})
+		h.recordHistory(r.Context(), models.HistoryEventDownloadFailed, req.Title, req.BookID, map[string]any{"guid": req.GUID, "message": err.Error()})
+		if h.notif != nil {
+			h.notif.Send(r.Context(), notifier.EventDownloadFailed, map[string]any{"title": req.Title, "message": err.Error()})
+		}
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "failed to send to downloader: " + err.Error()})
 		return
 	}
@@ -183,16 +193,19 @@ func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
 			dl.SABnzbdNzoID = &remoteID
 		}
 	}
-	if err := h.downloads.UpdateStatus(r.Context(), dl.ID, models.DownloadStatusDownloading); err != nil {
-		slog.Warn("failed to update download status", "download_id", dl.ID, "status", models.DownloadStatusDownloading, "error", err)
+	if err := h.downloads.UpdateStatus(r.Context(), dl.ID, models.StateDownloading); err != nil {
+		slog.Warn("failed to update download status", "download_id", dl.ID, "status", models.StateDownloading, "error", err)
 	}
-	dl.Status = models.DownloadStatusDownloading
+	dl.Status = models.StateDownloading
 
-	h.recordHistory(r.Context(), models.HistoryEventGrabbed, req.Title, req.BookID, map[string]interface{}{
+	h.recordHistory(r.Context(), models.HistoryEventGrabbed, req.Title, req.BookID, map[string]any{
 		"guid":      req.GUID,
 		"size":      req.Size,
 		"indexerId": req.IndexerID,
 	})
+	if h.notif != nil {
+		h.notif.Send(r.Context(), notifier.EventGrabbed, map[string]any{"title": req.Title, "size": req.Size})
+	}
 
 	slog.Info("download grabbed", "title", req.Title, "client", client.Type)
 	writeJSON(w, http.StatusAccepted, dl)
@@ -213,7 +226,7 @@ func (h *QueueHandler) selectClient(ctx context.Context, protocol, mediaType str
 }
 
 // recordHistory is a helper to write a history event, swallowing errors.
-func (h *QueueHandler) recordHistory(ctx context.Context, eventType, sourceTitle string, bookID *int64, data interface{}) {
+func (h *QueueHandler) recordHistory(ctx context.Context, eventType, sourceTitle string, bookID *int64, data any) {
 	if h.history == nil {
 		return
 	}
