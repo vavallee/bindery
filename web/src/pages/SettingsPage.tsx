@@ -1678,14 +1678,36 @@ function CalibreSection({
     <section>
       <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">Calibre</h3>
       <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-4">
-        <p className="text-xs text-slate-600 dark:text-zinc-500 -mt-1">
-          Mirror imported books into a Calibre library via{' '}
-          <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">calibredb add</code>.
-          Requires Calibre and Bindery to share the library directory (e.g. via a volume mount).
-        </p>
 
+        {/* Shared library path — used by both write integration and library import */}
         <div>
-          <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-2">Mode</label>
+          <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Library path</label>
+          <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+            Directory containing <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">metadata.db</code>.
+            Used by both the write integration and library import.
+          </p>
+          <div className="flex gap-2">
+            <input
+              value={settings['calibre.library_path'] ?? ''}
+              onChange={e => setSettings(s => ({ ...s, 'calibre.library_path': e.target.value }))}
+              placeholder="/data/calibre-library"
+              className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+            />
+            <button
+              onClick={() => saveSettingWithError('calibre.library_path')}
+              disabled={saving === 'calibre.library_path'}
+              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium disabled:opacity-50"
+            >
+              {saving === 'calibre.library_path' ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+          {saveError?.key === 'calibre.library_path' && (
+            <p className="text-xs text-red-600 dark:text-red-400 mt-1">{saveError.msg}</p>
+          )}
+        </div>
+
+        <div className="pt-1 border-t border-slate-200 dark:border-zinc-800">
+          <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-2 mt-3">Write integration</label>
           <div className="space-y-1.5">
             {([
               { v: 'off',       label: 'Off',           desc: 'No Calibre call on import.' },
@@ -1709,33 +1731,6 @@ function CalibreSection({
             ))}
           </div>
         </div>
-
-        {mode === 'calibredb' && (
-          <div>
-            <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Library path</label>
-            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
-              Directory containing <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">metadata.db</code>. Passed to <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">calibredb add --with-library</code>.
-            </p>
-            <div className="flex gap-2">
-              <input
-                value={settings['calibre.library_path'] ?? ''}
-                onChange={e => setSettings(s => ({ ...s, 'calibre.library_path': e.target.value }))}
-                placeholder="/data/calibre-library"
-                className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
-              />
-              <button
-                onClick={() => saveSettingWithError('calibre.library_path')}
-                disabled={saving === 'calibre.library_path'}
-                className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium disabled:opacity-50"
-              >
-                {saving === 'calibre.library_path' ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-            {saveError?.key === 'calibre.library_path' && (
-              <p className="text-xs text-red-600 dark:text-red-400 mt-1">{saveError.msg}</p>
-            )}
-          </div>
-        )}
 
         {mode === 'calibredb' && (
           <div>
@@ -1843,8 +1838,7 @@ function CalibreSection({
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">Library import</label>
               <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">
                 Read your existing Calibre library and import books, authors, and editions into Bindery.
-                Works independently of the write mode above — you can import from Calibre without Calibre being on the same host.
-                Mount your Calibre library directory into the container (e.g. <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">-v /path/to/library:/calibre:ro</code>) and set the path below.
+                Works independently of the write mode above.
               </p>
             </div>
             <button
@@ -1862,33 +1856,6 @@ function CalibreSection({
 
           {libraryImportEnabled && (
             <>
-              <div>
-                <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Library path</label>
-                <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
-                  Directory containing <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">metadata.db</code>.
-                  For Docker: mount your Calibre library and point here (e.g. <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">/calibre</code>).
-                  For Kubernetes: use the same NFS share both pods mount (e.g. <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">/media/BOOKS</code>).
-                </p>
-                <div className="flex gap-2">
-                  <input
-                    value={settings['calibre.library_path'] ?? ''}
-                    onChange={e => setSettings(s => ({ ...s, 'calibre.library_path': e.target.value }))}
-                    placeholder="/calibre"
-                    className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
-                  />
-                  <button
-                    onClick={() => saveSettingWithError('calibre.library_path')}
-                    disabled={saving === 'calibre.library_path'}
-                    className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium disabled:opacity-50"
-                  >
-                    {saving === 'calibre.library_path' ? 'Saving...' : 'Save'}
-                  </button>
-                </div>
-                {saveError?.key === 'calibre.library_path' && (
-                  <p className="text-xs text-red-600 dark:text-red-400 mt-1">{saveError.msg}</p>
-                )}
-              </div>
-
               <div className="flex items-center justify-between">
                 <div>
                   <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">Sync on startup</label>
