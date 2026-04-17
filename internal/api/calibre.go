@@ -135,4 +135,3 @@ func (h *CalibreHandler) Test(w http.ResponseWriter, r *http.Request) {
 		"message": "calibredb reachable",
 	})
 }
-

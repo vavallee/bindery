@@ -178,4 +178,3 @@ func TestPushToCalibre_NilResolver(t *testing.T) {
 	// No WithCalibre call.
 	s.pushToCalibre(ctx, book, author, "/library/book.epub") // must not panic
 }
-
