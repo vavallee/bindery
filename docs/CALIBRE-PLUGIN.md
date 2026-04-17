@@ -80,7 +80,7 @@ Open **Calibre → Preferences → Plugins → User plugins → Bindery Bridge �
 |---------|-------------------|-------|
 | **Listen port** | `8099` | Any free port works |
 | **Bind host** | `0.0.0.0` | Required for cross-pod access; `127.0.0.1` only works on bare-metal |
-| **API key** | (generate one) | `openssl rand -hex 32` |
+| **API key** | (generate one) | Use the **Generate** button in Bindery → Settings → Calibre, or run `openssl rand -hex 32` |
 
 After saving, the dialog restarts the HTTP server in-place — no Calibre
 restart needed.
@@ -119,7 +119,7 @@ In Bindery: **Settings → Calibre**:
 | **Mode** | `plugin` |
 | **Library path** | Path to the Calibre library root inside Bindery's container (e.g. `/media/BOOKS`) |
 | **Plugin URL** | `http://calibre.<namespace>.svc.cluster.local:8099` |
-| **Plugin API key** | The key you set in step 2 |
+| **Plugin API key** | The key you set in step 2 — paste it here, or click **Generate** to create a new one |
 
 Click **Test connection** — it calls `GET /v1/health` and should return the
 plugin version and Calibre version.

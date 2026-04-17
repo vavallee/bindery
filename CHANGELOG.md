@@ -8,6 +8,12 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 The `development` branch carries the in-flight feature set for the next release. Images are published as `ghcr.io/vavallee/bindery:development` and `:dev-<sha>`; point ArgoCD at the `development` branch to follow. Treat these features as beta — schema migrations are additive and safe, but UX may still shift before tagging.
 
+## [v0.18.1] — 2026-04-17
+
+### Changed
+
+- **Plugin API key field UX** ([#221](https://github.com/vavallee/bindery/pull/221)) — the API key field in Settings → Calibre (plugin mode) now has a show/hide toggle (eye icon) and a **Generate** button that fills the field with a cryptographically random 32-byte hex key (`crypto.getRandomValues`). `autoComplete="off"` prevents browsers from injecting saved passwords. Paste is unrestricted.
+
 ## [v0.18.0] — 2026-04-17
 
 Calibre plugin integration mode, decision engine, pending releases, and state machine for downloads.
