@@ -77,10 +77,10 @@ func TestNew_Construction(t *testing.T) {
 	}
 }
 
-// TestStart_RegistersFourJobs verifies that Start() registers exactly 4 cron entries
-// and that Stop() completes cleanly. No jobs fire during this test because all
-// intervals are ≥15 s and we stop immediately after start.
-func TestStart_RegistersFourJobs(t *testing.T) {
+// TestStart_RegistersBaseJobs verifies that Start() registers the expected
+// number of cron entries and that Stop() completes cleanly. No jobs fire
+// during this test because all intervals are ≥15 s and we stop immediately.
+func TestStart_RegistersBaseJobs(t *testing.T) {
 	s := &Scheduler{
 		cron: cron.New(cron.WithSeconds()),
 		// All other fields are nil; closures capture them but are not called
@@ -90,8 +90,11 @@ func TestStart_RegistersFourJobs(t *testing.T) {
 	entries := s.cron.Entries()
 	s.Stop()
 
-	if len(entries) != 4 {
-		t.Errorf("expected 4 cron entries after Start(), got %d", len(entries))
+	// Base jobs: check-downloads (15s), stall-detection (5m), search-wanted (12h),
+	// refresh-metadata (24h), scan-library (6h).
+	const wantJobs = 5
+	if len(entries) != wantJobs {
+		t.Errorf("expected %d cron entries after Start(), got %d", wantJobs, len(entries))
 	}
 }
 

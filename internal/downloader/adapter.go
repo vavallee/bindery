@@ -129,6 +129,50 @@ func RemoveDownload(ctx context.Context, client *models.DownloadClient, dl *mode
 	}
 }
 
+// GetStalledIDs returns the set of remote IDs the client reports as stalled.
+// For qBittorrent this is the `stalledDL` state; for Transmission it is
+// torrents stopped with a non-empty error string. SABnzbd has no stall
+// concept — its failures are already surfaced as Failed-status NZBs in the
+// existing checkSABnzbdDownloads path.
+//
+// Keys for torrent clients are lower-cased hash strings; for SABnzbd they
+// would be NZO IDs (but SABnzbd always returns nil here). The second return
+// value matches GetLiveStatuses: true when IDs are torrent hashes.
+func GetStalledIDs(ctx context.Context, client *models.DownloadClient) (map[string]bool, bool, error) {
+	switch client.Type {
+	case "qbittorrent":
+		qb := qbittorrent.New(client.Host, client.Port, client.Username, client.Password, client.UseSSL)
+		torrents, err := qb.GetTorrents(ctx, client.Category)
+		if err != nil {
+			return nil, true, err
+		}
+		out := make(map[string]bool, len(torrents))
+		for _, t := range torrents {
+			state := strings.ToLower(t.State)
+			if state == "stalleddl" {
+				out[strings.ToLower(t.Hash)] = true
+			}
+		}
+		return out, true, nil
+	case "transmission":
+		trans := transmission.New(client.Host, client.Port, client.Username, client.Password, client.UseSSL)
+		torrents, err := trans.GetTorrents(ctx, client.Category)
+		if err != nil {
+			return nil, true, err
+		}
+		out := make(map[string]bool, len(torrents))
+		for _, t := range torrents {
+			// status 0 = stopped; treat stopped+error as stalled
+			if t.Status == 0 && strings.TrimSpace(t.ErrorString) != "" {
+				out[strconv.FormatInt(t.ID, 10)] = true
+			}
+		}
+		return out, true, nil
+	default:
+		return nil, false, nil
+	}
+}
+
 func GetLiveStatuses(ctx context.Context, client *models.DownloadClient) (map[string]LiveStatus, bool, error) {
 	if IsTorrentClient(client.Type) {
 		statuses, err := getTorrentLiveStatuses(ctx, client)

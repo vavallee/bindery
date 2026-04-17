@@ -75,4 +75,6 @@ const (
 	HistoryEventBookRenamed          = "bookRenamed"
 	HistoryEventDownloadFolderImport = "downloadFolderImported"
 	HistoryEventBookFileDeleted      = "bookFileDeleted"
+	HistoryEventDownloadStalled      = "downloadStalled"
+	HistoryEventDownloadRequeued     = "downloadRequeued"
 )

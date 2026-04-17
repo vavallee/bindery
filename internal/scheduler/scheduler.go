@@ -5,8 +5,11 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/robfig/cron/v3"
 
@@ -57,6 +60,7 @@ type Scheduler struct {
 	indexers      *db.IndexerRepo
 	downloads     *db.DownloadRepo
 	clients       *db.DownloadClientRepo
+	history       *db.HistoryRepo
 	settings      *db.SettingsRepo
 	blocklist     *db.BlocklistRepo
 	calibreSyncer CalibreSyncer        // optional; nil if Calibre is not configured
@@ -92,6 +96,12 @@ func New(
 	}
 }
 
+// WithHistory attaches a HistoryRepo so stall events can be recorded.
+// Must be called before Start.
+func (s *Scheduler) WithHistory(h *db.HistoryRepo) {
+	s.history = h
+}
+
 // WithCalibreSyncer registers a CalibreSyncer that the scheduler will call
 // every 24 hours when Calibre is configured. Must be called before Start.
 func (s *Scheduler) WithCalibreSyncer(syncer CalibreSyncer) {
@@ -119,6 +129,14 @@ func (s *Scheduler) Start() {
 	s.cron.AddFunc("@every 15s", func() {
 		slog.Debug("job: check downloads")
 		s.scanner.CheckDownloads(context.Background())
+	})
+
+	// Stall detection runs every 5 minutes. Checking every 15s would be
+	// noisy for a condition that changes slowly; 5 minutes is frequent
+	// enough to act well within any reasonable stall timeout.
+	s.cron.AddFunc("@every 5m", func() {
+		slog.Debug("job: check stalled downloads")
+		s.checkStalledDownloads(context.Background())
 	})
 
 	// Search for wanted books every 12 hours
@@ -416,4 +434,142 @@ func (s *Scheduler) refreshMetadata() {
 
 		slog.Debug("refreshed author", "author", author.Name)
 	}
+}
+
+// stallTimeoutDefault is the duration a download must be in the downloading
+// state before it can be considered stalled. Configurable via the
+// stall.timeout_minutes setting (default 120 minutes / 2 hours).
+const stallTimeoutDefault = 120 * time.Minute
+
+// checkStalledDownloads detects downloads that have been stuck in
+// "downloading" state for longer than the stall timeout and handles them:
+// the release is marked failed, added to the blocklist so it won't be
+// re-grabbed, and a fresh search is triggered for the same book.
+//
+// Detection uses the download client's native stall signal where available
+// (qBittorrent: stalledDL state; Transmission: stopped with error). For
+// SABnzbd the existing Failed-state detection in CheckDownloads already
+// covers failures, so this job adds nothing for usenet downloads.
+func (s *Scheduler) checkStalledDownloads(ctx context.Context) {
+	timeout := stallTimeoutDefault
+	if s.settings != nil {
+		if v, _ := s.settings.Get(ctx, "stall.timeout_minutes"); v != nil {
+			if mins, err := strconv.Atoi(v.Value); err == nil && mins > 0 {
+				timeout = time.Duration(mins) * time.Minute
+			}
+		}
+	}
+
+	active, err := s.downloads.ListByStatus(ctx, models.DownloadStatusDownloading)
+	if err != nil || len(active) == 0 {
+		return
+	}
+
+	cutoff := time.Now().UTC().Add(-timeout)
+
+	// Group downloads by client to avoid fetching stall status per-download.
+	byClient := make(map[int64][]models.Download)
+	for _, dl := range active {
+		if dl.DownloadClientID == nil || dl.GrabbedAt == nil {
+			continue
+		}
+		if dl.GrabbedAt.After(cutoff) {
+			continue // not old enough yet
+		}
+		byClient[*dl.DownloadClientID] = append(byClient[*dl.DownloadClientID], dl)
+	}
+
+	for clientID, dls := range byClient {
+		client, err := s.clients.GetByID(ctx, clientID)
+		if err != nil || client == nil || !client.Enabled {
+			continue
+		}
+
+		stalledIDs, _, err := downloader.GetStalledIDs(ctx, client)
+		if err != nil {
+			slog.Debug("stall check: failed to fetch stalled IDs", "client", client.Name, "error", err)
+			continue
+		}
+		if len(stalledIDs) == 0 {
+			continue
+		}
+
+		for _, dl := range dls {
+			if dl.TorrentID == nil {
+				continue
+			}
+			if !stalledIDs[strings.ToLower(*dl.TorrentID)] {
+				continue
+			}
+			slog.Warn("stall detected",
+				"title", dl.Title,
+				"grabbed_at", dl.GrabbedAt,
+				"client", client.Name,
+			)
+			s.handleStalledDownload(ctx, &dl)
+		}
+	}
+}
+
+// handleStalledDownload marks a download as failed, records history, adds the
+// release to the blocklist, and triggers a fresh search for the same book.
+func (s *Scheduler) handleStalledDownload(ctx context.Context, dl *models.Download) {
+	reason := "stalled: no peers / no download progress"
+
+	// Mark failed in DB.
+	if err := s.downloads.SetError(ctx, dl.ID, reason); err != nil {
+		slog.Warn("stall: failed to set error", "download_id", dl.ID, "error", err)
+	}
+
+	// Record history event.
+	if s.history != nil {
+		data, _ := json.Marshal(map[string]string{"guid": dl.GUID, "message": reason})
+		_ = s.history.Create(ctx, &models.HistoryEvent{
+			BookID:      dl.BookID,
+			EventType:   models.HistoryEventDownloadStalled,
+			SourceTitle: dl.Title,
+			Data:        string(data),
+		})
+	}
+
+	// Blocklist the release so the next search skips it.
+	if s.blocklist != nil && dl.IndexerID != nil {
+		entry := &models.BlocklistEntry{
+			BookID:    dl.BookID,
+			GUID:      dl.GUID,
+			Title:     dl.Title,
+			IndexerID: dl.IndexerID,
+			Reason:    reason,
+		}
+		if err := s.blocklist.Create(ctx, entry); err != nil {
+			slog.Warn("stall: failed to add to blocklist", "guid", dl.GUID, "error", err)
+		}
+	}
+
+	// Trigger a fresh search if auto-grab is enabled.
+	if dl.BookID == nil {
+		return
+	}
+	if s.settings != nil {
+		if v, _ := s.settings.Get(ctx, "autoGrab.enabled"); v != nil && v.Value == "false" {
+			return
+		}
+	}
+	book, err := s.books.GetByID(ctx, *dl.BookID)
+	if err != nil || book == nil {
+		return
+	}
+	slog.Info("stall: triggering re-search", "title", dl.Title, "book_id", *dl.BookID)
+
+	if s.history != nil {
+		data, _ := json.Marshal(map[string]string{"guid": dl.GUID, "message": "stalled release removed, re-searching"})
+		_ = s.history.Create(ctx, &models.HistoryEvent{
+			BookID:      dl.BookID,
+			EventType:   models.HistoryEventDownloadRequeued,
+			SourceTitle: dl.Title,
+			Data:        string(data),
+		})
+	}
+
+	go s.SearchAndGrabBook(ctx, *book)
 }
