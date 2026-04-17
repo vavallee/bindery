@@ -1,6 +1,38 @@
 package openlibrary
 
+import "encoding/json"
+
 // OpenLibrary API response types
+
+// flexStringSlice unmarshals a JSON array whose elements may be plain strings
+// or objects (e.g. {"key": "...", "title": "..."}). Strings are kept as-is;
+// objects are decoded by extracting the "title" field when present, otherwise
+// they are skipped. This handles schema variance in the OpenLibrary works API.
+type flexStringSlice []string
+
+func (f *flexStringSlice) UnmarshalJSON(data []byte) error {
+	var raw []json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for _, elem := range raw {
+		var s string
+		if err := json.Unmarshal(elem, &s); err == nil {
+			*f = append(*f, s)
+			continue
+		}
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(elem, &obj); err == nil {
+			if titleRaw, ok := obj["title"]; ok {
+				var title string
+				if err := json.Unmarshal(titleRaw, &title); err == nil && title != "" {
+					*f = append(*f, title)
+				}
+			}
+		}
+	}
+	return nil
+}
 
 type searchResponse struct {
 	NumFound int         `json:"numFound"`
@@ -43,22 +75,22 @@ type authorWorksResponse struct {
 }
 
 type authorWorkEntry struct {
-	Key         string      `json:"key"` // "/works/OL123W"
-	Title       string      `json:"title"`
-	Description interface{} `json:"description"`
-	Covers      []int       `json:"covers"`
-	Subjects    []string    `json:"subjects"`
-	Series      []string    `json:"series"`
+	Key         string          `json:"key"` // "/works/OL123W"
+	Title       string          `json:"title"`
+	Description interface{}     `json:"description"`
+	Covers      []int           `json:"covers"`
+	Subjects    []string        `json:"subjects"`
+	Series      flexStringSlice `json:"series"`
 }
 
 type workResponse struct {
-	Key         string       `json:"key"` // "/works/OL123W"
-	Title       string       `json:"title"`
-	Description interface{}  `json:"description"` // can be string or {type, value}
-	Covers      []int        `json:"covers"`
-	Subjects    []string     `json:"subjects"`
-	Authors     []workAuthor `json:"authors"`
-	Series      []string     `json:"series"`
+	Key         string          `json:"key"` // "/works/OL123W"
+	Title       string          `json:"title"`
+	Description interface{}     `json:"description"` // can be string or {type, value}
+	Covers      []int           `json:"covers"`
+	Subjects    []string        `json:"subjects"`
+	Authors     []workAuthor    `json:"authors"`
+	Series      flexStringSlice `json:"series"`
 }
 
 type workAuthor struct {

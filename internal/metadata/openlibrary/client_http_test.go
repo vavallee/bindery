@@ -610,6 +610,47 @@ func TestGetAuthorWorks_HTTP(t *testing.T) {
 	}
 }
 
+// TestGetAuthorWorks_HTTP_ObjectSeries covers the schema variance seen with
+// Pierce Brown where OpenLibrary returns series as [{key,title}] objects
+// instead of plain strings. The parser should not error and should extract the
+// title when present.
+func TestGetAuthorWorks_HTTP_ObjectSeries(t *testing.T) {
+	worksBody := `{
+		"size": 1,
+		"entries": [{
+			"key": "/works/OL12345W",
+			"title": "Red Rising",
+			"series": [{"key": "/works/OL9999W", "title": "Red Rising #1"}]
+		}]
+	}`
+	langResp := `{"docs":[{"key":"/works/OL12345W","language":["eng"]}]}`
+
+	c := newClientWithPaths(t, map[string]interface{}{
+		"/authors/OL999A/works.json": worksBody,
+		"/search.json":               langResp,
+	})
+
+	books, err := c.GetAuthorWorks(context.Background(), "OL999A")
+	if err != nil {
+		t.Fatalf("GetAuthorWorks with object series: %v", err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("expected 1 book, got %d", len(books))
+	}
+	if books[0].Title != "Red Rising" {
+		t.Errorf("title: want 'Red Rising', got %q", books[0].Title)
+	}
+	if len(books[0].SeriesRefs) != 1 {
+		t.Errorf("expected 1 series ref, got %d", len(books[0].SeriesRefs))
+	}
+	if books[0].SeriesRefs[0].Title != "Red Rising" {
+		t.Errorf("series title: want 'Red Rising', got %q", books[0].SeriesRefs[0].Title)
+	}
+	if books[0].SeriesRefs[0].Position != "1" {
+		t.Errorf("series position: want '1', got %q", books[0].SeriesRefs[0].Position)
+	}
+}
+
 func TestGetAuthorWorks_HTTP_Error(t *testing.T) {
 	c := newClientWithStatus(t,
 		map[string]interface{}{"/authors/OL404A/works.json": "error"},
