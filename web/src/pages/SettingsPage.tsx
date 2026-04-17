@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, AuthConfig, AuthStatus, BlocklistEntry, Indexer, DownloadClient, NotificationConfig, QualityProfile, MetadataProfile, CalibreImportProgress, RootFolder, LogEntry, ImportList, HardcoverList } from '../api/client'
+import { api, AuthConfig, AuthStatus, BlocklistEntry, Indexer, ProwlarrInstance, DownloadClient, NotificationConfig, QualityProfile, MetadataProfile, CalibreImportProgress, RootFolder, LogEntry, ImportList, HardcoverList } from '../api/client'
 import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
 import ThemeToggle from '../components/ThemeToggle'
@@ -24,6 +24,9 @@ export default function SettingsPage() {
   const [rootFolders, setRootFolders] = useState<RootFolder[]>([])
   const [newFolderPath, setNewFolderPath] = useState('')
   const [folderError, setFolderError] = useState('')
+  const [prowlarrInstances, setProwlarrInstances] = useState<ProwlarrInstance[]>([])
+  const [showAddProwlarr, setShowAddProwlarr] = useState(false)
+  const [prowlarrSyncResult, setProwlarrSyncResult] = useState<Record<number, string>>({})
   const [showAddIndexer, setShowAddIndexer] = useState(false)
   const [showAddClient, setShowAddClient] = useState(false)
   const [showAddNotification, setShowAddNotification] = useState(false)
@@ -39,6 +42,7 @@ export default function SettingsPage() {
   useEffect(() => {
     api.listIndexers().then(setIndexers).catch(console.error)
     api.listDownloadClients().then(setClients).catch(console.error)
+    api.listProwlarr().then(setProwlarrInstances).catch(console.error)
   }, [])
 
   useEffect(() => {
@@ -160,6 +164,94 @@ export default function SettingsPage() {
               onAdded={(idx) => { setIndexers([...indexers, idx]); setShowAddIndexer(false) }}
             />
           )}
+
+          {/* Prowlarr sync */}
+          <div className="mt-8 border-t border-slate-200 dark:border-zinc-800 pt-6">
+            <div className="flex justify-between items-center mb-4">
+              <div>
+                <h4 className="text-base font-semibold">Prowlarr</h4>
+                <p className="text-xs text-slate-500 dark:text-zinc-500 mt-0.5">Add Prowlarr once — all configured indexers sync automatically.</p>
+              </div>
+              {prowlarrInstances.length === 0 && (
+                <button onClick={() => setShowAddProwlarr(true)} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium">
+                  Add Prowlarr
+                </button>
+              )}
+            </div>
+            <div className="space-y-2">
+              {prowlarrInstances.map(p => (
+                <div key={p.id} className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h5 className="font-medium text-sm">{p.name}</h5>
+                      <p className="text-xs text-slate-500 dark:text-zinc-500">{p.url}</p>
+                      {p.lastSyncAt && (
+                        <p className="text-xs text-slate-400 dark:text-zinc-600 mt-0.5">
+                          Last synced: {new Date(p.lastSyncAt).toLocaleString()}
+                          {' · '}{indexers.filter(i => i.prowlarrInstanceId === p.id).length} indexers
+                        </p>
+                      )}
+                      {prowlarrSyncResult[p.id] && (
+                        <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-0.5">{prowlarrSyncResult[p.id]}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      <button
+                        onClick={async () => {
+                          try {
+                            const r = await api.testProwlarr(p.id)
+                            if (r.ok === 'true') alert(`Connected — Prowlarr ${r.version}`)
+                            else alert(`Connection failed: ${r.error}`)
+                          } catch (err: unknown) {
+                            alert(err instanceof Error ? err.message : 'Connection failed')
+                          }
+                        }}
+                        className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white"
+                      >
+                        Test
+                      </button>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const r = await api.syncProwlarr(p.id)
+                            setProwlarrSyncResult(prev => ({ ...prev, [p.id]: `Synced — added ${r.added}, updated ${r.updated}, removed ${r.removed}` }))
+                            api.listIndexers().then(setIndexers).catch(console.error)
+                            api.listProwlarr().then(setProwlarrInstances).catch(console.error)
+                          } catch (err: unknown) {
+                            alert(err instanceof Error ? err.message : 'Sync failed')
+                          }
+                        }}
+                        className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white"
+                      >
+                        Sync now
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!confirm(`Delete Prowlarr instance "${p.name}" and all its synced indexers?`)) return
+                          await api.deleteProwlarr(p.id)
+                          setProwlarrInstances(prev => prev.filter(i => i.id !== p.id))
+                          api.listIndexers().then(setIndexers).catch(console.error)
+                        }}
+                        className="text-xs text-red-400 hover:text-red-300"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {showAddProwlarr && (
+              <AddProwlarrForm
+                onClose={() => setShowAddProwlarr(false)}
+                onAdded={(p) => {
+                  setProwlarrInstances(prev => [...prev, p])
+                  setShowAddProwlarr(false)
+                  api.listIndexers().then(setIndexers).catch(console.error)
+                }}
+              />
+            )}
+          </div>
         </div>
       )}
 
@@ -2530,5 +2622,66 @@ function ChangePasswordForm({ username }: { username: string }) {
         {submitting ? 'Updating…' : 'Change password'}
       </button>
     </form>
+  )
+}
+
+function AddProwlarrForm({ onClose, onAdded }: { onClose: () => void; onAdded: (p: ProwlarrInstance) => void }) {
+  const [name, setName] = useState('Prowlarr')
+  const [url, setUrl] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [syncOnStartup, setSyncOnStartup] = useState(true)
+  const [syncing, setSyncing] = useState(false)
+  const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
+
+  const submit = async () => {
+    setSyncing(true)
+    try {
+      const p = await api.addProwlarr({ name, url, apiKey, syncOnStartup, enabled: true })
+      // Auto-sync immediately so the user sees indexers appear right away.
+      try {
+        await api.syncProwlarr(p.id)
+        const updated = await api.listProwlarr()
+        onAdded(updated.find(i => i.id === p.id) ?? p)
+      } catch {
+        onAdded(p)
+      }
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  return (
+    <div className="mt-4 p-4 border border-slate-300 dark:border-zinc-700 rounded-lg bg-slate-200/50 dark:bg-zinc-800/50 space-y-3">
+      <div className="flex gap-2">
+        <div className="flex-1">
+          <label className={labelCls}>Name</label>
+          <input value={name} onChange={e => setName(e.target.value)} placeholder="Prowlarr" className={inputCls} />
+        </div>
+      </div>
+      <div>
+        <label className={labelCls}>URL</label>
+        <input value={url} onChange={e => setUrl(e.target.value)} placeholder="http://prowlarr:9696" className={inputCls} />
+      </div>
+      <div>
+        <label className={labelCls}>API Key</label>
+        <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="API Key" type="password" className={inputCls} />
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setSyncOnStartup(!syncOnStartup)}
+          className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${syncOnStartup ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'}`}
+        >
+          <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${syncOnStartup ? 'translate-x-4' : ''}`} />
+        </button>
+        <span className="text-xs text-slate-600 dark:text-zinc-400">Sync on startup</span>
+      </div>
+      <div className="flex gap-2 justify-end">
+        <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">Cancel</button>
+        <button onClick={submit} disabled={!url || !apiKey || syncing} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium disabled:opacity-50">
+          {syncing ? 'Saving & syncing…' : 'Save & sync'}
+        </button>
+      </div>
+    </div>
   )
 }

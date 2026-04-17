@@ -16,6 +16,7 @@ import (
 	"github.com/vavallee/bindery/internal/api"
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/calibre"
+	"github.com/vavallee/bindery/internal/prowlarr"
 	"github.com/vavallee/bindery/internal/config"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/hardcoverlistsyncer"
@@ -105,6 +106,7 @@ func main() {
 	tagRepo := db.NewTagRepo(database)
 	rootFolderRepo := db.NewRootFolderRepo(database)
 	importListRepo := db.NewImportListRepo(database)
+	prowlarrRepo := db.NewProwlarrRepo(database)
 	metadataProfileRepo := db.NewMetadataProfileRepo(database)
 	delayProfileRepo := db.NewDelayProfileRepo(database)
 	customFormatRepo := db.NewCustomFormatRepo(database)
@@ -192,6 +194,25 @@ func main() {
 		}
 	}
 
+	// Prowlarr startup sync: kick off sync for all enabled instances that have
+	// sync_on_startup set. Runs concurrently so it doesn't block server start.
+	{
+		instances, _ := prowlarrRepo.List(context.Background())
+		for _, inst := range instances {
+			if !inst.Enabled || !inst.SyncOnStartup {
+				continue
+			}
+			inst := inst // capture
+			go func() {
+				client := prowlarr.New(inst.URL, inst.APIKey)
+				syncer := prowlarr.NewSyncer(client, indexerRepo, prowlarrRepo)
+				if _, err := syncer.Sync(context.Background(), inst.ID); err != nil {
+					slog.Warn("prowlarr startup sync failed", "instance", inst.Name, "error", err)
+				}
+			}()
+		}
+	}
+
 	// Scheduler
 	sched := scheduler.New(importScanner, idxSearcher, metaAgg,
 		authorRepo, bookRepo, indexerRepo, downloadRepo, dlClientRepo, settingsRepo, blocklistRepo)
@@ -248,6 +269,7 @@ func main() {
 	backupHandler := api.NewBackupHandler(cfg.DBPath, cfg.DataDir)
 	rootFolderHandler := api.NewRootFolderHandler(rootFolderRepo)
 	logHandler := api.NewLogHandler(ring)
+	prowlarrHandler := api.NewProwlarrHandler(prowlarrRepo, indexerRepo)
 	calibreHandler := api.NewCalibreHandler(settingsRepo)
 	calibreImportHandler := api.NewCalibreImportHandler(calibreImporter, func() calibre.Config {
 		return api.LoadCalibreConfig(settingsRepo)
@@ -343,6 +365,15 @@ func main() {
 		r.Delete("/indexer/{id}", indexerHandler.Delete)
 		r.Post("/indexer/{id}/test", indexerHandler.Test)
 		r.Get("/indexer/search", indexerHandler.SearchQuery)
+
+		// Prowlarr indexer sync
+		r.Get("/prowlarr", prowlarrHandler.List)
+		r.Post("/prowlarr", prowlarrHandler.Create)
+		r.Get("/prowlarr/{id}", prowlarrHandler.Get)
+		r.Put("/prowlarr/{id}", prowlarrHandler.Update)
+		r.Delete("/prowlarr/{id}", prowlarrHandler.Delete)
+		r.Post("/prowlarr/{id}/test", prowlarrHandler.Test)
+		r.Post("/prowlarr/{id}/sync", prowlarrHandler.Sync)
 
 		// Root folders
 		r.Get("/rootfolder", rootFolderHandler.List)

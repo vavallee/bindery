@@ -136,6 +136,14 @@ export const api = {
   updateIndexer: (id: number, data: Partial<Indexer>) => request<Indexer>(`/indexer/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteIndexer: (id: number) => request<void>(`/indexer/${id}`, { method: 'DELETE' }),
   testIndexer: (id: number) => request<{ message: string }>(`/indexer/${id}/test`, { method: 'POST' }),
+
+  // Prowlarr indexer sync
+  listProwlarr: () => request<ProwlarrInstance[]>('/prowlarr'),
+  addProwlarr: (data: Partial<ProwlarrInstance>) => request<ProwlarrInstance>('/prowlarr', { method: 'POST', body: JSON.stringify(data) }),
+  updateProwlarr: (id: number, data: Partial<ProwlarrInstance>) => request<ProwlarrInstance>(`/prowlarr/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteProwlarr: (id: number) => request<void>(`/prowlarr/${id}`, { method: 'DELETE' }),
+  testProwlarr: (id: number) => request<{ ok: string; version?: string; error?: string }>(`/prowlarr/${id}/test`, { method: 'POST' }),
+  syncProwlarr: (id: number) => request<{ added: number; updated: number; removed: number }>(`/prowlarr/${id}/sync`, { method: 'POST' }),
   searchIndexers: (q: string) => request<SearchResult[]>(`/indexer/search?q=${encodeURIComponent(q)}`),
 
   // Download clients
@@ -364,6 +372,17 @@ export interface Indexer {
   apiKey: string
   categories: number[]
   enabled: boolean
+  prowlarrInstanceId?: number
+}
+
+export interface ProwlarrInstance {
+  id: number
+  name: string
+  url: string
+  apiKey: string
+  syncOnStartup: boolean
+  enabled: boolean
+  lastSyncAt?: string
 }
 
 export interface DownloadClient {

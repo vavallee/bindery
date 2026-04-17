@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -21,7 +20,8 @@ func NewIndexerRepo(db *sql.DB) *IndexerRepo {
 
 func (r *IndexerRepo) List(ctx context.Context) ([]models.Indexer, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, name, type, url, api_key, categories, priority, enabled, supports_search, created_at, updated_at
+		SELECT id, name, type, url, api_key, categories, priority, enabled, supports_search,
+		       prowlarr_instance_id, prowlarr_indexer_id, created_at, updated_at
 		FROM indexers ORDER BY priority`)
 	if err != nil {
 		return nil, err
@@ -30,17 +30,9 @@ func (r *IndexerRepo) List(ctx context.Context) ([]models.Indexer, error) {
 
 	var indexers []models.Indexer
 	for rows.Next() {
-		var idx models.Indexer
-		var enabled, supportsSearch int
-		var catsJSON string
-		if err := rows.Scan(&idx.ID, &idx.Name, &idx.Type, &idx.URL, &idx.APIKey,
-			&catsJSON, &idx.Priority, &enabled, &supportsSearch, &idx.CreatedAt, &idx.UpdatedAt); err != nil {
+		idx, err := scanIndexer(rows)
+		if err != nil {
 			return nil, err
-		}
-		idx.Enabled = enabled == 1
-		idx.SupportsSearch = supportsSearch == 1
-		if err := json.Unmarshal([]byte(catsJSON), &idx.Categories); err != nil {
-			return nil, fmt.Errorf("unmarshal indexer categories: %w", err)
 		}
 		indexers = append(indexers, idx)
 	}
@@ -48,26 +40,43 @@ func (r *IndexerRepo) List(ctx context.Context) ([]models.Indexer, error) {
 }
 
 func (r *IndexerRepo) GetByID(ctx context.Context, id int64) (*models.Indexer, error) {
-	var idx models.Indexer
-	var enabled, supportsSearch int
-	var catsJSON string
-	err := r.db.QueryRowContext(ctx, `
-		SELECT id, name, type, url, api_key, categories, priority, enabled, supports_search, created_at, updated_at
-		FROM indexers WHERE id=?`, id).
-		Scan(&idx.ID, &idx.Name, &idx.Type, &idx.URL, &idx.APIKey,
-			&catsJSON, &idx.Priority, &enabled, &supportsSearch, &idx.CreatedAt, &idx.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, name, type, url, api_key, categories, priority, enabled, supports_search,
+		       prowlarr_instance_id, prowlarr_indexer_id, created_at, updated_at
+		FROM indexers WHERE id=?`, id)
 	if err != nil {
 		return nil, err
 	}
-	idx.Enabled = enabled == 1
-	idx.SupportsSearch = supportsSearch == 1
-	if err = json.Unmarshal([]byte(catsJSON), &idx.Categories); err != nil {
-		return nil, fmt.Errorf("unmarshal indexer categories: %w", err)
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
 	}
-	return &idx, nil
+	idx, err := scanIndexer(rows)
+	if err != nil {
+		return nil, err
+	}
+	return &idx, rows.Err()
+}
+
+// ListByProwlarrInstance returns all indexers managed by a specific Prowlarr instance.
+func (r *IndexerRepo) ListByProwlarrInstance(ctx context.Context, instanceID int64) ([]models.Indexer, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, name, type, url, api_key, categories, priority, enabled, supports_search,
+		       prowlarr_instance_id, prowlarr_indexer_id, created_at, updated_at
+		FROM indexers WHERE prowlarr_instance_id=?`, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var indexers []models.Indexer
+	for rows.Next() {
+		idx, err := scanIndexer(rows)
+		if err != nil {
+			return nil, err
+		}
+		indexers = append(indexers, idx)
+	}
+	return indexers, rows.Err()
 }
 
 func (r *IndexerRepo) Create(ctx context.Context, idx *models.Indexer) error {
@@ -77,10 +86,12 @@ func (r *IndexerRepo) Create(ctx context.Context, idx *models.Indexer) error {
 		return fmt.Errorf("marshal indexer categories: %w", err)
 	}
 	result, err := r.db.ExecContext(ctx, `
-		INSERT INTO indexers (name, type, url, api_key, categories, priority, enabled, supports_search, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO indexers (name, type, url, api_key, categories, priority, enabled, supports_search,
+		                      prowlarr_instance_id, prowlarr_indexer_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		idx.Name, idx.Type, idx.URL, idx.APIKey, string(catsJSON),
-		idx.Priority, idx.Enabled, idx.SupportsSearch, now, now)
+		idx.Priority, idx.Enabled, idx.SupportsSearch,
+		idx.ProwlarrInstanceID, idx.ProwlarrIndexerID, now, now)
 	if err != nil {
 		return fmt.Errorf("create indexer: %w", err)
 	}
@@ -112,4 +123,34 @@ func (r *IndexerRepo) Update(ctx context.Context, idx *models.Indexer) error {
 func (r *IndexerRepo) Delete(ctx context.Context, id int64) error {
 	_, err := r.db.ExecContext(ctx, "DELETE FROM indexers WHERE id=?", id)
 	return err
+}
+
+// DeleteByProwlarrInstance removes all indexers managed by a specific Prowlarr instance.
+func (r *IndexerRepo) DeleteByProwlarrInstance(ctx context.Context, instanceID int64) error {
+	_, err := r.db.ExecContext(ctx, "DELETE FROM indexers WHERE prowlarr_instance_id=?", instanceID)
+	return err
+}
+
+type indexerScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanIndexer(s indexerScanner) (models.Indexer, error) {
+	var idx models.Indexer
+	var enabled, supportsSearch int
+	var catsJSON string
+	if err := s.Scan(
+		&idx.ID, &idx.Name, &idx.Type, &idx.URL, &idx.APIKey,
+		&catsJSON, &idx.Priority, &enabled, &supportsSearch,
+		&idx.ProwlarrInstanceID, &idx.ProwlarrIndexerID,
+		&idx.CreatedAt, &idx.UpdatedAt,
+	); err != nil {
+		return idx, err
+	}
+	idx.Enabled = enabled == 1
+	idx.SupportsSearch = supportsSearch == 1
+	if err := json.Unmarshal([]byte(catsJSON), &idx.Categories); err != nil {
+		return idx, fmt.Errorf("unmarshal indexer categories: %w", err)
+	}
+	return idx, nil
 }
