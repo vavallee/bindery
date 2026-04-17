@@ -400,9 +400,6 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool)
 	slog.Info("author books synced", "author", author.Name, "added", added, "skipped_language", skippedLang, "skipped_junk", skippedJunk, "total", len(books))
 }
 
-// resolveAllowedLanguages returns the parsed allowed-language set for an
-// author's metadata profile. Authors without an explicit profile use the
-// seeded "Standard" profile (id=1). If neither can be loaded we fall back to
 // AddBook adds a single book to the wanted list by its metadata foreign ID.
 // If the author is not yet in Bindery it is added as unmonitored and its
 // books are fetched in the background; the endpoint then polls until the
@@ -445,13 +442,12 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 		def := models.DefaultMetadataProfileID
 		fetched.MetadataProfileID = &def
 		if err := h.authors.Create(ctx, fetched); err != nil {
-			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-				// Race: another request created it between our check and insert.
-				author, _ = h.authors.GetByForeignID(ctx, req.ForeignAuthorID)
-			} else {
+			if !strings.Contains(err.Error(), "UNIQUE constraint failed") {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
 			}
+			// Race: another request created it between our check and insert.
+			author, _ = h.authors.GetByForeignID(ctx, req.ForeignAuthorID)
 		} else {
 			author = fetched
 			go h.FetchAuthorBooks(author, false)
@@ -496,15 +492,12 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 
 	// 4. Optionally trigger an indexer search.
 	if req.SearchOnAdd && h.searcher != nil {
-		go h.searcher.SearchAndGrabBook(context.Background(), *book)
+		go h.searcher.SearchAndGrabBook(contextBackground(), *book)
 	}
 
 	writeJSON(w, http.StatusCreated, book)
 }
 
-// English-only so existing behaviour is preserved; returning nil here would
-// silently disable the filter, which is the opposite of what users with a
-// default install expect.
 func (h *AuthorHandler) resolveAllowedLanguages(ctx context.Context, author *models.Author) []string {
 	id := models.DefaultMetadataProfileID
 	if author.MetadataProfileID != nil {
