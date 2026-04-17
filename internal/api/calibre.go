@@ -1,8 +1,8 @@
 package api
 
 import (
-	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -108,21 +108,27 @@ func validateCalibreConfig(cfg calibre.Config) error {
 	if cfg.LibraryPath != "" {
 		info, err := os.Stat(cfg.LibraryPath)
 		if err != nil {
-			return err
+			if os.IsNotExist(err) {
+				return fmt.Errorf("library_path %q not found — ensure the path is accessible inside the Bindery container/process (check volume mounts)", cfg.LibraryPath)
+			}
+			return fmt.Errorf("library_path %q: %w", cfg.LibraryPath, err)
 		}
 		if !info.IsDir() {
-			return errors.New("library_path is not a directory")
+			return fmt.Errorf("library_path %q exists but is not a directory", cfg.LibraryPath)
 		}
 	}
 	if cfg.BinaryPath != "" {
 		info, err := os.Stat(cfg.BinaryPath)
 		if err != nil {
-			return err
+			if os.IsNotExist(err) {
+				return fmt.Errorf("binary_path %q not found — calibredb must be accessible inside the Bindery container/process (check volume mounts, or leave blank to resolve from PATH)", cfg.BinaryPath)
+			}
+			return fmt.Errorf("binary_path %q: %w", cfg.BinaryPath, err)
 		}
 		// On Unix the executable bit lives in Mode&0o111. Windows has no
 		// concept of exec bits, so we only assert file-ness there.
 		if info.Mode()&0o111 == 0 && info.Mode().IsRegular() {
-			return errors.New("binary_path is not executable")
+			return fmt.Errorf("binary_path %q exists but is not executable", cfg.BinaryPath)
 		}
 	}
 	return nil
@@ -139,12 +145,14 @@ func (h *CalibreHandler) Test(w http.ResponseWriter, r *http.Request) {
 	// surprising extra step.
 	cfg.Enabled = true
 	if err := validateCalibreConfig(cfg); err != nil {
+		slog.Warn("calibre test failed: config invalid", "error", err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	client := calibre.New(cfg)
 	version, err := client.Test(r.Context())
 	if err != nil {
+		slog.Warn("calibre test failed: probe error", "binary_path", cfg.BinaryPath, "error", err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
