@@ -8,9 +8,35 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 The `development` branch carries the in-flight feature set for the next release. Images are published as `ghcr.io/vavallee/bindery:development` and `:dev-<sha>`; point ArgoCD at the `development` branch to follow. Treat these features as beta — schema migrations are additive and safe, but UX may still shift before tagging.
 
-### Added
+## [v0.17.0] — 2026-04-17
 
-- **Calibre library import (closes [#63](https://github.com/vavallee/bindery/issues/63))** — Bindery can now ingest an existing Calibre library via a new **Import library** button in Settings → General → Calibre. The importer opens Calibre's `metadata.db` read-only, streams authors / books / series / editions / ISBNs / covers, and upserts them into Bindery — deduplicating via `books.calibre_id` first and author-alias-aware title match second, so running the import twice is idempotent. Co-authors become alias rows on the canonical author. A polled progress endpoint (`GET /api/v1/calibre/import/status`) drives a live progress bar and a final summary of `{authorsAdded, booksAdded, editionsAdded, duplicatesMerged, skipped}`. A new **Sync on startup** toggle runs the same import on every boot (off by default).
+Drop-folder Calibre mode removed, OpenLibrary series schema fixed, and a batch of UX and deployment polish.
+
+### Removed
+
+- **Calibre drop-folder mode** ([#207](https://github.com/vavallee/bindery/pull/207)) — the drop-folder integration has been removed entirely. It depended on the Calibre GUI application's auto-add watcher, which never fires in containerised / headless deployments. Books silently timed out with no feedback. The `calibredb` mode achieves the same result — mirroring every successful import into Calibre — without any of these constraints: it only requires that Bindery and Calibre share the library directory via a volume mount, which is already required for the library import/sync feature. Existing `calibre.mode = drop_folder` settings are treated as `off`; operators should switch to `calibredb` mode. The `calibre.drop_folder_path` setting and the `/api/v1/calibre/test-paths` endpoint are gone.
+
+### Fixed
+
+- **OpenLibrary object-typed series entries** ([#206](https://github.com/vavallee/bindery/pull/206), closes [#201](https://github.com/vavallee/bindery/issues/201)) — some OpenLibrary work records encode `series` as `[{"key": "...", "title": "..."}]` (object array) rather than `["..."]` (string array). Bindery previously crashed with an unmarshal error on these records, silently skipping all books for authors like Pierce Brown, J.K. Rowling, and Cornelia Funke. A new `flexStringSlice` decoder accepts both forms transparently.
+- **Calibre settings save errors** ([#202](https://github.com/vavallee/bindery/pull/202), closes [#175](https://github.com/vavallee/bindery/issues/175)) — validation errors on `PUT /api/v1/setting/calibre.*` were returned as 400 but the UI silently discarded the response body; the error message now surfaces in the Settings page. Also fixes a case-sensitivity bug where NFS paths with uppercase letters were rejected.
+- **Search "no indexers" message** ([#203](https://github.com/vavallee/bindery/pull/203)) — when a search returns no results *and* no indexers are configured, the UI now shows "No indexers configured — add one in Settings" instead of the generic "No results" empty state.
+- **Login form method** ([#195](https://github.com/vavallee/bindery/pull/195)) — login form missing `method="POST"` caused browsers to silently submit via GET, leaking credentials in the URL bar and query-string logs.
+- **Auth visibility refresh** ([#199](https://github.com/vavallee/bindery/pull/199)) — auth status was not rechecked when a browser tab regained focus after a session expiry, leaving users on a page that appeared authenticated but returned 401 on the next action.
+- **Books empty state** ([#197](https://github.com/vavallee/bindery/pull/197)) — Books page showed a bare spinner when the library was empty; now shows instructional copy pointing to the "Add author" flow.
+- **Version badge and footer links** ([#196](https://github.com/vavallee/bindery/pull/196)) — version badge in the header now links to the corresponding GitHub release; footer links to the repo.
+- **Calendar aria-labels** ([#198](https://github.com/vavallee/bindery/pull/198)) — previous/next month buttons on the calendar lacked `aria-label` attributes, failing screen-reader and accessibility audits.
+
+### Changed
+
+- **Per-page document titles** ([#200](https://github.com/vavallee/bindery/pull/200)) — each page sets `document.title` to reflect the current view (e.g. "Authors — Bindery", "Settings — Bindery") for browser tab identification and history navigation.
+- **Helm chart: corrected `BINDERY_DOWNLOAD_PATH_REMAP`** ([#204](https://github.com/vavallee/bindery/pull/204)) — default remap was `/downloads:/downloads`; corrected to `/downloads:/media` to match the NFS-mount convention documented in the reference deployment.
+- **ArgoCD reference application** ([#205](https://github.com/vavallee/bindery/pull/205)) — updated NFS volume configuration and container entrypoints in the reference ArgoCD application manifest.
+
+### Upgrade notes
+
+- **No schema migrations** — this is a pure-logic and UI release. Drop-in binary or image replacement is safe.
+- **Drop-folder users:** if `calibre.mode` is set to `drop_folder`, Bindery will treat it as `off` on startup. Switch to `calibredb` mode in Settings → Calibre to restore automatic mirroring. The `calibre.library_path` and `calibre.binary_path` settings are unchanged.
 
 ## [v0.16.0] — 2026-04-17
 
