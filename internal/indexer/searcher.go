@@ -173,10 +173,12 @@ var stopWords = map[string]bool{
 // sigWords returns the meaningful (non-stop, 3+ char) words from s.
 // Apostrophes are stripped so "Ender's" produces the token "enders",
 // matching the apostrophe-free form used in most release names.
+// German umlauts are transliterated (ä→ae etc.) to match NormalizeRelease.
 func sigWords(s string) []string {
 	var out []string
 	for _, w := range strings.Fields(strings.ToLower(s)) {
 		w = strings.ReplaceAll(w, "'", "") // "ender's" → "enders"
+		w = transliterateUmlauts(w)
 		if len(w) >= 3 && !stopWords[w] {
 			out = append(out, w)
 		}

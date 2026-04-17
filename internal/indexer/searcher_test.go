@@ -565,3 +565,53 @@ func TestIsAudiobookFormat(t *testing.T) {
 		}
 	}
 }
+
+// TestFilterRelevantGermanUmlauts is a regression test for issue #211.
+// German NZB indexers (e.g. Scenenzbs) transliterate umlauts in release names:
+// ä→ae, ö→oe, ü→ue, ß→ss. Without normalisation on both sides, filterRelevant
+// drops every result even though 100 are returned from the indexer.
+func TestFilterRelevantGermanUmlauts(t *testing.T) {
+	cases := []struct {
+		bookTitle string
+		author    string
+		releases  []string
+		wantAny   string
+	}{
+		{
+			// "Gespensterjäger" → indexer stores as "Gespensterjaeger"
+			bookTitle: "Gespensterjäger",
+			author:    "Cornelia Funke",
+			releases: []string{
+				"Cornelia.Funke.-.Gespensterjaeger.EPUB",
+				"Gespensterjaeger.Cornelia.Funke.2003.epub",
+			},
+			wantAny: "Cornelia.Funke.-.Gespensterjaeger.EPUB",
+		},
+		{
+			// "Die Stille ist ein Geräusch" → "Gerausch" in releases
+			bookTitle: "Die Stille ist ein Geräusch",
+			author:    "Juli Zeh",
+			releases: []string{
+				"Juli.Zeh.Die.Stille.ist.ein.Gerausch.epub",
+				"Die.Stille.ist.ein.Gerausch.Juli.Zeh.2002.EPUB",
+			},
+			wantAny: "Juli.Zeh.Die.Stille.ist.ein.Gerausch.epub",
+		},
+		{
+			// Release name uses the actual umlaut character — must also match
+			bookTitle: "Gespensterjäger",
+			author:    "Cornelia Funke",
+			releases: []string{
+				"Cornelia.Funke.Gespensterjäger.epub",
+			},
+			wantAny: "Cornelia.Funke.Gespensterjäger.epub",
+		},
+	}
+	for _, tc := range cases {
+		got := filterRelevant(toResults(tc.releases...), tc.bookTitle, tc.author)
+		if !contains(got, tc.wantAny) {
+			t.Errorf("filterRelevant(%q, %q): want %q in results, got %v",
+				tc.bookTitle, tc.author, tc.wantAny, resultTitles(got))
+		}
+	}
+}

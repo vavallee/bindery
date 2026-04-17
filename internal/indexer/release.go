@@ -36,13 +36,30 @@ var (
 	articleSet = map[string]bool{"a": true, "an": true, "the": true, "and": true, "or": true, "of": true}
 )
 
+// transliterateUmlauts maps German umlaut characters to their common ASCII
+// two-letter equivalents (ä→ae, ö→oe, ü→ue, ß→ss). German NZB indexers
+// almost universally use this convention in release names, so normalising both
+// sides of a comparison to ASCII prevents false-negative title matches for
+// German-language books. Must be called after strings.ToLower so only the
+// lowercase forms need to be handled.
+func transliterateUmlauts(s string) string {
+	s = strings.ReplaceAll(s, "ä", "ae")
+	s = strings.ReplaceAll(s, "ö", "oe")
+	s = strings.ReplaceAll(s, "ü", "ue")
+	s = strings.ReplaceAll(s, "ß", "ss")
+	return s
+}
+
 // NormalizeRelease lowercases s and replaces NZB separators with single spaces.
 // Parentheses, brackets, pipes and repeated separators are all collapsed.
 // Apostrophes are stripped so possessive forms in book titles ("Ender's") match
 // the corresponding release names which typically omit them ("Enders").
+// German umlauts are transliterated to their ASCII equivalents (ä→ae etc.) to
+// match the convention used by German-language NZB indexers like Scenenzbs.
 func NormalizeRelease(s string) string {
 	s = strings.ToLower(s)
 	s = strings.ReplaceAll(s, "'", "") // "ender's" → "enders", "hitchhiker's" → "hitchhikers"
+	s = transliterateUmlauts(s)
 	s = separatorRe.ReplaceAllString(s, " ")
 	s = multiSpaceRe.ReplaceAllString(s, " ")
 	return strings.TrimSpace(s)
@@ -56,27 +73,43 @@ func StripArticles(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// umlautFlexRegex makes "ae", "oe", "ue" in an already-QuoteMeta'd keyword
+// flexible by appending "?" to the second letter: "ae"→"ae?", "oe"→"oe?",
+// "ue"→"ue?". This allows a single regex to match both the German
+// umlaut-expanded form (ä→ae, as produced by transliterateUmlauts) and the
+// compact form (ä→a) used by some NZB uploaders. Must be called AFTER
+// regexp.QuoteMeta so the inserted "?" acts as a regex quantifier.
+func umlautFlexRegex(kw string) string {
+	kw = strings.ReplaceAll(kw, "ae", "ae?")
+	kw = strings.ReplaceAll(kw, "oe", "oe?")
+	kw = strings.ReplaceAll(kw, "ue", "ue?")
+	return kw
+}
+
 // WordBoundaryRegex returns a cached case-insensitive \bkw\b regex for the
-// given keyword. Safe for concurrent use.
+// given keyword. Safe for concurrent use. German umlaut expansions (ae/oe/ue)
+// produced by transliterateUmlauts are treated as flexible so the regex
+// matches both the expanded (ae) and compact (a) NZB-name conventions.
 func WordBoundaryRegex(kw string) *regexp.Regexp {
 	if v, ok := regexCache.Load(kw); ok {
 		return v.(*regexp.Regexp)
 	}
-	re := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(kw) + `\b`)
+	re := regexp.MustCompile(`(?i)\b` + umlautFlexRegex(regexp.QuoteMeta(kw)) + `\b`)
 	regexCache.Store(kw, re)
 	return re
 }
 
 // ContainsPhrase returns true if all words in phrase appear in haystack in the
 // given order, separated only by non-word characters. haystack must already be
-// normalized (lowercased, separators→space).
+// normalized (lowercased, separators→space). German umlaut expansions in phrase
+// words are matched flexibly (ae/oe/ue optionally contracts to a/o/u).
 func ContainsPhrase(haystack string, phrase []string) bool {
 	if len(phrase) == 0 {
 		return true
 	}
 	parts := make([]string, len(phrase))
 	for i, w := range phrase {
-		parts[i] = regexp.QuoteMeta(strings.ToLower(w))
+		parts[i] = umlautFlexRegex(regexp.QuoteMeta(strings.ToLower(w)))
 	}
 	pattern := `(?i)\b` + strings.Join(parts, `\W+`) + `\b`
 	re, _ := regexCache.LoadOrStore(pattern, regexp.MustCompile(pattern))
