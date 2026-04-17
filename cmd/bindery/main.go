@@ -165,11 +165,19 @@ func main() {
 		cfg.DownloadPathRemap,
 	)
 
-	calibreClient := calibre.New(api.LoadCalibreConfig(settingsRepo))
 	modeResolver := func() calibre.Mode { return api.LoadCalibreMode(settingsRepo) }
-	importScanner.WithCalibre(modeResolver, calibreClient)
-	if api.LoadCalibreMode(settingsRepo) == calibre.ModeCalibredb {
-		slog.Info("calibre integration enabled", "mode", "calibredb")
+	calibreCfg := api.LoadCalibreConfig(settingsRepo)
+	currentMode := api.LoadCalibreMode(settingsRepo)
+	if currentMode == calibre.ModePlugin {
+		pluginClient := calibre.NewPluginClient(calibreCfg.PluginURL, calibreCfg.PluginAPIKey)
+		importScanner.WithCalibre(modeResolver, pluginClient)
+		slog.Info("calibre integration enabled", "mode", "plugin", "url", calibreCfg.PluginURL)
+	} else {
+		calibreClient := calibre.New(calibreCfg)
+		importScanner.WithCalibre(modeResolver, calibreClient)
+		if currentMode == calibre.ModeCalibredb {
+			slog.Info("calibre integration enabled", "mode", "calibredb")
+		}
 	}
 
 	// Library import (read side). Importer holds live progress state in

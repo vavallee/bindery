@@ -3,6 +3,8 @@ package importer
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/calibre"
@@ -167,6 +169,29 @@ func TestPushToCalibre_ErrDisabledSilent(t *testing.T) {
 	got, _ := bookRepo.GetByID(ctx, book.ID)
 	if got.CalibreID != nil {
 		t.Errorf("calibre_id must stay nil on ErrDisabled, got %v", got.CalibreID)
+	}
+}
+
+// TestPushToCalibre_ModePluginHappyPath: mode=plugin routes through the
+// plugin HTTP client. A fake server returning {"id":5678} must produce a
+// persisted calibre_id of 5678.
+func TestPushToCalibre_ModePluginHappyPath(t *testing.T) {
+	s, bookRepo, book, author, ctx := importScannerFixture(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":5678,"duplicate":false}`))
+	}))
+	defer srv.Close()
+
+	client := calibre.NewPluginClient(srv.URL, "test-key")
+	s.WithCalibre(modeFn(calibre.ModePlugin), client)
+
+	s.pushToCalibre(ctx, book, author, "/library/book.epub")
+
+	got, _ := bookRepo.GetByID(ctx, book.ID)
+	if got.CalibreID == nil || *got.CalibreID != 5678 {
+		t.Errorf("calibre_id = %v, want 5678", got.CalibreID)
 	}
 }
 

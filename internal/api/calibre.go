@@ -19,6 +19,8 @@ const (
 	SettingCalibreBinaryPath    = "calibre.binary_path"
 	SettingCalibreMode          = "calibre.mode"
 	SettingCalibreSyncOnStartup = "calibre.sync_on_startup"
+	SettingCalibrePluginURL     = "calibre.plugin_url"
+	SettingCalibrePluginAPIKey  = "calibre.plugin_api_key"
 )
 
 // CalibreHandler exposes the "test connection" endpoint for the Calibre
@@ -46,7 +48,7 @@ func LoadCalibreConfig(settings *db.SettingsRepo) calibre.Config {
 		return s.Value
 	}
 	mode := LoadCalibreMode(settings)
-	enabled := mode == calibre.ModeCalibredb
+	enabled := mode == calibre.ModeCalibredb || mode == calibre.ModePlugin
 	// Back-compat: if the operator still has the v0.8.0 `calibre.enabled`
 	// boolean set to true but the migration hasn't run yet (e.g. someone
 	// restored an old DB), honour it so the first import doesn't silently
@@ -59,6 +61,8 @@ func LoadCalibreConfig(settings *db.SettingsRepo) calibre.Config {
 		LibraryPath:   get(SettingCalibreLibraryPath),
 		BinaryPath:    get(SettingCalibreBinaryPath),
 		SyncOnStartup: strings.EqualFold(get(SettingCalibreSyncOnStartup), "true"),
+		PluginURL:     get(SettingCalibrePluginURL),
+		PluginAPIKey:  get(SettingCalibrePluginAPIKey),
 	}
 }
 
@@ -117,6 +121,27 @@ func (h *CalibreHandler) Test(w http.ResponseWriter, r *http.Request) {
 	// to save calibre.enabled=true before clicking Test would be a
 	// surprising extra step.
 	cfg.Enabled = true
+
+	if LoadCalibreMode(h.settings) == calibre.ModePlugin {
+		if cfg.PluginURL == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "plugin_url is not configured"})
+			return
+		}
+		pc := calibre.NewPluginClient(cfg.PluginURL, cfg.PluginAPIKey)
+		version, err := pc.Health(r.Context())
+		if err != nil {
+			slog.Warn("calibre test failed: plugin health", "plugin_url", cfg.PluginURL, "error", err)
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{
+			"ok":      "true",
+			"version": version,
+			"message": "plugin reachable",
+		})
+		return
+	}
+
 	if err := validateCalibreConfig(cfg); err != nil {
 		slog.Warn("calibre test failed: config invalid", "error", err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})

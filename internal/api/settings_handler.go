@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 
 	"github.com/go-chi/chi/v5"
@@ -136,7 +137,21 @@ func validateSettingValue(key, value string) error {
 			return nil
 		}
 		if !calibre.Mode(value).Valid() {
-			return fmt.Errorf("calibre.mode %q is not one of: off, calibredb", value)
+			return fmt.Errorf("calibre.mode %q is not one of: off, calibredb, plugin", value)
+		}
+	case SettingCalibrePluginURL:
+		if value == "" {
+			return nil
+		}
+		u, err := url.Parse(value)
+		if err != nil {
+			return fmt.Errorf("plugin_url %q: %w", value, err)
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return fmt.Errorf("plugin_url %q must use http or https scheme", value)
+		}
+		if u.Host == "" {
+			return fmt.Errorf("plugin_url %q is missing a host", value)
 		}
 	}
 	return nil

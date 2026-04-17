@@ -128,16 +128,18 @@ func (s *Scanner) pushToCalibre(ctx context.Context, book *models.Book, _ *model
 	if s.calibreMode == nil || book == nil {
 		return
 	}
-	if s.calibreMode() == calibre.ModeCalibredb {
-		s.pushCalibredb(ctx, book, path)
+	mode := s.calibreMode()
+	if mode == calibre.ModeCalibredb || mode == calibre.ModePlugin {
+		s.pushCalibreAdd(ctx, book, path, mode)
 	}
 }
 
-// pushCalibredb is the Path A flow — shell out to calibredb add. Kept as a
-// small helper so the mode-dispatch in pushToCalibre reads linearly.
-func (s *Scanner) pushCalibredb(ctx context.Context, book *models.Book, path string) {
+// pushCalibreAdd invokes the configured adder (calibredb CLI or plugin HTTP
+// client) and persists the resulting calibre_id. Failures are best-effort —
+// logged and swallowed so Bindery's own import stays good.
+func (s *Scanner) pushCalibreAdd(ctx context.Context, book *models.Book, path string, mode calibre.Mode) {
 	if s.calibreAdder == nil {
-		slog.Debug("calibre: mode=calibredb but adder is nil, skipping", "bookId", book.ID)
+		slog.Debug("calibre: adder is nil, skipping", "mode", mode, "bookId", book.ID)
 		return
 	}
 	id, err := s.calibreAdder.Add(ctx, path)
@@ -145,14 +147,14 @@ func (s *Scanner) pushCalibredb(ctx context.Context, book *models.Book, path str
 		if errors.Is(err, calibre.ErrDisabled) {
 			return
 		}
-		slog.Warn("calibre: add failed, continuing", "bookId", book.ID, "path", path, "error", err)
+		slog.Warn("calibre: add failed, continuing", "mode", mode, "bookId", book.ID, "path", path, "error", err)
 		return
 	}
 	if err := s.books.SetCalibreID(ctx, book.ID, id); err != nil {
 		slog.Warn("calibre: persist calibre_id failed", "bookId", book.ID, "calibreId", id, "error", err)
 		return
 	}
-	slog.Info("calibre: book mirrored", "mode", "calibredb", "bookId", book.ID, "calibreId", id, "path", path)
+	slog.Info("calibre: book mirrored", "mode", mode, "bookId", book.ID, "calibreId", id, "path", path)
 }
 
 // CheckDownloads polls SABnzbd for status changes and updates the local download records.
