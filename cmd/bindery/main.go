@@ -165,23 +165,11 @@ func main() {
 		cfg.DownloadPathRemap,
 	)
 
-	// Calibre clients: one per integration mode.
-	//   - calibredb client (Path A, v0.8.0) shells out to `calibredb add`
-	//   - drop-folder writer (Path B, v0.8.1) copies files into Calibre's
-	//     watched directory and polls metadata.db for the returned book id
-	// The mode resolver reads the setting on every import so the operator
-	// can switch modes in the UI without restarting. Library_path and the
-	// binary still require a restart to take effect — same pattern as the
-	// rest of Bindery.
 	calibreClient := calibre.New(api.LoadCalibreConfig(settingsRepo))
-	dropWriter := calibre.NewDropFolderWriter(api.LoadDropFolderConfig(settingsRepo))
 	modeResolver := func() calibre.Mode { return api.LoadCalibreMode(settingsRepo) }
-	importScanner.WithCalibre(modeResolver, calibreClient, dropWriter)
-	switch api.LoadCalibreMode(settingsRepo) {
-	case calibre.ModeCalibredb:
+	importScanner.WithCalibre(modeResolver, calibreClient)
+	if api.LoadCalibreMode(settingsRepo) == calibre.ModeCalibredb {
 		slog.Info("calibre integration enabled", "mode", "calibredb")
-	case calibre.ModeDropFolder:
-		slog.Info("calibre integration enabled", "mode", "drop_folder")
 	}
 
 	// Library import (read side). Importer holds live progress state in
@@ -473,7 +461,6 @@ func main() {
 		// Calibre integration — settings live under /setting/calibre.*,
 		// this endpoint just validates + probes the configured install.
 		r.Post("/calibre/test", calibreHandler.Test)
-		r.Post("/calibre/test-paths", calibreHandler.TestPaths)
 
 		// Calibre library import (read side). Start is fire-and-forget;
 		// the UI polls Status while it runs.

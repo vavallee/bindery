@@ -136,32 +136,8 @@ func validateSettingValue(key, value string) error {
 			return nil
 		}
 		if !calibre.Mode(value).Valid() {
-			return fmt.Errorf("calibre.mode %q is not one of off, calibredb, drop_folder", value)
+			return fmt.Errorf("calibre.mode %q is not one of: off, calibredb", value)
 		}
-	case SettingCalibreDropFolderPath:
-		// Empty is allowed: it's how the user disables the drop-folder
-		// target without flipping the mode. When set, require an existing
-		// writable directory so we fail fast in settings rather than in
-		// the middle of an import goroutine.
-		if value == "" {
-			return nil
-		}
-		info, err := os.Stat(value)
-		if err != nil {
-			return fmt.Errorf("drop_folder_path %q: %w", value, err)
-		}
-		if !info.IsDir() {
-			return fmt.Errorf("drop_folder_path %q is not a directory", value)
-		}
-		// Probe write access: creating a temp file exercises exactly the
-		// EACCES / EROFS surface the importer would hit later.
-		probe, err := os.CreateTemp(value, ".bindery-drop-probe-*")
-		if err != nil {
-			return fmt.Errorf("drop_folder_path %q is not writable: %w", value, err)
-		}
-		name := probe.Name()
-		_ = probe.Close()
-		_ = os.Remove(name)
 	}
 	return nil
 }

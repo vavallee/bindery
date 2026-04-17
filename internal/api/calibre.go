@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/vavallee/bindery/internal/calibre"
@@ -15,12 +14,11 @@ import (
 // Calibre settings keys. Centralised so the handler and main.go agree on
 // the exact names and nobody drifts to "calibre_enabled" vs "calibre.enabled".
 const (
-	SettingCalibreEnabled        = "calibre.enabled"
-	SettingCalibreLibraryPath    = "calibre.library_path"
-	SettingCalibreBinaryPath     = "calibre.binary_path"
-	SettingCalibreMode           = "calibre.mode"
-	SettingCalibreDropFolderPath = "calibre.drop_folder_path"
-	SettingCalibreSyncOnStartup  = "calibre.sync_on_startup"
+	SettingCalibreEnabled       = "calibre.enabled"
+	SettingCalibreLibraryPath   = "calibre.library_path"
+	SettingCalibreBinaryPath    = "calibre.binary_path"
+	SettingCalibreMode          = "calibre.mode"
+	SettingCalibreSyncOnStartup = "calibre.sync_on_startup"
 )
 
 // CalibreHandler exposes the "test connection" endpoint for the Calibre
@@ -38,13 +36,6 @@ func NewCalibreHandler(settings *db.SettingsRepo) *CalibreHandler {
 // LoadCalibreConfig materialises a calibre.Config from the settings table.
 // Exported so main.go can build the importer's Calibre client at boot and
 // refresh it on each scheduler tick.
-//
-// Enabled is derived from the canonical `calibre.mode` key rather than the
-// legacy `calibre.enabled` boolean: the Client is "enabled" for the
-// purpose of Test / Add when mode is anything other than ModeOff. The
-// mode selector itself is passed separately to the scanner via
-// LoadCalibreMode / LoadDropFolderConfig so the scanner can dispatch
-// between the calibredb and drop-folder paths per import.
 func LoadCalibreConfig(settings *db.SettingsRepo) calibre.Config {
 	ctx := contextBackground()
 	get := func(key string) string {
@@ -60,7 +51,7 @@ func LoadCalibreConfig(settings *db.SettingsRepo) calibre.Config {
 	// boolean set to true but the migration hasn't run yet (e.g. someone
 	// restored an old DB), honour it so the first import doesn't silently
 	// downgrade to off.
-	if !enabled && strings.EqualFold(get(SettingCalibreEnabled), "true") && mode != calibre.ModeDropFolder {
+	if !enabled && strings.EqualFold(get(SettingCalibreEnabled), "true") {
 		enabled = true
 	}
 	return calibre.Config{
@@ -80,24 +71,6 @@ func LoadCalibreMode(settings *db.SettingsRepo) calibre.Mode {
 		return calibre.ModeOff
 	}
 	return calibre.ParseMode(s.Value)
-}
-
-// LoadDropFolderConfig materialises the drop-folder-mode settings subset.
-// LibraryPath is shared with calibre.Config because the drop-folder poller
-// reads metadata.db at the same location.
-func LoadDropFolderConfig(settings *db.SettingsRepo) calibre.DropFolderConfig {
-	ctx := contextBackground()
-	get := func(key string) string {
-		s, _ := settings.Get(ctx, key)
-		if s == nil {
-			return ""
-		}
-		return s.Value
-	}
-	return calibre.DropFolderConfig{
-		DropFolderPath: get(SettingCalibreDropFolderPath),
-		LibraryPath:    get(SettingCalibreLibraryPath),
-	}
 }
 
 // validateCalibreConfig enforces the minimum preconditions for a usable
@@ -163,36 +136,3 @@ func (h *CalibreHandler) Test(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// TestPaths validates the drop-folder mode paths: checks that metadata.db is
-// readable at library_path and that drop_folder_path is writable.
-func (h *CalibreHandler) TestPaths(w http.ResponseWriter, r *http.Request) {
-	cfg := LoadDropFolderConfig(h.settings)
-	if cfg.LibraryPath == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "library_path is not set"})
-		return
-	}
-	metaDB := filepath.Join(cfg.LibraryPath, "metadata.db")
-	if _, err := os.Stat(metaDB); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": fmt.Sprintf("metadata.db not found at %s: %v", metaDB, err),
-		})
-		return
-	}
-	if cfg.DropFolderPath == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "drop_folder_path is not set"})
-		return
-	}
-	tmp, err := os.CreateTemp(cfg.DropFolderPath, ".bindery-test-*")
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": fmt.Sprintf("drop folder not writable: %v", err),
-		})
-		return
-	}
-	tmp.Close()
-	os.Remove(tmp.Name())
-	writeJSON(w, http.StatusOK, map[string]string{
-		"ok":      "true",
-		"message": "library path readable · drop folder writable",
-	})
-}

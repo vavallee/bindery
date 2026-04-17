@@ -10,8 +10,9 @@ func TestParseMode(t *testing.T) {
 		{"calibredb", ModeCalibredb},
 		{"CALIBREDB", ModeCalibredb},
 		{"  calibredb  ", ModeCalibredb},
-		{"drop_folder", ModeDropFolder},
-		{"Drop_Folder", ModeDropFolder},
+		// drop_folder was removed in v0.17.0; legacy values must fall through to off.
+		{"drop_folder", ModeOff},
+		{"Drop_Folder", ModeOff},
 		{"off", ModeOff},
 		{"", ModeOff},
 		{"something-else", ModeOff},
@@ -31,12 +32,12 @@ func TestParseMode(t *testing.T) {
 }
 
 func TestMode_Valid(t *testing.T) {
-	for _, m := range []Mode{ModeOff, ModeCalibredb, ModeDropFolder} {
+	for _, m := range []Mode{ModeOff, ModeCalibredb} {
 		if !m.Valid() {
 			t.Errorf("%q should be Valid", m)
 		}
 	}
-	for _, m := range []Mode{"", "nope", "true", "CALIBREDB"} {
+	for _, m := range []Mode{"", "nope", "true", "CALIBREDB", "drop_folder"} {
 		if m.Valid() {
 			t.Errorf("%q should not be Valid (canonical casing only)", m)
 		}
@@ -44,7 +45,7 @@ func TestMode_Valid(t *testing.T) {
 }
 
 func TestMode_String(t *testing.T) {
-	if got := ModeDropFolder.String(); got != "drop_folder" {
-		t.Errorf("String() = %q, want %q", got, "drop_folder")
+	if got := ModeCalibredb.String(); got != "calibredb" {
+		t.Errorf("String() = %q, want %q", got, "calibredb")
 	}
 }

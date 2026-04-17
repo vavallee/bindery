@@ -1495,11 +1495,7 @@ function CalibreTab() {
 }
 
 // CalibreSection renders the calibre.* settings fields plus a Test button
-// that hits /calibre/test. The Mode radio picks between two integration
-// flows: `calibredb` shells out to the CLI (requires Calibre on the host),
-// `drop_folder` drops files into a Calibre-watched directory (decouples
-// Bindery from where Calibre runs). The fields for each path are only
-// shown when their mode is selected so the form stays unambiguous.
+// that hits /calibre/test.
 function CalibreSection({
   settings,
   setSettings,
@@ -1513,8 +1509,6 @@ function CalibreSection({
 }) {
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null)
-  const [testingPaths, setTestingPaths] = useState(false)
-  const [testPathsResult, setTestPathsResult] = useState<{ ok: boolean; msg: string } | null>(null)
   const [saveError, setSaveError] = useState<{ key: string; msg: string } | null>(null)
   const [importProgress, setImportProgress] = useState<CalibreImportProgress | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
@@ -1530,8 +1524,8 @@ function CalibreSection({
   // setup is visible in the UI.
   const rawMode = settings['calibre.mode'] ?? ''
   const legacyEnabled = (settings['calibre.enabled'] ?? 'false').toLowerCase() === 'true'
-  const mode: 'off' | 'calibredb' | 'drop_folder' =
-    rawMode === 'calibredb' || rawMode === 'drop_folder' || rawMode === 'off'
+  const mode: 'off' | 'calibredb' =
+    rawMode === 'calibredb' || rawMode === 'off'
       ? rawMode
       : legacyEnabled
       ? 'calibredb'
@@ -1578,23 +1572,8 @@ function CalibreSection({
     }
   }
 
-  const runTestPaths = async () => {
-    setTestingPaths(true)
-    setTestPathsResult(null)
-    try {
-      const r = await api.calibreTestPaths()
-      setTestPathsResult({ ok: true, msg: r.message })
-    } catch (err) {
-      setTestPathsResult({ ok: false, msg: err instanceof Error ? err.message : 'Test failed' })
-    } finally {
-      setTestingPaths(false)
-    }
-  }
-
-  const setMode = async (next: 'off' | 'calibredb' | 'drop_folder') => {
+  const setMode = async (next: 'off' | 'calibredb') => {
     setSettings(s => ({ ...s, 'calibre.mode': next }))
-    // Persist immediately on change — matches the indexer/client toggles
-    // that don't require a separate Save click.
     await api.setSetting('calibre.mode', next).catch(console.error)
   }
 
@@ -1603,18 +1582,17 @@ function CalibreSection({
       <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">Calibre</h3>
       <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-4">
         <p className="text-xs text-slate-600 dark:text-zinc-500 -mt-1">
-          Mirror imported books into a Calibre library. Pick the mode that fits your deployment — {' '}
-          <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">calibredb</code>{' '}
-          when Calibre runs alongside Bindery, or drop-folder when Calibre runs elsewhere and watches a directory.
+          Mirror imported books into a Calibre library via{' '}
+          <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">calibredb add</code>.
+          Requires Calibre and Bindery to share the library directory (e.g. via a volume mount).
         </p>
 
         <div>
           <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-2">Mode</label>
           <div className="space-y-1.5">
             {([
-              { v: 'off',         label: 'Off',            desc: 'No Calibre call on import.' },
-              { v: 'calibredb',   label: 'calibredb CLI',  desc: 'Shell out to calibredb add --with-library. Requires calibredb reachable from the Bindery process.' },
-              { v: 'drop_folder', label: 'Drop folder',    desc: 'Write the file into Calibre\u2019s watched folder, then poll metadata.db for the assigned book id.' },
+              { v: 'off',       label: 'Off',           desc: 'No Calibre call on import.' },
+              { v: 'calibredb', label: 'calibredb CLI', desc: 'Shell out to calibredb add --with-library. Requires calibredb reachable from the Bindery process.' },
             ] as const).map(opt => (
               <label key={opt.v} className="flex items-start gap-2 cursor-pointer">
                 <input
@@ -1634,12 +1612,11 @@ function CalibreSection({
           </div>
         </div>
 
-        {mode === 'drop_folder' && (
+        {mode === 'calibredb' && (
           <div>
             <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Library path</label>
             <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
-              Directory containing <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">metadata.db</code>.
-              Read directly to resolve the assigned Calibre book id after drop-folder ingest.
+              Directory containing <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">metadata.db</code>. Passed to <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">calibredb add --with-library</code>.
             </p>
             <div className="flex gap-2">
               <input
@@ -1687,33 +1664,6 @@ function CalibreSection({
           </div>
         )}
 
-        {mode === 'drop_folder' && (
-          <div>
-            <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Drop folder path</label>
-            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
-              {'Directory Calibre\u2019s '}<em>Add books to library from folders</em>{' feature watches. Bindery will copy imported files into '}<code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">&lt;folder&gt;/&lt;Author&gt;/&lt;Title&gt;.ext</code>{' and wait for Calibre to ingest them.'}
-            </p>
-            <div className="flex gap-2">
-              <input
-                value={settings['calibre.drop_folder_path'] ?? ''}
-                onChange={e => setSettings(s => ({ ...s, 'calibre.drop_folder_path': e.target.value }))}
-                placeholder="/data/calibre-watch"
-                className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
-              />
-              <button
-                onClick={() => saveSettingWithError('calibre.drop_folder_path')}
-                disabled={saving === 'calibre.drop_folder_path'}
-                className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium disabled:opacity-50"
-              >
-                {saving === 'calibre.drop_folder_path' ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-            {saveError?.key === 'calibre.drop_folder_path' && (
-              <p className="text-xs text-red-600 dark:text-red-400 mt-1">{saveError.msg}</p>
-            )}
-          </div>
-        )}
-
         {mode === 'calibredb' && (
           <div className="flex items-center justify-between pt-1 border-t border-slate-200 dark:border-zinc-800">
             <div className="text-xs">
@@ -1729,25 +1679,6 @@ function CalibreSection({
               className="px-4 py-2 bg-slate-600 hover:bg-slate-500 rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
             >
               {testing ? 'Testing…' : 'Test connection'}
-            </button>
-          </div>
-        )}
-
-        {mode === 'drop_folder' && (
-          <div className="flex items-center justify-between pt-1 border-t border-slate-200 dark:border-zinc-800">
-            <div className="text-xs">
-              {testPathsResult && (
-                <span className={testPathsResult.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>
-                  {testPathsResult.msg}
-                </span>
-              )}
-            </div>
-            <button
-              onClick={runTestPaths}
-              disabled={testingPaths}
-              className="px-4 py-2 bg-slate-600 hover:bg-slate-500 rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
-            >
-              {testingPaths ? 'Testing…' : 'Test paths'}
             </button>
           </div>
         )}
