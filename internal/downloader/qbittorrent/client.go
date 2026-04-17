@@ -144,24 +144,37 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 		return infoHash, nil
 	}
 
-	after, err := c.GetTorrents(ctx, category)
-	if err != nil {
-		return "", fmt.Errorf("add torrent accepted but hash lookup failed: %w", err)
-	}
-
-	var newest *Torrent
-	for i := range after {
-		t := &after[i]
-		h := strings.ToLower(t.Hash)
-		if _, seen := beforeSet[h]; seen {
-			continue
+	// Poll until the new torrent appears — qBittorrent must fetch and parse
+	// the .torrent file before the hash is visible, which can take a second
+	// or two for remote URLs (e.g. Prowlarr Torznab redirects).
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		after, err := c.GetTorrents(ctx, category)
+		if err != nil {
+			return "", fmt.Errorf("add torrent accepted but hash lookup failed: %w", err)
 		}
-		if newest == nil || t.AddedOn > newest.AddedOn {
-			newest = t
+		var newest *Torrent
+		for i := range after {
+			t := &after[i]
+			h := strings.ToLower(t.Hash)
+			if _, seen := beforeSet[h]; seen {
+				continue
+			}
+			if newest == nil || t.AddedOn > newest.AddedOn {
+				newest = t
+			}
 		}
-	}
-	if newest != nil {
-		return strings.ToLower(newest.Hash), nil
+		if newest != nil {
+			return strings.ToLower(newest.Hash), nil
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
 	return "", fmt.Errorf("add torrent accepted but hash could not be determined")
 }
