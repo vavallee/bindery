@@ -106,10 +106,10 @@
 - **Naming tokens** — `{Author}`, `{SortAuthor}`, `{Title}`, `{Year}`, `{ext}` with sanitized path components
 - **Cross-filesystem moves** — Atomic rename when possible, copy+verify+delete for NFS/separate volumes
 - **History** — Every grab, import, and failure recorded with full detail (shown inline on History page)
-- **Calibre library integration** — Three modes, all configurable under **Settings → General → Calibre**:
+- **Calibre library integration** — Three modes, all configurable under **Settings → Calibre**:
   - **Off** — no Calibre interaction (default).
   - **calibredb CLI** — every successful import calls `calibredb add --with-library <path>`; the returned Calibre book id is persisted on the Bindery book row.
-  - **Drop folder** — Bindery copies finished files into a configured watch directory; Calibre auto-adds them (compatible with [Calibre-Web-Automated](https://github.com/crocodilestick/Calibre-Web-Automated)).
+  - **Plugin bridge** — POSTs the imported file path to the [Bindery Bridge plugin](https://github.com/vavallee/bindery-plugins) running an HTTP server inside a separate Calibre container; no shared binary or sidecar required. See [docs/CALIBRE-PLUGIN.md](docs/CALIBRE-PLUGIN.md) for setup.
   - **Library import** — read an existing Calibre library's `metadata.db` directly and ingest it as Bindery's catalogue (idempotent; trigger from the Settings page or set `calibre.sync_on_startup`). Toggling the mode takes effect without a restart.
 
 ### Metadata
@@ -305,6 +305,7 @@ Otherwise the server responds with `401`. The API key lives in **Settings → Ge
 |-------|-------|
 | **Quickstart** — first author to first grab in 10 minutes | [Wiki](https://github.com/vavallee/bindery/wiki/Quickstart) |
 | **Deployment** — Docker, Compose, k8s/Helm, binary, UID/GID, upgrades | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
+| **Calibre plugin bridge** — cross-container Calibre integration via the Bindery Bridge plugin | [docs/CALIBRE-PLUGIN.md](docs/CALIBRE-PLUGIN.md) |
 | **Roadmap** — planned work, scope notes, and explicitly-out-of-scope items (Z-Library, OpenBooks, etc.) | [docs/ROADMAP.md](docs/ROADMAP.md) |
 | **Contributing & CI checks** — dev setup, full quality/security matrix, local check suite | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | **Changelog** — release notes | [CHANGELOG.md](CHANGELOG.md) |
