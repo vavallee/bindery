@@ -57,10 +57,13 @@ func TestImageProxy_CacheMiss(t *testing.T) {
 		t.Errorf("body = %q, want FAKEJPEG", body)
 	}
 
-	// Cache directory should now contain the key file and .ct sidecar.
-	entries, _ := os.ReadDir(filepath.Join(dir, "image-cache"))
+	// Cache directory should now contain the key file and .ct sidecar under a shard.
+	sum := sha256.Sum256([]byte(upstream.URL + "/cover.jpg"))
+	key := fmt.Sprintf("%x", sum)
+	shardDir := filepath.Join(dir, "image-cache", key[:2])
+	entries, _ := os.ReadDir(shardDir)
 	if len(entries) < 2 {
-		t.Errorf("expected at least 2 cache files (body + .ct), got %d", len(entries))
+		t.Errorf("expected at least 2 cache files (body + .ct) in %s, got %d", shardDir, len(entries))
 	}
 }
 
@@ -186,7 +189,11 @@ func TestImageProxy_CacheHitMissingCT(t *testing.T) {
 	const rawURL = "https://example.com/noct.jpg"
 	sum := sha256.Sum256([]byte(rawURL))
 	key := fmt.Sprintf("%x", sum)
-	if err := os.WriteFile(filepath.Join(cacheDir, key), []byte("CACHEDIMG"), 0o640); err != nil {
+	shardDir := filepath.Join(cacheDir, key[:2])
+	if err := os.MkdirAll(shardDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(shardDir, key), []byte("CACHEDIMG"), 0o640); err != nil {
 		t.Fatal(err)
 	}
 

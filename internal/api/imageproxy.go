@@ -119,7 +119,7 @@ func (h *ImageProxyHandler) Serve(w http.ResponseWriter, r *http.Request) {
 
 	// Write to cache (best-effort — a write failure is not fatal).
 	// Atomic: write to .tmp, then rename so readers never see partial files.
-	if mkErr := os.MkdirAll(filepath.Dir(imgFile), imageDirMode); mkErr == nil {
+	if mkErr := os.MkdirAll(filepath.Dir(imgFile), imageDirMode); mkErr == nil { // #nosec G301 G304 -- path derived from sha256(url), not user input
 		tmp := imgFile + ".tmp"
 		if err := os.WriteFile(tmp, body, imageCacheMode); err == nil { // #nosec
 			_ = os.Rename(tmp, imgFile) // #nosec
