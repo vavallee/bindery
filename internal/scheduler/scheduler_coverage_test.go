@@ -236,7 +236,7 @@ func TestCheckStalledDownloads_NotYetOldEnough(t *testing.T) {
 	dl := &models.Download{
 		GUID:     "recent-guid",
 		Title:    "Recent",
-		Status:   models.StateGrabbed,
+		Status:   models.DownloadStatusQueued,
 		Protocol: "torrent",
 	}
 	if err := downloads.Create(ctx, dl); err != nil {
@@ -285,13 +285,13 @@ func TestCheckStalledDownloads_OldEnough_ReachesClientLookup(t *testing.T) {
 		GUID:             "old-guid",
 		DownloadClientID: &client.ID,
 		Title:            "Old Download",
-		Status:           models.StateGrabbed,
+		Status:           models.DownloadStatusDownloading,
 		Protocol:         "torrent",
 	}
 	if err := downloads.Create(ctx, dl); err != nil {
 		t.Fatalf("dl create: %v", err)
 	}
-	if err := downloads.UpdateStatus(ctx, dl.ID, models.StateDownloading); err != nil {
+	if err := downloads.UpdateStatus(ctx, dl.ID, models.DownloadStatusDownloading); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 

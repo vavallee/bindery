@@ -228,7 +228,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		}
 	}
 
-	lang := ""
+	lang := "en"
 	if s.settings != nil {
 		if langSetting, err := s.settings.Get(ctx, "search.preferredLanguage"); err != nil {
 			slog.Warn("failed to load preferred search language", "error", err)
@@ -309,7 +309,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		Title:            best.Title,
 		NZBURL:           best.NZBURL,
 		Size:             best.Size,
-		Status:           models.StateGrabbed,
+		Status:           models.DownloadStatusQueued,
 		Protocol:         best.Protocol,
 		Quality:          indexer.ParseRelease(best.Title).Format,
 	}
@@ -338,8 +338,8 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 			}
 		}
 	}
-	if err := s.downloads.UpdateStatus(ctx, dl.ID, models.StateDownloading); err != nil {
-		slog.Warn("failed to update download status", "download_id", dl.ID, "status", models.StateDownloading, "error", err)
+	if err := s.downloads.UpdateStatus(ctx, dl.ID, models.DownloadStatusDownloading); err != nil {
+		slog.Warn("failed to update download status", "download_id", dl.ID, "status", models.DownloadStatusDownloading, "error", err)
 	}
 	slog.Info("sent to downloader", "client", client.Type, "title", best.Title)
 }
@@ -460,7 +460,7 @@ func (s *Scheduler) checkStalledDownloads(ctx context.Context) {
 		}
 	}
 
-	active, err := s.downloads.ListByStatus(ctx, models.StateDownloading)
+	active, err := s.downloads.ListByStatus(ctx, models.DownloadStatusDownloading)
 	if err != nil || len(active) == 0 {
 		return
 	}
