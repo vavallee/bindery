@@ -28,11 +28,27 @@ export default function QueuePage() {
   }
 
   const statusColors: Record<string, string> = {
-    queued: 'text-slate-600 dark:text-zinc-400',
+    grabbed: 'text-slate-600 dark:text-zinc-400',
     downloading: 'text-blue-400',
-    completed: 'text-emerald-400',
-    failed: 'text-red-400',
+    completed: 'text-sky-400',
+    importPending: 'text-yellow-400',
+    importing: 'text-blue-400',
     imported: 'text-emerald-400',
+    failed: 'text-red-400',
+    importFailed: 'text-orange-400',
+    importBlocked: 'text-red-500',
+  }
+
+  const statusLabels: Record<string, string> = {
+    grabbed: 'Grabbed',
+    downloading: 'Downloading',
+    completed: 'Completed',
+    importPending: 'Import Pending',
+    importing: 'Importing',
+    imported: 'Imported',
+    failed: 'Failed',
+    importFailed: 'Import Failed',
+    importBlocked: 'Import Blocked',
   }
 
   const formatSize = (bytes: number) => {
@@ -59,7 +75,7 @@ export default function QueuePage() {
                 <h3 className="font-medium text-sm truncate">{item.title}</h3>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs">
                   <span className={statusColors[item.status] || 'text-slate-600 dark:text-zinc-400'}>
-                    {item.status}
+                    {statusLabels[item.status] ?? item.status}
                   </span>
                   <span className="text-slate-600 dark:text-zinc-500">{formatSize(item.size)}</span>
                   {item.percentage && (
@@ -72,6 +88,11 @@ export default function QueuePage() {
                     <span className="text-slate-500 dark:text-zinc-600">{item.protocol}</span>
                   )}
                 </div>
+                {item.status === 'importBlocked' && !item.errorMessage && (
+                  <div className="mt-1 text-xs text-red-500 bg-red-500/10 rounded px-2 py-1">
+                    Import blocked — manual intervention required (check library path permissions)
+                  </div>
+                )}
                 {item.errorMessage && (
                   <div className="mt-1 text-xs text-red-400 bg-red-400/10 rounded px-2 py-1">
                     {item.errorMessage}

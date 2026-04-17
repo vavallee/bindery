@@ -740,7 +740,7 @@ func TestDownloadRepoCRUD(t *testing.T) {
 		Title:    "Some.Book.epub",
 		NZBURL:   "https://example.com/dl.nzb",
 		Size:     1024,
-		Status:   models.DownloadStatusQueued,
+		Status:   models.StateGrabbed,
 		Protocol: "usenet",
 	}
 	if err := repo.Create(ctx, dl); err != nil {
@@ -775,21 +775,28 @@ func TestDownloadRepoCRUD(t *testing.T) {
 	}
 
 	// ListByStatus
-	queued, _ := repo.ListByStatus(ctx, models.DownloadStatusQueued)
+	queued, _ := repo.ListByStatus(ctx, models.StateGrabbed)
 	if len(queued) != 1 {
 		t.Errorf("expected 1 queued, got %d", len(queued))
 	}
 
-	// UpdateStatus — each branch
-	for _, status := range []string{
-		models.DownloadStatusDownloading,
-		models.DownloadStatusCompleted,
-		models.DownloadStatusImported,
-		models.DownloadStatusFailed,
-	} {
-		if err := repo.UpdateStatus(ctx, dl.ID, status); err != nil {
-			t.Errorf("UpdateStatus(%q): %v", status, err)
+	// UpdateStatus — walk through valid transitions and verify each succeeds.
+	validSeq := []models.DownloadState{
+		models.StateDownloading,
+		models.StateCompleted,
+		models.StateImportPending,
+		models.StateImporting,
+		models.StateImported,
+	}
+	for _, next := range validSeq {
+		if err := repo.UpdateStatus(ctx, dl.ID, next); err != nil {
+			t.Errorf("UpdateStatus(%q): %v", next, err)
 		}
+	}
+
+	// UpdateStatus — invalid transition must return ErrInvalidTransition.
+	if err := repo.UpdateStatus(ctx, dl.ID, models.StateDownloading); err == nil {
+		t.Error("expected error for illegal transition imported→downloading")
 	}
 
 	// SetNzoID

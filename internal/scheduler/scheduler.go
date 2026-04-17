@@ -309,7 +309,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		Title:            best.Title,
 		NZBURL:           best.NZBURL,
 		Size:             best.Size,
-		Status:           models.DownloadStatusQueued,
+		Status:           models.StateGrabbed,
 		Protocol:         best.Protocol,
 		Quality:          indexer.ParseRelease(best.Title).Format,
 	}
@@ -338,8 +338,8 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 			}
 		}
 	}
-	if err := s.downloads.UpdateStatus(ctx, dl.ID, models.DownloadStatusDownloading); err != nil {
-		slog.Warn("failed to update download status", "download_id", dl.ID, "status", models.DownloadStatusDownloading, "error", err)
+	if err := s.downloads.UpdateStatus(ctx, dl.ID, models.StateDownloading); err != nil {
+		slog.Warn("failed to update download status", "download_id", dl.ID, "status", models.StateDownloading, "error", err)
 	}
 	slog.Info("sent to downloader", "client", client.Type, "title", best.Title)
 }
@@ -460,7 +460,7 @@ func (s *Scheduler) checkStalledDownloads(ctx context.Context) {
 		}
 	}
 
-	active, err := s.downloads.ListByStatus(ctx, models.DownloadStatusDownloading)
+	active, err := s.downloads.ListByStatus(ctx, models.StateDownloading)
 	if err != nil || len(active) == 0 {
 		return
 	}
