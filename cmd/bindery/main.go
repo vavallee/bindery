@@ -378,6 +378,7 @@ func main() {
 		r.Delete("/indexer/{id}", indexerHandler.Delete)
 		r.Post("/indexer/{id}/test", indexerHandler.Test)
 		r.Get("/indexer/search", indexerHandler.SearchQuery)
+		r.Get("/search/last-debug", indexerHandler.LastSearchDebug)
 
 		// Prowlarr indexer sync
 		r.Get("/prowlarr", prowlarrHandler.List)

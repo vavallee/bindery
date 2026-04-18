@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"sync"
 
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/decision"
@@ -13,6 +15,27 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
+// lastDebugStore holds the audit trail from the most recent SearchBook run.
+// Only the single latest entry is kept — the debug panel surfaces "what
+// happened on the last search", not a history. Handler calls come from
+// different goroutines, so access is mutex-guarded.
+type lastDebugStore struct {
+	mu  sync.RWMutex
+	dbg *indexer.SearchDebug
+}
+
+func (s *lastDebugStore) set(d *indexer.SearchDebug) {
+	s.mu.Lock()
+	s.dbg = d
+	s.mu.Unlock()
+}
+
+func (s *lastDebugStore) get() *indexer.SearchDebug {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.dbg
+}
+
 type IndexerHandler struct {
 	indexers  *db.IndexerRepo
 	books     *db.BookRepo
@@ -21,10 +44,15 @@ type IndexerHandler struct {
 	searcher  *indexer.Searcher
 	settings  *db.SettingsRepo
 	blocklist *db.BlocklistRepo
+	lastDebug *lastDebugStore
 }
 
 func NewIndexerHandler(indexers *db.IndexerRepo, books *db.BookRepo, authors *db.AuthorRepo, profiles *db.MetadataProfileRepo, searcher *indexer.Searcher, settings *db.SettingsRepo, blocklist *db.BlocklistRepo) *IndexerHandler {
-	return &IndexerHandler{indexers: indexers, books: books, authors: authors, profiles: profiles, searcher: searcher, settings: settings, blocklist: blocklist}
+	return &IndexerHandler{
+		indexers: indexers, books: books, authors: authors, profiles: profiles,
+		searcher: searcher, settings: settings, blocklist: blocklist,
+		lastDebug: &lastDebugStore{},
+	}
 }
 
 func (h *IndexerHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -213,7 +241,7 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 		crit.Year = book.ReleaseDate.Year()
 	}
 
-	results := h.searcher.SearchBook(r.Context(), idxs, crit)
+	results, dbg := h.searcher.SearchBookWithDebug(r.Context(), idxs, crit)
 
 	// Build decision specs.
 	var specs []decision.Specification
@@ -225,7 +253,15 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 			lang = s.Value
 		}
 	}
+	beforeLang := len(results)
 	results = indexer.FilterByLanguage(results, lang)
+	if dbg != nil && beforeLang != len(results) {
+		dbg.Filters = append(dbg.Filters, indexer.FilterDebug{
+			Stage:  "language",
+			Reason: "release name matched a foreign-language tag (filter=" + lang + ")",
+			Title:  "(" + strconv.Itoa(beforeLang-len(results)) + " result(s) dropped)",
+		})
+	}
 
 	// Blocklist spec.
 	if h.blocklist != nil {
@@ -256,9 +292,38 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 			Approved:     d.Approved,
 			Rejection:    d.Rejection,
 		}
+		if !d.Approved && dbg != nil {
+			dbg.Filters = append(dbg.Filters, indexer.FilterDebug{
+				Title:       results[i].Title,
+				IndexerName: results[i].IndexerName,
+				Stage:       "decision",
+				Reason:      d.Rejection,
+			})
+		}
 	}
 
-	writeJSON(w, http.StatusOK, out)
+	// Remember the most recent debug payload so the UI can re-fetch it
+	// (e.g. after a page reload) without having to re-run the search.
+	if dbg != nil {
+		h.lastDebug.set(dbg)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"results": out,
+		"debug":   dbg,
+	})
+}
+
+// LastSearchDebug returns the audit trail captured during the most recent
+// SearchBook invocation on this bindery instance, or 404 if no search has
+// run yet.
+func (h *IndexerHandler) LastSearchDebug(w http.ResponseWriter, r *http.Request) {
+	dbg := h.lastDebug.get()
+	if dbg == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no search has run yet"})
+		return
+	}
+	writeJSON(w, http.StatusOK, dbg)
 }
 
 // resolveAllowedLanguages returns the parsed allowed-language list for an

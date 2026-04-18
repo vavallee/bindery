@@ -44,7 +44,7 @@ export default function WantedPage() {
     setSearchingId(book.id)
     try {
       const res = await api.searchBook(book.id)
-      setResults(res)
+      setResults(res.results)
       setShowResults(book.id)
     } catch (err) {
       console.error(err)

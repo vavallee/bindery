@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { api, Book, HistoryEvent, SearchResult } from '../api/client'
+import { api, Book, HistoryEvent, SearchResult, SearchDebug } from '../api/client'
+import SearchDebugPanel from '../components/SearchDebugPanel'
 
 function formatSize(n: number): string {
   if (!n || n <= 0) return ''
@@ -36,6 +37,7 @@ export default function BookDetailPage() {
   const [saving, setSaving] = useState(false)
   const [searching, setSearching] = useState(false)
   const [results, setResults] = useState<SearchResult[] | null>(null)
+  const [searchDebug, setSearchDebug] = useState<SearchDebug | null>(null)
   const [hasIndexers, setHasIndexers] = useState<boolean | null>(null)
   const [grabbing, setGrabbing] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -83,6 +85,7 @@ export default function BookDetailPage() {
     if (!book) return
     setSearching(true)
     setResults(null)
+    setSearchDebug(null)
     setError(null)
     try {
       const [r, indexers] = await Promise.all([
@@ -90,7 +93,8 @@ export default function BookDetailPage() {
         api.listIndexers(),
       ])
       setHasIndexers(indexers.length > 0)
-      setResults(r)
+      setResults(r.results)
+      setSearchDebug(r.debug ?? null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Search failed')
     } finally {
@@ -402,8 +406,16 @@ export default function BookDetailPage() {
         <div className="mb-6 text-center py-6 text-sm text-slate-600 dark:text-zinc-500 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
           {hasIndexers === false
             ? <>No indexers configured — add one in <Link to="/settings" className="underline">Settings</Link>.</>
-            : 'No results on any indexer.'}
+            : 'No results on any indexer — expand Search details below to see why.'}
         </div>
+      )}
+
+      {searchDebug && (
+        <SearchDebugPanel
+          debug={searchDebug}
+          resultCount={results?.length ?? 0}
+          defaultOpen={results !== null && results.length === 0}
+        />
       )}
 
       {results !== null && results.length > 0 && (

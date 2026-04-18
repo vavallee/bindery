@@ -118,7 +118,8 @@ export const api = {
   deleteBook: (id: number, deleteFiles = false) =>
     request<void>(`/book/${id}${deleteFiles ? '?deleteFiles=true' : ''}`, { method: 'DELETE' }),
   deleteBookFile: (id: number, queryParams = '') => request<Book>(`/book/${id}/file${queryParams}`, { method: 'DELETE' }),
-  searchBook: (id: number) => request<SearchResult[]>(`/book/${id}/search`, { method: 'POST' }),
+  searchBook: (id: number) => request<SearchBookResponse>(`/book/${id}/search`, { method: 'POST' }),
+  getLastSearchDebug: () => request<SearchDebug>(`/search/last-debug`),
   enrichAudiobook: (id: number) => request<Book>(`/book/${id}/enrich-audiobook`, { method: 'POST' }),
   toggleExcluded: (id: number) => request<Book>(`/book/${id}/exclude`, { method: 'PUT' }),
 
@@ -465,6 +466,57 @@ export interface SearchResult {
   language?: string // ISO 639-1 from newznab:attr language (when present)
   approved?: boolean
   rejection?: string
+}
+
+export interface SearchQueryDebug {
+  title?: string
+  author?: string
+  year?: number
+  isbn?: string
+  asin?: string
+  mediaType?: string
+  allowedLanguages?: string[]
+  freeText?: string
+}
+
+export interface IndexerDebug {
+  indexerId: number
+  indexerName: string
+  enabled: boolean
+  skipped?: boolean
+  skipReason?: string
+  categories?: number[]
+  resultCount: number
+  durationMs: number
+  error?: string
+}
+
+export interface PipelineDebug {
+  rawCount: number
+  afterDedupe: number
+  afterUsenetJunk: number
+  afterRelevance: number
+}
+
+export interface FilterDebug {
+  title: string
+  indexerName?: string
+  stage: string
+  reason: string
+}
+
+export interface SearchDebug {
+  query: SearchQueryDebug
+  indexers: IndexerDebug[]
+  pipeline: PipelineDebug
+  filters: FilterDebug[]
+  startedAt: string
+  durationMs: number
+}
+
+export interface SearchBookResponse {
+  results: SearchResult[]
+  debug: SearchDebug | null
 }
 
 export interface AddAuthorRequest {
