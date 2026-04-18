@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, Author, MetadataProfile, RootFolder } from '../api/client'
+import { api, Author, MediaType, MetadataProfile, RootFolder } from '../api/client'
 
 interface Props {
   onClose: () => void
@@ -31,6 +31,7 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
   const [rootFolders, setRootFolders] = useState<RootFolder[]>([])
   const [rootFolderId, setRootFolderId] = useState<number | null>(null)
   const [searchOnAdd, setSearchOnAdd] = useState(loadAutoGrabDefault)
+  const [mediaType, setMediaType] = useState<MediaType>('ebook')
 
   useEffect(() => {
     api.listMetadataProfiles().then(ps => {
@@ -44,6 +45,15 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
       setRootFolders(rfs)
       if (rfs.length > 0) setRootFolderId(rfs[0].id)
     }).catch(console.error)
+    // Seed the media-type dropdown with the global default setting so the
+    // user only has to override it when they want something different.
+    api.getSetting('default.media_type')
+      .then(s => {
+        if (s.value === 'ebook' || s.value === 'audiobook' || s.value === 'both') {
+          setMediaType(s.value)
+        }
+      })
+      .catch(() => { /* 404 = unset; keep ebook default */ })
   }, [])
 
   const search = async () => {
@@ -71,6 +81,7 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
         searchOnAdd,
         metadataProfileId: profileId,
         rootFolderId: rootFolderId,
+        mediaType,
       })
       try {
         localStorage.setItem(AUTO_GRAB_STORAGE_KEY, String(searchOnAdd))
@@ -122,6 +133,20 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
               </select>
             </div>
           )}
+          <div className="mb-3">
+            <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
+              {t('addAuthorModal.mediaType', 'Media type')}
+            </label>
+            <select
+              value={mediaType}
+              onChange={e => setMediaType(e.target.value as MediaType)}
+              className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+            >
+              <option value="ebook">{t('mediaType.ebook', 'Ebook')}</option>
+              <option value="audiobook">{t('mediaType.audiobook', 'Audiobook')}</option>
+              <option value="both">{t('mediaType.both', 'Both')}</option>
+            </select>
+          </div>
           <label className="flex items-start gap-2 text-sm mb-3 cursor-pointer select-none">
             <input
               type="checkbox"

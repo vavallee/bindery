@@ -13,6 +13,12 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
+// SettingDefaultMediaType is the KV key for the global media-type default
+// applied to authors created without an explicit mediaType. Value is one of
+// models.MediaTypeEbook / MediaTypeAudiobook / MediaTypeBoth; empty or
+// unset falls back to ebook for backwards compatibility.
+const SettingDefaultMediaType = "default.media_type"
+
 type SettingsHandler struct {
 	settings *db.SettingsRepo
 }
@@ -138,6 +144,18 @@ func validateSettingValue(key, value string) error {
 		}
 		if !calibre.Mode(value).Valid() {
 			return fmt.Errorf("calibre.mode %q is not one of: off, calibredb, plugin", value)
+		}
+	case SettingDefaultMediaType:
+		// Empty falls back to ebook at read time; only validate non-empty
+		// writes so a typo in the UI can't silently disable the default.
+		if value == "" {
+			return nil
+		}
+		switch value {
+		case models.MediaTypeEbook, models.MediaTypeAudiobook, models.MediaTypeBoth:
+			return nil
+		default:
+			return fmt.Errorf("default.media_type %q is not one of: ebook, audiobook, both", value)
 		}
 	case SettingCalibrePluginURL:
 		if value == "" {

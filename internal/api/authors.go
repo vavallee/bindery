@@ -99,6 +99,7 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		RootFolderID      *int64 `json:"rootFolderId"`
 		Monitored         bool   `json:"monitored"`
 		SearchOnAdd       bool   `json:"searchOnAdd"`
+		MediaType         string `json:"mediaType"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -167,9 +168,17 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve effective media type for books created under this author:
+	// explicit request value wins, else the global default.media_type
+	// setting, else ebook (backwards compat).
+	mediaType := req.MediaType
+	if mediaType == "" {
+		mediaType = h.resolveDefaultMediaType(r.Context())
+	}
+
 	// Fetch and store books for this author. Always populate the catalogue;
 	// pass searchOnAdd so FetchAuthorBooks knows whether to also queue grabs.
-	go h.FetchAuthorBooks(author, req.SearchOnAdd)
+	go h.FetchAuthorBooks(author, req.SearchOnAdd, mediaType)
 
 	writeJSON(w, http.StatusCreated, author)
 }
@@ -272,8 +281,30 @@ func (h *AuthorHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 
 	// Manual refresh always repopulates the catalogue but never auto-grabs —
 	// the user triggered it to refresh metadata, not to queue downloads.
-	go h.FetchAuthorBooks(author, false)
+	// Newly-discovered books inherit the global default media type; rows
+	// that already exist keep whatever value they were created with.
+	go h.FetchAuthorBooks(author, false, h.resolveDefaultMediaType(r.Context()))
 	writeJSON(w, http.StatusAccepted, map[string]string{"message": "refresh started"})
+}
+
+// resolveDefaultMediaType reads the global default.media_type setting and
+// falls back to ebook when unset so fresh installs keep the historical
+// behaviour. An invalid stored value — should never happen because writes
+// are validated — also falls back to ebook.
+func (h *AuthorHandler) resolveDefaultMediaType(ctx context.Context) string {
+	if h.settings == nil {
+		return models.MediaTypeEbook
+	}
+	s, _ := h.settings.Get(ctx, SettingDefaultMediaType)
+	if s == nil || s.Value == "" {
+		return models.MediaTypeEbook
+	}
+	switch s.Value {
+	case models.MediaTypeEbook, models.MediaTypeAudiobook, models.MediaTypeBoth:
+		return s.Value
+	default:
+		return models.MediaTypeEbook
+	}
 }
 
 // isAutoGrabEnabled reads the autoGrab.enabled setting. Defaults to true when
@@ -289,7 +320,10 @@ func (h *AuthorHandler) isAutoGrabEnabled(ctx context.Context) bool {
 	return s.Value != "false"
 }
 
-func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool) {
+// FetchAuthorBooks populates the author's catalogue from the metadata provider.
+// mediaType is applied to each newly-created book when the provider didn't
+// return one; pass an empty string to accept whatever the provider set.
+func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool, mediaType string) {
 	ctx := contextBackground()
 	slog.Info("fetching books for author", "author", author.Name, "foreignId", author.ForeignID)
 
@@ -325,6 +359,13 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool)
 	for _, b := range books {
 		b.AuthorID = author.ID
 		b.Monitored = author.Monitored
+		// Apply the caller-provided default media type when the provider
+		// didn't set one. Never overwrite an explicit value — the audiobook
+		// enrichment flow relies on provider-supplied audiobook rows coming
+		// through with MediaType=audiobook already.
+		if mediaType != "" && b.MediaType == "" {
+			b.MediaType = mediaType
+		}
 
 		// Filter out OpenLibrary "works" whose title is empty or is just the
 		// author name — a recurring OL data-quality problem where the Work
@@ -450,7 +491,7 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 			author, _ = h.authors.GetByForeignID(ctx, req.ForeignAuthorID)
 		} else {
 			author = fetched
-			go h.FetchAuthorBooks(author, false)
+			go h.FetchAuthorBooks(author, false, h.resolveDefaultMediaType(ctx))
 		}
 	}
 	if author == nil {

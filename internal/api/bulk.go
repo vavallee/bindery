@@ -41,14 +41,18 @@ type bulkResponse struct {
 
 // AuthorsBulk handles POST /api/v1/author/bulk.
 //
-// Supported actions: "monitor", "unmonitor", "delete", "search".
+// Supported actions: "monitor", "unmonitor", "delete", "search", "set_media_type".
 // "search" fires an async indexer search for every wanted book belonging
 // to each requested author and always returns ok:true immediately (the search
 // outcome is visible in History).
+// "set_media_type" requires a "mediaType" field ("ebook"|"audiobook"|"both")
+// and applies it to every book belonging to each author — the companion
+// mass-migration action for the global default.media_type setting.
 func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		IDs    []int64 `json:"ids"`
-		Action string  `json:"action"`
+		IDs       []int64 `json:"ids"`
+		Action    string  `json:"action"`
+		MediaType string  `json:"mediaType"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -60,10 +64,18 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch req.Action {
-	case "monitor", "unmonitor", "delete", "search":
+	case "monitor", "unmonitor", "delete", "search", "set_media_type":
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
+	}
+	if req.Action == "set_media_type" {
+		switch req.MediaType {
+		case models.MediaTypeEbook, models.MediaTypeAudiobook, models.MediaTypeBoth:
+		default:
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "mediaType must be 'ebook', 'audiobook', or 'both'"})
+			return
+		}
 	}
 
 	resp := bulkResponse{Results: make(map[string]bulkItemResult, len(req.IDs))}
@@ -102,6 +114,11 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 						go h.searcher.SearchAndGrabBook(bgCtx, b)
 					}
 				}
+			}
+		case "set_media_type":
+			if err := h.setAuthorBooksMediaType(r.Context(), id, req.MediaType); err != nil {
+				resp.Results[key] = bulkItemResult{Error: err.Error()}
+				continue
 			}
 		}
 		resp.Results[key] = bulkItemResult{OK: true}
@@ -268,6 +285,37 @@ func (h *BulkHandler) setBookMediaType(ctx context.Context, id int64, mediaType 
 	}
 	book.MediaType = mediaType
 	return h.books.Update(ctx, book)
+}
+
+// setAuthorBooksMediaType applies the given media type to every book in an
+// author's catalogue. Used by the Authors page bulk action so a user
+// switching their whole library from ebook to audiobook (or vice versa)
+// doesn't have to touch each book individually. The author must exist;
+// books already carrying the target value are still rewritten (cheap no-op
+// update rather than a dedicated WHERE clause so callers don't have to
+// understand SQLite semantics).
+func (h *BulkHandler) setAuthorBooksMediaType(ctx context.Context, authorID int64, mediaType string) error {
+	author, err := h.authors.GetByID(ctx, authorID)
+	if err != nil {
+		return err
+	}
+	if author == nil {
+		return fmt.Errorf("author not found")
+	}
+	books, err := h.books.ListByAuthor(ctx, authorID)
+	if err != nil {
+		return fmt.Errorf("list books: %w", err)
+	}
+	for i := range books {
+		if books[i].MediaType == mediaType {
+			continue
+		}
+		books[i].MediaType = mediaType
+		if err := h.books.Update(ctx, &books[i]); err != nil {
+			return fmt.Errorf("update book %d: %w", books[i].ID, err)
+		}
+	}
+	return nil
 }
 
 // skipBook marks a wanted book as unmonitored and skipped so it is removed

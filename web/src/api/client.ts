@@ -129,8 +129,8 @@ export const api = {
   },
 
   // Bulk actions
-  bulkActionAuthors: (ids: number[], action: AuthorBulkAction) =>
-    request<BulkResult>('/author/bulk', { method: 'POST', body: JSON.stringify({ ids, action }) }),
+  bulkActionAuthors: (ids: number[], action: AuthorBulkAction, mediaType?: MediaType) =>
+    request<BulkResult>('/author/bulk', { method: 'POST', body: JSON.stringify({ ids, action, ...(mediaType ? { mediaType } : {}) }) }),
   bulkActionBooks: (ids: number[], action: BookBulkAction, mediaType?: MediaType) =>
     request<BulkResult>('/book/bulk', { method: 'POST', body: JSON.stringify({ ids, action, ...(mediaType ? { mediaType } : {}) }) }),
   bulkActionWanted: (ids: number[], action: WantedBulkAction) =>
@@ -475,6 +475,7 @@ export interface AddAuthorRequest {
   metadataProfileId?: number | null
   qualityProfileId?: number | null
   rootFolderId?: number | null
+  mediaType?: MediaType
 }
 
 export interface GrabRequest {
@@ -643,7 +644,7 @@ export interface Recommendation {
   createdAt: string
 }
 
-export type AuthorBulkAction = 'monitor' | 'unmonitor' | 'delete' | 'search'
+export type AuthorBulkAction = 'monitor' | 'unmonitor' | 'delete' | 'search' | 'set_media_type'
 export type BookBulkAction = 'monitor' | 'unmonitor' | 'delete' | 'search' | 'set_media_type'
 export type WantedBulkAction = 'search' | 'blocklist' | 'unmonitor'
 

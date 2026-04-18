@@ -292,7 +292,9 @@ func main() {
 	migrateHandler := api.NewMigrateHandler(
 		authorRepo, indexerRepo, dlClientRepo, blocklistRepo, bookRepo, metaAgg,
 		// Bulk imports always populate the catalogue but never auto-grab.
-		func(a *models.Author) { authorHandler.FetchAuthorBooks(a, false) },
+		// Pass an empty media type so the handler falls back to the global
+		// default.media_type setting for each newly-created book.
+		func(a *models.Author) { authorHandler.FetchAuthorBooks(a, false, "") },
 	)
 
 	// Router

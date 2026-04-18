@@ -248,7 +248,7 @@ func TestFetchAuthorBooks_FiresSearchForMonitoredAuthor(t *testing.T) {
 	spy := &searcherSpy{}
 
 	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, nil, profileRepo, spy)
-	h.FetchAuthorBooks(author, true)
+	h.FetchAuthorBooks(author, true, "")
 
 	titles := spy.titles()
 	if len(titles) != 2 {
@@ -308,7 +308,7 @@ func TestFetchAuthorBooks_SkipsSearchForOwnedBooks(t *testing.T) {
 	}
 
 	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, nil, profileRepo, spy).WithFinder(finder)
-	h.FetchAuthorBooks(author, true)
+	h.FetchAuthorBooks(author, true, "")
 
 	titles := spy.titles()
 	// Only "Not Yet Owned" should have triggered a search.
@@ -372,7 +372,7 @@ func TestFetchAuthorBooks_SkipsSearchWhenNotMonitored(t *testing.T) {
 	spy := &searcherSpy{}
 
 	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, nil, profileRepo, spy)
-	h.FetchAuthorBooks(author, true)
+	h.FetchAuthorBooks(author, true, "")
 
 	if titles := spy.titles(); len(titles) != 0 {
 		t.Errorf("expected no searcher calls for unmonitored author, got %v", titles)

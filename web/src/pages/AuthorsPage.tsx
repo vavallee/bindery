@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { api, Author } from '../api/client'
+import { api, Author, MediaType } from '../api/client'
 import AddAuthorModal from '../components/AddAuthorModal'
 import AddBookModal from '../components/AddBookModal'
 import MergeAuthorsModal from '../components/MergeAuthorsModal'
@@ -117,6 +117,26 @@ export default function AuthorsPage() {
     setBulkBusy(true)
     try {
       await api.bulkActionAuthors([...selectedIds], action)
+      clearSelection()
+      load()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Bulk action failed')
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
+  const runBulkSetMediaType = async (mediaType: MediaType) => {
+    if (selectedIds.size === 0) return
+    const confirmMsg = t('authors.bulkSetMediaTypeConfirm', {
+      count: selectedIds.size,
+      mediaType: t(`mediaType.${mediaType}`, mediaType),
+      defaultValue: `Set the media type for every book of {{count}} selected authors to {{mediaType}}? This rewrites existing book rows and may re-evaluate wanted/missing status.`,
+    })
+    if (!confirm(confirmMsg)) return
+    setBulkBusy(true)
+    try {
+      await api.bulkActionAuthors([...selectedIds], 'set_media_type', mediaType)
       clearSelection()
       load()
     } catch (err) {
@@ -343,6 +363,9 @@ export default function AuthorsPage() {
           { label: t('common.monitor'), onClick: () => runBulk('monitor') },
           { label: t('common.unmonitor'), onClick: () => runBulk('unmonitor') },
           { label: t('common.search'), onClick: () => runBulk('search') },
+          { label: t('authors.bulkSetEbook', 'Set ebook'), onClick: () => runBulkSetMediaType('ebook') },
+          { label: t('authors.bulkSetAudiobook', 'Set audiobook'), onClick: () => runBulkSetMediaType('audiobook') },
+          { label: t('authors.bulkSetBoth', 'Set both'), onClick: () => runBulkSetMediaType('both') },
           { label: t('common.delete'), onClick: () => runBulk('delete'), variant: 'danger' },
         ]}
       />

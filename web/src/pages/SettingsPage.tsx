@@ -1487,6 +1487,32 @@ function GeneralTab() {
         </div>
       </section>
 
+      {/* Author defaults */}
+      <section>
+        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.authorDefaults', 'Author defaults')}</h3>
+        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+          <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
+            {t('settings.general.defaultMediaTypeLabel', 'Default media type')}
+          </label>
+          <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+            {t('settings.general.defaultMediaTypeHint', 'Applied to new authors when no explicit choice is made. Existing authors are unaffected — use the Authors page bulk action to migrate them.')}
+          </p>
+          <select
+            value={settings['default.media_type'] ?? 'ebook'}
+            onChange={async e => {
+              const next = e.target.value
+              setSettings(s => ({ ...s, 'default.media_type': next }))
+              await api.setSetting('default.media_type', next).catch(console.error)
+            }}
+            className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+          >
+            <option value="ebook">{t('mediaType.ebook', 'Ebook')}</option>
+            <option value="audiobook">{t('mediaType.audiobook', 'Audiobook')}</option>
+            <option value="both">{t('mediaType.both', 'Both')}</option>
+          </select>
+        </div>
+      </section>
+
       {/* Auto-grab */}
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.autoGrab')}</h3>

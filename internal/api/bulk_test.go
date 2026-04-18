@@ -130,6 +130,47 @@ func TestAuthorsBulk_Delete(t *testing.T) {
 	}
 }
 
+func TestAuthorsBulk_SetMediaType(t *testing.T) {
+	h, _, books, author, ctx := bulkFixture(t)
+
+	// Two books under this author, both currently ebook.
+	mustCreateBook(t, books, ctx, &models.Book{
+		ForeignID: "OL_A", AuthorID: author.ID, Title: "A",
+		SortTitle: "a", MediaType: models.MediaTypeEbook,
+		Genres: []string{}, MetadataProvider: "openlibrary",
+	})
+	mustCreateBook(t, books, ctx, &models.Book{
+		ForeignID: "OL_B", AuthorID: author.ID, Title: "B",
+		SortTitle: "b", MediaType: models.MediaTypeEbook,
+		Genres: []string{}, MetadataProvider: "openlibrary",
+	})
+
+	body := fmt.Sprintf(`{"ids":[%d],"action":"set_media_type","mediaType":"audiobook"}`, author.ID)
+	rec := postBulk(t, h.AuthorsBulk, body)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, _ := books.ListByAuthor(ctx, author.ID)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 books, got %d", len(got))
+	}
+	for _, b := range got {
+		if b.MediaType != models.MediaTypeAudiobook {
+			t.Errorf("book %q: expected audiobook, got %q", b.Title, b.MediaType)
+		}
+	}
+}
+
+func TestAuthorsBulk_SetMediaType_Invalid(t *testing.T) {
+	h, _, _, author, _ := bulkFixture(t)
+	body := fmt.Sprintf(`{"ids":[%d],"action":"set_media_type","mediaType":"videogame"}`, author.ID)
+	rec := postBulk(t, h.AuthorsBulk, body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
 func TestAuthorsBulk_Search_FiresSearcherForWantedBooks(t *testing.T) {
 	searcher := newMockBookSearcher()
 	h, _, books, author, ctx := bulkFixtureWithSearcher(t, searcher)
