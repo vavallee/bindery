@@ -1,5 +1,5 @@
 // Package downloader provides a unified interface for dispatching download
-// requests to different download clients (SABnzbd, NZBGet, Transmission, qBittorrent).
+// requests to different download clients (SABnzbd, NZBGet, Transmission, qBittorrent, Deluge).
 package downloader
 
 import (
@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/vavallee/bindery/internal/downloader/deluge"
 	"github.com/vavallee/bindery/internal/downloader/nzbget"
 	"github.com/vavallee/bindery/internal/downloader/qbittorrent"
 	"github.com/vavallee/bindery/internal/downloader/sabnzbd"
@@ -28,7 +29,7 @@ type SendResult struct {
 }
 
 func IsTorrentClient(clientType string) bool {
-	return clientType == "transmission" || clientType == "qbittorrent"
+	return clientType == "transmission" || clientType == "qbittorrent" || clientType == "deluge"
 }
 
 // IsNZBGetClient reports whether the given client type is NZBGet.
@@ -51,6 +52,9 @@ func TestClient(ctx context.Context, client *models.DownloadClient) error {
 	case "qbittorrent":
 		qb := qbittorrent.New(client.Host, client.Port, client.Username, client.Password, client.UseSSL)
 		return qb.Test(ctx)
+	case "deluge":
+		dl := deluge.New(client.Host, client.Port, client.Password, client.UseSSL)
+		return dl.Test(ctx)
 	case "nzbget":
 		ng := nzbget.New(client.Host, client.Port, client.Username, client.Password, client.UseSSL)
 		return ng.Test(ctx)
@@ -98,6 +102,17 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		}
 		result.RemoteID = hash
 		return result, nil
+	case "deluge":
+		dl := deluge.New(client.Host, client.Port, client.Password, client.UseSSL)
+		hash, err := dl.AddTorrent(ctx, sourceURL, client.Category)
+		if err != nil {
+			return nil, err
+		}
+		if hash == "" {
+			return nil, fmt.Errorf("downloader accepted request but did not return a trackable torrent ID")
+		}
+		result.RemoteID = hash
+		return result, nil
 	case "nzbget":
 		ng := nzbget.New(client.Host, client.Port, client.Username, client.Password, client.UseSSL)
 		nzbID, err := ng.Add(ctx, sourceURL, title, client.Category, 0)
@@ -137,6 +152,12 @@ func RemoveDownload(ctx context.Context, client *models.DownloadClient, dl *mode
 		}
 		qb := qbittorrent.New(client.Host, client.Port, client.Username, client.Password, client.UseSSL)
 		return qb.DeleteTorrent(ctx, *dl.TorrentID, deleteFiles)
+	case "deluge":
+		if dl.TorrentID == nil || *dl.TorrentID == "" {
+			return nil
+		}
+		delugeClient := deluge.New(client.Host, client.Port, client.Password, client.UseSSL)
+		return delugeClient.RemoveTorrent(ctx, *dl.TorrentID, deleteFiles)
 	case "nzbget":
 		if dl.SABnzbdNzoID == nil || *dl.SABnzbdNzoID == "" {
 			return nil
@@ -192,6 +213,19 @@ func GetStalledIDs(ctx context.Context, client *models.DownloadClient) (map[stri
 			// status 0 = stopped; treat stopped+error as stalled
 			if t.Status == 0 && strings.TrimSpace(t.ErrorString) != "" {
 				out[strconv.FormatInt(t.ID, 10)] = true
+			}
+		}
+		return out, true, nil
+	case "deluge":
+		dl := deluge.New(client.Host, client.Port, client.Password, client.UseSSL)
+		torrents, err := dl.GetTorrents(ctx)
+		if err != nil {
+			return nil, true, err
+		}
+		out := make(map[string]bool, len(torrents))
+		for h, t := range torrents {
+			if strings.ToLower(t.State) == "error" {
+				out[h] = true
 			}
 		}
 		return out, true, nil
@@ -266,6 +300,23 @@ func getTorrentLiveStatuses(ctx context.Context, client *models.DownloadClient) 
 			id := strconv.FormatInt(t.ID, 10)
 			out[id] = LiveStatus{
 				Percentage: fmt.Sprintf("%.1f", t.PercentDone*100),
+				TimeLeft:   etaToTimeLeft(t.ETA),
+				Speed:      bytesPerSecondToString(t.DownloadRate),
+			}
+		}
+		return out, nil
+	}
+
+	if client.Type == "deluge" {
+		dl := deluge.New(client.Host, client.Port, client.Password, client.UseSSL)
+		torrents, err := dl.GetTorrents(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make(map[string]LiveStatus, len(torrents))
+		for h, t := range torrents {
+			out[h] = LiveStatus{
+				Percentage: fmt.Sprintf("%.1f", t.Progress),
 				TimeLeft:   etaToTimeLeft(t.ETA),
 				Speed:      bytesPerSecondToString(t.DownloadRate),
 			}
