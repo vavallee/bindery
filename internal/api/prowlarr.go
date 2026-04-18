@@ -29,6 +29,9 @@ func (h *ProwlarrHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	if items == nil {
+		items = []models.ProwlarrInstance{}
+	}
 	writeJSON(w, http.StatusOK, items)
 }
 
