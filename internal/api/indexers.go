@@ -213,7 +213,22 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 		crit.Year = book.ReleaseDate.Year()
 	}
 
-	results := h.searcher.SearchBook(r.Context(), idxs, crit)
+	// For dual-format books (media_type='both'), run one search per format so
+	// each uses its own category tree (7xxx for ebooks, 3xxx for audiobooks).
+	// A single "both" search falls through to the ebook branch in
+	// filterCategoriesForMedia, silently dropping all audiobook results.
+	var results []newznab.SearchResult
+	if book.MediaType == models.MediaTypeBoth {
+		ebookCrit := crit
+		ebookCrit.MediaType = models.MediaTypeEbook
+		audioCrit := crit
+		audioCrit.MediaType = models.MediaTypeAudiobook
+		results = h.searcher.SearchBook(r.Context(), idxs, ebookCrit)
+		results = append(results, h.searcher.SearchBook(r.Context(), idxs, audioCrit)...)
+		results = indexer.DedupeResults(results)
+	} else {
+		results = h.searcher.SearchBook(r.Context(), idxs, crit)
+	}
 
 	// Build decision specs.
 	var specs []decision.Specification

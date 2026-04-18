@@ -293,6 +293,13 @@ func sameKws(a, b []string) bool {
 	return true
 }
 
+// DedupeResults removes duplicate search results (by GUID, falling back to
+// title+URL when the GUID is empty). Callers fanning out multiple SearchBook
+// calls (e.g. dual-format books) use this to merge the per-format result sets.
+func DedupeResults(results []newznab.SearchResult) []newznab.SearchResult {
+	return dedupe(results)
+}
+
 func dedupe(results []newznab.SearchResult) []newznab.SearchResult {
 	seen := make(map[string]bool)
 	deduped := make([]newznab.SearchResult, 0, len(results))
