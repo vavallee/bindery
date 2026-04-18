@@ -216,7 +216,8 @@
       "empty": "No indexers configured. Add a Newznab indexer to search for books.",
       "connectionOk": "Connection successful!",
       "connectionFail": "Test failed: {{error}}",
-      "testOk": "Connected — HTTP {{status}}, {{categories}} categories, responded in {{latency}} ms",
+      "testOk": "Connected — HTTP {{status}}, {{categories}} categories, {{results}} results in test search, {{latency}} ms",
+      "testWarn": "Connected — but test search returned 0 results. Check your API key permissions and category IDs (HTTP {{status}}, {{categories}} categories, {{latency}} ms)",
       "testFail": "Error: {{error}}"
     },
     "clients": {

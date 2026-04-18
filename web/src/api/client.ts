@@ -427,6 +427,8 @@ export interface IndexerTestResult {
   categories: number
   bookSearch: boolean
   latencyMs: number
+  searchResults: number
+  searchError?: string
   message?: string
   error?: string
 }

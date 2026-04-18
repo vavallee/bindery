@@ -182,21 +182,27 @@ func (c *Client) Test(ctx context.Context) error {
 	return err
 }
 
-// ProbeResult summarizes a lightweight connectivity check against the indexer.
+// ProbeResult summarizes a connectivity and search check against the indexer.
 type ProbeResult struct {
 	Status        int    `json:"status"`
 	Categories    int    `json:"categories"`
 	BookSearch    bool   `json:"bookSearch"`
 	GeneralSearch bool   `json:"generalSearch"`
 	LatencyMs     int64  `json:"latencyMs"`
+	SearchResults int    `json:"searchResults"` // results from the test search query
+	SearchError   string `json:"searchError,omitempty"`
 	Error         string `json:"error,omitempty"`
 }
 
-// Probe performs a capabilities fetch and returns a structured summary
-// (HTTP status, category count, latency) without writing anything to the
-// database. The response is the zero-cost "t=caps" endpoint described in
-// https://github.com/Sonarr/Sonarr/wiki/Implementing-a-New-Indexer — it is
-// safe to call from a "Test" button and never creates queue entries.
+// Probe performs a capabilities fetch followed by a lightweight test search,
+// returning a structured summary without writing anything to the database.
+//
+// The two-step approach catches a class of misconfiguration that caps-only
+// probes miss: an indexer can report HTTP 200 and valid capabilities while
+// still returning zero results for every query (wrong API key permissions,
+// no books indexed, category mismatch). The test search uses "t=search&q=book"
+// against the configured book categories and records how many results came
+// back so the UI can warn when connectivity succeeds but searches return nothing.
 func (c *Client) Probe(ctx context.Context) ProbeResult {
 	u, err := c.buildURL("caps", map[string]string{})
 	if err != nil {
@@ -232,7 +238,37 @@ func (c *Client) Probe(ctx context.Context) ProbeResult {
 	result.Categories = len(caps.Categories.Categories)
 	result.BookSearch = strings.EqualFold(caps.Searching.BookSearch.Available, "yes")
 	result.GeneralSearch = strings.EqualFold(caps.Searching.Search.Available, "yes")
+
+	// Run a real test search against the book categories to catch the case
+	// where caps succeeds but actual queries return nothing.
+	hits, err := c.Search(ctx, "book", bookCategoriesFromCaps(caps))
+	if err != nil {
+		result.SearchError = err.Error()
+	} else {
+		result.SearchResults = len(hits)
+	}
+
 	return result
+}
+
+// bookCategoriesFromCaps extracts 7xxx (ebook) category IDs from a caps
+// response. Falls back to [7020] when none are advertised so the test
+// search always targets book content.
+func bookCategoriesFromCaps(caps capsResponse) []int {
+	var out []int
+	for _, cat := range caps.Categories.Categories {
+		id, err := strconv.Atoi(cat.ID)
+		if err != nil {
+			continue
+		}
+		if id/1000 == 7 {
+			out = append(out, id)
+		}
+	}
+	if len(out) == 0 {
+		return []int{7020}
+	}
+	return out
 }
 
 func (c *Client) parseResults(items []rssItem) []SearchResult {

@@ -127,12 +127,12 @@ export default function SettingsPage() {
                       <button
                         disabled={indexerTestResults[idx.id]?.testing}
                         onClick={async () => {
-                          setIndexerTestResults(prev => ({ ...prev, [idx.id]: { ...(prev[idx.id] ?? { ok: false, status: 0, categories: 0, bookSearch: false, latencyMs: 0 }), testing: true } }))
+                          setIndexerTestResults(prev => ({ ...prev, [idx.id]: { ...(prev[idx.id] ?? { ok: false, status: 0, categories: 0, bookSearch: false, latencyMs: 0, searchResults: 0 }), testing: true } }))
                           try {
                             const r = await api.testIndexer(idx.id)
                             setIndexerTestResults(prev => ({ ...prev, [idx.id]: { ...r, testing: false } }))
                           } catch (err: unknown) {
-                            setIndexerTestResults(prev => ({ ...prev, [idx.id]: { ok: false, status: 0, categories: 0, bookSearch: false, latencyMs: 0, error: err instanceof Error ? err.message : 'Request failed', testing: false } }))
+                            setIndexerTestResults(prev => ({ ...prev, [idx.id]: { ok: false, status: 0, categories: 0, bookSearch: false, latencyMs: 0, searchResults: 0, error: err instanceof Error ? err.message : 'Request failed', testing: false } }))
                           }
                         }}
                         className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-50"
@@ -150,29 +150,28 @@ export default function SettingsPage() {
                       </button>
                     </div>
                   </div>
-                  {indexerTestResults[idx.id] && !indexerTestResults[idx.id].testing && (
-                    <div
-                      role="status"
-                      className={`mt-2 px-3 py-2 rounded text-xs flex items-center gap-2 ${indexerTestResults[idx.id].ok ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'}`}
-                    >
-                      <span className={`inline-block w-2 h-2 rounded-full ${indexerTestResults[idx.id].ok ? 'bg-emerald-500' : 'bg-red-500'}`} />
-                      {indexerTestResults[idx.id].ok ? (
-                        <span>
-                          {t('settings.indexers.testOk', {
-                            status: indexerTestResults[idx.id].status,
-                            categories: indexerTestResults[idx.id].categories,
-                            latency: indexerTestResults[idx.id].latencyMs,
-                          })}
-                        </span>
-                      ) : (
-                        <span>
-                          {t('settings.indexers.testFail', {
-                            error: indexerTestResults[idx.id].error ?? 'Unknown error',
-                          })}
-                        </span>
-                      )}
-                    </div>
-                  )}
+                  {indexerTestResults[idx.id] && !indexerTestResults[idx.id].testing && (() => {
+                    const r = indexerTestResults[idx.id]
+                    const warn = r.ok && r.searchResults === 0
+                    const colorCls = !r.ok
+                      ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'
+                      : warn
+                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
+                        : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300'
+                    const dotCls = !r.ok ? 'bg-red-500' : warn ? 'bg-amber-500' : 'bg-emerald-500'
+                    return (
+                      <div role="status" className={`mt-2 px-3 py-2 rounded text-xs flex items-center gap-2 ${colorCls}`}>
+                        <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${dotCls}`} />
+                        {!r.ok ? (
+                          <span>{t('settings.indexers.testFail', { error: r.error ?? 'Unknown error' })}</span>
+                        ) : warn ? (
+                          <span>{t('settings.indexers.testWarn', { status: r.status, categories: r.categories, latency: r.latencyMs })}{r.searchError ? ` — ${r.searchError}` : ''}</span>
+                        ) : (
+                          <span>{t('settings.indexers.testOk', { status: r.status, categories: r.categories, latency: r.latencyMs, results: r.searchResults })}</span>
+                        )}
+                      </div>
+                    )
+                  })()}
                   {editingIndexer === idx.id && (
                     <EditIndexerForm
                       indexer={idx}
