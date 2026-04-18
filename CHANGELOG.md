@@ -8,6 +8,12 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 The `development` branch carries the in-flight feature set for the next release. Images are published as `ghcr.io/vavallee/bindery:development` and `:dev-<sha>`; point ArgoCD at the `development` branch to follow. Treat these features as beta — schema migrations are additive and safe, but UX may still shift before tagging.
 
+## [v0.18.3] — 2026-04-17
+
+### Fixed
+
+- **Language filter now rejects books with unknown language** ([#228](https://github.com/vavallee/bindery/pull/228)) — when a metadata profile restricts to specific languages (e.g. English-only), books with no language data are now rejected instead of passing through. OpenLibrary doesn't include language at the work level, so translated editions (Turkish, Spanish, Dutch, etc.) were silently ingested for English-only profiles. Reported in [#224](https://github.com/vavallee/bindery/issues/224).
+
 ## [v0.17.0] — 2026-04-17
 
 Drop-folder Calibre mode removed, OpenLibrary series schema fixed, and a batch of UX and deployment polish.
