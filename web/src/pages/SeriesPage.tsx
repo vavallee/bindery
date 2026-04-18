@@ -5,6 +5,8 @@ export default function SeriesPage() {
   const [seriesList, setSeriesList] = useState<Series[]>([])
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<number | null>(null)
+  const [filling, setFilling] = useState<number | null>(null)
+  const [fillResult, setFillResult] = useState<Record<number, string>>({})
 
   useEffect(() => {
     api.listSeries().then(setSeriesList).catch(console.error).finally(() => setLoading(false))
@@ -17,6 +19,24 @@ export default function SeriesPage() {
 
   const toggleExpanded = (id: number) => {
     setExpanded(prev => (prev === id ? null : id))
+  }
+
+  const toggleMonitor = async (series: Series) => {
+    const next = !series.monitored
+    await api.monitorSeries(series.id, next)
+    setSeriesList(prev => prev.map(s => s.id === series.id ? { ...s, monitored: next } : s))
+  }
+
+  const fillGaps = async (series: Series) => {
+    setFilling(series.id)
+    try {
+      const r = await api.fillSeries(series.id)
+      setFillResult(prev => ({ ...prev, [series.id]: r.queued === 0 ? 'Nothing to fill' : `${r.queued} book${r.queued === 1 ? '' : 's'} queued` }))
+    } catch {
+      setFillResult(prev => ({ ...prev, [series.id]: 'Failed' }))
+    } finally {
+      setFilling(null)
+    }
   }
 
   return (
@@ -36,15 +56,15 @@ export default function SeriesPage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {seriesList.map(series => {
-            const bookCount = series.books?.length ?? 0
+            const books = series.books ?? []
+            const bookCount = books.length
+            const gapCount = books.filter(b => b.book && b.book.status !== 'imported').length
             const isOpen = expanded === series.id
-            const sortedBooks = series.books
-              ? [...series.books].sort((a, b) => {
-                  const posA = parseFloat(a.positionInSeries) || 0
-                  const posB = parseFloat(b.positionInSeries) || 0
-                  return posA - posB
-                })
-              : []
+            const sortedBooks = [...books].sort((a, b) => {
+              const posA = parseFloat(a.positionInSeries) || 0
+              const posB = parseFloat(b.positionInSeries) || 0
+              return posA - posB
+            })
 
             return (
               <div key={series.id} className="border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden">
@@ -60,12 +80,43 @@ export default function SeriesPage() {
                       )}
                     </div>
                     <div className="flex-shrink-0 flex items-center gap-2">
+                      {gapCount > 0 && (
+                        <span className="text-xs text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">
+                          {gapCount} missing
+                        </span>
+                      )}
                       <span className="text-xs text-slate-600 dark:text-zinc-500 bg-slate-200 dark:bg-zinc-800 px-2 py-0.5 rounded-full">
                         {bookCount} {bookCount === 1 ? 'book' : 'books'}
                       </span>
                       <span className="text-slate-500 dark:text-zinc-600 text-xs">{isOpen ? '▲' : '▼'}</span>
                     </div>
                   </div>
+                </div>
+
+                {/* Actions row */}
+                <div className="px-4 pb-3 flex items-center gap-3" onClick={e => e.stopPropagation()}>
+                  <button
+                    onClick={() => toggleMonitor(series)}
+                    className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${series.monitored ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'}`}
+                    title={series.monitored ? 'Stop monitoring' : 'Monitor series'}
+                  >
+                    <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${series.monitored ? 'translate-x-4' : ''}`} />
+                  </button>
+                  <span className="text-xs text-slate-600 dark:text-zinc-400">
+                    {series.monitored ? 'Monitored' : 'Not monitored'}
+                  </span>
+                  {gapCount > 0 && (
+                    <button
+                      onClick={() => fillGaps(series)}
+                      disabled={filling === series.id}
+                      className="ml-auto text-xs px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded font-medium"
+                    >
+                      {filling === series.id ? 'Queuing…' : 'Fill gaps'}
+                    </button>
+                  )}
+                  {fillResult[series.id] && (
+                    <span className="ml-auto text-xs text-emerald-600 dark:text-emerald-400">{fillResult[series.id]}</span>
+                  )}
                 </div>
 
                 {isOpen && bookCount > 0 && (

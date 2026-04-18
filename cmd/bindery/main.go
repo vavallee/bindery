@@ -271,7 +271,7 @@ func main() {
 	notificationHandler := api.NewNotificationHandler(notificationRepo, notif)
 	qualityProfileHandler := api.NewQualityProfileHandler(qualityProfileRepo)
 	settingsHandler := api.NewSettingsHandler(settingsRepo)
-	seriesHandler := api.NewSeriesHandler(seriesRepo)
+	seriesHandler := api.NewSeriesHandler(seriesRepo, bookRepo, sched)
 	tagHandler := api.NewTagHandler(tagRepo)
 	importListHandler := api.NewImportListHandler(importListRepo)
 	metadataProfileHandler := api.NewMetadataProfileHandler(metadataProfileRepo)
@@ -440,6 +440,8 @@ func main() {
 		// Series
 		r.Get("/series", seriesHandler.List)
 		r.Get("/series/{id}", seriesHandler.Get)
+		r.Patch("/series/{id}", seriesHandler.Monitor)
+		r.Post("/series/{id}/fill", seriesHandler.Fill)
 
 		// Recommendations
 		r.Get("/recommendations", recHandler.List)

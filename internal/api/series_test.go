@@ -19,7 +19,8 @@ func seriesFixture(t *testing.T) (*SeriesHandler, *db.SeriesRepo, *db.AuthorRepo
 	}
 	t.Cleanup(func() { database.Close() })
 	repo := db.NewSeriesRepo(database)
-	return NewSeriesHandler(repo), repo, db.NewAuthorRepo(database), db.NewBookRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	return NewSeriesHandler(repo, bookRepo, &mockBookSearcher{}), repo, db.NewAuthorRepo(database), bookRepo
 }
 
 func TestSeriesList_Empty(t *testing.T) {

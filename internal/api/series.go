@@ -1,6 +1,9 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -11,11 +14,13 @@ import (
 )
 
 type SeriesHandler struct {
-	series *db.SeriesRepo
+	series   *db.SeriesRepo
+	books    *db.BookRepo
+	searcher BookSearcher
 }
 
-func NewSeriesHandler(series *db.SeriesRepo) *SeriesHandler {
-	return &SeriesHandler{series: series}
+func NewSeriesHandler(series *db.SeriesRepo, books *db.BookRepo, searcher BookSearcher) *SeriesHandler {
+	return &SeriesHandler{series: series, books: books, searcher: searcher}
 }
 
 func (h *SeriesHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -50,4 +55,59 @@ func (h *SeriesHandler) Get(w http.ResponseWriter, r *http.Request) {
 		s.Books = []models.SeriesBook{}
 	}
 	writeJSON(w, http.StatusOK, s)
+}
+
+// Monitor toggles the monitored flag on a series.
+func (h *SeriesHandler) Monitor(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+
+	var body struct {
+		Monitored bool `json:"monitored"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	if err := h.series.SetMonitored(r.Context(), id, body.Monitored); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"monitored": body.Monitored})
+}
+
+// Fill marks all non-imported books in a series as wanted and kicks off searches.
+func (h *SeriesHandler) Fill(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+
+	books, err := h.series.ListBooksInSeries(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	queued := 0
+	for _, b := range books {
+		if b.Status == models.BookStatusImported {
+			continue
+		}
+		b.Status = models.BookStatusWanted
+		b.Monitored = true
+		if err := h.books.Update(r.Context(), &b); err != nil {
+			slog.Warn("series fill: failed to update book", "book", b.Title, "error", err)
+			continue
+		}
+		queued++
+		go h.searcher.SearchAndGrabBook(context.Background(), b)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]int{"queued": queued})
 }

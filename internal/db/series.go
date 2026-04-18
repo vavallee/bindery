@@ -20,7 +20,7 @@ func NewSeriesRepo(db *sql.DB) *SeriesRepo {
 
 func (r *SeriesRepo) List(ctx context.Context) ([]models.Series, error) {
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, foreign_id, title, description, created_at FROM series ORDER BY title")
+		"SELECT id, foreign_id, title, description, monitored, created_at FROM series ORDER BY title")
 	if err != nil {
 		return nil, fmt.Errorf("list series: %w", err)
 	}
@@ -29,20 +29,66 @@ func (r *SeriesRepo) List(ctx context.Context) ([]models.Series, error) {
 	var series []models.Series
 	for rows.Next() {
 		var s models.Series
-		if err := rows.Scan(&s.ID, &s.ForeignID, &s.Title, &s.Description, &s.CreatedAt); err != nil {
+		var monitored int
+		if err := rows.Scan(&s.ID, &s.ForeignID, &s.Title, &s.Description, &monitored, &s.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan series: %w", err)
 		}
+		s.Monitored = monitored == 1
 		series = append(series, s)
 	}
 	return series, rows.Err()
 }
 
+func (r *SeriesRepo) SetMonitored(ctx context.Context, id int64, monitored bool) error {
+	val := 0
+	if monitored {
+		val = 1
+	}
+	_, err := r.db.ExecContext(ctx, "UPDATE series SET monitored=? WHERE id=?", val, id)
+	return err
+}
+
+// ListBooksInSeries returns all books linked to the given series, with status.
+func (r *SeriesRepo) ListBooksInSeries(ctx context.Context, seriesID int64) ([]models.Book, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT b.id, b.foreign_id, b.author_id, b.title, b.sort_title, b.status, b.monitored,
+		       b.image_url, b.release_date, b.language, b.media_type, b.created_at, b.updated_at
+		FROM series_books sb
+		JOIN books b ON b.id = sb.book_id
+		WHERE sb.series_id = ?`, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var books []models.Book
+	for rows.Next() {
+		var b models.Book
+		var monitored int
+		var releaseDate sql.NullTime
+		if err := rows.Scan(
+			&b.ID, &b.ForeignID, &b.AuthorID, &b.Title, &b.SortTitle, &b.Status, &monitored,
+			&b.ImageURL, &releaseDate, &b.Language, &b.MediaType, &b.CreatedAt, &b.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		b.Monitored = monitored == 1
+		if releaseDate.Valid {
+			b.ReleaseDate = &releaseDate.Time
+		}
+		books = append(books, b)
+	}
+	return books, rows.Err()
+}
+
 func (r *SeriesRepo) GetByID(ctx context.Context, id int64) (*models.Series, error) {
 	row := r.db.QueryRowContext(ctx,
-		"SELECT id, foreign_id, title, description, created_at FROM series WHERE id=?", id)
+		"SELECT id, foreign_id, title, description, monitored, created_at FROM series WHERE id=?", id)
 
 	var s models.Series
-	err := row.Scan(&s.ID, &s.ForeignID, &s.Title, &s.Description, &s.CreatedAt)
+	var monitored int
+	err := row.Scan(&s.ID, &s.ForeignID, &s.Title, &s.Description, &monitored, &s.CreatedAt)
+	s.Monitored = monitored == 1
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

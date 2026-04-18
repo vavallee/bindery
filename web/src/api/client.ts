@@ -200,6 +200,8 @@ export const api = {
   // Series
   listSeries: () => request<Series[]>('/series'),
   getSeries: (id: number) => request<Series>(`/series/${id}`),
+  monitorSeries: (id: number, monitored: boolean) => request<{ monitored: boolean }>(`/series/${id}`, { method: 'PATCH', body: JSON.stringify({ monitored }) }),
+  fillSeries: (id: number) => request<{ queued: number }>(`/series/${id}/fill`, { method: 'POST' }),
 
   // Tags
   listTags: () => request<Tag[]>('/tag'),
@@ -521,6 +523,7 @@ export interface Series {
   foreignSeriesId: string
   title: string
   description: string
+  monitored: boolean
   books?: Array<{
     seriesId: number
     bookId: number

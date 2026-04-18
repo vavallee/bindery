@@ -7,6 +7,7 @@ type Series struct {
 	ForeignID   string    `json:"foreignSeriesId"`
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
+	Monitored   bool      `json:"monitored"`
 	CreatedAt   time.Time `json:"createdAt"`
 
 	// Joined data
