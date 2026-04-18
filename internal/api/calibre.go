@@ -1,11 +1,15 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/db"
@@ -23,16 +27,75 @@ const (
 	SettingCalibrePluginAPIKey  = "calibre.plugin_api_key"
 )
 
-// CalibreHandler exposes the "test connection" endpoint for the Calibre
-// settings UI. Read/write of the calibre.* keys themselves go through the
-// generic /setting endpoints so the UI can reuse its existing plumbing;
-// this handler just validates and probes.
+// calibreAdder is the narrow interface CalibreHandler uses to push a book.
+// Satisfied by *calibre.Client and *calibre.PluginClient.
+type calibreAdder interface {
+	Add(ctx context.Context, path string) (int64, error)
+}
+
+// CalibreHandler exposes the "test connection" and "sync book" endpoints for
+// the Calibre settings UI.
 type CalibreHandler struct {
 	settings *db.SettingsRepo
+	books    *db.BookRepo
+	adder    calibreAdder
 }
 
 func NewCalibreHandler(settings *db.SettingsRepo) *CalibreHandler {
 	return &CalibreHandler{settings: settings}
+}
+
+// WithBookRepo attaches a BookRepo so CalibreSync can look up books.
+func (h *CalibreHandler) WithBookRepo(books *db.BookRepo) {
+	h.books = books
+}
+
+// WithAdder attaches the calibre adder so CalibreSync can push books.
+func (h *CalibreHandler) WithAdder(adder calibreAdder) {
+	h.adder = adder
+}
+
+// CalibreSync manually re-pushes a single book to Calibre. Used to recover
+// books that failed at import time because the plugin was unreachable.
+// POST /api/v1/book/{id}/calibre-sync
+func (h *CalibreHandler) CalibreSync(w http.ResponseWriter, r *http.Request) {
+	if h.adder == nil || h.books == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "calibre integration not configured"})
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid book id"})
+		return
+	}
+	book, err := h.books.GetByID(r.Context(), id)
+	if err != nil || book == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
+		return
+	}
+	path := book.EbookFilePath
+	if path == "" {
+		path = book.AudiobookFilePath
+	}
+	if path == "" {
+		path = book.FilePath
+	}
+	if path == "" {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "book has no file path"})
+		return
+	}
+	calibreID, err := h.adder.Add(r.Context(), path)
+	if err != nil {
+		slog.Warn("calibre: manual sync failed", "bookId", id, "path", path, "error", err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := h.books.SetCalibreID(r.Context(), id, calibreID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	slog.Info("calibre: manual sync succeeded", "bookId", id, "calibreId", calibreID)
+	writeJSON(w, http.StatusOK, map[string]string{"calibre_id": strconv.FormatInt(calibreID, 10)})
 }
 
 // LoadCalibreConfig materialises a calibre.Config from the settings table.

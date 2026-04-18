@@ -170,14 +170,19 @@ func main() {
 	modeResolver := func() calibre.Mode { return api.LoadCalibreMode(settingsRepo) }
 	calibreCfg := api.LoadCalibreConfig(settingsRepo)
 	currentMode := api.LoadCalibreMode(settingsRepo)
+	var calibreAdderForScheduler interface {
+		Add(ctx context.Context, path string) (int64, error)
+	}
 	if currentMode == calibre.ModePlugin {
 		pluginClient := calibre.NewPluginClient(calibreCfg.PluginURL, calibreCfg.PluginAPIKey)
 		importScanner.WithCalibre(modeResolver, pluginClient)
+		calibreAdderForScheduler = pluginClient
 		slog.Info("calibre integration enabled", "mode", "plugin", "url", calibreCfg.PluginURL)
 	} else {
 		calibreClient := calibre.New(calibreCfg)
 		importScanner.WithCalibre(modeResolver, calibreClient)
 		if currentMode == calibre.ModeCalibredb {
+			calibreAdderForScheduler = calibreClient
 			slog.Info("calibre integration enabled", "mode", "calibredb")
 		}
 	}
@@ -225,9 +230,10 @@ func main() {
 	sched := scheduler.New(importScanner, idxSearcher, metaAgg,
 		authorRepo, bookRepo, indexerRepo, downloadRepo, dlClientRepo, settingsRepo, blocklistRepo)
 	sched.WithHistory(historyRepo)
-	// Register the Calibre importer as the 24-hour sync job. The scheduler
-	// only fires the job when the syncer is non-nil, so no guard needed here.
 	sched.WithCalibreSyncer(calibreImporter)
+	if calibreAdderForScheduler != nil {
+		sched.WithCalibreAdder(calibreAdderForScheduler)
+	}
 
 	// Recommendation engine (24-hour job, gated on recommendations.enabled).
 	recRepo := db.NewRecommendationRepo(database)
@@ -279,6 +285,10 @@ func main() {
 	logHandler := api.NewLogHandler(ring)
 	prowlarrHandler := api.NewProwlarrHandler(prowlarrRepo, indexerRepo)
 	calibreHandler := api.NewCalibreHandler(settingsRepo)
+	calibreHandler.WithBookRepo(bookRepo)
+	if calibreAdderForScheduler != nil {
+		calibreHandler.WithAdder(calibreAdderForScheduler)
+	}
 	calibreImportHandler := api.NewCalibreImportHandler(calibreImporter, func() calibre.Config {
 		return api.LoadCalibreConfig(settingsRepo)
 	})
@@ -359,6 +369,7 @@ func main() {
 		r.Delete("/book/{id}/file", bookHandler.DeleteFile)
 		r.Put("/book/{id}/exclude", bookHandler.ToggleExcluded)
 		r.Post("/book/{id}/enrich-audiobook", bookHandler.EnrichAudiobook)
+		r.Post("/book/{id}/calibre-sync", calibreHandler.CalibreSync)
 		r.Post("/book/{id}/search", indexerHandler.SearchBook)
 		r.Get("/book/{id}/file", fileHandler.Download)
 

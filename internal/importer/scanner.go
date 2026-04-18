@@ -135,19 +135,34 @@ func (s *Scanner) pushToCalibre(ctx context.Context, book *models.Book, _ *model
 }
 
 // pushCalibreAdd invokes the configured adder (calibredb CLI or plugin HTTP
-// client) and persists the resulting calibre_id. Failures are best-effort —
-// logged and swallowed so Bindery's own import stays good.
+// client) and persists the resulting calibre_id. Up to 3 attempts with
+// short backoff handle transient plugin unavailability (e.g. in-place server
+// restart after a config save). Failures are still best-effort — logged and
+// swallowed so Bindery's own import stays good. The scheduler's
+// syncMissingCalibreIDs catch-up job will retry any that still fail.
 func (s *Scanner) pushCalibreAdd(ctx context.Context, book *models.Book, path string, mode calibre.Mode) {
 	if s.calibreAdder == nil {
 		slog.Debug("calibre: adder is nil, skipping", "mode", mode, "bookId", book.ID)
 		return
 	}
-	id, err := s.calibreAdder.Add(ctx, path)
+	const maxAttempts = 3
+	backoff := []time.Duration{time.Second, 2 * time.Second}
+	var id int64
+	var err error
+	for attempt := range maxAttempts {
+		id, err = s.calibreAdder.Add(ctx, path)
+		if err == nil || errors.Is(err, calibre.ErrDisabled) {
+			break
+		}
+		if attempt < len(backoff) {
+			time.Sleep(backoff[attempt])
+		}
+	}
 	if err != nil {
 		if errors.Is(err, calibre.ErrDisabled) {
 			return
 		}
-		slog.Warn("calibre: add failed, continuing", "mode", mode, "bookId", book.ID, "path", path, "error", err)
+		slog.Warn("calibre: add failed after retries, continuing", "mode", mode, "bookId", book.ID, "path", path, "error", err)
 		return
 	}
 	if err := s.books.SetCalibreID(ctx, book.ID, id); err != nil {

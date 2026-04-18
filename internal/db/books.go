@@ -201,6 +201,16 @@ func (r *BookRepo) SetCalibreID(ctx context.Context, id, calibreID int64) error 
 	return err
 }
 
+// ListImportedMissingCalibreID returns all imported books that have a file
+// path but no calibre_id. Used by the scheduler's catch-up job to retry
+// Calibre notifications that failed at import time.
+func (r *BookRepo) ListImportedMissingCalibreID(ctx context.Context) ([]models.Book, error) {
+	return r.query(ctx,
+		"SELECT "+bookColumns+" FROM books WHERE status = 'imported' AND calibre_id IS NULL"+
+			" AND (file_path != '' OR ebook_file_path != '' OR audiobook_file_path != '')",
+		nil)
+}
+
 // GetByCalibreID returns the Bindery book row that currently points at the
 // given Calibre book id, or nil if none. The library import flow uses this
 // as its primary idempotency key — a second import pass sees the existing
