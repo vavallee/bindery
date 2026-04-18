@@ -42,7 +42,7 @@ export default function SettingsPage() {
   useEffect(() => {
     api.listIndexers().then(setIndexers).catch(console.error)
     api.listDownloadClients().then(setClients).catch(console.error)
-    api.listProwlarr().then(setProwlarrInstances).catch(console.error)
+    api.listProwlarr().then(r => setProwlarrInstances(r ?? [])).catch(console.error)
   }, [])
 
   useEffect(() => {
@@ -216,7 +216,7 @@ export default function SettingsPage() {
                             const r = await api.syncProwlarr(p.id)
                             setProwlarrSyncResult(prev => ({ ...prev, [p.id]: `Synced — added ${r.added}, updated ${r.updated}, removed ${r.removed}` }))
                             api.listIndexers().then(setIndexers).catch(console.error)
-                            api.listProwlarr().then(setProwlarrInstances).catch(console.error)
+                            api.listProwlarr().then(r => setProwlarrInstances(r ?? [])).catch(console.error)
                           } catch (err: unknown) {
                             alert(err instanceof Error ? err.message : 'Sync failed')
                           }
