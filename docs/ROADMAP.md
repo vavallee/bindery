@@ -2,7 +2,7 @@
 
 Tracked feature requests for future releases. Not a commitment — priorities shift based on user feedback and available time. Open an [issue](https://github.com/vavallee/bindery/issues) to propose additions.
 
-The short version lives in the [README](../README.md#roadmap). ✅ items have landed; ⬜ items are planned. Items with sub-lists track partially-shipped work.
+The short version lives in the [README](../README.md#roadmap). ✅ items have landed (either in a tagged release or on `development`); ⬜ items are planned. Items with sub-lists track partially-shipped work.
 
 ## Planned
 
@@ -39,6 +39,8 @@ The short version lives in the [README](../README.md#roadmap). ✅ items have la
   - ✅ Runtime switcher (language selector in Settings, persisted in `localStorage` so it applies before first paint alongside the theme).
   - ✅ Locale-aware date/number formatting.
   - ✅ `Accept-Language` auto-detect on first load with manual override.
+
+- ✅ **Direct title/keyword search** ([#85](https://github.com/vavallee/bindery/issues/85), [#267](https://github.com/vavallee/bindery/issues/267), landed in development) — Search page at `/search` lets users search all enabled indexers by title, author, or keyword directly from the nav without adding an author first. Results display inline with a Grab button. Backend endpoint (`GET /api/v1/indexer/search`) already existed; PR #266 added the dedicated UI.
 
 - **Cover image privacy / local caching** — prevent the browser from contacting third-party image hosts (Goodreads, OpenLibrary, Google Books) directly, which would leak the user's IP and reading habits.
   - ✅ **Server-side image proxy cache (closes [#112](https://github.com/vavallee/bindery/issues/112), landed in development)** — `GET /api/v1/images?url=<encoded>` fetches and caches cover images under `<dataDir>/image-cache/` with a 30-day TTL. All `imageURL` fields in API responses are rewritten to this proxy path before leaving the server. No browser-to-third-party requests, no fingerprinting.
