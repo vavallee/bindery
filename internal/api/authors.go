@@ -310,7 +310,7 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool)
 
 	// Resolve the author's metadata profile (falling back to the seeded
 	// default) and parse its allowed_languages CSV. Nil means "no filter".
-	allowedLangs := h.resolveAllowedLanguages(ctx, author)
+	allowedLangs, unknownFail := h.resolveAllowedLanguages(ctx, author)
 
 	// Track titles we've already added (case-insensitive) to avoid OL duplicates
 	existingBooks, _ := h.books.ListByAuthor(ctx, author.ID)
@@ -339,9 +339,9 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool)
 		}
 
 		// Filter by the author's metadata-profile allowed_languages.
-		// Books with an empty language (data unavailable) are always kept so
-		// an unclassified release doesn't get dropped by accident.
-		if !models.IsLanguageAllowed(b.Language, allowedLangs) {
+		// Books whose language is unknown honor the profile's
+		// unknown_language_behavior (pass by default; see #232).
+		if !models.IsLanguageAllowed(b.Language, allowedLangs, unknownFail) {
 			skippedLang++
 			slog.Debug("skipping non-allowed-language book", "title", b.Title, "language", b.Language, "allowed", allowedLangs)
 			continue
@@ -498,14 +498,14 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, book)
 }
 
-func (h *AuthorHandler) resolveAllowedLanguages(ctx context.Context, author *models.Author) []string {
+func (h *AuthorHandler) resolveAllowedLanguages(ctx context.Context, author *models.Author) ([]string, bool) {
 	id := models.DefaultMetadataProfileID
 	if author.MetadataProfileID != nil {
 		id = *author.MetadataProfileID
 	}
 	p, err := h.profiles.GetByID(ctx, id)
 	if err != nil || p == nil {
-		return []string{"eng"}
+		return []string{"eng"}, false
 	}
-	return models.ParseAllowedLanguages(p.AllowedLanguages)
+	return models.ParseAllowedLanguages(p.AllowedLanguages), p.UnknownLanguageBehavior == models.UnknownLanguageFail
 }

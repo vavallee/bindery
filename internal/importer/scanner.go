@@ -536,14 +536,39 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		destDir := UniqueDir(s.renamer.AudiobookDestDir(audiobookRoot, author, book))
 		mode := s.importMode(ctx)
 		slog.Info("importing audiobook folder", "src", downloadPath, "dst", destDir, "mode", mode)
+		// Single-file audiobook releases (e.g. a lone .m4b from a torrent) give
+		// us a file path rather than a folder. MoveDir/CopyDir/HardlinkDir all
+		// reject non-directory sources, so place the file inside destDir.
+		srcInfo, statErr := os.Stat(downloadPath)
+		if statErr != nil {
+			slog.Error("failed to stat audiobook source", "src", downloadPath, "error", statErr)
+			s.failImport(ctx, dl, models.StateImportBlocked, fmt.Sprintf("audiobook source unavailable: %v", statErr))
+			return
+		}
 		var dirErr error
-		switch mode {
-		case "hardlink":
-			dirErr = HardlinkDir(downloadPath, destDir)
-		case "copy":
-			dirErr = CopyDir(downloadPath, destDir)
-		default:
-			dirErr = MoveDir(downloadPath, destDir)
+		if srcInfo.IsDir() {
+			switch mode {
+			case "hardlink":
+				dirErr = HardlinkDir(downloadPath, destDir)
+			case "copy":
+				dirErr = CopyDir(downloadPath, destDir)
+			default:
+				dirErr = MoveDir(downloadPath, destDir)
+			}
+		} else {
+			if err := os.MkdirAll(destDir, 0o750); err != nil {
+				dirErr = fmt.Errorf("create audiobook dest dir: %w", err)
+			} else {
+				dstFile := filepath.Join(destDir, filepath.Base(downloadPath))
+				switch mode {
+				case "hardlink":
+					dirErr = HardlinkFile(downloadPath, dstFile)
+				case "copy":
+					dirErr = CopyFile(downloadPath, dstFile)
+				default:
+					dirErr = MoveFile(downloadPath, dstFile)
+				}
+			}
 		}
 		if dirErr != nil {
 			slog.Error("failed to import audiobook folder", "src", downloadPath, "mode", mode, "error", dirErr)

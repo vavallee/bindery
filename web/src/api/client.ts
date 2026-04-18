@@ -610,6 +610,7 @@ export interface MetadataProfile {
   skipMissingIsbn: boolean
   skipPartBooks: boolean
   allowedLanguages: string
+  unknownLanguageBehavior: 'pass' | 'fail'
 }
 
 export interface DelayProfile {

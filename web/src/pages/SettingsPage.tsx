@@ -817,6 +817,7 @@ function MetadataProfileForm({ profile, onClose, onSaved }: { profile?: Metadata
   const [skipMissingDate, setSkipMissingDate] = useState(profile?.skipMissingDate ?? false)
   const [skipMissingIsbn, setSkipMissingIsbn] = useState(profile?.skipMissingIsbn ?? false)
   const [skipPartBooks, setSkipPartBooks] = useState(profile?.skipPartBooks ?? false)
+  const [unknownLanguageBehavior, setUnknownLanguageBehavior] = useState<'pass' | 'fail'>(profile?.unknownLanguageBehavior ?? 'pass')
   const initialLangs = profile?.allowedLanguages
     ? profile.allowedLanguages.split(',').map(c => c.trim().toLowerCase()).filter(Boolean)
     : ['eng']
@@ -841,6 +842,7 @@ function MetadataProfileForm({ profile, onClose, onSaved }: { profile?: Metadata
         skipMissingIsbn,
         skipPartBooks,
         allowedLanguages: languages.join(','),
+        unknownLanguageBehavior,
       }
       if (profile) {
         await api.updateMetadataProfile(profile.id, payload)
@@ -882,6 +884,20 @@ function MetadataProfileForm({ profile, onClose, onSaved }: { profile?: Metadata
         </div>
         <p className="text-[11px] text-slate-500 dark:text-zinc-500 mt-2">
           {t('settings.metadata.formLanguagesHint')}
+        </p>
+      </div>
+      <div>
+        <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.metadata.formUnknownLanguage')}</label>
+        <select
+          value={unknownLanguageBehavior}
+          onChange={e => setUnknownLanguageBehavior(e.target.value as 'pass' | 'fail')}
+          className={inputCls}
+        >
+          <option value="pass">{t('settings.metadata.formUnknownLanguagePass')}</option>
+          <option value="fail">{t('settings.metadata.formUnknownLanguageFail')}</option>
+        </select>
+        <p className="text-[11px] text-slate-500 dark:text-zinc-500 mt-2">
+          {t('settings.metadata.formUnknownLanguageHint')}
         </p>
       </div>
       <div className="grid grid-cols-2 gap-3">

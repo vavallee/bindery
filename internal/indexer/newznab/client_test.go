@@ -563,3 +563,36 @@ func TestBuildURL_StripsStaleQueryParams(t *testing.T) {
 		t.Errorf("expected apikey=key in built URL, got %s", u)
 	}
 }
+
+func TestNormalizeQueryTitle(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"Die Stille ist ein Geräusch", "Die Stille ist ein Geräusch"},
+		{"  Die Stille  ist   ein Geräusch  ", "Die Stille ist ein Geräusch"},
+		{"Die Stille ist ein Geräusch (German Edition)", "Die Stille ist ein Geräusch"},
+		{"Dicke Freundinnen (Unabridged)", "Dicke Freundinnen"},
+		{"Ender\u2019s Game", "Ender's Game"},
+		{"Title \u2014 Subtitle", "Title - Subtitle"},
+	}
+	for _, c := range cases {
+		if got := NormalizeQueryTitle(c.in); got != c.want {
+			t.Errorf("NormalizeQueryTitle(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestPrimaryTitleForQuery_NormalizesAndDropsSubtitle(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"Dune: Messiah", "Dune"},
+		{"  Dune  ", "Dune"},
+		{"Die Stille ist ein Geräusch (ger)", "Die Stille ist ein Geräusch"},
+	}
+	for _, c := range cases {
+		if got := primaryTitleForQuery(c.in); got != c.want {
+			t.Errorf("primaryTitleForQuery(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

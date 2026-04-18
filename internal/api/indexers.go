@@ -241,7 +241,37 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 		crit.Year = book.ReleaseDate.Year()
 	}
 
-	results, dbg := h.searcher.SearchBookWithDebug(r.Context(), idxs, crit)
+	// For dual-format books (media_type='both'), run one search per format so
+	// each uses its own category tree (7xxx for ebooks, 3xxx for audiobooks).
+	// A single "both" search falls through to the ebook branch in
+	// filterCategoriesForMedia, silently dropping all audiobook results.
+	var results []newznab.SearchResult
+	var dbg *indexer.SearchDebug
+	if book.MediaType == models.MediaTypeBoth {
+		ebookCrit := crit
+		ebookCrit.MediaType = models.MediaTypeEbook
+		audioCrit := crit
+		audioCrit.MediaType = models.MediaTypeAudiobook
+		ebookResults, ebookDbg := h.searcher.SearchBookWithDebug(r.Context(), idxs, ebookCrit)
+		audioResults, audioDbg := h.searcher.SearchBookWithDebug(r.Context(), idxs, audioCrit)
+		results = append(ebookResults, audioResults...)
+		results = indexer.DedupeResults(results)
+		// Merge debug info from both searches.
+		if ebookDbg != nil && audioDbg != nil {
+			merged := *ebookDbg
+			merged.Indexers = append(merged.Indexers, audioDbg.Indexers...)
+			merged.Filters = append(merged.Filters, audioDbg.Filters...)
+			merged.Pipeline.RawCount += audioDbg.Pipeline.RawCount
+			merged.DurationMs += audioDbg.DurationMs
+			dbg = &merged
+		} else if audioDbg != nil {
+			dbg = audioDbg
+		} else {
+			dbg = ebookDbg
+		}
+	} else {
+		results, dbg = h.searcher.SearchBookWithDebug(r.Context(), idxs, crit)
+	}
 
 	// Build decision specs.
 	var specs []decision.Specification

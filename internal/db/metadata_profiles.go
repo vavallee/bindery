@@ -19,7 +19,7 @@ func NewMetadataProfileRepo(db *sql.DB) *MetadataProfileRepo {
 func (r *MetadataProfileRepo) List(ctx context.Context) ([]models.MetadataProfile, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, name, min_popularity, min_pages, skip_missing_date, skip_missing_isbn,
-		       skip_part_books, allowed_languages, created_at
+		       skip_part_books, allowed_languages, unknown_language_behavior, created_at
 		FROM metadata_profiles ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("list metadata profiles: %w", err)
@@ -40,7 +40,7 @@ func (r *MetadataProfileRepo) List(ctx context.Context) ([]models.MetadataProfil
 func (r *MetadataProfileRepo) GetByID(ctx context.Context, id int64) (*models.MetadataProfile, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, name, min_popularity, min_pages, skip_missing_date, skip_missing_isbn,
-		       skip_part_books, allowed_languages, created_at
+		       skip_part_books, allowed_languages, unknown_language_behavior, created_at
 		FROM metadata_profiles WHERE id=?`, id)
 	if err != nil {
 		return nil, fmt.Errorf("get metadata profile %d: %w", id, err)
@@ -61,12 +61,17 @@ func (r *MetadataProfileRepo) GetByID(ctx context.Context, id int64) (*models.Me
 }
 
 func (r *MetadataProfileRepo) Create(ctx context.Context, p *models.MetadataProfile) error {
+	if p.UnknownLanguageBehavior == "" {
+		p.UnknownLanguageBehavior = models.UnknownLanguagePass
+	}
 	result, err := r.db.ExecContext(ctx, `
 		INSERT INTO metadata_profiles (name, min_popularity, min_pages, skip_missing_date,
-		                               skip_missing_isbn, skip_part_books, allowed_languages)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		                               skip_missing_isbn, skip_part_books, allowed_languages,
+		                               unknown_language_behavior)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Name, p.MinPopularity, p.MinPages,
-		p.SkipMissingDate, p.SkipMissingISBN, p.SkipPartBooks, p.AllowedLanguages)
+		p.SkipMissingDate, p.SkipMissingISBN, p.SkipPartBooks, p.AllowedLanguages,
+		p.UnknownLanguageBehavior)
 	if err != nil {
 		return fmt.Errorf("create metadata profile: %w", err)
 	}
@@ -79,12 +84,17 @@ func (r *MetadataProfileRepo) Create(ctx context.Context, p *models.MetadataProf
 }
 
 func (r *MetadataProfileRepo) Update(ctx context.Context, p *models.MetadataProfile) error {
+	if p.UnknownLanguageBehavior == "" {
+		p.UnknownLanguageBehavior = models.UnknownLanguagePass
+	}
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE metadata_profiles SET name=?, min_popularity=?, min_pages=?, skip_missing_date=?,
-		                             skip_missing_isbn=?, skip_part_books=?, allowed_languages=?
+		                             skip_missing_isbn=?, skip_part_books=?, allowed_languages=?,
+		                             unknown_language_behavior=?
 		WHERE id=?`,
 		p.Name, p.MinPopularity, p.MinPages,
-		p.SkipMissingDate, p.SkipMissingISBN, p.SkipPartBooks, p.AllowedLanguages, p.ID)
+		p.SkipMissingDate, p.SkipMissingISBN, p.SkipPartBooks, p.AllowedLanguages,
+		p.UnknownLanguageBehavior, p.ID)
 	if err != nil {
 		return fmt.Errorf("update metadata profile %d: %w", p.ID, err)
 	}
@@ -104,7 +114,8 @@ func scanMetadataProfile(rows *sql.Rows) (models.MetadataProfile, error) {
 	var skipDate, skipISBN, skipPart int
 	err := rows.Scan(
 		&p.ID, &p.Name, &p.MinPopularity, &p.MinPages,
-		&skipDate, &skipISBN, &skipPart, &p.AllowedLanguages, &p.CreatedAt,
+		&skipDate, &skipISBN, &skipPart, &p.AllowedLanguages,
+		&p.UnknownLanguageBehavior, &p.CreatedAt,
 	)
 	if err != nil {
 		return p, fmt.Errorf("scan metadata profile: %w", err)

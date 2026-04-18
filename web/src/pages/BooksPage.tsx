@@ -308,6 +308,14 @@ export default function BooksPage() {
                   {book.mediaType === 'both' && (
                     <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">{t('common.ebook')}</span>
                   )}
+                  {!book.language && (
+                    <span
+                      className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-200 text-amber-900 dark:bg-amber-900/50 dark:text-amber-300"
+                      title="Metadata source did not report a language for this book."
+                    >
+                      ?
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center justify-between mt-0.5">
                   {book.releaseDate && (

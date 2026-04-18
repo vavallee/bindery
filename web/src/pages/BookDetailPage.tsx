@@ -258,8 +258,15 @@ export default function BookDetailPage() {
                 {new Date(book.releaseDate).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
               </span>
             )}
-            {book.language && (
+            {book.language ? (
               <span className="text-slate-600 dark:text-zinc-500">{book.language}</span>
+            ) : (
+              <span
+                className="inline-block px-2 py-0.5 rounded font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400"
+                title="Metadata source did not report a language for this book. It bypassed the language filter."
+              >
+                Language unknown
+              </span>
             )}
             {book.narrator && (
               <span className="text-slate-600 dark:text-zinc-500">Narrated by {book.narrator}</span>

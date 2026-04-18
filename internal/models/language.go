@@ -33,18 +33,18 @@ func ParseAllowedLanguages(csv string) []string {
 	return out
 }
 
-// IsLanguageAllowed returns true if code matches any entry in allowed, or if
-// allowed is empty (filter disabled). When allowed is non-empty and code is
-// empty (source didn't report a language), the book is rejected — failing
-// closed prevents non-English editions from slipping through when OL omits
-// language data at the work level.
-func IsLanguageAllowed(code string, allowed []string) bool {
+// IsLanguageAllowed reports whether code passes the allowed-language filter.
+// When allowed is empty the filter is disabled and everything passes. When
+// code is empty (source didn't report a language — common with OpenLibrary
+// work-level data), unknownFail controls behavior: false keeps the book,
+// true rejects it. See issue #232.
+func IsLanguageAllowed(code string, allowed []string, unknownFail bool) bool {
 	if len(allowed) == 0 {
 		return true
 	}
 	code = strings.ToLower(strings.TrimSpace(code))
 	if code == "" {
-		return false
+		return !unknownFail
 	}
 	return slices.Contains(allowed, code)
 }

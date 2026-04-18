@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -131,11 +132,40 @@ func (c *Client) BookSearch(ctx context.Context, title, author string, categorie
 // primaryTitleForQuery returns the portion of a book title before a colon,
 // so "Dune: Messiah" queries as "Dune". Indexers rarely have the subtitle
 // in the release name and including it can cause all-keyword-match failures.
+//
+// The title is also normalized so two book rows that differ only in
+// incidental metadata (leading/trailing whitespace, collapsed interior
+// whitespace, smart-quote variants, parenthesised language suffixes like
+// "(German Edition)") produce identical queries. Without this, ingesting
+// the same work from multiple metadata providers yields two rows that
+// search differently — see issue #250.
 func primaryTitleForQuery(title string) string {
 	if i := strings.Index(title, ":"); i > 0 {
-		return strings.TrimSpace(title[:i])
+		title = title[:i]
 	}
-	return title
+	return NormalizeQueryTitle(title)
+}
+
+// parenSuffixRe matches a trailing parenthesised qualifier used by metadata
+// providers to distinguish editions of the same work, e.g. "(German Edition)",
+// "(Unabridged)", "(2nd ed.)". Indexers almost never carry these qualifiers
+// in the release name, so including them reliably zeros out the result set.
+var parenSuffixRe = regexp.MustCompile(`\s*\([^)]*\)\s*$`)
+
+// NormalizeQueryTitle strips incidental differences that would cause two
+// metadata-provider rows for the same work to generate different indexer
+// queries: Unicode smart quotes are folded to ASCII, whitespace is trimmed
+// and collapsed, and a single trailing parenthesised qualifier is removed.
+// Called by primaryTitleForQuery and exported so ingestion paths can use
+// the same normalization for title-based deduplication.
+func NormalizeQueryTitle(title string) string {
+	title = strings.NewReplacer(
+		"\u2018", "'", "\u2019", "'",
+		"\u201C", `"`, "\u201D", `"`,
+		"\u2013", "-", "\u2014", "-",
+	).Replace(title)
+	title = parenSuffixRe.ReplaceAllString(title, "")
+	return strings.Join(strings.Fields(title), " ")
 }
 
 func authorSurname(author string) string {

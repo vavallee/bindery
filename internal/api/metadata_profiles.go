@@ -62,6 +62,9 @@ func (h *MetadataProfileHandler) Create(w http.ResponseWriter, r *http.Request) 
 	if p.AllowedLanguages == "" {
 		p.AllowedLanguages = "eng"
 	}
+	if p.UnknownLanguageBehavior != models.UnknownLanguageFail {
+		p.UnknownLanguageBehavior = models.UnknownLanguagePass
+	}
 	if err := h.repo.Create(r.Context(), &p); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -86,6 +89,9 @@ func (h *MetadataProfileHandler) Update(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	p.ID = id
+	if p.UnknownLanguageBehavior != models.UnknownLanguageFail {
+		p.UnknownLanguageBehavior = models.UnknownLanguagePass
+	}
 	if err := h.repo.Update(r.Context(), &p); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
