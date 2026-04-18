@@ -17,6 +17,7 @@ import HistoryPage from './pages/HistoryPage'
 import SeriesPage from './pages/SeriesPage'
 import CalendarPage from './pages/CalendarPage'
 import DiscoverPage from './pages/DiscoverPage'
+import SearchPage from './pages/SearchPage'
 import Logo from './components/Logo'
 import { useTheme } from './theme'
 
@@ -29,6 +30,7 @@ const NAV_KEYS = [
   { to: '/series', key: 'series' },
   { to: '/calendar', key: 'calendar' },
   { to: '/discover', key: 'discover' },
+  { to: '/search', key: 'search' },
 ]
 
 function Shell() {
@@ -189,6 +191,7 @@ function Shell() {
           <Route path="/series" element={<SeriesPage />} />
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/discover" element={<DiscoverPage />} />
+          <Route path="/search" element={<SearchPage />} />
           <Route path="/blocklist" element={<Navigate to="/settings" replace />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>

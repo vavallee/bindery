@@ -40,7 +40,8 @@
     "series": "Reeksen",
     "discover": "Discover",
     "blocklist": "Blokkeerlijst",
-    "settings": "Instellingen"
+    "settings": "Instellingen",
+    "search": "Search"
   },
   "login": {
     "title": "Inloggen",
@@ -119,7 +120,6 @@
     "statusImported": "In bibliotheek",
     "statusSkipped": "Overgeslagen",
     "audioLabel": "🎧 Audio",
-    "download": "Downloaden",
     "downloadFile": "Bestand downloaden",
     "setEbook": "📖 Instellen als e-boek",
     "setAudiobook": "🎧 Instellen als luisterboek",
@@ -393,5 +393,16 @@
       "coldStart": "Add more books to unlock personalized genre recommendations.",
       "goToSettings": "Go to Settings"
     }
+  },
+  "search": {
+    "heading": "Search Indexers",
+    "placeholder": "Title, author, or keyword…",
+    "submit": "Search",
+    "searching": "Searching…",
+    "noResults": "No results — try a different query or check your indexer configuration.",
+    "resultCount": "{{count}} results",
+    "grab": "Grab",
+    "grabbing": "Grabbing…",
+    "grabbed": "Grabbed"
   }
 }

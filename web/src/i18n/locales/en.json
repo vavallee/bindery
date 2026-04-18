@@ -40,8 +40,20 @@
     "queue": "Queue",
     "series": "Series",
     "discover": "Discover",
+    "search": "Search",
     "blocklist": "Blocklist",
     "settings": "Settings"
+  },
+  "search": {
+    "heading": "Search Indexers",
+    "placeholder": "Title, author, or keyword…",
+    "submit": "Search",
+    "searching": "Searching…",
+    "noResults": "No results — try a different query or check your indexer configuration.",
+    "resultCount": "{{count}} results",
+    "grab": "Grab",
+    "grabbing": "Grabbing…",
+    "grabbed": "Grabbed"
   },
   "login": {
     "title": "Sign in",

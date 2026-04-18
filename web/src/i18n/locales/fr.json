@@ -40,7 +40,8 @@
     "series": "Séries",
     "discover": "Discover",
     "blocklist": "Liste de blocage",
-    "settings": "Paramètres"
+    "settings": "Paramètres",
+    "search": "Search"
   },
   "login": {
     "title": "Connexion",
@@ -119,7 +120,6 @@
     "statusImported": "En bibliothèque",
     "statusSkipped": "Ignoré",
     "audioLabel": "🎧 Audio",
-    "download": "Télécharger",
     "downloadFile": "Télécharger le fichier",
     "setEbook": "📖 Définir livre numérique",
     "setAudiobook": "🎧 Définir livre audio",
@@ -393,5 +393,16 @@
       "coldStart": "Add more books to unlock personalized genre recommendations.",
       "goToSettings": "Go to Settings"
     }
+  },
+  "search": {
+    "heading": "Search Indexers",
+    "placeholder": "Title, author, or keyword…",
+    "submit": "Search",
+    "searching": "Searching…",
+    "noResults": "No results — try a different query or check your indexer configuration.",
+    "resultCount": "{{count}} results",
+    "grab": "Grab",
+    "grabbing": "Grabbing…",
+    "grabbed": "Grabbed"
   }
 }
