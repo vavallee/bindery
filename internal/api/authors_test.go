@@ -240,8 +240,8 @@ func TestFetchAuthorBooks_FiresSearchForMonitoredAuthor(t *testing.T) {
 
 	stub := &stubMetaProvider{
 		works: []models.Book{
-			{ForeignID: "OL501W", Title: "First Book", SortTitle: "first book", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
-			{ForeignID: "OL502W", Title: "Second Book", SortTitle: "second book", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+			{ForeignID: "OL501W", Title: "First Book", SortTitle: "first book", Language: "eng", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+			{ForeignID: "OL502W", Title: "Second Book", SortTitle: "second book", Language: "eng", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
 		},
 	}
 	agg := metadata.NewAggregator(stub)
@@ -296,8 +296,8 @@ func TestFetchAuthorBooks_SkipsSearchForOwnedBooks(t *testing.T) {
 
 	stub := &stubMetaProvider{
 		works: []models.Book{
-			{ForeignID: "OL701W", Title: "Already Owned", SortTitle: "already owned", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
-			{ForeignID: "OL702W", Title: "Not Yet Owned", SortTitle: "not yet owned", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+			{ForeignID: "OL701W", Title: "Already Owned", SortTitle: "already owned", Language: "eng", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+			{ForeignID: "OL702W", Title: "Not Yet Owned", SortTitle: "not yet owned", Language: "eng", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
 		},
 	}
 	agg := metadata.NewAggregator(stub)

@@ -34,15 +34,17 @@ func ParseAllowedLanguages(csv string) []string {
 }
 
 // IsLanguageAllowed returns true if code matches any entry in allowed, or if
-// allowed is empty (filter disabled) or code is empty (source didn't report a
-// language — we'd rather keep a book than drop it on missing data).
+// allowed is empty (filter disabled). When allowed is non-empty and code is
+// empty (source didn't report a language), the book is rejected — failing
+// closed prevents non-English editions from slipping through when OL omits
+// language data at the work level.
 func IsLanguageAllowed(code string, allowed []string) bool {
 	if len(allowed) == 0 {
 		return true
 	}
 	code = strings.ToLower(strings.TrimSpace(code))
 	if code == "" {
-		return true
+		return false
 	}
 	return slices.Contains(allowed, code)
 }
