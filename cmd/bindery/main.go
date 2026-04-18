@@ -286,6 +286,12 @@ func main() {
 	calibreImportHandler := api.NewCalibreImportHandler(calibreImporter, func() calibre.Config {
 		return api.LoadCalibreConfig(settingsRepo)
 	})
+	calibreSyncer := calibre.NewSyncer(bookRepo)
+	calibreSyncHandler := api.NewCalibreSyncHandler(
+		calibreSyncer,
+		func() calibre.Config { return api.LoadCalibreConfig(settingsRepo) },
+		func() calibre.Mode { return api.LoadCalibreMode(settingsRepo) },
+	)
 	recHandler := api.NewRecommendationHandler(recRepo, recEngine, authorRepo, bookRepo, sched)
 	imageProxyHandler := api.NewImageProxyHandler(cfg.DataDir)
 	imageProxyHandler.StartEviction(24 * time.Hour)
@@ -519,6 +525,12 @@ func main() {
 		// the UI polls Status while it runs.
 		r.Post("/calibre/import", calibreImportHandler.Start)
 		r.Get("/calibre/import/status", calibreImportHandler.Status)
+
+		// Calibre bulk push (write side). Iterates every imported book and
+		// POSTs its file to the plugin; 409 Conflict is treated as
+		// idempotent. Single-job policy — second call returns 409.
+		r.Post("/calibre/sync", calibreSyncHandler.Start)
+		r.Get("/calibre/sync/status", calibreSyncHandler.Status)
 
 		// Migration imports (CSV of author names, or Readarr SQLite DB).
 		r.Post("/migrate/csv", migrateHandler.ImportCSV)

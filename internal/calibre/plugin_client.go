@@ -4,11 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 )
+
+// ErrAlreadyInCalibre is returned by PluginClient.Add when the plugin
+// reports the book is already present (HTTP 409 Conflict). Callers that
+// treat duplicate pushes as idempotent — e.g. the "Push all to Calibre"
+// bulk sync — can errors.Is-check this sentinel instead of parsing the
+// response body.
+var ErrAlreadyInCalibre = errors.New("plugin client: book already in Calibre library")
 
 // PluginClient calls the Bindery Bridge Calibre plugin's HTTP API
 // (protocol /v1/, see bindery-plugins/docs/protocol.md). It implements the
@@ -71,8 +79,15 @@ func (c *PluginClient) addWithRetry(ctx context.Context, filePath string, retrie
 		Duplicate bool   `json:"duplicate"`
 		Error     string `json:"error"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil && resp.StatusCode < 400 {
 		return 0, fmt.Errorf("plugin client: decode response: %w", err)
+	}
+	if resp.StatusCode == http.StatusConflict {
+		// 409 → book is already in the Calibre library. Surface the
+		// existing id (when the plugin includes it) so the caller can
+		// persist the linkage, but wrap ErrAlreadyInCalibre so idempotent
+		// callers can distinguish this from a real failure.
+		return result.ID, ErrAlreadyInCalibre
 	}
 	if resp.StatusCode >= 400 {
 		return 0, fmt.Errorf("plugin client: server error %d: %s", resp.StatusCode, result.Error)

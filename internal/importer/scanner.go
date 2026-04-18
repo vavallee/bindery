@@ -149,6 +149,15 @@ func (s *Scanner) pushCalibreAdd(ctx context.Context, book *models.Book, path st
 		if errors.Is(err, calibre.ErrDisabled) {
 			return
 		}
+		if errors.Is(err, calibre.ErrAlreadyInCalibre) {
+			slog.Info("calibre: book already in library", "mode", mode, "bookId", book.ID, "path", path, "calibreId", id)
+			if id > 0 {
+				if perr := s.books.SetCalibreID(ctx, book.ID, id); perr != nil {
+					slog.Warn("calibre: persist calibre_id failed", "bookId", book.ID, "calibreId", id, "error", perr)
+				}
+			}
+			return
+		}
 		slog.Warn("calibre: add failed, continuing", "mode", mode, "bookId", book.ID, "path", path, "error", err)
 		return
 	}

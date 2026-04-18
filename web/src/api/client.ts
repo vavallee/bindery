@@ -224,6 +224,8 @@ export const api = {
   calibreTestPaths: () => request<{ ok: string; message: string }>('/calibre/test-paths', { method: 'POST' }),
   calibreImportStart: () => request<CalibreImportProgress>('/calibre/import', { method: 'POST' }),
   calibreImportStatus: () => request<CalibreImportProgress>('/calibre/import/status'),
+  calibreSyncStart: () => request<CalibreSyncProgress>('/calibre/sync', { method: 'POST' }),
+  calibreSyncStatus: () => request<CalibreSyncProgress>('/calibre/sync/status'),
 
   // Import lists
   listImportLists: () => request<ImportList[]>('/importlist'),
@@ -375,6 +377,36 @@ export interface CalibreImportProgress {
   message?: string
   error?: string
   stats?: CalibreImportStats
+}
+
+// CalibreSyncError is one failed push entry returned by /calibre/sync/status.
+export interface CalibreSyncError {
+  bookId: number
+  title: string
+  path?: string
+  reason: string
+}
+
+// CalibreSyncStats summarises one bulk-push run. Pushed = newly added;
+// alreadyInCalibre = 409 Conflict (treated as success for idempotency);
+// failed = everything else.
+export interface CalibreSyncStats {
+  total: number
+  processed: number
+  pushed: number
+  alreadyInCalibre: number
+  failed: number
+}
+
+// CalibreSyncProgress is the polled shape for /calibre/sync/status.
+export interface CalibreSyncProgress {
+  running: boolean
+  startedAt?: string
+  finishedAt?: string
+  message?: string
+  error?: string
+  stats: CalibreSyncStats
+  errors: CalibreSyncError[]
 }
 
 export interface Indexer {

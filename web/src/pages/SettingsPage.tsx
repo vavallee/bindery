@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, AuthConfig, AuthStatus, BlocklistEntry, Indexer, IndexerTestResult, ProwlarrInstance, DownloadClient, NotificationConfig, QualityProfile, MetadataProfile, CalibreImportProgress, RootFolder, LogEntry, ImportList, HardcoverList } from '../api/client'
+import { api, AuthConfig, AuthStatus, BlocklistEntry, Indexer, IndexerTestResult, ProwlarrInstance, DownloadClient, NotificationConfig, QualityProfile, MetadataProfile, CalibreImportProgress, CalibreSyncProgress, RootFolder, LogEntry, ImportList, HardcoverList } from '../api/client'
 import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
 import ThemeToggle from '../components/ThemeToggle'
@@ -1680,6 +1680,10 @@ function CalibreSection({
   const [saveError, setSaveError] = useState<{ key: string; msg: string } | null>(null)
   const [importProgress, setImportProgress] = useState<CalibreImportProgress | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
+  const [syncProgress, setSyncProgress] = useState<CalibreSyncProgress | null>(null)
+  const [syncError, setSyncError] = useState<string | null>(null)
+  const [syncModalOpen, setSyncModalOpen] = useState(false)
+  const [bridgeReachable, setBridgeReachable] = useState<boolean | null>(null)
 
   const saveSettingWithError = async (key: string) => {
     setSaveError(null)
@@ -1706,7 +1710,31 @@ function CalibreSection({
   // the live bar instead of a dead "Import library" button.
   useEffect(() => {
     api.calibreImportStatus().then(setImportProgress).catch(() => {})
+    api.calibreSyncStatus().then(p => {
+      setSyncProgress(p)
+      // If a sync is already running when the tab mounts, surface the
+      // modal so the user can watch it finish instead of wondering what
+      // the disabled button is doing.
+      if (p.running) setSyncModalOpen(true)
+    }).catch(() => {})
   }, [])
+
+  // Silently probe plugin reachability so the "Push all to Calibre"
+  // button can enable/disable without the user having to click Test
+  // first. Re-probes whenever mode, url, or api key changes.
+  const pluginURL = settings['calibre.plugin_url'] ?? ''
+  const pluginKey = settings['calibre.plugin_api_key'] ?? ''
+  useEffect(() => {
+    if (mode !== 'plugin' || !pluginURL) {
+      setBridgeReachable(null)
+      return
+    }
+    let cancelled = false
+    api.testCalibre()
+      .then(() => { if (!cancelled) setBridgeReachable(true) })
+      .catch(() => { if (!cancelled) setBridgeReachable(false) })
+    return () => { cancelled = true }
+  }, [mode, pluginURL, pluginKey])
 
   // Poll while an import is running.
   useEffect(() => {
@@ -1717,6 +1745,15 @@ function CalibreSection({
     return () => clearInterval(id)
   }, [importProgress?.running])
 
+  // Poll while a bulk sync is running. 2s matches the task spec.
+  useEffect(() => {
+    if (!syncProgress?.running) return
+    const id = setInterval(() => {
+      api.calibreSyncStatus().then(setSyncProgress).catch(() => {})
+    }, 2000)
+    return () => clearInterval(id)
+  }, [syncProgress?.running])
+
   const startImport = async () => {
     setImportError(null)
     try {
@@ -1724,6 +1761,17 @@ function CalibreSection({
       setImportProgress(p)
     } catch (err) {
       setImportError(err instanceof Error ? err.message : 'Import failed to start')
+    }
+  }
+
+  const startSync = async () => {
+    setSyncError(null)
+    setSyncModalOpen(true)
+    try {
+      const p = await api.calibreSyncStart()
+      setSyncProgress(p)
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : 'Push failed to start')
     }
   }
 
@@ -1902,6 +1950,32 @@ function CalibreSection({
           </div>
         )}
 
+        {/* Bulk push: Bindery → Calibre (plugin only). Pushes every imported
+            book's on-disk file to the plugin; 409 is treated as idempotent. */}
+        {mode === 'plugin' && (
+          <div className="pt-3 border-t border-slate-200 dark:border-zinc-800">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">Push all to Calibre</label>
+                <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">
+                  Send every imported book in Bindery to the Calibre Bridge plugin. Books already in Calibre are skipped (idempotent).
+                </p>
+                {bridgeReachable === false && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">Bridge not reachable — check plugin URL / API key above.</p>
+                )}
+              </div>
+              <button
+                onClick={startSync}
+                disabled={syncProgress?.running || bridgeReachable !== true}
+                className="px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
+                title={bridgeReachable !== true ? 'Enable plugin mode and verify the bridge is reachable first' : ''}
+              >
+                {syncProgress?.running ? 'Pushing…' : 'Push all to Calibre'}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Library import (read side): Calibre → Bindery */}
         <div className="pt-3 border-t border-slate-200 dark:border-zinc-800 space-y-3">
           <div className="flex items-center justify-between">
@@ -2005,7 +2079,118 @@ function CalibreSection({
           )}
         </div>
       </div>
+
+      {syncModalOpen && (
+        <CalibreSyncModal
+          progress={syncProgress}
+          error={syncError}
+          onClose={() => setSyncModalOpen(false)}
+        />
+      )}
     </section>
+  )
+}
+
+// CalibreSyncModal renders the live progress of a bulk "Push all to
+// Calibre" job. Stays open while running; once finished, the user
+// dismisses it explicitly so they can read the per-book error list.
+function CalibreSyncModal({
+  progress,
+  error,
+  onClose,
+}: {
+  progress: CalibreSyncProgress | null
+  error: string | null
+  onClose: () => void
+}) {
+  const stats = progress?.stats
+  const total = stats?.total ?? 0
+  const processed = stats?.processed ?? 0
+  const pct = total > 0 ? Math.min(100, (processed / total) * 100) : 0
+  const running = !!progress?.running
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+      <div className="w-full max-w-xl rounded-lg bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 shadow-xl">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-zinc-800">
+          <h3 className="text-base font-semibold text-slate-800 dark:text-zinc-100">Push all to Calibre</h3>
+          <button
+            onClick={onClose}
+            disabled={running}
+            className="text-slate-500 hover:text-slate-700 dark:text-zinc-400 dark:hover:text-zinc-200 disabled:opacity-40"
+            title={running ? 'Wait for the push to finish' : 'Close'}
+          >
+            ✕
+          </button>
+        </div>
+        <div className="p-4 space-y-3">
+          {error && (
+            <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
+          )}
+          {progress && (
+            <>
+              <div className="flex justify-between text-xs text-slate-600 dark:text-zinc-400">
+                <span>{progress.message || (running ? 'Working…' : 'Idle')}</span>
+                <span>{processed} / {total || '?'}</span>
+              </div>
+              <div className="h-1.5 bg-slate-200 dark:bg-zinc-800 rounded overflow-hidden">
+                <div className="h-full bg-sky-600 transition-[width] duration-300" style={{ width: `${pct}%` }} />
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div className="rounded border border-slate-200 dark:border-zinc-800 px-2 py-1.5">
+                  <div className="text-slate-600 dark:text-zinc-500">Pushed</div>
+                  <div className="font-semibold text-emerald-600 dark:text-emerald-400">{stats?.pushed ?? 0}</div>
+                </div>
+                <div className="rounded border border-slate-200 dark:border-zinc-800 px-2 py-1.5">
+                  <div className="text-slate-600 dark:text-zinc-500">Already in Calibre</div>
+                  <div className="font-semibold text-slate-700 dark:text-zinc-300">{stats?.alreadyInCalibre ?? 0}</div>
+                </div>
+                <div className="rounded border border-slate-200 dark:border-zinc-800 px-2 py-1.5">
+                  <div className="text-slate-600 dark:text-zinc-500">Failed</div>
+                  <div className="font-semibold text-red-600 dark:text-red-400">{stats?.failed ?? 0}</div>
+                </div>
+              </div>
+              {!running && progress.error && (
+                <p className="text-xs text-red-600 dark:text-red-400">Sync failed: {progress.error}</p>
+              )}
+              {!running && progress.finishedAt && !progress.error && (
+                <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                  Done — pushed {stats?.pushed ?? 0}, already in Calibre {stats?.alreadyInCalibre ?? 0}, failed {stats?.failed ?? 0}.
+                </p>
+              )}
+              {progress.errors && progress.errors.length > 0 && (
+                <div className="mt-2 max-h-48 overflow-y-auto rounded border border-slate-200 dark:border-zinc-800">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-100 dark:bg-zinc-800 sticky top-0">
+                      <tr>
+                        <th className="text-left px-2 py-1 text-slate-600 dark:text-zinc-400 font-medium">Title</th>
+                        <th className="text-left px-2 py-1 text-slate-600 dark:text-zinc-400 font-medium">Reason</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {progress.errors.map((e, i) => (
+                        <tr key={`${e.bookId}-${i}`} className="border-t border-slate-200 dark:border-zinc-800">
+                          <td className="px-2 py-1 text-slate-800 dark:text-zinc-200">{e.title || `#${e.bookId}`}</td>
+                          <td className="px-2 py-1 text-red-600 dark:text-red-400">{e.reason}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        <div className="px-4 py-3 border-t border-slate-200 dark:border-zinc-800 flex justify-end">
+          <button
+            onClick={onClose}
+            disabled={running}
+            className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 rounded text-sm font-medium disabled:opacity-50 text-white"
+          >
+            {running ? 'Running…' : 'Close'}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
