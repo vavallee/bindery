@@ -84,6 +84,7 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 			MediaType:        c.MediaType,
 			AllowedLanguages: c.AllowedLanguages,
 		},
+		Filters: []FilterDebug{},
 	}
 
 	var (

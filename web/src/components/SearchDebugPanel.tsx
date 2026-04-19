@@ -25,8 +25,10 @@ export default function SearchDebugPanel({ debug, resultCount, defaultOpen }: Pr
     }
   }
 
-  const anyIndexerErr = debug.indexers.some(i => i.error)
-  const rawCount = debug.pipeline.rawCount
+  const indexers = debug.indexers ?? []
+  const filters = debug.filters ?? []
+  const anyIndexerErr = indexers.some(i => i.error)
+  const rawCount = debug.pipeline?.rawCount ?? 0
   const droppedTotal = rawCount - resultCount
 
   return (
@@ -41,14 +43,14 @@ export default function SearchDebugPanel({ debug, resultCount, defaultOpen }: Pr
           <span className="text-slate-500 dark:text-zinc-500">{open ? '▾' : '▸'}</span>
           Search details
           <span className="text-xs text-slate-500 dark:text-zinc-500 font-normal">
-            {debug.indexers.length} indexer{debug.indexers.length === 1 ? '' : 's'}
+            {indexers.length} indexer{indexers.length === 1 ? '' : 's'}
             {' · '}
             {rawCount} raw → {resultCount} shown
             {anyIndexerErr && <span className="ml-2 text-red-600 dark:text-red-400">· indexer error</span>}
           </span>
         </span>
         <span className="text-xs text-slate-500 dark:text-zinc-500 font-normal">
-          {debug.durationMs} ms
+          {debug.durationMs ?? 0} ms
         </span>
       </button>
 
@@ -67,25 +69,25 @@ export default function SearchDebugPanel({ debug, resultCount, defaultOpen }: Pr
           <div>
             <h4 className="font-semibold text-slate-700 dark:text-zinc-300 mb-1">Query</h4>
             <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-slate-600 dark:text-zinc-400">
-              {debug.query.title && <><span>title</span><span className="font-mono">{debug.query.title}</span></>}
-              {debug.query.author && <><span>author</span><span className="font-mono">{debug.query.author}</span></>}
-              {debug.query.mediaType && <><span>mediaType</span><span className="font-mono">{debug.query.mediaType}</span></>}
-              {debug.query.year ? <><span>year</span><span className="font-mono">{debug.query.year}</span></> : null}
-              {debug.query.asin && <><span>ASIN</span><span className="font-mono">{debug.query.asin}</span></>}
-              {debug.query.isbn && <><span>ISBN</span><span className="font-mono">{debug.query.isbn}</span></>}
-              {debug.query.allowedLanguages && debug.query.allowedLanguages.length > 0 && (
+              {debug.query?.title && <><span>title</span><span className="font-mono">{debug.query.title}</span></>}
+              {debug.query?.author && <><span>author</span><span className="font-mono">{debug.query.author}</span></>}
+              {debug.query?.mediaType && <><span>mediaType</span><span className="font-mono">{debug.query.mediaType}</span></>}
+              {debug.query?.year ? <><span>year</span><span className="font-mono">{debug.query.year}</span></> : null}
+              {debug.query?.asin && <><span>ASIN</span><span className="font-mono">{debug.query.asin}</span></>}
+              {debug.query?.isbn && <><span>ISBN</span><span className="font-mono">{debug.query.isbn}</span></>}
+              {debug.query?.allowedLanguages && debug.query.allowedLanguages.length > 0 && (
                 <><span>allowedLanguages</span><span className="font-mono">{debug.query.allowedLanguages.join(', ')}</span></>
               )}
-              {debug.query.freeText && <><span>freeText</span><span className="font-mono">{debug.query.freeText}</span></>}
+              {debug.query?.freeText && <><span>freeText</span><span className="font-mono">{debug.query.freeText}</span></>}
             </div>
           </div>
 
           <div>
             <h4 className="font-semibold text-slate-700 dark:text-zinc-300 mb-1">
-              Indexers ({debug.indexers.length})
+              Indexers ({indexers.length})
             </h4>
             <div className="border border-slate-200 dark:border-zinc-800 rounded overflow-hidden divide-y divide-slate-200 dark:divide-zinc-800">
-              {debug.indexers.map(ix => (
+              {indexers.map(ix => (
                 <div key={`${ix.indexerId}-${ix.indexerName}`} className="px-2 py-1.5 bg-white dark:bg-zinc-950 flex items-start gap-2">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
@@ -119,40 +121,42 @@ export default function SearchDebugPanel({ debug, resultCount, defaultOpen }: Pr
             </div>
           </div>
 
-          <div>
-            <h4 className="font-semibold text-slate-700 dark:text-zinc-300 mb-1">Pipeline</h4>
-            <div className="font-mono text-slate-600 dark:text-zinc-400 space-y-0.5">
-              <div>raw from indexers: {debug.pipeline.rawCount}</div>
-              <div>after dedupe: {debug.pipeline.afterDedupe}{' '}
-                {debug.pipeline.rawCount !== debug.pipeline.afterDedupe && (
-                  <span className="text-amber-600 dark:text-amber-400">(−{debug.pipeline.rawCount - debug.pipeline.afterDedupe})</span>
-                )}
-              </div>
-              <div>after usenet-junk filter: {debug.pipeline.afterUsenetJunk}{' '}
-                {debug.pipeline.afterDedupe !== debug.pipeline.afterUsenetJunk && (
-                  <span className="text-amber-600 dark:text-amber-400">(−{debug.pipeline.afterDedupe - debug.pipeline.afterUsenetJunk})</span>
-                )}
-              </div>
-              <div>after relevance filter: {debug.pipeline.afterRelevance}{' '}
-                {debug.pipeline.afterUsenetJunk !== debug.pipeline.afterRelevance && (
-                  <span className="text-amber-600 dark:text-amber-400">(−{debug.pipeline.afterUsenetJunk - debug.pipeline.afterRelevance})</span>
-                )}
-              </div>
-              {droppedTotal > 0 && (
-                <div className="pt-1 text-slate-500 dark:text-zinc-500">
-                  {droppedTotal} release{droppedTotal === 1 ? '' : 's'} filtered before display
+          {debug.pipeline && (
+            <div>
+              <h4 className="font-semibold text-slate-700 dark:text-zinc-300 mb-1">Pipeline</h4>
+              <div className="font-mono text-slate-600 dark:text-zinc-400 space-y-0.5">
+                <div>raw from indexers: {debug.pipeline.rawCount}</div>
+                <div>after dedupe: {debug.pipeline.afterDedupe}{' '}
+                  {debug.pipeline.rawCount !== debug.pipeline.afterDedupe && (
+                    <span className="text-amber-600 dark:text-amber-400">(−{debug.pipeline.rawCount - debug.pipeline.afterDedupe})</span>
+                  )}
                 </div>
-              )}
+                <div>after usenet-junk filter: {debug.pipeline.afterUsenetJunk}{' '}
+                  {debug.pipeline.afterDedupe !== debug.pipeline.afterUsenetJunk && (
+                    <span className="text-amber-600 dark:text-amber-400">(−{debug.pipeline.afterDedupe - debug.pipeline.afterUsenetJunk})</span>
+                  )}
+                </div>
+                <div>after relevance filter: {debug.pipeline.afterRelevance}{' '}
+                  {debug.pipeline.afterUsenetJunk !== debug.pipeline.afterRelevance && (
+                    <span className="text-amber-600 dark:text-amber-400">(−{debug.pipeline.afterUsenetJunk - debug.pipeline.afterRelevance})</span>
+                  )}
+                </div>
+                {droppedTotal > 0 && (
+                  <div className="pt-1 text-slate-500 dark:text-zinc-500">
+                    {droppedTotal} release{droppedTotal === 1 ? '' : 's'} filtered before display
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          )}
 
-          {debug.filters.length > 0 && (
+          {filters.length > 0 && (
             <div>
               <h4 className="font-semibold text-slate-700 dark:text-zinc-300 mb-1">
-                Filter decisions ({debug.filters.length})
+                Filter decisions ({filters.length})
               </h4>
               <div className="border border-slate-200 dark:border-zinc-800 rounded overflow-hidden divide-y divide-slate-200 dark:divide-zinc-800 max-h-64 overflow-y-auto">
-                {debug.filters.map((f, i) => (
+                {filters.map((f, i) => (
                   <div key={i} className="px-2 py-1 bg-white dark:bg-zinc-950">
                     <div className="flex items-center gap-2">
                       <span className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 font-mono">
