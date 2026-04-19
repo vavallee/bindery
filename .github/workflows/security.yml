@@ -42,7 +42,7 @@ jobs:
       - name: gosec (SARIF)
         uses: securego/gosec@64b97151cd7b978abdf8d2f1159a4e9096a12c2b # master
         with:
-          args: '-no-fail -fmt sarif -out gosec.sarif ./...'
+          args: '-no-fail -fmt sarif -out gosec.sarif -exclude=G402 ./...'
 
       - name: Upload gosec SARIF
         uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4.35.2

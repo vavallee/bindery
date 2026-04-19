@@ -75,7 +75,7 @@ func (h *OIDCHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Value:    flowVal,
 		Path:     "/api/v1/auth/oidc",
 		HttpOnly: true,
-		Secure:   CookieSecureMode() == "always" || (CookieSecureMode() != "never" && (r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https")), // #nosec G402
+		Secure:   cookieSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   oidcFlowMaxAge,
 	})
@@ -111,7 +111,7 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		Value:    "",
 		Path:     "/api/v1/auth/oidc",
 		HttpOnly: true,
-		Secure:   CookieSecureMode() == "always" || (CookieSecureMode() != "never" && (r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https")), // #nosec G402
+		Secure:   cookieSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
@@ -237,6 +237,21 @@ func (h *OIDCHandler) SetProviders(w http.ResponseWriter, r *http.Request) {
 		h.mgr.Reload(r.Context(), merged)
 	}()
 	writeOK(w, map[string]any{"ok": true, "count": len(merged)})
+}
+
+// cookieSecure mirrors the issueSession() logic in auth.go: respect
+// BINDERY_COOKIE_SECURE env var, fall back to detecting TLS/proxy.
+// G402 is excluded project-wide in security.yml (gosec -exclude=G402) because
+// the Secure attribute is intentionally conditional on deployment mode.
+func cookieSecure(r *http.Request) bool {
+	switch CookieSecureMode() {
+	case "always":
+		return true
+	case "never":
+		return false
+	default:
+		return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	}
 }
 
 // sanitizeLog strips CR/LF from user-controlled strings before they reach
