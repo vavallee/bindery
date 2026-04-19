@@ -475,6 +475,7 @@
     "createButton": "Create User",
     "promote": "Make admin",
     "demote": "Make user",
+    "resetPassword": "Reset password",
     "deleteConfirm": "Delete user \"{{username}}\"? This cannot be undone.",
     "loadFail": "Failed to load users",
     "deleteFail": "Failed to delete user",
