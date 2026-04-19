@@ -8,6 +8,7 @@ func TestParseFilename(t *testing.T) {
 		wantTitle  string
 		wantAuthor string
 		wantISBN   string
+		wantASIN   string
 		wantFormat string
 	}{
 		{
@@ -45,6 +46,21 @@ func TestParseFilename(t *testing.T) {
 			wantTitle:  "audiobook",
 			wantFormat: "m4b",
 		},
+		{
+			// ASIN in filename should be extracted and not pollute the title
+			input:      "The Sparrow B01LVSUORS - Mary Doria Russell.epub",
+			wantTitle:  "The Sparrow",
+			wantAuthor: "Mary Doria Russell",
+			wantASIN:   "B01LVSUORS",
+			wantFormat: "epub",
+		},
+		{
+			// Bare ASIN as the whole filename
+			input:      "B09H42KSJF.azw3",
+			wantTitle:  "",
+			wantASIN:   "B09H42KSJF",
+			wantFormat: "azw3",
+		},
 	}
 
 	for _, tt := range tests {
@@ -58,6 +74,9 @@ func TestParseFilename(t *testing.T) {
 			}
 			if tt.wantISBN != "" && p.ISBN != tt.wantISBN {
 				t.Errorf("isbn: got %q, want %q", p.ISBN, tt.wantISBN)
+			}
+			if tt.wantASIN != "" && p.ASIN != tt.wantASIN {
+				t.Errorf("asin: got %q, want %q", p.ASIN, tt.wantASIN)
 			}
 			if p.Format != tt.wantFormat {
 				t.Errorf("format: got %q, want %q", p.Format, tt.wantFormat)

@@ -960,10 +960,29 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 			}
 		}
 
-		// Search existing books for a title + author match
+		// Search existing books for a match: ASIN takes priority over fuzzy title+author.
 		matched := false
-		if parsed.Title != "" {
-			detectedFmt := detectDownloadFormat([]string{path})
+		detectedFmt := detectDownloadFormat([]string{path})
+		if parsed.ASIN != "" {
+			for _, b := range allBooks {
+				if reconciledBooks[b.ID] {
+					continue
+				}
+				if b.Status == models.BookStatusWanted && b.ASIN == parsed.ASIN {
+					if err := s.books.SetFormatFilePath(ctx, b.ID, detectedFmt, path); err != nil {
+						slog.Error("library scan: failed to update book", "id", b.ID, "error", err)
+						continue
+					}
+					slog.Info("library scan: reconciled book via ASIN", "asin", parsed.ASIN, "title", b.Title, "path", path)
+					trackedPaths[cleanPath] = true
+					reconciledBooks[b.ID] = true
+					reconciled++
+					matched = true
+					break
+				}
+			}
+		}
+		if !matched && parsed.Title != "" {
 			for _, b := range allBooks {
 				if reconciledBooks[b.ID] {
 					continue

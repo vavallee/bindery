@@ -66,6 +66,36 @@ func stringContains(s, sub string) bool {
 	return false
 }
 
+func TestRenamerASINToken(t *testing.T) {
+	r := NewRenamer("{Author}/{ASIN} - {Title}.{ext}")
+	releaseDate := time.Date(2016, 1, 1, 0, 0, 0, 0, time.UTC)
+	author := &models.Author{Name: "Mary Doria Russell"}
+	book := &models.Book{
+		Title:       "The Sparrow",
+		ASIN:        "B01LVSUORS",
+		ReleaseDate: &releaseDate,
+	}
+
+	got := r.DestPath("/books", author, book, "book.epub")
+	want := filepath.Join("/books", "Mary Doria Russell", "B01LVSUORS - The Sparrow.epub")
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+}
+
+func TestRenamerASINTokenEmpty(t *testing.T) {
+	// {ASIN} with no ASIN on the book should produce an empty segment
+	r := NewRenamer("{ASIN}/{Title}.{ext}")
+	author := &models.Author{Name: "Author"}
+	book := &models.Book{Title: "Some Book"}
+
+	got := r.DestPath("/books", author, book, "book.epub")
+	want := filepath.Join("/books", "Some Book.epub")
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+}
+
 func TestMoveFile(t *testing.T) {
 	// Create temp source file
 	tmpDir := t.TempDir()

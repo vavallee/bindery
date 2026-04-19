@@ -11,6 +11,7 @@ type ParsedFile struct {
 	Title    string
 	Author   string
 	ISBN     string
+	ASIN     string
 	Year     string
 	Format   string // epub, mobi, pdf, etc.
 	FilePath string
@@ -21,6 +22,8 @@ var (
 	isbnRe = regexp.MustCompile(`(?:978|979)[-\s]?\d[-\s]?\d[-\s]?\d[-\s]?\d[-\s]?\d[-\s]?\d[-\s]?\d[-\s]?\d[-\s]?\d[-\s]?\d`)
 	// ISBN-10 pattern
 	isbn10Re = regexp.MustCompile(`\b\d{9}[\dXx]\b`)
+	// ASIN pattern: 10-char alphanumeric starting with B (Amazon identifier)
+	asinRe = regexp.MustCompile(`\bB[0-9A-Z]{9}\b`)
 	// Year pattern
 	yearRe = regexp.MustCompile(`\b(19|20)\d{2}\b`)
 	// Common separator patterns: "Title - Author" (spaces required around dash), "Title by Author"
@@ -53,6 +56,12 @@ func ParseFilename(path string) ParsedFile {
 	// Work with the base name without extension
 	name := filepath.Base(path)
 	name = strings.TrimSuffix(name, filepath.Ext(name))
+
+	// Extract ASIN if present and strip it so it doesn't pollute the title
+	if asin := asinRe.FindString(name); asin != "" {
+		p.ASIN = asin
+		name = strings.TrimSpace(asinRe.ReplaceAllString(name, " "))
+	}
 
 	// Extract ISBN if present
 	if isbn := isbnRe.FindString(name); isbn != "" {

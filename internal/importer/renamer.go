@@ -66,6 +66,7 @@ func (r *Renamer) apply(template string, author *models.Author, book *models.Boo
 	result = strings.ReplaceAll(result, "{SortAuthor}", sanitizePath(authorSortName(authorName)))
 	result = strings.ReplaceAll(result, "{Title}", sanitizePath(book.Title))
 	result = strings.ReplaceAll(result, "{Year}", year)
+	result = strings.ReplaceAll(result, "{ASIN}", sanitizePath(book.ASIN))
 	result = strings.ReplaceAll(result, "{ext}", ext)
 	return result
 }
