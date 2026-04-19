@@ -18,7 +18,10 @@ func TestAudiobookDestDir(t *testing.T) {
 	author := &models.Author{Name: "Ursula K. Le Guin"}
 	book := &models.Book{Title: "The Dispossessed", ReleaseDate: &releaseDate}
 
-	got := r.AudiobookDestDir("/audio", author, book)
+	got, err := r.AudiobookDestDir("/audio", author, book)
+	if err != nil {
+		t.Fatalf("AudiobookDestDir: %v", err)
+	}
 	want := filepath.Join("/audio", "Ursula K. Le Guin", "The Dispossessed (2020)")
 	if got != want {
 		t.Errorf("got  %q\nwant %q", got, want)
@@ -30,7 +33,10 @@ func TestAudiobookDestDir_NilAuthor(t *testing.T) {
 	// still land under a predictable folder rather than panicking.
 	r := NewRenamer("")
 	book := &models.Book{Title: "Mystery"}
-	got := r.AudiobookDestDir("/audio", nil, book)
+	got, err := r.AudiobookDestDir("/audio", nil, book)
+	if err != nil {
+		t.Fatalf("AudiobookDestDir: %v", err)
+	}
 	want := filepath.Join("/audio", "Unknown Author", "Mystery ()")
 	if got != want {
 		t.Errorf("got %q want %q", got, want)
@@ -41,7 +47,10 @@ func TestAudiobookDestDir_CustomTemplate(t *testing.T) {
 	r := NewRenamerWithAudiobook("", "Audiobooks/{SortAuthor}/{Title}")
 	author := &models.Author{Name: "Andy Weir"}
 	book := &models.Book{Title: "Project Hail Mary"}
-	got := r.AudiobookDestDir("/root", author, book)
+	got, err := r.AudiobookDestDir("/root", author, book)
+	if err != nil {
+		t.Fatalf("AudiobookDestDir: %v", err)
+	}
 	want := filepath.Join("/root", "Audiobooks", "Weir, Andy", "Project Hail Mary")
 	if got != want {
 		t.Errorf("got %q want %q", got, want)

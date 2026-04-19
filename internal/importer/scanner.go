@@ -542,7 +542,13 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		if effLib := s.effectiveLibraryDir(ctx, author); effLib != s.libraryDir {
 			audiobookRoot = effLib
 		}
-		destDir := UniqueDir(s.renamer.AudiobookDestDir(audiobookRoot, author, book))
+		audiobookDest, destErr := s.renamer.AudiobookDestDir(audiobookRoot, author, book)
+		if destErr != nil {
+			slog.Error("failed to compute audiobook destination", "src", downloadPath, "error", destErr)
+			s.failImport(ctx, dl, models.StateImportBlocked, fmt.Sprintf("audiobook destination invalid: %v", destErr))
+			return
+		}
+		destDir := UniqueDir(audiobookDest)
 		mode := s.importMode(ctx)
 		slog.Info("importing audiobook folder", "src", downloadPath, "dst", destDir, "mode", mode)
 		// Single-file audiobook releases (e.g. a lone .m4b from a torrent) give
@@ -618,7 +624,13 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			continue
 		}
 
-		destPath := s.renamer.DestPath(s.effectiveLibraryDir(ctx, author), author, book, srcFile)
+		destPath, destErr := s.renamer.DestPath(s.effectiveLibraryDir(ctx, author), author, book, srcFile)
+		if destErr != nil {
+			slog.Error("failed to compute book destination", "src", srcFile, "error", destErr)
+			lastFileErr = destErr
+			failed++
+			continue
+		}
 		mode := s.importMode(ctx)
 		slog.Info("importing book", "src", srcFile, "dst", destPath, "mode", mode)
 

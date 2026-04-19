@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/prowlarr"
 )
@@ -63,6 +64,10 @@ func (h *ProwlarrHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "url is required"})
 		return
 	}
+	if err := httpsec.ValidateOutboundURL(p.URL, httpsec.PolicyLAN); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid indexer URL: " + err.Error()})
+		return
+	}
 	if p.Name == "" {
 		p.Name = "Prowlarr"
 	}
@@ -93,6 +98,10 @@ func (h *ProwlarrHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	existing.ID = id
+	if err := httpsec.ValidateOutboundURL(existing.URL, httpsec.PolicyLAN); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid indexer URL: " + err.Error()})
+		return
+	}
 	if err := h.instances.Update(r.Context(), existing); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

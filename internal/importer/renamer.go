@@ -40,16 +40,30 @@ func NewRenamerWithAudiobook(ebookTemplate, audiobookTemplate string) *Renamer {
 }
 
 // DestPath computes the destination path for an ebook file.
-func (r *Renamer) DestPath(rootFolder string, author *models.Author, book *models.Book, srcPath string) string {
+func (r *Renamer) DestPath(rootFolder string, author *models.Author, book *models.Book, srcPath string) (string, error) {
 	ext := strings.TrimPrefix(filepath.Ext(srcPath), ".")
-	return filepath.Join(rootFolder, r.apply(r.template, author, book, ext))
+	dest := filepath.Join(rootFolder, r.apply(r.template, author, book, ext))
+	return ensureContained(dest, rootFolder)
 }
 
 // AudiobookDestDir computes the destination directory into which an audiobook
 // download folder should be moved. The download's internal file structure is
 // preserved inside (multi-part m4b/mp3 + cover + cue sheet stay together).
-func (r *Renamer) AudiobookDestDir(rootFolder string, author *models.Author, book *models.Book) string {
-	return filepath.Join(rootFolder, r.apply(r.audiobookTemplate, author, book, ""))
+func (r *Renamer) AudiobookDestDir(rootFolder string, author *models.Author, book *models.Book) (string, error) {
+	dest := filepath.Join(rootFolder, r.apply(r.audiobookTemplate, author, book, ""))
+	return ensureContained(dest, rootFolder)
+}
+
+// ensureContained returns dest unchanged when it resolves inside baseDir; otherwise
+// it returns an error. This prevents book-derived path components (e.g. author or
+// title strings seeded from remote metadata) from escaping the configured library.
+func ensureContained(dest, baseDir string) (string, error) {
+	cleanDest := filepath.Clean(dest)
+	cleanBase := filepath.Clean(baseDir)
+	if !strings.HasPrefix(cleanDest, cleanBase+string(filepath.Separator)) && cleanDest != cleanBase {
+		return "", fmt.Errorf("destination path escapes base directory")
+	}
+	return cleanDest, nil
 }
 
 func (r *Renamer) apply(template string, author *models.Author, book *models.Book, ext string) string {
@@ -360,7 +374,23 @@ func sanitizePath(s string) string {
 		"/", "-", "\\", "-", ":", "-", "*", "", "?", "",
 		"\"", "", "<", "", ">", "", "|", "",
 	)
-	return strings.TrimSpace(replacer.Replace(s))
+	cleaned := strings.TrimSpace(replacer.Replace(s))
+	// Strip traversal components (".", "..", empties) so a single field can't
+	// contribute a segment that walks out of the library root even after
+	// character replacement.
+	parts := strings.Split(cleaned, string(filepath.Separator))
+	kept := parts[:0]
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" || p == "." || p == ".." {
+			continue
+		}
+		kept = append(kept, p)
+	}
+	if len(kept) == 0 {
+		return ""
+	}
+	return strings.Join(kept, string(filepath.Separator))
 }
 
 func authorSortName(name string) string {

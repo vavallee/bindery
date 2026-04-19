@@ -19,7 +19,10 @@ func TestRenamerDestPath(t *testing.T) {
 		ReleaseDate: &releaseDate,
 	}
 
-	got := r.DestPath("/books", author, book, "/downloads/complete/something.epub")
+	got, err := r.DestPath("/books", author, book, "/downloads/complete/something.epub")
+	if err != nil {
+		t.Fatalf("DestPath: %v", err)
+	}
 	want := filepath.Join("/books", "Test Author", "Dark Matter (2016)", "Dark Matter - Test Author.epub")
 	if got != want {
 		t.Errorf("got  %q\nwant %q", got, want)
@@ -31,7 +34,10 @@ func TestRenamerNoYear(t *testing.T) {
 	author := &models.Author{Name: "Author"}
 	book := &models.Book{Title: "Book Title"}
 
-	got := r.DestPath("/lib", author, book, "file.pdf")
+	got, err := r.DestPath("/lib", author, book, "file.pdf")
+	if err != nil {
+		t.Fatalf("DestPath: %v", err)
+	}
 	want := filepath.Join("/lib", "Author", "Book Title ()", "Book Title - Author.pdf")
 	if got != want {
 		t.Errorf("got  %q\nwant %q", got, want)
@@ -43,7 +49,10 @@ func TestRenamerSanitizesPath(t *testing.T) {
 	author := &models.Author{Name: "Author: Bad/Name"}
 	book := &models.Book{Title: "Title? With <Bad> Chars"}
 
-	got := r.DestPath("/lib", author, book, "test.epub")
+	got, err := r.DestPath("/lib", author, book, "test.epub")
+	if err != nil {
+		t.Fatalf("DestPath: %v", err)
+	}
 	// Verify path doesn't contain dangerous characters in the filename portion
 	base := filepath.Base(got)
 	for _, bad := range []string{":", "?", "<", ">"} {
@@ -76,7 +85,10 @@ func TestRenamerASINToken(t *testing.T) {
 		ReleaseDate: &releaseDate,
 	}
 
-	got := r.DestPath("/books", author, book, "book.epub")
+	got, err := r.DestPath("/books", author, book, "book.epub")
+	if err != nil {
+		t.Fatalf("DestPath: %v", err)
+	}
 	want := filepath.Join("/books", "Mary Doria Russell", "B01LVSUORS - The Sparrow.epub")
 	if got != want {
 		t.Errorf("got  %q\nwant %q", got, want)
@@ -89,7 +101,10 @@ func TestRenamerASINTokenEmpty(t *testing.T) {
 	author := &models.Author{Name: "Author"}
 	book := &models.Book{Title: "Some Book"}
 
-	got := r.DestPath("/books", author, book, "book.epub")
+	got, err := r.DestPath("/books", author, book, "book.epub")
+	if err != nil {
+		t.Fatalf("DestPath: %v", err)
+	}
 	want := filepath.Join("/books", "Some Book.epub")
 	if got != want {
 		t.Errorf("got  %q\nwant %q", got, want)

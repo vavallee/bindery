@@ -39,8 +39,22 @@ type ImageProxyHandler struct {
 // <dataDir>/image-cache/.
 func NewImageProxyHandler(dataDir string) *ImageProxyHandler {
 	h := &ImageProxyHandler{
-		cacheDir:    filepath.Join(dataDir, "image-cache"),
-		client:      &http.Client{Timeout: 15 * time.Second},
+		cacheDir: filepath.Join(dataDir, "image-cache"),
+		client: &http.Client{
+			Timeout: 15 * time.Second,
+			// Re-validate redirect targets — a permissive upstream could otherwise
+			// redirect from a public host into the LAN (cloud metadata, internal
+			// services) and leak the body back through the cache.
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if err := httpsec.ValidateOutboundURL(req.URL.String(), httpsec.PolicyStrict); err != nil {
+					return fmt.Errorf("redirect blocked: %w", err)
+				}
+				if len(via) >= 5 {
+					return fmt.Errorf("too many redirects")
+				}
+				return nil
+			},
+		},
 		validateURL: func(u string) error { return httpsec.ValidateOutboundURL(u, httpsec.PolicyStrict) },
 	}
 	go h.migrateFlatCache()

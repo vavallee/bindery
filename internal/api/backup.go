@@ -9,11 +9,17 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 )
+
+// backupFilenameRe matches files produced by Create — "bindery_YYYYMMDD_HHMMSS.db".
+// Restore/Delete reject anything else so path-traversal tricks like "..%2Fetc"
+// or unrelated files under the backup dir can't be referenced by untrusted input.
+var backupFilenameRe = regexp.MustCompile(`^bindery_\d{8}_\d{6}\.db$`)
 
 type BackupHandler struct {
 	dbPath  string
@@ -103,8 +109,8 @@ func (h *BackupHandler) Create(w http.ResponseWriter, r *http.Request) {
 // Restore copies a backup file back to the DB path. Dangerous — requires confirmation header.
 func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	filename := chi.URLParam(r, "filename")
-	if filename == "" || strings.Contains(filename, "/") || strings.Contains(filename, "..") {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid filename"})
+	if !backupFilenameRe.MatchString(filename) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid backup filename"})
 		return
 	}
 
@@ -134,8 +140,8 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 // Delete removes a backup file.
 func (h *BackupHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	filename := chi.URLParam(r, "filename")
-	if filename == "" || strings.Contains(filename, "/") || strings.Contains(filename, "..") {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid filename"})
+	if !backupFilenameRe.MatchString(filename) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid backup filename"})
 		return
 	}
 
