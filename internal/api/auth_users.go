@@ -132,3 +132,34 @@ func (h *UserManagementHandler) SetRole(w http.ResponseWriter, r *http.Request) 
 	}
 	writeOK(w, map[string]any{"ok": true})
 }
+
+// ResetPassword sets a new password for a user (admin-only).
+// PUT /api/v1/auth/users/:id/reset-password
+func (h *UserManagementHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var body struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if len(body.Password) < 8 {
+		writeErr(w, http.StatusBadRequest, "password must be at least 8 characters")
+		return
+	}
+	hash, err := auth.HashPassword(body.Password)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "hash password: "+err.Error())
+		return
+	}
+	if err := h.users.UpdatePassword(r.Context(), id, hash); err != nil {
+		writeErr(w, http.StatusInternalServerError, "update password: "+err.Error())
+		return
+	}
+	writeOK(w, map[string]any{"ok": true})
+}
