@@ -158,6 +158,8 @@ export const api = {
   deleteUser: (id: number) => request<{ ok: boolean }>(`/auth/users/${id}`, { method: 'DELETE' }),
   setUserRole: (id: number, role: string) =>
     request<{ ok: boolean }>(`/auth/users/${id}/role`, { method: 'PUT', body: JSON.stringify({ role }) }),
+  resetUserPassword: (id: number, password: string) =>
+    request<{ ok: boolean }>(`/auth/users/${id}/reset-password`, { method: 'PUT', body: JSON.stringify({ password }) }),
 
   // Metadata search
   searchAuthors: (term: string) => request<Author[]>(`/search/author?term=${encodeURIComponent(term)}`),
