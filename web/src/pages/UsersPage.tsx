@@ -137,6 +137,12 @@ export default function UsersPage() {
                       {u.role === 'admin' ? t('users.demote') : t('users.promote')}
                     </button>
                     <button
+                      onClick={() => handleReset(u.id)}
+                      className={`${btnCls} text-xs bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-300`}
+                    >
+                      {t('users.resetPassword')}
+                    </button>
+                    <button
                       onClick={() => handleDelete(u)}
                       className={`${btnCls} text-xs bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400`}
                     >
