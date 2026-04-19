@@ -17,8 +17,6 @@ export default function UsersPage() {
   const [newRole, setNewRole] = useState<'user' | 'admin'>('user')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
-  const [resetingId, setResetingId] = useState<number | null>(null)
-  const [resetPassword, setResetPassword] = useState('')
   const [resetError, setResetError] = useState<Record<number, string>>({})
 
   useEffect(() => {
@@ -135,12 +133,6 @@ export default function UsersPage() {
                       className={`${btnCls} text-xs bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-300`}
                     >
                       {u.role === 'admin' ? t('users.demote') : t('users.promote')}
-                    </button>
-                    <button
-                      onClick={() => handleReset(u.id)}
-                      className={`${btnCls} text-xs bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-300`}
-                    >
-                      {t('users.resetPassword')}
                     </button>
                     <button
                       onClick={() => handleReset(u.id)}
