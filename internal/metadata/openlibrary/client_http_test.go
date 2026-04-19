@@ -449,14 +449,20 @@ func TestGetBookByISBN_HTTP_FallbackNoWork(t *testing.T) {
 	}
 }
 
-func TestGetBookByISBN_HTTP_Error(t *testing.T) {
+// A 404 from OpenLibrary means "this ISBN is not in their catalog" — not an
+// upstream failure. GetBookByISBN returns (nil, nil) so the API layer can
+// respond with a user-friendly "no book found" message (see issue #284).
+func TestGetBookByISBN_HTTP_NotFound(t *testing.T) {
 	c := newClientWithStatus(t,
 		map[string]interface{}{"/isbn/0000000000.json": "not found"},
 		map[string]int{"/isbn/0000000000.json": http.StatusNotFound},
 	)
-	_, err := c.GetBookByISBN(context.Background(), "0000000000")
-	if err == nil {
-		t.Fatal("expected error on 404")
+	book, err := c.GetBookByISBN(context.Background(), "0000000000")
+	if err != nil {
+		t.Fatalf("expected nil error for 404, got %v", err)
+	}
+	if book != nil {
+		t.Fatalf("expected nil book for 404, got %+v", book)
 	}
 }
 

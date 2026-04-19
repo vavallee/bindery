@@ -5,6 +5,7 @@ package openlibrary
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,6 +17,11 @@ import (
 
 	"github.com/vavallee/bindery/internal/models"
 )
+
+// ErrNotFound signals a 404 from OpenLibrary. Callers use errors.Is to
+// distinguish "this ISBN/work doesn't exist in the catalog" from genuine
+// upstream failures so the UI can show a friendly message.
+var ErrNotFound = errors.New("not found")
 
 const (
 	baseURL   = "https://openlibrary.org"
@@ -343,6 +349,11 @@ func (c *Client) GetBookByISBN(ctx context.Context, isbn string) (*models.Book, 
 	u := fmt.Sprintf("%s/isbn/%s.json", baseURL, isbn)
 	var resp isbnResponse
 	if err := c.getJSON(ctx, u, &resp); err != nil {
+		// Treat 404 as "no such ISBN" rather than an upstream error so the
+		// API layer can respond with a friendly message (issue #284).
+		if errors.Is(err, ErrNotFound) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("isbn lookup %s: %w", isbn, err)
 	}
 
@@ -381,6 +392,9 @@ func (c *Client) getJSON(ctx context.Context, rawURL string, target interface{})
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrNotFound
+	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))

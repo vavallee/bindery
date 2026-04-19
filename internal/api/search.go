@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -71,7 +72,9 @@ func (h *SearchHandler) LookupByISBN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if book == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no book found for ISBN"})
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": fmt.Sprintf("No book found for ISBN %s. Check the number, or try searching by title instead.", isbn),
+		})
 		return
 	}
 
