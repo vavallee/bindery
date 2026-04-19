@@ -70,7 +70,8 @@ func (h *OIDCHandler) Login(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "encode flow: "+err.Error())
 		return
 	}
-	http.SetCookie(w, &http.Cookie{ // #nosec G402 -- Secure auto-detected via cookieSecure(r); mirrors issueSession()
+	// #nosec G402 -- Secure auto-detected via cookieSecure(r); mirrors issueSession()
+	http.SetCookie(w, &http.Cookie{
 		Name:     oidcFlowCookie,
 		Value:    flowVal,
 		Path:     "/api/v1/auth/oidc",
@@ -106,7 +107,8 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Clear the flow cookie.
-	http.SetCookie(w, &http.Cookie{ // #nosec G402 -- Secure auto-detected via cookieSecure(r); mirrors issueSession()
+	// #nosec G402 -- Secure auto-detected via cookieSecure(r); mirrors issueSession()
+	http.SetCookie(w, &http.Cookie{
 		Name:     oidcFlowCookie,
 		Value:    "",
 		Path:     "/api/v1/auth/oidc",
@@ -160,6 +162,7 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 
 	// Reuse the existing session issuance — OIDC sits in front of it.
 	h.auth.issueSession(w, r, ctx, user.ID, true)
+	// #nosec -- providerID validated by oidcProviderIDRe; user.Username from DB
 	slog.Info("oidc: login successful", "provider", providerID, "username", user.Username)
 
 	// Redirect to the UI root.
