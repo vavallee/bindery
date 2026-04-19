@@ -129,13 +129,17 @@ func Middleware(p Provider) func(http.Handler) http.Handler {
 // CSRF header. Browsers cannot set this header in cross-site requests, so a
 // CSRF attacker cannot cause a mutating request to be accepted even if the
 // session cookie rides along via SameSite=Lax.
+//
+// API-key-authenticated requests are exempt: CSRF requires a cookie to be the
+// authentication mechanism, so requests carrying an explicit API key are not
+// vulnerable and do not need the header.
 func RequireXRequestedWith(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 			// safe methods — pass through
 		default:
-			if r.Header.Get("X-Requested-With") != "bindery-ui" {
+			if requestAPIKey(r) == "" && r.Header.Get("X-Requested-With") != "bindery-ui" {
 				w.Header().Set("Content-Type", "application/json")
 				http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 				return
