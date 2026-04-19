@@ -334,11 +334,11 @@ func main() {
 	// local-IP bypass when mode=local-only. Mode, key, and secret are sourced
 	// live from the DB so they can be rotated without a process restart.
 	authProvider := &dbAuthProvider{
-		settings:     settingsRepo,
-		users:        userRepo,
-		proxyHeader:  cfg.ProxyAuthHeader,
+		settings:       settingsRepo,
+		users:          userRepo,
+		proxyHeader:    cfg.ProxyAuthHeader,
 		proxyProvision: cfg.ProxyAutoProvision,
-		proxyCIDRs:   trustedCIDRs,
+		proxyCIDRs:     trustedCIDRs,
 	}
 
 	r.Route("/api/v1", func(r chi.Router) {
@@ -740,8 +740,8 @@ func (p *dbAuthProvider) SetupRequired() bool {
 	return err == nil && n == 0
 }
 
-func (p *dbAuthProvider) ProxyAuthHeader() string        { return p.proxyHeader }
-func (p *dbAuthProvider) ProxyAutoProvision() bool       { return p.proxyProvision }
+func (p *dbAuthProvider) ProxyAuthHeader() string         { return p.proxyHeader }
+func (p *dbAuthProvider) ProxyAutoProvision() bool        { return p.proxyProvision }
 func (p *dbAuthProvider) TrustedProxyCIDRs() []*net.IPNet { return p.proxyCIDRs }
 func (p *dbAuthProvider) UserProvisioner() auth.UserProvisioner {
 	return &dbUserProvisioner{users: p.users}

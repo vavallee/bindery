@@ -122,8 +122,8 @@ func (p *testProvider) SessionSecret() []byte {
 	return []byte(s.Value)
 }
 func (p *testProvider) SetupRequired() bool             { return false }
-func (p *testProvider) ProxyAuthHeader() string          { return "X-Forwarded-User" }
-func (p *testProvider) ProxyAutoProvision() bool         { return false }
+func (p *testProvider) ProxyAuthHeader() string         { return "X-Forwarded-User" }
+func (p *testProvider) ProxyAutoProvision() bool        { return false }
 func (p *testProvider) TrustedProxyCIDRs() []*net.IPNet { return nil }
 func (p *testProvider) UserProvisioner() auth.UserProvisioner {
 	return nil // proxy auth not exercised in these tests
