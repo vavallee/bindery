@@ -65,7 +65,8 @@
     "errorRequired": "El usuario y la contraseña son obligatorios",
     "errorFailed": "Error al iniciar sesión",
     "signOut": "Cerrar sesión",
-    "signedInAs": "Sesión iniciada como"
+    "signedInAs": "Sesión iniciada como",
+    "proxyHint": "Inicie sesión a través de su proveedor SSO"
   },
   "setup": {
     "title": "Configuración inicial",

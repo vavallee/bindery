@@ -53,7 +53,8 @@
     "errorRequired": "Benutzername und Passwort sind erforderlich",
     "errorFailed": "Anmeldung fehlgeschlagen",
     "signOut": "Abmelden",
-    "signedInAs": "Angemeldet als"
+    "signedInAs": "Angemeldet als",
+    "proxyHint": "Melden Sie sich über Ihren SSO-Anbieter an"
   },
   "setup": {
     "title": "Ersteinrichtung",

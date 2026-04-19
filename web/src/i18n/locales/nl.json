@@ -53,7 +53,8 @@
     "errorRequired": "Gebruikersnaam en wachtwoord zijn vereist",
     "errorFailed": "Inloggen mislukt",
     "signOut": "Uitloggen",
-    "signedInAs": "Ingelogd als"
+    "signedInAs": "Ingelogd als",
+    "proxyHint": "Meld u aan via uw SSO-provider"
   },
   "setup": {
     "title": "Eerste installatie",

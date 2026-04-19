@@ -65,7 +65,8 @@
     "errorRequired": "Nama pengguna dan kata sandi wajib diisi",
     "errorFailed": "Login gagal",
     "signOut": "Keluar",
-    "signedInAs": "Masuk sebagai"
+    "signedInAs": "Masuk sebagai",
+    "proxyHint": "Masuk melalui penyedia SSO Anda"
   },
   "setup": {
     "title": "Pengaturan awal",

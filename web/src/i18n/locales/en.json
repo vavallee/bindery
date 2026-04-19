@@ -65,7 +65,8 @@
     "errorRequired": "Username and password are required",
     "errorFailed": "Login failed",
     "signOut": "Sign out",
-    "signedInAs": "Signed in as"
+    "signedInAs": "Signed in as",
+    "proxyHint": "Sign in via your SSO provider"
   },
   "setup": {
     "title": "First-run setup",

@@ -65,7 +65,8 @@
     "errorRequired": "Kailangan ang username at password",
     "errorFailed": "Nabigo ang pag-login",
     "signOut": "Mag-sign out",
-    "signedInAs": "Naka-sign in bilang"
+    "signedInAs": "Naka-sign in bilang",
+    "proxyHint": "Mag-sign in sa pamamagitan ng iyong SSO provider"
   },
   "setup": {
     "title": "Unang setup",

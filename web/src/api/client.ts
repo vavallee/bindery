@@ -38,7 +38,7 @@ export interface AuthStatus {
   authenticated: boolean
   setupRequired: boolean
   username?: string
-  mode: 'enabled' | 'local-only' | 'disabled'
+  mode: 'enabled' | 'local-only' | 'disabled' | 'proxy'
 }
 
 export interface AuthConfig {

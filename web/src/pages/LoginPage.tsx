@@ -9,7 +9,7 @@ export default function LoginPage() {
   const { t } = useTranslation()
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const { refresh } = useAuth()
+  const { status, refresh } = useAuth()
   const navigate = useNavigate()
 
   // Read values from the form at submit time instead of React state.
@@ -37,6 +37,16 @@ export default function LoginPage() {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  if (status?.mode === 'proxy') {
+    return (
+      <CardShell title={t('login.title')} subtitle="">
+        <p className="text-sm text-slate-600 dark:text-zinc-400 text-center py-2">
+          {t('login.proxyHint')}
+        </p>
+      </CardShell>
+    )
   }
 
   return (

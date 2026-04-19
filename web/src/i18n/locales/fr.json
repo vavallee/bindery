@@ -53,7 +53,8 @@
     "errorRequired": "Nom d'utilisateur et mot de passe requis",
     "errorFailed": "Échec de la connexion",
     "signOut": "Se déconnecter",
-    "signedInAs": "Connecté en tant que"
+    "signedInAs": "Connecté en tant que",
+    "proxyHint": "Connectez-vous via votre fournisseur SSO"
   },
   "setup": {
     "title": "Configuration initiale",
