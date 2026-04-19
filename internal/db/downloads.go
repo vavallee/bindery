@@ -26,8 +26,19 @@ func (r *DownloadRepo) List(ctx context.Context) ([]models.Download, error) {
 	return r.query(ctx, "SELECT "+downloadSelectColumns+" FROM downloads ORDER BY added_at DESC")
 }
 
+func (r *DownloadRepo) ListByUser(ctx context.Context, userID int64) ([]models.Download, error) {
+	where, args := QueryScope("", userID)
+	q := "SELECT " + downloadSelectColumns + " FROM downloads " + where + " ORDER BY added_at DESC"
+	return r.query(ctx, q, args...)
+}
+
 func (r *DownloadRepo) ListByStatus(ctx context.Context, status models.DownloadState) ([]models.Download, error) {
 	return r.query(ctx, "SELECT "+downloadSelectColumns+" FROM downloads WHERE status=? ORDER BY added_at DESC", status)
+}
+
+func (r *DownloadRepo) ListByStatusAndUser(ctx context.Context, status models.DownloadState, userID int64) ([]models.Download, error) {
+	where, args := QueryScope("WHERE status=?", userID, status)
+	return r.query(ctx, "SELECT "+downloadSelectColumns+" FROM downloads "+where+" ORDER BY added_at DESC", args...)
 }
 
 func (r *DownloadRepo) GetByGUID(ctx context.Context, guid string) (*models.Download, error) {

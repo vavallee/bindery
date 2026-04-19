@@ -280,6 +280,7 @@ func main() {
 	// API handlers
 	authHandler := api.NewAuthHandler(userRepo, settingsRepo, loginLimiter)
 	oidcHandler := api.NewOIDCHandler(oidcMgr, userRepo, settingsRepo, authHandler)
+	userMgmtHandler := api.NewUserManagementHandler(userRepo)
 	searchHandler := api.NewSearchHandler(metaAgg)
 	authorHandler := api.NewAuthorHandler(authorRepo, authorAliasRepo, bookRepo, seriesRepo, metaAgg, settingsRepo, metadataProfileRepo, sched).WithFinder(importScanner)
 	authorAliasHandler := api.NewAuthorAliasHandler(authorRepo, authorAliasRepo)
@@ -386,6 +387,14 @@ func main() {
 		r.Put("/auth/oidc/providers", oidcHandler.SetProviders)
 		r.Get("/auth/oidc/{provider}/login", oidcHandler.Login)
 		r.Get("/auth/oidc/{provider}/callback", oidcHandler.Callback)
+		// User management — admin only.
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireAdmin)
+			r.Get("/auth/users", userMgmtHandler.List)
+			r.Post("/auth/users", userMgmtHandler.Create)
+			r.Delete("/auth/users/{id}", userMgmtHandler.Delete)
+			r.Put("/auth/users/{id}/role", userMgmtHandler.SetRole)
+		})
 
 		// Metadata search
 		r.Get("/search/author", searchHandler.SearchAuthors)
@@ -420,15 +429,18 @@ func main() {
 		r.Get("/wanted/missing", bookHandler.ListWanted)
 		r.Post("/wanted/bulk", bulkHandler.WantedBulk)
 
-		// Indexers
+		// Indexers — reads available to all; mutations admin-only.
 		r.Get("/indexer", indexerHandler.List)
-		r.Post("/indexer", indexerHandler.Create)
 		r.Get("/indexer/{id}", indexerHandler.Get)
-		r.Put("/indexer/{id}", indexerHandler.Update)
-		r.Delete("/indexer/{id}", indexerHandler.Delete)
-		r.Post("/indexer/{id}/test", indexerHandler.Test)
 		r.Get("/indexer/search", indexerHandler.SearchQuery)
 		r.Get("/search/last-debug", indexerHandler.LastSearchDebug)
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireAdmin)
+			r.Post("/indexer", indexerHandler.Create)
+			r.Put("/indexer/{id}", indexerHandler.Update)
+			r.Delete("/indexer/{id}", indexerHandler.Delete)
+			r.Post("/indexer/{id}/test", indexerHandler.Test)
+		})
 
 		// Prowlarr indexer sync
 		r.Get("/prowlarr", prowlarrHandler.List)
@@ -444,13 +456,16 @@ func main() {
 		r.Post("/rootfolder", rootFolderHandler.Create)
 		r.Delete("/rootfolder/{id}", rootFolderHandler.Delete)
 
-		// Download clients
+		// Download clients — reads available to all; mutations admin-only.
 		r.Get("/downloadclient", dlClientHandler.List)
-		r.Post("/downloadclient", dlClientHandler.Create)
 		r.Get("/downloadclient/{id}", dlClientHandler.Get)
-		r.Put("/downloadclient/{id}", dlClientHandler.Update)
-		r.Delete("/downloadclient/{id}", dlClientHandler.Delete)
-		r.Post("/downloadclient/{id}/test", dlClientHandler.Test)
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireAdmin)
+			r.Post("/downloadclient", dlClientHandler.Create)
+			r.Put("/downloadclient/{id}", dlClientHandler.Update)
+			r.Delete("/downloadclient/{id}", dlClientHandler.Delete)
+			r.Post("/downloadclient/{id}/test", dlClientHandler.Test)
+		})
 
 		// Queue
 		r.Get("/queue", queueHandler.List)
@@ -482,11 +497,14 @@ func main() {
 		r.Get("/qualityprofile", qualityProfileHandler.List)
 		r.Get("/qualityprofile/{id}", qualityProfileHandler.Get)
 
-		// Settings
+		// Settings — reads available to all; mutations admin-only.
 		r.Get("/setting", settingsHandler.List)
 		r.Get("/setting/{key}", settingsHandler.Get)
-		r.Put("/setting/{key}", settingsHandler.Set)
-		r.Delete("/setting/{key}", settingsHandler.Delete)
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireAdmin)
+			r.Put("/setting/{key}", settingsHandler.Set)
+			r.Delete("/setting/{key}", settingsHandler.Delete)
+		})
 
 		// Series
 		r.Get("/series", seriesHandler.List)
@@ -759,6 +777,13 @@ func (p *dbAuthProvider) SetupRequired() bool {
 func (p *dbAuthProvider) ProxyAuthHeader() string         { return p.proxyHeader }
 func (p *dbAuthProvider) ProxyAutoProvision() bool        { return p.proxyProvision }
 func (p *dbAuthProvider) TrustedProxyCIDRs() []*net.IPNet { return p.proxyCIDRs }
+func (p *dbAuthProvider) UserRole(ctx context.Context, userID int64) string {
+	u, err := p.users.GetByID(ctx, userID)
+	if err != nil || u == nil {
+		return ""
+	}
+	return u.Role
+}
 func (p *dbAuthProvider) UserProvisioner() auth.UserProvisioner {
 	return &dbUserProvisioner{users: p.users}
 }

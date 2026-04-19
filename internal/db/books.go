@@ -28,6 +28,11 @@ func (r *BookRepo) List(ctx context.Context) ([]models.Book, error) {
 	return r.query(ctx, "SELECT "+bookColumns+" FROM books WHERE excluded = 0 ORDER BY sort_title", nil)
 }
 
+func (r *BookRepo) ListByUser(ctx context.Context, userID int64) ([]models.Book, error) {
+	where, args := QueryScope("WHERE excluded = 0", userID)
+	return r.query(ctx, "SELECT "+bookColumns+" FROM books "+where+" ORDER BY sort_title", args)
+}
+
 // ListIncludingExcluded returns all books regardless of their excluded flag.
 func (r *BookRepo) ListIncludingExcluded(ctx context.Context) ([]models.Book, error) {
 	return r.query(ctx, "SELECT "+bookColumns+" FROM books ORDER BY sort_title", nil)
@@ -37,6 +42,11 @@ func (r *BookRepo) ListByAuthor(ctx context.Context, authorID int64) ([]models.B
 	return r.query(ctx, "SELECT "+bookColumns+" FROM books WHERE author_id = ? AND excluded = 0 ORDER BY release_date", []any{authorID})
 }
 
+func (r *BookRepo) ListByAuthorAndUser(ctx context.Context, authorID, userID int64) ([]models.Book, error) {
+	where, args := QueryScope("WHERE author_id = ? AND excluded = 0", userID, authorID)
+	return r.query(ctx, "SELECT "+bookColumns+" FROM books "+where+" ORDER BY release_date", args)
+}
+
 // ListByAuthorIncludingExcluded returns all books for an author regardless of excluded flag.
 func (r *BookRepo) ListByAuthorIncludingExcluded(ctx context.Context, authorID int64) ([]models.Book, error) {
 	return r.query(ctx, "SELECT "+bookColumns+" FROM books WHERE author_id = ? ORDER BY release_date", []any{authorID})
@@ -44,6 +54,11 @@ func (r *BookRepo) ListByAuthorIncludingExcluded(ctx context.Context, authorID i
 
 func (r *BookRepo) ListByStatus(ctx context.Context, status string) ([]models.Book, error) {
 	return r.query(ctx, "SELECT "+bookColumns+" FROM books WHERE status = ? AND monitored = 1 AND excluded = 0 ORDER BY sort_title", []any{status})
+}
+
+func (r *BookRepo) ListByStatusAndUser(ctx context.Context, status string, userID int64) ([]models.Book, error) {
+	where, args := QueryScope("WHERE status = ? AND monitored = 1 AND excluded = 0", userID, status)
+	return r.query(ctx, "SELECT "+bookColumns+" FROM books "+where+" ORDER BY sort_title", args)
 }
 
 // ListByStatusIncludingExcluded returns books with the given status regardless of excluded flag.

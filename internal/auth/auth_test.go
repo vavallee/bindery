@@ -163,14 +163,15 @@ type fakeProvider struct {
 	provisioner    UserProvisioner
 }
 
-func (f *fakeProvider) Mode() Mode                       { return f.mode }
-func (f *fakeProvider) APIKey() string                   { return f.apiKey }
-func (f *fakeProvider) SessionSecret() []byte            { return f.secret }
-func (f *fakeProvider) SetupRequired() bool              { return f.setup }
-func (f *fakeProvider) ProxyAuthHeader() string          { return f.proxyHeader }
-func (f *fakeProvider) ProxyAutoProvision() bool         { return f.proxyProvision }
-func (f *fakeProvider) TrustedProxyCIDRs() []*net.IPNet  { return f.proxyCIDRs }
-func (f *fakeProvider) UserProvisioner() UserProvisioner { return f.provisioner }
+func (f *fakeProvider) Mode() Mode                                 { return f.mode }
+func (f *fakeProvider) APIKey() string                             { return f.apiKey }
+func (f *fakeProvider) SessionSecret() []byte                      { return f.secret }
+func (f *fakeProvider) SetupRequired() bool                        { return f.setup }
+func (f *fakeProvider) ProxyAuthHeader() string                    { return f.proxyHeader }
+func (f *fakeProvider) ProxyAutoProvision() bool                   { return f.proxyProvision }
+func (f *fakeProvider) TrustedProxyCIDRs() []*net.IPNet            { return f.proxyCIDRs }
+func (f *fakeProvider) UserRole(_ context.Context, _ int64) string { return "admin" }
+func (f *fakeProvider) UserProvisioner() UserProvisioner           { return f.provisioner }
 
 // staticProvisioner always returns the same user ID for any username.
 type staticProvisioner struct{ uid int64 }

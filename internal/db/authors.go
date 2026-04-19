@@ -23,9 +23,24 @@ const authorSelectCols = `id, foreign_id, name, sort_name, description, image_ur
 	       metadata_provider, last_metadata_refresh_at, created_at, updated_at`
 
 func (r *AuthorRepo) List(ctx context.Context) ([]models.Author, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT `+authorSelectCols+`
-		FROM authors ORDER BY sort_name`)
+	return r.ListByUser(ctx, 0)
+}
+
+const (
+	listAuthorsAll    = "SELECT " + authorSelectCols + " FROM authors ORDER BY sort_name"
+	listAuthorsByUser = "SELECT " + authorSelectCols + " FROM authors WHERE owner_user_id = ? ORDER BY sort_name"
+)
+
+func (r *AuthorRepo) ListByUser(ctx context.Context, userID int64) ([]models.Author, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if userID == 0 {
+		rows, err = r.db.QueryContext(ctx, listAuthorsAll)
+	} else {
+		rows, err = r.db.QueryContext(ctx, listAuthorsByUser, userID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("list authors: %w", err)
 	}
@@ -73,15 +88,23 @@ func (r *AuthorRepo) GetByForeignID(ctx context.Context, foreignID string) (*mod
 }
 
 func (r *AuthorRepo) Create(ctx context.Context, a *models.Author) error {
+	return r.CreateForUser(ctx, a, 0)
+}
+
+func (r *AuthorRepo) CreateForUser(ctx context.Context, a *models.Author, ownerUserID int64) error {
 	now := time.Now().UTC()
+	var ownerArg any
+	if ownerUserID != 0 {
+		ownerArg = ownerUserID
+	}
 	result, err := r.db.ExecContext(ctx, `
 		INSERT INTO authors (foreign_id, name, sort_name, description, image_url, disambiguation,
 		                     ratings_count, average_rating, monitored, quality_profile_id, metadata_profile_id, root_folder_id,
-		                     metadata_provider, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                     metadata_provider, owner_user_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ForeignID, a.Name, a.SortName, a.Description, a.ImageURL, a.Disambiguation,
 		a.RatingsCount, a.AverageRating, a.Monitored, a.QualityProfileID, a.MetadataProfileID, a.RootFolderID,
-		a.MetadataProvider, now, now)
+		a.MetadataProvider, ownerArg, now, now)
 	if err != nil {
 		return fmt.Errorf("create author: %w", err)
 	}
