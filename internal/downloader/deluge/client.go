@@ -241,18 +241,17 @@ func (c *Client) call(ctx context.Context, authenticated bool, method string, pa
 	body, err := c.doCall(ctx, method, params)
 	if err != nil {
 		// 401 means session expired — re-auth and retry once.
-		if strings.Contains(err.Error(), "HTTP 401") && authenticated {
-			c.mu.Lock()
-			c.loggedIn = false
-			c.mu.Unlock()
-			if loginErr := c.Login(ctx); loginErr != nil {
-				return loginErr
-			}
-			body, err = c.doCall(ctx, method, params)
-			if err != nil {
-				return err
-			}
-		} else {
+		if !strings.Contains(err.Error(), "HTTP 401") || !authenticated {
+			return err
+		}
+		c.mu.Lock()
+		c.loggedIn = false
+		c.mu.Unlock()
+		if loginErr := c.Login(ctx); loginErr != nil {
+			return loginErr
+		}
+		body, err = c.doCall(ctx, method, params)
+		if err != nil {
 			return err
 		}
 	}

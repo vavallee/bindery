@@ -30,9 +30,9 @@ func (s *delugeServer) handler() http.HandlerFunc {
 			return
 		}
 		var req struct {
-			Method string `json:"method"`
+			Method string            `json:"method"`
 			Params []json.RawMessage `json:"params"`
-			ID     int64  `json:"id"`
+			ID     int64             `json:"id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
