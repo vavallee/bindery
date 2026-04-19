@@ -111,51 +111,29 @@ func (h *QueueHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 // grabRequest is the payload for grab operations (HTTP handler and pending force-grab).
+// BookID and IndexerID are optional: the free-text search UI grabs releases that
+// aren't tied to any local book or indexer, and the downloads table makes these
+// columns nullable to support that flow.
 type grabRequest struct {
 	GUID      string `json:"guid"`
 	Title     string `json:"title"`
 	NZBURL    string `json:"nzbUrl"`
 	Size      int64  `json:"size"`
-	BookID    int64  `json:"bookId"`
+	BookID    *int64 `json:"bookId"`
 	IndexerID *int64 `json:"indexerId"`
 	Protocol  string `json:"protocol"`
 	MediaType string `json:"mediaType"`
 }
 
 func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
-	// Intermediate struct to handle optional bookId from the HTTP body.
-	var body struct {
-		GUID      string `json:"guid"`
-		Title     string `json:"title"`
-		NZBURL    string `json:"nzbUrl"`
-		Size      int64  `json:"size"`
-		BookID    *int64 `json:"bookId"`
-		IndexerID *int64 `json:"indexerId"`
-		Protocol  string `json:"protocol"`
-		MediaType string `json:"mediaType"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	var req grabRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
-	if body.GUID == "" || body.NZBURL == "" {
+	if req.GUID == "" || req.NZBURL == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "guid and nzbUrl required"})
 		return
-	}
-
-	var bookID int64
-	if body.BookID != nil {
-		bookID = *body.BookID
-	}
-	req := grabRequest{
-		GUID:      body.GUID,
-		Title:     body.Title,
-		NZBURL:    body.NZBURL,
-		Size:      body.Size,
-		BookID:    bookID,
-		IndexerID: body.IndexerID,
-		Protocol:  body.Protocol,
-		MediaType: body.MediaType,
 	}
 
 	existing, err := h.downloads.GetByGUID(r.Context(), req.GUID)
@@ -208,11 +186,21 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	}
 
 	protocol := downloader.ProtocolForClient(client.Type)
+	// Coerce zero-valued BookID/IndexerID to nil. A caller that JSON-decodes
+	// into an older int64-typed grabRequest, or writes an explicit {"bookId":0},
+	// would otherwise insert 0 into the FK column and violate the constraint.
 	bookID := req.BookID
+	if bookID != nil && *bookID == 0 {
+		bookID = nil
+	}
+	indexerID := req.IndexerID
+	if indexerID != nil && *indexerID == 0 {
+		indexerID = nil
+	}
 	dl := &models.Download{
 		GUID:             req.GUID,
-		BookID:           &bookID,
-		IndexerID:        req.IndexerID,
+		BookID:           bookID,
+		IndexerID:        indexerID,
 		DownloadClientID: &client.ID,
 		Title:            req.Title,
 		NZBURL:           req.NZBURL,
@@ -231,7 +219,7 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 		if setErr := h.downloads.SetError(ctx, dl.ID, err.Error()); setErr != nil {
 			slog.Warn("failed to persist download error", "download_id", dl.ID, "error", setErr)
 		}
-		h.recordHistory(ctx, models.HistoryEventDownloadFailed, req.Title, &bookID, map[string]any{"guid": req.GUID, "message": err.Error()})
+		h.recordHistory(ctx, models.HistoryEventDownloadFailed, req.Title, bookID, map[string]any{"guid": req.GUID, "message": err.Error()})
 		if h.notif != nil {
 			h.notif.Send(ctx, notifier.EventDownloadFailed, map[string]any{"title": req.Title, "message": err.Error()})
 		}
@@ -256,7 +244,7 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	}
 	dl.Status = models.StateDownloading
 
-	h.recordHistory(ctx, models.HistoryEventGrabbed, req.Title, &bookID, map[string]any{
+	h.recordHistory(ctx, models.HistoryEventGrabbed, req.Title, bookID, map[string]any{
 		"guid":      req.GUID,
 		"size":      req.Size,
 		"indexerId": req.IndexerID,

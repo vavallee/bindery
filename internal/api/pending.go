@@ -79,7 +79,7 @@ func (h *PendingHandler) Grab(w http.ResponseWriter, r *http.Request) {
 			mediaType = book.MediaType
 		}
 	}
-	stored.BookID = pr.BookID
+	stored.BookID = &pr.BookID
 	stored.MediaType = mediaType
 
 	dl, err := h.queue.grab(r.Context(), stored)
