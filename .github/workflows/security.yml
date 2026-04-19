@@ -42,6 +42,9 @@ jobs:
       - name: gosec (SARIF)
         uses: securego/gosec@64b97151cd7b978abdf8d2f1159a4e9096a12c2b # master
         with:
+          # G402 (TLS/cookie insecure) excluded: cookie Secure flag is dynamic (auto-detected
+          # from r.TLS and X-Forwarded-Proto, overridable via BINDERY_COOKIE_SECURE) and gosec
+          # only accepts literal `true`. Safety is enforced by cookie config logic + docs.
           args: '-no-fail -fmt sarif -out gosec.sarif -exclude=G402 ./...'
 
       - name: Upload gosec SARIF
