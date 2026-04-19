@@ -1,35 +1,38 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, OidcProviderConfig } from '../api/client'
+import { api, OidcProvider, OidcProviderConfig } from '../api/client'
 
 const inputCls = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600'
 
 export default function AuthSettings() {
   const { t } = useTranslation()
-  const [providers, setProviders] = useState<OidcProviderConfig[]>([])
+  // GET returns public shape only (no client_secret). We track display list
+  // separately from the full configs we accumulate during add operations.
+  const [displayed, setDisplayed] = useState<OidcProvider[]>([])
+  // Full configs built up in-session from add operations. Used as the write
+  // source for PUT. Entries not in this map (i.e. loaded from GET) are sent
+  // with client_secret:'' — backend preserves the existing secret for those.
+  const [fullConfigs, setFullConfigs] = useState<Map<string, OidcProviderConfig>>(new Map())
   const [showAdd, setShowAdd] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    api.oidcProviders().then(setDisplayed).catch(console.error)
+  }, [])
 
-  const load = () => {
-    api.oidcProviders().then(ps => {
-      // Public endpoint returns {id,name}; admin needs full config from same endpoint
-      // (backend returns full config to admins, public fields only to others).
-      // Cast conservatively — secret may be masked.
-      setProviders(ps as unknown as OidcProviderConfig[])
-    }).catch(console.error)
-  }
+  const buildPutPayload = (ids: string[]): OidcProviderConfig[] =>
+    ids.map(id => fullConfigs.get(id) ?? { id, name: displayed.find(p => p.id === id)?.name ?? id, issuer: '', client_id: '', client_secret: '', scopes: [] })
 
   const remove = async (id: string) => {
     if (!confirm(t('settings.oidc.removeConfirm'))) return
     setSaving(true)
     setError('')
     try {
-      const next = providers.filter(p => p.id !== id)
-      await api.oidcSetProviders(next)
-      setProviders(next)
+      const nextIds = displayed.filter(p => p.id !== id).map(p => p.id)
+      await api.oidcSetProviders(buildPutPayload(nextIds))
+      setDisplayed(ps => ps.filter(p => p.id !== id))
+      setFullConfigs(m => { const n = new Map(m); n.delete(id); return n })
     } catch (e) {
       setError(e instanceof Error ? e.message : t('settings.oidc.saveFail'))
     } finally {
@@ -41,9 +44,11 @@ export default function AuthSettings() {
     setSaving(true)
     setError('')
     try {
-      const next = [...providers, cfg]
-      await api.oidcSetProviders(next)
-      setProviders(next)
+      const nextIds = [...displayed.map(p => p.id), cfg.id]
+      const nextConfigs = new Map(fullConfigs).set(cfg.id, cfg)
+      await api.oidcSetProviders(buildPutPayload(nextIds).map(p => nextConfigs.get(p.id) ?? p))
+      setDisplayed(ps => [...ps, { id: cfg.id, name: cfg.name }])
+      setFullConfigs(nextConfigs)
       setShowAdd(false)
     } catch (e) {
       setError(e instanceof Error ? e.message : t('settings.oidc.saveFail'))
@@ -62,15 +67,14 @@ export default function AuthSettings() {
           {t('settings.oidc.description')}
         </p>
 
-        {providers.length === 0 && !showAdd && (
+        {displayed.length === 0 && !showAdd && (
           <p className="text-sm text-slate-500 dark:text-zinc-500">{t('settings.oidc.empty')}</p>
         )}
 
-        {providers.map(p => (
+        {displayed.map(p => (
           <div key={p.id} className="flex items-center justify-between py-2 border-b border-slate-200 dark:border-zinc-800 last:border-0">
             <div>
               <span className="text-sm font-medium text-slate-800 dark:text-zinc-200">{p.name}</span>
-              <span className="ml-2 text-xs text-slate-500 dark:text-zinc-500 font-mono">{p.issuer}</span>
             </div>
             <button
               onClick={() => remove(p.id)}
