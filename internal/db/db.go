@@ -184,6 +184,13 @@ func migrate(database *sql.DB) error {
 			continue
 		}
 
+		// Pre-flight integrity check before the multi-user migration.
+		if entry.Name() == "025_multiuser.sql" {
+			if err := multiuserPreFlight(database); err != nil {
+				return err
+			}
+		}
+
 		content, err := migrationsFS.ReadFile("migrations/" + entry.Name())
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", entry.Name(), err)
@@ -222,5 +229,37 @@ func migrate(database *sql.DB) error {
 		slog.Info("applied migration", "version", v, "file", entry.Name())
 	}
 
+	return nil
+}
+
+// multiuserPreFlight checks that the database is in a consistent state before
+// the multi-user migration (025) runs. Aborts with a repair hint if data rows
+// exist in user-owned tables but there is no user row to own them.
+func multiuserPreFlight(database *sql.DB) error {
+	// Only check tables that hold exclusively user-created data. quality_profiles
+	// and metadata_profiles are seeded by earlier migrations so they may have
+	// rows even on a fresh install with no users.
+	tables := []string{"authors", "books", "downloads", "root_folders"}
+	var userCount int
+	if err := database.QueryRow("SELECT COUNT(*) FROM users").Scan(&userCount); err != nil {
+		return fmt.Errorf("pre-flight: count users: %w", err)
+	}
+	if userCount > 0 {
+		return nil // at least one user exists; backfill to id=1 is safe
+	}
+	for _, tbl := range tables {
+		var n int
+		//nolint:gosec // table name is a static literal from the slice above
+		if err := database.QueryRow("SELECT COUNT(*) FROM " + tbl).Scan(&n); err != nil { //nolint:gosec
+			return fmt.Errorf("pre-flight: count %s: %w", tbl, err)
+		}
+		if n > 0 {
+			return fmt.Errorf(
+				"025_multiuser.sql pre-flight: table %q has %d row(s) but users table is empty — "+
+					"create at least one user before upgrading",
+				tbl, n,
+			)
+		}
+	}
 	return nil
 }

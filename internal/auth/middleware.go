@@ -32,12 +32,39 @@ func ParseMode(s string) Mode {
 
 type ctxKey string
 
-const userIDCtxKey ctxKey = "auth.user_id"
+const (
+	userIDCtxKey   ctxKey = "auth.user_id"
+	userRoleCtxKey ctxKey = "auth.user_role"
+)
 
 // UserIDFromContext returns the authenticated user ID (0 if unauthenticated).
 func UserIDFromContext(ctx context.Context) int64 {
 	v, _ := ctx.Value(userIDCtxKey).(int64)
 	return v
+}
+
+// UserRoleFromContext returns the authenticated user's role ("admin", "user", or "").
+func UserRoleFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(userRoleCtxKey).(string)
+	return v
+}
+
+// WithUserRole returns a context carrying the given role alongside the user id.
+func WithUserRole(ctx context.Context, role string) context.Context {
+	return context.WithValue(ctx, userRoleCtxKey, role)
+}
+
+// RequireAdmin is a middleware that rejects non-admin requests with 403.
+func RequireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if UserRoleFromContext(r.Context()) != "admin" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":"admin role required"}`))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // UserProvisioner resolves or creates a user by username. Used by proxy-auth.
@@ -68,6 +95,9 @@ type Provider interface {
 	TrustedProxyCIDRs() []*net.IPNet
 	// UserProvisioner returns the provisioner used in proxy-auth mode.
 	UserProvisioner() UserProvisioner
+	// UserRole returns the role string ("admin" or "user") for the given user
+	// id. Returns "" if the user is not found or an error occurs.
+	UserRole(ctx context.Context, userID int64) string
 }
 
 // AllowUnauthPath returns true for routes the middleware must always let
@@ -113,6 +143,7 @@ func Middleware(p Provider) func(http.Handler) http.Handler {
 			if c, err := r.Cookie(SessionCookieName); err == nil {
 				if uid, err := VerifySession(p.SessionSecret(), c.Value); err == nil {
 					ctx = context.WithValue(ctx, userIDCtxKey, uid)
+					ctx = context.WithValue(ctx, userRoleCtxKey, p.UserRole(ctx, uid))
 					cookieValid = true
 				}
 			}
@@ -142,7 +173,9 @@ func Middleware(p Provider) func(http.Handler) http.Handler {
 
 			if mode == ModeProxy {
 				if uid, ok := resolveProxyIdentity(r, p); ok {
-					r = r.WithContext(context.WithValue(r.Context(), userIDCtxKey, uid))
+					pctx := context.WithValue(r.Context(), userIDCtxKey, uid)
+					pctx = context.WithValue(pctx, userRoleCtxKey, p.UserRole(pctx, uid))
+					r = r.WithContext(pctx)
 					next.ServeHTTP(w, r)
 					return
 				}
