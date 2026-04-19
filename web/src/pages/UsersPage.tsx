@@ -17,6 +17,9 @@ export default function UsersPage() {
   const [newRole, setNewRole] = useState<'user' | 'admin'>('user')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
+  const [resetingId, setResetingId] = useState<number | null>(null)
+  const [resetPassword, setResetPassword] = useState('')
+  const [resetError, setResetError] = useState<Record<number, string>>({})
 
   useEffect(() => {
     document.title = 'Users · Bindery'
@@ -65,6 +68,17 @@ export default function UsersPage() {
       setUsers(prev => prev.map(x => x.id === u.id ? { ...x, role: next } : x))
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : t('users.roleFail'))
+    }
+  }
+
+  async function handleReset(id: number) {
+    const pw = prompt('New password (min 8 characters):')
+    if (!pw) return
+    try {
+      await api.resetUserPassword(id, pw)
+      setResetError(prev => ({ ...prev, [id]: '' }))
+    } catch (e: unknown) {
+      setResetError(prev => ({ ...prev, [id]: e instanceof Error ? e.message : 'Failed' }))
     }
   }
 
