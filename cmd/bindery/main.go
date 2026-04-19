@@ -397,7 +397,6 @@ func main() {
 			r.Delete("/auth/users/{id}", userMgmtHandler.Delete)
 			r.Put("/auth/users/{id}/role", userMgmtHandler.SetRole)
 			r.Put("/auth/users/{id}/reset-password", userMgmtHandler.ResetPassword)
-			r.Put("/auth/users/{id}/reset-password", userMgmtHandler.ResetPassword)
 		})
 
 		// Metadata search
