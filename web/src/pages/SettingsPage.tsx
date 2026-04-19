@@ -1728,6 +1728,7 @@ function CalibreSection({
 
   const saveSettingWithError = async (key: string) => {
     setSaveError(null)
+    setTestResult(null)
     const err = await saveSetting(key)
     if (err) setSaveError({ key, msg: err })
   }
@@ -1819,11 +1820,16 @@ function CalibreSection({
   const runTest = async () => {
     setTesting(true)
     setTestResult(null)
+    const isPlugin = mode === 'plugin'
     try {
       const r = await api.testCalibre()
-      setTestResult({ ok: true, msg: `${r.message}${r.version ? ' — ' + r.version : ''}` })
+      const prefix = isPlugin ? '✓ Plugin reachable' : '✓ calibredb reachable'
+      const detail = r.version || r.message
+      setTestResult({ ok: true, msg: detail ? `${prefix} — ${detail}` : prefix })
     } catch (err) {
-      setTestResult({ ok: false, msg: err instanceof Error ? err.message : 'Test failed' })
+      const reason = err instanceof Error ? err.message : 'Test failed'
+      const prefix = isPlugin ? '✗ Could not reach plugin' : '✗ calibredb unreachable'
+      setTestResult({ ok: false, msg: `${prefix} — ${reason}` })
     } finally {
       setTesting(false)
     }
