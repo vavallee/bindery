@@ -396,6 +396,7 @@ func main() {
 			r.Post("/auth/users", userMgmtHandler.Create)
 			r.Delete("/auth/users/{id}", userMgmtHandler.Delete)
 			r.Put("/auth/users/{id}/role", userMgmtHandler.SetRole)
+			r.Put("/auth/users/{id}/reset-password", userMgmtHandler.ResetPassword)
 		})
 
 		// Metadata search
