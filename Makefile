@@ -1,4 +1,4 @@
-.PHONY: build dev test lint clean docker-build web-build web-dev help security helm-lint sbom smoke
+.PHONY: build dev test lint clean docker-build web-build web-dev help security helm-lint sbom smoke predeploy-smoke
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -67,6 +67,9 @@ helm-lint: ## Lint Helm chart + run helm-unittest cases
 
 smoke: build ## Boot the real binary and exercise the critical golden paths via HTTP
 	go test -count=1 -timeout=60s ./tests/smoke/...
+
+predeploy-smoke: ## Run pre-deploy smoke tests against a live instance (requires BINDERY_URL and BINDERY_API_KEY)
+	go test -v -count=1 -timeout=120s ./tests/predeploy/...
 
 sbom: build ## Generate an SPDX SBOM for the local binary
 	@command -v syft >/dev/null || (echo "syft not installed; see https://github.com/anchore/syft"; exit 1)

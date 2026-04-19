@@ -271,3 +271,50 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: make smoke
+
+  # Pre-deploy smoke: after the build job pushes a tagged image and ArgoCD
+  # rolls it out, wait for the app to report Healthy+Synced, then hit the
+  # live instance with a lightweight HTTP suite. Catches deploy-time issues
+  # (bad image, failed migration, missing secret) that build-time tests
+  # can't see. Only runs on tag pushes — main/development rollouts are
+  # already covered by the in-process `smoke` job above.
+  #
+  # Required repo secret: BINDERY_SMOKE_API_KEY — an API key provisioned on
+  # the live instance at https://bindery.autonomy.ninja with read access.
+  predeploy-smoke:
+    name: Pre-deploy smoke
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.25.9"
+      - name: Wait for ArgoCD to sync
+        env:
+          ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
+          ARGOCD_TOKEN: ${{ secrets.ARGOCD_TOKEN }}
+        run: |
+          if [[ -z "$ARGOCD_SERVER" || -z "$ARGOCD_TOKEN" ]]; then
+            echo "ArgoCD secrets not set — skipping wait"
+            exit 0
+          fi
+          echo "Waiting for ArgoCD app 'bindery' to be Healthy+Synced..."
+          for i in $(seq 1 24); do
+            STATUS=$(curl -sf -H "Authorization: Bearer $ARGOCD_TOKEN" \
+              "$ARGOCD_SERVER/api/v1/applications/bindery" | \
+              python3 -c "import json,sys; d=json.load(sys.stdin); print(d['status']['health']['status'], d['status']['sync']['status'])" 2>/dev/null || echo "unknown unknown")
+            echo "  attempt $i: $STATUS"
+            [[ "$STATUS" == "Healthy Synced" ]] && echo "ArgoCD sync complete" && exit 0
+            sleep 10
+          done
+          echo "Timed out waiting for ArgoCD sync"
+          exit 1
+      - name: Run pre-deploy smoke tests
+        env:
+          BINDERY_URL: https://bindery.autonomy.ninja
+          BINDERY_API_KEY: ${{ secrets.BINDERY_SMOKE_API_KEY }}
+        run: make predeploy-smoke
