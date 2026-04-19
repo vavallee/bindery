@@ -16,6 +16,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/api"
 	"github.com/vavallee/bindery/internal/auth"
+	oidcauth "github.com/vavallee/bindery/internal/auth/oidc"
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/config"
 	"github.com/vavallee/bindery/internal/db"
@@ -267,8 +268,18 @@ func main() {
 	// Notifier
 	notif := notifier.New(notificationRepo)
 
+	// OIDC manager — loaded from settings, reload on config change.
+	oidcMgr := oidcauth.NewManager(cfg.OIDCRedirectBaseURL)
+	if s, _ := settingsRepo.Get(ctxBoot, api.SettingOIDCProviders); s != nil && s.Value != "" {
+		if ps, err := oidcauth.ParseProviders(s.Value); err == nil && len(ps) > 0 {
+			oidcMgr.Reload(ctxBoot, ps)
+			slog.Info("oidc: loaded providers from settings", "count", len(ps))
+		}
+	}
+
 	// API handlers
 	authHandler := api.NewAuthHandler(userRepo, settingsRepo, loginLimiter)
+	oidcHandler := api.NewOIDCHandler(oidcMgr, userRepo, settingsRepo, authHandler)
 	searchHandler := api.NewSearchHandler(metaAgg)
 	authorHandler := api.NewAuthorHandler(authorRepo, authorAliasRepo, bookRepo, seriesRepo, metaAgg, settingsRepo, metadataProfileRepo, sched).WithFinder(importScanner)
 	authorAliasHandler := api.NewAuthorAliasHandler(authorRepo, authorAliasRepo)
@@ -370,6 +381,11 @@ func main() {
 		r.Post("/auth/password", authHandler.ChangePassword)
 		r.Post("/auth/apikey/regenerate", authHandler.RegenerateAPIKey)
 		r.Put("/auth/mode", authHandler.SetMode)
+		// OIDC — login/callback are unauthenticated; provider management requires auth.
+		r.Get("/auth/oidc/providers", oidcHandler.GetProviders)
+		r.Put("/auth/oidc/providers", oidcHandler.SetProviders)
+		r.Get("/auth/oidc/{provider}/login", oidcHandler.Login)
+		r.Get("/auth/oidc/{provider}/callback", oidcHandler.Callback)
 
 		// Metadata search
 		r.Get("/search/author", searchHandler.SearchAuthors)

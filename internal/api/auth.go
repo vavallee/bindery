@@ -36,6 +36,7 @@ const (
 	SettingAuthAPIKey        = "auth.api_key"        //nolint:gosec // setting key name, not a credential
 	SettingAuthSessionSecret = "auth.session_secret" //nolint:gosec // setting key name, not a credential
 	SettingAuthMode          = "auth.mode"
+	SettingOIDCProviders     = "auth.oidc.providers" //nolint:gosec // setting key name, not a credential
 )
 
 // AuthHandler owns the login / setup / password / mode endpoints.

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -14,6 +15,11 @@ type User struct {
 	PasswordHash string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	// OIDC fields — nil for local-password users.
+	OIDCSub     *string
+	OIDCIssuer  *string
+	Email       *string
+	DisplayName *string
 }
 
 type UserRepo struct {
@@ -29,34 +35,102 @@ func (r *UserRepo) Count(ctx context.Context) (int, error) {
 	return n, err
 }
 
-func (r *UserRepo) GetByUsername(ctx context.Context, username string) (*User, error) {
+const userSelectCols = `id, username, password_hash, created_at, updated_at,
+	oidc_sub, oidc_issuer, email, display_name`
+
+func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var u User
-	err := r.db.QueryRowContext(ctx,
-		"SELECT id, username, password_hash, created_at, updated_at FROM users WHERE username=?",
-		username,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt)
+	err := row.Scan(
+		&u.ID, &u.Username, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt,
+		&u.OIDCSub, &u.OIDCIssuer, &u.Email, &u.DisplayName,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("get user: %w", err)
+		return nil, err
 	}
 	return &u, nil
 }
 
-func (r *UserRepo) GetByID(ctx context.Context, id int64) (*User, error) {
-	var u User
-	err := r.db.QueryRowContext(ctx,
-		"SELECT id, username, password_hash, created_at, updated_at FROM users WHERE id=?",
-		id,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+func (r *UserRepo) GetByUsername(ctx context.Context, username string) (*User, error) {
+	u, err := scanUser(r.db.QueryRowContext(ctx,
+		"SELECT "+userSelectCols+" FROM users WHERE username=?", username))
+	if err != nil {
+		return nil, fmt.Errorf("get user: %w", err)
 	}
+	return u, nil
+}
+
+func (r *UserRepo) GetByID(ctx context.Context, id int64) (*User, error) {
+	u, err := scanUser(r.db.QueryRowContext(ctx,
+		"SELECT "+userSelectCols+" FROM users WHERE id=?", id))
 	if err != nil {
 		return nil, fmt.Errorf("get user by id: %w", err)
 	}
-	return &u, nil
+	return u, nil
+}
+
+// GetByOIDC looks up a user by the composite (issuer, sub) identity.
+// Returns nil, nil when not found.
+func (r *UserRepo) GetByOIDC(ctx context.Context, issuer, sub string) (*User, error) {
+	u, err := scanUser(r.db.QueryRowContext(ctx,
+		"SELECT "+userSelectCols+" FROM users WHERE oidc_issuer=? AND oidc_sub=?", issuer, sub))
+	if err != nil {
+		return nil, fmt.Errorf("get user by oidc: %w", err)
+	}
+	return u, nil
+}
+
+// GetOrCreateByOIDC resolves or creates a user identified by (issuer, sub).
+// On creation, username is derived from preferredUsername (falling back to sub),
+// email and displayName are stored as provided.
+func (r *UserRepo) GetOrCreateByOIDC(ctx context.Context, issuer, sub, preferredUsername, email, displayName string) (*User, error) {
+	u, err := r.GetByOIDC(ctx, issuer, sub)
+	if err != nil {
+		return nil, err
+	}
+	if u != nil {
+		return u, nil
+	}
+	username := preferredUsername
+	if username == "" {
+		username = sub
+	}
+	// Ensure username is unique by appending a suffix if needed.
+	base := username
+	for i := 1; ; i++ {
+		existing, err := r.GetByUsername(ctx, username)
+		if err != nil {
+			return nil, err
+		}
+		if existing == nil {
+			break
+		}
+		username = fmt.Sprintf("%s_%d", base, i)
+	}
+	now := time.Now().UTC()
+	res, err := r.db.ExecContext(ctx,
+		`INSERT INTO users (username, password_hash, created_at, updated_at, oidc_sub, oidc_issuer, email, display_name)
+		 VALUES (?, '', ?, ?, ?, ?, ?, ?)`,
+		username, now, now, sub, issuer, nullableStr(email), nullableStr(displayName),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create oidc user: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("get oidc user id: %w", err)
+	}
+	slog.Info("oidc: auto-provisioned user", "username", username, "issuer", issuer)
+	return r.GetByID(ctx, id)
+}
+
+func nullableStr(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // Create inserts a new user. Intended for the first-run setup flow; further

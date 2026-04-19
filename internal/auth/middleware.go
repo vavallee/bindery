@@ -78,7 +78,14 @@ func AllowUnauthPath(path string) bool {
 		"/api/v1/auth/status",
 		"/api/v1/auth/login",
 		"/api/v1/auth/logout",
-		"/api/v1/auth/setup":
+		"/api/v1/auth/setup",
+		"/api/v1/auth/oidc/providers":
+		return true
+	}
+	// OIDC login + callback paths are public — the IdP redirect happens before
+	// the user holds a Bindery session.
+	if strings.HasPrefix(path, "/api/v1/auth/oidc/") &&
+		(strings.HasSuffix(path, "/login") || strings.HasSuffix(path, "/callback")) {
 		return true
 	}
 	return false
