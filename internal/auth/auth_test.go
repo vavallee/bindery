@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"context"
+	"net"
 	"net/http"
 	"testing"
 	"time"
@@ -151,16 +153,39 @@ func TestLoginLimiterExpiresOldEvents(t *testing.T) {
 // --- middleware integration --------------------------------------------------
 
 type fakeProvider struct {
-	mode   Mode
-	apiKey string
-	secret []byte
-	setup  bool
+	mode           Mode
+	apiKey         string
+	secret         []byte
+	setup          bool
+	proxyHeader    string
+	proxyProvision bool
+	proxyCIDRs     []*net.IPNet
+	provisioner    UserProvisioner
 }
 
-func (f *fakeProvider) Mode() Mode            { return f.mode }
-func (f *fakeProvider) APIKey() string        { return f.apiKey }
-func (f *fakeProvider) SessionSecret() []byte { return f.secret }
-func (f *fakeProvider) SetupRequired() bool   { return f.setup }
+func (f *fakeProvider) Mode() Mode                        { return f.mode }
+func (f *fakeProvider) APIKey() string                    { return f.apiKey }
+func (f *fakeProvider) SessionSecret() []byte             { return f.secret }
+func (f *fakeProvider) SetupRequired() bool               { return f.setup }
+func (f *fakeProvider) ProxyAuthHeader() string           { return f.proxyHeader }
+func (f *fakeProvider) ProxyAutoProvision() bool          { return f.proxyProvision }
+func (f *fakeProvider) TrustedProxyCIDRs() []*net.IPNet  { return f.proxyCIDRs }
+func (f *fakeProvider) UserProvisioner() UserProvisioner  { return f.provisioner }
+
+// staticProvisioner always returns the same user ID for any username.
+type staticProvisioner struct{ uid int64 }
+
+func (s *staticProvisioner) ResolveOrProvisionUser(_ context.Context, _ string, _ bool) (int64, error) {
+	return s.uid, nil
+}
+
+func mustParseCIDR(s string) *net.IPNet {
+	_, cidr, err := net.ParseCIDR(s)
+	if err != nil {
+		panic(err)
+	}
+	return cidr
+}
 
 func TestMiddlewareAllowsHealthWithoutAuth(t *testing.T) {
 	p := &fakeProvider{mode: ModeEnabled}
@@ -283,5 +308,72 @@ func TestParseMode(t *testing.T) {
 	}
 	if m := ParseMode(""); m != ModeEnabled {
 		t.Errorf("empty mode should default to ModeEnabled, got %q", m)
+	}
+	if m := ParseMode("proxy"); m != ModeProxy {
+		t.Errorf("want ModeProxy, got %q", m)
+	}
+}
+
+// --- proxy mode tests --------------------------------------------------------
+
+func proxyProvider(trustedCIDR string, autoProvision bool, uid int64) *fakeProvider {
+	return &fakeProvider{
+		mode:           ModeProxy,
+		proxyHeader:    "X-Forwarded-User",
+		proxyProvision: autoProvision,
+		proxyCIDRs:     []*net.IPNet{mustParseCIDR(trustedCIDR)},
+		provisioner:    &staticProvisioner{uid: uid},
+	}
+}
+
+func TestProxyAuthTrustedIPWithHeader(t *testing.T) {
+	p := proxyProvider("10.0.0.0/8", true, 42)
+	mw := Middleware(p)
+	var gotUID int64
+	h := mw(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		gotUID = UserIDFromContext(r.Context())
+	}))
+	req, _ := http.NewRequest("GET", "/api/v1/author", nil)
+	req.RemoteAddr = "10.0.0.5:12345"
+	req.Header.Set("X-Forwarded-User", "alice")
+	h.ServeHTTP(nopWriter{}, req)
+	if gotUID != 42 {
+		t.Errorf("uid = %d; want 42", gotUID)
+	}
+}
+
+func TestProxyAuthUntrustedIPWithHeader(t *testing.T) {
+	p := proxyProvider("10.0.0.0/8", true, 42)
+	mw := Middleware(p)
+	called := false
+	h := mw(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true }))
+	req, _ := http.NewRequest("GET", "/api/v1/author", nil)
+	req.RemoteAddr = "8.8.8.8:12345"
+	req.Header.Set("X-Forwarded-User", "alice")
+	w := &captureWriter{}
+	h.ServeHTTP(w, req)
+	if called {
+		t.Fatal("untrusted IP with identity header must be rejected")
+	}
+	if w.status != http.StatusUnauthorized {
+		t.Errorf("status = %d; want 401", w.status)
+	}
+}
+
+func TestProxyAuthTrustedIPNoHeader(t *testing.T) {
+	p := proxyProvider("10.0.0.0/8", true, 42)
+	mw := Middleware(p)
+	called := false
+	h := mw(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true }))
+	req, _ := http.NewRequest("GET", "/api/v1/author", nil)
+	req.RemoteAddr = "10.0.0.5:12345"
+	// No X-Forwarded-User header
+	w := &captureWriter{}
+	h.ServeHTTP(w, req)
+	if called {
+		t.Fatal("trusted IP with no identity header must be rejected")
+	}
+	if w.status != http.StatusUnauthorized {
+		t.Errorf("status = %d; want 401", w.status)
 	}
 }

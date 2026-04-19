@@ -10,21 +10,13 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-// trustedProxyMiddleware returns a middleware that rewrites RemoteAddr from
-// X-Forwarded-For / X-Real-IP only when the direct peer is a configured
-// trusted proxy. Without a trusted proxy configured, forwarded headers are
-// ignored and the peer IP is used as-is — preventing XFF spoofing in
-// local-only auth mode.
-//
-// Configured via BINDERY_TRUSTED_PROXY: a comma-separated list of IPs or
-// CIDRs. Bare IPs are treated as /32 (IPv4) or /128 (IPv6).
-func trustedProxyMiddleware() func(http.Handler) http.Handler {
-	raw := os.Getenv("BINDERY_TRUSTED_PROXY")
+// parseTrustedProxyCIDRs parses a comma-separated list of IP/CIDR strings
+// (from BINDERY_TRUSTED_PROXY) into []*net.IPNet. Bare IPs are treated as
+// /32 (IPv4) or /128 (IPv6). Invalid entries are logged and skipped.
+func parseTrustedProxyCIDRs(raw string) []*net.IPNet {
 	if raw == "" {
-		// No trusted proxy — use peer IP as-is (safe default).
-		return func(next http.Handler) http.Handler { return next }
+		return nil
 	}
-
 	var trusted []*net.IPNet
 	for _, s := range strings.Split(raw, ",") {
 		s = strings.TrimSpace(s)
@@ -44,6 +36,23 @@ func trustedProxyMiddleware() func(http.Handler) http.Handler {
 			continue
 		}
 		trusted = append(trusted, cidr)
+	}
+	return trusted
+}
+
+// trustedProxyMiddleware returns a middleware that rewrites RemoteAddr from
+// X-Forwarded-For / X-Real-IP only when the direct peer is a configured
+// trusted proxy. Without a trusted proxy configured, forwarded headers are
+// ignored and the peer IP is used as-is — preventing XFF spoofing in
+// local-only auth mode.
+//
+// Configured via BINDERY_TRUSTED_PROXY: a comma-separated list of IPs or
+// CIDRs. Bare IPs are treated as /32 (IPv4) or /128 (IPv6).
+func trustedProxyMiddleware() func(http.Handler) http.Handler {
+	trusted := parseTrustedProxyCIDRs(os.Getenv("BINDERY_TRUSTED_PROXY"))
+	if len(trusted) == 0 {
+		// No trusted proxy — use peer IP as-is (safe default).
+		return func(next http.Handler) http.Handler { return next }
 	}
 
 	return func(next http.Handler) http.Handler {

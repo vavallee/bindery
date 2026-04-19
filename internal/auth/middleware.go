@@ -3,7 +3,9 @@ package auth
 import (
 	"context"
 	"log/slog"
+	"net"
 	"net/http"
+	"strings"
 )
 
 // Mode represents the auth posture. Matches Sonarr's "Authentication Required"
@@ -14,13 +16,14 @@ const (
 	ModeDisabled  Mode = "disabled"   // no auth check at all (not recommended; not the default)
 	ModeLocalOnly Mode = "local-only" // RFC1918 + loopback clients bypass
 	ModeEnabled   Mode = "enabled"    // everyone must authenticate
+	ModeProxy     Mode = "proxy"      // trust identity header from a configured upstream proxy
 )
 
 // ParseMode coerces a free-form string into a valid Mode; unknown values map
 // to ModeEnabled (fail-safe).
 func ParseMode(s string) Mode {
 	switch Mode(s) {
-	case ModeDisabled, ModeLocalOnly, ModeEnabled:
+	case ModeDisabled, ModeLocalOnly, ModeEnabled, ModeProxy:
 		return Mode(s)
 	default:
 		return ModeEnabled
@@ -37,6 +40,14 @@ func UserIDFromContext(ctx context.Context) int64 {
 	return v
 }
 
+// UserProvisioner resolves or creates a user by username. Used by proxy-auth.
+type UserProvisioner interface {
+	// ResolveOrProvisionUser returns the user ID for username, creating one if
+	// autoProvision is true and the user does not yet exist. Returns 0, nil when
+	// autoProvision is false and the user is not found.
+	ResolveOrProvisionUser(ctx context.Context, username string, autoProvision bool) (int64, error)
+}
+
 // Provider is the data the middleware needs at request time. Implemented by
 // main.go via a small adapter; keeps this package free of db imports.
 type Provider interface {
@@ -46,6 +57,17 @@ type Provider interface {
 	// SetupRequired reports whether no user exists yet (first-run). When true
 	// and the request is unauthenticated, /setup endpoints are allowed through.
 	SetupRequired() bool
+	// ProxyAuthHeader is the HTTP header carrying the upstream identity, e.g.
+	// "X-Forwarded-User". Only consulted when Mode() == ModeProxy.
+	ProxyAuthHeader() string
+	// ProxyAutoProvision controls whether unknown usernames are created on the
+	// fly when Mode() == ModeProxy.
+	ProxyAutoProvision() bool
+	// TrustedProxyCIDRs returns the parsed CIDR list for proxy-mode trust
+	// decisions. Callers must not mutate the returned slice.
+	TrustedProxyCIDRs() []*net.IPNet
+	// UserProvisioner returns the provisioner used in proxy-auth mode.
+	UserProvisioner() UserProvisioner
 }
 
 // AllowUnauthPath returns true for routes the middleware must always let
@@ -71,7 +93,8 @@ func AllowUnauthPath(path string) bool {
 //  4. Mode == local-only + local  — always allowed
 //  5. Valid X-Api-Key header or ?apikey= query — allowed
 //  6. Valid signed session cookie — allowed
-//  7. Otherwise                   — 401
+//  7. Mode == proxy: trusted peer IP + identity header → resolve/provision user
+//  8. Otherwise                   — 401
 func Middleware(p Provider) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -110,6 +133,20 @@ func Middleware(p Provider) func(http.Handler) http.Handler {
 				return
 			}
 
+			if mode == ModeProxy {
+				if uid, ok := resolveProxyIdentity(r, p); ok {
+					r = r.WithContext(context.WithValue(r.Context(), userIDCtxKey, uid))
+					next.ServeHTTP(w, r)
+					return
+				}
+				// Proxy mode — identity header present but source untrusted, or
+				// no header at all.
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+				return
+			}
+
 			// First-run escape hatch: before any user exists, the UI needs to
 			// reach /auth/setup without credentials. Those paths are already in
 			// AllowUnauthPath — any other path still 401s so random GETs can't
@@ -123,6 +160,59 @@ func Middleware(p Provider) func(http.Handler) http.Handler {
 			}
 		})
 	}
+}
+
+// resolveProxyIdentity checks whether the request carries a trusted upstream
+// identity header from a configured proxy IP. Returns (userID, true) on
+// success. Returns (0, false) when the header is missing or the source is
+// untrusted. A forged header from an untrusted IP is logged and rejected.
+func resolveProxyIdentity(r *http.Request, p Provider) (int64, bool) {
+	header := p.ProxyAuthHeader()
+	username := strings.TrimSpace(r.Header.Get(header))
+
+	peerIP := requestPeerIP(r)
+
+	trusted := isTrustedProxy(peerIP, p.TrustedProxyCIDRs())
+
+	if username != "" && !trusted {
+		slog.Warn("proxy auth: identity header from untrusted source — rejecting",
+			"header", header, "peer", peerIP)
+		return 0, false
+	}
+	if !trusted || username == "" {
+		return 0, false
+	}
+
+	uid, err := p.UserProvisioner().ResolveOrProvisionUser(r.Context(), username, p.ProxyAutoProvision())
+	if err != nil {
+		slog.Error("proxy auth: user provisioning failed", "username", username, "error", err)
+		return 0, false
+	}
+	if uid == 0 {
+		slog.Warn("proxy auth: user not found and auto-provisioning disabled", "username", username)
+		return 0, false
+	}
+	return uid, true
+}
+
+func isTrustedProxy(ip net.IP, cidrs []*net.IPNet) bool {
+	if ip == nil {
+		return false
+	}
+	for _, cidr := range cidrs {
+		if cidr.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func requestPeerIP(r *http.Request) net.IP {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	return net.ParseIP(strings.Trim(host, "[]"))
 }
 
 // RequireXRequestedWith rejects non-GET/HEAD requests that lack the custom

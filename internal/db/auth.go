@@ -92,3 +92,17 @@ func (r *UserRepo) UpdateUsername(ctx context.Context, id int64, username string
 	)
 	return err
 }
+
+// GetOrCreateByUsername returns the existing user with the given username, or
+// creates one (with an empty password hash — proxy-auth users never log in
+// with a local password). Used by the proxy-auth auto-provisioning path.
+func (r *UserRepo) GetOrCreateByUsername(ctx context.Context, username string) (*User, error) {
+	u, err := r.GetByUsername(ctx, username)
+	if err != nil {
+		return nil, err
+	}
+	if u != nil {
+		return u, nil
+	}
+	return r.Create(ctx, username, "")
+}

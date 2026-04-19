@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -121,6 +122,20 @@ func main() {
 	if err := bootstrapAuth(ctxBoot, settingsRepo, cfg.APIKey); err != nil {
 		slog.Error("auth bootstrap failed", "error", err)
 		os.Exit(1)
+	}
+
+	// Parse trusted-proxy CIDRs once at startup (shared by trustedProxyMiddleware
+	// and the proxy-auth identity check).
+	trustedCIDRs := parseTrustedProxyCIDRs(os.Getenv("BINDERY_TRUSTED_PROXY"))
+
+	// Safety gate: proxy auth mode requires at least one trusted proxy CIDR so
+	// that the identity header cannot be forged by arbitrary LAN hosts.
+	if s, _ := settingsRepo.Get(ctxBoot, api.SettingAuthMode); s != nil && s.Value == string(auth.ModeProxy) {
+		if len(trustedCIDRs) == 0 {
+			slog.Error("proxy auth mode is active but BINDERY_TRUSTED_PROXY is empty — refusing to start (any host could forge the identity header)")
+			os.Exit(1)
+		}
+		slog.Info("proxy auth mode: trusted proxies", "cidrs", trustedCIDRs)
 	}
 
 	// Login rate limiter: 5 failures / 15 min per IP, matches Sonarr's posture.
@@ -318,7 +333,13 @@ func main() {
 	// Composite auth: session cookie (UI) OR API key (external apps) OR
 	// local-IP bypass when mode=local-only. Mode, key, and secret are sourced
 	// live from the DB so they can be rotated without a process restart.
-	authProvider := &dbAuthProvider{settings: settingsRepo, users: userRepo}
+	authProvider := &dbAuthProvider{
+		settings:     settingsRepo,
+		users:        userRepo,
+		proxyHeader:  cfg.ProxyAuthHeader,
+		proxyProvision: cfg.ProxyAutoProvision,
+		proxyCIDRs:   trustedCIDRs,
+	}
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(auth.Middleware(authProvider))
@@ -683,8 +704,11 @@ func bootstrapAuth(ctx context.Context, settings *db.SettingsRepo, envSeed strin
 // dbAuthProvider adapts the DB-backed settings + user repo to the minimal
 // auth.Provider interface consumed by auth.Middleware.
 type dbAuthProvider struct {
-	settings *db.SettingsRepo
-	users    *db.UserRepo
+	settings       *db.SettingsRepo
+	users          *db.UserRepo
+	proxyHeader    string
+	proxyProvision bool
+	proxyCIDRs     []*net.IPNet
 }
 
 func (p *dbAuthProvider) Mode() auth.Mode {
@@ -714,4 +738,34 @@ func (p *dbAuthProvider) SessionSecret() []byte {
 func (p *dbAuthProvider) SetupRequired() bool {
 	n, err := p.users.Count(context.Background())
 	return err == nil && n == 0
+}
+
+func (p *dbAuthProvider) ProxyAuthHeader() string        { return p.proxyHeader }
+func (p *dbAuthProvider) ProxyAutoProvision() bool       { return p.proxyProvision }
+func (p *dbAuthProvider) TrustedProxyCIDRs() []*net.IPNet { return p.proxyCIDRs }
+func (p *dbAuthProvider) UserProvisioner() auth.UserProvisioner {
+	return &dbUserProvisioner{users: p.users}
+}
+
+// dbUserProvisioner implements auth.UserProvisioner using the UserRepo.
+type dbUserProvisioner struct {
+	users *db.UserRepo
+}
+
+func (p *dbUserProvisioner) ResolveOrProvisionUser(ctx context.Context, username string, autoProvision bool) (int64, error) {
+	if autoProvision {
+		u, err := p.users.GetOrCreateByUsername(ctx, username)
+		if err != nil {
+			return 0, err
+		}
+		return u.ID, nil
+	}
+	u, err := p.users.GetByUsername(ctx, username)
+	if err != nil {
+		return 0, err
+	}
+	if u == nil {
+		return 0, nil
+	}
+	return u.ID, nil
 }

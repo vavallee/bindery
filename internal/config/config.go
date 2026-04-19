@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // Config holds the application configuration loaded from environment variables.
@@ -19,6 +20,9 @@ type Config struct {
 	LibraryDir        string
 	AudiobookDir      string
 	DownloadPathRemap string
+	// Proxy SSO settings (Phase 1).
+	ProxyAuthHeader      string // BINDERY_PROXY_AUTH_HEADER
+	ProxyAutoProvision   bool   // BINDERY_PROXY_AUTO_PROVISION
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -42,6 +46,8 @@ func Load() *Config {
 		LibraryDir:        envOr("BINDERY_LIBRARY_DIR", "/books"),
 		AudiobookDir:      envOr("BINDERY_AUDIOBOOK_DIR", ""),
 		DownloadPathRemap: envOr("BINDERY_DOWNLOAD_PATH_REMAP", ""),
+		ProxyAuthHeader:   envOr("BINDERY_PROXY_AUTH_HEADER", "X-Forwarded-User"),
+		ProxyAutoProvision: envBool("BINDERY_PROXY_AUTO_PROVISION", true),
 	}
 }
 
@@ -76,6 +82,17 @@ func defaultDataDir(goos string, userConfigDir func() (string, error)) string {
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+func envBool(key string, fallback bool) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch v {
+	case "false", "0", "no":
+		return false
+	case "true", "1", "yes":
+		return true
 	}
 	return fallback
 }
