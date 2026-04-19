@@ -69,14 +69,16 @@ export default function BooksPage() {
     if (sort === 'title-az') list = [...list].sort((a, b) => a.title.localeCompare(b.title))
     else if (sort === 'title-za') list = [...list].sort((a, b) => b.title.localeCompare(a.title))
     else if (sort === 'date-new') list = [...list].sort((a, b) => {
-      const da = a.releaseDate ? new Date(a.releaseDate).getTime() : 0
-      const db = b.releaseDate ? new Date(b.releaseDate).getTime() : 0
-      return db - da
+      if (!a.releaseDate && !b.releaseDate) return 0
+      if (!a.releaseDate) return 1
+      if (!b.releaseDate) return -1
+      return new Date(b.releaseDate).getTime() - new Date(a.releaseDate).getTime()
     })
     else if (sort === 'date-old') list = [...list].sort((a, b) => {
-      const da = a.releaseDate ? new Date(a.releaseDate).getTime() : 0
-      const db = b.releaseDate ? new Date(b.releaseDate).getTime() : 0
-      return da - db
+      if (!a.releaseDate && !b.releaseDate) return 0
+      if (!a.releaseDate) return 1
+      if (!b.releaseDate) return -1
+      return new Date(a.releaseDate).getTime() - new Date(b.releaseDate).getTime()
     })
     return list
   }, [books, statusFilter, mediaFilter, search, sort])
