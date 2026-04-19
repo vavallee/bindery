@@ -272,8 +272,8 @@ func EncodeFlowState(state, nonce, codeVerifier string) (string, error) {
 }
 
 func configEqual(a, b ProviderConfig) bool {
-	aj, _ := json.Marshal(a) //nolint:gosec // G117: persisted server-side only, never returned via API (see ProviderPublicConfig split)
-	bj, _ := json.Marshal(b) //nolint:gosec // G117: persisted server-side only, never returned via API (see ProviderPublicConfig split)
+	aj, _ := json.Marshal(a) // #nosec G117 -- persisted server-side only, never returned via API (see ProviderPublicConfig split)
+	bj, _ := json.Marshal(b) // #nosec G117 -- persisted server-side only, never returned via API (see ProviderPublicConfig split)
 	return string(aj) == string(bj)
 }
 

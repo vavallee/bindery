@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -55,8 +56,8 @@ func (h *OIDCHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Store state+nonce+verifier in an HttpOnly cookie so the callback can
-	// verify them without any server-side session store.
+	// Store state+nonce+verifier in a secure HttpOnly cookie so the callback
+	// can verify them without any server-side session store.
 	flowVal, err := oidc.EncodeFlowState(state, nonce, verifier)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "encode flow: "+err.Error())
@@ -67,6 +68,7 @@ func (h *OIDCHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Value:    flowVal,
 		Path:     "/api/v1/auth/oidc",
 		HttpOnly: true,
+		Secure:   cookieSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   oidcFlowMaxAge,
 	})
@@ -94,10 +96,13 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 
 	// Clear the flow cookie.
 	http.SetCookie(w, &http.Cookie{
-		Name:   oidcFlowCookie,
-		Value:  "",
-		Path:   "/api/v1/auth/oidc",
-		MaxAge: -1,
+		Name:     oidcFlowCookie,
+		Value:    "",
+		Path:     "/api/v1/auth/oidc",
+		HttpOnly: true,
+		Secure:   cookieSecure(r),
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
 	})
 
 	// Validate state parameter.
@@ -109,8 +114,13 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	// Check for IdP error response.
 	if errParam := r.URL.Query().Get("error"); errParam != "" {
 		desc := r.URL.Query().Get("error_description")
-		slog.Warn("oidc callback: provider error", "error", errParam, "desc", desc)
-		writeErr(w, http.StatusUnauthorized, "oidc error: "+errParam)
+		// Strip CRLF from user-controlled query params before structured logging.
+		slog.Warn("oidc callback: provider error",
+			"error", sanitizeLog(errParam),
+			"desc", sanitizeLog(desc),
+			"provider", providerID,
+		)
+		writeErr(w, http.StatusUnauthorized, "oidc error from provider")
 		return
 	}
 
@@ -201,7 +211,7 @@ func (h *OIDCHandler) SetProviders(w http.ResponseWriter, r *http.Request) {
 		merged = append(merged, p)
 	}
 
-	raw, err := json.Marshal(merged) //nolint:gosec // G117: persisted server-side only, never returned via API (see ProviderPublicConfig split)
+	raw, err := json.Marshal(merged) // #nosec G117 -- persisted server-side only, never returned via API (see ProviderPublicConfig split)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "encode: "+err.Error())
 		return
@@ -215,4 +225,24 @@ func (h *OIDCHandler) SetProviders(w http.ResponseWriter, r *http.Request) {
 		h.mgr.Reload(r.Context(), merged)
 	}()
 	writeOK(w, map[string]any{"ok": true, "count": len(merged)})
+}
+
+// cookieSecure mirrors the issueSession() logic in auth.go: respect
+// BINDERY_COOKIE_SECURE env var, fall back to detecting TLS/proxy.
+func cookieSecure(r *http.Request) bool {
+	switch CookieSecureMode() {
+	case "always":
+		return true
+	case "never":
+		return false
+	default:
+		return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	}
+}
+
+// sanitizeLog strips CR/LF from user-controlled strings before they reach
+// log sinks, preventing CRLF log-injection even in structured loggers.
+func sanitizeLog(s string) string {
+	s = strings.ReplaceAll(s, "\r", " ")
+	return strings.ReplaceAll(s, "\n", " ")
 }
