@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react'
-import { api, AuthStatus } from '../api/client'
+import { api, AuthStatus, initCSRF } from '../api/client'
 
 interface AuthContextValue {
   status: AuthStatus | null
@@ -19,6 +19,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const s = await api.authStatus()
       setStatus(s)
+      // Re-hydrate CSRF token after page reload: authLogin() calls initCSRF,
+      // but a subsequent reload keeps the session cookie without the token
+      // in JS memory, so mutating requests would 403 until the next login.
+      if (s.authenticated) {
+        await initCSRF()
+      }
     } catch {
       setStatus(null)
     } finally {
