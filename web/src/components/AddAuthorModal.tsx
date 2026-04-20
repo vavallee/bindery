@@ -189,7 +189,7 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
                   <div className="font-medium text-sm">{author.authorName}</div>
                   <div className="text-xs text-slate-600 dark:text-zinc-500 flex flex-wrap gap-x-3">
                     {author.disambiguation && <span>{t('addAuthorModal.topWork')} {author.disambiguation}</span>}
-                    {author.statistics?.bookCount ? <span>{t('addAuthorModal.books', { count: author.statistics.bookCount })}</span> : null}
+                    {author.statistics?.bookCount ? <span title={t('addAuthorModal.booksTooltip')}>{t('addAuthorModal.books', { count: author.statistics.bookCount })}</span> : null}
                     {author.ratingsCount ? <span>{t('addAuthorModal.ratings', { count: author.ratingsCount })}</span> : null}
                   </div>
                 </div>
