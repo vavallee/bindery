@@ -12,11 +12,11 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "i18next": "^26.0.5",
+    "i18next": "^26.0.6",
     "i18next-browser-languagedetector": "^8.2.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-i18next": "^17.0.3",
+    "react-i18next": "^17.0.4",
     "react-router-dom": "^7.14.1"
   },
   "devDependencies": {
@@ -31,15 +31,15 @@
     "@vitejs/plugin-react": "^6.0.1",
     "autoprefixer": "^10.5.0",
     "eslint": "^9.0.0",
-    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.5.0",
     "jsdom": "^29.0.2",
     "postcss": "^8.5.10",
     "tailwindcss": "^4.2.2",
-    "typescript": "~6.0.2",
+    "typescript": "~6.0.3",
     "typescript-eslint": "^8.58.2",
-    "vite": "^8.0.8",
+    "vite": "^8.0.9",
     "vitest": "^3.0.0"
   }
 }
