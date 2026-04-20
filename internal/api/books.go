@@ -348,7 +348,7 @@ func removeBookPath(p string) error {
 	if info.IsDir() {
 		return os.RemoveAll(p)
 	}
-	if err := os.Remove(p); err != nil {
+	if err := os.Remove(p); err != nil { //nosec G304 -- p is a DB-stored path written by the import pipeline, not user input
 		return err
 	}
 	// After removing a file, clean up the parent directory if it is now empty.
@@ -356,7 +356,7 @@ func removeBookPath(p string) error {
 	parent := filepath.Dir(p)
 	entries, err := os.ReadDir(parent)
 	if err == nil && len(entries) == 0 {
-		_ = os.Remove(parent) // best-effort; ignore error
+		_ = os.Remove(parent) //nosec G304 -- derived from DB-stored path, not user input
 	}
 	return nil
 }
