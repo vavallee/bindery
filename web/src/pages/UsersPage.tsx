@@ -17,7 +17,7 @@ export default function UsersPage() {
   const [newRole, setNewRole] = useState<'user' | 'admin'>('user')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
-  const [resetError, setResetError] = useState<Record<number, string>>({})
+  const [, setResetError] = useState<Record<number, string>>({})
 
   useEffect(() => {
     document.title = 'Users · Bindery'
