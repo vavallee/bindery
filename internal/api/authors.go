@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -14,6 +15,11 @@ import (
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
+)
+
+var (
+	errNoMetadataAggregator = errors.New("metadata aggregator not configured")
+	errNoMetadataMatch      = errors.New("no exact-name match in metadata provider")
 )
 
 type AuthorHandler struct {
@@ -320,6 +326,69 @@ func (h *AuthorHandler) isAutoGrabEnabled(ctx context.Context) bool {
 	return s.Value != "false"
 }
 
+// relinkCalibreAuthor looks up a calibre-imported author by name in the
+// configured metadata provider and, on the first match, rewrites the row's
+// foreign_id, metadata_provider, image, description, and sort_name in place
+// so subsequent catalogue fetches work against a real provider ID.
+//
+// The match is deliberately conservative: we accept the first search result
+// only when its name normalises identically (case- and whitespace-insensitive)
+// to the Calibre-supplied name. Anything fuzzier risks mis-linking — users
+// can still rename the author manually if they want a different provider row.
+//
+// A nil return means the author row was updated. Any error means "keep the
+// synthetic ID and skip the refresh" — this is a best-effort operation, not a
+// hard dependency of the import flow.
+func (h *AuthorHandler) relinkCalibreAuthor(ctx context.Context, author *models.Author) error {
+	if h.meta == nil {
+		return errNoMetadataAggregator
+	}
+	results, err := h.meta.SearchAuthors(ctx, author.Name)
+	if err != nil {
+		return err
+	}
+	normWant := strings.ToLower(strings.TrimSpace(author.Name))
+	var match *models.Author
+	for i := range results {
+		if strings.ToLower(strings.TrimSpace(results[i].Name)) == normWant {
+			match = &results[i]
+			break
+		}
+	}
+	if match == nil {
+		return errNoMetadataMatch
+	}
+
+	full, err := h.meta.GetAuthor(ctx, match.ForeignID)
+	if err != nil {
+		return err
+	}
+	if full == nil {
+		return errNoMetadataMatch
+	}
+
+	author.ForeignID = full.ForeignID
+	author.MetadataProvider = "openlibrary"
+	if full.ImageURL != "" {
+		author.ImageURL = full.ImageURL
+	}
+	if full.Description != "" {
+		author.Description = full.Description
+	}
+	if full.SortName != "" {
+		author.SortName = full.SortName
+	}
+	if full.Disambiguation != "" {
+		author.Disambiguation = full.Disambiguation
+	}
+	if err := h.authors.Update(ctx, author); err != nil {
+		return err
+	}
+	slog.Info("relinked calibre author to metadata provider",
+		"author", author.Name, "newForeignId", author.ForeignID)
+	return nil
+}
+
 // FetchAuthorBooks populates the author's catalogue from the metadata provider.
 // mediaType is applied to each newly-created book when the provider didn't
 // return one; pass an empty string to accept whatever the provider set.
@@ -328,11 +397,16 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 	slog.Info("fetching books for author", "author", author.Name, "foreignId", author.ForeignID)
 
 	// Calibre-imported authors carry a synthetic "calibre:author:N" foreign ID
-	// that has no counterpart in OL/Hardcover. Attempting to fetch works for
-	// them always produces a 404; skip silently.
+	// that has no counterpart in OL/Hardcover — they come in with no image,
+	// description, or real catalogue. Re-link them to the upstream metadata
+	// provider by name so the first Refresh Metadata click pulls real data.
+	// If the re-link fails (name not found, network error) we fall through and
+	// keep the synthetic ID, matching the prior skip-silently behaviour.
 	if strings.HasPrefix(author.ForeignID, "calibre:") {
-		slog.Debug("skipping metadata fetch for calibre-native author", "author", author.Name, "foreignId", author.ForeignID)
-		return
+		if err := h.relinkCalibreAuthor(ctx, author); err != nil {
+			slog.Info("calibre author not re-linked to metadata provider", "author", author.Name, "reason", err)
+			return
+		}
 	}
 
 	// Use the dedicated author works endpoint for accurate results
