@@ -384,6 +384,12 @@ func (h *AuthorHandler) relinkCalibreAuthor(ctx context.Context, author *models.
 	if full.Disambiguation != "" {
 		author.Disambiguation = full.Disambiguation
 	}
+	if full.RatingsCount > 0 {
+		author.RatingsCount = full.RatingsCount
+	}
+	if full.AverageRating > 0 {
+		author.AverageRating = full.AverageRating
+	}
 	if err := h.authors.Update(ctx, author); err != nil {
 		return err
 	}
@@ -443,11 +449,13 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 	// default) and parse its allowed_languages CSV. Nil means "no filter".
 	allowedLangs, unknownFail := h.resolveAllowedLanguages(ctx, author)
 
-	// Track titles we've already added (case-insensitive) to avoid OL duplicates
+	// Track titles we've already added (case-insensitive) to avoid OL duplicates.
+	// The value is a pointer to the existing book so we can enrich calibre-imported
+	// stubs with the OL foreign ID and language when they title-match an OL record.
 	existingBooks, _ := h.books.ListByAuthor(ctx, author.ID)
-	seenTitles := make(map[string]bool)
-	for _, eb := range existingBooks {
-		seenTitles[strings.ToLower(eb.Title)] = true
+	seenTitles := make(map[string]*models.Book)
+	for i := range existingBooks {
+		seenTitles[strings.ToLower(existingBooks[i].Title)] = &existingBooks[i]
 	}
 
 	normalizedAuthor := strings.ToLower(strings.TrimSpace(author.Name))
@@ -491,11 +499,21 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 			continue
 		}
 
-		// Skip duplicate titles (OpenLibrary often has multiple works for the same book)
-		if seenTitles[normalizedTitle] {
+		// Skip duplicate titles (OpenLibrary often has multiple works for the same book).
+		// Exception: if the matching book is a calibre stub (calibre: ForeignID),
+		// upgrade it in place with the real OL foreign ID and language so it shows
+		// metadata without creating a second row.
+		if stub := seenTitles[normalizedTitle]; stub != nil {
+			if strings.HasPrefix(stub.ForeignID, "calibre:") {
+				stub.ForeignID = b.ForeignID
+				if stub.Language == "" && b.Language != "" {
+					stub.Language = b.Language
+				}
+				_ = h.books.Update(ctx, stub)
+			}
 			continue
 		}
-		seenTitles[normalizedTitle] = true
+		seenTitles[normalizedTitle] = &b
 
 		if err := h.books.Create(ctx, &b); err != nil {
 			// A UNIQUE constraint on foreign_id means the book was already

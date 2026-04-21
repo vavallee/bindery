@@ -36,6 +36,7 @@ type CalibreBook struct {
 	SortTitle   string
 	PublishDate *time.Time
 	ISBN        string
+	Language    string // ISO 639-2 code from Calibre's languages table; empty if unset
 	Authors     []CalibreAuthor
 	Series      *CalibreSeries
 	Formats     []CalibreFormat
@@ -161,6 +162,11 @@ func (r *Reader) Books(ctx context.Context, fn func(CalibreBook) error) error {
 			return err
 		}
 
+		cb.Language, err = r.loadLanguage(ctx, cb.CalibreID)
+		if err != nil {
+			return err
+		}
+
 		if cover := filepath.Join(cb.LibraryPath, "cover.jpg"); fileExists(cover) {
 			cb.CoverPath = cover
 		}
@@ -280,6 +286,33 @@ func (r *Reader) loadISBN(ctx context.Context, bookID int64) (string, error) {
 		return "", fmt.Errorf("load isbn for book %d: %w", bookID, err)
 	}
 	return isbn, nil
+}
+
+// loadLanguage returns the primary ISO 639-2 language code for the book from
+// Calibre's languages table, or empty string if none is set. Calibre stores
+// codes as three-letter ISO 639-2 strings (e.g. "eng", "deu", "fra") which
+// are the same format Bindery uses, so no translation is needed.
+func (r *Reader) loadLanguage(ctx context.Context, bookID int64) (string, error) {
+	var lang string
+	row := r.db.QueryRowContext(ctx, `
+		SELECT l.lang_code
+		FROM books_languages_link bll
+		JOIN languages l ON l.id = bll.lang_code
+		WHERE bll.book = ?
+		ORDER BY bll.item_order
+		LIMIT 1`, bookID)
+	err := row.Scan(&lang)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		// Older Calibre libraries (pre-0.7.x) don't have the languages table.
+		if strings.Contains(err.Error(), "no such table") {
+			return "", nil
+		}
+		return "", fmt.Errorf("load language for book %d: %w", bookID, err)
+	}
+	return lang, nil
 }
 
 // parseCalibreDate tolerates the three pubdate formats Calibre has shipped:

@@ -437,6 +437,7 @@ func (i *Importer) upsertBook(ctx context.Context, author *models.Author, cb Cal
 		Title:            cb.Title,
 		SortTitle:        firstNonEmpty(cb.SortTitle, cb.Title),
 		ReleaseDate:      cb.PublishDate,
+		Language:         cb.Language,
 		Monitored:        true,
 		Status:           models.BookStatusImported,
 		AnyEditionOK:     true,
@@ -469,6 +470,9 @@ func (i *Importer) applyBookFields(ctx context.Context, book *models.Book, cb Ca
 		book.FilePath = cb.Formats[0].AbsolutePath
 		book.Status = models.BookStatusImported
 	}
+	if cb.Language != "" && book.Language == "" {
+		book.Language = cb.Language
+	}
 	if book.MetadataProvider == "" {
 		book.MetadataProvider = "calibre"
 	}
@@ -489,6 +493,10 @@ func (i *Importer) upsertEdition(ctx context.Context, book *models.Book, cb Cali
 	}
 
 	isbn13 := ptrStringIfNonEmpty(cb.ISBN)
+	lang := cb.Language
+	if lang == "" {
+		lang = "eng" // fallback when Calibre library has no language set
+	}
 	e := &models.Edition{
 		ForeignID:   foreignID,
 		BookID:      book.ID,
@@ -497,7 +505,7 @@ func (i *Importer) upsertEdition(ctx context.Context, book *models.Book, cb Cali
 		Publisher:   "",
 		PublishDate: cb.PublishDate,
 		Format:      strings.ToUpper(f.Format),
-		Language:    "eng",
+		Language:    lang,
 		ImageURL:    cb.CoverPath,
 		IsEbook:     true,
 		Monitored:   true,
