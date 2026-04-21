@@ -316,12 +316,9 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		slog.Warn("failed to list clients for protocol", "protocol", best.Protocol, "error", err)
 	}
 	client := db.PickClientForMediaType(candidates, mediaType)
-	if client == nil {
-		client, err = s.clients.GetFirstEnabled(ctx)
-		if err != nil {
-			slog.Warn("failed to load fallback download client", "error", err)
-		}
-	}
+	// No cross-protocol fallback: a usenet release must not be pushed to a
+	// torrent client (qBittorrent would accept the .nzb URL, fail to parse it
+	// as a torrent, and report "hash could not be determined"), and vice versa.
 	if client == nil {
 		slog.Warn("SearchAndGrabBook: no enabled download client for protocol", "book", book.Title, "protocol", best.Protocol)
 

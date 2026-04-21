@@ -79,12 +79,17 @@ func (s *Syncer) Sync(ctx context.Context, instanceID int64) (SyncResult, error)
 
 		pID := ri.ProwlarrID
 		instID := instanceID
+		idxType := indexerTypeForProtocol(ri.Protocol)
 
 		if ex, ok := byProwlarrID[ri.ProwlarrID]; ok {
-			// Update only if something meaningful changed.
-			if ex.Name != ri.Name || ex.URL != ri.TorznabURL {
+			// Update only if something meaningful changed. Type is included so
+			// rows created by older versions (which hardcoded "torznab" for
+			// every indexer, misrouting usenet grabs to torrent clients) are
+			// corrected on the next sync.
+			if ex.Name != ri.Name || ex.URL != ri.TorznabURL || ex.Type != idxType {
 				ex.Name = ri.Name
 				ex.URL = ri.TorznabURL
+				ex.Type = idxType
 				ex.SupportsSearch = ri.SupportsSearch
 				if err := s.indexers.Update(ctx, ex); err != nil {
 					slog.Warn("prowlarr sync: update indexer failed",
@@ -99,7 +104,7 @@ func (s *Syncer) Sync(ctx context.Context, instanceID int64) (SyncResult, error)
 		// New indexer from Prowlarr.
 		idx := &models.Indexer{
 			Name:               ri.Name,
-			Type:               "torznab",
+			Type:               idxType,
 			URL:                ri.TorznabURL,
 			APIKey:             ri.APIKey,
 			Categories:         cats,
@@ -133,4 +138,15 @@ func (s *Syncer) Sync(ctx context.Context, instanceID int64) (SyncResult, error)
 	_ = s.instances.SetLastSyncAt(ctx, instanceID, time.Now())
 	slog.Info("prowlarr sync complete", "instance_id", instanceID, "result", result.String())
 	return result, nil
+}
+
+// indexerTypeForProtocol maps a Prowlarr indexer protocol ("usenet" or
+// "torrent") to the Bindery Indexer.Type the searcher uses to derive the
+// release protocol. Unknown/empty values default to "torznab" to preserve the
+// historical behavior for torrent-only Prowlarr setups.
+func indexerTypeForProtocol(protocol string) string {
+	if protocol == "usenet" {
+		return "newznab"
+	}
+	return "torznab"
 }
