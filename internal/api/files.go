@@ -46,34 +46,43 @@ func (h *FileHandler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if book.FilePath == "" {
+	// Prefer the legacy FilePath, fall back to per-format columns for books
+	// created after the dual-format schema landed (migration 026+).
+	filePath := book.FilePath
+	if filePath == "" {
+		filePath = book.EbookFilePath
+	}
+	if filePath == "" {
+		filePath = book.AudiobookFilePath
+	}
+	if filePath == "" {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no file available for this book"})
 		return
 	}
 
 	// Defence-in-depth: refuse to serve paths that aren't under a configured
-	// library root, even if a tampered DB row or importer bug set FilePath
+	// library root, even if a tampered DB row or importer bug set a path
 	// to something outside the library (e.g. /etc/passwd, /config/*).
-	if !h.isAllowedPath(book.FilePath) {
+	if !h.isAllowedPath(filePath) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})
 		return
 	}
 
-	info, err := os.Stat(book.FilePath)
+	info, err := os.Stat(filePath)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "file not found on disk"})
 		return
 	}
 
 	if info.IsDir() {
-		streamZip(w, book.FilePath)
+		streamZip(w, filePath)
 		return
 	}
 
-	filename := filepath.Base(book.FilePath)
+	filename := filepath.Base(filePath)
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
 	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
-	http.ServeFile(w, r, book.FilePath)
+	http.ServeFile(w, r, filePath)
 }
 
 // isAllowedPath reports whether p falls under one of the configured library

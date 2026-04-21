@@ -286,6 +286,15 @@ func (h *BookHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 		}
 		deletedPaths = append(deletedPaths, book.EbookFilePath)
 		book.EbookFilePath = ""
+	} else if deleteEbook && book.FilePath != "" {
+		// Legacy path: EbookFilePath is empty but FilePath is set.
+		// deleteEbook was set via the legacy-fallback branch above.
+		if err := removeBookPath(book.FilePath); err != nil {
+			slog.Error("failed to remove legacy file path", "id", id, "path", book.FilePath, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		deletedPaths = append(deletedPaths, book.FilePath)
 	}
 
 	if deleteAudiobook && book.AudiobookFilePath != "" {

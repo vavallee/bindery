@@ -295,7 +295,7 @@ export default function BookDetailPage() {
                 </div>
               )}
             </div>
-          ) : book.filePath ? (
+          ) : (book.filePath || book.ebookFilePath) ? (
             <div className="mt-3 flex items-center gap-4 text-sm">
               <a href={`/api/v1/book/${book.id}/file`} className="text-emerald-500 hover:text-emerald-400">
                 Download file
@@ -308,7 +308,7 @@ export default function BookDetailPage() {
               >
                 {deletingFile ? 'Deleting…' : 'Delete file'}
               </button>
-              <span className="text-xs text-slate-500 dark:text-zinc-500 break-all">{book.filePath}</span>
+              <span className="text-xs text-slate-500 dark:text-zinc-500 break-all">{book.filePath || book.ebookFilePath}</span>
             </div>
           ) : null}
           <div className="mt-3 flex items-center gap-3">
