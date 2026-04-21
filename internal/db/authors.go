@@ -27,8 +27,11 @@ func (r *AuthorRepo) List(ctx context.Context) ([]models.Author, error) {
 }
 
 const (
-	listAuthorsAll    = "SELECT " + authorSelectCols + " FROM authors ORDER BY sort_name"
-	listAuthorsByUser = "SELECT " + authorSelectCols + " FROM authors WHERE owner_user_id = ? ORDER BY sort_name"
+	listAuthorsAll = "SELECT " + authorSelectCols + " FROM authors ORDER BY sort_name"
+	// Include rows with NULL owner_user_id — these are authors created before the
+	// multi-user migration ran its backfill (migration 025) or imported without a
+	// user context. Excluding them causes the list to silently drop visible authors.
+	listAuthorsByUser = "SELECT " + authorSelectCols + " FROM authors WHERE owner_user_id = ? OR owner_user_id IS NULL ORDER BY sort_name"
 )
 
 func (r *AuthorRepo) ListByUser(ctx context.Context, userID int64) ([]models.Author, error) {
