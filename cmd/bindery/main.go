@@ -383,15 +383,15 @@ func main() {
 		r.Get("/auth/config", authHandler.GetConfig)
 		r.Post("/auth/password", authHandler.ChangePassword)
 		r.Post("/auth/apikey/regenerate", authHandler.RegenerateAPIKey)
-		r.Put("/auth/mode", authHandler.SetMode)
 		// OIDC — login/callback are unauthenticated; provider management requires auth.
 		r.Get("/auth/oidc/providers", oidcHandler.GetProviders)
 		r.Put("/auth/oidc/providers", oidcHandler.SetProviders)
 		r.Get("/auth/oidc/{provider}/login", oidcHandler.Login)
 		r.Get("/auth/oidc/{provider}/callback", oidcHandler.Callback)
-		// User management — admin only.
+		// Admin-only auth mutations.
 		r.Group(func(r chi.Router) {
 			r.Use(auth.RequireAdmin)
+			r.Put("/auth/mode", authHandler.SetMode)
 			r.Get("/auth/users", userMgmtHandler.List)
 			r.Post("/auth/users", userMgmtHandler.Create)
 			r.Delete("/auth/users/{id}", userMgmtHandler.Delete)

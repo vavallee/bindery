@@ -263,8 +263,11 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	resp := authConfigResponse{
-		Mode:   string(h.mode(ctx)),
-		APIKey: h.apiKey(ctx),
+		Mode: string(h.mode(ctx)),
+	}
+	// Only expose the API key to admin users — it grants full access.
+	if auth.UserRoleFromContext(ctx) == "admin" {
+		resp.APIKey = h.apiKey(ctx)
 	}
 	if uid := auth.UserIDFromContext(ctx); uid != 0 {
 		if u, _ := h.users.GetByID(ctx, uid); u != nil {

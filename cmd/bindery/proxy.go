@@ -40,20 +40,27 @@ func parseTrustedProxyCIDRs(raw string) []*net.IPNet {
 	return trusted
 }
 
+// proxyHeaders is the set of forwarded headers that only a trusted proxy
+// should be allowed to set. They are stripped from every request that does
+// not originate from a configured trusted proxy, preventing spoofing of
+// OPDS base URLs, HSTS detection, and session-cookie Secure flags.
+var proxyHeaders = []string{
+	"X-Forwarded-For",
+	"X-Forwarded-Proto",
+	"X-Forwarded-Host",
+	"X-Real-IP",
+}
+
 // trustedProxyMiddleware returns a middleware that rewrites RemoteAddr from
 // X-Forwarded-For / X-Real-IP only when the direct peer is a configured
-// trusted proxy. Without a trusted proxy configured, forwarded headers are
-// ignored and the peer IP is used as-is — preventing XFF spoofing in
-// local-only auth mode.
+// trusted proxy. When the peer is not trusted, all forwarded headers are
+// stripped so downstream handlers cannot be spoofed via X-Forwarded-Proto
+// or X-Forwarded-Host.
 //
 // Configured via BINDERY_TRUSTED_PROXY: a comma-separated list of IPs or
 // CIDRs. Bare IPs are treated as /32 (IPv4) or /128 (IPv6).
 func trustedProxyMiddleware() func(http.Handler) http.Handler {
 	trusted := parseTrustedProxyCIDRs(os.Getenv("BINDERY_TRUSTED_PROXY"))
-	if len(trusted) == 0 {
-		// No trusted proxy — use peer IP as-is (safe default).
-		return func(next http.Handler) http.Handler { return next }
-	}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +71,12 @@ func trustedProxyMiddleware() func(http.Handler) http.Handler {
 					middleware.RealIP(next).ServeHTTP(w, r)
 					return
 				}
+			}
+			// Peer is not a trusted proxy — strip all forwarded headers so
+			// they cannot influence scheme/host detection downstream.
+			r = r.Clone(r.Context())
+			for _, h := range proxyHeaders {
+				r.Header.Del(h)
 			}
 			next.ServeHTTP(w, r)
 		})

@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
@@ -47,7 +48,9 @@ func (h *AuthorHandler) WithFinder(f LibraryFinder) *AuthorHandler {
 }
 
 func (h *AuthorHandler) List(w http.ResponseWriter, r *http.Request) {
-	authors, err := h.authors.List(r.Context())
+	ctx := r.Context()
+	userID := auth.UserIDFromContext(ctx)
+	authors, err := h.authors.ListByUser(ctx, userID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
