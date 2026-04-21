@@ -318,5 +318,10 @@ jobs:
         env:
           BINDERY_URL: https://bindery.autonomy.ninja
           BINDERY_API_KEY: ${{ secrets.BINDERY_SMOKE_API_KEY }}
-        run: make predeploy-smoke
+        run: |
+          if ! curl -sf --max-time 5 "$BINDERY_URL/api/v1/health" > /dev/null 2>&1; then
+            echo "::warning::Live instance unreachable from runner — skipping pre-deploy smoke"
+            exit 0
+          fi
+          make predeploy-smoke
 
