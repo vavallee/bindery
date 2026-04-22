@@ -11,18 +11,26 @@ import (
 )
 
 type BookRepo struct {
-	db *sql.DB
+	db    *sql.DB
+	files *BookFileRepo
 }
 
 func NewBookRepo(db *sql.DB) *BookRepo {
-	return &BookRepo{db: db}
+	return &BookRepo{db: db, files: NewBookFileRepo(db)}
 }
 
-const bookColumns = `id, foreign_id, author_id, title, sort_title, original_title, description,
+// bookColumns is the canonical column list for book SELECT queries.
+// ebook_file_path and audiobook_file_path are derived from book_files first
+// (so multi-file books see the first registered path), with the legacy column
+// as a fallback for rows that pre-date the migration and have not yet been
+// re-imported via AddBookFile.
+const bookColumns = `books.id, foreign_id, author_id, title, sort_title, original_title, description,
 	image_url, release_date, genres, average_rating, ratings_count, monitored, status,
 	any_edition_ok, selected_edition_id, file_path, language, media_type, narrator, duration_seconds, asin,
 	calibre_id, metadata_provider, last_metadata_refresh_at, created_at, updated_at,
-	ebook_file_path, audiobook_file_path, excluded`
+	COALESCE((SELECT path FROM book_files WHERE book_id = books.id AND format = 'ebook'     ORDER BY id LIMIT 1), COALESCE(ebook_file_path, '')),
+	COALESCE((SELECT path FROM book_files WHERE book_id = books.id AND format = 'audiobook' ORDER BY id LIMIT 1), COALESCE(audiobook_file_path, '')),
+	excluded`
 
 func (r *BookRepo) List(ctx context.Context) ([]models.Book, error) {
 	return r.query(ctx, "SELECT "+bookColumns+" FROM books WHERE excluded = 0 ORDER BY sort_title", nil)
@@ -67,7 +75,7 @@ func (r *BookRepo) ListByStatusIncludingExcluded(ctx context.Context, status str
 }
 
 func (r *BookRepo) GetByID(ctx context.Context, id int64) (*models.Book, error) {
-	books, err := r.query(ctx, "SELECT "+bookColumns+" FROM books WHERE id = ?", []any{id})
+	books, err := r.query(ctx, "SELECT "+bookColumns+" FROM books WHERE books.id = ?", []any{id})
 	if err != nil {
 		return nil, err
 	}
@@ -159,35 +167,103 @@ func (r *BookRepo) Update(ctx context.Context, b *models.Book) error {
 	return nil
 }
 
-// SetFormatFilePath records the on-disk path for a specific format ('ebook'
-// or 'audiobook') and recomputes the book's aggregate status:
-//   - status = 'imported' when all formats the book wants are now on disk.
-//   - status unchanged otherwise (typically 'wanted' or 'downloading').
-//
-// The legacy file_path column is kept in sync with the most-recently-set
-// format path for Calibre integration compatibility.
-func (r *BookRepo) SetFormatFilePath(ctx context.Context, id int64, mediaType, filePath string) error {
-	b, err := r.GetByID(ctx, id)
+// AddBookFile records a new on-disk file in book_files and refreshes the
+// book's aggregate status. Multiple files for the same format are all tracked
+// (e.g. epub + mobi + pdf from a multi-file download).
+func (r *BookRepo) AddBookFile(ctx context.Context, bookID int64, format, path string) error {
+	if err := r.files.Add(ctx, bookID, format, path); err != nil {
+		return err
+	}
+	return r.refreshBookStatus(ctx, bookID)
+}
+
+// ListFiles returns all book_files rows for the given book.
+func (r *BookRepo) ListFiles(ctx context.Context, bookID int64) ([]models.BookFile, error) {
+	return r.files.ListByBook(ctx, bookID)
+}
+
+// RemoveBookFile deletes the book_files row for the given on-disk path and
+// refreshes the book's aggregate status. Returns the updated book, or nil if
+// the path was not in book_files.
+func (r *BookRepo) RemoveBookFile(ctx context.Context, path string) (*models.Book, error) {
+	bookID, err := r.files.DeleteByPath(ctx, path)
 	if err != nil {
-		return fmt.Errorf("SetFormatFilePath: load book %d: %w", id, err)
+		return nil, err
+	}
+	if bookID == 0 {
+		return nil, nil // not tracked
+	}
+	b, err := r.GetByID(ctx, bookID)
+	if err != nil || b == nil {
+		return nil, err
+	}
+	if err := r.refreshBookStatus(ctx, bookID); err != nil {
+		return nil, err
+	}
+	return r.GetByID(ctx, bookID)
+}
+
+// ListAllBookFilePaths returns every path in book_files.
+// Used by ScanLibrary to build the set of already-tracked files efficiently.
+func (r *BookRepo) ListAllBookFilePaths(ctx context.Context) ([]string, error) {
+	return r.files.ListAllPaths(ctx)
+}
+
+// refreshBookStatus recomputes the aggregate status for a book from its
+// current book_files rows and updates both the status and legacy columns.
+// It queries book_files directly so the result is always authoritative,
+// bypassing the legacy-column fallback in bookColumns.
+func (r *BookRepo) refreshBookStatus(ctx context.Context, bookID int64) error {
+	b, err := r.GetByID(ctx, bookID)
+	if err != nil {
+		return fmt.Errorf("refreshBookStatus: load book: %w", err)
 	}
 	if b == nil {
-		return fmt.Errorf("SetFormatFilePath: book %d not found", id)
+		return nil
 	}
 
-	switch mediaType {
-	case models.MediaTypeAudiobook:
-		b.AudiobookFilePath = filePath
-	default: // 'ebook' or any legacy value
-		b.EbookFilePath = filePath
-	}
-	b.FilePath = filePath // keep legacy column in sync
+	// Query book_files directly to get the true first path per format.
+	// This bypasses the COALESCE legacy-column fallback in bookColumns so
+	// removing the last book_files entry correctly clears the field.
+	var ebookPath, audiobookPath string
+	_ = r.db.QueryRowContext(ctx,
+		`SELECT COALESCE(path,'') FROM book_files WHERE book_id=? AND format='ebook' ORDER BY id LIMIT 1`,
+		bookID).Scan(&ebookPath)
+	_ = r.db.QueryRowContext(ctx,
+		`SELECT COALESCE(path,'') FROM book_files WHERE book_id=? AND format='audiobook' ORDER BY id LIMIT 1`,
+		bookID).Scan(&audiobookPath)
 
+	b.EbookFilePath = ebookPath
+	b.AudiobookFilePath = audiobookPath
+
+	// Derive status from which formats still need files.
 	if !b.NeedsEbook() && !b.NeedsAudiobook() {
 		b.Status = models.BookStatusImported
+	} else if b.Status == models.BookStatusImported {
+		b.Status = models.BookStatusWanted
+	}
+
+	// Keep legacy file_path column in sync with the first available file path.
+	if ebookPath != "" {
+		b.FilePath = ebookPath
+	} else if audiobookPath != "" {
+		b.FilePath = audiobookPath
+	} else {
+		b.FilePath = ""
 	}
 
 	return r.Update(ctx, b)
+}
+
+// SetFormatFilePath records the on-disk path for a specific format and
+// recomputes the book's aggregate status. It now writes to book_files
+// (allowing multiple files per format) rather than overwriting a single column.
+//
+// Deprecated: callers that process multiple files should call AddBookFile
+// for each file. SetFormatFilePath is retained for callers that set a single
+// canonical path per format (e.g. audiobook folder imports, rescan).
+func (r *BookRepo) SetFormatFilePath(ctx context.Context, id int64, mediaType, filePath string) error {
+	return r.AddBookFile(ctx, id, mediaType, filePath)
 }
 
 // SetFilePath is a backward-compatible wrapper around SetFormatFilePath that
@@ -261,6 +337,7 @@ func (r *BookRepo) SetExcluded(ctx context.Context, id int64, excluded bool) err
 }
 
 func (r *BookRepo) Delete(ctx context.Context, id int64) error {
+	// book_files rows are removed via ON DELETE CASCADE on the FK.
 	_, err := r.db.ExecContext(ctx, "DELETE FROM books WHERE id=?", id)
 	return err
 }

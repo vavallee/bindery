@@ -651,9 +651,10 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		}
 		imported++
 
-		// Update book status and file path
-		if err := s.books.SetFormatFilePath(ctx, book.ID, models.MediaTypeEbook, destPath); err != nil {
-			slog.Error("failed to update ebook file path", "bookID", book.ID, "error", err)
+		// Record each imported file individually in book_files so multi-file
+		// downloads (epub + mobi + pdf) are all tracked rather than overwriting.
+		if err := s.books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, destPath); err != nil {
+			slog.Error("failed to record book file", "bookID", book.ID, "error", err)
 		}
 		s.updateDownloadStatus(ctx, dl.ID, models.StateImported)
 		slog.Info("book imported", "title", book.Title, "path", destPath)
@@ -866,6 +867,12 @@ func authorMatch(bookAuthor, parsedAuthor string) bool {
 	return len(lastName) >= 3 && strings.Contains(strings.ToLower(bookAuthor), lastName)
 }
 
+// pathUnderDir reports whether path is located inside dir (or is dir itself).
+func pathUnderDir(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && !strings.HasPrefix(rel, "..")
+}
+
 // ScanLibrary walks the library directory (and the separate audiobook directory
 // when configured) for book files not yet tracked in the database and reconciles
 // found files with existing "wanted" book records.
@@ -915,23 +922,26 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 	}
 
 	// Build a set of tracked file paths AND their parent directories.
-	// The parent-directory entry is needed for audiobooks: their file_path
-	// is stored as a directory (the whole folder is the "file"), but the
-	// walk yields individual tracks. Without it every audio track inside an
-	// already-imported audiobook folder would look untracked.
-	trackedPaths := make(map[string]bool, len(allBooks)*2)
-	for _, b := range allBooks {
-		if b.FilePath != "" {
-			trackedPaths[filepath.Clean(b.FilePath)] = true
-			trackedPaths[filepath.Clean(filepath.Dir(b.FilePath))] = true
+	// Populated from book_files (all registered paths, not just the first per
+	// format) so that multi-file books don't show their non-first files as
+	// untracked on subsequent scans.
+	trackedPaths := make(map[string]bool)
+	if allPaths, err := s.books.ListAllBookFilePaths(ctx); err == nil {
+		for _, p := range allPaths {
+			cleanP := filepath.Clean(p)
+			trackedPaths[cleanP] = true
+			trackedPaths[filepath.Clean(filepath.Dir(cleanP))] = true
 		}
 	}
 
-	// Build an author name cache (authorID → name) for the author-anchor check.
+	// Build author name and full-author caches for the reconciliation loop.
+	// authorMap is needed for the path-under-library-dir constraint check.
 	authorNames := make(map[int64]string)
+	authorMap := make(map[int64]*models.Author)
 	if allAuthors, err := s.authors.List(ctx); err == nil {
-		for _, a := range allAuthors {
-			authorNames[a.ID] = a.Name
+		for i := range allAuthors {
+			authorNames[allAuthors[i].ID] = allAuthors[i].Name
+			authorMap[allAuthors[i].ID] = &allAuthors[i]
 		}
 	}
 
@@ -1003,18 +1013,26 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 				if reconciledBooks[b.ID] {
 					continue
 				}
-				if b.Status == models.BookStatusWanted && b.ASIN == parsed.ASIN {
-					if err := s.books.SetFormatFilePath(ctx, b.ID, detectedFmt, path); err != nil {
-						slog.Error("library scan: failed to update book", "id", b.ID, "error", err)
-						continue
-					}
-					slog.Info("library scan: reconciled book via ASIN", "asin", parsed.ASIN, "title", b.Title, "path", path)
-					trackedPaths[cleanPath] = true
-					reconciledBooks[b.ID] = true
-					reconciled++
-					matched = true
-					break
+				if b.Status != models.BookStatusWanted || b.ASIN != parsed.ASIN {
+					continue
 				}
+				// File must live under the candidate book's effective library root.
+				effDir := s.effectiveLibraryDir(ctx, authorMap[b.AuthorID])
+				if !pathUnderDir(path, effDir) {
+					slog.Debug("library scan: ASIN match rejected (outside library root)",
+						"asin", parsed.ASIN, "path", path, "root", effDir)
+					continue
+				}
+				if err := s.books.AddBookFile(ctx, b.ID, detectedFmt, path); err != nil {
+					slog.Error("library scan: failed to update book", "id", b.ID, "error", err)
+					continue
+				}
+				slog.Info("library scan: reconciled book via ASIN", "asin", parsed.ASIN, "title", b.Title, "path", path)
+				trackedPaths[cleanPath] = true
+				reconciledBooks[b.ID] = true
+				reconciled++
+				matched = true
+				break
 			}
 		}
 		if !matched && parsed.Title != "" {
@@ -1022,21 +1040,29 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 				if reconciledBooks[b.ID] {
 					continue
 				}
-				if b.Status == models.BookStatusWanted &&
-					titleMatch(b.Title, parsed.Title) &&
-					authorMatch(authorNames[b.AuthorID], parsed.Author) {
-					// Match found — update the per-format file path and aggregate status.
-					if err := s.books.SetFormatFilePath(ctx, b.ID, detectedFmt, path); err != nil {
-						slog.Error("library scan: failed to update book", "id", b.ID, "error", err)
-						continue
-					}
-					slog.Info("library scan: reconciled book", "title", b.Title, "path", path)
-					trackedPaths[cleanPath] = true
-					reconciledBooks[b.ID] = true
-					reconciled++
-					matched = true
-					break
+				if b.Status != models.BookStatusWanted ||
+					!titleMatch(b.Title, parsed.Title) ||
+					!authorMatch(authorNames[b.AuthorID], parsed.Author) {
+					continue
 				}
+				// File must live under the candidate book's effective library root
+				// to prevent cross-author mismapping after delete+rescan (#343).
+				effDir := s.effectiveLibraryDir(ctx, authorMap[b.AuthorID])
+				if !pathUnderDir(path, effDir) {
+					slog.Debug("library scan: title+author match rejected (outside library root)",
+						"title", b.Title, "path", path, "root", effDir)
+					continue
+				}
+				if err := s.books.AddBookFile(ctx, b.ID, detectedFmt, path); err != nil {
+					slog.Error("library scan: failed to update book", "id", b.ID, "error", err)
+					continue
+				}
+				slog.Info("library scan: reconciled book", "title", b.Title, "path", path)
+				trackedPaths[cleanPath] = true
+				reconciledBooks[b.ID] = true
+				reconciled++
+				matched = true
+				break
 			}
 		}
 

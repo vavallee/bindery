@@ -138,17 +138,23 @@ export default function BookDetailPage() {
     const hasLegacy = !!book.filePath && !hasEbook && !hasAudiobook
     if (!hasEbook && !hasAudiobook && !hasLegacy) return
 
+    // Count files being deleted from book_files for accurate dialog copy.
+    const relevantFiles = book.bookFiles?.filter(f => !format || f.format === format) ?? []
+    const fileCount = relevantFiles.length
+
     let label: string
-    let path: string
+    let pathSummary: string
     if (format === 'ebook' && hasEbook) {
-      label = 'the ebook file'; path = book.ebookFilePath
+      label = fileCount > 1 ? `${fileCount} ebook files` : 'the ebook file'
+      pathSummary = relevantFiles.map(f => f.path).join('\n') || book.ebookFilePath
     } else if (format === 'audiobook' && hasAudiobook) {
-      label = 'the audiobook folder'; path = book.audiobookFilePath
+      label = 'the audiobook folder'
+      pathSummary = book.audiobookFilePath
     } else {
       label = book.mediaType === 'audiobook' ? 'the audiobook folder' : 'this file'
-      path = book.filePath
+      pathSummary = book.filePath
     }
-    if (!window.confirm(`Permanently delete ${label} from disk?\n\n${path}\n\nThe book record stays; it will flip back to "wanted".`)) return
+    if (!window.confirm(`Permanently delete ${label} from disk?\n\n${pathSummary}\n\nThe book record stays; it will flip back to "wanted".`)) return
     setDeletingFile(true)
     setError(null)
     try {
@@ -167,7 +173,9 @@ export default function BookDetailPage() {
   const deleteBook = async () => {
     if (!book) return
     const hasFiles = !!(book.filePath || book.ebookFilePath || book.audiobookFilePath)
-    const fileSummary = [book.ebookFilePath, book.audiobookFilePath].filter(Boolean).join('\n') || book.filePath
+    const fileSummary = book.bookFiles && book.bookFiles.length > 0
+      ? book.bookFiles.map(f => f.path).join('\n')
+      : [book.ebookFilePath, book.audiobookFilePath].filter(Boolean).join('\n') || book.filePath
     const msg = hasFiles
       ? `Delete "${book.title}" AND its files on disk?\n\n${fileSummary}\n\nThis cannot be undone.`
       : `Delete "${book.title}"?\n\nThis cannot be undone.`
