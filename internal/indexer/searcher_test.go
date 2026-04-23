@@ -260,32 +260,87 @@ func TestFilterByLanguageAny(t *testing.T) {
 }
 
 func TestFilterCategoriesForMedia(t *testing.T) {
-	all := []int{7000, 7020, 3030}
-	ebook := filterCategoriesForMedia(all, "ebook")
-	if len(ebook) != 2 || ebook[0] != 7000 || ebook[1] != 7020 {
-		t.Errorf("ebook filter = %v, want [7000 7020]", ebook)
+	cases := []struct {
+		name      string
+		cats      []int
+		mediaType string
+		want      []int
+	}{
+		// Parent-only → widen to sane child default (no parent in output).
+		{name: "ebook parent-only", cats: []int{7000}, mediaType: "ebook", want: []int{7020}},
+		{name: "audiobook parent-only", cats: []int{3000}, mediaType: "audiobook", want: []int{3030}},
+
+		// Parent + child → drop parent, keep children.
+		{name: "ebook parent+child", cats: []int{7000, 7020}, mediaType: "ebook", want: []int{7020}},
+		{name: "ebook parent+multiple children", cats: []int{7000, 7020, 7030}, mediaType: "ebook", want: []int{7020, 7030}},
+		{name: "audiobook parent+child", cats: []int{3000, 3030}, mediaType: "audiobook", want: []int{3030}},
+
+		// Child(ren) only → pass through unchanged.
+		{name: "ebook child-only", cats: []int{7020}, mediaType: "ebook", want: []int{7020}},
+		{name: "audiobook child-only", cats: []int{3030}, mediaType: "audiobook", want: []int{3030}},
+		{name: "ebook multiple children", cats: []int{7020, 7030}, mediaType: "ebook", want: []int{7020, 7030}},
+
+		// Mixed ebook+audiobook → filtered by mediaType.
+		{name: "mixed ebook query", cats: []int{7020, 3030}, mediaType: "ebook", want: []int{7020}},
+		{name: "mixed audiobook query", cats: []int{7020, 3030}, mediaType: "audiobook", want: []int{3030}},
+
+		// Empty input → fallback to sane child default (no parent).
+		{name: "empty ebook", cats: nil, mediaType: "ebook", want: []int{7020}},
+		{name: "empty audiobook", cats: nil, mediaType: "audiobook", want: []int{3030}},
+
+		// No matching tree → fallback.
+		{name: "no ebook cats returns fallback", cats: []int{3030}, mediaType: "ebook", want: []int{7020}},
+		{name: "no audiobook cats returns fallback", cats: []int{7020}, mediaType: "audiobook", want: []int{3030}},
+
+		// Parent must never appear in output when a child is present.
+		{name: "7000 absent when child present ebook", cats: []int{7000, 7020}, mediaType: "ebook", want: []int{7020}},
+		{name: "3000 absent when child present audiobook", cats: []int{3000, 3030}, mediaType: "audiobook", want: []int{3030}},
 	}
-	audio := filterCategoriesForMedia(all, "audiobook")
-	if len(audio) != 1 || audio[0] != 3030 {
-		t.Errorf("audiobook filter = %v, want [3030]", audio)
+
+	sliceEq := func(a, b []int) bool {
+		if len(a) != len(b) {
+			return false
+		}
+		for i := range a {
+			if a[i] != b[i] {
+				return false
+			}
+		}
+		return true
 	}
-	// Empty input falls back to the standard category for the media type.
-	if got := filterCategoriesForMedia(nil, "ebook"); len(got) != 2 || got[0] != 7000 {
-		t.Errorf("nil + ebook should fall back to [7000 7020], got %v", got)
-	}
-	if got := filterCategoriesForMedia(nil, "audiobook"); len(got) != 1 || got[0] != 3030 {
-		t.Errorf("nil + audiobook should fall back to [3030], got %v", got)
-	}
-	// Unknown type falls back to books.
-	if got := filterCategoriesForMedia(all, ""); len(got) != 2 {
-		t.Errorf("empty type should default to books, got %v", got)
-	}
-	// Pre-v0.5.0 indexer config without 3030 still searches audiobooks
-	// via the fallback 3030 category rather than silently returning
-	// ebook results.
-	booksOnly := []int{7000, 7020}
-	if got := filterCategoriesForMedia(booksOnly, "audiobook"); len(got) != 1 || got[0] != 3030 {
-		t.Errorf("no-match audiobook should fall back to [3030], got %v", got)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := filterCategoriesForMedia(tc.cats, tc.mediaType)
+			if !sliceEq(got, tc.want) {
+				t.Errorf("filterCategoriesForMedia(%v, %q) = %v, want %v",
+					tc.cats, tc.mediaType, got, tc.want)
+			}
+			// Invariant: 7000 and 3000 must never appear in output when a child is
+			// also present.
+			has7000 := false
+			has3000 := false
+			hasOther7 := false
+			hasOther3 := false
+			for _, c := range got {
+				switch {
+				case c == 7000:
+					has7000 = true
+				case c == 3000:
+					has3000 = true
+				case c/1000 == 7:
+					hasOther7 = true
+				case c/1000 == 3:
+					hasOther3 = true
+				}
+			}
+			if has7000 && hasOther7 {
+				t.Errorf("output %v: parent 7000 present alongside child cat", got)
+			}
+			if has3000 && hasOther3 {
+				t.Errorf("output %v: parent 3000 present alongside child cat", got)
+			}
+		})
 	}
 }
 

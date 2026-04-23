@@ -53,7 +53,13 @@ func (s *Syncer) Sync(ctx context.Context, instanceID int64) (SyncResult, error)
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("fetch prowlarr indexers: %w", err)
 	}
+	return s.reconcile(ctx, instanceID, remotes)
+}
 
+// reconcile applies a fetched list of remote IndexerInfos to the local store.
+// It is split out from Sync so that tests can drive it without a live Prowlarr
+// instance.
+func (s *Syncer) reconcile(ctx context.Context, instanceID int64, remotes []IndexerInfo) (SyncResult, error) {
 	existing, err := s.indexers.ListByProwlarrInstance(ctx, instanceID)
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("list existing prowlarr indexers: %w", err)
@@ -74,7 +80,7 @@ func (s *Syncer) Sync(ctx context.Context, instanceID int64) (SyncResult, error)
 		seen[ri.ProwlarrID] = struct{}{}
 		cats := ri.Categories
 		if len(cats) == 0 {
-			cats = []int{7000, 7020}
+			cats = []int{7020}
 		}
 
 		pID := ri.ProwlarrID
