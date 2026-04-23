@@ -12,12 +12,12 @@ import (
 
 // LogEntry is a single persisted log record.
 type LogEntry struct {
-	ID        int64
-	TS        time.Time
-	Level     string
-	Component string
-	Message   string
-	Fields    map[string]string
+	ID        int64             `json:"id"`
+	TS        time.Time         `json:"ts"`
+	Level     string            `json:"level"`
+	Component string            `json:"component"`
+	Message   string            `json:"message"`
+	Fields    map[string]string `json:"fields"`
 }
 
 // LogFilter controls which rows are returned by LogRepo.Query.
