@@ -6,6 +6,12 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.2.3] — 2026-04-23
+
+### Fixed
+
+- **Logs tab now displays entries** — `db.LogEntry` was missing `json:""` tags, causing Go to serialise field names as PascalCase (`ID`, `TS`, `Level`, `Component`, `Message`, `Fields`). The TypeScript interface expected camelCase, so every row rendered blank. (#376)
+
 ## [v1.2.2] — 2026-04-23
 
 ### Fixed
