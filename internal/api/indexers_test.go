@@ -290,12 +290,12 @@ func TestSearchBook_DualFormat_MediaTypeTagging(t *testing.T) {
 
 // slowSearcher records peak concurrency to verify parallel dispatch.
 type slowSearcher struct {
-	mu            sync.Mutex
-	inFlight      int
-	peakFlight    int
-	delay         time.Duration
-	ebookResults  []newznab.SearchResult
-	audioResults  []newznab.SearchResult
+	mu           sync.Mutex
+	inFlight     int
+	peakFlight   int
+	delay        time.Duration
+	ebookResults []newznab.SearchResult
+	audioResults []newznab.SearchResult
 }
 
 func (s *slowSearcher) SearchBookWithDebug(_ context.Context, _ []models.Indexer, c indexer.MatchCriteria) ([]newznab.SearchResult, *indexer.SearchDebug) {
