@@ -24,7 +24,7 @@ func (f *fakeIndexerStore) Create(_ context.Context, idx *models.Indexer) error 
 }
 
 func (f *fakeIndexerStore) Update(_ context.Context, _ *models.Indexer) error { return nil }
-func (f *fakeIndexerStore) Delete(_ context.Context, _ int64) error            { return nil }
+func (f *fakeIndexerStore) Delete(_ context.Context, _ int64) error           { return nil }
 
 // fakeInstanceStore is a no-op InstanceStore.
 type fakeInstanceStore struct{}
