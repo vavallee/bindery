@@ -427,7 +427,8 @@ export interface SearchResult {
   grabs: number
   pubDate: string
   protocol: string  // "usenet" or "torrent"
-  language?: string // ISO 639-1 from newznab:attr language (when present)
+  language?: string  // ISO 639-1 from newznab:attr language (when present)
+  mediaType?: string // "ebook" or "audiobook" — present when the book mediaType is specific
 }
 
 export interface AddAuthorRequest {

@@ -86,4 +86,5 @@ type SearchResult struct {
 	BookTitle   string `json:"bookTitle"`
 	Protocol    string `json:"protocol"`           // "usenet" or "torrent"
 	Language    string `json:"language,omitempty"` // ISO 639-1 from newznab:attr language (when present)
+	MediaType   string `json:"mediaType,omitempty"` // "ebook" or "audiobook" — set when the search was media-type-specific
 }

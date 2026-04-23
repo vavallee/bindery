@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, Book, HistoryEvent, SearchResult } from '../api/client'
+import MediaBadge from '../components/MediaBadge'
 
 function formatSize(n: number): string {
   if (!n || n <= 0) return ''
@@ -406,30 +407,56 @@ export default function BookDetailPage() {
         </div>
       )}
 
-      {results !== null && results.length > 0 && (
-        <section className="mb-6">
-          <h3 className="text-sm font-semibold mb-2 text-slate-800 dark:text-zinc-200">Results ({results.length})</h3>
-          <div className="space-y-1">
-            {results.slice(0, 20).map(r => (
-              <div key={r.guid} className="flex items-center justify-between p-2 bg-slate-100 dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded text-xs">
-                <div className="min-w-0 mr-3">
-                  <span className="truncate block text-slate-800 dark:text-zinc-200">{r.title}</span>
-                  <span className="text-slate-500 dark:text-zinc-500 truncate block">
-                    {r.indexerName} · {formatSize(r.size)} · {r.grabs} grabs
-                  </span>
-                </div>
-                <button
-                  onClick={() => grab(r)}
-                  disabled={grabbing !== null}
-                  className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded text-[11px] font-medium flex-shrink-0"
-                >
-                  {grabbing === r.guid ? 'Grabbing…' : 'Grab'}
-                </button>
+      {results !== null && results.length > 0 && (() => {
+        const ebooks = results.filter(r => r.mediaType === 'ebook')
+        const audiobooks = results.filter(r => r.mediaType === 'audiobook')
+        const hasBothTypes = ebooks.length > 0 && audiobooks.length > 0
+
+        const renderRow = (r: SearchResult) => (
+          <div key={r.guid} className="flex items-center justify-between p-2 bg-slate-100 dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded text-xs">
+            <div className="min-w-0 mr-3">
+              <div className="flex items-center gap-1.5 mb-0.5">
+                {!hasBothTypes && r.mediaType && (
+                  <MediaBadge type={r.mediaType as 'ebook' | 'audiobook'} />
+                )}
+                <span className="truncate text-slate-800 dark:text-zinc-200">{r.title}</span>
               </div>
-            ))}
+              <span className="text-slate-500 dark:text-zinc-500 truncate block">
+                {r.indexerName} · {formatSize(r.size)} · {r.grabs} grabs
+              </span>
+            </div>
+            <button
+              onClick={() => grab(r)}
+              disabled={grabbing !== null}
+              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded text-[11px] font-medium flex-shrink-0"
+            >
+              {grabbing === r.guid ? 'Grabbing…' : 'Grab'}
+            </button>
           </div>
-        </section>
-      )}
+        )
+
+        if (hasBothTypes) {
+          return (
+            <div className="mb-6 space-y-4">
+              <section>
+                <h3 className="text-sm font-semibold mb-2 text-slate-800 dark:text-zinc-200">📖 Ebook results ({ebooks.length})</h3>
+                <div className="space-y-1">{ebooks.slice(0, 20).map(renderRow)}</div>
+              </section>
+              <section>
+                <h3 className="text-sm font-semibold mb-2 text-slate-800 dark:text-zinc-200">🎧 Audiobook results ({audiobooks.length})</h3>
+                <div className="space-y-1">{audiobooks.slice(0, 20).map(renderRow)}</div>
+              </section>
+            </div>
+          )
+        }
+
+        return (
+          <section className="mb-6">
+            <h3 className="text-sm font-semibold mb-2 text-slate-800 dark:text-zinc-200">Results ({results.length})</h3>
+            <div className="space-y-1">{results.slice(0, 20).map(renderRow)}</div>
+          </section>
+        )
+      })()}
 
       {events.length > 0 && (
         <section>

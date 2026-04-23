@@ -5,6 +5,7 @@ import { api, Book, SearchResult } from '../api/client'
 import BulkActionBar from '../components/BulkActionBar'
 import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
+import MediaBadge from '../components/MediaBadge'
 
 export default function WantedPage() {
   const { t } = useTranslation()
@@ -279,36 +280,64 @@ export default function WantedPage() {
                   </div>
                 )}
 
-                {showResults === book.id && results.length > 0 && (
-                  <div className="mt-1 mb-3 space-y-1">
-                    {results.slice(0, 10).map(r => (
-                      <div key={r.guid} className="flex items-center justify-between p-2 bg-slate-200/50 dark:bg-zinc-800/50 rounded text-xs">
-                        <div className="min-w-0 mr-3">
-                          <span className="truncate block">{r.title}</span>
-                          <span className="text-slate-600 dark:text-zinc-500 truncate block">
-                            {r.indexerName} &middot; {formatSize(r.size)} &middot; {r.grabs} grabs
-                            {r.language && (
-                              <span className="ml-1.5 inline-block px-1 py-0 rounded bg-slate-300 dark:bg-zinc-700 text-[9px] font-medium uppercase tracking-wide">{r.language}</span>
-                            )}
-                          </span>
+                {showResults === book.id && results.length > 0 && (() => {
+                  const ebooks = results.filter(r => r.mediaType === 'ebook')
+                  const audiobooks = results.filter(r => r.mediaType === 'audiobook')
+                  const hasBothTypes = ebooks.length > 0 && audiobooks.length > 0
+
+                  const renderResultRow = (r: SearchResult) => (
+                    <div key={r.guid} className="flex items-center justify-between p-2 bg-slate-200/50 dark:bg-zinc-800/50 rounded text-xs">
+                      <div className="min-w-0 mr-3">
+                        <div className="flex items-center gap-1.5 mb-0.5">
+                          {!hasBothTypes && r.mediaType && (
+                            <MediaBadge type={r.mediaType as 'ebook' | 'audiobook'} />
+                          )}
+                          <span className="truncate">{r.title}</span>
                         </div>
-                        <button
-                          onClick={() => grab(r, book)}
-                          disabled={grabbingGuid === r.guid || grabbedGuid === r.guid}
-                          className={`px-2 py-2 rounded text-[10px] font-medium flex-shrink-0 touch-manipulation transition-colors disabled:cursor-default ${
-                            grabbedGuid === r.guid
-                              ? 'bg-emerald-700 text-emerald-200'
-                              : grabbingGuid === r.guid
-                              ? 'bg-emerald-600/60 text-white/70'
-                              : 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                          }`}
-                        >
-                          {grabbedGuid === r.guid ? t('wanted.grabbed') : grabbingGuid === r.guid ? t('wanted.grabbing') : t('wanted.grab')}
-                        </button>
+                        <span className="text-slate-600 dark:text-zinc-500 truncate block">
+                          {r.indexerName} &middot; {formatSize(r.size)} &middot; {r.grabs} grabs
+                          {r.language && (
+                            <span className="ml-1.5 inline-block px-1 py-0 rounded bg-slate-300 dark:bg-zinc-700 text-[9px] font-medium uppercase tracking-wide">{r.language}</span>
+                          )}
+                        </span>
                       </div>
-                    ))}
-                  </div>
-                )}
+                      <button
+                        onClick={() => grab(r, book)}
+                        disabled={grabbingGuid === r.guid || grabbedGuid === r.guid}
+                        className={`px-2 py-2 rounded text-[10px] font-medium flex-shrink-0 touch-manipulation transition-colors disabled:cursor-default ${
+                          grabbedGuid === r.guid
+                            ? 'bg-emerald-700 text-emerald-200'
+                            : grabbingGuid === r.guid
+                            ? 'bg-emerald-600/60 text-white/70'
+                            : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                        }`}
+                      >
+                        {grabbedGuid === r.guid ? t('wanted.grabbed') : grabbingGuid === r.guid ? t('wanted.grabbing') : t('wanted.grab')}
+                      </button>
+                    </div>
+                  )
+
+                  if (hasBothTypes) {
+                    return (
+                      <div className="mt-1 mb-3 space-y-3">
+                        <div>
+                          <p className="text-xs font-semibold mb-1 text-slate-700 dark:text-zinc-300">📖 Ebook results ({ebooks.length})</p>
+                          <div className="space-y-1">{ebooks.slice(0, 10).map(renderResultRow)}</div>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold mb-1 text-slate-700 dark:text-zinc-300">🎧 Audiobook results ({audiobooks.length})</p>
+                          <div className="space-y-1">{audiobooks.slice(0, 10).map(renderResultRow)}</div>
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  return (
+                    <div className="mt-1 mb-3 space-y-1">
+                      {results.slice(0, 10).map(renderResultRow)}
+                    </div>
+                  )
+                })()}
               </div>
             ))}
           </div>
