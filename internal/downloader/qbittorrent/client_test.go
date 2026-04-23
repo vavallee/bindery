@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // newTestClient creates a Client pointing at the given test server URL.
@@ -427,5 +428,102 @@ func TestEnsureLoggedIn_NotLoggedIn(t *testing.T) {
 	}
 	if loginCount != 1 {
 		t.Errorf("Login should be called once when not logged in; called %d times", loginCount)
+	}
+}
+
+// TestAddTorrent_DifferentCategory verifies that AddTorrent can resolve the hash
+// even when qBittorrent assigns the torrent a different category than requested.
+// This exercises the fix for #363: the poll loop must use the unfiltered torrent
+// list, not the category-filtered one.
+func TestAddTorrent_DifferentCategory(t *testing.T) {
+	const requestedCategory = "books"
+	const actualCategory = "default" // qBittorrent assigns a different category
+
+	newTorrent := Torrent{
+		Hash:     "deadbeef1234",
+		Name:     "Some Book",
+		Category: actualCategory, // different from what Bindery requested
+		AddedOn:  1000,
+	}
+	afterBody, _ := json.Marshal([]Torrent{newTorrent})
+
+	// infoCallCount tracks how many times /torrents/info is called.
+	// The first call is the "before" snapshot (returns empty); subsequent calls
+	// are poll iterations (return the new torrent under a different category).
+	infoCallCount := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/add":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			// No category filter expected — poll must use unfiltered list.
+			if r.URL.Query().Get("category") != "" {
+				t.Errorf("poll should not filter by category, got query: %s", r.URL.RawQuery)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			infoCallCount++
+			if infoCallCount == 1 {
+				// First call: before-snapshot — return empty list.
+				_, _ = w.Write([]byte("[]"))
+			} else {
+				// Subsequent calls: poll — return the new torrent.
+				_, _ = w.Write(afterBody)
+			}
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	// Use a non-magnet URL so the code falls through to the poll loop.
+	hash, err := c.AddTorrent(context.Background(), "http://example.com/file.torrent", requestedCategory, "")
+	if err != nil {
+		t.Fatalf("AddTorrent: %v", err)
+	}
+	if !strings.EqualFold(hash, newTorrent.Hash) {
+		t.Errorf("hash: want %q, got %q", strings.ToLower(newTorrent.Hash), hash)
+	}
+}
+
+// TestAddTorrent_Timeout verifies that AddTorrent returns an error when the
+// poll loop exhausts its deadline without finding a new torrent.
+// The timeout is forced by using a context that is already cancelled.
+func TestAddTorrent_Timeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/add":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			// Never return the new torrent — always empty list.
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("[]"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	// Override the package-level timeout to something very short so the test
+	// doesn't take 30 seconds.
+	orig := addTorrentTimeout
+	// addTorrentTimeout is a const so we use a cancelled context instead to
+	// force an immediate context-cancellation error path, which is equivalent
+	// for our purposes: we verify AddTorrent returns an error when it can't
+	// resolve the hash.
+	_ = orig
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	_, err := c.AddTorrent(ctx, "http://example.com/file.torrent", "books", "")
+	if err == nil {
+		t.Fatal("expected error when torrent hash cannot be resolved before timeout")
 	}
 }

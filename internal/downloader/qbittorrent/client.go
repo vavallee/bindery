@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -14,6 +15,8 @@ import (
 	"sync"
 	"time"
 )
+
+const addTorrentTimeout = 30 * time.Second
 
 // Client interacts with the qBittorrent WebUI API v2.
 // Authentication is cookie-based: Login() obtains a SID cookie which is
@@ -98,7 +101,7 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 	// Snapshot existing hashes so we can detect newly-added items when the
 	// source URL is not a magnet with an explicit btih.
 	beforeSet := map[string]struct{}{}
-	if before, err := c.GetTorrents(ctx, category); err == nil {
+	if before, err := c.GetTorrents(ctx, ""); err == nil {
 		for _, t := range before {
 			beforeSet[strings.ToLower(t.Hash)] = struct{}{}
 		}
@@ -147,16 +150,21 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 	// Poll until the new torrent appears — qBittorrent must fetch and parse
 	// the .torrent file before the hash is visible, which can take a second
 	// or two for remote URLs (e.g. Prowlarr Torznab redirects).
-	deadline := time.Now().Add(10 * time.Second)
+	// Poll the full unfiltered list so we find the torrent even if qBittorrent
+	// assigns a different category than requested before our rename lands.
+	deadline := time.Now().Add(addTorrentTimeout)
+	var afterHashes []string
 	for {
-		after, err := c.GetTorrents(ctx, category)
+		after, err := c.GetTorrents(ctx, "")
 		if err != nil {
 			return "", fmt.Errorf("add torrent accepted but hash lookup failed: %w", err)
 		}
+		afterHashes = afterHashes[:0]
 		var newest *Torrent
 		for i := range after {
 			t := &after[i]
 			h := strings.ToLower(t.Hash)
+			afterHashes = append(afterHashes, h)
 			if _, seen := beforeSet[h]; seen {
 				continue
 			}
@@ -176,6 +184,14 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
+	beforeHashes := make([]string, 0, len(beforeSet))
+	for h := range beforeSet {
+		beforeHashes = append(beforeHashes, h)
+	}
+	slog.Error("add torrent: hash resolution timed out",
+		"before_hashes", beforeHashes,
+		"after_hashes", afterHashes,
+		"category", category)
 	return "", fmt.Errorf("add torrent accepted but hash could not be determined")
 }
 
