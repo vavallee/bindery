@@ -795,11 +795,10 @@ func jaroWinkler(s1, s2 string) float64 {
 	// Jaro-Winkler prefix bonus (p=0.1, up to 4 chars).
 	prefix := 0
 	for i := 0; i < l1 && i < l2 && i < 4; i++ {
-		if r1[i] == r2[i] {
-			prefix++
-		} else {
+		if r1[i] != r2[i] {
 			break
 		}
+		prefix++
 	}
 	return jaro + float64(prefix)*0.1*(1-jaro)
 }

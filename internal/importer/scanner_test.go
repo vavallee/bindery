@@ -207,11 +207,11 @@ func TestPushToCalibre_NilResolver(t *testing.T) {
 func TestJaroWinkler(t *testing.T) {
 	cases := []struct {
 		s1, s2 string
-		wantGE  float64
-		wantLT  float64
+		wantGE float64
+		wantLT float64
 	}{
 		{"Das Echo der Schuld", "Das Echo der Schuld", 1.0, 0},
-		{"Das Echo der Schuld", "das echo der schuld", 0, 1.0},      // case-sensitive; callers normalise
+		{"Das Echo der Schuld", "das echo der schuld", 0, 1.0}, // case-sensitive; callers normalise
 		{"Das Echo der Schuld", "Completely Different Book Title", 0, 0.85},
 		{"The Great Gatsby", "The Great Gatsby", 1.0, 0},
 		{"1984", "1984", 1.0, 0},
