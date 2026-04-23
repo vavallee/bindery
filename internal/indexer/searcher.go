@@ -48,26 +48,63 @@ type MatchCriteria struct {
 // we substitute the standard Newznab category for that media type rather
 // than silently sending an ebook query — otherwise the search appears to
 // succeed but returns the wrong kind of release.
+//
+// Parent categories (7000 for ebook, 3000 for audiobook) are dropped when
+// any child of that tree is already present — sending a parent alongside its
+// children causes indexers to return the broader (and noisier) result set.
+// If only the parent is configured, it is widened to the sane child default:
+// 7020 for ebook, 3030 for audiobook.
 func filterCategoriesForMedia(cats []int, mediaType string) []int {
 	wantPrefix := 7
-	fallback := []int{7000, 7020}
+	parent := 7000
+	childDefault := 7020
 	if mediaType == "audiobook" {
 		wantPrefix = 3
-		fallback = []int{3030}
+		parent = 3000
+		childDefault = 3030
 	}
+
+	fallback := []int{childDefault}
+
 	if len(cats) == 0 {
 		return fallback
 	}
+
+	// Collect all categories matching the target tree.
 	var out []int
 	for _, c := range cats {
 		if c/1000 == wantPrefix {
 			out = append(out, c)
 		}
 	}
+
 	if len(out) == 0 {
+		// No categories in the requested tree at all — use the safe child default.
 		return fallback
 	}
-	return out
+
+	// Check whether any child category (i.e. not the parent) is present.
+	hasChild := false
+	for _, c := range out {
+		if c != parent {
+			hasChild = true
+			break
+		}
+	}
+
+	if hasChild {
+		// Drop the parent; children provide sufficient and more precise coverage.
+		filtered := out[:0]
+		for _, c := range out {
+			if c != parent {
+				filtered = append(filtered, c)
+			}
+		}
+		return filtered
+	}
+
+	// Only the parent is configured — widen to the sane child default.
+	return fallback
 }
 
 // SearchBook queries all enabled indexers and returns deduplicated, filtered,
