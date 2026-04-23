@@ -27,6 +27,7 @@ vi.mock('../../api/client', () => ({
 }))
 
 import { api } from '../../api/client'
+import type { SearchResult } from '../../api/client'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -50,7 +51,7 @@ const baseBook = {
   author: { id: 1, foreignAuthorId: 'OL1A', authorName: 'Author Name', sortName: 'Name, Author', description: '', imageUrl: '', disambiguation: '', ratingsCount: 0, averageRating: 0, monitored: true },
 }
 
-const makeResult = (overrides: Partial<ReturnType<typeof makeResult>>) => ({
+const makeResult = (overrides: Partial<SearchResult>) => ({
   guid: 'guid-' + Math.random(),
   indexerName: 'TestIndexer',
   title: 'Test.Release.epub',
