@@ -8,6 +8,16 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 The `development` branch carries the in-flight feature set for the next release. Images are published as `ghcr.io/vavallee/bindery:development` and `:dev-<sha>`; point ArgoCD at the `development` branch to follow. Treat these features as beta — schema migrations are additive and safe, but UX may still shift before tagging.
 
+## [v1.1.6] — 2026-04-23
+
+### Fixed
+
+- **Prowlarr synced indexers no longer send broad parent category** ([#367](https://github.com/vavallee/bindery/pull/367), closes [#344](https://github.com/vavallee/bindery/issues/344)) — indexers synced from Prowlarr were always requesting category 7000 (Books parent), which caused many indexers to return results for every book-adjacent category. Bindery now sends the appropriate child category (7020 Ebooks, 3030 Audiobooks) and drops the parent when children are present. Searches that previously returned hundreds of irrelevant hits will be much tighter.
+- **qBittorrent "hash could not be determined" on category mismatch** ([#366](https://github.com/vavallee/bindery/pull/366), closes [#363](https://github.com/vavallee/bindery/issues/363)) — after adding a torrent, Bindery polled only the configured download category, so if qBittorrent placed the torrent in a different category the hash was never found and the download was marked as failed. Bindery now polls the full torrent list (no category filter) and logs a detailed error with hash diagnostics if the 30-second window expires.
+- **Dual-format delete leaves orphan sibling files** ([#365](https://github.com/vavallee/bindery/pull/365), closes [#343](https://github.com/vavallee/bindery/issues/343)) — deleting one format of a dual-format book (ebook + audiobook) failed to remove the other format's file from disk. Sibling cleanup now runs regardless of whether the file being deleted still exists on disk.
+- **Rescan misbinds books with similar titles** ([#365](https://github.com/vavallee/bindery/pull/365), closes [#290](https://github.com/vavallee/bindery/issues/290)) — the Jaro-Winkler similarity threshold for matching filenames to book records was too permissive, causing files for one book to be bound to a closely-named sibling. Threshold raised from 0.80 to 0.88.
+- **Interactive search mixes ebook and audiobook results** ([#368](https://github.com/vavallee/bindery/pull/368), closes [#333](https://github.com/vavallee/bindery/issues/333)) — for dual-format books, search results from all indexers were shown in a single unsorted list. Results are now split into labelled **Ebook results (N)** and **Audiobook results (N)** sections so it's clear which releases are which format.
+
 ## [v0.19.0] — 2026-04-17
 
 ### Added
