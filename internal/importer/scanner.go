@@ -258,7 +258,7 @@ func (s *Scanner) markDownloadFailed(ctx context.Context, dl *models.Download, m
 
 // checkSABnzbdDownloads polls SABnzbd for status changes.
 func (s *Scanner) checkSABnzbdDownloads(ctx context.Context, client *models.DownloadClient) {
-	sab := sabnzbd.New(client.Host, client.Port, client.APIKey, client.UseSSL)
+	sab := sabnzbd.New(client.Host, client.Port, client.APIKey, client.URLBase, client.UseSSL)
 
 	// Check history for completed downloads (no category filter — match by NZO ID)
 	history, err := sab.GetHistory(ctx, "", 50)
@@ -296,7 +296,7 @@ func (s *Scanner) checkSABnzbdDownloads(ctx context.Context, client *models.Down
 
 // checkNZBGetDownloads polls NZBGet for status changes using its JSON-RPC API.
 func (s *Scanner) checkNZBGetDownloads(ctx context.Context, client *models.DownloadClient) {
-	ng := nzbget.New(client.Host, client.Port, client.Username, client.Password, client.UseSSL)
+	ng := nzbget.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
 
 	// Check history for completed/failed downloads (matched by NZBID stored as sabnzbd_nzo_id).
 	history, err := ng.GetHistory(ctx)
@@ -344,7 +344,7 @@ func (s *Scanner) tryImportNZBGet(ctx context.Context, ng *nzbget.Client, dl *mo
 
 // checkTransmissionDownloads polls Transmission for status changes.
 func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models.DownloadClient) {
-	trans := transmission.New(client.Host, client.Port, client.Username, client.Password, client.UseSSL)
+	trans := transmission.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
 
 	// Get all torrents — Category is used as the download directory filter so
 	// Bindery only sees its own torrents on a shared Transmission instance.
@@ -398,7 +398,7 @@ func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models
 
 // checkQbittorrentDownloads polls qBittorrent for status changes.
 func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.DownloadClient) {
-	qb := qbittorrent.New(client.Host, client.Port, client.Username, client.Password, client.UseSSL)
+	qb := qbittorrent.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
 
 	torrents, err := qb.GetTorrents(ctx, client.Category)
 	if err != nil {

@@ -15,6 +15,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/vavallee/bindery/internal/downloader/urlbase"
 )
 
 // hashPollTimeout is the maximum time to wait for a newly-added torrent's hash
@@ -54,15 +56,16 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
-// New creates a Deluge client.
-func New(host string, port int, password string, useSSL bool) *Client {
+// New creates a Deluge client. urlBase is the optional reverse-proxy
+// subpath that is appended between host:port and the json endpoint.
+func New(host string, port int, password, urlBase string, useSSL bool) *Client {
 	scheme := "http"
 	if useSSL {
 		scheme = "https"
 	}
 	jar, _ := cookiejar.New(nil)
 	return &Client{
-		baseURL:  fmt.Sprintf("%s://%s:%d", scheme, host, port),
+		baseURL:  fmt.Sprintf("%s://%s:%d%s", scheme, host, port, urlbase.Normalize(urlBase)),
 		password: password,
 		http:     &http.Client{Timeout: 15 * time.Second, Jar: jar},
 	}

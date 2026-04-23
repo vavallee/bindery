@@ -164,7 +164,7 @@ func clientFromServer(srv *httptest.Server, password string) *deluge.Client {
 		}
 		port = p
 	}
-	return deluge.New(parts[0], port, password, false)
+	return deluge.New(parts[0], port, password, "", false)
 }
 
 func TestLogin_Success(t *testing.T) {

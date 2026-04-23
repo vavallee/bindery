@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/vavallee/bindery/internal/downloader/urlbase"
 )
 
 // hashPollTimeout is the maximum time to wait for a newly-added torrent's hash
@@ -27,7 +29,7 @@ var hashPollTimeout = 30 * time.Second
 //
 // Field mapping for DownloadClient storage:
 //   - APIKey  → password  (qBittorrent uses username/password, not an API key)
-//   - URLBase → username  (reused since qBittorrent ignores URL base)
+//   - URLBase → reverse-proxy subpath, appended to baseURL (#369)
 type Client struct {
 	baseURL  string
 	username string
@@ -37,10 +39,10 @@ type Client struct {
 	loggedIn bool
 }
 
-// New creates a qBittorrent client.
-// username and password map to the DownloadClient's URLBase and APIKey fields
-// respectively (see comment on the Client struct).
-func New(host string, port int, username, password string, useSSL bool) *Client {
+// New creates a qBittorrent client. urlBase is the optional reverse-proxy
+// subpath (e.g. "/qbit") that will be appended between the host:port and
+// the standard /api/v2 endpoints; leave it empty for a direct connection.
+func New(host string, port int, username, password, urlBase string, useSSL bool) *Client {
 	scheme := "http"
 	if useSSL {
 		scheme = "https"
@@ -48,7 +50,7 @@ func New(host string, port int, username, password string, useSSL bool) *Client 
 
 	jar, _ := cookiejar.New(nil)
 	return &Client{
-		baseURL:  fmt.Sprintf("%s://%s:%d", scheme, host, port),
+		baseURL:  fmt.Sprintf("%s://%s:%d%s", scheme, host, port, urlbase.Normalize(urlBase)),
 		username: username,
 		password: password,
 		http:     &http.Client{Timeout: 15 * time.Second, Jar: jar},

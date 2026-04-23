@@ -23,7 +23,7 @@ func TestAddURL(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New("127.0.0.1", 0, "testkey", false)
+	c := New("127.0.0.1", 0, "testkey", "", false)
 	c.baseURL = srv.URL
 
 	resp, err := c.AddURL(context.Background(), "https://example.com/nzb/123", "Test Book", "books", 0)
@@ -61,7 +61,7 @@ func TestGetQueue(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New("127.0.0.1", 0, "testkey", false)
+	c := New("127.0.0.1", 0, "testkey", "", false)
 	c.baseURL = srv.URL
 
 	queue, err := c.GetQueue(context.Background())
@@ -99,7 +99,7 @@ func TestGetHistory(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New("127.0.0.1", 0, "testkey", false)
+	c := New("127.0.0.1", 0, "testkey", "", false)
 	c.baseURL = srv.URL
 
 	history, err := c.GetHistory(context.Background(), "books", 20)
@@ -122,7 +122,7 @@ func TestGetCategories(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New("127.0.0.1", 0, "testkey", false)
+	c := New("127.0.0.1", 0, "testkey", "", false)
 	c.baseURL = srv.URL
 
 	cats, err := c.GetCategories(context.Background())
@@ -146,7 +146,7 @@ func TestDeleteHistory(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New("127.0.0.1", 0, "testkey", false)
+	c := New("127.0.0.1", 0, "testkey", "", false)
 	c.baseURL = srv.URL
 
 	if err := c.DeleteHistory(context.Background(), "SABnzbd_nzo_def456", false); err != nil {
@@ -175,7 +175,7 @@ func TestTest(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New("127.0.0.1", 0, "testkey", false)
+	c := New("127.0.0.1", 0, "testkey", "", false)
 	c.baseURL = srv.URL
 
 	err := c.Test(context.Background())

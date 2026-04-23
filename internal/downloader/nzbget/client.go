@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/vavallee/bindery/internal/downloader/urlbase"
 )
 
 // Client interacts with the NZBGet JSON-RPC API.
@@ -22,15 +24,16 @@ type Client struct {
 	password string
 }
 
-// New creates a NZBGet client.
-// NZBGet's JSON-RPC endpoint is http://user:pass@host:port/jsonrpc.
-func New(host string, port int, username, password string, useSSL bool) *Client {
+// New creates a NZBGet client. urlBase is the optional reverse-proxy
+// subpath that is appended before NZBGet's /jsonrpc endpoint.
+// NZBGet's JSON-RPC endpoint is http://user:pass@host:port[/url_base]/jsonrpc.
+func New(host string, port int, username, password, urlBase string, useSSL bool) *Client {
 	scheme := "http"
 	if useSSL {
 		scheme = "https"
 	}
 	return &Client{
-		baseURL:  fmt.Sprintf("%s://%s:%d/jsonrpc", scheme, host, port),
+		baseURL:  fmt.Sprintf("%s://%s:%d%s/jsonrpc", scheme, host, port, urlbase.Normalize(urlBase)),
 		username: username,
 		password: password,
 		http:     &http.Client{Timeout: 15 * time.Second},

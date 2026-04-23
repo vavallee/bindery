@@ -47,7 +47,7 @@ func TestTest_Success(t *testing.T) {
 	defer srv.Close()
 
 	host, port := serverHostPort(t, srv.URL)
-	c := New(host, port, "user", "pass", false)
+	c := New(host, port, "user", "pass", "", false)
 
 	if err := c.Test(context.Background()); err != nil {
 		t.Fatalf("Test should pass: %v", err)
@@ -62,7 +62,7 @@ func TestTest_AuthFailure(t *testing.T) {
 	defer srv.Close()
 
 	host, port := serverHostPort(t, srv.URL)
-	c := New(host, port, "bad", "creds", false)
+	c := New(host, port, "bad", "creds", "", false)
 
 	err := c.Test(context.Background())
 	if err == nil {
@@ -79,7 +79,7 @@ func TestTest_EmptyVersion(t *testing.T) {
 	defer srv.Close()
 
 	host, port := serverHostPort(t, srv.URL)
-	c := New(host, port, "", "", false)
+	c := New(host, port, "", "", "", false)
 
 	err := c.Test(context.Background())
 	if err == nil {
@@ -97,7 +97,7 @@ func TestAdd(t *testing.T) {
 	defer srv.Close()
 
 	host, port := serverHostPort(t, srv.URL)
-	c := New(host, port, "user", "pass", false)
+	c := New(host, port, "user", "pass", "", false)
 
 	id, err := c.Add(context.Background(), "https://example.com/file.nzb", "Test Book", "books", 0)
 	if err != nil {
@@ -119,7 +119,7 @@ func TestAdd_Rejected(t *testing.T) {
 	defer srv.Close()
 
 	host, port := serverHostPort(t, srv.URL)
-	c := New(host, port, "", "", false)
+	c := New(host, port, "", "", "", false)
 
 	_, err := c.Add(context.Background(), "https://example.com/bad.nzb", "Bad NZB", "books", 0)
 	if err == nil {
@@ -151,7 +151,7 @@ func TestGetQueue(t *testing.T) {
 	defer srv.Close()
 
 	host, port := serverHostPort(t, srv.URL)
-	c := New(host, port, "", "", false)
+	c := New(host, port, "", "", "", false)
 
 	groups, err := c.GetQueue(context.Background())
 	if err != nil {
@@ -200,7 +200,7 @@ func TestGetHistory(t *testing.T) {
 	defer srv.Close()
 
 	host, port := serverHostPort(t, srv.URL)
-	c := New(host, port, "", "", false)
+	c := New(host, port, "", "", "", false)
 
 	items, err := c.GetHistory(context.Background())
 	if err != nil {
@@ -227,7 +227,7 @@ func TestRemove(t *testing.T) {
 	defer srv.Close()
 
 	host, port := serverHostPort(t, srv.URL)
-	c := New(host, port, "", "", false)
+	c := New(host, port, "", "", "", false)
 
 	if err := c.Remove(context.Background(), 101); err != nil {
 		t.Fatalf("Remove: %v", err)
@@ -254,7 +254,7 @@ func TestRemoveHistory(t *testing.T) {
 	defer srv.Close()
 
 	host, port := serverHostPort(t, srv.URL)
-	c := New(host, port, "", "", false)
+	c := New(host, port, "", "", "", false)
 
 	if err := c.RemoveHistory(context.Background(), 202); err != nil {
 		t.Fatalf("RemoveHistory: %v", err)
@@ -324,7 +324,7 @@ func TestBasicAuth(t *testing.T) {
 	defer srv.Close()
 
 	host, port := serverHostPort(t, srv.URL)
-	c := New(host, port, "admin", "secret", false)
+	c := New(host, port, "admin", "secret", "", false)
 
 	if err := c.Test(context.Background()); err != nil {
 		t.Fatalf("Test: %v", err)

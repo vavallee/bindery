@@ -10,7 +10,7 @@ import (
 
 // newTestClient creates a Client pointing at the given test server URL.
 func newTestClient(serverURL, username, password string) *Client {
-	c := New("localhost", 9091, username, password, false)
+	c := New("localhost", 9091, username, password, "", false)
 	c.baseURL = serverURL
 	parsed, err := url.Parse(serverURL)
 	if err != nil {
@@ -21,7 +21,7 @@ func newTestClient(serverURL, username, password string) *Client {
 }
 
 func TestNew(t *testing.T) {
-	c := New("myhost", 9091, "admin", "secret", false)
+	c := New("myhost", 9091, "admin", "secret", "", false)
 	if c.baseURL != "http://myhost:9091/transmission/rpc" {
 		t.Errorf("baseURL: want %q, got %q", "http://myhost:9091/transmission/rpc", c.baseURL)
 	}
@@ -32,14 +32,14 @@ func TestNew(t *testing.T) {
 		t.Error("credentials not stored correctly")
 	}
 
-	cs := New("securehost", 443, "u", "p", true)
+	cs := New("securehost", 443, "u", "p", "", true)
 	if cs.baseURL != "https://securehost:443/transmission/rpc" {
 		t.Errorf("SSL baseURL: got %q", cs.baseURL)
 	}
 }
 
 func TestNew_InvalidHost(t *testing.T) {
-	c := New("http://bad-host", 9091, "admin", "secret", false)
+	c := New("http://bad-host", 9091, "admin", "secret", "", false)
 	if c.initErr == nil {
 		t.Fatal("expected invalid host to be rejected")
 	}

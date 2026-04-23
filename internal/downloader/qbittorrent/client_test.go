@@ -36,13 +36,13 @@ func (lc *logCatcher) Records() []slog.Record {
 
 // newTestClient creates a Client pointing at the given test server URL.
 func newTestClient(serverURL, username, password string) *Client {
-	c := New("localhost", 8080, username, password, false)
+	c := New("localhost", 8080, username, password, "", false)
 	c.baseURL = serverURL
 	return c
 }
 
 func TestNew(t *testing.T) {
-	c := New("myhost", 8080, "admin", "secret", false)
+	c := New("myhost", 8080, "admin", "secret", "", false)
 	if c.baseURL != "http://myhost:8080" {
 		t.Errorf("baseURL: want %q, got %q", "http://myhost:8080", c.baseURL)
 	}
@@ -53,7 +53,7 @@ func TestNew(t *testing.T) {
 		t.Error("should not be logged in on construction")
 	}
 
-	cs := New("securehost", 443, "u", "p", true)
+	cs := New("securehost", 443, "u", "p", "", true)
 	if cs.baseURL != "https://securehost:443" {
 		t.Errorf("SSL baseURL: got %q", cs.baseURL)
 	}
