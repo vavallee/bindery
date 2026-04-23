@@ -255,7 +255,7 @@ jobs:
       - run: npm ci --prefix web
       - run: npm run build --prefix web
       - name: Populate embedded frontend
-        run: rm -rf internal/webui/dist && cp -r web/dist internal/webui/dist
+        run: rm -rf internal/webui/dist && cp -r web/dist internal/webui/dist && touch internal/webui/dist/.gitkeep
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

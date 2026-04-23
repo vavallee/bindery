@@ -25,9 +25,11 @@ web/dist/
 web/.vite/
 web/tsconfig.tsbuildinfo
 
-# Embedded frontend build artifacts (rebuilt by CI/Makefile)
-internal/webui/dist/assets/
-internal/webui/dist/index.html
+# Embedded frontend build artifacts (rebuilt by CI/Makefile).
+# Glob covers all generated files; .gitkeep is excluded so the empty-dir
+# placeholder stays tracked and goreleaser sees a clean working tree.
+internal/webui/dist/*
+!internal/webui/dist/.gitkeep
 
 # IDE
 .idea/
