@@ -17,8 +17,8 @@ func TestHardFilter_RemovesOwned(t *testing.T) {
 		ExcludedAuthors:     map[string]bool{},
 	}
 	candidates := []models.RecommendationCandidate{
-		{ForeignID: "OWN", Title: "Already owned"},
-		{ForeignID: "KEEP", Title: "Keep this"},
+		{ForeignID: "OWN", Title: "Already owned", RatingsCount: 100, Rating: 4.0},
+		{ForeignID: "KEEP", Title: "Keep this", RatingsCount: 100, Rating: 4.0},
 	}
 	got := hardFilter(candidates, p)
 	if len(got) != 1 || got[0].ForeignID != "KEEP" {
@@ -33,8 +33,8 @@ func TestHardFilter_RemovesDismissed(t *testing.T) {
 		ExcludedAuthors:     map[string]bool{},
 	}
 	candidates := []models.RecommendationCandidate{
-		{ForeignID: "DIS"},
-		{ForeignID: "OK"},
+		{ForeignID: "DIS", RatingsCount: 100, Rating: 4.0},
+		{ForeignID: "OK", RatingsCount: 100, Rating: 4.0},
 	}
 	got := hardFilter(candidates, p)
 	if len(got) != 1 || got[0].ForeignID != "OK" {
@@ -49,9 +49,9 @@ func TestHardFilter_RemovesExcludedAuthor(t *testing.T) {
 		ExcludedAuthors:     map[string]bool{"bad author": true},
 	}
 	candidates := []models.RecommendationCandidate{
-		{ForeignID: "A", AuthorName: "Bad Author"}, // case-insensitive match
-		{ForeignID: "B", AuthorName: "Good Author"},
-		{ForeignID: "C", AuthorName: ""}, // no author → allowed
+		{ForeignID: "A", AuthorName: "Bad Author", RatingsCount: 100, Rating: 4.0}, // case-insensitive match
+		{ForeignID: "B", AuthorName: "Good Author", RatingsCount: 100, Rating: 4.0},
+		{ForeignID: "C", AuthorName: "", RatingsCount: 100, Rating: 4.0}, // no author → allowed
 	}
 	got := hardFilter(candidates, p)
 	if len(got) != 2 {
@@ -64,6 +64,38 @@ func TestHardFilter_RemovesExcludedAuthor(t *testing.T) {
 	}
 }
 
+func TestHardFilter_PopularityFilter(t *testing.T) {
+	p := &UserProfile{
+		OwnedForeignIDs:     map[string]bool{},
+		DismissedForeignIDs: map[string]bool{},
+		ExcludedAuthors:     map[string]bool{},
+	}
+	candidates := []models.RecommendationCandidate{
+		{ForeignID: "A", Title: "No ratings at all", RatingsCount: 0, Rating: 0},
+		{ForeignID: "B", Title: "Too few ratings", RatingsCount: 30, Rating: 4.5},
+		{ForeignID: "C", Title: "Enough ratings but low score", RatingsCount: 50, Rating: 2.5},
+		{ForeignID: "D", Title: "Enough ratings exactly 3.0", RatingsCount: 50, Rating: 3.0},
+		{ForeignID: "E", Title: "Popular and well rated", RatingsCount: 200, Rating: 4.5},
+		{ForeignID: "F", Title: "Popular but unrated in DB", RatingsCount: 200, Rating: 0.0},
+	}
+	got := hardFilter(candidates, p)
+
+	wantPass := map[string]bool{"D": true, "E": true, "F": true}
+	wantFilter := map[string]bool{"A": true, "B": true, "C": true}
+
+	if len(got) != len(wantPass) {
+		t.Fatalf("expected %d candidates, got %d: %+v", len(wantPass), len(got), got)
+	}
+	for _, c := range got {
+		if wantFilter[c.ForeignID] {
+			t.Errorf("candidate %q should have been filtered but was not", c.ForeignID)
+		}
+		if !wantPass[c.ForeignID] {
+			t.Errorf("unexpected candidate %q in result", c.ForeignID)
+		}
+	}
+}
+
 func TestHardFilter_Dedupes(t *testing.T) {
 	p := &UserProfile{
 		OwnedForeignIDs:     map[string]bool{},
@@ -71,9 +103,9 @@ func TestHardFilter_Dedupes(t *testing.T) {
 		ExcludedAuthors:     map[string]bool{},
 	}
 	candidates := []models.RecommendationCandidate{
-		{ForeignID: "X", Title: "first"},
-		{ForeignID: "X", Title: "dup"},
-		{ForeignID: "Y"},
+		{ForeignID: "X", Title: "first", RatingsCount: 100, Rating: 4.0},
+		{ForeignID: "X", Title: "dup", RatingsCount: 100, Rating: 4.0},
+		{ForeignID: "Y", RatingsCount: 100, Rating: 4.0},
 	}
 	got := hardFilter(candidates, p)
 	if len(got) != 2 {

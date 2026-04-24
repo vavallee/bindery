@@ -167,6 +167,14 @@ func hardFilter(candidates []models.RecommendationCandidate, p *UserProfile) []m
 		if p.PreferredLanguage != "" && c.Language != "" && c.Language != p.PreferredLanguage {
 			continue
 		}
+		// Suppress candidates with too few ratings (likely obscure editions or test entries).
+		if c.RatingsCount < 50 {
+			continue
+		}
+		// Suppress objectively poor books — only apply when there are enough ratings to trust the score.
+		if c.RatingsCount >= 50 && c.Rating > 0 && c.Rating < 3.0 {
+			continue
+		}
 		// Deduplicate by foreign ID.
 		if seen[c.ForeignID] {
 			continue

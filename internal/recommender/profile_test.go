@@ -68,6 +68,8 @@ func seedBook(t *testing.T, f profileFixtures, authorID int64, foreignID, title 
 		Status:           models.BookStatusWanted,
 		MetadataProvider: "openlibrary",
 		Monitored:        true,
+		RatingsCount:     100,
+		AverageRating:    4.0,
 	}
 	if err := f.books.Create(context.Background(), b); err != nil {
 		t.Fatalf("create book: %v", err)
