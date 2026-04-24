@@ -55,8 +55,10 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: make smoke
 
-  # PR-only: validates tests + frontend build (with race detector for correctness)
-  validate:
+  # PR-only: Go race-detector tests and frontend build run in parallel so
+  # neither blocks the other.
+  validate-go:
+    name: validate (Go)
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
@@ -74,6 +76,15 @@ jobs:
           flags: backend
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  validate-frontend:
+    name: validate (frontend)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
           node-version: "22"
@@ -337,3 +348,51 @@ jobs:
             exit 0
           fi
           make predeploy-smoke
+
+  # ── Discord release announcement ───────────────────────────────────────────
+  notify-discord:
+    name: Notify Discord
+    needs: [goreleaser, image]
+    if: startsWith(github.ref, 'refs/tags/v') && needs.goreleaser.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Post release announcement
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          python3 - <<'EOF'
+          import json, os, re, urllib.request
+
+          version = os.environ["VERSION"]
+          webhook = os.environ["DISCORD_WEBHOOK"]
+
+          with open("CHANGELOG.md") as f:
+              content = f.read()
+
+          # Extract the section for this version
+          pattern = rf"## \[{re.escape(version)}\][^\n]*\n(.*?)(?=\n## \[|\Z)"
+          m = re.search(pattern, content, re.DOTALL)
+          notes = m.group(1).strip() if m else ""
+
+          # Trim to a readable length (Discord 2000-char limit)
+          if len(notes) > 900:
+              notes = notes[:900].rsplit("\n", 1)[0] + "\n…"
+
+          body = f"**Bindery {version}** is out!"
+          if notes:
+              body += f"\n\n{notes}"
+          body += f"\n\n<https://github.com/vavallee/bindery/releases/tag/{version}>"
+
+          payload = json.dumps({"content": body}).encode()
+          req = urllib.request.Request(
+              webhook, data=payload,
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          urllib.request.urlopen(req)
+          print(f"Discord notified for {version}")
+          EOF
