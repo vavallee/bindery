@@ -202,38 +202,47 @@ func TestCommunityScore(t *testing.T) {
 }
 
 func TestRecencyScore(t *testing.T) {
-	// No date: neutral
+	const median = 2010
+
+	// No date: neutral regardless of median.
 	c := models.RecommendationCandidate{}
-	if got := recencyScore(c); got != 0.5 {
+	if got := recencyScore(c, median); got != 0.5 {
 		t.Errorf("no date: got %v, want 0.5", got)
 	}
 
-	// This year: 1.0
-	thisYear := time.Date(time.Now().Year(), 6, 1, 0, 0, 0, 0, time.UTC)
-	c = models.RecommendationCandidate{ReleaseDate: &thisYear}
-	if got := recencyScore(c); got != 1.0 {
-		t.Errorf("current year: got %v, want 1.0", got)
+	// medianYear == 0: neutral regardless of release date.
+	d := time.Date(2010, 6, 1, 0, 0, 0, 0, time.UTC)
+	c = models.RecommendationCandidate{ReleaseDate: &d}
+	if got := recencyScore(c, 0); got != 0.5 {
+		t.Errorf("zero median: got %v, want 0.5", got)
 	}
 
-	// 20 years ago: 0.3
-	old := time.Date(time.Now().Year()-20, 1, 1, 0, 0, 0, 0, time.UTC)
-	c = models.RecommendationCandidate{ReleaseDate: &old}
-	if got := recencyScore(c); got != 0.3 {
-		t.Errorf("20 years ago: got %v, want 0.3", got)
+	// Same year as median: 1.0
+	same := time.Date(median, 6, 1, 0, 0, 0, 0, time.UTC)
+	c = models.RecommendationCandidate{ReleaseDate: &same}
+	if got := recencyScore(c, median); got != 1.0 {
+		t.Errorf("median year: got %v, want 1.0", got)
 	}
 
-	// Very old: clamped at 0.3
+	// 30 years before median: floor 0.1
+	floor := time.Date(median-30, 1, 1, 0, 0, 0, 0, time.UTC)
+	c = models.RecommendationCandidate{ReleaseDate: &floor}
+	if got := recencyScore(c, median); got != 0.1 {
+		t.Errorf("30 years before median: got %v, want 0.1", got)
+	}
+
+	// More than 30 years before median: clamped at 0.1
 	ancient := time.Date(1800, 1, 1, 0, 0, 0, 0, time.UTC)
 	c = models.RecommendationCandidate{ReleaseDate: &ancient}
-	if got := recencyScore(c); got != 0.3 {
-		t.Errorf("ancient: got %v, want 0.3", got)
+	if got := recencyScore(c, median); got != 0.1 {
+		t.Errorf("ancient: got %v, want 0.1", got)
 	}
 
-	// Future year: clamp to 0 years ago, should be 1.0.
-	future := time.Date(time.Now().Year()+5, 1, 1, 0, 0, 0, 0, time.UTC)
-	c = models.RecommendationCandidate{ReleaseDate: &future}
-	if got := recencyScore(c); got != 1.0 {
-		t.Errorf("future date: got %v, want 1.0", got)
+	// Newer than median: clamp yearsBeforeMedian to 0, should be 1.0.
+	newer := time.Date(median+5, 1, 1, 0, 0, 0, 0, time.UTC)
+	c = models.RecommendationCandidate{ReleaseDate: &newer}
+	if got := recencyScore(c, median); got != 1.0 {
+		t.Errorf("newer than median: got %v, want 1.0", got)
 	}
 }
 

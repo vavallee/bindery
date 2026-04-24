@@ -23,4 +23,5 @@ type UserProfile struct {
 	ExcludedAuthors     map[string]bool
 	PreferredLanguage   string
 	TotalBooks          int
+	LibraryMedianYear   int
 }

@@ -3,6 +3,7 @@ package recommender
 import (
 	"context"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -54,6 +55,7 @@ func BuildProfile(
 		return nil, err
 	}
 	p.TotalBooks = len(allBooks)
+	p.LibraryMedianYear = medianReleaseYear(allBooks)
 
 	// Genre frequency counts and per-genre document counts (for IDF).
 	genreDocCount := make(map[string]int)
@@ -161,6 +163,22 @@ func BuildProfile(
 	}
 
 	return p, nil
+}
+
+// medianReleaseYear returns the median publication year across all books that
+// have a non-nil ReleaseDate. Returns 0 when no dated books exist.
+func medianReleaseYear(books []models.Book) int {
+	years := make([]int, 0, len(books))
+	for _, b := range books {
+		if b.ReleaseDate != nil {
+			years = append(years, b.ReleaseDate.Year())
+		}
+	}
+	if len(years) == 0 {
+		return 0
+	}
+	sort.Ints(years)
+	return years[len(years)/2]
 }
 
 // parsePosition converts a series position string like "1", "2.5" to float64.

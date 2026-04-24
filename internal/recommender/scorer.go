@@ -3,7 +3,6 @@ package recommender
 import (
 	"math"
 	"strings"
-	"time"
 
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -13,8 +12,8 @@ const (
 	weightGenre     = 0.30
 	weightAuthor    = 0.25
 	weightSeries    = 0.20
-	weightCommunity = 0.15
-	weightRecency   = 0.10
+	weightCommunity = 0.10
+	weightRecency   = 0.15
 
 	bonusSeries    = 0.15
 	bonusAuthorNew = 0.10
@@ -27,7 +26,7 @@ func Score(c models.RecommendationCandidate, p *UserProfile) float64 {
 	author := authorScore(c, p)
 	series := seriesScore(c, p)
 	community := communityScore(c)
-	recency := recencyScore(c)
+	recency := recencyScore(c, p.LibraryMedianYear)
 
 	score := genre*weightGenre +
 		author*weightAuthor +
@@ -144,21 +143,23 @@ func communityScore(c models.RecommendationCandidate) float64 {
 	return ratingNorm * countNorm
 }
 
-// recencyScore applies linear decay: 1.0 for the current year, 0.3 at 20+
-// years ago. Returns 0.5 if no release date is available.
-func recencyScore(c models.RecommendationCandidate) float64 {
-	if c.ReleaseDate == nil {
+// recencyScore applies linear decay relative to the user's library median
+// publication year. A candidate published in the same year as the median
+// scores 1.0; one published 30+ years before the median scores 0.1.
+// Returns 0.5 if no release date is available or medianYear is 0.
+func recencyScore(c models.RecommendationCandidate, medianYear int) float64 {
+	if c.ReleaseDate == nil || medianYear == 0 {
 		return 0.5
 	}
-	yearsAgo := float64(time.Now().Year() - c.ReleaseDate.Year())
-	if yearsAgo < 0 {
-		yearsAgo = 0
+	yearsBeforeMedian := float64(medianYear - c.ReleaseDate.Year())
+	if yearsBeforeMedian < 0 {
+		yearsBeforeMedian = 0
 	}
-	if yearsAgo >= 20 {
-		return 0.3
+	if yearsBeforeMedian >= 30 {
+		return 0.1
 	}
-	// Linear from 1.0 (0 years) to 0.3 (20 years).
-	return 1.0 - (0.7/20.0)*yearsAgo
+	// Linear from 1.0 (at or after median) to 0.1 (30 years before median).
+	return 1.0 - (0.9/30.0)*yearsBeforeMedian
 }
 
 func clamp(v float64) float64 {
