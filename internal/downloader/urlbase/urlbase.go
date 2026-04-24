@@ -1,3 +1,4 @@
+// Package urlbase normalises user-supplied URL base paths for download-client connections.
 package urlbase
 
 import "strings"

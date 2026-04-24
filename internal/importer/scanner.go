@@ -101,7 +101,6 @@ func (s *Scanner) primarySeriesFor(ctx context.Context, book *models.Book) (seri
 	return title, pos
 }
 
-
 // effectiveLibraryDir returns the library root to use for the given author.
 // Priority: (1) author's explicit RootFolderID, (2) library.defaultRootFolderId
 // setting, (3) global libraryDir from env-var.
