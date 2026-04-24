@@ -2507,6 +2507,8 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
   const usesPassword = client.type === 'qbittorrent' || client.type === 'transmission' || client.type === 'nzbget' || client.type === 'deluge'
   const [credential, setCredential] = useState(usesPassword ? (client.password || '') : (client.apiKey || ''))
   const [username, setUsername] = useState(client.username || '')
+  const [useSSL, setUseSSL] = useState(client.useSsl || false)
+  const [urlBase, setUrlBase] = useState(client.urlBase || '')
   const [category, setCategory] = useState(client.category)
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
@@ -2521,8 +2523,8 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
 
   const submit = async () => {
     const data = isPasswordClient(type)
-      ? { ...client, name, type, host, port: parseInt(port), username: hasUsername(type) ? username : '', password: credential, apiKey: '', category }
-      : { ...client, name, type, host, port: parseInt(port), apiKey: credential, username: '', password: '', category }
+      ? { ...client, name, type, host, port: parseInt(port), username: hasUsername(type) ? username : '', password: credential, apiKey: '', category, useSsl: useSSL, urlBase: urlBase.trim() }
+      : { ...client, name, type, host, port: parseInt(port), apiKey: credential, username: '', password: '', category, useSsl: useSSL, urlBase: urlBase.trim() }
     const updated = await api.updateDownloadClient(client.id, data)
     onSaved(updated)
   }
@@ -2552,6 +2554,21 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
           <input value={port} onChange={e => setPort(e.target.value)} placeholder="Port" className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
         </div>
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Hostname or IP only — no <code className="font-mono">http://</code> prefix. In Docker, use the service/container name (e.g. <code className="font-mono">nzbget</code>) — not <code className="font-mono">localhost</code>.</p>
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          id={`edit-ssl-${client.id}`}
+          checked={useSSL}
+          onChange={e => setUseSSL(e.target.checked)}
+          className="rounded border-slate-300 dark:border-zinc-700"
+        />
+        <label htmlFor={`edit-ssl-${client.id}`} className={labelCls}>Use SSL</label>
+      </div>
+      <div>
+        <label className={labelCls}>URL Base</label>
+        <input value={urlBase} onChange={e => setUrlBase(e.target.value)} placeholder="/sabnzbd" className={inputCls} />
+        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Optional path prefix for reverse proxy deployments (e.g. <code className="font-mono">/sabnzbd</code>). Leave blank for direct connections.</p>
       </div>
       {hasUsername(type) && (
         <div>
@@ -2685,6 +2702,8 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
   const [port, setPort] = useState('8080')
   const [credential, setCredential] = useState('')
   const [username, setUsername] = useState('')
+  const [useSSL, setUseSSL] = useState(false)
+  const [urlBase, setUrlBase] = useState('')
   const [category, setCategory] = useState('books')
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
@@ -2721,8 +2740,8 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
 
   const submit = async () => {
     const data = isPasswordClient(type)
-      ? { name, host, port: parseInt(port), username: hasUsername(type) ? username : '', password: credential, apiKey: '', category, type, enabled: true }
-      : { name, host, port: parseInt(port), apiKey: credential, username: '', password: '', category, type, enabled: true }
+      ? { name, host, port: parseInt(port), username: hasUsername(type) ? username : '', password: credential, apiKey: '', category, type, enabled: true, useSsl: useSSL, urlBase: urlBase.trim() }
+      : { name, host, port: parseInt(port), apiKey: credential, username: '', password: '', category, type, enabled: true, useSsl: useSSL, urlBase: urlBase.trim() }
     const c = await api.addDownloadClient(data)
     onAdded(c)
   }
@@ -2752,6 +2771,21 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
           <input value={port} onChange={e => setPort(e.target.value)} placeholder="Port" className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
         </div>
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Hostname or IP only — no <code className="font-mono">http://</code> prefix. In Docker, use the service/container name (e.g. <code className="font-mono">nzbget</code>) — not <code className="font-mono">localhost</code>.</p>
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          id="add-ssl"
+          checked={useSSL}
+          onChange={e => setUseSSL(e.target.checked)}
+          className="rounded border-slate-300 dark:border-zinc-700"
+        />
+        <label htmlFor="add-ssl" className={labelCls}>Use SSL</label>
+      </div>
+      <div>
+        <label className={labelCls}>URL Base</label>
+        <input value={urlBase} onChange={e => setUrlBase(e.target.value)} placeholder="/sabnzbd" className={inputCls} />
+        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Optional path prefix for reverse proxy deployments (e.g. <code className="font-mono">/sabnzbd</code>). Leave blank for direct connections.</p>
       </div>
       {hasUsername(type) && (
         <div>

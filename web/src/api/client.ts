@@ -571,6 +571,7 @@ export interface DownloadClient {
   username: string
   password: string
   useSsl: boolean
+  urlBase: string
   category: string
   enabled: boolean
 }
