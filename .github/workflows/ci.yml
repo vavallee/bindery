@@ -135,16 +135,14 @@ jobs:
           cache: true
       - run: go test -race ./cmd/... ./internal/...
 
-  # ── Docker image — runs after test passes, parallel with goreleaser ─────────
+  # ── Docker image — runs after test passes ──────────────────────────────────
   image:
     needs: test
     runs-on: ubuntu-latest
     permissions:
-      contents: write
       packages: write
       id-token: write
       attestations: write
-      pull-requests: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -197,24 +195,26 @@ jobs:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
-      # On tag push: update values-dev.yaml on the development branch so the
-      # bindery-dev ArgoCD app picks up the new image. Production promotion is
-      # done separately via the promote workflow (Actions → Promote to production)
-      # after you've validated the dev deployment.
-      #
-      # The development branch has required-status-checks protection with
-      # enforcement_level=non_admins. GITHUB_TOKEN (even with contents:write) is
-      # not treated as an admin, so a direct PUT to that branch is rejected.
-      # Workaround: commit to a throwaway branch and merge with --admin to bypass.
-      - name: Deploy to dev (update values-dev.yaml on development branch)
-        if: startsWith(github.ref, 'refs/tags/v')
-        continue-on-error: true
+
+  # ── Deploy to bindery-dev (development branch only) ────────────────────────
+  # Runs after image build on every push to development. Updates
+  # values-dev.yaml with the SHA image tag so ArgoCD picks up the new build.
+  deploy-dev:
+    name: Deploy to dev
+    needs: image
+    if: github.ref == 'refs/heads/development'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Update values-dev.yaml on development branch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          IMAGE_TAG="${GITHUB_REF_NAME#v}"
+          IMAGE_TAG="sha-${GITHUB_SHA::7}"
           FILE_PATH="charts/bindery/values-dev.yaml"
-          DEPLOY_BRANCH="auto/dev-deploy-${IMAGE_TAG}"
+          DEPLOY_BRANCH="auto/dev-deploy-${GITHUB_SHA::7}"
 
           DEV_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/refs/heads/development" --jq .object.sha)
           gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
@@ -242,12 +242,11 @@ jobs:
             --head "${DEPLOY_BRANCH}" \
             --base development \
             --title "chore(deploy-dev): update to ${IMAGE_TAG}" \
-            --body "Automated dev deploy: image tag \`${IMAGE_TAG}\`." \
-            --label "" 2>/dev/null || true
+            --body "Automated dev deploy: image tag \`${IMAGE_TAG}\`." 2>/dev/null || true
           gh pr merge "${DEPLOY_BRANCH}" --base development --squash --admin --delete-branch
-          echo "Dev image tag updated to ${IMAGE_TAG} on development branch"
-      - name: Trigger Argo CD dev refresh
-        if: startsWith(github.ref, 'refs/tags/v')
+          echo "bindery-dev image tag updated to ${IMAGE_TAG}"
+
+      - name: Trigger ArgoCD dev refresh
         env:
           ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
           ARGOCD_TOKEN: ${{ secrets.ARGOCD_TOKEN }}
@@ -259,10 +258,10 @@ jobs:
           curl -sf -X POST \
             -H "Authorization: Bearer ${ARGOCD_TOKEN}" \
             "${ARGOCD_SERVER}/api/v1/applications/bindery-dev?refresh=hard" \
-            && echo "Argo CD dev refresh triggered" \
-            || echo "::warning::Argo CD dev refresh trigger failed — Argo will pick up changes on next poll"
+            && echo "ArgoCD bindery-dev refresh triggered" \
+            || echo "::warning::ArgoCD dev refresh failed — Argo will pick up changes on next poll"
 
-  # ── GoReleaser — runs after test passes, parallel with image, tags only ─────
+  # ── GoReleaser — runs after test passes, tag pushes only ───────────────────
   goreleaser:
     needs: test
     if: startsWith(github.ref, 'refs/tags/v')
@@ -322,13 +321,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # ── Pre-deploy smoke — hits dev after image deploys ────────────────────────
-  # Update BINDERY_DEV_URL below (or add a BINDERY_DEV_URL secret) once you
-  # have a dev/staging instance URL distinct from production.
+  # ── Pre-deploy smoke — sanity check dev before promoting to prod ───────────
   predeploy-smoke:
     name: Pre-deploy smoke
     needs: image
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -368,6 +365,63 @@ jobs:
             exit 0
           fi
           make predeploy-smoke
+
+  # ── Deploy to prod (bindery) — tag push, after image + goreleaser + smoke ──
+  # Updates values.yaml on main; ArgoCD prod app (bindery) picks it up.
+  deploy-prod:
+    name: Deploy to prod
+    needs: [image, goreleaser, predeploy-smoke]
+    if: startsWith(github.ref, 'refs/tags/v') && needs.goreleaser.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Update values.yaml on main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          IMAGE_TAG="${GITHUB_REF_NAME#v}"
+          FILE_PATH="charts/bindery/values.yaml"
+          DEPLOY_BRANCH="auto/prod-deploy-${IMAGE_TAG}"
+
+          MAIN_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/refs/heads/main" --jq .object.sha)
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/heads/${DEPLOY_BRANCH}" \
+            -f sha="${MAIN_SHA}"
+
+          FILE_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}?ref=${DEPLOY_BRANCH}" --jq .sha)
+          CONTENT=$(gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}?ref=${DEPLOY_BRANCH}" \
+            --jq '.content' | base64 -d | sed "s|tag:.*|tag: \"${IMAGE_TAG}\"|" | base64 -w0)
+          gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}" \
+            -X PUT \
+            -f message="chore(deploy): promote bindery to ${IMAGE_TAG} [skip ci]" \
+            -f content="${CONTENT}" \
+            -f sha="${FILE_SHA}" \
+            -f branch="${DEPLOY_BRANCH}"
+
+          gh pr create \
+            --head "${DEPLOY_BRANCH}" \
+            --base main \
+            --title "chore(deploy): promote bindery to ${GITHUB_REF_NAME}" \
+            --body "Automated prod deploy: image tag \`${IMAGE_TAG}\`." 2>/dev/null || true
+          gh pr merge "${DEPLOY_BRANCH}" --base main --squash --admin --delete-branch
+          echo "bindery (prod) image tag updated to ${IMAGE_TAG}"
+
+      - name: Trigger ArgoCD prod refresh
+        env:
+          ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
+          ARGOCD_TOKEN: ${{ secrets.ARGOCD_TOKEN }}
+        run: |
+          if [ -z "${ARGOCD_SERVER:-}" ] || [ -z "${ARGOCD_TOKEN:-}" ]; then
+            echo "::warning::ARGOCD_SERVER or ARGOCD_TOKEN not configured — Argo will pick up changes on next poll"
+            exit 0
+          fi
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${ARGOCD_TOKEN}" \
+            "${ARGOCD_SERVER}/api/v1/applications/bindery?refresh=hard" \
+            && echo "ArgoCD bindery (prod) refresh triggered" \
+            || echo "::warning::ArgoCD prod refresh failed — Argo will pick up changes on next poll"
 
   # ── Discord release announcement ───────────────────────────────────────────
   notify-discord:
