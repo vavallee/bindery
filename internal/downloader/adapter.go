@@ -5,6 +5,7 @@ package downloader
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -20,6 +21,9 @@ type LiveStatus struct {
 	Percentage string
 	TimeLeft   string
 	Speed      string
+	Size       int64
+	SizeLeft   int64
+	Status     string
 }
 
 type SendResult struct {
@@ -260,6 +264,9 @@ func getSABLiveStatuses(ctx context.Context, client *models.DownloadClient) (map
 			Percentage: slot.Percentage,
 			TimeLeft:   slot.TimeLeft,
 			Speed:      queue.Speed,
+			Size:       megabytesStringToBytes(slot.MB),
+			SizeLeft:   megabytesStringToBytes(slot.MBLeft),
+			Status:     slot.Status,
 		}
 	}
 	return out, nil
@@ -282,6 +289,9 @@ func getNZBGetLiveStatuses(ctx context.Context, client *models.DownloadClient) (
 		}
 		out[id] = LiveStatus{
 			Percentage: pct,
+			Size:       megabytesToBytes(g.FileSizeMB),
+			SizeLeft:   megabytesToBytes(g.RemainingSizeMB),
+			Status:     g.Status,
 		}
 	}
 	return out, nil
@@ -302,6 +312,9 @@ func getTorrentLiveStatuses(ctx context.Context, client *models.DownloadClient) 
 				Percentage: fmt.Sprintf("%.1f", t.PercentDone*100),
 				TimeLeft:   etaToTimeLeft(t.ETA),
 				Speed:      bytesPerSecondToString(t.DownloadRate),
+				Size:       t.TotalSize,
+				SizeLeft:   t.LeftUntilDone,
+				Status:     strconv.Itoa(t.Status),
 			}
 		}
 		return out, nil
@@ -319,6 +332,9 @@ func getTorrentLiveStatuses(ctx context.Context, client *models.DownloadClient) 
 				Percentage: fmt.Sprintf("%.1f", t.Progress),
 				TimeLeft:   etaToTimeLeft(t.ETA),
 				Speed:      bytesPerSecondToString(t.DownloadRate),
+				Size:       t.TotalSize,
+				SizeLeft:   maxInt64(t.TotalSize-t.TotalDone, 0),
+				Status:     t.State,
 			}
 		}
 		return out, nil
@@ -335,9 +351,43 @@ func getTorrentLiveStatuses(ctx context.Context, client *models.DownloadClient) 
 		out[strings.ToLower(t.Hash)] = LiveStatus{
 			Percentage: fmt.Sprintf("%.1f", t.Progress*100),
 			TimeLeft:   etaToTimeLeft(int64(t.ETA)),
+			Speed:      bytesPerSecondToString(t.DLSpeed),
+			Size:       t.Size,
+			SizeLeft:   t.AmountLeft,
+			Status:     t.State,
 		}
 	}
 	return out, nil
+}
+
+func megabytesStringToBytes(s string) int64 {
+	s = strings.TrimSpace(strings.ReplaceAll(s, ",", ""))
+	if s == "" {
+		return 0
+	}
+	fields := strings.Fields(s)
+	if len(fields) > 0 {
+		s = fields[0]
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil || v <= 0 {
+		return 0
+	}
+	return megabytesToBytes(v)
+}
+
+func megabytesToBytes(v float64) int64 {
+	if v <= 0 {
+		return 0
+	}
+	return int64(math.Round(v * 1024 * 1024))
+}
+
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func etaToTimeLeft(etaSeconds int64) string {

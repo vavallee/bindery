@@ -393,6 +393,266 @@ func TestQueueListLiveOverlayQbittorrent(t *testing.T) {
 	}
 }
 
+func TestQueueListArrCompatibleEmpty(t *testing.T) {
+	h := newQueueTestHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/queue", nil)
+	rr := httptest.NewRecorder()
+	h.ListArrCompatible(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var resp arrQueueResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.TotalRecords != 0 || len(resp.Records) != 0 {
+		t.Fatalf("expected empty queue response, got %+v", resp)
+	}
+}
+
+func TestQueueListArrCompatibleQbittorrentShape(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
+				"hash":        "ABCDEF",
+				"progress":    0.5,
+				"eta":         300,
+				"size":        1048576,
+				"amount_left": 524288,
+				"state":       "downloading",
+			}})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	h, database, _, _, books, ctx := queueFixture(t)
+	host, port := testServerHostPort(t, srv.URL)
+	client := createTestDownloadClient(t, h, &models.DownloadClient{
+		Name:     "qBittorrent",
+		Type:     "qbittorrent",
+		Host:     host,
+		Port:     port,
+		Username: "user",
+		Password: "pass",
+		Enabled:  true,
+	})
+	a := &models.Author{ForeignID: "OLQBA", Name: "Andy Weir", SortName: "Weir, Andy", MetadataProvider: "openlibrary", Monitored: true}
+	if err := db.NewAuthorRepo(database).Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	b := &models.Book{
+		ForeignID: "OLQBB", AuthorID: a.ID, Title: "Project Hail Mary", SortTitle: "project hail mary",
+		Status: models.BookStatusDownloading, Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	createTestDownload(t, h, &models.Download{
+		GUID:             "guid-qb-arr",
+		BookID:           &b.ID,
+		DownloadClientID: &client.ID,
+		Title:            "Project Hail Mary",
+		NZBURL:           "magnet:?xt=urn:btih:abcdef",
+		Size:             999,
+		Status:           models.DownloadStatusDownloading,
+		Protocol:         "torrent",
+		TorrentID:        strPtr("abcdef"),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/queue?page=1&pageSize=10", nil)
+	rr := httptest.NewRecorder()
+	h.ListArrCompatible(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var resp arrQueueResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.TotalRecords != 1 || resp.Page != 1 || resp.PageSize != 10 {
+		t.Fatalf("unexpected paging response: %+v", resp)
+	}
+	if len(resp.Records) != 1 {
+		t.Fatalf("expected one record, got %d", len(resp.Records))
+	}
+	rec := resp.Records[0]
+	if rec.ID == 0 || rec.BookID != b.ID || rec.Title != "Project Hail Mary" {
+		t.Fatalf("unexpected identity fields: %+v", rec)
+	}
+	if rec.Status != string(models.StateDownloading) || rec.TrackedDownloadStatus != "ok" {
+		t.Fatalf("unexpected status fields: %+v", rec)
+	}
+	if rec.Size != 1048576 || rec.SizeLeft != 524288 {
+		t.Fatalf("expected live size fields, got %+v", rec)
+	}
+	if rec.DownloadClient != "qBittorrent" || rec.DownloadID != "abcdef" || rec.Protocol != "torrent" {
+		t.Fatalf("unexpected client fields: %+v", rec)
+	}
+}
+
+func TestQueueListArrCompatiblePollFailureWarns(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusBadGateway)
+	}))
+	defer srv.Close()
+
+	h := newQueueTestHandler(t)
+	host, port := testServerHostPort(t, srv.URL)
+	client := createTestDownloadClient(t, h, &models.DownloadClient{
+		Name:    "SABnzbd",
+		Type:    "sabnzbd",
+		Host:    host,
+		Port:    port,
+		APIKey:  "testkey",
+		Enabled: true,
+	})
+	createTestDownload(t, h, &models.Download{
+		GUID:             "guid-sab-warning",
+		DownloadClientID: &client.ID,
+		Title:            "Warning Book",
+		Size:             2048,
+		Status:           models.DownloadStatusDownloading,
+		Protocol:         "usenet",
+		SABnzbdNzoID:     strPtr("nzo-warning"),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/queue", nil)
+	rr := httptest.NewRecorder()
+	h.ListArrCompatible(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var resp arrQueueResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Records) != 1 {
+		t.Fatalf("expected one record, got %d", len(resp.Records))
+	}
+	rec := resp.Records[0]
+	if rec.TrackedDownloadStatus != "warning" {
+		t.Fatalf("expected warning status, got %+v", rec)
+	}
+	if rec.SizeLeft != 2048 {
+		t.Fatalf("expected conservative sizeleft, got %+v", rec)
+	}
+}
+
+func TestQueueListArrCompatibleLocalErrorOutranksPollFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusBadGateway)
+	}))
+	defer srv.Close()
+
+	h := newQueueTestHandler(t)
+	host, port := testServerHostPort(t, srv.URL)
+	client := createTestDownloadClient(t, h, &models.DownloadClient{
+		Name:    "SABnzbd",
+		Type:    "sabnzbd",
+		Host:    host,
+		Port:    port,
+		APIKey:  "testkey",
+		Enabled: true,
+	})
+	createTestDownload(t, h, &models.Download{
+		GUID:             "guid-local-error",
+		DownloadClientID: &client.ID,
+		Title:            "Failed Book",
+		Size:             2048,
+		Status:           models.StateFailed,
+		Protocol:         "usenet",
+		ErrorMessage:     "download failed",
+		SABnzbdNzoID:     strPtr("nzo-failed"),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/queue", nil)
+	rr := httptest.NewRecorder()
+	h.ListArrCompatible(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var resp arrQueueResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Records) != 1 {
+		t.Fatalf("expected one record, got %d", len(resp.Records))
+	}
+	if resp.Records[0].TrackedDownloadStatus != "error" {
+		t.Fatalf("expected error status, got %+v", resp.Records[0])
+	}
+}
+
+func TestQueueListArrCompatiblePaginationAndSort(t *testing.T) {
+	h := newQueueTestHandler(t)
+	createTestDownload(t, h, &models.Download{
+		GUID: "guid-b", Title: "B Book", Size: 20,
+		Status: models.DownloadStatusDownloading, Protocol: "usenet",
+	})
+	createTestDownload(t, h, &models.Download{
+		GUID: "guid-a", Title: "A Book", Size: 10,
+		Status: models.DownloadStatusDownloading, Protocol: "usenet",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/queue?sortKey=title&sortDirection=ascending&page=2&pageSize=1", nil)
+	rr := httptest.NewRecorder()
+	h.ListArrCompatible(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var resp arrQueueResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.TotalRecords != 2 || resp.Page != 2 || resp.PageSize != 1 {
+		t.Fatalf("unexpected paging metadata: %+v", resp)
+	}
+	if len(resp.Records) != 1 || resp.Records[0].Title != "B Book" {
+		t.Fatalf("expected second sorted record, got %+v", resp.Records)
+	}
+}
+
+func TestQueueListArrCompatiblePaginationOverflow(t *testing.T) {
+	h := newQueueTestHandler(t)
+	createTestDownload(t, h, &models.Download{
+		GUID: "guid-overflow", Title: "Overflow Book", Size: 20,
+		Status: models.DownloadStatusDownloading, Protocol: "usenet",
+	})
+
+	maxInt := int(^uint(0) >> 1)
+	req := httptest.NewRequest(http.MethodGet, "/api/queue?page="+strconv.Itoa(maxInt)+"&pageSize=2", nil)
+	rr := httptest.NewRecorder()
+	h.ListArrCompatible(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var resp arrQueueResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.TotalRecords != 1 || len(resp.Records) != 0 {
+		t.Fatalf("expected empty overflow page with preserved total, got %+v", resp)
+	}
+}
+
 func newQueueTestHandler(t *testing.T) *QueueHandler {
 	t.Helper()
 	database, err := db.OpenMemory()

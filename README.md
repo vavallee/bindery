@@ -294,8 +294,9 @@ GET    /api/v1/author                    - list authors
 POST   /api/v1/author                    - add author (triggers async book fetch)
 GET    /api/v1/book?status=wanted        - filter books by status
 POST   /api/v1/book/{id}/search          - manual indexer search for a book
-GET    /api/v1/queue                     - active downloads with live SABnzbd overlay
+GET    /api/v1/queue                     - active downloads with live downloader overlay
 POST   /api/v1/queue/grab                - submit a search result to download client
+GET    /api/queue                        - *arr-compatible queue for external tools
 GET    /api/v1/history                   - grab/import/failure events
 POST   /api/v1/history/{id}/blocklist    - add a history event's release to the blocklist
 GET    /api/v1/blocklist                 - blocked releases

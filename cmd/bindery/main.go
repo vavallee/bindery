@@ -378,6 +378,14 @@ func main() {
 		proxyCIDRs:     trustedCIDRs,
 	}
 
+	r.Route("/api", func(r chi.Router) {
+		r.Use(auth.Middleware(authProvider))
+		r.Use(auth.RequireXRequestedWith)
+		r.Use(auth.RequireCSRFToken(authProvider.SessionSecret))
+
+		r.Get("/queue", queueHandler.ListArrCompatible)
+	})
+
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(auth.Middleware(authProvider))
 		r.Use(auth.RequireXRequestedWith)

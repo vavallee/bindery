@@ -217,7 +217,7 @@ func (c *Client) setLabel(ctx context.Context, hash, label string) error {
 
 // GetTorrents returns status for all torrents, keyed by lower-cased hash.
 func (c *Client) GetTorrents(ctx context.Context) (map[string]TorrentStatus, error) {
-	fields := []string{"name", "hash", "progress", "state", "eta", "download_payload_rate"}
+	fields := []string{"name", "hash", "progress", "state", "eta", "download_payload_rate", "total_size", "total_done"}
 	var raw map[string]TorrentStatus
 	if err := c.call(ctx, true, "core.get_torrents_status", []any{map[string]any{}, fields}, &raw); err != nil {
 		return nil, fmt.Errorf("get torrents status: %w", err)

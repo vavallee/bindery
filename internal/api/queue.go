@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/vavallee/bindery/internal/db"
@@ -41,47 +44,68 @@ type QueueItem struct {
 	Speed      string `json:"speed,omitempty"`
 }
 
-func (h *QueueHandler) List(w http.ResponseWriter, r *http.Request) {
-	downloads, err := h.downloads.List(r.Context())
+type enrichedQueueItem struct {
+	Download   models.Download
+	ClientName string
+	RemoteID   string
+	Live       downloader.LiveStatus
+	HasLive    bool
+	PollFailed bool
+}
+
+type liveStatusResult struct {
+	client        *models.DownloadClient
+	statuses      map[string]downloader.LiveStatus
+	usesTorrentID bool
+	pollFailed    bool
+}
+
+func (h *QueueHandler) enrichedQueueItems(ctx context.Context) ([]enrichedQueueItem, error) {
+	downloads, err := h.downloads.List(ctx)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
+		return nil, err
 	}
 
-	items := make([]QueueItem, len(downloads))
+	items := make([]enrichedQueueItem, len(downloads))
 	for i, d := range downloads {
-		items[i] = QueueItem{Download: d}
-	}
-
-	type liveStatusResult struct {
-		statuses      map[string]downloader.LiveStatus
-		usesTorrentID bool
+		items[i] = enrichedQueueItem{
+			Download: d,
+			RemoteID: storedDownloadID(d),
+		}
 	}
 
 	statusByClientID := make(map[int64]liveStatusResult)
 	for i, item := range items {
-		if item.DownloadClientID == nil {
+		if item.Download.DownloadClientID == nil {
 			continue
 		}
 
-		clientID := *item.DownloadClientID
+		clientID := *item.Download.DownloadClientID
 		result, ok := statusByClientID[clientID]
 		if !ok {
-			client, err := h.clients.GetByID(r.Context(), clientID)
-			if err != nil || client == nil || !client.Enabled {
+			client, err := h.clients.GetByID(ctx, clientID)
+			if err != nil || client == nil {
 				statusByClientID[clientID] = liveStatusResult{}
 				continue
 			}
 
-			statuses, usesTorrentID, err := downloader.GetLiveStatuses(r.Context(), client)
-			if err != nil {
-				statusByClientID[clientID] = liveStatusResult{}
-				continue
+			result.client = client
+			if client.Enabled {
+				statuses, usesTorrentID, err := downloader.GetLiveStatuses(ctx, client)
+				if err != nil {
+					result.pollFailed = true
+				} else {
+					result.statuses = statuses
+					result.usesTorrentID = usesTorrentID
+				}
 			}
-
-			result = liveStatusResult{statuses: statuses, usesTorrentID: usesTorrentID}
 			statusByClientID[clientID] = result
 		}
+
+		if result.client != nil {
+			items[i].ClientName = result.client.Name
+		}
+		items[i].PollFailed = result.pollFailed
 
 		if len(result.statuses) == 0 {
 			continue
@@ -89,25 +113,286 @@ func (h *QueueHandler) List(w http.ResponseWriter, r *http.Request) {
 
 		var remoteID string
 		if result.usesTorrentID {
-			if item.TorrentID == nil {
+			if item.Download.TorrentID == nil {
 				continue
 			}
-			remoteID = *item.TorrentID
+			remoteID = strings.ToLower(*item.Download.TorrentID)
 		} else {
-			if item.SABnzbdNzoID == nil {
+			if item.Download.SABnzbdNzoID == nil {
 				continue
 			}
-			remoteID = *item.SABnzbdNzoID
+			remoteID = *item.Download.SABnzbdNzoID
 		}
 
+		items[i].RemoteID = remoteID
 		if status, ok := result.statuses[remoteID]; ok {
-			items[i].Percentage = status.Percentage
-			items[i].TimeLeft = status.TimeLeft
-			items[i].Speed = status.Speed
+			items[i].Live = status
+			items[i].HasLive = true
+		}
+	}
+
+	return items, nil
+}
+
+func (h *QueueHandler) List(w http.ResponseWriter, r *http.Request) {
+	enriched, err := h.enrichedQueueItems(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	items := make([]QueueItem, len(enriched))
+	for i, item := range enriched {
+		items[i] = QueueItem{Download: item.Download}
+		if item.HasLive {
+			items[i].Percentage = item.Live.Percentage
+			items[i].TimeLeft = item.Live.TimeLeft
+			items[i].Speed = item.Live.Speed
 		}
 	}
 
 	writeJSON(w, http.StatusOK, items)
+}
+
+type arrQueueResponse struct {
+	Page          int              `json:"page,omitempty"`
+	PageSize      int              `json:"pageSize,omitempty"`
+	SortKey       string           `json:"sortKey,omitempty"`
+	SortDirection string           `json:"sortDirection,omitempty"`
+	TotalRecords  int              `json:"totalRecords"`
+	Records       []arrQueueRecord `json:"records"`
+}
+
+type arrQueueRecord struct {
+	ID                    int64  `json:"id"`
+	BookID                int64  `json:"bookId"`
+	Title                 string `json:"title"`
+	Status                string `json:"status"`
+	TrackedDownloadStatus string `json:"trackedDownloadStatus"`
+	Size                  int64  `json:"size"`
+	SizeLeft              int64  `json:"sizeleft"`
+	DownloadClient        string `json:"downloadClient"`
+	DownloadID            string `json:"downloadId"`
+	Protocol              string `json:"protocol"`
+}
+
+// ListArrCompatible exposes a small Sonarr/Radarr-style queue payload for
+// external tools such as Harpoon. The existing /api/v1/queue UI shape remains
+// unchanged.
+func (h *QueueHandler) ListArrCompatible(w http.ResponseWriter, r *http.Request) {
+	enriched, err := h.enrichedQueueItems(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	records := make([]arrQueueRecord, len(enriched))
+	for i, item := range enriched {
+		bookID := int64(0)
+		if item.Download.BookID != nil {
+			bookID = *item.Download.BookID
+		}
+		records[i] = arrQueueRecord{
+			ID:                    item.Download.ID,
+			BookID:                bookID,
+			Title:                 item.Download.Title,
+			Status:                string(item.Download.Status),
+			TrackedDownloadStatus: trackedDownloadStatus(item),
+			Size:                  queueItemSize(item),
+			SizeLeft:              queueItemSizeLeft(item),
+			DownloadClient:        item.ClientName,
+			DownloadID:            item.RemoteID,
+			Protocol:              item.Download.Protocol,
+		}
+	}
+
+	opts := parseArrQueueOptions(r)
+	sortArrQueueRecords(records, opts.sortKey, opts.sortDirection)
+	total := len(records)
+	records = paginateArrQueueRecords(records, opts.page, opts.pageSize)
+
+	resp := arrQueueResponse{
+		TotalRecords: total,
+		Records:      records,
+	}
+	if opts.pageSize > 0 {
+		resp.Page = opts.page
+		resp.PageSize = opts.pageSize
+	}
+	if opts.sortKey != "" {
+		resp.SortKey = opts.sortKey
+		resp.SortDirection = opts.sortDirection
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+type arrQueueOptions struct {
+	page          int
+	pageSize      int
+	sortKey       string
+	sortDirection string
+}
+
+func parseArrQueueOptions(r *http.Request) arrQueueOptions {
+	q := r.URL.Query()
+	opts := arrQueueOptions{
+		page:          1,
+		sortKey:       strings.TrimSpace(q.Get("sortKey")),
+		sortDirection: strings.ToLower(strings.TrimSpace(q.Get("sortDirection"))),
+	}
+	if opts.sortDirection != "descending" && opts.sortDirection != "desc" {
+		opts.sortDirection = "ascending"
+	}
+	if page, err := strconv.Atoi(q.Get("page")); err == nil && page > 0 {
+		opts.page = page
+	}
+	if pageSize, err := strconv.Atoi(q.Get("pageSize")); err == nil && pageSize > 0 {
+		opts.pageSize = pageSize
+	}
+	return opts
+}
+
+func sortArrQueueRecords(records []arrQueueRecord, sortKey, sortDirection string) {
+	sortKey = strings.ToLower(sortKey)
+	if sortKey == "" {
+		return
+	}
+	desc := sortDirection == "descending" || sortDirection == "desc"
+	less := func(i, j int) bool {
+		a, b := records[i], records[j]
+		switch sortKey {
+		case "id":
+			return a.ID < b.ID
+		case "title":
+			return strings.ToLower(a.Title) < strings.ToLower(b.Title)
+		case "status":
+			return a.Status < b.Status
+		case "size":
+			return a.Size < b.Size
+		case "sizeleft":
+			return a.SizeLeft < b.SizeLeft
+		case "downloadclient":
+			return strings.ToLower(a.DownloadClient) < strings.ToLower(b.DownloadClient)
+		case "protocol":
+			return a.Protocol < b.Protocol
+		default:
+			return false
+		}
+	}
+	sort.SliceStable(records, func(i, j int) bool {
+		if desc {
+			return less(j, i)
+		}
+		return less(i, j)
+	})
+}
+
+func paginateArrQueueRecords(records []arrQueueRecord, page, pageSize int) []arrQueueRecord {
+	if pageSize <= 0 {
+		return records
+	}
+	if page <= 0 {
+		page = 1
+	}
+	if len(records) == 0 {
+		return []arrQueueRecord{}
+	}
+	if page > 1 && page-1 > (len(records)-1)/pageSize {
+		return []arrQueueRecord{}
+	}
+	start := (page - 1) * pageSize
+	end := len(records)
+	if pageSize < len(records)-start {
+		end = start + pageSize
+	}
+	return records[start:end]
+}
+
+func storedDownloadID(d models.Download) string {
+	if d.TorrentID != nil && *d.TorrentID != "" {
+		return *d.TorrentID
+	}
+	if d.SABnzbdNzoID != nil && *d.SABnzbdNzoID != "" {
+		return *d.SABnzbdNzoID
+	}
+	return ""
+}
+
+func trackedDownloadStatus(item enrichedQueueItem) string {
+	if item.Download.ErrorMessage != "" || liveStatusIsError(item.Live.Status) {
+		return "error"
+	}
+	switch item.Download.Status {
+	case models.StateFailed, models.StateImportFailed, models.StateImportBlocked:
+		return "error"
+	}
+	if item.PollFailed {
+		return "warning"
+	}
+	return "ok"
+}
+
+func liveStatusIsError(status string) bool {
+	status = strings.ToLower(status)
+	return strings.Contains(status, "error") || strings.Contains(status, "fail")
+}
+
+func queueItemSize(item enrichedQueueItem) int64 {
+	if item.HasLive && item.Live.Size > 0 {
+		return item.Live.Size
+	}
+	return item.Download.Size
+}
+
+func queueItemSizeLeft(item enrichedQueueItem) int64 {
+	if item.HasLive {
+		if item.Live.SizeLeft > 0 {
+			return item.Live.SizeLeft
+		}
+		if item.Live.Size > 0 {
+			return 0
+		}
+		if left, ok := sizeLeftFromPercentage(item.Download.Size, item.Live.Percentage); ok {
+			return left
+		}
+	}
+
+	switch item.Download.Status {
+	case models.StateCompleted, models.StateImportPending, models.StateImporting,
+		models.StateImported, models.StateFailed, models.StateImportFailed, models.StateImportBlocked:
+		return 0
+	default:
+		return item.Download.Size
+	}
+}
+
+func sizeLeftFromPercentage(size int64, percentage string) (int64, bool) {
+	if size <= 0 {
+		return 0, false
+	}
+	percentage = strings.TrimSpace(strings.TrimSuffix(percentage, "%"))
+	if percentage == "" {
+		return 0, false
+	}
+	pct, err := strconv.ParseFloat(percentage, 64)
+	if err != nil {
+		return 0, false
+	}
+	if pct <= 0 {
+		return size, true
+	}
+	if pct >= 100 {
+		return 0, true
+	}
+	left := int64(math.Round(float64(size) * (100 - pct) / 100))
+	if left < 0 {
+		return 0, true
+	}
+	if left > size {
+		return size, true
+	}
+	return left, true
 }
 
 // grabRequest is the payload for grab operations (HTTP handler and pending force-grab).
