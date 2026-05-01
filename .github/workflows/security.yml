@@ -50,7 +50,7 @@ jobs:
           cache: true
 
       - name: gosec (SARIF)
-        uses: securego/gosec@64b97151cd7b978abdf8d2f1159a4e9096a12c2b # master
+        uses: securego/gosec@5f4eec95fa28ce5dc6cf555de8c242cb57545f01 # master
         with:
           # G402 (TLS/cookie insecure) excluded: cookie Secure flag is dynamic (auto-detected
           # from r.TLS and X-Forwarded-Proto, overridable via BINDERY_COOKIE_SECURE) and gosec
