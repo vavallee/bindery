@@ -577,10 +577,14 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// Audiobook path: place the entire download directory as a unit so
 	// multi-part m4b/mp3 files, cover art, and cue sheets stay together.
 	if detectedFormat == models.MediaTypeAudiobook {
+		// audiobookRoot always starts from BINDERY_AUDIOBOOK_DIR (set at
+		// startup). effectiveLibraryDir is format-agnostic — it resolves the
+		// per-author ebook root folder — so applying it here would send
+		// audiobooks into the ebook root whenever the author has any custom
+		// root folder assigned, silently ignoring BINDERY_AUDIOBOOK_DIR
+		// (#421). Until a per-author audiobook root folder field exists we
+		// leave audiobookRoot as-is.
 		audiobookRoot := s.audiobookDir
-		if effLib := s.effectiveLibraryDir(ctx, author); effLib != s.libraryDir {
-			audiobookRoot = effLib
-		}
 		seriesTitle, seriesNum := s.primarySeriesFor(ctx, book)
 		audiobookDest, destErr := s.renamer.AudiobookDestDir(audiobookRoot, author, book, seriesTitle, seriesNum)
 		if destErr != nil {
