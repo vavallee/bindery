@@ -2875,11 +2875,11 @@ function SecuritySection() {
   const [savingMode, setSavingMode] = useState(false)
   const [copied, setCopied] = useState(false)
 
-  useEffect(() => { loadCfg() }, [])
-
   const loadCfg = () => {
     api.authConfig().then(setCfg).catch(console.error)
   }
+
+  useEffect(() => { loadCfg() }, [])
 
   const regenerate = async () => {
     if (!confirm('Regenerate the API key? Existing integrations using the old key will stop working.')) return

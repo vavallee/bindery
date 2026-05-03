@@ -18,7 +18,13 @@ export default tseslint.config(
       'react-refresh': reactRefresh,
     },
     rules: {
-      ...reactHooks.configs.recommended.rules,
+      // Explicitly list the two classic hooks rules that were in recommended
+      // before eslint-plugin-react-hooks 7.1 added React Compiler rules. The
+      // new compiler rules (set-state-in-effect, immutability, purity, etc.)
+      // require the React Compiler to be configured and are not applicable to
+      // this project.
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
     },
