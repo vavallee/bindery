@@ -92,7 +92,7 @@ func (h *QueueHandler) List(w http.ResponseWriter, r *http.Request) {
 			if item.TorrentID == nil {
 				continue
 			}
-			remoteID = *item.TorrentID
+			remoteID = strings.ToLower(*item.TorrentID)
 		} else {
 			if item.SABnzbdNzoID == nil {
 				continue
@@ -228,10 +228,11 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 
 	if remoteID := sendRes.RemoteID; remoteID != "" {
 		if sendRes.UsesTorrentID {
-			if err := h.downloads.SetTorrentID(ctx, dl.ID, remoteID); err != nil {
+			normalised := strings.ToLower(remoteID)
+			if err := h.downloads.SetTorrentID(ctx, dl.ID, normalised); err != nil {
 				slog.Warn("failed to set torrent ID", "download_id", dl.ID, "error", err)
 			}
-			dl.TorrentID = &remoteID
+			dl.TorrentID = &normalised
 		} else {
 			if err := h.downloads.SetNzoID(ctx, dl.ID, remoteID); err != nil {
 				slog.Warn("failed to set NZO ID", "download_id", dl.ID, "error", err)

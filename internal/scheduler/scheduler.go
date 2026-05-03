@@ -423,7 +423,8 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	}
 	if sendRes.RemoteID != "" {
 		if sendRes.UsesTorrentID {
-			if err := s.downloads.SetTorrentID(ctx, dl.ID, sendRes.RemoteID); err != nil {
+			normalised := strings.ToLower(sendRes.RemoteID)
+			if err := s.downloads.SetTorrentID(ctx, dl.ID, normalised); err != nil {
 				slog.Warn("failed to set torrent ID", "download_id", dl.ID, "error", err)
 			}
 		} else {

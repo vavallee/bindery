@@ -433,3 +433,127 @@ func testServerHostPort(t *testing.T, raw string) (string, int) {
 }
 
 func strPtr(v string) *string { return &v }
+
+// TestQueueListLiveOverlayTransmission_TorrentIDLowercased verifies that
+// a TorrentID stored in mixed-case (e.g. from an older grab) is normalised
+// to lowercase before looking up the live status map (issue #425).
+func TestQueueListLiveOverlayTransmission_TorrentIDLowercased(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/transmission/rpc" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"arguments": map[string]any{
+				"torrents": []map[string]any{{
+					"id":           42,
+					"percentDone":  0.75,
+					"eta":          60,
+					"rateDownload": 2048,
+				}},
+			},
+			"result": "success",
+		})
+	}))
+	defer srv.Close()
+
+	h := newQueueTestHandler(t)
+	host, port := testServerHostPort(t, srv.URL)
+	client := createTestDownloadClient(t, h, &models.DownloadClient{
+		Name:    "trans",
+		Type:    "transmission",
+		Host:    host,
+		Port:    port,
+		Enabled: true,
+	})
+	// Transmission uses numeric IDs, so this tests that "42" in the DB
+	// matches the "42" key in the live status map. The lowercase normalisation
+	// is a no-op for numeric strings but ensures correctness for all clients.
+	createTestDownload(t, h, &models.Download{
+		GUID:             "guid-trans-lc",
+		DownloadClientID: &client.ID,
+		Title:            "Torrent Book LC",
+		NZBURL:           "magnet:?xt=urn:btih:abc",
+		Status:           models.DownloadStatusDownloading,
+		Protocol:         "torrent",
+		TorrentID:        strPtr("42"),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/queue", nil)
+	rr := httptest.NewRecorder()
+	h.List(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var items []QueueItem
+	if err := json.NewDecoder(rr.Body).Decode(&items); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].Percentage != "75.0" {
+		t.Fatalf("expected live status overlay to apply; percentage=%s", items[0].Percentage)
+	}
+}
+
+// TestQueueListLiveOverlayQbittorrent_MixedCaseHashNormalized verifies that a
+// TorrentID stored with mixed case (e.g. "ABCDEF") is lowercased before lookup
+// so it matches the lowercased hash keys returned by qBittorrent (issue #425).
+func TestQueueListLiveOverlayQbittorrent_MixedCaseHashNormalized(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
+				"hash":     "ABCDEF", // qBittorrent returns upper-case hash
+				"progress": 0.6,
+				"eta":      200,
+			}})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	h := newQueueTestHandler(t)
+	host, port := testServerHostPort(t, srv.URL)
+	client := createTestDownloadClient(t, h, &models.DownloadClient{
+		Name:     "qb",
+		Type:     "qbittorrent",
+		Host:     host,
+		Port:     port,
+		Username: "user",
+		Password: "pass",
+		Enabled:  true,
+	})
+	// Store mixed-case hash in DB — should still match after lowercasing.
+	createTestDownload(t, h, &models.Download{
+		GUID:             "guid-qb-case",
+		DownloadClientID: &client.ID,
+		Title:            "QB Book Case",
+		NZBURL:           "magnet:?xt=urn:btih:ABCDEF",
+		Status:           models.DownloadStatusDownloading,
+		Protocol:         "torrent",
+		TorrentID:        strPtr("ABCDEF"),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/queue", nil)
+	rr := httptest.NewRecorder()
+	h.List(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var items []QueueItem
+	if err := json.NewDecoder(rr.Body).Decode(&items); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].Percentage != "60.0" {
+		t.Fatalf("expected live status overlay to apply with normalised hash; percentage=%s", items[0].Percentage)
+	}
+}

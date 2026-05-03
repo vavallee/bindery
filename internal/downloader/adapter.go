@@ -20,6 +20,25 @@ type LiveStatus struct {
 	Percentage string
 	TimeLeft   string
 	Speed      string
+	// Status is an optional client-specific status string. For Transmission,
+	// this is the integer torrent status code serialised via strconv.Itoa
+	// (e.g. "16" = error, "32" = isolated-error).
+	Status string
+}
+
+// liveStatusIsError reports whether ls represents an error state.
+// It handles both human-readable strings (e.g. qBittorrent "error") and
+// Transmission's integer status codes (16 = error, 32 = isolated-error).
+func liveStatusIsError(ls LiveStatus) bool {
+	s := strings.ToLower(ls.Status)
+	if strings.Contains(s, "error") || strings.Contains(s, "fail") {
+		return true
+	}
+	// Transmission encodes status as an integer string; check known error codes.
+	if n, err := strconv.Atoi(ls.Status); err == nil {
+		return n == 16 || n == 32
+	}
+	return false
 }
 
 type SendResult struct {
@@ -302,6 +321,7 @@ func getTorrentLiveStatuses(ctx context.Context, client *models.DownloadClient) 
 				Percentage: fmt.Sprintf("%.1f", t.PercentDone*100),
 				TimeLeft:   etaToTimeLeft(t.ETA),
 				Speed:      bytesPerSecondToString(t.DownloadRate),
+				Status:     strconv.Itoa(t.Status),
 			}
 		}
 		return out, nil

@@ -519,3 +519,70 @@ func TestBytesPerSecondToString_Bytes(t *testing.T) {
 		t.Errorf("expected \"512 B/s\", got %q", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// liveStatusIsError — issue #426
+// ---------------------------------------------------------------------------
+
+func TestLiveStatusIsError_TransmissionIntegerCodes(t *testing.T) {
+	tests := []struct {
+		status string
+		want   bool
+	}{
+		// Transmission error codes
+		{"16", true},  // TR_STATUS_CHECK_WAIT (error)
+		{"32", true},  // TR_STATUS_ISOLATED_ERROR
+		{"0", false},  // stopped but not an error code
+		{"3", false},  // seeding
+		{"2", false},  // downloading
+		// String-based statuses (qBittorrent, Deluge)
+		{"error", true},
+		{"Error", true},
+		{"stalledDL", false},
+		{"downloading", false},
+		{"failed", true},
+		{"Failed", true},
+		{"", false},
+	}
+	for _, tc := range tests {
+		ls := LiveStatus{Status: tc.status}
+		if got := liveStatusIsError(ls); got != tc.want {
+			t.Errorf("liveStatusIsError(%q) = %v, want %v", tc.status, got, tc.want)
+		}
+	}
+}
+
+func TestGetLiveStatusesTransmission_PopulatesStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"arguments": map[string]any{
+				"torrents": []map[string]any{
+					{
+						"id":          10,
+						"percentDone": 0.5,
+						"status":      16, // Transmission error code
+					},
+				},
+			},
+			"result": "success",
+		})
+	}))
+	defer srv.Close()
+
+	host, port := serverHostPort(t, srv.URL)
+	client := &models.DownloadClient{Type: "transmission", Host: host, Port: port}
+	statusByID, _, err := GetLiveStatuses(context.Background(), client)
+	if err != nil {
+		t.Fatalf("GetLiveStatuses: %v", err)
+	}
+	ls, ok := statusByID["10"]
+	if !ok {
+		t.Fatalf("expected torrent id 10 in status map")
+	}
+	if ls.Status != "16" {
+		t.Errorf("expected Status=%q, got %q", "16", ls.Status)
+	}
+	if !liveStatusIsError(ls) {
+		t.Error("expected liveStatusIsError to return true for Transmission status 16")
+	}
+}
