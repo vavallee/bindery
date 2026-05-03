@@ -80,6 +80,14 @@ func main() {
 		"dataDir", cfg.DataDir,
 	)
 
+	// Validate config before anything else touches the filesystem or network.
+	// Warnings are logged inline; a non-nil return means a clearly broken
+	// config (e.g. an unparseable OIDC redirect URL) and is treated as fatal.
+	if err := cfg.Validate(slog.Default()); err != nil {
+		slog.Error("configuration error — refusing to start", "error", err)
+		os.Exit(1)
+	}
+
 	// Fail fast if BINDERY_PUID/PGID is set but the container isn't running
 	// as that UID/GID. See cmd/bindery/uidcheck.go for the full rationale.
 	checkPUIDPGID()
