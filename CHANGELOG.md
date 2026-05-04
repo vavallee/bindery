@@ -6,6 +6,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Download client edge-case coverage** (#431) — Added hermetic matrix tests for RemoteID normalization, live status error mapping, poll failures, unreachable clients, context deadlines, and qBittorrent unfiltered hash polling. Transmission queue overlays now surface non-empty `errorString` values as error statuses.
+
 ## [v1.3.0] — 2026-05-05
 
 ### Added
