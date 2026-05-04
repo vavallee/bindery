@@ -190,6 +190,8 @@ func filterUsenetJunkDebug(results []newznab.SearchResult) ([]newznab.SearchResu
 // filterRelevantDebug is filterRelevant instrumented to record each drop with
 // the keyword set that failed to match.
 func filterRelevantDebug(results []newznab.SearchResult, title, author string, aliases []string) ([]newznab.SearchResult, []FilterDebug) {
+	// Strip possessive author prefix before keyword extraction (mirrors filterRelevant).
+	title = stripPossessivePrefix(title, author)
 	fullKws := sigWords(title)
 	primaryKws := sigWords(primaryTitle(title))
 	authorKws := sigWords(author)

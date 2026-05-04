@@ -199,6 +199,41 @@ func primaryTitle(title string) string {
 	return title
 }
 
+// stripPossessivePrefix removes a leading "Author's " possessive from a book
+// title when the author's name (or a portion of it) forms the possessive
+// opener. For example, "Tom Clancy's Rainbow Six" with author "Tom Clancy"
+// returns "Rainbow Six". This prevents "clancys" from appearing as a keyword
+// and failing to match releases named "Tom Clancy - Rainbow Six".
+//
+// The comparison is case-insensitive. Both ASCII apostrophes (') and Unicode
+// right-single-quotation-marks (’) are recognised as the possessive
+// marker. The function tries the full author name first, then each leading
+// prefix (first name, first+second name, etc.) in descending length order,
+// accepting the longest match. If no possessive prefix is found the original
+// title is returned unchanged.
+func stripPossessivePrefix(title, author string) string {
+	if title == "" || author == "" {
+		return title
+	}
+	// Normalise apostrophe variants so we only need to test one form.
+	normTitle := strings.ReplaceAll(title, "’", "'")
+	lowerTitle := strings.ToLower(normTitle)
+
+	authorFields := strings.Fields(author)
+	// Try longest prefix down to a single word (must be ≥ 2 chars to avoid
+	// matching short words that happen to be possessive).
+	for n := len(authorFields); n >= 1; n-- {
+		prefix := strings.ToLower(strings.Join(authorFields[:n], " ")) + "'s "
+		if strings.HasPrefix(lowerTitle, prefix) {
+			stripped := strings.TrimSpace(title[len(prefix):])
+			if stripped != "" {
+				return stripped
+			}
+		}
+	}
+	return title
+}
+
 // titleMatchesResult returns true if the normalized result contains the
 // significant words of the title either as a contiguous phrase or (for
 // multi-word titles as a fallback) with every significant word appearing at
@@ -254,6 +289,11 @@ func filterRelevant(results []newznab.SearchResult, title, author string, aliase
 	// Strip edition qualifiers ("(German Edition)" etc.) and normalize
 	// smart quotes before tokenizing, so they don't become spurious keywords.
 	title = newznab.NormalizeQueryTitle(title)
+	// Strip possessive author prefix before keyword extraction.
+	// "Tom Clancy's Rainbow Six" → "Rainbow Six" when author is "Tom Clancy",
+	// preventing "clancys" from becoming a keyword that fails to match releases
+	// like "Tom Clancy - Rainbow Six". See issue #409.
+	title = stripPossessivePrefix(title, author)
 	fullKws := sigWords(title)
 	primaryKws := sigWords(primaryTitle(title))
 	authorKws := sigWords(author)

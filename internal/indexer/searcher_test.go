@@ -664,6 +664,73 @@ func TestFilterRelevantGermanUmlauts(t *testing.T) {
 // latin-script alias is provided. The alias surname is needed for single-keyword
 // titles (where filterRelevant requires the surname alongside the keyword to
 // prevent false positives).
+// TestFilterRelevantPossessivePrefix is a regression test for issue #409.
+// Book titles with a possessive author prefix like "Tom Clancy's Rainbow Six"
+// must match releases named "Tom Clancy - Rainbow Six". Before the fix,
+// sigWords turned "Tom Clancy's" into the keyword "clancys", which never
+// matched the apostrophe-free "clancy" token in the release name, causing
+// the entire result set to be dropped.
+func TestFilterRelevantPossessivePrefix(t *testing.T) {
+	cases := []struct {
+		bookTitle string
+		author    string
+		releases  []string
+		wantPass  []string
+		wantDrop  []string
+	}{
+		{
+			bookTitle: "Tom Clancy's Rainbow Six",
+			author:    "Tom Clancy",
+			releases: []string{
+				"Tom.Clancy.-.Rainbow.Six.epub",
+				"Tom.Clancy.Rainbow.Six.RETAIL.EPUB",
+				"Rainbow.Six.Clancy.epub",
+				"Tom.Clancy.-.The.Hunt.for.Red.October.epub",
+			},
+			wantPass: []string{
+				"Tom.Clancy.-.Rainbow.Six.epub",
+				"Tom.Clancy.Rainbow.Six.RETAIL.EPUB",
+				"Rainbow.Six.Clancy.epub",
+			},
+			wantDrop: []string{
+				"Tom.Clancy.-.The.Hunt.for.Red.October.epub",
+			},
+		},
+		{
+			bookTitle: "James Patterson's Along Came a Spider",
+			author:    "James Patterson",
+			releases: []string{
+				"James.Patterson.-.Along.Came.a.Spider.epub",
+				"Along.Came.a.Spider.Patterson.epub",
+				"James.Patterson.Kiss.the.Girls.epub",
+			},
+			wantPass: []string{
+				"James.Patterson.-.Along.Came.a.Spider.epub",
+				"Along.Came.a.Spider.Patterson.epub",
+			},
+			wantDrop: []string{
+				"James.Patterson.Kiss.the.Girls.epub",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		got := filterRelevant(toResults(tc.releases...), tc.bookTitle, tc.author, nil)
+		for _, title := range tc.wantPass {
+			if !contains(got, title) {
+				t.Errorf("filterRelevant(%q, %q): expected %q to pass, got %v",
+					tc.bookTitle, tc.author, title, resultTitles(got))
+			}
+		}
+		for _, title := range tc.wantDrop {
+			if contains(got, title) {
+				t.Errorf("filterRelevant(%q, %q): expected %q to be dropped, got %v",
+					tc.bookTitle, tc.author, title, resultTitles(got))
+			}
+		}
+	}
+}
+
 func TestFilterRelevantNonLatinAuthor(t *testing.T) {
 	// "Silence" by 遠藤周作 (Shusaku Endo): 1 significant keyword → surname required.
 	releases := []string{
