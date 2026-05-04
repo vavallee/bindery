@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -59,6 +61,11 @@ type MigrateHandler struct {
 	// onNewAuthor fires in a goroutine for each newly-imported author so
 	// the book-fetch-on-add behaviour from the AddAuthor flow is preserved.
 	onNewAuthor func(author *models.Author)
+
+	// readarrImporter manages async Readarr DB imports so the HTTP handler
+	// can return 202 immediately instead of blocking for minutes while
+	// OpenLibrary metadata is resolved for each author.
+	readarrImporter *migrate.ReadarrImporter
 }
 
 func NewMigrateHandler(
@@ -74,6 +81,9 @@ func NewMigrateHandler(
 		authors: authors, indexers: indexers, clients: clients,
 		blocklist: blocklist, books: books, meta: meta,
 		onNewAuthor: onNewAuthor,
+		readarrImporter: migrate.NewReadarrImporter(
+			authors, indexers, clients, blocklist, meta, onNewAuthor,
+		),
 	}
 }
 
@@ -97,11 +107,18 @@ func (h *MigrateHandler) ImportCSV(w http.ResponseWriter, r *http.Request) {
 }
 
 // ImportReadarr accepts a multipart form with a "file" field containing
-// readarr.db (SQLite). It's saved to a temp file (sqlite driver wants a
-// path), imported, then deleted.
+// readarr.db (SQLite). The file is spooled to a temp path and the import
+// is kicked off asynchronously so the HTTP connection is not held open for
+// the duration — large libraries with many authors require one or more
+// OpenLibrary round-trips per author and can easily exceed server write
+// timeouts, producing a silent "NetworkError" in the browser.
+//
+// Returns 202 Accepted with an initial progress snapshot. The UI must poll
+// GET /api/v1/migrate/readarr/status to track completion.
 func (h *MigrateHandler) ImportReadarr(w http.ResponseWriter, r *http.Request) {
 	file, err := acceptUpload(w, r, 1<<30) // 1 GB cap — readarr.db is usually < 100 MB
 	if err != nil {
+		slog.Error("readarr import: upload rejected", "error", err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -109,29 +126,50 @@ func (h *MigrateHandler) ImportReadarr(w http.ResponseWriter, r *http.Request) {
 
 	tmp, err := os.CreateTemp(uploadTempDir(), "readarr-*.db")
 	if err != nil {
+		slog.Error("readarr import: create temp file failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create temp: " + err.Error()})
 		return
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
+
 	if _, err := io.Copy(tmp, file); err != nil {
 		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		slog.Error("readarr import: spool upload failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write temp: " + err.Error()})
 		return
 	}
 	if err := tmp.Close(); err != nil {
-		slog.Error("failed to close temp file", "path", tmpPath, "error", err)
-	}
-
-	result, err := migrate.ImportReadarr(
-		r.Context(), tmpPath,
-		h.authors, h.indexers, h.clients, h.blocklist, h.meta, h.onNewAuthor,
-	)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		slog.Error("readarr import: close temp file failed", "path", tmpPath, "error", err)
+		_ = os.Remove(tmpPath)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "close temp: " + err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+
+	// context.WithoutCancel ensures the import goroutine is not cancelled
+	// when the HTTP response is sent — same pattern as calibre/import.
+	err = h.readarrImporter.Start(context.WithoutCancel(r.Context()), tmpPath)
+	switch {
+	case errors.Is(err, migrate.ErrAlreadyRunning):
+		// Clean up the spool file we just wrote since the import won't run.
+		_ = os.Remove(tmpPath)
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	case err != nil:
+		_ = os.Remove(tmpPath)
+		slog.Error("readarr import: failed to start", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, h.readarrImporter.Progress())
+}
+
+// ImportReadarrStatus returns the current progress of an in-flight or
+// recently completed Readarr import. Cheap stateless poll — callers may
+// hit this as frequently as they like.
+func (h *MigrateHandler) ImportReadarrStatus(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, h.readarrImporter.Progress())
 }
 
 // acceptUpload reads a multipart "file" field with a size cap, returning

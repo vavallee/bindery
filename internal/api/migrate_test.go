@@ -10,9 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata"
+	"github.com/vavallee/bindery/internal/migrate"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -136,16 +138,115 @@ func TestUploadTempDir_CreatesDirNextToDB(t *testing.T) {
 	}
 }
 
+// TestMigrate_ImportReadarr_InvalidDB verifies that uploading garbage bytes
+// (not a valid SQLite file) returns 202 Accepted immediately (the import is
+// async) and that polling the status endpoint eventually shows an error —
+// rather than the handler silently dropping the connection and causing a
+// "NetworkError when attempting to fetch resource" in the browser (issue #398).
 func TestMigrate_ImportReadarr_InvalidDB(t *testing.T) {
 	h := migrateFixture(t, &stubProvider{})
 
-	// Valid multipart with garbage bytes — the SQLite driver should reject it.
+	// Upload garbage bytes — the SQLite driver should reject them once the
+	// goroutine opens the file, but the HTTP handler must return 202 first.
 	body, ct := multipartBody(t, "file", "readarr.db", "not a real sqlite file")
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/migrate/readarr", body)
 	req.Header.Set("Content-Type", ct)
 	rec := httptest.NewRecorder()
 	h.ImportReadarr(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("bad sqlite: expected 400, got %d", rec.Code)
+
+	// The handler must respond 202 immediately — never a network-level close.
+	if rec.Code != http.StatusAccepted {
+		t.Errorf("invalid db: expected 202 Accepted (async), got %d body=%s",
+			rec.Code, rec.Body.String())
+	}
+
+	// Body must decode as ReadarrProgress with Running=true.
+	var progress migrate.ReadarrProgress
+	if err := json.NewDecoder(rec.Body).Decode(&progress); err != nil {
+		t.Fatalf("decode progress: %v", err)
+	}
+	if !progress.Running {
+		t.Errorf("expected progress.Running=true immediately after start, got %+v", progress)
+	}
+	if progress.StartedAt.IsZero() {
+		t.Errorf("expected StartedAt to be set, got zero")
+	}
+
+	// Poll status until the goroutine finishes (invalid SQLite → fast error).
+	deadline := time.Now().Add(5 * time.Second)
+	var finalProgress migrate.ReadarrProgress
+	for time.Now().Before(deadline) {
+		srec := httptest.NewRecorder()
+		h.ImportReadarrStatus(srec, httptest.NewRequest(http.MethodGet, "/api/v1/migrate/readarr/status", nil))
+		if srec.Code != http.StatusOK {
+			t.Fatalf("status: expected 200, got %d", srec.Code)
+		}
+		var p migrate.ReadarrProgress
+		if err := json.NewDecoder(srec.Body).Decode(&p); err != nil {
+			t.Fatalf("decode status: %v", err)
+		}
+		if !p.Running {
+			finalProgress = p
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// The import must have finished with an error (bad SQLite).
+	if finalProgress.Running {
+		t.Fatal("import did not finish within 5 seconds")
+	}
+	if finalProgress.Error == "" {
+		t.Errorf("expected an error for invalid SQLite, got empty error field: %+v", finalProgress)
+	}
+	if finalProgress.FinishedAt == nil {
+		t.Error("expected FinishedAt to be set after completion")
+	}
+}
+
+// TestMigrate_ImportReadarr_ConflictOnDoubleSubmit checks that a second
+// concurrent upload is rejected with 409 Conflict when an import is already
+// running, and that the temp file is cleaned up.
+func TestMigrate_ImportReadarr_ConflictOnDoubleSubmit(t *testing.T) {
+	h := migrateFixture(t, &stubProvider{})
+
+	sendRequest := func() *httptest.ResponseRecorder {
+		body, ct := multipartBody(t, "file", "readarr.db", "not a real sqlite file")
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/migrate/readarr", body)
+		req.Header.Set("Content-Type", ct)
+		rec := httptest.NewRecorder()
+		h.ImportReadarr(rec, req)
+		return rec
+	}
+
+	// First request must be accepted.
+	first := sendRequest()
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("first request: expected 202, got %d", first.Code)
+	}
+
+	// Immediately send a second — should hit the already-running guard.
+	second := sendRequest()
+	if second.Code != http.StatusConflict {
+		t.Errorf("second request: expected 409, got %d body=%s", second.Code, second.Body.String())
+	}
+}
+
+// TestMigrate_ImportReadarrStatus_BeforeFirstRun checks the status endpoint
+// before any import has been kicked off returns 200 with Running=false.
+func TestMigrate_ImportReadarrStatus_BeforeFirstRun(t *testing.T) {
+	h := migrateFixture(t, &stubProvider{})
+
+	rec := httptest.NewRecorder()
+	h.ImportReadarrStatus(rec, httptest.NewRequest(http.MethodGet, "/api/v1/migrate/readarr/status", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var p migrate.ReadarrProgress
+	if err := json.NewDecoder(rec.Body).Decode(&p); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if p.Running {
+		t.Errorf("expected Running=false before any import, got %+v", p)
 	}
 }

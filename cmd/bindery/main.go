@@ -641,8 +641,11 @@ func main() {
 		r.Get("/calibre/sync/status", calibreSyncHandler.Status)
 
 		// Migration imports (CSV of author names, or Readarr SQLite DB).
+		// The Readarr import is async — POST returns 202 immediately and the
+		// UI polls GET /migrate/readarr/status to track completion.
 		r.Post("/migrate/csv", migrateHandler.ImportCSV)
 		r.Post("/migrate/readarr", migrateHandler.ImportReadarr)
+		r.Get("/migrate/readarr/status", migrateHandler.ImportReadarrStatus)
 
 		// Image proxy — caches external cover images locally so the browser
 		// never leaks the user's IP to Goodreads / OpenLibrary / etc.
