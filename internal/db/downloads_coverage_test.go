@@ -33,8 +33,9 @@ func TestDownloadRepo_TorrentIDRoundTrip(t *testing.T) {
 		t.Errorf("expected nil for unset torrent_id, got %+v", got)
 	}
 
-	// Set and look up.
-	if err := repo.SetTorrentID(ctx, dl.ID, "hash123"); err != nil {
+	// Set and look up. Torrent hashes are normalized to lowercase at the
+	// storage boundary so older mixed-case IDs still compare consistently.
+	if err := repo.SetTorrentID(ctx, dl.ID, "HASH123"); err != nil {
 		t.Fatalf("SetTorrentID: %v", err)
 	}
 	got, err = repo.GetByTorrentID(ctx, "hash123")
@@ -46,6 +47,13 @@ func TestDownloadRepo_TorrentIDRoundTrip(t *testing.T) {
 	}
 	if got.TorrentID == nil || *got.TorrentID != "hash123" {
 		t.Errorf("TorrentID not populated: %v", got.TorrentID)
+	}
+	got, err = repo.GetByTorrentID(ctx, "HASH123")
+	if err != nil {
+		t.Fatalf("GetByTorrentID uppercase: %v", err)
+	}
+	if got == nil || got.ID != dl.ID {
+		t.Errorf("GetByTorrentID uppercase unexpected: %+v", got)
 	}
 }
 

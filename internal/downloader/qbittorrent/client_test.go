@@ -463,6 +463,7 @@ func TestAddTorrent_HashFoundUnderDifferentCategory(t *testing.T) {
 	var setCategoryHash, setCategoryValue string
 	var mu sync.Mutex
 	added := false // becomes true after /torrents/add is called
+	infoQueries := []string{}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -474,6 +475,15 @@ func TestAddTorrent_HashFoundUnderDifferentCategory(t *testing.T) {
 			mu.Unlock()
 			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/info":
+			mu.Lock()
+			infoQueries = append(infoQueries, r.URL.RawQuery)
+			mu.Unlock()
+			if r.URL.Query().Get("category") != "" {
+				// A category-filtered lookup would reproduce the race from #418:
+				// qBittorrent can expose the hash before category metadata lands.
+				_, _ = w.Write([]byte("[]"))
+				return
+			}
 			mu.Lock()
 			isAdded := added
 			mu.Unlock()
@@ -522,6 +532,17 @@ func TestAddTorrent_HashFoundUnderDifferentCategory(t *testing.T) {
 	}
 	if gotSetCatVal != "books" {
 		t.Errorf("setCategory category: want %q, got %q", "books", gotSetCatVal)
+	}
+	mu.Lock()
+	gotInfoQueries := append([]string(nil), infoQueries...)
+	mu.Unlock()
+	if len(gotInfoQueries) == 0 {
+		t.Fatal("expected torrent info to be polled")
+	}
+	for _, rawQuery := range gotInfoQueries {
+		if rawQuery != "" {
+			t.Errorf("torrent info poll should be unfiltered, got query %q", rawQuery)
+		}
 	}
 }
 

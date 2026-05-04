@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -58,6 +59,7 @@ func (r *DownloadRepo) GetByNzoID(ctx context.Context, nzoID string) (*models.Do
 }
 
 func (r *DownloadRepo) GetByTorrentID(ctx context.Context, torrentID string) (*models.Download, error) {
+	torrentID = strings.ToLower(torrentID)
 	dl, err := r.query(ctx, "SELECT "+downloadSelectColumns+" FROM downloads WHERE torrent_id=?", torrentID)
 	if err != nil || len(dl) == 0 {
 		return nil, err
@@ -118,6 +120,7 @@ func (r *DownloadRepo) SetNzoID(ctx context.Context, id int64, nzoID string) err
 }
 
 func (r *DownloadRepo) SetTorrentID(ctx context.Context, id int64, torrentID string) error {
+	torrentID = strings.ToLower(torrentID)
 	_, err := r.db.ExecContext(ctx, "UPDATE downloads SET torrent_id=? WHERE id=?", torrentID, id)
 	return err
 }

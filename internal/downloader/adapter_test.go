@@ -3,11 +3,13 @@ package downloader
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -357,6 +359,81 @@ func TestTestClient_Qbittorrent(t *testing.T) {
 	client := &models.DownloadClient{Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p"}
 	if err := TestClient(context.Background(), client); err != nil {
 		t.Fatalf("TestClient: %v", err)
+	}
+}
+
+func TestTestClient_ConnectionFailureMatrix(t *testing.T) {
+	tests := []struct {
+		name       string
+		clientType string
+	}{
+		{name: "SABnzbd", clientType: "sabnzbd"},
+		{name: "NZBGet", clientType: "nzbget"},
+		{name: "Transmission", clientType: "transmission"},
+		{name: "qBittorrent", clientType: "qbittorrent"},
+		{name: "Deluge", clientType: "deluge"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+			host, port := serverHostPort(t, srv.URL)
+			srv.Close()
+
+			client := &models.DownloadClient{
+				Type:     tc.clientType,
+				Host:     host,
+				Port:     port,
+				APIKey:   "testkey",
+				Username: "user",
+				Password: "pass",
+			}
+			if err := TestClient(context.Background(), client); err == nil {
+				t.Fatal("expected connection failure error, got nil")
+			}
+		})
+	}
+}
+
+func TestTestClient_TimeoutMatrix(t *testing.T) {
+	tests := []struct {
+		name       string
+		clientType string
+	}{
+		{name: "SABnzbd", clientType: "sabnzbd"},
+		{name: "NZBGet", clientType: "nzbget"},
+		{name: "Transmission", clientType: "transmission"},
+		{name: "qBittorrent", clientType: "qbittorrent"},
+		{name: "Deluge", clientType: "deluge"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+				time.Sleep(200 * time.Millisecond)
+			}))
+			defer srv.Close()
+
+			host, port := serverHostPort(t, srv.URL)
+			client := &models.DownloadClient{
+				Type:     tc.clientType,
+				Host:     host,
+				Port:     port,
+				APIKey:   "testkey",
+				Username: "user",
+				Password: "pass",
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+			defer cancel()
+
+			err := TestClient(ctx, client)
+			if err == nil {
+				t.Fatal("expected timeout error, got nil")
+			}
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("expected context deadline exceeded, got %v", err)
+			}
+		})
 	}
 }
 

@@ -314,7 +314,7 @@ func paginateArrQueueRecords(records []arrQueueRecord, page, pageSize int) []arr
 
 func storedDownloadID(d models.Download) string {
 	if d.TorrentID != nil && *d.TorrentID != "" {
-		return *d.TorrentID
+		return strings.ToLower(*d.TorrentID)
 	}
 	if d.SABnzbdNzoID != nil && *d.SABnzbdNzoID != "" {
 		return *d.SABnzbdNzoID
@@ -342,7 +342,13 @@ func trackedDownloadStatus(item enrichedQueueItem) string {
 
 func liveStatusIsError(status string) bool {
 	status = strings.ToLower(status)
-	return strings.Contains(status, "error") || strings.Contains(status, "fail")
+	if strings.Contains(status, "error") || strings.Contains(status, "fail") {
+		return true
+	}
+	if n, err := strconv.Atoi(status); err == nil {
+		return n == 16 || n == 32
+	}
+	return false
 }
 
 func queueItemSize(item enrichedQueueItem) int64 {
