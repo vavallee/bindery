@@ -562,3 +562,171 @@ func TestCreateAuthor_DuplicateConstraint_Returns409(t *testing.T) {
 		t.Error("expected non-empty error field in response body")
 	}
 }
+
+// TestFetchAuthorBooks_DeduplicatesEbookAndAudiobookEditions is the regression
+// test for issue #442. When OpenLibrary returns two Work records for the same
+// title — one with media_type=ebook and one with media_type=audiobook —
+// FetchAuthorBooks must create exactly one book row and upgrade its media_type
+// to "both" rather than creating a second book entry.
+func TestFetchAuthorBooks_DeduplicatesEbookAndAudiobookEditions(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+
+	ctx := context.Background()
+	author := &models.Author{
+		ForeignID: "OL3101279A", Name: "Matt Dinniman", SortName: "Dinniman, Matt",
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate OL returning two Work records for the same title: one ebook Work
+	// and one audiobook Work (different foreign IDs, same normalized title).
+	stub := &stubMetaProvider{
+		works: []models.Book{
+			{
+				ForeignID: "OL1001W", Title: "Dungeon Crawler Carl",
+				SortTitle: "dungeon crawler carl", Language: "eng",
+				MediaType: models.MediaTypeEbook,
+				Status:    models.BookStatusWanted, Genres: []string{},
+				MetadataProvider: "openlibrary",
+			},
+			{
+				ForeignID: "OL1002W", Title: "Dungeon Crawler Carl",
+				SortTitle: "dungeon crawler carl", Language: "eng",
+				MediaType: models.MediaTypeAudiobook,
+				Status:    models.BookStatusWanted, Genres: []string{},
+				MetadataProvider: "openlibrary",
+			},
+		},
+	}
+	agg := metadata.NewAggregator(stub)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, nil, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, "")
+
+	books, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Must produce exactly one book row.
+	if len(books) != 1 {
+		t.Fatalf("expected 1 book after dedup, got %d: %v", len(books), func() []string {
+			var titles []string
+			for _, b := range books {
+				titles = append(titles, b.Title+" ("+b.MediaType+")")
+			}
+			return titles
+		}())
+	}
+	// The single row must be upgraded to dual-format.
+	if books[0].MediaType != models.MediaTypeBoth {
+		t.Errorf("expected media_type=%q after ebook+audiobook merge, got %q",
+			models.MediaTypeBoth, books[0].MediaType)
+	}
+}
+
+// TestFetchAuthorBooks_DeduplicatesEbookAndAudiobookEditions_Resync checks
+// that a second sync (re-sync) of the same author does not create duplicate
+// entries when the DB already contains a dual-format row created by the first
+// sync. This is the re-sync arm of issue #442.
+func TestFetchAuthorBooks_DeduplicatesEbookAndAudiobookEditions_Resync(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+
+	ctx := context.Background()
+	author := &models.Author{
+		ForeignID: "OL3101279A", Name: "Matt Dinniman", SortName: "Dinniman, Matt",
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pre-populate the DB with the ebook work (simulates a prior sync that only
+	// saw the ebook Work from OL before the audiobook Work existed).
+	existing := &models.Book{
+		ForeignID: "OL1001W", AuthorID: author.ID,
+		Title: "Dungeon Crawler Carl", SortTitle: "dungeon crawler carl",
+		Language: "eng", MediaType: models.MediaTypeEbook,
+		Status: models.BookStatusWanted, Genres: []string{},
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := bookRepo.Create(ctx, existing); err != nil {
+		t.Fatal(err)
+	}
+
+	// On re-sync, OL now returns both Work records (ebook and audiobook).
+	stub := &stubMetaProvider{
+		works: []models.Book{
+			{
+				ForeignID: "OL1001W", Title: "Dungeon Crawler Carl",
+				SortTitle: "dungeon crawler carl", Language: "eng",
+				MediaType: models.MediaTypeEbook,
+				Status:    models.BookStatusWanted, Genres: []string{},
+				MetadataProvider: "openlibrary",
+			},
+			{
+				ForeignID: "OL1002W", Title: "Dungeon Crawler Carl",
+				SortTitle: "dungeon crawler carl", Language: "eng",
+				MediaType: models.MediaTypeAudiobook,
+				Status:    models.BookStatusWanted, Genres: []string{},
+				MetadataProvider: "openlibrary",
+			},
+		},
+	}
+	agg := metadata.NewAggregator(stub)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, nil, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, "")
+
+	books, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("re-sync: expected 1 book, got %d", len(books))
+	}
+	if books[0].MediaType != models.MediaTypeBoth {
+		t.Errorf("re-sync: expected media_type=%q after audiobook Work discovered, got %q",
+			models.MediaTypeBoth, books[0].MediaType)
+	}
+}
+
+// TestCanUpgradeToBoth validates the helper that decides whether two
+// complementary media types should be merged into a dual-format row.
+func TestCanUpgradeToBoth(t *testing.T) {
+	cases := []struct {
+		existing, incoming string
+		want               bool
+	}{
+		{models.MediaTypeEbook, models.MediaTypeAudiobook, true},
+		{models.MediaTypeAudiobook, models.MediaTypeEbook, true},
+		{models.MediaTypeEbook, models.MediaTypeEbook, false},
+		{models.MediaTypeAudiobook, models.MediaTypeAudiobook, false},
+		{models.MediaTypeBoth, models.MediaTypeEbook, false},
+		{models.MediaTypeBoth, models.MediaTypeAudiobook, false},
+		{models.MediaTypeEbook, models.MediaTypeBoth, false},
+		{"", models.MediaTypeEbook, false},
+	}
+	for _, c := range cases {
+		got := canUpgradeToBoth(c.existing, c.incoming)
+		if got != c.want {
+			t.Errorf("canUpgradeToBoth(%q, %q) = %v, want %v",
+				c.existing, c.incoming, got, c.want)
+		}
+	}
+}

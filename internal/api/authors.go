@@ -505,18 +505,37 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 			continue
 		}
 
-		// Skip duplicate titles (OpenLibrary often has multiple works for the same book).
-		// Exception: if the matching book is a calibre stub (calibre: ForeignID),
-		// upgrade it in place with the real OL foreign ID and language so it shows
-		// metadata without creating a second row.
+		// Deduplicate by normalized title: OpenLibrary (and Audible enrichment)
+		// sometimes surfaces multiple Work records for the same title — most
+		// commonly one ebook Work and one audiobook Work.  Rather than silently
+		// dropping the duplicate, we upgrade the already-tracked row to
+		// media_type="both" so the user gets dual-format support without a
+		// second book entry (issue #442).
+		//
+		// Special cases:
+		//   • Calibre-stub rows are upgraded to the real OL foreign_id (existing
+		//     behaviour — preserves the pre-#442 upgrade path).
+		//   • A duplicate that carries the same media_type as the existing row is
+		//     truly redundant and is silently skipped (no format gain).
 		dedupKey := indexer.NormalizeTitleForDedup(b.Title)
-		if stub := seenTitles[dedupKey]; stub != nil {
-			if strings.HasPrefix(stub.ForeignID, "calibre:") {
-				stub.ForeignID = b.ForeignID
-				if stub.Language == "" && b.Language != "" {
-					stub.Language = b.Language
+		if existing := seenTitles[dedupKey]; existing != nil {
+			switch {
+			case strings.HasPrefix(existing.ForeignID, "calibre:"):
+				// Upgrade calibre stub to real OL foreign_id.
+				existing.ForeignID = b.ForeignID
+				if existing.Language == "" && b.Language != "" {
+					existing.Language = b.Language
 				}
-				_ = h.books.Update(ctx, stub)
+				_ = h.books.Update(ctx, existing)
+			case canUpgradeToBoth(existing.MediaType, b.MediaType):
+				// One Work is ebook, the other is audiobook — merge into a single
+				// dual-format row instead of creating a second book entry.
+				existing.MediaType = models.MediaTypeBoth
+				if err := h.books.Update(ctx, existing); err != nil {
+					slog.Warn("failed to upgrade book to dual-format", "title", existing.Title, "error", err)
+				} else {
+					slog.Debug("upgraded book to dual-format", "title", existing.Title, "foreignId", b.ForeignID)
+				}
 			}
 			continue
 		}
@@ -688,6 +707,22 @@ func isAllASCII(s string) bool {
 		}
 	}
 	return true
+}
+
+// canUpgradeToBoth reports whether combining existingMediaType and
+// incomingMediaType yields a dual-format upgrade. It returns true exactly when
+// one side is "ebook" and the other is "audiobook" — the two formats are
+// complementary, so the already-tracked row should become "both" rather than
+// a second row being created (issue #442).
+func canUpgradeToBoth(existingMediaType, incomingMediaType string) bool {
+	switch {
+	case existingMediaType == models.MediaTypeEbook && incomingMediaType == models.MediaTypeAudiobook:
+		return true
+	case existingMediaType == models.MediaTypeAudiobook && incomingMediaType == models.MediaTypeEbook:
+		return true
+	default:
+		return false
+	}
 }
 
 func (h *AuthorHandler) resolveAllowedLanguages(ctx context.Context, author *models.Author) ([]string, bool) {
