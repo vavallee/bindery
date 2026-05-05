@@ -21,6 +21,7 @@ import (
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/metadata"
+	"github.com/vavallee/bindery/internal/metrics"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -155,54 +156,73 @@ func (s *Scheduler) WithLogRepo(logs *db.LogRepo, retainDays int) {
 	s.logRetainDays = retainDays
 }
 
+// runJob wraps a cron callback so each invocation is recorded via the
+// metrics package — duration, completion count, and panic count. Jobs that
+// panic are recovered here so a single buggy job doesn't tear down the
+// scheduler goroutine; the panic is logged and counted with result="panic".
+func runJob(name string, fn func()) func() {
+	return func() {
+		start := time.Now()
+		result := "ok"
+		defer func() {
+			if r := recover(); r != nil {
+				result = "panic"
+				slog.Error("scheduler job panicked", "job", name, "panic", r)
+			}
+			metrics.ObserveSchedulerRun(name, result, time.Since(start))
+		}()
+		fn()
+	}
+}
+
 // Start registers and runs all background jobs.
 func (s *Scheduler) Start() {
 	// Check downloads every 15 seconds so completed imports land quickly
 	// after SABnzbd finishes post-processing (unrar/par-check). The actual
 	// lag between "100%" and "imported" = SAB post-processing time +
 	// up to 15s poll + file-move time.
-	s.cron.AddFunc("@every 15s", func() {
+	s.cron.AddFunc("@every 15s", runJob("check-downloads", func() {
 		slog.Debug("job: check downloads")
 		s.scanner.CheckDownloads(context.Background())
-	})
+	}))
 
 	// Stall detection runs every 5 minutes. Checking every 15s would be
 	// noisy for a condition that changes slowly; 5 minutes is frequent
 	// enough to act well within any reasonable stall timeout.
-	s.cron.AddFunc("@every 5m", func() {
+	s.cron.AddFunc("@every 5m", runJob("check-stalled", func() {
 		slog.Debug("job: check stalled downloads")
 		s.checkStalledDownloads(context.Background())
-	})
+	}))
 
 	// Search for wanted books every 12 hours
-	s.cron.AddFunc("@every 12h", func() {
+	s.cron.AddFunc("@every 12h", runJob("search-wanted", func() {
 		slog.Info("job: search wanted books")
 		s.searchWanted()
-	})
+	}))
 
 	// Refresh author metadata every 24 hours
-	s.cron.AddFunc("@every 24h", func() {
+	s.cron.AddFunc("@every 24h", runJob("refresh-metadata", func() {
 		slog.Info("job: refresh metadata")
 		s.refreshMetadata()
-	})
+	}))
 
 	// Scan library every 6 hours
-	s.cron.AddFunc("@every 6h", func() {
+	s.cron.AddFunc("@every 6h", runJob("scan-library", func() {
 		slog.Info("job: scan library")
 		s.scanner.ScanLibrary(context.Background())
-	})
+	}))
 
 	// Sync Calibre library every 24 hours when a syncer is registered.
 	if s.calibreSyncer != nil {
-		s.cron.AddFunc("@every 24h", func() {
+		s.cron.AddFunc("@every 24h", runJob("calibre-sync", func() {
 			slog.Info("job: calibre library sync")
 			s.calibreSyncer.RunSync(context.Background())
-		})
+		}))
 	}
 
 	// Generate recommendations every 24 hours when the engine is registered.
 	if s.recommender != nil {
-		s.cron.AddFunc("@every 24h", func() {
+		s.cron.AddFunc("@every 24h", runJob("recommendations", func() {
 			slog.Info("job: generate recommendations")
 			if s.settings != nil {
 				if setting, _ := s.settings.Get(context.Background(), "recommendations.enabled"); setting == nil || setting.Value != "true" {
@@ -212,17 +232,17 @@ func (s *Scheduler) Start() {
 			if err := s.recommender.Run(context.Background(), 1); err != nil {
 				slog.Error("recommendation engine failed", "error", err)
 			}
-		})
+		}))
 	}
 
 	// Sync Hardcover import lists every 24 hours.
 	if s.hcSyncer != nil {
-		s.cron.AddFunc("@every 24h", func() {
+		s.cron.AddFunc("@every 24h", runJob("hardcover-sync", func() {
 			slog.Info("job: sync hardcover lists")
 			if err := s.hcSyncer.Sync(context.Background()); err != nil {
 				slog.Error("hardcover list sync failed", "error", err)
 			}
-		})
+		}))
 	}
 
 	// Trim old log entries once per day.
@@ -231,7 +251,7 @@ func (s *Scheduler) Start() {
 		if defaultRetainDays <= 0 {
 			defaultRetainDays = 14
 		}
-		s.cron.AddFunc("@every 24h", func() {
+		s.cron.AddFunc("@every 24h", runJob("log-trim", func() {
 			slog.Debug("job: trim log entries")
 			retainDays := defaultRetainDays
 			// Prefer the DB setting when available so UI changes take effect without restart.
@@ -246,7 +266,7 @@ func (s *Scheduler) Start() {
 			if err := s.logs.Trim(context.Background(), cutoff); err != nil {
 				slog.Warn("log trim failed", "error", err)
 			}
-		})
+		}))
 	}
 
 	s.cron.Start()

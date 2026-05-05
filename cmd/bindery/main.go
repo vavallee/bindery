@@ -31,6 +31,7 @@ import (
 	"github.com/vavallee/bindery/internal/metadata/googlebooks"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/metadata/openlibrary"
+	"github.com/vavallee/bindery/internal/metrics"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/notifier"
 	"github.com/vavallee/bindery/internal/opds"
@@ -417,6 +418,17 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Compress(5))
 	r.Use(api.SecurityHeaders)
+	r.Use(metrics.HTTPMiddleware(routeTemplate))
+
+	// Prometheus exposition. Mounted at the router root (no auth, no
+	// CSRF, no XRequestedWith) because Prometheus scrapes don't carry
+	// session cookies — operators are expected to restrict access via
+	// NetworkPolicy / firewall / reverse-proxy ACL. Bindery's API key
+	// is intentionally not honored here either; adding auth would
+	// require every scrape config to also carry the key, which is a
+	// worse default for the typical Helm-chart deployment.
+	metrics.SetBuildInfo(version, commit, date)
+	r.Handle("/metrics", metrics.Handler())
 
 	// Composite auth: session cookie (UI) OR API key (external apps) OR
 	// local-IP bypass when mode=local-only. Mode, key, and secret are sourced
@@ -943,4 +955,21 @@ func (p *dbUserProvisioner) ResolveOrProvisionUser(ctx context.Context, username
 		return 0, nil
 	}
 	return u.ID, nil
+}
+
+// routeTemplate returns the chi route pattern for the request (e.g.
+// "/api/v1/book/{id}") rather than the raw URL. Critical for Prometheus
+// metric labels — using the raw URL would create unbounded label cardinality
+// because every distinct id becomes a separate time series.
+//
+// Falls back to the URL path before any handler has matched the route, which
+// happens for 404s. Strip query strings — they're already excluded by URL.Path
+// but the comment is here for the reader.
+func routeTemplate(r *http.Request) string {
+	if rc := chi.RouteContext(r.Context()); rc != nil {
+		if pat := rc.RoutePattern(); pat != "" {
+			return pat
+		}
+	}
+	return r.URL.Path
 }

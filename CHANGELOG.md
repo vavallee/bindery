@@ -9,6 +9,7 @@ All notable changes to Bindery are documented here. Format loosely follows
 ### Added
 
 - **Enhanced series data via Hardcover** — Series can now be managed manually, linked to Hardcover series, and compared against the Hardcover catalog. The Series page shows present, missing, local-only, and uncertain books; missing catalog entries can be filled all at once or one row at a time, creating wanted/monitored book rows and queuing searches. The enhanced controls are gated behind `BINDERY_ENHANCED_HARDCOVER_API`, a saved Hardcover API token, and the admin setting in **Settings -> General**.
+- **Prometheus `/metrics` endpoint** (#429) — Bindery now exposes `bindery_http_*` (request rate / latency by route template), `bindery_scheduler_*` (job-run counts and durations), and `bindery_build_info` alongside the standard `go_*` runtime and `process_*` collectors. Mounted at `/metrics` outside the `/api` auth chain so Prometheus scrapes work without session cookies; restrict access via NetworkPolicy / firewall / reverse-proxy ACL. Background jobs now also recover from panics so a single buggy job no longer tears down the scheduler goroutine.
 
 ### Fixed
 
