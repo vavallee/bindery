@@ -229,10 +229,8 @@ function AddProviderForm({
           {t('settings.oidc.callbackUrlHint')}
         </p>
       </div>
-      <div>
-        <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.oidc.fieldIssuer')}</label>
-        <input value={issuer} onChange={e => setIssuer(e.target.value)} required placeholder="https://accounts.google.com" className={inputCls} />
-      </div>
+      <IssuerField value={issuer} onChange={setIssuer} />
+
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.oidc.fieldClientId')}</label>
@@ -260,5 +258,113 @@ function AddProviderForm({
         </button>
       </div>
     </form>
+  )
+}
+
+// IssuerField wraps the issuer input with a "Test" button that probes the
+// IdP's /.well-known/openid-configuration server-side and renders the result
+// inline. Surfaces three classes of error before the user attempts a real
+// login: unreachable IdP, malformed discovery doc, and (most importantly)
+// issuer mismatch — where the discovered issuer differs from what the user
+// entered. The mismatch case is the silent killer for Authentik per-provider
+// mode and Keycloak realm paths.
+type DiscoveryResult =
+  | { state: 'idle' }
+  | { state: 'probing' }
+  | {
+      state: 'ok'
+      mismatch: boolean
+      discovered: NonNullable<Awaited<ReturnType<typeof api.oidcTestDiscovery>>['discovered']>
+    }
+  | { state: 'error'; message: string }
+
+function IssuerField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const { t } = useTranslation()
+  const [result, setResult] = useState<DiscoveryResult>({ state: 'idle' })
+  // Reset result whenever the user edits the issuer — a stale "ok" badge
+  // attached to a different URL would be actively misleading.
+  const handleChange = (v: string) => {
+    onChange(v)
+    if (result.state !== 'idle') setResult({ state: 'idle' })
+  }
+  const test = async () => {
+    if (!value.trim()) return
+    setResult({ state: 'probing' })
+    try {
+      const r = await api.oidcTestDiscovery(value.trim())
+      if (!r.ok) {
+        setResult({ state: 'error', message: r.error ?? t('settings.oidc.testDiscoveryUnknown') })
+        return
+      }
+      setResult({
+        state: 'ok',
+        mismatch: r.issuer_mismatch === true,
+        discovered: r.discovered!,
+      })
+    } catch (e) {
+      setResult({ state: 'error', message: e instanceof Error ? e.message : String(e) })
+    }
+  }
+  return (
+    <div>
+      <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
+        {t('settings.oidc.fieldIssuer')}
+      </label>
+      <div className="flex gap-2">
+        <input
+          value={value}
+          onChange={e => handleChange(e.target.value)}
+          required
+          placeholder="https://accounts.google.com"
+          className={inputCls}
+        />
+        <button
+          type="button"
+          onClick={test}
+          disabled={!value.trim() || result.state === 'probing'}
+          className="px-3 py-1.5 text-xs rounded border border-slate-300 dark:border-zinc-700 hover:bg-slate-100 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+        >
+          {result.state === 'probing' ? t('settings.oidc.testDiscoveryProbing') : t('settings.oidc.testDiscovery')}
+        </button>
+      </div>
+      <DiscoveryResultView result={result} entered={value.trim()} />
+    </div>
+  )
+}
+
+function DiscoveryResultView({ result, entered }: { result: DiscoveryResult; entered: string }) {
+  const { t } = useTranslation()
+  if (result.state === 'idle' || result.state === 'probing') return null
+  if (result.state === 'error') {
+    return (
+      <p className="text-xs text-red-600 dark:text-red-400 mt-1.5 break-all">
+        {t('settings.oidc.testDiscoveryFail')}: {result.message}
+      </p>
+    )
+  }
+  const { discovered, mismatch } = result
+  return (
+    <div className="text-[11px] mt-1.5 space-y-0.5 text-slate-600 dark:text-zinc-400">
+      {mismatch ? (
+        <p className="text-amber-700 dark:text-amber-400 break-all">
+          {t('settings.oidc.testDiscoveryMismatch', { entered, discovered: discovered.issuer })}
+        </p>
+      ) : (
+        <p className="text-emerald-700 dark:text-emerald-400">{t('settings.oidc.testDiscoveryOk')}</p>
+      )}
+      <p className="break-all">
+        <span className="text-slate-500 dark:text-zinc-500">authorize:</span>{' '}
+        {discovered.authorization_endpoint}
+      </p>
+      <p className="break-all">
+        <span className="text-slate-500 dark:text-zinc-500">token:</span> {discovered.token_endpoint}
+      </p>
+      {discovered.scopes_supported && discovered.scopes_supported.length > 0 && (
+        <p className="break-all">
+          <span className="text-slate-500 dark:text-zinc-500">scopes:</span>{' '}
+          {discovered.scopes_supported.join(' ')}
+        </p>
+      )}
+    </div>
   )
 }

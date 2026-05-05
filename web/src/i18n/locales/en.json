@@ -417,7 +417,13 @@
       "callbackUrlCopy": "Copy",
       "callbackUrlCopied": "Copied",
       "statusOk": "Ready",
-      "statusFailed": "Discovery failed"
+      "statusFailed": "Discovery failed",
+      "testDiscovery": "Test",
+      "testDiscoveryProbing": "Testing…",
+      "testDiscoveryOk": "Discovery succeeded — IdP is reachable and the issuer matches.",
+      "testDiscoveryMismatch": "Issuer mismatch: you entered {{entered}} but the IdP reports {{discovered}}. Use the discovered value as the Issuer URL.",
+      "testDiscoveryFail": "Discovery failed",
+      "testDiscoveryUnknown": "unknown error"
     }
   },
   "addAuthorModal": {

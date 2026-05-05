@@ -152,6 +152,24 @@ export const api = {
   // with `{id}` placeholder. The settings UI uses these to live-render the
   // redirect URI as the admin types the provider id.
   oidcRedirectBase: () => request<{ base: string; callback_path: string }>('/auth/oidc/redirect-base'),
+  // Probes <issuer>/.well-known/openid-configuration server-side. ok=false
+  // means the IdP is unreachable / wrong / not OIDC; the error string is
+  // safe to render directly. issuer_mismatch=true is the silent killer for
+  // Authentik per-provider mode and Keycloak realms.
+  oidcTestDiscovery: (issuer: string) =>
+    request<{
+      ok: boolean
+      error?: string
+      issuer_mismatch?: boolean
+      discovered?: {
+        issuer: string
+        authorization_endpoint: string
+        token_endpoint: string
+        userinfo_endpoint?: string
+        jwks_uri?: string
+        scopes_supported?: string[]
+      }
+    }>('/auth/oidc/test-discovery', { method: 'POST', body: JSON.stringify({ issuer }) }),
   authLogin: async (username: string, password: string, rememberMe: boolean) => {
     const res = await request<{ ok: boolean; username: string }>('/auth/login', {
       method: 'POST',

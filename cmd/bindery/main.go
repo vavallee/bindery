@@ -506,6 +506,7 @@ func main() {
 		r.Get("/auth/oidc/providers", oidcHandler.GetProviders)
 		r.Put("/auth/oidc/providers", oidcHandler.SetProviders)
 		r.Get("/auth/oidc/redirect-base", oidcHandler.GetRedirectBase)
+		r.Post("/auth/oidc/test-discovery", oidcHandler.TestDiscovery)
 		r.Get("/auth/oidc/{provider}/login", oidcHandler.Login)
 		r.Get("/auth/oidc/{provider}/callback", oidcHandler.Callback)
 		// Admin-only auth mutations.

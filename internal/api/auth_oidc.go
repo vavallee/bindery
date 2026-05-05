@@ -187,6 +187,42 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
+// TestDiscovery probes <issuer>/.well-known/openid-configuration and returns
+// the discovered metadata. The Settings UI exposes this as a "Test" button
+// next to the issuer field so admins see DNS errors, TLS errors, 404s, and
+// — most importantly — issuer-mismatch (where the IdP's discovered issuer
+// differs from what the user entered, e.g. Authentik per-provider mode or
+// Keycloak realm paths) before attempting a real login.
+//
+// On unreachable IdP / parse error / non-2xx, returns 200 with {ok:false,
+// error:"..."} rather than HTTP-error so the UI can render the message
+// inline; the request itself succeeded.
+// POST /api/v1/auth/oidc/test-discovery
+func (h *OIDCHandler) TestDiscovery(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Issuer string `json:"issuer"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	issuer := strings.TrimSpace(req.Issuer)
+	if issuer == "" {
+		writeErr(w, http.StatusBadRequest, "issuer required")
+		return
+	}
+	doc, err := oidc.Discover(r.Context(), issuer)
+	if err != nil {
+		writeOK(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeOK(w, map[string]any{
+		"ok":              true,
+		"issuer_mismatch": strings.TrimRight(doc.Issuer, "/") != strings.TrimRight(issuer, "/"),
+		"discovered":      doc,
+	})
+}
+
 // GetRedirectBase returns the public-facing base URL Bindery will use as
 // the prefix for OIDC callback URLs, resolved from the current request. The
 // Settings UI uses this to render a live preview of the redirect URI so
