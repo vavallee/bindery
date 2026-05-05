@@ -603,21 +603,52 @@ func detectDownloadFormat(files []string) string {
 	return models.MediaTypeEbook
 }
 
-// FindExisting searches the library directory for a book file that matches
-// the given title and author. Returns the first matching file path, or ""
-// if none is found. Intended to be called before auto-searching so books
-// the user already owns are not re-downloaded.
+// FindExisting searches the library directories for a book file that matches
+// the given title and author. Both libraryDir (ebooks) and audiobookDir are
+// searched. Returns the first matching file path, or "" if none is found.
+// Intended to be called before auto-searching so books the user already owns
+// are not re-downloaded.
 func (s *Scanner) FindExisting(ctx context.Context, title, authorName string) string {
-	if s.libraryDir == "" || title == "" {
+	if title == "" {
 		return ""
 	}
+	roots := make([]string, 0, 2)
+	if s.libraryDir != "" {
+		roots = append(roots, s.libraryDir)
+	}
+	if s.audiobookDir != "" && s.audiobookDir != s.libraryDir {
+		roots = append(roots, s.audiobookDir)
+	}
+	for _, root := range roots {
+		if found := s.findExistingInDir(root, title, authorName); found != "" {
+			return found
+		}
+	}
+	return ""
+}
+
+// findExistingInDir walks a single root directory looking for a book file
+// whose title matches and whose parent directory agrees with the expected
+// author, preventing cross-author false matches.
+func (s *Scanner) findExistingInDir(root, title, authorName string) string {
 	var found string
-	if err := filepath.Walk(s.libraryDir, func(path string, info os.FileInfo, err error) error {
+	if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || found != "" {
 			return nil
 		}
 		if !IsBookFile(path) {
 			return nil
+		}
+		// Author-folder pre-filter: the first directory under root must match
+		// the expected author. This prevents a file under books/David Wong/
+		// from being matched as a Matt Dinniman book.
+		if authorName != "" {
+			if rel, relErr := filepath.Rel(root, path); relErr == nil {
+				parts := strings.SplitN(rel, string(filepath.Separator), 2)
+				if len(parts) >= 2 && !authorMatch(authorName, parts[0]) {
+					return nil
+				}
+			}
 		}
 		parsed := ParseFilename(path)
 		if titleMatch(parsed.Title, title) && authorMatch(authorName, parsed.Author) {
@@ -625,7 +656,7 @@ func (s *Scanner) FindExisting(ctx context.Context, title, authorName string) st
 		}
 		return nil
 	}); err != nil {
-		slog.Warn("failed to search library for existing file", "path", s.libraryDir, "error", err)
+		slog.Warn("failed to search library for existing file", "path", root, "error", err)
 	}
 	return found
 }
