@@ -72,9 +72,11 @@ func (c *Client) SearchAuthors(ctx context.Context, query string) ([]models.Auth
 }
 
 func (c *Client) SearchBooks(ctx context.Context, query string) ([]models.Book, error) {
-	// OpenLibrary migrated /search.json to FastAPI. The new endpoint is /search
-	// which accepts the same query parameters and returns the same JSON shape.
-	u := fmt.Sprintf("%s/search?q=%s&fields=key,title,author_name,author_key,first_publish_year,cover_i,isbn,subject&limit=20",
+	// OpenLibrary's JSON search API is /search.json (now backed by FastAPI).
+	// /search (without .json) is the HTML web-UI path (Solr-backed) and
+	// returns HTTP 500 "DEPRECATED ENDPOINT ACCESSED" for API consumers
+	// since their FastAPI rollout completed (see issue #462, follow-up to #408).
+	u := fmt.Sprintf("%s/search.json?q=%s&fields=key,title,author_name,author_key,first_publish_year,cover_i,isbn,subject&limit=20",
 		baseURL, url.QueryEscape(query))
 	var resp searchResponse
 	if err := c.getJSON(ctx, u, &resp); err != nil {
@@ -304,10 +306,11 @@ func (c *Client) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]
 // Series membership is not in the search response — callers get it from
 // authorWorksBackfill (the /authors/{id}/works endpoint).
 //
-// Uses the /search endpoint (FastAPI, current) rather than the deprecated
-// /search.json (Solr, which now returns HTTP 500; see issue #408).
+// Uses /search.json (FastAPI-backed JSON API). /search without .json is the
+// HTML web-UI path still served by Solr, which returns HTTP 500
+// "DEPRECATED ENDPOINT ACCESSED" for API consumers (issue #462).
 func (c *Client) searchAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, error) {
-	u := fmt.Sprintf("%s/search?author_key=%s&fields=key,title,language,edition_count,first_publish_year,cover_i,subject&limit=200",
+	u := fmt.Sprintf("%s/search.json?author_key=%s&fields=key,title,language,edition_count,first_publish_year,cover_i,subject&limit=200",
 		baseURL, authorForeignID)
 	var resp struct {
 		Docs []struct {

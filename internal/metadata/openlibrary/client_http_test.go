@@ -151,7 +151,7 @@ func TestSearchBooks_HTTP(t *testing.T) {
 		},
 	}
 	c := newClientWithPaths(t, map[string]interface{}{
-		"/search": jsonStr(resp),
+		"/search.json": jsonStr(resp),
 	})
 
 	books, err := c.SearchBooks(context.Background(), "Dune")
@@ -194,7 +194,7 @@ func TestSearchBooks_HTTP_NoAuthorKey(t *testing.T) {
 		},
 	}
 	c := newClientWithPaths(t, map[string]interface{}{
-		"/search": jsonStr(resp),
+		"/search.json": jsonStr(resp),
 	})
 
 	books, err := c.SearchBooks(context.Background(), "test")
@@ -214,8 +214,8 @@ func TestSearchBooks_HTTP_NoAuthorKey(t *testing.T) {
 
 func TestSearchBooks_HTTP_Error(t *testing.T) {
 	c := newClientWithStatus(t,
-		map[string]interface{}{"/search": "error"},
-		map[string]int{"/search": http.StatusInternalServerError},
+		map[string]interface{}{"/search.json": "error"},
+		map[string]int{"/search.json": http.StatusInternalServerError},
 	)
 	_, err := c.SearchBooks(context.Background(), "dune")
 	if err == nil {
@@ -616,7 +616,7 @@ func TestGetAuthorWorks_HTTP(t *testing.T) {
 
 	c := newClientWithPaths(t, map[string]interface{}{
 		"/authors/OL123A/works.json": jsonStr(worksResp),
-		"/search":                    jsonStr(searchResp),
+		"/search.json":                    jsonStr(searchResp),
 	})
 
 	books, err := c.GetAuthorWorks(context.Background(), "OL123A")
@@ -666,7 +666,7 @@ func TestGetAuthorWorks_HTTP_WorksEndpointFillsMissingSearchEntries(t *testing.T
 	}
 	c := newClientWithPaths(t, map[string]interface{}{
 		"/authors/OL123A/works.json": jsonStr(worksResp),
-		"/search":                    jsonStr(searchResp),
+		"/search.json":                    jsonStr(searchResp),
 	})
 
 	books, err := c.GetAuthorWorks(context.Background(), "OL123A")
@@ -696,7 +696,7 @@ func TestGetAuthorWorks_HTTP_SearchFallbackWhenWorksEmpty(t *testing.T) {
 	}
 	c := newClientWithPaths(t, map[string]interface{}{
 		"/authors/OL123A/works.json": jsonStr(authorWorksResponse{}),
-		"/search":                    jsonStr(searchResp),
+		"/search.json":                    jsonStr(searchResp),
 	})
 	books, err := c.GetAuthorWorks(context.Background(), "OL123A")
 	if err != nil {
@@ -725,7 +725,7 @@ func TestGetAuthorWorks_HTTP_ObjectSeries(t *testing.T) {
 
 	c := newClientWithPaths(t, map[string]interface{}{
 		"/authors/OL999A/works.json": worksBody,
-		"/search":                    searchBody,
+		"/search.json":                    searchBody,
 	})
 
 	books, err := c.GetAuthorWorks(context.Background(), "OL999A")
@@ -755,11 +755,11 @@ func TestGetAuthorWorks_HTTP_Error(t *testing.T) {
 	c := newClientWithStatus(t,
 		map[string]interface{}{
 			"/authors/OL404A/works.json": "error",
-			"/search":                    "error",
+			"/search.json":                    "error",
 		},
 		map[string]int{
 			"/authors/OL404A/works.json": http.StatusInternalServerError,
-			"/search":                    http.StatusInternalServerError,
+			"/search.json":                    http.StatusInternalServerError,
 		},
 	)
 	_, err := c.GetAuthorWorks(context.Background(), "OL404A")
@@ -781,10 +781,10 @@ func TestGetAuthorWorks_HTTP_SearchEnrichmentFailure(t *testing.T) {
 	c := newClientWithStatus(t,
 		map[string]interface{}{
 			"/authors/OL1A/works.json": jsonStr(worksResp),
-			"/search":                  "oops",
+			"/search.json":                  "oops",
 		},
 		map[string]int{
-			"/search": http.StatusInternalServerError,
+			"/search.json": http.StatusInternalServerError,
 		},
 	)
 	books, err := c.GetAuthorWorks(context.Background(), "OL1A")
@@ -814,7 +814,7 @@ func TestGetAuthorWorks_HTTP_LangPreferEng(t *testing.T) {
 	}
 	c := newClientWithPaths(t, map[string]interface{}{
 		"/authors/OL999A/works.json": jsonStr(worksResp),
-		"/search":                    jsonStr(searchResp),
+		"/search.json":                    jsonStr(searchResp),
 	})
 
 	books, err := c.GetAuthorWorks(context.Background(), "OL999A")
@@ -846,7 +846,7 @@ func TestGetAuthorWorks_HTTP_NoiseFilter(t *testing.T) {
 	}
 	c := newClientWithPaths(t, map[string]interface{}{
 		"/authors/OL5A/works.json": jsonStr(worksResp),
-		"/search":                  jsonStr(searchRespForAuthor{}),
+		"/search.json":                  jsonStr(searchRespForAuthor{}),
 	})
 	books, err := c.GetAuthorWorks(context.Background(), "OL5A")
 	if err != nil {
@@ -870,7 +870,7 @@ func TestGetAuthorWorks_HTTP_NoiseFilterSearchEnrichment(t *testing.T) {
 				{Key: "/works/OL1W", Title: "Real Book"},
 			},
 		}),
-		"/search": jsonStr(searchRespForAuthor{
+		"/search.json": jsonStr(searchRespForAuthor{
 			Docs: []searchDocForAuthor{
 				{Key: "/works/OL1W", Title: "Real Book", Language: []string{"eng"}},
 				// These noise entries only appear in search (not in works) and must be dropped.
