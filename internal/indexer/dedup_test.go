@@ -59,6 +59,21 @@ func TestNormalizeTitleForDedup(t *testing.T) {
 			in:   "Die Stille ist ein Geraeusch",
 			want: "die stille ist ein geraeusch",
 		},
+		{
+			name: "post-colon subtitle stripped",
+			in:   "Carl's Doomsday Scenario: Dungeon Crawler Carl, Book 2",
+			want: "carl's doomsday scenario",
+		},
+		{
+			name: "title without colon unchanged",
+			in:   "Carl's Doomsday Scenario",
+			want: "carl's doomsday scenario",
+		},
+		{
+			name: "colon without trailing whitespace preserved",
+			in:   "foo:bar",
+			want: "foo:bar",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -78,6 +93,7 @@ func TestNormalizeTitleForDedup_Symmetric(t *testing.T) {
 		{"Dune (Unabridged)", "Dune"},
 		{"  Moby Dick  ", "Moby Dick"},
 		{"Öde Wälder (German Edition)", "Öde Wälder"},
+		{"Carl's Doomsday Scenario", "Carl's Doomsday Scenario: Dungeon Crawler Carl, Book 2"},
 	}
 	for _, pair := range pairs {
 		k1 := NormalizeTitleForDedup(pair[0])

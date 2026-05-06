@@ -10,6 +10,7 @@ All notable changes to Bindery are documented here. Format loosely follows
 ### Fixed
 
 - **Library file matching now respects media type** (#488, #454) — `FindExisting` now picks the right library root based on the book's `media_type` instead of always walking `BINDERY_LIBRARY_DIR` first. Audiobook book rows are matched against `BINDERY_AUDIOBOOK_DIR` (with fallback to `BINDERY_LIBRARY_DIR` when the audiobook root is unset), ebook rows are matched against `BINDERY_LIBRARY_DIR`, and dual-format / unspecified rows preserve the prior behaviour of walking both roots with the ebook library first. Previously a same-titled ebook in `libraryDir` could be mis-attributed to an audiobook entry on rescan, and authors filtered to "audiobooks only" still had file lookups walk the ebook root.
+- **Edition dedup now strips subtitles** (#458) — Author sync no longer creates duplicate rows when OpenLibrary returns the same work twice with different subtitle handling — typically the audiobook drops the post-colon subtitle while the ebook keeps it (e.g. *Carl's Doomsday Scenario* vs. *Carl's Doomsday Scenario: Dungeon Crawler Carl, Book 2*). `NormalizeTitleForDedup` now drops a `: subtitle` tail when the colon is followed by whitespace, so both editions collapse to the same key and the existing v1.3.1 dual-format upgrade path is taken instead of inserting a duplicate.
 
 ## [v1.4.3] — 2026-05-06
 
