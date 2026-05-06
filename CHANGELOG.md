@@ -340,6 +340,12 @@ All notable changes to Bindery are documented here. Format loosely follows
 - **Hardcover GraphQL success responses are bounded** (#470) — Successful Hardcover responses are now read through an 8 MiB cap so a misbehaving upstream cannot force unbounded memory growth before JSON parsing.
 - **Add-author search no longer hides valid author results when the query matches a book title** — Results whose name exactly matches a known book title and whose disambiguation points to that book's real author are now placed behind a reveal button rather than silently dropped.
 
+## [Unreleased]
+
+### Chores
+
+- **Frontend regression coverage expanded** (#427) — Added MSW-backed tests for login, CSRF handling, auth state/guards, Book Detail search/grab flows, and Wanted page search/grab/bulk actions.
+
 ## [v1.4.3] — 2026-05-06
 
 ### Fixed
