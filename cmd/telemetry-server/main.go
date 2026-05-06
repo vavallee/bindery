@@ -489,15 +489,22 @@ func (s *server) handleBackup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	defer os.RemoveAll(dir)
+	defer func() {
+		if removeErr := os.RemoveAll(dir); removeErr != nil {
+			slog.Warn("backup: cleanup tempdir", "error", removeErr)
+		}
+	}()
 	dst := filepath.Join(dir, "telemetry.db")
 
 	// VACUUM INTO acquires a read transaction, copies pages out, and produces
 	// a single self-contained SQLite file. Safer than streaming /data/telemetry.db
 	// directly (which would race the WAL). Path is parameterized as a literal
 	// string in the SQL because VACUUM INTO does not accept bind parameters.
+	// The destination path is a server-generated tempdir path with single-quotes
+	// escaped, so SQL injection is not possible here.
+	vacuumSQL := `VACUUM INTO '` + strings.ReplaceAll(dst, `'`, `''`) + `'` //nolint:gosec // G202: path is server-generated with quotes escaped
 	if _, err := s.db.ExecContext(r.Context(),
-		`VACUUM INTO '`+strings.ReplaceAll(dst, `'`, `''`)+`'`,
+		vacuumSQL,
 	); err != nil {
 		slog.Error("backup: vacuum", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -647,7 +654,7 @@ func (s *server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
 	stable(d.Deploy)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<!doctype html>
+	if _, err := fmt.Fprintf(w, `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -751,7 +758,9 @@ func (s *server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
 		renderBarChart(d.Deploy, 0),
 		renderSparkline(d.Daily),
 		time.Now().UTC().Format("2006-01-02 15:04 MST"),
-	)
+	); err != nil {
+		slog.Warn("stats: write response", "error", err)
+	}
 }
 
 // normalizeVersion strips a leading "v" from version strings of the form
