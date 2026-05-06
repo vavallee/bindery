@@ -402,6 +402,7 @@ func (h *AuthHandler) issueSession(w http.ResponseWriter, r *http.Request, ctx c
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   secure,
+		MaxAge:   int(dur.Seconds()),
 	}
 	if rememberMe {
 		cookie.Expires = exp

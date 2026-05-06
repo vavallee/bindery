@@ -151,6 +151,77 @@ func TestLogin_Success(t *testing.T) {
 	}
 }
 
+// TestLogin_CookieMaxAge_Short verifies the regression fix for mobile session
+// eviction: when rememberMe is false (the default), the response cookie must
+// carry an explicit Max-Age matching SessionDurationShort. Without Max-Age the
+// cookie reverts to a browser-session cookie, which iOS Safari and Android
+// Chrome drop when the tab is backgrounded — users got logged out on app switch.
+func TestLogin_CookieMaxAge_Short(t *testing.T) {
+	h, users, _, ctx := newAuthFixture(t)
+	hash, _ := auth.HashPassword("hunter2hunter2")
+	if _, err := users.Create(ctx, "admin", hash); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.Login(rec, httptest.NewRequest(http.MethodPost, "/auth/login",
+		jsonBody(t, loginRequest{Username: "admin", Password: "hunter2hunter2", RememberMe: false})))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var got *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == auth.SessionCookieName {
+			got = c
+		}
+	}
+	if got == nil {
+		t.Fatal("expected session cookie")
+	}
+	want := int(auth.SessionDurationShort.Seconds())
+	if got.MaxAge != want {
+		t.Errorf("MaxAge=%d, want %d (SessionDurationShort)", got.MaxAge, want)
+	}
+}
+
+// TestLogin_CookieMaxAge_RememberMe verifies the long-lived branch sets both
+// Max-Age (RFC 6265 preferred) and Expires (compat for stale clients) so a
+// user who ticks "Remember me" gets the full 30-day window.
+func TestLogin_CookieMaxAge_RememberMe(t *testing.T) {
+	h, users, _, ctx := newAuthFixture(t)
+	hash, _ := auth.HashPassword("hunter2hunter2")
+	if _, err := users.Create(ctx, "admin", hash); err != nil {
+		t.Fatal(err)
+	}
+	before := time.Now()
+	rec := httptest.NewRecorder()
+	h.Login(rec, httptest.NewRequest(http.MethodPost, "/auth/login",
+		jsonBody(t, loginRequest{Username: "admin", Password: "hunter2hunter2", RememberMe: true})))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var got *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == auth.SessionCookieName {
+			got = c
+		}
+	}
+	if got == nil {
+		t.Fatal("expected session cookie")
+	}
+	want := int(auth.SessionDuration.Seconds())
+	if got.MaxAge != want {
+		t.Errorf("MaxAge=%d, want %d (SessionDuration)", got.MaxAge, want)
+	}
+	// Expires should be roughly now + SessionDuration (allow 1 minute slack
+	// for slow CI). Belt-and-suspenders for clients that ignore Max-Age.
+	wantExp := before.Add(auth.SessionDuration)
+	if got.Expires.IsZero() {
+		t.Error("expected Expires set on remember-me cookie")
+	} else if delta := got.Expires.Sub(wantExp); delta < -time.Minute || delta > time.Minute {
+		t.Errorf("Expires=%v, want ~%v (delta %v)", got.Expires, wantExp, delta)
+	}
+}
+
 // TestLogin_WrongPassword must 401 and not leak whether the username exists.
 // The rate limiter should also record this failure.
 func TestLogin_WrongPassword(t *testing.T) {
