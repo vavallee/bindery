@@ -9,10 +9,11 @@ All notable changes to Bindery are documented here. Format loosely follows
 ### Added
 
 - **Book Detail page now exposes the media-type selector** — Imported and downloaded books can now be flipped between ebook / audiobook / both directly from the Book Detail page. Previously this was only available on the Wanted page, so once a book progressed past wanted there was no UI path to add the second format short of deleting and re-adding the author.
+- **Author Detail page now has an Edit modal** — Quality profile, metadata profile, and root folder are now editable from the Author Detail page; previously the only way to change them was to delete the author and re-add. Triggered from a new Edit button next to the existing actions.
 
 ### Fixed
 
-- **Mobile session cookie no longer evicted on app switch** — Login without "Remember me" now sets `Max-Age` on the session cookie (was previously a browser-session cookie with no expiry hint), so iOS Safari and Android Chrome don't drop it when the tab is backgrounded or the OS suspends the browser process. The 12-hour / 30-day durations were already encoded in `auth.SessionDurationShort` / `auth.SessionDuration` but never reached the wire on the short branch.
+- **Mobile session cookie no longer evicted on app switch** — Login without "Remember me" now sets `Max-Age` on the session cookie (was previously a browser-session cookie with no expiry hint), so iOS Safari and Android Chrome don'''t drop it when the tab is backgrounded or the OS suspends the browser process. The 12-hour / 30-day durations were already encoded in `auth.SessionDurationShort` / `auth.SessionDuration` but never reached the wire on the short branch.
 
 ## [v1.4.4] — 2026-05-06
 

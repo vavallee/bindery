@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, Author, Book } from '../api/client'
 import ViewToggle from '../components/ViewToggle'
 import MergeAuthorsModal from '../components/MergeAuthorsModal'
+import EditAuthorModal from '../components/EditAuthorModal'
 import { useView } from '../components/useView'
 
 const statusColors: Record<string, string> = {
@@ -57,6 +58,7 @@ export default function AuthorDetailPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [searchingWanted, setSearchingWanted] = useState(false)
   const [showMerge, setShowMerge] = useState(false)
+  const [showEdit, setShowEdit] = useState(false)
   const [showExcluded, setShowExcluded] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -281,6 +283,13 @@ export default function AuthorDetailPage() {
               {searchingWanted ? 'Searching…' : 'Search all wanted'}
             </button>
             <button
+              onClick={() => setShowEdit(true)}
+              className="px-3 py-1.5 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded text-xs font-medium"
+              title="Edit quality, metadata, and root folder"
+            >
+              Edit
+            </button>
+            <button
               onClick={() => {
                 if (allAuthors.length === 0) api.listAuthors().then(setAllAuthors).catch(console.error)
                 setShowMerge(true)
@@ -315,6 +324,14 @@ export default function AuthorDetailPage() {
           )}
         </div>
       </div>
+
+      {showEdit && (
+        <EditAuthorModal
+          author={author}
+          onClose={() => setShowEdit(false)}
+          onSaved={updated => setAuthor(updated)}
+        />
+      )}
 
       {showMerge && allAuthors.length > 0 && (
         <MergeAuthorsModal
