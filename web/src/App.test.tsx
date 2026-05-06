@@ -23,7 +23,17 @@ vi.mock('./pages/SeriesPage', () => ({ default: () => <div data-testid="page-ser
 vi.mock('./pages/CalendarPage', () => ({ default: () => <div data-testid="page-calendar" /> }))
 vi.mock('./pages/DiscoverPage', () => ({ default: () => <div data-testid="page-discover" /> }))
 vi.mock('./pages/SettingsPage', () => ({ default: () => <div data-testid="page-settings" /> }))
-vi.mock('./pages/LoginPage', () => ({ default: () => <div data-testid="page-login" /> }))
+vi.mock('./pages/LoginPage', async () => {
+  const { Navigate } = await vi.importActual<typeof import('react-router-dom')>('react-router-dom')
+  return {
+    default: () => {
+      const status = authState.value.status
+      if (status?.setupRequired) return <Navigate to="/setup" replace />
+      if (status?.authenticated) return <Navigate to="/" replace />
+      return <div data-testid="page-login" />
+    },
+  }
+})
 vi.mock('./pages/SetupPage', () => ({ default: () => <div data-testid="page-setup" /> }))
 vi.mock('./pages/AuthorDetailPage', () => ({ default: () => <div /> }))
 vi.mock('./pages/BookDetailPage', () => ({ default: () => <div /> }))

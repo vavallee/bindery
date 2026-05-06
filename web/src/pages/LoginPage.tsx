@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Navigate, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api, OidcProvider } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
@@ -47,6 +47,13 @@ export default function LoginPage() {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  if (status?.setupRequired) {
+    return <Navigate to="/setup" replace />
+  }
+  if (status?.authenticated) {
+    return <Navigate to="/" replace />
   }
 
   if (status?.mode === 'proxy') {

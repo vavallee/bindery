@@ -85,6 +85,14 @@ describe('LoginPage', () => {
     expect(loginHit).toBe(false)
   })
 
+  it('does not render the login form for an authenticated session', () => {
+    authState.status = makeAuthStatus({ authenticated: true, username: 'alice', role: 'admin' })
+
+    renderLoginPage()
+
+    expect(screen.queryByRole('button', { name: 'Sign in' })).not.toBeInTheDocument()
+  })
+
   it('submits DOM form values, refreshes auth state, and navigates home', async () => {
     let loginBody: unknown
 
