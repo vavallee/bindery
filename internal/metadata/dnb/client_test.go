@@ -71,6 +71,29 @@ const marcDuneGerman = `<record xmlns="http://www.loc.gov/MARC21/slim">
   </datafield>
 </record>`
 
+const marcStrunzFitness = `<record xmlns="http://www.loc.gov/MARC21/slim">
+  <controlfield tag="001">1011317877</controlfield>
+  <datafield tag="100" ind1="1" ind2=" ">
+    <subfield code="a">Strunz, Ulrich,</subfield>
+    <subfield code="e">Verfasser</subfield>
+  </datafield>
+  <datafield tag="245" ind1="1" ind2="0">
+    <subfield code="a">Fit wie Tiger, Panther &amp; Co. oder was man von den Tieren lernen kann</subfield>
+    <subfield code="c">Ulrich Strunz</subfield>
+  </datafield>
+  <datafield tag="264" ind1=" " ind2="1">
+    <subfield code="a">München</subfield>
+    <subfield code="b">Heyne</subfield>
+    <subfield code="c">2011</subfield>
+  </datafield>
+  <datafield tag="041" ind1=" " ind2=" ">
+    <subfield code="a">ger</subfield>
+  </datafield>
+  <datafield tag="520" ind1=" " ind2=" ">
+    <subfield code="a">Fitness- und Gesundheitsratgeber mit Tiervergleichen.</subfield>
+  </datafield>
+</record>`
+
 const marcNoTitle = `<record xmlns="http://www.loc.gov/MARC21/slim">
   <controlfield tag="001">9999</controlfield>
 </record>`
@@ -271,7 +294,7 @@ func TestGetBookByISBN_Found(t *testing.T) {
 				gotQuery = r.URL.Query().Get("query")
 				return &http.Response{
 					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(sruXMLN("1", marcDuneGerman))),
+					Body:       io.NopCloser(strings.NewReader(sruXMLN("1", marcStrunzFitness))),
 					Header:     make(http.Header),
 				}, nil
 			}),
@@ -287,11 +310,12 @@ func TestGetBookByISBN_Found(t *testing.T) {
 	if gotQuery != "isbn=9783453198975" {
 		t.Errorf("SRU query = %q, want isbn=9783453198975", gotQuery)
 	}
-	if book.ForeignID != "dnb:1234567890" {
-		t.Errorf("ForeignID = %q, want dnb:1234567890", book.ForeignID)
+	if book.ForeignID != "dnb:1011317877" {
+		t.Errorf("ForeignID = %q, want dnb:1011317877", book.ForeignID)
 	}
-	if book.Title != "Der Wüstenplanet: Roman" {
-		t.Errorf("Title = %q, want Der Wüstenplanet: Roman", book.Title)
+	wantTitle := "Fit wie Tiger, Panther & Co. oder was man von den Tieren lernen kann"
+	if book.Title != wantTitle {
+		t.Errorf("Title = %q, want %q", book.Title, wantTitle)
 	}
 	if book.Language != "ger" {
 		t.Errorf("Language = %q, want ger", book.Language)
@@ -299,8 +323,8 @@ func TestGetBookByISBN_Found(t *testing.T) {
 	if book.Description == "" {
 		t.Error("Description should be populated")
 	}
-	if book.Author == nil || book.Author.Name != "Frank Herbert" {
-		t.Fatalf("Author = %+v, want Frank Herbert", book.Author)
+	if book.Author == nil || book.Author.Name != "Ulrich Strunz" {
+		t.Fatalf("Author = %+v, want Ulrich Strunz", book.Author)
 	}
 }
 
