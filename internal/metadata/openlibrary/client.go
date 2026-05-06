@@ -292,6 +292,10 @@ func (c *Client) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]
 			if b.ReleaseDate == nil {
 				b.ReleaseDate = e.ReleaseDate
 			}
+			if e.RatingsCount > 0 {
+				b.RatingsCount = e.RatingsCount
+				b.AverageRating = e.AverageRating
+			}
 		}
 		index[workID] = len(books)
 		books = append(books, b)
@@ -328,7 +332,7 @@ func (c *Client) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]
 // HTML web-UI path still served by Solr, which returns HTTP 500
 // "DEPRECATED ENDPOINT ACCESSED" for API consumers (issue #462).
 func (c *Client) searchAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, error) {
-	u := fmt.Sprintf("%s/search.json?author_key=%s&fields=key,title,language,edition_count,first_publish_year,cover_i,subject&limit=200",
+	u := fmt.Sprintf("%s/search.json?author_key=%s&fields=key,title,language,edition_count,first_publish_year,cover_i,subject,ratings_count,ratings_average&limit=200",
 		baseURL, authorForeignID)
 	var resp struct {
 		Docs []struct {
@@ -339,6 +343,8 @@ func (c *Client) searchAuthorWorks(ctx context.Context, authorForeignID string) 
 			FirstPublishYear int      `json:"first_publish_year"`
 			CoverI           *int     `json:"cover_i"`
 			Subject          []string `json:"subject"`
+			RatingsCount     int      `json:"ratings_count"`
+			RatingsAverage   float64  `json:"ratings_average"`
 		} `json:"docs"`
 	}
 	if err := c.getJSON(ctx, u, &resp); err != nil {
@@ -356,6 +362,8 @@ func (c *Client) searchAuthorWorks(ctx context.Context, authorForeignID string) 
 			SortTitle:        doc.Title,
 			Genres:           truncateSlice(doc.Subject, 10),
 			Language:         pickPreferredLanguage(doc.Language),
+			RatingsCount:     doc.RatingsCount,
+			AverageRating:    doc.RatingsAverage,
 			MetadataProvider: "openlibrary",
 			Monitored:        true,
 			Status:           models.BookStatusWanted,
