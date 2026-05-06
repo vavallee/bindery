@@ -280,6 +280,28 @@ func TestGetBookByISBN_Found(t *testing.T) {
 	}
 }
 
+func TestGetBookByISBN_IncludesConfiguredAPIKey(t *testing.T) {
+	var gotQuery string
+	c := &Client{
+		apiKey: "gb-secret",
+		http: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			gotQuery = r.URL.Query().Encode()
+			return mockResponse(t, http.StatusOK, volumeSearchResponse{}), nil
+		})},
+	}
+
+	_, err := c.GetBookByISBN(context.Background(), "9780441013593")
+	if err != nil {
+		t.Fatalf("GetBookByISBN: %v", err)
+	}
+	if !strings.Contains(gotQuery, "q=isbn%3A9780441013593") {
+		t.Fatalf("query = %q, want isbn operator", gotQuery)
+	}
+	if !strings.Contains(gotQuery, "key=gb-secret") {
+		t.Fatalf("query = %q, want configured API key", gotQuery)
+	}
+}
+
 func TestGetBookByISBN_NotFound(t *testing.T) {
 	c := newMockClient(func(r *http.Request) *http.Response {
 		return mockResponse(t, http.StatusOK, volumeSearchResponse{})

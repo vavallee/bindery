@@ -279,6 +279,10 @@ func (c *Client) GetEditions(_ context.Context, _ string) ([]models.Edition, err
 }
 
 func (c *Client) GetBookByISBN(ctx context.Context, isbn string) (*models.Book, error) {
+	if c.authorizationToken(ctx) == "" {
+		return nil, metadata.ErrProviderNotConfigured
+	}
+
 	gql := `query GetBookByISBN($isbn: String!) {
 		editions(where: {_or: [{isbn_10: {_eq: $isbn}}, {isbn_13: {_eq: $isbn}}]}, limit: 1) {
 			language { iso_639_1 }

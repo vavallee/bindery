@@ -264,11 +264,11 @@ func TestGetEditions_ReturnsNil(t *testing.T) {
 }
 
 func TestGetBookByISBN_Found(t *testing.T) {
-	var gotURL string
+	var gotQuery string
 	c := &Client{
 		http: &http.Client{
 			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-				gotURL = r.URL.String()
+				gotQuery = r.URL.Query().Get("query")
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(sruXMLN("1", marcDuneGerman))),
@@ -284,8 +284,23 @@ func TestGetBookByISBN_Found(t *testing.T) {
 	if book == nil {
 		t.Fatal("expected non-nil book")
 	}
-	if !strings.Contains(gotURL, "isbn") {
-		t.Errorf("expected 'isbn' in SRU query URL, got %q", gotURL)
+	if gotQuery != "isbn=9783453198975" {
+		t.Errorf("SRU query = %q, want isbn=9783453198975", gotQuery)
+	}
+	if book.ForeignID != "dnb:1234567890" {
+		t.Errorf("ForeignID = %q, want dnb:1234567890", book.ForeignID)
+	}
+	if book.Title != "Der Wüstenplanet: Roman" {
+		t.Errorf("Title = %q, want Der Wüstenplanet: Roman", book.Title)
+	}
+	if book.Language != "ger" {
+		t.Errorf("Language = %q, want ger", book.Language)
+	}
+	if book.Description == "" {
+		t.Error("Description should be populated")
+	}
+	if book.Author == nil || book.Author.Name != "Frank Herbert" {
+		t.Fatalf("Author = %+v, want Frank Herbert", book.Author)
 	}
 }
 

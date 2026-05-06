@@ -491,7 +491,7 @@ func TestGetBookByISBN_Found(t *testing.T) {
 			},
 		}
 		return gqlResponse(t, http.StatusOK, data), nil
-	})
+	}).WithToken("hc-secret")
 
 	book, err := c.GetBookByISBN(context.Background(), "9780756404741")
 	if err != nil {
@@ -502,6 +502,34 @@ func TestGetBookByISBN_Found(t *testing.T) {
 	}
 	if book.Title != "The Name of the Wind" {
 		t.Errorf("Title: want 'The Name of the Wind', got %q", book.Title)
+	}
+}
+
+func TestGetBookByISBN_NoTokenSkipsRequest(t *testing.T) {
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected request without token: %s", r.URL.String())
+		return nil, nil
+	})
+
+	book, err := c.GetBookByISBN(context.Background(), "9780756404741")
+	if !errors.Is(err, metadata.ErrProviderNotConfigured) {
+		t.Fatalf("err = %v, want ErrProviderNotConfigured", err)
+	}
+	if book != nil {
+		t.Fatalf("book = %+v, want nil", book)
+	}
+}
+
+func TestGetBookByISBN_UsesAuthorizationHeader(t *testing.T) {
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		if got := r.Header.Get("Authorization"); got != "Bearer hc-secret" {
+			t.Fatalf("Authorization = %q, want Bearer hc-secret", got)
+		}
+		return gqlResponse(t, http.StatusOK, map[string]interface{}{"editions": []interface{}{}}), nil
+	}).WithToken("Bearer hc-secret")
+
+	if _, err := c.GetBookByISBN(context.Background(), "9780756404741"); err != nil {
+		t.Fatalf("GetBookByISBN: %v", err)
 	}
 }
 
@@ -520,7 +548,7 @@ func TestGetBookByISBN_WithLanguage(t *testing.T) {
 			},
 		}
 		return gqlResponse(t, http.StatusOK, data), nil
-	})
+	}).WithToken("hc-secret")
 
 	book, err := c.GetBookByISBN(context.Background(), "9783608938548")
 	if err != nil {
@@ -549,7 +577,7 @@ func TestGetBookByISBN_NoLanguage(t *testing.T) {
 			},
 		}
 		return gqlResponse(t, http.StatusOK, data), nil
-	})
+	}).WithToken("hc-secret")
 
 	book, err := c.GetBookByISBN(context.Background(), "0000000000001")
 	if err != nil {
@@ -566,7 +594,7 @@ func TestGetBookByISBN_NoLanguage(t *testing.T) {
 func TestGetBookByISBN_NotFound(t *testing.T) {
 	c := newMockClient(func(r *http.Request) (*http.Response, error) {
 		return gqlResponse(t, http.StatusOK, map[string]interface{}{"editions": []interface{}{}}), nil
-	})
+	}).WithToken("hc-secret")
 
 	book, err := c.GetBookByISBN(context.Background(), "0000000000000")
 	if err != nil {
@@ -584,7 +612,7 @@ func TestGetBookByISBN_HTTPError(t *testing.T) {
 			Body:       io.NopCloser(strings.NewReader("forbidden")),
 			Header:     make(http.Header),
 		}, nil
-	})
+	}).WithToken("hc-secret")
 
 	_, err := c.GetBookByISBN(context.Background(), "9780756404741")
 	if err == nil {

@@ -14,6 +14,7 @@ import (
 
 // stubProvider implements metadata.Provider for search handler tests.
 type stubProvider struct {
+	name       string
 	authors    []models.Author
 	authorsErr error
 	books      []models.Book
@@ -22,7 +23,12 @@ type stubProvider struct {
 	byISBNErr  error
 }
 
-func (s *stubProvider) Name() string { return "stub" }
+func (s *stubProvider) Name() string {
+	if s.name != "" {
+		return s.name
+	}
+	return "stub"
+}
 func (s *stubProvider) SearchAuthors(context.Context, string) ([]models.Author, error) {
 	return s.authors, s.authorsErr
 }
@@ -119,9 +125,25 @@ func TestLookupByISBN(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
+	// Secondary-provider success — fresh aggregator so nothing is cached.
+	pSecondary := &stubProvider{name: "hardcover", byISBN: &models.Book{Title: "Hardcover ISBN", MetadataProvider: "hardcover"}}
+	hSecondary := NewSearchHandler(metadata.NewAggregator(&stubProvider{name: "openlibrary"}, pSecondary))
+	rec = httptest.NewRecorder()
+	hSecondary.LookupByISBN(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book/lookup?isbn=9780756404741", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("secondary hit: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var got models.Book
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Title != "Hardcover ISBN" || got.MetadataProvider != "hardcover" {
+		t.Fatalf("secondary hit response = %+v, want Hardcover ISBN from hardcover", got)
+	}
+
 	// Not found — fresh aggregator so nothing is cached
 	p2 := &stubProvider{byISBN: nil}
-	h2 := NewSearchHandler(metadata.NewAggregator(p2))
+	h2 := NewSearchHandler(metadata.NewAggregator(p2, &stubProvider{name: "dnb"}))
 	rec = httptest.NewRecorder()
 	h2.LookupByISBN(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search/isbn?isbn=0000000000", nil))
 	if rec.Code != http.StatusNotFound {
@@ -135,5 +157,13 @@ func TestLookupByISBN(t *testing.T) {
 	h3.LookupByISBN(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search/isbn?isbn=fail", nil))
 	if rec.Code != http.StatusBadGateway {
 		t.Errorf("error: expected 502, got %d", rec.Code)
+	}
+
+	// Secondary-provider error with no hit
+	h4 := NewSearchHandler(metadata.NewAggregator(&stubProvider{name: "openlibrary"}, &stubProvider{name: "dnb", byISBNErr: errors.New("dnb down")}))
+	rec = httptest.NewRecorder()
+	h4.LookupByISBN(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book/lookup?isbn=9780000000000", nil))
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("secondary error: expected 502, got %d", rec.Code)
 	}
 }
