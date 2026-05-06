@@ -17,11 +17,15 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
+
+var uuidRE = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 type server struct {
 	db            *sql.DB
@@ -50,7 +54,7 @@ type statsResponse struct {
 func main() {
 	dbPath := env("DB_PATH", "/data/telemetry.db")
 	addr := env("ADDR", ":8080")
-	latestVersion := env("LATEST_VERSION", "v1.4.1")
+	latestVersion := env("LATEST_VERSION", "v1.4.3")
 	statsToken := env("STATS_TOKEN", "")
 
 	db, err := sql.Open("sqlite", dbPath+"?_journal=WAL&_timeout=5000")
@@ -221,8 +225,12 @@ func (s *server) handlePing(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	if req.InstallID == "" {
-		http.Error(w, "install_id required", http.StatusBadRequest)
+	if !uuidRE.MatchString(req.InstallID) {
+		http.Error(w, "install_id must be a valid UUID", http.StatusBadRequest)
+		return
+	}
+	if len(req.Version) > 64 || len(req.OS) > 32 || len(req.Arch) > 32 {
+		http.Error(w, "field too long", http.StatusBadRequest)
 		return
 	}
 
@@ -303,11 +311,21 @@ func (s *server) handleStats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// realIP extracts the client IP from X-Forwarded-For (set by Traefik) or
-// falls back to RemoteAddr. Used only for rate limiting — not for auth.
+// realIP returns the client IP for rate limiting. Prefers X-Real-Ip set by
+// Traefik (which reflects the actual downstream address regardless of any
+// X-Forwarded-For the client may have injected). Falls back to the rightmost
+// address in X-Forwarded-For — the one appended by the closest trusted proxy —
+// and finally to RemoteAddr. Never uses the leftmost X-Forwarded-For value,
+// which a client can spoof freely.
 func realIP(r *http.Request) string {
+	if xri := strings.TrimSpace(r.Header.Get("X-Real-Ip")); xri != "" {
+		return xri
+	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return xff
+		parts := strings.Split(xff, ",")
+		if ip := strings.TrimSpace(parts[len(parts)-1]); ip != "" {
+			return ip
+		}
 	}
 	return r.RemoteAddr
 }
