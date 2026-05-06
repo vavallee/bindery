@@ -1,4 +1,4 @@
-// Package telemetry sends an anonymous once-daily ping to getbindery.dev so
+// Package telemetry sends an anonymous once-daily ping to api.getbindery.dev so
 // the project maintainer can count active installs. The ping carries:
 //
 //   - install_id  — random UUID generated on first run, stored in the DB
@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	pingURL          = "https://getbindery.dev/api/ping"
+	pingURL          = "https://api.getbindery.dev/api/ping"
 	settingEnabled   = "telemetry.enabled"
 	settingInstallID = "telemetry.install_id"
 	timeout          = 10 * time.Second

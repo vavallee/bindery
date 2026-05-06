@@ -374,7 +374,7 @@ the [wiki Security page](https://github.com/vavallee/bindery/wiki/Security).
 
 ## Telemetry
 
-Bindery sends one anonymous ping per day to [getbindery.dev](https://getbindery.dev) so the maintainer can count active installs. The ping contains:
+Bindery sends one anonymous ping per day to [api.getbindery.dev](https://api.getbindery.dev) so the maintainer can count active installs. The ping contains:
 
 | Field | Value |
 |---|---|
