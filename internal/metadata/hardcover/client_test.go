@@ -70,6 +70,17 @@ func newMockClient(handler func(*http.Request) (*http.Response, error)) *Client 
 	}
 }
 
+func assertISBNLookupVariable(t *testing.T, r *http.Request, want string) {
+	t.Helper()
+	var req gqlRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		t.Fatalf("decode GraphQL request: %v", err)
+	}
+	if got, _ := req.Variables["isbn"].(string); got != want {
+		t.Fatalf("isbn variable = %q, want %q", got, want)
+	}
+}
+
 func TestName(t *testing.T) {
 	c := New()
 	if c.Name() != "hardcover" {
@@ -479,6 +490,7 @@ func TestGetEditions_AlwaysNil(t *testing.T) {
 
 func TestGetBookByISBN_Found(t *testing.T) {
 	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		assertISBNLookupVariable(t, r, "9780756404741")
 		data := map[string]interface{}{
 			"editions": []map[string]interface{}{
 				{
@@ -502,6 +514,35 @@ func TestGetBookByISBN_Found(t *testing.T) {
 	}
 	if book.Title != "The Name of the Wind" {
 		t.Errorf("Title: want 'The Name of the Wind', got %q", book.Title)
+	}
+}
+
+func TestGetBookByISBN_NormalizesISBNLookup(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "hyphenated isbn13", input: "978-0-7564-0474-1", want: "9780756404741"},
+		{name: "spaced isbn13", input: "978 0 7564 0474 1", want: "9780756404741"},
+		{name: "lowercase isbn10 x", input: "3-453-30523-x", want: "345330523X"},
+		{name: "invalid fallback", input: " not an isbn ", want: "not an isbn"},
+		{name: "prefixed fallback", input: "ISBN 9780756404741", want: "ISBN 9780756404741"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newMockClient(func(r *http.Request) (*http.Response, error) {
+				assertISBNLookupVariable(t, r, tt.want)
+				return gqlResponse(t, http.StatusOK, map[string]interface{}{"editions": []interface{}{}}), nil
+			}).WithToken("hc-secret")
+
+			book, err := c.GetBookByISBN(context.Background(), tt.input)
+			if err != nil {
+				t.Fatalf("GetBookByISBN: %v", err)
+			}
+			if book != nil {
+				t.Fatalf("book = %+v, want nil", book)
+			}
+		})
 	}
 }
 

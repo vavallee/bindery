@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
@@ -309,7 +310,7 @@ func (c *Client) GetBookByISBN(ctx context.Context, isbn string) (*models.Book, 
 			} `json:"editions"`
 		} `json:"data"`
 	}
-	if err := c.query(ctx, gql, map[string]any{"isbn": isbn}, &resp); err != nil {
+	if err := c.query(ctx, gql, map[string]any{"isbn": normalizeISBNLookup(isbn)}, &resp); err != nil {
 		return nil, fmt.Errorf("hardcover get book by isbn: %w", err)
 	}
 	if len(resp.Data.Editions) == 0 {
@@ -321,6 +322,29 @@ func (c *Client) GetBookByISBN(ctx context.Context, isbn string) (*models.Book, 
 		b.Language = ed.Language.Code2
 	}
 	return &b, nil
+}
+
+func normalizeISBNLookup(isbn string) string {
+	trimmed := strings.TrimSpace(isbn)
+	var b strings.Builder
+	invalid := false
+	for _, r := range trimmed {
+		switch {
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == 'x' || r == 'X':
+			b.WriteRune('X')
+		case r == '-' || unicode.IsSpace(r):
+			continue
+		default:
+			invalid = true
+		}
+	}
+	normalized := b.String()
+	if !invalid && (len(normalized) == 10 || len(normalized) == 13) {
+		return normalized
+	}
+	return trimmed
 }
 
 // GetUserWishlist fetches the authenticated user's "Want to Read" books.
