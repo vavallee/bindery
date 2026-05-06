@@ -292,12 +292,6 @@ export default function BookDetailPage() {
   if (!book) return <div className="text-slate-600 dark:text-zinc-500">Book not found</div>
 
   const mt = book.mediaType || 'ebook'
-  const typeBtn = (type: 'ebook' | 'audiobook' | 'both') =>
-    `px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-      mt === type
-        ? 'bg-emerald-600 text-white'
-        : 'bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 hover:bg-slate-300 dark:hover:bg-zinc-700'
-    }`
 
   return (
     <div className="max-w-4xl">
@@ -424,10 +418,20 @@ export default function BookDetailPage() {
 
       <section className="mb-6 p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
         <h3 className="text-sm font-semibold mb-3 text-slate-800 dark:text-zinc-200">Format</h3>
-        <div className="flex gap-2 mb-4">
-          <button onClick={() => saveField({ mediaType: 'ebook' })} disabled={saving} className={typeBtn('ebook')}>📖 Ebook</button>
-          <button onClick={() => saveField({ mediaType: 'audiobook' })} disabled={saving} className={typeBtn('audiobook')}>🎧 Audiobook</button>
-          <button onClick={() => saveField({ mediaType: 'both' })} disabled={saving} className={typeBtn('both')}>📖🎧 Both</button>
+        <div className="flex items-center gap-2 mb-4">
+          <label htmlFor="book-media-type" className="text-xs text-slate-600 dark:text-zinc-400">Format:</label>
+          <select
+            id="book-media-type"
+            value={mt}
+            onChange={e => saveField({ mediaType: e.target.value as 'ebook' | 'audiobook' | 'both' })}
+            disabled={saving}
+            className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600 disabled:opacity-50"
+            title="Change media type"
+          >
+            <option value="ebook">📖 Ebook</option>
+            <option value="audiobook">🎧 Audiobook</option>
+            <option value="both">📖🎧 Both</option>
+          </select>
         </div>
 
         {mt === 'both' && (

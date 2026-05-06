@@ -1,11 +1,57 @@
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
-import { SearchResultsSection } from './BookDetailPage'
-import type { SearchResult } from '../api/client'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import BookDetailPage, { SearchResultsSection } from './BookDetailPage'
+import { api } from '../api/client'
+import type { Book, SearchResult } from '../api/client'
 
 vi.mock('../components/MediaBadge', () => ({
   default: ({ type }: { type?: string }) => <span data-testid={`badge-${type}`}>{type}</span>,
 }))
+
+vi.mock('../api/client', async importOriginal => {
+  const actual = await importOriginal<typeof import('../api/client')>()
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      getBook: vi.fn(),
+      listHistory: vi.fn(),
+      updateBook: vi.fn(),
+    },
+  }
+})
+
+function makeBook(overrides: Partial<Book> = {}): Book {
+  return {
+    id: 7,
+    foreignBookId: 'fb-7',
+    authorId: 42,
+    title: 'Mistborn',
+    description: '',
+    imageUrl: '',
+    releaseDate: undefined,
+    genres: [],
+    monitored: true,
+    status: 'imported',
+    filePath: '',
+    mediaType: 'ebook',
+    ebookFilePath: '',
+    audiobookFilePath: '',
+    excluded: false,
+    ...overrides,
+  }
+}
+
+function renderBookDetailPage() {
+  return render(
+    <MemoryRouter initialEntries={['/book/7']}>
+      <Routes>
+        <Route path="/book/:id" element={<BookDetailPage />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
 
 function makeResult({ guid, title, ...rest }: Partial<SearchResult> & { guid: string }): SearchResult {
   return {
@@ -99,5 +145,48 @@ describe('SearchResultsSection — single-format book', () => {
       <SearchResultsSection results={results} bookMediaType="ebook" grabbing={null} onGrab={noop} />,
     )
     expect(container.querySelectorAll('button').length).toBe(20)
+  })
+})
+
+describe('BookDetailPage — media-type selector', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.listHistory).mockResolvedValue([])
+  })
+
+  it('renders the selector with the current mediaType selected', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({ mediaType: 'ebook' }))
+    renderBookDetailPage()
+
+    const select = (await screen.findByLabelText('Format:')) as HTMLSelectElement
+    expect(select.value).toBe('ebook')
+  })
+
+  it('calls api.updateBook with the new mediaType on change', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({ mediaType: 'ebook' }))
+    vi.mocked(api.updateBook).mockResolvedValue(makeBook({ mediaType: 'both' }))
+    renderBookDetailPage()
+
+    const select = await screen.findByLabelText('Format:')
+    fireEvent.change(select, { target: { value: 'both' } })
+
+    await waitFor(() => expect(api.updateBook).toHaveBeenCalledWith(7, { mediaType: 'both' }))
+  })
+
+  it('updates local state on success so the dual-format panels appear', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({ mediaType: 'ebook' }))
+    vi.mocked(api.updateBook).mockResolvedValue(makeBook({ mediaType: 'both' }))
+    renderBookDetailPage()
+
+    const select = (await screen.findByLabelText('Format:')) as HTMLSelectElement
+    expect(screen.queryByText(/✓ on disk|needed/)).toBeNull()
+
+    fireEvent.change(select, { target: { value: 'both' } })
+
+    await waitFor(() => expect((select as HTMLSelectElement).value).toBe('both'))
+    // The dual-format panels (gated on mediaType === 'both') now render the
+    // "📖 Ebook ... needed" / "🎧 Audiobook ... needed" status pills.
+    const needed = await screen.findAllByText('needed')
+    expect(needed.length).toBe(2)
   })
 })

@@ -13,7 +13,7 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ### Fixed
 
-- **Mobile session cookie no longer evicted on app switch** — Login without "Remember me" now sets `Max-Age` on the session cookie (was previously a browser-session cookie with no expiry hint), so iOS Safari and Android Chrome don'''t drop it when the tab is backgrounded or the OS suspends the browser process. The 12-hour / 30-day durations were already encoded in `auth.SessionDurationShort` / `auth.SessionDuration` but never reached the wire on the short branch.
+- **Mobile session cookie no longer evicted on app switch** — Login without "Remember me" now sets `Max-Age` on the session cookie (was previously a browser-session cookie with no expiry hint), so iOS Safari and Android Chrome don't drop it when the tab is backgrounded or the OS suspends the browser process. The 12-hour / 30-day durations were already encoded in `auth.SessionDurationShort` / `auth.SessionDuration` but never reached the wire on the short branch.
 
 ## [v1.4.4] — 2026-05-06
 
