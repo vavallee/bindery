@@ -1002,6 +1002,100 @@ func TestGetUserWishlist_HTTPError(t *testing.T) {
 	}
 }
 
+func TestGetUserLists_IncludesBuiltinShelves(t *testing.T) {
+	// When me.lists returns an empty array (user has no custom lists),
+	// GetUserLists must still return the 4 built-in shelf entries.
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		body := `{"data":{"me":{"lists":[]}}}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+		}, nil
+	})
+	c = c.WithToken("hc-token")
+
+	lists, err := c.GetUserLists(context.Background())
+	if err != nil {
+		t.Fatalf("GetUserLists: %v", err)
+	}
+	if len(lists) != len(hcBuiltinShelves) {
+		t.Fatalf("want %d lists (built-ins only), got %d", len(hcBuiltinShelves), len(lists))
+	}
+	if lists[0].ID != -1 || lists[0].Name != "Want to Read" {
+		t.Errorf("first list = %+v, want {ID:-1, Name:Want to Read}", lists[0])
+	}
+}
+
+func TestGetUserLists_CustomListsAppendedAfterShelves(t *testing.T) {
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		body := `{"data":{"me":{"lists":[{"id":42,"name":"Favorites","slug":"favorites","books_count":7}]}}}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+		}, nil
+	})
+	c = c.WithToken("hc-token")
+
+	lists, err := c.GetUserLists(context.Background())
+	if err != nil {
+		t.Fatalf("GetUserLists: %v", err)
+	}
+	want := len(hcBuiltinShelves) + 1
+	if len(lists) != want {
+		t.Fatalf("want %d lists, got %d", want, len(lists))
+	}
+	last := lists[len(lists)-1]
+	if last.ID != 42 || last.Name != "Favorites" || last.BooksCount != 7 {
+		t.Errorf("custom list = %+v, want {ID:42, Name:Favorites, BooksCount:7}", last)
+	}
+}
+
+func TestGetListBooks_BuiltinShelfRoutesToUserBooks(t *testing.T) {
+	var gotVars map[string]any
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		var req gqlRequest
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &req)
+		gotVars = req.Variables
+		resp := `{"data":{"me":{"user_books":[{"book":{"id":99,"title":"Dune","slug":"dune","contributions":[{"author":{"id":1,"name":"Frank Herbert","slug":"frank-herbert"}}]}}]}}}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(resp)),
+			Header:     make(http.Header),
+		}, nil
+	})
+	c = c.WithToken("hc-token")
+
+	books, err := c.GetListBooks(context.Background(), -1) // Want to Read
+	if err != nil {
+		t.Fatalf("GetListBooks shelf: %v", err)
+	}
+	if len(books) != 1 || books[0].Title != "Dune" {
+		t.Errorf("books = %+v, want [{Title:Dune}]", books)
+	}
+	if gotVars["statusID"] != float64(1) {
+		t.Errorf("statusID var = %v, want 1", gotVars["statusID"])
+	}
+}
+
+func TestHcShelfStatusID(t *testing.T) {
+	cases := []struct{ id, want int }{{-1, 1}, {-2, 2}, {-3, 3}, {-4, 4}}
+	for _, tc := range cases {
+		got, ok := hcShelfStatusID(tc.id)
+		if !ok || got != tc.want {
+			t.Errorf("hcShelfStatusID(%d) = %d,%v, want %d,true", tc.id, got, ok, tc.want)
+		}
+	}
+	if _, ok := hcShelfStatusID(0); ok {
+		t.Error("hcShelfStatusID(0) should return false")
+	}
+	if _, ok := hcShelfStatusID(42); ok {
+		t.Error("hcShelfStatusID(42) should return false")
+	}
+}
+
 func TestQuery_RequestFormat(t *testing.T) {
 	var gotBody []byte
 	c := newMockClient(func(r *http.Request) (*http.Response, error) {
