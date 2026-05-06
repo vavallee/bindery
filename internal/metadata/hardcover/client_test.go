@@ -538,7 +538,7 @@ func TestGetBookByISBN_WithLanguage(t *testing.T) {
 		data := map[string]interface{}{
 			"editions": []map[string]interface{}{
 				{
-					"language": map[string]interface{}{"iso_639_1": "de"},
+					"language": map[string]interface{}{"code2": "de"},
 					"book": map[string]interface{}{
 						"id":    88,
 						"title": "Der Herr der Ringe",
