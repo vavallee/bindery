@@ -932,7 +932,7 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 
 		// Check if the user already owns this book before queuing a download.
 		if h.finder != nil {
-			if existingPath := h.finder.FindExisting(ctx, b.Title, author.Name); existingPath != "" {
+			if existingPath := h.finder.FindExisting(ctx, b.Title, author.Name, b.MediaType); existingPath != "" {
 				slog.Info("library: found existing file, skipping auto-search", "title", b.Title, "path", existingPath)
 				_ = h.books.SetFilePath(ctx, b.ID, existingPath)
 				continue // don't auto-search for a book we already have

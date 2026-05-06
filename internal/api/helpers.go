@@ -18,9 +18,12 @@ type BookSearcher interface {
 }
 
 // LibraryFinder checks whether a book already exists in the local library.
-// Implemented by *importer.Scanner; a nil implementation is a no-op.
+// Implemented by *importer.Scanner; a nil implementation is a no-op. The
+// mediaType argument selects which library roots are searched (ebook vs
+// audiobook vs both) so a same-titled file in the wrong root cannot be
+// mis-attributed to a book of the opposite media type.
 type LibraryFinder interface {
-	FindExisting(ctx context.Context, title, authorName string) string
+	FindExisting(ctx context.Context, title, authorName, mediaType string) string
 }
 
 func contextBackground() context.Context {

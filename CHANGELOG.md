@@ -5,6 +5,12 @@ All notable changes to Bindery are documented here. Format loosely follows
 [Semantic Versioning](https://semver.org).
 
 
+## [Unreleased]
+
+### Fixed
+
+- **Library file matching now respects media type** (#488, #454) — `FindExisting` now picks the right library root based on the book's `media_type` instead of always walking `BINDERY_LIBRARY_DIR` first. Audiobook book rows are matched against `BINDERY_AUDIOBOOK_DIR` (with fallback to `BINDERY_LIBRARY_DIR` when the audiobook root is unset), ebook rows are matched against `BINDERY_LIBRARY_DIR`, and dual-format / unspecified rows preserve the prior behaviour of walking both roots with the ebook library first. Previously a same-titled ebook in `libraryDir` could be mis-attributed to an audiobook entry on rescan, and authors filtered to "audiobooks only" still had file lookups walk the ebook root.
+
 ## [v1.4.3] — 2026-05-06
 
 ### Fixed

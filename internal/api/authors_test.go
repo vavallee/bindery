@@ -346,7 +346,7 @@ type stubLibraryFinder struct {
 	ownedPath  string
 }
 
-func (f *stubLibraryFinder) FindExisting(_ context.Context, title, _ string) string {
+func (f *stubLibraryFinder) FindExisting(_ context.Context, title, _, _ string) string {
 	if title == f.ownedTitle {
 		return f.ownedPath
 	}

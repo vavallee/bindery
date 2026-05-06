@@ -779,20 +779,37 @@ func detectDownloadFormat(files []string) string {
 }
 
 // FindExisting searches the library directories for a book file that matches
-// the given title and author. Both libraryDir (ebooks) and audiobookDir are
-// searched. Returns the first matching file path, or "" if none is found.
-// Intended to be called before auto-searching so books the user already owns
-// are not re-downloaded.
-func (s *Scanner) FindExisting(ctx context.Context, title, authorName string) string {
+// the given title and author. The mediaType argument selects which roots are
+// walked: MediaTypeEbook restricts to libraryDir, MediaTypeAudiobook restricts
+// to audiobookDir (falling back to libraryDir when audiobookDir is unset), and
+// MediaTypeBoth or an empty/unknown value walks both with libraryDir first.
+// Returns the first matching file path, or "" if none is found. Intended to be
+// called before auto-searching so books the user already owns are not
+// re-downloaded.
+func (s *Scanner) FindExisting(ctx context.Context, title, authorName, mediaType string) string {
 	if title == "" {
 		return ""
 	}
 	roots := make([]string, 0, 2)
-	if s.libraryDir != "" {
-		roots = append(roots, s.libraryDir)
-	}
-	if s.audiobookDir != "" && s.audiobookDir != s.libraryDir {
-		roots = append(roots, s.audiobookDir)
+	switch mediaType {
+	case models.MediaTypeEbook:
+		if s.libraryDir != "" {
+			roots = append(roots, s.libraryDir)
+		}
+	case models.MediaTypeAudiobook:
+		switch {
+		case s.audiobookDir != "":
+			roots = append(roots, s.audiobookDir)
+		case s.libraryDir != "":
+			roots = append(roots, s.libraryDir)
+		}
+	default:
+		if s.libraryDir != "" {
+			roots = append(roots, s.libraryDir)
+		}
+		if s.audiobookDir != "" && s.audiobookDir != s.libraryDir {
+			roots = append(roots, s.audiobookDir)
+		}
 	}
 	for _, root := range roots {
 		if found := s.findExistingInDir(root, title, authorName); found != "" {
