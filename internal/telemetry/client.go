@@ -114,6 +114,11 @@ func (c *Client) Ping(ctx context.Context) {
 }
 
 func (c *Client) isEnabled(ctx context.Context) bool {
+	// BINDERY_TELEMETRY_DISABLED=true lets users opt out before any DB setting
+	// exists (e.g. on first boot, before the startup ping would fire).
+	if os.Getenv("BINDERY_TELEMETRY_DISABLED") == "true" {
+		return false
+	}
 	s, _ := c.settings.Get(ctx, settingEnabled)
 	if s == nil {
 		return true // default on

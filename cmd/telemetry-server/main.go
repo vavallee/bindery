@@ -20,6 +20,7 @@ import (
 	"html"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -72,6 +73,7 @@ type statsResponse struct {
 func main() {
 	dbPath := env("DB_PATH", "/data/telemetry.db")
 	addr := env("ADDR", ":8080")
+	canonicalHost := env("CANONICAL_HOST", "")
 	latestVersion := env("LATEST_VERSION", "v1.4.3")
 	statsToken := env("STATS_TOKEN", "")
 
@@ -147,7 +149,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:         addr,
-		Handler:      secureHeaders(mux),
+		Handler:      secureHeaders(canonicalHost, mux),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -161,11 +163,18 @@ func main() {
 
 // secureHeaders adds security response headers and rejects non-HTTPS requests
 // (when running behind Traefik, X-Forwarded-Proto carries the original scheme).
-func secureHeaders(next http.Handler) http.Handler {
+// host is the canonical public hostname (CANONICAL_HOST env var); when set it
+// is used in the HTTPS redirect instead of the request's Host header, which a
+// client could otherwise set to an arbitrary domain (open redirect).
+func secureHeaders(host string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Reject plain HTTP when the request came through the public ingress.
 		if r.Header.Get("X-Forwarded-Proto") == "http" {
-			http.Redirect(w, r, "https://"+r.Host+r.RequestURI, http.StatusMovedPermanently)
+			target := host
+			if target == "" {
+				target = r.Host
+			}
+			http.Redirect(w, r, "https://"+target+r.RequestURI, http.StatusMovedPermanently)
 			return
 		}
 		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
@@ -789,6 +798,11 @@ func realIP(r *http.Request) string {
 		if ip := strings.TrimSpace(parts[len(parts)-1]); ip != "" {
 			return ip
 		}
+	}
+	// RemoteAddr is "IP:port"; strip the port so each unique client IP gets
+	// one rate-limit bucket regardless of which ephemeral port it connects from.
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
 	}
 	return r.RemoteAddr
 }
