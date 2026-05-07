@@ -392,6 +392,7 @@ func main() {
 	logHandler := api.NewLogHandler(ring).WithLogRepo(logRepo)
 	prowlarrHandler := api.NewProwlarrHandler(prowlarrRepo, indexerRepo)
 	calibreHandler := api.NewCalibreHandler(settingsRepo)
+	grimmoryHandler := api.NewGrimmoryHandler(settingsRepo).WithVersion(version)
 	absHandler := api.NewABSHandler(settingsRepo).WithVersion(version)
 	absConflictHandler := api.NewABSConflictHandler(absConflictRepo, authorRepo, bookRepo)
 	absImportHandler := api.NewABSImportHandler(absImporter, func(ctx context.Context) api.ABSStoredConfig {
@@ -722,6 +723,11 @@ func main() {
 		// Library
 		r.Post("/library/scan", libraryHandler.Scan)
 		r.Get("/library/scan/status", libraryHandler.ScanStatus)
+
+		// Grimmory integration.
+		r.Get("/grimmory/config", grimmoryHandler.GetConfig)
+		r.Put("/grimmory/config", grimmoryHandler.SetConfig)
+		r.Post("/grimmory/test", grimmoryHandler.Test)
 
 		// Calibre integration — settings live under /setting/calibre.*,
 		// this endpoint just validates + probes the configured install.

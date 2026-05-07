@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, ABSConfig, ABSImportProgress, ABSImportRun, ABSLibrary, ABSMetadataConflict, ABSReviewItem, ABSRollbackAction, ABSRollbackResult, ABSTestResult, AuthConfig, AuthStatus, BlocklistEntry, Indexer, IndexerTestResult, ProwlarrInstance, DownloadClient, NotificationConfig, QualityProfile, MetadataProfile, CalibreImportProgress, CalibreSyncProgress, RootFolder, LogEntry, ImportList, HardcoverList, HardcoverTestResult, Author, Book, SystemStatus } from '../api/client'
+import { api, ABSConfig, ABSImportProgress, ABSImportRun, ABSLibrary, ABSMetadataConflict, ABSReviewItem, ABSRollbackAction, ABSRollbackResult, ABSTestResult, GrimmoryConfig, GrimmoryTestResult, AuthConfig, AuthStatus, BlocklistEntry, Indexer, IndexerTestResult, ProwlarrInstance, DownloadClient, NotificationConfig, QualityProfile, MetadataProfile, CalibreImportProgress, CalibreSyncProgress, RootFolder, LogEntry, ImportList, HardcoverList, HardcoverTestResult, Author, Book, SystemStatus } from '../api/client'
 import AuthSettings from '../settings/AuthSettings'
 import Pagination from '../components/Pagination'
 import ABSConflictPanel from '../components/ABSAuthorConflictsPanel'
@@ -9,7 +9,7 @@ import ThemeToggle from '../components/ThemeToggle'
 import LanguageSwitcher from '../components/LanguageSwitcher'
 import { useAuth } from '../auth/AuthContext'
 
-type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs'
+type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'grimmory'
 
 const inputCls = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600'
 const tabCls = (active: boolean) =>
@@ -106,7 +106,7 @@ export default function SettingsPage() {
 
       <div className="flex flex-wrap gap-2 mb-6">
         {(isAdmin
-          ? ['general', 'indexers', 'clients', 'rootfolders', 'quality', 'metadata', 'notifications', 'calibre', 'abs', 'import', 'blocklist', 'logs'] as Tab[]
+          ? ['general', 'indexers', 'clients', 'rootfolders', 'quality', 'metadata', 'notifications', 'calibre', 'abs', 'grimmory', 'import', 'blocklist', 'logs'] as Tab[]
           : ['general'] as Tab[]
         ).map(tabKey => (
           <button key={tabKey} onClick={() => setTab(tabKey)} className={tabCls(tab === tabKey)}>
@@ -780,6 +780,10 @@ export default function SettingsPage() {
 
       {tab === 'calibre' && (
         <CalibreTab />
+      )}
+
+      {tab === 'grimmory' && (
+        <GrimmoryTab />
       )}
 
       {tab === 'blocklist' && (
@@ -3097,6 +3101,139 @@ function GeneralTab() {
 
 function parseCats(s: string): number[] {
   return s.split(',').map(t => parseInt(t.trim(), 10)).filter(n => !isNaN(n))
+}
+
+function GrimmoryTab() {
+  const [config, setConfig] = useState<GrimmoryConfig | null>(null)
+  const [draft, setDraft] = useState({ baseUrl: '', apiKey: '', enabled: false })
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<GrimmoryTestResult | null>(null)
+  const [testError, setTestError] = useState<string | null>(null)
+
+  useEffect(() => {
+    api.grimmoryConfig()
+      .then(cfg => {
+        setConfig(cfg)
+        setDraft({ baseUrl: cfg.baseUrl ?? '', apiKey: '', enabled: cfg.enabled })
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [])
+
+  const save = async () => {
+    setSaving(true)
+    setSaveError(null)
+    setTestResult(null)
+    try {
+      const payload: { enabled: boolean; baseUrl: string; apiKey?: string } = {
+        enabled: draft.enabled,
+        baseUrl: draft.baseUrl,
+      }
+      if (draft.apiKey) payload.apiKey = draft.apiKey
+      const next = await api.grimmorySetConfig(payload)
+      setConfig(next)
+      setDraft(prev => ({ ...prev, apiKey: '' }))
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const test = async () => {
+    setTesting(true)
+    setTestResult(null)
+    setTestError(null)
+    try {
+      const payload: { baseUrl?: string; apiKey?: string } = { baseUrl: draft.baseUrl }
+      if (draft.apiKey) payload.apiKey = draft.apiKey
+      const r = await api.grimmoryTest(payload)
+      setTestResult(r)
+    } catch (err) {
+      setTestError(err instanceof Error ? err.message : 'Test failed')
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  if (loading) return <div className="text-slate-600 dark:text-zinc-500">Loading…</div>
+
+  return (
+    <div className="space-y-6 max-w-lg">
+      <div>
+        <h3 className="text-lg font-semibold mb-1">Grimmory</h3>
+        <p className="text-xs text-slate-600 dark:text-zinc-500 mb-4">
+          Push newly imported books to a{' '}
+          <a href="https://grimmory.org" target="_blank" rel="noopener noreferrer" className="underline">Grimmory</a>{' '}
+          self-hosted library. Enable the Grimmory REST API (<code>API_DOCS_ENABLED=true</code>) and provide
+          your server URL and API token.
+        </p>
+      </div>
+
+      <label className="flex items-center gap-3 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={draft.enabled}
+          onChange={e => setDraft(prev => ({ ...prev, enabled: e.target.checked }))}
+          className="w-4 h-4 accent-emerald-500"
+        />
+        <span className="text-sm font-medium">Enable Grimmory integration</span>
+      </label>
+
+      <div className="space-y-3">
+        <div>
+          <label className="block text-xs font-medium mb-1">Server URL</label>
+          <input
+            type="text"
+            value={draft.baseUrl}
+            onChange={e => setDraft(prev => ({ ...prev, baseUrl: e.target.value }))}
+            placeholder="https://grimmory.example.com"
+            className={inputCls}
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium mb-1">
+            API Key{config?.apiKeyConfigured && !draft.apiKey ? ' (configured — leave blank to keep)' : ''}
+          </label>
+          <input
+            type="password"
+            value={draft.apiKey}
+            onChange={e => setDraft(prev => ({ ...prev, apiKey: e.target.value }))}
+            placeholder={config?.apiKeyConfigured ? '••••••••' : 'Paste API token here'}
+            className={inputCls}
+          />
+        </div>
+      </div>
+
+      <div className="flex gap-2 flex-wrap">
+        <button
+          onClick={save}
+          disabled={saving}
+          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded text-sm font-medium"
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        <button
+          onClick={test}
+          disabled={testing || !draft.baseUrl}
+          className="px-4 py-2 bg-slate-200 dark:bg-zinc-700 hover:bg-slate-300 dark:hover:bg-zinc-600 disabled:opacity-50 rounded text-sm font-medium"
+        >
+          {testing ? 'Testing…' : 'Test Connection'}
+        </button>
+      </div>
+
+      {saveError && <p className="text-red-500 text-xs">{saveError}</p>}
+      {testError && <p className="text-red-500 text-xs">{testError}</p>}
+      {testResult && (
+        <p className={`text-xs ${testResult.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500'}`}>
+          {testResult.message}
+        </p>
+      )}
+    </div>
+  )
 }
 
 function CalibreTab() {
