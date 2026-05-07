@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -99,6 +100,7 @@ func (c *Client) GetEditions(_ context.Context, _ string) ([]models.Edition, err
 }
 
 func (c *Client) GetBookByISBN(ctx context.Context, isbn string) (*models.Book, error) {
+	isbn = isbnutil.Normalize(isbn)
 	books, err := c.SearchBooks(ctx, "isbn:"+isbn)
 	if err != nil {
 		return nil, err

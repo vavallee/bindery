@@ -1345,19 +1345,6 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, book)
 }
 
-func metadataProviderFromForeignID(foreignID string) string {
-	switch {
-	case strings.HasPrefix(foreignID, "gb:"):
-		return "googlebooks"
-	case strings.HasPrefix(foreignID, "hc:"):
-		return "hardcover"
-	case strings.HasPrefix(foreignID, "dnb:"):
-		return "dnb"
-	default:
-		return "openlibrary"
-	}
-}
-
 func fallbackMetadataAuthorForeignID(provider, name string) string {
 	key := strings.ReplaceAll(textutil.NormalizeAuthorName(name), " ", "-")
 	if key == "" {

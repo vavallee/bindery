@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -81,13 +82,41 @@ func bookFixture(t *testing.T) (*BookHandler, *db.BookRepo, *db.AuthorRepo, *mod
 	if err := authors.Create(ctx, author); err != nil {
 		t.Fatal(err)
 	}
-	return NewBookHandler(books, nil, history, nil), books, authors, author, ctx
+	return NewBookHandler(books, nil, history, nil).WithAuthors(authors), books, authors, author, ctx
 }
 
 func withURLParam(req *http.Request, key, val string) *http.Request {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add(key, val)
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+}
+
+type bookMapProvider struct {
+	booksByID  map[string]*models.Book
+	getBookErr error
+}
+
+func (p *bookMapProvider) Name() string { return "openlibrary" }
+func (p *bookMapProvider) SearchAuthors(context.Context, string) ([]models.Author, error) {
+	return nil, nil
+}
+func (p *bookMapProvider) SearchBooks(context.Context, string) ([]models.Book, error) {
+	return nil, nil
+}
+func (p *bookMapProvider) GetAuthor(context.Context, string) (*models.Author, error) {
+	return nil, nil
+}
+func (p *bookMapProvider) GetBook(_ context.Context, foreignID string) (*models.Book, error) {
+	if p.getBookErr != nil {
+		return nil, p.getBookErr
+	}
+	return p.booksByID[foreignID], nil
+}
+func (p *bookMapProvider) GetEditions(context.Context, string) ([]models.Edition, error) {
+	return nil, nil
+}
+func (p *bookMapProvider) GetBookByISBN(context.Context, string) (*models.Book, error) {
+	return nil, nil
 }
 
 // TestBookList_Empty returns [] (not null) so the frontend can render without
@@ -153,6 +182,184 @@ func TestBookGet_BadID(t *testing.T) {
 	h.Get(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestBookMapMetadata_SuccessPreservesLocalState(t *testing.T) {
+	h, books, authors, author, ctx := bookFixture(t)
+	selectedEditionID := int64(44)
+	book := &models.Book{
+		ForeignID:         "OL-OLDW",
+		AuthorID:          author.ID,
+		Title:             "Old Title",
+		SortTitle:         "Old Title",
+		Description:       "Old description",
+		Status:            models.BookStatusDownloaded,
+		Monitored:         true,
+		AnyEditionOK:      true,
+		SelectedEditionID: &selectedEditionID,
+		MediaType:         models.MediaTypeBoth,
+		Narrator:          "Existing Narrator",
+		DurationSeconds:   3600,
+		ASIN:              "B000OLD",
+		Genres:            []string{"old"},
+		MetadataProvider:  "openlibrary",
+		EbookFilePath:     "Library/Old.epub",
+		AudiobookFilePath: "Library/Old",
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.SetExcluded(ctx, book.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	targetRelease := time.Date(1967, 5, 30, 0, 0, 0, 0, time.UTC)
+	provider := &bookMapProvider{booksByID: map[string]*models.Book{
+		"OL-NEWW": {
+			ForeignID:        "OL-NEWW",
+			Title:            "New Title",
+			SortTitle:        "New Title",
+			Description:      "New description",
+			ImageURL:         "https://covers.example/new.jpg",
+			ReleaseDate:      &targetRelease,
+			Genres:           []string{"fiction"},
+			AverageRating:    4.5,
+			RatingsCount:     12,
+			Language:         "eng",
+			MetadataProvider: "openlibrary",
+			Author:           &models.Author{ForeignID: author.ForeignID, Name: "Test Author"},
+		},
+	}}
+	h.meta = metadata.NewAggregator(provider)
+	h.authors = authors
+
+	body := bytes.NewBufferString(`{"foreignBookId":"OL-NEWW"}`)
+	req := withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/book/"+strconv.FormatInt(book.ID, 10)+"/map", body), "id", strconv.FormatInt(book.ID, 10))
+	rec := httptest.NewRecorder()
+	h.MapMetadata(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var got models.Book
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ForeignID != "OL-NEWW" || got.Title != "New Title" || got.Language != "eng" {
+		t.Fatalf("mapped metadata not applied: %+v", got)
+	}
+	if got.AuthorID != author.ID || !got.Monitored || got.Status != models.BookStatusDownloaded || got.MediaType != models.MediaTypeBoth {
+		t.Fatalf("local state not preserved: %+v", got)
+	}
+	if got.SelectedEditionID == nil || *got.SelectedEditionID != selectedEditionID {
+		t.Fatalf("selected edition not preserved: %+v", got.SelectedEditionID)
+	}
+	if !got.Excluded {
+		t.Fatalf("excluded flag not preserved: %+v", got)
+	}
+}
+
+func TestBookMapMetadata_RejectsDuplicateForeignTarget(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	book := &models.Book{
+		ForeignID:        "OL-OLDW",
+		AuthorID:         author.ID,
+		Title:            "Old Title",
+		SortTitle:        "Old Title",
+		Status:           models.BookStatusWanted,
+		Genres:           []string{},
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	other := &models.Book{
+		ForeignID:        "OL-TAKENW",
+		AuthorID:         author.ID,
+		Title:            "Taken Title",
+		SortTitle:        "Taken Title",
+		Status:           models.BookStatusWanted,
+		Genres:           []string{},
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := books.Create(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	h.meta = metadata.NewAggregator(&bookMapProvider{booksByID: map[string]*models.Book{}})
+
+	body := bytes.NewBufferString(`{"foreignBookId":"OL-TAKENW"}`)
+	req := withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/book/"+strconv.FormatInt(book.ID, 10)+"/map", body), "id", strconv.FormatInt(book.ID, 10))
+	rec := httptest.NewRecorder()
+	h.MapMetadata(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestBookMapMetadata_RejectsMissingTarget(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	book := &models.Book{
+		ForeignID:        "OL-OLDW",
+		AuthorID:         author.ID,
+		Title:            "Old Title",
+		SortTitle:        "Old Title",
+		Status:           models.BookStatusWanted,
+		Genres:           []string{},
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	h.meta = metadata.NewAggregator(&bookMapProvider{booksByID: map[string]*models.Book{}})
+
+	body := bytes.NewBufferString(`{"foreignBookId":"OL-MISSINGW"}`)
+	req := withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/book/"+strconv.FormatInt(book.ID, 10)+"/map", body), "id", strconv.FormatInt(book.ID, 10))
+	rec := httptest.NewRecorder()
+	h.MapMetadata(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestBookMapMetadata_RejectsAuthorMismatch(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	book := &models.Book{
+		ForeignID:        "OL-OLDW",
+		AuthorID:         author.ID,
+		Title:            "Old Title",
+		SortTitle:        "Old Title",
+		Status:           models.BookStatusWanted,
+		Genres:           []string{},
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	h.meta = metadata.NewAggregator(&bookMapProvider{booksByID: map[string]*models.Book{
+		"OL-NEWW": {
+			ForeignID:        "OL-NEWW",
+			Title:            "New Title",
+			MetadataProvider: "openlibrary",
+			Author:           &models.Author{ForeignID: "OL-DIFFERENTA", Name: "Different Author"},
+		},
+	}})
+
+	body := bytes.NewBufferString(`{"foreignBookId":"OL-NEWW"}`)
+	req := withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/book/"+strconv.FormatInt(book.ID, 10)+"/map", body), "id", strconv.FormatInt(book.ID, 10))
+	rec := httptest.NewRecorder()
+	h.MapMetadata(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, err := books.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ForeignID != "OL-OLDW" {
+		t.Fatalf("foreign ID changed after rejected map: %+v", got)
 	}
 }
 

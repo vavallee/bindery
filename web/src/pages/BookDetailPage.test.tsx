@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import BookDetailPage, { SearchResultsSection } from './BookDetailPage'
+import BookDetailPage, { MapMetadataModal, SearchResultsSection } from './BookDetailPage'
 import { api } from '../api/client'
 import type { Book, SearchResult } from '../api/client'
 
@@ -18,6 +18,8 @@ vi.mock('../api/client', async importOriginal => {
       getBook: vi.fn(),
       listHistory: vi.fn(),
       updateBook: vi.fn(),
+      searchBooks: vi.fn(),
+      mapBookMetadata: vi.fn(),
     },
   }
 })
@@ -68,6 +70,10 @@ function makeResult({ guid, title, ...rest }: Partial<SearchResult> & { guid: st
 }
 
 const noop = () => {}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+})
 
 describe('SearchResultsSection — dual-format book', () => {
   it('renders separate Ebooks and Audiobooks sections', () => {
@@ -123,6 +129,62 @@ describe('SearchResultsSection — dual-format book', () => {
   })
 })
 
+describe('MapMetadataModal', () => {
+  it('maps a manually entered foreign ID', async () => {
+    const source = makeBook({ id: 42, foreignBookId: 'OL-OLDW', title: 'Cien años de soledad' })
+    const mapped = makeBook({ id: 42, foreignBookId: 'OL274505W', title: 'One Hundred Years of Solitude' })
+    const onClose = vi.fn()
+    const onMapped = vi.fn()
+    vi.mocked(api.mapBookMetadata).mockResolvedValue(mapped)
+
+    render(<MapMetadataModal book={source} onClose={onClose} onMapped={onMapped} />)
+
+    fireEvent.change(screen.getByPlaceholderText('OpenLibrary or provider ID'), {
+      target: { value: 'OL274505W' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Map ID' }))
+
+    await waitFor(() => expect(api.mapBookMetadata).toHaveBeenCalledWith(42, 'OL274505W'))
+    expect(onMapped).toHaveBeenCalledWith(mapped)
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('maps a metadata search result', async () => {
+    const source = makeBook({ id: 42, title: 'Cien años de soledad' })
+    const result = makeBook({
+      id: 0,
+      foreignBookId: 'OL274505W',
+      title: 'One Hundred Years of Solitude',
+      author: {
+        id: 0,
+        foreignAuthorId: 'OL45804A',
+        authorName: 'Gabriel García Márquez',
+        sortName: 'Márquez, Gabriel García',
+        description: '',
+        imageUrl: '',
+        disambiguation: '',
+        ratingsCount: 0,
+        averageRating: 0,
+        monitored: true,
+      },
+    })
+    const mapped = makeBook({ id: 42, foreignBookId: 'OL274505W', title: 'One Hundred Years of Solitude' })
+    const onClose = vi.fn()
+    const onMapped = vi.fn()
+    vi.mocked(api.searchBooks).mockResolvedValue([result])
+    vi.mocked(api.mapBookMetadata).mockResolvedValue(mapped)
+
+    render(<MapMetadataModal book={source} onClose={onClose} onMapped={onMapped} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+    await waitFor(() => expect(screen.getByText('One Hundred Years of Solitude')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Map' }))
+
+    await waitFor(() => expect(api.mapBookMetadata).toHaveBeenCalledWith(42, 'OL274505W'))
+    expect(onMapped).toHaveBeenCalledWith(mapped)
+  })
+})
+
 describe('SearchResultsSection — single-format book', () => {
   it('renders a flat list without section labels', () => {
     const results = [
@@ -150,7 +212,6 @@ describe('SearchResultsSection — single-format book', () => {
 
 describe('BookDetailPage — media-type selector', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
     vi.mocked(api.listHistory).mockResolvedValue([])
   })
 

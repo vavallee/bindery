@@ -743,8 +743,9 @@ func (h *BookHandler) MapMetadata(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
-	if strings.TrimSpace(req.ForeignBookID) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "foreignBookId is required"})
+	req.ForeignBookID = strings.TrimSpace(req.ForeignBookID)
+	if req.ForeignBookID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "foreignBookId required"})
 		return
 	}
 	book, err := h.books.GetByID(r.Context(), id)
@@ -752,13 +753,21 @@ func (h *BookHandler) MapMetadata(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
 		return
 	}
+	if existing, err := h.books.GetByForeignID(r.Context(), req.ForeignBookID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	} else if existing != nil && existing.ID != book.ID {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "foreignBookId is already mapped to another book"})
+		return
+	}
+
 	target, err := h.meta.GetBook(r.Context(), req.ForeignBookID)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
 	if target == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "upstream book not found"})
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "target book not found"})
 		return
 	}
 	if target.ForeignID == "" {

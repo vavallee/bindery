@@ -21,6 +21,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -153,6 +154,7 @@ func (c *Client) GetEditions(_ context.Context, _ string) ([]models.Edition, err
 
 // GetBookByISBN looks up a record by ISBN-10 or ISBN-13.
 func (c *Client) GetBookByISBN(ctx context.Context, isbn string) (*models.Book, error) {
+	isbn = isbnutil.Normalize(isbn)
 	records, err := c.sruQuery(ctx, "isbn="+isbn, 1)
 	if err != nil {
 		return nil, fmt.Errorf("dnb get book by ISBN: %w", err)

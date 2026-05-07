@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -77,7 +78,7 @@ func (c *Client) SearchBooks(ctx context.Context, query string) ([]models.Book, 
 	// /search (without .json) is the HTML web-UI path (Solr-backed) and
 	// returns HTTP 500 "DEPRECATED ENDPOINT ACCESSED" for API consumers
 	// since their FastAPI rollout completed (see issue #462, follow-up to #408).
-	u := fmt.Sprintf("%s/search.json?q=%s&fields=key,title,author_name,author_key,author_alternative_name,first_publish_year,cover_i,isbn,subject,editions,editions.key,editions.title,editions.language&limit=20",
+	u := fmt.Sprintf("%s/search.json?q=%s&fields=key,title,author_name,author_key,author_alternative_name,first_publish_year,edition_count,ratings_average,ratings_count,cover_i,isbn,subject,editions,editions.key,editions.title,editions.language&limit=20",
 		baseURL, url.QueryEscape(query))
 	var resp searchResponse
 	if err := c.getJSON(ctx, u, &resp); err != nil {
@@ -92,6 +93,10 @@ func (c *Client) SearchBooks(ctx context.Context, query string) ([]models.Book, 
 			Title:            doc.Title,
 			SortTitle:        doc.Title,
 			Genres:           truncateSlice(doc.Subject, 10),
+			EditionCount:     doc.EditionCount,
+			ISBNs:            doc.ISBN,
+			AverageRating:    doc.RatingsAverage,
+			RatingsCount:     doc.RatingsCount,
 			MetadataProvider: "openlibrary",
 			Monitored:        true,
 			Status:           models.BookStatusWanted,
@@ -321,6 +326,9 @@ func (c *Client) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]
 				b.RatingsCount = e.RatingsCount
 				b.AverageRating = e.AverageRating
 			}
+			if e.EditionCount > 0 {
+				b.EditionCount = e.EditionCount
+			}
 		}
 		index[workID] = len(books)
 		books = append(books, b)
@@ -387,6 +395,7 @@ func (c *Client) searchAuthorWorks(ctx context.Context, authorForeignID string) 
 			SortTitle:        doc.Title,
 			Genres:           truncateSlice(doc.Subject, 10),
 			Language:         pickPreferredLanguage(doc.Language),
+			EditionCount:     doc.EditionCount,
 			RatingsCount:     doc.RatingsCount,
 			AverageRating:    doc.RatingsAverage,
 			MetadataProvider: "openlibrary",
@@ -580,7 +589,8 @@ func (c *Client) GetSubjectBooks(ctx context.Context, subject string, limit int)
 }
 
 func (c *Client) GetBookByISBN(ctx context.Context, isbn string) (*models.Book, error) {
-	u := fmt.Sprintf("%s/isbn/%s.json", baseURL, isbn)
+	isbn = isbnutil.Normalize(isbn)
+	u := fmt.Sprintf("%s/isbn/%s.json", baseURL, url.PathEscape(isbn))
 	var resp isbnResponse
 	if err := c.getJSON(ctx, u, &resp); err != nil {
 		// Treat 404 as "no such ISBN" rather than an upstream error so the

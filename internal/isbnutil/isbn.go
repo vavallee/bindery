@@ -28,5 +28,9 @@ func Normalize(raw string) string {
 			b.WriteRune(r)
 		}
 	}
-	return b.String()
+	normalized := b.String()
+	if idx := strings.IndexByte(normalized, 'X'); idx >= 0 && idx != len(normalized)-1 {
+		normalized = strings.ReplaceAll(normalized, "X", "")
+	}
+	return normalized
 }

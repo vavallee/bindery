@@ -250,6 +250,8 @@ export const api = {
   },
   getBook: (id: number) => request<Book>(`/book/${id}`),
   updateBook: (id: number, data: Partial<Book>) => request<Book>(`/book/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  mapBookMetadata: (id: number, foreignBookId: string) =>
+    request<Book>(`/book/${id}/map`, { method: 'POST', body: JSON.stringify({ foreignBookId }) }),
   deleteBook: (id: number, deleteFiles = false) =>
     request<void>(`/book/${id}${deleteFiles ? '?deleteFiles=true' : ''}`, { method: 'DELETE' }),
   deleteBookFile: (id: number, queryParams = '') => request<Book>(`/book/${id}/file${queryParams}`, { method: 'DELETE' }),
