@@ -77,7 +77,7 @@ func (c *Client) SearchBooks(ctx context.Context, query string) ([]models.Book, 
 	// /search (without .json) is the HTML web-UI path (Solr-backed) and
 	// returns HTTP 500 "DEPRECATED ENDPOINT ACCESSED" for API consumers
 	// since their FastAPI rollout completed (see issue #462, follow-up to #408).
-	u := fmt.Sprintf("%s/search.json?q=%s&fields=key,title,author_name,author_key,first_publish_year,cover_i,isbn,subject&limit=20",
+	u := fmt.Sprintf("%s/search.json?q=%s&fields=key,title,author_name,author_key,first_publish_year,cover_i,isbn,subject,editions,editions.key,editions.title,editions.language&limit=20",
 		baseURL, url.QueryEscape(query))
 	var resp searchResponse
 	if err := c.getJSON(ctx, u, &resp); err != nil {
@@ -113,9 +113,33 @@ func (c *Client) SearchBooks(ctx context.Context, query string) ([]models.Book, 
 				b.Author.MetadataProvider = "openlibrary"
 			}
 		}
+		b.Editions = searchEditions(doc.Editions.Docs)
 		books = append(books, b)
 	}
 	return books, nil
+}
+
+func searchEditions(docs []searchEditionDoc) []models.Edition {
+	if len(docs) == 0 {
+		return nil
+	}
+	editions := make([]models.Edition, 0, len(docs))
+	for _, doc := range docs {
+		editionID := strings.TrimPrefix(doc.Key, "/books/")
+		title := strings.TrimSpace(doc.Title)
+		if editionID == "" && title == "" {
+			continue
+		}
+		editions = append(editions, models.Edition{
+			ForeignID: editionID,
+			Title:     title,
+			Language:  pickPreferredLanguage(doc.Language),
+		})
+	}
+	if len(editions) == 0 {
+		return nil
+	}
+	return editions
 }
 
 func (c *Client) GetAuthor(ctx context.Context, foreignID string) (*models.Author, error) {

@@ -153,8 +153,19 @@ func TestSearchBooks_HTTP(t *testing.T) {
 			},
 		},
 	}
+	resp.Docs[0].Editions.Docs = []searchEditionDoc{
+		{Key: "/books/OL111M", Title: "Dune - Der Wüstenplanet.", Language: []string{"ger"}},
+	}
 	c := newClientWithPaths(t, map[string]interface{}{
-		"/search.json": jsonStr(resp),
+		"/search.json": func(r *http.Request) string {
+			fields := r.URL.Query().Get("fields")
+			for _, want := range []string{"editions", "editions.key", "editions.title", "editions.language"} {
+				if !strings.Contains(fields, want) {
+					t.Fatalf("search fields = %q, want %q", fields, want)
+				}
+			}
+			return jsonStr(resp)
+		},
 	})
 
 	books, err := c.SearchBooks(context.Background(), "Dune")
@@ -182,6 +193,12 @@ func TestSearchBooks_HTTP(t *testing.T) {
 	}
 	if !strings.Contains(b.ImageURL, "12345") {
 		t.Errorf("ImageURL should contain cover ID 12345, got %q", b.ImageURL)
+	}
+	if len(b.Editions) != 1 {
+		t.Fatalf("expected 1 matching edition, got %d", len(b.Editions))
+	}
+	if b.Editions[0].ForeignID != "OL111M" || b.Editions[0].Title != "Dune - Der Wüstenplanet." || b.Editions[0].Language != "ger" {
+		t.Errorf("unexpected matching edition: %+v", b.Editions[0])
 	}
 }
 

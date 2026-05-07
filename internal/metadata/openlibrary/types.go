@@ -51,6 +51,15 @@ type searchDoc struct {
 	NumberOfPages    *int     `json:"number_of_pages_median"`
 	Publisher        []string `json:"publisher"`
 	Subject          []string `json:"subject"`
+	Editions         struct {
+		Docs []searchEditionDoc `json:"docs"`
+	} `json:"editions"`
+}
+
+type searchEditionDoc struct {
+	Key      string   `json:"key"` // e.g. "/books/OL123M"
+	Title    string   `json:"title"`
+	Language []string `json:"language"`
 }
 
 type authorSearchResponse struct {
