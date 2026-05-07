@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { api } from './api/client'
 import { AuthProvider, useAuth } from './auth/AuthContext'
 import AuthGuard from './auth/AuthGuard'
+import PublicOnlyRoute from './auth/PublicOnlyRoute'
 import LoginPage from './pages/LoginPage'
 import SetupPage from './pages/SetupPage'
 import AuthorsPage from './pages/AuthorsPage'
@@ -276,8 +277,22 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/setup" element={<SetupPage />} />
+          <Route
+            path="/login"
+            element={
+              <PublicOnlyRoute mode="login">
+                <LoginPage />
+              </PublicOnlyRoute>
+            }
+          />
+          <Route
+            path="/setup"
+            element={
+              <PublicOnlyRoute mode="setup">
+                <SetupPage />
+              </PublicOnlyRoute>
+            }
+          />
           <Route
             path="/*"
             element={
