@@ -62,7 +62,7 @@ describe('SettingsPage Hardcover API keys', () => {
     vi.mocked(api.listSettings).mockResolvedValue([{ key: 'hardcover.enhanced_series_enabled', value: 'false' }])
     vi.mocked(api.listBackups).mockResolvedValue([])
     vi.mocked(api.libraryScanStatus).mockRejectedValue(new Error('no scan'))
-    vi.mocked(api.getStorage).mockResolvedValue({ downloadDir: '/downloads', libraryDir: '/books', audiobookDir: '' })
+    vi.mocked(api.getStorage).mockResolvedValue({ downloadDir: '/downloads', audiobookDownloadDir: '', libraryDir: '/books', audiobookDir: '' })
     vi.mocked(api.listRootFolders).mockResolvedValue([])
     vi.mocked(api.status).mockResolvedValue({
       version: 'dev',
