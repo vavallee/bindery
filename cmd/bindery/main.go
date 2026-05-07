@@ -238,22 +238,20 @@ func main() {
 		WithEnhancedHardcoverSeriesEnabled(func(ctx context.Context) bool {
 			return api.HardcoverFeatureStateFor(ctx, settingsRepo, cfg.EnhancedHardcoverAPI).EnhancedHardcoverAPI
 		})
-	if cfg.ABSFeatureEnabled {
-		storedABS := api.LoadABSConfig(ctxBoot, settingsRepo)
-		resumeCfg := abs.ImportConfig{
-			SourceID:  abs.DefaultSourceID,
-			BaseURL:   storedABS.BaseURL,
-			APIKey:    storedABS.APIKey,
-			LibraryID: storedABS.LibraryID,
-			PathRemap: storedABS.PathRemap,
-			Label:     storedABS.Label,
-			Enabled:   storedABS.Enabled,
-		}
-		if resumed, err := absImporter.ResumeInterrupted(ctxBoot, resumeCfg); err != nil {
-			slog.Warn("abs interrupted import resume skipped", "error", err)
-		} else if resumed {
-			slog.Info("abs interrupted import resumed from checkpoint")
-		}
+	storedABS := api.LoadABSConfig(ctxBoot, settingsRepo)
+	resumeCfg := abs.ImportConfig{
+		SourceID:  abs.DefaultSourceID,
+		BaseURL:   storedABS.BaseURL,
+		APIKey:    storedABS.APIKey,
+		LibraryID: storedABS.LibraryID,
+		PathRemap: storedABS.PathRemap,
+		Label:     storedABS.Label,
+		Enabled:   storedABS.Enabled,
+	}
+	if resumed, err := absImporter.ResumeInterrupted(ctxBoot, resumeCfg); err != nil {
+		slog.Warn("abs interrupted import resume skipped", "error", err)
+	} else if resumed {
+		slog.Info("abs interrupted import resumed from checkpoint")
 	}
 	if syncOnStartup(settingsRepo) {
 		cfg := api.LoadCalibreConfig(settingsRepo)
@@ -393,7 +391,7 @@ func main() {
 	logHandler := api.NewLogHandler(ring).WithLogRepo(logRepo)
 	prowlarrHandler := api.NewProwlarrHandler(prowlarrRepo, indexerRepo)
 	calibreHandler := api.NewCalibreHandler(settingsRepo)
-	absHandler := api.NewABSHandler(settingsRepo).WithVersion(version).WithFeatureEnabled(cfg.ABSFeatureEnabled)
+	absHandler := api.NewABSHandler(settingsRepo).WithVersion(version)
 	absConflictHandler := api.NewABSConflictHandler(absConflictRepo, authorRepo, bookRepo)
 	absImportHandler := api.NewABSImportHandler(absImporter, func(ctx context.Context) api.ABSStoredConfig {
 		return api.LoadABSConfig(ctx, settingsRepo)
@@ -636,23 +634,21 @@ func main() {
 			r.Delete("/setting/{key}", settingsHandler.Delete)
 			r.Post("/hardcover/test", settingsHandler.TestHardcover)
 			r.Get("/abs/config", absHandler.GetConfig)
-			if cfg.ABSFeatureEnabled {
-				r.Put("/abs/config", absHandler.SetConfig)
-				r.Post("/abs/test", absHandler.Test)
-				r.Post("/abs/libraries", absHandler.Libraries)
-				r.Post("/abs/import", absImportHandler.Start)
-				r.Get("/abs/import/status", absImportHandler.Status)
-				r.Get("/abs/import/runs", absImportHandler.Runs)
-				r.Post("/abs/import/runs/{runID}/rollback/preview", absImportHandler.RollbackPreview)
-				r.Post("/abs/import/runs/{runID}/rollback", absImportHandler.Rollback)
-				r.Get("/abs/review", absReviewHandler.List)
-				r.Post("/abs/review/{id}/approve", absReviewHandler.Approve)
-				r.Post("/abs/review/{id}/resolve-author", absReviewHandler.ResolveAuthor)
-				r.Post("/abs/review/{id}/resolve-book", absReviewHandler.ResolveBook)
-				r.Post("/abs/review/{id}/dismiss", absReviewHandler.Dismiss)
-				r.Get("/abs/conflicts", absConflictHandler.List)
-				r.Post("/abs/conflicts/{id}/resolve", absConflictHandler.Resolve)
-			}
+			r.Put("/abs/config", absHandler.SetConfig)
+			r.Post("/abs/test", absHandler.Test)
+			r.Post("/abs/libraries", absHandler.Libraries)
+			r.Post("/abs/import", absImportHandler.Start)
+			r.Get("/abs/import/status", absImportHandler.Status)
+			r.Get("/abs/import/runs", absImportHandler.Runs)
+			r.Post("/abs/import/runs/{runID}/rollback/preview", absImportHandler.RollbackPreview)
+			r.Post("/abs/import/runs/{runID}/rollback", absImportHandler.Rollback)
+			r.Get("/abs/review", absReviewHandler.List)
+			r.Post("/abs/review/{id}/approve", absReviewHandler.Approve)
+			r.Post("/abs/review/{id}/resolve-author", absReviewHandler.ResolveAuthor)
+			r.Post("/abs/review/{id}/resolve-book", absReviewHandler.ResolveBook)
+			r.Post("/abs/review/{id}/dismiss", absReviewHandler.Dismiss)
+			r.Get("/abs/conflicts", absConflictHandler.List)
+			r.Post("/abs/conflicts/{id}/resolve", absConflictHandler.Resolve)
 		})
 
 		// Series

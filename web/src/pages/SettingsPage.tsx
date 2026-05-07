@@ -19,7 +19,6 @@ export default function SettingsPage() {
   const { t, i18n } = useTranslation()
   const { isAdmin } = useAuth()
   const [tab, setTab] = useState<Tab>('general')
-  const [absFeatureEnabled, setAbsFeatureEnabled] = useState(false)
   const [indexers, setIndexers] = useState<Indexer[]>([])
   const [clients, setClients] = useState<DownloadClient[]>([])
   const [notifications, setNotifications] = useState<NotificationConfig[]>([])
@@ -72,19 +71,6 @@ export default function SettingsPage() {
     }
   }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (!isAdmin) return
-    api.absConfig()
-      .then(cfg => setAbsFeatureEnabled(cfg.featureEnabled))
-      .catch(() => setAbsFeatureEnabled(false))
-  }, [isAdmin])
-
-  useEffect(() => {
-    if (!absFeatureEnabled && tab === 'abs') {
-      setTab('general')
-    }
-  }, [absFeatureEnabled, tab])
-
   const fetchLogs = (page = 0) => {
     api.getLogs({
       level: logFilter !== 'all' ? logFilter : undefined,
@@ -120,7 +106,7 @@ export default function SettingsPage() {
 
       <div className="flex flex-wrap gap-2 mb-6">
         {(isAdmin
-          ? ['general', 'indexers', 'clients', 'rootfolders', 'quality', 'metadata', 'notifications', 'calibre', ...(absFeatureEnabled ? ['abs'] : []), 'import', 'blocklist', 'logs'] as Tab[]
+          ? ['general', 'indexers', 'clients', 'rootfolders', 'quality', 'metadata', 'notifications', 'calibre', 'abs', 'import', 'blocklist', 'logs'] as Tab[]
           : ['general'] as Tab[]
         ).map(tabKey => (
           <button key={tabKey} onClick={() => setTab(tabKey)} className={tabCls(tab === tabKey)}>

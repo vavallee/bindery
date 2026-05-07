@@ -211,7 +211,6 @@ Multiple remaps are separated by commas: `BINDERY_DOWNLOAD_PATH_REMAP=/sab/compl
 | `BINDERY_DOWNLOAD_DIR` | `/downloads` | Where the download client places completed downloads |
 | `BINDERY_LIBRARY_DIR` | `/books` | Destination for imported ebook files |
 | `BINDERY_AUDIOBOOK_DIR` | falls back to `BINDERY_LIBRARY_DIR` | Destination for imported audiobook folders |
-| `BINDERY_ABS_ENABLED` | `false` | Set to `true` to expose and enable the Audiobookshelf (ABS) feature surface. |
 | `BINDERY_ENHANCED_HARDCOVER_API` | `false` | Set to `true` to allow token-backed Hardcover series search, linking, catalog diffs, and missing-book fill after an admin enables the feature in Settings. |
 | `BINDERY_DOWNLOAD_PATH_REMAP` | _(empty)_ | Comma-separated `from:to` pairs rewriting paths reported by the download client into paths Bindery can access. Required when SABnzbd and Bindery mount the same storage at different paths. Longest-prefix match wins. See [Path remapping](#path-remapping-multi-container--multi-pod-setups). |
 | `BINDERY_PUID` | _(unset)_ | Sanity check — see [Running as a specific UID/GID](#running-as-a-specific-uidgid) |
@@ -239,8 +238,6 @@ On first launch Bindery bootstraps itself — **no environment variables are req
 ### ABS import deployment note
 
 **Schema:** ABS import uses migrations `029` through `033`. They create five ABS tables: `abs_import_runs`, `abs_provenance`, `abs_metadata_conflicts`, `abs_import_run_entities`, and `abs_review_queue`. Migration `031` also adds `dry_run`, `source_config_json`, and `checkpoint_json` to `abs_import_runs`; migration `033` is currently a no-op compatibility migration. Take a normal SQLite backup before upgrading, then let Bindery apply the migrations on startup.
-
-**Feature flag:** ABS is disabled by default. Set `BINDERY_ABS_ENABLED=true` before startup to expose and enable the ABS feature surface.
 
 **Outbound ABS requests:** ABS probes and imports send `User-Agent: bindery/<version>` to the configured ABS server. Development or unversioned builds use `bindery/dev`.
 
