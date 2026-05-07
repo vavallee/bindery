@@ -552,6 +552,7 @@ export interface Book {
   durationSeconds?: number
   asin?: string
   language?: string
+  metadataProvider?: string
   calibre_id?: number
   author?: Author
 }

@@ -28,6 +28,89 @@ const statusColors: Record<string, string> = {
   skipped: 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400',
 }
 
+const upstreamMetadataProviders = new Set(['openlibrary', 'googlebooks', 'hardcover', 'dnb'])
+
+function normalizeMetadataProvider(provider?: string): string {
+  const value = provider?.trim().toLowerCase() ?? ''
+  if (value === 'ol' || value === 'open_library') return 'openlibrary'
+  if (value === 'gb' || value === 'google_books') return 'googlebooks'
+  if (value === 'hc') return 'hardcover'
+  return value
+}
+
+function inferMetadataProvider(provider?: string, foreignBookId?: string): string {
+  const normalizedProvider = normalizeMetadataProvider(provider)
+  if (normalizedProvider) return normalizedProvider
+
+  const id = foreignBookId?.trim() ?? ''
+  const lowerID = id.toLowerCase()
+  if (lowerID.startsWith('gb:')) return 'googlebooks'
+  if (lowerID.startsWith('hc:')) return 'hardcover'
+  if (lowerID.startsWith('dnb:')) return 'dnb'
+  if (/^OL\d+[A-Z]$/i.test(id)) return 'openlibrary'
+  return ''
+}
+
+function isMetadataMatched(provider?: string, foreignBookId?: string): boolean {
+  const id = foreignBookId?.trim().toLowerCase() ?? ''
+  if (!id || id.startsWith('abs:') || id.startsWith('metadata:')) return false
+  return upstreamMetadataProviders.has(inferMetadataProvider(provider, foreignBookId))
+}
+
+function metadataProviderLabel(provider?: string, foreignBookId?: string): string {
+  switch (inferMetadataProvider(provider, foreignBookId)) {
+    case 'openlibrary':
+      return 'OpenLibrary'
+    case 'googlebooks':
+      return 'Google Books'
+    case 'hardcover':
+      return 'Hardcover'
+    case 'dnb':
+      return 'DNB'
+    default:
+      return 'upstream metadata'
+  }
+}
+
+export function MetadataMatchAction({
+  isMatched,
+  providerLabel,
+  disabled,
+  onOpen,
+}: {
+  isMatched: boolean
+  providerLabel: string
+  disabled: boolean
+  onOpen: () => void
+}) {
+  const buttonCls = isMatched
+    ? 'border-slate-300 dark:border-zinc-700 bg-slate-200/70 dark:bg-zinc-800/70 text-slate-500 dark:text-zinc-500 cursor-not-allowed'
+    : 'border-emerald-500/50 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-500/20 hover:border-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed'
+  const title = isMatched
+    ? `Matched to ${providerLabel}`
+    : 'Match to upstream metadata for better title, cover, language, search matching, and ASIN coverage'
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      disabled={isMatched || disabled}
+      className={`inline-flex min-h-12 w-full sm:w-[18rem] items-center gap-2 rounded-md border px-3 py-2 text-left transition-colors ${buttonCls}`}
+      title={title}
+    >
+      <span aria-hidden className="text-base">{isMatched ? '✓' : '✨'}</span>
+      <span className="min-w-0">
+        <span className="block text-xs font-semibold leading-4">
+          {isMatched ? 'Metadata matched' : 'Improve metadata'}
+        </span>
+        <span className="block truncate text-[11px] font-normal leading-4 opacity-80">
+          {isMatched ? `Using ${providerLabel}` : 'Better cover, language, search, ASIN'}
+        </span>
+      </span>
+    </button>
+  )
+}
+
 const resultRowCls = (approved?: boolean) =>
   `flex items-center justify-between p-2 border rounded text-xs ${
     approved === false
@@ -427,6 +510,8 @@ export default function BookDetailPage() {
   if (!book) return <div className="text-slate-600 dark:text-zinc-500">Book not found</div>
 
   const mt = book.mediaType || 'ebook'
+  const matchedMetadata = isMetadataMatched(book.metadataProvider, book.foreignBookId)
+  const matchedProviderLabel = metadataProviderLabel(book.metadataProvider, book.foreignBookId)
 
   return (
     <div className="max-w-4xl">
@@ -518,7 +603,7 @@ export default function BookDetailPage() {
               <span className="text-xs text-slate-500 dark:text-zinc-500 break-all">{book.filePath || book.ebookFilePath}</span>
             </div>
           ) : null}
-          <div className="mt-3 flex items-center gap-3 flex-wrap">
+          <div className="mt-3 flex flex-wrap items-center gap-3">
             <button
               onClick={toggleExclude}
               disabled={togglingExclude}
@@ -541,13 +626,12 @@ export default function BookDetailPage() {
             >
               Re-bind
             </button>
-            <button
-              onClick={() => setMappingOpen(true)}
+            <MetadataMatchAction
+              isMatched={matchedMetadata}
+              providerLabel={matchedProviderLabel}
               disabled={deletingBook || deletingFile}
-              className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-40"
-            >
-              Map metadata
-            </button>
+              onOpen={() => setMappingOpen(true)}
+            />
             <button
               onClick={deleteBook}
               disabled={deletingBook || deletingFile}

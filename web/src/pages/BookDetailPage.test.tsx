@@ -185,6 +185,82 @@ describe('MapMetadataModal', () => {
   })
 })
 
+describe('BookDetailPage — metadata match action', () => {
+  beforeEach(() => {
+    vi.mocked(api.listHistory).mockResolvedValue([])
+  })
+
+  it('shows an enabled improve metadata CTA for ABS metadata', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({
+      foreignBookId: 'abs:book:lib-books:item-1',
+      metadataProvider: 'audiobookshelf',
+    }))
+
+    renderBookDetailPage()
+
+    const action = await screen.findByRole('button', { name: /Improve metadata/i })
+    expect(action).toBeEnabled()
+    expect(screen.getByText('Better cover, language, search, ASIN')).toBeInTheDocument()
+  })
+
+  it('opens the map metadata modal from the improve metadata CTA', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({
+      foreignBookId: 'abs:book:lib-books:item-1',
+      metadataProvider: 'audiobookshelf',
+    }))
+
+    renderBookDetailPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: /Improve metadata/i }))
+
+    expect(await screen.findByRole('heading', { name: 'Map metadata' })).toBeInTheDocument()
+  })
+
+  it('shows a disabled matched state for upstream metadata', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({
+      foreignBookId: 'OL274505W',
+      metadataProvider: 'openlibrary',
+    }))
+
+    renderBookDetailPage()
+
+    const action = await screen.findByRole('button', { name: /Metadata matched/i })
+    expect(action).toBeDisabled()
+    expect(screen.getByText('Using OpenLibrary')).toBeInTheDocument()
+
+    fireEvent.click(action)
+
+    expect(screen.queryByRole('heading', { name: 'Map metadata' })).toBeNull()
+  })
+
+  it('flips to matched after mapping succeeds', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({
+      id: 42,
+      foreignBookId: 'abs:book:lib-books:item-1',
+      metadataProvider: 'audiobookshelf',
+    }))
+    vi.mocked(api.mapBookMetadata).mockResolvedValue(makeBook({
+      id: 42,
+      foreignBookId: 'OL274505W',
+      metadataProvider: 'openlibrary',
+      title: 'One Hundred Years of Solitude',
+    }))
+
+    renderBookDetailPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: /Improve metadata/i }))
+    fireEvent.change(await screen.findByPlaceholderText('OpenLibrary or provider ID'), {
+      target: { value: 'OL274505W' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Map ID' }))
+
+    await waitFor(() => expect(api.mapBookMetadata).toHaveBeenCalledWith(42, 'OL274505W'))
+    await waitFor(() => expect(screen.getByRole('button', { name: /Metadata matched/i })).toBeDisabled())
+    expect(screen.getByText('Using OpenLibrary')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Map metadata' })).toBeNull()
+  })
+})
+
 describe('SearchResultsSection — single-format book', () => {
   it('renders a flat list without section labels', () => {
     const results = [

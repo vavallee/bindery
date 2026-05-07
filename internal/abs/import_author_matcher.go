@@ -389,7 +389,7 @@ func (i *Importer) recordSecondaryAuthors(ctx context.Context, canonicalID int64
 	}
 	for _, author := range extras {
 		name := strings.TrimSpace(author.Name)
-		if name == "" {
+		if name == "" || !authorNamesAutoMatch(name, canonical.Name) {
 			continue
 		}
 		// Mark ABS-sourced secondary-author aliases with a sentinel SourceOLID so
