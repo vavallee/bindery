@@ -527,25 +527,6 @@ func (r *SeriesRepo) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
-// GetSeriesIDsForBook returns the IDs of all series the given book belongs to.
-func (r *SeriesRepo) GetSeriesIDsForBook(ctx context.Context, bookID int64) ([]int64, error) {
-	rows, err := r.db.QueryContext(ctx,
-		"SELECT series_id FROM series_books WHERE book_id = ?", bookID)
-	if err != nil {
-		return nil, fmt.Errorf("get series IDs for book %d: %w", bookID, err)
-	}
-	defer rows.Close()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
-}
-
 // GetPrimarySeriesForBook returns the title and position of the primary series
 // for the given book. Returns ("", "", nil) when the book has no primary series.
 func (r *SeriesRepo) GetPrimarySeriesForBook(ctx context.Context, bookID int64) (seriesTitle, position string, err error) {

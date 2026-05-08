@@ -17,13 +17,6 @@ type BookSearcher interface {
 	SearchAndGrabBook(ctx context.Context, book models.Book)
 }
 
-// BookMetaLookup fetches a book record from a specific named provider.
-// Implemented by *metadata.Aggregator; a nil implementation means the rebind
-// endpoint will return HTTP 424.
-type BookMetaLookup interface {
-	GetBookFromProvider(ctx context.Context, provider, foreignID string) (*models.Book, error)
-}
-
 // LibraryFinder checks whether a book already exists in the local library.
 // Implemented by *importer.Scanner; a nil implementation is a no-op. The
 // mediaType argument selects which library roots are searched (ebook vs

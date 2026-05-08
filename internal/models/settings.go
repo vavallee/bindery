@@ -77,5 +77,4 @@ const (
 	HistoryEventBookFileDeleted      = "bookFileDeleted"
 	HistoryEventDownloadStalled      = "downloadStalled"
 	HistoryEventDownloadRequeued     = "downloadRequeued"
-	HistoryEventBookRebound          = "bookRebound"
 )

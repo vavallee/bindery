@@ -26,9 +26,6 @@ type BookHandler struct {
 	searcher  BookSearcher
 	settings  *db.SettingsRepo
 	downloads *db.DownloadRepo
-	authors   *db.AuthorRepo
-	series    *db.SeriesRepo
-	lookup    BookMetaLookup
 }
 
 func NewBookHandler(books *db.BookRepo, meta *metadata.Aggregator, history *db.HistoryRepo, searcher BookSearcher) *BookHandler {
@@ -46,28 +43,6 @@ func (h *BookHandler) WithSettings(settings *db.SettingsRepo) *BookHandler {
 // download records when a book is deleted with ?deleteFiles=true.
 func (h *BookHandler) WithDownloads(d *db.DownloadRepo) *BookHandler {
 	h.downloads = d
-	return h
-}
-
-// WithAuthors wires in the author repo so the Rebind handler can validate
-// upstream author identity against the locally-tracked author.
-func (h *BookHandler) WithAuthors(a *db.AuthorRepo) *BookHandler {
-	h.authors = a
-	return h
-}
-
-// WithSeries wires in the series repo so the Rebind handler can clear and
-// re-link series membership after a metadata swap.
-func (h *BookHandler) WithSeries(s *db.SeriesRepo) *BookHandler {
-	h.series = s
-	return h
-}
-
-// WithMetaLookup wires in a BookMetaLookup (usually the *metadata.Aggregator)
-// so the Rebind handler can fetch the upstream record without coupling to the
-// concrete type.
-func (h *BookHandler) WithMetaLookup(l BookMetaLookup) *BookHandler {
-	h.lookup = l
 	return h
 }
 
@@ -500,159 +475,6 @@ func (h *BookHandler) ToggleExcluded(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	book.Excluded = newVal
-	cleanBookDescription(book)
-	writeJSON(w, http.StatusOK, book)
-}
-
-// Rebind re-links an existing book record to a different metadata record from
-// the specified provider. This corrects wrong matches (e.g. an omnibus matched
-// instead of the standalone) without deleting and re-adding the book.
-//
-// POST /api/v1/books/{id}/rebind
-//
-//	{
-//	    "provider":   "openlibrary" | "hardcover",
-//	    "foreign_id": "<upstream id>",
-//	    "force":      false
-//	}
-//
-// Responses:
-//   - 200  — book updated, series re-linked
-//   - 400  — missing/invalid provider or foreign_id
-//   - 404  — book not found
-//   - 409  — author mismatch (force_required) or foreign_id collision
-//   - 424  — metadata aggregator not available
-func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
-	id, ok := parseID(w, r)
-	if !ok {
-		return
-	}
-
-	var req struct {
-		Provider  string `json:"provider"`
-		ForeignID string `json:"foreign_id"`
-		Force     bool   `json:"force"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-	req.Provider = strings.TrimSpace(strings.ToLower(req.Provider))
-	req.ForeignID = strings.TrimSpace(req.ForeignID)
-
-	if req.Provider != "openlibrary" && req.Provider != "hardcover" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "provider must be 'openlibrary' or 'hardcover'"})
-		return
-	}
-	if req.ForeignID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "foreign_id is required"})
-		return
-	}
-
-	if h.lookup == nil {
-		writeJSON(w, http.StatusFailedDependency, map[string]string{"error": "metadata aggregator not configured"})
-		return
-	}
-
-	book, err := h.books.GetByID(r.Context(), id)
-	if err != nil || book == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
-		return
-	}
-
-	// Guard: reject if another book already owns the target foreign_id.
-	if existing, _ := h.books.GetByForeignID(r.Context(), req.ForeignID); existing != nil && existing.ID != book.ID {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "foreign_id already used by another book"})
-		return
-	}
-
-	// Fetch the upstream record.
-	upstream, err := h.lookup.GetBookFromProvider(r.Context(), req.Provider, req.ForeignID)
-	if err != nil {
-		slog.Warn("rebind: upstream lookup failed", "bookId", id, "provider", req.Provider, "foreignId", req.ForeignID, "error", err)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
-		return
-	}
-	if upstream == nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "upstream returned no record for the given foreign_id"})
-		return
-	}
-
-	// Author-mismatch check: compare the upstream author name to the locally
-	// tracked author. Require force:true to override.
-	if !req.Force && h.authors != nil && upstream.Author != nil {
-		local, _ := h.authors.GetByID(r.Context(), book.AuthorID)
-		if local != nil && !strings.EqualFold(strings.TrimSpace(local.Name), strings.TrimSpace(upstream.Author.Name)) {
-			writeJSON(w, http.StatusConflict, map[string]any{
-				"error":           "author mismatch",
-				"current_author":  local.Name,
-				"upstream_author": upstream.Author.Name,
-				"force_required":  true,
-			})
-			return
-		}
-	}
-
-	// Apply upstream metadata to the local record.
-	book.ForeignID = req.ForeignID
-	book.MetadataProvider = req.Provider
-	if upstream.Title != "" {
-		book.Title = upstream.Title
-		book.SortTitle = upstream.SortTitle
-	}
-	if upstream.Description != "" {
-		book.Description = upstream.Description
-	}
-	if upstream.ImageURL != "" {
-		book.ImageURL = upstream.ImageURL
-	}
-	if upstream.ReleaseDate != nil {
-		book.ReleaseDate = upstream.ReleaseDate
-	}
-	if upstream.Language != "" {
-		book.Language = upstream.Language
-	}
-
-	if err := h.books.Update(r.Context(), book); err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": "foreign_id already used by another book"})
-			return
-		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-
-	// Re-link series membership from the upstream record.
-	if h.series != nil && len(upstream.SeriesRefs) > 0 {
-		// Remove all existing series memberships for this book.
-		if seriesIDs, err := h.series.GetSeriesIDsForBook(r.Context(), book.ID); err == nil {
-			for _, sid := range seriesIDs {
-				_ = h.series.UnlinkBook(r.Context(), sid, book.ID)
-			}
-		}
-		// Re-link from upstream SeriesRefs.
-		for _, ref := range upstream.SeriesRefs {
-			s := &models.Series{ForeignID: ref.ForeignID, Title: ref.Title}
-			if err := h.series.CreateOrGet(r.Context(), s); err == nil {
-				_ = h.series.LinkBook(r.Context(), s.ID, book.ID, ref.Position, ref.Primary)
-			}
-		}
-	}
-
-	// Audit history.
-	if h.history != nil {
-		data, _ := json.Marshal(map[string]any{
-			"provider":   req.Provider,
-			"foreign_id": req.ForeignID,
-		})
-		_ = h.history.Create(r.Context(), &models.HistoryEvent{
-			BookID:      &book.ID,
-			EventType:   models.HistoryEventBookRebound,
-			SourceTitle: book.Title,
-			Data:        string(data),
-		})
-	}
-
 	cleanBookDescription(book)
 	writeJSON(w, http.StatusOK, book)
 }
