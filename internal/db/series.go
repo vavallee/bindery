@@ -519,6 +519,24 @@ func (r *SeriesRepo) UnlinkBook(ctx context.Context, seriesID, bookID int64) err
 	return nil
 }
 
+// GetSeriesIDsForBook returns the IDs of every series the book currently belongs to.
+func (r *SeriesRepo) GetSeriesIDsForBook(ctx context.Context, bookID int64) ([]int64, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT series_id FROM series_books WHERE book_id = ?`, bookID)
+	if err != nil {
+		return nil, fmt.Errorf("get series for book %d: %w", bookID, err)
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (r *SeriesRepo) Delete(ctx context.Context, id int64) error {
 	_, err := r.db.ExecContext(ctx, "DELETE FROM series WHERE id=?", id)
 	if err != nil {
