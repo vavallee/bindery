@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -458,6 +459,106 @@ func (h *BookHandler) ListWanted(w http.ResponseWriter, r *http.Request) {
 
 // ToggleExcluded flips the excluded flag on a book. The response body is the
 // updated book so the UI can refresh in place without a second round-trip.
+// Rebind updates the book's foreign_id and metadata_provider, then re-fetches
+// metadata from that provider. This lets users correct a wrong match (e.g. an
+// omnibus instead of the standalone Book 1) without deleting and re-adding.
+//
+// Request body: {"provider": "openlibrary"|"hardcover", "foreign_id": "<id>"}
+// Returns the updated book JSON.
+func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r)
+	if !ok {
+		return
+	}
+	book, err := h.books.GetByID(r.Context(), id)
+	if err != nil || book == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
+		return
+	}
+
+	var req struct {
+		Provider  string `json:"provider"`
+		ForeignID string `json:"foreign_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	req.Provider = strings.TrimSpace(strings.ToLower(req.Provider))
+	req.ForeignID = strings.TrimSpace(req.ForeignID)
+	if req.Provider == "" || req.ForeignID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "provider and foreign_id are required"})
+		return
+	}
+	switch req.Provider {
+	case "openlibrary", "hardcover":
+		// valid
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "provider must be 'openlibrary' or 'hardcover'"})
+		return
+	}
+
+	if h.meta == nil {
+		writeJSON(w, http.StatusFailedDependency, map[string]string{"error": "metadata aggregator not configured"})
+		return
+	}
+
+	upstream, err := h.meta.GetBookFromProvider(r.Context(), req.Provider, req.ForeignID)
+	if err != nil {
+		slog.Warn("rebind: upstream fetch failed", "bookId", book.ID, "provider", req.Provider, "foreignId", req.ForeignID, "error", err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	if upstream == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no record found for that provider and foreign ID"})
+		return
+	}
+
+	// Update the book with the new foreign ID and refreshed metadata.
+	// Preserve fields managed by the user or the import pipeline (status,
+	// monitored, file paths, media type, ASIN, narrator, calibre_id).
+	book.ForeignID = req.ForeignID
+	book.MetadataProvider = req.Provider
+	if upstream.Title != "" {
+		book.Title = upstream.Title
+		book.SortTitle = upstream.SortTitle
+	}
+	if upstream.OriginalTitle != "" {
+		book.OriginalTitle = upstream.OriginalTitle
+	}
+	if upstream.Description != "" {
+		book.Description = upstream.Description
+	}
+	if upstream.ImageURL != "" {
+		book.ImageURL = upstream.ImageURL
+	}
+	if upstream.ReleaseDate != nil {
+		book.ReleaseDate = upstream.ReleaseDate
+	}
+	if len(upstream.Genres) > 0 {
+		book.Genres = upstream.Genres
+	}
+	if upstream.AverageRating > 0 {
+		book.AverageRating = upstream.AverageRating
+		book.RatingsCount = upstream.RatingsCount
+	}
+	if upstream.Language != "" {
+		book.Language = upstream.Language
+	}
+	now := time.Now().UTC()
+	book.LastMetadataRefreshAt = &now
+
+	if err := h.books.Update(r.Context(), book); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	h.attachBookFiles(r.Context(), book)
+	cleanBookDescription(book)
+	proxyBookImages(book)
+	writeJSON(w, http.StatusOK, book)
+}
+
 func (h *BookHandler) ToggleExcluded(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(w, r)
 	if !ok {

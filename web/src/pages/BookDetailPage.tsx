@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, Book, HistoryEvent, SearchResult, SearchDebug } from '../api/client'
 import SearchDebugPanel from '../components/SearchDebugPanel'
 import MediaBadge from '../components/MediaBadge'
+import RebindModal from '../components/RebindModal'
 
 function formatSize(n: number): string {
   if (!n || n <= 0) return ''
@@ -116,6 +117,7 @@ export default function BookDetailPage() {
   const [deletingFile, setDeletingFile] = useState(false)
   const [deletingBook, setDeletingBook] = useState(false)
   const [togglingExclude, setTogglingExclude] = useState(false)
+  const [showRebind, setShowRebind] = useState(false)
 
   useEffect(() => {
     if (book?.title) {
@@ -383,7 +385,7 @@ export default function BookDetailPage() {
               <span className="text-xs text-slate-500 dark:text-zinc-500 break-all">{book.filePath || book.ebookFilePath}</span>
             </div>
           ) : null}
-          <div className="mt-3 flex items-center gap-3">
+          <div className="mt-3 flex items-center gap-3 flex-wrap">
             <button
               onClick={toggleExclude}
               disabled={togglingExclude}
@@ -399,6 +401,13 @@ export default function BookDetailPage() {
             {book.excluded && (
               <span className="text-xs text-amber-600 dark:text-amber-400 font-medium">Excluded from searches</span>
             )}
+            <button
+              onClick={() => setShowRebind(true)}
+              className="text-xs font-medium px-3 py-1.5 rounded bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 hover:bg-slate-300 dark:hover:bg-zinc-700"
+              title="Point this book at a different upstream metadata record"
+            >
+              Re-bind
+            </button>
             <button
               onClick={deleteBook}
               disabled={deletingBook || deletingFile}
@@ -533,6 +542,17 @@ export default function BookDetailPage() {
             ))}
           </div>
         </section>
+      )}
+
+      {showRebind && (
+        <RebindModal
+          book={book}
+          onClose={() => setShowRebind(false)}
+          onSuccess={updated => {
+            setBook(updated)
+            setShowRebind(false)
+          }}
+        />
       )}
     </div>
   )

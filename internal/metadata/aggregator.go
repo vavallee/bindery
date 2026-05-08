@@ -287,6 +287,23 @@ func mergeAuthorWorkMetadata(dst *models.Book, src models.Book) {
 	}
 }
 
+// GetBookFromProvider fetches a single book by foreign ID from the named
+// provider ("openlibrary" or "hardcover"). It bypasses the TTL cache so the
+// rebind flow always gets a fresh record. Returns ErrProviderNotConfigured
+// when no matching provider is found.
+func (a *Aggregator) GetBookFromProvider(ctx context.Context, providerName, foreignID string) (*models.Book, error) {
+	providerName = strings.TrimSpace(strings.ToLower(providerName))
+	if a.primary.Name() == providerName {
+		return a.primary.GetBook(ctx, foreignID)
+	}
+	for _, enricher := range a.enrichers {
+		if enricher.Name() == providerName {
+			return enricher.GetBook(ctx, foreignID)
+		}
+	}
+	return nil, ErrProviderNotConfigured
+}
+
 func (a *Aggregator) GetBook(ctx context.Context, foreignID string) (*models.Book, error) {
 	key := "book:" + foreignID
 	if cached, ok := a.cache.get(key); ok {
