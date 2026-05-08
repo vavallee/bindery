@@ -9,8 +9,8 @@ Only the latest minor release receives security fixes. Older minors do not.
 
 | Version | Supported |
 | ------- | --------- |
-| 1.3.x   | Yes       |
-| < 1.3   | No        |
+| 1.6.x   | Yes       |
+| < 1.6   | No        |
 
 ## Reporting a vulnerability
 
