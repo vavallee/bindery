@@ -384,7 +384,8 @@ func main() {
 	qualityProfileHandler := api.NewQualityProfileHandler(qualityProfileRepo)
 	settingsHandler := api.NewSettingsHandler(settingsRepo)
 	seriesHandler := api.NewSeriesHandler(seriesRepo, bookRepo, authorRepo, metaAgg, sched).
-		WithHardcoverFeatureSettings(settingsRepo, cfg.EnhancedHardcoverAPI)
+		WithHardcoverFeatureSettings(settingsRepo, cfg.EnhancedHardcoverAPI).
+		WithFinder(importScanner)
 	tagHandler := api.NewTagHandler(tagRepo)
 	importListHandler := api.NewImportListHandler(importListRepo)
 	metadataProfileHandler := api.NewMetadataProfileHandler(metadataProfileRepo)
@@ -414,7 +415,8 @@ func main() {
 		func() calibre.Config { return api.LoadCalibreConfig(settingsRepo) },
 		func() calibre.Mode { return api.LoadCalibreMode(settingsRepo) },
 	)
-	recHandler := api.NewRecommendationHandler(recRepo, recEngine, authorRepo, bookRepo, sched)
+	recHandler := api.NewRecommendationHandler(recRepo, recEngine, authorRepo, bookRepo, sched).
+		WithFinder(seriesRepo, importScanner)
 	imageProxyHandler := api.NewImageProxyHandler(cfg.DataDir)
 	imageProxyHandler.StartEviction(24 * time.Hour)
 	migrateHandler := api.NewMigrateHandler(

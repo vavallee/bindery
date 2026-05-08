@@ -24,7 +24,17 @@ type RecommendationHandler struct {
 	engine   RecommendationEngine
 	authors  *db.AuthorRepo
 	books    *db.BookRepo
+	series   *db.SeriesRepo
 	searcher BookSearcher
+	finder   LibraryFinder
+}
+
+// WithFinder attaches a LibraryFinder so that Add can check whether the
+// recommended book already exists on disk before queuing an auto-search.
+func (h *RecommendationHandler) WithFinder(series *db.SeriesRepo, finder LibraryFinder) *RecommendationHandler {
+	h.series = series
+	h.finder = finder
+	return h
 }
 
 // NewRecommendationHandler creates a new RecommendationHandler.
@@ -147,11 +157,13 @@ func (h *RecommendationHandler) Add(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fileFound := handleNewWantedBook(r.Context(), h.books, h.series, h.finder, *book, rec.AuthorName)
+
 	// Dismiss the recommendation now that the book is added.
 	_ = h.recs.Dismiss(r.Context(), 1, id)
 
-	// Trigger search in background.
-	if h.searcher != nil {
+	// Trigger search in background unless the file already exists on disk.
+	if h.searcher != nil && !fileFound {
 		go h.searcher.SearchAndGrabBook(context.Background(), *book) // #nosec G118 -- intentional: search must outlive the request
 	}
 

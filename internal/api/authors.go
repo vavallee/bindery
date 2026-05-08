@@ -918,25 +918,8 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 		}
 		added++
 
-		// Populate series membership for this book.
-		for _, ref := range b.SeriesRefs {
-			s := &models.Series{ForeignID: ref.ForeignID, Title: ref.Title}
-			if err := h.series.CreateOrGet(ctx, s); err != nil {
-				slog.Warn("failed to upsert series", "series", ref.Title, "error", err)
-				continue
-			}
-			if err := h.series.LinkBook(ctx, s.ID, b.ID, ref.Position, ref.Primary); err != nil {
-				slog.Warn("failed to link book to series", "book", b.Title, "series", ref.Title, "error", err)
-			}
-		}
-
-		// Check if the user already owns this book before queuing a download.
-		if h.finder != nil {
-			if existingPath := h.finder.FindExisting(ctx, b.Title, author.Name, b.MediaType); existingPath != "" {
-				slog.Info("library: found existing file, skipping auto-search", "title", b.Title, "path", existingPath)
-				_ = h.books.SetFilePath(ctx, b.ID, existingPath)
-				continue // don't auto-search for a book we already have
-			}
+		if fileFound := handleNewWantedBook(ctx, h.books, h.series, h.finder, b, author.Name); fileFound {
+			continue // don't auto-search for a book we already have
 		}
 
 		// Auto-search the freshly-added wanted book only when the per-add
@@ -947,6 +930,40 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 	}
 	runBookSearches(ctx, h.searcher, searchQueue, authorAutoSearchConcurrency)
 	slog.Info("author books synced", "author", author.Name, "added", added, "skipped_language", skippedLang, "skipped_junk", skippedJunk, "total", len(books))
+}
+
+// handleNewWantedBook performs the post-create steps that every newly-created
+// wanted book requires regardless of the creation path:
+//  1. Link any provider series refs into the series/series_books tables.
+//  2. Check whether the user already owns the file via LibraryFinder; if so,
+//     record the path and return true so the caller can skip auto-search.
+//
+// Returns true when an existing file was found (caller must NOT auto-search),
+// false otherwise.
+func handleNewWantedBook(ctx context.Context, books *db.BookRepo, series *db.SeriesRepo, finder LibraryFinder, book models.Book, authorName string) (fileFound bool) {
+	// Populate series membership for this book.
+	if series != nil {
+		for _, ref := range book.SeriesRefs {
+			s := &models.Series{ForeignID: ref.ForeignID, Title: ref.Title}
+			if err := series.CreateOrGet(ctx, s); err != nil {
+				slog.Warn("failed to upsert series", "series", ref.Title, "error", err)
+				continue
+			}
+			if err := series.LinkBook(ctx, s.ID, book.ID, ref.Position, ref.Primary); err != nil {
+				slog.Warn("failed to link book to series", "book", book.Title, "series", ref.Title, "error", err)
+			}
+		}
+	}
+
+	// Check if the user already owns this book before queuing a download.
+	if finder != nil {
+		if existingPath := finder.FindExisting(ctx, book.Title, authorName, book.MediaType); existingPath != "" {
+			slog.Info("library: found existing file, skipping auto-search", "title", book.Title, "path", existingPath)
+			_ = books.SetFilePath(ctx, book.ID, existingPath)
+			return true
+		}
+	}
+	return false
 }
 
 func runBookSearches(ctx context.Context, searcher BookSearcher, books []models.Book, concurrency int) {

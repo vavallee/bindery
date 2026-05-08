@@ -29,6 +29,7 @@ type SeriesHandler struct {
 	meta                        *metadata.Aggregator
 	searcher                    BookSearcher
 	settings                    *db.SettingsRepo
+	finder                      LibraryFinder
 	enhancedHardcoverEnvEnabled bool
 }
 
@@ -45,6 +46,13 @@ func NewSeriesHandler(series *db.SeriesRepo, books *db.BookRepo, authors *db.Aut
 func (h *SeriesHandler) WithHardcoverFeatureSettings(settings *db.SettingsRepo, envEnabled bool) *SeriesHandler {
 	h.settings = settings
 	h.enhancedHardcoverEnvEnabled = envEnabled
+	return h
+}
+
+// WithFinder attaches a LibraryFinder so that ensureHardcoverCatalogBook can
+// check whether a newly-created wanted book already exists on disk.
+func (h *SeriesHandler) WithFinder(f LibraryFinder) *SeriesHandler {
+	h.finder = f
 	return h
 }
 
@@ -1200,6 +1208,7 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 	if _, err := h.series.LinkBookIfMissing(ctx, series.ID, book.ID, catalogBook.Position, true); err != nil {
 		return nil, err
 	}
+	handleNewWantedBook(ctx, h.books, h.series, h.finder, book, storedAuthor.Name)
 	return &book, nil
 }
 
