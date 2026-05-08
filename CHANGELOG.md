@@ -6,6 +6,21 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Subpath / reverse-proxy hosting** (`BINDERY_URL_BASE`) (#516) — New env var strips incoming URLs to their path, validates the prefix, injects `<base href>` and `window.__BINDERY_BASE__` into the served `index.html` at runtime, and mounts all chi routes under the prefix. Vite is built with `base: './'` for relative asset URLs; the React router and API client read `window.__BINDERY_BASE__` for the basename and prefix.
+- **Re-bind book to a different metadata record** (#519) — New `POST /api/v1/books/{id}/rebind` endpoint accepts a provider (`openlibrary` | `hardcover`) and a foreign ID, validates the upstream record, warns on author mismatch (with `force_required:true`) unless `force:true` is sent, clears and re-links series membership, and writes a `bookRebound` audit entry to History. A Re-bind dialog is accessible from the Book Detail page.
+- **DNB as primary metadata provider** (#521) — DNB's SRU endpoint now supports `GetAuthorWorks()` and can be selected as the primary provider in **Settings → General → Metadata Provider**. OpenLibrary remains the default. When DNB is primary, roles are swapped at startup.
+
+### Fixed
+
+- **Library scan: sort-suffix folders now reconciled** (#517) — Files stored in librarian sort-suffix form (`Title, The` / `Title, A`) are correctly matched during library scan. A new `normalizeTitle()` helper handles `, the` / `, an` / `, a` comma-suffix inversion and is applied in both `titleMatch()` and the JW-similarity comparison in `ScanLibrary()`.
+- **Hardcover lists fetch repaired** (#518) — Three response structs (`GetUserWishlist`, `GetUserLists`, `getShelfBooks`) incorrectly expected a single `Me` object; they now unmarshal `Me` as an array with a `len==0` guard, matching the actual API response shape.
+
+### Changed / Refactored
+
+- **Post-create wanted-book logic centralised** (#520) — `handleNewWantedBook()` extracted in `internal/api/authors.go` and called from `FetchAuthorBooks`, `RecommendationHandler.Add`, and `SeriesHandler.ensureHardcoverCatalogBook`, eliminating three copies of the same file-exists / auto-search dance.
+
 ## [v1.6.0] — 2026-05-07
 
 ### Fixed

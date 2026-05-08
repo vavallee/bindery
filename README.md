@@ -84,8 +84,9 @@
 - **Dual-format books** — Each book can hold an ebook *and* an audiobook simultaneously. The Book Detail page has separate format panels with independent status, file path, and grab buttons. The search pipeline uses Newznab category 7020 for ebooks and 3030 for audiobooks; the importer moves whole audiobook folders (multi-part `.m4b` / `.mp3`) as one unit into a separate audiobook library root; the Wanted page lists each missing format as a separate row.
 - **Series support** — Books grouped by series with position tracking and dedicated Series page
 - **Edition tracking** — Multiple editions per work, with format, ISBN, publisher, page count
-- **Library scan** — Walk `/books/` and reconcile existing files with wanted books in the database; trigger on-demand from **Settings → General → Scan Library**. Matching is four-tier: ASIN → title + author → series name + position number → fuzzy title. Files annotated with series info (e.g. `[Mistborn, Book 1]` or `(Dune Chronicles #2)`) are matched even when the title alone would be ambiguous.
+- **Library scan** — Walk `/books/` and reconcile existing files with wanted books in the database; trigger on-demand from **Settings → General → Scan Library**. Matching is four-tier: ASIN → title + author → series name + position number → fuzzy title. Files annotated with series info (e.g. `[Mistborn, Book 1]` or `(Dune Chronicles #2)`) are matched even when the title alone would be ambiguous. Files stored in librarian sort-suffix form (`Title, The` / `Title, A`) are now reconciled correctly.
 - **Author aliases** — Merge duplicate authors ("RR Haywood" / "R.R. Haywood" / "R R Haywood") into one canonical row from the Authors page; add-author flow detects aliases and prompts for merge instead of silently ingesting a duplicate
+- **Metadata re-bind** — Correct a wrong metadata match (e.g. an omnibus attributed instead of the standalone Book 1) from the Book Detail page without deleting and re-adding. The Re-bind dialog accepts a provider and foreign ID, validates the upstream record, warns on author mismatch, re-links series membership, and writes an audit entry to History.
 
 ### Search & downloads
 - **Newznab + Torznab** — Query multiple Usenet and torrent indexers in parallel, deduplicated and ranked
@@ -117,7 +118,7 @@
 - **OpenLibrary** (primary) — Authors, books, editions, covers, ISBN lookup
 - **Google Books** (enricher) — Richer descriptions and ratings
 - **Hardcover.app** (enricher) — Community ratings and series data via GraphQL
-- **DNB** (enricher) — Deutsche Nationalbibliothek via the public SRU endpoint. No API key. Always on. Fills description, language, year, and publisher from MARC21 records — especially useful for German-language titles where OpenLibrary coverage is thin.
+- **DNB** (enricher; optionally primary) — Deutsche Nationalbibliothek via the public SRU endpoint. No API key. Always on as an enricher; can now also be selected as the **primary** metadata provider in **Settings → General → Metadata Provider**. OpenLibrary remains the default. Fills description, language, year, and publisher from MARC21 records — especially useful for German-language titles where OpenLibrary coverage is thin.
 - **Audnex** — Audiobook narrator, duration, cover, and description by Audible ASIN via the free [api.audnex.us](https://api.audnex.us) wrapper. Trigger with `POST /api/v1/book/{id}/enrich-audiobook`.
 - **Audible catalogue** — Direct author lookup against Audible's public catalogue endpoint. Supplements OpenLibrary/Hardcover during `FetchAuthorBooks` when the author's effective media type is `audiobook` or `both`. Pulled books carry the ASIN and flow through the same `allowed_languages` filter as the OpenLibrary path — prolific authors (Sanderson, King, Rowling) gain the ASINs that OL/Hardcover are missing, without letting foreign-language editions slip past the default profile.
 - **Cover image proxy** — Cover images are fetched and cached server-side under `<dataDir>/image-cache/` (30-day TTL). All `imageURL` fields in API responses are rewritten to `/api/v1/images?url=<encoded>` before leaving the server. The browser never contacts Goodreads, OpenLibrary, or Google Books directly — no IP leakage, no third-party tracking.
@@ -217,6 +218,7 @@ Bindery is configured through the web UI under **Settings**. Core env vars:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BINDERY_PORT` | `8787` | HTTP server port |
+| `BINDERY_URL_BASE` | _(empty)_ | URL path prefix when Bindery is mounted under a reverse-proxy subpath (e.g. `/bindery`). Accepts a bare path or a full URL — the path component is extracted. No trailing slash. |
 | `BINDERY_DB_PATH` | platform-dependent (see [Binary install](#binary-linux--macos--windows)) | SQLite database path |
 | `BINDERY_DATA_DIR` | platform-dependent (see [Binary install](#binary-linux--macos--windows)) | Config directory (backups live here) |
 | `BINDERY_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |

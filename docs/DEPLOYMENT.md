@@ -204,6 +204,7 @@ Multiple remaps are separated by commas: `BINDERY_DOWNLOAD_PATH_REMAP=/sab/compl
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BINDERY_PORT` | `8787` | HTTP server port |
+| `BINDERY_URL_BASE` | _(empty)_ | URL path prefix when hosting Bindery under a reverse-proxy subpath (e.g. `/bindery`). Accepts a bare path or full URL — only the path component is used. No trailing slash needed. See [Reverse proxy](#reverse-proxy) for Nginx / Caddy / Traefik examples. |
 | `BINDERY_DB_PATH` | `/config/bindery.db` on Linux; `%APPDATA%\Bindery\bindery.db` on Windows; `~/Library/Application Support/Bindery/bindery.db` on macOS | SQLite database path |
 | `BINDERY_DATA_DIR` | `/config` on Linux; `%APPDATA%\Bindery` on Windows; `~/Library/Application Support/Bindery` on macOS | Config directory (backups live here) |
 | `BINDERY_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |

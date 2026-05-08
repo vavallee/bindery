@@ -287,6 +287,21 @@ func mergeAuthorWorkMetadata(dst *models.Book, src models.Book) {
 	}
 }
 
+// GetBookFromProvider fetches a book from a specific named provider (e.g.
+// "openlibrary" or "hardcover"). Returns ErrProviderNotConfigured when no
+// provider with that name is registered.
+func (a *Aggregator) GetBookFromProvider(ctx context.Context, providerName, foreignID string) (*models.Book, error) {
+	if a.primary != nil && strings.EqualFold(a.primary.Name(), providerName) {
+		return a.primary.GetBook(ctx, foreignID)
+	}
+	for _, enricher := range a.enrichers {
+		if strings.EqualFold(enricher.Name(), providerName) {
+			return enricher.GetBook(ctx, foreignID)
+		}
+	}
+	return nil, ErrProviderNotConfigured
+}
+
 func (a *Aggregator) GetBook(ctx context.Context, foreignID string) (*models.Book, error) {
 	key := "book:" + foreignID
 	if cached, ok := a.cache.get(key); ok {
