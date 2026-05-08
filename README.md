@@ -22,15 +22,15 @@
 ---
 
 <p align="center">
-  <img src="https://zipline.autonomy.ninja/u/kx9KgV.png" alt="Bindery — Author detail page with monitored books" width="1200">
+  <img src="docs/screenshots/author-detail-desktop-dark.png" alt="Bindery — Author detail page with monitored books" width="1200">
 </p>
 
 <p align="center">
-  <img src="https://zipline.autonomy.ninja/u/6XklLc.png" alt="Bindery — Authors overview with monitoring badges" width="1200">
+  <img src="docs/screenshots/authors-desktop-dark.png" alt="Bindery — Authors overview with monitoring badges" width="1200">
 </p>
 
 <p align="center">
-  <img src="https://zipline.autonomy.ninja/u/Mh0yDk.png" alt="Bindery — Books library grid view" width="1200">
+  <img src="docs/screenshots/books-desktop-dark.png" alt="Bindery — Books library grid view" width="1200">
 </p>
 
 <h4 align="center">Mobile-friendly</h4>
