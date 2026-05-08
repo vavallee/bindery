@@ -447,3 +447,127 @@ func TestSRUQueryBuildsCorrectURL(t *testing.T) {
 		t.Errorf("URL missing CQL title field: %q", gotURL)
 	}
 }
+
+// TestGetAuthorWorks_ByForeignID verifies that GetAuthorWorks with a "dnb:"
+// prefixed ID performs a num= lookup first to resolve the author name, then
+// performs a per= query. The test stubs two sequential HTTP calls.
+func TestGetAuthorWorks_ByForeignID(t *testing.T) {
+	calls := 0
+	c := &Client{
+		http: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				calls++
+				// First call: num= lookup returns a record with 100 $a.
+				// Second call: per= query returns the same record as a "work".
+				body := sruXMLN("1", marcDuneGerman)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		},
+	}
+	books, err := c.GetAuthorWorks(context.Background(), "dnb:1234567890")
+	if err != nil {
+		t.Fatalf("GetAuthorWorks: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("expected 2 HTTP calls (num= + per=), got %d", calls)
+	}
+	if len(books) == 0 {
+		t.Errorf("expected at least 1 book, got 0")
+	}
+}
+
+// TestGetAuthorWorks_ByPlainName verifies that GetAuthorWorks with a plain
+// name (no "dnb:" prefix) goes straight to a per= query (single HTTP call).
+func TestGetAuthorWorks_ByPlainName(t *testing.T) {
+	calls := 0
+	var gotURL string
+	c := &Client{
+		http: &http.Client{
+			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				calls++
+				gotURL = r.URL.String()
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(sruXMLN("1", marcDuneGerman))),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		},
+	}
+	books, err := c.GetAuthorWorks(context.Background(), "Herbert, Frank")
+	if err != nil {
+		t.Fatalf("GetAuthorWorks: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("expected 1 HTTP call (per= only), got %d", calls)
+	}
+	if !strings.Contains(gotURL, "per") {
+		t.Errorf("expected per= CQL query in URL, got %q", gotURL)
+	}
+	if len(books) == 0 {
+		t.Errorf("expected at least 1 book, got 0")
+	}
+}
+
+// TestGetAuthorWorks_Empty verifies that GetAuthorWorks returns an empty slice
+// (not nil) when no records match.
+func TestGetAuthorWorks_Empty(t *testing.T) {
+	calls := 0
+	c := &Client{
+		http: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				calls++
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(sruXMLN("0"))),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		},
+	}
+	books, err := c.GetAuthorWorks(context.Background(), "Unknown Author")
+	if err != nil {
+		t.Fatalf("GetAuthorWorks: %v", err)
+	}
+	if len(books) != 0 {
+		t.Errorf("expected 0 books, got %d", len(books))
+	}
+}
+
+// TestGetAuthorWorks_ForeignID_NumLookupFails verifies that when the initial
+// num= lookup fails (network error), GetAuthorWorks falls back to using the
+// raw ID as the per= query term rather than returning an error.
+func TestGetAuthorWorks_ForeignID_NumLookupFails(t *testing.T) {
+	calls := 0
+	c := &Client{
+		http: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				calls++
+				if calls == 1 {
+					// Simulate a network error on the num= lookup.
+					return nil, fmt.Errorf("connection refused")
+				}
+				// Second call (per= fallback) succeeds.
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(sruXMLN("1", marcDuneGerman))),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		},
+	}
+	books, err := c.GetAuthorWorks(context.Background(), "dnb:1234567890")
+	if err != nil {
+		t.Fatalf("expected fallback to succeed, got error: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("expected 2 calls (num= fail + per= fallback), got %d", calls)
+	}
+	if len(books) == 0 {
+		t.Errorf("expected at least 1 book from fallback, got 0")
+	}
+}

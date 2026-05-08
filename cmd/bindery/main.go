@@ -167,6 +167,21 @@ func main() {
 
 	// Metadata providers
 	olClient := openlibrary.New()
+	dnbClient := dnb.New()
+
+	// Determine primary provider from settings (default: openlibrary).
+	// When metadata.primary_provider = "dnb", DNB is promoted to primary and
+	// OpenLibrary is added as an enricher instead. This is the recommended
+	// choice for German/Austrian/Swiss catalogues where OpenLibrary coverage
+	// is too thin for German-language books.
+	var primaryProvider metadata.Provider = olClient
+	if s, _ := settingsRepo.Get(context.Background(), api.SettingMetadataPrimaryProvider); s != nil && s.Value == "dnb" {
+		primaryProvider = dnbClient
+		slog.Info("metadata primary provider: dnb")
+	} else {
+		slog.Info("metadata primary provider: openlibrary")
+	}
+
 	var enrichers []metadata.Provider
 	if setting, _ := settingsRepo.Get(context.Background(), "google_books_api_key"); setting != nil && setting.Value != "" {
 		enrichers = append(enrichers, googlebooks.New(setting.Value))
@@ -177,9 +192,18 @@ func main() {
 	})
 	enrichers = append(enrichers, hcClient)
 	slog.Info("hardcover enrichment enabled")
-	enrichers = append(enrichers, dnb.New())
-	slog.Info("dnb enrichment enabled")
-	metaAgg := metadata.NewAggregator(olClient, enrichers...)
+
+	// Add the non-primary provider as enricher so metadata is always
+	// cross-checked regardless of which provider is primary.
+	if primaryProvider == olClient {
+		enrichers = append(enrichers, dnbClient)
+		slog.Info("dnb enrichment enabled")
+	} else {
+		enrichers = append(enrichers, olClient)
+		slog.Info("openlibrary enrichment enabled")
+	}
+
+	metaAgg := metadata.NewAggregator(primaryProvider, enrichers...)
 
 	// Optional CLI subcommand: `bindery migrate {csv,readarr} <path>`.
 	// Runs the import and exits; does not start the HTTP server. Useful

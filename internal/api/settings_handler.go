@@ -31,6 +31,12 @@ const SettingDefaultMediaType = "default.media_type"
 // empty or unset means fall back to cfg.LibraryDir (the env-var default).
 const SettingDefaultLibraryRootFolderID = "library.defaultRootFolderId"
 
+// SettingMetadataPrimaryProvider is the KV key that selects the primary
+// metadata provider used for author/book search and lookup. Valid values are
+// "openlibrary" (default) and "dnb". Empty or unset falls back to
+// "openlibrary" for backwards compatibility.
+const SettingMetadataPrimaryProvider = "metadata.primary_provider"
+
 type SettingsHandler struct {
 	settings *db.SettingsRepo
 }
@@ -266,6 +272,17 @@ func validateSettingValue(key, value string) error {
 		id, err := strconv.ParseInt(value, 10, 64)
 		if err != nil || id <= 0 {
 			return fmt.Errorf("library.defaultRootFolderId %q must be a positive integer or empty", value)
+		}
+	case SettingMetadataPrimaryProvider:
+		// Empty falls back to "openlibrary"; non-empty must be a known provider.
+		if value == "" {
+			return nil
+		}
+		switch value {
+		case "openlibrary", "dnb":
+			return nil
+		default:
+			return fmt.Errorf("metadata.primary_provider %q is not one of: openlibrary, dnb", value)
 		}
 	case SettingCalibrePluginURL:
 		if value == "" {

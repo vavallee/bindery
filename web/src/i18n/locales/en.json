@@ -373,7 +373,12 @@
       "telemetryLabel": "Send anonymous usage ping",
       "telemetryHint": "Helps the maintainer count active installs. No personal data or library contents are sent.",
       "telemetryToggle": "Toggle anonymous usage ping",
-      "telemetryDetail": "Sends install_id (random UUID), version, OS, and architecture to getbindery.dev once per day. Disable at any time."
+      "telemetryDetail": "Sends install_id (random UUID), version, OS, and architecture to getbindery.dev once per day. Disable at any time.",
+      "metadataProvider": "Metadata Provider",
+      "metadataProviderLabel": "Primary metadata provider",
+      "metadataProviderHint": "Selects the source used for author and book search. DNB (Deutsche Nationalbibliothek) is recommended for German, Austrian, and Swiss catalogues — it covers German-language publications since 1913 where OpenLibrary coverage is thin. OpenLibrary remains the default for other regions. The non-primary provider is always used as an enricher.",
+      "metadataProviderOpenlibrary": "OpenLibrary (default)",
+      "metadataProviderDnb": "DNB — Deutsche Nationalbibliothek (German/DACH)"
     },
     "import": {
       "csvHeading": "CSV of author names",

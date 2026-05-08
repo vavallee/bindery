@@ -2801,6 +2801,31 @@ function GeneralTab() {
         </div>
       </section>
 
+      {/* Metadata provider */}
+      <section>
+        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.metadataProvider', 'Metadata Provider')}</h3>
+        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+          <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
+            {t('settings.general.metadataProviderLabel', 'Primary metadata provider')}
+          </label>
+          <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+            {t('settings.general.metadataProviderHint', 'Selects the source used for author and book search. DNB (Deutsche Nationalbibliothek) is recommended for German, Austrian, and Swiss catalogues — it covers German-language publications since 1913 where OpenLibrary coverage is thin. OpenLibrary remains the default for other regions. The non-primary provider is always used as an enricher.')}
+          </p>
+          <select
+            value={settings['metadata.primary_provider'] ?? 'openlibrary'}
+            onChange={async e => {
+              const next = e.target.value
+              setSettings(s => ({ ...s, 'metadata.primary_provider': next }))
+              await api.setSetting('metadata.primary_provider', next).catch(console.error)
+            }}
+            className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+          >
+            <option value="openlibrary">{t('settings.general.metadataProviderOpenlibrary', 'OpenLibrary (default)')}</option>
+            <option value="dnb">{t('settings.general.metadataProviderDnb', 'DNB — Deutsche Nationalbibliothek (German/DACH)')}</option>
+          </select>
+        </div>
+      </section>
+
       {/* Author defaults */}
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.authorDefaults', 'Author defaults')}</h3>

@@ -80,9 +80,56 @@ func (c *Client) SearchBooks(ctx context.Context, query string) ([]models.Book, 
 	return books, nil
 }
 
-// GetAuthor is not supported by the DNB SRU endpoint.
+// GetAuthor is not supported by the DNB SRU endpoint. DNB's public SRU
+// interface does not expose an authority record lookup by ID — author records
+// in DNB live in a separate GND (Gemeinsame Normdatei) catalog that is not
+// queryable by the same SRU endpoint. Callers that need the full author record
+// must use SearchAuthors and pick the best match.
 func (c *Client) GetAuthor(_ context.Context, _ string) (*models.Author, error) {
 	return nil, fmt.Errorf("dnb does not support author lookup by ID")
+}
+
+// GetAuthorWorks returns all books by the author identified by foreignID.
+// When foreignID carries a "dnb:" prefix (e.g. "dnb:1234567890") the SRU
+// num= index is used to look up the authority record's control number and
+// then searches by author name.  When the foreignID looks like a plain name
+// (i.e. no recognised prefix) it is used directly as a person-name query.
+//
+// Limitation: DNB's public SRU endpoint does not expose an author-ID →
+// works relationship directly; this implementation performs a per=<name>
+// query which may include works by different authors who share the same
+// name.  For most use cases this is acceptable — DNB catalogue entries are
+// generally unambiguous within the DACH publication space.
+func (c *Client) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, error) {
+	// Derive a query term: if it looks like a plain name (no known prefix)
+	// use it directly; otherwise try to find the name from a record lookup.
+	query := authorForeignID
+	if id := strings.TrimPrefix(authorForeignID, idPrefix); id != authorForeignID {
+		// Had the "dnb:" prefix — look up the record to get the author name.
+		records, err := c.sruQuery(ctx, "num="+id, 1)
+		if err != nil || len(records) == 0 {
+			// Fall back to a direct person query with the raw ID.
+			query = id
+		} else {
+			if name := marcClean(records[0].subfield("100", "a")); name != "" {
+				query = name
+			} else {
+				query = id
+			}
+		}
+	}
+
+	records, err := c.sruQuery(ctx, "per="+query, 50)
+	if err != nil {
+		return nil, fmt.Errorf("dnb get author works %s: %w", authorForeignID, err)
+	}
+	books := make([]models.Book, 0, len(records))
+	for _, rec := range records {
+		if b := recordToBook(rec); b != nil {
+			books = append(books, *b)
+		}
+	}
+	return books, nil
 }
 
 // GetBook fetches a single record by its DNB control number (the foreignID
