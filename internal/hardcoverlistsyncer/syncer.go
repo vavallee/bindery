@@ -4,6 +4,7 @@ package hardcoverlistsyncer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -55,6 +56,36 @@ func (s *ListSyncer) Sync(ctx context.Context) error {
 	}
 	return firstErr
 }
+
+// SyncOne syncs a single hardcover import list by ID. Used by the manual
+// "Sync now" UI affordance. Returns ErrNotFound if the list doesn't exist,
+// ErrWrongType if it's not a hardcover list, or the underlying sync error.
+func (s *ListSyncer) SyncOne(ctx context.Context, id int64) error {
+	il, err := s.importLists.GetByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("load import list %d: %w", id, err)
+	}
+	if il == nil {
+		return ErrNotFound
+	}
+	if il.Type != "hardcover" {
+		return ErrWrongType
+	}
+	if err := s.syncList(ctx, *il); err != nil {
+		return err
+	}
+	if err := s.importLists.UpdateLastSyncAt(ctx, il.ID); err != nil {
+		slog.Error("failed to update last_sync_at", "list", il.Name, "error", err)
+	}
+	return nil
+}
+
+// Sentinel errors for SyncOne so the API handler can map them to HTTP status
+// codes without string-matching.
+var (
+	ErrNotFound  = errors.New("import list not found")
+	ErrWrongType = errors.New("import list is not a hardcover list")
+)
 
 func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 	client := hardcover.NewAuthenticated(il.APIKey)

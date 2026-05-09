@@ -436,6 +436,7 @@ export const api = {
   addImportList: (data: Partial<ImportList>) => request<ImportList>('/importlist', { method: 'POST', body: JSON.stringify(data) }),
   updateImportList: (id: number, data: Partial<ImportList>) => request<ImportList>(`/importlist/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteImportList: (id: number) => request<void>(`/importlist/${id}`, { method: 'DELETE' }),
+  syncImportList: (id: number) => request<{ status: string }>(`/importlist/${id}/sync`, { method: 'POST' }),
   hardcoverLists: (token: string) =>
     request<HardcoverList[]>('/importlist/hardcover/lists', {
       headers: { Authorization: `Bearer ${token}` },

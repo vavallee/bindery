@@ -18,7 +18,7 @@ func importListFixture(t *testing.T) *ImportListHandler {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	return NewImportListHandler(db.NewImportListRepo(database))
+	return NewImportListHandler(db.NewImportListRepo(database), nil)
 }
 
 func TestImportListList_Empty(t *testing.T) {

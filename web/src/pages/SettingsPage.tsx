@@ -2166,6 +2166,8 @@ function HardcoverListsSection() {
   const { t } = useTranslation()
   const [lists, setLists] = useState<ImportList[]>([])
   const [showAdd, setShowAdd] = useState(false)
+  const [syncingId, setSyncingId] = useState<number | null>(null)
+  const [syncError, setSyncError] = useState<{ id: number; message: string } | null>(null)
 
   useEffect(() => {
     api.listImportLists().then(all => setLists(all.filter(l => l.type === 'hardcover'))).catch(console.error)
@@ -2179,6 +2181,20 @@ function HardcoverListsSection() {
   const handleToggle = async (il: ImportList) => {
     const updated = await api.updateImportList(il.id, { ...il, enabled: !il.enabled })
     setLists(prev => prev.map(l => l.id === il.id ? updated : l))
+  }
+
+  const handleSync = async (id: number) => {
+    setSyncingId(id)
+    setSyncError(null)
+    try {
+      await api.syncImportList(id)
+      const all = await api.listImportLists()
+      setLists(all.filter(l => l.type === 'hardcover'))
+    } catch (e: unknown) {
+      setSyncError({ id, message: e instanceof Error ? e.message : 'Sync failed' })
+    } finally {
+      setSyncingId(null)
+    }
   }
 
   return (
@@ -2209,8 +2225,18 @@ function HardcoverListsSection() {
                 ? t('settings.import.hardcoverLastSync', { date: new Date(il.lastSyncAt).toLocaleString() })
                 : t('settings.import.hardcoverNeverSynced')}
             </div>
+            {syncError?.id === il.id && (
+              <div className="text-xs text-red-600 dark:text-red-400 mt-1 break-words">{syncError.message}</div>
+            )}
           </div>
           <div className="flex items-center gap-2 ml-3">
+            <button
+              onClick={() => handleSync(il.id)}
+              disabled={syncingId === il.id}
+              className="text-xs px-2 py-1 rounded bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 hover:bg-slate-300 dark:hover:bg-zinc-700 disabled:opacity-50"
+            >
+              {syncingId === il.id ? 'Syncing…' : 'Sync now'}
+            </button>
             <button
               onClick={() => handleToggle(il)}
               className={`text-xs px-2 py-1 rounded ${il.enabled ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400' : 'bg-slate-200 dark:bg-zinc-800 text-slate-500 dark:text-zinc-500'}`}
@@ -4628,20 +4654,29 @@ function AddProwlarrForm({ onClose, onAdded }: { onClose: () => void; onAdded: (
   const [apiKey, setApiKey] = useState('')
   const [syncOnStartup, setSyncOnStartup] = useState(true)
   const [syncing, setSyncing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const submit = async () => {
     setSyncing(true)
+    setError(null)
+    let p: ProwlarrInstance
     try {
-      const p = await api.addProwlarr({ name, url, apiKey, syncOnStartup, enabled: true })
-      // Auto-sync immediately so the user sees indexers appear right away.
-      try {
-        await api.syncProwlarr(p.id)
-        const updated = await api.listProwlarr()
-        onAdded(updated.find(i => i.id === p.id) ?? p)
-      } catch {
-        onAdded(p)
-      }
+      p = await api.addProwlarr({ name, url, apiKey, syncOnStartup, enabled: true })
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Save failed')
+      setSyncing(false)
+      return
+    }
+    // Save succeeded — auto-sync so indexers appear right away. Sync failures
+    // are non-fatal: the instance is already persisted, the user can retry sync
+    // from the row's button.
+    try {
+      await api.syncProwlarr(p.id)
+      const updated = await api.listProwlarr()
+      onAdded(updated.find(i => i.id === p.id) ?? p)
+    } catch {
+      onAdded(p)
     } finally {
       setSyncing(false)
     }
@@ -4673,6 +4708,9 @@ function AddProwlarrForm({ onClose, onAdded }: { onClose: () => void; onAdded: (
         </button>
         <span className="text-xs text-slate-600 dark:text-zinc-400">Sync on startup</span>
       </div>
+      {error && (
+        <div className="text-xs text-red-600 dark:text-red-400 break-words">{error}</div>
+      )}
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">Cancel</button>
         <button onClick={submit} disabled={!url || !apiKey || syncing} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium disabled:opacity-50">

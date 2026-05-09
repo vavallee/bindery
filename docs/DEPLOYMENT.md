@@ -242,6 +242,18 @@ Multiple remaps are separated by commas: `BINDERY_DOWNLOAD_PATH_REMAP=/sab/compl
 | `BINDERY_RATE_LIMIT_MAX_FAILURES` | `5` | Maximum failed login attempts per IP before the account is locked for the rate-limit window. |
 | `BINDERY_RATE_LIMIT_WINDOW_MINUTES` | `15` | Duration in minutes of the per-IP login rate-limit window. After the window expires the failure counter resets. |
 
+## Indexer / Prowlarr URLs
+
+URLs entered for **Settings → Indexers** and **Settings → Indexers → Add Prowlarr** are validated against an SSRF policy that **blocks loopback** (`127.0.0.0/8`, `::1`), link-local (`169.254/16`, `fe80::/10`), and cloud-metadata endpoints (e.g. `169.254.169.254`). RFC1918 ranges (`10/8`, `172.16/12`, `192.168/16`) are allowed.
+
+This means `http://localhost:9696` and `http://127.0.0.1:9696` are **rejected** even when Prowlarr runs on the same host. Use one of the following instead:
+
+- **Same Docker network** — use the service name: `http://prowlarr:9696`.
+- **Same host, different containers** — use the host's LAN IP: `http://192.168.x.y:9696`.
+- **Bare-metal both processes** — use the host's LAN IP, or have Prowlarr listen on a non-loopback interface.
+
+The rejection is intentional: a confused-deputy request from Bindery to a loopback URL would let any logged-in user probe services running locally on the Bindery host. There is no env-var escape hatch — if you need it for a controlled test environment, [open an issue](https://github.com/vavallee/bindery/issues/new) describing the use case.
+
 ## First-run setup
 
 On first launch Bindery bootstraps itself — **no environment variables are required for auth.**

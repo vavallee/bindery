@@ -412,7 +412,7 @@ func main() {
 		WithHardcoverFeatureSettings(settingsRepo, cfg.EnhancedHardcoverAPI).
 		WithFinder(importScanner)
 	tagHandler := api.NewTagHandler(tagRepo)
-	importListHandler := api.NewImportListHandler(importListRepo)
+	importListHandler := api.NewImportListHandler(importListRepo, hcSyncer)
 	metadataProfileHandler := api.NewMetadataProfileHandler(metadataProfileRepo)
 	delayProfileHandler := api.NewDelayProfileHandler(delayProfileRepo)
 	customFormatHandler := api.NewCustomFormatHandler(customFormatRepo)
@@ -710,6 +710,7 @@ func main() {
 		r.Get("/importlist/{id}", importListHandler.Get)
 		r.Put("/importlist/{id}", importListHandler.Update)
 		r.Delete("/importlist/{id}", importListHandler.Delete)
+		r.Post("/importlist/{id}/sync", importListHandler.Sync)
 
 		// Import list exclusions
 		r.Get("/importlistexclusion", importListHandler.ListExclusions)
