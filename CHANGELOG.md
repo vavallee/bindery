@@ -6,9 +6,34 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.8.0] — 2026-05-09
+
+### Added
+
+- **Manual Hardcover list sync** (#536) — A "Sync now" button on each Hardcover list row in **Settings → Import** triggers an immediate sync without waiting for the 24-hour scheduler tick. New `POST /api/v1/importlist/{id}/sync` endpoint backs the button and is scriptable from the CLI.
+- **Top-level React ErrorBoundary** (#530, #539) — Render-time errors no longer blank the entire page. A friendly fallback card with **Reload** / **Show details** buttons sits outside the router, so even router-level throws are caught.
+
+### Fixed
+
+- **Prowlarr add-form silently swallowed errors** (#536) — Failed adds now surface a red error message under the form instead of failing silently. Sync errors (separate from the add itself) are non-fatal so a successful Prowlarr connection is not rolled back by a transient sync failure.
+- **Telemetry only pings for semver release versions** (#527) — Dev / branch builds no longer ping the telemetry endpoint, keeping ingestion data clean.
+
+### Security
+
+- **Go 1.26.3 stdlib security release** (#540) — Bumps the runtime image from `golang:1.26.2-alpine` to `1.26.3-alpine`, picking up patches for CVE-2026-42499, CVE-2026-39820, CVE-2026-39823, CVE-2026-39825, CVE-2026-39826, CVE-2026-33811, CVE-2026-33814, CVE-2026-39836. Container Scan (Trivy CRITICAL+HIGH) returns to green on this release.
+- **`security-events: write` scoped to SARIF-uploading jobs only** (#538) — Removed the over-broad workflow-level write permission from `security.yml`; only the four jobs that actually call `github/codeql-action/upload-sarif` (`sast-go`, `sast-frontend`, `secrets-scan`, `iac-scan`) hold the scope. OpenSSF Scorecard `Token-Permissions` improvement.
+- **Dependabot security updates enabled** at the repo level — weekly version updates already shipped via `dependabot.yml`; this turns on the security advisory channel for transitive vulns.
+
+### Docs
+
+- **Indexer / Prowlarr URL guidance** (#536) — New section in `docs/DEPLOYMENT.md` explaining why loopback URLs (`127.0.0.1`, `localhost`) are rejected by the SSRF policy and what alternatives to use (docker service name, LAN IP, or container IP).
+- **README pruned to ~280 lines** — Hero, Why Bindery, Features (compressed), Quick Start, signposts. Implementation detail moved to new `docs/ARCHITECTURE.md` and `docs/API.md`. SECURITY.md supported-versions table bumped to 1.8.x.
+- **Unraid Community Apps template** (#526) — Template added to repo; selfhosters marketplace listing pending review.
+
 ### Chores
 
-- **Series Codecov follow-up coverage** (#475) — Added targeted tests for series API edge cases, repository hydration and linking behavior, metadata aggregator series catalog fallback/cache behavior, and series matching helpers after gaps were noticed in the Codecov report for PR #459.
+- **Series Codecov follow-up coverage** (#475) — Targeted tests for series API edge cases, repository hydration and linking behavior, metadata aggregator series catalog fallback/cache behavior, and series matching helpers after gaps were noticed in the Codecov report for PR #459.
+- **Hero screenshots refreshed** (#528, #529).
 
 ## [v1.7.0] — 2026-05-08
 
