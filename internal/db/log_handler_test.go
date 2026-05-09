@@ -59,6 +59,54 @@ func TestLogSlogHandler_MirrorsToDBAndRing(t *testing.T) {
 	}
 }
 
+func TestLogHandlerStop(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatalf("open memory db: %v", err)
+	}
+	defer database.Close()
+
+	repo := NewLogRepo(database)
+	h := NewLogSlogHandler(repo, slog.LevelDebug)
+
+	const n = 25
+	for i := 0; i < n; i++ {
+		rec := slog.NewRecord(time.Now(), slog.LevelInfo, "stop-test", 0)
+		rec.AddAttrs(slog.String("component", "stoptest"))
+		if err := h.Handle(context.Background(), rec); err != nil {
+			t.Fatalf("Handle: %v", err)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := h.Stop(ctx); err != nil {
+		t.Fatalf("Stop returned error: %v", err)
+	}
+
+	// Verify all entries were persisted.
+	entries, err := repo.Query(context.Background(), LogFilter{Limit: n + 5})
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(entries) != n {
+		t.Errorf("expected %d entries persisted, got %d", n, len(entries))
+	}
+
+	// Calling Handle after Stop must not panic — record is dropped.
+	rec := slog.NewRecord(time.Now(), slog.LevelInfo, "after-stop", 0)
+	if err := h.Handle(context.Background(), rec); err != nil {
+		t.Errorf("Handle after Stop: unexpected error %v", err)
+	}
+
+	// Stop on a child handler returned by WithAttrs is a no-op (does not
+	// re-close the channel).
+	child := h.WithAttrs([]slog.Attr{slog.String("k", "v")}).(*LogHandler)
+	if err := child.Stop(context.Background()); err != nil {
+		t.Errorf("child.Stop returned error: %v", err)
+	}
+}
+
 func TestLogSlogHandler_DropsOnFullChannel(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {

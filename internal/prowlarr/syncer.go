@@ -137,7 +137,9 @@ func (s *Syncer) Sync(ctx context.Context, instanceID int64) (SyncResult, error)
 		}
 	}
 
-	_ = s.instances.SetLastSyncAt(ctx, instanceID, time.Now())
+	if err := s.instances.SetLastSyncAt(ctx, instanceID, time.Now()); err != nil {
+		slog.Warn("prowlarr: persist sync timestamp", "error", err, "instance_id", instanceID)
+	}
 	slog.Info("prowlarr sync complete", "instance_id", instanceID, "result", result.String())
 	return result, nil
 }

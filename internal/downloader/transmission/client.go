@@ -271,7 +271,10 @@ func (c *Client) doRequest(req *http.Request) ([]byte, error) {
 			}
 			defer resp2.Body.Close()
 
-			body, _ = io.ReadAll(io.LimitReader(resp2.Body, 1024*1024))
+			body, err = io.ReadAll(io.LimitReader(resp2.Body, 1024*1024))
+			if err != nil {
+				return nil, fmt.Errorf("transmission: read retry body: %w", err)
+			}
 			resp = resp2
 		}
 	}

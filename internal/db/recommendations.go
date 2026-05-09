@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -51,12 +52,15 @@ func (r *RecommendationRepo) ReplaceBatch(ctx context.Context, userID int64, can
 	defer func() { _ = stmt.Close() }()
 
 	for _, c := range candidates {
-		genresJSON, _ := json.Marshal(c.Genres)
+		genresJSON, err := json.Marshal(c.Genres)
+		if err != nil {
+			slog.Warn("recommendations: marshal genres", "error", err)
+		}
 		if genresJSON == nil {
 			genresJSON = []byte("[]")
 		}
 
-		_, err := stmt.ExecContext(ctx,
+		_, err = stmt.ExecContext(ctx,
 			userID, c.ForeignID, c.RecType, c.Title, c.AuthorName, c.AuthorID,
 			c.ImageURL, c.Description, string(genresJSON), c.Rating, c.RatingsCount,
 			c.ReleaseDate, c.Language, c.MediaType, c.Score, c.Reason,

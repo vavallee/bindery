@@ -7,8 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/db"
@@ -105,6 +107,45 @@ func TestFileDownload_EbookFile(t *testing.T) {
 	}
 	if cd := rec.Header().Get("Content-Disposition"); cd == "" {
 		t.Errorf("expected Content-Disposition header")
+	}
+}
+
+func TestFileDownload_NonASCIIFilename(t *testing.T) {
+	h, books, author, ctx := fileFixture(t)
+	tmp := t.TempDir()
+	name := "日本語.epub"
+	path := filepath.Join(tmp, name)
+	if err := os.WriteFile(path, []byte("epub bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{ForeignID: "OL-JP", AuthorID: author.ID, Title: "T"}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.SetFilePath(ctx, book.ID, path); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.Download(rec, withURLParam(httptest.NewRequest(http.MethodGet, "/api/v1/file/1/download", nil), "id", "1"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	cd := rec.Header().Get("Content-Disposition")
+	// RFC 5987 filename* parameter must carry the percent-encoded UTF-8 name.
+	if !strings.Contains(cd, "filename*=UTF-8''") {
+		t.Errorf("Content-Disposition missing filename* param: %q", cd)
+	}
+	encoded := url.PathEscape(name)
+	if !strings.Contains(cd, encoded) {
+		t.Errorf("Content-Disposition missing percent-encoded name %q: %q", encoded, cd)
+	}
+	// And the legacy filename= parameter must not contain raw non-ASCII bytes.
+	for _, r := range cd {
+		if r > 0x7e {
+			t.Errorf("Content-Disposition contains non-ASCII byte %U: %q", r, cd)
+			break
+		}
 	}
 }
 

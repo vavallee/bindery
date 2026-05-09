@@ -851,7 +851,9 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 			if b.RatingsCount > 0 && (existing.RatingsCount == 0 || b.RatingsCount > existing.RatingsCount) {
 				existing.RatingsCount = b.RatingsCount
 				existing.AverageRating = b.AverageRating
-				_ = h.books.Update(ctx, existing)
+				if err := h.books.Update(ctx, existing); err != nil {
+					slog.Warn("authors: update during dedup", "error", err, "book_id", existing.ID)
+				}
 			}
 			continue
 		}
@@ -881,7 +883,9 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 					existing.RatingsCount = b.RatingsCount
 					existing.AverageRating = b.AverageRating
 				}
-				_ = h.books.Update(ctx, existing)
+				if err := h.books.Update(ctx, existing); err != nil {
+					slog.Warn("authors: update during dedup", "error", err, "book_id", existing.ID)
+				}
 			case canUpgradeToBoth(existing.MediaType, b.MediaType):
 				// One Work is ebook, the other is audiobook — merge into a single
 				// dual-format row instead of creating a second book entry.
@@ -900,7 +904,9 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 				if b.RatingsCount > 0 && (existing.RatingsCount == 0 || b.RatingsCount > existing.RatingsCount) {
 					existing.RatingsCount = b.RatingsCount
 					existing.AverageRating = b.AverageRating
-					_ = h.books.Update(ctx, existing)
+					if err := h.books.Update(ctx, existing); err != nil {
+						slog.Warn("authors: update during dedup", "error", err, "book_id", existing.ID)
+					}
 				}
 			}
 			continue
@@ -959,7 +965,9 @@ func handleNewWantedBook(ctx context.Context, books *db.BookRepo, series *db.Ser
 	if finder != nil {
 		if existingPath := finder.FindExisting(ctx, book.Title, authorName, book.MediaType); existingPath != "" {
 			slog.Info("library: found existing file, skipping auto-search", "title", book.Title, "path", existingPath)
-			_ = books.SetFilePath(ctx, book.ID, existingPath)
+			if err := books.SetFilePath(ctx, book.ID, existingPath); err != nil {
+				slog.Warn("authors: record existing file path", "error", err, "book_id", book.ID)
+			}
 			return true
 		}
 	}

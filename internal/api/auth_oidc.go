@@ -305,7 +305,11 @@ func (h *OIDCHandler) SetProviders(w http.ResponseWriter, r *http.Request) {
 	// Load existing providers so we can preserve secrets not re-submitted.
 	var existing []oidc.ProviderConfig
 	if s, _ := h.settings.Get(ctx, SettingOIDCProviders); s != nil && s.Value != "" {
-		existing, _ = oidc.ParseProviders(s.Value)
+		var perr error
+		existing, perr = oidc.ParseProviders(s.Value)
+		if perr != nil {
+			slog.Warn("auth_oidc: parse providers", "error", perr)
+		}
 	}
 	existingByID := make(map[string]oidc.ProviderConfig, len(existing))
 	for _, e := range existing {

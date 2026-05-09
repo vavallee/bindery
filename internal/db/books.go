@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -239,12 +240,16 @@ func (r *BookRepo) refreshBookStatus(ctx context.Context, bookID int64) error {
 	// This bypasses the COALESCE legacy-column fallback in bookColumns so
 	// removing the last book_files entry correctly clears the field.
 	var ebookPath, audiobookPath string
-	_ = r.db.QueryRowContext(ctx,
+	if err := r.db.QueryRowContext(ctx,
 		`SELECT COALESCE(path,'') FROM book_files WHERE book_id=? AND format='ebook' ORDER BY id LIMIT 1`,
-		bookID).Scan(&ebookPath)
-	_ = r.db.QueryRowContext(ctx,
+		bookID).Scan(&ebookPath); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("refreshBookStatus: read ebook path: %w", err)
+	}
+	if err := r.db.QueryRowContext(ctx,
 		`SELECT COALESCE(path,'') FROM book_files WHERE book_id=? AND format='audiobook' ORDER BY id LIMIT 1`,
-		bookID).Scan(&audiobookPath)
+		bookID).Scan(&audiobookPath); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("refreshBookStatus: read audiobook path: %w", err)
+	}
 
 	b.EbookFilePath = ebookPath
 	b.AudiobookFilePath = audiobookPath

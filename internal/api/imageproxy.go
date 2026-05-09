@@ -160,7 +160,9 @@ func (h *ImageProxyHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Cache-Control", "public, max-age=2592000")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
-	_, _ = w.Write(body)
+	if _, err := w.Write(body); err != nil {
+		slog.Warn("imageproxy: write response", "error", err)
+	}
 }
 
 // hexKeyRe matches a 64-character lowercase hex string (sha256 output).

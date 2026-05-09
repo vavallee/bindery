@@ -109,6 +109,13 @@ func main() {
 	logRepo := db.NewLogRepo(database)
 	logDBHandler := db.NewLogSlogHandler(logRepo, level)
 	slog.SetDefault(slog.New(logbuf.NewTee(logbuf.NewTee(stdoutHandler, ring), logDBHandler)))
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := logDBHandler.Stop(shutdownCtx); err != nil {
+			slog.Warn("log handler shutdown timed out", "error", err)
+		}
+	}()
 
 	authorRepo := db.NewAuthorRepo(database)
 	authorAliasRepo := db.NewAuthorAliasRepo(database)

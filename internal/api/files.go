@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -80,9 +81,37 @@ func (h *FileHandler) Download(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filename := filepath.Base(filePath)
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	w.Header().Set("Content-Disposition", contentDisposition(filename))
 	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
 	http.ServeFile(w, r, filePath)
+}
+
+// contentDisposition builds an RFC 6266 / RFC 5987 attachment header that
+// works for both ASCII-clean and Unicode filenames. The legacy filename=
+// parameter carries an ASCII-only fallback for ancient clients; the
+// filename*= parameter carries the original UTF-8 percent-encoded for
+// anything modern (every browser since ~2010).
+func contentDisposition(name string) string {
+	ascii := asciiFallback(name)
+	disp := `attachment; filename="` + strings.ReplaceAll(ascii, `"`, `\"`) + `"`
+	disp += `; filename*=UTF-8''` + url.PathEscape(name)
+	return disp
+}
+
+// asciiFallback returns name with non-ASCII bytes replaced by '_' so it
+// is safe to embed in the legacy quoted filename= parameter. Quotes and
+// backslashes are preserved (and escaped by the caller).
+func asciiFallback(name string) string {
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		if r > 0x7e || r < 0x20 {
+			b.WriteByte('_')
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // isAllowedPath reports whether p falls under one of the configured library
