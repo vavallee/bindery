@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/subtle"
 	"log/slog"
 	"net"
 	"net/http"
@@ -163,7 +164,7 @@ func Middleware(p Provider) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if key := requestAPIKey(r); key != "" && key == p.APIKey() {
+			if key := requestAPIKey(r); key != "" && subtle.ConstantTimeCompare([]byte(key), []byte(p.APIKey())) == 1 {
 				next.ServeHTTP(w, r)
 				return
 			}

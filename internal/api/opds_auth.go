@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"log/slog"
 	"net"
 	"net/http"
@@ -36,7 +37,7 @@ func OPDSAuth(p auth.Provider, users *db.UserRepo, limiter *auth.LoginLimiter) f
 				next.ServeHTTP(w, r)
 				return
 			}
-			if key := opdsAPIKey(r); key != "" && key == p.APIKey() {
+			if key := opdsAPIKey(r); key != "" && subtle.ConstantTimeCompare([]byte(key), []byte(p.APIKey())) == 1 {
 				next.ServeHTTP(w, r)
 				return
 			}

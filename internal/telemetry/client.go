@@ -41,6 +41,14 @@ const (
 // fill up with throwaway version buckets, one per CI commit.
 var releaseVersionPattern = regexp.MustCompile(`^v?\d+\.\d+\.\d+$`)
 
+// pingClient is a dedicated HTTP client for the telemetry ping path. We avoid
+// http.DefaultClient so that other code mutating DefaultClient (transport,
+// timeout, jar) can't reach into our request, and so the per-request 10s
+// context deadline is backstopped by an explicit transport-level timeout.
+var pingClient = &http.Client{
+	Timeout: timeout, // 10s — same as the context deadline; belt-and-suspenders
+}
+
 // isReleaseVersion reports whether v looks like a semver release tag.
 func isReleaseVersion(v string) bool {
 	return releaseVersionPattern.MatchString(v)
@@ -110,7 +118,7 @@ func (c *Client) Ping(ctx context.Context) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := pingClient.Do(req)
 	if err != nil {
 		slog.Debug("telemetry: ping failed", "error", err)
 		return
