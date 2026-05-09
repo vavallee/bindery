@@ -1,23 +1,34 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/hardcoverlistsyncer"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/models"
 )
 
-type ImportListHandler struct {
-	repo *db.ImportListRepo
+// HardcoverListSyncer is the narrow surface ImportListHandler needs for the
+// manual "Sync now" affordance. Implemented by *hardcoverlistsyncer.ListSyncer.
+type HardcoverListSyncer interface {
+	SyncOne(ctx context.Context, id int64) error
 }
 
-func NewImportListHandler(repo *db.ImportListRepo) *ImportListHandler {
-	return &ImportListHandler{repo: repo}
+type ImportListHandler struct {
+	repo   *db.ImportListRepo
+	hcSync HardcoverListSyncer
+}
+
+func NewImportListHandler(repo *db.ImportListRepo, hcSync HardcoverListSyncer) *ImportListHandler {
+	return &ImportListHandler{repo: repo, hcSync: hcSync}
 }
 
 func (h *ImportListHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -168,4 +179,36 @@ func (h *ImportListHandler) DeleteExclusion(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Sync triggers a manual sync of a single import list. Hardcover lists run
+// the full hardcoverlistsyncer.SyncOne path; other list types are rejected
+// with 400 since no other type has a syncer wired here yet.
+// POST /api/v1/importlist/{id}/sync
+func (h *ImportListHandler) Sync(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	if h.hcSync == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "hardcover syncer not configured"})
+		return
+	}
+
+	// Sync is a few GraphQL hops; bound the request lifetime so a hung upstream
+	// doesn't tie up the connection forever.
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+
+	switch err := h.hcSync.SyncOne(ctx, id); {
+	case err == nil:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	case errors.Is(err, hardcoverlistsyncer.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+	case errors.Is(err, hardcoverlistsyncer.ErrWrongType):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+	default:
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+	}
 }
