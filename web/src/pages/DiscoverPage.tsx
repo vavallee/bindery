@@ -52,9 +52,17 @@ export default function DiscoverPage() {
     return () => { document.title = 'Bindery' }
   }, [])
 
+  // Auto-dismiss the toast 2.5s after it appears. Lives in an effect with
+  // cleanup so the timer is cleared if the page unmounts (or the toast is
+  // replaced) before it fires.
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(null), 2500)
+    return () => clearTimeout(t)
+  }, [toast])
+
   const showToast = (msg: string) => {
     setToast(msg)
-    setTimeout(() => setToast(null), 2500)
   }
 
   const grouped = useMemo(() => {

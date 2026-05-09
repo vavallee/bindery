@@ -166,6 +166,15 @@ function AddProviderForm({
       .catch(() => {})
   }, [])
 
+  // Reset the "copied" badge after 1.5s. Lives in an effect (rather than a
+  // bare setTimeout in the click handler) so it's cleared if the form
+  // unmounts before the timer fires.
+  useEffect(() => {
+    if (!copied) return
+    const t = setTimeout(() => setCopied(false), 1500)
+    return () => clearTimeout(t)
+  }, [copied])
+
   const trimmedId = id.trim()
   const callbackPreview = trimmedId
     ? redirectBase + callbackTemplate.replace('{id}', encodeURIComponent(trimmedId))
@@ -175,7 +184,6 @@ function AddProviderForm({
     try {
       await navigator.clipboard.writeText(callbackPreview)
       setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
     } catch {
       /* clipboard unavailable */
     }
