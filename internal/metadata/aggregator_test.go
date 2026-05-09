@@ -1126,7 +1126,7 @@ func TestResolveBookByISBN_FallsThroughToEnricherWhenPrimaryHasNoAuthorID(t *tes
 }
 
 func TestResolveBookByISBN_AllProvidersMiss(t *testing.T) {
-	primary := &mockProvider{name: "dnb"}                           // returns nil
+	primary := &mockProvider{name: "dnb"}                          // returns nil
 	enricher := &mockProvider{name: "openlibrary", getByISBN: nil} // also nil
 	a := &Aggregator{primary: primary, enrichers: []Provider{enricher}, cache: newTTLCache(time.Minute)}
 	book, err := a.ResolveBookByISBN(context.Background(), "9999999999999")
