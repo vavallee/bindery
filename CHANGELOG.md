@@ -6,6 +6,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Chores
+
+- **Series Codecov follow-up coverage** (#475) — Added targeted tests for series API edge cases, repository hydration and linking behavior, metadata aggregator series catalog fallback/cache behavior, and series matching helpers after gaps were noticed in the Codecov report for PR #459.
+
 ## [v1.7.0] — 2026-05-08
 
 ### Added

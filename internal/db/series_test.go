@@ -316,3 +316,293 @@ func TestSeriesHardcoverLinkCRUD(t *testing.T) {
 		t.Fatalf("expected deleted link, got %+v", got)
 	}
 }
+
+func TestSeriesListWithBooksHydratesBooksAndHardcoverLinks(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	authorRepo := NewAuthorRepo(database)
+	bookRepo := NewBookRepo(database)
+	seriesRepo := NewSeriesRepo(database)
+
+	empty := &models.Series{ForeignID: "manual:empty", Title: "Empty Series"}
+	if err := seriesRepo.Create(ctx, empty); err != nil {
+		t.Fatal(err)
+	}
+	linked := &models.Series{ForeignID: "manual:stormlight", Title: "Stormlight Archive"}
+	if err := seriesRepo.Create(ctx, linked); err != nil {
+		t.Fatal(err)
+	}
+	author := &models.Author{ForeignID: "hc:brandon-sanderson", Name: "Brandon Sanderson", SortName: "Sanderson, Brandon"}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{
+		ForeignID: "hc:the-way-of-kings", AuthorID: author.ID, Title: "The Way of Kings", SortTitle: "The Way of Kings",
+		Status: models.BookStatusWanted, Monitored: true, Genres: []string{},
+	}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.LinkBook(ctx, linked.ID, book.ID, "1", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.UpsertHardcoverLink(ctx, &models.SeriesHardcoverLink{
+		SeriesID:            linked.ID,
+		HardcoverSeriesID:   "hc-series:42",
+		HardcoverProviderID: "42",
+		HardcoverTitle:      "The Stormlight Archive",
+		HardcoverAuthorName: "Brandon Sanderson",
+		HardcoverBookCount:  10,
+		Confidence:          1,
+		LinkedBy:            "manual",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := seriesRepo.ListWithBooks(ctx)
+	if err != nil {
+		t.Fatalf("ListWithBooks: %v", err)
+	}
+	byID := make(map[int64]models.Series, len(got))
+	for _, series := range got {
+		byID[series.ID] = series
+	}
+	if len(byID) != 2 {
+		t.Fatalf("series count = %d, want 2: %+v", len(byID), got)
+	}
+	if len(byID[empty.ID].Books) != 0 {
+		t.Fatalf("empty series books = %+v, want none", byID[empty.ID].Books)
+	}
+	hydrated := byID[linked.ID]
+	if len(hydrated.Books) != 1 || hydrated.Books[0].Book == nil || hydrated.Books[0].Book.Title != "The Way of Kings" {
+		t.Fatalf("hydrated books = %+v, want linked book", hydrated.Books)
+	}
+	if hydrated.Books[0].PositionInSeries != "1" || !hydrated.Books[0].PrimarySeries {
+		t.Fatalf("series book metadata = %+v, want position 1 primary", hydrated.Books[0])
+	}
+	if hydrated.HardcoverLink == nil || hydrated.HardcoverLink.HardcoverSeriesID != "hc-series:42" {
+		t.Fatalf("hydrated link = %+v, want hc-series:42", hydrated.HardcoverLink)
+	}
+}
+
+func TestSeriesMonitoringAndBookLinks(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	authorRepo := NewAuthorRepo(database)
+	bookRepo := NewBookRepo(database)
+	seriesRepo := NewSeriesRepo(database)
+
+	series := &models.Series{ForeignID: "manual:murderbot", Title: "Murderbot Diaries"}
+	if err := seriesRepo.Create(ctx, series); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.SetMonitored(ctx, series.ID, true); err != nil {
+		t.Fatalf("SetMonitored true: %v", err)
+	}
+	gotSeries, err := seriesRepo.GetByID(ctx, series.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotSeries == nil || !gotSeries.Monitored {
+		t.Fatalf("monitored series = %+v, want monitored", gotSeries)
+	}
+
+	author := &models.Author{ForeignID: "ol:martha-wells", Name: "Martha Wells", SortName: "Wells, Martha"}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{
+		ForeignID: "ol:all-systems-red", AuthorID: author.ID, Title: "All Systems Red", SortTitle: "All Systems Red",
+		Status: models.BookStatusWanted, Monitored: true, Genres: []string{},
+	}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.LinkBook(ctx, series.ID, book.ID, "1", true); err != nil {
+		t.Fatal(err)
+	}
+	books, err := seriesRepo.ListBooksInSeries(ctx, series.ID)
+	if err != nil {
+		t.Fatalf("ListBooksInSeries: %v", err)
+	}
+	if len(books) != 1 || books[0].ID != book.ID || books[0].Status != models.BookStatusWanted || !books[0].Monitored {
+		t.Fatalf("series books = %+v, want linked wanted monitored book", books)
+	}
+
+	if err := seriesRepo.UnlinkBook(ctx, series.ID, book.ID); err != nil {
+		t.Fatalf("UnlinkBook: %v", err)
+	}
+	books, err = seriesRepo.ListBooksInSeries(ctx, series.ID)
+	if err != nil {
+		t.Fatalf("ListBooksInSeries after unlink: %v", err)
+	}
+	if len(books) != 0 {
+		t.Fatalf("series books after unlink = %+v, want none", books)
+	}
+}
+
+func TestSeriesForeignIDAndPrimarySeriesLookup(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	authorRepo := NewAuthorRepo(database)
+	bookRepo := NewBookRepo(database)
+	seriesRepo := NewSeriesRepo(database)
+
+	if got, err := seriesRepo.GetByForeignID(ctx, "missing"); err != nil || got != nil {
+		t.Fatalf("missing GetByForeignID = %+v err=%v, want nil", got, err)
+	}
+	series := &models.Series{ForeignID: "abs:series:old", Title: "The Expanse"}
+	if err := seriesRepo.Create(ctx, series); err != nil {
+		t.Fatal(err)
+	}
+	got, err := seriesRepo.GetByForeignID(ctx, "abs:series:old")
+	if err != nil {
+		t.Fatalf("GetByForeignID old: %v", err)
+	}
+	if got == nil || got.ID != series.ID {
+		t.Fatalf("GetByForeignID old = %+v, want series %d", got, series.ID)
+	}
+	if err := seriesRepo.UpdateForeignID(ctx, series.ID, "hc-series:expanse"); err != nil {
+		t.Fatalf("UpdateForeignID: %v", err)
+	}
+	if got, err := seriesRepo.GetByForeignID(ctx, "abs:series:old"); err != nil || got != nil {
+		t.Fatalf("old foreign id after update = %+v err=%v, want nil", got, err)
+	}
+	got, err = seriesRepo.GetByForeignID(ctx, "hc-series:expanse")
+	if err != nil {
+		t.Fatalf("GetByForeignID updated: %v", err)
+	}
+	if got == nil || got.ID != series.ID || got.ForeignID != "hc-series:expanse" {
+		t.Fatalf("GetByForeignID updated = %+v, want updated series", got)
+	}
+
+	author := &models.Author{ForeignID: "ol:james-corey", Name: "James S. A. Corey", SortName: "Corey, James S. A."}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{
+		ForeignID: "ol:leviathan-wakes", AuthorID: author.ID, Title: "Leviathan Wakes", SortTitle: "Leviathan Wakes",
+		Status: models.BookStatusWanted, Genres: []string{},
+	}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.LinkBook(ctx, series.ID, book.ID, "1", true); err != nil {
+		t.Fatal(err)
+	}
+	title, position, err := seriesRepo.GetPrimarySeriesForBook(ctx, book.ID)
+	if err != nil {
+		t.Fatalf("GetPrimarySeriesForBook: %v", err)
+	}
+	if title != "The Expanse" || position != "1" {
+		t.Fatalf("primary series = %q/%q, want The Expanse/1", title, position)
+	}
+	title, position, err = seriesRepo.GetPrimarySeriesForBook(ctx, book.ID+999)
+	if err != nil {
+		t.Fatalf("GetPrimarySeriesForBook missing: %v", err)
+	}
+	if title != "" || position != "" {
+		t.Fatalf("missing primary series = %q/%q, want empty", title, position)
+	}
+}
+
+func TestSeriesGetBookBySeriesPosition(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	authorRepo := NewAuthorRepo(database)
+	bookRepo := NewBookRepo(database)
+	seriesRepo := NewSeriesRepo(database)
+
+	author := &models.Author{ForeignID: "ol:james-corey", Name: "James S. A. Corey", SortName: "Corey, James S. A."}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	wanted := &models.Book{
+		ForeignID: "ol:leviathan-wakes", AuthorID: author.ID, Title: "Leviathan Wakes", SortTitle: "Leviathan Wakes",
+		Status: models.BookStatusWanted, Monitored: true, Genres: []string{},
+	}
+	if err := bookRepo.Create(ctx, wanted); err != nil {
+		t.Fatal(err)
+	}
+	imported := &models.Book{
+		ForeignID: "ol:calibans-war", AuthorID: author.ID, Title: "Caliban's War", SortTitle: "Caliban's War",
+		Status: models.BookStatusImported, Monitored: true, Genres: []string{},
+	}
+	if err := bookRepo.Create(ctx, imported); err != nil {
+		t.Fatal(err)
+	}
+	series := &models.Series{ForeignID: "manual:expanse", Title: "The Expanse"}
+	if err := seriesRepo.Create(ctx, series); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.LinkBook(ctx, series.ID, wanted.ID, "1", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.LinkBook(ctx, series.ID, imported.ID, "2", true); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := seriesRepo.GetBookBySeriesPosition(ctx, " the expanse ", "1")
+	if err != nil {
+		t.Fatalf("GetBookBySeriesPosition wanted: %v", err)
+	}
+	if got == nil || got.ID != wanted.ID {
+		t.Fatalf("wanted match = %+v, want book %d", got, wanted.ID)
+	}
+	got, err = seriesRepo.GetBookBySeriesPosition(ctx, "The Expanse", "99")
+	if err != nil {
+		t.Fatalf("GetBookBySeriesPosition missing: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("missing position = %+v, want nil", got)
+	}
+	got, err = seriesRepo.GetBookBySeriesPosition(ctx, "The Expanse", "2")
+	if err != nil {
+		t.Fatalf("GetBookBySeriesPosition imported: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("imported position = %+v, want nil because only wanted books qualify", got)
+	}
+
+	duplicateSeries := &models.Series{ForeignID: "manual:expanse-duplicate", Title: " the expanse "}
+	if err := seriesRepo.Create(ctx, duplicateSeries); err != nil {
+		t.Fatal(err)
+	}
+	duplicateBook := &models.Book{
+		ForeignID: "ol:leviathan-wakes-duplicate", AuthorID: author.ID, Title: "Leviathan Wakes", SortTitle: "Leviathan Wakes",
+		Status: models.BookStatusWanted, Monitored: true, Genres: []string{},
+	}
+	if err := bookRepo.Create(ctx, duplicateBook); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.LinkBook(ctx, duplicateSeries.ID, duplicateBook.ID, "1", true); err != nil {
+		t.Fatal(err)
+	}
+	got, err = seriesRepo.GetBookBySeriesPosition(ctx, "The Expanse", "1")
+	if err != nil {
+		t.Fatalf("GetBookBySeriesPosition ambiguous: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("ambiguous position = %+v, want nil", got)
+	}
+}

@@ -72,6 +72,35 @@ func (m *mockAuthorWorksByNameProvider) GetAuthorWorksByName(_ context.Context, 
 	return m.authorWorksByName, m.authorWorksByNameErr
 }
 
+type mockSeriesCatalogProvider struct {
+	mockProvider
+	searchSeriesResults []SeriesSearchResult
+	searchSeriesErr     error
+	searchSeriesCalls   int
+	searchSeriesQueries []string
+	searchSeriesLimits  []int
+	catalogs            map[string]*SeriesCatalog
+	catalogErr          error
+	catalogCalls        int
+	catalogIDs          []string
+}
+
+func (m *mockSeriesCatalogProvider) SearchSeries(_ context.Context, query string, limit int) ([]SeriesSearchResult, error) {
+	m.searchSeriesCalls++
+	m.searchSeriesQueries = append(m.searchSeriesQueries, query)
+	m.searchSeriesLimits = append(m.searchSeriesLimits, limit)
+	return m.searchSeriesResults, m.searchSeriesErr
+}
+
+func (m *mockSeriesCatalogProvider) GetSeriesCatalog(_ context.Context, foreignID string) (*SeriesCatalog, error) {
+	m.catalogCalls++
+	m.catalogIDs = append(m.catalogIDs, foreignID)
+	if m.catalogErr != nil {
+		return nil, m.catalogErr
+	}
+	return m.catalogs[foreignID], nil
+}
+
 func TestAggregator_SearchAuthors(t *testing.T) {
 	want := []models.Author{{Name: "Frank Herbert", ForeignID: "OL123A"}}
 	primary := &mockProvider{name: "ol", searchAuthors: want}
@@ -338,6 +367,154 @@ func TestAggregator_GetBookByISBN_NilBook(t *testing.T) {
 	}
 	if got != nil {
 		t.Errorf("expected nil for missing ISBN, got %+v", got)
+	}
+}
+
+func TestAggregator_SearchSeries_EdgeCases(t *testing.T) {
+	agg := newTestAggregator(&mockProvider{name: "ol"})
+
+	got, err := agg.SearchSeries(context.Background(), "  ", 10)
+	if err != nil {
+		t.Fatalf("SearchSeries empty query: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("empty query = %+v, want nil", got)
+	}
+
+	got, err = agg.SearchSeries(context.Background(), "Dune", 10)
+	if err != nil {
+		t.Fatalf("SearchSeries without providers: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("without providers = %+v, want nil", got)
+	}
+}
+
+func TestAggregator_SearchSeries_FallbackDefaultLimitAndCache(t *testing.T) {
+	primary := &mockSeriesCatalogProvider{
+		mockProvider:    mockProvider{name: "primary"},
+		searchSeriesErr: errors.New("primary unavailable"),
+	}
+	enricher := &mockSeriesCatalogProvider{
+		mockProvider: mockProvider{name: "enricher"},
+		searchSeriesResults: []SeriesSearchResult{{
+			ForeignID:  "hc-series:1",
+			ProviderID: "1",
+			Title:      "Dune",
+		}},
+	}
+	agg := &Aggregator{
+		primary:   primary,
+		enrichers: []Provider{enricher},
+		cache:     newTTLCache(time.Minute),
+	}
+
+	got, err := agg.SearchSeries(context.Background(), "  Dune  ", 0)
+	if err != nil {
+		t.Fatalf("SearchSeries: %v", err)
+	}
+	if len(got) != 1 || got[0].ForeignID != "hc-series:1" {
+		t.Fatalf("unexpected results: %+v", got)
+	}
+	if primary.searchSeriesCalls != 1 || enricher.searchSeriesCalls != 1 {
+		t.Fatalf("provider calls primary=%d enricher=%d, want 1/1", primary.searchSeriesCalls, enricher.searchSeriesCalls)
+	}
+	if primary.searchSeriesQueries[0] != "Dune" || primary.searchSeriesLimits[0] != 10 {
+		t.Fatalf("primary query/limit = %q/%d, want Dune/10", primary.searchSeriesQueries[0], primary.searchSeriesLimits[0])
+	}
+	if enricher.searchSeriesQueries[0] != "Dune" || enricher.searchSeriesLimits[0] != 10 {
+		t.Fatalf("enricher query/limit = %q/%d, want Dune/10", enricher.searchSeriesQueries[0], enricher.searchSeriesLimits[0])
+	}
+
+	enricher.searchSeriesResults = nil
+	got, err = agg.SearchSeries(context.Background(), "Dune", 10)
+	if err != nil {
+		t.Fatalf("SearchSeries cached: %v", err)
+	}
+	if len(got) != 1 || primary.searchSeriesCalls != 1 || enricher.searchSeriesCalls != 1 {
+		t.Fatalf("cached lookup got=%+v calls primary=%d enricher=%d, want cached result and no new calls", got, primary.searchSeriesCalls, enricher.searchSeriesCalls)
+	}
+}
+
+func TestAggregator_GetSeriesCatalog_EdgeCases(t *testing.T) {
+	agg := newTestAggregator(&mockProvider{name: "ol"})
+
+	got, err := agg.GetSeriesCatalog(context.Background(), "  ")
+	if err != nil {
+		t.Fatalf("GetSeriesCatalog empty id: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("empty id = %+v, want nil", got)
+	}
+
+	got, err = agg.GetSeriesCatalog(context.Background(), "hc-series:missing")
+	if err != nil {
+		t.Fatalf("GetSeriesCatalog without providers: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("without providers = %+v, want nil", got)
+	}
+}
+
+func TestAggregator_GetSeriesCatalog_FallbackAndCache(t *testing.T) {
+	catalog := &SeriesCatalog{ForeignID: "hc-series:1", ProviderID: "1", Title: "Dune"}
+	primary := &mockSeriesCatalogProvider{
+		mockProvider: mockProvider{name: "primary"},
+		catalogErr:   errors.New("primary unavailable"),
+	}
+	enricher := &mockSeriesCatalogProvider{
+		mockProvider: mockProvider{name: "enricher"},
+		catalogs:     map[string]*SeriesCatalog{catalog.ForeignID: catalog},
+	}
+	agg := &Aggregator{
+		primary:   primary,
+		enrichers: []Provider{enricher},
+		cache:     newTTLCache(time.Minute),
+	}
+
+	got, err := agg.GetSeriesCatalog(context.Background(), "  hc-series:1  ")
+	if err != nil {
+		t.Fatalf("GetSeriesCatalog: %v", err)
+	}
+	if got == nil || got.Title != "Dune" {
+		t.Fatalf("unexpected catalog: %+v", got)
+	}
+	if primary.catalogCalls != 1 || enricher.catalogCalls != 1 {
+		t.Fatalf("provider calls primary=%d enricher=%d, want 1/1", primary.catalogCalls, enricher.catalogCalls)
+	}
+	if primary.catalogIDs[0] != "hc-series:1" || enricher.catalogIDs[0] != "hc-series:1" {
+		t.Fatalf("catalog ids primary=%q enricher=%q, want trimmed id", primary.catalogIDs[0], enricher.catalogIDs[0])
+	}
+
+	enricher.catalogs = nil
+	got, err = agg.GetSeriesCatalog(context.Background(), "hc-series:1")
+	if err != nil {
+		t.Fatalf("GetSeriesCatalog cached: %v", err)
+	}
+	if got == nil || got.Title != "Dune" || primary.catalogCalls != 1 || enricher.catalogCalls != 1 {
+		t.Fatalf("cached catalog=%+v calls primary=%d enricher=%d, want cached result and no new calls", got, primary.catalogCalls, enricher.catalogCalls)
+	}
+}
+
+func TestAggregator_SeriesCatalogProviders_Order(t *testing.T) {
+	primary := &mockSeriesCatalogProvider{mockProvider: mockProvider{name: "primary"}}
+	plainEnricher := &mockProvider{name: "plain"}
+	seriesEnricher := &mockSeriesCatalogProvider{mockProvider: mockProvider{name: "series"}}
+	agg := &Aggregator{
+		primary:   primary,
+		enrichers: []Provider{plainEnricher, seriesEnricher},
+		cache:     newTTLCache(time.Minute),
+	}
+
+	providers := agg.seriesCatalogProviders()
+	if len(providers) != 2 {
+		t.Fatalf("providers len = %d, want 2", len(providers))
+	}
+	if providers[0] != primary || providers[1] != seriesEnricher {
+		t.Fatalf("provider order = %#v, want primary then series enricher", providers)
+	}
+	if providers := (*Aggregator)(nil).seriesCatalogProviders(); providers != nil {
+		t.Fatalf("nil aggregator providers = %+v, want nil", providers)
 	}
 }
 
