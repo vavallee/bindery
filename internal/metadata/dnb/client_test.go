@@ -83,6 +83,25 @@ const marcNoID = `<record xmlns="http://www.loc.gov/MARC21/slim">
   </datafield>
 </record>`
 
+// marcWithISBNs carries two MARC 020 entries — a paperback ISBN-13 with a
+// trailing qualifier ("(pbk.)") and an ISBN-10 with hyphens — to exercise
+// stripISBNQualifier across both forms.
+const marcWithISBNs = `<record xmlns="http://www.loc.gov/MARC21/slim">
+  <controlfield tag="001">2222</controlfield>
+  <datafield tag="020" ind1=" " ind2=" ">
+    <subfield code="a">9783499015717 (pbk.)</subfield>
+  </datafield>
+  <datafield tag="020" ind1=" " ind2=" ">
+    <subfield code="a">3-499-01571-X</subfield>
+  </datafield>
+  <datafield tag="100" ind1="1" ind2=" ">
+    <subfield code="a">Funke, Cornelia,</subfield>
+  </datafield>
+  <datafield tag="245" ind1="1" ind2="0">
+    <subfield code="a">Tintenherz</subfield>
+  </datafield>
+</record>`
+
 // --- Tests ---
 
 func TestName(t *testing.T) {
@@ -569,5 +588,47 @@ func TestGetAuthorWorks_ForeignID_NumLookupFails(t *testing.T) {
 	}
 	if len(books) == 0 {
 		t.Errorf("expected at least 1 book from fallback, got 0")
+	}
+}
+
+func TestSearchBooks_ExtractsISBNsFromMARC020(t *testing.T) {
+	c := mockXMLClient(sruXMLN("1", marcWithISBNs), http.StatusOK)
+	books, err := c.SearchBooks(context.Background(), "Tintenherz")
+	if err != nil {
+		t.Fatalf("SearchBooks: %v", err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("expected 1 book, got %d", len(books))
+	}
+	b := books[0]
+	if len(b.Editions) != 2 {
+		t.Fatalf("expected 2 editions (one per ISBN), got %d", len(b.Editions))
+	}
+	if b.Editions[0].ISBN13 == nil || *b.Editions[0].ISBN13 != "9783499015717" {
+		t.Errorf("Editions[0].ISBN13 = %v, want 9783499015717", b.Editions[0].ISBN13)
+	}
+	if b.Editions[0].ISBN10 != nil {
+		t.Errorf("Editions[0].ISBN10 should be nil for an ISBN-13 row, got %v", *b.Editions[0].ISBN10)
+	}
+	if b.Editions[1].ISBN10 == nil || *b.Editions[1].ISBN10 != "349901571X" {
+		t.Errorf("Editions[1].ISBN10 = %v, want 349901571X", b.Editions[1].ISBN10)
+	}
+}
+
+func TestStripISBNQualifier(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"9783499015717", "9783499015717"},
+		{"9783499015717 (pbk.)", "9783499015717"},
+		{"3-499-01571-X", "349901571X"},
+		{"  9783446123456  ", "9783446123456"},
+		{"978 3 446 12345 6", "978"}, // first delimiter ends the run — accepted limitation
+		{"", ""},
+		{"no digits here", ""},
+		{"349901571x", "349901571X"}, // lowercase x normalized
+	}
+	for _, tc := range cases {
+		if got := stripISBNQualifier(tc.in); got != tc.want {
+			t.Errorf("stripISBNQualifier(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }

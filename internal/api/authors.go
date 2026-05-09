@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -1142,6 +1143,15 @@ func dedupeAuthorQueries(values []string) []string {
 // If the author is not yet in Bindery it is added as unmonitored and its
 // books are fetched in the background; the endpoint then polls until the
 // requested book appears and marks it monitored before responding.
+//
+// foreignAuthorId is optional. When omitted (typical for DNB search results,
+// which don't expose author IDs), the handler resolves the author by looking
+// up the book's ISBN against every metadata provider and picking the first
+// hit that carries a real author ID — almost always OpenLibrary. When that
+// resolution succeeds, both foreignBookId and foreignAuthorId are rewritten
+// to the resolved provider's IDs so the rest of the existing flow works as
+// before. When it fails, the request is rejected with a friendly hint about
+// adding the author manually first.
 func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ForeignBookID   string `json:"foreignBookId"`
@@ -1153,12 +1163,35 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
-	if req.ForeignBookID == "" || req.ForeignAuthorID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "foreignBookId and foreignAuthorId required"})
+	if req.ForeignBookID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "foreignBookId required"})
 		return
 	}
 
 	ctx := r.Context()
+
+	if req.ForeignAuthorID == "" {
+		resolved, err := h.resolveAuthorForBook(ctx, req.ForeignBookID)
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		if resolved == nil {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{
+				"error": "Author metadata unavailable for this result. Add the author manually first (Authors → Add Author by name), then try again.",
+			})
+			return
+		}
+		// Rewrite the request so the existing fetch+poll flow targets the
+		// canonical provider's IDs. The user sees the canonical record (e.g.
+		// the OpenLibrary version) in their library; the original DNB record
+		// is dropped because bindery's author/book identity is single-source.
+		req.ForeignBookID = resolved.ForeignID
+		req.ForeignAuthorID = resolved.Author.ForeignID
+		if req.AuthorName == "" {
+			req.AuthorName = resolved.Author.Name
+		}
+	}
 
 	// 1. Find or create the author (unmonitored if new so we don't auto-want all books).
 	author, _ := h.authors.GetByForeignID(ctx, req.ForeignAuthorID)
@@ -1234,6 +1267,43 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, book)
+}
+
+// resolveAuthorForBook looks up the foreign book by primary metadata
+// provider, walks its editions for an ISBN, then asks the aggregator to find
+// the same ISBN in any provider that exposes a real author ID. Returns nil
+// when no ISBN is found or no provider can place the author. This is the
+// fallback path for AddBook when the search result didn't carry a
+// foreignAuthorId — currently the case for every DNB result.
+func (h *AuthorHandler) resolveAuthorForBook(ctx context.Context, foreignBookID string) (*models.Book, error) {
+	primaryBook, err := h.meta.GetBook(ctx, foreignBookID)
+	if err != nil {
+		return nil, fmt.Errorf("look up book metadata: %w", err)
+	}
+	if primaryBook == nil {
+		return nil, nil
+	}
+	for _, ed := range primaryBook.Editions {
+		var isbn string
+		switch {
+		case ed.ISBN13 != nil && *ed.ISBN13 != "":
+			isbn = *ed.ISBN13
+		case ed.ISBN10 != nil && *ed.ISBN10 != "":
+			isbn = *ed.ISBN10
+		}
+		if isbn == "" {
+			continue
+		}
+		resolved, err := h.meta.ResolveBookByISBN(ctx, isbn)
+		if err != nil {
+			slog.Debug("resolveAuthorForBook: provider lookup failed", "isbn", isbn, "error", err)
+			continue
+		}
+		if resolved != nil {
+			return resolved, nil
+		}
+	}
+	return nil, nil
 }
 
 // saveAlternateNames persists any latin-script OL alternate names from

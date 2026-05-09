@@ -357,6 +357,32 @@ func (a *Aggregator) GetBookByISBN(ctx context.Context, isbn string) (*models.Bo
 	return book, nil
 }
 
+// ResolveBookByISBN walks every provider (primary first, then enrichers) and
+// returns the first hit whose author carries a usable foreignAuthorId. Used
+// at add-time when the user picked a search result from a provider that
+// doesn't expose author IDs (notably DNB), so we can fall back to a stronger
+// provider for the author identity rather than synthesising an ID locally.
+//
+// Returns (nil, nil) when no provider has the ISBN — the caller should treat
+// that as "couldn't resolve" and surface a friendly error to the user.
+// A provider error on one source is logged at debug level and treated as a
+// miss, so a single flaky provider doesn't block resolution.
+func (a *Aggregator) ResolveBookByISBN(ctx context.Context, isbn string) (*models.Book, error) {
+	providers := append([]Provider{a.primary}, a.enrichers...)
+	for _, p := range providers {
+		book, err := p.GetBookByISBN(ctx, isbn)
+		if err != nil {
+			slog.Debug("resolve isbn: provider failed", "provider", p.Name(), "isbn", isbn, "error", err)
+			continue
+		}
+		if book == nil || book.Author == nil || book.Author.ForeignID == "" {
+			continue
+		}
+		return book, nil
+	}
+	return nil, nil
+}
+
 // SearchSeries queries metadata providers that expose series catalog search.
 func (a *Aggregator) SearchSeries(ctx context.Context, query string, limit int) ([]SeriesSearchResult, error) {
 	query = strings.TrimSpace(query)

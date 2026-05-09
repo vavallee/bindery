@@ -8,6 +8,16 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ### Fixed
 
+- **DNB search results couldn't be added to the wanted list** (#545) — DNB
+  bib records expose author *names* but not author IDs, so every result had
+  the Add button greyed out with a misleading "try a more specific search"
+  hint. The fix extracts ISBN(s) from MARC 020 in DNB records and adds a
+  cross-provider author resolver: when a search result lacks a foreign
+  author ID, the backend looks up the ISBN in OpenLibrary and rewrites the
+  request to use OL's canonical author/book identity. Books that resolve
+  end up under their OpenLibrary record (with OL's title and metadata);
+  books with no OL match return a clear "add the author manually first"
+  error instead of silently failing.
 - **Telemetry chart hides the freshly cut release** — `/stats` truncated the
   version chart to top-8 by count, so a brand-new release with one or two
   installs disappeared into `(other)` until it organically out-ranked older

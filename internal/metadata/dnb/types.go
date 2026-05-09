@@ -67,3 +67,21 @@ func (r marcRecord) subfield(tag, code string) string {
 	}
 	return ""
 }
+
+// subfieldAll returns every $<code> value across every datafield with the
+// given tag. Used for repeated MARC fields like 020 (ISBN) where a single
+// bib record can carry one entry per edition (paperback / hardcover / ebook).
+func (r marcRecord) subfieldAll(tag, code string) []string {
+	var out []string
+	for _, df := range r.DataFields {
+		if df.Tag != tag {
+			continue
+		}
+		for _, sf := range df.Subfields {
+			if sf.Code == code {
+				out = append(out, sf.Value)
+			}
+		}
+	}
+	return out
+}

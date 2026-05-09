@@ -253,7 +253,50 @@ func recordToBook(rec marcRecord) *models.Book {
 		}
 	}
 
+	// ISBN(s) from MARC 020 $a. The field can repeat once per edition format
+	// (paperback / hardcover / ebook), and the value typically contains a
+	// qualifier in parentheses ("9783499015717 (pbk)"). Extract every digit
+	// run, classify into ISBN-13 / ISBN-10, and surface as Editions so the
+	// add-book endpoint can use them for cross-provider author resolution
+	// when the DNB record has only an author name and no foreign author ID.
+	for _, raw := range rec.subfieldAll("020", "a") {
+		digits := stripISBNQualifier(raw)
+		if digits == "" {
+			continue
+		}
+		ed := models.Edition{}
+		switch len(digits) {
+		case 13:
+			ed.ISBN13 = &digits
+		case 10:
+			ed.ISBN10 = &digits
+		default:
+			continue
+		}
+		b.Editions = append(b.Editions, ed)
+	}
+
 	return b
+}
+
+// stripISBNQualifier extracts the digit-run from a MARC 020 $a value. Real
+// values look like "9783499015717", "3-499-01571-X", or
+// "9783499015717 (pbk.)" — keep the digits (and a trailing X for ISBN-10
+// check digits), drop everything else.
+func stripISBNQualifier(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		} else if r == 'X' || r == 'x' {
+			// ISBN-10 check digit can be 'X' (value 10).
+			b.WriteRune('X')
+		} else if b.Len() > 0 && (r == ' ' || r == '(' || r == ',') {
+			// Stop at the first delimiter after digits — qualifier text follows.
+			break
+		}
+	}
+	return b.String()
 }
 
 func recordToAuthor(rec marcRecord) *models.Author {

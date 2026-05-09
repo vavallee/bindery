@@ -1079,3 +1079,80 @@ func newTestAggregator(primary Provider) *Aggregator {
 		cache:   newTTLCache(time.Minute),
 	}
 }
+
+func TestResolveBookByISBN_PrimaryHasAuthorID(t *testing.T) {
+	primary := &mockProvider{
+		name: "openlibrary",
+		getByISBN: &models.Book{
+			ForeignID: "OL9780441A",
+			Author:    &models.Author{ForeignID: "OL12345A", Name: "Frank Herbert"},
+		},
+	}
+	a := &Aggregator{primary: primary, cache: newTTLCache(time.Minute)}
+	book, err := a.ResolveBookByISBN(context.Background(), "9780441013593")
+	if err != nil {
+		t.Fatalf("ResolveBookByISBN: %v", err)
+	}
+	if book == nil || book.Author == nil || book.Author.ForeignID != "OL12345A" {
+		t.Errorf("expected primary's author OL12345A, got %+v", book)
+	}
+}
+
+func TestResolveBookByISBN_FallsThroughToEnricherWhenPrimaryHasNoAuthorID(t *testing.T) {
+	// Primary returns the book but with no author.ForeignID — typical of the
+	// DNB-as-primary configuration that prompted this method.
+	primary := &mockProvider{
+		name: "dnb",
+		getByISBN: &models.Book{
+			ForeignID: "dnb:1234567890",
+			Author:    &models.Author{Name: "Cornelia Funke"}, // no ForeignID
+		},
+	}
+	enricher := &mockProvider{
+		name: "openlibrary",
+		getByISBN: &models.Book{
+			ForeignID: "OL999A",
+			Author:    &models.Author{ForeignID: "OL12345A", Name: "Cornelia Funke"},
+		},
+	}
+	a := &Aggregator{primary: primary, enrichers: []Provider{enricher}, cache: newTTLCache(time.Minute)}
+	book, err := a.ResolveBookByISBN(context.Background(), "9783499015717")
+	if err != nil {
+		t.Fatalf("ResolveBookByISBN: %v", err)
+	}
+	if book == nil || book.Author == nil || book.Author.ForeignID != "OL12345A" {
+		t.Errorf("expected enricher's author OL12345A, got %+v", book)
+	}
+}
+
+func TestResolveBookByISBN_AllProvidersMiss(t *testing.T) {
+	primary := &mockProvider{name: "dnb"}                           // returns nil
+	enricher := &mockProvider{name: "openlibrary", getByISBN: nil} // also nil
+	a := &Aggregator{primary: primary, enrichers: []Provider{enricher}, cache: newTTLCache(time.Minute)}
+	book, err := a.ResolveBookByISBN(context.Background(), "9999999999999")
+	if err != nil {
+		t.Fatalf("ResolveBookByISBN: %v", err)
+	}
+	if book != nil {
+		t.Errorf("expected nil book on full miss, got %+v", book)
+	}
+}
+
+func TestResolveBookByISBN_ProviderErrorIsTreatedAsMiss(t *testing.T) {
+	primary := &mockProvider{name: "dnb", getByISBNErr: errors.New("upstream 503")}
+	enricher := &mockProvider{
+		name: "openlibrary",
+		getByISBN: &models.Book{
+			ForeignID: "OL999A",
+			Author:    &models.Author{ForeignID: "OL12345A", Name: "Frank Herbert"},
+		},
+	}
+	a := &Aggregator{primary: primary, enrichers: []Provider{enricher}, cache: newTTLCache(time.Minute)}
+	book, err := a.ResolveBookByISBN(context.Background(), "9780441013593")
+	if err != nil {
+		t.Fatalf("ResolveBookByISBN: %v", err)
+	}
+	if book == nil || book.Author.ForeignID != "OL12345A" {
+		t.Errorf("expected fallback to enricher after primary error, got %+v", book)
+	}
+}

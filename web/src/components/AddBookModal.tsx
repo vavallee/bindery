@@ -38,12 +38,14 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
   }
 
   const addBook = async (book: Book) => {
-    if (!book.foreignBookId || !book.author?.foreignAuthorId) return
+    if (!book.foreignBookId || !book.author?.authorName) return
     setAdding(book.foreignBookId)
     try {
       const created = await api.addBook({
         foreignBookId: book.foreignBookId,
-        foreignAuthorId: book.author.foreignAuthorId,
+        // foreignAuthorId may be empty (e.g. DNB results) — the backend
+        // resolves the author by ISBN against OpenLibrary in that case.
+        foreignAuthorId: book.author.foreignAuthorId ?? '',
         authorName: book.author.authorName,
         searchOnAdd,
       })
@@ -102,7 +104,9 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
               const key = book.foreignBookId || book.title
               const isAdded = added.has(book.foreignBookId)
               const isAdding = adding === book.foreignBookId
-              const canAdd = !!book.author?.foreignAuthorId
+              // Author *name* is enough — when foreignAuthorId is missing
+              // (DNB results), the backend resolves it by ISBN at add-time.
+              const canAdd = !!book.author?.authorName
               return (
                 <div key={key} className="flex items-center gap-3 p-3 rounded-md bg-slate-200/50 dark:bg-zinc-800/50 hover:bg-slate-200 dark:hover:bg-zinc-800">
                   {book.imageUrl && (
@@ -121,7 +125,7 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
                     onClick={() => addBook(book)}
                     disabled={isAdded || isAdding || !canAdd}
                     className={`px-3 py-1 rounded text-xs font-medium flex-shrink-0 ${isAdded ? 'bg-emerald-700 text-white opacity-75 cursor-default' : 'bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50'}`}
-                    title={!canAdd ? 'Author metadata unavailable — try a more specific search' : undefined}
+                    title={!canAdd ? 'Author name missing on this result' : undefined}
                   >
                     {isAdded ? 'Added ✓' : isAdding ? 'Adding…' : 'Add'}
                   </button>
