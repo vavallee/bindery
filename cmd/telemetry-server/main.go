@@ -571,11 +571,36 @@ func paletteColor(i int) string { return chartPalette[i%len(chartPalette)] }
 // renderBarChart returns inline SVG for a horizontal bar chart with a legend.
 // Each bucket gets its own colour from chartPalette so the swatch in the
 // legend column matches the bar.
-func renderBarChart(buckets []statsBucket, maxBars int) string {
+//
+// When pinLabel is non-empty and matches a bucket that would otherwise fall
+// into the "(other)" tail, the pinned bucket is swapped into the last visible
+// slot so a freshly cut release stays visible before it organically reaches
+// top-N. The pinned row's legend is suffixed with " (latest)". Buckets with
+// pinLabel already in the visible region are annotated but not reordered.
+func renderBarChart(buckets []statsBucket, maxBars int, pinLabel string) string {
 	if len(buckets) == 0 {
 		return `<p class="empty">No data yet.</p>`
 	}
 	if maxBars > 0 && len(buckets) > maxBars {
+		// Copy so we can mutate without surprising the caller (other charts
+		// reuse the same slices indirectly via stable-sort in handleStatsPage).
+		work := make([]statsBucket, len(buckets))
+		copy(work, buckets)
+		buckets = work
+
+		if pinLabel != "" {
+			pinIdx := -1
+			for i := maxBars; i < len(buckets); i++ {
+				if buckets[i].Label == pinLabel {
+					pinIdx = i
+					break
+				}
+			}
+			if pinIdx >= 0 {
+				buckets[maxBars-1], buckets[pinIdx] = buckets[pinIdx], buckets[maxBars-1]
+			}
+		}
+
 		// Collapse the long tail into an "(other)" bucket so the chart
 		// doesn't grow unbounded with every release sha.
 		head := buckets[:maxBars]
@@ -602,11 +627,15 @@ func renderBarChart(buckets []statsBucket, maxBars int) string {
 		if max > 0 {
 			pct = b.Count * 100 / max
 		}
+		label := b.Label
+		if pinLabel != "" && b.Label == pinLabel {
+			label = b.Label + " (latest)"
+		}
 		fmt.Fprintf(&sb,
 			`<tr><td class="legend-cell"><span class="swatch" style="background:%s"></span>%s</td>`+
 				`<td class="bar-cell"><div class="bar" style="width:%d%%;background:%s"></div></td>`+
 				`<td class="count-cell">%d</td></tr>`,
-			colour, html.EscapeString(b.Label), pct, colour, b.Count)
+			colour, html.EscapeString(label), pct, colour, b.Count)
 	}
 	sb.WriteString(`</table></div>`)
 	return sb.String()
@@ -777,10 +806,10 @@ func (s *server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
 </body>
 </html>`,
 		d.Active30d, d.Total,
-		renderBarChart(d.Versions, 8),
-		renderBarChart(d.OS, 0),
-		renderBarChart(d.Arch, 0),
-		renderBarChart(d.Deploy, 0),
+		renderBarChart(d.Versions, 8, normalizeVersion(s.latestVersion)),
+		renderBarChart(d.OS, 0, ""),
+		renderBarChart(d.Arch, 0, ""),
+		renderBarChart(d.Deploy, 0, ""),
 		renderSparkline(d.Daily),
 		time.Now().UTC().Format("2006-01-02 15:04 MST"),
 	); err != nil {

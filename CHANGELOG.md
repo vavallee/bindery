@@ -6,6 +6,15 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Telemetry chart hides the freshly cut release** — `/stats` truncated the
+  version chart to top-8 by count, so a brand-new release with one or two
+  installs disappeared into `(other)` until it organically out-ranked older
+  versions (sometimes weeks). The chart now pins the configured
+  `LATEST_VERSION` into the visible region and annotates it `(latest)` so
+  newly cut releases are immediately visible to anyone watching adoption.
+
 ## [v1.8.0] — 2026-05-09
 
 ### Added
