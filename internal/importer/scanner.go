@@ -158,22 +158,27 @@ func (s *Scanner) WithSettings(sr *db.SettingsRepo) *Scanner {
 }
 
 // importMode reads the "import.mode" setting and returns one of "move",
-// "copy", "hardlink", or "external". Defaults to "move" when the setting is
-// absent or unrecognised so upgrades are transparent for existing installs.
-func (s *Scanner) importMode(ctx context.Context) string {
-	if s.settings == nil {
-		return "move"
+// "copy", "hardlink", or "external". When the setting is absent or
+// unrecognised, it defaults to "hardlink" if src and dst are on the same
+// filesystem (free, preserves seeding) or "copy" when they are on different
+// filesystems. Pass empty strings for src/dst to get the cross-device default
+// ("copy") without performing a stat.
+func (s *Scanner) importMode(ctx context.Context, src, dst string) string {
+	if s.settings != nil {
+		setting, err := s.settings.Get(ctx, "import.mode")
+		if err == nil && setting != nil {
+			switch setting.Value {
+			case "move", "copy", "hardlink", "external":
+				return setting.Value
+			}
+		}
 	}
-	setting, err := s.settings.Get(ctx, "import.mode")
-	if err != nil || setting == nil {
-		return "move"
+	// No explicit setting — choose the safest mode that also preserves seeding.
+	if sameDevice(src, dst) {
+		return "hardlink"
 	}
-	switch setting.Value {
-	case "copy", "hardlink", "external":
-		return setting.Value
-	default:
-		return "move"
-	}
+	slog.Warn("import.mode not set and src/dst are on different filesystems; defaulting to copy — seeding will be preserved but disk usage doubles")
+	return "copy"
 }
 
 // pushToCWA copies the just-imported file into the directory watched by a
@@ -636,7 +641,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// External mode: skip all file operations and reset the book to wanted so
 	// the library scan can reconcile it after the user's external tool (Calibre,
 	// Grimmory, etc.) processes and places the file in the library directory.
-	if s.importMode(ctx) == "external" {
+	if s.importMode(ctx, downloadPath, s.libraryDir) == "external" {
 		if dl.BookID != nil {
 			if b, err := s.books.GetByID(ctx, *dl.BookID); err == nil && b != nil {
 				b.Status = models.BookStatusWanted
@@ -724,7 +729,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			return
 		}
 		destDir := UniqueDir(audiobookDest)
-		mode := s.importMode(ctx)
+		mode := s.importMode(ctx, downloadPath, destDir)
 		slog.Info("importing audiobook folder", "src", downloadPath, "dst", destDir, "mode", mode)
 		// Single-file audiobook releases (e.g. a lone .m4b from a torrent) give
 		// us a file path rather than a folder. MoveDir/CopyDir/HardlinkDir all
@@ -807,7 +812,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			failed++
 			continue
 		}
-		mode := s.importMode(ctx)
+		mode := s.importMode(ctx, srcFile, destPath)
 		slog.Info("importing book", "src", srcFile, "dst", destPath, "mode", mode)
 
 		var fileErr error
@@ -864,7 +869,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// them so the folder is removed. For "copy"/"hardlink" modes the source must
 	// be preserved so the torrent client can continue seeding.
 	if imported > 0 && failed == 0 {
-		if s.importMode(ctx) == "move" {
+		if s.importMode(ctx, downloadPath, s.libraryDir) == "move" {
 			if err := os.RemoveAll(downloadPath); err != nil {
 				slog.Warn("failed to remove download folder after import", "path", downloadPath, "error", err)
 			}

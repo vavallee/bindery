@@ -155,12 +155,43 @@ func TestCopyDirMode(t *testing.T) {
 	}
 }
 
-// TestImportMode_Default verifies that a Scanner with no settings falls back
-// to "move" mode.
+// TestImportMode_Default verifies that a Scanner with no settings and no path
+// hints (empty strings) falls back to "copy" mode (safe cross-device default).
 func TestImportMode_Default(t *testing.T) {
 	s := &Scanner{}
-	if got := s.importMode(nil); got != "move" { //nolint:staticcheck
-		t.Errorf("importMode without settings = %q, want %q", got, "move")
+	if got := s.importMode(nil, "", ""); got != "copy" {
+		t.Errorf("importMode without settings = %q, want %q", got, "copy")
+	}
+}
+
+// TestImportMode_DefaultHardlinkSameDevice verifies that when no import.mode
+// setting is configured but src and dst are on the same filesystem, importMode
+// returns "hardlink" (free disk cost, preserves seeding).
+func TestImportMode_DefaultHardlinkSameDevice(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "downloads", "audiobook")
+	dst := filepath.Join(dir, "library", "Author", "Book")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	sr := db.NewSettingsRepo(database)
+	s := &Scanner{}
+	s.WithSettings(sr)
+
+	// No import.mode setting → must default to "hardlink" on same filesystem.
+	got := s.importMode(context.Background(), src, dst)
+	if got != "hardlink" {
+		t.Errorf("no-setting same-device: importMode = %q, want %q", got, "hardlink")
 	}
 }
 
@@ -185,8 +216,9 @@ func TestImportMode_Settings(t *testing.T) {
 	}{
 		{setValue: "copy", want: "copy"},
 		{setValue: "hardlink", want: "hardlink"},
-		{setValue: "invalid", want: "move"}, // unknown value falls back to move
-		{setValue: "", want: "move"},        // absent key falls back to move
+		{setValue: "move", want: "move"},
+		{setValue: "invalid", want: "copy"}, // unknown value falls back to safe default (cross-device assumed for empty paths)
+		{setValue: "", want: "copy"},        // absent key falls back to safe default (cross-device assumed for empty paths)
 	}
 
 	for _, tc := range cases {
@@ -197,7 +229,8 @@ func TestImportMode_Settings(t *testing.T) {
 				t.Fatalf("Set: %v", err)
 			}
 		}
-		got := s.importMode(ctx)
+		// Pass empty paths so sameDevice() returns false → default is "copy".
+		got := s.importMode(ctx, "", "")
 		if got != tc.want {
 			t.Errorf("setValue=%q: importMode = %q, want %q", tc.setValue, got, tc.want)
 		}
