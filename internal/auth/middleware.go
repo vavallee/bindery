@@ -271,7 +271,11 @@ func RequireXRequestedWith(next http.Handler) http.Handler {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 			// safe methods — pass through
 		default:
-			if requestAPIKey(r) == "" && r.Header.Get("X-Requested-With") != "bindery-ui" {
+			// Auth endpoints (login, setup, logout…) are exempt: there is no
+			// session cookie to protect against CSRF at those points, so
+			// requiring the header is pure friction for non-browser clients.
+			// This mirrors the identical exemption in RequireCSRFToken.
+			if requestAPIKey(r) == "" && !AllowUnauthPath(r.URL.Path) && r.Header.Get("X-Requested-With") != "bindery-ui" {
 				w.Header().Set("Content-Type", "application/json")
 				http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 				return

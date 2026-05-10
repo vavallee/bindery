@@ -630,6 +630,35 @@ func TestCSRFStack_APIKeyGrabPassesAllGuards(t *testing.T) {
 	}
 }
 
+// TestRequireXRequestedWith_AllowsLoginEndpoint verifies that POST /api/v1/auth/login
+// passes through RequireXRequestedWith without the custom header. Before a session
+// exists there is no cookie to CSRF-protect, so blocking the login endpoint from plain
+// curl/scripts is pure friction with no security benefit.
+// Regression test for Bug 4: login unreachable from non-browser clients.
+func TestRequireXRequestedWith_AllowsLoginEndpoint(t *testing.T) {
+	called := false
+	h := RequireXRequestedWith(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true }))
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+	// No X-Requested-With, no API key — plain curl.
+	h.ServeHTTP(nopWriter{}, req)
+	if !called {
+		t.Fatal("POST /api/v1/auth/login must not be blocked by RequireXRequestedWith — no session to CSRF-protect")
+	}
+}
+
+// TestRequireXRequestedWith_AllowsSetupEndpoint mirrors the login case for the
+// first-run /auth/setup endpoint. Setup creates the very first user; there is
+// no authenticated session and therefore no CSRF risk.
+func TestRequireXRequestedWith_AllowsSetupEndpoint(t *testing.T) {
+	called := false
+	h := RequireXRequestedWith(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true }))
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/auth/setup", nil)
+	h.ServeHTTP(nopWriter{}, req)
+	if !called {
+		t.Fatal("POST /api/v1/auth/setup must not be blocked by RequireXRequestedWith")
+	}
+}
+
 func TestCSRFStack_BrowserSessionWithoutCSRFTokenIsRejected(t *testing.T) {
 	secret := []byte("stack-secret")
 	p := &fakeProvider{mode: ModeEnabled, apiKey: "harpoon-key", secret: secret}
