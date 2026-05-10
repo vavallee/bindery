@@ -2,6 +2,7 @@ package importer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -289,5 +290,76 @@ func TestImportInternal_ThreeFileBundle_TracksAllInBookFiles(t *testing.T) {
 	}
 	if len(files) != 3 {
 		t.Errorf("want 3 book_files rows for epub+mobi+pdf bundle, got %d", len(files))
+	}
+}
+
+// TestTryImportInternal_HistoryEventIncludesFormat is the regression test for
+// Bug #13. When an ebook is imported for a media_type='both' book the
+// bookImported history event must carry a "format" field so the user can see
+// which format was actually imported — without it the queue shows "imported"
+// with no indication that the audiobook half is still missing.
+func TestTryImportInternal_HistoryEventIncludesFormat(t *testing.T) {
+	libDir := t.TempDir()
+	dlDir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(dlDir, "book.epub"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	ctx := context.Background()
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	dlRepo := db.NewDownloadRepo(database)
+	clientRepo := db.NewDownloadClientRepo(database)
+	historyRepo := db.NewHistoryRepo(database)
+
+	author := &models.Author{
+		ForeignID: "OLA-B13", Name: "Author B13", SortName: "B13, Author",
+		Monitored: true, MetadataProvider: "openlibrary",
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{
+		ForeignID: "OLB-B13", AuthorID: author.ID,
+		Title: "Both Format Book", SortTitle: "Both Format Book",
+		Status: models.BookStatusWanted, Monitored: true, AnyEditionOK: true,
+		MediaType: models.MediaTypeBoth, MetadataProvider: "openlibrary",
+	}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	dl := &models.Download{
+		GUID: "b13-guid", Title: "Both Format Book", BookID: &book.ID,
+		Status: models.StateCompleted,
+	}
+	if err := dlRepo.Create(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewScanner(dlRepo, clientRepo, bookRepo, authorRepo, historyRepo, libDir, "", "", "", "")
+	s.tryImportInternal(ctx, dl, dlDir, "", "", nil)
+
+	events, err := historyRepo.ListByType(ctx, models.HistoryEventBookImported)
+	if err != nil {
+		t.Fatalf("list history events: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("Bug #13: no bookImported history event was created")
+	}
+
+	var data map[string]string
+	if err := json.Unmarshal([]byte(events[0].Data), &data); err != nil {
+		t.Fatalf("unmarshal history event data: %v", err)
+	}
+	if got := data["format"]; got != models.MediaTypeEbook {
+		t.Errorf("Bug #13: history event missing format field: got %q, want %q — user cannot tell ebook vs audiobook was imported", got, models.MediaTypeEbook)
 	}
 }

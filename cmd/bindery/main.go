@@ -256,9 +256,6 @@ func main() {
 			if !cfg.Enabled {
 				return ""
 			}
-			if cfg.AudiobooksLibraryID != "" {
-				return cfg.AudiobooksLibraryID
-			}
 			return cfg.LibraryID
 		},
 	)
