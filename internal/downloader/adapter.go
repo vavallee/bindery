@@ -85,6 +85,17 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		UsesTorrentID: IsTorrentClient(client.Type),
 	}
 
+	// Pre-resolve indexer-provided URLs that 30x to a magnet target.
+	// Public torrent trackers proxied via Prowlarr commonly redirect
+	// to `magnet:?xt=...`, which BitTorrent clients can't follow as a
+	// redirect (they treat magnet: as a separate scheme, not a fetchable
+	// target). resolveTorrentSource walks redirects and returns the
+	// magnet directly so the download client can accept it. Failing
+	// soft: any error returns the original URL unchanged.
+	if IsTorrentClient(client.Type) {
+		sourceURL = resolveTorrentSource(ctx, sourceURL)
+	}
+
 	switch client.Type {
 	case "transmission":
 		trans := transmission.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
