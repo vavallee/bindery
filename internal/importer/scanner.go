@@ -501,12 +501,20 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 		isFailed := strings.Contains(state, "error")
 
 		if isComplete && (dl.Status == models.StateDownloading || dl.Status == models.StateGrabbed) {
-			downloadPath := torrent.SavePath
-			candidate := filepath.Join(torrent.SavePath, torrent.Name)
-			if _, err := os.Stat(candidate); err == nil {
-				downloadPath = candidate
+			rawPath, ok := resolveQbitContentPath(torrent)
+			if !ok {
+				// Path doesn't exist on disk yet (qBittorrent may sanitise characters
+				// in the torrent name that differ from what the API reports, e.g. ':'→'_').
+				// Do NOT fall back to torrent.SavePath — for multi-file torrents that is
+				// the shared download root and walking it would import every unrelated file.
+				// Leave the status unchanged so the next check cycle retries.
+				slog.Warn("qbittorrent: content path not found, will retry next cycle",
+					"title", dl.Title,
+					"save_path", torrent.SavePath,
+					"name", torrent.Name)
+				continue
 			}
-			downloadPath = s.remapper.Apply(downloadPath)
+			downloadPath := s.remapper.Apply(rawPath)
 
 			slog.Info("download completed", "title", dl.Title, "path", downloadPath)
 			s.updateDownloadStatus(ctx, dl.ID, models.StateCompleted)
@@ -535,6 +543,29 @@ func (s *Scanner) tryImportTransmission(ctx context.Context, dl *models.Download
 
 func (s *Scanner) tryImportQbittorrent(ctx context.Context, dl *models.Download, downloadPath string) {
 	s.tryImportInternal(ctx, dl, downloadPath, "qbittorrent", safeRemoteID(dl.TorrentID), nil)
+}
+
+// resolveQbitContentPath returns the on-disk content path for a completed torrent.
+//
+// qBittorrent ≥ 4.1.x populates content_path with the authoritative on-disk path,
+// correctly reflecting any character sanitisation it applied to the torrent name
+// (e.g. ':' → '_'). When content_path is available it is used directly.
+//
+// For older clients that omit content_path the function falls back to
+// filepath.Join(SavePath, Name) and verifies the path exists with os.Stat.
+//
+// SavePath is deliberately never returned on its own. For multi-file torrents
+// SavePath is the shared download root; falling back to it would cause Bindery
+// to walk and import every unrelated file in that directory.
+func resolveQbitContentPath(t qbittorrent.Torrent) (string, bool) {
+	if t.ContentPath != "" {
+		return t.ContentPath, true
+	}
+	candidate := filepath.Join(t.SavePath, t.Name)
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate, true
+	}
+	return "", false
 }
 
 // tryImportInternal is the common import logic shared by SABnzbd and Transmission.
