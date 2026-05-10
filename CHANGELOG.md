@@ -6,6 +6,19 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Calibre-Web-Automated (CWA) ingest** (#417) — A new
+  **Settings → General → Calibre-Web-Automated (CWA)** field configures a
+  shared ingest folder. When set, every successful ebook import is also
+  copied into that folder so a sibling
+  [CWA](https://github.com/crocodilestick/Calibre-Web-Automated) container
+  can auto-ingest it. Bindery keeps its own copy and never moves the file,
+  so a misconfigured CWA can't take bindery's library with it. No Calibre
+  runtime dependency is added to the bindery container — only the file
+  drop is in scope. Audiobook imports are unaffected since CWA is built
+  around ebook libraries.
+
 ### Fixed
 
 - **DNB search results couldn't be added to the wanted list** (#545) — DNB

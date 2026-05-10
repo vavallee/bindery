@@ -3767,6 +3767,37 @@ function CalibreSection({
         </div>
       </div>
 
+      <div className="bg-slate-100 dark:bg-zinc-900 rounded-lg p-5 border border-slate-300 dark:border-zinc-800">
+        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">Calibre-Web-Automated (CWA)</h3>
+        <p className="text-xs text-slate-600 dark:text-zinc-500 mb-4">
+          When set, every successful ebook import is also copied into this directory so a sibling{' '}
+          <a href="https://github.com/crocodilestick/Calibre-Web-Automated" target="_blank" rel="noopener noreferrer" className="text-emerald-700 dark:text-emerald-400 underline">CWA</a>{' '}
+          container can ingest it. Bindery keeps its own copy. Leave blank to disable.
+        </p>
+        <div>
+          <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Ingest folder path</label>
+          <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">Mount the same path into both containers. CWA's docs use <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">/cwa-book-ingest</code>.</p>
+          <div className="flex gap-2">
+            <input
+              value={settings['cwa.ingest_path'] ?? ''}
+              onChange={e => setSettings(s => ({ ...s, 'cwa.ingest_path': e.target.value }))}
+              placeholder="/cwa-book-ingest"
+              className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+            />
+            <button
+              onClick={() => saveSettingWithError('cwa.ingest_path')}
+              disabled={saving === 'cwa.ingest_path'}
+              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium disabled:opacity-50"
+            >
+              {saving === 'cwa.ingest_path' ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+          {saveError?.key === 'cwa.ingest_path' && (
+            <p className="text-xs text-red-600 dark:text-red-400 mt-1">{saveError.msg}</p>
+          )}
+        </div>
+      </div>
+
       {syncModalOpen && (
         <CalibreSyncModal
           progress={syncProgress}

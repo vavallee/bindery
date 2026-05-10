@@ -66,6 +66,8 @@ The short version lives in the [README](../README.md#roadmap). ✅ items have la
 
 - ✅ **Split ebook / audiobook results in search** ([#333](https://github.com/vavallee/bindery/issues/333)) — when both ebook and audiobook indexers are enabled, the search results page shows only one media type at a time based on the active filter. A two-section layout (ebooks / audiobooks) would surface both in the same view so users can compare and grab from either without toggling.
 
+- ✅ **Calibre-Web-Automated (CWA) ingest** ([#417](https://github.com/vavallee/bindery/issues/417)) — when the operator runs CWA in a sibling container, bindery copies every successful ebook import into a configured shared ingest folder so CWA's auto-ingest picks it up automatically. Bindery keeps its own copy. No Calibre runtime dependency in the bindery container. Configured under **Settings → General → Calibre-Web-Automated (CWA)**.
+
 ## v2 horizon
 
 These items are too large or architectural for a minor release. They define the v2 milestone — the set of changes that would warrant a major version bump.
@@ -77,6 +79,8 @@ These items are too large or architectural for a minor release. They define the 
 - ~~**External database (MySQL / Postgres)** ([#86](https://github.com/vavallee/bindery/issues/86))~~ — **Won't do.** Closed as won't-fix; see the Planned section above.
 
 - ✅ **Persistent structured log store** ([#241](https://github.com/vavallee/bindery/issues/241), landed in development) — Persists log entries to SQLite (migration 026), survives restarts, queryable by date range / level / component / full-text. Retention defaults to 14 days and is configurable. The ring buffer remains as a fast in-process fallback when no DB is available.
+
+- **Soulseek as a download source** ([#417](https://github.com/vavallee/bindery/issues/417)) — Soulseek's slsk:// P2P protocol is stateful and session-oriented (handshake, peer discovery, queue, transfer, slot management) — fundamentally different shape from the fire-and-forget HTTP fetch of NZB/torrent/magnet that bindery's queue assumes today. Adding it requires a long-lived peer connection in the bindery process, a search-result schema rich enough to carry slsk peer/file/size metadata through the ranker and quality-profile machinery, and either a vendored slsk client (e.g. [slingamn/slsk](https://github.com/slingamn/slsk-client)) or a sidecar daemon with its own configuration story. Worth doing because of the genuinely strong content catalogue on the network, but not before the v2 milestone.
 
 ## Explicitly out of scope
 

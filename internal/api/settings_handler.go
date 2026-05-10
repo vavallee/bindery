@@ -240,6 +240,20 @@ func validateSettingValue(key, value string) error {
 		if info.Mode()&0o111 == 0 {
 			return fmt.Errorf("binary_path %q is not executable", value)
 		}
+	case SettingCWAIngestPath:
+		// Empty = disabled. Non-empty must resolve to an existing writable
+		// directory so a typo in the UI fails loudly here, not silently at
+		// import time when the post-import push tries to copy.
+		if value == "" {
+			return nil
+		}
+		info, err := os.Stat(value)
+		if err != nil {
+			return fmt.Errorf("cwa.ingest_path %q: %w (ensure the path is accessible inside the bindery container, check volume mounts)", value, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("cwa.ingest_path %q is not a directory", value)
+		}
 	case SettingCalibreMode:
 		// Canonical values only. An empty string falls through to the
 		// default (off) handled by LoadCalibreMode; anything else must
