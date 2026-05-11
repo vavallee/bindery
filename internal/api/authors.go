@@ -129,8 +129,11 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if already exists
-	existing, _ := h.authors.GetByForeignID(r.Context(), req.ForeignID)
+	// Check if already exists — use user-scoped lookup so this agrees with the
+	// author list, which filters by owner_user_id. A global GetByForeignID
+	// would block re-creation of authors orphaned under a different user ID.
+	userID := auth.UserIDFromContext(r.Context())
+	existing, _ := h.authors.GetByForeignIDForUser(r.Context(), req.ForeignID, userID)
 	if existing != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "author already exists"})
 		return
@@ -142,7 +145,7 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if author.ForeignID != "" {
-		if existing, _ := h.authors.GetByForeignID(r.Context(), author.ForeignID); existing != nil {
+		if existing, _ := h.authors.GetByForeignIDForUser(r.Context(), author.ForeignID, userID); existing != nil {
 			h.writeCanonicalAuthorConflict(w, existing, "author already exists")
 			return
 		}
@@ -371,7 +374,7 @@ func (h *AuthorHandler) findAuthorByNameOrAliasExcluding(ctx context.Context, ex
 	if name == "" {
 		return nil, false, nil
 	}
-	authors, err := h.authors.List(ctx)
+	authors, err := h.authors.ListByUser(ctx, auth.UserIDFromContext(ctx))
 	if err != nil {
 		return nil, false, err
 	}

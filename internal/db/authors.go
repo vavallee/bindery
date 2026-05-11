@@ -90,6 +90,27 @@ func (r *AuthorRepo) GetByForeignID(ctx context.Context, foreignID string) (*mod
 	return &a, nil
 }
 
+// GetByForeignIDForUser returns the author with the given foreign_id that is
+// visible to userID — i.e. owned by that user or with a NULL owner. When
+// userID is 0 the search is global (same as GetByForeignID).
+func (r *AuthorRepo) GetByForeignIDForUser(ctx context.Context, foreignID string, userID int64) (*models.Author, error) {
+	if userID == 0 {
+		return r.GetByForeignID(ctx, foreignID)
+	}
+	row := r.db.QueryRowContext(ctx, `
+		SELECT `+authorSelectCols+`
+		FROM authors WHERE foreign_id = ? AND (owner_user_id = ? OR owner_user_id IS NULL)`, foreignID, userID)
+
+	a, err := scanAuthorRow(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get author by foreign_id %s: %w", foreignID, err)
+	}
+	return &a, nil
+}
+
 func (r *AuthorRepo) Create(ctx context.Context, a *models.Author) error {
 	return r.CreateForUser(ctx, a, 0)
 }

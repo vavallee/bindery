@@ -6,6 +6,14 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.9.1] — 2026-05-11
+
+### Fixed
+
+- **Author list no longer hides authors after user re-creation** — The "author already exists" duplicate check was global-scoped while the author list filtered by `owner_user_id`. Authors whose `owner_user_id` pointed to a deleted or re-created user were permanently invisible in the list but blocked re-addition. The check is now user-scoped so it agrees with what the list shows. A new migration (039) resets orphaned `owner_user_id` values to NULL so those authors become visible to all users immediately on upgrade.
+
+- **Canonical author name search now scoped to current user** — The name-deduplication path during author creation previously searched the global author pool, which could conflict with authors belonging to other users in multi-user setups.
+
 ## [v1.9.0] — 2026-05-11
 
 ### Added
