@@ -82,6 +82,37 @@ export default function QueuePage() {
     return (bytes / 1024).toFixed(0) + ' KB'
   }
 
+  const formatRelativeTime = (timestamp: string): string => {
+    const now = Date.now()
+    const then = new Date(timestamp).getTime()
+    const diffMs = now - then
+    const diffSec = Math.floor(diffMs / 1000)
+    const diffMin = Math.floor(diffSec / 60)
+    const diffHr = Math.floor(diffMin / 60)
+    const diffDay = Math.floor(diffHr / 24)
+
+    if (diffSec < 60) return `${diffSec}s ago`
+    if (diffMin < 60) return `${diffMin}m ago`
+    if (diffHr < 24) return `${diffHr}h ago`
+    return `${diffDay}d ago`
+  }
+
+  const getContextualTimestamp = (item: QueueItem): { label: string; absolute: string } | null => {
+    if (item.importedAt) {
+      return { label: formatRelativeTime(item.importedAt), absolute: new Date(item.importedAt).toUTCString() }
+    }
+    if (item.completedAt) {
+      return { label: formatRelativeTime(item.completedAt), absolute: new Date(item.completedAt).toUTCString() }
+    }
+    if (item.grabbedAt) {
+      return { label: formatRelativeTime(item.grabbedAt), absolute: new Date(item.grabbedAt).toUTCString() }
+    }
+    if (item.addedAt) {
+      return { label: formatRelativeTime(item.addedAt), absolute: new Date(item.addedAt).toUTCString() }
+    }
+    return null
+  }
+
   return (
     <div>
       <h2 className="text-2xl font-bold mb-6">{t('queue.title')}</h2>
@@ -114,6 +145,14 @@ export default function QueuePage() {
                       {item.protocol && (
                         <span className="text-slate-500 dark:text-zinc-600">{item.protocol}</span>
                       )}
+                      {(() => {
+                        const ts = getContextualTimestamp(item)
+                        return ts ? (
+                          <span className="text-slate-500 dark:text-zinc-600" title={ts.absolute}>
+                            {ts.label}
+                          </span>
+                        ) : null
+                      })()}
                     </div>
                     {item.status === 'importBlocked' && !item.errorMessage && (
                       <div className="mt-1 text-xs text-red-500 bg-red-500/10 rounded px-2 py-1">
