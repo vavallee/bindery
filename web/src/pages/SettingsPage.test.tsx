@@ -203,7 +203,7 @@ function seedSettingsMocks(options: {
     vi.mocked(api.authChangePassword).mockResolvedValue({ ok: true })
     vi.mocked(api.oidcProviders).mockResolvedValue(options.oidcProviders ?? [])
     vi.mocked(api.oidcSetProviders).mockResolvedValue(undefined)
-    vi.mocked(api.oidcRedirectBase).mockResolvedValue({ base: 'http://localhost', callback_path: '/api/v1/auth/oidc/{id}/callback' })
+    vi.mocked(api.oidcRedirectBase).mockResolvedValue({ base: 'http://localhost', callback_path: '/api/v1/auth/oidc/{id}/callback', configured: true })
     vi.mocked(api.oidcTestDiscovery).mockResolvedValue({
       ok: true,
       discovered: {
@@ -512,6 +512,7 @@ describe('SettingsPage', () => {
     vi.mocked(api.oidcRedirectBase).mockResolvedValue({
       base: 'https://bindery.example.com',
       callback_path: '/api/v1/auth/oidc/{id}/callback',
+      configured: true,
     })
 
     renderSettings()

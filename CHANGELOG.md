@@ -62,6 +62,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 - **Canonical author name search now scoped to current user** — The name-deduplication path during author creation previously searched the global author pool, which could conflict with authors belonging to other users in multi-user setups.
 
+### Chores
+
+- **Frontend regression coverage expanded** (#427) — Added MSW-backed tests for login, CSRF handling, auth state/guards, Book Detail search/grab flows, and Wanted page search/grab/bulk actions.
+
 ## [v1.9.0] — 2026-05-11
 
 ### Added
@@ -339,12 +343,6 @@ All notable changes to Bindery are documented here. Format loosely follows
 - **Series title inputs now have an API length limit** (#469) — Manual series creation and title updates now reject titles longer than 500 bytes before writing to SQLite, preventing oversized titles from being stored through the HTTP API.
 - **Hardcover GraphQL success responses are bounded** (#470) — Successful Hardcover responses are now read through an 8 MiB cap so a misbehaving upstream cannot force unbounded memory growth before JSON parsing.
 - **Add-author search no longer hides valid author results when the query matches a book title** — Results whose name exactly matches a known book title and whose disambiguation points to that book's real author are now placed behind a reveal button rather than silently dropped.
-
-## [Unreleased]
-
-### Chores
-
-- **Frontend regression coverage expanded** (#427) — Added MSW-backed tests for login, CSRF handling, auth state/guards, Book Detail search/grab flows, and Wanted page search/grab/bulk actions.
 
 ## [v1.4.3] — 2026-05-06
 

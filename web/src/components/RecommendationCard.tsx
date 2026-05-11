@@ -99,6 +99,7 @@ export default function RecommendationCard({ rec, onDismiss, onAdd, onExcludeAut
           <button
             onClick={() => onDismiss(rec.id)}
             className="px-2 py-1.5 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded text-xs text-slate-600 dark:text-zinc-400 transition-colors"
+            aria-label={t('discover.dismiss')}
             title={t('discover.dismiss')}
           >
             ✕
