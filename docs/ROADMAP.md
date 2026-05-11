@@ -68,6 +68,8 @@ The short version lives in the [README](../README.md#roadmap). ✅ items have la
 
 - ✅ **Calibre-Web-Automated (CWA) ingest** ([#417](https://github.com/vavallee/bindery/issues/417)) — when the operator runs CWA in a sibling container, bindery copies every successful ebook import into a configured shared ingest folder so CWA's auto-ingest picks it up automatically. Bindery keeps its own copy. No Calibre runtime dependency in the bindery container. Configured under **Settings → General → Calibre-Web-Automated (CWA)**.
 
+- **Editable quality profiles** — today the Settings → Quality tab is read-only: the seeded profiles render but there's no way to create, rename, delete, or toggle which formats are allowed. The filtering logic itself already works (`internal/decision/specs.go` `QualityAllowed`), so a user-edited profile that only ticks `epub` would correctly reject `pdf` / `azw3` / `mobi` releases — the editor surface is what's missing. Scope: a profile form in the existing Quality tab plus POST/PUT/DELETE handlers under `/api/v1/qualityprofile`.
+
 ## v2 horizon
 
 These items are too large or architectural for a minor release. They define the v2 milestone — the set of changes that would warrant a major version bump.
