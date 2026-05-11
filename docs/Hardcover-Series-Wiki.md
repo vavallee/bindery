@@ -21,13 +21,12 @@ Local series management remains available without the enhanced Hardcover feature
 
 ## Before You Start
 
-Enhanced Hardcover series data requires three things:
+Enhanced Hardcover series data requires:
 
-- `BINDERY_ENHANCED_HARDCOVER_API=true` in the Bindery environment
 - a saved Hardcover API token in `Settings -> General`
 - the **Enhanced Hardcover series** toggle enabled in `Settings -> General`
 
-If any requirement is missing, Bindery hides the enhanced controls and the enhanced API endpoints return `404`. Existing local series data keeps working.
+If either requirement is missing, Bindery hides the enhanced controls and the enhanced API endpoints return `404`. Existing local series data keeps working. Operators can still disable the feature for the whole deployment with `BINDERY_ENHANCED_HARDCOVER_API=false`.
 
 ## Series Workflow
 
@@ -66,7 +65,7 @@ The fill action may create new authors and books from Hardcover metadata when th
 
 ## Troubleshooting
 
-- Enhanced controls are missing: confirm `BINDERY_ENHANCED_HARDCOVER_API=true`, save a Hardcover API token, then enable **Enhanced Hardcover series** in `Settings -> General`.
+- Enhanced controls are missing: save a Hardcover API token, then enable **Enhanced Hardcover series** in `Settings -> General`. If your operator disabled the deployment-wide feature flag, they must remove `BINDERY_ENHANCED_HARDCOVER_API=false` and restart Bindery.
 - Hardcover test fails: verify the token at [Hardcover API settings](https://hardcover.app/account/api) and make sure Bindery can reach `hardcover.app`.
 - Search finds the wrong series: choose a different result manually, or remove the link and search again with a more specific local series name.
 - Fill gaps adds nothing: check whether the missing books already exist locally, are excluded, or whether the linked Hardcover catalog has no missing entries relative to the local series.
