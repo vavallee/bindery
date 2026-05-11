@@ -481,21 +481,19 @@ func (s *server) computeStats(ctx context.Context) (*statsData, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer rowsNew.Close()
 	newDayCount := make(map[string]int)
 	for rowsNew.Next() {
 		var day string
 		var count int
 		if err := rowsNew.Scan(&day, &count); err != nil {
-			rowsNew.Close()
 			return nil, err
 		}
 		newDayCount[day] = count
 	}
 	if err := rowsNew.Err(); err != nil {
-		rowsNew.Close()
 		return nil, err
 	}
-	rowsNew.Close()
 	for i := 29; i >= 0; i-- {
 		day := today.AddDate(0, 0, -i)
 		key := day.Format("2006-01-02")
@@ -520,21 +518,19 @@ func (s *server) computeStats(ctx context.Context) (*statsData, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer rowsLon.Close()
 	lonMap := make(map[string]int)
 	for rowsLon.Next() {
 		var bucket string
 		var count int
 		if err := rowsLon.Scan(&bucket, &count); err != nil {
-			rowsLon.Close()
 			return nil, err
 		}
 		lonMap[bucket] = count
 	}
 	if err := rowsLon.Err(); err != nil {
-		rowsLon.Close()
 		return nil, err
 	}
-	rowsLon.Close()
 	for _, label := range []string{"< 1 week", "1–4 weeks", "1–3 months", "3+ months"} {
 		if cnt, ok := lonMap[label]; ok {
 			d.Longevity = append(d.Longevity, statsBucket{Label: label, Count: cnt})
@@ -549,11 +545,11 @@ func (s *server) computeStats(ctx context.Context) (*statsData, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer rowsMon.Close()
 	for rowsMon.Next() {
 		var month string
 		var count int
 		if err := rowsMon.Scan(&month, &count); err != nil {
-			rowsMon.Close()
 			return nil, err
 		}
 		label := month
@@ -563,10 +559,8 @@ func (s *server) computeStats(ctx context.Context) (*statsData, error) {
 		d.Monthly = append(d.Monthly, statsBucket{Label: label, Count: count})
 	}
 	if err := rowsMon.Err(); err != nil {
-		rowsMon.Close()
 		return nil, err
 	}
-	rowsMon.Close()
 
 	// Top versions for the version-trend legend (max 4).
 	for i, v := range d.Versions {
@@ -583,12 +577,12 @@ func (s *server) computeStats(ctx context.Context) (*statsData, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer rowsVer.Close()
 	vtMap := make(map[string]map[string]int) // day -> version -> count
 	for rowsVer.Next() {
 		var day, ver string
 		var count int
 		if err := rowsVer.Scan(&day, &ver, &count); err != nil {
-			rowsVer.Close()
 			return nil, err
 		}
 		if vtMap[day] == nil {
@@ -597,10 +591,8 @@ func (s *server) computeStats(ctx context.Context) (*statsData, error) {
 		vtMap[day][ver] = count
 	}
 	if err := rowsVer.Err(); err != nil {
-		rowsVer.Close()
 		return nil, err
 	}
-	rowsVer.Close()
 	for i := 29; i >= 0; i-- {
 		day := today.AddDate(0, 0, -i)
 		key := day.Format("2006-01-02")

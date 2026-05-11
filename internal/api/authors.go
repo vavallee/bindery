@@ -974,22 +974,6 @@ func handleNewWantedBook(ctx context.Context, books *db.BookRepo, series *db.Ser
 	return false
 }
 
-func (h *AuthorHandler) linkBookSeriesRefs(ctx context.Context, bookID int64, bookTitle string, refs []models.SeriesRef) {
-	if h == nil || h.series == nil || bookID == 0 || len(refs) == 0 {
-		return
-	}
-	for _, ref := range refs {
-		s := &models.Series{ForeignID: ref.ForeignID, Title: ref.Title}
-		if err := h.series.CreateOrGet(ctx, s); err != nil {
-			slog.Warn("failed to upsert series", "series", ref.Title, "error", err)
-			continue
-		}
-		if err := h.series.LinkBook(ctx, s.ID, bookID, ref.Position, ref.Primary); err != nil {
-			slog.Warn("failed to link book to series", "book", bookTitle, "series", ref.Title, "error", err)
-		}
-	}
-}
-
 func runBookSearches(ctx context.Context, searcher BookSearcher, books []models.Book, concurrency int) {
 	if searcher == nil || len(books) == 0 {
 		return
