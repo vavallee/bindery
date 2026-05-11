@@ -1188,7 +1188,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 	slog.Info("library scan found files", "paths", []string{s.libraryDir, s.audiobookDir}, "count", len(foundFiles))
 
 	if len(foundFiles) == 0 {
-		s.writeScanResult(ctx, len(foundFiles), 0, 0, 0)
+		s.writeScanResult(ctx, len(foundFiles), 0, 0, 0, nil)
 		return
 	}
 
@@ -1230,6 +1230,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 	// the correct earlier assignment.
 	reconciledBooks := make(map[int64]bool)
 
+	var unmatchedFiles []unmatchedFile
 	var reconciled, unmatched, tagReadFailed int
 	for _, path := range foundFiles {
 		// Skip files already tracked, or files inside a tracked directory
@@ -1375,25 +1376,56 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 		if !matched {
 			slog.Debug("library scan: unmatched file", "path", path, "parsedTitle", parsed.Title, "parsedAuthor", parsed.Author)
 			unmatched++
+			// Collect up to 1000 unmatched entries for UI display
+			if len(unmatchedFiles) < 1000 {
+				unmatchedFiles = append(unmatchedFiles, unmatchedFile{
+					Path:         path,
+					ParsedTitle:  parsed.Title,
+					ParsedAuthor: parsed.Author,
+				})
+			}
 		}
 	}
 
 	slog.Info("library scan complete", "path", s.libraryDir, "bookFiles", len(foundFiles),
 		"reconciled", reconciled, "unmatched", unmatched, "tagReadFailed", tagReadFailed)
 
-	s.writeScanResult(ctx, len(foundFiles), reconciled, unmatched, tagReadFailed)
+	s.writeScanResult(ctx, len(foundFiles), reconciled, unmatched, tagReadFailed, unmatchedFiles)
+}
+
+// unmatchedFile represents a file that could not be reconciled during library scan.
+type unmatchedFile struct {
+	Path         string `json:"path"`
+	ParsedTitle  string `json:"parsed_title"`
+	ParsedAuthor string `json:"parsed_author"`
 }
 
 // writeScanResult persists the scan summary to the settings table under
 // "library.lastScan" so the UI can surface the result without polling logs.
-func (s *Scanner) writeScanResult(ctx context.Context, filesFound, reconciled, unmatched, tagReadFailed int) {
+func (s *Scanner) writeScanResult(ctx context.Context, filesFound, reconciled, unmatched, tagReadFailed int, unmatchedFiles []unmatchedFile) {
 	if s.settings == nil {
 		return
 	}
+
+	// Marshal unmatched files to JSON
+	var unmatchedJSON string
+	if len(unmatchedFiles) > 0 {
+		bytes, err := json.Marshal(unmatchedFiles)
+		if err != nil {
+			slog.Warn("library scan: failed to marshal unmatched files", "error", err)
+			unmatchedJSON = "[]"
+		} else {
+			unmatchedJSON = string(bytes)
+		}
+	} else {
+		unmatchedJSON = "[]"
+	}
+
 	payload := fmt.Sprintf(
-		`{"ran_at":%q,"files_found":%d,"reconciled":%d,"unmatched":%d,"tag_read_failed":%d}`,
+		`{"ran_at":%q,"files_found":%d,"reconciled":%d,"unmatched":%d,"tag_read_failed":%d,"unmatched_files":%s}`,
 		time.Now().UTC().Format(time.RFC3339),
 		filesFound, reconciled, unmatched, tagReadFailed,
+		unmatchedJSON,
 	)
 	if err := s.settings.Set(ctx, "library.lastScan", payload); err != nil {
 		slog.Warn("library scan: failed to persist scan result", "error", err)

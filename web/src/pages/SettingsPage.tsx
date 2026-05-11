@@ -2365,7 +2365,14 @@ function GeneralTab() {
   const [creatingBackup, setCreatingBackup] = useState(false)
   const [scanningLibrary, setScanningLibrary] = useState(false)
   const [scanMessage, setScanMessage] = useState<string | null>(null)
-  const [lastScan, setLastScan] = useState<{ ran_at: string; files_found: number; reconciled: number; unmatched: number } | null>(null)
+  const [lastScan, setLastScan] = useState<{
+    ran_at: string
+    files_found: number
+    reconciled: number
+    unmatched: number
+    tag_read_failed?: number
+    unmatched_files?: Array<{ path: string; parsed_title: string; parsed_author: string }>
+  } | null>(null)
   const [storage, setStorage] = useState<{ downloadDir: string; audiobookDownloadDir: string; libraryDir: string; audiobookDir: string } | null>(null)
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null)
   const [hardcoverToken, setHardcoverToken] = useState('')
@@ -2749,6 +2756,33 @@ function GeneralTab() {
               <p className="mt-1 text-slate-500 dark:text-zinc-500">
                 {new Date(lastScan.ran_at).toLocaleString()}
               </p>
+              {lastScan.unmatched_files && lastScan.unmatched_files.length > 0 && (
+                <details className="mt-3">
+                  <summary className="cursor-pointer font-medium text-slate-700 dark:text-zinc-300 hover:text-slate-900 dark:hover:text-zinc-100">
+                    Unmatched files ({lastScan.unmatched_files.length}{lastScan.unmatched > 1000 ? ' of ' + lastScan.unmatched : ''})
+                  </summary>
+                  <div className="mt-2 max-h-80 overflow-y-auto border border-slate-200 dark:border-zinc-800 rounded bg-slate-50 dark:bg-zinc-950/50">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-slate-100 dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800">
+                        <tr>
+                          <th className="text-left p-2 font-medium">Path</th>
+                          <th className="text-left p-2 font-medium">Parsed Title</th>
+                          <th className="text-left p-2 font-medium">Parsed Author</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {lastScan.unmatched_files.map((file, idx) => (
+                          <tr key={idx} className="border-b border-slate-100 dark:border-zinc-900 hover:bg-slate-100 dark:hover:bg-zinc-900/50">
+                            <td className="p-2 font-mono text-xs break-all">{file.path}</td>
+                            <td className="p-2">{file.parsed_title || '—'}</td>
+                            <td className="p-2">{file.parsed_author || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              )}
             </div>
           )}
         </div>

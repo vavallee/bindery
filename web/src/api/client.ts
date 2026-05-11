@@ -301,7 +301,14 @@ export const api = {
 
   // Library
   triggerLibraryScan: () => request<{ message: string }>('/library/scan', { method: 'POST' }),
-  libraryScanStatus: () => request<{ ran_at: string; files_found: number; reconciled: number; unmatched: number }>('/library/scan/status'),
+  libraryScanStatus: () => request<{
+    ran_at: string
+    files_found: number
+    reconciled: number
+    unmatched: number
+    tag_read_failed?: number
+    unmatched_files?: Array<{ path: string; parsed_title: string; parsed_author: string }>
+  }>('/library/scan/status'),
 
   // Queue
   listQueue: () => request<QueueItem[]>('/queue'),
