@@ -6,9 +6,11 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.9.0] — 2026-05-11
+
 ### Added
 
-- **Book metadata can be remapped from the Book Detail page** — Books with ABS or stale metadata now show an **Improve metadata** action that searches upstream providers or accepts a direct provider ID. New `POST /api/v1/book/{id}/map` applies the upstream title, cover, language, ratings, genres, and provider ID while preserving local status, files, media type, ASIN, narrator, selected edition, and exclusion state.
+- **Book metadata can be remapped from the Book Detail page** (#590) — Books with ABS or stale metadata now show an **Improve metadata** action that searches upstream providers or accepts a direct provider ID. New `POST /api/v1/book/{id}/map` applies the upstream title, cover, language, ratings, genres, and provider ID while preserving local status, files, media type, ASIN, narrator, selected edition, and exclusion state.
 
 - **Calibre-Web-Automated (CWA) ingest** (#417) — A new
   **Settings → General → Calibre-Web-Automated (CWA)** field configures a
@@ -21,13 +23,88 @@ All notable changes to Bindery are documented here. Format loosely follows
   drop is in scope. Audiobook imports are unaffected since CWA is built
   around ebook libraries.
 
+- **Prowlarr search timeout is now configurable** (#576) — The Prowlarr indexer
+  search timeout has been raised from 15 s to 60 s and can be adjusted in
+  **Settings → Indexers → Prowlarr → Search timeout**. Slow usenet indexers
+  no longer time out on the first query.
+
 ### Fixed
 
-- **ISBN lookups now canonicalise provider-native matches** — ISBN searches normalize ISBN input, consult configured metadata enrichers, and conservatively relink provider-native results back to canonical OpenLibrary works when the author/title evidence is unambiguous. This improves translated and edition-specific matches while avoiding plausible wrong-title fallbacks.
-- **Audiobook ASIN enrichment can relink to upstream metadata** — Enriching an audiobook now uses Audnex ASIN metadata to find a safe canonical upstream match, so ABS/imported audiobook rows can gain better titles, covers, language, search metadata, and OpenLibrary IDs while keeping audiobook-specific fields intact.
-- **ABS imports no longer trust stale secondary-author aliases or provenance** — Existing ABS author provenance and aliases are reused only when they still match the local author, preventing secondary-author names from corrupting future imports.
-- **Direct book adds preserve series links** — Adding a book directly no longer drops existing series associations during metadata canonicalization.
-- **Google Books provider settings are respected at startup** — Bindery now prefers the UI-managed Google Books API key, keeps legacy setting fallback for existing installs, and treats a deliberately cleared UI setting as disabled.
+**Importer / download clients**
+
+- **qBittorrent SavePath fallback caused incorrect imports** (#574) — When
+  qBittorrent's `content_path` field was absent or empty, the importer
+  fell back to `SavePath` (the shared download root) and could match
+  unrelated files or walk directories it should not touch. The importer
+  now uses `content_path` exclusively and aborts cleanly when it is missing.
+- **Default import mode changed from `move` to `hardlink`/`copy`** (#577) —
+  The out-of-box default was `move`, which silently broke torrent/usenet
+  seeding immediately after import. Bindery now defaults to `hardlink` when
+  source and destination are on the same filesystem (free, preserves seeding)
+  or `copy` when they are cross-device. **Upgrade note**: migration 038
+  clears the implicit `move` default written at install time; users who
+  explicitly set an import mode in Settings are not affected.
+- **Downloads stuck in `importFailed` are now retried automatically** (#578)
+  — Previously, a download that failed during import was permanently orphaned.
+  Bindery now retries up to three times before leaving it for manual
+  intervention. Retry count is persisted via migration 037.
+- **CheckDownloads now polls all enabled download clients** (#572) — Only
+  the highest-priority client was polled for status updates. Secondary
+  clients (e.g. a second qBittorrent instance or a fallover) were silently
+  ignored. All enabled clients are now iterated in priority order.
+- **Bulk-grab torrent dedup race condition fixed** (#573) — Grabbing multiple
+  releases simultaneously could assign the same `torrent_id` to two
+  downloads, breaking per-download tracking. `AddTorrent` is now serialised.
+
+**Auth**
+
+- **API key authentication now grants admin role** (#582) — Requests
+  authenticated via API key successfully verified the key but did not set
+  the admin role in the request context, causing `RequireAdmin`-protected
+  endpoints to return 403. The role is now correctly propagated.
+- **Auth endpoints no longer require `X-Requested-With` header** (#575) —
+  The login endpoint enforced `X-Requested-With: bindery-ui`, blocking
+  non-browser clients (curl, mobile apps, integrations). Auth endpoints are
+  now exempt; programmatic clients should use API key auth instead of cookie
+  sessions.
+
+**AudioBookShelf (ABS)**
+
+- **ABS library is rescanned after audiobook import** (#581) — Bindery now
+  triggers `POST /api/v2/libraries/:id/scan` after a successful audiobook
+  import so the file appears in ABS immediately rather than on its next
+  scheduled scan.
+- **Move-mode audiobook imports no longer appear MISSING in ABS** (#583) —
+  The ABS rescan after import updates ABS's path knowledge, resolving the
+  MISSING status that appeared when the import moved the file.
+- **History events include format for dual-format books** (#584) — `bookImported`
+  events for books with `media_type='both'` now record which format (ebook
+  or audiobook) was imported, making the History page unambiguous.
+
+**Metadata**
+
+- **ISBN lookups now canonicalise provider-native matches** (#590) — ISBN
+  searches normalise ISBN input, consult configured metadata enrichers, and
+  conservatively relink provider-native results back to canonical OpenLibrary
+  works when the author/title evidence is unambiguous. This improves
+  translated and edition-specific matches while avoiding plausible
+  wrong-title fallbacks.
+- **Audiobook ASIN enrichment can relink to upstream metadata** (#590) —
+  Enriching an audiobook now uses Audnex ASIN metadata to find a safe
+  canonical upstream match, so ABS/imported audiobook rows can gain better
+  titles, covers, language, search metadata, and OpenLibrary IDs while
+  keeping audiobook-specific fields intact.
+- **ABS imports no longer trust stale secondary-author aliases or provenance**
+  (#590) — Existing ABS author provenance and aliases are reused only when
+  they still match the local author, preventing secondary-author names from
+  corrupting future imports.
+- **Direct book adds preserve series links** (#590) — Adding a book directly
+  no longer drops existing series associations during metadata
+  canonicalization.
+- **Google Books provider settings are respected at startup** (#590) —
+  Bindery now prefers the UI-managed Google Books API key, keeps legacy
+  setting fallback for existing installs, and treats a deliberately cleared
+  UI setting as disabled.
 
 ## [v1.8.1] — 2026-05-09
 
