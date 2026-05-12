@@ -6,21 +6,27 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.9.2] — 2026-05-12
+
 ### Fixed
 
-- Backup creation no longer crashes the Settings page; updated frontend types and rendering to match the API response shape (#594).
+- **Backup creation no longer crashes the Settings page** (#594) — The backup endpoint returns `{name, size, modTime}` but the frontend was typed for `{filename}` and rendered the raw object, triggering React error #31 ("Objects are not valid as a React child"). Frontend types and the backup list rendering now match the API response shape.
 
-- **ABS review search results are scrollable and keep book-author links intact** — No-match review author/book searches now show up to 10 scrollable matches instead of truncating after three, and selecting a book result auto-links its author before resolving the book when the review item does not already have a resolved author.
+- **Hardcover list sync** (#562) — `GetListBooks` now queries the plural `lists(where: {id: {_eq: $id}}, limit: 1)` root field. The singular `list(id:)` query was rejected by Hardcover's GraphQL schema ("field 'list' not found in type: 'query_root'"), breaking every custom list Sync Now since v1.1.0.
 
-- Newznab/Prowlarr-proxy: download enclosure URLs are now signed with the indexer apikey when the URL points at the indexer's own host, fixing NZBGet "empty NZB" rejections for Prowlarr-proxied Usenet indexers (#531).
+- **Proxy auth `/api/v1/auth/status`** (#560) — Proxy identity resolution now runs before the allow-unauth fast-path. Previously `/auth/status` was on the allow-unauth list and bypassed the proxy header lookup entirely, so SSO-authed users were never let past the login screen. Trusted-proxy CIDR gating preserved.
 
-- Proxy auth: `/api/v1/auth/status` now honors the configured proxy header from trusted CIDRs; previously the allow-unauth fast-path bypassed proxy identity resolution (#560).
+- **Newznab / Prowlarr-proxy NZBGet rejections** (#531) — Download enclosure URLs are now signed with the indexer apikey when the URL host matches the indexer's own host. Prowlarr-proxied Usenet downloads were arriving at NZBGet as empty content ("Document is empty" / `id 0`) because the apikey was stripped at client construction but never re-applied to download URLs. Apikey is only appended for same-host URLs to avoid leaking it to third-party redirect targets.
 
-- **Enhanced Hardcover series controls are no longer hidden by default** (#596) — The deployment-wide `BINDERY_ENHANCED_HARDCOVER_API` flag now defaults to enabled, leaving the saved Hardcover token and **Settings -> General** admin toggle as the normal feature gates. Operators can still set the flag to `false` to disable the feature for an entire deployment.
+- **Author matching false positives** (#563) — Indexer release filter and library scanner now require all significant author tokens (>=3 chars) to match at word boundaries, not just surname substring. Releases like `Adam.Reid.Book.epub` will no longer be auto-imported under monitored author "Rachel Reid". Initials (1-2 char tokens) are treated as optional, so "George R. R. Martin" still matches "George Martin". ABS path was already safe (Jaro-Winkler whole-string match).
 
-- Hardcover list sync now uses the plural `lists(where:)` root field; the singular `list(id:)` query was rejected by Hardcover's GraphQL schema (#562).
+- **Enhanced Hardcover series controls no longer hidden by default** (#596) — The deployment-wide `BINDERY_ENHANCED_HARDCOVER_API` flag now defaults to enabled. The saved Hardcover token and **Settings → General** admin toggle remain as the normal feature gates. Operators can still set the flag to `false` to disable the feature for an entire deployment.
 
-- Author matching: indexer release filter and library scanner now require word-boundary matches on all significant author tokens (not just surname substring), eliminating false positives where co-authors share a token with the monitored author (#563).
+- **ABS review search results are scrollable and keep book-author links intact** (#599) — No-match review author/book searches now show up to 10 scrollable matches instead of truncating after three, and selecting a book result auto-links its author before resolving the book when the review item does not already have a resolved author.
+
+### Added
+
+- **Download queue surfaces timestamps** (#543, #592) — Each queue entry now shows the most recent meaningful event (imported / completed / grabbed / added) as a relative time, with the absolute UTC timestamp on hover.
 
 ## [v1.9.1] — 2026-05-11
 
