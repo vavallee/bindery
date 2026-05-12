@@ -72,6 +72,8 @@ func (c *Client) Login(ctx context.Context) error {
 		return fmt.Errorf("build login request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// qBittorrent v5.x rejects login requests without a matching Referer header (CSRF protection).
+	req.Header.Set("Referer", c.baseURL)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
