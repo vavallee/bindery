@@ -72,7 +72,8 @@ func (c *Client) Login(ctx context.Context) error {
 		return fmt.Errorf("build login request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	// qBittorrent v5.x rejects login requests without a matching Referer header (CSRF protection).
+	// qBittorrent v5.x requires both Origin and Referer for CSRF protection on the login endpoint.
+	req.Header.Set("Origin", c.baseURL)
 	req.Header.Set("Referer", c.baseURL)
 
 	resp, err := c.http.Do(req)
@@ -84,8 +85,15 @@ func (c *Client) Login(ctx context.Context) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
 	text := strings.TrimSpace(string(body))
 
+	// qBittorrent v4.x returns 200 "Ok." on success; v5.x returns 204 No Content.
+	if resp.StatusCode == http.StatusNoContent {
+		c.mu.Lock()
+		c.loggedIn = true
+		c.mu.Unlock()
+		return nil
+	}
 	if resp.StatusCode != http.StatusOK || text == "Fails." {
-		return fmt.Errorf("qBittorrent login failed: %s", text)
+		return fmt.Errorf("qBittorrent login failed (HTTP %d): %s", resp.StatusCode, text)
 	}
 
 	c.mu.Lock()
