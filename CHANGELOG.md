@@ -9,6 +9,7 @@ All notable changes to Bindery are documented here. Format loosely follows
 ### Fixed
 
 - **ABS review search results are scrollable and keep book-author links intact** — No-match review author/book searches now show up to 10 scrollable matches instead of truncating after three, and selecting a book result auto-links its author before resolving the book when the review item does not already have a resolved author.
+- Newznab/Prowlarr-proxy: download enclosure URLs are now signed with the indexer apikey when the URL points at the indexer's own host, fixing NZBGet "empty NZB" rejections for Prowlarr-proxied Usenet indexers (#531).
 
 - **Enhanced Hardcover series controls are no longer hidden by default** (#596) — The deployment-wide `BINDERY_ENHANCED_HARDCOVER_API` flag now defaults to enabled, leaving the saved Hardcover token and **Settings -> General** admin toggle as the normal feature gates. Operators can still set the flag to `false` to disable the feature for an entire deployment.
 
