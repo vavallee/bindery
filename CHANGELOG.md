@@ -6,6 +6,8 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.9.3] — 2026-05-12
+
 ### Fixed
 
 - **DNB add-by-ISBN no longer fails for German books with no OpenLibrary coverage** (#608) — DNB results now carry a stable author ForeignID (GND from MARC 100 $0 when present, otherwise a synthetic `dnb:author:<name-slug>`). When a canonical author (OpenLibrary / Hardcover) later arrives for the same SortName, the synthetic DNB row is migrated in place so the user keeps a single author record. Previously the add flow returned 422 "Author metadata unavailable" whenever no canonical provider had the ISBN.
