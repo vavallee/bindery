@@ -1,0 +1,63 @@
+name: Notify Discord on external PR
+
+# Fires a Discord ping whenever a non-owner, non-bot PR is opened or moved
+# from draft to ready-for-review. Triage on contributor PRs in this repo
+# has historically been slow (e.g. #515 sat 5 days while #590 superseded
+# it locally) — this gives a real-time signal so the queue stays legible.
+#
+# pull_request_target runs in the BASE repo's context with secret access,
+# which is what we need for the webhook. We deliberately do NOT check out
+# the PR's code — only read metadata fields — so there's no code-execution
+# risk from forks.
+
+on:
+  pull_request_target:
+    types: [opened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    name: Notify external PR
+    runs-on: ubuntu-latest
+    # Skip Vincent's own PRs and bot accounts (dependabot, github-actions, etc.)
+    if: |
+      github.event.pull_request.user.login != github.repository_owner &&
+      !endsWith(github.event.pull_request.user.login, '[bot]')
+    # A broken/expired webhook should never fail anything else.
+    continue-on-error: true
+    steps:
+      - name: Post to Discord
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "::warning::DISCORD_RELEASE_WEBHOOK not set; skipping"
+            exit 0
+          fi
+          DRAFT_TAG=""
+          if [ "$PR_DRAFT" = "true" ]; then
+            DRAFT_TAG=" (draft)"
+          fi
+          PAYLOAD=$(jq -nc \
+            --arg title "$PR_TITLE" \
+            --arg url "$PR_URL" \
+            --arg author "$PR_AUTHOR" \
+            --arg num "$PR_NUMBER" \
+            --arg draft "$DRAFT_TAG" \
+            '{content: "📥 New PR #\($num) by **\($author)**\($draft): \($title)\n\($url)"}')
+          HTTP=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -X POST -H "Content-Type: application/json" \
+            -d "$PAYLOAD" "$WEBHOOK")
+          if [ "$HTTP" = "204" ]; then
+            echo "Discord notified for PR #${PR_NUMBER}"
+          else
+            echo "::warning::Discord returned HTTP ${HTTP}"
+            exit 1
+          fi
