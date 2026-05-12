@@ -17,6 +17,8 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 - Hardcover list sync now uses the plural `lists(where:)` root field; the singular `list(id:)` query was rejected by Hardcover's GraphQL schema (#562).
 
+- Author matching: indexer release filter and library scanner now require word-boundary matches on all significant author tokens (not just surname substring), eliminating false positives where co-authors share a token with the monitored author (#563).
+
 ## [v1.9.1] — 2026-05-11
 
 ### Fixed

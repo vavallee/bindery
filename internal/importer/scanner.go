@@ -11,8 +11,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vavallee/bindery/internal/calibre"
@@ -1130,19 +1132,67 @@ func titleMatch(bookTitle, parsedTitle string) bool {
 	return overlap >= required
 }
 
+// authorTokenRegexCache caches per-token compiled word-boundary regexes used
+// by authorMatch. ScanLibrary can perform thousands of comparisons in one
+// pass, so we amortise the regexp.MustCompile cost across calls.
+var authorTokenRegexCache sync.Map // map[string]*regexp.Regexp
+
+// authorTokenRegex returns a cached case-insensitive \btoken\b regex. token
+// is already lowercased and stripped of punctuation by the caller.
+func authorTokenRegex(token string) *regexp.Regexp {
+	if v, ok := authorTokenRegexCache.Load(token); ok {
+		return v.(*regexp.Regexp)
+	}
+	re := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(token) + `\b`)
+	authorTokenRegexCache.Store(token, re)
+	return re
+}
+
 // authorMatch returns true when parsedAuthor is consistent with bookAuthor.
 // If parsedAuthor is empty the function returns true (can't disprove).
-// Otherwise it checks that the last name of parsedAuthor appears in bookAuthor.
+//
+// Significant tokens (>=3 chars, lowercased, punctuation-stripped) are
+// extracted from parsedAuthor. Each significant token must appear at a word
+// boundary in bookAuthor. Initials (1-2 char tokens like "R." in "George R.
+// R. Martin") are dropped — they are treated as optional, so the parsed name
+// "George Martin" can still match "George R. R. Martin".
+//
+// This is stricter than a plain substring check: it eliminates the
+// surname-overlap false positives where a co-author shares a token with the
+// monitored author (e.g. parsedAuthor="Rachel Reid" should NOT match
+// bookAuthor="Rachel Larsen, Adam Reid, and Ozi Akturk" — "rachel" and "reid"
+// both appear but not as the same person; we still match because all tokens
+// are present, which is a known limitation of word-list matching without
+// position. The primary fix is rejecting the inverse case where the
+// monitored author's surname coincides with a co-author's surname.)
 func authorMatch(bookAuthor, parsedAuthor string) bool {
 	if parsedAuthor == "" {
 		return true // no author info in filename — don't filter
 	}
-	parts := strings.Fields(strings.ToLower(parsedAuthor))
-	if len(parts) == 0 {
-		return true
+	tokens := significantAuthorTokens(parsedAuthor)
+	if len(tokens) == 0 {
+		return true // only initials/punctuation — can't disprove
 	}
-	lastName := parts[len(parts)-1]
-	return len(lastName) >= 3 && strings.Contains(strings.ToLower(bookAuthor), lastName)
+	for _, tok := range tokens {
+		if !authorTokenRegex(tok).MatchString(bookAuthor) {
+			return false
+		}
+	}
+	return true
+}
+
+// significantAuthorTokens splits name into lowercased, punctuation-trimmed
+// tokens of length >=3. Hyphenated names ("Mary-Kate Olsen") are kept as
+// single tokens so the word-boundary regex matches the hyphen-delimited form.
+func significantAuthorTokens(name string) []string {
+	var out []string
+	for _, w := range strings.Fields(strings.ToLower(name)) {
+		w = strings.Trim(w, ".,;:()[]'\"")
+		if len(w) >= 3 {
+			out = append(out, w)
+		}
+	}
+	return out
 }
 
 // pathUnderDir reports whether path is located inside dir (or is dir itself).

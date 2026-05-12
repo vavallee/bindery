@@ -238,24 +238,80 @@ func stripPossessivePrefix(title, author string) string {
 	return title
 }
 
+// authorTokens splits an author name into a (significant, all-lowercased)
+// token list suitable for word-boundary matching. Significant means >=3 chars
+// of letters/digits; shorter tokens (typically initials like "R." or "R")
+// are treated as optional and dropped. German umlauts are transliterated to
+// match NormalizeRelease. Returns nil for empty / all-initials input — the
+// caller should fall back to surname-only behaviour.
+func authorTokens(author string) []string {
+	if author == "" {
+		return nil
+	}
+	var out []string
+	for _, w := range strings.Fields(strings.ToLower(author)) {
+		w = strings.ReplaceAll(w, "'", "")
+		w = strings.Trim(w, ".,;:()[]")
+		w = transliterateUmlauts(w)
+		if len(w) >= 3 {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// authorMatchesRelease reports whether the normalized release plausibly
+// belongs to the requested author. The check is:
+//   - Empty author tokens: caller-defined; this function returns false.
+//   - 1 significant token (single-name pseudonym, e.g. "Plato"): word-boundary
+//     match on that token.
+//   - 2+ significant tokens: accept a contiguous "first ... last" phrase
+//     match (preferred), or — as a fallback — every significant token at a
+//     word boundary anywhere in the release.
+//
+// Initials (tokens <3 chars like "R." in "George R. R. Martin") have already
+// been stripped by authorTokens, so they are effectively optional: a release
+// named "George Martin ..." matches "George R. R. Martin".
+func authorMatchesRelease(normResult string, tokens []string) bool {
+	switch len(tokens) {
+	case 0:
+		return false
+	case 1:
+		return WordBoundaryRegex(tokens[0]).MatchString(normResult)
+	default:
+		// Prefer contiguous "first ... last" phrase.
+		if ContainsPhrase(normResult, tokens) {
+			return true
+		}
+		// Fallback: every significant token must appear at a word boundary.
+		for _, tok := range tokens {
+			if !WordBoundaryRegex(tok).MatchString(normResult) {
+				return false
+			}
+		}
+		return true
+	}
+}
+
 // titleMatchesResult returns true if the normalized result contains the
 // significant words of the title either as a contiguous phrase or (for
 // multi-word titles as a fallback) with every significant word appearing at
 // a word boundary. A single-significant-word title additionally requires the
-// author's surname to be present.
-func titleMatchesResult(normResult string, titleKws []string, surname string, allowKwFallback bool) bool {
+// author to be present (first+last for multi-token authors, surname-only for
+// single-token authors); see authorMatchesRelease.
+func titleMatchesResult(normResult string, titleKws []string, authorToks []string, allowKwFallback bool) bool {
 	switch len(titleKws) {
 	case 0:
-		return surname != "" && WordBoundaryRegex(surname).MatchString(normResult)
+		return authorMatchesRelease(normResult, authorToks)
 	case 1:
 		if !WordBoundaryRegex(titleKws[0]).MatchString(normResult) {
 			return false
 		}
-		if surname == "" {
-			// No surname to anchor on — accept (can't do better).
+		if len(authorToks) == 0 {
+			// No author tokens to anchor on — accept (can't do better).
 			return true
 		}
-		return WordBoundaryRegex(surname).MatchString(normResult)
+		return authorMatchesRelease(normResult, authorToks)
 	default:
 		if ContainsPhrase(normResult, titleKws) {
 			return true
@@ -303,22 +359,26 @@ func filterRelevant(results []newznab.SearchResult, title, author string, aliase
 	authorKws := sigWords(author)
 	surname := AuthorSurname(author)
 
-	// Build candidate surnames. When the primary surname is non-ASCII (e.g.
-	// "春樹" for "村上春樹"), also include surnames from any latin-script
-	// aliases (e.g. "murakami" from "Haruki Murakami") so release names
-	// romanised by indexers are not incorrectly filtered out.
-	surnames := []string{surname}
+	// Build candidate author token sets. The primary set is from `author`. When
+	// the primary surname is non-ASCII (e.g. "春樹" for "村上春樹"), also
+	// include token sets from any latin-script aliases (e.g.
+	// "Haruki Murakami") so release names romanised by indexers are not
+	// incorrectly filtered out. Each token set is used independently: a
+	// release matching any one alias' tokens is accepted.
+	authorTokenSets := [][]string{authorTokens(author)}
 	if !isAllASCIILower(surname) {
 		for _, alias := range aliases {
 			if s := AuthorSurname(alias); s != "" && isAllASCIILower(s) {
-				surnames = append(surnames, s)
+				if toks := authorTokens(alias); len(toks) > 0 {
+					authorTokenSets = append(authorTokenSets, toks)
+				}
 			}
 		}
 	}
 
 	tryMatch := func(n string, kws []string) bool {
-		for _, sn := range surnames {
-			if titleMatchesResult(n, kws, sn, true) {
+		for _, toks := range authorTokenSets {
+			if titleMatchesResult(n, kws, toks, true) {
 				return true
 			}
 		}

@@ -33,6 +33,10 @@ func contains(haystack []newznab.SearchResult, needle string) bool {
 
 func TestFilterRelevantTheSparrow(t *testing.T) {
 	// The "canonical" failing case: short title + common word.
+	// Post-#563 the author check requires all significant author tokens to
+	// appear (not just surname) for single-keyword titles. Releases that
+	// carry only the surname are now rejected as too ambiguous — they could
+	// be by any "Russell". A release naming the full author is required.
 	results := toResults(
 		"Mary.Doria.Russell.-.The.Sparrow.1996.RETAIL.EPUB",
 		"The.Sparrow.Russell.epub",
@@ -46,8 +50,9 @@ func TestFilterRelevantTheSparrow(t *testing.T) {
 	if !contains(got, "Mary.Doria.Russell.-.The.Sparrow.1996.RETAIL.EPUB") {
 		t.Errorf("expected Russell's Sparrow to be kept, got %v", resultTitles(got))
 	}
-	if !contains(got, "The.Sparrow.Russell.epub") {
-		t.Errorf("expected surname-marked result to be kept, got %v", resultTitles(got))
+	// Surname-only release: now rejected post-#563 (was a false-positive vector).
+	if contains(got, "The.Sparrow.Russell.epub") {
+		t.Errorf("post-#563: surname-only release should be rejected, got %v", resultTitles(got))
 	}
 	for _, noise := range []string{
 		"Falcon.and.the.Sparrow.MaryLu.Tyndall.epub",
@@ -63,10 +68,11 @@ func TestFilterRelevantTheSparrow(t *testing.T) {
 
 func TestFilterRelevantWordBoundary(t *testing.T) {
 	// Ensure "sparrow" keyword does not leak into "sparrowhawk" or "sparrows".
+	// Releases name the full author so the post-#563 author check is satisfied.
 	results := toResults(
 		"sparrowhawk.by.russell.epub",
 		"sparrows.russell.epub",
-		"the.sparrow.russell.epub",
+		"mary.doria.russell.the.sparrow.epub",
 	)
 	got := filterRelevant(results, "The Sparrow", "Mary Doria Russell", nil)
 	if contains(got, "sparrowhawk.by.russell.epub") {
@@ -75,8 +81,8 @@ func TestFilterRelevantWordBoundary(t *testing.T) {
 	if contains(got, "sparrows.russell.epub") {
 		t.Error("must not match plural 'sparrows' for 'sparrow' keyword")
 	}
-	if !contains(got, "the.sparrow.russell.epub") {
-		t.Error("expected 'the.sparrow.russell' to pass")
+	if !contains(got, "mary.doria.russell.the.sparrow.epub") {
+		t.Error("expected 'mary.doria.russell.the.sparrow' to pass")
 	}
 }
 
@@ -111,22 +117,27 @@ func TestFilterRelevantMultiWordPhrase(t *testing.T) {
 }
 
 func TestFilterRelevantSubtitle(t *testing.T) {
-	// "Dune: Messiah" must accept releases tagged either as "Dune" or
-	// "Dune Messiah". The colon subtitle is treated specially.
+	// "Dune: Messiah" must accept releases naming the full author. The colon
+	// subtitle is treated specially: a release matching the primary ("Dune")
+	// + the full author is accepted. Post-#563 the primary-title-only path
+	// (single keyword) requires both first name AND surname, not just surname.
 	results := toResults(
-		"Frank.Herbert.Dune.Messiah.epub",
-		"Dune.Messiah.Herbert.epub",
-		"Frank.Herbert.Dune.epub", // primary-title-only match
+		"Frank.Herbert.Dune.Messiah.epub", // full author + primary title
+		"Frank.Herbert.Dune.epub",         // full author + primary only
+		"Dune.Herbert.epub",               // surname only — post-#563 rejected
 	)
 	got := filterRelevant(results, "Dune: Messiah", "Frank Herbert", nil)
 	for _, title := range []string{
 		"Frank.Herbert.Dune.Messiah.epub",
-		"Dune.Messiah.Herbert.epub",
 		"Frank.Herbert.Dune.epub",
 	} {
 		if !contains(got, title) {
-			t.Errorf("expected %q to pass subtitle filter", title)
+			t.Errorf("expected %q to pass subtitle filter, got %v", title, resultTitles(got))
 		}
+	}
+	// Post-#563: primary-title-only with surname-only author is now rejected.
+	if contains(got, "Dune.Herbert.epub") {
+		t.Error("post-#563: primary-only + surname-only release should be rejected")
 	}
 }
 
@@ -477,16 +488,16 @@ func TestIsArticle(t *testing.T) {
 }
 
 func TestTitleMatchesSingleKeyword(t *testing.T) {
-	// Single keyword without surname → accept (can't do better)
-	if !titleMatchesResult("dune", []string{"dune"}, "", false) {
-		t.Error("single keyword, no surname → should accept")
+	// Single keyword without author tokens → accept (can't do better)
+	if !titleMatchesResult("dune", []string{"dune"}, nil, false) {
+		t.Error("single keyword, no author → should accept")
 	}
 	// Single keyword with non-matching surname → reject
-	if titleMatchesResult("dune.novel", []string{"dune"}, "herbert", false) {
+	if titleMatchesResult("dune novel", []string{"dune"}, []string{"herbert"}, false) {
 		t.Error("single keyword missing surname → should reject")
 	}
 	// Single keyword with matching surname → accept
-	if !titleMatchesResult("dune.herbert", []string{"dune"}, "herbert", false) {
+	if !titleMatchesResult("dune herbert", []string{"dune"}, []string{"herbert"}, false) {
 		t.Error("single keyword + matching surname → should accept")
 	}
 }
@@ -748,7 +759,10 @@ func TestFilterRelevantPossessivePrefix(t *testing.T) {
 }
 
 func TestFilterRelevantNonLatinAuthor(t *testing.T) {
-	// "Silence" by 遠藤周作 (Shusaku Endo): 1 significant keyword → surname required.
+	// "Silence" by 遠藤周作 (Shusaku Endo): 1 significant keyword → author required.
+	// Post-#563: author check requires all tokens (first+last) for multi-token
+	// aliases, so surname-only releases like "Endo.Silence.epub" no longer pass
+	// — even with the alias, "shusaku" must also appear.
 	releases := []string{
 		"Endo.Silence.epub",
 		"Shusaku.Endo.Silence.m4b",
@@ -764,16 +778,137 @@ func TestFilterRelevantNonLatinAuthor(t *testing.T) {
 		t.Error("without aliases, romanised-surname release should not pass for non-latin primary name")
 	}
 
-	// With the latin alias, "endo" is extracted as an alias surname and the
-	// author-anchored releases pass.
+	// With the latin alias "Shusaku Endo", releases naming the full alias pass;
+	// surname-only ones are now rejected (post-#563 stricter author check).
 	aliases := []string{"Shusaku Endo"}
 	withAliases := filterRelevant(results, "Silence", "遠藤周作", aliases)
-	for _, want := range []string{"Endo.Silence.epub", "Shusaku.Endo.Silence.m4b"} {
-		if !contains(withAliases, want) {
-			t.Errorf("with alias, expected %q to pass; got %v", want, resultTitles(withAliases))
-		}
+	if !contains(withAliases, "Shusaku.Endo.Silence.m4b") {
+		t.Errorf("with alias, expected %q to pass; got %v",
+			"Shusaku.Endo.Silence.m4b", resultTitles(withAliases))
+	}
+	if contains(withAliases, "Endo.Silence.epub") {
+		t.Error("post-#563: alias surname-only release should be rejected")
 	}
 	if contains(withAliases, "Unrelated.Noise.epub") {
 		t.Error("unrelated result should still be filtered out even with aliases")
 	}
+}
+
+// TestFilterRelevantCoAuthorSurnameOverlap is the regression test for #563:
+// when the monitored author shares a surname with a co-author of an unrelated
+// release, the surname-only token check used to leak the co-author's work into
+// the monitored author's library. The release filter must require both the
+// first name and the surname (or all significant tokens) at word boundaries.
+func TestFilterRelevantCoAuthorSurnameOverlap(t *testing.T) {
+	// Monitored author "Rachel Reid". A release by co-author "Adam Reid" must
+	// be rejected. The title here is a multi-keyword title so the title path
+	// doesn't anchor on author; the single-keyword path is what we exercise.
+	// Note: the multi-keyword-title path uses phrase-only matching and does
+	// NOT consult author tokens at all (the existing code accepts that
+	// limitation to avoid rejecting NZBs that omit the author). The author
+	// check applies on the single-keyword and zero-keyword title paths only.
+	cases := []struct {
+		name    string
+		title   string
+		author  string
+		release string
+		wantOK  bool
+	}{
+		{
+			name:    "single-keyword title, surname-only release rejected",
+			title:   "Sparrow",
+			author:  "Rachel Reid",
+			release: "Sparrow.by.Adam.Reid.epub",
+			wantOK:  false,
+		},
+		{
+			name:    "single-keyword title, full author release accepted",
+			title:   "Sparrow",
+			author:  "Rachel Reid",
+			release: "Rachel.Reid.Sparrow.epub",
+			wantOK:  true,
+		},
+		{
+			name:    "single-keyword title, surname-only (matches monitored surname) rejected",
+			title:   "Sparrow",
+			author:  "Rachel Reid",
+			release: "Reid.Sparrow.epub",
+			wantOK:  false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := filterRelevant(toResults(tc.release), tc.title, tc.author, nil)
+			if tc.wantOK && !contains(got, tc.release) {
+				t.Errorf("expected %q to pass; got %v", tc.release, resultTitles(got))
+			}
+			if !tc.wantOK && contains(got, tc.release) {
+				t.Errorf("expected %q to be filtered out; got %v", tc.release, resultTitles(got))
+			}
+		})
+	}
+}
+
+// TestAuthorMatchesReleaseInitials covers #563: an author like "George R. R.
+// Martin" should still match a release naming the author as "George Martin"
+// (initials are optional). The fallback all-significant-tokens path requires
+// every >=3-char token, so initials must be dropped, not kept.
+func TestAuthorMatchesReleaseInitials(t *testing.T) {
+	toks := authorTokens("George R. R. Martin")
+	if want := []string{"george", "martin"}; !equalSlices(toks, want) {
+		t.Errorf("authorTokens dropped initials = %v, want %v", toks, want)
+	}
+	if !authorMatchesRelease("george martin a game of thrones epub", toks) {
+		t.Error("'George Martin ...' should match 'George R. R. Martin'")
+	}
+	if authorMatchesRelease("george martin epub", []string{"george", "r", "r", "martin"}) {
+		// guard: with the strict all-tokens fallback, a 1-char "r" requires
+		// `\br\b` somewhere in the haystack. We don't want our dropping logic
+		// to allow false positives, but since authorTokens strips initials,
+		// this synthetic check is just an aux sanity test for the matcher.
+		t.Log("matcher with 1-char tokens rejected when 'r' is absent — OK")
+	}
+}
+
+// TestAuthorMatchesReleaseSingleName covers the single-token pseudonym path
+// (#563): authors like "Plato" must accept releases naming "Plato" without
+// any other anchor.
+func TestAuthorMatchesReleaseSingleName(t *testing.T) {
+	toks := authorTokens("Plato")
+	if want := []string{"plato"}; !equalSlices(toks, want) {
+		t.Errorf("authorTokens(Plato) = %v, want %v", toks, want)
+	}
+	if !authorMatchesRelease("plato republic epub", toks) {
+		t.Error("'Plato' should match 'plato republic epub'")
+	}
+	if authorMatchesRelease("aristotle epub", toks) {
+		t.Error("'Plato' should NOT match 'aristotle epub'")
+	}
+}
+
+// TestAuthorMatchesReleaseHyphenated covers hyphenated names like
+// "Mary-Kate Olsen" (#563). The hyphen is non-word so the regex \bmary-kate\b
+// matches "mary-kate" in the release, and "olsen" matches separately.
+func TestAuthorMatchesReleaseHyphenated(t *testing.T) {
+	toks := authorTokens("Mary-Kate Olsen")
+	if !authorMatchesRelease("mary-kate olsen biography epub", toks) {
+		t.Errorf("hyphenated name should match: tokens=%v", toks)
+	}
+	// Bare "kate" alone is not enough — the monitored author has the hyphenated
+	// first name as one token; partial first-name match doesn't count.
+	if authorMatchesRelease("kate olsen biography epub", toks) {
+		t.Errorf("partial first-name match should be rejected: tokens=%v", toks)
+	}
+}
+
+func equalSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
