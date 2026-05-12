@@ -18,15 +18,17 @@ import (
 
 // Client interacts with a single Newznab-compatible indexer.
 type Client struct {
-	baseURL string
-	apiKey  string
-	http    *http.Client
+	baseURL  string
+	baseHost string
+	apiKey   string
+	http     *http.Client
 }
 
 // New creates a Newznab client for a specific indexer.
 func New(baseURL, apiKey string) *Client {
 	parsedURL := normalizeEndpointURL(baseURL)
 	resolvedAPIKey := strings.TrimSpace(apiKey)
+	var baseHost string
 	if u, err := url.Parse(parsedURL); err == nil {
 		q := u.Query()
 		if resolvedAPIKey == "" {
@@ -37,13 +39,40 @@ func New(baseURL, apiKey string) *Client {
 		q.Del("apikey")
 		u.RawQuery = q.Encode()
 		parsedURL = strings.TrimRight(u.String(), "/")
+		baseHost = strings.ToLower(u.Host)
 	}
 
 	return &Client{
-		baseURL: parsedURL,
-		apiKey:  resolvedAPIKey,
-		http:    &http.Client{Timeout: 30 * time.Second},
+		baseURL:  parsedURL,
+		baseHost: baseHost,
+		apiKey:   resolvedAPIKey,
+		http:     &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+// signDownloadURL appends the indexer's apikey query parameter to a download
+// URL when, and only when, the URL points at the indexer's own host. This
+// fixes Prowlarr-proxy enclosure URLs (which omit the apikey and get rejected
+// by NZBGet as empty content) without leaking the apikey to third-party
+// direct-from-uploader links an indexer might return.
+func (c *Client) signDownloadURL(raw string) string {
+	if raw == "" || c.apiKey == "" {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	if !strings.EqualFold(u.Host, c.baseHost) {
+		return raw
+	}
+	q := u.Query()
+	if q.Get("apikey") != "" {
+		return raw
+	}
+	q.Set("apikey", c.apiKey)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // Caps fetches the indexer capabilities.
@@ -278,7 +307,7 @@ func (c *Client) parseResults(items []rssItem) []SearchResult {
 			GUID:    item.GUID.Value,
 			Title:   item.Title,
 			Size:    item.Enclosure.Length,
-			NZBURL:  item.Enclosure.URL,
+			NZBURL:  c.signDownloadURL(item.Enclosure.URL),
 			PubDate: item.PubDate,
 		}
 
@@ -305,7 +334,7 @@ func (c *Client) parseResults(items []rssItem) []SearchResult {
 		}
 
 		if r.NZBURL == "" {
-			r.NZBURL = item.Link
+			r.NZBURL = c.signDownloadURL(item.Link)
 		}
 
 		results = append(results, r)

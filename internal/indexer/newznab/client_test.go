@@ -3,8 +3,10 @@ package newznab
 import (
 	"context"
 	"encoding/xml"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -579,6 +581,97 @@ func TestNormalizeQueryTitle(t *testing.T) {
 		if got := NormalizeQueryTitle(c.in); got != c.want {
 			t.Errorf("NormalizeQueryTitle(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+// TestSignDownloadURL covers the apikey-signing helper used to fix
+// Prowlarr-proxy NZBGet "empty NZB" rejections (#531). The apikey must be
+// appended to enclosure URLs that target the indexer's own host but never
+// to third-party hosts (would leak credentials) or URLs already carrying
+// an apikey (would clobber a valid one).
+func TestSignDownloadURL(t *testing.T) {
+	c := New("https://prowlarr.local:9696/1/api", "secret123")
+
+	t.Run("same host without apikey gets it appended", func(t *testing.T) {
+		raw := "https://prowlarr.local:9696/1/download?id=abc"
+		got := c.signDownloadURL(raw)
+		u, err := url.Parse(got)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if u.Query().Get("apikey") != "secret123" {
+			t.Errorf("expected apikey=secret123 appended, got %s", got)
+		}
+		if u.Query().Get("id") != "abc" {
+			t.Errorf("expected existing id=abc preserved, got %s", got)
+		}
+	})
+
+	t.Run("same host with existing apikey is left alone", func(t *testing.T) {
+		raw := "https://prowlarr.local:9696/1/download?id=abc&apikey=other"
+		got := c.signDownloadURL(raw)
+		u, err := url.Parse(got)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if u.Query().Get("apikey") != "other" {
+			t.Errorf("expected existing apikey preserved, got %s", got)
+		}
+	})
+
+	t.Run("different host does not get apikey appended", func(t *testing.T) {
+		raw := "https://third-party.example.com/getnzb/xyz?id=999"
+		got := c.signDownloadURL(raw)
+		if strings.Contains(got, "apikey=") {
+			t.Errorf("apikey leaked to third-party host: %s", got)
+		}
+		if got != raw {
+			t.Errorf("expected URL unchanged, got %s", got)
+		}
+	})
+}
+
+// TestParseResults_AppendsApikeyToEnclosure exercises the end-to-end
+// parse path with a Prowlarr-proxy-shaped RSS response: the indexer's
+// enclosure URLs lack the apikey, and parseResults must re-sign them so
+// downstream download clients (NZBGet) can authenticate.
+func TestParseResults_AppendsApikeyToEnclosure(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		// Build an RSS body whose enclosure URLs point back at the same host
+		// but carry no apikey — mirroring what Prowlarr returns when proxying
+		// a Newznab indexer.
+		body := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+  <channel>
+    <newznab:response offset="0" total="1"/>
+    <item>
+      <title>Some Book</title>
+      <guid isPermaLink="true">prowlarr-1</guid>
+      <link>%s/1/download?id=prowlarr-1</link>
+      <enclosure url="%s/1/download?id=prowlarr-1" length="1024" type="application/x-nzb"/>
+      <newznab:attr name="category" value="7020"/>
+    </item>
+  </channel>
+</rss>`, srv.URL, srv.URL)
+		w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL+"/1/api", "the-key")
+	results, err := c.Search(context.Background(), "anything", nil)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if !strings.Contains(results[0].NZBURL, "apikey=the-key") {
+		t.Errorf("expected enclosure NZBURL to be signed with apikey, got %s", results[0].NZBURL)
+	}
+	if !strings.Contains(results[0].NZBURL, "id=prowlarr-1") {
+		t.Errorf("expected enclosure NZBURL to preserve id query, got %s", results[0].NZBURL)
 	}
 }
 
