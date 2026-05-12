@@ -378,8 +378,8 @@ export const api = {
   testHardcover: () => request<HardcoverTestResult>('/hardcover/test', { method: 'POST' }),
 
   // Backup
-  listBackups: () => request<string[]>('/backup'),
-  createBackup: () => request<{ filename: string }>('/backup', { method: 'POST' }),
+  listBackups: () => request<Array<{ name: string; size: number; modTime: string }>>('/backup'),
+  createBackup: () => request<{ name: string; size: number; modTime: string }>('/backup', { method: 'POST' }),
 
   // Calibre
   testCalibre: () => request<CalibreTestResult>('/calibre/test', { method: 'POST' }),

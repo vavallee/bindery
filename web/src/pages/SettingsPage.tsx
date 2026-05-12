@@ -2379,7 +2379,7 @@ function GeneralTab() {
   const [settings, setSettings] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<string | null>(null)
-  const [backups, setBackups] = useState<string[]>([])
+  const [backups, setBackups] = useState<Array<{ name: string; size: number; modTime: string }>>([])
   const [creatingBackup, setCreatingBackup] = useState(false)
   const [scanningLibrary, setScanningLibrary] = useState(false)
   const [scanMessage, setScanMessage] = useState<string | null>(null)
@@ -2497,8 +2497,8 @@ function GeneralTab() {
     setCreatingBackup(true)
     try {
       const result = await api.createBackup()
-      setBackups(prev => [result.filename, ...prev])
-      alert(`Backup created: ${result.filename}`)
+      setBackups(prev => [result, ...prev])
+      alert(`Backup created: ${result.name}`)
     } catch (err) {
       alert('Backup failed: ' + (err instanceof Error ? err.message : 'Unknown error'))
     } finally {
@@ -3143,7 +3143,10 @@ function GeneralTab() {
               <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">{t('settings.general.existingBackups')}</p>
               <ul className="space-y-1">
                 {backups.map(b => (
-                  <li key={b} className="text-xs text-slate-600 dark:text-zinc-400 font-mono">{b}</li>
+                  <li key={b.name} className="text-xs text-slate-600 dark:text-zinc-400">
+                    <span className="font-mono">{b.name}</span>
+                    <span className="ml-2 text-slate-500 dark:text-zinc-500">{formatBackupSize(b.size)} · {formatRelativeTime(b.modTime)}</span>
+                  </li>
                 ))}
               </ul>
             </div>
@@ -3184,6 +3187,27 @@ function GeneralTab() {
 
 function parseCats(s: string): number[] {
   return s.split(',').map(t => parseInt(t.trim(), 10)).filter(n => !isNaN(n))
+}
+
+function formatBackupSize(bytes: number): string {
+  if (!bytes || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)))
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
+}
+
+function formatRelativeTime(iso: string): string {
+  const t = Date.parse(iso)
+  if (isNaN(t)) return ''
+  const diffSec = Math.round((Date.now() - t) / 1000)
+  const abs = Math.abs(diffSec)
+  if (abs < 60) return diffSec >= 0 ? 'just now' : 'in a moment'
+  const mins = Math.round(diffSec / 60)
+  if (Math.abs(mins) < 60) return mins >= 0 ? `${mins}m ago` : `in ${-mins}m`
+  const hrs = Math.round(diffSec / 3600)
+  if (Math.abs(hrs) < 24) return hrs >= 0 ? `${hrs}h ago` : `in ${-hrs}h`
+  const days = Math.round(diffSec / 86400)
+  return days >= 0 ? `${days}d ago` : `in ${-days}d`
 }
 
 function GrimmoryTab() {

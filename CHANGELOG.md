@@ -8,6 +8,8 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ### Fixed
 
+- Backup creation no longer crashes the Settings page; updated frontend types and rendering to match the API response shape (#594).
+
 - **ABS review search results are scrollable and keep book-author links intact** — No-match review author/book searches now show up to 10 scrollable matches instead of truncating after three, and selecting a book result auto-links its author before resolving the book when the review item does not already have a resolved author.
 
 - **Enhanced Hardcover series controls are no longer hidden by default** (#596) — The deployment-wide `BINDERY_ENHANCED_HARDCOVER_API` flag now defaults to enabled, leaving the saved Hardcover token and **Settings -> General** admin toggle as the normal feature gates. Operators can still set the flag to `false` to disable the feature for an entire deployment.
