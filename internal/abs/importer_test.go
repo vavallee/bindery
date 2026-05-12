@@ -959,6 +959,161 @@ func TestImporter_RepairsStaleABSAuthorProvenance(t *testing.T) {
 	}
 }
 
+func TestImporter_RepairsStaleABSAuthorProvenanceWithABSSourcedAlias(t *testing.T) {
+	t.Parallel()
+
+	importer, authorRepo, bookRepo, _, _, provenanceRepo, _, _, _, _ := newABSImporterFixture(t)
+	ctx := context.Background()
+	wrong := &models.Author{
+		ForeignID:        "OL-GRAPHIC",
+		Name:             "GraphicAudio",
+		SortName:         "GraphicAudio",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := authorRepo.Create(ctx, wrong); err != nil {
+		t.Fatalf("Create wrong author: %v", err)
+	}
+	correct := &models.Author{
+		ForeignID:        "OL-BRANDON",
+		Name:             "Brandon Sanderson",
+		SortName:         "Sanderson, Brandon",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := authorRepo.Create(ctx, correct); err != nil {
+		t.Fatalf("Create correct author: %v", err)
+	}
+	if err := importer.aliases.Create(ctx, &models.AuthorAlias{AuthorID: wrong.ID, Name: "Brandon Sanderson", SourceOLID: "abs"}); err != nil {
+		t.Fatalf("Create bad ABS alias: %v", err)
+	}
+
+	item := sampleABSItem()
+	item.ItemID = "li-arcanum"
+	item.Title = "Arcanum Unbounded: The Cosmere Collection"
+	item.ASIN = "B01K5Q6VWO"
+	item.Authors = []NormalizedAuthor{{ID: "author-brandon-sanderson", Name: "Brandon Sanderson"}}
+	item.Series = nil
+	item.AudioFiles = []NormalizedAudioFile{{INO: "audio-arcanum", Path: "/abs/arcanum.m4b"}}
+	item.EbookPath = ""
+	item.EbookINO = ""
+
+	book := &models.Book{
+		ForeignID:        absForeignID("book", item.LibraryID, item.ItemID),
+		AuthorID:         wrong.ID,
+		Title:            item.Title,
+		SortTitle:        item.Title,
+		Monitored:        true,
+		Status:           models.BookStatusWanted,
+		AnyEditionOK:     true,
+		MediaType:        models.MediaTypeAudiobook,
+		ASIN:             item.ASIN,
+		MetadataProvider: providerAudiobookshelf,
+	}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatalf("Create bad book: %v", err)
+	}
+	if err := provenanceRepo.Upsert(ctx, &models.ABSProvenance{
+		SourceID:   DefaultSourceID,
+		LibraryID:  item.LibraryID,
+		EntityType: entityTypeAuthor,
+		ExternalID: authorExternalID(item.Authors[0]),
+		LocalID:    wrong.ID,
+		ItemID:     item.ItemID,
+	}); err != nil {
+		t.Fatalf("Upsert bad author provenance: %v", err)
+	}
+	if err := provenanceRepo.Upsert(ctx, &models.ABSProvenance{
+		SourceID:   DefaultSourceID,
+		LibraryID:  item.LibraryID,
+		EntityType: entityTypeBook,
+		ExternalID: item.ItemID,
+		LocalID:    book.ID,
+		ItemID:     item.ItemID,
+	}); err != nil {
+		t.Fatalf("Upsert book provenance: %v", err)
+	}
+
+	runSingleABSImport(t, importer, item)
+
+	updated, err := bookRepo.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if updated.AuthorID != correct.ID {
+		t.Fatalf("book author_id = %d, want corrected Brandon Sanderson author %d", updated.AuthorID, correct.ID)
+	}
+	link, err := provenanceRepo.GetByExternal(ctx, DefaultSourceID, item.LibraryID, entityTypeAuthor, authorExternalID(item.Authors[0]))
+	if err != nil {
+		t.Fatalf("GetByExternal author provenance: %v", err)
+	}
+	if link == nil || link.LocalID != correct.ID {
+		t.Fatalf("author provenance = %+v, want local_id %d", link, correct.ID)
+	}
+	aliases, err := importer.aliases.ListByAuthor(ctx, wrong.ID)
+	if err != nil {
+		t.Fatalf("ListByAuthor wrong: %v", err)
+	}
+	if len(aliases) != 0 {
+		t.Fatalf("wrong aliases = %+v, want stale ABS alias deleted", aliases)
+	}
+}
+
+func TestImporter_CleanupABSSourcedAliases(t *testing.T) {
+	t.Parallel()
+
+	importer, authorRepo, _, _, _, _, _, _, _, _ := newABSImporterFixture(t)
+	ctx := context.Background()
+	author := &models.Author{
+		ForeignID:        "OL-BRANDON",
+		Name:             "Brandon Sanderson",
+		SortName:         "Sanderson, Brandon",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatalf("Create author: %v", err)
+	}
+	aliases := []*models.AuthorAlias{
+		{AuthorID: author.ID, Name: "GraphicAudio", SourceOLID: "abs"},
+		{AuthorID: author.ID, Name: "Brandon Sanderson", SourceOLID: "abs"},
+		{AuthorID: author.ID, Name: "B Sanderson", SourceOLID: "abs"},
+		{AuthorID: author.ID, Name: "Robert Jordan"},
+		{AuthorID: author.ID, Name: "Upstream Pen Name", SourceOLID: "OL-PEN"},
+	}
+	for _, alias := range aliases {
+		if err := importer.aliases.Create(ctx, alias); err != nil {
+			t.Fatalf("Create alias %q: %v", alias.Name, err)
+		}
+	}
+
+	removed, err := importer.cleanupABSSourcedAliases(ctx)
+	if err != nil {
+		t.Fatalf("cleanupABSSourcedAliases: %v", err)
+	}
+	if removed != 2 {
+		t.Fatalf("removed = %d, want 2", removed)
+	}
+	got, err := importer.aliases.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatalf("ListByAuthor: %v", err)
+	}
+	remaining := make(map[string]string)
+	for _, alias := range got {
+		remaining[alias.Name] = alias.SourceOLID
+	}
+	for _, removedName := range []string{"GraphicAudio", "Brandon Sanderson"} {
+		if _, ok := remaining[removedName]; ok {
+			t.Fatalf("remaining aliases = %+v, want %q removed", got, removedName)
+		}
+	}
+	for _, keptName := range []string{"B Sanderson", "Robert Jordan", "Upstream Pen Name"} {
+		if _, ok := remaining[keptName]; !ok {
+			t.Fatalf("remaining aliases = %+v, want %q preserved", got, keptName)
+		}
+	}
+}
+
 func TestImporter_TrustedSourceAliasStillMatchesAuthor(t *testing.T) {
 	t.Parallel()
 

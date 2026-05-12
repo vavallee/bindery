@@ -280,6 +280,17 @@ func (i *Importer) run(ctx context.Context, cfg ImportConfig) *ImportStats {
 		return stats
 	}
 
+	if !cfg.DryRun {
+		removedAliases, err := i.cleanupABSSourcedAliases(ctx)
+		if err != nil {
+			i.fail(fmt.Errorf("cleanup abs-sourced author aliases: %w", err))
+			return stats
+		}
+		if removedAliases > 0 {
+			slog.Info("abs import: cleaned stale abs-sourced author aliases", "removed", removedAliases)
+		}
+	}
+
 	authorMatcher, err := i.newAuthorMatcher(ctx)
 	if err != nil {
 		i.fail(err)

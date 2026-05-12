@@ -52,6 +52,40 @@ func (h *AuthorAliasHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, aliases)
 }
 
+// Delete removes one alias from the author in the URL.
+// DELETE /api/v1/author/{id}/aliases/{aliasID}
+func (h *AuthorAliasHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	authorID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	aliasID, err := strconv.ParseInt(chi.URLParam(r, "aliasID"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid alias id"})
+		return
+	}
+	author, err := h.authors.GetByID(r.Context(), authorID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if author == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
+		return
+	}
+	deleted, err := h.aliases.DeleteForAuthor(r.Context(), authorID, aliasID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if !deleted {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "alias not found"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // Merge collapses the given source author into the target author in the URL.
 // Books are reparented, the source's name + OL id are preserved as aliases,
 // and the source row is deleted. All in one transaction.

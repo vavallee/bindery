@@ -233,6 +233,8 @@ export const api = {
   refreshAuthor: (id: number) => request<void>(`/author/${id}/refresh`, { method: 'POST' }),
   relinkAuthorUpstream: (id: number) => request<Author>(`/author/${id}/relink-upstream`, { method: 'POST' }),
   listAuthorAliases: (id: number) => request<AuthorAlias[]>(`/author/${id}/aliases`),
+  deleteAuthorAlias: (authorId: number, aliasId: number) =>
+    request<void>(`/author/${authorId}/aliases/${aliasId}`, { method: 'DELETE' }),
   mergeAuthors: (targetId: number, sourceId: number, overwriteDefaults = true) =>
     request<MergeAuthorsResult>(`/author/${targetId}/merge`, {
       method: 'POST',

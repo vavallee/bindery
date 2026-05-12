@@ -146,6 +146,21 @@ func (r *AuthorAliasRepo) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
+// DeleteForAuthor removes a single alias row only when it belongs to authorID.
+// The boolean return distinguishes "not found for this author" from database
+// errors so API callers can return 404 without a separate ownership check.
+func (r *AuthorAliasRepo) DeleteForAuthor(ctx context.Context, authorID, id int64) (bool, error) {
+	result, err := r.db.ExecContext(ctx, "DELETE FROM author_aliases WHERE id = ? AND author_id = ?", id, authorID)
+	if err != nil {
+		return false, fmt.Errorf("delete alias %d for author %d: %w", id, authorID, err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("check alias deletion %d for author %d: %w", id, authorID, err)
+	}
+	return affected > 0, nil
+}
+
 // MergeOptions controls how field-level settings are carried from source to
 // target during Merge. `OverwriteDefaults` means "copy source.monitored /
 // *_profile_id / root_folder_id onto target only if target's value looks

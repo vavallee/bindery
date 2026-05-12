@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import AuthorDetailPage from './AuthorDetailPage'
 import { api } from '../api/client'
@@ -17,6 +17,7 @@ vi.mock('../api/client', async importOriginal => {
       refreshAuthor: vi.fn(),
       updateAuthor: vi.fn(),
       deleteAuthor: vi.fn(),
+      deleteAuthorAlias: vi.fn(),
       searchAuthorWanted: vi.fn(),
     },
   }
@@ -77,9 +78,9 @@ function installLocalStorageMock() {
   Object.defineProperty(window, 'localStorage', { value: storage, configurable: true })
 }
 
-function renderAuthorDetailPage(books: Book[], view: 'grid' | 'table' = 'grid') {
+function renderAuthorDetailPage(books: Book[], view: 'grid' | 'table' = 'grid', authorData: Author = author) {
   localStorage.setItem('bindery.view.author-detail', view)
-  vi.mocked(api.getAuthor).mockResolvedValue(author)
+  vi.mocked(api.getAuthor).mockResolvedValue(authorData)
   vi.mocked(api.listBooks).mockResolvedValue(books)
 
   return render(
@@ -104,6 +105,7 @@ describe('AuthorDetailPage', () => {
     vi.mocked(api.searchAuthorWanted).mockResolvedValue({
       results: { '42': { ok: true } },
     })
+    vi.mocked(api.deleteAuthorAlias).mockResolvedValue(undefined)
   })
 
   it('searches all wanted books for the current author', async () => {
@@ -132,6 +134,52 @@ describe('AuthorDetailPage', () => {
     fireEvent.click(button)
 
     expect(api.searchAuthorWanted).not.toHaveBeenCalled()
+  })
+
+  it('removes an author alias', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    renderAuthorDetailPage([], 'grid', {
+      ...author,
+      aliases: [
+        { id: 1, authorId: 42, name: 'Robert Jordan', createdAt: '2026-05-12T00:00:00Z' },
+        { id: 2, authorId: 42, name: 'GraphicAudio', sourceOlId: 'abs', createdAt: '2026-05-12T00:00:00Z' },
+      ],
+    })
+
+    await screen.findByText('Robert Jordan')
+    fireEvent.click(screen.getByRole('button', { name: 'Remove alias Robert Jordan' }))
+
+    await waitFor(() => expect(api.deleteAuthorAlias).toHaveBeenCalledWith(42, 1))
+    expect(screen.queryByText('Robert Jordan')).not.toBeInTheDocument()
+    expect(screen.getByText('GraphicAudio')).toBeInTheDocument()
+    confirmSpy.mockRestore()
+  })
+
+  it('keeps concurrent alias removals from restoring stale aliases', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const deletes: Array<() => void> = []
+    vi.mocked(api.deleteAuthorAlias).mockImplementation(() => new Promise(resolve => {
+      deletes.push(resolve)
+    }))
+    renderAuthorDetailPage([], 'grid', {
+      ...author,
+      aliases: [
+        { id: 1, authorId: 42, name: 'Robert Jordan', createdAt: '2026-05-12T00:00:00Z' },
+        { id: 2, authorId: 42, name: 'GraphicAudio', sourceOlId: 'abs', createdAt: '2026-05-12T00:00:00Z' },
+      ],
+    })
+
+    await screen.findByText('Robert Jordan')
+    fireEvent.click(screen.getByRole('button', { name: 'Remove alias Robert Jordan' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove alias GraphicAudio' }))
+    await waitFor(() => expect(api.deleteAuthorAlias).toHaveBeenCalledTimes(2))
+
+    await act(async () => { deletes[1]() })
+    await act(async () => { deletes[0]() })
+
+    expect(screen.queryByText('Robert Jordan')).not.toBeInTheDocument()
+    expect(screen.queryByText('GraphicAudio')).not.toBeInTheDocument()
+    confirmSpy.mockRestore()
   })
 
   it('keeps table metadata visible and repeats it in compact title rows', async () => {

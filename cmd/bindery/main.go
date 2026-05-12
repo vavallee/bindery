@@ -599,6 +599,7 @@ func main() {
 		r.Post("/author/{id}/refresh", authorHandler.Refresh)
 		r.Post("/author/{id}/relink-upstream", authorHandler.RelinkUpstream)
 		r.Get("/author/{id}/aliases", authorAliasHandler.List)
+		r.Delete("/author/{id}/aliases/{aliasID}", authorAliasHandler.Delete)
 		r.Post("/author/{id}/merge", authorAliasHandler.Merge)
 
 		// Books

@@ -199,6 +199,55 @@ func TestAliasDelete(t *testing.T) {
 	}
 }
 
+func TestAliasDeleteForAuthor(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	authorRepo := NewAuthorRepo(database)
+	aliasRepo := NewAuthorAliasRepo(database)
+
+	a := seedAuthor(t, authorRepo, "OL1A", "Author A")
+	other := seedAuthor(t, authorRepo, "OL2A", "Author B")
+	alias := &models.AuthorAlias{AuthorID: a.ID, Name: "scoped delete"}
+	if err := aliasRepo.Create(ctx, alias); err != nil {
+		t.Fatal(err)
+	}
+
+	deleted, err := aliasRepo.DeleteForAuthor(ctx, other.ID, alias.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted {
+		t.Fatal("DeleteForAuthor deleted alias for the wrong author")
+	}
+	got, err := aliasRepo.LookupByName(ctx, "scoped delete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || *got != a.ID {
+		t.Fatalf("alias lookup = %v, want author %d", got, a.ID)
+	}
+
+	deleted, err = aliasRepo.DeleteForAuthor(ctx, a.ID, alias.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !deleted {
+		t.Fatal("DeleteForAuthor did not delete alias for owning author")
+	}
+	got, err = aliasRepo.LookupByName(ctx, "scoped delete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Errorf("expected lookup miss after scoped delete, got %d", *got)
+	}
+}
+
 func TestAliasCascadeOnAuthorDelete(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {

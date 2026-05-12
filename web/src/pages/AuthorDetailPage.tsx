@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { api, Author, Book } from '../api/client'
+import { api, Author, AuthorAlias, Book } from '../api/client'
 import ViewToggle from '../components/ViewToggle'
 import MergeAuthorsModal from '../components/MergeAuthorsModal'
 import EditAuthorModal from '../components/EditAuthorModal'
@@ -192,6 +192,21 @@ export default function AuthorDetailPage() {
     }
   }
 
+  const handleDeleteAlias = async (alias: AuthorAlias) => {
+    if (!author) return
+    if (!confirm(`Remove alias "${alias.name}" from ${author.authorName}?`)) return
+    setError(null)
+    try {
+      await api.deleteAuthorAlias(author.id, alias.id)
+      setAuthor(current => current ? {
+        ...current,
+        aliases: (current.aliases ?? []).filter(a => a.id !== alias.id),
+      } : current)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Remove alias failed')
+    }
+  }
+
   const filteredBooks = useMemo(() => {
     let list = books
     if (typeFilter) list = list.filter(b => (b.mediaType || 'ebook') === typeFilter)
@@ -313,10 +328,19 @@ export default function AuthorDetailPage() {
                 {author.aliases.map(a => (
                   <span
                     key={a.id}
-                    className="px-2 py-0.5 rounded bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300"
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300"
                     title={a.sourceOlId ? `From ${a.sourceOlId}` : undefined}
                   >
-                    {a.name}
+                    <span>{a.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteAlias(a)}
+                      className="ml-0.5 text-slate-500 hover:text-red-600 dark:text-zinc-500 dark:hover:text-red-400 leading-none"
+                      aria-label={`Remove alias ${a.name}`}
+                      title={`Remove alias ${a.name}`}
+                    >
+                      ×
+                    </button>
                   </span>
                 ))}
               </div>
