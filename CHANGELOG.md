@@ -9,6 +9,7 @@ All notable changes to Bindery are documented here. Format loosely follows
 ### Added
 
 - **Discord stats voice channels** — A k8s CronJob in `deploy/discord-stats.yaml` updates three Discord voice channels every 10 minutes with live active-install count, latest released version, and GitHub star count. Powered by a new `/stats.json` JSON endpoint on the telemetry server. Setup steps in `deploy/README.md`.
+- **Live ISBN provider integration tests** — New torture-corpus tests (`BINDERY_INTEGRATION=1` to run) exercise the aggregator's ISBN fallback chain against real DNB / OpenLibrary / GoogleBooks / Hardcover endpoints. Useful for catching upstream schema drift; skipped by default to avoid CI flake. Extracted from #515.
 
 ### Fixed
 
