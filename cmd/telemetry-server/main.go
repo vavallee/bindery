@@ -1420,6 +1420,9 @@ func (s *server) computePreviewData(ctx context.Context, f previewFilters) (*pre
 			}
 			lonMap[bucket] = count
 		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
 		for _, label := range []string{"< 1 week", "1–4 weeks", "1–3 months", "3+ months"} {
 			d.Longevity = append(d.Longevity, statsBucket{Label: label, Count: lonMap[label]})
 		}
@@ -1433,6 +1436,7 @@ func (s *server) computePreviewData(ctx context.Context, f previewFilters) (*pre
 	chartCutoff := today.AddDate(0, 0, -(days - 1))
 	{
 		args := []any{chartCutoff}
+		// #nosec G202 -- extraWhere is static fragments; values bound via extraArgs.
 		q := `SELECT substr(last_seen, 1, 10) AS day, COUNT(*) FROM installs WHERE last_seen >= ?` + extraWhere
 		args = append(args, extraArgs...)
 		q += ` GROUP BY day ORDER BY day`
@@ -1451,6 +1455,9 @@ func (s *server) computePreviewData(ctx context.Context, f previewFilters) (*pre
 			}
 			dayCount[day] = count
 		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
 		for i := days - 1; i >= 0; i-- {
 			day := today.AddDate(0, 0, -i)
 			key := day.Format("2006-01-02")
@@ -1461,6 +1468,7 @@ func (s *server) computePreviewData(ctx context.Context, f previewFilters) (*pre
 	// New installs per day over the same window.
 	{
 		args := []any{chartCutoff}
+		// #nosec G202 -- extraWhere is static fragments; values bound via extraArgs.
 		q := `SELECT substr(first_seen, 1, 10) AS day, COUNT(*) FROM installs WHERE first_seen >= ?` + extraWhere
 		args = append(args, extraArgs...)
 		q += ` GROUP BY day ORDER BY day`
@@ -1478,6 +1486,9 @@ func (s *server) computePreviewData(ctx context.Context, f previewFilters) (*pre
 				return nil, err
 			}
 			dayCount[day] = count
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
 		}
 		for i := days - 1; i >= 0; i-- {
 			day := today.AddDate(0, 0, -i)
@@ -1499,6 +1510,7 @@ func (s *server) computePreviewData(ctx context.Context, f previewFilters) (*pre
 	// existing query shape but with the range-aware cutoff + OS/deploy filter.
 	{
 		args := []any{chartCutoff}
+		// #nosec G202 -- extraWhere is static fragments; values bound via extraArgs.
 		q := `SELECT substr(last_seen, 1, 10) AS day, version, COUNT(*) FROM installs WHERE last_seen >= ?` + extraWhere
 		args = append(args, extraArgs...)
 		q += ` GROUP BY day, version ORDER BY day`
@@ -1519,6 +1531,9 @@ func (s *server) computePreviewData(ctx context.Context, f previewFilters) (*pre
 				vtMap[day] = make(map[string]int)
 			}
 			vtMap[day][ver] = count
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
 		}
 		for i := days - 1; i >= 0; i-- {
 			day := today.AddDate(0, 0, -i)
