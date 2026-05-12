@@ -2759,7 +2759,7 @@ function GeneralTab() {
               {lastScan.unmatched_files && lastScan.unmatched_files.length > 0 && (
                 <details className="mt-3">
                   <summary className="cursor-pointer font-medium text-slate-700 dark:text-zinc-300 hover:text-slate-900 dark:hover:text-zinc-100">
-                    Unmatched files ({lastScan.unmatched_files.length}{lastScan.unmatched > 1000 ? ' of ' + lastScan.unmatched : ''})
+                    Unmatched files ({lastScan.unmatched_files.length}{lastScan.unmatched_files.length >= 1000 && lastScan.unmatched > 1000 ? ' of ' + lastScan.unmatched : ''})
                   </summary>
                   <div className="mt-2 max-h-80 overflow-y-auto border border-slate-200 dark:border-zinc-800 rounded bg-slate-50 dark:bg-zinc-950/50">
                     <table className="w-full text-xs">
