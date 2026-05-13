@@ -2,6 +2,7 @@ package nzbget
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -91,19 +92,30 @@ func TestTest_EmptyVersion(t *testing.T) {
 	}
 }
 
-// TestAdd verifies that Add sends the correct JSON-RPC request and returns the NZBID.
+const testNZBContent = `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE nzb PUBLIC "-//newzBin//DTD NZB 1.1//EN" "http://www.newzbin.com/DTD/nzb/nzb-1.1.dtd"><nzb></nzb>`
+
+// TestAdd verifies that Add fetches NZB content from the indexer and submits it
+// as base64 to NZBGet's append RPC (rather than sending a URL for NZBGet to
+// fetch itself, which fails when NZBGet can't reach the indexer).
 func TestAdd(t *testing.T) {
+	// indexerSrv serves the NZB file, simulating a Prowlarr proxy download URL.
+	indexerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-nzb")
+		fmt.Fprint(w, testNZBContent)
+	}))
+	defer indexerSrv.Close()
+
 	var gotReq rpcRequest
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	nzbgetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotReq = decodeRequest(t, r)
 		json.NewEncoder(w).Encode(appendResponse{Result: 42})
 	}))
-	defer srv.Close()
+	defer nzbgetSrv.Close()
 
-	host, port := serverHostPort(t, srv.URL)
+	host, port := serverHostPort(t, nzbgetSrv.URL)
 	c := New(host, port, "user", "pass", "", false)
 
-	id, err := c.Add(context.Background(), "https://example.com/file.nzb", "Test Book", "books", 0)
+	id, err := c.Add(context.Background(), indexerSrv.URL+"/file.nzb", "Test Book", "books", 0)
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -113,21 +125,72 @@ func TestAdd(t *testing.T) {
 	if gotReq.Method != "append" {
 		t.Errorf("expected method=append, got %q", gotReq.Method)
 	}
+	// Verify content was sent as base64, not a URL.
+	if len(gotReq.Params) < 2 {
+		t.Fatal("expected at least 2 params in append request")
+	}
+	raw, ok := gotReq.Params[1].(string)
+	if !ok {
+		t.Fatalf("param[1] is not a string: %T", gotReq.Params[1])
+	}
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
+		t.Errorf("Add must send base64 content, not a URL; got %q", raw)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		t.Fatalf("param[1] is not valid base64: %v", err)
+	}
+	if string(decoded) != testNZBContent {
+		t.Errorf("NZB content mismatch: got %q, want %q", string(decoded), testNZBContent)
+	}
 }
 
 // TestAdd_Rejected verifies that Add returns an error when NZBGet rejects the download.
 func TestAdd_Rejected(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	indexerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, testNZBContent)
+	}))
+	defer indexerSrv.Close()
+
+	nzbgetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(appendResponse{Result: 0})
 	}))
-	defer srv.Close()
+	defer nzbgetSrv.Close()
 
-	host, port := serverHostPort(t, srv.URL)
+	host, port := serverHostPort(t, nzbgetSrv.URL)
 	c := New(host, port, "", "", "", false)
 
-	_, err := c.Add(context.Background(), "https://example.com/bad.nzb", "Bad NZB", "books", 0)
+	_, err := c.Add(context.Background(), indexerSrv.URL+"/bad.nzb", "Bad NZB", "books", 0)
 	if err == nil {
 		t.Fatal("expected error when NZBGet rejects download")
+	}
+}
+
+// TestAdd_FetchFailure verifies that Add returns a clear error when the NZB
+// cannot be fetched from the indexer (e.g. auth failure), rather than sending
+// a URL for NZBGet to fail on silently.
+func TestAdd_FetchFailure(t *testing.T) {
+	indexerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	}))
+	defer indexerSrv.Close()
+
+	// NZBGet should never be called — Add must fail at the fetch step.
+	nzbgetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("NZBGet append must not be called when NZB fetch fails")
+		json.NewEncoder(w).Encode(appendResponse{Result: 1})
+	}))
+	defer nzbgetSrv.Close()
+
+	host, port := serverHostPort(t, nzbgetSrv.URL)
+	c := New(host, port, "", "", "", false)
+
+	_, err := c.Add(context.Background(), indexerSrv.URL+"/file.nzb", "Book", "books", 0)
+	if err == nil {
+		t.Fatal("expected error on fetch failure")
+	}
+	if !strings.Contains(err.Error(), "401") {
+		t.Errorf("expected HTTP 401 in error, got: %v", err)
 	}
 }
 

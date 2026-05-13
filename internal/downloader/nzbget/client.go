@@ -5,11 +5,13 @@ package nzbget
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/vavallee/bindery/internal/downloader/nethint"
@@ -18,8 +20,9 @@ import (
 
 // Client interacts with the NZBGet JSON-RPC API.
 type Client struct {
-	baseURL string
-	http    *http.Client
+	baseURL  string
+	http     *http.Client // NZBGet JSON-RPC transport
+	fetchHTTP *http.Client // used to fetch NZB content from indexers before submission
 	// username and password for HTTP Basic auth
 	username string
 	password string
@@ -34,10 +37,11 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 		scheme = "https"
 	}
 	return &Client{
-		baseURL:  fmt.Sprintf("%s://%s:%d%s/jsonrpc", scheme, host, port, urlbase.Normalize(urlBase)),
-		username: username,
-		password: password,
-		http:     &http.Client{Timeout: 15 * time.Second},
+		baseURL:   fmt.Sprintf("%s://%s:%d%s/jsonrpc", scheme, host, port, urlbase.Normalize(urlBase)),
+		username:  username,
+		password:  password,
+		http:      &http.Client{Timeout: 15 * time.Second},
+		fetchHTTP: &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
@@ -53,12 +57,23 @@ func (c *Client) Test(ctx context.Context) error {
 	return nil
 }
 
-// Add submits an NZB by URL to NZBGet and returns the NZBID as a string.
+// Add fetches the NZB file from nzbURL (using Bindery's own HTTP client, which
+// holds the indexer credentials and network path) then submits the content to
+// NZBGet as base64. Sending content rather than a URL means NZBGet never needs
+// to reach the indexer directly — which fails in containerised setups where
+// Prowlarr's signed download URL is only reachable from Bindery's network
+// context, not NZBGet's.
+//
 // The priority parameter maps to NZBGet priorities: 0=normal, 100=high, -100=low.
 func (c *Client) Add(ctx context.Context, nzbURL, name, category string, priority int) (int, error) {
-	// append params: name, url, category, priority, dupecheck, dupekey, dupescore,
+	content, err := c.fetchNZBContent(ctx, nzbURL)
+	if err != nil {
+		return 0, err
+	}
+	encoded := base64.StdEncoding.EncodeToString(content)
+	// append params: name, content, category, priority, dupecheck, dupekey, dupescore,
 	//                ppparameters (array), addtoTop, addpaused, urlpassword, postscript
-	params := []any{name, nzbURL, category, priority, false, "", 0, []any{}, false, false, "", ""}
+	params := []any{name, encoded, category, priority, false, "", 0, []any{}, false, false, "", ""}
 	var resp appendResponse
 	if err := c.call(ctx, "append", params, &resp); err != nil {
 		return 0, fmt.Errorf("add nzb: %w", err)
@@ -67,6 +82,23 @@ func (c *Client) Add(ctx context.Context, nzbURL, name, category string, priorit
 		return 0, fmt.Errorf("NZBGet rejected download (returned id %d)", resp.Result)
 	}
 	return resp.Result, nil
+}
+
+func (c *Client) fetchNZBContent(ctx context.Context, nzbURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, nzbURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("fetch nzb: %w", err)
+	}
+	resp, err := c.fetchHTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch nzb from indexer: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return nil, fmt.Errorf("fetch nzb: indexer returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 50<<20)) // 50 MB cap
 }
 
 // GetQueue returns the active download groups from NZBGet.
