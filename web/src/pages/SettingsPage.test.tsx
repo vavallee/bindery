@@ -67,6 +67,7 @@ vi.mock('../api/client', async importOriginal => {
       testHardcover: vi.fn(),
       triggerLibraryScan: vi.fn(),
       createBackup: vi.fn(),
+      deleteBackup: vi.fn(),
       addRootFolder: vi.fn(),
       authConfig: vi.fn(),
       authSetMode: vi.fn(),
@@ -186,6 +187,7 @@ function seedSettingsMocks(options: {
     vi.mocked(api.setSetting).mockResolvedValue(undefined)
     vi.mocked(api.triggerLibraryScan).mockResolvedValue({ message: 'started' })
     vi.mocked(api.createBackup).mockResolvedValue({ name: 'bindery-backup.zip', size: 0, modTime: '' })
+    vi.mocked(api.deleteBackup).mockResolvedValue(undefined)
     vi.mocked(api.addRootFolder).mockImplementation(async path => makeRootFolder({ id: 99, path }))
     vi.mocked(api.testHardcover).mockResolvedValue({
       ok: true,
@@ -965,6 +967,25 @@ describe('SettingsPage', () => {
       await waitFor(() => expect(screen.queryByText('Client Actions')).not.toBeInTheDocument())
     } finally {
       alertSpy.mockRestore()
+    }
+  })
+
+  it('deletes a backup from the list', async () => {
+    const backup = { name: 'bindery_20260513_120000.db', size: 1024 * 512, modTime: new Date().toISOString() }
+    vi.mocked(api.listBackups).mockResolvedValue([backup])
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    try {
+      renderSettings()
+
+      expect(await screen.findByText(backup.name)).toBeInTheDocument()
+
+      const deleteBtn = screen.getByRole('button', { name: 'common.delete' })
+      fireEvent.click(deleteBtn)
+
+      await waitFor(() => expect(api.deleteBackup).toHaveBeenCalledWith(backup.name))
+      await waitFor(() => expect(screen.queryByText(backup.name)).not.toBeInTheDocument())
+    } finally {
+      confirmSpy.mockRestore()
     }
   })
 })

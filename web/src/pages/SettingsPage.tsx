@@ -2381,6 +2381,7 @@ function GeneralTab() {
   const [saving, setSaving] = useState<string | null>(null)
   const [backups, setBackups] = useState<Array<{ name: string; size: number; modTime: string }>>([])
   const [creatingBackup, setCreatingBackup] = useState(false)
+  const [deletingBackup, setDeletingBackup] = useState<string | null>(null)
   const [scanningLibrary, setScanningLibrary] = useState(false)
   const [scanMessage, setScanMessage] = useState<string | null>(null)
   const scanStartedAt = useRef<number>(0)
@@ -2511,6 +2512,19 @@ function GeneralTab() {
       alert('Backup failed: ' + (err instanceof Error ? err.message : 'Unknown error'))
     } finally {
       setCreatingBackup(false)
+    }
+  }
+
+  const handleDeleteBackup = async (filename: string) => {
+    if (!confirm(`Delete backup ${filename}?`)) return
+    setDeletingBackup(filename)
+    try {
+      await api.deleteBackup(filename)
+      setBackups(prev => prev.filter(b => b.name !== filename))
+    } catch (err) {
+      alert('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown error'))
+    } finally {
+      setDeletingBackup(null)
     }
   }
 
@@ -3178,9 +3192,18 @@ function GeneralTab() {
               <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">{t('settings.general.existingBackups')}</p>
               <ul className="space-y-1">
                 {backups.map(b => (
-                  <li key={b.name} className="text-xs text-slate-600 dark:text-zinc-400">
-                    <span className="font-mono">{b.name}</span>
-                    <span className="ml-2 text-slate-500 dark:text-zinc-500">{formatBackupSize(b.size)} · {formatRelativeTime(b.modTime)}</span>
+                  <li key={b.name} className="flex items-center justify-between text-xs text-slate-600 dark:text-zinc-400">
+                    <span>
+                      <span className="font-mono">{b.name}</span>
+                      <span className="ml-2 text-slate-500 dark:text-zinc-500">{formatBackupSize(b.size)} · {formatRelativeTime(b.modTime)}</span>
+                    </span>
+                    <button
+                      onClick={() => handleDeleteBackup(b.name)}
+                      disabled={deletingBackup === b.name}
+                      className="ml-4 text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
+                    >
+                      {deletingBackup === b.name ? '…' : t('common.delete')}
+                    </button>
                   </li>
                 ))}
               </ul>

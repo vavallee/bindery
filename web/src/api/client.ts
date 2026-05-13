@@ -387,6 +387,7 @@ export const api = {
   // Backup
   listBackups: () => request<Array<{ name: string; size: number; modTime: string }>>('/backup'),
   createBackup: () => request<{ name: string; size: number; modTime: string }>('/backup', { method: 'POST' }),
+  deleteBackup: (filename: string) => request<void>(`/backup/${encodeURIComponent(filename)}`, { method: 'DELETE' }),
 
   // Calibre
   testCalibre: () => request<CalibreTestResult>('/calibre/test', { method: 'POST' }),
