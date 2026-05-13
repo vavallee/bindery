@@ -1,8 +1,16 @@
 package main
 
 import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestIsReleaseVersion(t *testing.T) {
@@ -102,5 +110,75 @@ func TestRenderBarChartDoesNotMutateInput(t *testing.T) {
 	_ = renderBarChart(in, 8, "1.8.0")
 	if in[7].Label != "sha-dd31a9f" || in[8].Label != "1.8.0" {
 		t.Errorf("renderBarChart mutated caller's slice: %+v", in)
+	}
+}
+
+// newTestServer spins up an in-memory SQLite DB with the installs schema
+// matching the production migration, ready for handler tests.
+func newTestServer(t *testing.T, latest string) *server {
+	t.Helper()
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.ExecContext(context.Background(), `CREATE TABLE installs (
+		install_id  TEXT PRIMARY KEY,
+		version     TEXT NOT NULL,
+		os          TEXT NOT NULL,
+		arch        TEXT NOT NULL,
+		first_seen  DATETIME NOT NULL,
+		last_seen   DATETIME NOT NULL,
+		deploy      TEXT NOT NULL DEFAULT ''
+	)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	return &server{db: db, latestVersion: latest}
+}
+
+func TestHandleStatsJSON(t *testing.T) {
+	s := newTestServer(t, "v1.9.5")
+	now := time.Now().UTC()
+	// Two recently-active installs and one stale (>30 days old) install.
+	rows := []struct {
+		id        string
+		firstSeen time.Time
+		lastSeen  time.Time
+	}{
+		{"11111111-1111-1111-1111-111111111111", now.Add(-40 * 24 * time.Hour), now.Add(-1 * time.Hour)},
+		{"22222222-2222-2222-2222-222222222222", now.Add(-5 * 24 * time.Hour), now.Add(-2 * 24 * time.Hour)},
+		{"33333333-3333-3333-3333-333333333333", now.Add(-90 * 24 * time.Hour), now.Add(-45 * 24 * time.Hour)}, // stale
+	}
+	for _, r := range rows {
+		if _, err := s.db.ExecContext(context.Background(),
+			`INSERT INTO installs (install_id, version, os, arch, first_seen, last_seen, deploy)
+			 VALUES (?, '1.9.5', 'linux', 'amd64', ?, ?, 'docker')`,
+			r.id, r.firstSeen, r.lastSeen); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/stats.json", nil)
+	rec := httptest.NewRecorder()
+	s.handleStatsJSON(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	var got statsJSON
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
+	}
+	if got.Active != 2 {
+		t.Errorf("Active = %d, want 2", got.Active)
+	}
+	if got.Total != 3 {
+		t.Errorf("Total = %d, want 3", got.Total)
+	}
+	if got.Latest != "v1.9.5" {
+		t.Errorf("Latest = %q, want v1.9.5", got.Latest)
 	}
 }

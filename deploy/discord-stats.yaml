@@ -1,0 +1,43 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: discord-stats
+  namespace: bindery-ping
+spec:
+  schedule: "*/10 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0  # do not retry on failure — next tick handles it
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: discord-stats
+              image: ghcr.io/vavallee/bindery-discord-stats:latest
+              imagePullPolicy: Always
+              env:
+                - name: DISCORD_BOT_TOKEN
+                  valueFrom:
+                    secretKeyRef: { name: discord-stats, key: bot_token }
+                - name: DISCORD_ACTIVE_CHANNEL_ID
+                  valueFrom:
+                    secretKeyRef: { name: discord-stats, key: active_channel_id }
+                - name: DISCORD_LATEST_CHANNEL_ID
+                  valueFrom:
+                    secretKeyRef: { name: discord-stats, key: latest_channel_id }
+                - name: DISCORD_STARS_CHANNEL_ID
+                  valueFrom:
+                    secretKeyRef: { name: discord-stats, key: stars_channel_id }
+              resources:
+                limits: { cpu: 100m, memory: 64Mi }
+                requests: { cpu: 10m, memory: 16Mi }
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 65532
+                readOnlyRootFilesystem: true
+                allowPrivilegeEscalation: false
+                capabilities: { drop: [ALL] }
+                seccompProfile: { type: RuntimeDefault }

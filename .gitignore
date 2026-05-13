@@ -62,3 +62,5 @@ Thumbs.db
 embeddeddolt/
 /cmd/telemetry-server/telemetry-server
 /telemetry-server
+/cmd/discord-stats/discord-stats
+/discord-stats

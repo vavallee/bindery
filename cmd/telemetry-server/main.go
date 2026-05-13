@@ -6,6 +6,7 @@
 //
 //	GET  /               — welcome page with logo and GitHub link
 //	GET  /stats          — public dashboard with version/OS/arch charts
+//	GET  /stats.json     — public JSON snapshot {active,total,latest} for bots
 //	POST /api/ping       — upsert install record, return latest version (rate-limited)
 //	GET  /api/stats      — active/total counts + version breakdown (token-gated)
 //	GET  /api/backup     — sqlite VACUUM INTO snapshot of installs DB (token-gated)
@@ -82,6 +83,15 @@ type statsResponse struct {
 	Versions  map[string]int `json:"versions"`
 }
 
+// statsJSON is the response shape for the public /stats.json endpoint. It
+// surfaces the three numbers the Discord stats bot (and any future scraper)
+// needs without requiring the full /api/stats token-gated payload.
+type statsJSON struct {
+	Active int    `json:"active"` // 30-day active install count
+	Total  int    `json:"total"`  // all-time install count
+	Latest string `json:"latest"` // latest released version, e.g. "v1.9.5"
+}
+
 func main() {
 	dbPath := env("DB_PATH", "/data/telemetry.db")
 	addr := env("ADDR", ":8080")
@@ -152,6 +162,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.handleHome)
 	mux.HandleFunc("GET /stats", s.handleStatsPage)
+	mux.HandleFunc("GET /stats.json", s.handleStatsJSON)
 	mux.HandleFunc("GET /stats/preview", s.handlePreviewPage)
 	mux.HandleFunc("POST /api/ping", s.handlePing)
 	mux.HandleFunc("GET /api/stats", s.handleStats)
@@ -636,6 +647,37 @@ func (s *server) handleStats(w http.ResponseWriter, r *http.Request) {
 		Total:     d.Total,
 		Versions:  versions,
 	})
+}
+
+// handleStatsJSON returns a small public JSON payload with active install
+// count, total install count, and the configured latest version. It does NOT
+// run the full computeStats pipeline (versions, OS, arch, longevity, etc.)
+// because callers like the Discord stats bot only need three numbers and hit
+// the endpoint every 10 minutes. The two COUNT(*) queries mirror the head of
+// computeStats — keeping them inline avoids dragging the heavy aggregation
+// path onto this hot, unauthenticated endpoint.
+func (s *server) handleStatsJSON(w http.ResponseWriter, r *http.Request) {
+	cutoff := time.Now().UTC().Add(-30 * 24 * time.Hour)
+	var resp statsJSON
+	if err := s.db.QueryRowContext(r.Context(),
+		`SELECT COUNT(*) FROM installs WHERE last_seen >= ?`, cutoff,
+	).Scan(&resp.Active); err != nil {
+		slog.Error("stats.json: active count", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if err := s.db.QueryRowContext(r.Context(),
+		`SELECT COUNT(*) FROM installs`,
+	).Scan(&resp.Total); err != nil {
+		slog.Error("stats.json: total count", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	resp.Latest = s.latestVersion
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "public, max-age=60")
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // handleBackup streams a consistent snapshot of the installs database. Uses

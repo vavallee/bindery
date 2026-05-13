@@ -6,6 +6,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Discord stats voice channels** — A k8s CronJob in `deploy/discord-stats.yaml` updates three Discord voice channels every 10 minutes with live active-install count, latest released version, and GitHub star count. Powered by a new `/stats.json` JSON endpoint on the telemetry server. Setup steps in `deploy/README.md`.
+
 ## [v1.9.5] — 2026-05-12
 
 ### Fixed

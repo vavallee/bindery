@@ -244,7 +244,7 @@ The full endpoint catalogue, authentication rules (API key, session cookie, loca
 
 ## Community
 
-- **Discord** — real-time help, setup questions, release chat: [discord.gg/RpuYYRM9cZ](https://discord.gg/RpuYYRM9cZ). The `#support` channel is the best place to ask; `#changelog` is updated on every release.
+- **Discord** — real-time help, setup questions, release chat: [discord.gg/RpuYYRM9cZ](https://discord.gg/RpuYYRM9cZ). The `#support` channel is the best place to ask; `#changelog` is updated on every release. The three read-only voice channels at the top of the server show live active-install count, latest release, and GitHub star count, refreshed from the telemetry API every 10 minutes.
 - **GitHub Issues** — bug reports and feature requests: [issues](https://github.com/vavallee/bindery/issues).
 - **GitHub Discussions** — open-ended design questions, show-and-tell, integration recipes: [discussions](https://github.com/vavallee/bindery/discussions).
 
