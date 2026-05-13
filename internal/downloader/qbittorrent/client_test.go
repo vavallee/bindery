@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -15,6 +16,21 @@ import (
 	"testing"
 	"time"
 )
+
+// fakeTorrentContent is minimal bencoded content used across tests.
+const fakeTorrentContent = "d8:announce27:http://tracker.example.com/ae"
+
+// newFakeIndexer returns a test server that serves fakeTorrentContent at /torrent.
+func newFakeIndexer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/torrent" {
+			_, _ = w.Write([]byte(fakeTorrentContent))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+}
 
 // TestAddTorrent_ConcurrentUniqueHashes is a regression test for Bug 2.
 // When AddTorrent is called concurrently (e.g. during a bulk grab), each call
@@ -63,6 +79,9 @@ func TestAddTorrent_ConcurrentUniqueHashes(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	indexer := newFakeIndexer(t)
+	defer indexer.Close()
+
 	c := newTestClient(srv.URL, "admin", "pass")
 	c.loggedIn = true
 
@@ -77,7 +96,7 @@ func TestAddTorrent_ConcurrentUniqueHashes(t *testing.T) {
 			defer wg.Done()
 			results[i], errs[i] = c.AddTorrent(
 				context.Background(),
-				"http://example.com/book.torrent",
+				indexer.URL+"/torrent",
 				"", "",
 			)
 		}()
@@ -452,6 +471,158 @@ func TestAddTorrent_HTTPError(t *testing.T) {
 	}
 }
 
+// TestAddTorrent_TorrentURL_SubmitsMultipart verifies that an http URL causes
+// Bindery to fetch the torrent content and submit it via multipart rather than
+// passing the URL to qBittorrent (which may not be able to reach the indexer).
+func TestAddTorrent_TorrentURL_SubmitsMultipart(t *testing.T) {
+	var gotMultipart bool
+	var gotTorrentContent []byte
+	var mu sync.Mutex
+	added := false
+
+	indexer := newFakeIndexer(t)
+	defer indexer.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/add":
+			ct := r.Header.Get("Content-Type")
+			if strings.HasPrefix(ct, "multipart/form-data") {
+				gotMultipart = true
+				mr, err := r.MultipartReader()
+				if err != nil {
+					t.Errorf("parse multipart: %v", err)
+					break
+				}
+				for {
+					part, err := mr.NextPart()
+					if err == io.EOF {
+						break
+					}
+					if err != nil {
+						t.Errorf("next part: %v", err)
+						break
+					}
+					if part.FormName() == "torrents" {
+						gotTorrentContent, _ = io.ReadAll(part)
+					}
+				}
+			}
+			mu.Lock()
+			added = true
+			mu.Unlock()
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			mu.Lock()
+			isAdded := added
+			mu.Unlock()
+			if isAdded {
+				_, _ = w.Write([]byte(`[{"hash":"aabbccdd","name":"test","added_on":1000}]`))
+			} else {
+				_, _ = w.Write([]byte("[]"))
+			}
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	if _, err := c.AddTorrent(context.Background(), indexer.URL+"/torrent", "", ""); err != nil {
+		t.Fatalf("AddTorrent: %v", err)
+	}
+	if !gotMultipart {
+		t.Error("expected multipart/form-data submission for http URL, got url-encoded form")
+	}
+	if string(gotTorrentContent) != fakeTorrentContent {
+		t.Errorf("torrent content: want %q, got %q", fakeTorrentContent, string(gotTorrentContent))
+	}
+}
+
+// TestAddTorrent_TorrentURL_WithCategoryAndSavePath verifies that category and
+// savepath are included in the multipart body when submitting a torrent URL.
+func TestAddTorrent_TorrentURL_WithCategoryAndSavePath(t *testing.T) {
+	var gotCategory, gotSavePath string
+	var mu sync.Mutex
+	added := false
+
+	indexer := newFakeIndexer(t)
+	defer indexer.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/add":
+			if err := r.ParseMultipartForm(1 << 20); err == nil {
+				gotCategory = r.FormValue("category")
+				gotSavePath = r.FormValue("savepath")
+			}
+			mu.Lock()
+			added = true
+			mu.Unlock()
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			mu.Lock()
+			isAdded := added
+			mu.Unlock()
+			if isAdded {
+				_, _ = w.Write([]byte(`[{"hash":"aabbccdd","name":"test","added_on":1000}]`))
+			} else {
+				_, _ = w.Write([]byte("[]"))
+			}
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	if _, err := c.AddTorrent(context.Background(), indexer.URL+"/torrent", "books", "/downloads"); err != nil {
+		t.Fatalf("AddTorrent: %v", err)
+	}
+	if gotCategory != "books" {
+		t.Errorf("category: want %q, got %q", "books", gotCategory)
+	}
+	if gotSavePath != "/downloads" {
+		t.Errorf("savepath: want %q, got %q", "/downloads", gotSavePath)
+	}
+}
+
+// TestAddTorrent_TorrentURL_FetchFailure verifies that a non-200 from the
+// indexer is returned as an error and qBittorrent is never contacted.
+func TestAddTorrent_TorrentURL_FetchFailure(t *testing.T) {
+	qbitCalled := false
+
+	indexer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer indexer.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/add":
+			qbitCalled = true
+			_, _ = w.Write([]byte("Ok."))
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	_, err := c.AddTorrent(context.Background(), indexer.URL+"/torrent", "", "")
+	if err == nil {
+		t.Fatal("expected error when indexer returns 401")
+	}
+	if !strings.Contains(err.Error(), "401") {
+		t.Errorf("error should mention 401, got: %v", err)
+	}
+	if qbitCalled {
+		t.Error("qBittorrent should not be contacted when torrent fetch fails")
+	}
+}
+
 func TestGetTorrents_Success(t *testing.T) {
 	want := []Torrent{
 		{Hash: "abc123", Name: "My Book", Size: 1024, Progress: 0.5, State: "downloading", Category: "books"},
@@ -729,8 +900,11 @@ func TestAddTorrent_HashFoundUnderDifferentCategory(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	indexer := newFakeIndexer(t)
+	defer indexer.Close()
+
 	c := newTestClient(srv.URL, "admin", "pass")
-	hash, err := c.AddTorrent(context.Background(), "http://example.com/book.torrent", "books", "")
+	hash, err := c.AddTorrent(context.Background(), indexer.URL+"/torrent", "books", "")
 	if err != nil {
 		t.Fatalf("AddTorrent: %v", err)
 	}
@@ -788,8 +962,11 @@ func TestAddTorrent_HashLookupTimeout(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	indexer := newFakeIndexer(t)
+	defer indexer.Close()
+
 	c := newTestClient(srv.URL, "admin", "pass")
-	_, err := c.AddTorrent(context.Background(), "http://example.com/book.torrent", "books", "")
+	_, err := c.AddTorrent(context.Background(), indexer.URL+"/torrent", "books", "")
 	if err == nil {
 		t.Fatal("expected error on timeout, got nil")
 	}

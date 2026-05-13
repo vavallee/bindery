@@ -3,12 +3,14 @@
 package qbittorrent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -58,13 +60,14 @@ var hashPollTimeout = 30 * time.Second
 //   - APIKey  → password  (qBittorrent uses username/password, not an API key)
 //   - URLBase → reverse-proxy subpath, appended to baseURL (#369)
 type Client struct {
-	baseURL  string
-	username string
-	password string
-	http     *http.Client
-	mu       sync.Mutex // guards loggedIn
-	addMu    sync.Mutex // serialises AddTorrent: keeps before/after hash diff atomic
-	loggedIn bool
+	baseURL   string
+	username  string
+	password  string
+	http      *http.Client
+	fetchHTTP *http.Client // fetches .torrent file content on behalf of qBittorrent
+	mu        sync.Mutex  // guards loggedIn
+	addMu     sync.Mutex  // serialises AddTorrent: keeps before/after hash diff atomic
+	loggedIn  bool
 }
 
 // New creates a qBittorrent client. urlBase is the optional reverse-proxy
@@ -78,6 +81,7 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 
 	jar, _ := cookiejar.New(nil)
 	return &Client{
+		fetchHTTP: &http.Client{Timeout: 60 * time.Second},
 		baseURL:  fmt.Sprintf("%s://%s:%d%s", scheme, host, port, urlbase.Normalize(urlBase)),
 		username: username,
 		password: password,
@@ -176,25 +180,60 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 		}
 	}
 
-	form := url.Values{"urls": {magnetOrURL}}
-	if category != "" {
-		form.Set("category", category)
-	}
-	if savePath != "" {
-		form.Set("savepath", savePath)
-	}
-
 	if err := c.ensureLoggedIn(ctx); err != nil {
 		return "", err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.baseURL+"/api/v2/torrents/add",
-		strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", fmt.Errorf("build add request: %w", err)
+	var req *http.Request
+	if strings.HasPrefix(magnetOrURL, "http://") || strings.HasPrefix(magnetOrURL, "https://") {
+		// Fetch the .torrent content in Bindery so qBittorrent never needs to
+		// reach the indexer URL directly (which may be a Docker-only hostname
+		// like prowlarr:9696 that qBittorrent can't resolve from its network).
+		content, err := c.fetchTorrentContent(magnetOrURL)
+		if err != nil {
+			return "", fmt.Errorf("fetch torrent content: %w", err)
+		}
+
+		var buf bytes.Buffer
+		mw := multipart.NewWriter(&buf)
+		fw, err := mw.CreateFormFile("torrents", "upload.torrent")
+		if err != nil {
+			return "", fmt.Errorf("build multipart: %w", err)
+		}
+		if _, err := fw.Write(content); err != nil {
+			return "", fmt.Errorf("write torrent content: %w", err)
+		}
+		if category != "" {
+			_ = mw.WriteField("category", category)
+		}
+		if savePath != "" {
+			_ = mw.WriteField("savepath", savePath)
+		}
+		mw.Close()
+
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost,
+			c.baseURL+"/api/v2/torrents/add", &buf)
+		if err != nil {
+			return "", fmt.Errorf("build add request: %w", err)
+		}
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+	} else {
+		form := url.Values{"urls": {magnetOrURL}}
+		if category != "" {
+			form.Set("category", category)
+		}
+		if savePath != "" {
+			form.Set("savepath", savePath)
+		}
+		var err error
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost,
+			c.baseURL+"/api/v2/torrents/add",
+			strings.NewReader(form.Encode()))
+		if err != nil {
+			return "", fmt.Errorf("build add request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -286,6 +325,20 @@ func infoHashFromMagnet(raw string) string {
 		return ""
 	}
 	return strings.ToLower(h)
+}
+
+// fetchTorrentContent downloads a .torrent file URL and returns its raw bytes.
+// It limits the response to 50 MiB to guard against runaway reads.
+func (c *Client) fetchTorrentContent(rawURL string) ([]byte, error) {
+	resp, err := c.fetchHTTP.Get(rawURL) //nolint:noctx
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("indexer returned HTTP %d", resp.StatusCode)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 50<<20))
 }
 
 // GetTorrents returns all torrents in the given category (empty = all).
