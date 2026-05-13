@@ -3,6 +3,7 @@ package qbittorrent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -194,6 +195,87 @@ func TestLogin_BadStatus(t *testing.T) {
 	c := newTestClient(srv.URL, "admin", "pass")
 	if err := c.Login(context.Background()); err == nil {
 		t.Fatal("expected error on 500 response")
+	}
+}
+
+// TestLogin_AuthError_BadCreds covers the "200 + Fails." path. Bindery
+// should return an *AuthError that surfaces the credentials hint.
+func TestLogin_AuthError_BadCreds(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("Fails."))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "bad", "creds")
+	err := c.Login(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var authErr *AuthError
+	if !errors.As(err, &authErr) {
+		t.Fatalf("expected *AuthError, got %T: %v", err, err)
+	}
+	if authErr.Status != http.StatusOK || authErr.Body != "Fails." {
+		t.Errorf("AuthError fields: got status=%d body=%q", authErr.Status, authErr.Body)
+	}
+	if !strings.Contains(err.Error(), "credentials rejected") {
+		t.Errorf("expected credentials hint, got %q", err.Error())
+	}
+}
+
+// TestLogin_AuthError_BanEmpty403 covers the qBit IP-ban shape: HTTP 403
+// with an empty body. Pre-fix this surfaced as "qBittorrent login failed: "
+// (nothing useful). Now should explain IP-ban + how to clear it.
+func TestLogin_AuthError_BanEmpty403(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	err := c.Login(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var authErr *AuthError
+	if !errors.As(err, &authErr) {
+		t.Fatalf("expected *AuthError, got %T: %v", err, err)
+	}
+	if authErr.Status != http.StatusForbidden || authErr.Body != "" {
+		t.Errorf("AuthError fields: got status=%d body=%q", authErr.Status, authErr.Body)
+	}
+	if !strings.Contains(err.Error(), "IP is most likely banned") {
+		t.Errorf("expected IP-ban hint, got %q", err.Error())
+	}
+}
+
+// TestTest_AuthErrorDoesNotMisdirect proves Test() no longer wraps auth
+// failures with the "could not reach + use container name" hint that only
+// makes sense for actual transport failures.
+func TestTest_AuthErrorDoesNotMisdirect(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v2/auth/login" {
+			w.WriteHeader(http.StatusForbidden) // simulate IP ban
+			return
+		}
+		t.Errorf("unexpected path: %s", r.URL.Path)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	err := c.Test(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "could not reach") {
+		t.Errorf("auth failure must not be reported as 'could not reach': %q", msg)
+	}
+	if !strings.Contains(msg, "connected to qBittorrent") {
+		t.Errorf("expected 'connected to qBittorrent at ... but ...' wording: %q", msg)
+	}
+	if !strings.Contains(msg, "IP is most likely banned") {
+		t.Errorf("expected the underlying AuthError hint to propagate: %q", msg)
 	}
 }
 

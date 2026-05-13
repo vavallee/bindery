@@ -5,6 +5,7 @@ package qbittorrent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,6 +18,31 @@ import (
 
 	"github.com/vavallee/bindery/internal/downloader/urlbase"
 )
+
+// AuthError signals that qBittorrent responded but rejected the login.
+// Test() inspects this type via errors.As so it can avoid wrapping auth
+// failures with the misleading "could not reach + use container name"
+// hint that only applies to actual transport failures.
+type AuthError struct {
+	Status int
+	Body   string
+}
+
+func (e *AuthError) Error() string {
+	switch {
+	case e.Status == http.StatusForbidden && e.Body == "":
+		return "qBittorrent auth failed (HTTP 403, empty body): your IP is most likely banned after repeated failed logins. " +
+			"Clear it in qBit (Tools → Options → Web UI → IP filtering, or the banlist in qBittorrent.conf — restart of qBit may not clear it because the banlist is persisted)."
+	case e.Status == http.StatusOK && e.Body == "Fails.":
+		return "qBittorrent auth failed: credentials rejected (check the WebUI username/password matches what's saved in bindery)."
+	case e.Status == http.StatusForbidden:
+		return fmt.Sprintf("qBittorrent auth failed (HTTP 403): %s — host-header validation may be rejecting bindery; disable it in Tools → Options → Web UI, or whitelist the bindery container's hostname.", e.Body)
+	case e.Status != http.StatusOK:
+		return fmt.Sprintf("qBittorrent auth failed (HTTP %d): %s", e.Status, e.Body)
+	default:
+		return fmt.Sprintf("qBittorrent auth failed: %s", e.Body)
+	}
+}
 
 // hashPollTimeout is the maximum time to wait for a newly-added torrent's hash
 // to appear in the unfiltered torrent list.
@@ -83,7 +109,7 @@ func (c *Client) Login(ctx context.Context) error {
 	text := strings.TrimSpace(string(body))
 
 	if resp.StatusCode != http.StatusOK || text == "Fails." {
-		return fmt.Errorf("qBittorrent login failed: %s", text)
+		return &AuthError{Status: resp.StatusCode, Body: text}
 	}
 
 	c.mu.Lock()
@@ -92,9 +118,17 @@ func (c *Client) Login(ctx context.Context) error {
 	return nil
 }
 
-// Test verifies connectivity by fetching the application version.
+// Test verifies connectivity by fetching the application version. The error
+// wording adapts to the failure mode: auth/config issues (the server
+// responded but rejected us) get a targeted hint; transport failures (the
+// server didn't respond at all) get the Docker-networking hint.
 func (c *Client) Test(ctx context.Context) error {
 	if _, err := c.get(ctx, "/api/v2/app/version"); err != nil {
+		var authErr *AuthError
+		if errors.As(err, &authErr) {
+			// Server responded — this is an auth/config issue, not unreachable.
+			return fmt.Errorf("connected to qBittorrent at %s but %w", c.baseURL, err)
+		}
 		return fmt.Errorf("could not reach qBittorrent at %s — %w (in Docker use the service/container name, not localhost)", c.baseURL, err)
 	}
 	return nil

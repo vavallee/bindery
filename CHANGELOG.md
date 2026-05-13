@@ -10,6 +10,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 - **Telemetry preview dashboard** — New `/stats/preview` page with interactive filters (time range, OS, deployment), version-adoption stacked area chart, retention cohorts, and per-distribution doughnut charts. Existing `/stats` is unchanged.
 
+### Fixed
+
+- **qBittorrent connection-test error messages are no longer misleading** — When qBit returned `HTTP 403` with an empty body (the shape of an IP ban after repeated failed logins), bindery previously surfaced `qBittorrent login failed: ` (empty) wrapped with `could not reach qBittorrent at … (in Docker use the service/container name, not localhost)`. The "could not reach" hint and Docker-name hint only apply to actual transport failures, not to a server that responded with a rejection. The qBittorrent client now returns a typed `*AuthError` carrying the HTTP status and body; `Test()` rewords accordingly (`connected to qBittorrent at … but qBittorrent auth failed (HTTP 403, empty body): your IP is most likely banned…`) so the user knows where to look. Bad credentials and host-header rejection get their own targeted hints.
+
 ## [v1.9.3] — 2026-05-12
 
 ### Fixed
