@@ -322,11 +322,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Bump bindery-ping LATEST_VERSION
-        if: ${{ secrets.HETZ1_KUBECONFIG != '' }}
         env:
           KUBECONFIG_B64: ${{ secrets.HETZ1_KUBECONFIG }}
           VERSION: ${{ github.ref_name }}
         run: |
+          [ -z "$KUBECONFIG_B64" ] && exit 0
           echo "$KUBECONFIG_B64" | base64 -d > /tmp/kc
           KUBECONFIG=/tmp/kc kubectl -n bindery-ping set env deployment/bindery-ping \
             LATEST_VERSION="$VERSION"
