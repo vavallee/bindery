@@ -6,15 +6,23 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.10.0] — 2026-05-13
+
 ### Added
 
 - **Discord stats voice channels** — A k8s CronJob in `deploy/discord-stats.yaml` updates three Discord voice channels every 10 minutes with live active-install count, latest released version, and GitHub star count. Powered by a new `/stats.json` JSON endpoint on the telemetry server. Setup steps in `deploy/README.md`.
 - **Live ISBN provider integration tests** — New torture-corpus tests (`BINDERY_INTEGRATION=1` to run) exercise the aggregator's ISBN fallback chain against real DNB / OpenLibrary / GoogleBooks / Hardcover endpoints. Useful for catching upstream schema drift; skipped by default to avoid CI flake. Extracted from #515.
+- **Library scan status auto-refresh** (#544) — The Settings page now polls the scan endpoint every 2 s while a scan is running and shows an inline progress banner. No more F5 to see when the scan finishes.
+- **Expanded frontend test coverage** (#485) — Auth flow, Login page, History page, Queue page, WantedPage, full SettingsPage suite, and MSW-based API client tests; previously untested paths now have coverage.
+- **Auto-bump `bindery-ping` on release** (#557) — The goreleaser CI job now updates the `LATEST_VERSION` env var on the bindery-ping deployment automatically, eliminating the manual `auto/prod-deploy-X.Y.Z` step after each release. Requires `HETZ1_KUBECONFIG` secret.
 
 ### Fixed
 
 - **Stale ABS-sourced author aliases are now cleaned up post-import** — When an audiobook import recorded a co-author (or a different-named primary author) as an alias, the alias would stick around tagged `SourceOLID="abs"` even when it no longer matched the canonical author. The importer now sweeps these at the end of each run and drops aliases that don't fuzzy-match the canonical name. Also prevents pen-name corruption by requiring secondary-author aliases recorded during import to fuzzy-match the canonical author. Extracted from #515.
 - **Manual alias deletion** — New `DELETE /api/v1/author/{id}/aliases/{aliasID}` endpoint lets the UI / API clients remove specific aliases without merging the whole author. Scoped to (authorID, aliasID) pair; returns 404 if the alias isn't on that author so cross-author tampering can't happen. Extracted from #515.
+- **Download client error messages now suggest the root cause** (#621) — Test-connection failures are classified by errno: DNS resolution failure suggests checking container networking; connection refused suggests the service isn't running on that port; timeouts suggest a firewall or proxy.
+- **WantedPage optimistic updates now roll back on failure** (#551) — If the API call fails after a monitored/wanted toggle, the UI reverts to the previous state and shows a toast ("Couldn't update — reverted. Retry?") instead of silently diverging from server state.
+- **Graceful SIGTERM/SIGINT shutdown** (#559) — The server now drains in-flight requests before exiting. Grace period defaults to 30 s and is configurable via `BINDERY_SHUTDOWN_GRACE`. `kubectl rollout restart` no longer drops in-flight requests.
 
 ## [v1.9.3] — 2026-05-12
 
