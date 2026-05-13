@@ -2383,6 +2383,7 @@ function GeneralTab() {
   const [creatingBackup, setCreatingBackup] = useState(false)
   const [scanningLibrary, setScanningLibrary] = useState(false)
   const [scanMessage, setScanMessage] = useState<string | null>(null)
+  const scanStartedAt = useRef<number>(0)
   const [lastScan, setLastScan] = useState<{
     ran_at: string
     files_found: number
@@ -2513,38 +2514,38 @@ function GeneralTab() {
     }
   }
 
+  useEffect(() => {
+    if (!scanningLibrary) return
+    const id = setInterval(async () => {
+      try {
+        const status = await api.libraryScanStatus()
+        if (new Date(status.ran_at).getTime() >= scanStartedAt.current) {
+          setLastScan(status)
+          setScanMessage(null)
+          setScanningLibrary(false)
+        }
+      } catch {
+        // result not written yet — keep polling
+      }
+    }, 2000)
+    // Stop after 2 minutes regardless; the scan surely finished or something went wrong.
+    const ceiling = setTimeout(() => {
+      setScanMessage('Scan started — check back shortly for results.')
+      setScanningLibrary(false)
+    }, 120_000)
+    return () => {
+      clearInterval(id)
+      clearTimeout(ceiling)
+    }
+  }, [scanningLibrary])
+
   const handleScan = async () => {
+    scanStartedAt.current = Date.now()
     setScanningLibrary(true)
-    setScanMessage('Scanning...')
+    setScanMessage('Scanning…')
     setLastScan(null)
     try {
       await api.triggerLibraryScan()
-      // Poll for the result — the scan is async, so wait up to ~8s in 1s intervals.
-      let attempts = 0
-      const poll = async () => {
-        attempts++
-        try {
-          const status = await api.libraryScanStatus()
-          // Only accept a result that was produced after we triggered the scan.
-          const ranAt = new Date(status.ran_at).getTime()
-          const triggerTime = Date.now() - (attempts * 1000)
-          if (ranAt >= triggerTime) {
-            setLastScan(status)
-            setScanMessage(null)
-            setScanningLibrary(false)
-            return
-          }
-        } catch {
-          // result not ready yet
-        }
-        if (attempts < 8) {
-          setTimeout(poll, 1000)
-        } else {
-          setScanMessage('Scan started — results will appear after it completes.')
-          setScanningLibrary(false)
-        }
-      }
-      setTimeout(poll, 1000)
     } catch (err) {
       setScanMessage('Scan failed: ' + (err instanceof Error ? err.message : 'Unknown error'))
       setScanningLibrary(false)
