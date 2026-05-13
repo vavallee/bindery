@@ -298,7 +298,7 @@ export const api = {
   addDownloadClient: (data: Partial<DownloadClient>) => request<DownloadClient>('/downloadclient', { method: 'POST', body: JSON.stringify(data) }),
   updateDownloadClient: (id: number, data: Partial<DownloadClient>) => request<DownloadClient>(`/downloadclient/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteDownloadClient: (id: number) => request<void>(`/downloadclient/${id}`, { method: 'DELETE' }),
-  testDownloadClient: (id: number) => request<{ message: string }>(`/downloadclient/${id}/test`, { method: 'POST' }),
+  testDownloadClient: (id: number) => request<{ message: string; health?: DownloadClientHealth }>(`/downloadclient/${id}/test`, { method: 'POST' }),
 
   // Library
   triggerLibraryScan: () => request<{ message: string }>('/library/scan', { method: 'POST' }),
@@ -920,7 +920,14 @@ export interface DownloadClient {
   useSsl: boolean
   urlBase: string
   category: string
+  pathRemap?: string
   enabled: boolean
+  health?: DownloadClientHealth
+}
+
+export interface DownloadClientHealth {
+  status: 'ok' | 'checking' | 'error'
+  message: string
 }
 
 export interface Download {

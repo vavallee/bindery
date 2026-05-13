@@ -441,6 +441,35 @@ func TestAddTorrent_WithCategoryAndSavePath(t *testing.T) {
 	}
 }
 
+func TestGetCategories_NormalizesSavePathKeys(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/categories":
+			_, _ = w.Write([]byte(`{
+				"books":{"name":"books","savePath":"/media/books"},
+				"audiobooks":{"name":"audiobooks","save_path":"/media/audio"}
+			}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	cats, err := c.GetCategories(context.Background())
+	if err != nil {
+		t.Fatalf("GetCategories: %v", err)
+	}
+	if cats["books"].SavePath != "/media/books" {
+		t.Errorf("books save path = %q", cats["books"].SavePath)
+	}
+	if cats["audiobooks"].SavePath != "/media/audio" {
+		t.Errorf("audiobooks save path = %q", cats["audiobooks"].SavePath)
+	}
+}
+
 func TestAddTorrent_FailsBody(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

@@ -26,6 +26,7 @@ import (
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/config"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/downloader"
 	"github.com/vavallee/bindery/internal/hardcoverlistsyncer"
 	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/indexer"
@@ -358,6 +359,7 @@ func main() {
 	sched.WithAliases(authorAliasRepo)
 	sched.WithDelayProfiles(delayProfileRepo)
 	sched.WithPendingReleases(pendingReleaseRepo)
+	sched.WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir)
 	// Register the Calibre importer as the 24-hour sync job. The scheduler
 	// only fires the job when the syncer is non-nil, so no guard needed here.
 	sched.WithCalibreSyncer(calibreImporter)
@@ -419,8 +421,18 @@ func main() {
 	authorAliasHandler := api.NewAuthorAliasHandler(authorRepo, authorAliasRepo)
 	bookHandler := api.NewBookHandler(bookRepo, metaAgg, historyRepo, sched).WithSettings(settingsRepo).WithDownloads(downloadRepo).WithAuthors(authorRepo).WithSeries(seriesRepo)
 	indexerHandler := api.NewIndexerHandler(indexerRepo, bookRepo, authorRepo, metadataProfileRepo, idxSearcher, settingsRepo, blocklistRepo).WithAliases(authorAliasRepo)
-	dlClientHandler := api.NewDownloadClientHandler(dlClientRepo)
-	queueHandler := api.NewQueueHandler(downloadRepo, dlClientRepo, bookRepo, historyRepo).WithNotifier(notif)
+	downloadHealth := downloader.NewHealthStore()
+	if clients, err := dlClientRepo.List(ctxBoot); err == nil {
+		downloader.RefreshDownloadClientHealthAsync(context.Background(), downloadHealth, clients, cfg.DownloadDir, cfg.AudiobookDownloadDir)
+	} else {
+		slog.Warn("download client startup health check skipped", "error", err)
+	}
+	dlClientHandler := api.NewDownloadClientHandler(dlClientRepo).
+		WithHealth(downloadHealth).
+		WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir)
+	queueHandler := api.NewQueueHandler(downloadRepo, dlClientRepo, bookRepo, historyRepo).
+		WithNotifier(notif).
+		WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir)
 	pendingHandler := api.NewPendingHandler(pendingReleaseRepo, queueHandler, downloadRepo, bookRepo)
 	importScanner.WithSettings(settingsRepo)
 	importScanner.WithRootFolders(rootFolderRepo)

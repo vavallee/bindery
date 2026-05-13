@@ -64,23 +64,25 @@ type Scheduler struct {
 	searcher bookSearcher
 	meta     *metadata.Aggregator
 
-	authors       *db.AuthorRepo
-	books         *db.BookRepo
-	indexers      *db.IndexerRepo
-	downloads     *db.DownloadRepo
-	clients       *db.DownloadClientRepo
-	history       *db.HistoryRepo
-	settings      *db.SettingsRepo
-	blocklist     *db.BlocklistRepo
-	delayProfiles *db.DelayProfileRepo
-	pending       *db.PendingReleaseRepo
-	aliases       *db.AuthorAliasRepo  // optional; used for non-latin author matching
-	calibreSyncer CalibreSyncer        // optional; nil if Calibre is not configured
-	recommender   RecommendationEngine // optional; generates recommendations
-	hcSyncer      HCListSyncer         // optional; syncs Hardcover import lists
-	telemetry     TelemetryPinger      // optional; sends daily anonymous install ping
-	logs          *db.LogRepo          // optional; enables periodic log retention trim
-	logRetainDays int                  // 0 = use default (14)
+	authors              *db.AuthorRepo
+	books                *db.BookRepo
+	indexers             *db.IndexerRepo
+	downloads            *db.DownloadRepo
+	clients              *db.DownloadClientRepo
+	history              *db.HistoryRepo
+	settings             *db.SettingsRepo
+	blocklist            *db.BlocklistRepo
+	delayProfiles        *db.DelayProfileRepo
+	pending              *db.PendingReleaseRepo
+	aliases              *db.AuthorAliasRepo  // optional; used for non-latin author matching
+	calibreSyncer        CalibreSyncer        // optional; nil if Calibre is not configured
+	recommender          RecommendationEngine // optional; generates recommendations
+	hcSyncer             HCListSyncer         // optional; syncs Hardcover import lists
+	telemetry            TelemetryPinger      // optional; sends daily anonymous install ping
+	logs                 *db.LogRepo          // optional; enables periodic log retention trim
+	logRetainDays        int                  // 0 = use default (14)
+	downloadDir          string
+	audiobookDownloadDir string
 }
 
 const scheduledWantedSearchConcurrency = 2
@@ -135,6 +137,13 @@ func (s *Scheduler) WithHistory(h *db.HistoryRepo) {
 // in MatchCriteria for non-latin author name matching. Must be called before Start.
 func (s *Scheduler) WithAliases(aliases *db.AuthorAliasRepo) {
 	s.aliases = aliases
+}
+
+// WithStoragePaths attaches the process-level download roots used when sending
+// torrent clients an explicit save path.
+func (s *Scheduler) WithStoragePaths(downloadDir, audiobookDownloadDir string) {
+	s.downloadDir = downloadDir
+	s.audiobookDownloadDir = audiobookDownloadDir
 }
 
 // WithCalibreSyncer registers a CalibreSyncer that the scheduler will call
@@ -458,7 +467,11 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		return
 	}
 
-	sendRes, err := downloader.SendDownload(ctx, client, best.NZBURL, best.Title)
+	sendRes, err := downloader.SendDownload(ctx, client, best.NZBURL, best.Title, downloader.SendOptions{
+		MediaType:            mediaType,
+		DownloadDir:          s.downloadDir,
+		AudiobookDownloadDir: s.audiobookDownloadDir,
+	})
 	if err != nil {
 		slog.Error("SearchAndGrabBook: failed to send to downloader", "client", client.Type, "title", best.Title, "error", err)
 		if setErr := s.downloads.SetError(ctx, dl.ID, err.Error()); setErr != nil {

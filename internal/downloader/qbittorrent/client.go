@@ -468,6 +468,34 @@ func (c *Client) GetTorrents(ctx context.Context, category string) ([]Torrent, e
 	return torrents, nil
 }
 
+// GetCategories returns all configured qBittorrent categories keyed by name.
+func (c *Client) GetCategories(ctx context.Context) (map[string]Category, error) {
+	data, err := c.get(ctx, "/api/v2/torrents/categories")
+	if err != nil {
+		return nil, err
+	}
+	var categories map[string]Category
+	if err := json.Unmarshal(data, &categories); err != nil {
+		return nil, fmt.Errorf("decode categories: %w", err)
+	}
+	for name, category := range categories {
+		if category.Name == "" {
+			category.Name = name
+			categories[name] = category
+		}
+	}
+	return categories, nil
+}
+
+// GetDefaultSavePath returns qBittorrent's default save path.
+func (c *Client) GetDefaultSavePath(ctx context.Context) (string, error) {
+	data, err := c.get(ctx, "/api/v2/app/defaultSavePath")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
 // DeleteTorrent removes a torrent by hash, optionally deleting its files.
 func (c *Client) DeleteTorrent(ctx context.Context, hash string, deleteFiles bool) error {
 	deleteFilesStr := "false"

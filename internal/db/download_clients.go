@@ -17,7 +17,7 @@ type DownloadClientRepo struct {
 
 const downloadClientSelectColumns = `
 	id, name, type, host, port, api_key, use_ssl, url_base, username, password,
-	category, priority, enabled, created_at, updated_at`
+	category, path_remap, priority, enabled, created_at, updated_at`
 
 func isCredentialClient(clientType string) bool {
 	return clientType == "qbittorrent" || clientType == "transmission"
@@ -111,7 +111,7 @@ func (r *DownloadClientRepo) List(ctx context.Context) ([]models.DownloadClient,
 		var c models.DownloadClient
 		var enabled, useSSL int
 		if err := rows.Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
-			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.Priority,
+			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.PathRemap, &c.Priority,
 			&enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -130,7 +130,7 @@ func (r *DownloadClientRepo) GetByID(ctx context.Context, id int64) (*models.Dow
 		SELECT `+downloadClientSelectColumns+`
 		FROM download_clients WHERE id=?`, id).
 		Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
-			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.Priority,
+			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.PathRemap, &c.Priority,
 			&enabled, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -151,7 +151,7 @@ func (r *DownloadClientRepo) GetFirstEnabled(ctx context.Context) (*models.Downl
 		SELECT `+downloadClientSelectColumns+`
 		FROM download_clients WHERE enabled=1 ORDER BY priority LIMIT 1`).
 		Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
-			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.Priority,
+			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.PathRemap, &c.Priority,
 			&enabled, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -177,14 +177,14 @@ func (r *DownloadClientRepo) GetFirstEnabledByProtocol(ctx context.Context, prot
 			SELECT `+downloadClientSelectColumns+`
 			FROM download_clients WHERE enabled=1 AND type IN (?, ?, ?) ORDER BY priority LIMIT 1`, "qbittorrent", "transmission", "deluge").
 			Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
-				&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.Priority,
+				&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.PathRemap, &c.Priority,
 				&enabled, &c.CreatedAt, &c.UpdatedAt)
 	} else {
 		err = r.db.QueryRowContext(ctx, `
 			SELECT `+downloadClientSelectColumns+`
 			FROM download_clients WHERE enabled=1 AND type IN (?, ?) ORDER BY priority LIMIT 1`, "sabnzbd", "nzbget").
 			Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
-				&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.Priority,
+				&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.PathRemap, &c.Priority,
 				&enabled, &c.CreatedAt, &c.UpdatedAt)
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -226,7 +226,7 @@ func (r *DownloadClientRepo) GetEnabledByProtocol(ctx context.Context, protocol 
 		var c models.DownloadClient
 		var enabled, useSSL int
 		if err := rows.Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
-			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.Priority,
+			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.PathRemap, &c.Priority,
 			&enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -242,9 +242,9 @@ func (r *DownloadClientRepo) Create(ctx context.Context, c *models.DownloadClien
 	normalizeClientCredentialStorage(c)
 	now := time.Now().UTC()
 	result, err := r.db.ExecContext(ctx, `
-		INSERT INTO download_clients (name, type, host, port, api_key, use_ssl, url_base, username, password, category, priority, enabled, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.Name, c.Type, c.Host, c.Port, c.APIKey, c.UseSSL, c.URLBase, c.Username, c.Password, c.Category, c.Priority, c.Enabled, now, now)
+		INSERT INTO download_clients (name, type, host, port, api_key, use_ssl, url_base, username, password, category, path_remap, priority, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.Name, c.Type, c.Host, c.Port, c.APIKey, c.UseSSL, c.URLBase, c.Username, c.Password, c.Category, c.PathRemap, c.Priority, c.Enabled, now, now)
 	if err != nil {
 		return fmt.Errorf("create download client: %w", err)
 	}
@@ -263,9 +263,9 @@ func (r *DownloadClientRepo) Update(ctx context.Context, c *models.DownloadClien
 	now := time.Now().UTC()
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE download_clients SET name=?, type=?, host=?, port=?, api_key=?, use_ssl=?,
-		                            url_base=?, username=?, password=?, category=?, priority=?, enabled=?, updated_at=?
+		                            url_base=?, username=?, password=?, category=?, path_remap=?, priority=?, enabled=?, updated_at=?
 		WHERE id=?`,
-		c.Name, c.Type, c.Host, c.Port, c.APIKey, c.UseSSL, c.URLBase, c.Username, c.Password, c.Category, c.Priority, c.Enabled, now, c.ID)
+		c.Name, c.Type, c.Host, c.Port, c.APIKey, c.UseSSL, c.URLBase, c.Username, c.Password, c.Category, c.PathRemap, c.Priority, c.Enabled, now, c.ID)
 	return err
 }
 

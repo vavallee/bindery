@@ -46,7 +46,7 @@ func TestDownloadClientCRUD(t *testing.T) {
 
 	// Create — valid. Use RFC1918 IP literal so the SSRF validator's LAN
 	// policy accepts it without needing DNS in the test environment.
-	body := `{"name":"My SAB","host":"10.10.10.10","port":8080,"type":"sabnzbd","apiKey":"key1","enabled":true}`
+	body := `{"name":"My SAB","host":"10.10.10.10","port":8080,"type":"sabnzbd","apiKey":"key1","pathRemap":"/remote:/local","enabled":true}`
 	rec := httptest.NewRecorder()
 	h.Create(rec, httptest.NewRequest(http.MethodPost, "/downloadclient", bytes.NewBufferString(body)))
 	if rec.Code != http.StatusCreated {
@@ -56,6 +56,9 @@ func TestDownloadClientCRUD(t *testing.T) {
 	json.NewDecoder(rec.Body).Decode(&created)
 	if created.ID == 0 {
 		t.Fatal("expected non-zero ID after create")
+	}
+	if created.PathRemap != "/remote:/local" {
+		t.Fatalf("pathRemap = %q", created.PathRemap)
 	}
 
 	// List — should have one entry
@@ -83,7 +86,7 @@ func TestDownloadClientCRUD(t *testing.T) {
 	}
 
 	// Update
-	update := `{"name":"Updated SAB","host":"10.10.10.11","port":8080,"type":"sabnzbd","apiKey":"key2","enabled":false}`
+	update := `{"name":"Updated SAB","host":"10.10.10.11","port":8080,"type":"sabnzbd","apiKey":"key2","pathRemap":"/remote2:/local2","enabled":false}`
 	rec = httptest.NewRecorder()
 	h.Update(rec, withURLParam(httptest.NewRequest(http.MethodPut, "/downloadclient/1", bytes.NewBufferString(update)), "id", idStr))
 	if rec.Code != http.StatusOK {
@@ -92,6 +95,9 @@ func TestDownloadClientCRUD(t *testing.T) {
 	got, _ := clients.GetByID(ctx, created.ID)
 	if got == nil {
 		t.Fatal("expected client still exists after update")
+	}
+	if got.PathRemap != "/remote2:/local2" {
+		t.Errorf("updated pathRemap = %q", got.PathRemap)
 	}
 
 	// Delete
@@ -196,11 +202,14 @@ func TestDownloadClientTest_SuccessMessage(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	var out map[string]string
+	var out struct {
+		Message string                       `json:"message"`
+		Health  *models.DownloadClientHealth `json:"health"`
+	}
 	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
 		t.Fatal(err)
 	}
-	if out["message"] != "Connection verified" {
-		t.Errorf("message: want Connection verified, got %q", out["message"])
+	if out.Message != "Connection verified" {
+		t.Errorf("message: want Connection verified, got %q", out.Message)
 	}
 }

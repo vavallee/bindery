@@ -576,11 +576,14 @@ func TestSendDownload_Transmission_AbsoluteCategorySentAsDownloadDir(t *testing.
 }
 
 func TestSendDownload_Qbittorrent(t *testing.T) {
+	var gotSavePath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v2/auth/login":
 			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
+			_ = r.ParseForm()
+			gotSavePath = r.FormValue("savepath")
 			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/info":
 			_ = json.NewEncoder(w).Encode([]map[string]any{
@@ -590,16 +593,50 @@ func TestSendDownload_Qbittorrent(t *testing.T) {
 	}))
 	defer srv.Close()
 	host, port := serverHostPort(t, srv.URL)
-	client := &models.DownloadClient{Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p"}
-	result, err := SendDownload(context.Background(), client, "magnet:?xt=urn:btih:ABCDEF123&dn=Book", "")
+	client := &models.DownloadClient{Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p", PathRemap: "/media:/books"}
+	result, err := SendDownload(context.Background(), client, "magnet:?xt=urn:btih:ABCDEF123&dn=Book", "", SendOptions{
+		MediaType:   models.MediaTypeEbook,
+		DownloadDir: "/books/downloads",
+	})
 	if err != nil {
 		t.Fatalf("SendDownload: %v", err)
+	}
+	if gotSavePath != "/media/downloads" {
+		t.Errorf("savepath: want /media/downloads, got %q", gotSavePath)
 	}
 	if result.Protocol != "torrent" {
 		t.Errorf("expected Protocol=torrent, got %q", result.Protocol)
 	}
 	if !result.UsesTorrentID {
 		t.Error("expected UsesTorrentID=true for qbittorrent")
+	}
+}
+
+func TestSendDownload_QbittorrentAudiobookSavePath(t *testing.T) {
+	var gotSavePath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/add":
+			_ = r.ParseForm()
+			gotSavePath = r.FormValue("savepath")
+			_, _ = w.Write([]byte("Ok."))
+		}
+	}))
+	defer srv.Close()
+	host, port := serverHostPort(t, srv.URL)
+	client := &models.DownloadClient{Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p", PathRemap: "/media:/books"}
+	_, err := SendDownload(context.Background(), client, "magnet:?xt=urn:btih:ABCDEF123&dn=Book", "", SendOptions{
+		MediaType:            models.MediaTypeAudiobook,
+		DownloadDir:          "/books/downloads",
+		AudiobookDownloadDir: "/books/audio-downloads",
+	})
+	if err != nil {
+		t.Fatalf("SendDownload: %v", err)
+	}
+	if gotSavePath != "/media/audio-downloads" {
+		t.Errorf("savepath: want /media/audio-downloads, got %q", gotSavePath)
 	}
 }
 

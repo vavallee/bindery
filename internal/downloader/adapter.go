@@ -15,6 +15,7 @@ import (
 	"github.com/vavallee/bindery/internal/downloader/sabnzbd"
 	"github.com/vavallee/bindery/internal/downloader/transmission"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/pathmap"
 )
 
 type LiveStatus struct {
@@ -41,6 +42,12 @@ type SendResult struct {
 	RemoteID      string
 	Protocol      string
 	UsesTorrentID bool
+}
+
+type SendOptions struct {
+	MediaType            string
+	DownloadDir          string
+	AudiobookDownloadDir string
 }
 
 func IsTorrentClient(clientType string) bool {
@@ -79,7 +86,11 @@ func TestClient(ctx context.Context, client *models.DownloadClient) error {
 	}
 }
 
-func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL, title string) (*SendResult, error) {
+func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL, title string, options ...SendOptions) (*SendResult, error) {
+	var opts SendOptions
+	if len(options) > 0 {
+		opts = options[0]
+	}
 	result := &SendResult{
 		Protocol:      ProtocolForClient(client.Type),
 		UsesTorrentID: IsTorrentClient(client.Type),
@@ -107,7 +118,8 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		return result, nil
 	case "qbittorrent":
 		qb := qbittorrent.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
-		hash, err := qb.AddTorrent(ctx, sourceURL, client.Category, "")
+		savePath := qbitSavePath(client, opts)
+		hash, err := qb.AddTorrent(ctx, sourceURL, client.Category, savePath)
 		if err != nil {
 			return nil, err
 		}
@@ -147,6 +159,14 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		}
 		return result, nil
 	}
+}
+
+func qbitSavePath(client *models.DownloadClient, opts SendOptions) string {
+	localPath := TargetDownloadDir(opts.MediaType, opts.DownloadDir, opts.AudiobookDownloadDir)
+	if strings.TrimSpace(localPath) == "" {
+		return ""
+	}
+	return pathmap.Parse(client.PathRemap).ApplyInverse(localPath)
 }
 
 func RemoveDownload(ctx context.Context, client *models.DownloadClient, dl *models.Download, deleteFiles bool) error {

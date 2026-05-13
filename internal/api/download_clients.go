@@ -1,11 +1,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -43,11 +45,25 @@ func downloadClientURL(c *models.DownloadClient) string {
 }
 
 type DownloadClientHandler struct {
-	clients *db.DownloadClientRepo
+	clients              *db.DownloadClientRepo
+	health               *downloader.HealthStore
+	downloadDir          string
+	audiobookDownloadDir string
 }
 
 func NewDownloadClientHandler(clients *db.DownloadClientRepo) *DownloadClientHandler {
 	return &DownloadClientHandler{clients: clients}
+}
+
+func (h *DownloadClientHandler) WithHealth(store *downloader.HealthStore) *DownloadClientHandler {
+	h.health = store
+	return h
+}
+
+func (h *DownloadClientHandler) WithStoragePaths(downloadDir, audiobookDownloadDir string) *DownloadClientHandler {
+	h.downloadDir = downloadDir
+	h.audiobookDownloadDir = audiobookDownloadDir
+	return h
 }
 
 func (h *DownloadClientHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +75,7 @@ func (h *DownloadClientHandler) List(w http.ResponseWriter, r *http.Request) {
 	if clients == nil {
 		clients = []models.DownloadClient{}
 	}
+	h.attachHealth(clients)
 	writeJSON(w, http.StatusOK, clients)
 }
 
@@ -69,6 +86,7 @@ func (h *DownloadClientHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download client not found"})
 		return
 	}
+	h.attachClientHealth(client)
 	writeJSON(w, http.StatusOK, client)
 }
 
@@ -101,6 +119,8 @@ func (h *DownloadClientHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	h.refreshClientHealthAsync(c)
+	h.attachClientHealth(&c)
 	writeJSON(w, http.StatusCreated, c)
 }
 
@@ -129,6 +149,8 @@ func (h *DownloadClientHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	h.refreshClientHealthAsync(c)
+	h.attachClientHealth(&c)
 	writeJSON(w, http.StatusOK, c)
 }
 
@@ -137,6 +159,9 @@ func (h *DownloadClientHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if err := h.clients.Delete(r.Context(), id); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
+	}
+	if h.health != nil {
+		h.health.Delete(id)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -152,5 +177,55 @@ func (h *DownloadClientHandler) Test(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"message": "Connection verified"})
+	health := h.refreshClientHealth(r.Context(), client)
+	resp := struct {
+		Message string                       `json:"message"`
+		Health  *models.DownloadClientHealth `json:"health,omitempty"`
+	}{
+		Message: "Connection verified",
+		Health:  health,
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *DownloadClientHandler) attachHealth(clients []models.DownloadClient) {
+	for i := range clients {
+		h.attachClientHealth(&clients[i])
+	}
+}
+
+func (h *DownloadClientHandler) attachClientHealth(client *models.DownloadClient) {
+	if h.health == nil || client == nil {
+		return
+	}
+	h.health.Attach(client)
+}
+
+func (h *DownloadClientHandler) refreshClientHealthAsync(client models.DownloadClient) {
+	if h.health == nil {
+		return
+	}
+	if client.Type != "qbittorrent" || !client.Enabled {
+		h.health.Delete(client.ID)
+		return
+	}
+	h.health.Set(client.ID, downloader.CheckingHealth())
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		h.health.Set(client.ID, downloader.CheckDownloadClientHealth(ctx, &client, h.downloadDir, h.audiobookDownloadDir))
+	}()
+}
+
+func (h *DownloadClientHandler) refreshClientHealth(ctx context.Context, client *models.DownloadClient) *models.DownloadClientHealth {
+	if h.health == nil || client == nil {
+		return nil
+	}
+	if client.Type != "qbittorrent" || !client.Enabled {
+		h.health.Delete(client.ID)
+		return nil
+	}
+	health := downloader.CheckDownloadClientHealth(ctx, client, h.downloadDir, h.audiobookDownloadDir)
+	h.health.Set(client.ID, health)
+	return &health
 }

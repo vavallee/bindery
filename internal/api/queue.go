@@ -19,11 +19,13 @@ import (
 )
 
 type QueueHandler struct {
-	downloads *db.DownloadRepo
-	clients   *db.DownloadClientRepo
-	books     *db.BookRepo
-	history   *db.HistoryRepo
-	notif     *notifier.Notifier
+	downloads            *db.DownloadRepo
+	clients              *db.DownloadClientRepo
+	books                *db.BookRepo
+	history              *db.HistoryRepo
+	notif                *notifier.Notifier
+	downloadDir          string
+	audiobookDownloadDir string
 }
 
 func NewQueueHandler(downloads *db.DownloadRepo, clients *db.DownloadClientRepo, books *db.BookRepo, history *db.HistoryRepo) *QueueHandler {
@@ -33,6 +35,14 @@ func NewQueueHandler(downloads *db.DownloadRepo, clients *db.DownloadClientRepo,
 // WithNotifier attaches a notifier so grab/failure events fire webhooks.
 func (h *QueueHandler) WithNotifier(n *notifier.Notifier) *QueueHandler {
 	h.notif = n
+	return h
+}
+
+// WithStoragePaths attaches the process-level download roots used when sending
+// torrent clients an explicit save path.
+func (h *QueueHandler) WithStoragePaths(downloadDir, audiobookDownloadDir string) *QueueHandler {
+	h.downloadDir = downloadDir
+	h.audiobookDownloadDir = audiobookDownloadDir
 	return h
 }
 
@@ -505,7 +515,11 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 		return nil, err
 	}
 
-	sendRes, err := downloader.SendDownload(ctx, client, req.NZBURL, req.Title)
+	sendRes, err := downloader.SendDownload(ctx, client, req.NZBURL, req.Title, downloader.SendOptions{
+		MediaType:            req.MediaType,
+		DownloadDir:          h.downloadDir,
+		AudiobookDownloadDir: h.audiobookDownloadDir,
+	})
 	if err != nil {
 		slog.Error("failed to send download", "client_type", client.Type, "error", err, "title", req.Title)
 		if setErr := h.downloads.SetError(ctx, dl.ID, err.Error()); setErr != nil {

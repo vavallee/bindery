@@ -1,6 +1,10 @@
 package importer
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/vavallee/bindery/internal/models"
+)
 
 func TestRemapperApply(t *testing.T) {
 	tests := []struct {
@@ -54,6 +58,18 @@ func TestRemapperNilSafe(t *testing.T) {
 func TestParseRemapSkipsJunk(t *testing.T) {
 	r := ParseRemap(",,:,foo:,:bar,   ,")
 	if !r.Empty() {
-		t.Errorf("expected empty remapper, got %+v", r.rules)
+		t.Error("expected empty remapper")
+	}
+}
+
+func TestScannerRemapDownloadClientPath(t *testing.T) {
+	s := NewScanner(nil, nil, nil, nil, nil, "/library", "", "", "", "/global:/local-global")
+
+	client := &models.DownloadClient{PathRemap: "/remote:/local"}
+	if got := s.remapDownloadClientPath(client, "/remote/downloads/book"); got != "/local/downloads/book" {
+		t.Fatalf("client remap = %q, want /local/downloads/book", got)
+	}
+	if got := s.remapDownloadClientPath(client, "/global/downloads/book"); got != "/local-global/downloads/book" {
+		t.Fatalf("global fallback remap = %q, want /local-global/downloads/book", got)
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+
+	"github.com/vavallee/bindery/internal/pathmap"
 )
 
 // Validate checks the configuration for known conflict patterns and invalid
@@ -155,16 +157,5 @@ func validateAbsURL(envVar, raw string) error {
 // comma-separated list of "from:to" pairs. It only validates the format —
 // whether the paths actually resolve is left to the importer.
 func validateDownloadPathRemap(raw string) error {
-	pairs := strings.Split(raw, ",")
-	for i, pair := range pairs {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-		parts := strings.SplitN(pair, ":", 2)
-		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
-			return fmt.Errorf("pair %d %q is not in 'from:to' format", i+1, pair)
-		}
-	}
-	return nil
+	return pathmap.Validate(raw)
 }

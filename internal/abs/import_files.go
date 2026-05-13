@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	bindimporter "github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/pathmap"
 )
 
 type ownershipReconcileResult struct {
@@ -135,7 +135,7 @@ func (i *Importer) remapABSPath(cfg ImportConfig, candidatePath string) string {
 	if candidatePath == "" || strings.TrimSpace(cfg.PathRemap) == "" {
 		return candidatePath
 	}
-	return bindimporter.ParseRemap(cfg.PathRemap).Apply(candidatePath)
+	return pathmap.Parse(cfg.PathRemap).Apply(candidatePath)
 }
 
 func (i *Importer) bookAlreadyTracksPath(ctx context.Context, bookID int64, format, path string) (bool, error) {
