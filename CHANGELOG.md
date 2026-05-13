@@ -6,9 +6,11 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.9.5] — 2026-05-12
+
 ### Fixed
 
-- **qBittorrent v5.x login now works** (#616) — qBit 5.0 introduced two breaking changes to `/api/v2/auth/login` that v1.9.4 and earlier didn't handle: (1) CSRF protection requires matching `Origin` and `Referer` headers (without them, login is silently rejected — the empty-body 403 that v1.9.4 surfaced as an IP-ban hint); (2) successful login returns `204 No Content` instead of `200 OK` + body `Ok.`. Bindery now sends both headers on every login request (v4.x ignores them, so the change is version-safe) and accepts `204` as success alongside the v4.x `200`. Original fix and tests authored by @statte.
+- **qBittorrent v5.x login now works** (#616, #623) — qBit 5.0 introduced two breaking changes to `/api/v2/auth/login` that v1.9.4 and earlier didn't handle: (1) CSRF protection requires matching `Origin` and `Referer` headers (without them, login is silently rejected — the empty-body 403 that v1.9.4 surfaced as an IP-ban hint); (2) successful login returns `204 No Content` instead of `200 OK` + body `Ok.`. Bindery now sends both headers on every login request (v4.x ignores them, so the change is version-safe) and accepts `204` as success alongside the v4.x `200`. Original fix and tests authored by @statte.
 
 ## [v1.9.4] — 2026-05-12
 
