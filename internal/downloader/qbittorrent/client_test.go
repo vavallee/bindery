@@ -198,6 +198,52 @@ func TestLogin_BadStatus(t *testing.T) {
 	}
 }
 
+// TestLogin_V5_NoContent verifies that qBittorrent v5.x's `204 No Content`
+// login response is treated as a success (v4.x returned `200 OK` + "Ok.").
+func TestLogin_V5_NoContent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v2/auth/login" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	if err := c.Login(context.Background()); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if !c.loggedIn {
+		t.Error("loggedIn should be true after 204 response")
+	}
+}
+
+// TestLogin_SendsCSRFHeaders verifies that Origin and Referer headers are
+// sent on every login request, as required by qBittorrent v5.x CSRF checks.
+// v4.x ignores these headers, so setting them is safe across versions.
+func TestLogin_SendsCSRFHeaders(t *testing.T) {
+	var gotOrigin, gotReferer string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v2/auth/login" {
+			gotOrigin = r.Header.Get("Origin")
+			gotReferer = r.Header.Get("Referer")
+			_, _ = w.Write([]byte("Ok."))
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	if err := c.Login(context.Background()); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if gotOrigin != srv.URL {
+		t.Errorf("Origin: want %q, got %q", srv.URL, gotOrigin)
+	}
+	if gotReferer != srv.URL {
+		t.Errorf("Referer: want %q, got %q", srv.URL, gotReferer)
+	}
+}
+
 // TestLogin_AuthError_BadCreds covers the "200 + Fails." path. Bindery
 // should return an *AuthError that surfaces the credentials hint.
 func TestLogin_AuthError_BadCreds(t *testing.T) {

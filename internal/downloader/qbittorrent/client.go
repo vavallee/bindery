@@ -98,6 +98,12 @@ func (c *Client) Login(ctx context.Context) error {
 		return fmt.Errorf("build login request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// qBittorrent v5.x enforces CSRF protection on /auth/login and rejects
+	// requests without matching Origin and Referer headers (often silently —
+	// the empty-body 403 that motivated AuthError above). v4.x ignores these
+	// headers, so setting them is safe across versions.
+	req.Header.Set("Origin", c.baseURL)
+	req.Header.Set("Referer", c.baseURL)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -107,6 +113,15 @@ func (c *Client) Login(ctx context.Context) error {
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
 	text := strings.TrimSpace(string(body))
+
+	// qBittorrent v4.x returns `200 OK` + body "Ok." on a successful login;
+	// v5.x returns `204 No Content` with an empty body. Accept both.
+	if resp.StatusCode == http.StatusNoContent {
+		c.mu.Lock()
+		c.loggedIn = true
+		c.mu.Unlock()
+		return nil
+	}
 
 	if resp.StatusCode != http.StatusOK || text == "Fails." {
 		return &AuthError{Status: resp.StatusCode, Body: text}
