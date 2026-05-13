@@ -152,5 +152,5 @@ func (h *DownloadClientHandler) Test(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"message": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{"message": "Connection verified"})
 }

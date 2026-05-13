@@ -83,6 +83,7 @@ func TestAddTorrent_ConcurrentUniqueHashes(t *testing.T) {
 	defer indexer.Close()
 
 	c := newTestClient(srv.URL, "admin", "pass")
+	allowTorrentFetch(c)
 	c.loggedIn = true
 
 	var wg sync.WaitGroup
@@ -145,6 +146,10 @@ func newTestClient(serverURL, username, password string) *Client {
 	c := New("localhost", 8080, username, password, "", false)
 	c.baseURL = serverURL
 	return c
+}
+
+func allowTorrentFetch(c *Client) {
+	c.validateTorrentURL = func(string) error { return nil }
 }
 
 func TestNew(t *testing.T) {
@@ -530,6 +535,7 @@ func TestAddTorrent_TorrentURL_SubmitsMultipart(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestClient(srv.URL, "admin", "pass")
+	allowTorrentFetch(c)
 	if _, err := c.AddTorrent(context.Background(), indexer.URL+"/torrent", "", ""); err != nil {
 		t.Fatalf("AddTorrent: %v", err)
 	}
@@ -578,6 +584,7 @@ func TestAddTorrent_TorrentURL_WithCategoryAndSavePath(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestClient(srv.URL, "admin", "pass")
+	allowTorrentFetch(c)
 	if _, err := c.AddTorrent(context.Background(), indexer.URL+"/torrent", "books", "/downloads"); err != nil {
 		t.Fatalf("AddTorrent: %v", err)
 	}
@@ -611,6 +618,7 @@ func TestAddTorrent_TorrentURL_FetchFailure(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestClient(srv.URL, "admin", "pass")
+	allowTorrentFetch(c)
 	_, err := c.AddTorrent(context.Background(), indexer.URL+"/torrent", "", "")
 	if err == nil {
 		t.Fatal("expected error when indexer returns 401")
@@ -620,6 +628,120 @@ func TestAddTorrent_TorrentURL_FetchFailure(t *testing.T) {
 	}
 	if qbitCalled {
 		t.Error("qBittorrent should not be contacted when torrent fetch fails")
+	}
+}
+
+func TestAddTorrent_TorrentURL_RedirectToMagnetUsesURLForm(t *testing.T) {
+	const magnet = "magnet:?xt=urn:btih:ABCDEF123&dn=Book"
+	indexer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, magnet, http.StatusFound)
+	}))
+	defer indexer.Close()
+
+	var gotURL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/add":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			gotURL = r.FormValue("urls")
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			_, _ = w.Write([]byte("[]"))
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	allowTorrentFetch(c)
+	hash, err := c.AddTorrent(context.Background(), indexer.URL+"/redirect", "books", "")
+	if err != nil {
+		t.Fatalf("AddTorrent: %v", err)
+	}
+	if hash != "abcdef123" {
+		t.Errorf("hash: want abcdef123, got %q", hash)
+	}
+	if gotURL != magnet {
+		t.Errorf("urls field: want %q, got %q", magnet, gotURL)
+	}
+}
+
+func TestAddTorrent_TorrentURL_OversizedResponseDoesNotCallQbitAdd(t *testing.T) {
+	orig := maxTorrentFileBytes
+	maxTorrentFileBytes = 8
+	t.Cleanup(func() { maxTorrentFileBytes = orig })
+
+	indexer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("123456789"))
+	}))
+	defer indexer.Close()
+
+	qbitCalled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/add":
+			qbitCalled = true
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			_, _ = w.Write([]byte("[]"))
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	allowTorrentFetch(c)
+	_, err := c.AddTorrent(context.Background(), indexer.URL+"/too-large.torrent", "", "")
+	if err == nil {
+		t.Fatal("expected oversized response error")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("expected oversized error, got: %v", err)
+	}
+	if qbitCalled {
+		t.Error("qBittorrent should not be contacted when torrent fetch is oversized")
+	}
+}
+
+func TestAddTorrent_TorrentURL_DefaultValidationRejectsLoopbackBeforeFetch(t *testing.T) {
+	indexerCalled := false
+	indexer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		indexerCalled = true
+		_, _ = w.Write([]byte(fakeTorrentContent))
+	}))
+	defer indexer.Close()
+
+	qbitAddCalled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/add":
+			qbitAddCalled = true
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			_, _ = w.Write([]byte("[]"))
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	_, err := c.AddTorrent(context.Background(), indexer.URL+"/blocked.torrent", "", "")
+	if err == nil {
+		t.Fatal("expected loopback URL validation failure")
+	}
+	if !strings.Contains(err.Error(), "url not allowed") {
+		t.Errorf("expected URL validation error, got: %v", err)
+	}
+	if indexerCalled {
+		t.Error("indexer URL must not be fetched after validation failure")
+	}
+	if qbitAddCalled {
+		t.Error("qBittorrent add endpoint should not be contacted after validation failure")
 	}
 }
 
@@ -904,6 +1026,7 @@ func TestAddTorrent_HashFoundUnderDifferentCategory(t *testing.T) {
 	defer indexer.Close()
 
 	c := newTestClient(srv.URL, "admin", "pass")
+	allowTorrentFetch(c)
 	hash, err := c.AddTorrent(context.Background(), indexer.URL+"/torrent", "books", "")
 	if err != nil {
 		t.Fatalf("AddTorrent: %v", err)
@@ -966,6 +1089,7 @@ func TestAddTorrent_HashLookupTimeout(t *testing.T) {
 	defer indexer.Close()
 
 	c := newTestClient(srv.URL, "admin", "pass")
+	allowTorrentFetch(c)
 	_, err := c.AddTorrent(context.Background(), indexer.URL+"/torrent", "books", "")
 	if err == nil {
 		t.Fatal("expected error on timeout, got nil")

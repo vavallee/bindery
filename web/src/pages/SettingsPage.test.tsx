@@ -958,6 +958,7 @@ describe('SettingsPage', () => {
       })
       expect(await screen.findByTitle('common.enable')).toBeInTheDocument()
 
+      vi.mocked(api.testDownloadClient).mockResolvedValue({ message: 'Connection verified' })
       fireEvent.click(screen.getByRole('button', { name: 'common.test' }))
       await waitFor(() => expect(api.testDownloadClient).toHaveBeenCalledWith(45))
       expect(alertSpy).toHaveBeenCalledWith('common.connOk')

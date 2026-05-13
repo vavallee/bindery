@@ -20,6 +20,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/downloader/nethint"
 	"github.com/vavallee/bindery/internal/downloader/urlbase"
+	"github.com/vavallee/bindery/internal/httpsec"
 )
 
 // AuthError signals that qBittorrent responded but rejected the login.
@@ -51,6 +52,10 @@ func (e *AuthError) Error() string {
 // to appear in the unfiltered torrent list.
 var hashPollTimeout = 30 * time.Second
 
+// maxTorrentFileBytes caps the torrent payload Bindery will fetch before
+// uploading it to qBittorrent.
+var maxTorrentFileBytes int64 = 50 << 20
+
 // Client interacts with the qBittorrent WebUI API v2.
 // Authentication is cookie-based: Login() obtains a SID cookie which is
 // stored in the embedded http.Client's cookie jar and sent automatically on
@@ -60,14 +65,14 @@ var hashPollTimeout = 30 * time.Second
 //   - APIKey  → password  (qBittorrent uses username/password, not an API key)
 //   - URLBase → reverse-proxy subpath, appended to baseURL (#369)
 type Client struct {
-	baseURL   string
-	username  string
-	password  string
-	http      *http.Client
-	fetchHTTP *http.Client // fetches .torrent file content on behalf of qBittorrent
-	mu        sync.Mutex   // guards loggedIn
-	addMu     sync.Mutex   // serialises AddTorrent: keeps before/after hash diff atomic
-	loggedIn  bool
+	baseURL            string
+	username           string
+	password           string
+	http               *http.Client
+	validateTorrentURL func(string) error
+	mu                 sync.Mutex // guards loggedIn
+	addMu              sync.Mutex // serialises AddTorrent: keeps before/after hash diff atomic
+	loggedIn           bool
 }
 
 // New creates a qBittorrent client. urlBase is the optional reverse-proxy
@@ -81,11 +86,13 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 
 	jar, _ := cookiejar.New(nil)
 	return &Client{
-		fetchHTTP: &http.Client{Timeout: 60 * time.Second},
-		baseURL:   fmt.Sprintf("%s://%s:%d%s", scheme, host, port, urlbase.Normalize(urlBase)),
-		username:  username,
-		password:  password,
-		http:      &http.Client{Timeout: 15 * time.Second, Jar: jar},
+		baseURL:  fmt.Sprintf("%s://%s:%d%s", scheme, host, port, urlbase.Normalize(urlBase)),
+		username: username,
+		password: password,
+		http:     &http.Client{Timeout: 15 * time.Second, Jar: jar},
+		validateTorrentURL: func(raw string) error {
+			return httpsec.ValidateOutboundURL(raw, httpsec.PolicyLAN)
+		},
 	}
 }
 
@@ -185,40 +192,63 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 	}
 
 	var req *http.Request
+	submitted := magnetOrURL
 	if strings.HasPrefix(magnetOrURL, "http://") || strings.HasPrefix(magnetOrURL, "https://") {
 		// Fetch the .torrent content in Bindery so qBittorrent never needs to
 		// reach the indexer URL directly (which may be a Docker-only hostname
 		// like prowlarr:9696 that qBittorrent can't resolve from its network).
-		content, err := c.fetchTorrentContent(magnetOrURL)
+		fetched, err := c.fetchTorrentContent(ctx, magnetOrURL)
 		if err != nil {
 			return "", fmt.Errorf("fetch torrent content: %w", err)
 		}
 
-		var buf bytes.Buffer
-		mw := multipart.NewWriter(&buf)
-		fw, err := mw.CreateFormFile("torrents", "upload.torrent")
-		if err != nil {
-			return "", fmt.Errorf("build multipart: %w", err)
-		}
-		if _, err := fw.Write(content); err != nil {
-			return "", fmt.Errorf("write torrent content: %w", err)
-		}
-		if category != "" {
-			_ = mw.WriteField("category", category)
-		}
-		if savePath != "" {
-			_ = mw.WriteField("savepath", savePath)
-		}
-		if err := mw.Close(); err != nil {
-			return "", fmt.Errorf("close multipart writer: %w", err)
-		}
+		if fetched.magnetURL != "" {
+			submitted = fetched.magnetURL
+			form := url.Values{"urls": {fetched.magnetURL}}
+			if category != "" {
+				form.Set("category", category)
+			}
+			if savePath != "" {
+				form.Set("savepath", savePath)
+			}
+			req, err = http.NewRequestWithContext(ctx, http.MethodPost,
+				c.baseURL+"/api/v2/torrents/add",
+				strings.NewReader(form.Encode()))
+			if err != nil {
+				return "", fmt.Errorf("build add request: %w", err)
+			}
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		} else {
+			var buf bytes.Buffer
+			mw := multipart.NewWriter(&buf)
+			fw, err := mw.CreateFormFile("torrents", "upload.torrent")
+			if err != nil {
+				return "", fmt.Errorf("build multipart: %w", err)
+			}
+			if _, err := fw.Write(fetched.data); err != nil {
+				return "", fmt.Errorf("write torrent content: %w", err)
+			}
+			if category != "" {
+				if err := mw.WriteField("category", category); err != nil {
+					return "", fmt.Errorf("write torrent category: %w", err)
+				}
+			}
+			if savePath != "" {
+				if err := mw.WriteField("savepath", savePath); err != nil {
+					return "", fmt.Errorf("write torrent savepath: %w", err)
+				}
+			}
+			if err := mw.Close(); err != nil {
+				return "", fmt.Errorf("close multipart: %w", err)
+			}
 
-		req, err = http.NewRequestWithContext(ctx, http.MethodPost,
-			c.baseURL+"/api/v2/torrents/add", &buf)
-		if err != nil {
-			return "", fmt.Errorf("build add request: %w", err)
+			req, err = http.NewRequestWithContext(ctx, http.MethodPost,
+				c.baseURL+"/api/v2/torrents/add", &buf)
+			if err != nil {
+				return "", fmt.Errorf("build add request: %w", err)
+			}
+			req.Header.Set("Content-Type", mw.FormDataContentType())
 		}
-		req.Header.Set("Content-Type", mw.FormDataContentType())
 	} else {
 		form := url.Values{"urls": {magnetOrURL}}
 		if category != "" {
@@ -253,7 +283,7 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 		return "", fmt.Errorf("add torrent failed: %s", text)
 	}
 
-	if infoHash := infoHashFromMagnet(magnetOrURL); infoHash != "" {
+	if infoHash := infoHashFromMagnet(submitted); infoHash != "" {
 		return infoHash, nil
 	}
 
@@ -329,18 +359,94 @@ func infoHashFromMagnet(raw string) string {
 	return strings.ToLower(h)
 }
 
+type fetchedTorrentContent struct {
+	data      []byte
+	magnetURL string
+}
+
 // fetchTorrentContent downloads a .torrent file URL and returns its raw bytes.
-// It limits the response to 50 MiB to guard against runaway reads.
-func (c *Client) fetchTorrentContent(rawURL string) ([]byte, error) {
-	resp, err := c.fetchHTTP.Get(rawURL) //nolint:noctx
+// It limits the response size and validates each redirect target before fetch.
+func (c *Client) fetchTorrentContent(ctx context.Context, rawURL string) (*fetchedTorrentContent, error) {
+	current := rawURL
+	fetchClient := &http.Client{
+		Transport: c.http.Transport,
+		Timeout:   c.http.Timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	for redirects := 0; redirects <= 5; redirects++ {
+		if err := c.validateTorrentFetchURL(current); err != nil {
+			return nil, err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, current, nil)
+		if err != nil {
+			return nil, fmt.Errorf("build torrent fetch request: %w", err)
+		}
+		req.Header.Set("Accept", "application/x-bittorrent")
+
+		resp, err := fetchClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode >= http.StatusMultipleChoices && resp.StatusCode < http.StatusBadRequest {
+			location := resp.Header.Get("Location")
+			_, _ = io.Copy(io.Discard, resp.Body)
+			if err := resp.Body.Close(); err != nil {
+				return nil, fmt.Errorf("close redirect body: %w", err)
+			}
+			if location == "" {
+				return nil, fmt.Errorf("redirect without location")
+			}
+			if strings.HasPrefix(strings.ToLower(location), "magnet:") {
+				return &fetchedTorrentContent{magnetURL: location}, nil
+			}
+			next, err := req.URL.Parse(location)
+			if err != nil {
+				return nil, fmt.Errorf("invalid redirect location: %w", err)
+			}
+			if next.Scheme != "http" && next.Scheme != "https" {
+				return nil, fmt.Errorf("unsupported redirect scheme %q", next.Scheme)
+			}
+			current = next.String()
+			continue
+		}
+
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("indexer returned HTTP %d", resp.StatusCode)
+		}
+		data, err := readLimited(resp.Body, maxTorrentFileBytes)
+		if err != nil {
+			return nil, err
+		}
+		if len(data) == 0 {
+			return nil, fmt.Errorf("empty torrent response")
+		}
+		return &fetchedTorrentContent{data: data}, nil
+	}
+
+	return nil, fmt.Errorf("too many redirects")
+}
+
+func (c *Client) validateTorrentFetchURL(raw string) error {
+	if c.validateTorrentURL == nil {
+		return httpsec.ValidateOutboundURL(raw, httpsec.PolicyLAN)
+	}
+	return c.validateTorrentURL(raw)
+}
+
+func readLimited(r io.Reader, maxBytes int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, maxBytes+1))
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("indexer returned HTTP %d", resp.StatusCode)
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("torrent response exceeds %d bytes", maxBytes)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, 50<<20))
+	return data, nil
 }
 
 // GetTorrents returns all torrents in the given category (empty = all).

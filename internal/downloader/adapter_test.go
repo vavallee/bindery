@@ -350,8 +350,12 @@ func TestTestClient_Qbittorrent(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v2/auth/login":
 			_, _ = w.Write([]byte("Ok."))
-		default:
+		case "/api/v2/app/version":
 			_, _ = w.Write([]byte("1.2.3"))
+		case "/api/v2/torrents/info":
+			_, _ = w.Write([]byte("[]"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	defer srv.Close()

@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/db"
@@ -144,5 +147,60 @@ func TestDownloadClientTest_NotFound(t *testing.T) {
 	h.Test(rec, withURLParam(httptest.NewRequest(http.MethodPost, "/downloadclient/999/test", nil), "id", "999"))
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected 404 for missing client, got %d", rec.Code)
+	}
+}
+
+func TestDownloadClientTest_SuccessMessage(t *testing.T) {
+	qbit := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/app/version":
+			_, _ = w.Write([]byte("5.1.4"))
+		case "/api/v2/torrents/info":
+			_, _ = w.Write([]byte("[]"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer qbit.Close()
+	u, err := url.Parse(qbit.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, portStr, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h, clients := downloadClientFixture(t)
+	client := &models.DownloadClient{
+		Name:     "qBit",
+		Type:     "qbittorrent",
+		Host:     host,
+		Port:     port,
+		Username: "u",
+		Password: "p",
+		Enabled:  true,
+	}
+	if err := clients.Create(context.Background(), client); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.Test(rec, withURLParam(httptest.NewRequest(http.MethodPost, "/downloadclient/1/test", nil), "id", "1"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var out map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out["message"] != "Connection verified" {
+		t.Errorf("message: want Connection verified, got %q", out["message"])
 	}
 }
