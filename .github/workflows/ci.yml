@@ -321,6 +321,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Bump bindery-ping LATEST_VERSION
+        if: ${{ secrets.HETZ1_KUBECONFIG != '' }}
+        env:
+          KUBECONFIG_B64: ${{ secrets.HETZ1_KUBECONFIG }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          echo "$KUBECONFIG_B64" | base64 -d > /tmp/kc
+          KUBECONFIG=/tmp/kc kubectl -n bindery-ping set env deployment/bindery-ping \
+            LATEST_VERSION="$VERSION"
+          rm -f /tmp/kc
+
   # Pinned ABS compatibility suite. Runs self-contained against the
   # repository's seeded Phase 6 fixture harness and can optionally target a
   # real pinned ABS instance when the env vars below are provided.
