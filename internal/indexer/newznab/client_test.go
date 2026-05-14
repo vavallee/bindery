@@ -675,6 +675,38 @@ func TestParseResults_AppendsApikeyToEnclosure(t *testing.T) {
 	}
 }
 
+func TestRedactAPIKey(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "replaces apikey value",
+			in:   "https://indexer.local/api?t=book&apikey=supersecret&title=Dune",
+			want: "https://indexer.local/api?apikey=%2A%2A%2A&t=book&title=Dune",
+		},
+		{
+			name: "no apikey param left unchanged",
+			in:   "https://indexer.local/api?t=search&q=Dune",
+			want: "https://indexer.local/api?t=search&q=Dune",
+		},
+		{
+			name: "invalid URL returned as-is",
+			in:   "://not a url",
+			want: "://not a url",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := redactAPIKey(c.in)
+			if got != c.want {
+				t.Errorf("redactAPIKey(%q)\n got  %q\n want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
 func TestPrimaryTitleForQuery_NormalizesAndDropsSubtitle(t *testing.T) {
 	cases := []struct {
 		in, want string

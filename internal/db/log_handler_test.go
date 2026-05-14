@@ -107,6 +107,59 @@ func TestLogHandlerStop(t *testing.T) {
 	}
 }
 
+func TestLogHandler_SetLevelAndLevel(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatalf("open memory db: %v", err)
+	}
+	defer database.Close()
+
+	h := NewLogSlogHandler(NewLogRepo(database), slog.LevelInfo)
+	defer h.Stop(context.Background())
+
+	if h.Level() != slog.LevelInfo {
+		t.Errorf("initial level: want INFO, got %s", h.Level())
+	}
+
+	h.SetLevel(slog.LevelDebug)
+
+	if h.Level() != slog.LevelDebug {
+		t.Errorf("after SetLevel: want DEBUG, got %s", h.Level())
+	}
+	if !h.Enabled(context.Background(), slog.LevelDebug) {
+		t.Error("Enabled(DEBUG) should be true after SetLevel(DEBUG)")
+	}
+}
+
+func TestLogHandler_SetLevelPropagatestoWithAttrsChild(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatalf("open memory db: %v", err)
+	}
+	defer database.Close()
+
+	h := NewLogSlogHandler(NewLogRepo(database), slog.LevelInfo)
+	defer h.Stop(context.Background())
+
+	child := h.WithAttrs([]slog.Attr{slog.String("component", "test")})
+
+	// Child starts at parent's level.
+	if child.Enabled(context.Background(), slog.LevelDebug) {
+		t.Error("child should not be enabled for DEBUG before SetLevel")
+	}
+
+	// Changing parent level propagates to child via shared atomic.
+	h.SetLevel(slog.LevelDebug)
+	if !child.Enabled(context.Background(), slog.LevelDebug) {
+		t.Error("child should be enabled for DEBUG after parent SetLevel(DEBUG)")
+	}
+
+	h.SetLevel(slog.LevelWarn)
+	if child.Enabled(context.Background(), slog.LevelInfo) {
+		t.Error("child should not be enabled for INFO after parent SetLevel(WARN)")
+	}
+}
+
 func TestLogSlogHandler_DropsOnFullChannel(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {

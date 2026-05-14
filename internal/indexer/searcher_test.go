@@ -1,9 +1,14 @@
 package indexer
 
 import (
+	"context"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/indexer/newznab"
+	"github.com/vavallee/bindery/internal/models"
 )
 
 func resultTitles(rs []newznab.SearchResult) []string {
@@ -950,3 +955,49 @@ func equalSlices(a, b []string) bool {
 	}
 	return true
 }
+
+// TestSearchBookWithDebug_PerResultLogging verifies that the per-result debug
+// log lines in SearchBookWithDebug are executed when the slog level is DEBUG.
+func TestSearchBookWithDebug_PerResultLogging(t *testing.T) {
+	const rssBody = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+  <channel>
+    <newznab:response offset="0" total="1"/>
+    <item>
+      <title>Life Ascending Nick Lane</title>
+      <guid isPermaLink="false">guid-1</guid>
+      <enclosure url="https://fake/dl/1" length="1000" type="application/x-nzb"/>
+      <newznab:attr name="author" value="Nick Lane"/>
+    </item>
+  </channel>
+</rss>`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(rssBody))
+	}))
+	defer srv.Close()
+
+	// Set global slog to debug so the Enabled check in SearchBookWithDebug fires.
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(nopWriter{}, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(orig) })
+
+	idxs := []models.Indexer{{ID: 1, Name: "test", URL: srv.URL, Enabled: true, Categories: []int{7020}}}
+	results, dbg := NewSearcher().SearchBookWithDebug(context.Background(), idxs, MatchCriteria{
+		Title:  "Life Ascending",
+		Author: "Nick Lane",
+	})
+
+	if len(results) == 0 {
+		t.Fatal("expected at least 1 result")
+	}
+	if dbg == nil {
+		t.Fatal("expected non-nil debug info")
+	}
+}
+
+// nopWriter discards all log output during tests.
+type nopWriter struct{}
+
+func (nopWriter) Write(p []byte) (int, error) { return len(p), nil }
