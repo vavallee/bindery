@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -18,7 +19,9 @@ type LogHandler struct {
 	repo     *LogRepo
 	ch       chan LogEntry
 	preAttrs []slog.Attr
-	level    slog.Level
+	// levelVar is shared (by pointer) between the root handler and all children
+	// created via WithAttrs, so a single SetLevel call propagates everywhere.
+	levelVar *atomic.Int64
 	// wg is non-nil only on the root handler returned by NewLogSlogHandler.
 	// Child handlers from WithAttrs share repo+ch but must not own the wg or
 	// the close-channel responsibility.
@@ -28,23 +31,37 @@ type LogHandler struct {
 // NewLogSlogHandler returns a non-blocking slog.Handler backed by repo.
 // Call Stop to flush in-flight entries and shut the drain goroutine down.
 func NewLogSlogHandler(repo *LogRepo, minLevel slog.Level) *LogHandler {
+	lv := &atomic.Int64{}
+	lv.Store(int64(minLevel))
 	h := &LogHandler{
-		repo:  repo,
-		ch:    make(chan LogEntry, logHandlerBufSize),
-		level: minLevel,
-		wg:    &sync.WaitGroup{},
+		repo:     repo,
+		ch:       make(chan LogEntry, logHandlerBufSize),
+		levelVar: lv,
+		wg:       &sync.WaitGroup{},
 	}
 	h.wg.Add(1)
 	go h.drain()
 	return h
 }
 
+// SetLevel changes the minimum level recorded to the database. Safe to call
+// concurrently; takes effect immediately for both the root handler and any
+// child handlers created via WithAttrs.
+func (h *LogHandler) SetLevel(l slog.Level) {
+	h.levelVar.Store(int64(l))
+}
+
+// Level returns the current minimum level.
+func (h *LogHandler) Level() slog.Level {
+	return slog.Level(h.levelVar.Load())
+}
+
 func (h *LogHandler) Enabled(_ context.Context, level slog.Level) bool {
-	return level >= h.level
+	return level >= h.Level()
 }
 
 func (h *LogHandler) Handle(_ context.Context, rec slog.Record) error {
-	if rec.Level < h.level {
+	if rec.Level < h.Level() {
 		return nil
 	}
 
@@ -95,8 +112,9 @@ func (h *LogHandler) Handle(_ context.Context, rec slog.Record) error {
 
 func (h *LogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	combined := append(append([]slog.Attr{}, h.preAttrs...), attrs...)
+	// Share levelVar so SetLevel on the root propagates to all children.
 	// Intentionally do NOT propagate wg: only the root handler owns shutdown.
-	return &LogHandler{repo: h.repo, ch: h.ch, preAttrs: combined, level: h.level}
+	return &LogHandler{repo: h.repo, ch: h.ch, preAttrs: combined, levelVar: h.levelVar}
 }
 
 func (h *LogHandler) WithGroup(_ string) slog.Handler {

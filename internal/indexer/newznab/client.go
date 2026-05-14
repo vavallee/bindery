@@ -7,6 +7,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path"
@@ -100,6 +101,8 @@ func (c *Client) Search(ctx context.Context, query string, categories []int) ([]
 		return nil, fmt.Errorf("search: %w", err)
 	}
 
+	slog.Debug("indexer query", "url", redactAPIKey(u))
+
 	var rss rssResponse
 	if err := c.getXML(ctx, u, &rss); err != nil {
 		return nil, fmt.Errorf("search: %w", err)
@@ -131,10 +134,13 @@ func (c *Client) BookSearch(ctx context.Context, title, author string, categorie
 			"limit":  "100",
 		})
 		if err == nil {
+			slog.Debug("indexer query", "tier", 1, "url", redactAPIKey(u))
 			var rss rssResponse
 			if err := c.getXML(ctx, u, &rss); err == nil && len(rss.Channel.Items) > 0 && rss.Channel.Response.Total < 1000 {
+				slog.Debug("indexer query tier matched", "tier", 1, "count", len(rss.Channel.Items))
 				return c.parseResults(rss.Channel.Items), nil
 			}
+			slog.Debug("indexer query tier fallthrough", "tier", 1, "items", len(rss.Channel.Items))
 		}
 	}
 
@@ -142,6 +148,7 @@ func (c *Client) BookSearch(ctx context.Context, title, author string, categorie
 	if surname != "" && !strings.EqualFold(surname, author) {
 		results, err := c.Search(ctx, surname+" "+queryTitle, categories)
 		if err == nil && len(results) > 0 {
+			slog.Debug("indexer query tier matched", "tier", 2, "count", len(results))
 			return results, nil
 		}
 	}
@@ -150,12 +157,29 @@ func (c *Client) BookSearch(ctx context.Context, title, author string, categorie
 	if author != "" {
 		results, err := c.Search(ctx, author+" "+queryTitle, categories)
 		if err == nil && len(results) > 0 {
+			slog.Debug("indexer query tier matched", "tier", 3, "count", len(results))
 			return results, nil
 		}
 	}
 
 	// Tier 4: title only
+	slog.Debug("indexer query tier 4 (title only)", "title", queryTitle)
 	return c.Search(ctx, queryTitle, categories)
+}
+
+// redactAPIKey replaces the apikey query parameter value with *** so URLs
+// can be logged without leaking credentials.
+func redactAPIKey(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	q := u.Query()
+	if q.Get("apikey") != "" {
+		q.Set("apikey", "***")
+		u.RawQuery = q.Encode()
+	}
+	return u.String()
 }
 
 // primaryTitleForQuery returns the portion of a book title before a colon,
