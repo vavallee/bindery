@@ -20,6 +20,20 @@ func NewBookRepo(db *sql.DB) *BookRepo {
 	return &BookRepo{db: db, files: NewBookFileRepo(db)}
 }
 
+// bookCTE is a WITH clause that materialises the first book_files row per
+// format for every book. Using CTEs + LEFT JOINs avoids the correlated
+// subqueries that previously fired 2 N extra SQLite queries per book list.
+const bookCTE = `WITH first_ebook AS (
+	SELECT book_id, path FROM book_files
+	WHERE format = 'ebook'
+	GROUP BY book_id HAVING id = MIN(id)
+),
+first_audiobook AS (
+	SELECT book_id, path FROM book_files
+	WHERE format = 'audiobook'
+	GROUP BY book_id HAVING id = MIN(id)
+)`
+
 // bookColumns is the canonical column list for book SELECT queries.
 // ebook_file_path and audiobook_file_path are derived from book_files first
 // (so multi-file books see the first registered path), with the legacy column
@@ -29,54 +43,59 @@ const bookColumns = `books.id, foreign_id, author_id, title, sort_title, origina
 	image_url, release_date, genres, average_rating, ratings_count, monitored, status,
 	any_edition_ok, selected_edition_id, file_path, language, media_type, narrator, duration_seconds, asin,
 	calibre_id, metadata_provider, last_metadata_refresh_at, created_at, updated_at,
-	COALESCE((SELECT path FROM book_files WHERE book_id = books.id AND format = 'ebook'     ORDER BY id LIMIT 1), COALESCE(ebook_file_path, '')),
-	COALESCE((SELECT path FROM book_files WHERE book_id = books.id AND format = 'audiobook' ORDER BY id LIMIT 1), COALESCE(audiobook_file_path, '')),
+	COALESCE(fe.path, COALESCE(books.ebook_file_path, '')),
+	COALESCE(fa.path, COALESCE(books.audiobook_file_path, '')),
 	excluded`
 
+// bookJoins are the LEFT JOINs that attach the first_ebook and first_audiobook
+// CTE results to the books table. Must follow the FROM books clause.
+const bookJoins = `LEFT JOIN first_ebook    fe ON fe.book_id = books.id
+LEFT JOIN first_audiobook fa ON fa.book_id = books.id`
+
 func (r *BookRepo) List(ctx context.Context) ([]models.Book, error) {
-	return r.query(ctx, "SELECT "+bookColumns+" FROM books WHERE excluded = 0 ORDER BY sort_title", nil)
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE excluded = 0 ORDER BY sort_title", nil)
 }
 
 func (r *BookRepo) ListByUser(ctx context.Context, userID int64) ([]models.Book, error) {
 	where, args := QueryScope("WHERE excluded = 0", userID)
-	return r.query(ctx, "SELECT "+bookColumns+" FROM books "+where+" ORDER BY sort_title", args)
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY sort_title", args)
 }
 
 // ListIncludingExcluded returns all books regardless of their excluded flag.
 func (r *BookRepo) ListIncludingExcluded(ctx context.Context) ([]models.Book, error) {
-	return r.query(ctx, "SELECT "+bookColumns+" FROM books ORDER BY sort_title", nil)
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" ORDER BY sort_title", nil)
 }
 
 func (r *BookRepo) ListByAuthor(ctx context.Context, authorID int64) ([]models.Book, error) {
-	return r.query(ctx, "SELECT "+bookColumns+" FROM books WHERE author_id = ? AND excluded = 0 ORDER BY release_date", []any{authorID})
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE author_id = ? AND excluded = 0 ORDER BY release_date", []any{authorID})
 }
 
 func (r *BookRepo) ListByAuthorAndUser(ctx context.Context, authorID, userID int64) ([]models.Book, error) {
 	where, args := QueryScope("WHERE author_id = ? AND excluded = 0", userID, authorID)
-	return r.query(ctx, "SELECT "+bookColumns+" FROM books "+where+" ORDER BY release_date", args)
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY release_date", args)
 }
 
 // ListByAuthorIncludingExcluded returns all books for an author regardless of excluded flag.
 func (r *BookRepo) ListByAuthorIncludingExcluded(ctx context.Context, authorID int64) ([]models.Book, error) {
-	return r.query(ctx, "SELECT "+bookColumns+" FROM books WHERE author_id = ? ORDER BY release_date", []any{authorID})
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE author_id = ? ORDER BY release_date", []any{authorID})
 }
 
 func (r *BookRepo) ListByStatus(ctx context.Context, status string) ([]models.Book, error) {
-	return r.query(ctx, "SELECT "+bookColumns+" FROM books WHERE status = ? AND monitored = 1 AND excluded = 0 ORDER BY sort_title", []any{status})
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE status = ? AND monitored = 1 AND excluded = 0 ORDER BY sort_title", []any{status})
 }
 
 func (r *BookRepo) ListByStatusAndUser(ctx context.Context, status string, userID int64) ([]models.Book, error) {
 	where, args := QueryScope("WHERE status = ? AND monitored = 1 AND excluded = 0", userID, status)
-	return r.query(ctx, "SELECT "+bookColumns+" FROM books "+where+" ORDER BY sort_title", args)
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY sort_title", args)
 }
 
 // ListByStatusIncludingExcluded returns books with the given status regardless of excluded flag.
 func (r *BookRepo) ListByStatusIncludingExcluded(ctx context.Context, status string) ([]models.Book, error) {
-	return r.query(ctx, "SELECT "+bookColumns+" FROM books WHERE status = ? AND monitored = 1 ORDER BY sort_title", []any{status})
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE status = ? AND monitored = 1 ORDER BY sort_title", []any{status})
 }
 
 func (r *BookRepo) GetByID(ctx context.Context, id int64) (*models.Book, error) {
-	books, err := r.query(ctx, "SELECT "+bookColumns+" FROM books WHERE books.id = ?", []any{id})
+	books, err := r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE books.id = ?", []any{id})
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +106,7 @@ func (r *BookRepo) GetByID(ctx context.Context, id int64) (*models.Book, error) 
 }
 
 func (r *BookRepo) GetByForeignID(ctx context.Context, foreignID string) (*models.Book, error) {
-	books, err := r.query(ctx, "SELECT "+bookColumns+" FROM books WHERE foreign_id = ?", []any{foreignID})
+	books, err := r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE foreign_id = ?", []any{foreignID})
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +333,7 @@ func (r *BookRepo) SetCalibreID(ctx context.Context, id, calibreID int64) error 
 // as its primary idempotency key — a second import pass sees the existing
 // row and updates in place instead of duplicating.
 func (r *BookRepo) GetByCalibreID(ctx context.Context, calibreID int64) (*models.Book, error) {
-	books, err := r.query(ctx, "SELECT "+bookColumns+" FROM books WHERE calibre_id = ?", []any{calibreID})
+	books, err := r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE calibre_id = ?", []any{calibreID})
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +351,7 @@ func (r *BookRepo) GetByCalibreID(ctx context.Context, calibreID int64) (*models
 // duplicate.
 func (r *BookRepo) FindByAuthorAndTitle(ctx context.Context, authorID int64, title string) (*models.Book, error) {
 	books, err := r.query(ctx,
-		"SELECT "+bookColumns+" FROM books WHERE author_id = ? AND LOWER(title) = LOWER(?)",
+		bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE author_id = ? AND LOWER(title) = LOWER(?)",
 		[]any{authorID, title})
 	if err != nil {
 		return nil, err
