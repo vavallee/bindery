@@ -970,6 +970,34 @@ describe('SettingsPage', () => {
     }
   })
 
+  it('shows error message when adding a download client fails', async () => {
+    renderSettings()
+    vi.mocked(api.addDownloadClient).mockRejectedValue(new Error('Connection refused'))
+    await openClientsTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.clients.addButton' }))
+    fireEvent.change(screen.getByPlaceholderText('Host'), { target: { value: 'badhost' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText('Connection refused')).toBeInTheDocument()
+    expect(api.addDownloadClient).toHaveBeenCalledOnce()
+  })
+
+  it('shows error message when editing a download client fails', async () => {
+    const client = makeClient({ id: 55, name: 'Broken SAB' })
+
+    renderSettings({ clients: [client] })
+    vi.mocked(api.updateDownloadClient).mockRejectedValue(new Error('Server error'))
+    await openClientsTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
+    fireEvent.change(screen.getByPlaceholderText('Host'), { target: { value: 'newhost' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText('Server error')).toBeInTheDocument()
+    expect(api.updateDownloadClient).toHaveBeenCalledOnce()
+  })
+
   it('deletes a backup from the list', async () => {
     const backup = { name: 'bindery_20260513_120000.db', size: 1024 * 512, modTime: new Date().toISOString() }
     vi.mocked(api.listBackups).mockResolvedValue([backup])

@@ -4073,6 +4073,8 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
   const [useSSL, setUseSSL] = useState(client.useSsl || false)
   const [urlBase, setUrlBase] = useState(client.urlBase || '')
   const [category, setCategory] = useState(client.category)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const handleTypeChange = (newType: string) => {
@@ -4088,8 +4090,16 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
     const data = isPasswordClient(type)
       ? { ...client, name, type, host, port: parseInt(port), username: hasUsername(type) ? username : '', password: credential, apiKey: '', category, useSsl: useSSL, urlBase: urlBase.trim() }
       : { ...client, name, type, host, port: parseInt(port), apiKey: credential, username: '', password: '', category, useSsl: useSSL, urlBase: urlBase.trim() }
-    const updated = await api.updateDownloadClient(client.id, data)
-    onSaved(updated)
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const updated = await api.updateDownloadClient(client.id, data)
+      onSaved(updated)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -4149,9 +4159,10 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
         {type === 'transmission' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Optional absolute path override. Leave blank to use Transmission's configured default download directory.</p>}
         {type === 'deluge' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Applied via the Deluge label plugin. Leave blank if the plugin is not installed.</p>}
       </div>
+      {saveError && <p className="text-sm text-red-500">{saveError}</p>}
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">Cancel</button>
-        <button onClick={submit} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium">Save</button>
+        <button onClick={submit} disabled={saving} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium disabled:opacity-50">Save</button>
       </div>
     </div>
   )
@@ -4268,6 +4279,8 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
   const [useSSL, setUseSSL] = useState(false)
   const [urlBase, setUrlBase] = useState('')
   const [category, setCategory] = useState('books')
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const isPasswordClient = (t: string) => t === 'qbittorrent' || t === 'transmission' || t === 'nzbget' || t === 'deluge'
@@ -4305,8 +4318,16 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
     const data = isPasswordClient(type)
       ? { name, host, port: parseInt(port), username: hasUsername(type) ? username : '', password: credential, apiKey: '', category, type, enabled: true, useSsl: useSSL, urlBase: urlBase.trim() }
       : { name, host, port: parseInt(port), apiKey: credential, username: '', password: '', category, type, enabled: true, useSsl: useSSL, urlBase: urlBase.trim() }
-    const c = await api.addDownloadClient(data)
-    onAdded(c)
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const c = await api.addDownloadClient(data)
+      onAdded(c)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -4366,9 +4387,10 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
         {type === 'transmission' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Optional absolute path override. Leave blank to use Transmission's configured default download directory.</p>}
         {type === 'deluge' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Applied via the Deluge label plugin. Leave blank if the plugin is not installed.</p>}
       </div>
+      {saveError && <p className="text-sm text-red-500">{saveError}</p>}
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">Cancel</button>
-        <button onClick={submit} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium">Save</button>
+        <button onClick={submit} disabled={saving} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium disabled:opacity-50">Save</button>
       </div>
     </div>
   )
