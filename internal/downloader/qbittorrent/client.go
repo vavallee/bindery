@@ -65,8 +65,8 @@ type Client struct {
 	password  string
 	http      *http.Client
 	fetchHTTP *http.Client // fetches .torrent file content on behalf of qBittorrent
-	mu        sync.Mutex  // guards loggedIn
-	addMu     sync.Mutex  // serialises AddTorrent: keeps before/after hash diff atomic
+	mu        sync.Mutex   // guards loggedIn
+	addMu     sync.Mutex   // serialises AddTorrent: keeps before/after hash diff atomic
 	loggedIn  bool
 }
 
@@ -82,10 +82,10 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 	jar, _ := cookiejar.New(nil)
 	return &Client{
 		fetchHTTP: &http.Client{Timeout: 60 * time.Second},
-		baseURL:  fmt.Sprintf("%s://%s:%d%s", scheme, host, port, urlbase.Normalize(urlBase)),
-		username: username,
-		password: password,
-		http:     &http.Client{Timeout: 15 * time.Second, Jar: jar},
+		baseURL:   fmt.Sprintf("%s://%s:%d%s", scheme, host, port, urlbase.Normalize(urlBase)),
+		username:  username,
+		password:  password,
+		http:      &http.Client{Timeout: 15 * time.Second, Jar: jar},
 	}
 }
 
@@ -209,7 +209,9 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 		if savePath != "" {
 			_ = mw.WriteField("savepath", savePath)
 		}
-		mw.Close()
+		if err := mw.Close(); err != nil {
+			return "", fmt.Errorf("close multipart writer: %w", err)
+		}
 
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost,
 			c.baseURL+"/api/v2/torrents/add", &buf)
