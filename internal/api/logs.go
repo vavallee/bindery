@@ -15,9 +15,9 @@ import (
 // LogHandler exposes the log store over HTTP. When a LogRepo is attached it
 // queries the persistent database; otherwise it falls back to the ring buffer.
 type LogHandler struct {
-	ring   *logbuf.Ring
-	logs   *db.LogRepo     // optional persistent store
-	dblog  *db.LogHandler  // optional; kept in sync with ring level
+	ring  *logbuf.Ring
+	logs  *db.LogRepo    // optional persistent store
+	dblog *db.LogHandler // optional; kept in sync with ring level
 }
 
 func NewLogHandler(ring *logbuf.Ring) *LogHandler {
