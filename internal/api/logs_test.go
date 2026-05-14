@@ -245,3 +245,31 @@ func TestLogGetLevel(t *testing.T) {
 		t.Errorf("expected WARN, got %q", out["level"])
 	}
 }
+
+func TestLogSetLevel_PropagatestoDBHandler(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatalf("open memory db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	ring := logbuf.New(100)
+	dbHandler := db.NewLogSlogHandler(db.NewLogRepo(database), slog.LevelInfo)
+	t.Cleanup(func() { dbHandler.Stop(context.Background()) })
+
+	h := NewLogHandler(ring).WithDBLogHandler(dbHandler)
+
+	body := bytes.NewBufferString(`{"level":"debug"}`)
+	rec := httptest.NewRecorder()
+	h.SetLevel(rec, httptest.NewRequest(http.MethodPut, "/system/loglevel", body))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if ring.Level() != slog.LevelDebug {
+		t.Errorf("ring level: want DEBUG, got %s", ring.Level())
+	}
+	if dbHandler.Level() != slog.LevelDebug {
+		t.Errorf("dbHandler level: want DEBUG, got %s", dbHandler.Level())
+	}
+}
