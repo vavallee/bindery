@@ -143,6 +143,11 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 			mu.Unlock()
 
 			slog.Debug("indexer returned results", "indexer", idx.Name, "count", len(hits))
+			if slog.Default().Enabled(ctx, slog.LevelDebug) {
+				for _, h := range hits {
+					slog.Debug("indexer result", "indexer", idx.Name, "title", h.Title, "author", h.Author)
+				}
+			}
 		}(idx, entry)
 	}
 	wg.Wait()
