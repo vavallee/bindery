@@ -20,8 +20,8 @@ import (
 
 // Client interacts with the NZBGet JSON-RPC API.
 type Client struct {
-	baseURL  string
-	http     *http.Client // NZBGet JSON-RPC transport
+	baseURL   string
+	http      *http.Client // NZBGet JSON-RPC transport
 	fetchHTTP *http.Client // used to fetch NZB content from indexers before submission
 	// username and password for HTTP Basic auth
 	username string
