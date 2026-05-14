@@ -2,6 +2,7 @@ package hardcoverlistsyncer
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/db"
@@ -122,5 +123,32 @@ func testImportList(name, typ string, enabled bool) models.ImportList {
 		URL:     "some-slug",
 		APIKey:  "irrelevant-for-these-tests",
 		Enabled: enabled,
+	}
+}
+
+// TestSyncOne_ErrNotFound verifies that SyncOne returns ErrNotFound when the
+// requested list ID does not exist in the database.
+func TestSyncOne_ErrNotFound(t *testing.T) {
+	s, _ := newTestSyncer(t)
+	err := s.SyncOne(context.Background(), 99999)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("SyncOne(missing id): want ErrNotFound, got %v", err)
+	}
+}
+
+// TestSyncOne_ErrWrongType verifies that SyncOne returns ErrWrongType when the
+// list exists but has a type other than "hardcover".
+func TestSyncOne_ErrWrongType(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	il := testImportList("My Goodreads", "goodreads", true)
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// repo.Create sets il.ID via LastInsertId
+	err := s.SyncOne(ctx, il.ID)
+	if !errors.Is(err, ErrWrongType) {
+		t.Errorf("SyncOne(goodreads list): want ErrWrongType, got %v", err)
 	}
 }
