@@ -449,7 +449,7 @@ func main() {
 	bulkHandler := api.NewBulkHandler(authorRepo, bookRepo, blocklistRepo, sched)
 	backupHandler := api.NewBackupHandler(cfg.DBPath, cfg.DataDir)
 	rootFolderHandler := api.NewRootFolderHandler(rootFolderRepo)
-	logHandler := api.NewLogHandler(ring).WithLogRepo(logRepo)
+	logHandler := api.NewLogHandler(ring).WithLogRepo(logRepo).WithDBLogHandler(logDBHandler)
 	prowlarrHandler := api.NewProwlarrHandler(prowlarrRepo, indexerRepo).WithSettings(settingsRepo)
 	calibreHandler := api.NewCalibreHandler(settingsRepo)
 	grimmoryHandler := api.NewGrimmoryHandler(settingsRepo).WithVersion(version)

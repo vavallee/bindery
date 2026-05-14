@@ -15,8 +15,9 @@ import (
 // LogHandler exposes the log store over HTTP. When a LogRepo is attached it
 // queries the persistent database; otherwise it falls back to the ring buffer.
 type LogHandler struct {
-	ring *logbuf.Ring
-	logs *db.LogRepo // optional persistent store
+	ring   *logbuf.Ring
+	logs   *db.LogRepo     // optional persistent store
+	dblog  *db.LogHandler  // optional; kept in sync with ring level
 }
 
 func NewLogHandler(ring *logbuf.Ring) *LogHandler {
@@ -27,6 +28,13 @@ func NewLogHandler(ring *logbuf.Ring) *LogHandler {
 // database when date/component/search filters are supplied.
 func (h *LogHandler) WithLogRepo(logs *db.LogRepo) *LogHandler {
 	h.logs = logs
+	return h
+}
+
+// WithDBLogHandler stores a reference to the DB slog handler so that
+// SetLevel propagates to it alongside the ring buffer.
+func (h *LogHandler) WithDBLogHandler(dblog *db.LogHandler) *LogHandler {
+	h.dblog = dblog
 	return h
 }
 
@@ -137,6 +145,9 @@ func (h *LogHandler) SetLevel(w http.ResponseWriter, r *http.Request) {
 	}
 	level := parseLevel(req.Level)
 	h.ring.SetLevel(level)
+	if h.dblog != nil {
+		h.dblog.SetLevel(level)
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"level": level.String()})
 }
 
