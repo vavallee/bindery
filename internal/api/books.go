@@ -335,7 +335,6 @@ func (h *BookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 							slog.Warn("book delete: failed to remove legacy file", "id", id, "path", p, "error", err)
 						}
 					}
-					deleteSiblings(p)
 				}
 			}
 		}
@@ -350,13 +349,6 @@ func (h *BookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if err := h.books.Delete(r.Context(), id); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
-	}
-	// Remove any queued/completed download records for this book so the queue
-	// page doesn't show phantom entries after a book is deleted.
-	if h.downloads != nil {
-		if err := h.downloads.DeleteByBookID(r.Context(), id); err != nil {
-			slog.Warn("book delete: failed to clean download records", "id", id, "error", err)
-		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

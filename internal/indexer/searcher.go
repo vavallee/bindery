@@ -64,14 +64,9 @@ func filterCategoriesForMedia(cats []int, mediaType string) []int {
 		wantTens = 303
 		fallback = []int{3030}
 	}
-
-	fallback := []int{childDefault}
-
 	if len(cats) == 0 {
 		return fallback
 	}
-
-	// Collect all categories matching the target tree.
 	var out []int
 	hasNonStandard := false
 	for _, c := range cats {
@@ -82,88 +77,18 @@ func filterCategoriesForMedia(cats []int, mediaType string) []int {
 			hasNonStandard = true
 		}
 	}
-
 	if len(out) == 0 {
 		if hasNonStandard {
 			return cats
 		}
 		return fallback
 	}
-
-	// Check whether any child category (i.e. not the parent) is present.
-	hasChild := false
-	for _, c := range out {
-		if c != parent {
-			hasChild = true
-			break
-		}
-	}
-
-	if hasChild {
-		// Drop the parent; children provide sufficient and more precise coverage.
-		filtered := out[:0]
-		for _, c := range out {
-			if c != parent {
-				filtered = append(filtered, c)
-			}
-		}
-		return filtered
-	}
-
-	// Only the parent is configured — widen to the sane child default.
-	return fallback
+	return out
 }
 
 // SearchBook queries all enabled indexers and returns deduplicated, filtered,
 // ranked results.
-//
-// When c.MediaType is "both", two parallel passes are run — one for ebook and
-// one for audiobook — and each result is tagged with its MediaType so the
-// caller can render them in separate sections. In single-type mode the results
-// are tagged with c.MediaType directly.
 func (s *Searcher) SearchBook(ctx context.Context, indexers []models.Indexer, c MatchCriteria) []newznab.SearchResult {
-	if c.MediaType == models.MediaTypeBoth {
-		// Run ebook and audiobook passes concurrently, preserving per-type
-		// ranking so each section is independently ordered.
-		var (
-			ebookResults     []newznab.SearchResult
-			audiobookResults []newznab.SearchResult
-			wg               sync.WaitGroup
-		)
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			ec := c
-			ec.MediaType = models.MediaTypeEbook
-			res := s.searchBookSingle(ctx, indexers, ec)
-			for i := range res {
-				res[i].MediaType = models.MediaTypeEbook
-			}
-			ebookResults = res
-		}()
-		go func() {
-			defer wg.Done()
-			ac := c
-			ac.MediaType = models.MediaTypeAudiobook
-			res := s.searchBookSingle(ctx, indexers, ac)
-			for i := range res {
-				res[i].MediaType = models.MediaTypeAudiobook
-			}
-			audiobookResults = res
-		}()
-		wg.Wait()
-		return append(ebookResults, audiobookResults...)
-	}
-
-	results := s.searchBookSingle(ctx, indexers, c)
-	for i := range results {
-		results[i].MediaType = c.MediaType
-	}
-	return results
-}
-
-// searchBookSingle executes one media-type pass across all enabled indexers.
-func (s *Searcher) searchBookSingle(ctx context.Context, indexers []models.Indexer, c MatchCriteria) []newznab.SearchResult {
 	var (
 		mu      sync.Mutex
 		results []newznab.SearchResult

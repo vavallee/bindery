@@ -267,19 +267,7 @@ func (s *Scanner) pushCalibreAdd(ctx context.Context, book *models.Book, path st
 		slog.Debug("calibre: adder is nil, skipping", "mode", mode, "bookId", book.ID)
 		return
 	}
-	const maxAttempts = 3
-	backoff := []time.Duration{time.Second, 2 * time.Second}
-	var id int64
-	var err error
-	for attempt := range maxAttempts {
-		id, err = s.calibreAdder.Add(ctx, path)
-		if err == nil || errors.Is(err, calibre.ErrDisabled) {
-			break
-		}
-		if attempt < len(backoff) {
-			time.Sleep(backoff[attempt])
-		}
-	}
+	id, err := s.calibreAdder.Add(ctx, path)
 	if err != nil {
 		if errors.Is(err, calibre.ErrDisabled) {
 			return
@@ -707,8 +695,6 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		return
 	}
 
-	s.updateDownloadStatus(ctx, dl.ID, models.StateImportPending)
-
 	// Find book files in the download path
 	var bookFiles []string
 	if err := filepath.Walk(downloadPath, func(path string, info os.FileInfo, err error) error {
@@ -915,13 +901,6 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// so the user can manually intervene rather than seeing a silent queue.
 	if imported == 0 && failed == 0 && book == nil {
 		s.failImport(ctx, dl, models.StateImportFailed, "could not match any book to this download — check the release title")
-		return
-	}
-
-	// If every file failed to copy/move, the destination is likely not writable —
-	// mark as blocked so the user knows manual intervention is needed.
-	if imported == 0 && failed > 0 {
-		s.updateDownloadStatus(ctx, dl.ID, models.StateImportBlocked)
 		return
 	}
 
@@ -1441,23 +1420,6 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 						matched = true
 					}
 				}
-				if jaroWinkler(strings.ToLower(b.Title), normTitle) < 0.85 {
-					continue
-				}
-				if !authorMatch(authorNames[b.AuthorID], parsed.Author) {
-					continue
-				}
-				// Match found — update the per-format file path and aggregate status.
-				if err := s.books.SetFormatFilePath(ctx, b.ID, detectedFmt, path); err != nil {
-					slog.Error("library scan: failed to update book", "id", b.ID, "error", err)
-					continue
-				}
-				slog.Info("library scan: reconciled book", "title", b.Title, "path", path)
-				trackedPaths[cleanPath] = true
-				reconciledBooks[b.ID] = true
-				reconciled++
-				matched = true
-				break
 			}
 		}
 

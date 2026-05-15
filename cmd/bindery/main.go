@@ -355,9 +355,6 @@ func main() {
 	// Register the Calibre importer as the 24-hour sync job. The scheduler
 	// only fires the job when the syncer is non-nil, so no guard needed here.
 	sched.WithCalibreSyncer(calibreImporter)
-	if calibreAdderForScheduler != nil {
-		sched.WithCalibreAdder(calibreAdderForScheduler)
-	}
 
 	// Recommendation engine (24-hour job, gated on recommendations.enabled).
 	recRepo := db.NewRecommendationRepo(database)
@@ -623,7 +620,6 @@ func main() {
 		r.Post("/book/{id}/rebind", bookHandler.Rebind)
 		r.Post("/book/{id}/map", bookHandler.MapMetadata)
 		r.Post("/book/{id}/enrich-audiobook", bookHandler.EnrichAudiobook)
-		r.Post("/book/{id}/calibre-sync", calibreHandler.CalibreSync)
 		r.Post("/book/{id}/search", indexerHandler.SearchBook)
 		r.Get("/book/{id}/file", fileHandler.Download)
 
@@ -643,15 +639,6 @@ func main() {
 			r.Delete("/indexer/{id}", indexerHandler.Delete)
 			r.Post("/indexer/{id}/test", indexerHandler.Test)
 		})
-
-		// Prowlarr indexer sync
-		r.Get("/prowlarr", prowlarrHandler.List)
-		r.Post("/prowlarr", prowlarrHandler.Create)
-		r.Get("/prowlarr/{id}", prowlarrHandler.Get)
-		r.Put("/prowlarr/{id}", prowlarrHandler.Update)
-		r.Delete("/prowlarr/{id}", prowlarrHandler.Delete)
-		r.Post("/prowlarr/{id}/test", prowlarrHandler.Test)
-		r.Post("/prowlarr/{id}/sync", prowlarrHandler.Sync)
 
 		// Prowlarr indexer sync
 		r.Get("/prowlarr", prowlarrHandler.List)

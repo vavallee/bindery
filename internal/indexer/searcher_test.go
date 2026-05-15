@@ -305,17 +305,9 @@ func TestFilterCategoriesForMedia(t *testing.T) {
 	if len(ebook) != 1 || ebook[0] != 7020 {
 		t.Errorf("ebook filter = %v, want [7020]", ebook)
 	}
-
-	sliceEq := func(a, b []int) bool {
-		if len(a) != len(b) {
-			return false
-		}
-		for i := range a {
-			if a[i] != b[i] {
-				return false
-			}
-		}
-		return true
+	audio := filterCategoriesForMedia(all, "audiobook")
+	if len(audio) != 1 || audio[0] != 3030 {
+		t.Errorf("audiobook filter = %v, want [3030]", audio)
 	}
 	// Empty input falls back to the standard category for the media type.
 	if got := filterCategoriesForMedia(nil, "ebook"); len(got) != 1 || got[0] != 7020 {

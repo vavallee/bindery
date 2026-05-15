@@ -32,13 +32,6 @@ type CalibreSyncer interface {
 	RunSync(ctx context.Context)
 }
 
-// CalibreAdder is the narrow interface the scheduler uses to push individual
-// books to Calibre. Both *calibre.Client (calibredb) and *calibre.PluginClient
-// satisfy it; the interface avoids a direct dependency on the calibre package.
-type CalibreAdder interface {
-	Add(ctx context.Context, path string) (int64, error)
-}
-
 // bookSearcher is the narrow interface the scheduler uses for indexer
 // searches. *indexer.Searcher satisfies it; the interface keeps the scheduler
 // testable without real network calls.
@@ -83,7 +76,6 @@ type Scheduler struct {
 	pending       *db.PendingReleaseRepo
 	aliases       *db.AuthorAliasRepo  // optional; used for non-latin author matching
 	calibreSyncer CalibreSyncer        // optional; nil if Calibre is not configured
-	calibreAdder  CalibreAdder         // optional; retries books with no calibre_id
 	recommender   RecommendationEngine // optional; generates recommendations
 	hcSyncer      HCListSyncer         // optional; syncs Hardcover import lists
 	telemetry     TelemetryPinger      // optional; sends daily anonymous install ping
@@ -149,12 +141,6 @@ func (s *Scheduler) WithAliases(aliases *db.AuthorAliasRepo) {
 // every 24 hours when Calibre is configured. Must be called before Start.
 func (s *Scheduler) WithCalibreSyncer(syncer CalibreSyncer) {
 	s.calibreSyncer = syncer
-}
-
-// WithCalibreAdder registers an adder used by the catch-up job that retries
-// imported books with no calibre_id. Must be called before Start.
-func (s *Scheduler) WithCalibreAdder(adder CalibreAdder) {
-	s.calibreAdder = adder
 }
 
 // WithRecommender registers a recommendation engine that runs every 24 hours.
@@ -245,15 +231,6 @@ func (s *Scheduler) Start() {
 			slog.Info("job: calibre library sync")
 			s.calibreSyncer.RunSync(context.Background())
 		}))
-	}
-
-	// Retry imported books with no calibre_id every 6 hours. Handles cases
-	// where the Calibre plugin was unreachable at import time.
-	if s.calibreAdder != nil {
-		s.cron.AddFunc("@every 6h", func() {
-			slog.Info("job: calibre catch-up sync")
-			s.syncMissingCalibreIDs(context.Background())
-		})
 	}
 
 	// Generate recommendations every 24 hours when the engine is registered.
@@ -803,44 +780,4 @@ func (s *Scheduler) handleStalledDownload(ctx context.Context, dl *models.Downlo
 	}
 
 	go s.SearchAndGrabBook(ctx, *book)
-}
-
-// syncMissingCalibreIDs finds all imported books with no calibre_id and
-// re-pushes them to Calibre. Runs every 6 hours to catch imports that failed
-// because the Calibre plugin was temporarily unreachable.
-func (s *Scheduler) syncMissingCalibreIDs(ctx context.Context) {
-	if s.calibreAdder == nil || s.books == nil {
-		return
-	}
-	books, err := s.books.ListImportedMissingCalibreID(ctx)
-	if err != nil {
-		slog.Warn("calibre catch-up: list failed", "error", err)
-		return
-	}
-	if len(books) == 0 {
-		return
-	}
-	slog.Info("calibre catch-up: retrying books", "count", len(books))
-	for _, book := range books {
-		path := book.EbookFilePath
-		if path == "" {
-			path = book.AudiobookFilePath
-		}
-		if path == "" {
-			path = book.FilePath
-		}
-		if path == "" {
-			continue
-		}
-		id, err := s.calibreAdder.Add(ctx, path)
-		if err != nil {
-			slog.Warn("calibre catch-up: add failed", "bookId", book.ID, "path", path, "error", err)
-			continue
-		}
-		if err := s.books.SetCalibreID(ctx, book.ID, id); err != nil {
-			slog.Warn("calibre catch-up: persist calibre_id failed", "bookId", book.ID, "error", err)
-			continue
-		}
-		slog.Info("calibre catch-up: book mirrored", "bookId", book.ID, "calibreId", id)
-	}
 }
