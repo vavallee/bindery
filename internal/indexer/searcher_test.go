@@ -391,6 +391,18 @@ func TestRankResultsManyItemsOrdering(t *testing.T) {
 	}
 }
 
+func TestRankResultsIndexerPriority(t *testing.T) {
+	// Two otherwise-identical releases; the one from the higher-priority indexer
+	// must sort first regardless of insertion order.
+	low := newznab.SearchResult{Title: "Project.Hail.Mary.EPUB", IndexerPriority: 10}
+	high := newznab.SearchResult{Title: "Project.Hail.Mary.EPUB", IndexerPriority: 50}
+	results := []newznab.SearchResult{low, high}
+	rankResults(results, MatchCriteria{Title: "Project Hail Mary"})
+	if results[0].IndexerPriority != 50 {
+		t.Errorf("expected higher-priority indexer first, got priority=%d", results[0].IndexerPriority)
+	}
+}
+
 func TestFilterUsenetJunk(t *testing.T) {
 	junk := []string{
 		`NMR: Project Hail Mary - Andy Weir - 2021 [12/22] - "Andy Weir - 2021 - Project Hail Mary.part09.rar" yEnc`,

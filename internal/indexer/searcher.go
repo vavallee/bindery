@@ -116,6 +116,7 @@ func (s *Searcher) SearchBook(ctx context.Context, indexers []models.Indexer, c 
 				hits[i].IndexerID = idx.ID
 				hits[i].IndexerName = idx.Name
 				hits[i].Protocol = protocol
+				hits[i].IndexerPriority = idx.Priority
 			}
 
 			mu.Lock()
@@ -163,6 +164,7 @@ func (s *Searcher) SearchQuery(ctx context.Context, indexers []models.Indexer, q
 				hits[i].IndexerID = idx.ID
 				hits[i].IndexerName = idx.Name
 				hits[i].Protocol = protocol
+				hits[i].IndexerPriority = idx.Priority
 			}
 
 			mu.Lock()
@@ -563,6 +565,11 @@ func scoreResult(r newznab.SearchResult, c MatchCriteria) float64 {
 	if c.ASIN != "" && strings.Contains(strings.ToUpper(r.Title), strings.ToUpper(c.ASIN)) {
 		score += 250
 	}
+
+	// Indexer priority: each priority point adds directly to the score so a
+	// higher-priority indexer wins ties and can outweigh small quality gaps.
+	// Default priority is 0, so deployments that never configure it are unaffected.
+	score += float64(r.IndexerPriority)
 
 	return score
 }
