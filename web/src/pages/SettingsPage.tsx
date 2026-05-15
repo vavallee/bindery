@@ -13,8 +13,39 @@ type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | '
 
 const inputCls = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600'
 const absReviewResultLimit = 10
-const tabCls = (active: boolean) =>
-  `px-4 py-2 rounded-md text-sm font-medium transition-colors ${active ? 'bg-slate-200 dark:bg-zinc-800 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/50 dark:hover:bg-zinc-800/50'}`
+
+function SettingsNavLink({ tab, active, onSelect, label }: { tab: Tab; active: Tab; onSelect: (t: Tab) => void; label: string }) {
+  return (
+    <button
+      onClick={() => onSelect(tab)}
+      className={`w-full text-left px-3 py-1.5 rounded-md text-sm transition-colors ${
+        active === tab
+          ? 'bg-slate-200 dark:bg-zinc-800 text-slate-900 dark:text-white font-medium'
+          : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-zinc-800/50'
+      }`}
+    >
+      {label}
+    </button>
+  )
+}
+
+function Toggle({ checked, onChange, title, disabled }: { checked: boolean; onChange: () => void; title?: string; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={onChange}
+      title={title}
+      disabled={disabled}
+      className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-zinc-900 disabled:opacity-50 disabled:cursor-not-allowed ${
+        checked ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'
+      }`}
+    >
+      <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-150 ${checked ? 'translate-x-4' : ''}`} />
+    </button>
+  )
+}
 
 export default function SettingsPage() {
   const { t, i18n } = useTranslation()
@@ -36,8 +67,14 @@ export default function SettingsPage() {
   const [showAddNotification, setShowAddNotification] = useState(false)
   const [editingIndexer, setEditingIndexer] = useState<number | null>(null)
   const [indexerTestResults, setIndexerTestResults] = useState<Record<number, IndexerTestResult & { testing?: boolean }>>({})
+  const [confirmDeleteIndexer, setConfirmDeleteIndexer] = useState<number | null>(null)
   const [editingClient, setEditingClient] = useState<number | null>(null)
+  const [clientTestResult, setClientTestResult] = useState<Record<number, { ok: boolean; msg: string }>>({})
+  const [confirmDeleteClient, setConfirmDeleteClient] = useState<number | null>(null)
   const [editingNotification, setEditingNotification] = useState<number | null>(null)
+  const [notificationTestResult, setNotificationTestResult] = useState<Record<number, { ok: boolean; msg: string }>>({})
+  const [confirmDeleteNotification, setConfirmDeleteNotification] = useState<number | null>(null)
+  const [prowlarrTestResult, setProwlarrTestResult] = useState<Record<number, { ok: boolean; msg: string }>>({})
   const [logEntries, setLogEntries] = useState<LogEntry[]>([])
   const [logLevel, setLogLevel] = useState<string>('info')
   const [logFilter, setLogFilter] = useState<string>('all')
@@ -105,16 +142,46 @@ export default function SettingsPage() {
     <div>
       <h2 className="text-2xl font-bold mb-6">{t('settings.title')}</h2>
 
-      <div className="flex flex-wrap gap-2 mb-6">
-        {(isAdmin
-          ? ['general', 'indexers', 'clients', 'rootfolders', 'quality', 'metadata', 'notifications', 'calibre', 'abs', 'grimmory', 'import', 'blocklist', 'logs'] as Tab[]
-          : ['general'] as Tab[]
-        ).map(tabKey => (
-          <button key={tabKey} onClick={() => setTab(tabKey)} className={tabCls(tab === tabKey)}>
-            {t(`settings.tabs.${tabKey}`)}
-          </button>
-        ))}
-      </div>
+      <div className="flex gap-8 items-start">
+        {/* Sidebar navigation */}
+        <nav className="w-44 flex-shrink-0 space-y-0.5">
+          <SettingsNavLink tab="general" active={tab} onSelect={setTab} label={t('settings.tabs.general')} />
+
+          {isAdmin && (
+            <>
+              <div className="pt-4 pb-0.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-zinc-600 px-3 mb-1">Sources</p>
+                <SettingsNavLink tab="indexers" active={tab} onSelect={setTab} label={t('settings.tabs.indexers')} />
+                <SettingsNavLink tab="clients" active={tab} onSelect={setTab} label={t('settings.tabs.clients')} />
+                <SettingsNavLink tab="notifications" active={tab} onSelect={setTab} label={t('settings.tabs.notifications')} />
+              </div>
+
+              <div className="pt-3 pb-0.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-zinc-600 px-3 mb-1">Library</p>
+                <SettingsNavLink tab="quality" active={tab} onSelect={setTab} label={t('settings.tabs.quality')} />
+                <SettingsNavLink tab="metadata" active={tab} onSelect={setTab} label={t('settings.tabs.metadata')} />
+                <SettingsNavLink tab="rootfolders" active={tab} onSelect={setTab} label={t('settings.tabs.rootfolders')} />
+              </div>
+
+              <div className="pt-3 pb-0.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-zinc-600 px-3 mb-1">Integrations</p>
+                <SettingsNavLink tab="calibre" active={tab} onSelect={setTab} label={t('settings.tabs.calibre')} />
+                <SettingsNavLink tab="abs" active={tab} onSelect={setTab} label={t('settings.tabs.abs')} />
+                <SettingsNavLink tab="grimmory" active={tab} onSelect={setTab} label={t('settings.tabs.grimmory')} />
+              </div>
+
+              <div className="pt-3 pb-0.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-zinc-600 px-3 mb-1">System</p>
+                <SettingsNavLink tab="import" active={tab} onSelect={setTab} label={t('settings.tabs.import')} />
+                <SettingsNavLink tab="blocklist" active={tab} onSelect={setTab} label={t('settings.tabs.blocklist')} />
+                <SettingsNavLink tab="logs" active={tab} onSelect={setTab} label={t('settings.tabs.logs')} />
+              </div>
+            </>
+          )}
+        </nav>
+
+        {/* Tab content */}
+        <div className="flex-1 min-w-0">
 
       {/* Indexers */}
       {tab === 'indexers' && (
@@ -133,16 +200,14 @@ export default function SettingsPage() {
                 <div key={idx.id}>
                   <div className="flex items-center justify-between p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
                     <div className="flex items-center gap-3 min-w-0">
-                      <button
-                        onClick={async () => {
+                      <Toggle
+                        checked={idx.enabled}
+                        onChange={async () => {
                           const updated = await api.updateIndexer(idx.id, { ...idx, enabled: !idx.enabled })
                           setIndexers(indexers.map(i => i.id === idx.id ? updated : i))
                         }}
-                        className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${idx.enabled ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'}`}
                         title={idx.enabled ? t('common.disable') : t('common.enable')}
-                      >
-                        <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${idx.enabled ? 'translate-x-4' : ''}`} />
-                      </button>
+                      />
                       <div className="min-w-0">
                         <h4 className={`font-medium text-sm ${!idx.enabled ? 'text-slate-600 dark:text-zinc-500' : ''}`}>{idx.name}</h4>
                         <p className="text-xs text-slate-600 dark:text-zinc-500 truncate">{idx.url}</p>
@@ -165,15 +230,24 @@ export default function SettingsPage() {
                       >
                         {indexerTestResults[idx.id]?.testing ? t('common.testing') : t('common.test')}
                       </button>
-                      <button
-                        onClick={async () => {
-                          await api.deleteIndexer(idx.id)
-                          setIndexers(indexers.filter(i => i.id !== idx.id))
-                        }}
-                        className="text-xs text-red-400 hover:text-red-300"
-                      >
-                        {t('common.delete')}
-                      </button>
+                      {confirmDeleteIndexer === idx.id ? (
+                        <span className="flex items-center gap-1.5">
+                          <span className="text-xs text-slate-500 dark:text-zinc-500">{t('common.delete')}?</span>
+                          <button
+                            onClick={async () => {
+                              await api.deleteIndexer(idx.id)
+                              setIndexers(indexers.filter(i => i.id !== idx.id))
+                              setConfirmDeleteIndexer(null)
+                            }}
+                            className="text-xs text-red-500 font-medium hover:text-red-400"
+                          >{t('common.yes')}</button>
+                          <button onClick={() => setConfirmDeleteIndexer(null)} className="text-xs text-slate-500 dark:text-zinc-500 hover:text-slate-700 dark:hover:text-zinc-300">{t('common.no')}</button>
+                        </span>
+                      ) : (
+                        <button onClick={() => setConfirmDeleteIndexer(idx.id)} className="text-xs text-red-400 hover:text-red-300">
+                          {t('common.delete')}
+                        </button>
+                      )}
                     </div>
                   </div>
                   {indexerTestResults[idx.id] && !indexerTestResults[idx.id].testing && (() => {
@@ -245,16 +319,18 @@ export default function SettingsPage() {
                       {prowlarrSyncResult[p.id] && (
                         <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-0.5">{prowlarrSyncResult[p.id]}</p>
                       )}
+                      {prowlarrTestResult[p.id] && (
+                        <p className={`text-xs mt-0.5 ${prowlarrTestResult[p.id].ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{prowlarrTestResult[p.id].msg}</p>
+                      )}
                     </div>
                     <div className="flex items-center gap-3 flex-shrink-0">
                       <button
                         onClick={async () => {
                           try {
                             const r = await api.testProwlarr(p.id)
-                            if (r.ok === 'true') alert(`Connected — Prowlarr ${r.version}`)
-                            else alert(`Connection failed: ${r.error}`)
+                            setProwlarrTestResult(prev => ({ ...prev, [p.id]: { ok: r.ok === 'true', msg: r.ok === 'true' ? `Connected — Prowlarr ${r.version}` : `Connection failed: ${r.error}` } }))
                           } catch (err: unknown) {
-                            alert(err instanceof Error ? err.message : 'Connection failed')
+                            setProwlarrTestResult(prev => ({ ...prev, [p.id]: { ok: false, msg: err instanceof Error ? err.message : 'Connection failed' } }))
                           }
                         }}
                         className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white"
@@ -269,7 +345,7 @@ export default function SettingsPage() {
                             api.listIndexers().then(setIndexers).catch(console.error)
                             api.listProwlarr().then(r => setProwlarrInstances(r ?? [])).catch(console.error)
                           } catch (err: unknown) {
-                            alert(err instanceof Error ? err.message : 'Sync failed')
+                            setProwlarrSyncResult(prev => ({ ...prev, [p.id]: `Sync failed: ${err instanceof Error ? err.message : 'Unknown error'}` }))
                           }
                         }}
                         className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white"
@@ -323,16 +399,14 @@ export default function SettingsPage() {
                 <div key={c.id}>
                   <div className="flex items-center justify-between p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
                     <div className="flex items-center gap-3 min-w-0">
-                      <button
-                        onClick={async () => {
+                      <Toggle
+                        checked={c.enabled}
+                        onChange={async () => {
                           const updated = await api.updateDownloadClient(c.id, { ...c, enabled: !c.enabled })
                           setClients(clients.map(x => x.id === c.id ? updated : x))
                         }}
-                        className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${c.enabled ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'}`}
                         title={c.enabled ? t('common.disable') : t('common.enable')}
-                      >
-                        <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${c.enabled ? 'translate-x-4' : ''}`} />
-                      </button>
+                      />
                       <div className="min-w-0">
                         <h4 className={`font-medium text-sm ${!c.enabled ? 'text-slate-600 dark:text-zinc-500' : ''}`}>{c.name}</h4>
                         <p className="text-xs text-slate-600 dark:text-zinc-500">{c.host}:{c.port} ({c.category})</p>
@@ -344,24 +418,33 @@ export default function SettingsPage() {
                         onClick={async () => {
                           try {
                             await api.testDownloadClient(c.id)
-                            alert(t('common.connOk'))
+                            setClientTestResult(prev => ({ ...prev, [c.id]: { ok: true, msg: t('common.connOk') } }))
                           } catch (err: unknown) {
-                            alert(t('common.connFail', { error: err instanceof Error ? err.message : 'Unknown error' }))
+                            setClientTestResult(prev => ({ ...prev, [c.id]: { ok: false, msg: t('common.connFail', { error: err instanceof Error ? err.message : 'Unknown error' }) } }))
                           }
                         }}
                         className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white"
                       >
                         {t('common.test')}
                       </button>
-                      <button
-                        onClick={async () => {
-                          await api.deleteDownloadClient(c.id)
-                          setClients(clients.filter(x => x.id !== c.id))
-                        }}
-                        className="text-xs text-red-400 hover:text-red-300"
-                      >
-                        {t('common.delete')}
-                      </button>
+                      {confirmDeleteClient === c.id ? (
+                        <span className="flex items-center gap-1.5">
+                          <span className="text-xs text-slate-500 dark:text-zinc-500">{t('common.delete')}?</span>
+                          <button
+                            onClick={async () => {
+                              await api.deleteDownloadClient(c.id)
+                              setClients(clients.filter(x => x.id !== c.id))
+                              setConfirmDeleteClient(null)
+                            }}
+                            className="text-xs text-red-500 font-medium hover:text-red-400"
+                          >{t('common.yes')}</button>
+                          <button onClick={() => setConfirmDeleteClient(null)} className="text-xs text-slate-500 dark:text-zinc-500 hover:text-slate-700 dark:hover:text-zinc-300">{t('common.no')}</button>
+                        </span>
+                      ) : (
+                        <button onClick={() => setConfirmDeleteClient(c.id)} className="text-xs text-red-400 hover:text-red-300">
+                          {t('common.delete')}
+                        </button>
+                      )}
                     </div>
                   </div>
                   {editingClient === c.id && (
@@ -370,6 +453,12 @@ export default function SettingsPage() {
                       onClose={() => setEditingClient(null)}
                       onSaved={(updated) => { setClients(clients.map(x => x.id === updated.id ? updated : x)); setEditingClient(null) }}
                     />
+                  )}
+                  {clientTestResult[c.id] && (
+                    <div role="status" className={`mt-1 px-3 py-1.5 rounded text-xs flex items-center gap-2 ${clientTestResult[c.id].ok ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'}`}>
+                      <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${clientTestResult[c.id].ok ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                      {clientTestResult[c.id].msg}
+                    </div>
                   )}
                 </div>
               ))}
@@ -402,16 +491,14 @@ export default function SettingsPage() {
                   <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-start gap-3 min-w-0">
-                        <button
-                          onClick={async () => {
+                        <Toggle
+                          checked={n.enabled}
+                          onChange={async () => {
                             const updated = await api.updateNotification(n.id, { ...n, enabled: !n.enabled })
                             setNotifications(notifications.map(x => x.id === n.id ? updated : x))
                           }}
-                          className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5 ${n.enabled ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'}`}
                           title={n.enabled ? t('common.disable') : t('common.enable')}
-                        >
-                          <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${n.enabled ? 'translate-x-4' : ''}`} />
-                        </button>
+                        />
                         <div className="min-w-0">
                           <h4 className={`font-medium text-sm ${!n.enabled ? 'text-slate-600 dark:text-zinc-500' : ''}`}>{n.name}</h4>
                           <p className="text-xs text-slate-600 dark:text-zinc-500 truncate mt-0.5">{n.url}</p>
@@ -430,24 +517,33 @@ export default function SettingsPage() {
                           onClick={async () => {
                             try {
                               await api.testNotification(n.id)
-                              alert(t('settings.notifications.testSent'))
+                              setNotificationTestResult(prev => ({ ...prev, [n.id]: { ok: true, msg: t('settings.notifications.testSent') } }))
                             } catch (err: unknown) {
-                              alert(t('common.connFail', { error: err instanceof Error ? err.message : 'Unknown error' }))
+                              setNotificationTestResult(prev => ({ ...prev, [n.id]: { ok: false, msg: t('common.connFail', { error: err instanceof Error ? err.message : 'Unknown error' }) } }))
                             }
                           }}
                           className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white"
                         >
                           {t('common.test')}
                         </button>
-                        <button
-                          onClick={async () => {
-                            await api.deleteNotification(n.id)
-                            setNotifications(notifications.filter(x => x.id !== n.id))
-                          }}
-                          className="text-xs text-red-400 hover:text-red-300"
-                        >
-                          {t('common.delete')}
-                        </button>
+                        {confirmDeleteNotification === n.id ? (
+                          <span className="flex items-center gap-1.5">
+                            <span className="text-xs text-slate-500 dark:text-zinc-500">{t('common.delete')}?</span>
+                            <button
+                              onClick={async () => {
+                                await api.deleteNotification(n.id)
+                                setNotifications(notifications.filter(x => x.id !== n.id))
+                                setConfirmDeleteNotification(null)
+                              }}
+                              className="text-xs text-red-500 font-medium hover:text-red-400"
+                            >{t('common.yes')}</button>
+                            <button onClick={() => setConfirmDeleteNotification(null)} className="text-xs text-slate-500 dark:text-zinc-500 hover:text-slate-700 dark:hover:text-zinc-300">{t('common.no')}</button>
+                          </span>
+                        ) : (
+                          <button onClick={() => setConfirmDeleteNotification(n.id)} className="text-xs text-red-400 hover:text-red-300">
+                            {t('common.delete')}
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -457,6 +553,12 @@ export default function SettingsPage() {
                       onClose={() => setEditingNotification(null)}
                       onSaved={(updated) => { setNotifications(notifications.map(x => x.id === updated.id ? updated : x)); setEditingNotification(null) }}
                     />
+                  )}
+                  {notificationTestResult[n.id] && (
+                    <div role="status" className={`mt-1 px-3 py-1.5 rounded text-xs flex items-center gap-2 ${notificationTestResult[n.id].ok ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'}`}>
+                      <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${notificationTestResult[n.id].ok ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                      {notificationTestResult[n.id].msg}
+                    </div>
                   )}
                 </div>
               ))}
@@ -790,6 +892,8 @@ export default function SettingsPage() {
       {tab === 'blocklist' && (
         <BlocklistTab />
       )}
+        </div> {/* flex-1 min-w-0 content */}
+      </div> {/* flex gap-8 */}
     </div>
   )
 }
@@ -2954,18 +3058,16 @@ function GeneralTab() {
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.autoGrabLabel')}</label>
               <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">{t('settings.general.autoGrabHint')}</p>
             </div>
-            <button
-              onClick={async () => {
+            <Toggle
+              checked={(settings['autoGrab.enabled'] ?? 'true') !== 'false'}
+              onChange={async () => {
                 const current = (settings['autoGrab.enabled'] ?? 'true').toLowerCase()
                 const next = current === 'false' ? 'true' : 'false'
                 setSettings(s => ({ ...s, 'autoGrab.enabled': next }))
                 await api.setSetting('autoGrab.enabled', next).catch(console.error)
               }}
-              className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${(settings['autoGrab.enabled'] ?? 'true') !== 'false' ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'}`}
               title={(settings['autoGrab.enabled'] ?? 'true') !== 'false' ? t('common.disable') : t('common.enable')}
-            >
-              <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${(settings['autoGrab.enabled'] ?? 'true') !== 'false' ? 'translate-x-4' : ''}`} />
-            </button>
+            />
           </div>
         </div>
       </section>
@@ -2979,18 +3081,16 @@ function GeneralTab() {
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.recommendationsLabel')}</label>
               <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">{t('settings.general.recommendationsHint')}</p>
             </div>
-            <button
-              onClick={async () => {
+            <Toggle
+              checked={(settings['recommendations.enabled'] ?? 'false') === 'true'}
+              onChange={async () => {
                 const current = (settings['recommendations.enabled'] ?? 'false').toLowerCase()
                 const next = current === 'true' ? 'false' : 'true'
                 setSettings(s => ({ ...s, 'recommendations.enabled': next }))
                 await api.setSetting('recommendations.enabled', next).catch(console.error)
               }}
-              className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${(settings['recommendations.enabled'] ?? 'false') === 'true' ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'}`}
               title={(settings['recommendations.enabled'] ?? 'false') === 'true' ? t('common.disable') : t('common.enable')}
-            >
-              <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${(settings['recommendations.enabled'] ?? 'false') === 'true' ? 'translate-x-4' : ''}`} />
-            </button>
+            />
           </div>
         </div>
       </section>
@@ -3103,15 +3203,12 @@ function GeneralTab() {
                   {enhancedHardcoverStatus}
                 </p>
               </div>
-              <button
-                onClick={toggleEnhancedHardcover}
+              <Toggle
+                checked={enhancedHardcoverAdminEnabled}
+                onChange={toggleEnhancedHardcover}
                 disabled={saving === 'hardcover.enhanced_series_enabled'}
-                className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 disabled:opacity-50 ${enhancedHardcoverAdminEnabled ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'}`}
                 title={enhancedHardcoverAdminEnabled ? t('common.disable') : t('common.enable')}
-                aria-label={t('settings.general.enhancedHardcoverToggle', 'Toggle enhanced Hardcover series')}
-              >
-                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${enhancedHardcoverAdminEnabled ? 'translate-x-4' : ''}`} />
-              </button>
+              />
             </div>
           </div>
         </div>
@@ -3220,19 +3317,16 @@ function GeneralTab() {
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.telemetryLabel')}</label>
               <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">{t('settings.general.telemetryHint')}</p>
             </div>
-            <button
-              onClick={async () => {
+            <Toggle
+              checked={(settings['telemetry.enabled'] ?? 'true') !== 'false'}
+              onChange={async () => {
                 const current = (settings['telemetry.enabled'] ?? 'true').toLowerCase()
                 const next = current !== 'false' ? 'false' : 'true'
                 setSettings(s => ({ ...s, 'telemetry.enabled': next }))
                 await api.setSetting('telemetry.enabled', next).catch(console.error)
               }}
-              className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${(settings['telemetry.enabled'] ?? 'true') !== 'false' ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'}`}
               title={(settings['telemetry.enabled'] ?? 'true') !== 'false' ? t('common.disable') : t('common.enable')}
-              aria-label={t('settings.general.telemetryToggle')}
-            >
-              <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${(settings['telemetry.enabled'] ?? 'true') !== 'false' ? 'translate-x-4' : ''}`} />
-            </button>
+            />
           </div>
           <p className="text-xs text-slate-500 dark:text-zinc-600">
             {t('settings.general.telemetryDetail')}
@@ -3773,17 +3867,15 @@ function CalibreSection({
                 Works independently of the write mode above.
               </p>
             </div>
-            <button
-              onClick={async () => {
+            <Toggle
+              checked={libraryImportEnabled}
+              onChange={async () => {
                 const next = libraryImportEnabled ? 'false' : 'true'
                 setSettings(s => ({ ...s, 'calibre.library_import_enabled': next }))
                 await api.setSetting('calibre.library_import_enabled', next).catch(console.error)
               }}
-              className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ml-4 ${libraryImportEnabled ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'}`}
               title={libraryImportEnabled ? 'Disable library import' : 'Enable library import'}
-            >
-              <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${libraryImportEnabled ? 'translate-x-4' : ''}`} />
-            </button>
+            />
           </div>
 
           {libraryImportEnabled && (
@@ -3793,17 +3885,15 @@ function CalibreSection({
                   <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">Sync on startup</label>
                   <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">Re-import each time Bindery starts. Safe to leave on — imports are incremental and idempotent.</p>
                 </div>
-                <button
-                  onClick={async () => {
+                <Toggle
+                  checked={syncOnStartup}
+                  onChange={async () => {
                     const next = syncOnStartup ? 'false' : 'true'
                     setSettings(s => ({ ...s, 'calibre.sync_on_startup': next }))
                     await api.setSetting('calibre.sync_on_startup', next).catch(console.error)
                   }}
-                  className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${syncOnStartup ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'}`}
                   title={syncOnStartup ? 'Disable' : 'Enable'}
-                >
-                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${syncOnStartup ? 'translate-x-4' : ''}`} />
-                </button>
+                />
               </div>
 
               <div className="flex items-center justify-between">
@@ -4852,13 +4942,7 @@ function AddProwlarrForm({ onClose, onAdded }: { onClose: () => void; onAdded: (
         <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="API Key" type="password" className={inputCls} />
       </div>
       <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setSyncOnStartup(!syncOnStartup)}
-          className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${syncOnStartup ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'}`}
-        >
-          <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${syncOnStartup ? 'translate-x-4' : ''}`} />
-        </button>
+        <Toggle checked={syncOnStartup} onChange={() => setSyncOnStartup(!syncOnStartup)} />
         <span className="text-xs text-slate-600 dark:text-zinc-400">Sync on startup</span>
       </div>
       {error && (
