@@ -24,6 +24,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/useragent"
 )
 
 const (
@@ -117,6 +118,7 @@ func (c *Client) Ping(ctx context.Context) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", useragent.Get())
 
 	resp, err := pingClient.Do(req)
 	if err != nil {

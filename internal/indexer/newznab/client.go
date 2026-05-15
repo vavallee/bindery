@@ -15,15 +15,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
-)
 
-// userAgent is sent on every request to Newznab/Torznab indexers.
-//
-// Lowercase "bindery" is intentional: at least one indexer (nzbfinder.ws)
-// runs a Cloudflare WAF rule that case-sensitively blocks the substring
-// "Bindery" in User-Agent and returns 403 "Attention Required". Lowercase
-// passes; other indexers (NZBGeek, NZB Planet) accept either form.
-const userAgent = "bindery/0.1 (+https://github.com/vavallee/bindery)"
+	"github.com/vavallee/bindery/internal/useragent"
+)
 
 // Client interacts with a single Newznab-compatible indexer.
 type Client struct {
@@ -275,7 +269,7 @@ func (c *Client) Probe(ctx context.Context) ProbeResult {
 	if err != nil {
 		return ProbeResult{Error: err.Error()}
 	}
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", useragent.Get())
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -379,7 +373,7 @@ func (c *Client) getXML(ctx context.Context, rawURL string, target interface{}) 
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", useragent.Get())
 
 	resp, err := c.http.Do(req)
 	if err != nil {

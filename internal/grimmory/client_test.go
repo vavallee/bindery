@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -151,32 +152,24 @@ func TestNormalizeAPIKey(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestUserAgent(t *testing.T) {
+	// grimmory.UserAgent now delegates to internal/useragent.Build, which
+	// appends "(<GOOS>)" to match Sonarr's canonical format. Assert the
+	// stable prefix/version invariants rather than the OS suffix.
 	tests := []struct {
 		name    string
 		version string
 		want    string
 	}{
-		{
-			name:    "empty version",
-			version: "",
-			want:    "bindery/dev",
-		},
-		{
-			name:    "whitespace-only version",
-			version: "   ",
-			want:    "bindery/dev",
-		},
-		{
-			name:    "non-empty version",
-			version: "1.2.3",
-			want:    "bindery/1.2.3",
-		},
+		{name: "empty version", version: "", want: "bindery/dev"},
+		{name: "whitespace-only version", version: "   ", want: "bindery/dev"},
+		{name: "non-empty version", version: "1.2.3", want: "bindery/1.2.3"},
+		{name: "v-prefix stripped", version: "v1.2.3", want: "bindery/1.2.3"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := UserAgent(tt.version)
-			if got != tt.want {
-				t.Errorf("UserAgent(%q) = %q, want %q", tt.version, got, tt.want)
+			if !strings.HasPrefix(got, tt.want+" (") {
+				t.Errorf("UserAgent(%q) = %q, want prefix %q", tt.version, got, tt.want+" (")
 			}
 		})
 	}

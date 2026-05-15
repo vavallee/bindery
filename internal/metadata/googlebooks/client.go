@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/useragent"
 )
 
 const baseURL = "https://www.googleapis.com/books/v1"
@@ -144,6 +145,7 @@ func (c *Client) getJSON(ctx context.Context, rawURL string, target interface{})
 	if err != nil {
 		return err
 	}
+	req.Header.Set("User-Agent", useragent.Get())
 
 	resp, err := c.http.Do(req)
 	if err != nil {

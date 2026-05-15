@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/useragent"
 )
 
 // ErrNotFound signals a 404 from OpenLibrary. Callers use errors.Is to
@@ -26,9 +27,8 @@ import (
 var ErrNotFound = errors.New("not found")
 
 const (
-	baseURL   = "https://openlibrary.org"
-	coverURL  = "https://covers.openlibrary.org"
-	userAgent = "Bindery/0.1 (https://github.com/vavallee/bindery)"
+	baseURL  = "https://openlibrary.org"
+	coverURL = "https://covers.openlibrary.org"
 )
 
 // Client implements the metadata.Provider interface for OpenLibrary.
@@ -592,7 +592,7 @@ func (c *Client) getJSON(ctx context.Context, rawURL string, target interface{})
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", useragent.Get())
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.http.Do(req)

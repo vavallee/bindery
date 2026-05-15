@@ -12,12 +12,13 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/vavallee/bindery/internal/useragent"
 )
 
 const (
-	defaultTimeout   = 10 * time.Second
-	defaultUserAgent = "bindery/dev"
-	maxAttempts      = 3
+	defaultTimeout = 10 * time.Second
+	maxAttempts    = 3
 )
 
 type APIError struct {
@@ -67,12 +68,10 @@ func NormalizeAPIKey(raw string) (string, error) {
 	return key, nil
 }
 
+// UserAgent delegates to the shared canonical helper so abs traffic carries
+// the same identity as the rest of Bindery's outbound HTTP.
 func UserAgent(version string) string {
-	version = strings.TrimSpace(version)
-	if version == "" {
-		return defaultUserAgent
-	}
-	return "bindery/" + version
+	return useragent.Build(version)
 }
 
 type Client struct {
@@ -100,7 +99,7 @@ func NewClient(baseURL, apiKey string) (*Client, error) {
 		httpClient: &http.Client{
 			Timeout: defaultTimeout,
 		},
-		userAgent: defaultUserAgent,
+		userAgent: useragent.Get(),
 	}, nil
 }
 
@@ -112,7 +111,7 @@ func (c *Client) WithVersion(version string) *Client {
 func (c *Client) WithUserAgent(userAgent string) *Client {
 	userAgent = strings.TrimSpace(userAgent)
 	if userAgent == "" {
-		userAgent = defaultUserAgent
+		userAgent = useragent.Get()
 	}
 	c.userAgent = userAgent
 	return c

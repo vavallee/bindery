@@ -30,20 +30,23 @@ func (e retryNetError) Temporary() bool {
 func TestUserAgent(t *testing.T) {
 	t.Parallel()
 
+	// abs.UserAgent delegates to internal/useragent.Build, which appends
+	// "(<GOOS>)" and strips a leading "v". Assert the stable prefix.
 	tests := []struct {
 		version string
-		want    string
+		wantPfx string
 	}{
-		{version: "", want: "bindery/dev"},
-		{version: "v1.2.3", want: "bindery/v1.2.3"},
+		{version: "", wantPfx: "bindery/dev ("},
+		{version: "v1.2.3", wantPfx: "bindery/1.2.3 ("},
+		{version: "1.2.3", wantPfx: "bindery/1.2.3 ("},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.version, func(t *testing.T) {
 			t.Parallel()
 
-			if got := UserAgent(tt.version); got != tt.want {
-				t.Fatalf("UserAgent(%q) = %q, want %q", tt.version, got, tt.want)
+			if got := UserAgent(tt.version); !strings.HasPrefix(got, tt.wantPfx) {
+				t.Fatalf("UserAgent(%q) = %q, want prefix %q", tt.version, got, tt.wantPfx)
 			}
 		})
 	}
@@ -78,8 +81,8 @@ func TestClientAuthorizeInjectsBearerHeader(t *testing.T) {
 	if sawAuth != "Bearer secret-key" {
 		t.Fatalf("Authorization header = %q", sawAuth)
 	}
-	if sawAgent != "bindery/dev" {
-		t.Fatalf("User-Agent header = %q, want bindery/dev", sawAgent)
+	if !strings.HasPrefix(sawAgent, "bindery/dev (") {
+		t.Fatalf("User-Agent header = %q, want prefix bindery/dev (", sawAgent)
 	}
 	if sawRawQuery != "" {
 		t.Fatalf("query = %q, want api key absent from URL query", sawRawQuery)

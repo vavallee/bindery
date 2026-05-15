@@ -14,6 +14,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/useragent"
 )
 
 const (
@@ -593,7 +594,7 @@ func (c *Client) query(ctx context.Context, q string, vars map[string]any, out i
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "Bindery/0.1 (https://github.com/vavallee/bindery)")
+	req.Header.Set("User-Agent", useragent.Get())
 	if token := c.authorizationToken(ctx); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

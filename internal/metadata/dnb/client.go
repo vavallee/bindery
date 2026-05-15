@@ -24,13 +24,13 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/useragent"
 )
 
 const (
 	sruBase      = "https://services.dnb.de/sru/dnb"
 	idPrefix     = "dnb:"
 	recordSchema = "MARC21-xml"
-	userAgent    = "Bindery/1 (https://github.com/vavallee/bindery)"
 )
 
 // Client implements metadata.Provider for DNB via the public SRU endpoint.
@@ -192,7 +192,7 @@ func (c *Client) sruQuery(ctx context.Context, cql string, maxRecords int) ([]ma
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", useragent.Get())
 	req.Header.Set("Accept", "application/xml")
 
 	resp, err := c.http.Do(req)
