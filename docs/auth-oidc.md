@@ -19,6 +19,9 @@ Sessions are issued using the same HMAC-signed cookie as password login. OIDC si
 |----------|---------|-------------|
 | `BINDERY_OIDC_REDIRECT_BASE_URL` | _(see resolution below)_ | Public base URL Bindery is reachable at (e.g. `https://bindery.example.com`). Used as the prefix for OIDC callback URLs. Required for path-prefix deploys; otherwise optional when behind a trusted proxy that sets `X-Forwarded-Proto` and `X-Forwarded-Host`. |
 | `BINDERY_TRUSTED_PROXY` | _(unset)_ | Comma-separated CIDRs of reverse proxies whose `X-Forwarded-*` headers Bindery may trust. Required for the auto-derive fallback to kick in. |
+| `BINDERY_LOCAL_AUTH_ENABLED` | `true` | Set to `false` to disable password-based login entirely. `POST /auth/login` returns 403 and the admin user-create API is also blocked. Use when all users must authenticate via OIDC. |
+| `BINDERY_OIDC_AUTO_PROVISION` | `true` | Set to `false` to require that OIDC users already exist in Bindery's database. First-time OIDC logins from unknown `(issuer, sub)` pairs return 403 instead of creating an account. |
+| `BINDERY_OIDC_EMAIL_LINK` | `false` | Set to `true` to link an unknown OIDC identity to an existing Bindery account if the email address matches. Runs before the auto-provision check. Useful for migrating from local accounts to OIDC without losing history. |
 
 ## Redirect URL construction
 
@@ -72,6 +75,51 @@ Providers are configured in **Settings → Security → OIDC Providers** (admin 
 | `allowed_groups` | Optional. Comma-separated IdP groups/roles that are allowed to log in. Empty = allow all authenticated users. |
 
 Providers can also be set directly via the `settings` table key `auth.oidc.providers` (JSON array) for scripted deploys.
+
+## Auth policy controls
+
+Three env vars govern who can log in and how accounts are created. All default to backwards-compatible values — existing deployments are unaffected.
+
+### SSO-only mode (disable local password login)
+
+```
+BINDERY_LOCAL_AUTH_ENABLED=false
+```
+
+With this set, `POST /auth/login` returns `403 Forbidden` and the OIDC providers are the only way in. The admin user-create API is also blocked. The login page hides the username/password form; if no OIDC providers are configured it shows "Contact your administrator for access".
+
+**Before** setting this: ensure at least one OIDC provider is configured and working, and that you can authenticate through it. There is no break-glass override — if you lock yourself out, you must restart with `BINDERY_LOCAL_AUTH_ENABLED=true` to recover.
+
+### Preventing account self-registration via OIDC
+
+```
+BINDERY_OIDC_AUTO_PROVISION=false
+```
+
+By default, any user who authenticates via a configured OIDC provider gets a Bindery account created for them automatically. Setting this to `false` requires the admin to pre-create accounts (via `POST /api/v1/auth/users`) before users can log in for the first time. First-time logins from an unknown `(issuer, sub)` pair receive `403 access denied: account not provisioned`.
+
+Useful for closed deployments where you control the user list explicitly.
+
+### Linking OIDC identities to existing local accounts
+
+```
+BINDERY_OIDC_EMAIL_LINK=true
+```
+
+When `BINDERY_OIDC_EMAIL_LINK=true`, Bindery tries to match an unrecognised OIDC login to an existing account by email address before deciding whether to auto-provision or deny. If the email in the ID token matches a local account's email, the OIDC identity is permanently linked to that account (`oidc_issuer` / `oidc_sub` updated) and the user is logged in.
+
+This is a one-time migration path: once linked, the `(issuer, sub)` pair is stored and subsequent logins bypass the email check. If the email doesn't match any account, the normal auto-provision / deny logic continues.
+
+**Security note:** email linking trusts that the IdP has verified the email address. Only enable this with IdPs that verify email — don't use it with IdPs that allow users to self-assign arbitrary email claims.
+
+### Scenario: fully managed SSO deployment
+
+```
+BINDERY_LOCAL_AUTH_ENABLED=false
+BINDERY_OIDC_AUTO_PROVISION=false
+```
+
+Only users pre-created by an admin can log in, exclusively via OIDC. No local password logins, no self-registration. Pair this with `allowed_groups` on the provider to further restrict who can authenticate.
 
 ### `client_secret` write-only semantics
 
@@ -336,3 +384,6 @@ Migration `018_oidc.sql` is additive-only (nullable columns). Rolling back the b
 | `connection refused` or timeout fetching discovery URL | IdP not reachable from Bindery container/pod at startup | Check network policy / firewall. Bindery must reach `<issuer>/.well-known/openid-configuration`. Test with `curl` from inside the container. |
 | JWKS fetch fails after IdP key rotation | Stale cached JWKS | Restart Bindery to force re-fetch. The cache auto-refreshes on miss in subsequent versions. |
 | `allowed_groups` filter blocks all users | Group claim name or format differs from config value | Enable `BINDERY_LOG_LEVEL=debug` to log decoded ID token claims. Keycloak groups are prefixed with `/` (e.g. `/bindery-users`); match this exactly. |
+| Login page shows "Contact your administrator for access" with no login form | `BINDERY_LOCAL_AUTH_ENABLED=false` and no OIDC providers configured | Either configure an OIDC provider or restart with `BINDERY_LOCAL_AUTH_ENABLED=true` to restore local login. |
+| OIDC login returns 403 "account not provisioned" | `BINDERY_OIDC_AUTO_PROVISION=false` and no account pre-created for this OIDC identity | Admin must create an account for this user first (`POST /api/v1/auth/users`), then ask the user to log in again. Or set `BINDERY_OIDC_AUTO_PROVISION=true` to allow self-registration. |
+| First OIDC login creates a duplicate account instead of linking to existing local account | `BINDERY_OIDC_EMAIL_LINK=false` (default) | Set `BINDERY_OIDC_EMAIL_LINK=true` to link by email on first login. After enabling, the next login attempt will link if the email matches. Existing duplicate account must be removed manually if already created. |
