@@ -171,12 +171,12 @@ func TestAuthPolicyDefaults(t *testing.T) {
 // TestAuthPolicyFromEnv verifies explicit values override the defaults.
 func TestAuthPolicyFromEnv(t *testing.T) {
 	cases := []struct {
-		localAuth   string
+		localAuth     string
 		autoProvision string
-		emailLink   string
-		wantLocal   bool
-		wantProv    bool
-		wantLink    bool
+		emailLink     string
+		wantLocal     bool
+		wantProv      bool
+		wantLink      bool
 	}{
 		{"false", "false", "true", false, false, true},
 		{"0", "0", "1", false, false, true},

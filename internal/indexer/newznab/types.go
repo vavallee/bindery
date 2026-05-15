@@ -73,17 +73,17 @@ type capsCategory struct {
 
 // SearchResult is the domain type for an indexer search result.
 type SearchResult struct {
-	GUID        string `json:"guid"`
-	IndexerID   int64  `json:"indexerId"`
-	IndexerName string `json:"indexerName"`
-	Title       string `json:"title"`
-	Size        int64  `json:"size"`
-	PubDate     string `json:"pubDate"`
-	NZBURL      string `json:"nzbUrl"`
-	Category    string `json:"category"`
-	Grabs       int    `json:"grabs"`
-	Author      string `json:"author"`
-	BookTitle   string `json:"bookTitle"`
+	GUID            string `json:"guid"`
+	IndexerID       int64  `json:"indexerId"`
+	IndexerName     string `json:"indexerName"`
+	Title           string `json:"title"`
+	Size            int64  `json:"size"`
+	PubDate         string `json:"pubDate"`
+	NZBURL          string `json:"nzbUrl"`
+	Category        string `json:"category"`
+	Grabs           int    `json:"grabs"`
+	Author          string `json:"author"`
+	BookTitle       string `json:"bookTitle"`
 	Protocol        string `json:"protocol"`            // "usenet" or "torrent"
 	Language        string `json:"language,omitempty"`  // ISO 639-1 from newznab:attr language (when present)
 	MediaType       string `json:"mediaType,omitempty"` // "ebook" or "audiobook"; set for dual-format book searches
