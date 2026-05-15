@@ -6,6 +6,14 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.11.0] — 2026-05-14
+
+### Added
+
+- **SSO-only mode and OIDC account controls** (#654) — Three new env vars: `BINDERY_LOCAL_AUTH_ENABLED` (default `true`) disables password login entirely when set to `false`; `BINDERY_OIDC_AUTO_PROVISION` (default `true`) prevents automatic account creation for unknown OIDC users when set to `false`; `BINDERY_OIDC_EMAIL_LINK` (default `false`) links an unknown OIDC identity to an existing account by email on first login. Deployments that don't set these vars are unaffected.
+
+- **Indexer priority now applied to release scoring** (#656) — The `Priority` field on indexers (Settings → Indexers) previously had no effect. It now adds directly to the composite release score, so a higher-priority indexer wins ties and can outweigh small quality differences. Set Usenet indexers to a higher priority than torrent indexers to prefer Usenet when both have matching releases.
+
 ### Fixed
 
 - **Recommendations now return empty genre arrays instead of null** — Recommendation storage normalizes missing and legacy `null` genre values to `[]`, keeping API responses consistent for clients.
