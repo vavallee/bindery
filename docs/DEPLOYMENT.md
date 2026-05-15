@@ -241,6 +241,7 @@ Multiple remaps are separated by commas: `BINDERY_DOWNLOAD_PATH_REMAP=/sab/compl
 | `BINDERY_NOTIFICATIONS_ALLOW_PRIVATE` | _(unset)_ | Set to `1` to flip outbound webhook SSRF policy from Strict to LAN, allowing RFC1918 targets. Use when ntfy / Home Assistant / Gotify live on your private network. Loopback, link-local, and cloud-metadata endpoints stay blocked. |
 | `BINDERY_RATE_LIMIT_MAX_FAILURES` | `5` | Maximum failed login attempts per IP before the account is locked for the rate-limit window. |
 | `BINDERY_RATE_LIMIT_WINDOW_MINUTES` | `15` | Duration in minutes of the per-IP login rate-limit window. After the window expires the failure counter resets. |
+| `BINDERY_SHUTDOWN_GRACE` | `30` | Seconds to drain in-flight HTTP requests after receiving SIGTERM or SIGINT before the process exits. Increase if your load balancer / Kubernetes sends long-lived SSE or WebSocket connections. |
 
 ## Indexer / Prowlarr URLs
 
@@ -282,6 +283,16 @@ On first launch Bindery bootstraps itself — **no environment variables are req
 **Feature flag:** token-backed Hardcover series search, manual/automatic series linking, catalog diffs, and missing-book fill are available by default at deployment time, but still require a saved Hardcover API token in **Settings -> General** and the enhanced Hardcover series toggle in the same settings section. Set `BINDERY_ENHANCED_HARDCOVER_API=false` only when you need to disable the enhanced endpoints and hide the UI controls for an entire deployment. Existing local series data keeps working when the feature is disabled.
 
 **Operational note:** the enhanced fill action can create wanted/monitored book rows from the linked Hardcover catalog and immediately queue indexer searches. Make sure outbound HTTPS to Hardcover and your configured indexers is allowed before enabling it for production users.
+
+### From v1.9.x to v1.10.0
+
+**Schema:** migration `040` adds `path_remap TEXT` to `download_clients`. Non-destructive; no action required.
+
+**Docker/container networking — qBittorrent and NZBGet** — If you previously saw qBittorrent or NZBGet silently fail to grab torrent/NZB files when using Prowlarr or other indexers with Docker-internal hostnames (e.g. `prowlarr:9696`), this is fixed. Bindery now fetches the content itself and forwards it directly to the download client — qBittorrent and NZBGet never need to resolve the indexer URL.
+
+**Graceful shutdown** — `BINDERY_SHUTDOWN_GRACE` (default `30s`) controls how long the server drains in-flight requests after SIGTERM. `kubectl rollout restart` no longer drops in-flight requests.
+
+**Log level UI toggle** — The log level toggle in Settings → System now immediately affects the log viewer (previously only `BINDERY_LOG_LEVEL` at startup worked).
 
 ### From v0.11.x to v0.12.0 (security posture)
 

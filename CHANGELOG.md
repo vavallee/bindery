@@ -10,6 +10,28 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 - **Recommendations now return empty genre arrays instead of null** — Recommendation storage normalizes missing and legacy `null` genre values to `[]`, keeping API responses consistent for clients.
 
+- **qBittorrent Docker hostname fix** (#640) — Bindery now fetches .torrent content itself and submits it to qBittorrent via multipart/form-data. Fixes setups where qBittorrent runs in a separate container and cannot resolve the Prowlarr/indexer internal hostname (e.g. `prowlarr:9696`). No config change needed.
+
+- **NZBGet Docker hostname fix** (#531) — Bindery now fetches the NZB file itself and sends it to NZBGet as base64-encoded content. Same fix as #640 for Usenet: NZBGet in a separate container no longer needs to reach the indexer URL directly. No config change needed.
+
+- **Non-standard indexer category passthrough** (#636) — Category IDs outside the standard 7xxx/3xxx ranges (e.g. MaM-style IDs) are now forwarded to the indexer unchanged instead of being dropped. Fixes searches returning no results on niche indexers with custom category numbering.
+
+- **Backup delete button in Settings → General → Backup** (#638) — Backup entries now have a delete button in the UI. Previously backups could only be removed by SSHing into the container.
+
+- **Log level toggle now propagates to log viewer** (#651) — Switching to DEBUG in Settings → System now immediately affects the log viewer. Previously only `BINDERY_LOG_LEVEL=debug` at startup had any visible effect.
+
+- **Discover page no longer crashes on books with no genre metadata** (#645) — The Recommendations page handles `genres: null` from the API gracefully instead of throwing a runtime render error.
+
+### Improved
+
+- **Book list query performance** (#648) — Book list queries now use a single CTE JOIN instead of correlated subqueries (previously 2N SQLite queries for N books). Noticeable speedup for libraries with more than a few hundred books.
+
+- **Download client form shows inline errors on save failure** (#649) — The Save button in the Add/Edit Download Client forms now displays an inline error message when the API call fails, rather than appearing to do nothing.
+
+### Internal
+
+- **Test coverage for grimmory and hardcoverlistsyncer** (#652) — Added unit and HTTP test coverage for `internal/grimmory` (0% → 93%) and `internal/hardcoverlistsyncer` (13% → 20%).
+
 ### Chores
 
 - **Local check cleanup** — Restored downloader lint compliance and aligned the WantedPage test with optimistic unmonitor behavior so local checks can pass.
