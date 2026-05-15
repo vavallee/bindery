@@ -275,7 +275,8 @@ describe('SettingsPage', () => {
   it('persists the enhanced Hardcover admin toggle separately from effective status', async () => {
     renderSettings()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Toggle enhanced Hardcover series' }))
+    await screen.findByText('Hardcover API Token')
+    fireEvent.click(sectionForHeading('settings.general.apiKeys').getByTitle('common.enable'))
 
     await waitFor(() => {
       expect(api.setSetting).toHaveBeenCalledWith('hardcover.enhanced_series_enabled', 'true')
@@ -707,6 +708,7 @@ describe('SettingsPage', () => {
     expect(await screen.findByTitle('common.enable')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'common.delete' }))
+    fireEvent.click(screen.getByRole('button', { name: 'common.yes' }))
     await waitFor(() => expect(api.deleteIndexer).toHaveBeenCalledWith(8))
     await waitFor(() => expect(screen.queryByText('Toggle Indexer')).not.toBeInTheDocument())
   })
@@ -782,7 +784,6 @@ describe('SettingsPage', () => {
 
   it('tests, syncs, and deletes an existing Prowlarr instance', async () => {
     const prowlarr = makeProwlarr({ id: 33, name: 'Library Prowlarr', lastSyncAt: '2026-05-06T12:00:00Z' })
-    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
 
     try {
@@ -793,7 +794,7 @@ describe('SettingsPage', () => {
 
       fireEvent.click(screen.getByRole('button', { name: 'Test' }))
       await waitFor(() => expect(api.testProwlarr).toHaveBeenCalledWith(33))
-      expect(alertSpy).toHaveBeenCalledWith('Connected — Prowlarr 1.0.0')
+      expect(await screen.findByText('Connected — Prowlarr 1.0.0')).toBeInTheDocument()
 
       fireEvent.click(screen.getByRole('button', { name: 'Sync now' }))
       await waitFor(() => expect(api.syncProwlarr).toHaveBeenCalledWith(33))
@@ -806,7 +807,6 @@ describe('SettingsPage', () => {
       expect(confirmSpy).toHaveBeenCalledWith('Delete Prowlarr instance "Library Prowlarr" and all its synced indexers?')
       await waitFor(() => expect(screen.queryByText('Library Prowlarr')).not.toBeInTheDocument())
     } finally {
-      alertSpy.mockRestore()
       confirmSpy.mockRestore()
     }
   })
@@ -965,30 +965,26 @@ describe('SettingsPage', () => {
 
   it('toggles, tests, and deletes a download client', async () => {
     const client = makeClient({ id: 45, name: 'Client Actions', enabled: true })
-    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
     vi.mocked(api.updateDownloadClient).mockResolvedValue({ ...client, enabled: false })
 
-    try {
-      renderSettings({ clients: [client] })
-      await openClientsTab()
+    renderSettings({ clients: [client] })
+    await openClientsTab()
 
-      fireEvent.click(screen.getByTitle('common.disable'))
-      await waitFor(() => {
-        expect(api.updateDownloadClient).toHaveBeenCalledWith(45, { ...client, enabled: false })
-      })
-      expect(await screen.findByTitle('common.enable')).toBeInTheDocument()
+    fireEvent.click(screen.getByTitle('common.disable'))
+    await waitFor(() => {
+      expect(api.updateDownloadClient).toHaveBeenCalledWith(45, { ...client, enabled: false })
+    })
+    expect(await screen.findByTitle('common.enable')).toBeInTheDocument()
 
-      vi.mocked(api.testDownloadClient).mockResolvedValue({ message: 'Connection verified' })
-      fireEvent.click(screen.getByRole('button', { name: 'common.test' }))
-      await waitFor(() => expect(api.testDownloadClient).toHaveBeenCalledWith(45))
-      expect(alertSpy).toHaveBeenCalledWith('common.connOk')
+    vi.mocked(api.testDownloadClient).mockResolvedValue({ message: 'Connection verified' })
+    fireEvent.click(screen.getByRole('button', { name: 'common.test' }))
+    await waitFor(() => expect(api.testDownloadClient).toHaveBeenCalledWith(45))
+    expect(await screen.findByText('common.connOk')).toBeInTheDocument()
 
-      fireEvent.click(screen.getByRole('button', { name: 'common.delete' }))
-      await waitFor(() => expect(api.deleteDownloadClient).toHaveBeenCalledWith(45))
-      await waitFor(() => expect(screen.queryByText('Client Actions')).not.toBeInTheDocument())
-    } finally {
-      alertSpy.mockRestore()
-    }
+    fireEvent.click(screen.getByRole('button', { name: 'common.delete' }))
+    fireEvent.click(screen.getByRole('button', { name: 'common.yes' }))
+    await waitFor(() => expect(api.deleteDownloadClient).toHaveBeenCalledWith(45))
+    await waitFor(() => expect(screen.queryByText('Client Actions')).not.toBeInTheDocument())
   })
 
   it('shows error message when adding a download client fails', async () => {
