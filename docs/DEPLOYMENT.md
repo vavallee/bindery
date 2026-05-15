@@ -53,6 +53,20 @@ helm install bindery charts/bindery \
 
 See [`charts/bindery/values.yaml`](../charts/bindery/values.yaml) for all configuration options.
 
+### PodSecurityStandards namespace label
+
+The chart's `securityContext` already satisfies Kubernetes' `restricted` policy (non-root user, read-only root filesystem, all capabilities dropped, `seccomp: RuntimeDefault`). To enforce this at the namespace level so that no chart override or future operator can weaken it, label your namespace before installing:
+
+```bash
+kubectl label namespace bindery \
+  pod-security.kubernetes.io/enforce=restricted \
+  pod-security.kubernetes.io/enforce-version=latest
+```
+
+`restricted` is the recommended setting. If you run a sidecar or init container that requires elevated privileges, use `baseline` instead — it blocks only the most critical misconfigurations (host namespaces, privileged mode) while permitting containers that need capabilities Bindery itself doesn't use.
+
+The label belongs on the namespace, not in the chart, because Helm charts should not create or mutate namespaces they're installed into.
+
 ## Unraid (Community Applications)
 
 Bindery ships a Community Applications template at
