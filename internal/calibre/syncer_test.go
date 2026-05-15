@@ -68,9 +68,11 @@ func (f fakeEditionLister) ListByBook(_ context.Context, bookID int64) ([]models
 // so we can verify pushed / already_in_calibre / failed all get counted
 // correctly inside one sync run.
 type fakePusher struct {
-	calls map[string]func() (int64, error)
-	mu    sync.Mutex
-	metas map[string]Metadata
+	calls      map[string]func() (int64, error)
+	library    string
+	libraryErr error
+	mu         sync.Mutex
+	metas      map[string]Metadata
 }
 
 func (f *fakePusher) Add(_ context.Context, path string, meta Metadata) (int64, error) {
@@ -85,6 +87,10 @@ func (f *fakePusher) Add(_ context.Context, path string, meta Metadata) (int64, 
 		return 0, errors.New("unexpected path")
 	}
 	return fn()
+}
+
+func (f *fakePusher) Library(_ context.Context) (string, error) {
+	return f.library, f.libraryErr
 }
 
 func (f *fakePusher) meta(path string) Metadata {
@@ -256,6 +262,91 @@ func TestSyncer_Start_DifferentiatesSameTitleByAuthorAndISBN(t *testing.T) {
 	}
 }
 
+func TestSyncer_Start_DoesNotReuseSourceCalibreIDForDifferentTargetLibrary(t *testing.T) {
+	isbn := "9781504034364"
+	books := &fakeBookLister{
+		books: []models.Book{{
+			ID:               1,
+			AuthorID:         20,
+			Title:            "The Complete Poems",
+			FilePath:         "/source/Anne Sexton/The Complete Poems.azw3",
+			ForeignID:        "calibre:book:2767",
+			MetadataProvider: "calibre",
+			CalibreID:        int64Ptr(2767),
+		}},
+	}
+	pusher := &fakePusher{
+		library: "/target-calibre",
+		calls: map[string]func() (int64, error){
+			"/source/Anne Sexton/The Complete Poems.azw3": func() (int64, error) { return 101, nil },
+		},
+	}
+
+	s := NewSyncer(books).WithMetadata(
+		fakeAuthorGetter{authors: map[int64]*models.Author{
+			20: {ID: 20, Name: "Anne Sexton", SortName: "Sexton, Anne"},
+		}},
+		fakeEditionLister{editions: map[int64][]models.Edition{
+			1: {{ID: 201, BookID: 1, Title: "The Complete Poems", Format: "AZW3", ISBN13: &isbn}},
+		}},
+	)
+	s.newClient = func(_ Config) pluginPusher { return pusher }
+
+	if err := s.Start(context.Background(), Config{LibraryPath: "/source-calibre"}, ModePlugin); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	waitUntil(t, 2*time.Second, func() bool { return !s.Running() })
+
+	if _, ok := books.set[1]; ok {
+		t.Fatalf("source calibre_id was overwritten for a different target library: %+v", books.set)
+	}
+	meta := pusher.meta("/source/Anne Sexton/The Complete Poems.azw3")
+	if _, ok := meta.Identifiers["calibre"]; ok {
+		t.Fatalf("source calibre identifier leaked into different target library payload: %+v", meta.Identifiers)
+	}
+	if meta.Identifiers["isbn"] != isbn {
+		t.Fatalf("isbn identifier = %q, want %s", meta.Identifiers["isbn"], isbn)
+	}
+	if meta.Identifiers["bindery"] != "1" {
+		t.Fatalf("bindery identifier = %q, want 1", meta.Identifiers["bindery"])
+	}
+}
+
+func TestSyncer_Start_PersistsCalibreIDForSameTargetLibrary(t *testing.T) {
+	books := &fakeBookLister{
+		books: []models.Book{{
+			ID:               1,
+			Title:            "Existing",
+			FilePath:         "/library/existing.epub",
+			ForeignID:        "calibre:book:2767",
+			MetadataProvider: "calibre",
+			CalibreID:        int64Ptr(2767),
+		}},
+	}
+	pusher := &fakePusher{
+		library: "/library",
+		calls: map[string]func() (int64, error){
+			"/library/existing.epub": func() (int64, error) { return 2767, ErrAlreadyInCalibre },
+		},
+	}
+
+	s := NewSyncer(books)
+	s.newClient = func(_ Config) pluginPusher { return pusher }
+
+	if err := s.Start(context.Background(), Config{LibraryPath: "/library"}, ModePlugin); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	waitUntil(t, 2*time.Second, func() bool { return !s.Running() })
+
+	if books.set[1] != 2767 {
+		t.Fatalf("same-library calibre_id should be persisted, got %+v", books.set)
+	}
+	meta := pusher.meta("/library/existing.epub")
+	if meta.Identifiers["calibre"] != "calibre:book:2767" {
+		t.Fatalf("same-library calibre identifier = %q", meta.Identifiers["calibre"])
+	}
+}
+
 func TestSyncer_Start_RejectsNonPluginMode(t *testing.T) {
 	s := NewSyncer(&fakeBookLister{})
 	if err := s.Start(context.Background(), Config{}, ModeCalibredb); !errors.Is(err, ErrSyncModeNotPlugin) {
@@ -285,3 +376,5 @@ func TestSyncer_Start_RejectsConcurrentRuns(t *testing.T) {
 	close(release)
 	waitUntil(t, 2*time.Second, func() bool { return !s.Running() })
 }
+
+func int64Ptr(v int64) *int64 { return &v }

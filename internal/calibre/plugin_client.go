@@ -197,6 +197,18 @@ func (c *PluginClient) Health(ctx context.Context) (string, error) {
 	return fmt.Sprintf("calibredb plugin v%s (Calibre %s)", h.PluginVersion, h.CalibreVersion), nil
 }
 
+// Library probes the plugin's active Calibre library path. The returned path is
+// from the Calibre/plugin runtime, so direct path comparison is only reliable
+// when Bindery and Calibre mount the same library at the same container path.
+func (c *PluginClient) Library(ctx context.Context) (string, error) {
+	h, err := c.fetchHealth(ctx)
+	if err != nil {
+		return "", err
+	}
+	c.cacheCapabilities(h)
+	return h.Library, nil
+}
+
 func (c *PluginClient) fetchHealth(ctx context.Context) (pluginHealth, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/health", nil)
 	if err != nil {
