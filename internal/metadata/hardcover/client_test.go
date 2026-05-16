@@ -6,10 +6,12 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/metadata"
+	"github.com/vavallee/bindery/internal/models"
 )
 
 // testTransport routes all HTTP calls through a handler function.
@@ -369,7 +371,7 @@ func TestSearchBooks_Success(t *testing.T) {
 }
 
 func TestSearchBooks_ParsesStringResultsAndAuthorNames(t *testing.T) {
-	encoded := `{"found":1,"hits":[{"document":{"id":"312460","title":"Dune","slug":"dune","description":"A desert planet.","release_year":"1965","rating":"4.4","ratings_count":"12000","image_url":"https://img.example.com/dune.jpg","author_names":["Frank Herbert"]}}]}`
+	encoded := `{"found":1,"hits":[{"document":{"id":"312460","title":"Dune","slug":"dune","description":"A desert planet.","release_year":"1965","rating":"4.4","ratings_count":"12000","image_url":"https://img.example.com/dune.jpg","isbns":["978-0-441-17271-9","9780441172719","0441172717"],"genres":["Science Fiction"," science fiction ","Classic"],"has_audiobook":"true","has_ebook":"true","featured_series":"Dune Chronicles","featured_series_position":"1","author_names":["Frank Herbert"]}}]}`
 	c := newMockClient(func(r *http.Request) (*http.Response, error) {
 		assertSearchRequest(t, r, "Book", "dune")
 		return gqlResponse(t, http.StatusOK, map[string]interface{}{
@@ -396,6 +398,126 @@ func TestSearchBooks_ParsesStringResultsAndAuthorNames(t *testing.T) {
 	}
 	if book.AverageRating != 4.4 || book.RatingsCount != 12000 {
 		t.Errorf("rating/count = %f/%d, want 4.4/12000", book.AverageRating, book.RatingsCount)
+	}
+	if !slices.Equal(book.ISBNs, []string{"9780441172719", "0441172717"}) {
+		t.Errorf("ISBNs = %+v", book.ISBNs)
+	}
+	if !slices.Equal(book.Genres, []string{"Science Fiction", "Classic"}) {
+		t.Errorf("Genres = %+v", book.Genres)
+	}
+	if book.MediaType != models.MediaTypeBoth {
+		t.Errorf("MediaType = %q, want %q", book.MediaType, models.MediaTypeBoth)
+	}
+	if len(book.SeriesRefs) != 0 {
+		t.Fatalf("SeriesRefs len = %d, want 0 without Hardcover series id", len(book.SeriesRefs))
+	}
+}
+
+func TestSearchBooks_ParsesSupplementalPayloadMetadata(t *testing.T) {
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		assertSearchRequest(t, r, "Book", "way of kings")
+		return gqlResponse(t, http.StatusOK, map[string]interface{}{
+			"search": map[string]interface{}{
+				"results": map[string]interface{}{
+					"found": 1,
+					"hits": []map[string]interface{}{
+						{
+							"document": map[string]interface{}{
+								"id":                       42,
+								"title":                    "The Way of Kings",
+								"slug":                     "the-way-of-kings",
+								"isbns":                    []interface{}{"978-0-7653-2635-5", "0765326353", "9780765326355"},
+								"genres":                   []interface{}{"Fantasy", " fantasy ", ""},
+								"has_audiobook":            true,
+								"has_ebook":                false,
+								"featured_series":          map[string]interface{}{"name": "The Stormlight Archive"},
+								"featured_series_id":       103,
+								"featured_series_position": 1.5,
+								"author_names":             []interface{}{"", "Brandon Sanderson"},
+							},
+						},
+					},
+				},
+			},
+		}), nil
+	})
+
+	books, err := c.SearchBooks(context.Background(), "way of kings")
+	if err != nil {
+		t.Fatalf("SearchBooks: %v", err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("expected 1 book, got %d", len(books))
+	}
+	book := books[0]
+	if book.Author == nil || book.Author.Name != "Brandon Sanderson" {
+		t.Fatalf("Author = %+v, want Brandon Sanderson", book.Author)
+	}
+	if !slices.Equal(book.ISBNs, []string{"9780765326355", "0765326353"}) {
+		t.Errorf("ISBNs = %+v", book.ISBNs)
+	}
+	if !slices.Equal(book.Genres, []string{"Fantasy"}) {
+		t.Errorf("Genres = %+v", book.Genres)
+	}
+	if book.MediaType != models.MediaTypeAudiobook {
+		t.Errorf("MediaType = %q, want %q", book.MediaType, models.MediaTypeAudiobook)
+	}
+	if len(book.SeriesRefs) != 1 {
+		t.Fatalf("SeriesRefs len = %d, want 1", len(book.SeriesRefs))
+	}
+	ref := book.SeriesRefs[0]
+	if ref.ForeignID != "hc-series:103" || ref.Title != "The Stormlight Archive" || ref.Position != "1.5" || !ref.Primary {
+		t.Errorf("SeriesRef = %+v", ref)
+	}
+}
+
+func TestSearchSeriesRefsRequiresHardcoverSeriesID(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		seriesValue any
+		idValue     any
+		want        string
+	}{
+		{
+			name:        "string title only",
+			seriesValue: "Dune Chronicles",
+		},
+		{
+			name:        "slug only",
+			seriesValue: map[string]any{"name": "Dune Chronicles", "slug": "dune-chronicles"},
+		},
+		{
+			name:        "non numeric id",
+			seriesValue: "Dune Chronicles",
+			idValue:     "dune-chronicles",
+		},
+		{
+			name:        "featured series id",
+			seriesValue: "Dune Chronicles",
+			idValue:     "103",
+			want:        "hc-series:103",
+		},
+		{
+			name:        "map numeric id",
+			seriesValue: map[string]any{"name": "Dune Chronicles", "id": float64(103), "slug": "dune-chronicles"},
+			want:        "hc-series:103",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			refs := searchSeriesRefs(tt.seriesValue, tt.idValue, "1")
+			if tt.want == "" {
+				if len(refs) != 0 {
+					t.Fatalf("SeriesRefs len = %d, want 0: %+v", len(refs), refs)
+				}
+				return
+			}
+			if len(refs) != 1 {
+				t.Fatalf("SeriesRefs len = %d, want 1", len(refs))
+			}
+			if refs[0].ForeignID != tt.want {
+				t.Fatalf("ForeignID = %q, want %q", refs[0].ForeignID, tt.want)
+			}
+		})
 	}
 }
 
@@ -474,6 +596,11 @@ func TestGetAuthorWorksByName_WithToken(t *testing.T) {
 		}
 		if strings.Contains(req.Query, "cached_tags") {
 			t.Fatalf("query requested Hardcover tags as genres: %s", req.Query)
+		}
+		for _, field := range []string{"isbns", "has_audiobook", "has_ebook", "featured_series"} {
+			if strings.Contains(req.Query, field) {
+				t.Fatalf("query requested search-only Hardcover field %q: %s", field, req.Query)
+			}
 		}
 		gotVars = req.Variables
 		data := map[string]interface{}{
@@ -1541,8 +1668,16 @@ func TestGetUserLists_IncludesBuiltinShelves(t *testing.T) {
 	if len(lists) != len(hcBuiltinShelves) {
 		t.Fatalf("want %d lists (built-ins only), got %d", len(hcBuiltinShelves), len(lists))
 	}
-	if lists[0].ID != -1 || lists[0].Name != "Want to Read" {
-		t.Errorf("first list = %+v, want {ID:-1, Name:Want to Read}", lists[0])
+	want := []HCList{
+		{ID: -1, Name: "Want to Read", Slug: "want-to-read"},
+		{ID: -2, Name: "Currently Reading", Slug: "currently-reading"},
+		{ID: -3, Name: "Read", Slug: "read"},
+		{ID: -4, Name: "Did Not Finish", Slug: "did-not-finish"},
+	}
+	for i, wantShelf := range want {
+		if lists[i] != wantShelf {
+			t.Errorf("list[%d] = %+v, want %+v", i, lists[i], wantShelf)
+		}
 	}
 }
 
@@ -1572,30 +1707,45 @@ func TestGetUserLists_CustomListsAppendedAfterShelves(t *testing.T) {
 }
 
 func TestGetListBooks_BuiltinShelfRoutesToUserBooks(t *testing.T) {
-	var gotVars map[string]any
-	c := newMockClient(func(r *http.Request) (*http.Response, error) {
-		var req gqlRequest
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, &req)
-		gotVars = req.Variables
-		resp := `{"data":{"me":[{"user_books":[{"book":{"id":99,"title":"Dune","slug":"dune","contributions":[{"author":{"id":1,"name":"Frank Herbert","slug":"frank-herbert"}}]}}]}]}}`
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(strings.NewReader(resp)),
-			Header:     make(http.Header),
-		}, nil
-	})
-	c = c.WithToken("hc-token")
+	cases := []struct {
+		name         string
+		listID       int
+		wantStatusID int
+	}{
+		{name: "want to read", listID: -1, wantStatusID: 1},
+		{name: "currently reading", listID: -2, wantStatusID: 2},
+		{name: "read", listID: -3, wantStatusID: 3},
+		{name: "did not finish", listID: -4, wantStatusID: 5},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotVars map[string]any
+			c := newMockClient(func(r *http.Request) (*http.Response, error) {
+				var req gqlRequest
+				body, _ := io.ReadAll(r.Body)
+				_ = json.Unmarshal(body, &req)
+				gotVars = req.Variables
+				resp := `{"data":{"me":[{"user_books":[{"book":{"id":99,"title":"Dune","slug":"dune","contributions":[{"author":{"id":1,"name":"Frank Herbert","slug":"frank-herbert"}}]}}]}]}}`
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(resp)),
+					Header:     make(http.Header),
+				}, nil
+			})
+			c = c.WithToken("hc-token")
 
-	books, err := c.GetListBooks(context.Background(), -1) // Want to Read
-	if err != nil {
-		t.Fatalf("GetListBooks shelf: %v", err)
-	}
-	if len(books) != 1 || books[0].Title != "Dune" {
-		t.Errorf("books = %+v, want [{Title:Dune}]", books)
-	}
-	if gotVars["statusID"] != float64(1) {
-		t.Errorf("statusID var = %v, want 1", gotVars["statusID"])
+			books, err := c.GetListBooks(context.Background(), tc.listID)
+			if err != nil {
+				t.Fatalf("GetListBooks shelf: %v", err)
+			}
+			if len(books) != 1 || books[0].Title != "Dune" {
+				t.Errorf("books = %+v, want [{Title:Dune}]", books)
+			}
+			wantStatusID := float64(tc.wantStatusID)
+			if gotVars["statusID"] != wantStatusID {
+				t.Errorf("statusID var = %v, want %v", gotVars["statusID"], wantStatusID)
+			}
+		})
 	}
 }
 
@@ -1633,18 +1783,32 @@ func TestGetListBooks_PositiveID(t *testing.T) {
 }
 
 func TestHcShelfStatusID(t *testing.T) {
-	cases := []struct{ id, want int }{{-1, 1}, {-2, 2}, {-3, 3}, {-4, 4}}
+	cases := []struct {
+		name string
+		id   int
+		want int
+	}{
+		{name: "want to read", id: -1, want: 1},
+		{name: "currently reading", id: -2, want: 2},
+		{name: "read", id: -3, want: 3},
+		{name: "did not finish", id: -4, want: 5},
+	}
 	for _, tc := range cases {
-		got, ok := hcShelfStatusID(tc.id)
-		if !ok || got != tc.want {
-			t.Errorf("hcShelfStatusID(%d) = %d,%v, want %d,true", tc.id, got, ok, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := hcShelfStatusID(tc.id)
+			if !ok || got != tc.want {
+				t.Errorf("hcShelfStatusID(%d) = %d,%v, want %d,true", tc.id, got, ok, tc.want)
+			}
+		})
 	}
 	if _, ok := hcShelfStatusID(0); ok {
 		t.Error("hcShelfStatusID(0) should return false")
 	}
 	if _, ok := hcShelfStatusID(42); ok {
 		t.Error("hcShelfStatusID(42) should return false")
+	}
+	if _, ok := hcShelfStatusID(-5); ok {
+		t.Error("hcShelfStatusID(-5) should return false")
 	}
 }
 
