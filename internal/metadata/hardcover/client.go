@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -94,56 +96,64 @@ func NewAuthenticated(token string) *Client {
 func (c *Client) Name() string { return "hardcover" }
 
 func (c *Client) SearchAuthors(ctx context.Context, query string) ([]models.Author, error) {
-	gql := `query SearchAuthors($query: String!) {
-		authors(where: {name: {_ilike: $query}}, limit: 20) {
-			id
-			name
-			slug
-			bio
-			image { url }
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, nil
+	}
+	gql := `query SearchAuthors($query: String!, $queryType: String!, $perPage: Int!) {
+		search(query: $query, query_type: $queryType, per_page: $perPage) {
+			results
 		}
 	}`
 	var resp struct {
 		Data struct {
-			Authors []hcAuthor `json:"authors"`
+			Search struct {
+				Results json.RawMessage `json:"results"`
+			} `json:"search"`
 		} `json:"data"`
 	}
-	if err := c.query(ctx, gql, map[string]any{"query": "%" + query + "%"}, &resp); err != nil {
+	if err := c.query(ctx, gql, map[string]any{
+		"query":     query,
+		"queryType": "Author",
+		"perPage":   20,
+	}, &resp); err != nil {
 		return nil, fmt.Errorf("hardcover search authors: %w", err)
 	}
-	authors := make([]models.Author, 0, len(resp.Data.Authors))
-	for _, a := range resp.Data.Authors {
+	docs := parseAuthorSearchResults(resp.Data.Search.Results)
+	authors := make([]models.Author, 0, len(docs))
+	for _, a := range docs {
 		authors = append(authors, c.toAuthor(a))
 	}
 	return authors, nil
 }
 
 func (c *Client) SearchBooks(ctx context.Context, query string) ([]models.Book, error) {
-	gql := `query SearchBooks($query: String!) {
-		books(where: {title: {_ilike: $query}}, limit: 20) {
-			id
-			title
-			slug
-			description
-			image { url }
-			release_year
-			ratings_count
-			rating
-			contributions {
-				author { id name slug }
-			}
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, nil
+	}
+	gql := `query SearchBooks($query: String!, $queryType: String!, $perPage: Int!) {
+		search(query: $query, query_type: $queryType, per_page: $perPage) {
+			results
 		}
 	}`
 	var resp struct {
 		Data struct {
-			Books []hcBook `json:"books"`
+			Search struct {
+				Results json.RawMessage `json:"results"`
+			} `json:"search"`
 		} `json:"data"`
 	}
-	if err := c.query(ctx, gql, map[string]any{"query": "%" + query + "%"}, &resp); err != nil {
+	if err := c.query(ctx, gql, map[string]any{
+		"query":     query,
+		"queryType": "Book",
+		"perPage":   20,
+	}, &resp); err != nil {
 		return nil, fmt.Errorf("hardcover search books: %w", err)
 	}
-	books := make([]models.Book, 0, len(resp.Data.Books))
-	for _, b := range resp.Data.Books {
+	docs := parseBookSearchResults(resp.Data.Search.Results)
+	books := make([]models.Book, 0, len(docs))
+	for _, b := range docs {
 		books = append(books, c.toBook(b))
 	}
 	return books, nil
@@ -182,9 +192,6 @@ func (c *Client) GetAuthorWorksByName(ctx context.Context, authorName string) ([
 			ratings_count
 			rating
 			users_count
-			genres
-			has_audiobook
-			has_ebook
 			audio_seconds
 			contributions {
 				author { id name slug }
@@ -217,7 +224,7 @@ func (c *Client) GetAuthorWorksByName(ctx context.Context, authorName string) ([
 }
 
 func (c *Client) GetAuthor(ctx context.Context, foreignID string) (*models.Author, error) {
-	slug := strings.TrimPrefix(foreignID, idPrefix)
+	id := strings.TrimPrefix(foreignID, idPrefix)
 	gql := `query GetAuthor($slug: String!) {
 		authors(where: {slug: {_eq: $slug}}, limit: 1) {
 			id
@@ -227,12 +234,25 @@ func (c *Client) GetAuthor(ctx context.Context, foreignID string) (*models.Autho
 			image { url }
 		}
 	}`
+	vars := map[string]any{"slug": id}
+	if numericID, ok := hardcoverNumericID(id); ok {
+		gql = `query GetAuthor($id: Int!) {
+			authors(where: {id: {_eq: $id}}, limit: 1) {
+				id
+				name
+				slug
+				bio
+				image { url }
+			}
+		}`
+		vars = map[string]any{"id": numericID}
+	}
 	var resp struct {
 		Data struct {
 			Authors []hcAuthor `json:"authors"`
 		} `json:"data"`
 	}
-	if err := c.query(ctx, gql, map[string]any{"slug": slug}, &resp); err != nil {
+	if err := c.query(ctx, gql, vars, &resp); err != nil {
 		return nil, fmt.Errorf("hardcover get author: %w", err)
 	}
 	if len(resp.Data.Authors) == 0 {
@@ -243,7 +263,7 @@ func (c *Client) GetAuthor(ctx context.Context, foreignID string) (*models.Autho
 }
 
 func (c *Client) GetBook(ctx context.Context, foreignID string) (*models.Book, error) {
-	slug := strings.TrimPrefix(foreignID, idPrefix)
+	id := strings.TrimPrefix(foreignID, idPrefix)
 	gql := `query GetBook($slug: String!) {
 		books(where: {slug: {_eq: $slug}}, limit: 1) {
 			id
@@ -259,12 +279,31 @@ func (c *Client) GetBook(ctx context.Context, foreignID string) (*models.Book, e
 			}
 		}
 	}`
+	vars := map[string]any{"slug": id}
+	if numericID, ok := hardcoverNumericID(id); ok {
+		gql = `query GetBook($id: Int!) {
+			books(where: {id: {_eq: $id}}, limit: 1) {
+				id
+				title
+				slug
+				description
+				image { url }
+				release_year
+				ratings_count
+				rating
+				contributions {
+					author { id name slug }
+				}
+			}
+		}`
+		vars = map[string]any{"id": numericID}
+	}
 	var resp struct {
 		Data struct {
 			Books []hcBook `json:"books"`
 		} `json:"data"`
 	}
-	if err := c.query(ctx, gql, map[string]any{"slug": slug}, &resp); err != nil {
+	if err := c.query(ctx, gql, vars, &resp); err != nil {
 		return nil, fmt.Errorf("hardcover get book: %w", err)
 	}
 	if len(resp.Data.Books) == 0 {
@@ -687,10 +726,251 @@ type hcBook struct {
 	Rating        float64          `json:"rating"`
 	UsersCount    int              `json:"users_count"`
 	Genres        []string         `json:"genres"`
-	HasAudiobook  bool             `json:"has_audiobook"`
-	HasEbook      bool             `json:"has_ebook"`
 	AudioSeconds  *int             `json:"audio_seconds"`
 	Contributions []hcContribution `json:"contributions"`
+	AuthorNames   []string         `json:"author_names"`
+}
+
+type hcAuthorSearchEnvelope struct {
+	Hits []hcAuthorSearchHit `json:"hits"`
+}
+
+type hcAuthorSearchHit struct {
+	Document hcAuthorSearchDocument `json:"document"`
+}
+
+type hcAuthorSearchDocument struct {
+	ID          any    `json:"id"`
+	Name        string `json:"name"`
+	Slug        string `json:"slug"`
+	Bio         string `json:"bio"`
+	Description string `json:"description"`
+	Image       any    `json:"image"`
+	ImageURL    string `json:"image_url"`
+	CachedImage any    `json:"cached_image"`
+}
+
+type hcBookSearchEnvelope struct {
+	Hits []hcBookSearchHit `json:"hits"`
+}
+
+type hcBookSearchHit struct {
+	Document hcBookSearchDocument `json:"document"`
+}
+
+type hcBookSearchDocument struct {
+	ID            any                    `json:"id"`
+	Title         string                 `json:"title"`
+	Slug          string                 `json:"slug"`
+	Description   string                 `json:"description"`
+	Image         any                    `json:"image"`
+	ImageURL      string                 `json:"image_url"`
+	CachedImage   any                    `json:"cached_image"`
+	ReleaseYear   any                    `json:"release_year"`
+	RatingsCount  any                    `json:"ratings_count"`
+	Rating        any                    `json:"rating"`
+	Contributions []hcSearchContribution `json:"contributions"`
+	AuthorNames   []string               `json:"author_names"`
+}
+
+type hcSearchContribution struct {
+	Author hcAuthorSearchDocument `json:"author"`
+}
+
+func parseAuthorSearchResults(raw json.RawMessage) []hcAuthor {
+	raw = normalizeRawSearchResults(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var envelope hcAuthorSearchEnvelope
+	if err := json.Unmarshal(raw, &envelope); err == nil && len(envelope.Hits) > 0 {
+		return authorSearchHitsToAuthors(envelope.Hits)
+	}
+	var hits []hcAuthorSearchHit
+	if err := json.Unmarshal(raw, &hits); err == nil {
+		return authorSearchHitsToAuthors(hits)
+	}
+	var docs []hcAuthorSearchDocument
+	if err := json.Unmarshal(raw, &docs); err == nil {
+		authors := make([]hcAuthor, 0, len(docs))
+		for _, doc := range docs {
+			if author, ok := authorSearchDocumentToAuthor(doc); ok {
+				authors = append(authors, author)
+			}
+		}
+		return authors
+	}
+	return nil
+}
+
+func parseBookSearchResults(raw json.RawMessage) []hcBook {
+	raw = normalizeRawSearchResults(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var envelope hcBookSearchEnvelope
+	if err := json.Unmarshal(raw, &envelope); err == nil && len(envelope.Hits) > 0 {
+		return bookSearchHitsToBooks(envelope.Hits)
+	}
+	var hits []hcBookSearchHit
+	if err := json.Unmarshal(raw, &hits); err == nil {
+		return bookSearchHitsToBooks(hits)
+	}
+	var docs []hcBookSearchDocument
+	if err := json.Unmarshal(raw, &docs); err == nil {
+		books := make([]hcBook, 0, len(docs))
+		for _, doc := range docs {
+			if book, ok := bookSearchDocumentToBook(doc); ok {
+				books = append(books, book)
+			}
+		}
+		return books
+	}
+	return nil
+}
+
+func authorSearchHitsToAuthors(hits []hcAuthorSearchHit) []hcAuthor {
+	authors := make([]hcAuthor, 0, len(hits))
+	for _, hit := range hits {
+		if author, ok := authorSearchDocumentToAuthor(hit.Document); ok {
+			authors = append(authors, author)
+		}
+	}
+	return authors
+}
+
+func bookSearchHitsToBooks(hits []hcBookSearchHit) []hcBook {
+	books := make([]hcBook, 0, len(hits))
+	for _, hit := range hits {
+		if book, ok := bookSearchDocumentToBook(hit.Document); ok {
+			books = append(books, book)
+		}
+	}
+	return books
+}
+
+func authorSearchDocumentToAuthor(doc hcAuthorSearchDocument) (hcAuthor, bool) {
+	name := strings.TrimSpace(doc.Name)
+	id, _ := searchInt(doc.ID)
+	slug := strings.TrimSpace(doc.Slug)
+	if name == "" || (slug == "" && id <= 0) {
+		return hcAuthor{}, false
+	}
+	bio := strings.TrimSpace(doc.Bio)
+	if bio == "" {
+		bio = strings.TrimSpace(doc.Description)
+	}
+	return hcAuthor{
+		ID:    id,
+		Name:  name,
+		Slug:  slug,
+		Bio:   bio,
+		Image: searchImage(doc.Image, doc.ImageURL, doc.CachedImage),
+	}, true
+}
+
+func bookSearchDocumentToBook(doc hcBookSearchDocument) (hcBook, bool) {
+	title := strings.TrimSpace(doc.Title)
+	id, _ := searchInt(doc.ID)
+	slug := strings.TrimSpace(doc.Slug)
+	if title == "" || (slug == "" && id <= 0) {
+		return hcBook{}, false
+	}
+	book := hcBook{
+		ID:            id,
+		Title:         title,
+		Slug:          slug,
+		Description:   strings.TrimSpace(doc.Description),
+		Image:         searchImage(doc.Image, doc.ImageURL, doc.CachedImage),
+		ReleaseYear:   searchIntPtr(doc.ReleaseYear),
+		RatingsCount:  searchIntValue(doc.RatingsCount),
+		Rating:        searchFloatValue(doc.Rating),
+		Contributions: make([]hcContribution, 0, len(doc.Contributions)),
+		AuthorNames:   doc.AuthorNames,
+	}
+	for _, contribution := range doc.Contributions {
+		author, ok := authorSearchDocumentToAuthor(contribution.Author)
+		if ok {
+			book.Contributions = append(book.Contributions, hcContribution{Author: author})
+		}
+	}
+	return book, true
+}
+
+func searchImage(values ...any) *hcImage {
+	for _, value := range values {
+		switch v := value.(type) {
+		case nil:
+			continue
+		case string:
+			if url := strings.TrimSpace(v); url != "" {
+				return &hcImage{URL: url}
+			}
+		case map[string]any:
+			if url, ok := v["url"].(string); ok && strings.TrimSpace(url) != "" {
+				return &hcImage{URL: strings.TrimSpace(url)}
+			}
+			if url, ok := v["image_url"].(string); ok && strings.TrimSpace(url) != "" {
+				return &hcImage{URL: strings.TrimSpace(url)}
+			}
+		}
+	}
+	return nil
+}
+
+func searchIntPtr(value any) *int {
+	i, ok := searchInt(value)
+	if !ok {
+		return nil
+	}
+	return &i
+}
+
+func searchIntValue(value any) int {
+	i, _ := searchInt(value)
+	return i
+}
+
+func searchInt(value any) (int, bool) {
+	switch v := value.(type) {
+	case nil:
+		return 0, false
+	case int:
+		return v, true
+	case float64:
+		if v != math.Trunc(v) {
+			return 0, false
+		}
+		i, err := strconv.Atoi(strconv.FormatFloat(v, 'f', 0, 64))
+		return i, err == nil
+	case json.Number:
+		i, err := strconv.Atoi(v.String())
+		return i, err == nil
+	case string:
+		i, err := strconv.Atoi(strings.TrimSpace(v))
+		return i, err == nil
+	default:
+		i, err := strconv.Atoi(seriesIDString(v))
+		return i, err == nil
+	}
+}
+
+func searchFloatValue(value any) float64 {
+	switch v := value.(type) {
+	case nil:
+		return 0
+	case float64:
+		return v
+	case json.Number:
+		f, _ := strconv.ParseFloat(v.String(), 64)
+		return f
+	case string:
+		f, _ := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		return f
+	default:
+		f, _ := strconv.ParseFloat(seriesIDString(v), 64)
+		return f
+	}
 }
 
 // --- Converters ---
@@ -746,6 +1026,19 @@ func (c *Client) toBook(b hcBook) models.Book {
 	if len(b.Contributions) > 0 {
 		a := c.toAuthor(b.Contributions[0].Author)
 		bk.Author = &a
+	} else if len(b.AuthorNames) > 0 {
+		for _, authorName := range b.AuthorNames {
+			name := strings.TrimSpace(authorName)
+			if name == "" {
+				continue
+			}
+			bk.Author = &models.Author{
+				Name:             name,
+				SortName:         sortName(name),
+				MetadataProvider: "hardcover",
+			}
+			break
+		}
 	}
 	return bk
 }
@@ -758,4 +1051,16 @@ func sortName(name string) string {
 	last := parts[len(parts)-1]
 	rest := strings.Join(parts[:len(parts)-1], " ")
 	return last + ", " + rest
+}
+
+func hardcoverNumericID(value string) (int, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	id, err := strconv.Atoi(value)
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
 }

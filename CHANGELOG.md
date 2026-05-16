@@ -14,6 +14,7 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 - **qBittorrent imports recover from mismatched container paths without re-downloading** — Download clients now support per-client path remaps, qBittorrent grabs are sent with the expected category save path, and Settings surfaces qBittorrent category path health warnings. Queue items stuck in `importFailed` can also be retried after fixing storage/path settings.
 - **Calibre ID reuse** — Plugin sync no longer reuses a stored source-library Calibre ID when pushing into a different Calibre library.
+- **Hardcover supplemental author sync restored** (#669) — Hardcover removed fields from its GraphQL `books` shape and blocked `_ilike` searches, causing author page enrichment to fail with validation or 403 errors. Bindery now uses Hardcover's current search operation and avoids the removed author-work fields.
 
 ## [v1.11.2] — 2026-05-17
 

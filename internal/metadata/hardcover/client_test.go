@@ -70,6 +70,34 @@ func newMockClient(handler func(*http.Request) (*http.Response, error)) *Client 
 	}
 }
 
+func assertSearchRequest(t *testing.T, r *http.Request, queryType, query string) {
+	t.Helper()
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Fatalf("read request body: %v", err)
+	}
+	var req gqlRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	if strings.Contains(req.Query, "_ilike") {
+		t.Fatalf("search query still uses _ilike: %s", req.Query)
+	}
+	if !strings.Contains(req.Query, "search(query: $query") {
+		t.Fatalf("search query does not use Hardcover search operation: %s", req.Query)
+	}
+	if got := req.Variables["queryType"]; got != queryType {
+		t.Fatalf("queryType = %v, want %s", got, queryType)
+	}
+	if got := req.Variables["query"]; got != query {
+		t.Fatalf("query = %v, want %s", got, query)
+	}
+	perPage, ok := req.Variables["perPage"].(float64)
+	if !ok || perPage != 20 {
+		t.Fatalf("perPage = %v, want 20", req.Variables["perPage"])
+	}
+}
+
 func TestName(t *testing.T) {
 	c := New()
 	if c.Name() != "hardcover" {
@@ -111,7 +139,11 @@ func TestQuery_UsesNormalizedAuthorizationHeader(t *testing.T) {
 				if got := r.Header.Get("Authorization"); got != "Bearer hc-secret" {
 					t.Fatalf("Authorization = %q, want Bearer hc-secret", got)
 				}
-				return gqlResponse(t, http.StatusOK, map[string]interface{}{"authors": []interface{}{}}), nil
+				return gqlResponse(t, http.StatusOK, map[string]interface{}{
+					"search": map[string]interface{}{
+						"results": map[string]interface{}{"found": 0, "hits": []interface{}{}},
+					},
+				}), nil
 			}}
 			if _, err := tt.client.SearchAuthors(context.Background(), "nobody"); err != nil {
 				t.Fatalf("SearchAuthors: %v", err)
@@ -155,15 +187,23 @@ func TestQuery_SuccessResponseBodyReadIsBounded(t *testing.T) {
 
 func TestSearchAuthors_Success(t *testing.T) {
 	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		assertSearchRequest(t, r, "Author", "Sanderson")
 		data := map[string]interface{}{
-			"authors": []map[string]interface{}{
-				{
-					"id":   1,
-					"name": "Brandon Sanderson",
-					"slug": "brandon-sanderson",
-					"bio":  "Fantasy author",
-					"image": map[string]interface{}{
-						"url": "https://example.com/bs.jpg",
+			"search": map[string]interface{}{
+				"results": map[string]interface{}{
+					"found": 1,
+					"hits": []map[string]interface{}{
+						{
+							"document": map[string]interface{}{
+								"id":   1,
+								"name": "Brandon Sanderson",
+								"slug": "brandon-sanderson",
+								"bio":  "Fantasy author",
+								"image": map[string]interface{}{
+									"url": "https://example.com/bs.jpg",
+								},
+							},
+						},
 					},
 				},
 			},
@@ -189,9 +229,41 @@ func TestSearchAuthors_Success(t *testing.T) {
 	}
 }
 
+func TestSearchAuthors_ParsesStringResults(t *testing.T) {
+	encoded := `{"found":1,"hits":[{"document":{"id":"80626","name":"J.K. Rowling","description":"Author","image_url":"https://example.com/jkr.jpg"}}]}`
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		assertSearchRequest(t, r, "Author", "rowling")
+		return gqlResponse(t, http.StatusOK, map[string]interface{}{
+			"search": map[string]interface{}{"results": encoded},
+		}), nil
+	})
+
+	authors, err := c.SearchAuthors(context.Background(), "rowling")
+	if err != nil {
+		t.Fatalf("SearchAuthors: %v", err)
+	}
+	if len(authors) != 1 {
+		t.Fatalf("expected 1 author, got %d", len(authors))
+	}
+	if authors[0].ForeignID != "hc:80626" {
+		t.Errorf("ForeignID: want 'hc:80626', got %q", authors[0].ForeignID)
+	}
+	if authors[0].Description != "Author" {
+		t.Errorf("Description: want fallback description, got %q", authors[0].Description)
+	}
+	if authors[0].ImageURL != "https://example.com/jkr.jpg" {
+		t.Errorf("ImageURL: got %q", authors[0].ImageURL)
+	}
+}
+
 func TestSearchAuthors_Empty(t *testing.T) {
 	c := newMockClient(func(r *http.Request) (*http.Response, error) {
-		return gqlResponse(t, http.StatusOK, map[string]interface{}{"authors": []interface{}{}}), nil
+		assertSearchRequest(t, r, "Author", "nobody")
+		return gqlResponse(t, http.StatusOK, map[string]interface{}{
+			"search": map[string]interface{}{
+				"results": map[string]interface{}{"found": 0, "hits": []interface{}{}},
+			},
+		}), nil
 	})
 
 	authors, err := c.SearchAuthors(context.Background(), "nobody")
@@ -200,6 +272,25 @@ func TestSearchAuthors_Empty(t *testing.T) {
 	}
 	if len(authors) != 0 {
 		t.Errorf("expected 0 authors, got %d", len(authors))
+	}
+}
+
+func TestSearchAuthors_BlankQuerySkipsAPI(t *testing.T) {
+	called := false
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		called = true
+		return gqlResponse(t, http.StatusOK, map[string]interface{}{}), nil
+	})
+
+	authors, err := c.SearchAuthors(context.Background(), "   ")
+	if err != nil {
+		t.Fatalf("SearchAuthors: %v", err)
+	}
+	if len(authors) != 0 {
+		t.Fatalf("expected no authors, got %d", len(authors))
+	}
+	if called {
+		t.Fatal("expected blank query not to call API")
 	}
 }
 
@@ -221,19 +312,27 @@ func TestSearchAuthors_HTTPError(t *testing.T) {
 func TestSearchBooks_Success(t *testing.T) {
 	year := 2001
 	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		assertSearchRequest(t, r, "Book", "Mistborn")
 		data := map[string]interface{}{
-			"books": []map[string]interface{}{
-				{
-					"id":            42,
-					"title":         "Mistborn",
-					"slug":          "mistborn",
-					"description":   "A fantasy novel",
-					"release_year":  year,
-					"rating":        4.2,
-					"ratings_count": 8000,
-					"image":         map[string]interface{}{"url": "https://img.example.com/m.jpg"},
-					"contributions": []map[string]interface{}{
-						{"author": map[string]interface{}{"id": 1, "name": "Brandon Sanderson", "slug": "brandon-sanderson"}},
+			"search": map[string]interface{}{
+				"results": map[string]interface{}{
+					"found": 1,
+					"hits": []map[string]interface{}{
+						{
+							"document": map[string]interface{}{
+								"id":            42,
+								"title":         "Mistborn",
+								"slug":          "mistborn",
+								"description":   "A fantasy novel",
+								"release_year":  year,
+								"rating":        4.2,
+								"ratings_count": 8000,
+								"image":         map[string]interface{}{"url": "https://img.example.com/m.jpg"},
+								"contributions": []map[string]interface{}{
+									{"author": map[string]interface{}{"id": 1, "name": "Brandon Sanderson", "slug": "brandon-sanderson"}},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -269,6 +368,84 @@ func TestSearchBooks_Success(t *testing.T) {
 	}
 }
 
+func TestSearchBooks_ParsesStringResultsAndAuthorNames(t *testing.T) {
+	encoded := `{"found":1,"hits":[{"document":{"id":"312460","title":"Dune","slug":"dune","description":"A desert planet.","release_year":"1965","rating":"4.4","ratings_count":"12000","image_url":"https://img.example.com/dune.jpg","author_names":["Frank Herbert"]}}]}`
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		assertSearchRequest(t, r, "Book", "dune")
+		return gqlResponse(t, http.StatusOK, map[string]interface{}{
+			"search": map[string]interface{}{"results": encoded},
+		}), nil
+	})
+
+	books, err := c.SearchBooks(context.Background(), "dune")
+	if err != nil {
+		t.Fatalf("SearchBooks: %v", err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("expected 1 book, got %d", len(books))
+	}
+	book := books[0]
+	if book.ForeignID != "hc:dune" || book.Title != "Dune" {
+		t.Fatalf("unexpected book: %+v", book)
+	}
+	if book.ReleaseDate == nil || book.ReleaseDate.Year() != 1965 {
+		t.Errorf("ReleaseDate: expected year 1965, got %v", book.ReleaseDate)
+	}
+	if book.Author == nil || book.Author.Name != "Frank Herbert" || book.Author.ForeignID != "" {
+		t.Errorf("Author: %+v", book.Author)
+	}
+	if book.AverageRating != 4.4 || book.RatingsCount != 12000 {
+		t.Errorf("rating/count = %f/%d, want 4.4/12000", book.AverageRating, book.RatingsCount)
+	}
+}
+
+func TestSearchBooks_SkipsUnmappableHits(t *testing.T) {
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		assertSearchRequest(t, r, "Book", "Dune")
+		return gqlResponse(t, http.StatusOK, map[string]interface{}{
+			"search": map[string]interface{}{
+				"results": map[string]interface{}{
+					"found": 2,
+					"hits": []map[string]interface{}{
+						{"document": map[string]interface{}{"title": "No ID"}},
+						{"document": map[string]interface{}{"id": 42, "title": "Dune"}},
+					},
+				},
+			},
+		}), nil
+	})
+
+	books, err := c.SearchBooks(context.Background(), "Dune")
+	if err != nil {
+		t.Fatalf("SearchBooks: %v", err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("expected 1 mappable book, got %d", len(books))
+	}
+	if books[0].ForeignID != "hc:42" {
+		t.Errorf("ForeignID: want 'hc:42', got %q", books[0].ForeignID)
+	}
+}
+
+func TestSearchBooks_BlankQuerySkipsAPI(t *testing.T) {
+	called := false
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		called = true
+		return gqlResponse(t, http.StatusOK, map[string]interface{}{}), nil
+	})
+
+	books, err := c.SearchBooks(context.Background(), "   ")
+	if err != nil {
+		t.Fatalf("SearchBooks: %v", err)
+	}
+	if len(books) != 0 {
+		t.Fatalf("expected no books, got %d", len(books))
+	}
+	if called {
+		t.Fatal("expected blank query not to call API")
+	}
+}
+
 func TestSearchBooks_HTTPError(t *testing.T) {
 	c := newMockClient(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{
@@ -292,6 +469,12 @@ func TestGetAuthorWorksByName_WithToken(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		var req gqlRequest
 		_ = json.Unmarshal(body, &req)
+		if strings.Contains(req.Query, "genres") {
+			t.Fatalf("query requested removed Hardcover books.genres field: %s", req.Query)
+		}
+		if strings.Contains(req.Query, "cached_tags") {
+			t.Fatalf("query requested Hardcover tags as genres: %s", req.Query)
+		}
 		gotVars = req.Variables
 		data := map[string]interface{}{
 			"books": []map[string]interface{}{
@@ -305,9 +488,6 @@ func TestGetAuthorWorksByName_WithToken(t *testing.T) {
 					"ratings_count": 1000,
 					"rating":        4.5,
 					"users_count":   2000,
-					"genres":        []string{"Science Fiction"},
-					"has_audiobook": true,
-					"has_ebook":     false,
 					"audio_seconds": 7200,
 					"contributions": []map[string]interface{}{
 						{"author": map[string]interface{}{"id": 1, "name": "Frank Herbert", "slug": "frank-herbert"}},
@@ -338,7 +518,7 @@ func TestGetAuthorWorksByName_WithToken(t *testing.T) {
 	if book.DurationSeconds != 7200 {
 		t.Fatalf("DurationSeconds = %d, want 7200", book.DurationSeconds)
 	}
-	if len(book.Genres) != 1 || book.Genres[0] != "Science Fiction" {
+	if len(book.Genres) != 0 {
 		t.Fatalf("Genres = %+v", book.Genres)
 	}
 	if book.MediaType != "" {
@@ -388,6 +568,41 @@ func TestGetAuthor_Found(t *testing.T) {
 	// ForeignID strips "hc:" for the query but toAuthor re-adds it
 	if author.ForeignID != "hc:neil-gaiman" {
 		t.Errorf("ForeignID: want 'hc:neil-gaiman', got %q", author.ForeignID)
+	}
+}
+
+func TestGetAuthor_NumericID(t *testing.T) {
+	var gotVars map[string]any
+	var gotQuery string
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(r.Body)
+		var req gqlRequest
+		_ = json.Unmarshal(body, &req)
+		gotQuery = req.Query
+		gotVars = req.Variables
+		data := map[string]interface{}{
+			"authors": []map[string]interface{}{
+				{"id": 5, "name": "Neil Gaiman", "slug": "neil-gaiman", "bio": "Writer", "image": nil},
+			},
+		}
+		return gqlResponse(t, http.StatusOK, data), nil
+	})
+
+	author, err := c.GetAuthor(context.Background(), "hc:5")
+	if err != nil {
+		t.Fatalf("GetAuthor: %v", err)
+	}
+	if author == nil || author.ForeignID != "hc:neil-gaiman" {
+		t.Fatalf("author = %+v, want slug-backed author", author)
+	}
+	if gotVars["id"] != float64(5) && gotVars["id"] != 5 {
+		t.Fatalf("id variable = %#v, want 5", gotVars["id"])
+	}
+	if _, ok := gotVars["slug"]; ok {
+		t.Fatalf("slug variable present for numeric lookup: %#v", gotVars["slug"])
+	}
+	if !strings.Contains(gotQuery, "id: {_eq: $id}") {
+		t.Fatalf("query did not use id lookup: %s", gotQuery)
 	}
 }
 
@@ -449,6 +664,48 @@ func TestGetBook_Found(t *testing.T) {
 	}
 	if book.ForeignID != "hc:american-gods" {
 		t.Errorf("ForeignID: want 'hc:american-gods', got %q", book.ForeignID)
+	}
+}
+
+func TestGetBook_NumericID(t *testing.T) {
+	var gotVars map[string]any
+	var gotQuery string
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(r.Body)
+		var req gqlRequest
+		_ = json.Unmarshal(body, &req)
+		gotQuery = req.Query
+		gotVars = req.Variables
+		data := map[string]interface{}{
+			"books": []map[string]interface{}{
+				{
+					"id":            99,
+					"title":         "American Gods",
+					"slug":          "american-gods",
+					"description":   "A novel about gods in America.",
+					"rating":        4.1,
+					"ratings_count": 12000,
+				},
+			},
+		}
+		return gqlResponse(t, http.StatusOK, data), nil
+	})
+
+	book, err := c.GetBook(context.Background(), "hc:99")
+	if err != nil {
+		t.Fatalf("GetBook: %v", err)
+	}
+	if book == nil || book.ForeignID != "hc:american-gods" {
+		t.Fatalf("book = %+v, want slug-backed book", book)
+	}
+	if gotVars["id"] != float64(99) && gotVars["id"] != 99 {
+		t.Fatalf("id variable = %#v, want 99", gotVars["id"])
+	}
+	if _, ok := gotVars["slug"]; ok {
+		t.Fatalf("slug variable present for numeric lookup: %#v", gotVars["slug"])
+	}
+	if !strings.Contains(gotQuery, "id: {_eq: $id}") {
+		t.Fatalf("query did not use id lookup: %s", gotQuery)
 	}
 }
 
