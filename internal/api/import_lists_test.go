@@ -359,6 +359,58 @@ func TestHardcoverListsUsesSavedTokenForAdmins(t *testing.T) {
 	}
 }
 
+func TestHardcoverListsUsesSavedTokenInDisabledAuthMode(t *testing.T) {
+	h, _, settings := importListFixture(t)
+	ctx := context.Background()
+	if err := settings.Set(ctx, SettingAuthMode, string(auth.ModeDisabled)); err != nil {
+		t.Fatalf("set auth mode: %v", err)
+	}
+	if err := settings.Set(ctx, SettingHardcoverAPIToken, "global-token"); err != nil {
+		t.Fatalf("set token: %v", err)
+	}
+	var gotToken string
+	h.hcListClient = func(token string) hardcoverUserListClient {
+		gotToken = token
+		return fakeHardcoverUserListClient{lists: []hardcover.HCList{{ID: -1, Name: "Want to Read", Slug: "want-to-read"}}}
+	}
+
+	rec := httptest.NewRecorder()
+	h.HardcoverLists(rec, httptest.NewRequest(http.MethodGet, "/api/v1/importlist/hardcover/lists", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if gotToken != "global-token" {
+		t.Fatalf("token = %q, want global-token", gotToken)
+	}
+}
+
+func TestHardcoverListsUsesSavedTokenForLocalOnlyLocalRequests(t *testing.T) {
+	h, _, settings := importListFixture(t)
+	ctx := context.Background()
+	if err := settings.Set(ctx, SettingAuthMode, string(auth.ModeLocalOnly)); err != nil {
+		t.Fatalf("set auth mode: %v", err)
+	}
+	if err := settings.Set(ctx, SettingHardcoverAPIToken, "global-token"); err != nil {
+		t.Fatalf("set token: %v", err)
+	}
+	var gotToken string
+	h.hcListClient = func(token string) hardcoverUserListClient {
+		gotToken = token
+		return fakeHardcoverUserListClient{lists: []hardcover.HCList{{ID: -1, Name: "Want to Read", Slug: "want-to-read"}}}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/importlist/hardcover/lists", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	rec := httptest.NewRecorder()
+	h.HardcoverLists(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if gotToken != "global-token" {
+		t.Fatalf("token = %q, want global-token", gotToken)
+	}
+}
+
 func TestHardcoverListsSavedTokenRequiresAdmin(t *testing.T) {
 	h, _, settings := importListFixture(t)
 	if err := settings.Set(context.Background(), SettingHardcoverAPIToken, "global-token"); err != nil {

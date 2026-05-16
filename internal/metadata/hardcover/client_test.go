@@ -1774,8 +1774,19 @@ func TestGetUserWishlist_HTTPError(t *testing.T) {
 func TestGetUserLists_IncludesBuiltinShelves(t *testing.T) {
 	// When me.lists returns an empty array (user has no custom lists),
 	// GetUserLists must still return the 4 built-in shelf entries.
+	var gotQuery string
 	c := newMockClient(func(r *http.Request) (*http.Response, error) {
-		body := `{"data":{"me":[{"lists":[]}]}}`
+		bodyBytes, _ := io.ReadAll(r.Body)
+		var req gqlRequest
+		_ = json.Unmarshal(bodyBytes, &req)
+		gotQuery = req.Query
+		body := `{"data":{"me":[{
+			"want_to_read":{"aggregate":{"count":11}},
+			"currently_reading":{"aggregate":{"count":2}},
+			"read":{"aggregate":{"count":30}},
+			"did_not_finish":{"aggregate":{"count":4}},
+			"lists":[]
+		}]}}`
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(body)),
@@ -1792,14 +1803,25 @@ func TestGetUserLists_IncludesBuiltinShelves(t *testing.T) {
 		t.Fatalf("want %d lists (built-ins only), got %d", len(hcBuiltinShelves), len(lists))
 	}
 	want := []HCList{
-		{ID: -1, Name: "Want to Read", Slug: "want-to-read"},
-		{ID: -2, Name: "Currently Reading", Slug: "currently-reading"},
-		{ID: -3, Name: "Read", Slug: "read"},
-		{ID: -4, Name: "Did Not Finish", Slug: "did-not-finish"},
+		{ID: -1, Name: "Want to Read", Slug: "want-to-read", BooksCount: 11},
+		{ID: -2, Name: "Currently Reading", Slug: "currently-reading", BooksCount: 2},
+		{ID: -3, Name: "Read", Slug: "read", BooksCount: 30},
+		{ID: -4, Name: "Did Not Finish", Slug: "did-not-finish", BooksCount: 4},
 	}
 	for i, wantShelf := range want {
 		if lists[i] != wantShelf {
 			t.Errorf("list[%d] = %+v, want %+v", i, lists[i], wantShelf)
+		}
+	}
+	for _, wantFragment := range []string{
+		"want_to_read: user_books_aggregate",
+		"currently_reading: user_books_aggregate",
+		"read: user_books_aggregate",
+		"did_not_finish: user_books_aggregate",
+		"aggregate { count }",
+	} {
+		if !strings.Contains(gotQuery, wantFragment) {
+			t.Errorf("query missing %q: %s", wantFragment, gotQuery)
 		}
 	}
 }

@@ -134,6 +134,18 @@ func hcShelfStatusID(listID int) (int, bool) {
 func (c *Client) GetUserLists(ctx context.Context) ([]HCList, error) {
 	gql := `query GetUserLists {
 		me {
+			want_to_read: user_books_aggregate(where: {status_id: {_eq: 1}}) {
+				aggregate { count }
+			}
+			currently_reading: user_books_aggregate(where: {status_id: {_eq: 2}}) {
+				aggregate { count }
+			}
+			read: user_books_aggregate(where: {status_id: {_eq: 3}}) {
+				aggregate { count }
+			}
+			did_not_finish: user_books_aggregate(where: {status_id: {_eq: 5}}) {
+				aggregate { count }
+			}
 			lists {
 				id
 				name
@@ -145,7 +157,11 @@ func (c *Client) GetUserLists(ctx context.Context) ([]HCList, error) {
 	var resp struct {
 		Data struct {
 			Me []struct {
-				Lists []struct {
+				WantToRead       hcCountAggregate `json:"want_to_read"`
+				CurrentlyReading hcCountAggregate `json:"currently_reading"`
+				Read             hcCountAggregate `json:"read"`
+				DidNotFinish     hcCountAggregate `json:"did_not_finish"`
+				Lists            []struct {
 					ID         int    `json:"id"`
 					Name       string `json:"name"`
 					Slug       string `json:"slug"`
@@ -167,7 +183,17 @@ func (c *Client) GetUserLists(ctx context.Context) ([]HCList, error) {
 		customLists = resp.Data.Me[0].Lists
 	}
 	lists := make([]HCList, 0, len(hcBuiltinShelves)+len(customLists))
-	lists = append(lists, hcBuiltinShelves...)
+	if len(resp.Data.Me) > 0 {
+		me := resp.Data.Me[0]
+		lists = append(lists,
+			HCList{ID: -1, Name: "Want to Read", Slug: "want-to-read", BooksCount: me.WantToRead.count()},
+			HCList{ID: -2, Name: "Currently Reading", Slug: "currently-reading", BooksCount: me.CurrentlyReading.count()},
+			HCList{ID: -3, Name: "Read", Slug: "read", BooksCount: me.Read.count()},
+			HCList{ID: -4, Name: "Did Not Finish", Slug: "did-not-finish", BooksCount: me.DidNotFinish.count()},
+		)
+	} else {
+		lists = append(lists, hcBuiltinShelves...)
+	}
 	for _, l := range customLists {
 		lists = append(lists, HCList{
 			ID:         l.ID,
@@ -177,6 +203,16 @@ func (c *Client) GetUserLists(ctx context.Context) ([]HCList, error) {
 		})
 	}
 	return lists, nil
+}
+
+type hcCountAggregate struct {
+	Aggregate struct {
+		Count int `json:"count"`
+	} `json:"aggregate"`
+}
+
+func (a hcCountAggregate) count() int {
+	return a.Aggregate.Count
 }
 
 // GetListBooks returns all books in the given list as Bindery models.

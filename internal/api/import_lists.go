@@ -10,7 +10,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/hardcoverlistsyncer"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
@@ -146,7 +145,7 @@ func (h *ImportListHandler) HardcoverLists(w http.ResponseWriter, r *http.Reques
 	authHeader := r.Header.Get("Authorization")
 	token := hardcover.NormalizeAPIToken(authHeader)
 	if token == "" {
-		if auth.UserRoleFromContext(r.Context()) != "admin" {
+		if !requestHasAdminSemantics(r, h.settings) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin role required"})
 			return
 		}
