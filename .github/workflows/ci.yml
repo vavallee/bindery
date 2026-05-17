@@ -247,12 +247,21 @@ jobs:
               -f branch="${DEPLOY_BRANCH}"
           fi
 
+          # --repo is required because this job does not check out the
+          # repository, so gh has no local git context to infer the target
+          # from. Without it, `gh pr create` exits 1 with "not a git
+          # repository: .git" and the 2>/dev/null mask hides that error;
+          # the subsequent `gh pr merge` then fails for the same reason
+          # (and orphans the auto/dev-deploy-<sha> branch with the right
+          # content but no PR). The deploy-prod job below already has the
+          # --repo flag; this brings deploy-dev in line.
           gh pr create \
+            --repo "${GITHUB_REPOSITORY}" \
             --head "${DEPLOY_BRANCH}" \
             --base development \
             --title "chore(deploy-dev): update to ${IMAGE_TAG}" \
             --body "Automated dev deploy: image tag \`${IMAGE_TAG}\`." 2>/dev/null || true
-          gh pr merge "${DEPLOY_BRANCH}" --squash --admin --delete-branch
+          gh pr merge "${DEPLOY_BRANCH}" --repo "${GITHUB_REPOSITORY}" --squash --admin --delete-branch
           echo "bindery-dev image tag updated to ${IMAGE_TAG}"
 
       - name: Trigger ArgoCD dev refresh
