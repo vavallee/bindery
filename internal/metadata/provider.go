@@ -73,3 +73,18 @@ type SeriesCatalogProvider interface {
 	SearchSeries(ctx context.Context, query string, limit int) ([]SeriesSearchResult, error)
 	GetSeriesCatalog(ctx context.Context, foreignID string) (*SeriesCatalog, error)
 }
+
+// CoverProvider is an optional capability for providers that can resolve a
+// cover image URL from an ISBN out-of-band from their bibliographic
+// records. DNB implements this — its MARC21 records carry no cover URL,
+// but the MVB cover service (portal.dnb.de/opac/mvb/cover) serves a JPEG
+// for many German-edition ISBNs. The aggregator's enrichBook falls back
+// to this when no enricher has supplied an ImageURL.
+//
+// Implementations MUST return "" rather than an error when no cover is
+// available — failures are best-effort and should not surface to the
+// user. Implementations SHOULD validate the response (HTTP 2xx + image
+// Content-Type) before returning a URL so callers can trust it.
+type CoverProvider interface {
+	CoverByISBN(ctx context.Context, isbn string) string
+}

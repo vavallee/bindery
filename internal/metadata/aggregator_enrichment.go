@@ -222,10 +222,15 @@ func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
 			slog.Debug("enrichment failed", "provider", enricher.Name(), "error", err)
 			continue
 		}
-		if len(enriched) == 0 {
+		// Pick the first result that plausibly matches our book — same
+		// title AND (if we have one) same author. Without the author
+		// guard a German title like "Die Verwandlung" could pull the
+		// wrong author's record off OL; refusing to enrich is safer
+		// than enriching with wrong data. Issue #667.
+		e := pickEnrichmentMatch(enriched, book)
+		if e == nil {
 			continue
 		}
-		e := enriched[0]
 		if len(e.Description) > len(book.Description) {
 			book.Description = e.Description
 			slog.Debug("enriched description", "provider", enricher.Name(), "book", book.Title)
@@ -237,6 +242,89 @@ func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
 		if book.ImageURL == "" && e.ImageURL != "" {
 			book.ImageURL = e.ImageURL
 			slog.Debug("enriched cover", "provider", enricher.Name(), "book", book.Title)
+		}
+	}
+
+	// Cover-only fallback: any provider implementing CoverProvider gets
+	// a chance to serve a cover by ISBN when enrichers above didn't
+	// supply one. Currently only DNB (its MVB cover service is separate
+	// from the SRU bibliographic endpoint and has covers SRU doesn't).
+	// Skipped entirely when ImageURL is already set.
+	if book.ImageURL == "" {
+		a.fillCoverFromCoverProviders(ctx, book)
+	}
+}
+
+// pickEnrichmentMatch returns the first candidate that plausibly matches
+// target — same title (case-insensitive substring either way to tolerate
+// subtitles like ": Roman") AND, when target carries an author, the
+// candidate's author name overlaps too. Returns nil when no candidate
+// matches. Conservative by design: a false negative just leaves
+// enrichment empty; a false positive overwrites the user's book with
+// data from an unrelated record.
+func pickEnrichmentMatch(candidates []models.Book, target *models.Book) *models.Book {
+	targetTitle := strings.ToLower(strings.TrimSpace(target.Title))
+	if targetTitle == "" {
+		return nil
+	}
+	targetAuthor := ""
+	if target.Author != nil {
+		targetAuthor = strings.ToLower(strings.TrimSpace(target.Author.Name))
+	}
+	for i := range candidates {
+		c := &candidates[i]
+		cTitle := strings.ToLower(strings.TrimSpace(c.Title))
+		if cTitle == "" {
+			continue
+		}
+		if !strings.Contains(cTitle, targetTitle) && !strings.Contains(targetTitle, cTitle) {
+			continue
+		}
+		if targetAuthor == "" {
+			return c
+		}
+		if c.Author == nil {
+			continue
+		}
+		cAuthor := strings.ToLower(strings.TrimSpace(c.Author.Name))
+		if cAuthor == "" {
+			continue
+		}
+		if !strings.Contains(cAuthor, targetAuthor) && !strings.Contains(targetAuthor, cAuthor) {
+			continue
+		}
+		return c
+	}
+	return nil
+}
+
+// fillCoverFromCoverProviders walks every provider that implements
+// CoverProvider and tries each ISBN edition until one resolves. Used by
+// enrichBook as a last-resort cover lookup for books whose primary
+// provider (e.g. DNB) returns no cover URL in its bibliographic data.
+func (a *Aggregator) fillCoverFromCoverProviders(ctx context.Context, book *models.Book) {
+	for _, p := range a.providers() {
+		cp, ok := p.(CoverProvider)
+		if !ok {
+			continue
+		}
+		for _, ed := range book.Editions {
+			var isbn string
+			switch {
+			case ed.ISBN13 != nil && *ed.ISBN13 != "":
+				isbn = *ed.ISBN13
+			case ed.ISBN10 != nil && *ed.ISBN10 != "":
+				isbn = *ed.ISBN10
+			}
+			if isbn == "" {
+				continue
+			}
+			if url := cp.CoverByISBN(ctx, isbn); url != "" {
+				book.ImageURL = url
+				slog.Debug("enriched cover via CoverProvider",
+					"provider", p.Name(), "isbn", isbn, "book", book.Title)
+				return
+			}
 		}
 	}
 }

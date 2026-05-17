@@ -474,6 +474,7 @@ func TestAggregator_GetBookByISBN_EnrichesShortDescription(t *testing.T) {
 	enricher := &mockProvider{
 		name: "googlebooks",
 		searchBooks: []models.Book{{
+			Title:         "Sparse ISBN",
 			Description:   "A fuller description from a configured enricher that should replace the sparse ISBN result.",
 			AverageRating: 4.2,
 			RatingsCount:  12,

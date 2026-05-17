@@ -3,12 +3,28 @@ package metadata
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/vavallee/bindery/internal/metadata/audnex"
 	"github.com/vavallee/bindery/internal/models"
 )
+
+// mockCoverProvider is a test double for the metadata.CoverProvider
+// interface. urls maps ISBN → cover URL; CoverByISBN returns the mapped
+// value or "" for a miss. Used to exercise the aggregator's MVB-style
+// fallback path without hitting a real network.
+type mockCoverProvider struct {
+	mockProvider
+	urls       map[string]string
+	coverCalls int
+}
+
+func (m *mockCoverProvider) CoverByISBN(_ context.Context, isbn string) string {
+	m.coverCalls++
+	return m.urls[isbn]
+}
 
 type stubAudnexClient struct {
 	books map[string]*audnex.Book
@@ -193,7 +209,7 @@ func TestAggregator_EnrichBook_SkipsOnSearchError(t *testing.T) {
 func TestAggregator_enrichBook_FillsCoverWhenMissing(t *testing.T) {
 	enricher := &mockProvider{
 		name:        "gb",
-		searchBooks: []models.Book{{Description: "A description.", ImageURL: "https://books.google.com/cover.jpg"}},
+		searchBooks: []models.Book{{Title: "Sapiens", Description: "A description.", ImageURL: "https://books.google.com/cover.jpg"}},
 	}
 	agg := &Aggregator{enrichers: []Provider{enricher}, cache: newTTLCache(time.Minute)}
 
@@ -207,7 +223,7 @@ func TestAggregator_enrichBook_FillsCoverWhenMissing(t *testing.T) {
 func TestAggregator_enrichBook_KeepsExistingCover(t *testing.T) {
 	enricher := &mockProvider{
 		name:        "gb",
-		searchBooks: []models.Book{{ImageURL: "https://books.google.com/other.jpg"}},
+		searchBooks: []models.Book{{Title: "Dune", ImageURL: "https://books.google.com/other.jpg"}},
 	}
 	agg := &Aggregator{enrichers: []Provider{enricher}, cache: newTTLCache(time.Minute)}
 
@@ -216,6 +232,95 @@ func TestAggregator_enrichBook_KeepsExistingCover(t *testing.T) {
 	agg.enrichBook(context.Background(), book)
 	if book.ImageURL != existing {
 		t.Errorf("existing cover should not be replaced, got %q", book.ImageURL)
+	}
+}
+
+// TestAggregator_enrichBook_AuthorMismatchSkipsEnrichment is the new
+// safety guard that issue #667 motivated: an enricher returning a
+// book with the right title but a different author must NOT overwrite
+// our book's metadata. Real-world hazard: a German title like
+// "Die Verwandlung" matches dozens of OL editions including non-Kafka
+// works; without the author check we'd silently pull the wrong cover
+// and description.
+func TestAggregator_enrichBook_AuthorMismatchSkipsEnrichment(t *testing.T) {
+	enricher := &mockProvider{
+		name: "gb",
+		searchBooks: []models.Book{{
+			Title:       "Die Verwandlung",
+			Author:      &models.Author{Name: "Some Other Person"},
+			Description: "Wrong-author description that must not leak in.",
+			ImageURL:    "https://example.com/wrong.jpg",
+		}},
+	}
+	agg := &Aggregator{enrichers: []Provider{enricher}, cache: newTTLCache(time.Minute)}
+
+	book := &models.Book{
+		Title:    "Die Verwandlung",
+		Author:   &models.Author{Name: "Franz Kafka"},
+		ImageURL: "",
+	}
+	agg.enrichBook(context.Background(), book)
+	if book.ImageURL != "" {
+		t.Errorf("ImageURL was wrongly enriched from author-mismatched record: %q", book.ImageURL)
+	}
+	if book.Description != "" {
+		t.Errorf("Description was wrongly enriched from author-mismatched record: %q", book.Description)
+	}
+}
+
+// TestAggregator_enrichBook_FillsCoverFromCoverProvider is the
+// fallback path: when no enricher supplies an ImageURL, any provider
+// implementing CoverProvider gets a chance. Currently DNB does this
+// against its MVB cover service.
+func TestAggregator_enrichBook_FillsCoverFromCoverProvider(t *testing.T) {
+	// Primary returns the book as-is. No enricher matches by title.
+	primary := &mockProvider{name: "dnb"}
+	cover := &mockCoverProvider{
+		mockProvider: mockProvider{name: "dnb-cover"},
+		urls:         map[string]string{"9783844935776": "https://portal.dnb.de/opac/mvb/cover?isbn=9783844935776"},
+	}
+	agg := &Aggregator{
+		primary:   primary,
+		enrichers: []Provider{cover},
+		cache:     newTTLCache(time.Minute),
+	}
+	isbn := "9783844935776"
+	book := &models.Book{
+		Title:    "Der war's",
+		Author:   &models.Author{Name: "Juli Zeh"},
+		Editions: []models.Edition{{ISBN13: &isbn}},
+	}
+	agg.enrichBook(context.Background(), book)
+	if book.ImageURL == "" {
+		t.Fatal("CoverProvider fallback did not fill ImageURL")
+	}
+	if !strings.Contains(book.ImageURL, "9783844935776") {
+		t.Errorf("ImageURL %q does not contain the ISBN that resolved", book.ImageURL)
+	}
+}
+
+// TestAggregator_enrichBook_CoverProviderSkippedWhenAlreadyHaveCover
+// guards against the fallback wasting a HEAD request (and overwriting
+// an already-good cover) when an enricher succeeded.
+func TestAggregator_enrichBook_CoverProviderSkippedWhenAlreadyHaveCover(t *testing.T) {
+	cover := &mockCoverProvider{
+		mockProvider: mockProvider{name: "dnb-cover"},
+		urls:         map[string]string{"9783844935776": "https://example.com/mvb.jpg"},
+	}
+	agg := &Aggregator{enrichers: []Provider{cover}, cache: newTTLCache(time.Minute)}
+	isbn := "9783844935776"
+	existing := "https://existing.example/cover.jpg"
+	book := &models.Book{
+		Title:    "Der war's",
+		ImageURL: existing,
+		Editions: []models.Edition{{ISBN13: &isbn}},
+	}
+	agg.enrichBook(context.Background(), book)
+	if book.ImageURL != existing {
+		t.Errorf("existing cover replaced by CoverProvider: %q", book.ImageURL)
+	}
+	if cover.coverCalls != 0 {
+		t.Errorf("CoverByISBN was called %d times when we already had a cover", cover.coverCalls)
 	}
 }
 
@@ -232,7 +337,7 @@ func TestAggregator_GetBook_NoCover_EnrichedFromProvider(t *testing.T) {
 	}
 	enricher := &mockProvider{
 		name:        "gb",
-		searchBooks: []models.Book{{ImageURL: "https://books.google.com/cover-en.jpg"}},
+		searchBooks: []models.Book{{Title: "21 Lessons for the 21st Century", ImageURL: "https://books.google.com/cover-en.jpg"}},
 	}
 	agg := &Aggregator{primary: primary, enrichers: []Provider{enricher}, cache: newTTLCache(time.Minute)}
 
@@ -256,8 +361,11 @@ func TestAggregator_GetAuthorWorks_CoversEnrichedForMissingOnes(t *testing.T) {
 		},
 	}
 	enricher := &mockProvider{
-		name:        "gb",
-		searchBooks: []models.Book{{ImageURL: "https://books.google.com/sapiens.jpg"}},
+		name: "gb",
+		searchBooksByQuery: map[string][]models.Book{
+			"Sapiens":   {{Title: "Sapiens", ImageURL: "https://books.google.com/sapiens.jpg"}},
+			"Homo Deus": {{Title: "Homo Deus", ImageURL: "https://books.google.com/homo-deus.jpg"}},
+		},
 	}
 	agg := &Aggregator{primary: primary, enrichers: []Provider{enricher}, cache: newTTLCache(time.Minute)}
 

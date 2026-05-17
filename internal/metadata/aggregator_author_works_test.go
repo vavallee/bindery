@@ -174,7 +174,7 @@ func TestAggregator_GetAuthorWorksForAuthor_EnrichesMissingCoversAfterSupplement
 	}
 	google := &mockProvider{
 		name:        "googlebooks",
-		searchBooks: []models.Book{{ImageURL: "https://books.google.com/heretics.jpg"}},
+		searchBooks: []models.Book{{Title: "Heretics of Dune", ImageURL: "https://books.google.com/heretics.jpg"}},
 	}
 	agg := &Aggregator{
 		primary:   primary,

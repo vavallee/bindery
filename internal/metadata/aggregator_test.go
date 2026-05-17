@@ -133,7 +133,7 @@ func TestAggregator_GetBook_ShortDescription_Enriched(t *testing.T) {
 	}
 	enricher := &mockProvider{
 		name:        "gb",
-		searchBooks: []models.Book{{Description: richerDesc}},
+		searchBooks: []models.Book{{Title: "Foundation", Description: richerDesc}},
 	}
 	agg := &Aggregator{
 		primary:   primary,
@@ -157,7 +157,7 @@ func TestAggregator_GetBook_Enrichment_RatingFilled(t *testing.T) {
 	}
 	enricher := &mockProvider{
 		name:        "hc",
-		searchBooks: []models.Book{{Description: "Some desc", AverageRating: 4.5, RatingsCount: 100}},
+		searchBooks: []models.Book{{Title: "Short", Description: "Some desc", AverageRating: 4.5, RatingsCount: 100}},
 	}
 	agg := &Aggregator{
 		primary:   primary,
