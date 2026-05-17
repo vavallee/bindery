@@ -6,6 +6,26 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.11.2] — 2026-05-17
+
+### Fixed
+
+- **DNB add-by-ISBN no longer fails with "book not found after author sync"** (#667) — The DNB flow used to create the author row, kick off a 15-second background reconcile, and poll for the book to appear from a second SRU query that DNB's index can't actually answer (the synthetic `dnb:gnd:*` / `dnb:author:*` IDs aren't queryable in DNB's bibliographic `num=` or `per=` indices). The poll always timed out, the user saw "try again shortly" forever, and the author row was orphaned on the way out. The AddBook handler now resolves the DNB record synchronously, inserts the book in the same flow as the author, and only falls back to the reconcile poll for non-DNB providers.
+- **German titles no longer render with garbage characters around leading articles** (#667) — DNB's MARC 21 records wrap the non-sorting prefix (e.g. "Der", "Die", "Das") in U+0098 (MARC Non-Sorting Begin) and U+009C (MARC Non-Sorting End) C1 control characters. These were passing through `marcClean` untouched and showed up as box/replacement glyphs in titles like *Der war's* by Juli Zeh. The cleaner now strips both control characters at the front of the pipeline, matching the pattern in calibre-dnb's `remove_sorting_characters` helper.
+- **Failed adds no longer leave orphan author rows** (#667) — When AddBook timed out polling for a book to land, the author row created earlier in the flow stuck around with zero books. The handler now tracks whether the book was actually written and rolls the author back if not, eliminating the "add author first, then add book" workaround.
+- **DNB MARC 100/700 author selection now follows the `aut` relator** — Author resolution falls back through MARC 100 → 700 with `$4 aut` (or German `$e Verfasser` / `Verfasser*in`) → first 700 with any name. Translations and audiobooks where the original author sits only in 700 (e.g. Harry Potter audiobooks where J.K. Rowling is cataloged as `ctb`) now resolve to a usable author instead of dropping the record.
+- **Synthetic DNB author IDs short-circuit `GetAuthorWorks`** — When the foreign ID is `dnb:gnd:*` or `dnb:author:*` (a Bindery-internal synthetic, not addressable in DNB's SRU index), the works lookup now returns empty immediately instead of issuing a 15-second nonsense query against the `num=` and `per=` indices.
+
+### Added
+
+- **MVB cover image fallback for DNB-sourced books** — German books that aren't in OpenLibrary or Hardcover were ending up with no cover image. Bindery now consults DNB's public MVB cover service (`portal.dnb.de/opac/mvb/cover?isbn=<X>`) as a fallback when no other provider returned an image URL. Cheap HEAD probe to verify the service is actually serving an image for that ISBN before persisting the URL. Pattern lifted from calibre-dnb (#667).
+
+### Internal
+
+- **Live DNB SRU regression test** — New `BINDERY_LIVE=1` integration test exercises 25 zippoking-reported ISBNs (the three from #284 plus the twelve in #667/#608) plus 50 deterministic random samples against the real DNB SRU endpoint. Asserts each lookup returns a title with no U+0098/U+009C residue and a resolvable author. Wired into a separate nightly workflow so DNB upstream flakiness doesn't block PR merges.
+- **`stripMARCNonSortingBrackets` + `extractAuthor` helpers** — DNB title cleanup and author resolution are now isolated for direct unit testing.
+- **AddBook orphan-cleanup deferral** — A pointer-tracked flag arms a `defer` that deletes the author row if the book write didn't land. Idempotent: skipped when the author already had books before this AddBook call.
+
 ## [v1.11.1] — 2026-05-15
 
 ### Fixed
