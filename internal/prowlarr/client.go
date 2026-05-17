@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/vavallee/bindery/internal/useragent"
 )
 
 // Client calls the Prowlarr HTTP API.
@@ -113,6 +115,7 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("X-Api-Key", c.apiKey)
+	req.Header.Set("User-Agent", useragent.Get())
 
 	resp, err := c.http.Do(req)
 	if err != nil {

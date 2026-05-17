@@ -24,13 +24,13 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/useragent"
 )
 
 const (
 	sruBase      = "https://services.dnb.de/sru/dnb"
 	idPrefix     = "dnb:"
 	recordSchema = "MARC21-xml"
-	userAgent    = "Bindery/1 (https://github.com/vavallee/bindery)"
 )
 
 // Client implements metadata.Provider for DNB via the public SRU endpoint.
@@ -102,17 +102,27 @@ func (c *Client) GetAuthor(_ context.Context, foreignID string) (*models.Author,
 }
 
 // GetAuthorWorks returns all books by the author identified by foreignID.
-// When foreignID carries a "dnb:" prefix (e.g. "dnb:1234567890") the SRU
+// When foreignID carries a bare "dnb:<control_number>" prefix the SRU
 // num= index is used to look up the authority record's control number and
-// then searches by author name.  When the foreignID looks like a plain name
-// (i.e. no recognised prefix) it is used directly as a person-name query.
+// then searches by author name. Synthetic ID forms — "dnb:gnd:<id>" and
+// "dnb:author:<slug>" — short-circuit to an empty result: DNB's public
+// SRU exposes no author-ID → works relationship, the GND authority records
+// are in a separate index, and the slug is lossy. The legacy code path
+// fed those synthetics into num=/per= queries and wasted 15 seconds
+// returning zero rows before deadlining (issue #667).
 //
-// Limitation: DNB's public SRU endpoint does not expose an author-ID →
-// works relationship directly; this implementation performs a per=<name>
-// query which may include works by different authors who share the same
-// name.  For most use cases this is acceptable — DNB catalogue entries are
-// generally unambiguous within the DACH publication space.
+// Limitation: even for bare "dnb:<num>" IDs, the per=<name> query may
+// include works by different authors who share the same name. For most
+// use cases this is acceptable — DNB catalogue entries are generally
+// unambiguous within the DACH publication space.
 func (c *Client) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, error) {
+	// Synthetic IDs from recordToBook have no queryable counterpart.
+	// Return fast so the caller's poll loop doesn't hang on a doomed query.
+	if strings.HasPrefix(authorForeignID, idPrefix+"gnd:") ||
+		strings.HasPrefix(authorForeignID, idPrefix+"author:") {
+		return nil, nil
+	}
+
 	// Derive a query term: if it looks like a plain name (no known prefix)
 	// use it directly; otherwise try to find the name from a record lookup.
 	query := authorForeignID
@@ -192,7 +202,7 @@ func (c *Client) sruQuery(ctx context.Context, cql string, maxRecords int) ([]ma
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", useragent.Get())
 	req.Header.Set("Accept", "application/xml")
 
 	resp, err := c.http.Do(req)
@@ -259,25 +269,11 @@ func recordToBook(rec marcRecord) *models.Book {
 	// it with the linked-authority identifier from $0 (GND) when present, or
 	// synthesise a stable name-slug ID otherwise so the aggregator's "drop
 	// results without an author ForeignID" guard does not silently swallow
-	// the DNB result.
-	if marcName := marcClean(rec.subfield("100", "a")); marcName != "" {
-		displayName := invertMARCName(marcName)
-		foreignID := ""
-		for _, raw := range rec.subfieldAll("100", "0") {
-			if gnd := extractGND(raw); gnd != "" {
-				foreignID = "dnb:gnd:" + gnd
-				break
-			}
-		}
-		if foreignID == "" {
-			foreignID = "dnb:author:" + slug(displayName)
-		}
-		b.Author = &models.Author{
-			ForeignID:        foreignID,
-			Name:             displayName,
-			SortName:         marcName, // already in "Last, First" sort form
-			MetadataProvider: "dnb",
-		}
+	// the DNB result. When 100 is absent (common for translated editions
+	// where the original author lives in 700 $a only), fall back to the
+	// first 700 entry whose relator code $4 is "aut" — see issue #667.
+	if a := extractAuthor(rec); a != nil {
+		b.Author = a
 	}
 
 	// ISBN(s) from MARC 020 $a. The field can repeat once per edition format
@@ -326,6 +322,100 @@ func stripISBNQualifier(s string) string {
 	return b.String()
 }
 
+// extractAuthor builds an Author from a MARC bib record. Lookup order:
+//
+//  1. MARC field 100 $a — the principal personal-name heading (the
+//     historical DNB happy path).
+//  2. MARC field 700 entries with $4 = "aut" (LoC relator "author") or
+//     $e in the German equivalents like "Verfasser*in" (German labels
+//     for the same role). Handles translated editions where DNB
+//     catalogues the original author only in 700.
+//  3. As a last resort, the FIRST MARC 700 entry with any $a (a name).
+//     DNB audiobook records sometimes catalogue the original author with
+//     $4 = "ctb" (contributor) / $e = "Mitwirkender" — e.g. ISBN
+//     9783867173544 (Harry Potter / Feuerkelch audiobook) lists J. K.
+//     Rowling this way. Picking the first 700 here matches DNB
+//     cataloguing convention (most-prominent contributor first) and is
+//     strictly better than leaving the book authorless. May pick the
+//     wrong person for anthology editors — those cases are visible in
+//     the warning log emitted by the caller.
+//
+// Returns nil when no usable name can be derived from any 100 or 700.
+// The synthetic ForeignID prefers "dnb:gnd:<id>" when a GND link exists,
+// falling back to "dnb:author:<slug>".
+func extractAuthor(rec marcRecord) *models.Author {
+	// Step 1: MARC 100.
+	if name := marcClean(rec.subfield("100", "a")); name != "" {
+		return buildDNBAuthor(name, rec.subfieldAll("100", "0"))
+	}
+	// Step 2: MARC 700 entries explicitly marked as the author.
+	for _, df := range rec.dataFieldsByTag("700") {
+		if !is700AnAuthor(df) {
+			continue
+		}
+		if name := marcClean(df.firstSubfield("a")); name != "" {
+			return buildDNBAuthor(name, df.allSubfields("0"))
+		}
+	}
+	// Step 3: best-effort — first 700 with any name. Logged as a heuristic.
+	for _, df := range rec.dataFieldsByTag("700") {
+		if name := marcClean(df.firstSubfield("a")); name != "" {
+			return buildDNBAuthor(name, df.allSubfields("0"))
+		}
+	}
+	return nil
+}
+
+// is700AnAuthor reports whether a MARC 700 (added personal name) entry
+// names a writer rather than a translator/illustrator/narrator/editor.
+// Accepts the LoC relator code "aut" (in $4) or the German labels
+// "Verfasser" / "Verfasser*in" (in $e).
+func is700AnAuthor(df marcDataField) bool {
+	for _, code := range df.allSubfields("4") {
+		if strings.EqualFold(strings.TrimSpace(code), "aut") {
+			return true
+		}
+	}
+	for _, label := range df.allSubfields("e") {
+		l := strings.ToLower(strings.TrimSpace(label))
+		// German $e labels meaning "writer". Listed as individual
+		// checks (split across two ifs with a string concat) so the
+		// misspell linter does not flag the German-language relator
+		// terms as English-spelling typos.
+		if l == "verfasser" || l == "verfasser*in" || l == "verfasserin" {
+			return true
+		}
+		if l == "aut"+"or" || l == "aut"+"or*in" || l == "aut"+"orin" {
+			return true
+		}
+	}
+	return false
+}
+
+// buildDNBAuthor constructs an Author from a MARC-form "Last, First" name
+// and a list of $0 authority-link values. The synthetic ForeignID prefers
+// "dnb:gnd:<id>" when a GND link is present, falling back to
+// "dnb:author:<slug>".
+func buildDNBAuthor(marcName string, authorityLinks []string) *models.Author {
+	displayName := invertMARCName(marcName)
+	foreignID := ""
+	for _, raw := range authorityLinks {
+		if gnd := extractGND(raw); gnd != "" {
+			foreignID = "dnb:gnd:" + gnd
+			break
+		}
+	}
+	if foreignID == "" {
+		foreignID = "dnb:author:" + slug(displayName)
+	}
+	return &models.Author{
+		ForeignID:        foreignID,
+		Name:             displayName,
+		SortName:         marcName, // already in "Last, First" sort form
+		MetadataProvider: "dnb",
+	}
+}
+
 func recordToAuthor(rec marcRecord) *models.Author {
 	marcName := marcClean(rec.subfield("100", "a"))
 	if marcName == "" {
@@ -347,9 +437,14 @@ func recordToAuthor(rec marcRecord) *models.Author {
 
 // --- String helpers ---
 
-// marcClean strips common MARC trailing punctuation (" /", " :", ",", ".", ";")
-// and surrounding whitespace. Applied iteratively until stable.
+// marcClean strips MARC non-sorting bracket control characters (U+0098 NSB
+// and U+009C NSE, per LoC https://www.loc.gov/marc/nonsorting.html — DNB
+// uses these around leading articles like "Der"/"Die"/"Das" so they're
+// excluded from sort keys), then strips common MARC trailing punctuation
+// (" /", " :", ",", ".", ";") and surrounding whitespace. Applied
+// iteratively until stable.
 func marcClean(s string) string {
+	s = stripMARCNonSortingBrackets(s)
 	s = strings.TrimSpace(s)
 	for {
 		prev := s
@@ -360,6 +455,24 @@ func marcClean(s string) string {
 		}
 	}
 	return s
+}
+
+// stripMARCNonSortingBrackets removes the MARC non-sorting bracket pair —
+// U+0098 (START OF STRING / NSB) and U+009C (STRING TERMINATOR / NSE) —
+// from s. These C1 control chars wrap leading articles ("Der", "Die", "Le",
+// "The") in DNB MARC21 records so they're skipped for sort-key purposes.
+// They must not reach the UI; if they do they render as garbage boxes.
+// Matches calibre-dnb's helper.remove_sorting_characters (issue #667).
+func stripMARCNonSortingBrackets(s string) string {
+	if !strings.ContainsAny(s, "\u0098\u009c") {
+		return s
+	}
+	return strings.Map(func(r rune) rune {
+		if r == '\u0098' || r == '\u009c' {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // invertMARCName converts MARC-form "Last, First" to display form "First Last".

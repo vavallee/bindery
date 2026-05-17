@@ -1,0 +1,94 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bindery-ping
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bindery-ping
+  namespace: bindery-ping
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bindery-ping
+  namespace: bindery-ping
+  labels:
+    app: bindery-ping
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bindery-ping
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: bindery-ping
+    spec:
+      serviceAccountName: bindery-ping
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ping
+          image: ghcr.io/vavallee/bindery-ping:sha-a91386de6543efb3c90235436a72bd29d6b5fd04
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: DB_PATH
+              value: /data/telemetry.db
+            - name: LATEST_VERSION
+              value: v1.11.0
+            - name: STATS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: bindery-ping-secret
+                  key: stats-token
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: bindery-ping-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bindery-ping
+  namespace: bindery-ping
+spec:
+  selector:
+    app: bindery-ping
+  ports:
+    - port: 8080
+      targetPort: 8080

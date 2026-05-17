@@ -1202,6 +1202,177 @@ func TestFetchAuthorBooks_DeduplicatesEbookAndAudiobookEditions_Resync(t *testin
 	}
 }
 
+// --- Issue #667 regression tests --------------------------------------------
+
+// TestCleanupOrphanIfNoBooks_DeletesAuthorWithZeroBooks is the unit-level
+// guarantee that the orphan-cleanup helper removes a just-created author
+// who has no books — the failure mode reported in issue #667 bug 3.
+func TestCleanupOrphanIfNoBooks_DeletesAuthorWithZeroBooks(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+
+	ctx := context.Background()
+	author := &models.Author{
+		ForeignID:        "dnb:author:should-be-deleted",
+		Name:             "Should Be Deleted",
+		SortName:         "Deleted, Should Be",
+		MetadataProvider: "dnb",
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, nil, nil, profileRepo, nil)
+	bookCreated := false
+	h.cleanupOrphanIfNoBooks(author, &bookCreated)
+
+	if got, _ := authorRepo.GetByID(ctx, author.ID); got != nil {
+		t.Fatalf("expected author deleted, still present: %+v", got)
+	}
+}
+
+// TestCleanupOrphanIfNoBooks_KeepsAuthorWithBooks is the safety guard:
+// if the async FetchAuthorBooks goroutine has already raced ahead and
+// inserted books for this author (the OL/Hardcover happy path) we MUST
+// NOT delete — the user still gets value from those books even though
+// the specific add-book request failed.
+func TestCleanupOrphanIfNoBooks_KeepsAuthorWithBooks(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+
+	ctx := context.Background()
+	author := &models.Author{
+		ForeignID: "OL999A", Name: "Has Books", SortName: "Books, Has",
+		MetadataProvider: "openlibrary",
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{
+		ForeignID: "OL999W", AuthorID: author.ID, Title: "Some Other Book",
+		SortTitle: "some other book", Status: models.BookStatusWanted,
+		Genres: []string{}, MetadataProvider: "openlibrary",
+	}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, nil, nil, profileRepo, nil)
+	bookCreated := false
+	h.cleanupOrphanIfNoBooks(author, &bookCreated)
+
+	if got, _ := authorRepo.GetByID(ctx, author.ID); got == nil {
+		t.Fatal("author with existing books was wrongly deleted")
+	}
+}
+
+// TestCleanupOrphanIfNoBooks_NoopWhenBookCreated covers the happy path:
+// the AddBook flow succeeded, bookCreated=true, the defer must do
+// nothing. Belt-and-braces — even though the defer is only registered
+// when authorWasJustCreated is true, the bookCreated flag is the final
+// gate that the deletion is unwanted.
+func TestCleanupOrphanIfNoBooks_NoopWhenBookCreated(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+
+	ctx := context.Background()
+	author := &models.Author{
+		ForeignID: "OL777A", Name: "Survivor", SortName: "Survivor",
+		MetadataProvider: "openlibrary",
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, nil, nil, profileRepo, nil)
+	bookCreated := true
+	h.cleanupOrphanIfNoBooks(author, &bookCreated)
+
+	if got, _ := authorRepo.GetByID(ctx, author.ID); got == nil {
+		t.Fatal("author wrongly deleted despite bookCreated=true")
+	}
+}
+
+// TestAddBook_OrphanAuthorDeletedOnTimeout is the end-to-end guarantee
+// for issue #667. With a DNB-shaped synthetic author ID, the
+// (legacy-flow) async fetch returns zero books deterministically and the
+// poll loop times out. Before this fix the author row stayed in the DB
+// forever; now the deferred cleanup removes it. We short-circuit the
+// poll with a fast ctx cancel rather than waiting the full 15s.
+func TestAddBook_OrphanAuthorDeletedOnTimeout(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+
+	// stubMetaProvider.GetAuthorWorks returns empty by default, which
+	// exactly mirrors what DNB's GetAuthorWorks now does for synthetic
+	// IDs. The poll loop will never see a book.
+	stub := &stubMetaProvider{works: nil}
+	agg := metadata.NewAggregator(stub)
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, nil, profileRepo, nil)
+
+	body, _ := json.Marshal(map[string]any{
+		"foreignBookId":   "dnb:doesnotexist",
+		"foreignAuthorId": "dnb:author:phantom-author",
+		"authorName":      "Phantom Author",
+	})
+
+	// Short-deadline context so the poll loop's ctx.Done() branch fires
+	// in ~50ms instead of the hardcoded 15s. The defer should still
+	// run after the 504 response.
+	parent, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body)).WithContext(parent)
+	rec := httptest.NewRecorder()
+
+	h.AddBook(rec, req)
+
+	// Either 504 (ctx cancel) or 404 (poll deadline) is acceptable —
+	// both must trigger the orphan cleanup.
+	if rec.Code != http.StatusGatewayTimeout && rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 504 or 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Give any in-flight async goroutine a moment to drain before
+	// checking; the orphan-cleanup defer ran synchronously on
+	// AddBook return so the author should already be gone.
+	time.Sleep(50 * time.Millisecond)
+
+	got, _ := authorRepo.GetByForeignID(context.Background(), "dnb:author:phantom-author")
+	if got != nil {
+		t.Fatalf("orphan author was not cleaned up after timeout: %+v", got)
+	}
+}
+
 // TestCanUpgradeToBoth validates the helper that decides whether two
 // complementary media types should be merged into a dual-format row.
 func TestCanUpgradeToBoth(t *testing.T) {

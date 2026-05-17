@@ -15,12 +15,11 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/vavallee/bindery/internal/useragent"
 )
 
-const (
-	defaultTimeout   = 10 * time.Second
-	defaultUserAgent = "bindery/dev"
-)
+const defaultTimeout = 10 * time.Second
 
 // APIError represents an HTTP error from the Grimmory API.
 type APIError struct {
@@ -79,12 +78,10 @@ func NormalizeAPIKey(raw string) (string, error) {
 }
 
 // UserAgent returns the Bindery User-Agent string to send to Grimmory.
+// Delegates to the shared canonical helper so every external client emits
+// the same identity (see internal/useragent).
 func UserAgent(version string) string {
-	version = strings.TrimSpace(version)
-	if version == "" {
-		return defaultUserAgent
-	}
-	return "bindery/" + version
+	return useragent.Build(version)
 }
 
 // Client is an HTTP client for the Grimmory REST API.
@@ -108,7 +105,7 @@ func NewClient(baseURL, apiKey string) (*Client, error) {
 	return &Client{
 		baseURL:   u,
 		apiKey:    k,
-		userAgent: defaultUserAgent,
+		userAgent: useragent.Get(),
 		http: &http.Client{
 			Timeout: defaultTimeout,
 			Transport: &http.Transport{

@@ -776,3 +776,326 @@ func TestStripISBNQualifier(t *testing.T) {
 		}
 	}
 }
+
+// --- Issue #667 regression tests --------------------------------------------
+
+// TestStripMARCNonSortingBrackets verifies that U+0098 (NSB) and U+009C
+// (NSE) — the MARC non-sorting bracket pair DNB wraps around leading
+// articles like "Der"/"Die"/"Das" — are removed before titles reach the
+// UI. Without this strip, the C1 control bytes pass through and render
+// as garbage in the frontend (issue #667 bug 2).
+func TestStripMARCNonSortingBrackets(t *testing.T) {
+	const nsb = "\u0098"
+	const nse = "\u009c"
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty", "", ""},
+		{"no markers", "Plain title", "Plain title"},
+		{"Der wrapped", nsb + "Der" + nse + " war's", "Der war's"},
+		{"Die wrapped", nsb + "Die" + nse + " Verwandlung", "Die Verwandlung"},
+		{"Das wrapped", nsb + "Das" + nse + " Erbe", "Das Erbe"},
+		{"only NSB", nsb + "stray", "stray"},
+		{"only NSE", "stray" + nse, "stray"},
+		{"multiple pairs", nsb + "Der" + nse + " " + nsb + "und" + nse + " Die", "Der und Die"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := stripMARCNonSortingBrackets(tc.in); got != tc.want {
+				t.Errorf("stripMARCNonSortingBrackets(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestMarcClean_StripsNSBNSE confirms marcClean integrates the
+// non-sorting bracket strip alongside its existing trailing-punctuation
+// trim (issue #667 bug 2).
+func TestMarcClean_StripsNSBNSE(t *testing.T) {
+	const nsb = "\u0098"
+	const nse = "\u009c"
+	in := nsb + "Der" + nse + " war's :"
+	want := "Der war's"
+	if got := marcClean(in); got != want {
+		t.Fatalf("marcClean(%q) = %q, want %q", in, got, want)
+	}
+}
+
+// TestRecordToBook_TitleHasNoNonSortingBrackets is the record-level guard:
+// a DNB MARC record with NSB/NSE around the leading article must produce
+// a Book whose Title contains neither U+0098 nor U+009C. Live SRU sample
+// for ISBN 978-3-8449-3577-6 carries exactly this shape.
+func TestRecordToBook_TitleHasNoNonSortingBrackets(t *testing.T) {
+	const nsb = "\u0098"
+	const nse = "\u009c"
+	marc := `<record xmlns="http://www.loc.gov/MARC21/slim">
+		<controlfield tag="001">1305873874</controlfield>
+		<datafield tag="100" ind1="1" ind2=" ">
+			<subfield code="a">Zeh, Juli</subfield>
+			<subfield code="4">aut</subfield>
+		</datafield>
+		<datafield tag="245" ind1="1" ind2="0">
+			<subfield code="a">` + nsb + `Der` + nse + ` war's</subfield>
+		</datafield>
+	</record>`
+	body := sruXMLN("1", marc)
+	c := mockXMLClient(body, 200)
+	book, err := c.GetBookByISBN(context.Background(), "9783844935776")
+	if err != nil {
+		t.Fatalf("GetBookByISBN: %v", err)
+	}
+	if book == nil {
+		t.Fatal("GetBookByISBN returned nil book")
+	}
+	if strings.ContainsRune(book.Title, '\u0098') || strings.ContainsRune(book.Title, '\u009c') {
+		t.Fatalf("Title %q still contains MARC NSB/NSE control characters", book.Title)
+	}
+	if !strings.Contains(book.Title, "Der war's") {
+		t.Fatalf("Title %q does not contain the cleaned phrase 'Der war's'", book.Title)
+	}
+}
+
+// TestRecordToBook_FallsBackTo700AUT verifies that when MARC field 100
+// is absent the parser uses the first 700 entry whose $4 relator code is
+// "aut" (writer). This handles DNB records for translations/audiobooks
+// where the original author is catalogued only in 700 (issue #667 —
+// affects several of zippoking's failing ISBNs).
+func TestRecordToBook_FallsBackTo700AUT(t *testing.T) {
+	marc := `<record xmlns="http://www.loc.gov/MARC21/slim">
+		<controlfield tag="001">123</controlfield>
+		<datafield tag="245" ind1="1" ind2="0">
+			<subfield code="a">Translated work</subfield>
+		</datafield>
+		<datafield tag="700" ind1="1" ind2=" ">
+			<subfield code="a">Translator, Max</subfield>
+			<subfield code="4">trl</subfield>
+		</datafield>
+		<datafield tag="700" ind1="1" ind2=" ">
+			<subfield code="0">(DE-588)999000111</subfield>
+			<subfield code="a">Author, Original</subfield>
+			<subfield code="4">aut</subfield>
+		</datafield>
+		<datafield tag="700" ind1="1" ind2=" ">
+			<subfield code="a">Narrator, Some</subfield>
+			<subfield code="4">nrt</subfield>
+		</datafield>
+	</record>`
+	body := sruXMLN("1", marc)
+	c := mockXMLClient(body, 200)
+	book, err := c.GetBookByISBN(context.Background(), "0000000000000")
+	if err != nil {
+		t.Fatalf("GetBookByISBN: %v", err)
+	}
+	if book == nil {
+		t.Fatal("nil book returned")
+	}
+	if book.Author == nil {
+		t.Fatal("Author is nil — 700 fallback did not fire")
+	}
+	if book.Author.Name != "Original Author" {
+		t.Errorf("Author.Name = %q, want %q (700 fallback must pick the 'aut' entry, not the 'trl' or 'nrt' one)", book.Author.Name, "Original Author")
+	}
+	if book.Author.ForeignID != "dnb:gnd:999000111" {
+		t.Errorf("Author.ForeignID = %q, want dnb:gnd:999000111", book.Author.ForeignID)
+	}
+}
+
+// TestRecordToBook_FallsBackTo700AUT_GermanLabel exercises the same path
+// when the relator is in $e using the German "Verfasser" label rather
+// than the LoC $4 "aut" code. DNB records in older catalogue snapshots
+// sometimes use the $e form without $4.
+func TestRecordToBook_FallsBackTo700AUT_GermanLabel(t *testing.T) {
+	marc := `<record xmlns="http://www.loc.gov/MARC21/slim">
+		<controlfield tag="001">123</controlfield>
+		<datafield tag="245" ind1="1" ind2="0">
+			<subfield code="a">Some book</subfield>
+		</datafield>
+		<datafield tag="700" ind1="1" ind2=" ">
+			<subfield code="a">Schmidt, Anna</subfield>
+			<subfield code="e">Verfasser</subfield>
+		</datafield>
+	</record>`
+	body := sruXMLN("1", marc)
+	c := mockXMLClient(body, 200)
+	book, err := c.GetBookByISBN(context.Background(), "0000000000000")
+	if err != nil {
+		t.Fatalf("GetBookByISBN: %v", err)
+	}
+	if book == nil || book.Author == nil {
+		t.Fatal("Author missing")
+	}
+	if book.Author.Name != "Anna Schmidt" {
+		t.Errorf("Author.Name = %q, want 'Anna Schmidt'", book.Author.Name)
+	}
+}
+
+// TestRecordToBook_LastResort700Fallback documents the third tier of
+// author extraction: when MARC 100 is missing AND no 700 entry carries
+// the explicit author relator ($4=aut / $e=Verfasser), the first 700
+// with a name wins. This matches DNB audiobook cataloguing convention
+// where the original author can be filed as $4=ctb (contributor) —
+// e.g. ISBN 9783867173544 (Harry Potter audiobook) lists J. K. Rowling
+// this way. Picking the first 700 is strictly better than leaving the
+// book authorless: it gives the user a clickable name to refine if it's
+// wrong, instead of a silent failure.
+//
+// Trade-off: for anthologies catalogued without $4=aut, this could pick
+// the editor instead of an author. That's a known tolerated risk; PR2
+// will address author identity properly via the rewrite.
+func TestRecordToBook_LastResort700Fallback(t *testing.T) {
+	marc := `<record xmlns="http://www.loc.gov/MARC21/slim">
+		<controlfield tag="001">123</controlfield>
+		<datafield tag="245" ind1="1" ind2="0">
+			<subfield code="a">Audiobook with only contributors</subfield>
+		</datafield>
+		<datafield tag="700" ind1="1" ind2=" ">
+			<subfield code="0">(DE-588)111000222</subfield>
+			<subfield code="a">Primary, Contributor</subfield>
+			<subfield code="4">ctb</subfield>
+		</datafield>
+		<datafield tag="700" ind1="1" ind2=" ">
+			<subfield code="a">Secondary, Voice</subfield>
+			<subfield code="4">nrt</subfield>
+		</datafield>
+	</record>`
+	body := sruXMLN("1", marc)
+	c := mockXMLClient(body, 200)
+	book, err := c.GetBookByISBN(context.Background(), "0000000000000")
+	if err != nil {
+		t.Fatalf("GetBookByISBN: %v", err)
+	}
+	if book == nil || book.Author == nil {
+		t.Fatal("Author should be the first 700 entry, not nil")
+	}
+	if book.Author.Name != "Contributor Primary" {
+		t.Errorf("Author.Name = %q, want %q (first 700 with $a)", book.Author.Name, "Contributor Primary")
+	}
+	if book.Author.ForeignID != "dnb:gnd:111000222" {
+		t.Errorf("Author.ForeignID = %q, want dnb:gnd:111000222", book.Author.ForeignID)
+	}
+}
+
+// TestRecordToBook_PrefersAUTOverFirstName confirms the precedence order
+// is robust: even when an $4=aut entry appears AFTER an $4=ctb entry,
+// the $4=aut entry wins. Without this we'd silently regress to picking
+// translators or contributors when an explicit author is available.
+func TestRecordToBook_PrefersAUTOverFirstName(t *testing.T) {
+	marc := `<record xmlns="http://www.loc.gov/MARC21/slim">
+		<controlfield tag="001">123</controlfield>
+		<datafield tag="245" ind1="1" ind2="0">
+			<subfield code="a">Book with mixed contributors</subfield>
+		</datafield>
+		<datafield tag="700" ind1="1" ind2=" ">
+			<subfield code="a">First, Translator</subfield>
+			<subfield code="4">trl</subfield>
+		</datafield>
+		<datafield tag="700" ind1="1" ind2=" ">
+			<subfield code="a">Second, Author</subfield>
+			<subfield code="4">aut</subfield>
+		</datafield>
+		<datafield tag="700" ind1="1" ind2=" ">
+			<subfield code="a">Third, Narrator</subfield>
+			<subfield code="4">nrt</subfield>
+		</datafield>
+	</record>`
+	body := sruXMLN("1", marc)
+	c := mockXMLClient(body, 200)
+	book, err := c.GetBookByISBN(context.Background(), "0000000000000")
+	if err != nil || book == nil || book.Author == nil {
+		t.Fatalf("Author missing; book=%+v err=%v", book, err)
+	}
+	if book.Author.Name != "Author Second" {
+		t.Errorf("Author.Name = %q, want 'Author Second' ($4=aut must beat first-700 fallback)", book.Author.Name)
+	}
+}
+
+// TestRecordToBook_NoAuthorWhenNo100NoAny700 covers the only remaining
+// "Author == nil" case: a record with neither MARC 100 nor any 700
+// entry at all. The AddBook flow's resolveAuthorForBook fallback then
+// kicks in via cross-provider ISBN lookup.
+func TestRecordToBook_NoAuthorWhenNo100NoAny700(t *testing.T) {
+	marc := `<record xmlns="http://www.loc.gov/MARC21/slim">
+		<controlfield tag="001">123</controlfield>
+		<datafield tag="245" ind1="1" ind2="0">
+			<subfield code="a">Orphaned title</subfield>
+		</datafield>
+	</record>`
+	body := sruXMLN("1", marc)
+	c := mockXMLClient(body, 200)
+	book, err := c.GetBookByISBN(context.Background(), "0000000000000")
+	if err != nil {
+		t.Fatalf("GetBookByISBN: %v", err)
+	}
+	if book == nil {
+		t.Fatal("nil book")
+	}
+	if book.Author != nil {
+		t.Fatalf("Author should be nil (no 100, no 700); got %+v", book.Author)
+	}
+}
+
+// TestGetAuthorWorks_SyntheticIDsReturnEmptyFast verifies that synthetic
+// DNB author IDs ("dnb:gnd:*" and "dnb:author:*") short-circuit to an
+// empty slice without making a network request. Before issue #667 these
+// IDs were fed into the SRU num=/per= queries, which always returned
+// zero hits but spent up to 15s doing so — driving the
+// "book not found after author sync" error.
+func TestGetAuthorWorks_SyntheticIDsReturnEmptyFast(t *testing.T) {
+	hits := 0
+	c := &Client{
+		http: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				hits++
+				return nil, fmt.Errorf("must not make a network call for synthetic IDs")
+			}),
+		},
+	}
+	cases := []string{
+		"dnb:gnd:118540238",
+		"dnb:gnd:123120802",
+		"dnb:author:juli-zeh",
+		"dnb:author:muller-thomas",
+	}
+	for _, id := range cases {
+		t.Run(id, func(t *testing.T) {
+			books, err := c.GetAuthorWorks(context.Background(), id)
+			if err != nil {
+				t.Fatalf("GetAuthorWorks(%q) = error %v, want nil", id, err)
+			}
+			if len(books) != 0 {
+				t.Errorf("GetAuthorWorks(%q) returned %d books, want 0", id, len(books))
+			}
+		})
+	}
+	if hits != 0 {
+		t.Fatalf("GetAuthorWorks made %d network calls; synthetic IDs must be local", hits)
+	}
+}
+
+// TestGetAuthorWorks_BareDNBIDStillQueriesSRU is a regression guard: the
+// short-circuit for synthetic IDs must NOT swallow bare "dnb:<num>" IDs
+// (control numbers), which still legitimately resolve via SRU.
+func TestGetAuthorWorks_BareDNBIDStillQueriesSRU(t *testing.T) {
+	hits := 0
+	body := sruXMLN("0") // empty result is fine; we only check it tried
+	c := &Client{
+		http: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				hits++
+				return &http.Response{
+					StatusCode: 200,
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		},
+	}
+	if _, err := c.GetAuthorWorks(context.Background(), "dnb:1305873874"); err != nil {
+		t.Fatalf("GetAuthorWorks(bare dnb id): %v", err)
+	}
+	if hits == 0 {
+		t.Fatal("bare dnb:<num> ID must still make at least one SRU call")
+	}
+}

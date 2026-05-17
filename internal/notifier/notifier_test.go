@@ -277,7 +277,12 @@ func TestUserAgentHeader(t *testing.T) {
 	notif := &models.Notification{URL: srv.URL}
 	_ = n.send(context.Background(), notif, map[string]interface{}{})
 
-	if gotUA != "Bindery/1.0" {
-		t.Errorf("User-Agent: want 'Bindery/1.0', got %q", gotUA)
+	// Notifier now uses the shared lowercase UA helper. Assert the prefix
+	// rather than the exact string so the OS suffix doesn't pin the test.
+	if !strings.HasPrefix(gotUA, "bindery/") {
+		t.Errorf("User-Agent: want prefix 'bindery/', got %q", gotUA)
+	}
+	if strings.Contains(gotUA, "Bindery") {
+		t.Errorf("User-Agent must be lowercase to clear nzbfinder.ws WAF; got %q", gotUA)
 	}
 }

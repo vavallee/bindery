@@ -15,6 +15,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/useragent"
 )
 
 const (
@@ -103,6 +104,7 @@ func (h *ImageProxyHandler) Serve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "upstream fetch failed", http.StatusBadGateway)
 		return
 	}
+	upReq.Header.Set("User-Agent", useragent.Get())
 	resp, err := h.client.Do(upReq) // #nosec -- URL validated above via h.validateURL (PolicyStrict)
 	if err != nil {
 		http.Error(w, "upstream fetch failed", http.StatusBadGateway)

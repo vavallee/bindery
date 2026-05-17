@@ -26,11 +26,11 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/useragent"
 )
 
 const (
 	defaultBaseURL = "https://api.audible.com"
-	userAgent      = "Bindery/1 (https://github.com/vavallee/bindery)"
 	// IDPrefix is the ForeignID namespace for books sourced from Audible.
 	// Using the ASIN keeps rows globally unique across regions and mirrors
 	// the "dnb:" / "OL..." prefix conventions used by sibling providers.
@@ -112,7 +112,7 @@ func (c *Client) SearchBooksByAuthor(ctx context.Context, author string) ([]mode
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", useragent.Get())
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.http.Do(req)

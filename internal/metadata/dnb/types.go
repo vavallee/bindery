@@ -85,3 +85,42 @@ func (r marcRecord) subfieldAll(tag, code string) []string {
 	}
 	return out
 }
+
+// dataFieldsByTag returns every datafield with the given tag, in the order
+// they appear in the record. Used for MARC fields that can repeat as
+// independent entries — notably 700 (added personal name), where each
+// repetition is a different contributor with their own role ($4) and
+// identifier ($0).
+func (r marcRecord) dataFieldsByTag(tag string) []marcDataField {
+	var out []marcDataField
+	for _, df := range r.DataFields {
+		if df.Tag == tag {
+			out = append(out, df)
+		}
+	}
+	return out
+}
+
+// firstSubfield returns the value of the first $<code> in df, or "".
+func (df marcDataField) firstSubfield(code string) string {
+	for _, sf := range df.Subfields {
+		if sf.Code == code {
+			return sf.Value
+		}
+	}
+	return ""
+}
+
+// allSubfields returns every $<code> value within df. A single datafield
+// can repeat the same subfield code — e.g. MARC 100 $0 carries multiple
+// authority identifiers ((DE-588)<id>, https://d-nb.info/gnd/<id>,
+// (DE-101)<id>) for the same person.
+func (df marcDataField) allSubfields(code string) []string {
+	var out []string
+	for _, sf := range df.Subfields {
+		if sf.Code == code {
+			out = append(out, sf.Value)
+		}
+	}
+	return out
+}

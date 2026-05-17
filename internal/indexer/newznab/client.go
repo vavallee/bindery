@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/vavallee/bindery/internal/useragent"
 )
 
 // Client interacts with a single Newznab-compatible indexer.
@@ -267,7 +269,7 @@ func (c *Client) Probe(ctx context.Context) ProbeResult {
 	if err != nil {
 		return ProbeResult{Error: err.Error()}
 	}
-	req.Header.Set("User-Agent", "Bindery/0.1")
+	req.Header.Set("User-Agent", useragent.Get())
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -371,7 +373,7 @@ func (c *Client) getXML(ctx context.Context, rawURL string, target interface{}) 
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "Bindery/0.1")
+	req.Header.Set("User-Agent", useragent.Get())
 
 	resp, err := c.http.Do(req)
 	if err != nil {

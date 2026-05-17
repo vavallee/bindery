@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/vavallee/bindery/internal/useragent"
 )
 
 const defaultBaseURL = "https://api.audnex.us"
@@ -69,7 +71,7 @@ func (c *Client) GetBook(ctx context.Context, asin string) (*Book, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Bindery/0.5")
+	req.Header.Set("User-Agent", useragent.Get())
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, err

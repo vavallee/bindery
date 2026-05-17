@@ -1173,6 +1173,13 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
+	// bookCreated flips true once the poll loop confirms the requested
+	// book is in the DB. The orphan-cleanup defer below reads it on
+	// AddBook return — when false (poll timeout, ctx cancel, etc.) the
+	// just-created author row is deleted iff it has zero books. Fixes
+	// issue #667 bug 3.
+	bookCreated := false
+
 	if req.ForeignAuthorID == "" {
 		resolved, err := h.resolveAuthorForBook(ctx, req.ForeignBookID)
 		if err != nil {
@@ -1238,6 +1245,13 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// authorWasJustCreated tracks whether this request's CreateForUser
+		// succeeded (vs. the UNIQUE-race fallback at line 1247). When the
+		// poll loop below times out without seeing the requested book, we
+		// roll back this insert iff the author currently has zero books —
+		// otherwise the user is left with a permanent orphan author (the
+		// failure mode reported in issue #667).
+		authorWasJustCreated := false
 		if author == nil {
 			if err := h.authors.CreateForUser(ctx, fetched, auth.UserIDFromContext(ctx)); err != nil {
 				if !strings.Contains(err.Error(), "UNIQUE constraint failed") {
@@ -1248,8 +1262,14 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 				author, _ = h.authors.GetByForeignID(ctx, req.ForeignAuthorID)
 			} else {
 				author = fetched
+				authorWasJustCreated = true
 				h.fetchAuthorBooksAsync(author, false, h.resolveDefaultMediaType(ctx))
 			}
+		}
+		// Defer the orphan cleanup so cancellation paths inside the poll
+		// loop also benefit. Runs only after a CreateForUser this request.
+		if authorWasJustCreated {
+			defer h.cleanupOrphanIfNoBooks(author, &bookCreated)
 		}
 	}
 	if author == nil {
@@ -1281,6 +1301,7 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found after author sync — try again shortly"})
 		return
 	}
+	bookCreated = true
 
 	// 3. Mark the book monitored (wanted).
 	book.Monitored = true
@@ -1295,6 +1316,44 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, book)
+}
+
+// cleanupOrphanIfNoBooks deletes the given author iff (a) the book add
+// did not succeed (bookCreated is false) and (b) the author currently has
+// zero books in the DB. Called via defer in AddBook so any path that
+// returns without a successful book add — poll timeout, ctx cancel, 500
+// from book.Update — rolls back the speculative author insert. Uses a
+// background context so client-cancellation paths still run the cleanup.
+//
+// The "zero books" guard is what makes this safe even when the async
+// FetchAuthorBooks goroutine has raced ahead and inserted some books for
+// this author: in that case the user still gets an author with content,
+// so we keep it. For DNB synthetic IDs (issue #667), the async fetch
+// returns zero rows deterministically and this cleanup fires.
+func (h *AuthorHandler) cleanupOrphanIfNoBooks(author *models.Author, bookCreated *bool) {
+	if bookCreated != nil && *bookCreated {
+		return
+	}
+	if author == nil || author.ID == 0 {
+		return
+	}
+	ctx := contextBackground()
+	books, err := h.books.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		slog.Warn("AddBook: orphan-cleanup ListByAuthor failed",
+			"authorId", author.ID, "error", err)
+		return
+	}
+	if len(books) > 0 {
+		return
+	}
+	if err := h.authors.Delete(ctx, author.ID); err != nil {
+		slog.Warn("AddBook: orphan-cleanup Delete failed",
+			"authorId", author.ID, "foreignId", author.ForeignID, "error", err)
+		return
+	}
+	slog.Info("AddBook: cleaned up orphan author after failed add",
+		"authorId", author.ID, "foreignId", author.ForeignID, "name", author.Name)
 }
 
 // resolveAuthorForBook looks up the foreign book by primary metadata

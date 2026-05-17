@@ -43,6 +43,7 @@ import (
 	"github.com/vavallee/bindery/internal/recommender"
 	"github.com/vavallee/bindery/internal/scheduler"
 	"github.com/vavallee/bindery/internal/telemetry"
+	"github.com/vavallee/bindery/internal/useragent"
 	"github.com/vavallee/bindery/internal/webui"
 )
 
@@ -84,12 +85,17 @@ func main() {
 	stdoutHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
 	slog.SetDefault(slog.New(logbuf.NewTee(stdoutHandler, ring)))
 
+	// Install the canonical User-Agent before any HTTP client constructs
+	// requests. Every external client reads from this singleton.
+	useragent.Set(version)
+
 	slog.Info("starting bindery",
 		"version", version,
 		"commit", commit,
 		"port", cfg.Port,
 		"dbPath", cfg.DBPath,
 		"dataDir", cfg.DataDir,
+		"userAgent", useragent.Get(),
 	)
 
 	// Validate config before anything else touches the filesystem or network.

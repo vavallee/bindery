@@ -16,6 +16,7 @@ import (
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/useragent"
 )
 
 const (
@@ -136,7 +137,7 @@ func (n *Notifier) send(ctx context.Context, notif *models.Notification, payload
 		return fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "Bindery/1.0")
+	req.Header.Set("User-Agent", useragent.Get())
 
 	// Parse and apply extra headers stored as a JSON object.
 	if notif.Headers != "" && notif.Headers != "{}" {

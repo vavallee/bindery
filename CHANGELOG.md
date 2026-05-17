@@ -6,6 +6,16 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.11.1] — 2026-05-15
+
+### Fixed
+
+- **NZB Finder indexer searches no longer return Cloudflare 403** — nzbfinder.ws runs a WAF rule that case-sensitively rejects any User-Agent containing the substring `Bindery`. Every search through that indexer was returning HTTP 403 "Attention Required" instead of results. Bindery now sends a single canonical, lowercase User-Agent (`bindery/<version> (<os>)`) on every outbound HTTP request, matching the convention used by Sonarr/Radarr/Prowlarr. Other indexers (NZBGeek, NZB Planet) are unaffected.
+
+### Internal
+
+- **Single source of truth for User-Agent** — New `internal/useragent` package centralises the outbound User-Agent. Twelve HTTP clients (newznab indexers, OpenLibrary, DNB, Hardcover, Audnex, Audible, Google Books, Discord notifier, image proxy, Prowlarr, telemetry, Audiobookshelf, Grimmory) now share one identity. Previously some sent `Bindery/0.1`, some `Bindery/1.0`, three sent Go's default `Go-http-client/2.0` (which is on Cloudflare's bot blocklist), and existing helpers used their own format. All converged on `bindery/<version> (<os>)`.
+
 ## [v1.11.0] — 2026-05-14
 
 ### Added
