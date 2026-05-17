@@ -74,9 +74,22 @@ func (s *concurrentSearcherSpy) stats() (int, int) {
 // hitting the real OpenLibrary API.
 type stubMetaProvider struct {
 	works []models.Book
+	// getBookByID lets a test return a specific Book for a foreign ID.
+	// Used to exercise the AddBook direct-insert path for DNB-prefixed
+	// foreign IDs (issue #667).
+	getBookByID map[string]*models.Book
+	// name overrides the provider's reported name. When non-empty it's
+	// returned by Name() — required when a test exercises a code path
+	// that routes by prefix via the aggregator (e.g. "dnb" for DNB IDs).
+	name string
 }
 
-func (p *stubMetaProvider) Name() string { return "stub" }
+func (p *stubMetaProvider) Name() string {
+	if p.name != "" {
+		return p.name
+	}
+	return "stub"
+}
 func (p *stubMetaProvider) SearchAuthors(_ context.Context, _ string) ([]models.Author, error) {
 	return nil, nil
 }
@@ -86,7 +99,12 @@ func (p *stubMetaProvider) SearchBooks(_ context.Context, _ string) ([]models.Bo
 func (p *stubMetaProvider) GetAuthor(_ context.Context, _ string) (*models.Author, error) {
 	return nil, nil
 }
-func (p *stubMetaProvider) GetBook(_ context.Context, _ string) (*models.Book, error) {
+func (p *stubMetaProvider) GetBook(_ context.Context, fid string) (*models.Book, error) {
+	if p.getBookByID != nil {
+		if b, ok := p.getBookByID[fid]; ok {
+			return b, nil
+		}
+	}
 	return nil, nil
 }
 func (p *stubMetaProvider) GetEditions(_ context.Context, _ string) ([]models.Edition, error) {
@@ -1370,6 +1388,81 @@ func TestAddBook_OrphanAuthorDeletedOnTimeout(t *testing.T) {
 	got, _ := authorRepo.GetByForeignID(context.Background(), "dnb:author:phantom-author")
 	if got != nil {
 		t.Fatalf("orphan author was not cleaned up after timeout: %+v", got)
+	}
+}
+
+// TestAddBook_DNBDirectInsertSucceeds is the end-to-end guarantee that
+// adding a DNB-prefixed book no longer hangs on the poll loop. The
+// async FetchAuthorBooks goroutine returns zero books for DNB synthetic
+// IDs (correctly, since DNB SRU has no author→works endpoint); the new
+// direct-insert path in AddBook fetches the requested record and
+// persists it before the poll loop starts. Without this fix, the poll
+// times out at 15 s and the request returns 404 — the exact failure
+// zippoking saw on bindery-dev with ISBN 978-3-8449-3577-6.
+func TestAddBook_DNBDirectInsertSucceeds(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+
+	// Mirrors what DNB.GetBook returns for ISBN 978-3-8449-3577-6:
+	// a *models.Book carrying its own embedded synthetic author.
+	primary := &models.Book{
+		ForeignID:        "dnb:1305873874",
+		Title:            "Der war's",
+		SortTitle:        "Der war's",
+		Language:         "ger",
+		Status:           models.BookStatusWanted,
+		Genres:           []string{},
+		MetadataProvider: "dnb",
+		Monitored:        true,
+	}
+	stub := &stubMetaProvider{
+		name:  "dnb", // aggregator routes "dnb:" prefix to a provider named "dnb"
+		works: nil,   // GetAuthorWorks empty — matches real DNB short-circuit
+		getBookByID: map[string]*models.Book{
+			"dnb:1305873874": primary,
+		},
+	}
+	agg := metadata.NewAggregator(stub)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, nil, profileRepo, nil)
+
+	body, _ := json.Marshal(map[string]any{
+		"foreignBookId":   "dnb:1305873874",
+		"foreignAuthorId": "dnb:gnd:123120802",
+		"authorName":      "Juli Zeh",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	h.AddBook(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Book persisted with author linkage and marked monitored.
+	got, err := bookRepo.GetByForeignID(context.Background(), "dnb:1305873874")
+	if err != nil || got == nil {
+		t.Fatalf("book not persisted: err=%v got=%v", err, got)
+	}
+	if !got.Monitored {
+		t.Errorf("book should be Monitored=true after AddBook success")
+	}
+	if got.AuthorID == 0 {
+		t.Errorf("book AuthorID should be linked to the author row")
+	}
+
+	// Author persisted with the synthetic foreign ID.
+	auth, err := authorRepo.GetByForeignID(context.Background(), "dnb:gnd:123120802")
+	if err != nil || auth == nil {
+		t.Fatalf("author not persisted: err=%v auth=%v", err, auth)
 	}
 }
 

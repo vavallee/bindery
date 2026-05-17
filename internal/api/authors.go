@@ -1277,6 +1277,34 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 1b. Direct insert for providers without a queryable author-works
+	// endpoint. DNB's public SRU has no author→works relationship, so the
+	// async FetchAuthorBooks goroutine returns zero books for synthetic
+	// dnb:gnd:* / dnb:author:* IDs — the poll loop below would time out
+	// every time. Fetch the single requested record now and persist it
+	// so the poll finds it on its first iteration. UNIQUE-constraint
+	// races against a concurrent FetchAuthorBooks insert are tolerated.
+	if strings.HasPrefix(req.ForeignBookID, "dnb:") {
+		if existing, _ := h.books.GetByForeignID(ctx, req.ForeignBookID); existing == nil {
+			primary, err := h.meta.GetBook(ctx, req.ForeignBookID)
+			if err != nil {
+				slog.Warn("AddBook: DNB direct fetch failed",
+					"foreignBookId", req.ForeignBookID, "error", err)
+			} else if primary != nil {
+				primary.AuthorID = author.ID
+				primary.Monitored = author.Monitored
+				if primary.Status == "" {
+					primary.Status = models.BookStatusWanted
+				}
+				if err := h.books.Create(ctx, primary); err != nil &&
+					!strings.Contains(err.Error(), "UNIQUE constraint failed") {
+					slog.Warn("AddBook: DNB direct insert failed",
+						"foreignBookId", req.ForeignBookID, "error", err)
+				}
+			}
+		}
+	}
+
 	// 2. Poll until the book appears (FetchAuthorBooks runs asynchronously).
 	deadline := time.Now().Add(15 * time.Second)
 	var book *models.Book
