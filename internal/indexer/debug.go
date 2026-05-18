@@ -197,9 +197,9 @@ func filterUsenetJunkDebug(results []newznab.SearchResult) ([]newznab.SearchResu
 func filterRelevantDebug(results []newznab.SearchResult, title, author string, aliases []string) ([]newznab.SearchResult, []FilterDebug) {
 	// Strip possessive author prefix before keyword extraction (mirrors filterRelevant).
 	title = stripPossessivePrefix(title, author)
-	fullKws := sigWords(title)
-	primaryKws := sigWords(primaryTitle(title))
-	authorKws := sigWords(author)
+	fullKws := newznab.SigWords(title)
+	primaryKws := newznab.SigWords(primaryTitle(title))
+	authorKws := newznab.SigWords(author)
 	surname := AuthorSurname(author)
 
 	authorTokenSets := [][]string{authorTokens(author)}

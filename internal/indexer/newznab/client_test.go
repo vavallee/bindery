@@ -721,3 +721,125 @@ func TestPrimaryTitleForQuery_NormalizesAndDropsSubtitle(t *testing.T) {
 		}
 	}
 }
+
+func TestSigWords(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"Life Ascending", []string{"life", "ascending"}},
+		{"Dark Matter", []string{"dark", "matter"}},
+		// stopwords and short words excluded
+		{"The It", nil},
+		// 3-char minimum: "war" included, "it" excluded
+		{"It War", []string{"war"}},
+		// stopword excluded even at sufficient length
+		{"the and for", nil},
+		// apostrophe stripped: "Ender's" → "enders"
+		{"Ender's Game", []string{"enders", "game"}},
+		// German umlaut transliteration
+		{"Märchen", []string{"maerchen"}},
+	}
+	for _, c := range cases {
+		got := SigWords(c.in)
+		if len(got) != len(c.want) {
+			t.Errorf("SigWords(%q) = %v, want %v", c.in, got, c.want)
+			continue
+		}
+		for i, w := range c.want {
+			if got[i] != w {
+				t.Errorf("SigWords(%q)[%d] = %q, want %q", c.in, i, got[i], w)
+			}
+		}
+	}
+}
+
+func TestTitleHasRelevantResult(t *testing.T) {
+	matching := []SearchResult{
+		{Title: "Nick.Lane.Life.Ascending.Evolution", BookTitle: ""},
+	}
+	canned := []SearchResult{
+		{Title: "Stephen.King.It", BookTitle: ""},
+		{Title: "Neil.Gaiman.Good.Omens", BookTitle: ""},
+	}
+
+	if !titleHasRelevantResult("Life Ascending", matching) {
+		t.Error("expected true for results containing 'life' and 'ascending'")
+	}
+	if titleHasRelevantResult("Life Ascending", canned) {
+		t.Error("expected false for canned results that don't contain query words")
+	}
+	// Empty query words (all stopwords/short) → always valid
+	if !titleHasRelevantResult("The It", canned) {
+		t.Error("expected true when query has no significant words")
+	}
+	// BookTitle field is also checked
+	withBookTitle := []SearchResult{{Title: "random release", BookTitle: "Life Ascending"}}
+	if !titleHasRelevantResult("Life Ascending", withBookTitle) {
+		t.Error("expected true when BookTitle contains query word")
+	}
+}
+
+// TestBookSearch_Tier1FallsBackOnCannedFeed simulates a Jackett/AudioBookBay
+// indexer that always returns the same canned category results for t=book
+// regardless of the title/author params. The canned results do not contain
+// any significant word from the search title, so tier 1 should be rejected
+// and the search should fall through to tier 2 (surname + title).
+func TestBookSearch_Tier1FallsBackOnCannedFeed(t *testing.T) {
+	var queries []url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.Query())
+		w.Header().Set("Content-Type", "application/xml")
+		q := r.URL.Query()
+		if q.Get("t") == "book" {
+			// Canned feed: results that have nothing to do with the query.
+			w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+  <channel>
+    <newznab:response offset="0" total="18"/>
+    <item><title>Stephen.King.It.mp3</title><guid isPermaLink="true">canned-1</guid>
+      <enclosure url="https://example.com/canned-1" length="1" type="application/x-nzb"/>
+    </item>
+    <item><title>Neil.Gaiman.Good.Omens.epub</title><guid isPermaLink="true">canned-2</guid>
+      <enclosure url="https://example.com/canned-2" length="1" type="application/x-nzb"/>
+    </item>
+  </channel>
+</rss>`))
+			return
+		}
+		// Tier 2: q="Lane Life Ascending" — return a relevant result.
+		if q.Get("t") == "search" && strings.Contains(q.Get("q"), "Lane") {
+			w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+  <channel>
+    <newznab:response offset="0" total="1"/>
+    <item><title>Nick.Lane.Life.Ascending.epub</title><guid isPermaLink="true">relevant-1</guid>
+      <enclosure url="https://example.com/relevant-1" length="1" type="application/x-nzb"/>
+    </item>
+  </channel>
+</rss>`))
+			return
+		}
+		w.Write([]byte(`<?xml version="1.0"?><rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/"><channel><newznab:response total="0"/></channel></rss>`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "testkey")
+	results, err := c.BookSearch(context.Background(), "Life Ascending", "Nick Lane", []int{7020})
+	if err != nil {
+		t.Fatalf("BookSearch: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 relevant result, got %d", len(results))
+	}
+	if results[0].Title != "Nick.Lane.Life.Ascending.epub" {
+		t.Errorf("unexpected result title %q", results[0].Title)
+	}
+	// Tier 1 must have been tried (t=book) then rejected, so at least 2 requests total.
+	if len(queries) < 2 {
+		t.Fatalf("expected at least 2 requests (tier 1 + tier 2), got %d", len(queries))
+	}
+	if queries[0].Get("t") != "book" {
+		t.Errorf("expected first request to be t=book, got t=%s", queries[0].Get("t"))
+	}
+}

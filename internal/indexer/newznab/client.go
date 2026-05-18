@@ -139,10 +139,19 @@ func (c *Client) BookSearch(ctx context.Context, title, author string, categorie
 			slog.Debug("indexer query", "tier", 1, "url", redactAPIKey(u))
 			var rss rssResponse
 			if err := c.getXML(ctx, u, &rss); err == nil && len(rss.Channel.Items) > 0 && rss.Channel.Response.Total < 1000 {
-				slog.Debug("indexer query tier matched", "tier", 1, "count", len(rss.Channel.Items))
-				return c.parseResults(rss.Channel.Items), nil
+				parsed := c.parseResults(rss.Channel.Items)
+				if titleHasRelevantResult(queryTitle, parsed) {
+					slog.Debug("indexer query tier matched", "tier", 1, "count", len(parsed))
+					return parsed, nil
+				}
+				// Indexer returned a fixed category feed that ignored title/author
+				// (Jackett/AudioBookBay pattern). Fall through to text-search tiers.
+				slog.Debug("indexer query tier 1 canned feed, falling through",
+					"count", len(parsed),
+					"words_checked", SigWords(queryTitle))
+			} else {
+				slog.Debug("indexer query tier fallthrough", "tier", 1, "items", len(rss.Channel.Items))
 			}
-			slog.Debug("indexer query tier fallthrough", "tier", 1, "items", len(rss.Channel.Items))
 		}
 	}
 
@@ -229,6 +238,27 @@ func authorSurname(author string) string {
 		return ""
 	}
 	return fields[len(fields)-1]
+}
+
+// titleHasRelevantResult returns true when at least one result's title
+// contains at least one significant word from queryTitle (as determined by
+// SigWords). A false return means the indexer likely returned a fixed
+// category feed that ignored the search params (Jackett/AudioBookBay
+// pattern), so callers should fall through to text-search tiers.
+func titleHasRelevantResult(queryTitle string, results []SearchResult) bool {
+	words := SigWords(queryTitle)
+	if len(words) == 0 {
+		return true // query has no checkable words; assume results are valid
+	}
+	for _, r := range results {
+		combined := strings.ToLower(r.Title + " " + r.BookTitle)
+		for _, w := range words {
+			if strings.Contains(combined, w) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Test verifies the indexer is reachable and the API key is valid.

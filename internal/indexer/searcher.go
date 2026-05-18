@@ -180,29 +180,6 @@ func (s *Searcher) SearchQuery(ctx context.Context, indexers []models.Indexer, q
 	return results
 }
 
-// stopWords are common English words excluded from keyword significance checks.
-var stopWords = map[string]bool{
-	"the": true, "a": true, "an": true, "and": true, "or": true,
-	"of": true, "in": true, "to": true, "by": true, "for": true,
-	"with": true, "at": true, "from": true, "is": true, "it": true,
-	"as": true, "on": true, "be": true,
-}
-
-// sigWords returns the meaningful (non-stop, 3+ char) words from s.
-// Apostrophes are stripped so "Ender's" produces the token "enders",
-// matching the apostrophe-free form used in most release names.
-// German umlauts are transliterated (ä→ae etc.) to match NormalizeRelease.
-func sigWords(s string) []string {
-	var out []string
-	for _, w := range strings.Fields(strings.ToLower(s)) {
-		w = strings.ReplaceAll(w, "'", "") // "ender's" → "enders"
-		w = transliterateUmlauts(w)
-		if len(w) >= 3 && !stopWords[w] {
-			out = append(out, w)
-		}
-	}
-	return out
-}
 
 // primaryTitle returns the portion of title before the first colon (used for
 // subtitle handling — "Dune: Messiah" → "Dune"). If there's no colon the full
@@ -369,9 +346,9 @@ func filterRelevant(results []newznab.SearchResult, title, author string, aliase
 	// preventing "clancys" from becoming a keyword that fails to match releases
 	// like "Tom Clancy - Rainbow Six". See issue #409.
 	title = stripPossessivePrefix(title, author)
-	fullKws := sigWords(title)
-	primaryKws := sigWords(primaryTitle(title))
-	authorKws := sigWords(author)
+	fullKws := newznab.SigWords(title)
+	primaryKws := newznab.SigWords(primaryTitle(title))
+	authorKws := newznab.SigWords(author)
 	surname := AuthorSurname(author)
 
 	// Build candidate author token sets. The primary set is from `author`. When
