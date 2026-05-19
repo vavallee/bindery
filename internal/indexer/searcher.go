@@ -180,7 +180,6 @@ func (s *Searcher) SearchQuery(ctx context.Context, indexers []models.Indexer, q
 	return results
 }
 
-
 // primaryTitle returns the portion of title before the first colon (used for
 // subtitle handling — "Dune: Messiah" → "Dune"). If there's no colon the full
 // title is returned.
