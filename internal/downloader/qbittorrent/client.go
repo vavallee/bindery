@@ -273,16 +273,35 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	text := strings.TrimSpace(string(body))
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("add torrent HTTP %d: %s", resp.StatusCode, text)
 	}
+
+	// qBittorrent v4.x: plaintext body "Ok." on success, anything else is failure.
+	// qBittorrent v5.x: JSON body {"added_torrent_ids":[...],"success_count":N,...}.
+	// Accept either shape; on v5 prefer added_torrent_ids[0] as the infohash so we
+	// can skip the hash-poll fallback when the API already returned the hash.
+	v5Hash := ""
 	if text != "Ok." {
-		return "", fmt.Errorf("add torrent failed: %s", text)
+		var v5 struct {
+			AddedTorrentIDs []string `json:"added_torrent_ids"`
+			SuccessCount    int      `json:"success_count"`
+			FailureCount    int      `json:"failure_count"`
+		}
+		if err := json.Unmarshal(body, &v5); err != nil || (v5.SuccessCount == 0 && len(v5.AddedTorrentIDs) == 0) {
+			return "", fmt.Errorf("add torrent failed: %s", text)
+		}
+		if len(v5.AddedTorrentIDs) > 0 {
+			v5Hash = strings.ToLower(strings.TrimSpace(v5.AddedTorrentIDs[0]))
+		}
 	}
 
+	if v5Hash != "" {
+		return v5Hash, nil
+	}
 	if infoHash := infoHashFromMagnet(submitted); infoHash != "" {
 		return infoHash, nil
 	}

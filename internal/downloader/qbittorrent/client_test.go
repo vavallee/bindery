@@ -119,6 +119,71 @@ func TestAddTorrent_ConcurrentUniqueHashes(t *testing.T) {
 	}
 }
 
+// TestAddTorrent_V5JSONResponse is a regression test for #690.
+// qBittorrent 5.x returns a JSON body from POST /api/v2/torrents/add instead
+// of the plaintext "Ok." that v4 returned. The legacy check rejected the JSON
+// even though the add succeeded, causing every grab to surface as failed.
+// The fix accepts either shape: plaintext "Ok." (v4) or JSON with success_count
+// >= 1 or non-empty added_torrent_ids (v5). When v5 returns the hash inline,
+// we use it directly and skip the hash-poll.
+func TestAddTorrent_V5JSONResponse(t *testing.T) {
+	const v5Hash = "cccccccccccccccccccccccccccccccccccccccc"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/add":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"added_torrent_ids":["` + v5Hash + `"],"failure_count":0,"pending_count":0,"success_count":1}`))
+		}
+	}))
+	defer srv.Close()
+
+	indexer := newFakeIndexer(t)
+	defer indexer.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	allowTorrentFetch(c)
+	c.loggedIn = true
+
+	got, err := c.AddTorrent(context.Background(), indexer.URL+"/torrent", "", "")
+	if err != nil {
+		t.Fatalf("unexpected error on v5 JSON response: %v", err)
+	}
+	if got != v5Hash {
+		t.Errorf("hash from added_torrent_ids: want %q, got %q", v5Hash, got)
+	}
+}
+
+// TestAddTorrent_V5JSONResponse_FailureCount verifies that a v5 JSON body with
+// success_count=0 and an empty added_torrent_ids is correctly treated as a
+// failure, not accepted on the basis of being JSON.
+func TestAddTorrent_V5JSONResponse_FailureCount(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/add":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"added_torrent_ids":[],"failure_count":1,"pending_count":0,"success_count":0}`))
+		}
+	}))
+	defer srv.Close()
+
+	indexer := newFakeIndexer(t)
+	defer indexer.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	allowTorrentFetch(c)
+	c.loggedIn = true
+
+	_, err := c.AddTorrent(context.Background(), indexer.URL+"/torrent", "", "")
+	if err == nil {
+		t.Fatal("expected failure for success_count=0 / empty added_torrent_ids, got nil")
+	}
+}
+
 // logCatcher captures slog records for test assertions.
 type logCatcher struct {
 	mu      sync.Mutex

@@ -40,7 +40,8 @@ func NewWithTimeout(baseURL, apiKey string, timeout time.Duration) *Client {
 type remoteIndexer struct {
 	ID             int    `json:"id"`
 	Name           string `json:"name"`
-	Protocol       string `json:"protocol"` // "usenet" or "torrent"
+	Enable         bool   `json:"enable"`    // Prowlarr's per-indexer enabled flag
+	Protocol       string `json:"protocol"`  // "usenet" or "torrent"
 	SupportsSearch bool   `json:"supportsSearch"`
 	Categories     []struct {
 		ID int `json:"id"`
@@ -52,6 +53,7 @@ type remoteIndexer struct {
 type IndexerInfo struct {
 	ProwlarrID     int
 	Name           string
+	Enable         bool
 	Protocol       string
 	TorznabURL     string
 	APIKey         string
@@ -84,6 +86,7 @@ func (c *Client) FetchIndexers(ctx context.Context) ([]IndexerInfo, error) {
 		infos = append(infos, IndexerInfo{
 			ProwlarrID:     ri.ID,
 			Name:           ri.Name,
+			Enable:         ri.Enable,
 			Protocol:       ri.Protocol,
 			TorznabURL:     torznabURL,
 			APIKey:         c.apiKey,
