@@ -10,6 +10,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 - **Hardcover edition metadata lookup** — Hardcover-backed books can now return edition-level metadata, including ISBNs, ASINs, publisher, format, page count, cover, language, and audiobook duration, using Hardcover's current editions query shape.
 
+### Fixed
+
+- **Torznab indexers returning canned category feeds no longer block searches** (#665, #687) — Tier-1 `t=book` results that ignore the title/author params (Jackett/AudioBookBay pattern) are detected by a keyword-relevance check; the search now falls through to text-search tiers instead of returning the same canned results for every query.
+
 ## [v1.12.0] — 2026-05-18
 
 ### Added
