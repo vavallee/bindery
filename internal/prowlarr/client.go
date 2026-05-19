@@ -40,8 +40,8 @@ func NewWithTimeout(baseURL, apiKey string, timeout time.Duration) *Client {
 type remoteIndexer struct {
 	ID             int    `json:"id"`
 	Name           string `json:"name"`
-	Enable         bool   `json:"enable"`    // Prowlarr's per-indexer enabled flag
-	Protocol       string `json:"protocol"`  // "usenet" or "torrent"
+	Enable         bool   `json:"enable"`   // Prowlarr's per-indexer enabled flag
+	Protocol       string `json:"protocol"` // "usenet" or "torrent"
 	SupportsSearch bool   `json:"supportsSearch"`
 	Categories     []struct {
 		ID int `json:"id"`
