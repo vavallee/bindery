@@ -122,8 +122,8 @@ func TestIndexerTypeForProtocol(t *testing.T) {
 
 func TestSyncer_CreatesNewznabForUsenetIndexers(t *testing.T) {
 	srv := prowlarrStub(t, `[
-		{"id":1,"name":"NZBHydra","protocol":"usenet","supportsSearch":true,"categories":[{"id":7020}]},
-		{"id":2,"name":"PrivateTracker","protocol":"torrent","supportsSearch":true,"categories":[{"id":7020}]}
+		{"id":1,"name":"NZBHydra","enable":true,"protocol":"usenet","supportsSearch":true,"categories":[{"id":7020}]},
+		{"id":2,"name":"PrivateTracker","enable":true,"protocol":"torrent","supportsSearch":true,"categories":[{"id":7020}]}
 	]`)
 	defer srv.Close()
 
@@ -161,7 +161,7 @@ func TestSyncer_CorrectsMisTypedExistingIndexer(t *testing.T) {
 		ProwlarrInstanceID: &instID,
 		ProwlarrIndexerID:  &pID,
 	}}
-	srv := prowlarrStub(t, `[{"id":42,"name":"NZBHydra","protocol":"usenet","supportsSearch":true,"categories":[{"id":7020}]}]`)
+	srv := prowlarrStub(t, `[{"id":42,"name":"NZBHydra","enable":true,"protocol":"usenet","supportsSearch":true,"categories":[{"id":7020}]}]`)
 	defer srv.Close()
 
 	store := &fakeIndexerStore{existing: existing}
@@ -180,7 +180,7 @@ func TestSyncer_CorrectsMisTypedExistingIndexer(t *testing.T) {
 
 func TestSyncer_WidensParentOnlyCategory(t *testing.T) {
 	// Prowlarr reports [7000] only — syncer must store [7020], not [7000] or [].
-	srv := prowlarrStub(t, `[{"id":9,"name":"GenericBooks","protocol":"torrent","supportsSearch":true,"categories":[{"id":7000}]}]`)
+	srv := prowlarrStub(t, `[{"id":9,"name":"GenericBooks","enable":true,"protocol":"torrent","supportsSearch":true,"categories":[{"id":7000}]}]`)
 	defer srv.Close()
 
 	store := &fakeIndexerStore{}
@@ -211,7 +211,7 @@ func TestSyncer_PropagatesChangedCategories(t *testing.T) {
 		ProwlarrInstanceID: &instID,
 		ProwlarrIndexerID:  &pID,
 	}}
-	srv := prowlarrStub(t, `[{"id":10,"name":"IndexerA","protocol":"torrent","supportsSearch":true,"categories":[{"id":7020}]}]`)
+	srv := prowlarrStub(t, `[{"id":10,"name":"IndexerA","enable":true,"protocol":"torrent","supportsSearch":true,"categories":[{"id":7020}]}]`)
 	defer srv.Close()
 	existing[0].URL = srv.URL + "/10/api"
 
@@ -243,7 +243,7 @@ func TestSyncer_NoUpdateWhenNothingChanged(t *testing.T) {
 		ProwlarrInstanceID: &instID,
 		ProwlarrIndexerID:  &pID,
 	}}
-	srv := prowlarrStub(t, `[{"id":7,"name":"TrackerX","protocol":"torrent","supportsSearch":true,"categories":[{"id":7020}]}]`)
+	srv := prowlarrStub(t, `[{"id":7,"name":"TrackerX","enable":true,"protocol":"torrent","supportsSearch":true,"categories":[{"id":7020}]}]`)
 	defer srv.Close()
 	existing[0].URL = srv.URL + "/7/api"
 

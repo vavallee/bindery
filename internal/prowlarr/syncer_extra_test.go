@@ -30,7 +30,7 @@ func TestSyncer_FetchError(t *testing.T) {
 }
 
 func TestSyncer_ListError(t *testing.T) {
-	srv := prowlarrStub(t, `[{"id":1,"name":"T","protocol":"torrent","supportsSearch":true}]`)
+	srv := prowlarrStub(t, `[{"id":1,"name":"T","enable":true,"protocol":"torrent","supportsSearch":true,"categories":[{"id":7020}]}]`)
 	defer srv.Close()
 
 	store := &fakeIndexerStore{listErr: errors.New("db failure")}
@@ -42,9 +42,10 @@ func TestSyncer_ListError(t *testing.T) {
 	}
 }
 
-func TestSyncer_DefaultCategoriesWhenEmpty(t *testing.T) {
-	// No categories in remote → syncer must default to [7020].
-	srv := prowlarrStub(t, `[{"id":5,"name":"Tracker","protocol":"torrent","supportsSearch":true,"categories":[]}]`)
+func TestSyncer_SkipsIndexerWithNoBookCategories(t *testing.T) {
+	// Issue #675: an indexer with no ebook/audiobook categories must be
+	// skipped, not auto-promoted into Bindery with a fake [7020] category.
+	srv := prowlarrStub(t, `[{"id":5,"name":"Tracker","enable":true,"protocol":"torrent","supportsSearch":true,"categories":[]}]`)
 	defer srv.Close()
 
 	store := &fakeIndexerStore{}
@@ -53,12 +54,41 @@ func TestSyncer_DefaultCategoriesWhenEmpty(t *testing.T) {
 	if _, err := syncer.Sync(context.Background(), 1); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	if len(store.created) != 1 {
-		t.Fatalf("expected 1 created, got %d", len(store.created))
+	if len(store.created) != 0 {
+		t.Errorf("expected 0 created (no book/audiobook categories), got %d", len(store.created))
 	}
-	cats := store.created[0].Categories
-	if len(cats) != 1 || cats[0] != 7020 {
-		t.Errorf("Categories = %v, want [7020]", cats)
+}
+
+func TestSyncer_SkipsDisabledIndexer(t *testing.T) {
+	// Issue #675: an indexer disabled in Prowlarr must not be added to Bindery.
+	srv := prowlarrStub(t, `[{"id":6,"name":"DisabledIdx","enable":false,"protocol":"torrent","supportsSearch":true,"categories":[{"id":7020}]}]`)
+	defer srv.Close()
+
+	store := &fakeIndexerStore{}
+	syncer := NewSyncer(New(srv.URL, "k"), store, fakeInstanceStore{})
+
+	if _, err := syncer.Sync(context.Background(), 1); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(store.created) != 0 {
+		t.Errorf("expected 0 created (indexer disabled), got %d", len(store.created))
+	}
+}
+
+func TestSyncer_SkipsIndexerWithoutSearchSupport(t *testing.T) {
+	// Issue #675: an indexer without search support is useless for book lookup
+	// and must not be added to Bindery.
+	srv := prowlarrStub(t, `[{"id":7,"name":"NoSearch","enable":true,"protocol":"torrent","supportsSearch":false,"categories":[{"id":7020}]}]`)
+	defer srv.Close()
+
+	store := &fakeIndexerStore{}
+	syncer := NewSyncer(New(srv.URL, "k"), store, fakeInstanceStore{})
+
+	if _, err := syncer.Sync(context.Background(), 1); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(store.created) != 0 {
+		t.Errorf("expected 0 created (no search support), got %d", len(store.created))
 	}
 }
 
@@ -70,7 +100,7 @@ func TestSyncer_RemovesStaleIndexer(t *testing.T) {
 		{ID: 10, Name: "Active", Type: "torznab", URL: "http://h/1/api", ProwlarrInstanceID: &instID, ProwlarrIndexerID: &pID1},
 		{ID: 11, Name: "Stale", Type: "torznab", URL: "http://h/2/api", ProwlarrInstanceID: &instID, ProwlarrIndexerID: &pID2},
 	}
-	srv := prowlarrStub(t, `[{"id":1,"name":"Active","protocol":"torrent","supportsSearch":true}]`)
+	srv := prowlarrStub(t, `[{"id":1,"name":"Active","enable":true,"protocol":"torrent","supportsSearch":true,"categories":[{"id":7020}]}]`)
 	defer srv.Close()
 
 	// Update the Active indexer URL to match what the client will compute.
@@ -93,7 +123,7 @@ func TestSyncer_RemovesStaleIndexer(t *testing.T) {
 
 func TestSyncer_CreateErrorIsLogged(t *testing.T) {
 	// Create failure must be logged but not returned as an error.
-	srv := prowlarrStub(t, `[{"id":3,"name":"New","protocol":"torrent","supportsSearch":true}]`)
+	srv := prowlarrStub(t, `[{"id":3,"name":"New","enable":true,"protocol":"torrent","supportsSearch":true,"categories":[{"id":7020}]}]`)
 	defer srv.Close()
 
 	store := &fakeIndexerStore{createErr: errors.New("insert failed")}
@@ -139,7 +169,7 @@ func TestSyncer_UpdateErrorIsLogged(t *testing.T) {
 		{ID: 5, Name: "OldName", Type: "torznab", URL: "http://old/7/api",
 			ProwlarrInstanceID: &instID, ProwlarrIndexerID: &pID},
 	}
-	srv := prowlarrStub(t, `[{"id":7,"name":"NewName","protocol":"torrent","supportsSearch":true}]`)
+	srv := prowlarrStub(t, `[{"id":7,"name":"NewName","enable":true,"protocol":"torrent","supportsSearch":true,"categories":[{"id":7020}]}]`)
 	defer srv.Close()
 
 	store := &fakeIndexerStore{existing: existing, updateErr: errors.New("update failed")}
@@ -162,8 +192,8 @@ func TestSyncer_MixedAddUpdateRemove(t *testing.T) {
 		{ID: 11, Name: "Stale", Type: "torznab", ProwlarrInstanceID: &instID, ProwlarrIndexerID: &pID2},
 	}
 	srv := prowlarrStub(t, `[
-		{"id":1,"name":"NewName","protocol":"torrent","supportsSearch":true,"categories":[{"id":7020}]},
-		{"id":3,"name":"Added","protocol":"torrent","supportsSearch":false,"categories":[{"id":7000}]}
+		{"id":1,"name":"NewName","enable":true,"protocol":"torrent","supportsSearch":true,"categories":[{"id":7020}]},
+		{"id":3,"name":"Added","enable":true,"protocol":"torrent","supportsSearch":true,"categories":[{"id":7000}]}
 	]`)
 	defer srv.Close()
 

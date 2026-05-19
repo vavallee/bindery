@@ -13,6 +13,8 @@ All notable changes to Bindery are documented here. Format loosely follows
 ### Fixed
 
 - **Torznab indexers returning canned category feeds no longer block searches** (#665, #687) — Tier-1 `t=book` results that ignore the title/author params (Jackett/AudioBookBay pattern) are detected by a keyword-relevance check; the search now falls through to text-search tiers instead of returning the same canned results for every query.
+- **qBittorrent 5.x grabs no longer surface as failed when the add succeeded** (#690) — qBittorrent v5 returns a JSON body from `POST /api/v2/torrents/add` (`{"success_count":1,"added_torrent_ids":[...]}`) instead of the plaintext `Ok.` v4 returned; Bindery was treating the JSON as a failure. The client now accepts either shape and uses `added_torrent_ids[0]` as the infohash directly when available.
+- **Prowlarr sync no longer imports unrelated, disabled, or non-search indexers** (#675) — Indexers disabled in Prowlarr, without `supportsSearch`, or with no ebook/audiobook categories are now skipped during sync. Previously every indexer Prowlarr returned was created in Bindery and would respawn if deleted.
 
 ## [v1.12.0] — 2026-05-18
 

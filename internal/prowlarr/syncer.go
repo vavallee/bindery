@@ -71,11 +71,28 @@ func (s *Syncer) Sync(ctx context.Context, instanceID int64) (SyncResult, error)
 	seen := map[int]struct{}{}
 
 	for _, ri := range remotes {
-		seen[ri.ProwlarrID] = struct{}{}
+		// Skip indexers that aren't book-relevant. Issue #675: previously
+		// every indexer Prowlarr returned was created in Bindery, including
+		// ones disabled in Prowlarr, ones that don't support search, and
+		// ones with no ebook/audiobook categories. Users then deleted them
+		// manually and watched them reappear on the next sync.
 		cats := filterCategoriesForMedia(ri.Categories)
-		if len(cats) == 0 {
-			cats = []int{7020}
+		switch {
+		case !ri.Enable:
+			slog.Debug("prowlarr sync: skipping disabled indexer",
+				"name", ri.Name, "prowlarr_id", ri.ProwlarrID)
+			continue
+		case !ri.SupportsSearch:
+			slog.Debug("prowlarr sync: skipping indexer with no search support",
+				"name", ri.Name, "prowlarr_id", ri.ProwlarrID)
+			continue
+		case len(cats) == 0:
+			slog.Debug("prowlarr sync: skipping indexer with no book/audiobook categories",
+				"name", ri.Name, "prowlarr_id", ri.ProwlarrID,
+				"categories", ri.Categories)
+			continue
 		}
+		seen[ri.ProwlarrID] = struct{}{}
 
 		pID := ri.ProwlarrID
 		instID := instanceID
