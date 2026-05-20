@@ -6,6 +6,8 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.12.3] — 2026-05-20
+
 ### Security
 
 - **API-key regeneration and OIDC provider management now require an admin account** (#717) — `POST /auth/apikey/regenerate` and `PUT /auth/oidc/providers` sat outside the admin-only route group, so any signed-in non-admin user could rewrite OIDC config or regenerate the API key and read it back — and the API key grants admin access. Both routes are now behind the admin check.
