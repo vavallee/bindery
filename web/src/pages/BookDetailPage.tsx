@@ -465,13 +465,33 @@ export default function BookDetailPage() {
             <p className="mt-3 text-sm text-slate-700 dark:text-zinc-300 leading-relaxed">{book.description}</p>
           )}
 
-          <button
-            onClick={runSearch}
-            disabled={searching}
-            className="mt-4 inline-flex items-center gap-2 px-3 py-2 rounded text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50"
-          >
-            <span aria-hidden>🔍</span> {searchLabel}
-          </button>
+          {/* Media type scopes what the indexer search looks for, so it sits
+              with the search action — not in the File card, which is about the
+              file(s) actually on disk. */}
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <label htmlFor="book-media-type" className="text-xs text-slate-500 dark:text-zinc-500">
+              {t('bookDetail.mediaTypeLabel')}
+            </label>
+            <select
+              id="book-media-type"
+              value={mt}
+              onChange={e => saveField({ mediaType: e.target.value as MediaType })}
+              disabled={saving}
+              className="w-fit bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600 disabled:opacity-50"
+              title={t('bookDetail.mediaTypeHint')}
+            >
+              <option value="ebook">📖 {t('common.ebook')}</option>
+              <option value="audiobook">🎧 {t('common.audiobook')}</option>
+              <option value="both">📖🎧 {t('common.both')}</option>
+            </select>
+            <button
+              onClick={runSearch}
+              disabled={searching}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50"
+            >
+              <span aria-hidden>🔍</span> {searchLabel}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -488,22 +508,6 @@ export default function BookDetailPage() {
         </h3>
         <div className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-zinc-900 p-4">
           <div className="grid grid-cols-[92px,1fr] gap-x-4 gap-y-3 text-sm items-center">
-            <label htmlFor="book-media-type" className="text-xs text-slate-500 dark:text-zinc-500">
-              {t('bookDetail.mediaTypeLabel')}
-            </label>
-            <select
-              id="book-media-type"
-              value={mt}
-              onChange={e => saveField({ mediaType: e.target.value as MediaType })}
-              disabled={saving}
-              className="w-fit bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600 disabled:opacity-50"
-              title={t('bookDetail.mediaTypeHint')}
-            >
-              <option value="ebook">📖 {t('common.ebook')}</option>
-              <option value="audiobook">🎧 {t('common.audiobook')}</option>
-              <option value="both">📖🎧 {t('common.both')}</option>
-            </select>
-
             <span className="text-xs text-slate-500 dark:text-zinc-500">{t('bookDetail.formatLabel')}</span>
             {isDual ? (
               <div className="inline-flex rounded overflow-hidden w-fit" role="group" aria-label={t('bookDetail.formatLabel')}>
