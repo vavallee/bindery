@@ -23,4 +23,4 @@ Bindery is a single instance. One author record covers ebook, audiobook, or both
 
 ## Bringing in books already on disk
 
-For files already on disk, use **Library Scan**. Parsing of existing filenames is still being improved — if authors and titles come in wrong, check the open issues or ask in support before bulk-renaming.
+For files already on disk, use **Library Scan**. It takes the author and title from your folder layout: a file under `{Author}/{Book}/` — Readarr's and Calibre's default structure — is matched on the folder names, so the filename convention (`Author - Title` vs `Title - Author`) does not matter. Loose files with no author/book folders fall back to filename parsing, which can still be ambiguous, so keep an organised folder structure for the most reliable scan.

@@ -1781,6 +1781,41 @@ func firstWordRun(tok string) string {
 	return ""
 }
 
+// cleanLayoutTitle strips bracket/paren annotations from a book-folder name —
+// Calibre's " (id)", Readarr's " (year)" — so it matches the stored title.
+func cleanLayoutTitle(dir string) string {
+	s := cleanRe.ReplaceAllString(dir, "")
+	s = multiSp.ReplaceAllString(s, " ")
+	return strings.TrimSpace(s)
+}
+
+// authorTitleFromLayout derives author and title from a library file's folder
+// hierarchy. A file under <root>/<Author>/<Book>/<file> names both
+// unambiguously and is dash-safe, unlike splitting an "Author - Title" or
+// "Title - Author" filename (#754). title is "" when only the author folder is
+// present; ok is false when the file is not nested under any root.
+func authorTitleFromLayout(path string, roots ...string) (author, title string, ok bool) {
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			continue
+		}
+		switch parts := strings.Split(rel, string(filepath.Separator)); {
+		case len(parts) >= 3:
+			// <root>/<Author>/…/<Book>/<file>: first dir is the author,
+			// the file's immediate parent dir is the book title.
+			return strings.TrimSpace(parts[0]), cleanLayoutTitle(parts[len(parts)-2]), true
+		case len(parts) == 2:
+			// <root>/<Author>/<file>: only the author is unambiguous.
+			return strings.TrimSpace(parts[0]), "", true
+		}
+	}
+	return "", "", false
+}
+
 // ScanLibrary walks the library directory (and the separate audiobook directory
 // when configured) for book files not yet tracked in the database and reconciles
 // found files with existing "wanted" book records.
@@ -2009,17 +2044,25 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 			continue
 		}
 
-		// Parse the filename for title/author hints. If the filename alone
-		// doesn't yield an author (e.g. the file is named just "book.epub"),
-		// fall back to the first directory component relative to whichever
-		// library root contains the file — most layouts are
-		// {Author}/{Title}/filename.ext.
+		// Parse the filename for title/author hints, then let the folder
+		// hierarchy correct them. A file under <root>/<Author>/<Book>/<file>
+		// names author and title unambiguously and dash-safe, unlike splitting
+		// an "Author - Title" / "Title - Author" filename — the scan must not
+		// assume a single filename order (#754).
 		parsed := ParseFilename(path)
+		if a, t, ok := authorTitleFromLayout(path, s.libraryDir, s.audiobookDir); ok {
+			if a != "" {
+				parsed.Author = a
+			}
+			if t != "" {
+				parsed.Title = t
+			}
+		}
 
-		// Prefer embedded audio tags over filename parsing for audiobook
-		// files. Well-tagged M4B/MP3 releases carry the author, title and
-		// often an ASIN in their ID3/iTunes atoms; using them avoids the
-		// fuzzy-match noise seen on users' organised libraries (#303).
+		// Prefer embedded audio tags over filename and folder parsing for
+		// audiobook files. Well-tagged M4B/MP3 releases carry the author,
+		// title and often an ASIN in their ID3/iTunes atoms; using them avoids
+		// the fuzzy-match noise seen on users' organised libraries (#303).
 		if IsAudioTagFile(path) {
 			if tags, err := ReadAudioTags(path); err != nil {
 				slog.Warn("library scan: tag read failed, falling back to filename",
@@ -2034,21 +2077,6 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 				}
 				if tags.ASIN != "" {
 					parsed.ASIN = tags.ASIN
-				}
-			}
-		}
-
-		if parsed.Author == "" {
-			for _, root := range []string{s.libraryDir, s.audiobookDir} {
-				if root == "" {
-					continue
-				}
-				if rel, err := filepath.Rel(root, path); err == nil && !strings.HasPrefix(rel, "..") {
-					parts := strings.SplitN(rel, string(filepath.Separator), 2)
-					if len(parts) >= 2 {
-						parsed.Author = parts[0]
-						break
-					}
 				}
 			}
 		}

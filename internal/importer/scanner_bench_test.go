@@ -51,15 +51,17 @@ func benchScannerFixture(tb testing.TB, libraryDir string) (*Scanner, *db.BookRe
 }
 
 // seedLibrary creates totalBooks untracked .epub files on disk plus totalBooks
-// matching "wanted" book rows. File titles and book titles use disjoint
-// vocabularies so Jaro-Winkler stays below the 0.85 reconcile threshold — the
-// scan does its full matching work every iteration with no reconcile side
-// effects, keeping iterations identical.
+// matching "wanted" book rows. The names the scan reads (folder names when
+// nested, filename when flat) use a vocabulary disjoint from the book titles,
+// so Jaro-Winkler stays below the 0.85 reconcile threshold — the scan does its
+// full matching work every iteration with no reconcile side effects, keeping
+// iterations identical.
 //
-// nested=true uses the realistic {Author}/{Title}/file.epub layout with 4
-// books per author, so ParseFilename recovers an author and the title tier can
-// scope comparison to that author. nested=false dumps every file flat in the
-// library root under one author — the worst case, no author scoping possible.
+// nested=true uses the realistic {Author}/{Book}/file.epub layout with 4 books
+// per author, so the scan recovers the author from the folder hierarchy and
+// the title tier can scope comparison to that author. nested=false dumps every
+// file flat in the library root under one author — the worst case, no author
+// scoping possible.
 func seedLibrary(tb testing.TB, libDir string, books *db.BookRepo, authors *db.AuthorRepo, totalBooks int, nested bool) {
 	tb.Helper()
 	ctx := context.Background()
@@ -76,16 +78,20 @@ func seedLibrary(tb testing.TB, libDir string, books *db.BookRepo, authors *db.A
 				tb.Fatal(err)
 			}
 		}
-		title := fmt.Sprintf("Catalogue Record Distinct Entry %06d", i)
+		dbTitle := fmt.Sprintf("Catalogue Record Distinct Entry %06d", i)
+		fileBase := fmt.Sprintf("Untracked Manuscript Number %06d.epub", i)
 		var fp string
 		if nested {
-			dir := filepath.Join(libDir, author.Name, title)
+			// The book-folder name is deliberately disjoint from dbTitle: the
+			// scan derives the title from this folder (#754), so a matching
+			// name here would reconcile the file and skew later iterations.
+			dir := filepath.Join(libDir, author.Name, fmt.Sprintf("Unmatched Folder Volume %06d", i))
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				tb.Fatal(err)
 			}
-			fp = filepath.Join(dir, fmt.Sprintf("Untracked Manuscript Number %06d.epub", i))
+			fp = filepath.Join(dir, fileBase)
 		} else {
-			fp = filepath.Join(libDir, fmt.Sprintf("Untracked Manuscript Number %06d.epub", i))
+			fp = filepath.Join(libDir, fileBase)
 		}
 		if err := os.WriteFile(fp, []byte("x"), 0o644); err != nil {
 			tb.Fatal(err)
@@ -93,7 +99,7 @@ func seedLibrary(tb testing.TB, libDir string, books *db.BookRepo, authors *db.A
 		bk := &models.Book{
 			ForeignID: fmt.Sprintf("OL-B-%06d", i),
 			AuthorID:  author.ID,
-			Title:     title,
+			Title:     dbTitle,
 			Status:    models.BookStatusWanted,
 		}
 		if err := books.Create(ctx, bk); err != nil {
