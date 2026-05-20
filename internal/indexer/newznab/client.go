@@ -3,6 +3,7 @@
 package newznab
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"fmt"
@@ -240,25 +241,47 @@ func authorSurname(author string) string {
 	return fields[len(fields)-1]
 }
 
-// titleHasRelevantResult returns true when at least one result's title
-// contains at least one significant word from queryTitle (as determined by
-// SigWords). A false return means the indexer likely returned a fixed
-// category feed that ignored the search params (Jackett/AudioBookBay
-// pattern), so callers should fall through to text-search tiers.
+// titleHasRelevantResult returns true when *every* significant word of
+// queryTitle (as determined by SigWords) appears in at least one result —
+// the words may be spread across different results, not all in one. A false
+// return means the indexer likely returned a fixed category feed that ignored
+// the search params (Jackett/AudioBookBay pattern), so callers should fall
+// through to text-search tiers.
+//
+// The earlier "any sig-word in any result" check was too weak: for a query
+// like "Life Ascending", the common word "life" coincidentally matches an
+// unrelated title in AudioBookBay's canned feed, so the whole canned feed was
+// accepted as a tier-1 hit. The downstream relevance filter then rejected all
+// of it, leaving the user with zero results instead of falling through (#699).
+// A genuine t=book response covers every query word; a canned feed only
+// matches words by coincidence and rarely covers all of them. The failure
+// mode of this stricter check is a benign false negative — fall through to
+// text-search tiers — which beats a false positive that empties the results.
+//
+// Single-sig-word titles (e.g. "Dune") remain inherently ambiguous: there is
+// no second word to disambiguate a coincidental canned-feed match.
 func titleHasRelevantResult(queryTitle string, results []SearchResult) bool {
 	words := SigWords(queryTitle)
 	if len(words) == 0 {
 		return true // query has no checkable words; assume results are valid
 	}
-	for _, r := range results {
-		combined := strings.ToLower(r.Title + " " + r.BookTitle)
-		for _, w := range words {
-			if strings.Contains(combined, w) {
-				return true
+	combined := make([]string, len(results))
+	for i, r := range results {
+		combined[i] = strings.ToLower(r.Title + " " + r.BookTitle)
+	}
+	for _, w := range words {
+		found := false
+		for _, c := range combined {
+			if strings.Contains(c, w) {
+				found = true
+				break
 			}
 		}
+		if !found {
+			return false
+		}
 	}
-	return false
+	return true
 }
 
 // Test verifies the indexer is reachable and the API key is valid.
@@ -411,12 +434,69 @@ func (c *Client) getXML(ctx context.Context, rawURL string, target interface{}) 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	if err != nil {
+		return fmt.Errorf("read indexer response: %w", err)
 	}
 
-	return xml.NewDecoder(resp.Body).Decode(target)
+	// Newznab/Torznab indexers report failures (bad API key, rate limit, site
+	// disabled, …) as a top-level <error code="N" description="..."/> element
+	// instead of an <rss> feed — on either a 2xx or an error status. Surface
+	// the indexer's own code and description rather than leaking the XML
+	// decoder's unhelpful "expected element type <rss> but have <error>".
+	if nzErr := parseNewznabError(body); nzErr != nil {
+		return nzErr
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		snippet := strings.TrimSpace(string(body))
+		if len(snippet) > 512 {
+			snippet = snippet[:512]
+		}
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, snippet)
+	}
+
+	return xml.Unmarshal(body, target)
+}
+
+// parseNewznabError returns a non-nil error when body is a Newznab/Torznab
+// <error> response, formatted with the indexer's own code and description.
+// It returns nil for any other document — including a normal <rss> feed or
+// non-XML content — so callers proceed with their usual decoding.
+func parseNewznabError(body []byte) error {
+	dec := xml.NewDecoder(bytes.NewReader(body))
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil // not XML, or no start element — let the caller decide
+		}
+		start, ok := tok.(xml.StartElement)
+		if !ok {
+			continue // skip the prolog, comments, and whitespace
+		}
+		if !strings.EqualFold(start.Name.Local, "error") {
+			return nil // root is <rss> or something else; not an error response
+		}
+		var code, desc string
+		for _, attr := range start.Attr {
+			switch strings.ToLower(attr.Name.Local) {
+			case "code":
+				code = strings.TrimSpace(attr.Value)
+			case "description":
+				desc = strings.TrimSpace(attr.Value)
+			}
+		}
+		switch {
+		case code == "" && desc == "":
+			return nil // a bare <error/> tells us nothing actionable
+		case desc == "":
+			return fmt.Errorf("indexer error %s", code)
+		case code == "":
+			return fmt.Errorf("indexer error: %s", desc)
+		default:
+			return fmt.Errorf("indexer error %s: %s", code, desc)
+		}
+	}
 }
 
 func (c *Client) buildURL(command string, params map[string]string) (string, error) {

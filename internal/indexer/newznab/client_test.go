@@ -540,6 +540,65 @@ func TestGetXML_SurfacesNon200(t *testing.T) {
 	}
 }
 
+// TestParseNewznabError verifies the helper recognises Newznab/Torznab
+// <error> responses and leaves normal documents alone (#698).
+func TestParseNewznabError(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string // substring expected in the error; "" means nil error
+	}{
+		{"rate limit", `<?xml version="1.0" encoding="UTF-8"?><error code="500" description="Request limit reached"/>`, "500"},
+		{"bad credentials", `<error code="100" description="Incorrect user credentials"/>`, "Incorrect user credentials"},
+		{"description only", `<error description="site offline"/>`, "site offline"},
+		{"code only", `<error code="910"/>`, "910"},
+		{"normal rss feed", `<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`, ""},
+		{"non-xml body", `not xml at all`, ""},
+		{"bare error element", `<error/>`, ""},
+		{"empty body", ``, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := parseNewznabError([]byte(tc.body))
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("expected nil error, got %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not contain %q", err.Error(), tc.want)
+			}
+		})
+	}
+}
+
+// TestSearch_SurfacesNewznabError verifies a Newznab <error> response — which
+// indexers return with HTTP 200 — is surfaced with the indexer's own code and
+// description rather than the raw XML decoder error (#698).
+func TestSearch_SurfacesNewznabError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><error code="500" description="Request limit reached"/>`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "testkey")
+	_, err := c.Search(context.Background(), "anything", nil)
+	if err == nil {
+		t.Fatal("expected error on <error> response, got nil")
+	}
+	if !strings.Contains(err.Error(), "500") || !strings.Contains(err.Error(), "Request limit reached") {
+		t.Errorf("expected error with indexer code and description, got %v", err)
+	}
+	if strings.Contains(err.Error(), "expected element type") {
+		t.Errorf("raw XML decoder error leaked instead of being translated: %v", err)
+	}
+}
+
 // TestBuildURL_StripsStaleQueryParams verifies that baseURL-embedded
 // query params for t/q/cat/limit are wiped before new ones are added,
 // preventing duplicated keys like t=caps&t=search.
@@ -777,6 +836,27 @@ func TestTitleHasRelevantResult(t *testing.T) {
 	withBookTitle := []SearchResult{{Title: "random release", BookTitle: "Life Ascending"}}
 	if !titleHasRelevantResult("Life Ascending", withBookTitle) {
 		t.Error("expected true when BookTitle contains query word")
+	}
+
+	// Regression for #699: a canned feed where one common query word ("life")
+	// coincidentally appears but the other ("ascending") is absent from every
+	// result must be rejected, not accepted on the strength of the single hit.
+	cannedPartialMatch := []SearchResult{
+		{Title: "This Precious Life - Tibetan Buddhist Teachings"},
+		{Title: "Bring Me the Rhinoceros - Zen Koans That Will Save Your Life"},
+		{Title: "The Beginning After The End, 12"},
+	}
+	if titleHasRelevantResult("Life Ascending", cannedPartialMatch) {
+		t.Error("expected false: 'ascending' is absent from every result (#699)")
+	}
+
+	// Sig-words spread across different results (not all in one) still count.
+	spread := []SearchResult{
+		{Title: "A book about Life"},
+		{Title: "Something Ascending into the sky"},
+	}
+	if !titleHasRelevantResult("Life Ascending", spread) {
+		t.Error("expected true when each sig-word appears in some result")
 	}
 }
 

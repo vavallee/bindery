@@ -6,6 +6,13 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.12.2] — 2026-05-20
+
+### Fixed
+
+- **Searches for titles containing a common word no longer return zero results** (#699) — The tier-1 canned-feed detector accepted a Jackett/AudioBookBay category feed whenever *any* significant query word coincidentally appeared in *any* result. For a title like *Life Ascending*, the common word "life" matched an unrelated canned title, so the canned feed was accepted as a tier-1 hit and the relevance filter then rejected all of it — leaving the user with zero results instead of falling through to text-search tiers. The detector now requires every significant query word to appear in at least one result before accepting a tier-1 response.
+- **Newznab/Torznab indexer errors are surfaced with their own code and description** (#698) — When an indexer returns a top-level `<error code="N" description="...">` element (bad API key, rate limit, site disabled, …) instead of an `<rss>` feed, Bindery reported the raw XML decoder error `expected element type <rss> but have <error>`. The Search debug panel now shows the indexer's actual error, e.g. `indexer error 500: Request limit reached`.
+
 ## [v1.12.1] — 2026-05-19
 
 ### Added
