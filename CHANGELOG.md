@@ -6,6 +6,27 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Security
+
+- **API-key regeneration and OIDC provider management now require an admin account** (#717) — `POST /auth/apikey/regenerate` and `PUT /auth/oidc/providers` sat outside the admin-only route group, so any signed-in non-admin user could rewrite OIDC config or regenerate the API key and read it back — and the API key grants admin access. Both routes are now behind the admin check.
+- **NZBGet downloads validate the NZB URL before fetching; SABnzbd API key redacted from errors** (#724) — the NZBGet NZB fetch now runs the same outbound-request (SSRF) policy check qBittorrent already applied, and the SABnzbd API key is no longer interpolated into error messages.
+- **Session cookies and CSRF tokens fail closed on a missing or too-short signing secret** (#726) — a missing or under-32-byte session secret previously still produced "valid" HMAC tokens; signing and verification now reject it instead.
+
+### Fixed
+
+- **Saving OIDC provider settings no longer breaks login** (#716) — the provider reload ran on the already-cancelled request context, so discovery aborted and every provider was marked failed until a later retry. It now runs on a non-cancelled context.
+- **Scheduled jobs no longer overlap themselves** (#718) — a slow run (e.g. `check-downloads` on slow storage) is now skipped rather than run concurrently with the next tick, which previously could double-import a download. Two swallowed scheduler errors are now surfaced.
+- **The hardlink import mode is reachable again** (#719) — the same-filesystem check stat'd the not-yet-created destination path and always failed, so first imports silently fell back to copying (doubling disk use) even when the download and library shared a filesystem.
+- **Import retries record a blocked status correctly** (#720) — the `import-failed → blocked` and `→ importing` state transitions were rejected, so a retry that hit a blocking condition burned the retry counter with no state change or recorded reason.
+- **The search debug panel no longer shows fabricated relevance rejections** (#721) — the debug relevance path skipped the query-title normalization the live search applies, so titles with edition qualifiers like "(German Edition)" were reported as dropped when the real search kept them.
+- **Removing or demoting an admin is now atomic** (#722) — two simultaneous requests could each pass the "is there another admin?" check and both proceed, leaving the instance with zero admins.
+- **Approve, Fill series, and blocklist actions are now idempotent** (#723) — re-approving an already-imported Audiobookshelf review item no longer re-imports the book, "Fill series" no longer re-grabs books already downloading or downloaded, and blocklisting the same release twice no longer creates duplicate rows.
+- **Download-client tracking and concurrency fixes** (#725) — a SABnzbd job accepted without a trackable NZO id now surfaces as an error instead of becoming silently untrackable; concurrent torrent adds to one Deluge client no longer cross-assign info-hashes; and a qBittorrent session-refresh retry now checks the response status instead of decoding an error page as data.
+
+### Changed
+
+- **Torrents reported as having missing files now show as errored in the queue** (#725) — the queue's error-state check now recognises qBittorrent's `missingFiles` status.
+
 ## [v1.12.2] — 2026-05-20
 
 ### Fixed
