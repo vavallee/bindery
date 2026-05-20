@@ -172,7 +172,9 @@ func (h *AuthHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	}
 	u.Role = "admin"
 	// Log the user in immediately.
-	h.issueSession(w, r, ctx, u.ID, true)
+	if !h.issueSession(w, r, ctx, u.ID, true) {
+		return
+	}
 	slog.Info("first-run setup complete", "username", u.Username)
 	writeOK(w, map[string]any{"ok": true})
 }
@@ -205,7 +207,9 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.limiter.Reset(ip)
-	h.issueSession(w, r, ctx, u.ID, req.RememberMe)
+	if !h.issueSession(w, r, ctx, u.ID, req.RememberMe) {
+		return
+	}
 	writeOK(w, map[string]any{"ok": true, "username": u.Username})
 }
 
@@ -392,13 +396,24 @@ func (h *AuthHandler) sessionSecret(ctx context.Context) []byte {
 	return []byte(s.Value)
 }
 
-func (h *AuthHandler) issueSession(w http.ResponseWriter, r *http.Request, ctx context.Context, userID int64, rememberMe bool) {
+// issueSession signs and sets the session cookie. It returns true on success.
+// On failure it writes a 500 error response and returns false — callers must
+// return immediately without writing any further response.
+func (h *AuthHandler) issueSession(w http.ResponseWriter, r *http.Request, ctx context.Context, userID int64, rememberMe bool) bool {
 	dur := auth.SessionDurationShort
 	if rememberMe {
 		dur = auth.SessionDuration
 	}
 	exp := time.Now().Add(dur)
-	value := auth.SignSession(h.sessionSecret(ctx), userID, exp)
+	value, err := auth.SignSession(h.sessionSecret(ctx), userID, exp)
+	if err != nil {
+		// Secret is absent or too short — fail closed rather than issue a
+		// forgeable token. This should never happen in practice because
+		// bootstrapAuth seeds a 32-byte secret before any requests are served,
+		// and the server exits if bootstrapAuth fails.
+		writeErr(w, http.StatusInternalServerError, "session signing unavailable")
+		return false
+	}
 
 	var secure bool
 	switch CookieSecureMode() {
@@ -423,6 +438,7 @@ func (h *AuthHandler) issueSession(w http.ResponseWriter, r *http.Request, ctx c
 		cookie.Expires = exp
 	}
 	http.SetCookie(w, cookie)
+	return true
 }
 
 func (h *AuthHandler) listAllUsers(ctx context.Context) ([]*db.User, error) {

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"testing"
@@ -47,10 +48,16 @@ func TestVerifyPasswordRejectsMalformed(t *testing.T) {
 	}
 }
 
+// testSecret32 is a 32-byte secret suitable for session signing in tests.
+var testSecret32 = []byte("test-secret-32bytes-for-testing!")
+
 func TestSessionSignAndVerifyRoundtrip(t *testing.T) {
-	secret := []byte("test-secret-not-for-production")
+	secret := testSecret32
 	exp := time.Now().Add(time.Hour)
-	cookie := SignSession(secret, 42, exp)
+	cookie, err := SignSession(secret, 42, exp)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
 	uid, err := VerifySession(secret, cookie)
 	if err != nil {
 		t.Fatalf("verify: %v", err)
@@ -61,8 +68,11 @@ func TestSessionSignAndVerifyRoundtrip(t *testing.T) {
 }
 
 func TestSessionRejectsTamperedPayload(t *testing.T) {
-	secret := []byte("test-secret-not-for-production")
-	cookie := SignSession(secret, 1, time.Now().Add(time.Hour))
+	secret := testSecret32
+	cookie, err := SignSession(secret, 1, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
 	// Swap the user id in the payload without re-signing.
 	tampered := "v1.9999." + cookie[len("v1.1."):]
 	if _, err := VerifySession(secret, tampered); err == nil {
@@ -71,17 +81,65 @@ func TestSessionRejectsTamperedPayload(t *testing.T) {
 }
 
 func TestSessionRejectsWrongSecret(t *testing.T) {
-	cookie := SignSession([]byte("one"), 1, time.Now().Add(time.Hour))
-	if _, err := VerifySession([]byte("two"), cookie); err == nil {
+	secretA := []byte("secret-A-for-signing-32bytes!!!!") // 32 bytes
+	secretB := []byte("secret-B-for-verify-32bytes!!!!")  // 32 bytes
+	cookie, err := SignSession(secretA, 1, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if _, err := VerifySession(secretB, cookie); err == nil {
 		t.Fatal("verify accepted cookie signed with a different secret")
 	}
 }
 
 func TestSessionRejectsExpired(t *testing.T) {
-	secret := []byte("s")
-	cookie := SignSession(secret, 1, time.Now().Add(-time.Second))
+	secret := testSecret32
+	cookie, err := SignSession(secret, 1, time.Now().Add(-time.Second))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
 	if _, err := VerifySession(secret, cookie); err == nil {
 		t.Fatal("verify accepted an expired cookie")
+	}
+}
+
+func TestSessionRejectsShortSecret(t *testing.T) {
+	if _, err := SignSession([]byte("tooshort"), 1, time.Now().Add(time.Hour)); err == nil {
+		t.Fatal("SignSession must reject a secret shorter than 32 bytes")
+	}
+	if _, err := VerifySession([]byte("tooshort"), "v1.1.9999999999.AAAA"); err == nil {
+		t.Fatal("VerifySession must reject a secret shorter than 32 bytes")
+	}
+	if _, err := VerifySession(nil, "v1.1.9999999999.AAAA"); err == nil {
+		t.Fatal("VerifySession must reject a nil secret")
+	}
+}
+
+func TestSessionSentinelErrors(t *testing.T) {
+	secret := testSecret32
+
+	// Expired cookie must wrap ErrSessionExpired.
+	cookie, err := SignSession(secret, 1, time.Now().Add(-time.Second))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	_, err = VerifySession(secret, cookie)
+	if !errors.Is(err, ErrSessionExpired) {
+		t.Errorf("expired cookie: want errors.Is(err, ErrSessionExpired); got %v", err)
+	}
+
+	// Tampered cookie must wrap ErrSessionInvalid.
+	good, _ := SignSession(secret, 1, time.Now().Add(time.Hour))
+	tampered := "v1.9999." + good[len("v1.1."):]
+	_, err = VerifySession(secret, tampered)
+	if !errors.Is(err, ErrSessionInvalid) {
+		t.Errorf("tampered cookie: want errors.Is(err, ErrSessionInvalid); got %v", err)
+	}
+
+	// Short secret must wrap ErrSessionInvalid.
+	_, err = VerifySession([]byte("short"), good)
+	if !errors.Is(err, ErrSessionInvalid) {
+		t.Errorf("short secret: want errors.Is(err, ErrSessionInvalid); got %v", err)
 	}
 }
 
@@ -275,7 +333,7 @@ func TestMiddlewareAcceptsAPIKeyInQuery(t *testing.T) {
 }
 
 func TestMiddlewareAcceptsValidSessionCookie(t *testing.T) {
-	secret := []byte("hmac-secret")
+	secret := testSecret32
 	p := &fakeProvider{mode: ModeEnabled, secret: secret}
 	mw := Middleware(p)
 	var gotUID int64
@@ -283,7 +341,11 @@ func TestMiddlewareAcceptsValidSessionCookie(t *testing.T) {
 		gotUID = UserIDFromContext(r.Context())
 	}))
 	req, _ := http.NewRequest("GET", "/api/v1/author", nil)
-	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: SignSession(secret, 7, time.Now().Add(time.Hour))})
+	cookie, err := SignSession(secret, 7, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: cookie})
 	h.ServeHTTP(nopWriter{}, req)
 	if gotUID != 7 {
 		t.Errorf("uid = %d; want 7", gotUID)
@@ -445,8 +507,11 @@ func TestRequireCSRFToken_AllowsUnauthPath(t *testing.T) {
 }
 
 func TestRequireCSRFToken_BlocksMutationWithSessionButNoToken(t *testing.T) {
-	secret := []byte("s")
-	sessionVal := SignSession(secret, 1, time.Now().Add(time.Hour))
+	secret := testSecret32
+	sessionVal, err := SignSession(secret, 1, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
 	mw := RequireCSRFToken(func() []byte { return secret })
 	called := false
 	h := mw(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true }))
@@ -477,8 +542,11 @@ func TestRequireCSRFToken_AllowsMutationWithAPIKey(t *testing.T) {
 }
 
 func TestRequireCSRFToken_AllowsMutationWithValidToken(t *testing.T) {
-	secret := []byte("test-secret")
-	sessionVal := SignSession(secret, 1, time.Now().Add(time.Hour))
+	secret := testSecret32
+	sessionVal, err := SignSession(secret, 1, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
 	token := MakeCSRFToken(secret, sessionVal)
 
 	mw := RequireCSRFToken(func() []byte { return secret })
@@ -494,8 +562,11 @@ func TestRequireCSRFToken_AllowsMutationWithValidToken(t *testing.T) {
 }
 
 func TestRequireCSRFToken_BlocksMutationWithWrongToken(t *testing.T) {
-	secret := []byte("test-secret")
-	sessionVal := SignSession(secret, 1, time.Now().Add(time.Hour))
+	secret := testSecret32
+	sessionVal, err := SignSession(secret, 1, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
 
 	mw := RequireCSRFToken(func() []byte { return secret })
 	called := false
@@ -587,8 +658,11 @@ func buildCSRFStack(p Provider, secret []byte, inner http.Handler) http.Handler 
 	)
 }
 
+// stackSecret32 is a 32-byte secret for CSRF stack tests.
+var stackSecret32 = []byte("stack-secret-32-bytes-for-tests!")
+
 func TestCSRFStack_APIKeyRequestPassesAllGuards(t *testing.T) {
-	secret := []byte("stack-secret")
+	secret := stackSecret32
 	p := &fakeProvider{mode: ModeEnabled, apiKey: "harpoon-key", secret: secret}
 	called := false
 	stack := buildCSRFStack(p, secret, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -611,7 +685,7 @@ func TestCSRFStack_APIKeyRequestPassesAllGuards(t *testing.T) {
 }
 
 func TestCSRFStack_APIKeyGrabPassesAllGuards(t *testing.T) {
-	secret := []byte("stack-secret")
+	secret := stackSecret32
 	p := &fakeProvider{mode: ModeEnabled, apiKey: "harpoon-key", secret: secret}
 	called := false
 	stack := buildCSRFStack(p, secret, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -665,7 +739,7 @@ func TestRequireXRequestedWith_AllowsSetupEndpoint(t *testing.T) {
 // Regression test for Bug 11: API key auth bypasses CSRF but then fails at
 // the role check with a misleading "admin role required" 403.
 func TestAPIKeyAuthGrantsAdminRole(t *testing.T) {
-	secret := []byte("stack-secret")
+	secret := stackSecret32
 	p := &fakeProvider{mode: ModeEnabled, apiKey: "my-api-key", secret: secret}
 
 	called := false
@@ -688,7 +762,7 @@ func TestAPIKeyAuthGrantsAdminRole(t *testing.T) {
 // TestAPIKeyAuthRoleVisibleInContext verifies that the admin role is present in
 // the request context when API key auth is used, so handlers can inspect it.
 func TestAPIKeyAuthRoleVisibleInContext(t *testing.T) {
-	secret := []byte("stack-secret")
+	secret := stackSecret32
 	p := &fakeProvider{mode: ModeEnabled, apiKey: "my-api-key", secret: secret}
 
 	var gotRole string
@@ -705,7 +779,7 @@ func TestAPIKeyAuthRoleVisibleInContext(t *testing.T) {
 }
 
 func TestCSRFStack_BrowserSessionWithoutCSRFTokenIsRejected(t *testing.T) {
-	secret := []byte("stack-secret")
+	secret := stackSecret32
 	p := &fakeProvider{mode: ModeEnabled, apiKey: "harpoon-key", secret: secret}
 	called := false
 	stack := buildCSRFStack(p, secret, http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
@@ -713,7 +787,10 @@ func TestCSRFStack_BrowserSessionWithoutCSRFTokenIsRejected(t *testing.T) {
 	}))
 
 	// Browser session cookie present but no CSRF token — CSRF attack scenario.
-	sessionVal := SignSession(secret, 1, time.Now().Add(time.Hour))
+	sessionVal, err := SignSession(secret, 1, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
 	req, _ := http.NewRequest("POST", "/api/v1/queue/grab", nil)
 	req.Header.Set("X-Requested-With", "bindery-ui")
 	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: sessionVal})
