@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -64,6 +65,120 @@ func TestGetByEmail_Empty(t *testing.T) {
 	}
 	if got != nil {
 		t.Errorf("expected nil for empty email, got %+v", got)
+	}
+}
+
+// TestDeleteLastAdmin verifies that deleting the sole admin is rejected.
+func TestDeleteLastAdmin(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewUserRepo(database)
+
+	admin, err := repo.Create(ctx, "root", "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.PromoteFirstUser(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	err = repo.Delete(ctx, admin.ID)
+	if err == nil {
+		t.Fatal("expected error when deleting last admin, got nil")
+	}
+	if !strings.Contains(err.Error(), "last admin") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestDeleteLastAdmin_TwoAdmins verifies that deleting one of two admins succeeds.
+func TestDeleteLastAdmin_TwoAdmins(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewUserRepo(database)
+
+	a, err := repo.Create(ctx, "alice", "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.PromoteFirstUser(ctx); err != nil {
+		t.Fatal(err)
+	}
+	b, err := repo.Create(ctx, "bob", "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetRole(ctx, b.ID, "admin"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.Delete(ctx, a.ID); err != nil {
+		t.Errorf("expected success deleting one of two admins: %v", err)
+	}
+}
+
+// TestSetRoleLastAdmin verifies that demoting the sole admin is rejected.
+func TestSetRoleLastAdmin(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewUserRepo(database)
+
+	admin, err := repo.Create(ctx, "root", "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.PromoteFirstUser(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	err = repo.SetRole(ctx, admin.ID, "user")
+	if err == nil {
+		t.Fatal("expected error when demoting last admin, got nil")
+	}
+	if !strings.Contains(err.Error(), "last admin") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestSetRoleLastAdmin_TwoAdmins verifies that demoting one of two admins succeeds.
+func TestSetRoleLastAdmin_TwoAdmins(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewUserRepo(database)
+
+	a, err := repo.Create(ctx, "alice", "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.PromoteFirstUser(ctx); err != nil {
+		t.Fatal(err)
+	}
+	b, err := repo.Create(ctx, "bob", "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetRole(ctx, b.ID, "admin"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.SetRole(ctx, a.ID, "user"); err != nil {
+		t.Errorf("expected success demoting one of two admins: %v", err)
 	}
 }
 

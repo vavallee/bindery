@@ -197,53 +197,85 @@ func (r *UserRepo) List(ctx context.Context) ([]User, error) {
 }
 
 // Delete removes a user by id. Returns an error if trying to delete the last admin.
+//
+// The last-admin guard (COUNT check + DELETE) runs inside a single transaction
+// to prevent a TOCTOU race where two concurrent callers both pass the count
+// check and both proceed, leaving zero admins.
 func (r *UserRepo) Delete(ctx context.Context, id int64) error {
-	// Guard: refuse to delete the last admin.
-	var adminCount int
-	if err := r.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM users WHERE role='admin' AND id != ?", id,
-	).Scan(&adminCount); err != nil {
-		return fmt.Errorf("check admin count: %w", err)
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
 	}
+	defer tx.Rollback() //nolint:errcheck
+
 	// Check whether the target is an admin.
 	var targetRole string
-	if err := r.db.QueryRowContext(ctx, "SELECT role FROM users WHERE id=?", id).Scan(&targetRole); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT role FROM users WHERE id=?", id).Scan(&targetRole); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil // already gone
 		}
 		return fmt.Errorf("get user role: %w", err)
 	}
-	if targetRole == "admin" && adminCount == 0 {
-		return fmt.Errorf("cannot delete the last admin user")
-	}
-	_, err := r.db.ExecContext(ctx, "DELETE FROM users WHERE id=?", id)
-	return err
-}
 
-// SetRole changes a user's role to "admin" or "user".
-func (r *UserRepo) SetRole(ctx context.Context, id int64, role string) error {
-	if role != "admin" && role != "user" {
-		return fmt.Errorf("invalid role %q: must be admin or user", role)
-	}
-	// Guard: refuse to demote the last admin.
-	if role == "user" {
+	if targetRole == "admin" {
+		// Guard: refuse to delete the last admin — count other admins while
+		// still inside the transaction so no concurrent mutation can sneak in.
 		var adminCount int
-		if err := r.db.QueryRowContext(ctx,
+		if err := tx.QueryRowContext(ctx,
 			"SELECT COUNT(*) FROM users WHERE role='admin' AND id != ?", id,
 		).Scan(&adminCount); err != nil {
 			return fmt.Errorf("check admin count: %w", err)
 		}
-		var targetRole string
-		if err := r.db.QueryRowContext(ctx, "SELECT role FROM users WHERE id=?", id).Scan(&targetRole); err != nil {
-			return fmt.Errorf("get user role: %w", err)
-		}
-		if targetRole == "admin" && adminCount == 0 {
-			return fmt.Errorf("cannot demote the last admin user")
+		if adminCount == 0 {
+			return fmt.Errorf("cannot delete the last admin user")
 		}
 	}
-	_, err := r.db.ExecContext(ctx,
-		"UPDATE users SET role=?, updated_at=? WHERE id=?", role, time.Now().UTC(), id)
-	return err
+
+	if _, err := tx.ExecContext(ctx, "DELETE FROM users WHERE id=?", id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// SetRole changes a user's role to "admin" or "user".
+//
+// When demoting an admin to "user", the last-admin guard (COUNT check + UPDATE)
+// runs inside a single transaction to prevent a TOCTOU race.
+func (r *UserRepo) SetRole(ctx context.Context, id int64, role string) error {
+	if role != "admin" && role != "user" {
+		return fmt.Errorf("invalid role %q: must be admin or user", role)
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// Guard: refuse to demote the last admin.
+	if role == "user" {
+		var targetRole string
+		if err := tx.QueryRowContext(ctx, "SELECT role FROM users WHERE id=?", id).Scan(&targetRole); err != nil {
+			return fmt.Errorf("get user role: %w", err)
+		}
+		if targetRole == "admin" {
+			var adminCount int
+			if err := tx.QueryRowContext(ctx,
+				"SELECT COUNT(*) FROM users WHERE role='admin' AND id != ?", id,
+			).Scan(&adminCount); err != nil {
+				return fmt.Errorf("check admin count: %w", err)
+			}
+			if adminCount == 0 {
+				return fmt.Errorf("cannot demote the last admin user")
+			}
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE users SET role=?, updated_at=? WHERE id=?", role, time.Now().UTC(), id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // PromoteFirstUser sets role='admin' on the user with the lowest id, if any.
