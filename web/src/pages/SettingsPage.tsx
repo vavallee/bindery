@@ -11,6 +11,8 @@ import { useAuth } from '../auth/AuthContext'
 
 type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'grimmory'
 
+const ADMIN_TABS: Tab[] = ['indexers', 'clients', 'notifications', 'quality', 'metadata', 'import', 'rootfolders', 'logs', 'blocklist', 'calibre', 'abs', 'grimmory']
+
 const inputCls = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600'
 const absReviewResultLimit = 10
 
@@ -123,6 +125,14 @@ export default function SettingsPage() {
     document.title = 'Settings · Bindery'
     return () => { document.title = 'Bindery' }
   }, [])
+
+  // Redirect non-admins back to the general tab if they somehow navigate to an
+  // admin-only tab (e.g. via direct link or stale state).
+  useEffect(() => {
+    if (!isAdmin && ADMIN_TABS.includes(tab)) {
+      setTab('general')
+    }
+  }, [isAdmin, tab])
 
   useEffect(() => {
     if (tab === 'notifications') api.listNotifications().then(setNotifications).catch(console.error)
@@ -2509,6 +2519,7 @@ function AddHardcoverListForm({ onSaved, onCancel }: { onSaved: (il: ImportList)
 
 function GeneralTab() {
   const { t } = useTranslation()
+  const { isAdmin } = useAuth()
   const [settings, setSettings] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<string | null>(null)
@@ -2736,6 +2747,7 @@ function GeneralTab() {
         </div>
       </section>
 
+      {isAdmin && (<>
       {/* Naming */}
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.fileNaming')}</h3>
@@ -3362,6 +3374,7 @@ function GeneralTab() {
           </p>
         </div>
       </section>
+      </>)}
     </div>
   )
 }
