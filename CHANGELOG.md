@@ -6,6 +6,12 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.13.0] — 2026-05-20
+
+### Added
+
+- **Session-secret rotation** (#746) — an admin can rotate the session-signing secret from Settings → Security. Rotation keeps the previous secret valid for a one-rotation window so existing logins are not dropped immediately; rotating twice fully invalidates sessions signed with the old secret.
+
 ### Security
 
 - **OIDC account-linking now requires a verified email and enforces `AllowedGroups`** (#736) — email-based linking of an OIDC identity to an existing account is rejected unless the IdP marks the email verified, closing an account-takeover vector; a provider's configured `AllowedGroups` is now actually enforced (login is refused when the user belongs to none of them).
@@ -24,10 +30,12 @@ All notable changes to Bindery are documented here. Format loosely follows
 - **Deleting one format of a dual-format book no longer removes the other** (#742) — a format-scoped file delete only removes files of that format, not the same-named sibling of the other format.
 - **Audiobookshelf settings are saved atomically** (#742) — the ABS config is written in a single transaction, so a mid-save failure no longer leaves a half-applied configuration.
 - **Book status updates are validated** (#742) — the API rejects an unknown `status` value instead of writing it verbatim.
+- **qBittorrent categories that save to a sub-folder of the download directory are accepted** (#744) — the category-path health check no longer requires the category's save path to equal the configured download directory; a path at or under it is valid. A category that saves entirely outside the download directory still warns.
 
 ### Changed
 
 - **Removing a queue item keeps the downloaded files by default** (#742) — the queue "remove" action no longer deletes data and stops seeding unless you explicitly opt in via a checkbox in the confirmation dialog.
+- **Non-admin users no longer see admin-only Settings sections** (#745) — the Settings page hides sections a non-admin account cannot use (download clients, indexers, auth, system, …); a non-admin still sees Appearance and can still change their own password. Backend authorization is unchanged.
 
 ## [v1.12.3] — 2026-05-20
 
