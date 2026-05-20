@@ -161,6 +161,21 @@ func (c *Client) DeleteHistory(ctx context.Context, nzoID string, deleteFiles bo
 	return c.apiCall(ctx, params, &resp)
 }
 
+// redactAPIURL returns a copy of rawURL with the "apikey" query parameter
+// replaced by "REDACTED", safe for use in error messages and logs.
+func redactAPIURL(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "[unparseable url]"
+	}
+	q := parsed.Query()
+	if q.Get("apikey") != "" {
+		q.Set("apikey", "REDACTED")
+		parsed.RawQuery = q.Encode()
+	}
+	return parsed.String()
+}
+
 func (c *Client) apiCall(ctx context.Context, params url.Values, target interface{}) error {
 	params.Set("apikey", c.apiKey)
 	params.Set("output", "json")
@@ -168,12 +183,12 @@ func (c *Client) apiCall(ctx context.Context, params url.Values, target interfac
 	u := fmt.Sprintf("%s/api?%s", c.baseURL, params.Encode())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("build request for %s: %w", redactAPIURL(u), err)
 	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("request to %s: %w", redactAPIURL(u), err)
 	}
 	defer resp.Body.Close()
 

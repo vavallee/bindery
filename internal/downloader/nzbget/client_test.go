@@ -94,6 +94,11 @@ func TestTest_EmptyVersion(t *testing.T) {
 
 const testNZBContent = `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE nzb PUBLIC "-//newzBin//DTD NZB 1.1//EN" "http://www.newzbin.com/DTD/nzb/nzb-1.1.dtd"><nzb></nzb>`
 
+// allowNZBFetch bypasses the SSRF guard for loopback test servers.
+func allowNZBFetch(c *Client) {
+	c.validateNZBURL = func(string) error { return nil }
+}
+
 // TestAdd verifies that Add fetches NZB content from the indexer and submits it
 // as base64 to NZBGet's append RPC (rather than sending a URL for NZBGet to
 // fetch itself, which fails when NZBGet can't reach the indexer).
@@ -114,6 +119,7 @@ func TestAdd(t *testing.T) {
 
 	host, port := serverHostPort(t, nzbgetSrv.URL)
 	c := New(host, port, "user", "pass", "", false)
+	allowNZBFetch(c)
 
 	id, err := c.Add(context.Background(), indexerSrv.URL+"/file.nzb", "Test Book", "books", 0)
 	if err != nil {
@@ -159,6 +165,7 @@ func TestAdd_Rejected(t *testing.T) {
 
 	host, port := serverHostPort(t, nzbgetSrv.URL)
 	c := New(host, port, "", "", "", false)
+	allowNZBFetch(c)
 
 	_, err := c.Add(context.Background(), indexerSrv.URL+"/bad.nzb", "Bad NZB", "books", 0)
 	if err == nil {
@@ -184,6 +191,7 @@ func TestAdd_FetchFailure(t *testing.T) {
 
 	host, port := serverHostPort(t, nzbgetSrv.URL)
 	c := New(host, port, "", "", "", false)
+	allowNZBFetch(c)
 
 	_, err := c.Add(context.Background(), indexerSrv.URL+"/file.nzb", "Book", "books", 0)
 	if err == nil {
@@ -191,6 +199,27 @@ func TestAdd_FetchFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "401") {
 		t.Errorf("expected HTTP 401 in error, got: %v", err)
+	}
+}
+
+// TestAdd_SSRFBlocked verifies that fetchNZBContent rejects loopback/private URLs
+// when the SSRF guard is active (i.e. not bypassed for tests).
+func TestAdd_SSRFBlocked(t *testing.T) {
+	nzbgetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("NZBGet must not be called when SSRF guard blocks the indexer URL")
+	}))
+	defer nzbgetSrv.Close()
+
+	host, port := serverHostPort(t, nzbgetSrv.URL)
+	c := New(host, port, "", "", "", false)
+	// Do NOT call allowNZBFetch — the guard must be active.
+
+	_, err := c.Add(context.Background(), "http://127.0.0.1:9999/file.nzb", "Book", "books", 0)
+	if err == nil {
+		t.Fatal("expected SSRF guard to block loopback URL")
+	}
+	if !strings.Contains(err.Error(), "url not allowed") {
+		t.Errorf("expected 'url not allowed' in error, got: %v", err)
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/downloader/nethint"
 	"github.com/vavallee/bindery/internal/downloader/urlbase"
+	"github.com/vavallee/bindery/internal/httpsec"
 )
 
 // Client interacts with the NZBGet JSON-RPC API.
@@ -24,8 +25,9 @@ type Client struct {
 	http      *http.Client // NZBGet JSON-RPC transport
 	fetchHTTP *http.Client // used to fetch NZB content from indexers before submission
 	// username and password for HTTP Basic auth
-	username string
-	password string
+	username       string
+	password       string
+	validateNZBURL func(string) error // injectable for tests; nil uses httpsec.ValidateOutboundURL
 }
 
 // New creates a NZBGet client. urlBase is the optional reverse-proxy
@@ -42,6 +44,9 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 		password:  password,
 		http:      &http.Client{Timeout: 15 * time.Second},
 		fetchHTTP: &http.Client{Timeout: 60 * time.Second},
+		validateNZBURL: func(raw string) error {
+			return httpsec.ValidateOutboundURL(raw, httpsec.PolicyLAN)
+		},
 	}
 }
 
@@ -84,7 +89,17 @@ func (c *Client) Add(ctx context.Context, nzbURL, name, category string, priorit
 	return resp.Result, nil
 }
 
+func (c *Client) validateNZBFetchURL(raw string) error {
+	if c.validateNZBURL == nil {
+		return httpsec.ValidateOutboundURL(raw, httpsec.PolicyLAN)
+	}
+	return c.validateNZBURL(raw)
+}
+
 func (c *Client) fetchNZBContent(ctx context.Context, nzbURL string) ([]byte, error) {
+	if err := c.validateNZBFetchURL(nzbURL); err != nil {
+		return nil, fmt.Errorf("fetch nzb: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, nzbURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("fetch nzb: %w", err)
