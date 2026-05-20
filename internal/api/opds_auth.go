@@ -33,7 +33,7 @@ func OPDSAuth(p auth.Provider, users *db.UserRepo, limiter *auth.LoginLimiter) f
 				next.ServeHTTP(w, r)
 				return
 			}
-			if mode == auth.ModeLocalOnly && auth.IsLocalRequest(r) {
+			if mode == auth.ModeLocalOnly && auth.IsLocalRequestTrusted(r, p.TrustedProxyCIDRs()) {
 				next.ServeHTTP(w, r)
 				return
 			}

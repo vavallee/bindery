@@ -2,9 +2,12 @@ package auth
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -1029,5 +1032,258 @@ func TestMiddleware_SessionAuthDoesNotSetAPIKeyFlag(t *testing.T) {
 	h.ServeHTTP(nopWriter{}, req)
 	if viaKey {
 		t.Fatal("session-cookie request must NOT set the AuthedViaAPIKey flag")
+	}
+}
+
+// --- Finding 1: X-Forwarded-For spoofing of local-only mode -------------------
+
+// mkReq builds a request whose true TCP peer is peer and which carries the
+// given X-Forwarded-For header value (empty = no header). The true peer is
+// stashed in context exactly as trustedProxyMiddleware does in production.
+func mkReq(peer, xff string) *http.Request {
+	r := &http.Request{RemoteAddr: peer, Header: http.Header{}}
+	if xff != "" {
+		r.Header.Set("X-Forwarded-For", xff)
+	}
+	r = r.WithContext(WithRealPeer(r.Context(), peer))
+	return r
+}
+
+func cidrs(t *testing.T, raw string) []*net.IPNet {
+	t.Helper()
+	return ParseTrustedProxyCIDRs(raw)
+}
+
+func TestResolveClientIP_NoTrustedProxy_IgnoresXFF(t *testing.T) {
+	// No trusted proxy: the TCP peer is the client; a forged XFF must be
+	// ignored entirely. A remote client claiming a private IP stays remote.
+	r := mkReq("8.8.8.8:443", "10.0.0.5")
+	if got := ResolveClientIP(r, nil); got != "8.8.8.8" {
+		t.Fatalf("ResolveClientIP = %q; want 8.8.8.8 (XFF must be ignored)", got)
+	}
+	if IsLocalRequestTrusted(r, nil) {
+		t.Fatal("local-only must NOT be bypassed: forged XFF, no trusted proxy")
+	}
+}
+
+func TestResolveClientIP_SpoofedLeftmostXFF_Rejected(t *testing.T) {
+	// The core CVE: a remote client prepends a forged private IP, the trusted
+	// proxy appends its own hop. chi RealIP would pick the leftmost (forged)
+	// 10.0.0.5 — we must instead resolve to the real remote client.
+	trusted := cidrs(t, "203.0.113.7") // the proxy
+	r := mkReq("203.0.113.7:55000", "10.0.0.5, 8.8.8.8")
+	if got := ResolveClientIP(r, trusted); got != "8.8.8.8" {
+		t.Fatalf("ResolveClientIP = %q; want 8.8.8.8 (real client, not forged 10.0.0.5)", got)
+	}
+	if IsLocalRequestTrusted(r, trusted) {
+		t.Fatal("local-only MUST NOT be bypassed by a forged leftmost XFF entry")
+	}
+}
+
+func TestResolveClientIP_GenuineLocalClientViaProxy(t *testing.T) {
+	// A genuine LAN client behind the trusted proxy: XFF has exactly one hop,
+	// the real private client IP. local-only should allow it.
+	trusted := cidrs(t, "203.0.113.7")
+	r := mkReq("203.0.113.7:55000", "192.168.1.50")
+	if got := ResolveClientIP(r, trusted); got != "192.168.1.50" {
+		t.Fatalf("ResolveClientIP = %q; want 192.168.1.50", got)
+	}
+	if !IsLocalRequestTrusted(r, trusted) {
+		t.Fatal("genuine LAN client behind trusted proxy should be local")
+	}
+}
+
+func TestResolveClientIP_MultipleTrustedHopsPeeled(t *testing.T) {
+	// Two chained trusted proxies. XFF: <client>, <proxyA>; TCP peer = proxyB.
+	// Both proxies are trusted and must be peeled, leaving the client.
+	trusted := cidrs(t, "203.0.113.7,203.0.113.8")
+	r := mkReq("203.0.113.8:40000", "8.8.4.4, 203.0.113.7")
+	if got := ResolveClientIP(r, trusted); got != "8.8.4.4" {
+		t.Fatalf("ResolveClientIP = %q; want 8.8.4.4", got)
+	}
+	if IsLocalRequestTrusted(r, trusted) {
+		t.Fatal("remote client behind two trusted proxies must not be local")
+	}
+}
+
+func TestResolveClientIP_UntrustedPeerXFFIgnored(t *testing.T) {
+	// The TCP peer is NOT a configured proxy: it talks to us directly, so it
+	// is the client and any XFF it sends is untrusted.
+	trusted := cidrs(t, "203.0.113.7")
+	r := mkReq("8.8.8.8:1234", "10.0.0.9")
+	if got := ResolveClientIP(r, trusted); got != "8.8.8.8" {
+		t.Fatalf("ResolveClientIP = %q; want 8.8.8.8 (untrusted peer's XFF ignored)", got)
+	}
+	if IsLocalRequestTrusted(r, trusted) {
+		t.Fatal("untrusted direct peer must not gain local via its own XFF")
+	}
+}
+
+func TestResolveClientIP_IPv6TrustedProxyAndClient(t *testing.T) {
+	// IPv6: trusted proxy is a /48; the real client is a public v6 address
+	// prepended with a forged ULA. The forged fd00:: must not win.
+	trusted := cidrs(t, "2001:db8:aaaa::/48")
+	r := mkReq("[2001:db8:aaaa::1]:9000", "fd00::1, 2606:4700:4700::1111")
+	if got := ResolveClientIP(r, trusted); got != "2606:4700:4700::1111" {
+		t.Fatalf("ResolveClientIP = %q; want 2606:4700:4700::1111 (real v6 client)", got)
+	}
+	if IsLocalRequestTrusted(r, trusted) {
+		t.Fatal("forged IPv6 ULA in XFF must not make the request local")
+	}
+
+	// Genuine IPv6 loopback client behind the trusted v6 proxy.
+	r2 := mkReq("[2001:db8:aaaa::1]:9000", "::1")
+	if !IsLocalRequestTrusted(r2, trusted) {
+		t.Fatal("genuine ::1 client behind trusted v6 proxy should be local")
+	}
+}
+
+func TestResolveClientIP_AllHopsTrusted(t *testing.T) {
+	// Every XFF hop is itself a trusted proxy (degenerate config). The
+	// outermost entry is taken as the best-effort client.
+	trusted := cidrs(t, "203.0.113.0/24")
+	r := mkReq("203.0.113.8:40000", "203.0.113.1, 203.0.113.2")
+	if got := ResolveClientIP(r, trusted); got != "203.0.113.1" {
+		t.Fatalf("ResolveClientIP = %q; want 203.0.113.1 (outermost)", got)
+	}
+}
+
+func TestResolveClientIP_GarbageHopFailsClosed(t *testing.T) {
+	// An unparseable XFF entry breaks the chain of trust; we must not keep
+	// peeling past it (that could expose a forged private IP to its left).
+	trusted := cidrs(t, "203.0.113.7")
+	r := mkReq("203.0.113.7:55000", "10.0.0.5, garbage")
+	got := ResolveClientIP(r, trusted)
+	if got != "garbage" {
+		t.Fatalf("ResolveClientIP = %q; want \"garbage\" (chain breaks, fail closed)", got)
+	}
+	if IsLocalRequestTrusted(r, trusted) {
+		t.Fatal("garbage hop must not resolve to a local address")
+	}
+}
+
+func TestIsLocalRequest_DirectLocalPeerNoXFF(t *testing.T) {
+	// Direct LAN client, no proxy, no XFF — the common local-only case.
+	r := mkReq("192.168.1.10:54321", "")
+	if !IsLocalRequestTrusted(r, nil) {
+		t.Fatal("direct LAN peer should be local")
+	}
+}
+
+// --- Finding 3: session key-id and rotation primitive ------------------------
+
+func TestSession_V2KeyIDRoundTrip(t *testing.T) {
+	secret := testSecret32
+	cookie, err := SignSession(secret, 99, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	parts := strings.Split(cookie, ".")
+	if len(parts) != 5 || parts[0] != "v2" {
+		t.Fatalf("cookie = %q; want 5-part v2 format", cookie)
+	}
+	if parts[1] != keyID(secret) {
+		t.Errorf("cookie key-id = %q; want %q", parts[1], keyID(secret))
+	}
+	uid, err := VerifySession(secret, cookie)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if uid != 99 {
+		t.Errorf("uid = %d; want 99", uid)
+	}
+}
+
+func TestSession_KeyIDChangesWithSecret(t *testing.T) {
+	a := []byte("secret-A-for-keyid-test-32bytes!!")
+	b := []byte("secret-B-for-keyid-test-32bytes!!")
+	if keyID(a) == keyID(b) {
+		t.Fatal("different secrets must produce different key-ids")
+	}
+}
+
+func TestSession_VerifyMultiAcceptsOldAndNew(t *testing.T) {
+	// Rotation window: cookies signed under the previous secret must still
+	// verify when the verifier is handed {new, old}.
+	oldSecret := []byte("old-rotation-secret-32-bytes-long")
+	newSecret := []byte("new-rotation-secret-32-bytes-long")
+
+	oldCookie, err := SignSession(oldSecret, 7, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("sign old: %v", err)
+	}
+	newCookie, err := SignSession(newSecret, 8, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("sign new: %v", err)
+	}
+
+	set := [][]byte{newSecret, oldSecret}
+	if uid, err := VerifySessionMulti(set, oldCookie); err != nil || uid != 7 {
+		t.Fatalf("old cookie under rotation set: uid=%d err=%v; want 7,nil", uid, err)
+	}
+	if uid, err := VerifySessionMulti(set, newCookie); err != nil || uid != 8 {
+		t.Fatalf("new cookie under rotation set: uid=%d err=%v; want 8,nil", uid, err)
+	}
+	// After the window closes (only the new secret), the old cookie must fail.
+	if _, err := VerifySessionMulti([][]byte{newSecret}, oldCookie); !errors.Is(err, ErrSessionInvalid) {
+		t.Fatalf("old cookie post-rotation: want ErrSessionInvalid, got %v", err)
+	}
+}
+
+func TestSession_LegacyV1StillVerifies(t *testing.T) {
+	// A v1 cookie minted the old way must still verify so a deploy that adds
+	// v2 does not invalidate every outstanding session at once.
+	secret := testSecret32
+	exp := time.Now().Add(time.Hour).Unix()
+	payload := fmt.Sprintf("v1.%d.%d", int64(55), exp)
+	mac := hmacSum(secret, payload)
+	v1Cookie := payload + "." + base64.RawURLEncoding.EncodeToString(mac)
+
+	uid, err := VerifySession(secret, v1Cookie)
+	if err != nil {
+		t.Fatalf("legacy v1 verify: %v", err)
+	}
+	if uid != 55 {
+		t.Errorf("uid = %d; want 55", uid)
+	}
+
+	// A tampered v1 cookie must still be rejected.
+	tampered := fmt.Sprintf("v1.%d.%d.", int64(9999), exp) +
+		base64.RawURLEncoding.EncodeToString(mac)
+	if _, err := VerifySession(secret, tampered); !errors.Is(err, ErrSessionInvalid) {
+		t.Fatalf("tampered v1 cookie: want ErrSessionInvalid, got %v", err)
+	}
+}
+
+func TestSession_V2WrongKeyIDStillVerifiesWithCorrectSecret(t *testing.T) {
+	// Decode-tolerant: a v2 cookie whose key-id field does not match (e.g.
+	// truncated/garbled) must still verify if the signature is genuine — the
+	// HMAC is authoritative, the key-id is only a routing hint.
+	secret := testSecret32
+	cookie, err := SignSession(secret, 12, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	parts := strings.Split(cookie, ".")
+	// Re-sign the payload but lie about the key-id field. The HMAC covers the
+	// key-id, so we must recompute it for the doctored payload to be valid.
+	parts[1] = "deadbeef"
+	doctoredPayload := strings.Join(parts[:4], ".")
+	parts[4] = base64.RawURLEncoding.EncodeToString(hmacSum(secret, doctoredPayload))
+	doctored := strings.Join(parts, ".")
+
+	uid, err := VerifySession(secret, doctored)
+	if err != nil {
+		t.Fatalf("v2 with non-matching key-id but valid sig: %v", err)
+	}
+	if uid != 12 {
+		t.Errorf("uid = %d; want 12", uid)
+	}
+}
+
+func TestSession_VerifyMultiRejectsWhenNoSecretUsable(t *testing.T) {
+	cookie, _ := SignSession(testSecret32, 1, time.Now().Add(time.Hour))
+	if _, err := VerifySessionMulti([][]byte{[]byte("short"), nil}, cookie); !errors.Is(err, ErrSessionInvalid) {
+		t.Fatal("VerifySessionMulti must fail closed when no secret meets minSecretLen")
 	}
 }

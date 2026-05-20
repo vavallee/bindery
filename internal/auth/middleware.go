@@ -200,7 +200,7 @@ func Middleware(p Provider) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if mode == ModeLocalOnly && IsLocalRequest(r) {
+			if mode == ModeLocalOnly && IsLocalRequestTrusted(r, p.TrustedProxyCIDRs()) {
 				next.ServeHTTP(w, r)
 				return
 			}

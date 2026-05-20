@@ -1,43 +1,23 @@
 package main
 
 import (
-	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"strings"
 
 	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/vavallee/bindery/internal/auth"
 )
 
 // parseTrustedProxyCIDRs parses a comma-separated list of IP/CIDR strings
 // (from BINDERY_TRUSTED_PROXY) into []*net.IPNet. Bare IPs are treated as
-// /32 (IPv4) or /128 (IPv6). Invalid entries are logged and skipped.
+// /32 (IPv4) or /128 (IPv6). Invalid entries are skipped. It delegates to
+// auth.ParseTrustedProxyCIDRs so the proxy middleware and the local-only
+// trust decision parse the env var identically.
 func parseTrustedProxyCIDRs(raw string) []*net.IPNet {
-	if raw == "" {
-		return nil
-	}
-	var trusted []*net.IPNet
-	for _, s := range strings.Split(raw, ",") {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			continue
-		}
-		if !strings.Contains(s, "/") {
-			if strings.Contains(s, ":") {
-				s += "/128"
-			} else {
-				s += "/32"
-			}
-		}
-		_, cidr, err := net.ParseCIDR(s)
-		if err != nil {
-			slog.Warn("BINDERY_TRUSTED_PROXY: invalid entry, skipping", "entry", s, "err", err)
-			continue
-		}
-		trusted = append(trusted, cidr)
-	}
-	return trusted
+	return auth.ParseTrustedProxyCIDRs(raw)
 }
 
 // proxyHeaders is the set of forwarded headers that only a trusted proxy
@@ -64,6 +44,12 @@ func trustedProxyMiddleware() func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Capture the true TCP peer before chi's RealIP overwrites
+			// RemoteAddr. The local-only trust decision needs the genuine peer
+			// to walk X-Forwarded-For right-to-left; RealIP's leftmost pick is
+			// attacker-controlled and must not be used for auth.
+			r = r.WithContext(auth.WithRealPeer(r.Context(), r.RemoteAddr))
+
 			peerHost, _, _ := net.SplitHostPort(r.RemoteAddr)
 			peerIP := net.ParseIP(strings.Trim(peerHost, "[]"))
 			for _, cidr := range trusted {
