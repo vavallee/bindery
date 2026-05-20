@@ -30,12 +30,15 @@ type LiveStatus struct {
 	Status string
 }
 
-// liveStatusIsError reports whether ls represents an error state.
-// It handles human-readable strings from clients such as qBittorrent, Deluge,
-// SABnzbd, NZBGet, and Transmission errorString overlays.
-func liveStatusIsError(ls LiveStatus) bool {
-	s := strings.ToLower(ls.Status)
-	return strings.Contains(s, "error") || strings.Contains(s, "fail")
+// LiveStatusIsError reports whether a client status string represents an error
+// state. It handles human-readable strings from qBittorrent (including the
+// "missingFiles" state), Deluge, SABnzbd, NZBGet, and Transmission
+// errorString overlays.
+func LiveStatusIsError(status string) bool {
+	s := strings.ToLower(status)
+	return strings.Contains(s, "error") ||
+		strings.Contains(s, "fail") ||
+		s == "missingfiles"
 }
 
 type SendResult struct {
@@ -154,9 +157,10 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		if err != nil {
 			return nil, err
 		}
-		if len(resp.NzoIDs) > 0 {
-			result.RemoteID = resp.NzoIDs[0]
+		if len(resp.NzoIDs) == 0 || strings.TrimSpace(resp.NzoIDs[0]) == "" {
+			return nil, fmt.Errorf("SABnzbd accepted the download but did not return a trackable NZO id")
 		}
+		result.RemoteID = resp.NzoIDs[0]
 		return result, nil
 	}
 }
