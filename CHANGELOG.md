@@ -6,6 +6,20 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.13.2] — 2026-05-20
+
+### Changed
+
+- **The library scan is now linear in library size instead of quadratic** (#757) — reconciling on-disk files against the database ran a Jaro-Winkler title comparison for every *(file, book)* pair, an O(files × books) cost that made the first scan of a large migrated library take minutes and allocate gigabytes of memory. The title comparison is now scoped to the file's author and the loop-invariant title normalisation is hoisted out of the inner loop, so a realistic per-author library scans in time proportional to its size — a 2,000-book library drops from ~3.6 s to ~0.08 s, allocating 98% less memory.
+
+### Fixed
+
+- **The library scan no longer transposes author and title for Readarr- and Calibre-organised libraries** (#754) — the scan inferred author and title by splitting the filename on `" - "`, assuming a `Title - Author` order, but Readarr's default naming and Calibre both write `Author - Title`, so every migrated book scanned in with the two swapped and downstream metadata matching failed. The scan now derives author and title from the `{Author}/{Book}/` folder hierarchy — unambiguous and dash-safe — and falls back to filename parsing only when no such hierarchy is present.
+
+### Docs
+
+- **Added wiki pages for troubleshooting, storage and hardlinking, and migrating from Readarr** (#755) — new guides under `docs/` covering common setup problems, how Bindery's storage layout and hardlinking behave, and the path for bringing an existing Readarr library across.
+
 ## [v1.13.1] — 2026-05-20
 
 ### Changed
