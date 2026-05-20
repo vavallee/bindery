@@ -32,6 +32,17 @@ const (
 	hardcoverSuccessResponseBodyLimit = 8 << 20
 )
 
+// Hardcover documents user_books.status_id values in its official API docs:
+// https://github.com/hardcoverapp/hardcover-docs/blob/31aaa75774ec560312222e5834322c71b79dbb5b/src/content/docs/api/GraphQL/Schemas/UserBooks.mdx#L12-L21
+const (
+	hcStatusWantToRead       = 1
+	hcStatusCurrentlyReading = 2
+	hcStatusRead             = 3
+	hcStatusPaused           = 4
+	hcStatusDidNotFinish     = 5
+	hcStatusIgnored          = 6
+)
+
 // Client implements metadata.Provider for Hardcover.app using its public GraphQL API.
 // Set an API token via WithToken or NewAuthenticated to enable authenticated queries.
 type Client struct {
@@ -452,10 +463,9 @@ func (c *Client) GetUserWishlist(ctx context.Context, limit int) ([]models.Recom
 	if limit <= 0 {
 		limit = 100
 	}
-	// status_id 1 = "Want to Read" in Hardcover's reading status enum.
-	gql := `query GetWishlist($limit: Int!) {
+	gql := `query GetWishlist($limit: Int!, $statusID: Int!) {
 		me {
-			user_books(where: {status_id: {_eq: 1}}, limit: $limit) {
+			user_books(where: {status_id: {_eq: $statusID}}, limit: $limit) {
 				book {
 					id
 					title
@@ -472,6 +482,7 @@ func (c *Client) GetUserWishlist(ctx context.Context, limit int) ([]models.Recom
 			}
 		}
 	}`
+	vars := map[string]any{"limit": limit, "statusID": hcStatusWantToRead}
 	var resp struct {
 		Data struct {
 			Me []struct {
@@ -481,7 +492,7 @@ func (c *Client) GetUserWishlist(ctx context.Context, limit int) ([]models.Recom
 			} `json:"me"`
 		} `json:"data"`
 	}
-	if err := c.query(ctx, gql, map[string]any{"limit": limit}, &resp); err != nil {
+	if err := c.query(ctx, gql, vars, &resp); err != nil {
 		return nil, fmt.Errorf("hardcover get wishlist: %w", err)
 	}
 	if len(resp.Data.Me) == 0 {
@@ -522,9 +533,10 @@ type HCList struct {
 	BooksCount int    `json:"booksCount"`
 }
 
-// hcBuiltinShelves are the four Hardcover reading-status shelves Bindery
-// exposes for list sync. Hardcover status_id 4 is Paused, which is not exposed
-// as a synthetic list because existing list sync behavior only surfaces DNF.
+// hcBuiltinShelves are the four Hardcover reading-status shelves Bindery exposes
+// for list sync. Hardcover also defines Paused (hcStatusPaused), which is not
+// exposed as a synthetic list because existing list sync behavior only surfaces
+// DNF.
 // They live in user_books (filtered by status_id), not in me.lists, so they
 // are injected as synthetic entries using negative IDs to avoid collision with
 // real list IDs.
@@ -539,13 +551,13 @@ var hcBuiltinShelves = []HCList{
 func hcShelfStatusID(listID int) (int, bool) {
 	switch listID {
 	case -1:
-		return 1, true
+		return hcStatusWantToRead, true
 	case -2:
-		return 2, true
+		return hcStatusCurrentlyReading, true
 	case -3:
-		return 3, true
+		return hcStatusRead, true
 	case -4:
-		return 5, true
+		return hcStatusDidNotFinish, true
 	}
 	return 0, false
 }

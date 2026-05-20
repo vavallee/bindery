@@ -1615,6 +1615,9 @@ func TestGetUserWishlist_DefaultLimit(t *testing.T) {
 	if v, ok := gotVars["limit"].(float64); !ok || v != 100 {
 		t.Errorf("limit variable: want 100, got %v", gotVars["limit"])
 	}
+	if v, ok := gotVars["statusID"].(float64); !ok || v != hcStatusWantToRead {
+		t.Errorf("statusID variable: want %d, got %v", hcStatusWantToRead, gotVars["statusID"])
+	}
 }
 
 func TestGetUserWishlist_Empty(t *testing.T) {
