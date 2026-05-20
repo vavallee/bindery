@@ -180,17 +180,21 @@ func (h *RecommendationHandler) Add(w http.ResponseWriter, r *http.Request) {
 	_ = h.recs.Dismiss(r.Context(), 1, id)
 
 	// Trigger search in background unless the file already exists on disk.
+	// Use the process-lifecycle context so the goroutine is cancelled on
+	// shutdown rather than running forever on context.Background(). See #550.
 	if h.searcher != nil && !fileFound {
-		go h.searcher.SearchAndGrabBook(context.Background(), *book) // #nosec G118 -- intentional: search must outlive the request
+		go h.searcher.SearchAndGrabBook(h.appCtx, *book) // #nosec G118 -- intentional: search must outlive the request
 	}
 
 	writeJSON(w, http.StatusCreated, book)
 }
 
 // Refresh triggers a recommendation engine run in the background.
+// The goroutine derives its context from the process-lifecycle context so it
+// is cancelled on shutdown instead of running on context.Background(). See #550.
 func (h *RecommendationHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	go func() {
-		if err := h.engine.Run(context.Background(), 1); err != nil {
+		if err := h.engine.Run(h.appCtx, 1); err != nil {
 			slog.Error("recommendation refresh failed", "error", err)
 		}
 	}()
