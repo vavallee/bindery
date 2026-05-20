@@ -195,6 +195,40 @@ func TestImportMode_DefaultHardlinkSameDevice(t *testing.T) {
 	}
 }
 
+// TestImportMode_DefaultHardlinkSameDevice_DstNotExist is the regression test
+// for the bug fixed in #705 (finding 5): importMode must choose "hardlink" when
+// src and dst share a filesystem even if the destination path does not yet exist.
+// Before the fix, sameDevice statted the not-yet-created dst directly, always
+// got an error, and fell back to "copy" — making the hardlink path unreachable.
+func TestImportMode_DefaultHardlinkSameDevice_DstNotExist(t *testing.T) {
+	dir := t.TempDir()
+	// src exists; dst is a deeply nested path that has never been created.
+	src := filepath.Join(dir, "downloads", "audiobook")
+	dst := filepath.Join(dir, "library", "Author", "Book", "audiobook")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Intentionally do NOT create dst or any of its parents under "library/".
+
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	sr := db.NewSettingsRepo(database)
+	s := &Scanner{}
+	s.WithSettings(sr)
+
+	// Both paths are under the same tempdir (same filesystem). With no
+	// import.mode setting and a non-existent destination, importMode must still
+	// return "hardlink" by statting dst's nearest existing ancestor.
+	got := s.importMode(context.Background(), src, dst)
+	if got != "hardlink" {
+		t.Errorf("non-existent dst same-device: importMode = %q, want %q (hardlink path unreachable — bug #705 finding 5 regression)", got, "hardlink")
+	}
+}
+
 // TestImportMode_Settings exercises all branches of importMode when a real
 // SettingsRepo is attached: "copy", "hardlink", unknown value, and absent key.
 func TestImportMode_Settings(t *testing.T) {
