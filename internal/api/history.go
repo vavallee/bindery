@@ -88,6 +88,20 @@ func (h *HistoryHandler) Blocklist(w http.ResponseWriter, r *http.Request) {
 		guid = event.SourceTitle
 	}
 
+	// Idempotent: blocklisting the same release twice must not create a
+	// duplicate row. Create has no unique constraint to lean on.
+	if guid != "" {
+		blocked, err := h.blocklist.IsBlocked(r.Context(), guid)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if blocked {
+			writeJSON(w, http.StatusOK, map[string]string{"status": "already blocklisted"})
+			return
+		}
+	}
+
 	entry := &models.BlocklistEntry{
 		BookID: event.BookID,
 		GUID:   guid,

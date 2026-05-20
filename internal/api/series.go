@@ -404,7 +404,11 @@ func (h *SeriesHandler) Fill(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SeriesHandler) queueSeriesBook(ctx context.Context, b models.Book) (bool, error) {
-	if b.Status == models.BookStatusImported {
+	// Only act on books that are not already satisfied or in flight. Re-queuing
+	// a book that is downloading or downloaded would reset it to wanted and fire
+	// a second grab for a download already underway.
+	switch b.Status {
+	case models.BookStatusImported, models.BookStatusDownloading, models.BookStatusDownloaded:
 		return false, nil
 	}
 	if err := h.books.MarkWantedMonitored(ctx, b.ID); err != nil {

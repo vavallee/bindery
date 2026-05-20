@@ -83,6 +83,13 @@ func (h *ABSReviewHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "review item not found"})
 		return
 	}
+	// Reject re-approval of an item that has already left the pending state.
+	// Without this, a stale tab or a double-click re-runs ImportReview and
+	// imports the book a second time.
+	if item.Status != "pending" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "review item is not pending (status: " + item.Status + ")"})
+		return
+	}
 
 	var payload abs.NormalizedLibraryItem
 	if err := json.Unmarshal([]byte(item.PayloadJSON), &payload); err != nil {
