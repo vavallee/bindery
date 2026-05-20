@@ -435,14 +435,55 @@ func (s *Scanner) CheckDownloads(ctx context.Context) {
 	}
 }
 
-func isTrackedTorrentDownloadForClient(dl models.Download, clientID int64) bool {
-	if dl.DownloadClientID == nil || *dl.DownloadClientID != clientID {
-		return false
+// RecoverInterruptedImports sweeps downloads stuck mid-import back into a
+// retryable state. It must be called once at startup, before the scheduler
+// begins polling.
+//
+// A process crash or the 30-minute per-import timeout can leave a download in
+// StateImporting (or the earlier StateImportPending) — both non-terminal states
+// with no automatic re-entry. CheckDownloads only retries from
+// StateImportFailed, so without this sweep such a download is wedged forever
+// (issue #706 finding 1). Moving it to StateImportFailed lets the existing
+// retry path (CheckDownloads, while the source is still in the client) pick it
+// up; if the source has since vanished, the same path now terminally blocks it
+// (finding 4) rather than leaving it silently stuck.
+func (s *Scanner) RecoverInterruptedImports(ctx context.Context) {
+	if s.downloads == nil {
+		return
 	}
-	if dl.TorrentID == nil {
-		return false
+	recovered, err := s.downloads.RecoverInterruptedImports(ctx)
+	if err != nil {
+		slog.Warn("failed to sweep interrupted imports on startup", "error", err)
+		// Fall through: some downloads may still have been recovered before the
+		// error; emit history for those.
 	}
-	return dl.Status != models.StateImported && dl.Status != models.StateFailed
+	for _, id := range recovered {
+		slog.Info("recovered interrupted import — re-queued for retry", "download_id", id)
+		dl, getErr := s.downloadByID(ctx, id)
+		if getErr != nil || dl == nil {
+			continue
+		}
+		s.createHistoryEvent(ctx, models.HistoryEventImportFailed, dl.Title, dl.BookID, map[string]string{
+			"guid":    dl.GUID,
+			"message": "import interrupted (process restart) — re-queued for retry",
+			"status":  string(models.StateImportFailed),
+		})
+	}
+}
+
+// downloadByID is a small helper used by recovery/diagnostic paths that only
+// have an ID. DownloadRepo has no GetByID, so look the row up via List.
+func (s *Scanner) downloadByID(ctx context.Context, id int64) (*models.Download, error) {
+	all, err := s.downloads.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range all {
+		if all[i].ID == id {
+			return &all[i], nil
+		}
+	}
+	return nil, nil
 }
 
 func (s *Scanner) setDownloadError(ctx context.Context, id int64, message string) {
@@ -495,6 +536,73 @@ func (s *Scanner) markDownloadFailed(ctx context.Context, dl *models.Download, m
 	s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, map[string]string{"guid": dl.GUID, "message": message})
 }
 
+// blockStaleImportFailures terminally blocks downloads that are stuck in
+// StateImportFailed with no remaining automatic recovery path (issue #706
+// finding 4).
+//
+// CheckDownloads only retries a StateImportFailed download while its source
+// still appears in the client's torrent list / history. Two cases leave such a
+// download wedged below the retry limit forever, with no terminal state:
+//
+//   - the retry budget is exhausted (ImportRetryCount >= importRetryLimit);
+//   - the source has vanished from the client (the torrent was removed, or the
+//     usenet history entry was cleared), so no future poll will ever revisit it.
+//
+// For both, this transitions the download to terminal StateImportBlocked with
+// an actionable message so the operator sees it needs manual intervention
+// rather than a silent stuck queue entry.
+//
+// seenSourceIDs holds the IDs of every download whose source was observed in
+// this poll cycle — a StateImportFailed download NOT in that set has lost its
+// source. belongsToClient reports whether a download is owned by the polling
+// client (torrent vs. usenet ownership differs, so the caller supplies the
+// predicate).
+//
+// sourceListIsComplete must be true only when seenSourceIDs was built from a
+// complete enumeration of the client's sources. Torrent clients return every
+// torrent, so a missing entry definitively means the source is gone. Usenet
+// history APIs are paginated (SABnzbd is capped at 50 slots here), so a missing
+// entry there could merely be an aged-out-but-healthy download — for those
+// callers this is false and only the retry-exhaustion case blocks, never the
+// vanished-source case.
+//
+// The download list is re-fetched here rather than reusing the caller's
+// snapshot: a retry that ran earlier in the same poll cycle may have changed a
+// download's status / retry count, and acting on the stale snapshot could
+// misjudge the retry budget.
+func (s *Scanner) blockStaleImportFailures(
+	ctx context.Context,
+	seenSourceIDs map[int64]bool,
+	sourceListIsComplete bool,
+	belongsToClient func(models.Download) bool,
+) {
+	allDownloads, err := s.downloads.List(ctx)
+	if err != nil {
+		slog.Debug("blockStaleImportFailures: failed to list downloads", "error", err)
+		return
+	}
+	for i := range allDownloads {
+		dl := allDownloads[i]
+		if dl.Status != models.StateImportFailed {
+			continue
+		}
+		if !belongsToClient(dl) {
+			continue
+		}
+		var reason string
+		switch {
+		case dl.ImportRetryCount >= importRetryLimit:
+			reason = fmt.Sprintf("import retry limit reached (%d attempts) — fix the underlying problem, then retry manually", importRetryLimit)
+		case sourceListIsComplete && !seenSourceIDs[dl.ID]:
+			reason = "download source no longer available in the client — re-download or import the files manually"
+		default:
+			continue
+		}
+		slog.Warn("blocking unrecoverable import failure", "title", dl.Title, "download_id", dl.ID, "reason", reason)
+		s.failImport(ctx, &dl, models.StateImportBlocked, reason)
+	}
+}
+
 // checkSABnzbdDownloads polls SABnzbd for status changes.
 func (s *Scanner) checkSABnzbdDownloads(ctx context.Context, client *models.DownloadClient) {
 	sab := sabnzbd.New(client.Host, client.Port, client.APIKey, client.URLBase, client.UseSSL)
@@ -506,11 +614,17 @@ func (s *Scanner) checkSABnzbdDownloads(ctx context.Context, client *models.Down
 		return
 	}
 
+	// Track which downloads' sources we observed this cycle so stale
+	// StateImportFailed downloads (history entry cleared / aged out) can be
+	// terminally blocked rather than left stuck (issue #706 finding 4).
+	seenSourceIDs := make(map[int64]bool)
+
 	for _, slot := range history.Slots {
 		dl, err := s.downloads.GetByNzoID(ctx, slot.NzoID)
 		if err != nil || dl == nil {
 			continue
 		}
+		seenSourceIDs[dl.ID] = true
 
 		switch slot.Status {
 		case "Completed":
@@ -540,6 +654,15 @@ func (s *Scanner) checkSABnzbdDownloads(ctx context.Context, client *models.Down
 			}
 		}
 	}
+
+	// Terminally block StateImportFailed downloads whose retry budget is spent
+	// (issue #706 finding 4). sourceListIsComplete is false: SABnzbd history is
+	// paginated (capped at 50 slots above), so a download missing from this poll
+	// may simply have aged out while still healthy — only retry-exhaustion is a
+	// safe, definitive signal here.
+	s.blockStaleImportFailures(ctx, seenSourceIDs, false, func(d models.Download) bool {
+		return d.DownloadClientID != nil && *d.DownloadClientID == client.ID
+	})
 }
 
 // checkNZBGetDownloads polls NZBGet for status changes using its JSON-RPC API.
@@ -553,12 +676,16 @@ func (s *Scanner) checkNZBGetDownloads(ctx context.Context, client *models.Downl
 		return
 	}
 
+	// Track which downloads' sources we observed this cycle (issue #706 finding 4).
+	seenSourceIDs := make(map[int64]bool)
+
 	for _, item := range history {
 		nzbIDStr := strconv.Itoa(item.NZBID)
 		dl, err := s.downloads.GetByNzoID(ctx, nzbIDStr)
 		if err != nil || dl == nil {
 			continue
 		}
+		seenSourceIDs[dl.ID] = true
 
 		if nzbget.IsSuccess(item.Status) {
 			if dl.Status == models.StateDownloading || dl.Status == models.StateGrabbed {
@@ -588,6 +715,14 @@ func (s *Scanner) checkNZBGetDownloads(ctx context.Context, client *models.Downl
 			}
 		}
 	}
+
+	// Terminally block StateImportFailed downloads whose retry budget is spent
+	// (issue #706 finding 4). sourceListIsComplete is false: the NZBGet history
+	// response is not a guaranteed-complete enumeration of every source we might
+	// still retry, so only retry-exhaustion is acted on here.
+	s.blockStaleImportFailures(ctx, seenSourceIDs, false, func(d models.Download) bool {
+		return d.DownloadClientID != nil && *d.DownloadClientID == client.ID
+	})
 }
 
 // tryImportNZBGet attempts to import a completed NZBGet download into the library.
@@ -622,13 +757,22 @@ func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models
 		torrentsMap[fmt.Sprintf("%d", t.ID)] = t
 	}
 
+	// Track which downloads' sources we observed this cycle so stale
+	// StateImportFailed downloads (torrent removed) can be terminally blocked
+	// rather than left stuck below the retry limit (issue #706 finding 4).
+	seenSourceIDs := make(map[int64]bool)
+
 	for _, dl := range allDownloads {
-		if !isTrackedTorrentDownloadForClient(dl, client.ID) {
+		if dl.DownloadClientID == nil || *dl.DownloadClientID != client.ID || dl.TorrentID == nil {
 			continue
 		}
-
 		torrent, ok := torrentsMap[*dl.TorrentID]
 		if !ok {
+			continue
+		}
+		seenSourceIDs[dl.ID] = true
+
+		if dl.Status == models.StateImported || dl.Status == models.StateFailed {
 			continue
 		}
 
@@ -661,6 +805,14 @@ func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models
 			s.markDownloadFailed(ctx, &dl, stopError)
 		}
 	}
+
+	// Terminally block StateImportFailed downloads whose torrent has been
+	// removed from Transmission, or whose retry budget is spent (issue #706
+	// finding 4). sourceListIsComplete is true: GetTorrents returns every
+	// torrent, so a missing entry definitively means the source is gone.
+	s.blockStaleImportFailures(ctx, seenSourceIDs, true, func(d models.Download) bool {
+		return d.DownloadClientID != nil && *d.DownloadClientID == client.ID
+	})
 }
 
 // checkQbittorrentDownloads polls qBittorrent for status changes.
@@ -683,13 +835,20 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 		torrentsMap[strings.ToLower(t.Hash)] = t
 	}
 
+	// Track which downloads' sources we observed this cycle (issue #706 finding 4).
+	seenSourceIDs := make(map[int64]bool)
+
 	for _, dl := range allDownloads {
-		if !isTrackedTorrentDownloadForClient(dl, client.ID) {
+		if dl.DownloadClientID == nil || *dl.DownloadClientID != client.ID || dl.TorrentID == nil {
 			continue
 		}
-
 		torrent, ok := torrentsMap[strings.ToLower(*dl.TorrentID)]
 		if !ok {
+			continue
+		}
+		seenSourceIDs[dl.ID] = true
+
+		if dl.Status == models.StateImported || dl.Status == models.StateFailed {
 			continue
 		}
 
@@ -741,6 +900,14 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 			s.markDownloadFailed(ctx, &dl, "Torrent failed in qBittorrent")
 		}
 	}
+
+	// Terminally block StateImportFailed downloads whose torrent has been
+	// removed from qBittorrent, or whose retry budget is spent (issue #706
+	// finding 4). sourceListIsComplete is true: GetTorrents returns every
+	// torrent, so a missing entry definitively means the source is gone.
+	s.blockStaleImportFailures(ctx, seenSourceIDs, true, func(d models.Download) bool {
+		return d.DownloadClientID != nil && *d.DownloadClientID == client.ID
+	})
 }
 
 // tryImportSABnzbd attempts to import a completed SABnzbd download into the library.
@@ -794,6 +961,67 @@ func resolveQbitContentPath(t qbittorrent.Torrent) (string, bool) {
 	return "", false
 }
 
+// alreadyImportedFormat reports whether book already has a tracked, on-disk
+// file for the given format. It is the idempotency guard for issue #706
+// finding 2: the book-file write, the download-status write and the history
+// event are three separate non-transactional ops, so a crash between them
+// leaves the file on disk and recorded in book_files while the download stays
+// non-terminal. The startup sweep (finding 1) then re-queues the download and
+// the retry would import the SAME files a second time — and because the
+// audiobook destination is run through UniqueDir, the retry lands a duplicate
+// folder ("Title (2)") that INSERT OR IGNORE cannot dedupe.
+//
+// Checking book_files AND os.Stat (rather than book_files alone) means a
+// recorded-but-since-deleted file does not wrongly suppress a legitimate
+// re-import.
+func (s *Scanner) alreadyImportedFormat(ctx context.Context, book *models.Book, format string) bool {
+	if book == nil {
+		return false
+	}
+	files, err := s.books.ListFiles(ctx, book.ID)
+	if err != nil {
+		slog.Warn("idempotency check: failed to list book files", "bookID", book.ID, "error", err)
+		return false
+	}
+	for _, f := range files {
+		if f.Format != format {
+			continue
+		}
+		if _, statErr := os.Stat(f.Path); statErr == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// alreadyImportedPath reports whether the exact destination path is already
+// tracked in book_files for the book and still exists on disk. This is the
+// per-file idempotency guard for ebook imports, whose destination paths are
+// deterministic (no UniqueDir): a retry recomputes the identical destPath, so
+// a match here means that specific file already landed and must not be
+// re-imported. It is intentionally per-file so a retry of a genuine PARTIAL
+// failure still imports the files that never landed.
+func (s *Scanner) alreadyImportedPath(ctx context.Context, book *models.Book, destPath string) bool {
+	if book == nil {
+		return false
+	}
+	files, err := s.books.ListFiles(ctx, book.ID)
+	if err != nil {
+		slog.Warn("idempotency check: failed to list book files", "bookID", book.ID, "error", err)
+		return false
+	}
+	cleanDest := filepath.Clean(destPath)
+	for _, f := range files {
+		if filepath.Clean(f.Path) != cleanDest {
+			continue
+		}
+		if _, statErr := os.Stat(f.Path); statErr == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // tryImportInternal is the common import logic shared by SABnzbd and Transmission.
 func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, downloadPath, cleanupClientType, cleanupRemoteID string, cleanupFunc func() error) {
 	if s.libraryDir == "" {
@@ -813,21 +1041,22 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// below — no further DB reads of "import.mode" occur for this import.
 	importMode := s.importMode(ctx, downloadPath, s.libraryDir)
 
-	// External mode: skip all file operations and reset the book to wanted so
-	// the library scan can reconcile it after the user's external tool (Calibre,
+	// External mode: skip all file operations and leave the book Wanted so the
+	// library scan can reconcile it after the user's external tool (Calibre,
 	// Grimmory, etc.) processes and places the file in the library directory.
+	//
+	// The download is parked in StateImportExternal — a NON-terminal state
+	// (issue #706 finding 3). Marking it terminal-StateImported here was wrong:
+	// if the external tool never places the file (or places it outside the
+	// library dir, where ScanLibrary's path constraint rejects it), the book
+	// stays Wanted forever and searchWanted re-grabs the same release every
+	// sweep, each prior download reading as a success. StateImportExternal lets
+	// searchWanted skip the book while the hand-off is outstanding, and
+	// ScanLibrary still reconciles the file the moment it lands.
 	if importMode == "external" {
-		if dl.BookID != nil {
-			if b, err := s.books.GetByID(ctx, *dl.BookID); err == nil && b != nil {
-				b.Status = models.BookStatusWanted
-				if err := s.books.Update(ctx, b); err != nil {
-					slog.Warn("external import: failed to reset book status", "bookId", b.ID, "error", err)
-				}
-			}
-		}
-		s.updateDownloadStatus(ctx, dl.ID, models.StateImported)
+		s.updateDownloadStatus(ctx, dl.ID, models.StateImportExternal)
 		slog.Info("external import: download handed off, awaiting library scan", "title", dl.Title)
-		s.createHistoryEvent(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, map[string]string{"mode": "external"})
+		s.createHistoryEvent(ctx, models.HistoryEventDownloadFolderImport, dl.Title, dl.BookID, map[string]string{"mode": "external", "status": string(models.StateImportExternal)})
 		return
 	}
 
@@ -890,6 +1119,22 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// Audiobook path: place the entire download directory as a unit so
 	// multi-part m4b/mp3 files, cover art, and cue sheets stay together.
 	if detectedFormat == models.MediaTypeAudiobook {
+		// Idempotency guard (issue #706 finding 2): if a prior attempt already
+		// placed this audiobook (book_files has an on-disk audiobook entry) but
+		// crashed before writing the terminal status, re-importing here would
+		// run AudiobookDestDir through UniqueDir and land a duplicate
+		// "Title (2)" folder. Short-circuit straight to StateImported instead.
+		if s.alreadyImportedFormat(ctx, book, models.MediaTypeAudiobook) {
+			slog.Info("audiobook already imported — skipping re-import (idempotency guard)",
+				"title", dl.Title, "bookID", book.ID)
+			s.updateDownloadStatus(ctx, dl.ID, models.StateImported)
+			if cleanupFunc != nil {
+				if err := cleanupFunc(); err != nil {
+					slog.Warn("cleanup failed", cleanupWarnAttrs(cleanupClientType, cleanupRemoteID, err)...)
+				}
+			}
+			return
+		}
 		// audiobookRoot always starts from BINDERY_AUDIOBOOK_DIR (set at
 		// startup). effectiveLibraryDir is format-agnostic — it resolves the
 		// per-author ebook root folder — so applying it here would send
@@ -994,6 +1239,22 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			failed++
 			continue
 		}
+
+		// Idempotency guard (issue #706 finding 2): if a prior attempt already
+		// landed this exact destination file and recorded it in book_files but
+		// crashed before writing the terminal status, re-importing would
+		// re-copy the bytes and re-emit the history event. The ebook
+		// destination is deterministic, so a match means the file is already
+		// imported — count it as imported and move on. Per-file (not
+		// per-download) so a retry of a genuine partial failure still imports
+		// the files that never landed.
+		if s.alreadyImportedPath(ctx, book, destPath) {
+			slog.Info("book file already imported — skipping re-import (idempotency guard)",
+				"src", srcFile, "dst", destPath)
+			imported++
+			continue
+		}
+
 		mode := importMode
 		slog.Info("importing book", "src", srcFile, "dst", destPath, "mode", mode)
 

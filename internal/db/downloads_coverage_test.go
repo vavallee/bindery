@@ -74,6 +74,77 @@ func TestDownloadRepo_GetByNzoIDNotFound(t *testing.T) {
 	}
 }
 
+// TestDownloadRepo_RecoverInterruptedImports verifies the startup sweep
+// (issue #706 finding 1): downloads wedged mid-import in StateImporting /
+// StateImportPending are moved to StateImportFailed so the retry path can pick
+// them up, while terminal and unrelated states are left untouched.
+func TestDownloadRepo_RecoverInterruptedImports(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewDownloadRepo(database)
+
+	mk := func(guid string, status models.DownloadState) *models.Download {
+		d := &models.Download{GUID: guid, Title: guid, NZBURL: "x", Status: status}
+		if err := repo.Create(ctx, d); err != nil {
+			t.Fatalf("create %s: %v", guid, err)
+		}
+		return d
+	}
+
+	importing := mk("wedged-importing", models.StateImporting)
+	pending := mk("wedged-pending", models.StateImportPending)
+	done := mk("terminal-imported", models.StateImported)
+	external := mk("external-handoff", models.StateImportExternal)
+	downloading := mk("still-downloading", models.StateDownloading)
+
+	recovered, err := repo.RecoverInterruptedImports(ctx)
+	if err != nil {
+		t.Fatalf("RecoverInterruptedImports: %v", err)
+	}
+	if len(recovered) != 2 {
+		t.Fatalf("recovered %d downloads, want 2 (importing + pending)", len(recovered))
+	}
+
+	check := func(id int64, want models.DownloadState) {
+		all, err := repo.List(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range all {
+			if d.ID == id {
+				if d.Status != want {
+					t.Errorf("download %d status = %q, want %q", id, d.Status, want)
+				}
+				return
+			}
+		}
+		t.Errorf("download %d not found", id)
+	}
+
+	// The two wedged downloads must now be retryable.
+	check(importing.ID, models.StateImportFailed)
+	check(pending.ID, models.StateImportFailed)
+	// Terminal / parked / in-flight states must be untouched. In particular
+	// StateImportExternal is a legitimate long-lived parked state, NOT a crash
+	// artefact, and must survive the sweep.
+	check(done.ID, models.StateImported)
+	check(external.ID, models.StateImportExternal)
+	check(downloading.ID, models.StateDownloading)
+
+	// Idempotent: a second sweep with nothing wedged recovers nothing.
+	again, err := repo.RecoverInterruptedImports(ctx)
+	if err != nil {
+		t.Fatalf("second RecoverInterruptedImports: %v", err)
+	}
+	if len(again) != 0 {
+		t.Errorf("second sweep recovered %d downloads, want 0", len(again))
+	}
+}
+
 func TestAuthorRepo_GetByForeignIDNotFound(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {

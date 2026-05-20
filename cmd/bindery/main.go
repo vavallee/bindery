@@ -395,6 +395,13 @@ func main() {
 	telemetryClient := telemetry.New(settingsRepo, version)
 	sched.WithTelemetry(telemetryClient)
 
+	// Recover downloads wedged mid-import by a prior crash or timeout before the
+	// scheduler starts polling. StateImporting / StateImportPending are
+	// non-terminal with no automatic re-entry; this sweeps them to
+	// StateImportFailed so the scanner's retry path picks them up
+	// (issue #706 finding 1).
+	importScanner.RecoverInterruptedImports(ctxBoot)
+
 	sched.Start()
 	defer sched.Stop()
 

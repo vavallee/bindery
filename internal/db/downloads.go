@@ -239,6 +239,61 @@ func (r *DownloadRepo) IncrementImportRetryCount(ctx context.Context, id int64) 
 	return err
 }
 
+// RecoverInterruptedImports moves every download stuck in a non-terminal,
+// non-resumable import state (StateImporting, StateImportPending) to
+// StateImportFailed so the scanner's retry path (which only fires from
+// StateImportFailed) can pick them up. It is called once on startup: a process
+// crash or timeout mid-import leaves the download in StateImporting/Pending
+// with no automatic re-entry, wedging it forever (issue #706 finding 1).
+//
+// StateImportExternal is intentionally NOT swept — it is a legitimate
+// long-lived parked state awaiting reconciliation by ScanLibrary, not a
+// crash artefact.
+//
+// It returns the IDs of the downloads it transitioned so the caller can log /
+// emit history events for them.
+func (r *DownloadRepo) RecoverInterruptedImports(ctx context.Context) ([]int64, error) {
+	rows, err := r.db.QueryContext(ctx,
+		"SELECT id FROM downloads WHERE status IN (?, ?)",
+		models.StateImporting, models.StateImportPending)
+	if err != nil {
+		return nil, fmt.Errorf("list interrupted imports: %w", err)
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan interrupted import id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("iterate interrupted imports: %w", err)
+	}
+	rows.Close()
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	// Both StateImporting and StateImportPending can legally transition to
+	// StateImportFailed (see validTransitions), so a single guarded UPDATE is
+	// safe. The error_message records why the state moved so the cause is
+	// visible in the Queue/History UI.
+	const msg = "import interrupted (process restart) — re-queued for retry"
+	recovered := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if _, err := r.db.ExecContext(ctx,
+			"UPDATE downloads SET status=?, error_message=? WHERE id=? AND status IN (?, ?)",
+			models.StateImportFailed, msg, id, models.StateImporting, models.StateImportPending); err != nil {
+			return recovered, fmt.Errorf("recover interrupted import %d: %w", id, err)
+		}
+		recovered = append(recovered, id)
+	}
+	return recovered, nil
+}
+
 func (r *DownloadRepo) Delete(ctx context.Context, id int64) error {
 	_, err := r.db.ExecContext(ctx, "DELETE FROM downloads WHERE id=?", id)
 	return err

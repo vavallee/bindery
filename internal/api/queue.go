@@ -375,7 +375,8 @@ func queueItemSizeLeft(item enrichedQueueItem) int64 {
 
 	switch item.Download.Status {
 	case models.StateCompleted, models.StateImportPending, models.StateImporting,
-		models.StateImported, models.StateFailed, models.StateImportFailed, models.StateImportBlocked:
+		models.StateImported, models.StateFailed, models.StateImportFailed,
+		models.StateImportBlocked, models.StateImportExternal:
 		return 0
 	default:
 		return item.Download.Size

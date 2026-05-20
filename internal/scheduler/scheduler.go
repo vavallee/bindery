@@ -634,9 +634,31 @@ func (s *Scheduler) searchWanted() {
 		return
 	}
 
+	// Books with a download parked in StateImportExternal have been handed off
+	// to an external import tool; the book is deliberately still Wanted so
+	// ScanLibrary can reconcile the file once it lands, but the release must
+	// NOT be re-grabbed in the meantime or the importer re-downloads the same
+	// book every sweep (issue #706 finding 3).
+	externalHandoffBooks := make(map[int64]bool)
+	if s.downloads != nil {
+		if pending, derr := s.downloads.ListByStatus(ctx, models.StateImportExternal); derr != nil {
+			slog.Warn("failed to list external-handoff downloads", "error", derr)
+		} else {
+			for _, d := range pending {
+				if d.BookID != nil {
+					externalHandoffBooks[*d.BookID] = true
+				}
+			}
+		}
+	}
+
 	searchQueue := make([]models.Book, 0, len(wanted))
 	for _, book := range wanted {
 		if book.Excluded {
+			continue
+		}
+		if externalHandoffBooks[book.ID] {
+			slog.Debug("skipping wanted search — external import hand-off outstanding", "book", book.Title)
 			continue
 		}
 		searchQueue = append(searchQueue, book)
