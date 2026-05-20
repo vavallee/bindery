@@ -165,8 +165,15 @@ func TestMigrate_ImportReadarr_InvalidDB(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&progress); err != nil {
 		t.Fatalf("decode progress: %v", err)
 	}
-	if !progress.Running {
-		t.Errorf("expected progress.Running=true immediately after start, got %+v", progress)
+	// The import runs in a background goroutine. With an invalid SQLite file
+	// the goroutine can fail and finish in microseconds — before the handler
+	// serialises this response — so Running may already be false. The handler's
+	// contract is "respond 202 immediately"; observing the async job as either
+	// still-running or already-finished-with-an-error both satisfy it. Asserting
+	// Running==true here was a scheduling race (#702). A non-running response
+	// with no error recorded would be the genuine bug, so that still fails.
+	if !progress.Running && progress.Error == "" {
+		t.Errorf("expected the import to be running or finished with an error, got %+v", progress)
 	}
 	if progress.StartedAt.IsZero() {
 		t.Errorf("expected StartedAt to be set, got zero")
