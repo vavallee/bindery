@@ -195,6 +195,10 @@ func filterUsenetJunkDebug(results []newznab.SearchResult) ([]newznab.SearchResu
 // filterRelevantDebug is filterRelevant instrumented to record each drop with
 // the keyword set that failed to match.
 func filterRelevantDebug(results []newznab.SearchResult, title, author string, aliases []string) ([]newznab.SearchResult, []FilterDebug) {
+	// Strip edition qualifiers ("(German Edition)" etc.) and normalize smart
+	// quotes before tokenizing — mirrors the first step of filterRelevant so
+	// both paths produce identical keyword sets.
+	title = newznab.NormalizeQueryTitle(title)
 	// Strip possessive author prefix before keyword extraction (mirrors filterRelevant).
 	title = stripPossessivePrefix(title, author)
 	fullKws := newznab.SigWords(title)

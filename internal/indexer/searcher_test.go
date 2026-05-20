@@ -1009,6 +1009,44 @@ func TestSearchBookWithDebug_PerResultLogging(t *testing.T) {
 	}
 }
 
+// TestFilterRelevantDebugEditionQualifierParity verifies that
+// filterRelevantDebug and filterRelevant agree on which results to keep for a
+// title that carries a parenthesised edition qualifier — the bug reported in
+// #713 (finding 4) caused filterRelevantDebug to fabricate relevance-rejections
+// because it did not call NormalizeQueryTitle before tokenizing.
+func TestFilterRelevantDebugEditionQualifierParity(t *testing.T) {
+	releases := []string{
+		"Herta.Mueller.Die.Stille.ist.ein.Geraeusch.epub",
+		"Die.Stille.ist.ein.Geraeusch.Mueller.epub",
+		"Some.Unrelated.Noise.epub",
+	}
+	results := toResults(releases...)
+	title := "Die Stille ist ein Geräusch (German Edition)"
+	author := "Herta Müller"
+
+	kept := filterRelevant(results, title, author, nil)
+	keptDebug, _ := filterRelevantDebug(results, title, author, nil)
+
+	keptTitles := resultTitles(kept)
+	keptDebugTitles := resultTitles(keptDebug)
+
+	if len(keptTitles) != len(keptDebugTitles) {
+		t.Fatalf("filterRelevant kept %v but filterRelevantDebug kept %v — paths diverge", keptTitles, keptDebugTitles)
+	}
+	for _, r := range keptTitles {
+		found := false
+		for _, d := range keptDebugTitles {
+			if r == d {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("filterRelevant kept %q but filterRelevantDebug did not", r)
+		}
+	}
+}
+
 // nopWriter discards all log output during tests.
 type nopWriter struct{}
 
