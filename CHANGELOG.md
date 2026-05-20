@@ -6,6 +6,29 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Security
+
+- **OIDC account-linking now requires a verified email and enforces `AllowedGroups`** (#736) — email-based linking of an OIDC identity to an existing account is rejected unless the IdP marks the email verified, closing an account-takeover vector; a provider's configured `AllowedGroups` is now actually enforced (login is refused when the user belongs to none of them).
+- **CSRF protection can no longer be switched off with a bogus `?apikey=`** (#734) — the CSRF and `X-Requested-With` exemptions now key off a *verified* API-key authentication rather than the mere presence of an `apikey` parameter; the API key is also no longer accepted from the URL query string for state-changing requests.
+- **`local-only` auth mode is no longer spoofable via `X-Forwarded-For`** (#737) — the client IP is resolved by walking the forwarded-for chain right-to-left and peeling trusted-proxy hops, so a client-supplied leftmost address can no longer masquerade as local; session cookies also carry a key-id to support secret rotation.
+- **Indexer requests re-validate the resolved IP on every connection** (#738) — prevents a DNS-rebinding attack where an indexer hostname is repointed at an internal or cloud-metadata address after the initial create-time check.
+
+### Fixed
+
+- **Move-mode imports no longer destroy un-imported or still-seeding files** (#740) — a partial multi-file import no longer marks the download complete and deletes the source of a file that never landed; the import mode is resolved once per run; a cancelled directory copy no longer continues in the background and deletes its source; and move cleanup removes only the specific imported files instead of `RemoveAll`-ing a path that can be a shared torrent save root.
+- **Imports interrupted mid-move are recovered instead of wedged forever** (#741) — downloads stuck in `importing` after a crash are swept back to a retryable state on startup; retries are idempotent and no longer double-add files; external-handoff imports use a dedicated state so they no longer cause a silent re-download loop; and a download whose source has vanished ends in a terminal blocked state instead of retrying invisibly forever.
+- **Database migrations now run in a transaction** (#733) — a crash mid-migration no longer leaves partially-applied DDL; migration versions are keyed to the filename number (with a one-time reconciliation of older databases) so the numbering gap can no longer cause a migration to be skipped.
+- **Scheduled jobs honour the shutdown signal and no longer leak goroutines** (#739) — cron jobs run under the process-lifecycle context so a graceful shutdown can cancel them; background goroutines are tracked and drained on stop; per-format pending releases are no longer dropped when a dual-format book's other format is grabbed first.
+- **Indexer errors are classified and no longer wasted on the tier ladder** (#735) — a hard indexer rejection (auth failure, rate limit) on an early search tier now aborts immediately instead of retrying the same indexer through three more tiers; searches also have an overall timeout so one hung indexer cannot stall the whole query.
+- **Background recommendation work stops on shutdown** (#732) — the recommendations goroutine is tied to the app lifecycle instead of an uncancellable context.
+- **Deleting one format of a dual-format book no longer removes the other** (#742) — a format-scoped file delete only removes files of that format, not the same-named sibling of the other format.
+- **Audiobookshelf settings are saved atomically** (#742) — the ABS config is written in a single transaction, so a mid-save failure no longer leaves a half-applied configuration.
+- **Book status updates are validated** (#742) — the API rejects an unknown `status` value instead of writing it verbatim.
+
+### Changed
+
+- **Removing a queue item keeps the downloaded files by default** (#742) — the queue "remove" action no longer deletes data and stops seeding unless you explicitly opt in via a checkbox in the confirmation dialog.
+
 ## [v1.12.3] — 2026-05-20
 
 ### Security
