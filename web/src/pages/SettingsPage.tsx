@@ -1709,6 +1709,7 @@ function AudiobookshelfSection() {
       .filter(id => !libraries.some(lib => lib.id === id))
       .map(id => ({ id, name: id, mediaType: 'book', icon: '', provider: '', folders: [] } as ABSLibrary)),
   ]
+  const libraryNameById = new Map(libraryRows.map(lib => [lib.id, lib.name || lib.id]))
   const absRunStatusLabel = (status: string) => {
     switch (status) {
       case 'rolled_back':
@@ -1720,6 +1721,13 @@ function AudiobookshelfSection() {
       default:
         return status.replace(/_/g, ' ')
     }
+  }
+  const absRunLibraryLabel = (run: ABSImportRun) => {
+    const libraryId = (run.libraryId || run.source.libraryId || '').trim()
+    if (!libraryId) return 'Unknown library'
+    const name = libraryNameById.get(libraryId)?.trim()
+    if (name && name !== libraryId) return `${name} (${libraryId})`
+    return libraryId
   }
   const rollbackActionName = (action: ABSRollbackAction) => action.displayName?.trim() || action.externalId
 
@@ -2090,7 +2098,7 @@ function AudiobookshelfSection() {
                       Run #{run.id} · {run.dryRun ? 'Dry-run' : 'Live import'} · {absRunStatusLabel(run.status)}
                     </p>
                     <p className="text-[11px] text-slate-500 dark:text-zinc-500">
-                      {new Date(run.startedAt).toLocaleString()} · {run.source.label || run.sourceLabel}
+                      {new Date(run.startedAt).toLocaleString()} · {run.source.label || run.sourceLabel} · {absRunLibraryLabel(run)}
                     </p>
                   </div>
                   {!run.dryRun && (

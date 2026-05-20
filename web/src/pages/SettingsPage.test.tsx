@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import SettingsPage from './SettingsPage'
-import { api, type DownloadClient, type Indexer, type OidcProvider, type ProwlarrInstance, type RootFolder, type SystemStatus } from '../api/client'
+import { api, type ABSImportRun, type DownloadClient, type Indexer, type OidcProvider, type ProwlarrInstance, type RootFolder, type SystemStatus } from '../api/client'
 
 const mockAuthContext = vi.hoisted(() => ({
   status: {
@@ -141,6 +141,57 @@ function makeRootFolder(overrides: Partial<RootFolder> = {}): RootFolder {
     freeSpace: 1024,
     createdAt: '2026-05-06T12:00:00Z',
     ...overrides,
+  }
+}
+
+function makeABSImportRun(id: number, libraryId: string): ABSImportRun {
+  return {
+    id,
+    sourceId: 'abs',
+    sourceLabel: 'Shelf',
+    baseUrl: 'https://abs.example.com',
+    libraryId,
+    status: 'completed',
+    dryRun: false,
+    startedAt: '2026-05-20T14:00:00Z',
+    source: {
+      sourceId: 'abs',
+      label: 'Shelf',
+      baseUrl: 'https://abs.example.com',
+      libraryId,
+      libraryIds: ['lib-books', 'lib-audio'],
+      pathRemap: '',
+      enabled: true,
+      dryRun: false,
+    },
+    summary: {
+      dryRun: false,
+      resumedFromCheckpoint: false,
+      stats: {
+        librariesScanned: 1,
+        pagesScanned: 1,
+        itemsSeen: 0,
+        itemsNormalized: 0,
+        itemsDetailFetched: 0,
+        authorsCreated: 0,
+        authorsLinked: 0,
+        booksCreated: 0,
+        booksLinked: 0,
+        booksUpdated: 0,
+        seriesCreated: 0,
+        seriesLinked: 0,
+        editionsAdded: 0,
+        ownedMarked: 0,
+        pendingManual: 0,
+        reviewQueued: 0,
+        metadataMatched: 0,
+        metadataRelinked: 0,
+        metadataConflicts: 0,
+        metadataAutoResolved: 0,
+        skipped: 0,
+        failed: 0,
+      },
+    },
   }
 }
 
@@ -669,6 +720,34 @@ describe('SettingsPage', () => {
     expect(screen.queryByLabelText('Library')).not.toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: /Books/ })).toBeChecked()
     expect(screen.getByRole('checkbox', { name: /Audiobooks/ })).toBeChecked()
+  })
+
+  it('labels recent Audiobookshelf import runs by library', async () => {
+    vi.mocked(api.absConfig).mockResolvedValue({
+      featureEnabled: true,
+      baseUrl: 'https://abs.example.com',
+      label: 'Shelf',
+      enabled: true,
+      libraryId: 'lib-books',
+      libraryIds: ['lib-books', 'lib-audio'],
+      pathRemap: '/abs:/books',
+      apiKeyConfigured: true,
+    })
+    vi.mocked(api.absLibraries).mockResolvedValue([
+      { id: 'lib-books', name: 'Books', mediaType: 'book', icon: '', provider: 'local', folders: [] },
+      { id: 'lib-audio', name: 'Audiobooks', mediaType: 'book', icon: '', provider: 'audible', folders: [] },
+    ])
+    vi.mocked(api.absImportRuns).mockResolvedValue([
+      makeABSImportRun(42, 'lib-books'),
+      makeABSImportRun(43, 'lib-audio'),
+    ])
+
+    renderSettings()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'settings.tabs.abs' }))
+
+    expect(await screen.findByText(/Shelf · Books \(lib-books\)/)).toBeInTheDocument()
+    expect(screen.getByText(/Shelf · Audiobooks \(lib-audio\)/)).toBeInTheDocument()
   })
 
   it('saves all selected Audiobookshelf libraries', async () => {

@@ -3368,6 +3368,99 @@ func TestImporter_RollbackRemovesCreatedBatch(t *testing.T) {
 	}
 }
 
+func TestImporter_RollbackSecondLibraryPreservesFirstLibraryImport(t *testing.T) {
+	t.Parallel()
+
+	importer, _, bookRepo, _, _, provenanceRepo, _, _, _, _ := newABSImporterFixture(t)
+	ctx := context.Background()
+	itemForLibrary := func(libraryID, itemID, title string) NormalizedLibraryItem {
+		item := sampleABSItem()
+		item.LibraryID = libraryID
+		item.ItemID = itemID
+		item.Title = title
+		item.ASIN = "ASIN-" + itemID
+		item.Authors = []NormalizedAuthor{{ID: "author-" + itemID, Name: "Author " + title}}
+		item.Series = []NormalizedSeries{{ID: "series-" + itemID, Name: "Series " + title, Sequence: "1"}}
+		item.AudioFiles = []NormalizedAudioFile{{INO: "audio-" + itemID, Path: "/abs/" + itemID + ".m4b"}}
+		item.EbookPath = "/abs/" + itemID + ".epub"
+		item.EbookINO = "ebook-" + itemID
+		return item
+	}
+	first := itemForLibrary("lib-books", "li-books", "Books Library Title")
+	second := itemForLibrary("lib-audio", "li-audio", "Audio Library Title")
+	items := map[string]NormalizedLibraryItem{
+		first.LibraryID:  first,
+		second.LibraryID: second,
+	}
+	importer.enumerateFn = func(ctx context.Context, libraryID string, fn func(context.Context, NormalizedLibraryItem) error) (EnumerationStats, error) {
+		item, ok := items[libraryID]
+		if !ok {
+			return EnumerationStats{}, fmt.Errorf("unexpected library %q", libraryID)
+		}
+		if err := fn(ctx, item); err != nil {
+			return EnumerationStats{}, err
+		}
+		return EnumerationStats{PagesScanned: 1, ItemsSeen: 1, ItemsNormalized: 1}, nil
+	}
+
+	if _, err := importer.Run(ctx, ImportConfig{
+		SourceID:   DefaultSourceID,
+		BaseURL:    "https://abs.example.com",
+		APIKey:     "secret",
+		LibraryIDs: []string{first.LibraryID, second.LibraryID},
+		Label:      "Shelf",
+		Enabled:    true,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	runs, err := importer.RecentRuns(ctx, 10)
+	if err != nil {
+		t.Fatalf("RecentRuns: %v", err)
+	}
+	runIDs := map[string]int64{}
+	for _, run := range runs {
+		runIDs[run.LibraryID] = run.ID
+	}
+	if runIDs[first.LibraryID] == 0 || runIDs[second.LibraryID] == 0 {
+		t.Fatalf("run IDs = %+v, want runs for both libraries", runIDs)
+	}
+
+	if _, err := importer.Rollback(ctx, runIDs[second.LibraryID]); err != nil {
+		t.Fatalf("Rollback second library: %v", err)
+	}
+
+	firstBook, err := bookRepo.GetByForeignID(ctx, absForeignID("book", first.LibraryID, first.ItemID))
+	if err != nil {
+		t.Fatalf("GetByForeignID first book: %v", err)
+	}
+	if firstBook == nil {
+		t.Fatal("first library book was removed by second library rollback")
+	}
+	firstLink, err := provenanceRepo.GetByExternal(ctx, DefaultSourceID, first.LibraryID, entityTypeBook, first.ItemID)
+	if err != nil {
+		t.Fatalf("GetByExternal first book: %v", err)
+	}
+	if firstLink == nil {
+		t.Fatal("first library provenance was removed by second library rollback")
+	}
+
+	secondBook, err := bookRepo.GetByForeignID(ctx, absForeignID("book", second.LibraryID, second.ItemID))
+	if err != nil {
+		t.Fatalf("GetByForeignID second book: %v", err)
+	}
+	if secondBook != nil {
+		t.Fatalf("second library book = %+v, want removed by rollback", secondBook)
+	}
+	secondLink, err := provenanceRepo.GetByExternal(ctx, DefaultSourceID, second.LibraryID, entityTypeBook, second.ItemID)
+	if err != nil {
+		t.Fatalf("GetByExternal second book: %v", err)
+	}
+	if secondLink != nil {
+		t.Fatalf("second library provenance = %+v, want removed by rollback", secondLink)
+	}
+}
+
 func TestImporter_RollbackKeepsRunCreatedSeriesWithUserMembership(t *testing.T) {
 	t.Parallel()
 
