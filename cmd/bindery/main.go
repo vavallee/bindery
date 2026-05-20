@@ -353,8 +353,19 @@ func main() {
 		}
 	}
 
+	// Process-lifecycle context. Unlike a per-request context this is not tied
+	// to any single HTTP request; it is cancelled when the process receives
+	// SIGINT/SIGTERM (graceful shutdown). Long-lived background goroutines —
+	// the scheduler's cron jobs and the recommendations goroutine — should
+	// derive from this so they observe shutdown instead of running against a
+	// context that never cancels. This commit only threads appCtx into the
+	// scheduler and the recommendation handler; converting the existing
+	// context.Background() call sites to use it is the job of #707 and #550.
+	appCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	// Scheduler
-	sched := scheduler.New(importScanner, idxSearcher, metaAgg,
+	sched := scheduler.New(appCtx, importScanner, idxSearcher, metaAgg,
 		authorRepo, bookRepo, indexerRepo, downloadRepo, dlClientRepo, settingsRepo, blocklistRepo)
 	sched.WithHistory(historyRepo)
 	sched.WithAliases(authorAliasRepo)
@@ -496,7 +507,8 @@ func main() {
 		func() calibre.Mode { return api.LoadCalibreMode(settingsRepo) },
 	)
 	recHandler := api.NewRecommendationHandler(recRepo, recEngine, authorRepo, bookRepo, sched).
-		WithFinder(seriesRepo, importScanner)
+		WithFinder(seriesRepo, importScanner).
+		WithAppContext(appCtx)
 	imageProxyHandler := api.NewImageProxyHandler(cfg.DataDir)
 	imageProxyHandler.StartEviction(24 * time.Hour)
 	migrateHandler := api.NewMigrateHandler(
@@ -921,9 +933,6 @@ func main() {
 		slog.Info("serving under path prefix", "urlBase", cfg.URLBase)
 	}
 
-	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	gracePeriod := 30 * time.Second
 	if v := os.Getenv("BINDERY_SHUTDOWN_GRACE"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
@@ -953,7 +962,7 @@ func main() {
 			slog.Error("server failed", "error", err)
 			os.Exit(1)
 		}
-	case <-sigCtx.Done():
+	case <-appCtx.Done():
 		slog.Info("received shutdown signal, draining…")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), gracePeriod)
 		defer cancel()

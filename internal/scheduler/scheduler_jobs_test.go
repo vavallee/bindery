@@ -63,12 +63,15 @@ func TestNew_Construction(t *testing.T) {
 	settings := db.NewSettingsRepo(database)
 	blocklist := db.NewBlocklistRepo(database)
 
-	s := New(nil, nil, nil, authors, books, indexers, downloads, clients, settings, blocklist)
+	s := New(context.Background(), nil, nil, nil, authors, books, indexers, downloads, clients, settings, blocklist)
 	if s == nil {
 		t.Fatal("New returned nil")
 	}
 	if s.cron == nil {
 		t.Fatal("cron field not initialized")
+	}
+	if s.appCtx == nil {
+		t.Fatal("appCtx field not initialized")
 	}
 	if s.authors != authors {
 		t.Error("authors repo not assigned")

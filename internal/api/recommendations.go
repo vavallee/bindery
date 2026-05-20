@@ -27,6 +27,12 @@ type RecommendationHandler struct {
 	series   *db.SeriesRepo
 	searcher BookSearcher
 	finder   LibraryFinder
+
+	// appCtx is the process-lifecycle context: not tied to any single HTTP
+	// request but cancelled when the process shuts down. Background work
+	// kicked off from a handler (which must outlive the request) will derive
+	// from it instead of context.Background() — see #550. Never nil.
+	appCtx context.Context
 }
 
 // WithFinder attaches a LibraryFinder so that Add can check whether the
@@ -34,6 +40,16 @@ type RecommendationHandler struct {
 func (h *RecommendationHandler) WithFinder(series *db.SeriesRepo, finder LibraryFinder) *RecommendationHandler {
 	h.series = series
 	h.finder = finder
+	return h
+}
+
+// WithAppContext attaches the process-lifecycle context so that background
+// work started from a request handler can be tied to process shutdown rather
+// than to context.Background(). A nil ctx is tolerated and ignored. See #550.
+func (h *RecommendationHandler) WithAppContext(ctx context.Context) *RecommendationHandler {
+	if ctx != nil {
+		h.appCtx = ctx
+	}
 	return h
 }
 
@@ -51,6 +67,7 @@ func NewRecommendationHandler(
 		authors:  authors,
 		books:    books,
 		searcher: searcher,
+		appCtx:   context.Background(),
 	}
 }
 

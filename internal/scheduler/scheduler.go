@@ -59,6 +59,12 @@ type TelemetryPinger interface {
 
 // Scheduler runs background jobs on configurable intervals.
 type Scheduler struct {
+	// appCtx is the process-lifecycle context: it is not tied to any single
+	// HTTP request but is cancelled when the process shuts down. Background
+	// jobs that should observe shutdown will derive from it (see #707). It is
+	// never nil — New falls back to context.Background() when given a nil ctx.
+	appCtx context.Context
+
 	cron     *cron.Cron
 	scanner  *importer.Scanner
 	searcher bookSearcher
@@ -88,7 +94,14 @@ type Scheduler struct {
 const scheduledWantedSearchConcurrency = 2
 
 // New creates a new scheduler.
+//
+// appCtx is the process-lifecycle context — a context that is not tied to any
+// single HTTP request but is cancelled when the process shuts down. It is
+// stored on the Scheduler so background jobs can later derive request-free,
+// shutdown-aware contexts from it (see #707). A nil appCtx is tolerated and
+// replaced with context.Background().
 func New(
+	appCtx context.Context,
 	scanner *importer.Scanner,
 	searcher *indexer.Searcher,
 	meta *metadata.Aggregator,
@@ -100,7 +113,11 @@ func New(
 	settings *db.SettingsRepo,
 	blocklist *db.BlocklistRepo,
 ) *Scheduler {
+	if appCtx == nil {
+		appCtx = context.Background()
+	}
 	return &Scheduler{
+		appCtx:    appCtx,
 		cron:      cron.New(cron.WithSeconds(), cron.WithChain(cron.SkipIfStillRunning(cron.DefaultLogger))),
 		scanner:   scanner,
 		searcher:  searcher,
