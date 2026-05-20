@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1718,6 +1719,68 @@ func pathUnderDir(path, dir string) bool {
 	return err == nil && !strings.HasPrefix(rel, "..")
 }
 
+// scanBook is the precomputed per-book data the library-scan reconciliation
+// loop needs. Hoisting normalizeTitle into this struct makes it run once per
+// book instead of once per (file, book) pair — see ScanLibrary.
+type scanBook struct {
+	book      *models.Book
+	normTitle string
+	normLen   int
+}
+
+// wordRunsInto appends every maximal [0-9A-Za-z_] run of s, lowercased, to dst
+// and returns the result. These are the runs a `\b…\b` regex (authorTokenRegex,
+// used by authorMatch) treats as words, so an index of them is an exact
+// super-set key for authorMatch candidates. dst is reused to avoid allocations.
+func wordRunsInto(dst []string, s string) []string {
+	start := -1
+	for i := range len(s) {
+		c := s[i]
+		isWord := c == '_' || (c >= '0' && c <= '9') ||
+			(c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+		if isWord {
+			if start < 0 {
+				start = i
+			}
+			continue
+		}
+		if start >= 0 {
+			dst = append(dst, strings.ToLower(s[start:i]))
+			start = -1
+		}
+	}
+	if start >= 0 {
+		dst = append(dst, strings.ToLower(s[start:]))
+	}
+	return dst
+}
+
+// firstWordRun returns the first maximal [0-9A-Za-z_] run of tok, lowercased,
+// or "" if tok has no word characters. Whenever authorMatch's `\btok\b` test
+// matches an author name, firstWordRun(tok) is one of that name's word runs —
+// which is what makes authorWordIndex a guaranteed super-set (see ScanLibrary).
+func firstWordRun(tok string) string {
+	start := -1
+	for i := range len(tok) {
+		c := tok[i]
+		isWord := c == '_' || (c >= '0' && c <= '9') ||
+			(c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+		if isWord {
+			if start < 0 {
+				start = i
+			}
+			continue
+		}
+		if start >= 0 {
+			return strings.ToLower(tok[start:i])
+		}
+	}
+	if start >= 0 {
+		return strings.ToLower(tok[start:])
+	}
+	return ""
+}
+
 // ScanLibrary walks the library directory (and the separate audiobook directory
 // when configured) for book files not yet tracked in the database and reconciles
 // found files with existing "wanted" book records.
@@ -1797,8 +1860,147 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 	// the correct earlier assignment.
 	reconciledBooks := make(map[int64]bool)
 
+	// Precompute per-book reconciliation data once. The title tier previously
+	// called normalizeTitle(book.Title) inside the per-file loop — a pure,
+	// loop-invariant function recomputed files×books times. Hoisting it here
+	// makes it run once per book. Only "wanted" books can reconcile, so the
+	// candidate set is filtered down up front, and ASIN lookups become O(1).
+	wantedBooks := make([]scanBook, 0, len(allBooks))
+	asinIndex := make(map[string][]scanBook)
+	// booksByAuthor maps an author ID to the indices (into wantedBooks, i.e. in
+	// library order) of that author's wanted books, so the title tier can build
+	// its candidate list from just the matching authors instead of walking
+	// every book in the library.
+	booksByAuthor := make(map[int64][]int)
+	for i := range allBooks {
+		b := &allBooks[i]
+		if b.Status != models.BookStatusWanted {
+			continue
+		}
+		sb := scanBook{book: b, normTitle: normalizeTitle(b.Title)}
+		sb.normLen = len(sb.normTitle)
+		idx := len(wantedBooks)
+		wantedBooks = append(wantedBooks, sb)
+		booksByAuthor[b.AuthorID] = append(booksByAuthor[b.AuthorID], idx)
+		if b.ASIN != "" {
+			asinIndex[b.ASIN] = append(asinIndex[b.ASIN], sb)
+		}
+	}
+
+	// authorWordIndex maps each author-name word run to the authors containing
+	// it. The title tier only matches a book when authorMatch(authorName,
+	// parsed.Author) holds, so resolving the matching authors up front lets the
+	// title comparison skip every other author's books — turning the tier from
+	// O(files × books) into roughly O(files × books-per-author).
+	authorWordIndex := make(map[string][]int64)
+	{
+		var runs []string
+		for id, name := range authorNames {
+			runs = wordRunsInto(runs[:0], name)
+			for _, w := range runs {
+				authorWordIndex[w] = append(authorWordIndex[w], id)
+			}
+		}
+	}
+
+	// matchingAuthors returns the set of author IDs satisfying authorMatch for
+	// parsedAuthor. A nil result means "every author" — authorMatch's contract
+	// for an empty or initials-only parsed author. Candidates come from the
+	// rarest token's word-run bucket (a guaranteed super-set of authorMatch
+	// matches) and are then verified with the exact authorMatch, so the result
+	// is identical to scanning every author. Memoised: a {Author}/{Title}/file
+	// library yields the same parsed author for all of that author's files.
+	authorMatchCache := make(map[string]map[int64]bool)
+	matchingAuthors := func(parsedAuthor string) map[int64]bool {
+		if parsedAuthor == "" {
+			return nil
+		}
+		if set, ok := authorMatchCache[parsedAuthor]; ok {
+			return set
+		}
+		tokens := significantAuthorTokens(parsedAuthor)
+		if len(tokens) == 0 {
+			authorMatchCache[parsedAuthor] = nil
+			return nil
+		}
+		var candidates []int64
+		haveBucket := false
+		for _, tok := range tokens {
+			run := firstWordRun(tok)
+			if run == "" {
+				continue
+			}
+			if bucket := authorWordIndex[run]; !haveBucket || len(bucket) < len(candidates) {
+				candidates, haveBucket = bucket, true
+			}
+		}
+		set := make(map[int64]bool)
+		if !haveBucket {
+			// No indexable token — fall back to scanning every author.
+			for id, name := range authorNames {
+				if authorMatch(name, parsedAuthor) {
+					set[id] = true
+				}
+			}
+		} else {
+			for _, id := range candidates {
+				if !set[id] && authorMatch(authorNames[id], parsedAuthor) {
+					set[id] = true
+				}
+			}
+		}
+		authorMatchCache[parsedAuthor] = set
+		return set
+	}
+
 	var unmatchedFiles []unmatchedFile
 	var reconciled, unmatched, tagReadFailed int
+
+	// tryReconcileTitle attempts to reconcile path to the given wanted book via
+	// the fuzzy title tier, returning true once a book is claimed. The
+	// candidate's author is already known to satisfy authorMatch — see the
+	// title tier in the file loop below.
+	var titleCand []int // reused candidate-index scratch
+	tryReconcileTitle := func(sb *scanBook, path, cleanPath, normParsed, detectedFmt string) bool {
+		b := sb.book
+		if reconciledBooks[b.ID] {
+			return false
+		}
+		// Length gate: Jaro-Winkler is bounded above by 0.8 + 0.2·(minLen/
+		// maxLen), so a score >= 0.85 is impossible once the shorter normalised
+		// title drops below a quarter of the longer. Cheap, never skips a match.
+		lo, hi := sb.normLen, len(normParsed)
+		if lo > hi {
+			lo, hi = hi, lo
+		}
+		if lo == 0 || lo*4 < hi {
+			return false
+		}
+		// Require Jaro-Winkler >= 0.85 to prevent low-confidence matches from
+		// reconciling the wrong book after a delete+rescan (#343).
+		jwScore := textutil.JaroWinkler(sb.normTitle, normParsed)
+		if jwScore < 0.85 {
+			return false
+		}
+		// File must live under the candidate book's effective library root to
+		// prevent cross-author mismapping after delete+rescan (#343).
+		effDir := s.effectiveLibraryDir(ctx, authorMap[b.AuthorID])
+		if !pathUnderDir(path, effDir) {
+			slog.Debug("library scan: title+author match rejected (outside library root)",
+				"title", b.Title, "path", path, "root", effDir)
+			return false
+		}
+		if err := s.books.AddBookFile(ctx, b.ID, detectedFmt, path); err != nil {
+			slog.Error("library scan: failed to update book", "id", b.ID, "error", err)
+			return false
+		}
+		slog.Info("library scan: reconciled book", "title", b.Title, "path", path, "jw", jwScore)
+		trackedPaths[cleanPath] = true
+		reconciledBooks[b.ID] = true
+		reconciled++
+		return true
+	}
+
 	for _, path := range foundFiles {
 		// Skip files already tracked, or files inside a tracked directory
 		// (individual tracks inside an already-imported audiobook folder).
@@ -1855,11 +2057,9 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 		matched := false
 		detectedFmt := detectDownloadFormat([]string{path})
 		if parsed.ASIN != "" {
-			for _, b := range allBooks {
+			for _, sb := range asinIndex[parsed.ASIN] {
+				b := sb.book
 				if reconciledBooks[b.ID] {
-					continue
-				}
-				if b.Status != models.BookStatusWanted || b.ASIN != parsed.ASIN {
 					continue
 				}
 				// File must live under the candidate book's effective library root.
@@ -1882,39 +2082,34 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 			}
 		}
 		if !matched && parsed.Title != "" {
-			for _, b := range allBooks {
-				if reconciledBooks[b.ID] {
-					continue
+			// normalizeTitle strips leading articles and inverts comma-suffix
+			// sort form ("Title, A" → "title") so librarian-sorted folders
+			// reconcile correctly (#513). Hoisted: computed once per file.
+			normParsed := normalizeTitle(parsed.Title)
+			// authorMatch is part of the title-tier predicate. Resolving the
+			// matching authors first lets the candidate list be built from just
+			// their books (booksByAuthor), iterated in library order. A nil set
+			// means the parsed author is empty/initials-only — authorMatch then
+			// accepts any author, so every wanted book is a candidate.
+			if authorSet := matchingAuthors(parsed.Author); authorSet == nil {
+				for i := range wantedBooks {
+					if tryReconcileTitle(&wantedBooks[i], path, cleanPath, normParsed, detectedFmt) {
+						matched = true
+						break
+					}
 				}
-				// Require Jaro-Winkler >= 0.85 on normalised titles to prevent
-				// low-confidence matches from reconciling the wrong book after a
-				// delete+rescan cycle (#343). normalizeTitle strips leading articles
-				// and inverts comma-suffix sort form ("Title, A" → "title") so that
-				// librarian-sorted folders reconcile correctly (#513).
-				jwScore := textutil.JaroWinkler(normalizeTitle(b.Title), normalizeTitle(parsed.Title))
-				if b.Status != models.BookStatusWanted ||
-					jwScore < 0.85 ||
-					!authorMatch(authorNames[b.AuthorID], parsed.Author) {
-					continue
+			} else {
+				titleCand = titleCand[:0]
+				for id := range authorSet {
+					titleCand = append(titleCand, booksByAuthor[id]...)
 				}
-				// File must live under the candidate book's effective library root
-				// to prevent cross-author mismapping after delete+rescan (#343).
-				effDir := s.effectiveLibraryDir(ctx, authorMap[b.AuthorID])
-				if !pathUnderDir(path, effDir) {
-					slog.Debug("library scan: title+author match rejected (outside library root)",
-						"title", b.Title, "path", path, "root", effDir)
-					continue
+				slices.Sort(titleCand) // restore library order across authors
+				for _, idx := range titleCand {
+					if tryReconcileTitle(&wantedBooks[idx], path, cleanPath, normParsed, detectedFmt) {
+						matched = true
+						break
+					}
 				}
-				if err := s.books.AddBookFile(ctx, b.ID, detectedFmt, path); err != nil {
-					slog.Error("library scan: failed to update book", "id", b.ID, "error", err)
-					continue
-				}
-				slog.Info("library scan: reconciled book", "title", b.Title, "path", path, "jw", jwScore)
-				trackedPaths[cleanPath] = true
-				reconciledBooks[b.ID] = true
-				reconciled++
-				matched = true
-				break
 			}
 		}
 
