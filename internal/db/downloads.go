@@ -253,26 +253,10 @@ func (r *DownloadRepo) IncrementImportRetryCount(ctx context.Context, id int64) 
 // It returns the IDs of the downloads it transitioned so the caller can log /
 // emit history events for them.
 func (r *DownloadRepo) RecoverInterruptedImports(ctx context.Context) ([]int64, error) {
-	rows, err := r.db.QueryContext(ctx,
-		"SELECT id FROM downloads WHERE status IN (?, ?)",
-		models.StateImporting, models.StateImportPending)
+	ids, err := r.interruptedImportIDs(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list interrupted imports: %w", err)
+		return nil, err
 	}
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return nil, fmt.Errorf("scan interrupted import id: %w", err)
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, fmt.Errorf("iterate interrupted imports: %w", err)
-	}
-	_ = rows.Close()
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -292,6 +276,32 @@ func (r *DownloadRepo) RecoverInterruptedImports(ctx context.Context) ([]int64, 
 		recovered = append(recovered, id)
 	}
 	return recovered, nil
+}
+
+// interruptedImportIDs returns the ids of downloads stuck mid-import. It is a
+// separate function so the result set is closed (via defer) before the caller
+// issues its recovery UPDATEs — the pool is single-connection, so an open
+// query would block the writes.
+func (r *DownloadRepo) interruptedImportIDs(ctx context.Context) ([]int64, error) {
+	rows, err := r.db.QueryContext(ctx,
+		"SELECT id FROM downloads WHERE status IN (?, ?)",
+		models.StateImporting, models.StateImportPending)
+	if err != nil {
+		return nil, fmt.Errorf("list interrupted imports: %w", err)
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan interrupted import id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate interrupted imports: %w", err)
+	}
+	return ids, nil
 }
 
 func (r *DownloadRepo) Delete(ctx context.Context, id int64) error {
