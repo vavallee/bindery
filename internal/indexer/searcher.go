@@ -11,10 +11,19 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/models"
 )
+
+// searchBookTimeout is the outer deadline applied to a full SearchBook call.
+// Each per-indexer BookSearch may issue up to 4 sequential HTTP calls; with a
+// 30 s transport timeout per call the theoretical maximum is 4 × 30 s = 120 s
+// per indexer. 60 s is a pragmatic bound that still allows a slow indexer to
+// respond on tier 1 while preventing a hung connection from blocking the caller
+// for multiple minutes.
+const searchBookTimeout = 60 * time.Second
 
 // Searcher coordinates searches across multiple Newznab indexers.
 type Searcher struct {
@@ -103,7 +112,15 @@ func filterCategoriesForMedia(cats []int, mediaType string) []int {
 
 // SearchBook queries all enabled indexers and returns deduplicated, filtered,
 // ranked results.
+//
+// An outer context.WithTimeout of searchBookTimeout is applied to the whole
+// operation so that a slow or hung indexer cannot block the caller indefinitely.
+// The timeout is additional to any deadline already on ctx — whichever fires
+// first wins.
 func (s *Searcher) SearchBook(ctx context.Context, indexers []models.Indexer, c MatchCriteria) []newznab.SearchResult {
+	ctx, cancel := context.WithTimeout(ctx, searchBookTimeout)
+	defer cancel()
+
 	var (
 		mu      sync.Mutex
 		results []newznab.SearchResult

@@ -170,7 +170,19 @@ func (c *Client) BookSearch(ctx context.Context, title, author string, categorie
 		if err == nil {
 			slog.Debug("indexer query", "tier", 1, "url", redactAPIKey(u))
 			var rss rssResponse
-			if err := c.getXML(ctx, u, &rss); err == nil && len(rss.Channel.Items) > 0 && rss.Channel.Response.Total < 1000 {
+			if err := c.getXML(ctx, u, &rss); err != nil {
+				// Hard errors (auth failure, rate limit) mean the indexer has
+				// explicitly rejected this session. Firing tiers 2-4 at the same
+				// indexer would repeat the same rejection — abort immediately so
+				// the caller can surface the real error rather than logging "0
+				// results". Network timeouts and context cancellations are also
+				// treated as hard stops: the indexer is unreachable for the
+				// duration of this search.
+				if IsHardIndexerError(err) || ctx.Err() != nil {
+					return nil, err
+				}
+				slog.Debug("indexer query tier fallthrough", "tier", 1, "error", err)
+			} else if len(rss.Channel.Items) > 0 && rss.Channel.Response.Total < 1000 {
 				parsed := c.parseResults(rss.Channel.Items)
 				if titleHasRelevantResult(queryTitle, parsed) {
 					slog.Debug("indexer query tier matched", "tier", 1, "count", len(parsed))
@@ -190,7 +202,11 @@ func (c *Client) BookSearch(ctx context.Context, title, author string, categorie
 	// Tier 2: surname + title (short, disambiguating)
 	if surname != "" && !strings.EqualFold(surname, author) {
 		results, err := c.Search(ctx, surname+" "+queryTitle, categories)
-		if err == nil && len(results) > 0 {
+		if err != nil {
+			if IsHardIndexerError(err) || ctx.Err() != nil {
+				return nil, err
+			}
+		} else if len(results) > 0 {
 			slog.Debug("indexer query tier matched", "tier", 2, "count", len(results))
 			return results, nil
 		}
@@ -199,7 +215,11 @@ func (c *Client) BookSearch(ctx context.Context, title, author string, categorie
 	// Tier 3: full author + title
 	if author != "" {
 		results, err := c.Search(ctx, author+" "+queryTitle, categories)
-		if err == nil && len(results) > 0 {
+		if err != nil {
+			if IsHardIndexerError(err) || ctx.Err() != nil {
+				return nil, err
+			}
+		} else if len(results) > 0 {
 			slog.Debug("indexer query tier matched", "tier", 3, "count", len(results))
 			return results, nil
 		}
@@ -490,10 +510,14 @@ func (c *Client) getXML(ctx context.Context, rawURL string, target interface{}) 
 	return xml.Unmarshal(body, target)
 }
 
-// parseNewznabError returns a non-nil error when body is a Newznab/Torznab
-// <error> response, formatted with the indexer's own code and description.
-// It returns nil for any other document — including a normal <rss> feed or
-// non-XML content — so callers proceed with their usual decoding.
+// parseNewznabError returns a non-nil *IndexerError when body is a
+// Newznab/Torznab <error> response. It returns nil for any other document —
+// including a normal <rss> feed or non-XML content — so callers proceed with
+// their usual decoding.
+//
+// The returned error is a *IndexerError so callers can use IsAuthError /
+// IsRateLimitError / IsHardIndexerError to classify the failure and decide
+// whether to abort tier fall-through or log differently.
 func parseNewznabError(body []byte) error {
 	dec := xml.NewDecoder(bytes.NewReader(body))
 	for {
@@ -508,25 +532,20 @@ func parseNewznabError(body []byte) error {
 		if !strings.EqualFold(start.Name.Local, "error") {
 			return nil // root is <rss> or something else; not an error response
 		}
-		var code, desc string
+		var codeStr, desc string
 		for _, attr := range start.Attr {
 			switch strings.ToLower(attr.Name.Local) {
 			case "code":
-				code = strings.TrimSpace(attr.Value)
+				codeStr = strings.TrimSpace(attr.Value)
 			case "description":
 				desc = strings.TrimSpace(attr.Value)
 			}
 		}
-		switch {
-		case code == "" && desc == "":
+		if codeStr == "" && desc == "" {
 			return nil // a bare <error/> tells us nothing actionable
-		case desc == "":
-			return fmt.Errorf("indexer error %s", code)
-		case code == "":
-			return fmt.Errorf("indexer error: %s", desc)
-		default:
-			return fmt.Errorf("indexer error %s: %s", code, desc)
 		}
+		code, _ := strconv.Atoi(codeStr)
+		return &IndexerError{Code: code, Description: desc}
 	}
 }
 

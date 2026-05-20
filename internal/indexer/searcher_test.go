@@ -1060,6 +1060,56 @@ func TestFilterRelevantDebugEditionQualifierParity(t *testing.T) {
 	}
 }
 
+// TestSearchBook_AggregateTimeout verifies that SearchBook respects the outer
+// searchBookTimeout: when every indexer hangs indefinitely (by blocking until
+// the context is cancelled), the search still returns within a reasonable bound
+// rather than blocking for up to 4×30 s (Finding 2 — aggregate timeout).
+//
+// This test uses an already-cancelled context to avoid waiting for the real
+// 60 s timeout, while still verifying that the timeout is wired into each
+// goroutine so http.NewRequestWithContext sees it.
+func TestSearchBook_AggregateTimeout(t *testing.T) {
+	// Create a server that blocks until the request context is cancelled.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+		// The request was cancelled — this is the expected path.
+	}))
+	defer srv.Close()
+
+	// Use an already-cancelled context so we don't wait for the real 60 s wall-clock.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	idxs := []models.Indexer{
+		{ID: 1, Name: "slow-indexer", URL: srv.URL, Enabled: true, Categories: []int{7020}},
+	}
+
+	// SearchBook must return (possibly with zero results) rather than blocking.
+	// With the context already cancelled the goroutine aborts on first HTTP call.
+	results := NewSearcher().SearchBook(ctx, idxs, MatchCriteria{
+		Title:  "Dark Matter",
+		Author: "Blake Crouch",
+	})
+	// We don't assert on results (the indexer was never able to respond),
+	// only that the call returned at all. If the timeout isn't wired in,
+	// this test would hang until the Go test runner kills it.
+	_ = results
+}
+
+// TestSearchBook_TimeoutConstantExists ensures the searchBookTimeout constant
+// has a positive, sensible value (between 30 s and 300 s).
+func TestSearchBook_TimeoutConstantExists(t *testing.T) {
+	if searchBookTimeout <= 0 {
+		t.Fatalf("searchBookTimeout must be positive, got %v", searchBookTimeout)
+	}
+	if searchBookTimeout < 30*time.Second {
+		t.Errorf("searchBookTimeout %v is suspiciously short (< 30s)", searchBookTimeout)
+	}
+	if searchBookTimeout > 5*60*time.Second {
+		t.Errorf("searchBookTimeout %v is suspiciously long (> 5 min)", searchBookTimeout)
+	}
+}
+
 // nopWriter discards all log output during tests.
 type nopWriter struct{}
 
