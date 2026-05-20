@@ -38,7 +38,18 @@ func TestCheckDownloadClientHealth_QBittorrentCategoryPath(t *testing.T) {
 			name:       "mismatched category path",
 			categories: `{"books":{"name":"books","savePath":"/media/other"}}`,
 			wantStatus: HealthError,
-			wantText:   `expected "/books/downloads"`,
+			wantText:   `expected a path at or under "/books/downloads"`,
+		},
+		{
+			name:       "category path is a subdirectory of download dir",
+			categories: `{"books":{"name":"books","savePath":"/media/downloads/Torrents/books"}}`,
+			wantStatus: HealthOK,
+		},
+		{
+			name:       "category path under sibling dir is still rejected",
+			categories: `{"books":{"name":"books","savePath":"/media/downloads-extra/books"}}`,
+			wantStatus: HealthError,
+			wantText:   `expected a path at or under "/books/downloads"`,
 		},
 	}
 

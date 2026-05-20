@@ -143,8 +143,8 @@ func checkQbittorrentCategoryPath(ctx context.Context, client *models.DownloadCl
 	}
 
 	localPath := filepath.Clean(pathmap.Parse(client.PathRemap).Apply(savePath))
-	if localPath != expected {
-		return healthError(fmt.Sprintf("qBittorrent category %q saves to %q, which maps to %q; expected %q", category, savePath, localPath, expected))
+	if !pathIsAtOrUnder(localPath, expected) {
+		return healthError(fmt.Sprintf("qBittorrent category %q saves to %q, which maps to %q; expected a path at or under %q", category, savePath, localPath, expected))
 	}
 
 	return models.DownloadClientHealth{
@@ -155,4 +155,15 @@ func checkQbittorrentCategoryPath(ctx context.Context, client *models.DownloadCl
 
 func healthError(message string) models.DownloadClientHealth {
 	return models.DownloadClientHealth{Status: HealthError, Message: message}
+}
+
+// pathIsAtOrUnder reports whether candidate is equal to base or is a
+// subdirectory of base. Both paths must already be filepath.Clean'd.
+// A trailing separator is added to base before the prefix check so that
+// "/data/downloads-extra" is not mistakenly accepted as "under" "/data/downloads".
+func pathIsAtOrUnder(candidate, base string) bool {
+	if candidate == base {
+		return true
+	}
+	return strings.HasPrefix(candidate, base+string(filepath.Separator))
 }
