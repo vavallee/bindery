@@ -36,7 +36,28 @@ type ctxKey string
 const (
 	userIDCtxKey   ctxKey = "auth.user_id"
 	userRoleCtxKey ctxKey = "auth.user_role"
+	// viaAPIKeyCtxKey marks a request whose identity was established by a
+	// *verified* API key (subtle.ConstantTimeCompare passed in Middleware).
+	// The CSRF and X-Requested-With guards consult this flag to decide whether
+	// to exempt the request — never the mere presence of an apikey parameter,
+	// which an attacker can forge to switch the CSRF layer off (#708).
+	viaAPIKeyCtxKey ctxKey = "auth.via_api_key"
 )
+
+// AuthedViaAPIKey reports whether the request was authenticated by a verified
+// API key. False for session-cookie, proxy, local-only, or disabled-mode
+// requests — and false for requests carrying a *bogus* apikey parameter that
+// failed key verification and fell through to cookie auth.
+func AuthedViaAPIKey(ctx context.Context) bool {
+	v, _ := ctx.Value(viaAPIKeyCtxKey).(bool)
+	return v
+}
+
+// WithAPIKeyAuth returns a context marked as authenticated via a verified API
+// key. Exported only so tests can construct the same state Middleware sets.
+func WithAPIKeyAuth(ctx context.Context) context.Context {
+	return context.WithValue(ctx, viaAPIKeyCtxKey, true)
+}
 
 // UserIDFromContext returns the authenticated user ID (0 if unauthenticated).
 func UserIDFromContext(ctx context.Context) int64 {
@@ -187,7 +208,14 @@ func Middleware(p Provider) func(http.Handler) http.Handler {
 				// API key authentication is always treated as admin. Set the role
 				// so RequireAdmin-protected endpoints are accessible without a
 				// session cookie (Bug 11: misleading "admin role required" 403).
-				r = r.WithContext(context.WithValue(r.Context(), userRoleCtxKey, "admin"))
+				ctx := context.WithValue(r.Context(), userRoleCtxKey, "admin")
+				// Mark the request as API-key-authenticated. The CSRF and
+				// X-Requested-With guards downstream key their exemption off
+				// this verified flag, not the presence of an apikey parameter
+				// (#708 finding 3). A request reaches this branch only after
+				// subtle.ConstantTimeCompare confirmed the key.
+				ctx = context.WithValue(ctx, viaAPIKeyCtxKey, true)
+				r = r.WithContext(ctx)
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -285,7 +313,11 @@ func requestPeerIP(r *http.Request) net.IP {
 //
 // API-key-authenticated requests are exempt: CSRF requires a cookie to be the
 // authentication mechanism, so requests carrying an explicit API key are not
-// vulnerable and do not need the header.
+// vulnerable and do not need the header. The exemption keys off the
+// AuthedViaAPIKey context flag, which Middleware sets only after the key has
+// been *verified* — a bogus ?apikey= parameter no longer disables the check
+// (#708 finding 3). For this to work, auth.Middleware MUST run before this
+// middleware in the chain (it does — see cmd/bindery/main.go).
 func RequireXRequestedWith(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -296,7 +328,7 @@ func RequireXRequestedWith(next http.Handler) http.Handler {
 			// session cookie to protect against CSRF at those points, so
 			// requiring the header is pure friction for non-browser clients.
 			// This mirrors the identical exemption in RequireCSRFToken.
-			if requestAPIKey(r) == "" && !AllowUnauthPath(r.URL.Path) && r.Header.Get("X-Requested-With") != "bindery-ui" {
+			if !AuthedViaAPIKey(r.Context()) && !AllowUnauthPath(r.URL.Path) && r.Header.Get("X-Requested-With") != "bindery-ui" {
 				w.Header().Set("Content-Type", "application/json")
 				http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 				return
@@ -306,9 +338,32 @@ func RequireXRequestedWith(next http.Handler) http.Handler {
 	})
 }
 
+// safeMethod reports whether the HTTP method is non-mutating (read-only).
+// The ?apikey= query parameter is honoured only for these methods.
+func safeMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	default:
+		return false
+	}
+}
+
+// requestAPIKey extracts the API key supplied with the request.
+//
+// The X-Api-Key header is always honoured. The ?apikey= query parameter is
+// honoured ONLY for safe (read-only) methods: a key in the URL leaks into
+// proxy access logs, browser history, and Referer headers, so it must not be
+// usable to authorise a state-changing POST/PUT/DELETE/PATCH. Mutations must
+// send the key in the header instead (#708 finding 4a). All documented client
+// workflows (curl examples, OPDS readers, integrations) already use the header
+// for mutations or the query param only for GET, so this does not break them.
 func requestAPIKey(r *http.Request) string {
 	if k := r.Header.Get("X-Api-Key"); k != "" {
 		return k
 	}
-	return r.URL.Query().Get("apikey")
+	if safeMethod(r.Method) {
+		return r.URL.Query().Get("apikey")
+	}
+	return ""
 }

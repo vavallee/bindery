@@ -534,10 +534,69 @@ func TestRequireCSRFToken_AllowsMutationWithAPIKey(t *testing.T) {
 	called := false
 	h := mw(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true }))
 	req, _ := http.NewRequest("POST", "/api/v1/author", nil)
-	req.Header.Set("X-Api-Key", "apikey-value")
+	// A request whose key Middleware already verified carries the
+	// AuthedViaAPIKey context flag. The CSRF guard exempts it on that flag.
+	req = req.WithContext(WithAPIKeyAuth(req.Context()))
 	h.ServeHTTP(nopWriter{}, req)
 	if !called {
-		t.Fatal("POST with API key must bypass CSRF check")
+		t.Fatal("POST with verified API key must bypass CSRF check")
+	}
+}
+
+// TestRequireCSRFToken_BogusAPIKeyDoesNotBypassCSRF is the core regression test
+// for #708 finding 3. A request with a *bogus* ?apikey= (or X-Api-Key) was
+// previously exempted from CSRF purely because the parameter was present, even
+// though the bogus key fails verification and the request authenticates via the
+// session cookie. After the fix the exemption keys off the verified-auth
+// context flag, which a bogus key never sets, so the CSRF token is enforced.
+func TestRequireCSRFToken_BogusAPIKeyDoesNotBypassCSRF(t *testing.T) {
+	secret := testSecret32
+	sessionVal, err := SignSession(secret, 1, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	mw := RequireCSRFToken(func() []byte { return secret })
+	called := false
+	h := mw(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true }))
+
+	// Bogus apikey in the query string, real session cookie, NO CSRF token.
+	// Crucially: no AuthedViaAPIKey flag in context (Middleware never set it
+	// because the key would fail subtle.ConstantTimeCompare).
+	req, _ := http.NewRequest("POST", "/api/v1/author?apikey=bogus-not-the-real-key", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: sessionVal})
+	w := &captureWriter{}
+	h.ServeHTTP(w, req)
+	if called {
+		t.Fatal("POST with bogus ?apikey= and a session cookie must NOT bypass CSRF (#708)")
+	}
+	if w.status != http.StatusForbidden {
+		t.Errorf("status = %d; want 403", w.status)
+	}
+}
+
+// TestRequireCSRFToken_BogusAPIKeyHeaderDoesNotBypassCSRF mirrors the above for
+// a bogus X-Api-Key *header* — the header is no exemption either; only the
+// verified-auth context flag is.
+func TestRequireCSRFToken_BogusAPIKeyHeaderDoesNotBypassCSRF(t *testing.T) {
+	secret := testSecret32
+	sessionVal, err := SignSession(secret, 1, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	mw := RequireCSRFToken(func() []byte { return secret })
+	called := false
+	h := mw(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true }))
+
+	req, _ := http.NewRequest("DELETE", "/api/v1/author/1", nil)
+	req.Header.Set("X-Api-Key", "bogus-not-the-real-key")
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: sessionVal})
+	w := &captureWriter{}
+	h.ServeHTTP(w, req)
+	if called {
+		t.Fatal("DELETE with bogus X-Api-Key and a session cookie must NOT bypass CSRF (#708)")
+	}
+	if w.status != http.StatusForbidden {
+		t.Errorf("status = %d; want 403", w.status)
 	}
 }
 
@@ -610,24 +669,34 @@ func TestRequireXRequestedWith_BlocksMutationWithoutHeader(t *testing.T) {
 	}
 }
 
-func TestRequireXRequestedWith_AllowsMutationWithAPIKeyHeader(t *testing.T) {
+func TestRequireXRequestedWith_AllowsMutationWithVerifiedAPIKey(t *testing.T) {
 	called := false
 	h := RequireXRequestedWith(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true }))
 	req, _ := http.NewRequest("POST", "/api/v1/queue/grab", nil)
-	req.Header.Set("X-Api-Key", "some-api-key")
+	// Verified-API-key requests carry the AuthedViaAPIKey context flag set by
+	// Middleware; RequireXRequestedWith exempts them on that flag.
+	req = req.WithContext(WithAPIKeyAuth(req.Context()))
 	h.ServeHTTP(nopWriter{}, req)
 	if !called {
-		t.Fatal("POST with X-Api-Key must bypass RequireXRequestedWith")
+		t.Fatal("POST authenticated via verified API key must bypass RequireXRequestedWith")
 	}
 }
 
-func TestRequireXRequestedWith_AllowsMutationWithAPIKeyQuery(t *testing.T) {
+// TestRequireXRequestedWith_BogusAPIKeyDoesNotBypass is the #708 finding-3
+// regression test for the X-Requested-With guard: a bogus ?apikey= must not
+// exempt a mutating request from the X-Requested-With requirement.
+func TestRequireXRequestedWith_BogusAPIKeyDoesNotBypass(t *testing.T) {
 	called := false
 	h := RequireXRequestedWith(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true }))
-	req, _ := http.NewRequest("DELETE", "/api/v1/queue/1?apikey=some-api-key", nil)
-	h.ServeHTTP(nopWriter{}, req)
-	if !called {
-		t.Fatal("DELETE with ?apikey= must bypass RequireXRequestedWith")
+	// Bogus apikey, no verified-auth context flag, no X-Requested-With header.
+	req, _ := http.NewRequest("DELETE", "/api/v1/queue/1?apikey=bogus-key", nil)
+	w := &captureWriter{}
+	h.ServeHTTP(w, req)
+	if called {
+		t.Fatal("DELETE with bogus ?apikey= must NOT bypass RequireXRequestedWith (#708)")
+	}
+	if w.status != http.StatusForbidden {
+		t.Errorf("status = %d; want 403", w.status)
 	}
 }
 
@@ -803,5 +872,162 @@ func TestCSRFStack_BrowserSessionWithoutCSRFTokenIsRejected(t *testing.T) {
 	}
 	if rw.status != http.StatusForbidden {
 		t.Errorf("status = %d; want 403", rw.status)
+	}
+}
+
+// --- #708 finding 3: bogus ?apikey= must not switch CSRF off (full stack) ----
+//
+// Exercises the real middleware chain (Middleware → RequireXRequestedWith →
+// RequireCSRFToken) to prove that a request with a *bogus* apikey parameter is
+// no longer exempted from the CSRF guards just because the parameter is
+// present. Before the fix, requestAPIKey(r) != "" short-circuited both guards;
+// the bogus key then failed verification in Middleware and the request
+// authenticated via the session cookie — executing with CSRF fully disabled.
+
+func TestCSRFStack_BogusAPIKeyWithSessionStillRequiresCSRF(t *testing.T) {
+	secret := stackSecret32
+	p := &fakeProvider{mode: ModeEnabled, apiKey: "the-real-key", secret: secret}
+	called := false
+	stack := buildCSRFStack(p, secret, http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		called = true
+	}))
+
+	sessionVal, err := SignSession(secret, 1, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	// Attacker-style request: bogus apikey, victim's session cookie rides
+	// along, browser header present, but NO CSRF token. The bogus key fails
+	// subtle.ConstantTimeCompare, so the request authenticates via the cookie
+	// and must be held to the CSRF token requirement.
+	req, _ := http.NewRequest("POST", "/api/v1/queue/grab?apikey=bogus", nil)
+	req.Header.Set("X-Requested-With", "bindery-ui")
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: sessionVal})
+	req.RemoteAddr = "8.8.8.8:12345"
+	rw := &captureWriter{}
+	stack.ServeHTTP(rw, req)
+	if called {
+		t.Fatal("bogus ?apikey= must not exempt a session-cookie POST from CSRF (#708)")
+	}
+	if rw.status != http.StatusForbidden {
+		t.Errorf("status = %d; want 403", rw.status)
+	}
+}
+
+func TestCSRFStack_BogusAPIKeyHeaderWithSessionStillRequiresXRW(t *testing.T) {
+	secret := stackSecret32
+	p := &fakeProvider{mode: ModeEnabled, apiKey: "the-real-key", secret: secret}
+	called := false
+	stack := buildCSRFStack(p, secret, http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		called = true
+	}))
+
+	sessionVal, err := SignSession(secret, 1, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	// Bogus X-Api-Key header, session cookie, no X-Requested-With header.
+	// RequireXRequestedWith must still reject it.
+	req, _ := http.NewRequest("POST", "/api/v1/queue/grab", nil)
+	req.Header.Set("X-Api-Key", "bogus")
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: sessionVal})
+	req.RemoteAddr = "8.8.8.8:12345"
+	rw := &captureWriter{}
+	stack.ServeHTTP(rw, req)
+	if called {
+		t.Fatal("bogus X-Api-Key must not exempt a session-cookie POST from X-Requested-With (#708)")
+	}
+	if rw.status != http.StatusForbidden {
+		t.Errorf("status = %d; want 403", rw.status)
+	}
+}
+
+// --- #708 finding 4a: ?apikey= accepted only for safe methods ---------------
+
+// TestMiddleware_APIKeyInQueryRejectedForMutation verifies that a valid key
+// supplied via the ?apikey= query parameter no longer authenticates a mutating
+// request. The key must be sent in the X-Api-Key header for POST/PUT/DELETE so
+// it does not leak into proxy logs, browser history, or Referer headers.
+func TestMiddleware_APIKeyInQueryRejectedForMutation(t *testing.T) {
+	p := &fakeProvider{mode: ModeEnabled, apiKey: "correct-key"}
+	mw := Middleware(p)
+	called := false
+	h := mw(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true }))
+	req, _ := http.NewRequest("POST", "/api/v1/author?apikey=correct-key", nil)
+	w := &captureWriter{}
+	h.ServeHTTP(w, req)
+	if called {
+		t.Fatal("valid key via ?apikey= must NOT authenticate a POST (#708 finding 4a)")
+	}
+	if w.status != http.StatusUnauthorized {
+		t.Errorf("status = %d; want 401", w.status)
+	}
+}
+
+// TestMiddleware_APIKeyInHeaderAcceptedForMutation is the companion: the header
+// remains the supported way to authenticate a mutating request with a key.
+func TestMiddleware_APIKeyInHeaderAcceptedForMutation(t *testing.T) {
+	p := &fakeProvider{mode: ModeEnabled, apiKey: "correct-key"}
+	mw := Middleware(p)
+	called := false
+	h := mw(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true }))
+	req, _ := http.NewRequest("POST", "/api/v1/author", nil)
+	req.Header.Set("X-Api-Key", "correct-key")
+	h.ServeHTTP(nopWriter{}, req)
+	if !called {
+		t.Fatal("valid key via X-Api-Key header must authenticate a POST")
+	}
+}
+
+// TestMiddleware_APIKeyInQueryAcceptedForSafeMethod confirms the documented
+// read-only ?apikey= workflow (OPDS readers, GET integrations) still works.
+func TestMiddleware_APIKeyInQueryAcceptedForSafeMethod(t *testing.T) {
+	p := &fakeProvider{mode: ModeEnabled, apiKey: "correct-key"}
+	mw := Middleware(p)
+	called := false
+	h := mw(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true }))
+	req, _ := http.NewRequest("GET", "/api/v1/author?apikey=correct-key", nil)
+	h.ServeHTTP(nopWriter{}, req)
+	if !called {
+		t.Fatal("valid key via ?apikey= must still authenticate a GET")
+	}
+}
+
+// TestMiddleware_VerifiedAPIKeySetsContextFlag verifies that a verified key
+// sets the AuthedViaAPIKey context flag the CSRF guards depend on.
+func TestMiddleware_VerifiedAPIKeySetsContextFlag(t *testing.T) {
+	p := &fakeProvider{mode: ModeEnabled, apiKey: "correct-key"}
+	mw := Middleware(p)
+	var viaKey bool
+	h := mw(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		viaKey = AuthedViaAPIKey(r.Context())
+	}))
+	req, _ := http.NewRequest("GET", "/api/v1/author", nil)
+	req.Header.Set("X-Api-Key", "correct-key")
+	h.ServeHTTP(nopWriter{}, req)
+	if !viaKey {
+		t.Fatal("verified API-key request must set the AuthedViaAPIKey context flag")
+	}
+}
+
+// TestMiddleware_SessionAuthDoesNotSetAPIKeyFlag verifies a session-cookie
+// request never gets the API-key flag — otherwise it would skip CSRF.
+func TestMiddleware_SessionAuthDoesNotSetAPIKeyFlag(t *testing.T) {
+	secret := testSecret32
+	p := &fakeProvider{mode: ModeEnabled, secret: secret}
+	sessionVal, err := SignSession(secret, 1, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	mw := Middleware(p)
+	var viaKey bool
+	h := mw(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		viaKey = AuthedViaAPIKey(r.Context())
+	}))
+	req, _ := http.NewRequest("GET", "/api/v1/author", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: sessionVal})
+	h.ServeHTTP(nopWriter{}, req)
+	if viaKey {
+		t.Fatal("session-cookie request must NOT set the AuthedViaAPIKey flag")
 	}
 }

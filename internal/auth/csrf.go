@@ -30,8 +30,16 @@ func ValidCSRFToken(secret []byte, r *http.Request, token string) bool {
 }
 
 // RequireCSRFToken rejects state-mutating requests that lack a valid
-// X-CSRF-Token header. Exempt: API-key requests, safe methods, AllowUnauthPath
-// routes (login, logout, setup…), and requests with no session cookie.
+// X-CSRF-Token header. Exempt: verified-API-key requests, safe methods,
+// AllowUnauthPath routes (login, logout, setup…), and requests with no session
+// cookie.
+//
+// The API-key exemption keys off the AuthedViaAPIKey context flag, which
+// Middleware sets only after subtle.ConstantTimeCompare confirms the key. A
+// request carrying a *bogus* ?apikey= no longer skips the CSRF check: it fails
+// key verification, falls through to cookie auth, and is held to the token
+// requirement like any other session request (#708 finding 3). This depends on
+// auth.Middleware running before this middleware — see cmd/bindery/main.go.
 func RequireCSRFToken(secret func() []byte) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -39,7 +47,7 @@ func RequireCSRFToken(secret func() []byte) func(http.Handler) http.Handler {
 			case http.MethodGet, http.MethodHead, http.MethodOptions:
 				// safe methods — no mutation risk
 			default:
-				if requestAPIKey(r) == "" && !AllowUnauthPath(r.URL.Path) {
+				if !AuthedViaAPIKey(r.Context()) && !AllowUnauthPath(r.URL.Path) {
 					if c, err := r.Cookie(SessionCookieName); err == nil && c.Value != "" {
 						tok := r.Header.Get("X-CSRF-Token")
 						if !ValidCSRFToken(secret(), r, tok) {
