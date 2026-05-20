@@ -232,6 +232,31 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 				result.Actions = append(result.Actions, action)
 				continue
 			}
+			retainLocal, err := i.hasProvenanceOutsideRun(ctx, entity.EntityType, entity.LocalID, runID)
+			if err != nil {
+				action.Action = "skip"
+				action.Reason = err.Error()
+				result.Stats.Failed++
+				result.Actions = append(result.Actions, action)
+				continue
+			}
+			if retainLocal {
+				action.Action = "unlink_provenance"
+				action.Reason = "local book retained because another ABS import link references it"
+				result.Stats.ActionsPlanned++
+				if !preview {
+					if err := i.provenance.DeleteByExternal(ctx, entity.SourceID, entity.LibraryID, entity.EntityType, entity.ExternalID); err != nil {
+						action.Action = "skip"
+						action.Reason = err.Error()
+						result.Stats.Failed++
+						result.Actions = append(result.Actions, action)
+						continue
+					}
+					result.Stats.ProvenanceUnlinked++
+				}
+				result.Actions = append(result.Actions, action)
+				continue
+			}
 			action.Action = "delete_book"
 			result.Stats.ActionsPlanned++
 			if !preview {
@@ -360,9 +385,44 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 				continue
 			}
 			if remaining > 0 {
+				action.Action = "unlink_provenance"
+				action.Reason = "local author retained because it still has linked books"
+				result.Stats.ActionsPlanned++
+				if !preview {
+					if err := i.provenance.DeleteByExternal(ctx, entity.SourceID, entity.LibraryID, entity.EntityType, entity.ExternalID); err != nil {
+						action.Action = "skip"
+						action.Reason = err.Error()
+						result.Stats.Failed++
+						result.Actions = append(result.Actions, action)
+						continue
+					}
+					result.Stats.ProvenanceUnlinked++
+				}
+				result.Actions = append(result.Actions, action)
+				continue
+			}
+			retainLocal, err := i.hasProvenanceOutsideRun(ctx, entity.EntityType, entity.LocalID, runID)
+			if err != nil {
 				action.Action = "skip"
-				action.Reason = "author still has linked books"
-				result.Stats.Skipped++
+				action.Reason = err.Error()
+				result.Stats.Failed++
+				result.Actions = append(result.Actions, action)
+				continue
+			}
+			if retainLocal {
+				action.Action = "unlink_provenance"
+				action.Reason = "local author retained because another ABS import link references it"
+				result.Stats.ActionsPlanned++
+				if !preview {
+					if err := i.provenance.DeleteByExternal(ctx, entity.SourceID, entity.LibraryID, entity.EntityType, entity.ExternalID); err != nil {
+						action.Action = "skip"
+						action.Reason = err.Error()
+						result.Stats.Failed++
+						result.Actions = append(result.Actions, action)
+						continue
+					}
+					result.Stats.ProvenanceUnlinked++
+				}
 				result.Actions = append(result.Actions, action)
 				continue
 			}
@@ -479,6 +539,49 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 			if bookID > 0 {
 				action.Action = "unlink_series"
 				result.Stats.ActionsPlanned++
+				retainMembership, err := i.hasMatchingProvenanceOutsideRun(ctx, entity, runID)
+				if err != nil {
+					action.Action = "skip"
+					action.Reason = err.Error()
+					result.Stats.Failed++
+					result.Actions = append(result.Actions, action)
+					continue
+				}
+				if !retainMembership {
+					retainBook, err := i.hasProvenanceOutsideRun(ctx, entityTypeBook, int64(bookID), runID)
+					if err != nil {
+						action.Action = "skip"
+						action.Reason = err.Error()
+						result.Stats.Failed++
+						result.Actions = append(result.Actions, action)
+						continue
+					}
+					retainSeries, err := i.hasProvenanceOutsideRun(ctx, entity.EntityType, entity.LocalID, runID)
+					if err != nil {
+						action.Action = "skip"
+						action.Reason = err.Error()
+						result.Stats.Failed++
+						result.Actions = append(result.Actions, action)
+						continue
+					}
+					retainMembership = retainBook && retainSeries
+				}
+				if retainMembership {
+					action.Action = "unlink_provenance"
+					action.Reason = "series membership retained because another ABS import link references it"
+					if !preview {
+						if err := i.provenance.DeleteByExternal(ctx, entity.SourceID, entity.LibraryID, entity.EntityType, entity.ExternalID); err != nil {
+							action.Action = "skip"
+							action.Reason = err.Error()
+							result.Stats.Failed++
+							result.Actions = append(result.Actions, action)
+							continue
+						}
+						result.Stats.ProvenanceUnlinked++
+					}
+					result.Actions = append(result.Actions, action)
+					continue
+				}
 				_, createdByRun := runCreatedSeries[entity.LocalID]
 				_, hasIdentityEntity := seriesIdentityEntities[entity.LocalID]
 				deleteSeries := false
@@ -491,7 +594,15 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 						result.Actions = append(result.Actions, action)
 						continue
 					}
-					if remaining <= 0 {
+					retainSeries, err := i.hasProvenanceOutsideRun(ctx, entity.EntityType, entity.LocalID, runID)
+					if err != nil {
+						action.Action = "skip"
+						action.Reason = err.Error()
+						result.Stats.Failed++
+						result.Actions = append(result.Actions, action)
+						continue
+					}
+					if remaining <= 0 && !retainSeries {
 						action.Action = "delete_series"
 						deleteSeries = true
 					}
@@ -535,6 +646,30 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 			} else {
 				action.Action = "unlink_provenance"
 				if entity.Outcome == itemOutcomeCreated {
+					retainSeries, err := i.hasProvenanceOutsideRun(ctx, entity.EntityType, entity.LocalID, runID)
+					if err != nil {
+						action.Action = "skip"
+						action.Reason = err.Error()
+						result.Stats.Failed++
+						result.Actions = append(result.Actions, action)
+						continue
+					}
+					if retainSeries {
+						action.Reason = "local series retained because another ABS import link references it"
+						result.Stats.ActionsPlanned++
+						if !preview {
+							if err := i.provenance.DeleteByExternal(ctx, entity.SourceID, entity.LibraryID, entity.EntityType, entity.ExternalID); err != nil {
+								action.Action = "skip"
+								action.Reason = err.Error()
+								result.Stats.Failed++
+								result.Actions = append(result.Actions, action)
+								continue
+							}
+							result.Stats.ProvenanceUnlinked++
+						}
+						result.Actions = append(result.Actions, action)
+						continue
+					}
 					remaining, err := i.remainingSeriesBooksAfterRunRollback(ctx, entity.LocalID, runSeriesMemberships[entity.LocalID])
 					if err != nil {
 						action.Action = "skip"
@@ -826,6 +961,41 @@ func metadataBookID(metadata map[string]any) int64 {
 	default:
 		return 0
 	}
+}
+
+func (i *Importer) hasProvenanceOutsideRun(ctx context.Context, entityType string, localID, runID int64) (bool, error) {
+	if i.provenance == nil || localID == 0 {
+		return false, nil
+	}
+	links, err := i.provenance.ListByLocal(ctx, entityType, localID)
+	if err != nil {
+		return false, err
+	}
+	for _, link := range links {
+		if link.ImportRunID == nil || *link.ImportRunID != runID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (i *Importer) hasMatchingProvenanceOutsideRun(ctx context.Context, entity models.ABSImportRunEntity, runID int64) (bool, error) {
+	if i.provenance == nil || entity.LocalID == 0 {
+		return false, nil
+	}
+	links, err := i.provenance.ListByLocal(ctx, entity.EntityType, entity.LocalID)
+	if err != nil {
+		return false, err
+	}
+	for _, link := range links {
+		if link.ExternalID != entity.ExternalID {
+			continue
+		}
+		if link.ImportRunID == nil || *link.ImportRunID != runID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (i *Importer) remainingSeriesBooksAfterRunRollback(ctx context.Context, seriesID int64, runOwnedBookIDs map[int64]struct{}) (int, error) {

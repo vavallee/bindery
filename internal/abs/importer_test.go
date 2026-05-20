@@ -3659,6 +3659,188 @@ func TestImporter_RollbackDeletesCreatedEntitiesAfterSameRunRelink(t *testing.T)
 	}
 }
 
+func TestImporter_RollbackFirstLibraryPreservesSecondLibrarySharedBook(t *testing.T) {
+	t.Parallel()
+
+	importer, authorRepo, bookRepo, seriesRepo, _, provenanceRepo, _, _, _, _ := newABSImporterFixture(t)
+	ctx := context.Background()
+	first := sampleABSItem()
+	first.LibraryID = "lib-books"
+	first.ItemID = "li-books"
+	first.Title = "Shared Library Book"
+	first.ASIN = "ASIN-LIB-BOOKS"
+	first.Authors = []NormalizedAuthor{{ID: "author-shared", Name: "Shared Author"}}
+	first.Series = []NormalizedSeries{{ID: "series-shared", Name: "Shared Series", Sequence: "1"}}
+	first.AudioFiles = []NormalizedAudioFile{{INO: "audio-books", Path: "/abs/books/shared.m4b"}}
+	first.EbookPath = ""
+	first.EbookINO = ""
+	second := first
+	second.LibraryID = "lib-audio"
+	second.ItemID = "li-audio"
+	second.ASIN = "ASIN-LIB-AUDIO"
+	second.AudioFiles = []NormalizedAudioFile{{INO: "audio-audio", Path: "/abs/audio/shared.m4b"}}
+	items := map[string]NormalizedLibraryItem{
+		first.LibraryID:  first,
+		second.LibraryID: second,
+	}
+	importer.enumerateFn = func(ctx context.Context, libraryID string, fn func(context.Context, NormalizedLibraryItem) error) (EnumerationStats, error) {
+		item, ok := items[libraryID]
+		if !ok {
+			return EnumerationStats{}, fmt.Errorf("unexpected library %q", libraryID)
+		}
+		if err := fn(ctx, item); err != nil {
+			return EnumerationStats{}, err
+		}
+		return EnumerationStats{PagesScanned: 1, ItemsSeen: 1, ItemsNormalized: 1, ItemsDetailFetched: 1}, nil
+	}
+
+	if _, err := importer.Run(ctx, ImportConfig{
+		SourceID:  DefaultSourceID,
+		BaseURL:   "https://abs.example.com",
+		APIKey:    "secret",
+		LibraryID: first.LibraryID,
+		Label:     "Shelf",
+		Enabled:   true,
+	}); err != nil {
+		t.Fatalf("Run first library: %v", err)
+	}
+	if _, err := importer.Run(ctx, ImportConfig{
+		SourceID:  DefaultSourceID,
+		BaseURL:   "https://abs.example.com",
+		APIKey:    "secret",
+		LibraryID: second.LibraryID,
+		Label:     "Shelf",
+		Enabled:   true,
+	}); err != nil {
+		t.Fatalf("Run second library: %v", err)
+	}
+
+	runs, err := importer.RecentRuns(ctx, 10)
+	if err != nil {
+		t.Fatalf("RecentRuns: %v", err)
+	}
+	runIDs := map[string]int64{}
+	for _, run := range runs {
+		runIDs[run.LibraryID] = run.ID
+	}
+	if runIDs[first.LibraryID] == 0 || runIDs[second.LibraryID] == 0 {
+		t.Fatalf("run IDs = %+v, want runs for both libraries", runIDs)
+	}
+	books, err := bookRepo.ListIncludingExcluded(ctx)
+	if err != nil {
+		t.Fatalf("List books before rollback: %v", err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("books before rollback = %d, want shared local book", len(books))
+	}
+	bookID := books[0].ID
+	bookLinks, err := provenanceRepo.ListByLocal(ctx, entityTypeBook, bookID)
+	if err != nil {
+		t.Fatalf("ListByLocal book before rollback: %v", err)
+	}
+	if len(bookLinks) != 2 {
+		t.Fatalf("book links before rollback = %+v, want both libraries linked", bookLinks)
+	}
+	authors, err := authorRepo.List(ctx)
+	if err != nil {
+		t.Fatalf("List authors before rollback: %v", err)
+	}
+	if len(authors) != 1 {
+		t.Fatalf("authors before rollback = %d, want shared local author", len(authors))
+	}
+	authorID := authors[0].ID
+	authorLinks, err := provenanceRepo.ListByLocal(ctx, entityTypeAuthor, authorID)
+	if err != nil {
+		t.Fatalf("ListByLocal author before rollback: %v", err)
+	}
+	if len(authorLinks) != 2 {
+		t.Fatalf("author links before rollback = %+v, want both libraries linked", authorLinks)
+	}
+	allSeries, err := seriesRepo.List(ctx)
+	if err != nil {
+		t.Fatalf("List series before rollback: %v", err)
+	}
+	if len(allSeries) != 1 {
+		t.Fatalf("series before rollback = %d, want shared local series", len(allSeries))
+	}
+	seriesID := allSeries[0].ID
+
+	result, err := importer.Rollback(ctx, runIDs[first.LibraryID])
+	if err != nil {
+		t.Fatalf("Rollback first library: %v", err)
+	}
+	if result.Stats.Failed != 0 {
+		t.Fatalf("rollback result = %+v, want no failures", result)
+	}
+	books, err = bookRepo.ListIncludingExcluded(ctx)
+	if err != nil {
+		t.Fatalf("List books after rollback: %v", err)
+	}
+	if len(books) != 1 || books[0].ID != bookID {
+		t.Fatalf("books after rollback = %+v, want shared local book retained", books)
+	}
+	firstBookLink, err := provenanceRepo.GetByExternal(ctx, DefaultSourceID, first.LibraryID, entityTypeBook, first.ItemID)
+	if err != nil {
+		t.Fatalf("Get first book link after rollback: %v", err)
+	}
+	if firstBookLink != nil {
+		t.Fatalf("first book link after rollback = %+v, want removed", firstBookLink)
+	}
+	secondBookLink, err := provenanceRepo.GetByExternal(ctx, DefaultSourceID, second.LibraryID, entityTypeBook, second.ItemID)
+	if err != nil {
+		t.Fatalf("Get second book link after rollback: %v", err)
+	}
+	if secondBookLink == nil || secondBookLink.LocalID != bookID {
+		t.Fatalf("second book link after rollback = %+v, want retained local book %d", secondBookLink, bookID)
+	}
+	firstAuthorLink, err := provenanceRepo.GetByExternal(ctx, DefaultSourceID, first.LibraryID, entityTypeAuthor, "author-shared")
+	if err != nil {
+		t.Fatalf("Get first author link after rollback: %v", err)
+	}
+	if firstAuthorLink != nil {
+		t.Fatalf("first author link after rollback = %+v, want removed", firstAuthorLink)
+	}
+	secondAuthorLink, err := provenanceRepo.GetByExternal(ctx, DefaultSourceID, second.LibraryID, entityTypeAuthor, "author-shared")
+	if err != nil {
+		t.Fatalf("Get second author link after rollback: %v", err)
+	}
+	if secondAuthorLink == nil || secondAuthorLink.LocalID != authorID {
+		t.Fatalf("second author link after rollback = %+v, want retained local author %d", secondAuthorLink, authorID)
+	}
+	series, err := seriesRepo.GetByID(ctx, seriesID)
+	if err != nil {
+		t.Fatalf("Get series after rollback: %v", err)
+	}
+	if series == nil {
+		t.Fatal("series after rollback = nil, want shared local series retained")
+	}
+	if len(series.Books) != 1 || series.Books[0].BookID != bookID {
+		t.Fatalf("series books after rollback = %+v, want shared local book retained", series.Books)
+	}
+	seriesLinkExternalID := seriesMembershipExternalID("series-shared", bookID, first.ItemID)
+	firstSeriesLink, err := provenanceRepo.GetByExternal(ctx, DefaultSourceID, first.LibraryID, entityTypeSeries, seriesLinkExternalID)
+	if err != nil {
+		t.Fatalf("Get first series link after rollback: %v", err)
+	}
+	if firstSeriesLink != nil {
+		t.Fatalf("first series link after rollback = %+v, want removed", firstSeriesLink)
+	}
+	firstSeriesIdentity, err := provenanceRepo.GetByExternal(ctx, DefaultSourceID, first.LibraryID, entityTypeSeries, "series-shared")
+	if err != nil {
+		t.Fatalf("Get first series identity after rollback: %v", err)
+	}
+	if firstSeriesIdentity != nil {
+		t.Fatalf("first series identity after rollback = %+v, want removed", firstSeriesIdentity)
+	}
+	secondSeriesIdentity, err := provenanceRepo.GetByExternal(ctx, DefaultSourceID, second.LibraryID, entityTypeSeries, "series-shared")
+	if err != nil {
+		t.Fatalf("Get second series identity after rollback: %v", err)
+	}
+	if secondSeriesIdentity == nil || secondSeriesIdentity.LocalID != seriesID {
+		t.Fatalf("second series identity after rollback = %+v, want retained local series %d", secondSeriesIdentity, seriesID)
+	}
+}
+
 func TestImporter_RollbackRestoresExistingBookMetadata(t *testing.T) {
 	t.Parallel()
 
