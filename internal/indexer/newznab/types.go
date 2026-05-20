@@ -2,6 +2,7 @@ package newznab
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 )
 
@@ -38,20 +39,7 @@ func (e *IndexerError) Error() string {
 // suspended, 102 = VPN forbidden, etc.).
 func IsAuthError(err error) bool {
 	var ie *IndexerError
-	if err == nil {
-		return false
-	}
-	// Unwrap manually so we work with both direct and wrapped IndexerErrors.
-	for {
-		if e, ok := err.(*IndexerError); ok {
-			ie = e
-			break
-		}
-		type unwrapper interface{ Unwrap() error }
-		if u, ok := err.(unwrapper); ok {
-			err = u.Unwrap()
-			continue
-		}
+	if !errors.As(err, &ie) {
 		return false
 	}
 	return ie.Code >= 100 && ie.Code <= 199
@@ -62,19 +50,7 @@ func IsAuthError(err error) bool {
 // grabs reached, etc.).
 func IsRateLimitError(err error) bool {
 	var ie *IndexerError
-	if err == nil {
-		return false
-	}
-	for {
-		if e, ok := err.(*IndexerError); ok {
-			ie = e
-			break
-		}
-		type unwrapper interface{ Unwrap() error }
-		if u, ok := err.(unwrapper); ok {
-			err = u.Unwrap()
-			continue
-		}
+	if !errors.As(err, &ie) {
 		return false
 	}
 	return ie.Code >= 500 && ie.Code <= 599
