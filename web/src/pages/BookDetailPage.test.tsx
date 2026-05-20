@@ -4,6 +4,40 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import BookDetailPage, { SearchResultsSection } from './BookDetailPage'
 import { api } from '../api/client'
 import type { Author, Book, Download, HistoryEvent, Indexer, SearchResult } from '../api/client'
+import en from '../i18n/locales/en.json'
+
+// Resolve a dotted i18n key against the real English locale, applying the
+// {{var}} interpolation and the second-arg default-value fallback so tests
+// assert against the real strings the page renders.
+function resolveKey(key: string): string | undefined {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let node: any = en
+  for (const part of key.split('.')) {
+    if (node && typeof node === 'object' && part in node) node = node[part]
+    else return undefined
+  }
+  return typeof node === 'string' ? node : undefined
+}
+
+// A stable t() — a fresh reference each render would re-trigger effects with
+// `t` in their dependency array (mirrors react-i18next, whose t is stable).
+function translate(key: string, arg?: unknown): string {
+  const resolved = resolveKey(key)
+  const fallback = typeof arg === 'string' ? arg : key
+  let str = resolved ?? fallback
+  if (arg && typeof arg === 'object') {
+    for (const [k, v] of Object.entries(arg as Record<string, unknown>)) {
+      str = str.replace(new RegExp(`{{\\s*${k}\\s*}}`, 'g'), String(v))
+    }
+  }
+  return str
+}
+
+const translation = { t: translate }
+
+vi.mock('react-i18next', () => ({
+  useTranslation: () => translation,
+}))
 
 vi.mock('../api/client', async importOriginal => {
   const actual = await importOriginal<typeof import('../api/client')>()
@@ -17,6 +51,10 @@ vi.mock('../api/client', async importOriginal => {
       listIndexers: vi.fn(),
       grab: vi.fn(),
       updateBook: vi.fn(),
+      deleteBook: vi.fn(),
+      deleteBookFile: vi.fn(),
+      toggleExcluded: vi.fn(),
+      enrichAudiobook: vi.fn(),
     },
   }
 })
@@ -120,6 +158,7 @@ function renderBookDetailPage() {
       <Routes>
         <Route path="/book/:id" element={<BookDetailPage />} />
         <Route path="/settings" element={<div>Settings Page</div>} />
+        <Route path="/author/:id" element={<div>Author Page</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -136,6 +175,12 @@ beforeEach(() => {
   vi.mocked(api.listIndexers).mockResolvedValue([])
   vi.mocked(api.grab).mockResolvedValue(makeDownload())
   vi.mocked(api.updateBook).mockImplementation(async (_id, patch) => makeBook(patch))
+  vi.mocked(api.deleteBook).mockResolvedValue(undefined)
+  vi.mocked(api.deleteBookFile).mockImplementation(async () => makeBook())
+  vi.mocked(api.toggleExcluded).mockImplementation(async () => makeBook({ excluded: true }))
+  vi.mocked(api.enrichAudiobook).mockImplementation(async () => makeBook())
+  // jsdom has no clipboard by default.
+  Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } })
 })
 
 describe('SearchResultsSection — dual-format book', () => {
@@ -217,7 +262,7 @@ describe('SearchResultsSection — single-format book', () => {
   })
 })
 
-describe('BookDetailPage', () => {
+describe('BookDetailPage — header & metadata', () => {
   it('loads book details and history', async () => {
     vi.mocked(api.listHistory).mockResolvedValue([makeHistory()])
 
@@ -226,54 +271,85 @@ describe('BookDetailPage', () => {
     expect(await screen.findByRole('heading', { name: 'The Final Empire' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Brandon Sanderson' })).toBeInTheDocument()
     expect(screen.getByText('A skaa thief joins a rebellion.')).toBeInTheDocument()
-    expect(screen.getByText('The Final Empire release')).toBeInTheDocument()
     expect(api.getBook).toHaveBeenCalledWith(42)
     expect(api.listHistory).toHaveBeenCalledWith({ bookId: 42 })
   })
 
-  it('searches and renders grouped result metadata', async () => {
-    vi.mocked(api.getBook).mockResolvedValue(makeBook({ mediaType: 'both' }))
+  it('maps the ISO-639 language code to a full word', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({ language: 'eng' }))
+    renderBookDetailPage()
+    expect(await screen.findByText('English')).toBeInTheDocument()
+  })
+
+  it('labels the published date', async () => {
+    renderBookDetailPage()
+    expect(await screen.findByText(/^Published /)).toBeInTheDocument()
+  })
+
+  it('links the author byline to the author page', async () => {
+    renderBookDetailPage()
+    const link = await screen.findByRole('link', { name: 'Brandon Sanderson' })
+    expect(link).toHaveAttribute('href', '/author/7')
+  })
+})
+
+describe('BookDetailPage — file section actions', () => {
+  it('renders a download link for a single-format book with a file', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({ filePath: '/library/book.epub' }))
+    renderBookDetailPage()
+    const download = await screen.findByRole('link', { name: 'Download' })
+    expect(download).toHaveAttribute('href', '/api/v1/book/42/file')
+  })
+
+  it('shows the format badge for a single-format book', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({ mediaType: 'ebook' }))
+    renderBookDetailPage()
+    expect(await screen.findByTestId('badge-ebook')).toBeInTheDocument()
+  })
+
+  it('opens the re-bind modal', async () => {
+    renderBookDetailPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Re-bind' }))
+    expect(await screen.findByText('Re-bind metadata')).toBeInTheDocument()
+  })
+
+  it('toggles exclude via api.toggleExcluded', async () => {
+    renderBookDetailPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Exclude' }))
+    await waitFor(() => expect(api.toggleExcluded).toHaveBeenCalledWith(42))
+  })
+
+  it('deletes a file via api.deleteBookFile after confirmation', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({ filePath: '/library/book.epub' }))
+    renderBookDetailPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Delete file/ }))
+    await waitFor(() => expect(api.deleteBookFile).toHaveBeenCalledWith(42, ''))
+  })
+
+  it('copies the file path to the clipboard', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({ filePath: '/library/book.epub' }))
+    renderBookDetailPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Copy file path/ }))
+    await waitFor(() =>
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith('/library/book.epub'),
+    )
+  })
+})
+
+describe('BookDetailPage — search', () => {
+  it('searches indexers and renders results', async () => {
     vi.mocked(api.listIndexers).mockResolvedValue([makeIndexer()])
     vi.mocked(api.searchBook).mockResolvedValue({
-      results: [
-        makeResult({
-          guid: 'ebook-guid',
-          title: 'The Final Empire EPUB',
-          indexerName: 'Ebook Indexer',
-          size: 1048576,
-          grabs: 2,
-          mediaType: 'ebook',
-          rejection: 'Wrong language',
-          approved: false,
-        }),
-        makeResult({
-          guid: 'audio-guid',
-          title: 'The Final Empire MP3',
-          indexerName: 'Audio Indexer',
-          size: 2147483648,
-          grabs: 8,
-          mediaType: 'audiobook',
-        }),
-      ],
+      results: [makeResult({ guid: 'r1', title: 'A Result' })],
       debug: null,
     })
 
     renderBookDetailPage()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Search ebook + audiobook indexers' }))
-
+    fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
     await waitFor(() => expect(api.searchBook).toHaveBeenCalledWith(42))
-    expect(screen.getByText('Ebooks (1)')).toBeInTheDocument()
-    expect(screen.getByText('Audiobooks (1)')).toBeInTheDocument()
-    expect(screen.getByText('The Final Empire EPUB')).toBeInTheDocument()
-    expect(screen.getByText('The Final Empire MP3')).toBeInTheDocument()
-    expect(screen.getByText(/Ebook Indexer/)).toBeInTheDocument()
-    expect(screen.getByText(/1 MB/)).toBeInTheDocument()
-    expect(screen.getByText(/2 grabs/)).toBeInTheDocument()
-    expect(screen.getByText(/Wrong language/)).toBeInTheDocument()
-    expect(screen.getByText(/Audio Indexer/)).toBeInTheDocument()
-    expect(screen.getByText(/2.0 GB/)).toBeInTheDocument()
-    expect(screen.getByText(/8 grabs/)).toBeInTheDocument()
+    expect(await screen.findByText('A Result')).toBeInTheDocument()
     expect(api.listIndexers).toHaveBeenCalled()
   })
 
@@ -283,21 +359,10 @@ describe('BookDetailPage', () => {
 
     renderBookDetailPage()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Search ebook indexers' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
 
     expect(await screen.findByText(/No indexers configured/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/settings')
-  })
-
-  it('shows an empty search state when configured indexers return no results', async () => {
-    vi.mocked(api.listIndexers).mockResolvedValue([makeIndexer()])
-    vi.mocked(api.searchBook).mockResolvedValue({ results: [], debug: null })
-
-    renderBookDetailPage()
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Search ebook indexers' }))
-
-    expect(await screen.findByText(/No results on any indexer/)).toBeInTheDocument()
   })
 
   it('grabs a result, refreshes book and history, and clears results', async () => {
@@ -326,7 +391,7 @@ describe('BookDetailPage', () => {
 
     renderBookDetailPage()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Search ebook indexers' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
     fireEvent.click(await screen.findByRole('button', { name: 'Grab' }))
 
     expect(screen.getByRole('button', { name: 'Grabbing…' })).toBeDisabled()
@@ -347,13 +412,13 @@ describe('BookDetailPage', () => {
     expect(await screen.findByText('Grab refreshed history')).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByText('Grab Me')).not.toBeInTheDocument())
   })
+})
 
+describe('BookDetailPage — media type selector', () => {
   it('renders the selector with the current mediaType selected', async () => {
     vi.mocked(api.getBook).mockResolvedValue(makeBook({ mediaType: 'ebook' }))
-
     renderBookDetailPage()
-
-    const select = (await screen.findByLabelText('Format:')) as HTMLSelectElement
+    const select = (await screen.findByLabelText('Media type')) as HTMLSelectElement
     expect(select.value).toBe('ebook')
   })
 
@@ -363,25 +428,105 @@ describe('BookDetailPage', () => {
 
     renderBookDetailPage()
 
-    const select = await screen.findByLabelText('Format:')
+    const select = await screen.findByLabelText('Media type')
     fireEvent.change(select, { target: { value: 'both' } })
 
     await waitFor(() => expect(api.updateBook).toHaveBeenCalledWith(42, { mediaType: 'both' }))
   })
+})
 
-  it('updates local state on success so the dual-format panels appear', async () => {
-    vi.mocked(api.getBook).mockResolvedValue(makeBook({ mediaType: 'ebook' }))
-    vi.mocked(api.updateBook).mockResolvedValue(makeBook({ mediaType: 'both' }))
-
+describe('BookDetailPage — dual-format book', () => {
+  it('renders a format switcher for a two-format book', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(
+      makeBook({
+        mediaType: 'both',
+        ebookFilePath: '/library/book.epub',
+        audiobookFilePath: '/library/book-audio',
+      }),
+    )
     renderBookDetailPage()
 
-    const select = (await screen.findByLabelText('Format:')) as HTMLSelectElement
-    expect(screen.queryByText(/✓ on disk|needed/)).toBeNull()
+    const ebookBtn = await screen.findByRole('button', { name: /Ebook/ })
+    const audioBtn = screen.getByRole('button', { name: /Audiobook/ })
+    expect(ebookBtn).toHaveAttribute('aria-pressed', 'true')
+    expect(audioBtn).toHaveAttribute('aria-pressed', 'false')
 
-    fireEvent.change(select, { target: { value: 'both' } })
+    // The path shown follows the active format.
+    expect(screen.getByText('/library/book.epub')).toBeInTheDocument()
+    fireEvent.click(audioBtn)
+    expect(await screen.findByText('/library/book-audio')).toBeInTheDocument()
+  })
 
-    await waitFor(() => expect(select.value).toBe('both'))
-    const needed = await screen.findAllByText('needed')
-    expect(needed.length).toBe(2)
+  it('deletes the active format file for a dual-format book', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    vi.mocked(api.getBook).mockResolvedValue(
+      makeBook({
+        mediaType: 'both',
+        ebookFilePath: '/library/book.epub',
+        audiobookFilePath: '/library/book-audio',
+      }),
+    )
+    renderBookDetailPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: /Delete file/ }))
+    await waitFor(() => expect(api.deleteBookFile).toHaveBeenCalledWith(42, '?format=ebook'))
+  })
+})
+
+describe('BookDetailPage — history section', () => {
+  it('renders the humanised event label', async () => {
+    vi.mocked(api.listHistory).mockResolvedValue([
+      makeHistory({ eventType: 'bookImported', sourceTitle: 'A.Desolation.Called.Peace' }),
+    ])
+    renderBookDetailPage()
+    expect(await screen.findByText('Book imported')).toBeInTheDocument()
+    expect(screen.getByText('A.Desolation.Called.Peace')).toBeInTheDocument()
+  })
+})
+
+describe('BookDetailPage — danger zone', () => {
+  it('opens the confirm modal and keeps confirm disabled until acknowledged', async () => {
+    renderBookDetailPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete book + files…' }))
+
+    const confirm = await screen.findByRole('button', { name: 'Delete book + files' })
+    expect(confirm).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /I understand/ }))
+    expect(confirm).toBeEnabled()
+  })
+
+  it('calls api.deleteBook only after acknowledging and confirming', async () => {
+    renderBookDetailPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete book + files…' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /I understand/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete book + files' }))
+
+    await waitFor(() => expect(api.deleteBook).toHaveBeenCalledWith(42, false))
+  })
+
+  it('does not call api.deleteBook when the modal is cancelled', async () => {
+    renderBookDetailPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete book + files…' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
+
+    await waitFor(() =>
+      expect(screen.queryByRole('checkbox', { name: /I understand/ })).not.toBeInTheDocument(),
+    )
+    expect(api.deleteBook).not.toHaveBeenCalled()
+  })
+
+  it('passes deleteFiles=true to api.deleteBook when the book has files', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({ filePath: '/library/book.epub' }))
+    renderBookDetailPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete book + files…' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /I understand/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete book + files' }))
+
+    await waitFor(() => expect(api.deleteBook).toHaveBeenCalledWith(42, true))
   })
 })

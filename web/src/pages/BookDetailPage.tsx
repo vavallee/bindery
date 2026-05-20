@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { api, Book, HistoryEvent, SearchResult, SearchDebug } from '../api/client'
+import { useTranslation } from 'react-i18next'
+import { api, Book, HistoryEvent, MediaType, SearchResult, SearchDebug } from '../api/client'
 import SearchDebugPanel from '../components/SearchDebugPanel'
 import MediaBadge from '../components/MediaBadge'
 import RebindModal from '../components/RebindModal'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 function formatSize(n: number): string {
   if (!n || n <= 0) return ''
@@ -20,12 +22,48 @@ function formatDuration(seconds?: number): string {
   return `${m}m`
 }
 
+// Maps ISO-639 language codes (both 639-1 two-letter and 639-2/B three-letter
+// forms) to a full English name. Codes outside this short list fall back to the
+// raw code — indexers and metadata providers only reliably tag a few majors.
+const LANGUAGE_NAMES: Record<string, string> = {
+  en: 'English', eng: 'English',
+  fr: 'French', fre: 'French', fra: 'French',
+  de: 'German', ger: 'German', deu: 'German',
+  nl: 'Dutch', dut: 'Dutch', nld: 'Dutch',
+  es: 'Spanish', spa: 'Spanish',
+  it: 'Italian', ita: 'Italian',
+  pt: 'Portuguese', por: 'Portuguese',
+  ja: 'Japanese', jpn: 'Japanese',
+  zh: 'Chinese', chi: 'Chinese', zho: 'Chinese',
+  ru: 'Russian', rus: 'Russian',
+  tl: 'Tagalog', tgl: 'Tagalog',
+  id: 'Indonesian', ind: 'Indonesian',
+}
+
+function languageName(code?: string): string | null {
+  if (!code) return null
+  return LANGUAGE_NAMES[code.toLowerCase()] ?? code
+}
+
 const statusColors: Record<string, string> = {
   wanted: 'bg-amber-500/20 text-amber-700 dark:text-amber-400',
   downloading: 'bg-blue-500/20 text-blue-700 dark:text-blue-400',
   downloaded: 'bg-purple-500/20 text-purple-700 dark:text-purple-400',
   imported: 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400',
   skipped: 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400',
+}
+
+// Small coloured dot for a history row, by event type.
+const eventDotColors: Record<string, string> = {
+  grabbed: 'bg-blue-500',
+  bookImported: 'bg-emerald-500',
+  imported: 'bg-emerald-500',
+  downloadFailed: 'bg-red-500',
+  importFailed: 'bg-red-500',
+  deleted: 'bg-red-500',
+  renamed: 'bg-purple-500',
+  bookFileRenamed: 'bg-purple-500',
+  ignored: 'bg-slate-400 dark:bg-zinc-600',
 }
 
 const resultRowCls = (approved?: boolean) =>
@@ -97,7 +135,18 @@ export function SearchResultsSection({
   )
 }
 
+// Uniform neutral action button used across the file action row.
+const actionBtnCls =
+  'px-3 py-1.5 rounded text-sm font-medium border ' +
+  'bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 ' +
+  'border-slate-300 dark:border-zinc-700 ' +
+  'hover:bg-slate-300 dark:hover:bg-zinc-700 disabled:opacity-40'
+
+const dangerBtnCls =
+  'px-3 py-1.5 rounded text-sm font-medium bg-red-600 hover:bg-red-500 text-white disabled:opacity-40'
+
 export default function BookDetailPage() {
+  const { t } = useTranslation()
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const bookId = Number(id)
@@ -118,6 +167,10 @@ export default function BookDetailPage() {
   const [deletingBook, setDeletingBook] = useState(false)
   const [togglingExclude, setTogglingExclude] = useState(false)
   const [showRebind, setShowRebind] = useState(false)
+  const [showDeleteBook, setShowDeleteBook] = useState(false)
+  const [copied, setCopied] = useState(false)
+  // For dual-format books, which format the file section is acting on.
+  const [activeFormat, setActiveFormat] = useState<'ebook' | 'audiobook'>('ebook')
 
   useEffect(() => {
     if (book?.title) {
@@ -133,10 +186,10 @@ export default function BookDetailPage() {
       api.getBook(bookId).then(b => { if (!cancelled) { setBook(b); setAsinDraft(b.asin || '') } }),
       api.listHistory({ bookId }).then(setEvents).catch(() => {}),
     ])
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load'))
+      .catch(err => setError(err instanceof Error ? err.message : t('bookDetail.loadFailed')))
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [bookId])
+  }, [bookId, t])
 
   const saveField = async (patch: Partial<Book>) => {
     if (!book) return
@@ -147,7 +200,7 @@ export default function BookDetailPage() {
       setBook(updated)
       if (patch.asin !== undefined) setAsinDraft(updated.asin || '')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Save failed')
+      setError(e instanceof Error ? e.message : t('bookDetail.saveFailed'))
     } finally {
       setSaving(false)
     }
@@ -168,7 +221,7 @@ export default function BookDetailPage() {
       setResults(r.results)
       setSearchDebug(r.debug ?? null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Search failed')
+      setError(e instanceof Error ? e.message : t('bookDetail.searchFailed'))
     } finally {
       setSearching(false)
     }
@@ -197,7 +250,7 @@ export default function BookDetailPage() {
       setEvents(h)
       setResults(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Grab failed')
+      setError(e instanceof Error ? e.message : t('bookDetail.grabFailed'))
     } finally {
       setGrabbing(null)
     }
@@ -236,7 +289,7 @@ export default function BookDetailPage() {
       const h = await api.listHistory({ bookId: book.id }).catch(() => events)
       setEvents(h)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Delete failed')
+      setError(e instanceof Error ? e.message : t('bookDetail.deleteFailed'))
     } finally {
       setDeletingFile(false)
     }
@@ -245,20 +298,13 @@ export default function BookDetailPage() {
   const deleteBook = async () => {
     if (!book) return
     const hasFiles = !!(book.filePath || book.ebookFilePath || book.audiobookFilePath || (book.bookFiles && book.bookFiles.length > 0))
-    const fileSummary = book.bookFiles && book.bookFiles.length > 0
-      ? book.bookFiles.map(f => f.path).join('\n')
-      : [book.ebookFilePath, book.audiobookFilePath].filter(Boolean).join('\n') || book.filePath
-    const msg = hasFiles
-      ? `Delete "${book.title}" AND its files on disk?\n\n${fileSummary}\n\nSibling files with the same name (different format) will also be removed. Download history will be cleared.\n\nThis cannot be undone.`
-      : `Delete "${book.title}"?\n\nThis cannot be undone.`
-    if (!window.confirm(msg)) return
     setDeletingBook(true)
     setError(null)
     try {
       await api.deleteBook(book.id, hasFiles)
       navigate(`/author/${book.authorId}`)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Delete failed')
+      setError(e instanceof Error ? e.message : t('bookDetail.deleteFailed'))
       setDeletingBook(false)
     }
   }
@@ -271,7 +317,7 @@ export default function BookDetailPage() {
       const updated = await api.enrichAudiobook(book.id)
       setBook(updated)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Enrich failed')
+      setError(e instanceof Error ? e.message : t('bookDetail.enrichFailed'))
     } finally {
       setEnriching(false)
     }
@@ -284,25 +330,74 @@ export default function BookDetailPage() {
       const updated = await api.toggleExcluded(book.id)
       setBook(updated)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to toggle exclude')
+      setError(e instanceof Error ? e.message : t('bookDetail.excludeFailed'))
     } finally {
       setTogglingExclude(false)
     }
   }
 
-  if (loading) return <div className="text-slate-600 dark:text-zinc-500">Loading…</div>
-  if (!book) return <div className="text-slate-600 dark:text-zinc-500">Book not found</div>
+  const copyPath = async (path: string) => {
+    try {
+      await navigator.clipboard.writeText(path)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      /* clipboard unavailable */
+    }
+  }
 
-  const mt = book.mediaType || 'ebook'
+  if (loading) return <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
+  if (!book) return <div className="text-slate-600 dark:text-zinc-500">{t('bookDetail.notFound')}</div>
+
+  const mt: MediaType = book.mediaType || 'ebook'
+  const isDual = mt === 'both'
+  // The format the file section + actions + search apply to.
+  const fmt: 'ebook' | 'audiobook' = isDual ? activeFormat : (mt === 'audiobook' ? 'audiobook' : 'ebook')
+
+  // Resolve the file path for the currently active format.
+  const activePath = isDual
+    ? (fmt === 'ebook' ? book.ebookFilePath : book.audiobookFilePath)
+    : (book.filePath || book.ebookFilePath || book.audiobookFilePath)
+  const hasActiveFile = !!activePath
+
+  const lang = languageName(book.language)
+  const publishedDate = book.releaseDate
+    ? new Date(book.releaseDate).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+    : null
+
+  const searchLabel = searching
+    ? t('bookDetail.searching')
+    : mt === 'audiobook'
+      ? t('bookDetail.searchAudiobookIndexers')
+      : mt === 'both'
+        ? t('bookDetail.searchBothIndexers')
+        : t('bookDetail.searchEbookIndexers')
+
+  const downloadHref = isDual
+    ? `/api/v1/book/${book.id}/file?format=${fmt}`
+    : `/api/v1/book/${book.id}/file`
+
+  const formatButtonCls = (active: boolean) =>
+    `px-3 py-1 text-xs font-medium border ${
+      active
+        ? 'bg-emerald-600 border-emerald-600 text-white'
+        : 'bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 border-slate-300 dark:border-zinc-700 hover:bg-slate-300 dark:hover:bg-zinc-700'
+    }`
 
   return (
     <div className="max-w-4xl">
       <div className="mb-4 flex items-center gap-3 text-sm">
-        <button onClick={() => navigate(-1)} className="text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">← Back</button>
+        <button
+          onClick={() => navigate(-1)}
+          className="text-emerald-600 dark:text-emerald-400 hover:underline"
+        >
+          {t('bookDetail.back')}
+        </button>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-6 mb-8">
-        <div className="w-40 flex-shrink-0">
+      {/* ===== Header: cover + metadata ===== */}
+      <div className="flex flex-col sm:flex-row gap-6">
+        <div className="w-44 flex-shrink-0">
           {book.imageUrl ? (
             <img src={book.imageUrl} alt={book.title} className="w-full rounded-lg shadow-lg" />
           ) : (
@@ -312,230 +407,290 @@ export default function BookDetailPage() {
           )}
         </div>
         <div className="min-w-0 flex-1">
-          <h2 className="text-2xl font-bold mb-1">{book.title}</h2>
+          <h2 className="text-2xl font-semibold text-slate-900 dark:text-white">{book.title}</h2>
           {book.author?.authorName && (
-            <Link to={`/author/${book.authorId}`} className="text-sm text-emerald-500 hover:text-emerald-400">
+            <Link
+              to={`/author/${book.authorId}`}
+              className="text-sm text-emerald-600 dark:text-emerald-400 hover:underline"
+            >
               {book.author.authorName}
             </Link>
           )}
-          <div className="flex flex-wrap gap-2 mt-3 text-xs">
-            <span className={`inline-block px-2 py-0.5 rounded font-medium ${statusColors[book.status] || 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400'}`}>
-              {book.status}
+
+          <div className="flex flex-wrap items-center gap-2 mt-3 text-xs">
+            <span className={`inline-flex items-center px-2 py-0.5 rounded font-medium ${statusColors[book.status] || 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400'}`}>
+              {t(`bookDetail.status.${book.status}`, book.status)}
             </span>
             {book.excluded && (
-              <span className="inline-block px-2 py-0.5 rounded font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">
-                Excluded
+              <span className="inline-flex items-center px-2 py-0.5 rounded font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">
+                {t('bookDetail.excludedBadge')}
               </span>
             )}
-            {book.releaseDate && (
-              <span className="text-slate-600 dark:text-zinc-500">
-                {new Date(book.releaseDate).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
-              </span>
+            {publishedDate && (
+              <>
+                <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
+                <span className="text-slate-600 dark:text-zinc-400">
+                  {t('bookDetail.publishedDate', { date: publishedDate })}
+                </span>
+              </>
             )}
-            {book.language ? (
-              <span className="text-slate-600 dark:text-zinc-500">{book.language}</span>
+            <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
+            {lang ? (
+              <span className="text-slate-600 dark:text-zinc-400">{lang}</span>
             ) : (
               <span
-                className="inline-block px-2 py-0.5 rounded font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400"
-                title="Metadata source did not report a language for this book. It bypassed the language filter."
+                className="inline-flex items-center px-2 py-0.5 rounded font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400"
+                title={t('bookDetail.languageUnknownHint')}
               >
-                Language unknown
+                {t('bookDetail.languageUnknown')}
               </span>
             )}
             {book.narrator && (
-              <span className="text-slate-600 dark:text-zinc-500">Narrated by {book.narrator}</span>
+              <>
+                <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
+                <span className="text-slate-600 dark:text-zinc-400">
+                  {t('bookDetail.narratedBy', { narrator: book.narrator })}
+                </span>
+              </>
             )}
             {book.durationSeconds ? (
-              <span className="text-slate-600 dark:text-zinc-500">· {formatDuration(book.durationSeconds)}</span>
+              <>
+                <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
+                <span className="text-slate-600 dark:text-zinc-400">{formatDuration(book.durationSeconds)}</span>
+              </>
             ) : null}
           </div>
+
           {book.description && (
-            <p className="mt-4 text-sm text-slate-700 dark:text-zinc-300 leading-relaxed">{book.description}</p>
+            <p className="mt-3 text-sm text-slate-700 dark:text-zinc-300 leading-relaxed">{book.description}</p>
           )}
-          {mt === 'both' ? (
-            <div className="mt-3 space-y-1.5 text-sm">
-              {book.ebookFilePath && (
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-slate-500 dark:text-zinc-500 break-all flex-1">📖 {book.ebookFilePath}</span>
-                  <button onClick={() => deleteFile('ebook')} disabled={deletingFile || deletingBook}
-                    className="text-red-500 hover:text-red-400 disabled:opacity-40 text-xs flex-shrink-0">Delete ebook</button>
-                </div>
-              )}
-              {book.audiobookFilePath && (
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-slate-500 dark:text-zinc-500 break-all flex-1">🎧 {book.audiobookFilePath}</span>
-                  <button onClick={() => deleteFile('audiobook')} disabled={deletingFile || deletingBook}
-                    className="text-red-500 hover:text-red-400 disabled:opacity-40 text-xs flex-shrink-0">Delete audiobook</button>
-                </div>
-              )}
-            </div>
-          ) : (book.filePath || book.ebookFilePath) ? (
-            <div className="mt-3 flex items-center gap-4 text-sm">
-              <a href={`/api/v1/book/${book.id}/file`} className="text-emerald-500 hover:text-emerald-400">
-                Download file
-              </a>
-              <button
-                onClick={() => deleteFile()}
-                disabled={deletingFile || deletingBook}
-                className="text-red-500 hover:text-red-400 disabled:opacity-40"
-                title={`Remove ${book.mediaType === 'audiobook' ? 'folder' : 'file'} from disk; keep the book record`}
-              >
-                {deletingFile ? 'Deleting…' : 'Delete file'}
-              </button>
-              <span className="text-xs text-slate-500 dark:text-zinc-500 break-all">{book.filePath || book.ebookFilePath}</span>
-            </div>
-          ) : null}
-          <div className="mt-3 flex items-center gap-3 flex-wrap">
-            <button
-              onClick={toggleExclude}
-              disabled={togglingExclude}
-              className={`text-xs font-medium px-3 py-1.5 rounded transition-colors disabled:opacity-40 ${
-                book.excluded
-                  ? 'bg-amber-500/20 text-amber-700 dark:text-amber-400 hover:bg-amber-500/30'
-                  : 'bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 hover:bg-slate-300 dark:hover:bg-zinc-700'
-              }`}
-              title={book.excluded ? 'Un-exclude this book from searches and the Wanted page' : 'Exclude this book from searches and the Wanted page'}
-            >
-              {togglingExclude ? '…' : book.excluded ? 'Un-exclude' : 'Exclude'}
-            </button>
-            {book.excluded && (
-              <span className="text-xs text-amber-600 dark:text-amber-400 font-medium">Excluded from searches</span>
-            )}
-            <button
-              onClick={() => setShowRebind(true)}
-              className="text-xs font-medium px-3 py-1.5 rounded bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 hover:bg-slate-300 dark:hover:bg-zinc-700"
-              title="Point this book at a different upstream metadata record"
-            >
-              Re-bind
-            </button>
-            <button
-              onClick={deleteBook}
-              disabled={deletingBook || deletingFile}
-              className="text-xs text-red-600 dark:text-red-500 hover:text-red-500 dark:hover:text-red-400 disabled:opacity-40"
-            >
-              {deletingBook ? 'Deleting book…' : (book.filePath || book.ebookFilePath || book.audiobookFilePath) ? 'Delete book + files' : 'Delete book'}
-            </button>
-          </div>
+
+          <button
+            onClick={runSearch}
+            disabled={searching}
+            className="mt-4 inline-flex items-center gap-2 px-3 py-2 rounded text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50"
+          >
+            <span aria-hidden>🔍</span> {searchLabel}
+          </button>
         </div>
       </div>
 
       {error && (
-        <div className="mb-4 px-3 py-2 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900 rounded text-sm text-red-800 dark:text-red-300">
+        <div className="mt-6 px-3 py-2 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900 rounded text-sm text-red-800 dark:text-red-300">
           {error}
         </div>
       )}
 
-      <section className="mb-6 p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-        <h3 className="text-sm font-semibold mb-3 text-slate-800 dark:text-zinc-200">Format</h3>
-        <div className="flex items-center gap-2 mb-4">
-          <label htmlFor="book-media-type" className="text-xs text-slate-600 dark:text-zinc-400">Format:</label>
-          <select
-            id="book-media-type"
-            value={mt}
-            onChange={e => saveField({ mediaType: e.target.value as 'ebook' | 'audiobook' | 'both' })}
-            disabled={saving}
-            className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600 disabled:opacity-50"
-            title="Change media type"
-          >
-            <option value="ebook">📖 Ebook</option>
-            <option value="audiobook">🎧 Audiobook</option>
-            <option value="both">📖🎧 Both</option>
-          </select>
+      {/* ===== File section ===== */}
+      <section className="mt-8">
+        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">
+          {t('bookDetail.fileHeading')}
+        </h3>
+        <div className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-zinc-900 p-4">
+          <div className="grid grid-cols-[92px,1fr] gap-x-4 gap-y-3 text-sm items-center">
+            <label htmlFor="book-media-type" className="text-xs text-slate-500 dark:text-zinc-500">
+              {t('bookDetail.mediaTypeLabel')}
+            </label>
+            <select
+              id="book-media-type"
+              value={mt}
+              onChange={e => saveField({ mediaType: e.target.value as MediaType })}
+              disabled={saving}
+              className="w-fit bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600 disabled:opacity-50"
+              title={t('bookDetail.mediaTypeHint')}
+            >
+              <option value="ebook">📖 {t('common.ebook')}</option>
+              <option value="audiobook">🎧 {t('common.audiobook')}</option>
+              <option value="both">📖🎧 {t('common.both')}</option>
+            </select>
+
+            <span className="text-xs text-slate-500 dark:text-zinc-500">{t('bookDetail.formatLabel')}</span>
+            {isDual ? (
+              <div className="inline-flex rounded overflow-hidden w-fit" role="group" aria-label={t('bookDetail.formatLabel')}>
+                <button
+                  type="button"
+                  onClick={() => setActiveFormat('ebook')}
+                  aria-pressed={fmt === 'ebook'}
+                  className={`${formatButtonCls(fmt === 'ebook')} rounded-l`}
+                >
+                  <span aria-hidden>📖</span> {t('common.ebook')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveFormat('audiobook')}
+                  aria-pressed={fmt === 'audiobook'}
+                  className={`${formatButtonCls(fmt === 'audiobook')} rounded-r -ml-px`}
+                >
+                  <span aria-hidden>🎧</span> {t('common.audiobook')}
+                </button>
+              </div>
+            ) : (
+              <span className="w-fit">
+                <MediaBadge type={fmt} />
+              </span>
+            )}
+
+            <span className="text-xs text-slate-500 dark:text-zinc-500">{t('bookDetail.pathLabel')}</span>
+            <span className="flex items-center gap-2 min-w-0">
+              {hasActiveFile ? (
+                <>
+                  <code
+                    className="font-mono text-xs text-slate-500 dark:text-zinc-500 truncate"
+                    title={activePath}
+                  >
+                    {activePath}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => copyPath(activePath)}
+                    className="shrink-0 text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200 text-xs border border-slate-300 dark:border-zinc-700 rounded px-1.5 py-0.5"
+                    aria-label={t('bookDetail.copyPath')}
+                  >
+                    <span aria-hidden>⧉</span> {copied ? t('bookDetail.copied') : t('bookDetail.copy')}
+                  </button>
+                </>
+              ) : (
+                <span className="text-xs text-slate-500 dark:text-zinc-500">{t('bookDetail.noFile')}</span>
+              )}
+            </span>
+          </div>
+
+          <div className="mt-4 pt-4 border-t border-slate-200 dark:border-zinc-800 flex flex-wrap items-center gap-2">
+            <a
+              href={downloadHref}
+              className={`${actionBtnCls} ${hasActiveFile ? '' : 'opacity-40 pointer-events-none'}`}
+              aria-disabled={!hasActiveFile}
+            >
+              {t('bookDetail.download')}
+            </a>
+            <button type="button" onClick={() => setShowRebind(true)} className={actionBtnCls}>
+              {t('bookDetail.rebind')}
+            </button>
+            <button
+              type="button"
+              onClick={toggleExclude}
+              disabled={togglingExclude}
+              className={actionBtnCls}
+              title={book.excluded ? t('bookDetail.unexcludeHint') : t('bookDetail.excludeHint')}
+            >
+              {togglingExclude ? '…' : book.excluded ? t('bookDetail.unexclude') : t('bookDetail.exclude')}
+            </button>
+            <button
+              type="button"
+              onClick={() => deleteFile(isDual ? fmt : undefined)}
+              disabled={deletingFile || deletingBook || !hasActiveFile}
+              className={`ml-auto ${dangerBtnCls}`}
+            >
+              <span aria-hidden>🗑 </span>
+              {deletingFile ? t('bookDetail.deletingFile') : t('bookDetail.deleteFile')}
+            </button>
+          </div>
+
+          {book.excluded && (
+            <p className="mt-2 text-xs text-amber-600 dark:text-amber-400 font-medium">
+              {t('bookDetail.excludedFromSearches')}
+            </p>
+          )}
         </div>
-
-        {mt === 'both' && (
-          <div className="mb-4 grid grid-cols-2 gap-2 text-xs">
-            <div className={`px-3 py-2 rounded border ${book.ebookFilePath ? 'border-emerald-500/50 bg-emerald-500/5 text-emerald-700 dark:text-emerald-400' : 'border-slate-200 dark:border-zinc-700 text-slate-500 dark:text-zinc-500'}`}>
-              <span className="font-medium">📖 Ebook</span>
-              <span className="ml-2">{book.ebookFilePath ? '✓ on disk' : 'needed'}</span>
-            </div>
-            <div className={`px-3 py-2 rounded border ${book.audiobookFilePath ? 'border-emerald-500/50 bg-emerald-500/5 text-emerald-700 dark:text-emerald-400' : 'border-slate-200 dark:border-zinc-700 text-slate-500 dark:text-zinc-500'}`}>
-              <span className="font-medium">🎧 Audiobook</span>
-              <span className="ml-2">{book.audiobookFilePath ? '✓ on disk' : 'needed'}</span>
-            </div>
-          </div>
-        )}
-
-        {(mt === 'audiobook' || mt === 'both') && (
-          <div className="flex items-end gap-2 mb-4">
-            <div className="flex-1">
-              <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">ASIN (Audible identifier)</label>
-              <input
-                value={asinDraft}
-                onChange={e => setAsinDraft(e.target.value.toUpperCase())}
-                placeholder="B08GB58KD5"
-                className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
-              />
-            </div>
-            <button
-              onClick={() => saveField({ asin: asinDraft })}
-              disabled={saving || asinDraft === (book.asin || '')}
-              className="px-3 py-1.5 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded text-xs font-medium disabled:opacity-40"
-            >
-              Save ASIN
-            </button>
-            <button
-              onClick={enrich}
-              disabled={!book.asin || enriching}
-              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded text-xs font-medium disabled:opacity-40"
-              title={book.asin ? 'Fetch narrator, duration, cover from audnex' : 'Set an ASIN first'}
-            >
-              {enriching ? 'Fetching…' : 'Enrich from audnex'}
-            </button>
-          </div>
-        )}
-
-        <button
-          onClick={runSearch}
-          disabled={searching}
-          className="w-full sm:w-auto px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded text-sm font-medium"
-        >
-          {searching
-            ? 'Searching all indexers…'
-            : mt === 'audiobook'
-              ? 'Search audiobook indexers'
-              : mt === 'both'
-                ? 'Search ebook + audiobook indexers'
-                : 'Search ebook indexers'}
-        </button>
       </section>
 
+      {/* ===== Audiobook ASIN / enrich (audiobook + dual-format only) ===== */}
+      {(mt === 'audiobook' || mt === 'both') && (
+        <section className="mt-8">
+          <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">
+            {t('bookDetail.audiobookHeading')}
+          </h3>
+          <div className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-zinc-900 p-4">
+            <div className="flex flex-col sm:flex-row sm:items-end gap-2">
+              <div className="flex-1">
+                <label htmlFor="book-asin" className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
+                  {t('bookDetail.asinLabel')}
+                </label>
+                <input
+                  id="book-asin"
+                  value={asinDraft}
+                  onChange={e => setAsinDraft(e.target.value.toUpperCase())}
+                  placeholder="B08GB58KD5"
+                  className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => saveField({ asin: asinDraft })}
+                disabled={saving || asinDraft === (book.asin || '')}
+                className={actionBtnCls}
+              >
+                {t('bookDetail.saveAsin')}
+              </button>
+              <button
+                type="button"
+                onClick={enrich}
+                disabled={!book.asin || enriching}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-sm font-medium disabled:opacity-40"
+                title={book.asin ? t('bookDetail.enrichHint') : t('bookDetail.enrichHintNoAsin')}
+              >
+                {enriching ? t('bookDetail.enriching') : t('bookDetail.enrich')}
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* ===== Search results ===== */}
       {results !== null && results.length === 0 && (
-        <div className="mb-6 text-center py-6 text-sm text-slate-600 dark:text-zinc-500 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-          {hasIndexers === false
-            ? <>No indexers configured — add one in <Link to="/settings" className="underline">Settings</Link>.</>
-            : 'No results on any indexer — expand Search details below to see why.'}
+        <div className="mt-6 text-center py-6 text-sm text-slate-600 dark:text-zinc-500 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+          {hasIndexers === false ? (
+            <>
+              {t('bookDetail.noIndexers')}{' '}
+              <Link to="/settings" className="underline">{t('nav.settings')}</Link>.
+            </>
+          ) : (
+            t('bookDetail.noResults')
+          )}
         </div>
       )}
 
       {searchDebug && (
-        <SearchDebugPanel
-          debug={searchDebug}
-          resultCount={results?.length ?? 0}
-          defaultOpen={results !== null && results.length === 0}
-        />
+        <div className="mt-6">
+          <SearchDebugPanel
+            debug={searchDebug}
+            resultCount={results?.length ?? 0}
+            defaultOpen={results !== null && results.length === 0}
+          />
+        </div>
       )}
 
       {results !== null && results.length > 0 && (
-        <SearchResultsSection
-          results={results}
-          bookMediaType={book.mediaType}
-          grabbing={grabbing}
-          onGrab={grab}
-        />
+        <div className="mt-6">
+          <SearchResultsSection
+            results={results}
+            bookMediaType={book.mediaType}
+            grabbing={grabbing}
+            onGrab={grab}
+          />
+        </div>
       )}
 
+      {/* ===== History section ===== */}
       {events.length > 0 && (
-        <section>
-          <h3 className="text-sm font-semibold mb-2 text-slate-800 dark:text-zinc-200">History</h3>
-          <div className="border border-slate-200 dark:border-zinc-800 rounded-lg overflow-hidden divide-y divide-slate-200 dark:divide-zinc-800">
+        <section className="mt-8">
+          <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">
+            {t('bookDetail.historyHeading')}
+          </h3>
+          <div className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-zinc-900 divide-y divide-slate-200 dark:divide-zinc-800">
             {events.map(ev => (
-              <div key={ev.id} className="flex items-start gap-3 p-3 bg-slate-100 dark:bg-zinc-900 text-xs">
-                <span className="px-2 py-0.5 rounded bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 font-medium flex-shrink-0">
-                  {ev.eventType}
+              <div key={ev.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
+                <span
+                  aria-hidden
+                  className={`w-2 h-2 rounded-full flex-shrink-0 ${eventDotColors[ev.eventType] ?? 'bg-slate-400 dark:bg-zinc-600'}`}
+                />
+                <span className="font-medium text-slate-700 dark:text-zinc-300 flex-shrink-0">
+                  {t(`bookDetail.event.${ev.eventType}`, ev.eventType)}
                 </span>
-                <span className="text-slate-800 dark:text-zinc-200 flex-1 break-words min-w-0">{ev.sourceTitle || '—'}</span>
-                <span className="text-slate-600 dark:text-zinc-500 whitespace-nowrap flex-shrink-0">
+                <span className="font-mono text-xs text-slate-500 dark:text-zinc-500 truncate min-w-0">
+                  {ev.sourceTitle || '—'}
+                </span>
+                <span className="ml-auto text-xs text-slate-500 dark:text-zinc-500 whitespace-nowrap flex-shrink-0">
                   {new Date(ev.createdAt).toLocaleString()}
                 </span>
               </div>
@@ -543,6 +698,26 @@ export default function BookDetailPage() {
           </div>
         </section>
       )}
+
+      {/* ===== Danger zone ===== */}
+      <section className="mt-8">
+        <h3 className="text-base font-semibold mb-3 text-rose-700 dark:text-rose-400">
+          {t('bookDetail.dangerHeading')}
+        </h3>
+        <div className="rounded-lg border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/30 p-4 flex flex-col sm:flex-row sm:items-center gap-4">
+          <p className="text-sm text-slate-600 dark:text-zinc-400 flex-1">
+            {t('bookDetail.dangerBody')}
+          </p>
+          <button
+            type="button"
+            onClick={() => setShowDeleteBook(true)}
+            disabled={deletingBook || deletingFile}
+            className={`shrink-0 ${dangerBtnCls}`}
+          >
+            {t('bookDetail.deleteBook')}
+          </button>
+        </div>
+      </section>
 
       {showRebind && (
         <RebindModal
@@ -552,6 +727,25 @@ export default function BookDetailPage() {
             setBook(updated)
             setShowRebind(false)
           }}
+        />
+      )}
+
+      {showDeleteBook && (
+        <ConfirmDialog
+          title={t('bookDetail.deleteBook')}
+          body={
+            <p>
+              {t('bookDetail.deleteBookBody1')}{' '}
+              <span className="font-medium text-slate-800 dark:text-zinc-200">{book.title}</span>{' '}
+              {t('bookDetail.deleteBookBody2')}
+            </p>
+          }
+          acknowledgeLabel={t('bookDetail.deleteAcknowledge')}
+          confirmLabel={t('bookDetail.deleteBookConfirm')}
+          confirmingLabel={t('bookDetail.deletingBook')}
+          confirming={deletingBook}
+          onConfirm={deleteBook}
+          onClose={() => setShowDeleteBook(false)}
         />
       )}
     </div>
