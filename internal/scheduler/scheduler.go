@@ -101,7 +101,7 @@ func New(
 	blocklist *db.BlocklistRepo,
 ) *Scheduler {
 	return &Scheduler{
-		cron:      cron.New(cron.WithSeconds()),
+		cron:      cron.New(cron.WithSeconds(), cron.WithChain(cron.SkipIfStillRunning(cron.DefaultLogger))),
 		scanner:   scanner,
 		searcher:  searcher,
 		meta:      meta,
@@ -417,7 +417,8 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 
 	candidates, err := s.clients.GetEnabledByProtocol(ctx, best.Protocol)
 	if err != nil {
-		slog.Warn("failed to list clients for protocol", "protocol", best.Protocol, "error", err)
+		slog.Error("SearchAndGrabBook: failed to list download clients", "protocol", best.Protocol, "error", err)
+		return
 	}
 	client := db.PickClientForMediaType(candidates, mediaType)
 	// No cross-protocol fallback: a usenet release must not be pushed to a
@@ -651,7 +652,10 @@ func (s *Scheduler) refreshMetadata() {
 		}
 		author.AverageRating = updated.AverageRating
 		author.RatingsCount = updated.RatingsCount
-		s.authors.Update(ctx, &author)
+		if err := s.authors.Update(ctx, &author); err != nil {
+			slog.Warn("failed to persist refreshed author", "author", author.Name, "error", err)
+			continue
+		}
 
 		slog.Debug("refreshed author", "author", author.Name)
 	}
