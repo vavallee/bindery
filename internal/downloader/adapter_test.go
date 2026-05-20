@@ -468,18 +468,18 @@ func TestSendDownload_SABnzbd(t *testing.T) {
 }
 
 func TestSendDownload_SABnzbd_NoNzoID(t *testing.T) {
+	// SABnzbd may report status:true but return an empty nzo_ids slice.
+	// This is not a usable success — the download becomes untrackable.
+	// SendDownload must return an error rather than a silent empty RemoteID.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": true, "nzo_ids": []string{}})
 	}))
 	defer srv.Close()
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{Type: "sabnzbd", Host: host, Port: port, APIKey: "k"}
-	result, err := SendDownload(context.Background(), client, "https://example.com/file.nzb", "My Book")
-	if err != nil {
-		t.Fatalf("SendDownload: %v", err)
-	}
-	if result.RemoteID != "" {
-		t.Errorf("expected empty RemoteID, got %q", result.RemoteID)
+	_, err := SendDownload(context.Background(), client, "https://example.com/file.nzb", "My Book")
+	if err == nil {
+		t.Fatal("expected an error when SABnzbd returns no NZO id, got nil")
 	}
 }
 
@@ -775,11 +775,13 @@ func TestLiveStatusIsError_StatusStrings(t *testing.T) {
 		{"failed", true},
 		{"Failed", true},
 		{"", false},
+		// qBittorrent missingFiles state
+		{"missingFiles", true},
+		{"missingfiles", true},
 	}
 	for _, tc := range tests {
-		ls := LiveStatus{Status: tc.status}
-		if got := liveStatusIsError(ls); got != tc.want {
-			t.Errorf("liveStatusIsError(%q) = %v, want %v", tc.status, got, tc.want)
+		if got := LiveStatusIsError(tc.status); got != tc.want {
+			t.Errorf("LiveStatusIsError(%q) = %v, want %v", tc.status, got, tc.want)
 		}
 	}
 }
@@ -815,7 +817,7 @@ func TestGetLiveStatusesTransmission_UsesErrorStringStatus(t *testing.T) {
 	if ls.Status != "error: No data found! Ensure your drives are connected" {
 		t.Errorf("unexpected Status=%q", ls.Status)
 	}
-	if !liveStatusIsError(ls) {
-		t.Error("expected liveStatusIsError to return true for Transmission errorString")
+	if !LiveStatusIsError(ls.Status) {
+		t.Error("expected LiveStatusIsError to return true for Transmission errorString")
 	}
 }

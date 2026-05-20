@@ -340,7 +340,7 @@ func includeArrQueueItem(item enrichedQueueItem) bool {
 }
 
 func trackedDownloadStatus(item enrichedQueueItem) string {
-	if item.Download.ErrorMessage != "" || liveStatusIsError(item.Live.Status) {
+	if item.Download.ErrorMessage != "" || downloader.LiveStatusIsError(item.Live.Status) {
 		return "error"
 	}
 	switch item.Download.Status {
@@ -351,11 +351,6 @@ func trackedDownloadStatus(item enrichedQueueItem) string {
 		return "warning"
 	}
 	return "ok"
-}
-
-func liveStatusIsError(status string) bool {
-	status = strings.ToLower(status)
-	return strings.Contains(status, "error") || strings.Contains(status, "fail")
 }
 
 func queueItemSize(item enrichedQueueItem) int64 {

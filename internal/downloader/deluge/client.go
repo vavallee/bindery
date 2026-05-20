@@ -35,7 +35,8 @@ type Client struct {
 	baseURL  string
 	password string
 	http     *http.Client
-	mu       sync.Mutex
+	mu       sync.Mutex // guards loggedIn
+	addMu    sync.Mutex // serialises addTorrentURL: keeps before/after hash diff atomic
 	loggedIn bool
 	reqID    atomic.Int64
 }
@@ -143,7 +144,14 @@ func (c *Client) addMagnet(ctx context.Context, magnet string) (string, error) {
 // (which saves it to a temp path on the Deluge server), then adds it via
 // web.add_torrents. The hash is resolved by polling the unfiltered torrent
 // list until a new hash (not in beforeSet) appears.
+//
+// addMu serialises concurrent calls so that each goroutine's before-snapshot →
+// submit → poll sequence is atomic. Without it two concurrent calls both
+// snapshot the same beforeSet, then cross-assign hashes.
 func (c *Client) addTorrentURL(ctx context.Context, torrentURL, label string) (string, error) {
+	c.addMu.Lock()
+	defer c.addMu.Unlock()
+
 	// Snapshot all existing hashes so we can identify the newly-added torrent.
 	beforeSet := map[string]struct{}{}
 	if before, err := c.GetTorrents(ctx); err == nil {

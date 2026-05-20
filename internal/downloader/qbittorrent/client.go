@@ -622,6 +622,10 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 			return nil, fmt.Errorf("GET %s (retry): %w", path, err)
 		}
 		defer resp2.Body.Close()
+		if resp2.StatusCode != http.StatusOK {
+			body2, _ := io.ReadAll(io.LimitReader(resp2.Body, 512))
+			return nil, fmt.Errorf("HTTP %d: %s", resp2.StatusCode, string(body2))
+		}
 		return io.ReadAll(resp2.Body)
 	}
 
