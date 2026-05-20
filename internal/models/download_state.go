@@ -29,7 +29,7 @@ var validTransitions = map[DownloadState][]DownloadState{
 	StateImporting:     {StateImported, StateImportFailed, StateImportBlocked},
 	StateImported:      {},
 	StateFailed:        {},
-	StateImportFailed:  {StateImportPending},
+	StateImportFailed:  {StateImportPending, StateImportBlocked, StateImporting},
 	StateImportBlocked: {},
 }
 
