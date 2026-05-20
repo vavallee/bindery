@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -402,8 +403,12 @@ func (h *OIDCHandler) SetProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Reload async so the HTTP response isn't delayed by discovery.
+	// Use WithoutCancel so request-scoped values (logger, trace IDs) are
+	// preserved but the goroutine is not killed when the HTTP handler returns
+	// and cancels r.Context(), which would abort OIDC discovery mid-flight.
+	reloadCtx := context.WithoutCancel(r.Context())
 	go func() {
-		h.mgr.Reload(r.Context(), merged)
+		h.mgr.Reload(reloadCtx, merged)
 	}()
 	writeOK(w, map[string]any{"ok": true, "count": len(merged)})
 }
