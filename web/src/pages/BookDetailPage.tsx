@@ -511,17 +511,21 @@ export default function BookDetailPage() {
                   type="button"
                   onClick={() => setActiveFormat('ebook')}
                   aria-pressed={fmt === 'ebook'}
+                  title={book.ebookFilePath ? t('bookDetail.formatOnDisk') : t('bookDetail.formatNotOnDisk')}
                   className={`${formatButtonCls(fmt === 'ebook')} rounded-l`}
                 >
                   <span aria-hidden>📖</span> {t('common.ebook')}
+                  {book.ebookFilePath && <span aria-hidden className="ml-1">✓</span>}
                 </button>
                 <button
                   type="button"
                   onClick={() => setActiveFormat('audiobook')}
                   aria-pressed={fmt === 'audiobook'}
+                  title={book.audiobookFilePath ? t('bookDetail.formatOnDisk') : t('bookDetail.formatNotOnDisk')}
                   className={`${formatButtonCls(fmt === 'audiobook')} rounded-r -ml-px`}
                 >
                   <span aria-hidden>🎧</span> {t('common.audiobook')}
+                  {book.audiobookFilePath && <span aria-hidden className="ml-1">✓</span>}
                 </button>
               </div>
             ) : (

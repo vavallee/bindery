@@ -501,6 +501,8 @@
     "mediaTypeLabel": "Media type",
     "mediaTypeHint": "Change media type",
     "formatLabel": "Format",
+    "formatOnDisk": "On disk",
+    "formatNotOnDisk": "Not downloaded",
     "pathLabel": "Path",
     "noFile": "No file on disk",
     "copy": "Copy",

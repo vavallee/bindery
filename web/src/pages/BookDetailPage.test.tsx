@@ -457,6 +457,24 @@ describe('BookDetailPage — dual-format book', () => {
     expect(await screen.findByText('/library/book-audio')).toBeInTheDocument()
   })
 
+  it('marks which formats are on disk in the switcher', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(
+      makeBook({
+        mediaType: 'both',
+        ebookFilePath: '/library/book.epub',
+        audiobookFilePath: '',
+      }),
+    )
+    renderBookDetailPage()
+
+    const ebookBtn = await screen.findByRole('button', { name: /Ebook/ })
+    const audioBtn = screen.getByRole('button', { name: /Audiobook/ })
+    expect(ebookBtn).toHaveAttribute('title', 'On disk')
+    expect(ebookBtn).toHaveTextContent('✓')
+    expect(audioBtn).toHaveAttribute('title', 'Not downloaded')
+    expect(audioBtn).not.toHaveTextContent('✓')
+  })
+
   it('deletes the active format file for a dual-format book', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     vi.mocked(api.getBook).mockResolvedValue(
