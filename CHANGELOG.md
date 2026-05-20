@@ -6,6 +6,12 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.13.1] — 2026-05-20
+
+### Changed
+
+- **The book detail page has been redesigned** (#751) — the scattered action links are now consistent buttons, the file path and per-format on-disk status are surfaced clearly, history entries are humanised, and deleting a book and its files moved to a dedicated "Danger zone" that requires an explicit checkbox confirmation. The media-type control sits with the indexer-search action it scopes.
+
 ## [v1.13.0] — 2026-05-20
 
 ### Added
