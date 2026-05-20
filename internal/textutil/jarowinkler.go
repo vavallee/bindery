@@ -17,8 +17,21 @@ func JaroWinkler(s, t string) float64 {
 		matchWindow = 0
 	}
 
-	sMatch := make([]bool, sl)
-	tMatch := make([]bool, tl)
+	// Stack-allocated scratch for the common case (titles, author names);
+	// avoids two heap allocations per call on the library-scan hot path.
+	// Inputs longer than the buffer fall back to heap allocation.
+	var sBuf, tBuf [256]bool
+	var sMatch, tMatch []bool
+	if sl <= len(sBuf) {
+		sMatch = sBuf[:sl]
+	} else {
+		sMatch = make([]bool, sl)
+	}
+	if tl <= len(tBuf) {
+		tMatch = tBuf[:tl]
+	} else {
+		tMatch = make([]bool, tl)
+	}
 	m := 0
 	for i := 0; i < sl; i++ {
 		lo := max(0, i-matchWindow)
