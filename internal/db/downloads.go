@@ -263,16 +263,16 @@ func (r *DownloadRepo) RecoverInterruptedImports(ctx context.Context) ([]int64, 
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("scan interrupted import id: %w", err)
 		}
 		ids = append(ids, id)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, fmt.Errorf("iterate interrupted imports: %w", err)
 	}
-	rows.Close()
+	_ = rows.Close()
 	if len(ids) == 0 {
 		return nil, nil
 	}

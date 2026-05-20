@@ -66,7 +66,7 @@ func (r *SettingsRepo) SetMany(ctx context.Context, kvs []SettingKV) error {
 	if err != nil {
 		return err
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 
 	for _, kv := range kvs {
 		if _, err := stmt.ExecContext(ctx, kv.Key, kv.Value, now); err != nil {
