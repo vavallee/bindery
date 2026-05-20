@@ -72,7 +72,13 @@ type FilterDebug struct {
 // SearchBookWithDebug is SearchBook plus an audit trail of every decision the
 // searcher made. The returned results are identical to SearchBook's output;
 // callers that don't care about the debug info can keep using SearchBook.
+//
+// The same aggregate timeout (searchBookTimeout) as SearchBook is applied so
+// the debug path cannot be used to bypass the per-search deadline.
 func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.Indexer, c MatchCriteria) ([]newznab.SearchResult, *SearchDebug) {
+	ctx, cancel := context.WithTimeout(ctx, searchBookTimeout)
+	defer cancel()
+
 	dbg := &SearchDebug{
 		StartedAt: time.Now(),
 		Query: SearchQueryDebug{

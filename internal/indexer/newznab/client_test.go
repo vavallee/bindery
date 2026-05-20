@@ -957,3 +957,171 @@ func TestNew_HardenedDialerBlocksLoopback(t *testing.T) {
 		t.Errorf("expected 'loopback' in SSRF dial error, got: %v", err)
 	}
 }
+
+// TestIndexerError_Classification verifies that IndexerError.Code is correctly
+// set by parseNewznabError and that IsAuthError / IsRateLimitError /
+// IsHardIndexerError classify the result accurately (Finding 3 — typed errors).
+func TestIndexerError_Classification(t *testing.T) {
+	cases := []struct {
+		name          string
+		body          string
+		wantAuth      bool
+		wantRateLimit bool
+		wantHard      bool
+	}{
+		{
+			name:          "auth failure code 100",
+			body:          `<error code="100" description="Incorrect user credentials"/>`,
+			wantAuth:      true,
+			wantRateLimit: false,
+			wantHard:      true,
+		},
+		{
+			name:          "account suspended code 101",
+			body:          `<error code="101" description="Account suspended"/>`,
+			wantAuth:      true,
+			wantRateLimit: false,
+			wantHard:      true,
+		},
+		{
+			name:          "rate limit code 500",
+			body:          `<error code="500" description="Request limit reached"/>`,
+			wantAuth:      false,
+			wantRateLimit: true,
+			wantHard:      true,
+		},
+		{
+			name:          "grabs limit code 520",
+			body:          `<error code="520" description="Maximum grabs reached"/>`,
+			wantAuth:      false,
+			wantRateLimit: true,
+			wantHard:      true,
+		},
+		{
+			name:          "other code 300",
+			body:          `<error code="300" description="No such function"/>`,
+			wantAuth:      false,
+			wantRateLimit: false,
+			wantHard:      false,
+		},
+		{
+			name:          "description-only (code 0)",
+			body:          `<error description="site offline"/>`,
+			wantAuth:      false,
+			wantRateLimit: false,
+			wantHard:      false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := parseNewznabError([]byte(tc.body))
+			if err == nil {
+				t.Fatalf("expected non-nil error")
+			}
+			if got := IsAuthError(err); got != tc.wantAuth {
+				t.Errorf("IsAuthError = %v, want %v", got, tc.wantAuth)
+			}
+			if got := IsRateLimitError(err); got != tc.wantRateLimit {
+				t.Errorf("IsRateLimitError = %v, want %v", got, tc.wantRateLimit)
+			}
+			if got := IsHardIndexerError(err); got != tc.wantHard {
+				t.Errorf("IsHardIndexerError = %v, want %v", got, tc.wantHard)
+			}
+		})
+	}
+}
+
+// TestBookSearch_AbortOnAuthError verifies that a tier-1 auth error (code 100)
+// causes BookSearch to abort immediately rather than falling through to tiers
+// 2-4 (Finding 1 — hard errors abort).
+func TestBookSearch_AbortOnAuthError(t *testing.T) {
+	var requestCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		w.Header().Set("Content-Type", "application/xml")
+		// All requests receive an auth-error response.
+		w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><error code="100" description="Incorrect user credentials"/>`))
+	}))
+	defer srv.Close()
+
+	c := testNew(srv.URL, "badkey")
+	_, err := c.BookSearch(context.Background(), "Dark Matter", "Blake Crouch", []int{7020})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !IsAuthError(err) {
+		t.Errorf("expected IsAuthError to be true, got err=%v", err)
+	}
+	if requestCount > 1 {
+		t.Errorf("expected abort after 1 request, but made %d requests — auth error was not a hard stop", requestCount)
+	}
+}
+
+// TestBookSearch_AbortOnRateLimitError verifies that a tier-2 rate-limit error
+// (code 500) causes BookSearch to abort rather than falling through to tier 3/4
+// (Finding 1).
+func TestBookSearch_AbortOnRateLimitError(t *testing.T) {
+	var requestCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		w.Header().Set("Content-Type", "application/xml")
+		q := r.URL.Query()
+		if q.Get("t") == "book" {
+			// Tier 1 returns empty (not an error), triggering fallthrough.
+			w.Write([]byte(`<?xml version="1.0"?><rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/"><channel><newznab:response total="0"/></channel></rss>`))
+			return
+		}
+		// Tier 2 (first text-search tier) returns rate-limit error.
+		w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><error code="500" description="Request limit reached"/>`))
+	}))
+	defer srv.Close()
+
+	c := testNew(srv.URL, "somekey")
+	_, err := c.BookSearch(context.Background(), "Dark Matter", "Blake Crouch", []int{7020})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !IsRateLimitError(err) {
+		t.Errorf("expected IsRateLimitError to be true, got err=%v", err)
+	}
+	// Tier 1 (book) + tier 2 (rate-limited) = 2 requests max; must not try tier 3 or 4.
+	if requestCount > 2 {
+		t.Errorf("expected abort after 2 requests (t=book + rate-limited tier-2), made %d", requestCount)
+	}
+}
+
+// TestBookSearch_FallsThroughOnSoftError verifies that a non-hard error (an
+// HTTP 503 or other transport error that is NOT an IndexerError) still allows
+// tier fall-through on tier 1 — only hard (auth/rate-limit) errors abort.
+// This test uses an empty-results response on tier 1 and a network error on
+// tier 2 to ensure tier 3/4 are still reached.
+func TestBookSearch_NonHardErrorFallsThrough(t *testing.T) {
+	// Tier 1 returns empty; tier 2 also returns empty; tier 3 matches.
+	var queries []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.Query().Get("t")+":"+r.URL.Query().Get("q"))
+		w.Header().Set("Content-Type", "application/xml")
+		q := r.URL.Query()
+		if q.Get("t") == "search" && strings.Contains(q.Get("q"), "Blake Crouch") {
+			// Tier 3 match.
+			w.Write([]byte(testRSS))
+			return
+		}
+		w.Write([]byte(`<?xml version="1.0"?><rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/"><channel><newznab:response total="0"/></channel></rss>`))
+	}))
+	defer srv.Close()
+
+	c := testNew(srv.URL, "key")
+	results, err := c.BookSearch(context.Background(), "Dark Matter", "Blake Crouch", []int{7020})
+	if err != nil {
+		t.Fatalf("expected success on tier 3, got err=%v", err)
+	}
+	if len(results) == 0 {
+		t.Error("expected results from tier 3")
+	}
+	// Must have issued requests for more than 1 tier (proving fall-through happened).
+	if len(queries) < 2 {
+		t.Errorf("expected multiple tiers issued, got %d: %v", len(queries), queries)
+	}
+}

@@ -1,6 +1,69 @@
 package newznab
 
-import "encoding/xml"
+import (
+	"encoding/xml"
+	"errors"
+	"fmt"
+)
+
+// IndexerError is a structured error returned by a Newznab/Torznab indexer via
+// its <error code="N" description="..."/> response element. It carries the raw
+// numeric code so callers can classify the failure:
+//
+//   - 1xx codes (100–199) indicate authentication / authorization problems.
+//   - 5xx codes (500–599) indicate rate-limiting by the indexer.
+//   - Other codes (200–499, 9xx, …) are indexer-defined operational errors.
+//
+// Callers that only need the human-readable message can treat IndexerError like
+// any other error via its Error() method.
+type IndexerError struct {
+	Code        int
+	Description string
+}
+
+func (e *IndexerError) Error() string {
+	switch {
+	case e.Code == 0 && e.Description == "":
+		return "indexer error"
+	case e.Code == 0:
+		return fmt.Sprintf("indexer error: %s", e.Description)
+	case e.Description == "":
+		return fmt.Sprintf("indexer error %d", e.Code)
+	default:
+		return fmt.Sprintf("indexer error %d: %s", e.Code, e.Description)
+	}
+}
+
+// IsAuthError reports whether the error is an authentication / authorization
+// failure (Newznab 1xx code range: 100 = bad credentials, 101 = account
+// suspended, 102 = VPN forbidden, etc.).
+func IsAuthError(err error) bool {
+	var ie *IndexerError
+	if !errors.As(err, &ie) {
+		return false
+	}
+	return ie.Code >= 100 && ie.Code <= 199
+}
+
+// IsRateLimitError reports whether the error is a rate-limit rejection
+// (Newznab 5xx code range: 500 = request limit reached, 520 = maximum
+// grabs reached, etc.).
+func IsRateLimitError(err error) bool {
+	var ie *IndexerError
+	if !errors.As(err, &ie) {
+		return false
+	}
+	return ie.Code >= 500 && ie.Code <= 599
+}
+
+// IsHardIndexerError reports whether err is an error that the indexer itself
+// deliberately returned (auth failure or rate limit), as opposed to a transient
+// network or decoding problem. Callers can use this to abort tier fall-through:
+// if an indexer has explicitly rejected the session, retrying lower tiers
+// against the same indexer is wasteful and will produce the same result.
+func IsHardIndexerError(err error) bool {
+	return IsAuthError(err) || IsRateLimitError(err)
+}
 
 // Newznab RSS response
 type rssResponse struct {
