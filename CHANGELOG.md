@@ -6,9 +6,35 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.14.0] — 2026-05-21
+
 ### Added
 
+- **Audiobookshelf import can reconcile multiple libraries from one source** (#670) — a single ABS source can now import from several selected book libraries (for example a separate Books and Audiobooks library) instead of just one. Libraries are imported in an ordered, per-library sequence, each producing its own run record with independent checkpoint, rollback, and provenance, and the settings UI gains a multi-select for choosing them. Existing single-library configurations are migrated and behave unchanged. Closes #580.
+
+- **Per-author audiobook root folder** (#579) — an author can be assigned a dedicated audiobook destination, separate from the global audiobook directory and from the ebook root folder. Set it in the Edit Author dialog; when unset, audiobooks fall back to the global audiobook directory. It is honoured by both the import scanner and the Audiobookshelf import path. Thanks to @j-tt for the original report and patch.
+
+- **One-shot Goodreads library import** (#585) — a migration aid for users coming from Goodreads or Readarr. Export your library CSV from Goodreads, upload it under Settings → Import, and Bindery resolves each row against the metadata providers, shows a dry-run preview (added / skipped / failed to resolve), and lets you commit. Rows that fail to resolve are downloadable as a CSV to fix and retry. A shelf filter (default: `to-read`) selects which books to bring across. It is a one-time import, not a live sync — Bindery never contacts Goodreads.
+
 - **OIDC role mapping** (#688) — three new opt-in, backward-compatible env vars remove the manual-promotion friction (and lockout trap) of SSO-only deployments. `BINDERY_OIDC_DEFAULT_ROLE` (`user`/`admin`, default `user`) sets the role assigned at OIDC auto-provision time. `BINDERY_OIDC_ADMIN_GROUP` makes the IdP authoritative for the admin role: when set, every login promotes the user to `admin` if the configured group claim contains that group and demotes to `user` if absent — overriding the manual role-promotion API for OIDC users. `BINDERY_OIDC_GROUP_CLAIM` (default `groups`) selects the claim path and tolerates both shapes IdPs emit (a JSON array of strings, or a single space/comma-delimited string). Finally, when local auth is disabled and Bindery has zero admins at OIDC-provision time, the first provisioned OIDC user is auto-promoted to admin — guarded by a one-shot settings flag so deleting all admins later cannot silently re-promote.
+
+### Changed
+
+- **The Wanted page has been redesigned** (#760) — the wanted-books list now uses the same card styling and consistent action buttons as the refreshed book-detail page, presenting each book and its search action more clearly.
+
+- **Audiobookshelf import now imports unmatched items instead of queuing them for review** (#781) — previously every author or book without a confident local match was sent to the manual review queue, so a first import of a large folder-backed ABS library left almost everything (often 90%+) parked for review. Unmatched authors and books are now created directly — a faithful import of your own library — and only genuinely *ambiguous* matches (a close but uncertain candidate) are queued for review. If you re-run an Audiobookshelf import, expect far more items to import directly than before.
+
+### Fixed
+
+- **Readarr import no longer fails CSRF validation** (#765) — the Readarr/CSV migrate upload bypassed the standard API request wrapper and sent no CSRF token, so it was rejected once CSRF enforcement was tightened. The upload now goes through a helper that attaches the CSRF and `X-Requested-With` headers; this also fixes the upload on sub-path deployments.
+
+- **Hardcover series and shelf handling hardened** (#691, #776) — built-in reading-shelf mapping (Want to Read / Currently Reading / Read / Did Not Finish) is corrected against Hardcover's documented `status_id` values, series mapping is more robust, and ISBN, genre, and media-type are now parsed from Hardcover responses.
+
+- **qBittorrent re-grabs no longer fail when the torrent is already present** (#769) — re-grabbing a book whose torrent qBittorrent already holds returned `add torrent HTTP 409: Conflict` and failed the grab outright. A 409 means the content is already available, so Bindery now recovers the existing torrent's hash and proceeds to import instead of erroring.
+
+### Docs
+
+- **Documentation deep-dive cleanup** (#782) — removed a stale orphaned multi-user doc, corrected the multi-user guide (a wrong API route, a non-existent config key, and a wrong env var), updated the Audiobookshelf docs for the new import behaviour, added how-tos for the Goodreads import and the per-author audiobook root folder, and completed the README documentation index.
 
 ## [v1.13.2] — 2026-05-20
 
