@@ -77,12 +77,41 @@ func ImportReadarr(
 	return res, nil
 }
 
+// queryReadarrAuthors handles both old and new Readarr schemas:
+// - Newer schemas have Authors.Name directly
+// - Older schemas store display names in AuthorMetadata, joined via AuthorMetadataId
+//
+// Returns rows with two string columns (name, monitored-as-int) in both
+// cases so the caller can use a single Scan path.
+func queryReadarrAuthors(ctx context.Context, src *sql.DB) (*sql.Rows, error) {
+	// Prefer the AuthorMetadata join for older schemas where Authors.Name
+	// doesn't exist. Filter out NULL AuthorMetadataId to avoid losing records
+	// on corrupted/incomplete data.
+	rows, err := src.QueryContext(ctx, `
+		SELECT am.Name, a.Monitored
+		FROM Authors a
+		JOIN AuthorMetadata am ON a.AuthorMetadataId = am.Id
+		WHERE a.AuthorMetadataId IS NOT NULL
+	`)
+	if err == nil {
+		return rows, nil
+	}
+
+	// Fall back to the Name column present in newer Readarr schemas.
+	rows, err = src.QueryContext(ctx, `SELECT Name, Monitored FROM Authors`)
+	if err == nil {
+		return rows, nil
+	}
+
+	return nil, fmt.Errorf("query Authors: %w", err)
+}
+
 // importReadarrAuthors pulls Authors.Name+Monitored from Readarr and
 // re-resolves each one against OpenLibrary. No Goodreads IDs are trusted.
 func importReadarrAuthors(ctx context.Context, src *sql.DB, repo *db.AuthorRepo, agg *metadata.Aggregator, onSearchOnAdd func(*models.Author), res *Result) error {
-	rows, err := src.QueryContext(ctx, `SELECT Name, Monitored FROM Authors`)
+	rows, err := queryReadarrAuthors(ctx, src)
 	if err != nil {
-		return fmt.Errorf("query Authors: %w", err)
+		return err
 	}
 	defer rows.Close()
 
