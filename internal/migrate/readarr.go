@@ -77,10 +77,17 @@ func ImportReadarr(
 	return res, nil
 }
 
-// importReadarrAuthors pulls Authors.Name+Monitored from Readarr and
-// re-resolves each one against OpenLibrary. No Goodreads IDs are trusted.
+// importReadarrAuthors pulls each author's Name (from AuthorMetadata) and
+// Monitored flag from Readarr and re-resolves them against OpenLibrary. No
+// Goodreads IDs are trusted. Authors.Name does not exist in the Readarr
+// schema — the human-readable name lives in AuthorMetadata joined via
+// Authors.AuthorMetadataId.
 func importReadarrAuthors(ctx context.Context, src *sql.DB, repo *db.AuthorRepo, agg *metadata.Aggregator, onSearchOnAdd func(*models.Author), res *Result) error {
-	rows, err := src.QueryContext(ctx, `SELECT Name, Monitored FROM Authors`)
+	rows, err := src.QueryContext(ctx, `
+		SELECT am.Name, a.Monitored
+		FROM Authors a
+		JOIN AuthorMetadata am ON am.Id = a.AuthorMetadataId
+	`)
 	if err != nil {
 		return fmt.Errorf("query Authors: %w", err)
 	}

@@ -26,10 +26,16 @@ func newReadarrDB(t *testing.T) string {
 	t.Cleanup(func() { src.Close() })
 
 	stmts := []string{
+		// Real Readarr schema: Authors holds Monitored + a FK to AuthorMetadata,
+		// where the human-readable Name actually lives.
+		`CREATE TABLE AuthorMetadata (
+			Id INTEGER PRIMARY KEY,
+			Name TEXT NOT NULL
+		)`,
 		`CREATE TABLE Authors (
 			Id INTEGER PRIMARY KEY,
-			Name TEXT NOT NULL,
-			Monitored INTEGER NOT NULL DEFAULT 1
+			Monitored INTEGER NOT NULL DEFAULT 1,
+			AuthorMetadataId INTEGER NOT NULL
 		)`,
 		`CREATE TABLE Indexers (
 			Id INTEGER PRIMARY KEY,
@@ -83,11 +89,19 @@ func TestImportReadarr_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = src.Exec(`INSERT INTO Authors (Name, Monitored) VALUES
-		('Andy Weir', 1),
-		('', 1),
-		('Duplicate Author', 1),
-		('Isaac Asimov', 0)`)
+	_, err = src.Exec(`INSERT INTO AuthorMetadata (Id, Name) VALUES
+		(1, 'Andy Weir'),
+		(2, ''),
+		(3, 'Duplicate Author'),
+		(4, 'Isaac Asimov')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = src.Exec(`INSERT INTO Authors (Monitored, AuthorMetadataId) VALUES
+		(1, 1),
+		(1, 2),
+		(1, 3),
+		(0, 4)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +271,8 @@ func TestImportReadarr_BlacklistFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, stmt := range []string{
-		`CREATE TABLE Authors (Id INTEGER PRIMARY KEY, Name TEXT, Monitored INTEGER)`,
+		`CREATE TABLE AuthorMetadata (Id INTEGER PRIMARY KEY, Name TEXT)`,
+		`CREATE TABLE Authors (Id INTEGER PRIMARY KEY, Monitored INTEGER, AuthorMetadataId INTEGER)`,
 		`CREATE TABLE Indexers (Id INTEGER PRIMARY KEY, Name TEXT, Implementation TEXT, Settings TEXT, EnableRss INTEGER)`,
 		`CREATE TABLE DownloadClients (Id INTEGER PRIMARY KEY, Name TEXT, Implementation TEXT, Settings TEXT, Enable INTEGER)`,
 		`CREATE TABLE Blacklist (Id INTEGER PRIMARY KEY, SourceTitle TEXT, Message TEXT)`,
