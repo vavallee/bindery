@@ -132,9 +132,15 @@ func (i *Importer) resolveAuthor(ctx context.Context, cfg ImportConfig, runID in
 		return nil, false, "", metadataMergeResult{}, reviewRequiredError{Reason: reviewReasonAmbiguousAuthor}
 	}
 
-	if !allowCreate {
-		return nil, false, "", metadataMergeResult{}, reviewRequiredError{Reason: reviewReasonUnmatchedAuthor}
-	}
+	// No local author matched. Previously a non-ASIN item (allowCreate=false)
+	// was parked in the review queue here, which sent the great majority of a
+	// folder-backed ABS library to review even for unambiguous, well-known
+	// authors (#762). An unmatched author is not an uncertain match: the local
+	// matcher found nothing close, so the correct outcome is to create the
+	// author. enrichAuthor (below) still performs a confidence-gated upstream
+	// lookup and relinks the new row to the metadata provider when it finds a
+	// confident match, so import quality is preserved. Only an *ambiguous*
+	// author (handled above) still requires human review.
 
 	if cfg.DryRun {
 		_ = i.recordRunEntity(ctx, runID, cfg, item.LibraryID, item.ItemID, entityTypeAuthor, externalID, 0, itemOutcomeCreated, nil)
@@ -607,9 +613,11 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 		metaResult, err := i.enrichBook(ctx, cfg, item, author, match)
 		return &bookUpsertResult{row: match, matchedBy: "author+normalized_title"}, false, true, metaResult, err
 	}
-	if !allowCreate {
-		return nil, false, false, metadataMergeResult{}, reviewRequiredError{Reason: reviewReasonUnmatchedBook}
-	}
+	// No local book matched for this author. As with the author path above,
+	// an unmatched book is not an uncertain match and no longer parks the item
+	// in the review queue for non-ASIN items (#762): the book is created and
+	// enrichBook performs a confidence-gated upstream lookup. Only an
+	// *ambiguous* book (handled above) still requires human review.
 
 	if cfg.DryRun {
 		_ = i.recordRunEntity(ctx, runID, cfg, item.LibraryID, item.ItemID, entityTypeBook, externalID, 0, itemOutcomeCreated, nil)

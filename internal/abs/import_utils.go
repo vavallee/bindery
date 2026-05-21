@@ -2,6 +2,7 @@ package abs
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -165,8 +166,34 @@ func normalizeAuthorName(name string) string {
 	return textutil.NormalizeAuthorName(name)
 }
 
+// bracketSuffixRe matches one trailing square-bracketed qualifier. ABS titles
+// routinely append format/edition tags this way ("[Unabridged]",
+// "[Dramatized Adaptation]", "[Audiobook]"). indexer.NormalizeTitleForDedup
+// only strips a trailing *parenthesised* qualifier, so without this step
+// "The Eye of the World [Unabridged]" and "The Eye of the World" produce
+// different keys and never match against the metadata provider or a local row.
+var bracketSuffixRe = regexp.MustCompile(`\s*\[[^\[\]]*\]\s*$`)
+
+// stripBracketSuffixes removes any trailing square-bracketed qualifiers,
+// applied repeatedly so "Title [Unabridged] [2021]" is fully cleaned.
+func stripBracketSuffixes(title string) string {
+	for {
+		stripped := bracketSuffixRe.ReplaceAllString(title, "")
+		if stripped == title {
+			return strings.TrimSpace(stripped)
+		}
+		title = stripped
+	}
+}
+
+// normalizeTitle produces the canonical key used to compare an ABS item title
+// against local book rows and metadata-provider works. ABS-specific bracketed
+// edition/format noise is stripped first; the remainder reuses the shared
+// indexer normalization (paren-suffix strip, subtitle strip, case/Unicode
+// folding). The same wrapper is applied to both sides of every comparison, so
+// the dedup key stays symmetric.
 func normalizeTitle(title string) string {
-	return indexer.NormalizeTitleForDedup(strings.TrimSpace(title))
+	return indexer.NormalizeTitleForDedup(stripBracketSuffixes(strings.TrimSpace(title)))
 }
 
 func primaryAuthorName(item NormalizedLibraryItem) string {

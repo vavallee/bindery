@@ -184,8 +184,11 @@ func TestContractHarness_ImporterDryRunAndIdempotentRerun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dry-run Run: %v", err)
 	}
-	if dryRunStats.BooksCreated != 4 || dryRunStats.AuthorsCreated != 4 || dryRunStats.SeriesCreated != 2 || dryRunStats.SeriesLinked != 1 || dryRunStats.ReviewQueued != 2 {
-		t.Fatalf("dry-run stats = %+v, want 4 books/authors, 2 created series, 1 linked series membership, and 2 queued reviews", dryRunStats)
+	// After the #762 fix, the two non-ASIN fixture items (missing-stats and
+	// ebook-only) are imported rather than parked in the review queue: all six
+	// items become books/authors and no item is queued for review.
+	if dryRunStats.BooksCreated != 6 || dryRunStats.AuthorsCreated != 6 || dryRunStats.SeriesCreated != 2 || dryRunStats.SeriesLinked != 1 || dryRunStats.ReviewQueued != 0 {
+		t.Fatalf("dry-run stats = %+v, want 6 books/authors, 2 created series, 1 linked series membership, and no queued reviews", dryRunStats)
 	}
 
 	authors, err := authorRepo.List(context.Background())
@@ -214,15 +217,15 @@ func TestContractHarness_ImporterDryRunAndIdempotentRerun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("commit Run: %v", err)
 	}
-	if commitStats.BooksCreated != 4 || commitStats.SeriesCreated != 2 || commitStats.SeriesLinked != 1 || commitStats.ReviewQueued != 2 {
-		t.Fatalf("commit stats = %+v, want 4 books, repeated series ownership, and 2 queued reviews", commitStats)
+	if commitStats.BooksCreated != 6 || commitStats.SeriesCreated != 2 || commitStats.SeriesLinked != 1 || commitStats.ReviewQueued != 0 {
+		t.Fatalf("commit stats = %+v, want 6 books, repeated series ownership, and no queued reviews", commitStats)
 	}
 	books, err = bookRepo.ListIncludingExcluded(context.Background())
 	if err != nil {
 		t.Fatalf("List books after commit: %v", err)
 	}
-	if len(books) != 4 {
-		t.Fatalf("books = %d, want 4 after commit", len(books))
+	if len(books) != 6 {
+		t.Fatalf("books = %d, want 6 after commit", len(books))
 	}
 	series, err := seriesRepo.ListWithBooks(context.Background())
 	if err != nil {
@@ -254,8 +257,8 @@ func TestContractHarness_ImporterDryRunAndIdempotentRerun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List books after rerun: %v", err)
 	}
-	if len(books) != 4 {
-		t.Fatalf("books after rerun = %d, want 4", len(books))
+	if len(books) != 6 {
+		t.Fatalf("books after rerun = %d, want 6", len(books))
 	}
 	series, err = seriesRepo.ListWithBooks(context.Background())
 	if err != nil {
@@ -271,7 +274,7 @@ func TestContractHarness_ImporterDryRunAndIdempotentRerun(t *testing.T) {
 		t.Fatalf("runs = %d, want 3", len(runs))
 	}
 	latestDryRun := abs.HydrateRun(runs[2])
-	if !latestDryRun.Summary.DryRun || latestDryRun.Summary.Stats.BooksCreated != 4 || latestDryRun.Summary.Stats.SeriesCreated != 2 || latestDryRun.Summary.Stats.SeriesLinked != 1 || latestDryRun.Summary.Stats.ReviewQueued != 2 {
+	if !latestDryRun.Summary.DryRun || latestDryRun.Summary.Stats.BooksCreated != 6 || latestDryRun.Summary.Stats.SeriesCreated != 2 || latestDryRun.Summary.Stats.SeriesLinked != 1 || latestDryRun.Summary.Stats.ReviewQueued != 0 {
 		t.Fatalf("dry-run summary = %+v", latestDryRun.Summary)
 	}
 	if rollback, err := importer.Rollback(context.Background(), runToRollback); err != nil {
@@ -366,16 +369,18 @@ func TestContractHarness_ImporterResumeFromFailedCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resume Run: %v", err)
 	}
-	if resumeStats.BooksCreated != 2 || resumeStats.ReviewQueued != 2 {
-		t.Fatalf("resume stats = %+v, want 2 newly created books and 2 queued reviews after resuming", resumeStats)
+	// After the #762 fix the resumed pages import their non-ASIN items instead
+	// of queuing them for review: four books created on resume, none queued.
+	if resumeStats.BooksCreated != 4 || resumeStats.ReviewQueued != 0 {
+		t.Fatalf("resume stats = %+v, want 4 newly created books and no queued reviews after resuming", resumeStats)
 	}
 
 	books, err := bookRepo.ListIncludingExcluded(context.Background())
 	if err != nil {
 		t.Fatalf("List books after resume: %v", err)
 	}
-	if len(books) != 4 {
-		t.Fatalf("books after resume = %d, want 4", len(books))
+	if len(books) != 6 {
+		t.Fatalf("books after resume = %d, want 6", len(books))
 	}
 
 	runs, err := runRepo.ListRecent(context.Background(), 2)

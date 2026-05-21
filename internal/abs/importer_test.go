@@ -1513,7 +1513,12 @@ func TestImporter_CleansABSDescriptionBeforeStoring(t *testing.T) {
 	}
 }
 
-func TestImporter_UnmatchedBookQueuesReview(t *testing.T) {
+// TestImporter_UnmatchedBookImportsWithoutASIN verifies that a non-ASIN item
+// whose author is already known locally but whose title matches no existing
+// book is imported (the book is created) rather than parked in the review
+// queue. Before the #762 fix, the absence of an ASIN forced every such item to
+// review even though an unmatched book is an unambiguous "this is new" signal.
+func TestImporter_UnmatchedBookImportsWithoutASIN(t *testing.T) {
 	t.Parallel()
 
 	importer, authorRepo, bookRepo, _, _, _, _, _, reviewRepo, _ := newABSImporterFixture(t)
@@ -1554,29 +1559,34 @@ func TestImporter_UnmatchedBookQueuesReview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if stats.ReviewQueued != 1 || stats.BooksCreated != 0 {
-		t.Fatalf("stats = %+v, want queued review without creating book", stats)
+	if stats.ReviewQueued != 0 || stats.BooksCreated != 1 {
+		t.Fatalf("stats = %+v, want book created without review", stats)
 	}
 	books, err := bookRepo.ListIncludingExcluded(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(books) != 0 {
-		t.Fatalf("books = %d, want 0", len(books))
+	if len(books) != 1 || books[0].Title != "Completely Unmatched Title" {
+		t.Fatalf("books = %+v, want one created book", books)
 	}
 	reviews, err := reviewRepo.ListByStatus(context.Background(), "pending")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reviews) != 1 || reviews[0].ReviewReason != reviewReasonUnmatchedBook {
-		t.Fatalf("reviews = %+v, want unmatched_book review", reviews)
+	if len(reviews) != 0 {
+		t.Fatalf("reviews = %+v, want no review items", reviews)
 	}
 }
 
-func TestImporter_UnmatchedAuthorReviewMessageReportsAuthor(t *testing.T) {
+// TestImporter_UnmatchedAuthorImportsWithoutASIN verifies that a well-known
+// author absent from the local database is created (not queued for review)
+// when the item carries no ASIN. This is the headline #762 regression: real
+// authors like Robert Jordan were sent to review purely because their ABS
+// item lacked an embedded ASIN.
+func TestImporter_UnmatchedAuthorImportsWithoutASIN(t *testing.T) {
 	t.Parallel()
 
-	importer, _, _, _, _, _, _, _, _, _ := newABSImporterFixture(t)
+	importer, authorRepo, bookRepo, _, _, _, _, _, reviewRepo, _ := newABSImporterFixture(t)
 	item := sampleABSItem()
 	item.ItemID = "li-onyx-storm"
 	item.Title = "Onyx Storm"
@@ -1602,12 +1612,100 @@ func TestImporter_UnmatchedAuthorReviewMessageReportsAuthor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if stats.ReviewQueued != 1 {
-		t.Fatalf("stats = %+v, want one review item", stats)
+	if stats.ReviewQueued != 0 || stats.AuthorsCreated != 1 || stats.BooksCreated != 1 {
+		t.Fatalf("stats = %+v, want author and book created without review", stats)
 	}
-	progress := importer.Progress()
-	if len(progress.Results) != 1 || !strings.Contains(progress.Results[0].Message, "Rebecca Yarros") {
-		t.Fatalf("result message = %+v, want author name reported", progress.Results)
+	authors, err := authorRepo.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(authors) != 1 || authors[0].Name != "Rebecca Yarros" {
+		t.Fatalf("authors = %+v, want one created author", authors)
+	}
+	books, err := bookRepo.ListIncludingExcluded(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("books = %d, want 1", len(books))
+	}
+	reviews, err := reviewRepo.ListByStatus(context.Background(), "pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reviews) != 0 {
+		t.Fatalf("reviews = %+v, want no review items", reviews)
+	}
+}
+
+// TestImporter_AmbiguousBookStillQueuesReview confirms the #762 fix is
+// targeted: an *ambiguous* book match (two local books for the same author
+// normalize to the incoming title) still requires human review even without
+// an ASIN. Only unmatched — not ambiguous — items are auto-created.
+func TestImporter_AmbiguousBookStillQueuesReview(t *testing.T) {
+	t.Parallel()
+
+	importer, authorRepo, bookRepo, _, _, _, _, _, reviewRepo, _ := newABSImporterFixture(t)
+	ctx := context.Background()
+	author := &models.Author{
+		ForeignID:        "OL23919A",
+		Name:             "Andy Weir",
+		SortName:         "Weir, Andy",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	for _, dup := range []string{"Artemis", "Artemis (Unabridged)"} {
+		if err := bookRepo.Create(ctx, &models.Book{
+			AuthorID:         author.ID,
+			Title:            dup,
+			SortTitle:        dup,
+			MediaType:        models.MediaTypeAudiobook,
+			Status:           models.BookStatusWanted,
+			MetadataProvider: "openlibrary",
+			ForeignID:        "OL-" + dup,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	item := sampleABSItem()
+	item.ItemID = "li-artemis"
+	item.Title = "Artemis"
+	item.Authors = []NormalizedAuthor{{ID: "author-andy-weir", Name: "Andy Weir"}}
+	item.ASIN = ""
+	item.AudioFiles = nil
+	item.EbookPath = "/abs/artemis.epub"
+	item.EbookINO = "ebook-artemis"
+	importer.enumerateFn = func(ctx context.Context, libraryID string, fn func(context.Context, NormalizedLibraryItem) error) (EnumerationStats, error) {
+		if err := fn(ctx, item); err != nil {
+			return EnumerationStats{}, err
+		}
+		return EnumerationStats{PagesScanned: 1, ItemsSeen: 1, ItemsNormalized: 1}, nil
+	}
+
+	stats, err := importer.Run(ctx, ImportConfig{
+		SourceID:  DefaultSourceID,
+		BaseURL:   "https://abs.example.com",
+		APIKey:    "secret",
+		LibraryID: item.LibraryID,
+		Label:     "Shelf",
+		Enabled:   true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if stats.ReviewQueued != 1 || stats.BooksCreated != 0 {
+		t.Fatalf("stats = %+v, want ambiguous book queued for review", stats)
+	}
+	reviews, err := reviewRepo.ListByStatus(ctx, "pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reviews) != 1 || reviews[0].ReviewReason != reviewReasonAmbiguousBook {
+		t.Fatalf("reviews = %+v, want ambiguous_book review", reviews)
 	}
 }
 
