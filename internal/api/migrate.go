@@ -234,7 +234,10 @@ func (h *MigrateHandler) ImportGoodreadsPreview(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	opts := migrate.GoodreadsImportOptions{Shelves: parseShelfFilter(r.FormValue("shelves"))}
+	// acceptUpload already wrapped the body in MaxBytesReader and parsed the
+	// multipart form, so read from the parsed form directly rather than via
+	// FormValue (which would re-trigger the body-reading parse path).
+	opts := migrate.GoodreadsImportOptions{Shelves: parseShelfFilter(r.Form.Get("shelves"))}
 
 	// Detach from the request context: a slow browser must not abort a
 	// resolution pass that may run for minutes on a large library.
