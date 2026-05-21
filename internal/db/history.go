@@ -17,6 +17,11 @@ func NewHistoryRepo(db *sql.DB) *HistoryRepo {
 	return &HistoryRepo{db: db}
 }
 
+// historyColumns is the explicit column list for history SELECTs. It is kept
+// in the exact order query() scans into models.HistoryEvent — changing the
+// history schema means updating both this list and the Scan call in query().
+const historyColumns = "id, book_id, event_type, source_title, data, created_at"
+
 func (r *HistoryRepo) Create(ctx context.Context, e *models.HistoryEvent) error {
 	now := time.Now().UTC()
 	result, err := r.db.ExecContext(ctx, `
@@ -36,19 +41,19 @@ func (r *HistoryRepo) Create(ctx context.Context, e *models.HistoryEvent) error 
 }
 
 func (r *HistoryRepo) List(ctx context.Context) ([]models.HistoryEvent, error) {
-	return r.query(ctx, "SELECT * FROM history ORDER BY created_at DESC")
+	return r.query(ctx, "SELECT "+historyColumns+" FROM history ORDER BY created_at DESC")
 }
 
 func (r *HistoryRepo) ListByBook(ctx context.Context, bookID int64) ([]models.HistoryEvent, error) {
-	return r.query(ctx, "SELECT * FROM history WHERE book_id=? ORDER BY created_at DESC", bookID)
+	return r.query(ctx, "SELECT "+historyColumns+" FROM history WHERE book_id=? ORDER BY created_at DESC", bookID)
 }
 
 func (r *HistoryRepo) ListByType(ctx context.Context, eventType string) ([]models.HistoryEvent, error) {
-	return r.query(ctx, "SELECT * FROM history WHERE event_type=? ORDER BY created_at DESC", eventType)
+	return r.query(ctx, "SELECT "+historyColumns+" FROM history WHERE event_type=? ORDER BY created_at DESC", eventType)
 }
 
 func (r *HistoryRepo) GetByID(ctx context.Context, id int64) (*models.HistoryEvent, error) {
-	events, err := r.query(ctx, "SELECT * FROM history WHERE id=?", id)
+	events, err := r.query(ctx, "SELECT "+historyColumns+" FROM history WHERE id=?", id)
 	if err != nil {
 		return nil, err
 	}
