@@ -50,6 +50,7 @@ func isReleaseVersion(v string) bool {
 
 type server struct {
 	db            *sql.DB
+	dbDir         string // directory holding the DB — the writable data volume
 	latestVersion string
 	statsToken    string
 	limiter       *rateLimiter
@@ -153,6 +154,7 @@ func main() {
 
 	s := &server{
 		db:            db,
+		dbDir:         filepath.Dir(dbPath),
 		latestVersion: latestVersion,
 		statsToken:    statsToken,
 		// Each IP may ping at most once per hour.
@@ -695,7 +697,11 @@ func (s *server) handleBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dir, err := os.MkdirTemp("", "bindery-backup-*")
+	// Stage the snapshot in the DB's own directory, not os.MkdirTemp's
+	// default of /tmp: the container runs with readOnlyRootFilesystem, so
+	// /tmp is not writable and MkdirTemp there fails every call. The DB
+	// directory is the data volume and is writable by definition.
+	dir, err := os.MkdirTemp(s.dbDir, "bindery-backup-*")
 	if err != nil {
 		slog.Error("backup: mkdir", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -181,4 +182,44 @@ func TestHandleStatsJSON(t *testing.T) {
 	if got.Latest != "v1.9.5" {
 		t.Errorf("Latest = %q, want v1.9.5", got.Latest)
 	}
+}
+
+func TestHandleBackup(t *testing.T) {
+	s := newTestServer(t, "v1.9.5")
+	s.statsToken = "secret"
+	s.dbDir = t.TempDir() // stand-in for the writable data volume
+	if _, err := s.db.ExecContext(context.Background(),
+		`INSERT INTO installs (install_id, version, os, arch, first_seen, last_seen, deploy)
+		 VALUES ('11111111-1111-1111-1111-111111111111', '1.9.5', 'linux', 'amd64', ?, ?, 'docker')`,
+		time.Now().UTC(), time.Now().UTC()); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	t.Run("ok", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/backup", nil)
+		req.Header.Set("Authorization", "Bearer secret")
+		rec := httptest.NewRecorder()
+		s.handleBackup(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+		}
+		// A valid SQLite file begins with the literal header "SQLite format 3\0".
+		if !bytes.HasPrefix(rec.Body.Bytes(), []byte("SQLite format 3\x00")) {
+			t.Errorf("response body is not a SQLite database")
+		}
+		if ct := rec.Header().Get("Content-Type"); ct != "application/vnd.sqlite3" {
+			t.Errorf("Content-Type = %q, want application/vnd.sqlite3", ct)
+		}
+	})
+
+	t.Run("wrong token", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/backup", nil)
+		req.Header.Set("Authorization", "Bearer nope")
+		rec := httptest.NewRecorder()
+		s.handleBackup(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want 401", rec.Code)
+		}
+	})
 }
