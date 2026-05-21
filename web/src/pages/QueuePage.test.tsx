@@ -285,7 +285,7 @@ describe('QueuePage', () => {
     expect(await screen.findByText('Queue is empty')).toBeInTheDocument()
   })
 
-  it('deletes a queue item and reloads the queue', async () => {
+  it('deletes a queue item via the confirmation modal and reloads the queue', async () => {
     vi.mocked(api.listQueue)
       .mockResolvedValueOnce([makeQueueItem({ id: 7, title: 'Remove Me' })])
       .mockResolvedValueOnce([])
@@ -296,9 +296,31 @@ describe('QueuePage', () => {
     const card = item.closest('div')!.parentElement!
     fireEvent.click(within(card).getByRole('button', { name: 'Remove' }))
 
-    await waitFor(() => expect(api.deleteFromQueue).toHaveBeenCalledWith(7))
+    // The card's Remove button opens a confirmation modal; the actual delete
+    // only fires on the modal's confirm button. Its label is the untranslated
+    // i18n key here because the test's t() mock only maps a curated subset.
+    fireEvent.click(await screen.findByRole('button', { name: 'queue.removeConfirm' }))
+
+    await waitFor(() => expect(api.deleteFromQueue).toHaveBeenCalledWith(7, false))
     await waitFor(() => expect(api.listQueue).toHaveBeenCalledTimes(2))
     expect(await screen.findByText('Queue is empty')).toBeInTheDocument()
+  })
+
+  it('passes deleteFiles=true when the modal "delete files" checkbox is ticked', async () => {
+    vi.mocked(api.listQueue)
+      .mockResolvedValueOnce([makeQueueItem({ id: 7, title: 'Remove Me' })])
+      .mockResolvedValueOnce([])
+
+    renderQueuePage()
+
+    const item = await screen.findByText('Remove Me')
+    const card = item.closest('div')!.parentElement!
+    fireEvent.click(within(card).getByRole('button', { name: 'Remove' }))
+
+    fireEvent.click(await screen.findByRole('checkbox'))
+    fireEvent.click(screen.getByRole('button', { name: 'queue.removeConfirm' }))
+
+    await waitFor(() => expect(api.deleteFromQueue).toHaveBeenCalledWith(7, true))
   })
 
   it('polls the queue every five seconds and clears the interval on unmount', async () => {
