@@ -1,7 +1,7 @@
 package qbittorrent
 
 import (
-	"crypto/sha1" //nolint:gosec // G505: the BitTorrent v1 infohash is defined as SHA-1, not used as a security primitive
+	"crypto/sha1" //nolint:gosec // #nosec G505 -- the BitTorrent v1 infohash is defined as SHA-1, not a security primitive
 	"encoding/hex"
 	"errors"
 	"strconv"
@@ -23,7 +23,7 @@ func infoHashFromTorrentFile(data []byte) string {
 	if !ok {
 		return ""
 	}
-	sum := sha1.Sum(data[start:end]) //nolint:gosec // G401: the BitTorrent v1 infohash is defined as SHA-1, not used as a security primitive
+	sum := sha1.Sum(data[start:end]) //nolint:gosec // #nosec G401 -- the BitTorrent v1 infohash is defined as SHA-1, not a security primitive
 	return hex.EncodeToString(sum[:])
 }
 

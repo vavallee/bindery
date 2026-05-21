@@ -2,37 +2,33 @@ package qbittorrent
 
 import (
 	"context"
-	"crypto/sha1"
-	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
 
-// sampleInfoDict is a realistic single-file bencoded "info" dictionary.
-const sampleInfoDict = "d6:lengthi5e4:name8:test.txt12:piece lengthi16384e6:pieces20:" +
-	"\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14e"
-
-func sha1Hex(s string) string {
-	sum := sha1.Sum([]byte(s))
-	return hex.EncodeToString(sum[:])
-}
+// sampleInfoDict is a realistic single-file bencoded "info" dictionary, and
+// sampleInfoHash is its v1 infohash (SHA-1 of the bytes above) as a golden
+// value — hardcoded so the test does not itself depend on crypto/sha1.
+const (
+	sampleInfoDict = "d6:lengthi5e4:name8:test.txt12:piece lengthi16384e6:pieces20:" +
+		"\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14e"
+	sampleInfoHash = "9ca9aea0e4d50429f039ca828f52ec49283f36bb"
+)
 
 func TestInfoHashFromTorrentFile(t *testing.T) {
-	want := sha1Hex(sampleInfoDict)
-
 	t.Run("info is the first key", func(t *testing.T) {
 		torrent := "d4:info" + sampleInfoDict + "8:announce10:udp://t/ane"
-		if got := infoHashFromTorrentFile([]byte(torrent)); got != want {
-			t.Fatalf("got %q, want %q", got, want)
+		if got := infoHashFromTorrentFile([]byte(torrent)); got != sampleInfoHash {
+			t.Fatalf("got %q, want %q", got, sampleInfoHash)
 		}
 	})
 
 	t.Run("info after other keys", func(t *testing.T) {
 		torrent := "d8:announce10:udp://t/an13:creation datei1700000000e4:info" + sampleInfoDict + "e"
-		if got := infoHashFromTorrentFile([]byte(torrent)); got != want {
-			t.Fatalf("got %q, want %q", got, want)
+		if got := infoHashFromTorrentFile([]byte(torrent)); got != sampleInfoHash {
+			t.Fatalf("got %q, want %q", got, sampleInfoHash)
 		}
 	})
 
@@ -40,8 +36,8 @@ func TestInfoHashFromTorrentFile(t *testing.T) {
 		// Verifies the value span stops at the info dict's own closing 'e'
 		// rather than running into the next key.
 		torrent := "d4:info" + sampleInfoDict + "7:comment5:helloe"
-		if got := infoHashFromTorrentFile([]byte(torrent)); got != want {
-			t.Fatalf("got %q, want %q", got, want)
+		if got := infoHashFromTorrentFile([]byte(torrent)); got != sampleInfoHash {
+			t.Fatalf("got %q, want %q", got, sampleInfoHash)
 		}
 	})
 
@@ -98,7 +94,6 @@ func TestAddTorrent_Duplicate409_Magnet(t *testing.T) {
 // is recovered from the .torrent bytes (SHA-1 of the bencoded info dict).
 func TestAddTorrent_Duplicate409_File(t *testing.T) {
 	torrent := "d8:announce11:udp://t/ann4:info" + sampleInfoDict + "e"
-	wantHash := sha1Hex(sampleInfoDict)
 
 	indexer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/torrent" {
@@ -127,8 +122,8 @@ func TestAddTorrent_Duplicate409_File(t *testing.T) {
 	if err != nil {
 		t.Fatalf("409 on a file-upload add must not fail: %v", err)
 	}
-	if got != wantHash {
-		t.Errorf("recovered hash: want %q, got %q", wantHash, got)
+	if got != sampleInfoHash {
+		t.Errorf("recovered hash: want %q, got %q", sampleInfoHash, got)
 	}
 }
 
