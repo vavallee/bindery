@@ -46,11 +46,13 @@ func ImportReadarr(
 	if dbPath == "" {
 		return nil, errors.New("readarr db path is required")
 	}
+
 	src, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&immutable=1")
 	if err != nil {
 		return nil, fmt.Errorf("open readarr db: %w", err)
 	}
 	defer src.Close()
+
 	if err := src.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("ping readarr db: %w", err)
 	}
@@ -65,24 +67,58 @@ func ImportReadarr(
 	if err := importReadarrAuthors(ctx, src, authorRepo, agg, onSearchOnAdd, &res.Authors); err != nil {
 		slog.Warn("readarr import: authors failed", "error", err)
 	}
+
 	if err := importReadarrIndexers(ctx, src, indexerRepo, &res.Indexers); err != nil {
 		slog.Warn("readarr import: indexers failed", "error", err)
 	}
+
 	if err := importReadarrDownloadClients(ctx, src, clientRepo, &res.DownloadClients); err != nil {
 		slog.Warn("readarr import: download clients failed", "error", err)
 	}
+
 	if err := importReadarrBlocklist(ctx, src, blocklistRepo, &res.Blocklist); err != nil {
 		slog.Warn("readarr import: blocklist failed", "error", err)
 	}
+
 	return res, nil
 }
 
-// importReadarrAuthors pulls Authors.Name+Monitored from Readarr and
-// re-resolves each one against OpenLibrary. No Goodreads IDs are trusted.
+// queryReadarrAuthors handles two Readarr schema generations:
+//
+//   - Newer schemas have a Name column directly on the Authors table.
+//   - Older schemas (pre-rename) store display names in a separate
+//     AuthorMetadata table, joined via Authors.AuthorMetadataId.
+//
+// Returns rows with two string columns (name, monitored-as-int) in both
+// cases so the caller can use a single Scan path.
+func queryReadarrAuthors(ctx context.Context, src *sql.DB) (*sql.Rows, error) {
+	// Prefer the AuthorMetadata join: it's the authoritative display-name
+	// source for older Readarr databases where Authors.Name doesn't exist.
+	rows, err := src.QueryContext(ctx, `
+		SELECT am.Name, a.Monitored
+		FROM Authors a
+		JOIN AuthorMetadata am ON a.AuthorMetadataId = am.Id
+	`)
+	if err == nil {
+		return rows, nil
+	}
+
+	// Fall back to the Name column present in newer Readarr schemas.
+	rows, err = src.QueryContext(ctx, `SELECT Name, Monitored FROM Authors`)
+	if err == nil {
+		return rows, nil
+	}
+
+	return nil, fmt.Errorf("query Authors: %w", err)
+}
+
+// importReadarrAuthors pulls author names and monitored status from
+// Readarr and re-resolves each one against OpenLibrary.
+// No Goodreads IDs are trusted.
 func importReadarrAuthors(ctx context.Context, src *sql.DB, repo *db.AuthorRepo, agg *metadata.Aggregator, onSearchOnAdd func(*models.Author), res *Result) error {
-	rows, err := src.QueryContext(ctx, `SELECT Name, Monitored FROM Authors`)
+	rows, err := queryReadarrAuthors(ctx, src)
 	if err != nil {
-		return fmt.Errorf("query Authors: %w", err)
+		return err
 	}
 	defer rows.Close()
 
@@ -92,10 +128,12 @@ func importReadarrAuthors(ctx context.Context, src *sql.DB, repo *db.AuthorRepo,
 		if err := rows.Scan(&name, &monitored); err != nil {
 			continue
 		}
+
 		name = strings.TrimSpace(name)
 		if name == "" {
 			continue
 		}
+
 		res.Requested++
 
 		matches, serr := agg.SearchAuthors(ctx, name)
@@ -107,6 +145,7 @@ func importReadarrAuthors(ctx context.Context, src *sql.DB, repo *db.AuthorRepo,
 			res.fail(name, "no OpenLibrary match")
 			continue
 		}
+
 		top := matches[0]
 
 		if existing, _ := repo.GetByForeignID(ctx, top.ForeignID); existing != nil {
@@ -118,6 +157,7 @@ func importReadarrAuthors(ctx context.Context, src *sql.DB, repo *db.AuthorRepo,
 		if ferr != nil || full == nil {
 			full = &top
 		}
+
 		full.Monitored = monitored
 		full.MetadataProvider = "openlibrary"
 
@@ -125,16 +165,15 @@ func importReadarrAuthors(ctx context.Context, src *sql.DB, repo *db.AuthorRepo,
 			res.fail(name, cerr.Error())
 			continue
 		}
+
 		res.Added++
 		res.AddedNames = append(res.AddedNames, full.Name)
 
-		// Bulk imports are safe by default: always populate the catalogue
-		// but never auto-grab. The user can trigger grabs manually from the
-		// Wanted page after the import completes.
-		if onSearchOnAdd != nil {
+		if monitored && onSearchOnAdd != nil {
 			go onSearchOnAdd(full)
 		}
 	}
+
 	return rows.Err()
 }
 
@@ -158,9 +197,7 @@ type readarrSettings struct {
 
 func parseSettings(raw string) readarrSettings {
 	var s readarrSettings
-	if err := json.Unmarshal([]byte(raw), &s); err != nil {
-		slog.Warn("failed to parse readarr settings JSON", "err", err)
-	}
+	_ = json.Unmarshal([]byte(raw), &s)
 	return s
 }
 
@@ -177,6 +214,7 @@ func importReadarrIndexers(ctx context.Context, src *sql.DB, repo *db.IndexerRep
 		if err := rows.Scan(&name, &impl, &settings, &enableRss); err != nil {
 			continue
 		}
+
 		res.Requested++
 
 		s := parseSettings(settings)
@@ -208,13 +246,16 @@ func importReadarrIndexers(ctx context.Context, src *sql.DB, repo *db.IndexerRep
 			Categories: cats,
 			Enabled:    enableRss,
 		}
+
 		if err := repo.Create(ctx, idx); err != nil {
 			res.fail(name, err.Error())
 			continue
 		}
+
 		res.Added++
 		res.AddedNames = append(res.AddedNames, name)
 	}
+
 	return rows.Err()
 }
 
@@ -231,6 +272,7 @@ func importReadarrDownloadClients(ctx context.Context, src *sql.DB, repo *db.Dow
 		if err := rows.Scan(&name, &impl, &settings, &enable); err != nil {
 			continue
 		}
+
 		res.Requested++
 
 		s := parseSettings(settings)
@@ -249,25 +291,34 @@ func importReadarrDownloadClients(ctx context.Context, src *sql.DB, repo *db.Dow
 			cat = "books"
 		}
 
+		// For qBittorrent, Readarr's Username/Password fields carry creds;
+		// Bindery squashes credentials into the APIKey field for either
+		// client so we don't need a separate Password column.
+		apiKey := s.APIKey
+		if apiKey == "" {
+			apiKey = s.Password
+		}
+
 		c := &models.DownloadClient{
 			Name:     name,
 			Type:     t,
 			Host:     s.Host,
 			Port:     s.Port,
-			APIKey:   s.APIKey,
-			Username: s.Username,
-			Password: s.Password,
+			APIKey:   apiKey,
 			Category: cat,
 			UseSSL:   s.UseSsl,
 			Enabled:  enable,
 		}
+
 		if err := repo.Create(ctx, c); err != nil {
 			res.fail(name, err.Error())
 			continue
 		}
+
 		res.Added++
 		res.AddedNames = append(res.AddedNames, name)
 	}
+
 	return rows.Err()
 }
 
@@ -288,10 +339,12 @@ func importReadarrBlocklist(ctx context.Context, src *sql.DB, repo *db.Blocklist
 		if err := rows.Scan(&title, &message); err != nil {
 			continue
 		}
+
 		t := strings.TrimSpace(title.String)
 		if t == "" {
 			continue
 		}
+
 		res.Requested++
 
 		// We don't have a GUID, so use the release title as the key.
@@ -300,11 +353,14 @@ func importReadarrBlocklist(ctx context.Context, src *sql.DB, repo *db.Blocklist
 			Title:  t,
 			Reason: message.String,
 		}
+
 		if err := repo.Create(ctx, entry); err != nil {
 			res.fail(t, err.Error())
 			continue
 		}
+
 		res.Added++
 	}
+
 	return rows.Err()
 }
