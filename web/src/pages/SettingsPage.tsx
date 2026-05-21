@@ -1200,14 +1200,9 @@ function ImportTab() {
     try {
       const fd = new FormData()
       fd.append('file', file)
-      const res = await fetch(`/api/v1/migrate/${endpoint}`, { method: 'POST', body: fd })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({ error: res.statusText }))
-        throw new Error(body.error || `HTTP ${res.status}`)
-      }
-      const data = await res.json()
-      if (endpoint === 'csv') setCsvResult(data)
-      else setReadarrResult(data)
+      const data = await api.uploadMigrate<MigrateResult | ReadarrResult>(endpoint, fd)
+      if (endpoint === 'csv') setCsvResult(data as MigrateResult)
+      else setReadarrResult(data as ReadarrResult)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Upload failed')
     } finally {

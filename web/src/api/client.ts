@@ -68,6 +68,32 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json()
 }
 
+// Upload a file (multipart/form-data). Omits Content-Type so the browser
+// sets the boundary automatically, but still injects the CSRF token.
+async function uploadFile<T>(path: string, body: FormData): Promise<T> {
+  const headers = new Headers({
+    'X-Requested-With': 'bindery-ui',
+  })
+  if (csrfToken) {
+    headers.set('X-CSRF-Token', csrfToken)
+  }
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers,
+    body,
+  })
+  if (res.status === 401 && !PUBLIC_PATHS.has(window.location.pathname)) {
+    window.location.href = `${BINDERY_BASE}/login`
+    return Promise.reject(new Error('unauthenticated'))
+  }
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(data.error || `HTTP ${res.status}`)
+  }
+  return res.json() as Promise<T>
+}
+
 export interface AuthStatus {
   authenticated: boolean
   setupRequired: boolean
@@ -453,6 +479,8 @@ export const api = {
     request<HardcoverList[]>('/importlist/hardcover/lists', {
       headers: { Authorization: `Bearer ${token}` },
     }),
+  uploadMigrate: <T>(endpoint: 'csv' | 'readarr', body: FormData) =>
+    uploadFile<T>(`/migrate/${endpoint}`, body),
 
   // Metadata Profiles
   listMetadataProfiles: () => request<MetadataProfile[]>('/metadataprofile'),
