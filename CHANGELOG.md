@@ -6,6 +6,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **OIDC role mapping** (#688) — three new opt-in, backward-compatible env vars remove the manual-promotion friction (and lockout trap) of SSO-only deployments. `BINDERY_OIDC_DEFAULT_ROLE` (`user`/`admin`, default `user`) sets the role assigned at OIDC auto-provision time. `BINDERY_OIDC_ADMIN_GROUP` makes the IdP authoritative for the admin role: when set, every login promotes the user to `admin` if the configured group claim contains that group and demotes to `user` if absent — overriding the manual role-promotion API for OIDC users. `BINDERY_OIDC_GROUP_CLAIM` (default `groups`) selects the claim path and tolerates both shapes IdPs emit (a JSON array of strings, or a single space/comma-delimited string). Finally, when local auth is disabled and Bindery has zero admins at OIDC-provision time, the first provisioned OIDC user is auto-promoted to admin — guarded by a one-shot settings flag so deleting all admins later cannot silently re-promote.
+
 ## [v1.13.2] — 2026-05-20
 
 ### Changed

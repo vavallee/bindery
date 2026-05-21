@@ -43,6 +43,11 @@ const (
 	SettingAuthSessionSecretPrevious = "auth.session_secret_previous" //nolint:gosec // setting key name, not a credential
 	SettingAuthMode                  = "auth.mode"
 	SettingOIDCProviders             = "auth.oidc.providers" //nolint:gosec // setting key name, not a credential
+	// SettingOIDCFirstAdminPromoted is a one-shot guard for the
+	// promote-first-OIDC-user fallback (issue #688). Once an OIDC user has been
+	// auto-promoted to admin because the system had zero admins, this flag is
+	// set so deleting every admin later cannot silently re-trigger promotion.
+	SettingOIDCFirstAdminPromoted = "auth.oidc.first_admin_promoted" //nolint:gosec // setting key name, not a credential
 )
 
 // AuthHandler owns the login / setup / password / mode endpoints.

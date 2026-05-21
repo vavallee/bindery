@@ -41,6 +41,17 @@ type OIDCHandler struct {
 	baseConfigured    bool
 	oidcAutoProvision bool
 	oidcEmailLink     bool
+	// localAuthEnabled mirrors BINDERY_LOCAL_AUTH_ENABLED. When false, the
+	// promote-first-OIDC-user fallback (issue #688) is armed.
+	localAuthEnabled bool
+	// oidcDefaultRole is the role assigned to a freshly auto-provisioned OIDC
+	// user (issue #688). "admin" or "user"; coerced to "user" if invalid.
+	oidcDefaultRole string
+	// oidcAdminGroup, when non-empty, makes the IdP authoritative for the admin
+	// role: every login promotes/demotes the user based on group membership.
+	oidcAdminGroup string
+	// oidcGroupClaim is the ID-token claim path holding the user's groups.
+	oidcGroupClaim string
 }
 
 func NewOIDCHandler(mgr *oidc.Manager, users *db.UserRepo, settings *db.SettingsRepo, auth *AuthHandler, resolveBase func(*http.Request) string) *OIDCHandler {
@@ -52,6 +63,9 @@ func NewOIDCHandler(mgr *oidc.Manager, users *db.UserRepo, settings *db.Settings
 		resolveBase:       resolveBase,
 		oidcAutoProvision: true,
 		oidcEmailLink:     false,
+		localAuthEnabled:  true,
+		oidcDefaultRole:   "user",
+		oidcGroupClaim:    "groups",
 	}
 }
 
@@ -79,6 +93,44 @@ func (h *OIDCHandler) WithOIDCAutoProvision(v bool) *OIDCHandler {
 // creating a new one or returning 403.
 func (h *OIDCHandler) WithOIDCEmailLink(v bool) *OIDCHandler {
 	h.oidcEmailLink = v
+	return h
+}
+
+// WithLocalAuthEnabled mirrors BINDERY_LOCAL_AUTH_ENABLED into the OIDC handler.
+// When false, the promote-first-OIDC-user fallback is armed: an OIDC login that
+// finds zero admins in the DB promotes the user being provisioned to admin
+// (issue #688). Default true.
+func (h *OIDCHandler) WithLocalAuthEnabled(v bool) *OIDCHandler {
+	h.localAuthEnabled = v
+	return h
+}
+
+// WithOIDCDefaultRole sets the role assigned at OIDC auto-provision time
+// (issue #688). Valid values are "admin" and "user"; any other value falls
+// back to "user".
+func (h *OIDCHandler) WithOIDCDefaultRole(role string) *OIDCHandler {
+	if role != "admin" && role != "user" {
+		role = "user"
+	}
+	h.oidcDefaultRole = role
+	return h
+}
+
+// WithOIDCAdminGroup sets the IdP group whose presence in the configured group
+// claim grants the admin role (issue #688). When non-empty, the IdP becomes
+// authoritative: every login promotes the user to admin if the group is present
+// and demotes to user if it is absent. Empty disables group-based role mapping.
+func (h *OIDCHandler) WithOIDCAdminGroup(group string) *OIDCHandler {
+	h.oidcAdminGroup = strings.TrimSpace(group)
+	return h
+}
+
+// WithOIDCGroupClaim sets the ID-token claim path Bindery reads the user's
+// groups from (issue #688). Default "groups".
+func (h *OIDCHandler) WithOIDCGroupClaim(claim string) *OIDCHandler {
+	if c := strings.TrimSpace(claim); c != "" {
+		h.oidcGroupClaim = c
+	}
 	return h
 }
 
@@ -282,14 +334,48 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusForbidden, "access denied: account not provisioned")
 			return
 		}
+		// Decide the provisioning role (issue #688). Start from the configured
+		// default; the promote-first-OIDC-user fallback may upgrade it to admin.
+		provisionRole := h.resolveProvisionRole(ctx)
 		user, err = h.users.GetOrCreateByOIDC(ctx,
 			claims.Issuer, claims.Sub,
 			claims.PreferredUsername, claims.Email, claims.Name,
+			provisionRole,
 		)
 		if err != nil {
 			slog.Error("oidc: user provisioning failed", "error", err)
 			writeErr(w, http.StatusInternalServerError, "user provisioning failed")
 			return
+		}
+		// If the fallback fired, record the one-shot guard so deleting all
+		// admins later cannot silently re-promote a future first OIDC user.
+		if provisionRole == "admin" && user.Role == "admin" {
+			if err := h.settings.Set(ctx, SettingOIDCFirstAdminPromoted, "true"); err != nil {
+				slog.Warn("oidc: failed to persist first-admin-promoted flag", "error", err)
+			}
+		}
+	}
+
+	// 4. Group-claim role sync (issue #688). When BINDERY_OIDC_ADMIN_GROUP is
+	// configured, the IdP is authoritative for the admin role on every login:
+	// promote when the group is present, demote when absent. This intentionally
+	// overrides any role set via PUT /api/v1/auth/users/{id}/role for OIDC users.
+	if h.oidcAdminGroup != "" {
+		groups := oidc.GroupClaimValues(claims.Raw, h.oidcGroupClaim)
+		want := "user"
+		if oidc.ContainsGroup(groups, h.oidcAdminGroup) {
+			want = "admin"
+		}
+		if user.Role != want {
+			if err := h.users.SetRoleUnguarded(ctx, user.ID, want); err != nil {
+				slog.Error("oidc: group-claim role sync failed", "error", err, "user_id", user.ID)
+				writeErr(w, http.StatusInternalServerError, "role sync failed")
+				return
+			}
+			slog.Info("oidc: synced role from group claim",
+				"username", user.Username, "from", user.Role, "to", want,
+				"admin_group", h.oidcAdminGroup, "group_claim", h.oidcGroupClaim)
+			user.Role = want
 		}
 	}
 
@@ -300,6 +386,49 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 
 	// Redirect to the UI root.
 	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+// resolveProvisionRole decides the role for a brand-new OIDC user (issue #688).
+//
+// It starts from the configured BINDERY_OIDC_DEFAULT_ROLE. The
+// promote-first-OIDC-user fallback then upgrades the result to "admin" when ALL
+// of the following hold:
+//
+//   - local auth is disabled (BINDERY_LOCAL_AUTH_ENABLED=false) — without it
+//     there is no other path back into an admin-less instance;
+//   - the DB currently has zero admin users — the lockout trap;
+//   - the one-shot SettingOIDCFirstAdminPromoted guard has never been set —
+//     so deleting every admin later does not silently re-promote.
+//
+// Any error reading the guard or counting admins is treated conservatively:
+// the fallback does not fire and the configured default role is used.
+func (h *OIDCHandler) resolveProvisionRole(ctx context.Context) string {
+	role := h.oidcDefaultRole
+	if role != "admin" && role != "user" {
+		role = "user"
+	}
+	if role == "admin" {
+		return role // already admin; fallback would be a no-op
+	}
+	if h.localAuthEnabled {
+		return role // local auth still offers a recovery path
+	}
+	if s, err := h.settings.Get(ctx, SettingOIDCFirstAdminPromoted); err != nil {
+		slog.Warn("oidc: cannot read first-admin-promoted guard; skipping promote-first fallback", "error", err)
+		return role
+	} else if s != nil && s.Value == "true" {
+		return role // fallback already used once
+	}
+	admins, err := h.users.CountAdmins(ctx)
+	if err != nil {
+		slog.Warn("oidc: cannot count admins; skipping promote-first fallback", "error", err)
+		return role
+	}
+	if admins == 0 {
+		slog.Warn("oidc: promoting first OIDC user to admin — local auth disabled and no admin exists")
+		return "admin"
+	}
+	return role
 }
 
 // TestDiscovery probes <issuer>/.well-known/openid-configuration and returns

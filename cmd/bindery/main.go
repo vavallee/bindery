@@ -433,7 +433,11 @@ func main() {
 	oidcHandler := api.NewOIDCHandler(oidcMgr, userRepo, settingsRepo, authHandler, oidcResolveBase).
 		WithBaseConfigured(cfg.OIDCRedirectBaseURL != "").
 		WithOIDCAutoProvision(cfg.OIDCAutoProvision).
-		WithOIDCEmailLink(cfg.OIDCEmailLink)
+		WithOIDCEmailLink(cfg.OIDCEmailLink).
+		WithLocalAuthEnabled(cfg.LocalAuthEnabled).
+		WithOIDCDefaultRole(cfg.OIDCDefaultRole).
+		WithOIDCAdminGroup(cfg.OIDCAdminGroup).
+		WithOIDCGroupClaim(cfg.OIDCGroupClaim)
 	userMgmtHandler := api.NewUserManagementHandler(userRepo).
 		WithLocalAuthEnabled(cfg.LocalAuthEnabled)
 	searchHandler := api.NewSearchHandler(metaAgg)

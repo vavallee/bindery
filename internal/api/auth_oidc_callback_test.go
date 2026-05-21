@@ -291,7 +291,7 @@ func TestCallback_EmailLink_VerifiedEmail(t *testing.T) {
 	// Pre-create the account that owns victim@example.com via a *different*
 	// OIDC issuer/sub so GetByOIDC for the callback's (issuer,sub) returns nil.
 	existing, err := users.GetOrCreateByOIDC(ctx, "https://other-issuer.example", "other-sub",
-		"victim", "victim@example.com", "Victim")
+		"victim", "victim@example.com", "Victim", "user")
 	if err != nil {
 		t.Fatalf("seed existing user: %v", err)
 	}
@@ -326,7 +326,7 @@ func TestCallback_EmailLink_UnverifiedEmail(t *testing.T) {
 	h, users, ctx := newCallbackTestHandler(t, idp, nil, true)
 
 	victim, err := users.GetOrCreateByOIDC(ctx, "https://other-issuer.example", "victim-sub",
-		"victim", "victim@example.com", "Victim")
+		"victim", "victim@example.com", "Victim", "user")
 	if err != nil {
 		t.Fatalf("seed victim: %v", err)
 	}
@@ -363,7 +363,7 @@ func TestCallback_EmailLink_MissingEmailVerifiedClaim(t *testing.T) {
 	h, users, ctx := newCallbackTestHandler(t, idp, nil, true)
 
 	victim, err := users.GetOrCreateByOIDC(ctx, "https://other-issuer.example", "victim-sub-2",
-		"victim2", "victim@example.com", "Victim")
+		"victim2", "victim@example.com", "Victim", "user")
 	if err != nil {
 		t.Fatalf("seed victim: %v", err)
 	}

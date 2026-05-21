@@ -111,14 +111,19 @@ func (r *UserRepo) LinkOIDCSubject(ctx context.Context, userID int64, issuer, su
 
 // GetOrCreateByOIDC resolves or creates a user identified by (issuer, sub).
 // On creation, username is derived from preferredUsername (falling back to sub),
-// email and displayName are stored as provided.
-func (r *UserRepo) GetOrCreateByOIDC(ctx context.Context, issuer, sub, preferredUsername, email, displayName string) (*User, error) {
+// email and displayName are stored as provided, and the user is assigned the
+// given role. role must be "admin" or "user"; any other value is coerced to
+// "user" so a bad caller can never silently grant admin.
+func (r *UserRepo) GetOrCreateByOIDC(ctx context.Context, issuer, sub, preferredUsername, email, displayName, role string) (*User, error) {
 	u, err := r.GetByOIDC(ctx, issuer, sub)
 	if err != nil {
 		return nil, err
 	}
 	if u != nil {
 		return u, nil
+	}
+	if role != "admin" && role != "user" {
+		role = "user"
 	}
 	username := preferredUsername
 	if username == "" {
@@ -139,8 +144,8 @@ func (r *UserRepo) GetOrCreateByOIDC(ctx context.Context, issuer, sub, preferred
 	now := time.Now().UTC()
 	res, err := r.db.ExecContext(ctx,
 		`INSERT INTO users (username, password_hash, role, created_at, updated_at, oidc_sub, oidc_issuer, email, display_name)
-		 VALUES (?, '', 'user', ?, ?, ?, ?, ?, ?)`,
-		username, now, now, sub, issuer, nullableStr(email), nullableStr(displayName),
+		 VALUES (?, '', ?, ?, ?, ?, ?, ?, ?)`,
+		username, role, now, now, sub, issuer, nullableStr(email), nullableStr(displayName),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create oidc user: %w", err)
@@ -149,8 +154,31 @@ func (r *UserRepo) GetOrCreateByOIDC(ctx context.Context, issuer, sub, preferred
 	if err != nil {
 		return nil, fmt.Errorf("get oidc user id: %w", err)
 	}
-	slog.Info("oidc: auto-provisioned user", "username", username, "issuer", issuer)
+	slog.Info("oidc: auto-provisioned user", "username", username, "issuer", issuer, "role", role)
 	return r.GetByID(ctx, id)
+}
+
+// CountAdmins returns the number of users with role "admin". Used by the OIDC
+// callback to detect the lockout trap (zero admins) at provision time.
+func (r *UserRepo) CountAdmins(ctx context.Context) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM users WHERE role='admin'").Scan(&n)
+	return n, err
+}
+
+// SetRoleUnguarded sets a user's role without the last-admin demotion guard.
+// It is used by the OIDC group-claim sync path, where the IdP is authoritative:
+// demoting an OIDC user because they lost the admin group must not be blocked
+// by the "cannot demote the last admin" rule (that rule protects against
+// accidental lockout via the manual API, not against deliberate IdP-driven
+// role changes). role must be "admin" or "user".
+func (r *UserRepo) SetRoleUnguarded(ctx context.Context, id int64, role string) error {
+	if role != "admin" && role != "user" {
+		return fmt.Errorf("invalid role %q: must be admin or user", role)
+	}
+	_, err := r.db.ExecContext(ctx,
+		"UPDATE users SET role=?, updated_at=? WHERE id=?", role, time.Now().UTC(), id)
+	return err
 }
 
 func nullableStr(s string) any {

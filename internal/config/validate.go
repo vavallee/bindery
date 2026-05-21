@@ -86,6 +86,14 @@ func (c *Config) Validate(logger *slog.Logger) error {
 		}
 	}
 
+	// BINDERY_OIDC_DEFAULT_ROLE is silently coerced to "user" on any invalid
+	// value by normalizeOIDCRole; warn so a typo (e.g. "Administrator") does not
+	// quietly produce non-admin users when the operator expected admins.
+	if raw := strings.TrimSpace(os.Getenv("BINDERY_OIDC_DEFAULT_ROLE")); raw != "" && c.OIDCDefaultRole != strings.ToLower(raw) {
+		logger.Warn("config: BINDERY_OIDC_DEFAULT_ROLE has an invalid value — falling back to \"user\"",
+			"provided", raw, "effective", c.OIDCDefaultRole)
+	}
+
 	// BINDERY_URL_BASE must be a clean path prefix after normalisation.
 	if c.URLBase != "" {
 		if strings.Contains(c.URLBase, "://") {

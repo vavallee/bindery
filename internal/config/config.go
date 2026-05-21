@@ -33,6 +33,16 @@ type Config struct {
 	LocalAuthEnabled  bool // BINDERY_LOCAL_AUTH_ENABLED (default true)
 	OIDCAutoProvision bool // BINDERY_OIDC_AUTO_PROVISION (default true)
 	OIDCEmailLink     bool // BINDERY_OIDC_EMAIL_LINK (default false)
+	// OIDC role mapping (issue #688).
+	// OIDCDefaultRole is the role assigned to a freshly auto-provisioned OIDC
+	// user. Valid values: "user", "admin"; anything else falls back to "user".
+	OIDCDefaultRole string // BINDERY_OIDC_DEFAULT_ROLE (default "user")
+	// OIDCAdminGroup, when non-empty, makes the IdP authoritative for the admin
+	// role: on every OIDC login the user is promoted to admin if this group is
+	// present in the group claim, and demoted to user if absent.
+	OIDCAdminGroup string // BINDERY_OIDC_ADMIN_GROUP (default "")
+	// OIDCGroupClaim is the ID-token claim path holding the user's groups.
+	OIDCGroupClaim string // BINDERY_OIDC_GROUP_CLAIM (default "groups")
 	// Log retention in days (BINDERY_LOG_RETENTION_DAYS, default 14).
 	LogRetentionDays int
 	// Login rate limit (per-IP sliding window).
@@ -78,6 +88,9 @@ func Load() *Config {
 		LocalAuthEnabled:       envBool("BINDERY_LOCAL_AUTH_ENABLED", true),
 		OIDCAutoProvision:      envBool("BINDERY_OIDC_AUTO_PROVISION", true),
 		OIDCEmailLink:          envBool("BINDERY_OIDC_EMAIL_LINK", false),
+		OIDCDefaultRole:        normalizeOIDCRole(envOr("BINDERY_OIDC_DEFAULT_ROLE", "user")),
+		OIDCAdminGroup:         strings.TrimSpace(envOr("BINDERY_OIDC_ADMIN_GROUP", "")),
+		OIDCGroupClaim:         envOr("BINDERY_OIDC_GROUP_CLAIM", "groups"),
 		LogRetentionDays:       envInt("BINDERY_LOG_RETENTION_DAYS", 14),
 		RateLimitMaxFailures:   envInt("BINDERY_RATE_LIMIT_MAX_FAILURES", 5),
 		RateLimitWindowMinutes: envInt("BINDERY_RATE_LIMIT_WINDOW_MINUTES", 15),
@@ -137,6 +150,19 @@ func defaultDataDir(goos string, userConfigDir func() (string, error)) string {
 		}
 	}
 	return "/config"
+}
+
+// normalizeOIDCRole validates the BINDERY_OIDC_DEFAULT_ROLE value. Only
+// "user" and "admin" are accepted (case-insensitive); anything else — typos,
+// empty, "Admin ", "moderator" — falls back to "user" so a misconfigured env
+// var can never silently grant unintended privileges.
+func normalizeOIDCRole(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "admin":
+		return "admin"
+	default:
+		return "user"
+	}
 }
 
 func envOr(key, fallback string) string {

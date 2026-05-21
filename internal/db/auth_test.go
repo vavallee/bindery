@@ -16,7 +16,7 @@ func TestGetByEmail_Found(t *testing.T) {
 	repo := NewUserRepo(database)
 
 	// Create a user with an email by using the OIDC path (which stores email).
-	if _, err := repo.GetOrCreateByOIDC(ctx, "https://idp.example", "sub-abc", "alice", "alice@example.com", "Alice"); err != nil {
+	if _, err := repo.GetOrCreateByOIDC(ctx, "https://idp.example", "sub-abc", "alice", "alice@example.com", "Alice", "user"); err != nil {
 		t.Fatalf("GetOrCreateByOIDC: %v", err)
 	}
 
@@ -224,5 +224,177 @@ func TestLinkOIDCSubject(t *testing.T) {
 	}
 	if after.Username != "bob" {
 		t.Errorf("Username after link: got %q, want bob", after.Username)
+	}
+}
+
+// --- issue #688: OIDC role mapping -----------------------------------------
+
+// TestGetOrCreateByOIDC_DefaultRoleUser verifies the historical behaviour: an
+// OIDC user provisioned with role "user" gets role "user".
+func TestGetOrCreateByOIDC_DefaultRoleUser(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewUserRepo(database)
+
+	u, err := repo.GetOrCreateByOIDC(ctx, "https://idp.example", "sub-u", "alice", "", "", "user")
+	if err != nil {
+		t.Fatalf("GetOrCreateByOIDC: %v", err)
+	}
+	if u.Role != "user" {
+		t.Errorf("Role=%q, want user", u.Role)
+	}
+}
+
+// TestGetOrCreateByOIDC_DefaultRoleAdmin verifies that BINDERY_OIDC_DEFAULT_ROLE
+// = admin provisions the new user as admin.
+func TestGetOrCreateByOIDC_DefaultRoleAdmin(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewUserRepo(database)
+
+	u, err := repo.GetOrCreateByOIDC(ctx, "https://idp.example", "sub-a", "admin1", "", "", "admin")
+	if err != nil {
+		t.Fatalf("GetOrCreateByOIDC: %v", err)
+	}
+	if u.Role != "admin" {
+		t.Errorf("Role=%q, want admin", u.Role)
+	}
+	if !u.IsAdmin() {
+		t.Error("IsAdmin()=false, want true")
+	}
+}
+
+// TestGetOrCreateByOIDC_InvalidRoleCoerced verifies that a bad role string is
+// coerced to "user" — the DB layer never silently grants an unintended role.
+func TestGetOrCreateByOIDC_InvalidRoleCoerced(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewUserRepo(database)
+
+	u, err := repo.GetOrCreateByOIDC(ctx, "https://idp.example", "sub-x", "x", "", "", "superadmin")
+	if err != nil {
+		t.Fatalf("GetOrCreateByOIDC: %v", err)
+	}
+	if u.Role != "user" {
+		t.Errorf("Role=%q, want user (invalid role must be coerced)", u.Role)
+	}
+}
+
+// TestGetOrCreateByOIDC_ExistingUserRoleUnchanged verifies that re-resolving an
+// already-provisioned OIDC user does NOT change its role, regardless of the role
+// argument — GetOrCreateByOIDC only applies the role on creation.
+func TestGetOrCreateByOIDC_ExistingUserRoleUnchanged(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewUserRepo(database)
+
+	first, err := repo.GetOrCreateByOIDC(ctx, "https://idp.example", "sub-e", "e", "", "", "admin")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if first.Role != "admin" {
+		t.Fatalf("setup: Role=%q, want admin", first.Role)
+	}
+	again, err := repo.GetOrCreateByOIDC(ctx, "https://idp.example", "sub-e", "e", "", "", "user")
+	if err != nil {
+		t.Fatalf("resolve again: %v", err)
+	}
+	if again.Role != "admin" {
+		t.Errorf("Role=%q, want admin (existing user role must not change)", again.Role)
+	}
+}
+
+// TestCountAdmins verifies CountAdmins reflects only admin-role users.
+func TestCountAdmins(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewUserRepo(database)
+
+	if n, err := repo.CountAdmins(ctx); err != nil || n != 0 {
+		t.Fatalf("CountAdmins on empty DB: n=%d err=%v, want 0,nil", n, err)
+	}
+	if _, err := repo.GetOrCreateByOIDC(ctx, "https://idp.example", "s1", "u1", "", "", "user"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := repo.CountAdmins(ctx); err != nil || n != 0 {
+		t.Fatalf("CountAdmins with one user: n=%d err=%v, want 0,nil", n, err)
+	}
+	if _, err := repo.GetOrCreateByOIDC(ctx, "https://idp.example", "s2", "u2", "", "", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := repo.CountAdmins(ctx); err != nil || n != 1 {
+		t.Fatalf("CountAdmins with one admin: n=%d err=%v, want 1,nil", n, err)
+	}
+}
+
+// TestSetRoleUnguarded_DemotesLastAdmin verifies that SetRoleUnguarded bypasses
+// the last-admin demotion guard — the IdP-driven group-claim sync must be able
+// to demote even the sole admin.
+func TestSetRoleUnguarded_DemotesLastAdmin(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewUserRepo(database)
+
+	admin, err := repo.GetOrCreateByOIDC(ctx, "https://idp.example", "s", "root", "", "", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Guarded SetRole must refuse this.
+	if err := repo.SetRole(ctx, admin.ID, "user"); err == nil {
+		t.Fatal("SetRole demoting last admin should fail, got nil")
+	}
+	// Unguarded must succeed.
+	if err := repo.SetRoleUnguarded(ctx, admin.ID, "user"); err != nil {
+		t.Fatalf("SetRoleUnguarded: %v", err)
+	}
+	got, err := repo.GetByID(ctx, admin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Role != "user" {
+		t.Errorf("Role=%q, want user", got.Role)
+	}
+}
+
+// TestSetRoleUnguarded_InvalidRole verifies SetRoleUnguarded rejects bad roles.
+func TestSetRoleUnguarded_InvalidRole(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewUserRepo(database)
+
+	u, err := repo.GetOrCreateByOIDC(ctx, "https://idp.example", "s", "u", "", "", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetRoleUnguarded(ctx, u.ID, "root"); err == nil {
+		t.Error("SetRoleUnguarded with invalid role should fail, got nil")
 	}
 }

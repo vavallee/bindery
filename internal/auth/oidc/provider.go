@@ -90,6 +90,10 @@ type Claims struct {
 	PreferredUsername string
 	Name              string
 	Groups            []string
+	// Raw is the full decoded ID-token claim set. It lets callers read
+	// non-standard claims (e.g. a group claim under a configurable path) that
+	// are not modelled as typed fields above. nil if decoding the raw map fails.
+	Raw map[string]any
 }
 
 // Status is the runtime state of a configured provider as far as the manager
@@ -338,16 +342,27 @@ func (m *Manager) Exchange(ctx context.Context, redirectBase, id, code, nonce, c
 	if idToken.Nonce != nonce {
 		return nil, fmt.Errorf("oidc: nonce mismatch")
 	}
+	// `groups` is decoded as json.RawMessage rather than []string: IdPs vary in
+	// shape (array vs delimited string) and a strict []string field makes the
+	// whole token-exchange fail for a string-shaped claim. GroupClaimValues
+	// normalises the shape after the fact.
 	var claims struct {
 		Sub               string          `json:"sub"`
 		Email             string          `json:"email"`
 		EmailVerified     json.RawMessage `json:"email_verified"`
 		PreferredUsername string          `json:"preferred_username"`
 		Name              string          `json:"name"`
-		Groups            []string        `json:"groups"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
 		return nil, fmt.Errorf("oidc: parse claims: %w", err)
+	}
+	// Also decode the full claim set as a generic map so callers can read
+	// non-standard claims (e.g. a configurable group-claim path) and so the
+	// `groups` claim can be normalised tolerantly. A failure here is non-fatal
+	// — the typed fields above are still usable.
+	var raw map[string]any
+	if err := idToken.Claims(&raw); err != nil {
+		raw = nil
 	}
 	return &Claims{
 		Sub:               claims.Sub,
@@ -356,8 +371,74 @@ func (m *Manager) Exchange(ctx context.Context, redirectBase, id, code, nonce, c
 		EmailVerified:     parseEmailVerified(claims.EmailVerified),
 		PreferredUsername: claims.PreferredUsername,
 		Name:              claims.Name,
-		Groups:            claims.Groups,
+		Groups:            GroupClaimValues(raw, "groups"),
+		Raw:               raw,
 	}, nil
+}
+
+// GroupClaimValues extracts a group list from the named claim in a decoded
+// ID-token claim set, normalising the well-known shape variance between IdPs.
+// The claim value may be:
+//
+//   - a JSON array of strings (Authentik, Keycloak with a groups mapper)  →
+//     used as-is;
+//   - a single string holding several groups separated by spaces and/or
+//     commas (some Keycloak/Authelia role-string configs)  → split;
+//   - a single bare string (one group)  → one-element list.
+//
+// Returns nil when the claim is absent, empty, or of an unsupported type.
+func GroupClaimValues(raw map[string]any, claimName string) []string {
+	if raw == nil || claimName == "" {
+		return nil
+	}
+	v, ok := raw[claimName]
+	if !ok || v == nil {
+		return nil
+	}
+	switch val := v.(type) {
+	case []string:
+		return trimNonEmpty(val)
+	case []any:
+		out := make([]string, 0, len(val))
+		for _, item := range val {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return trimNonEmpty(out)
+	case string:
+		// Space- and/or comma-delimited single string.
+		fields := strings.FieldsFunc(val, func(r rune) bool {
+			return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
+		})
+		return trimNonEmpty(fields)
+	default:
+		return nil
+	}
+}
+
+// trimNonEmpty trims whitespace from each element and drops empties.
+func trimNonEmpty(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if t := strings.TrimSpace(s); t != "" {
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// ContainsGroup reports whether group is present in groups (exact, case-sensitive).
+func ContainsGroup(groups []string, group string) bool {
+	for _, g := range groups {
+		if g == group {
+			return true
+		}
+	}
+	return false
 }
 
 // parseEmailVerified interprets the `email_verified` claim. The OIDC spec
