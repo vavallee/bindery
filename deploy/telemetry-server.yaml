@@ -76,10 +76,19 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            # Writable scratch. The container runs readOnlyRootFilesystem;
+            # the server stages its /api/backup VACUUM INTO copy next to the
+            # DB now, but keeping /tmp writable is cheap insurance for any
+            # stdlib path that falls back to it.
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: bindery-ping-data
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
 ---
 apiVersion: v1
 kind: Service
