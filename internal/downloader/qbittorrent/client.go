@@ -193,6 +193,9 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 
 	var req *http.Request
 	submitted := magnetOrURL
+	// torrentFile holds the raw .torrent bytes when the add is a file upload,
+	// so a 409 duplicate response can still recover the infohash.
+	var torrentFile []byte
 	if strings.HasPrefix(magnetOrURL, "http://") || strings.HasPrefix(magnetOrURL, "https://") {
 		// Fetch the .torrent content in Bindery so qBittorrent never needs to
 		// reach the indexer URL directly (which may be a Docker-only hostname
@@ -219,6 +222,7 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 			}
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		} else {
+			torrentFile = fetched.data
 			var buf bytes.Buffer
 			mw := multipart.NewWriter(&buf)
 			fw, err := mw.CreateFormFile("torrents", "upload.torrent")
@@ -275,6 +279,24 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	text := strings.TrimSpace(string(body))
+
+	// qBittorrent answers POST /torrents/add with 409 Conflict when it already
+	// holds the torrent. The content is effectively available, so recover the
+	// existing torrent's hash and proceed instead of failing the grab.
+	if resp.StatusCode == http.StatusConflict {
+		hash := infoHashFromMagnet(submitted)
+		if hash == "" {
+			hash = infoHashFromTorrentFile(torrentFile)
+		}
+		if hash == "" {
+			return "", fmt.Errorf("add torrent: qBittorrent reports the torrent is already present but its hash could not be determined")
+		}
+		if category != "" {
+			_ = c.setCategory(ctx, hash, category)
+		}
+		slog.Info("add torrent: already present in qBittorrent, reusing existing torrent", "hash", hash)
+		return hash, nil
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("add torrent HTTP %d: %s", resp.StatusCode, text)
