@@ -182,3 +182,23 @@ func TestHandleStatsJSON(t *testing.T) {
 		t.Errorf("Latest = %q, want v1.9.5", got.Latest)
 	}
 }
+
+func TestLogRequestsPassesThrough(t *testing.T) {
+	h := logRequests(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	// Both a normal path and /health (the skipped path) must pass the
+	// downstream handler's status and body through unchanged.
+	for _, path := range []string{"/api/ping", "/health"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusTeapot {
+			t.Errorf("%s: status = %d, want %d", path, rec.Code, http.StatusTeapot)
+		}
+		if rec.Body.String() != "ok" {
+			t.Errorf("%s: body = %q, want \"ok\"", path, rec.Body.String())
+		}
+	}
+}

@@ -173,7 +173,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:         addr,
-		Handler:      secureHeaders(canonicalHost, mux),
+		Handler:      logRequests(secureHeaders(canonicalHost, mux)),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -183,6 +183,42 @@ func main() {
 		slog.Error("listen", "error", err)
 		os.Exit(1)
 	}
+}
+
+// statusRecorder wraps http.ResponseWriter to capture the response status code
+// for the access log. Defaults to 200 — a handler that only calls Write (never
+// WriteHeader) still sends 200 implicitly.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+// logRequests is an access-log middleware: one slog line per request, carrying
+// the real client IP via realIP (X-Real-Ip / X-Forwarded-For aware), so the log
+// shows the external address rather than Traefik's pod IP. The /health
+// readiness probe is skipped so it doesn't flood the log every few seconds.
+func logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		slog.Info("request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rec.status,
+			"ip", realIP(r),
+			"dur", time.Since(start).Round(time.Millisecond).String(),
+		)
+	})
 }
 
 // secureHeaders adds security response headers and rejects non-HTTPS requests
