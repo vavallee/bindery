@@ -6,6 +6,18 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.14.1] — 2026-05-22
+
+### Fixed
+
+- **Prowlarr no longer syncs zero indexers** (#763, #788, #794) — since v1.13.x the Prowlarr sync read each indexer's categories from a top-level field that Prowlarr's API does not populate (the category list lives under the indexer's `capabilities`). Every indexer was rejected as having "no book/audiobook categories", and — worse — previously synced indexers were then deleted on each sync, wiping indexer config. The sync now reads categories from `capabilities`, scoped against a registered book application (Readarr/LazyLibrarian) where one exists and falling back to the indexer's own book/audiobook capability categories for standalone Prowlarr setups. The syncer also no longer removes indexers when a sync matches nothing at all, so a future filter regression cannot wipe indexer config again.
+
+- **qBittorrent 5.1.4 category health checks no longer fail** (#793) — qBittorrent 5.1.4 can return a boolean `download_path` flag in category payloads, which made Bindery fail to decode the categories response (`cannot unmarshal bool into Go struct field`) and fail the category health check. Non-string category path fields are now ignored while the string save path is still read.
+
+- **Readarr migration imports author names correctly** (#784) — the Readarr import queried a non-existent `Authors.Name` column; in Readarr's schema the author name lives in `AuthorMetadata`, joined via `Authors.AuthorMetadataId`. The import now performs that join, so migrated authors keep their names.
+
+- **Telemetry server stages its database backup next to the database** (#777) — the telemetry server wrote its backup to `/tmp`, which could fail or cross a filesystem boundary; the backup is now staged alongside the live database.
+
 ## [v1.14.0] — 2026-05-21
 
 ### Added
