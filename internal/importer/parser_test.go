@@ -164,6 +164,20 @@ func TestParseFilenameSeriesExtraction(t *testing.T) {
 			wantSeries:    "",
 			wantSeriesNum: "",
 		},
+		{
+			name:          "inline Book N separates series from title",
+			path:          "Convergence_Book_2_-_Dragonslayer.m4b",
+			wantSeries:    "Convergence",
+			wantSeriesNum: "2",
+			wantTitle:     "Dragonslayer",
+		},
+		{
+			name:          "inline Vol N with author",
+			path:          "Mistborn_Vol_1_-_The_Final_Empire_-_Brandon_Sanderson.epub",
+			wantSeries:    "Mistborn",
+			wantSeriesNum: "1",
+			wantTitle:     "The Final Empire",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

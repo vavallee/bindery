@@ -456,7 +456,7 @@ func TestImportInternal_ThreeFileBundle_TracksAllInBookFiles(t *testing.T) {
 	}
 
 	s := NewScanner(dlRepo, clientRepo, bookRepo, authorRepo, db.NewHistoryRepo(database), libDir, "", "", "", "")
-	s.tryImportInternal(ctx, dl, dlDir, "", "", nil)
+	s.tryImportInternal(ctx, dl, dlDir, "", "", "", nil)
 
 	files, err := bookRepo.ListFiles(ctx, book.ID)
 	if err != nil {
@@ -519,7 +519,7 @@ func TestTryImportInternal_HistoryEventIncludesFormat(t *testing.T) {
 	}
 
 	s := NewScanner(dlRepo, clientRepo, bookRepo, authorRepo, historyRepo, libDir, "", "", "", "")
-	s.tryImportInternal(ctx, dl, dlDir, "", "", nil)
+	s.tryImportInternal(ctx, dl, dlDir, "", "", "", nil)
 
 	events, err := historyRepo.ListByType(ctx, models.HistoryEventBookImported)
 	if err != nil {

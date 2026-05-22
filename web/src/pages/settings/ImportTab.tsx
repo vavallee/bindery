@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, HardcoverList, ImportList } from '../../api/client'
+import { api, Book, HardcoverList, ImportList, ManualImportLookup } from '../../api/client'
 import { inputCls } from './formStyles'
 import GoodreadsImportSection from './GoodreadsImportSection'
 
@@ -111,6 +111,7 @@ export default function ImportTab() {
           </div>
         )}
       </section>
+      <ManualImportSection />
       <GoodreadsImportSection />
       <HardcoverListsSection />
 
@@ -120,6 +121,138 @@ export default function ImportTab() {
         </div>
       )}
     </div>
+  )
+}
+
+function ManualImportSection() {
+  const { t } = useTranslation()
+  const [path, setPath] = useState('')
+  const [looking, setLooking] = useState(false)
+  const [result, setResult] = useState<ManualImportLookup | null>(null)
+  const [selectedBook, setSelectedBook] = useState<Book | null>(null)
+  const [format, setFormat] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [success, setSuccess] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  const reset = () => {
+    setResult(null)
+    setSelectedBook(null)
+    setFormat('')
+    setSuccess(false)
+    setErr(null)
+  }
+
+  const handleLookup = async () => {
+    if (!path.trim()) return
+    setLooking(true)
+    reset()
+    try {
+      const r = await api.lookupManualImport(path.trim())
+      setResult(r)
+      setFormat(r.detectedFormat)
+      if (r.match === 'confident' && r.book) setSelectedBook(r.book)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Lookup failed')
+    } finally {
+      setLooking(false)
+    }
+  }
+
+  const handleImport = async () => {
+    if (!selectedBook) return
+    setImporting(true)
+    setErr(null)
+    try {
+      await api.manualImport({ path: path.trim(), bookId: selectedBook.id, format: format || undefined })
+      setSuccess(true)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Import failed')
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  return (
+    <section>
+      <h3 className="text-base font-semibold mb-2 text-slate-800 dark:text-zinc-200">{t('settings.import.manualImportHeading')}</h3>
+      <p className="text-xs text-slate-600 dark:text-zinc-500 mb-3">{t('settings.import.manualImportDescription')}</p>
+
+      <div className="flex gap-2 mb-3">
+        <input
+          className={inputCls + ' flex-1'}
+          placeholder={t('settings.import.manualImportPathPlaceholder')}
+          value={path}
+          onChange={e => { setPath(e.target.value); reset() }}
+          onKeyDown={e => { if (e.key === 'Enter') handleLookup() }}
+        />
+        <button
+          onClick={handleLookup}
+          disabled={looking || !path.trim()}
+          className="px-3 py-2 bg-slate-200 dark:bg-zinc-700 hover:bg-slate-300 dark:hover:bg-zinc-600 disabled:opacity-50 rounded text-sm font-medium"
+        >
+          {looking ? t('settings.import.manualImportLooking') : t('settings.import.manualImportLookup')}
+        </button>
+      </div>
+
+      {result && !success && (
+        <div className="p-3 border border-slate-200 dark:border-zinc-800 rounded bg-slate-50 dark:bg-zinc-900 space-y-3">
+          {result.match === 'confident' && selectedBook && (
+            <p className="text-sm text-slate-700 dark:text-zinc-300">
+              {t('settings.import.manualImportConfident', { title: selectedBook.title, author: selectedBook.author?.authorName ?? '' })}
+            </p>
+          )}
+          {result.match === 'ambiguous' && (
+            <div className="space-y-1">
+              <p className="text-sm text-slate-700 dark:text-zinc-300">{t('settings.import.manualImportAmbiguous')}</p>
+              <select
+                className={inputCls}
+                value={selectedBook?.id ?? ''}
+                onChange={e => {
+                  const id = Number(e.target.value)
+                  setSelectedBook(result.candidates?.find(b => b.id === id) ?? null)
+                }}
+              >
+                <option value="">— select —</option>
+                {result.candidates?.map(b => (
+                  <option key={b.id} value={b.id}>{b.title} {b.author ? `(${b.author.authorName})` : ''}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {result.match === 'none' && (
+            <p className="text-sm text-amber-700 dark:text-amber-400">{t('settings.import.manualImportNone')}</p>
+          )}
+
+          {result.match !== 'none' && (
+            <div className="flex items-center gap-3">
+              <div>
+                <label className="block text-xs text-slate-500 dark:text-zinc-500 mb-1">{t('settings.import.manualImportFormatLabel')}</label>
+                <select className={inputCls} value={format} onChange={e => setFormat(e.target.value)}>
+                  <option value="">{t('settings.import.manualImportFormatAuto')}</option>
+                  <option value="ebook">{t('settings.import.manualImportFormatEbook')}</option>
+                  <option value="audiobook">{t('settings.import.manualImportFormatAudiobook')}</option>
+                </select>
+              </div>
+              <button
+                onClick={handleImport}
+                disabled={importing || !selectedBook}
+                className="mt-4 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded text-sm font-medium"
+              >
+                {importing ? t('settings.import.manualImportImporting') : t('settings.import.manualImportConfirm')}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {success && (
+        <p className="text-sm text-emerald-600 dark:text-emerald-400">{t('settings.import.manualImportSuccess')}</p>
+      )}
+      {err && (
+        <p className="text-sm text-red-600 dark:text-red-400">{err}</p>
+      )}
+    </section>
   )
 }
 

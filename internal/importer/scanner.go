@@ -762,7 +762,7 @@ func (s *Scanner) checkNZBGetDownloads(ctx context.Context, client *models.Downl
 // ng is used to clean up the NZBGet history entry once bindery has taken ownership.
 func (s *Scanner) tryImportNZBGet(ctx context.Context, ng *nzbget.Client, dl *models.Download, nzbID int, downloadPath string) {
 	nzbIDStr := strconv.Itoa(nzbID)
-	s.tryImportInternal(ctx, dl, downloadPath, "nzbget", nzbIDStr, func() error {
+	s.tryImportInternal(ctx, dl, downloadPath, "nzbget", nzbIDStr, "", func() error {
 		return ng.RemoveHistory(ctx, nzbID)
 	})
 }
@@ -973,7 +973,7 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 // sab is used to clear the SABnzbd history entry once bindery has taken
 // ownership of the files; nzoID is the history slot's NZO identifier.
 func (s *Scanner) tryImportSABnzbd(ctx context.Context, sab *sabnzbd.Client, dl *models.Download, nzoID, downloadPath string) {
-	s.tryImportInternal(ctx, dl, downloadPath, "sabnzbd", nzoID, func() error {
+	s.tryImportInternal(ctx, dl, downloadPath, "sabnzbd", nzoID, "", func() error {
 		// Clean up SABnzbd history
 		return sab.DeleteHistory(ctx, nzoID, false)
 	})
@@ -981,11 +981,11 @@ func (s *Scanner) tryImportSABnzbd(ctx context.Context, sab *sabnzbd.Client, dl 
 
 // tryImportTransmission attempts to import a completed Transmission download into the library.
 func (s *Scanner) tryImportTransmission(ctx context.Context, dl *models.Download, downloadPath string) {
-	s.tryImportInternal(ctx, dl, downloadPath, "transmission", safeRemoteID(dl.TorrentID), nil)
+	s.tryImportInternal(ctx, dl, downloadPath, "transmission", safeRemoteID(dl.TorrentID), "", nil)
 }
 
 func (s *Scanner) tryImportQbittorrent(ctx context.Context, dl *models.Download, downloadPath string) {
-	s.tryImportInternal(ctx, dl, downloadPath, "qbittorrent", safeRemoteID(dl.TorrentID), nil)
+	s.tryImportInternal(ctx, dl, downloadPath, "qbittorrent", safeRemoteID(dl.TorrentID), "", nil)
 }
 
 func (s *Scanner) remapDownloadClientPath(client *models.DownloadClient, rawPath string) string {
@@ -1119,7 +1119,14 @@ func (s *Scanner) alreadyImportedPath(ctx context.Context, book *models.Book, de
 }
 
 // tryImportInternal is the common import logic shared by SABnzbd and Transmission.
-func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, downloadPath, cleanupClientType, cleanupRemoteID string, cleanupFunc func() error) {
+// ImportFromPath creates an import run for a file or folder already on disk,
+// bypassing the download-client polling path. formatHint overrides extension-
+// based format detection when non-empty ("ebook" or "audiobook").
+func (s *Scanner) ImportFromPath(ctx context.Context, dl *models.Download, path, formatHint string) {
+	s.tryImportInternal(ctx, dl, path, "", "", formatHint, nil)
+}
+
+func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, downloadPath, cleanupClientType, cleanupRemoteID, formatHint string, cleanupFunc func() error) {
 	if s.libraryDir == "" {
 		slog.Warn("no library directory configured, skipping import")
 		// Not writable/configured — needs user action before import can proceed.
@@ -1223,8 +1230,12 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// Detect the format of the downloaded files from their extensions.
 	// This is authoritative for dual-format books (media_type='both') and
 	// also fixes edge-cases where a mislabelled book would be routed to the
-	// wrong library directory.
+	// wrong library directory. formatHint overrides detection when the caller
+	// (e.g. manual import) knows the intended format explicitly.
 	detectedFormat := detectDownloadFormat(bookFiles)
+	if formatHint == models.MediaTypeAudiobook || formatHint == models.MediaTypeEbook {
+		detectedFormat = formatHint
+	}
 
 	// Audiobook path: place the entire download directory as a unit so
 	// multi-part m4b/mp3 files, cover art, and cue sheets stay together.

@@ -1,0 +1,117 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/importer"
+	"github.com/vavallee/bindery/internal/models"
+)
+
+type manualImportScanner interface {
+	Lookup(ctx context.Context, path string) (importer.LookupResult, error)
+	ImportFromPath(ctx context.Context, dl *models.Download, path, formatHint string)
+}
+
+// ManualImportHandler serves the manual-import lookup and trigger endpoints.
+type ManualImportHandler struct {
+	scanner   manualImportScanner
+	downloads *db.DownloadRepo
+	books     *db.BookRepo
+}
+
+func NewManualImportHandler(scanner manualImportScanner, downloads *db.DownloadRepo, books *db.BookRepo) *ManualImportHandler {
+	return &ManualImportHandler{scanner: scanner, downloads: downloads, books: books}
+}
+
+// Lookup handles GET /api/v1/queue/manual-import/lookup?path=...
+// It parses the filename, searches the local catalogue, and returns a match
+// result along with the auto-detected format. No state is modified.
+func (h *ManualImportHandler) Lookup(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path parameter required"})
+		return
+	}
+	if _, err := os.Stat(path); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("path not accessible: %v", err)})
+		return
+	}
+	result, err := h.scanner.Lookup(r.Context(), path)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+type manualImportRequest struct {
+	Path   string `json:"path"`
+	BookID int64  `json:"bookId"`
+	// Format is optional. When omitted, the format is auto-detected from file
+	// extensions. Accepted values: "ebook", "audiobook".
+	Format string `json:"format"`
+}
+
+// Import handles POST /api/v1/queue/manual-import
+// It validates the path and book, creates a synthetic Download record, and
+// kicks off tryImportInternal asynchronously. Returns 202 with the new record.
+func (h *ManualImportHandler) Import(w http.ResponseWriter, r *http.Request) {
+	var req manualImportRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if req.Path == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path is required"})
+		return
+	}
+	if req.BookID <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bookId is required"})
+		return
+	}
+	if req.Format != "" && req.Format != models.MediaTypeEbook && req.Format != models.MediaTypeAudiobook {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "format must be \"ebook\" or \"audiobook\""})
+		return
+	}
+
+	info, err := os.Stat(req.Path)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("path not accessible: %v", err)})
+		return
+	}
+	if !info.IsDir() && !importer.IsBookFile(req.Path) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path is not a recognised book file"})
+		return
+	}
+
+	book, err := h.books.GetByID(r.Context(), req.BookID)
+	if err != nil || book == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "book not found"})
+		return
+	}
+
+	now := time.Now().UTC()
+	dl := &models.Download{
+		GUID:   "manual-" + uuid.New().String(),
+		BookID: &req.BookID,
+		Title:  book.Title,
+		Status: models.StateCompleted,
+	}
+	dl.CompletedAt = &now
+
+	if err := h.downloads.Create(r.Context(), dl); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create import record"})
+		return
+	}
+
+	go h.scanner.ImportFromPath(context.WithoutCancel(r.Context()), dl, req.Path, req.Format)
+
+	writeJSON(w, http.StatusAccepted, dl)
+}
