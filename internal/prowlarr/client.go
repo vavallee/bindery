@@ -114,6 +114,16 @@ func (c *Client) FetchIndexers(ctx context.Context) ([]IndexerInfo, error) {
 		if len(cats) == 0 {
 			cats = categoriesFromApplicationScopes(ri, scopes)
 		}
+		// Issue #763: when Prowlarr has no book-scoped application registered
+		// there is no app signal to scope capability categories against. Most
+		// Bindery users run Prowlarr standalone (or alongside only Sonarr/
+		// Radarr), so without this fallback every indexer is rejected as
+		// having "no book/audiobook categories" and the syncer wipes the lot.
+		// Trust the indexer's own capability categories, narrowed to the
+		// book/audiobook Newznab ranges.
+		if len(cats) == 0 && len(scopes) == 0 {
+			cats = bookCapabilityCategories(ri)
+		}
 
 		infos = append(infos, IndexerInfo{
 			ProwlarrID:     ri.ID,
@@ -177,13 +187,34 @@ func (a remoteApplication) syncCategories() []int {
 	return nil
 }
 
+// isBookOrAudiobookCategory reports whether a Newznab category ID falls in the
+// book (7000-7999) or audiobook (3000-3999) ranges.
+func isBookOrAudiobookCategory(category int) bool {
+	return (category >= 7000 && category < 8000) || (category >= 3000 && category < 4000)
+}
+
 func hasBookOrAudiobookCategory(categories []int) bool {
 	for _, cat := range categories {
-		if (cat >= 7000 && cat < 8000) || (cat >= 3000 && cat < 4000) {
+		if isBookOrAudiobookCategory(cat) {
 			return true
 		}
 	}
 	return false
+}
+
+// bookCapabilityCategories returns an indexer's advertised capability
+// categories restricted to the book and audiobook ranges. It is the
+// standalone-Prowlarr fallback for FetchIndexers (issue #763): with no
+// application scope to consult, the indexer's own capabilities are the only
+// signal for whether it can serve books.
+func bookCapabilityCategories(indexer remoteIndexer) []int {
+	var out []int
+	for _, id := range categoryIDs(indexer.Capabilities.Categories) {
+		if isBookOrAudiobookCategory(id) {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func categoryIDs(categories []remoteCategory) []int {

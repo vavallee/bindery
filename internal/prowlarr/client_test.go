@@ -235,7 +235,10 @@ func TestFetchIndexers_RequiresApplicationTagMatchForCapabilityCategories(t *tes
 	}
 }
 
-func TestFetchIndexers_SkipsCapabilityCategoriesWithOnlyNonBookApplicationScope(t *testing.T) {
+func TestFetchIndexers_FallsBackToCapabilitiesWithOnlyNonBookApplicationScope(t *testing.T) {
+	// Issue #763: the only registered application is non-book (e.g. Radarr),
+	// so there is no book-scoped application to consult. The indexer's own
+	// book capabilities must still be used rather than dropped.
 	indexerBody := `[
 		{
 			"id":3,
@@ -258,6 +261,70 @@ func TestFetchIndexers_SkipsCapabilityCategoriesWithOnlyNonBookApplicationScope(
 		}
 	]`
 	srv := prowlarrClientStub(t, indexerBody, applicationsBody)
+	defer srv.Close()
+
+	infos, err := New(srv.URL, "key").FetchIndexers(context.Background())
+	if err != nil {
+		t.Fatalf("FetchIndexers: %v", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 info, got %d", len(infos))
+	}
+	assertCategoryIDs(t, infos[0].Categories, []int{7000, 7020})
+}
+
+func TestFetchIndexers_FallsBackToCapabilitiesWhenNoApplications(t *testing.T) {
+	// Issue #763: standalone Prowlarr with no applications registered. The
+	// indexer's book/audiobook capabilities are the only signal and must be
+	// used; non-book capabilities (movies) are dropped.
+	indexerBody := `[
+		{
+			"id":3,
+			"name":"MyAnonamouse",
+			"protocol":"torrent",
+			"supportsSearch":true,
+			"categories":[],
+			"capabilities":{
+				"categories":[
+					{"id":2000,"name":"Movies","subCategories":[{"id":2010,"name":"Movies/HD"}]},
+					{"id":3000,"name":"Audio","subCategories":[{"id":3030,"name":"Audio/Audiobook"}]},
+					{"id":7000,"name":"Books","subCategories":[{"id":7020,"name":"Books/EBook"}]}
+				]
+			}
+		}
+	]`
+	srv := prowlarrClientStub(t, indexerBody, `[]`)
+	defer srv.Close()
+
+	infos, err := New(srv.URL, "key").FetchIndexers(context.Background())
+	if err != nil {
+		t.Fatalf("FetchIndexers: %v", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 info, got %d", len(infos))
+	}
+	assertCategoryIDs(t, infos[0].Categories, []int{3000, 3030, 7000, 7020})
+}
+
+func TestFetchIndexers_NonBookIndexerStaysEmptyWithoutApplications(t *testing.T) {
+	// A movie/TV-only indexer has no book or audiobook capabilities, so the
+	// standalone fallback leaves it with no categories (the syncer drops it).
+	indexerBody := `[
+		{
+			"id":4,
+			"name":"MovieTracker",
+			"protocol":"torrent",
+			"supportsSearch":true,
+			"categories":[],
+			"capabilities":{
+				"categories":[
+					{"id":2000,"name":"Movies","subCategories":[{"id":2010,"name":"Movies/HD"}]},
+					{"id":5000,"name":"TV","subCategories":[{"id":5040,"name":"TV/HD"}]}
+				]
+			}
+		}
+	]`
+	srv := prowlarrClientStub(t, indexerBody, `[]`)
 	defer srv.Close()
 
 	infos, err := New(srv.URL, "key").FetchIndexers(context.Background())

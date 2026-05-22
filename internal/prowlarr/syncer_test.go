@@ -272,3 +272,67 @@ func TestSyncer_NoUpdateWhenNothingChanged(t *testing.T) {
 		t.Errorf("expected no updates, got %+v", store.updated)
 	}
 }
+
+func TestSyncer_KeepsExistingIndexersWhenSyncMatchesNothing(t *testing.T) {
+	// Issue #763: a sync that matches zero indexers (a category-filter
+	// regression, a partial Prowlarr response) must not delete the user's
+	// existing synced indexers.
+	pID := 7
+	instID := int64(1)
+	existing := []models.Indexer{{
+		ID:                 11,
+		Name:               "TrackerX",
+		Type:               "torznab",
+		Categories:         []int{7020},
+		ProwlarrInstanceID: &instID,
+		ProwlarrIndexerID:  &pID,
+	}}
+	// Prowlarr returns an indexer the filter rejects (no categories, no
+	// capabilities, no applications) — nothing matches.
+	srv := prowlarrStub(t, `[{"id":99,"name":"Torrenting","enable":true,"protocol":"torrent","supportsSearch":true,"categories":[]}]`)
+	defer srv.Close()
+
+	store := &fakeIndexerStore{existing: existing}
+	syncer := NewSyncer(New(srv.URL, "k"), store, fakeInstanceStore{})
+
+	res, err := syncer.Sync(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(store.deleted) != 0 {
+		t.Errorf("deleted = %v, want none (a zero-match sync must not wipe indexers)", store.deleted)
+	}
+	if res.Removed != 0 {
+		t.Errorf("Removed = %d, want 0", res.Removed)
+	}
+}
+
+func TestSyncer_RemovesStaleIndexerWhenOthersStillMatch(t *testing.T) {
+	// The zero-match guard must not block legitimate removals: when at least
+	// one indexer still matches, indexers gone from Prowlarr are deleted.
+	matchID, staleID := 7, 8
+	instID := int64(1)
+	existing := []models.Indexer{
+		{ID: 11, Name: "Keep", Type: "torznab", Categories: []int{7020},
+			ProwlarrInstanceID: &instID, ProwlarrIndexerID: &matchID},
+		{ID: 12, Name: "Gone", Type: "torznab", Categories: []int{7020},
+			ProwlarrInstanceID: &instID, ProwlarrIndexerID: &staleID},
+	}
+	srv := prowlarrStub(t, `[{"id":7,"name":"Keep","enable":true,"protocol":"torrent","supportsSearch":true,"categories":[{"id":7020}]}]`)
+	defer srv.Close()
+	existing[0].URL = srv.URL + "/7/api"
+
+	store := &fakeIndexerStore{existing: existing}
+	syncer := NewSyncer(New(srv.URL, "k"), store, fakeInstanceStore{})
+
+	res, err := syncer.Sync(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(store.deleted) != 1 || store.deleted[0] != 12 {
+		t.Errorf("deleted = %v, want [12]", store.deleted)
+	}
+	if res.Removed != 1 {
+		t.Errorf("Removed = %d, want 1", res.Removed)
+	}
+}

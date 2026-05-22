@@ -141,16 +141,26 @@ func (s *Syncer) Sync(ctx context.Context, instanceID int64) (SyncResult, error)
 		}
 	}
 
-	// Remove indexers that disappeared from Prowlarr.
-	for prowlarrID, ex := range byProwlarrID {
-		if _, ok := seen[prowlarrID]; ok {
-			continue
-		}
-		if err := s.indexers.Delete(ctx, ex.ID); err != nil {
-			slog.Warn("prowlarr sync: delete stale indexer failed",
-				"id", ex.ID, "name", ex.Name, "error", err)
-		} else {
-			result.Removed++
+	// Remove indexers that disappeared from Prowlarr — but never when a sync
+	// matched nothing at all. Issue #763: a category-filter regression filtered
+	// out every indexer, turning each sync into a full wipe of the user's
+	// indexer config (priorities, enable state). Zero matches against a
+	// non-empty existing set is treated as a failed sync, not an instruction to
+	// delete everything; a genuinely stale indexer can still be removed by hand.
+	if len(seen) == 0 && len(byProwlarrID) > 0 {
+		slog.Warn("prowlarr sync: zero indexers matched an existing set; skipping removals to protect indexer config",
+			"instance_id", instanceID, "existing", len(byProwlarrID))
+	} else {
+		for prowlarrID, ex := range byProwlarrID {
+			if _, ok := seen[prowlarrID]; ok {
+				continue
+			}
+			if err := s.indexers.Delete(ctx, ex.ID); err != nil {
+				slog.Warn("prowlarr sync: delete stale indexer failed",
+					"id", ex.ID, "name", ex.Name, "error", err)
+			} else {
+				result.Removed++
+			}
 		}
 	}
 
