@@ -38,9 +38,9 @@ func TestInvertAuthorName(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"lane, nick", "nick lane"},
 		{"le guin, ursula k.", "ursula k. le guin"},
-		{"nick lane", "nick lane"},        // no comma - returned unchanged
-		{",first", ",first"},              // no last name segment
-		{"last,", "last,"},               // no first name after comma
+		{"nick lane", "nick lane"}, // no comma - returned unchanged
+		{",first", ",first"},       // no last name segment
+		{"last,", "last,"},         // no first name after comma
 	}
 	for _, tc := range cases {
 		got := invertAuthorName(tc.in)

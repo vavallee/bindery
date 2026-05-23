@@ -1118,7 +1118,6 @@ func (s *Scanner) alreadyImportedPath(ctx context.Context, book *models.Book, de
 	return false
 }
 
-// tryImportInternal is the common import logic shared by SABnzbd and Transmission.
 // ImportFromPath creates an import run for a file or folder already on disk,
 // bypassing the download-client polling path. formatHint overrides extension-
 // based format detection when non-empty ("ebook" or "audiobook").
