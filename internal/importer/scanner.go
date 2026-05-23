@@ -892,6 +892,22 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 		if isComplete && (dl.Status == models.StateDownloading || dl.Status == models.StateGrabbed) {
 			rawPath, ok := resolveQbitContentPath(torrent)
 			if !ok {
+				// content_path is absent or points to a path that no longer exists.
+				// This can happen when files were moved to the library by a prior
+				// Bindery import (move mode) and the torrent is re-grabbed via a
+				// 409 duplicate-add (#769). If the book is already in the library,
+				// close out this download immediately rather than looping forever.
+				if s.isBookAlreadyImported(ctx, &dl) {
+					slog.Info("qbittorrent: content path gone but book already in library — marking as imported",
+						"title", dl.Title)
+					// Walk the state machine: grabbed/downloading → completed →
+					// importPending → importing → imported.
+					s.updateDownloadStatus(ctx, dl.ID, models.StateCompleted)
+					s.updateDownloadStatus(ctx, dl.ID, models.StateImportPending)
+					s.updateDownloadStatus(ctx, dl.ID, models.StateImporting)
+					s.updateDownloadStatus(ctx, dl.ID, models.StateImported)
+					continue
+				}
 				// Path doesn't exist on disk yet (qBittorrent may sanitise characters
 				// in the torrent name that differ from what the API reports, e.g. ':'→'_').
 				// Do NOT fall back to torrent.SavePath — for multi-file torrents that is
@@ -914,6 +930,16 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 			// files — retry the import rather than leaving it stuck permanently.
 			rawPath, ok := resolveQbitContentPath(torrent)
 			if !ok {
+				// Same guard as the StateGrabbed branch: if the book is already in
+				// the library (files moved by a prior import), close out cleanly.
+				if s.isBookAlreadyImported(ctx, &dl) {
+					slog.Info("qbittorrent: content path gone but book already in library — marking as imported",
+						"title", dl.Title)
+					s.updateDownloadStatus(ctx, dl.ID, models.StateImportPending)
+					s.updateDownloadStatus(ctx, dl.ID, models.StateImporting)
+					s.updateDownloadStatus(ctx, dl.ID, models.StateImported)
+					continue
+				}
 				slog.Warn("qbittorrent: content path not found during import retry, will retry next cycle",
 					"title", dl.Title,
 					"save_path", torrent.SavePath,
@@ -1027,6 +1053,27 @@ func (s *Scanner) alreadyImportedFormat(ctx context.Context, book *models.Book, 
 	return false
 }
 
+// isBookAlreadyImported reports whether any on-disk file is tracked in
+// book_files for the book linked to dl, in either ebook or audiobook format.
+//
+// It is used as a guard for duplicate-add re-grabs (#769): when a torrent is
+// re-grabbed after qBittorrent already holds it (409 response), the original
+// download files may have been moved to the library by a prior Bindery import
+// (move mode), leaving the download path empty. Rather than failing with "no
+// book files found" and burning through the retry budget, the caller can check
+// this and mark the Download StateImported directly.
+func (s *Scanner) isBookAlreadyImported(ctx context.Context, dl *models.Download) bool {
+	if dl.BookID == nil {
+		return false
+	}
+	book, err := s.books.GetByID(ctx, *dl.BookID)
+	if err != nil || book == nil {
+		return false
+	}
+	return s.alreadyImportedFormat(ctx, book, models.MediaTypeAudiobook) ||
+		s.alreadyImportedFormat(ctx, book, models.MediaTypeEbook)
+}
+
 // alreadyImportedPath reports whether the exact destination path is already
 // tracked in book_files for the book and still exists on disk. This is the
 // per-file idempotency guard for ebook imports, whose destination paths are
@@ -1108,6 +1155,20 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	}
 
 	if len(bookFiles) == 0 {
+		// Before failing, check whether the book is already in the library. This
+		// covers the case where a torrent was re-grabbed after its files were moved
+		// to the library by a prior Bindery import (move mode): the download path is
+		// empty but the book is already on disk. Marking it StateImported avoids
+		// spurious failure noise and retry churn (#769).
+		if s.isBookAlreadyImported(ctx, dl) {
+			slog.Info("no book files at download path but book already in library — marking as imported",
+				"title", dl.Title, "path", downloadPath)
+			// Currently at StateImportPending (set at the top of this function).
+			// Walk: importPending → importing → imported.
+			s.updateDownloadStatus(ctx, dl.ID, models.StateImporting)
+			s.updateDownloadStatus(ctx, dl.ID, models.StateImported)
+			return
+		}
 		slog.Warn("no book files found in download", "path", downloadPath)
 		// No files — retryable if the downloader hasn't flushed them yet.
 		s.failImport(ctx, dl, models.StateImportFailed, fmt.Sprintf("no book files found in %q", downloadPath))

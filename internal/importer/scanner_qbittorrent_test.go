@@ -333,3 +333,177 @@ func TestCheckQbittorrentDownloads_MissingContentPathDoesNotFallBackToSaveRoot(t
 			models.StateDownloading, got.Status)
 	}
 }
+
+// TestCheckQbittorrentDownloads_ContentPathGoneAlreadyImported is the
+// regression test for #769 (part 1 — content_path missing path).
+//
+// Scenario: a book was previously downloaded, imported with move mode (files
+// now live in the library), then re-grabbed. qBittorrent already holds the
+// torrent (409) so the hash is recovered and a new Download record is created
+// in StateGrabbed. By the next poll cycle the torrent is seeding but
+// content_path is absent AND Join(SavePath, Name) doesn't exist on disk (files
+// were moved to the library). The scanner must detect that the book is already
+// in the library and mark the Download StateImported rather than looping
+// forever in StateGrabbed.
+func TestCheckQbittorrentDownloads_ContentPathGoneAlreadyImported(t *testing.T) {
+	saveRoot := t.TempDir()
+	libraryDir := t.TempDir()
+
+	// Simulate a book file already in the library (placed there by a prior import).
+	libEpub := filepath.Join(libraryDir, "book.epub")
+	if err := os.WriteFile(libEpub, []byte("epub-in-library"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	const torrentHash = "feed1234567890feed1234567890feed12345678"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			torrents := []map[string]any{{
+				"hash":         torrentHash,
+				"name":         "My Book",
+				"state":        "missingFiles",
+				"progress":     1.0,
+				"save_path":    saveRoot,
+				"content_path": "", // absent — files were moved to the library
+			}}
+			_ = json.NewEncoder(w).Encode(torrents)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	ctx := context.Background()
+	dlRepo := db.NewDownloadRepo(database)
+	clientRepo := db.NewDownloadClientRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	authorRepo := db.NewAuthorRepo(database)
+	histRepo := db.NewHistoryRepo(database)
+
+	s := NewScanner(dlRepo, clientRepo, bookRepo, authorRepo, histRepo, libraryDir, "", "", "", "")
+
+	// Seed author and book records.
+	author := &models.Author{Name: "Test Author", ForeignID: "a-769", SortName: "Author, Test"}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{AuthorID: author.ID, Title: "My Book", ForeignID: "b-769", Status: "wanted"}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	// Record the library file in book_files to simulate a prior successful import.
+	if err := bookRepo.AddBookFile(ctx, book.ID, models.MediaTypeEbook, libEpub); err != nil {
+		t.Fatal(err)
+	}
+
+	host, port := scannerTestHostPort(t, srv.URL)
+	client := &models.DownloadClient{
+		Name: "qbit-769", Type: "qbittorrent",
+		Host: host, Port: port, Enabled: true,
+	}
+	if err := clientRepo.Create(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+
+	hash := torrentHash
+	dl := &models.Download{
+		GUID:             "guid-769-qbit",
+		Title:            "My Book",
+		Status:           models.StateGrabbed,
+		Protocol:         "torrent",
+		TorrentID:        &hash,
+		BookID:           &book.ID,
+		DownloadClientID: &client.ID,
+	}
+	if err := dlRepo.Create(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+
+	s.checkQbittorrentDownloads(ctx, client)
+
+	got, err := dlRepo.GetByGUID(ctx, dl.GUID)
+	if err != nil {
+		t.Fatalf("get download: %v", err)
+	}
+	if got.Status != models.StateImported {
+		t.Errorf("#769 regression: expected status %q (book already in library), got %q",
+			models.StateImported, got.Status)
+	}
+}
+
+// TestTryImportInternal_EmptyPathAlreadyImported is the regression test for
+// #769 (part 2 — empty download path, all clients).
+//
+// Scenario: tryImportInternal is called with a download path that contains no
+// book files (e.g. files were moved to the library by a prior import). The
+// book is already tracked in book_files with an on-disk file. The scanner must
+// mark the Download StateImported rather than StateImportFailed.
+func TestTryImportInternal_EmptyPathAlreadyImported(t *testing.T) {
+	libraryDir := t.TempDir()
+	emptyDownloadDir := t.TempDir() // no book files
+
+	// Simulate a book file already in the library.
+	libEpub := filepath.Join(libraryDir, "book.epub")
+	if err := os.WriteFile(libEpub, []byte("epub-in-library"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	ctx := context.Background()
+	dlRepo := db.NewDownloadRepo(database)
+	clientRepo := db.NewDownloadClientRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	authorRepo := db.NewAuthorRepo(database)
+	histRepo := db.NewHistoryRepo(database)
+
+	s := NewScanner(dlRepo, clientRepo, bookRepo, authorRepo, histRepo, libraryDir, "", "", "", "")
+
+	author := &models.Author{Name: "Test Author", ForeignID: "a-769b", SortName: "Author, Test"}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{AuthorID: author.ID, Title: "My Book", ForeignID: "b-769b", Status: "wanted"}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := bookRepo.AddBookFile(ctx, book.ID, models.MediaTypeEbook, libEpub); err != nil {
+		t.Fatal(err)
+	}
+
+	dl := &models.Download{
+		GUID:   "guid-769-internal",
+		Title:  "My Book",
+		Status: models.StateCompleted,
+		BookID: &book.ID,
+	}
+	if err := dlRepo.Create(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+
+	s.tryImportInternal(ctx, dl, emptyDownloadDir, "", "", nil)
+
+	got, err := dlRepo.GetByGUID(ctx, dl.GUID)
+	if err != nil {
+		t.Fatalf("get download: %v", err)
+	}
+	if got.Status != models.StateImported {
+		t.Errorf("#769 regression: expected status %q (book already in library), got %q — "+
+			"re-grab of already-imported book must not fail with 'no book files found'",
+			models.StateImported, got.Status)
+	}
+}
