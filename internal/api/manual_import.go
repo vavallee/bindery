@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,12 +35,16 @@ func NewManualImportHandler(scanner manualImportScanner, downloads *db.DownloadR
 // It parses the filename, searches the local catalogue, and returns a match
 // result along with the auto-detected format. No state is modified.
 func (h *ManualImportHandler) Lookup(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Query().Get("path")
-	if path == "" {
+	path := filepath.Clean(r.URL.Query().Get("path"))
+	if path == "" || path == "." {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path parameter required"})
 		return
 	}
-	if _, err := os.Stat(path); err != nil {
+	if !filepath.IsAbs(path) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path must be absolute"})
+		return
+	}
+	if _, err := os.Stat(path); err != nil { //nolint:gosec // #nosec G304 -- path is cleaned and validated as absolute; endpoint is admin-only
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("path not accessible: %v", err)})
 		return
 	}
@@ -68,8 +73,13 @@ func (h *ManualImportHandler) Import(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
-	if req.Path == "" {
+	req.Path = filepath.Clean(req.Path)
+	if req.Path == "" || req.Path == "." {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path is required"})
+		return
+	}
+	if !filepath.IsAbs(req.Path) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path must be absolute"})
 		return
 	}
 	if req.BookID <= 0 {
@@ -81,7 +91,7 @@ func (h *ManualImportHandler) Import(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := os.Stat(req.Path)
+	info, err := os.Stat(req.Path) //nolint:gosec // #nosec G304 -- path is cleaned and validated as absolute; endpoint is admin-only
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("path not accessible: %v", err)})
 		return
