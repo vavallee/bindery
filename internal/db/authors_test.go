@@ -38,6 +38,58 @@ func TestAuthorRepo_GetByDNBSyntheticName_NoMatch(t *testing.T) {
 	}
 }
 
+func TestAuthorRepo_MonitorDefaultsRoundTrip(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	repo := NewAuthorRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID:        "OL-MON-A",
+		Name:             "Monitor Author",
+		SortName:         "Author, Monitor",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := repo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	if author.MonitorMode != models.AuthorMonitorModeAll {
+		t.Fatalf("create default monitor mode = %q, want %q", author.MonitorMode, models.AuthorMonitorModeAll)
+	}
+	if author.MonitorLatestCount != models.DefaultAuthorMonitorLatestCount {
+		t.Fatalf("create default latest count = %d, want %d", author.MonitorLatestCount, models.DefaultAuthorMonitorLatestCount)
+	}
+
+	got, err := repo.GetByID(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("author not found")
+	}
+	if got.MonitorMode != models.AuthorMonitorModeAll || got.MonitorLatestCount != models.DefaultAuthorMonitorLatestCount {
+		t.Fatalf("defaults did not round trip: %+v", got)
+	}
+
+	got.MonitorMode = models.AuthorMonitorModeLatest
+	got.MonitorLatestCount = 3
+	if err := repo.Update(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	got, err = repo.GetByID(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MonitorMode != models.AuthorMonitorModeLatest || got.MonitorLatestCount != 3 {
+		t.Fatalf("updated monitor defaults did not round trip: %+v", got)
+	}
+}
+
 // TestAuthorRepo_GetByDNBSyntheticName_MatchesSyntheticOnly verifies the
 // foreign_id LIKE 'dnb:author:%' guard: rows with dnb:gnd: or other prefixes
 // are not considered synthetic, only dnb:author:<slug> rows are eligible for

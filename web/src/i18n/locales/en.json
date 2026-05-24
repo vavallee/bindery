@@ -33,6 +33,12 @@
     "prev": "Prev",
     "next": "Next"
   },
+  "monitorMode": {
+    "all": "All books",
+    "future": "Future books only",
+    "latest": "Latest only",
+    "none": "None"
+  },
   "nav": {
     "authors": "Authors",
     "books": "Books",
@@ -481,6 +487,8 @@
     "title": "Add Author",
     "metadataProfile": "Metadata profile",
     "rootFolder": "Root folder",
+    "monitorMode": "Monitor mode",
+    "monitorLatestCount": "Latest book count",
     "autoGrabLabel": "Auto-grab books on add",
     "autoGrabHint": "Bindery will always fetch the book catalogue. Enable this to also queue downloads immediately.",
     "searchPlaceholder": "Search by author name...",

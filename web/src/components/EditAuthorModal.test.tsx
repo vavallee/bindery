@@ -67,13 +67,13 @@ describe('EditAuthorModal', () => {
   })
 
   async function getSelects() {
-    // Wait for profiles to load — once they do all four selects render
-    // (quality, metadata, ebook root folder, audiobook root folder).
+    // Wait for profiles to load — once they do all five selects render
+    // (quality, metadata, ebook root folder, audiobook root folder, monitor mode).
     await screen.findByRole('option', { name: 'Any' })
     const selects = screen.getAllByRole('combobox') as HTMLSelectElement[]
-    expect(selects).toHaveLength(4)
-    const [quality, metadata, root, audiobookRoot] = selects
-    return { quality, metadata, root, audiobookRoot }
+    expect(selects).toHaveLength(5)
+    const [quality, metadata, root, audiobookRoot, monitorMode] = selects
+    return { quality, metadata, root, audiobookRoot, monitorMode }
   }
 
   it('opens with the current author values prefilled', async () => {
@@ -101,6 +101,25 @@ describe('EditAuthorModal', () => {
     expect('rootFolderId' in callArg).toBe(false)
     expect('audiobookRootFolderId' in callArg).toBe(false)
     expect('clearAudiobookRootFolder' in callArg).toBe(false)
+    expect('monitorMode' in callArg).toBe(false)
+    expect('applyMonitorModeToExisting' in callArg).toBe(false)
+  })
+
+  it('sends monitor mode fields and the apply flag when selected', async () => {
+    render(<EditAuthorModal author={baseAuthor} onClose={onClose} onSaved={onSaved} />)
+
+    const { monitorMode } = await getSelects()
+    fireEvent.change(monitorMode, { target: { value: 'latest' } })
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: /apply monitor mode to existing books/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => expect(api.updateAuthor).toHaveBeenCalledTimes(1))
+    expect(api.updateAuthor).toHaveBeenCalledWith(42, {
+      monitorMode: 'latest',
+      monitorLatestCount: 3,
+      applyMonitorModeToExisting: true,
+    })
   })
 
   it('prefills the audiobook root folder and sends it when changed', async () => {

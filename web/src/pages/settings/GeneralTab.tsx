@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, AuthConfig, AuthStatus, HardcoverTestResult, RootFolder, SystemStatus } from '../../api/client'
+import { api, AuthConfig, AuthStatus, AuthorMonitorMode, HardcoverTestResult, RootFolder, SystemStatus } from '../../api/client'
 import AuthSettings from '../../settings/AuthSettings'
 import ThemeToggle from '../../components/ThemeToggle'
 import LanguageSwitcher from '../../components/LanguageSwitcher'
@@ -27,6 +27,10 @@ function formatRelativeTime(iso: string): string {
   if (Math.abs(hrs) < 24) return hrs >= 0 ? `${hrs}h ago` : `in ${-hrs}h`
   const days = Math.round(diffSec / 86400)
   return days >= 0 ? `${days}d ago` : `in ${-days}d`
+}
+
+function isAuthorMonitorMode(value: string): value is AuthorMonitorMode {
+  return value === 'all' || value === 'future' || value === 'latest' || value === 'none'
 }
 
 export default function GeneralTab() {
@@ -583,26 +587,70 @@ export default function GeneralTab() {
       {/* Author defaults */}
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.authorDefaults', 'Author defaults')}</h3>
-        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-          <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
-            {t('settings.general.defaultMediaTypeLabel', 'Default media type')}
-          </label>
-          <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
-            {t('settings.general.defaultMediaTypeHint', 'Applied to new authors when no explicit choice is made. Existing authors are unaffected — use the Authors page bulk action to migrate them.')}
-          </p>
-          <select
-            value={settings['default.media_type'] ?? 'ebook'}
-            onChange={async e => {
-              const next = e.target.value
-              setSettings(s => ({ ...s, 'default.media_type': next }))
-              await api.setSetting('default.media_type', next).catch(console.error)
-            }}
-            className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
-          >
-            <option value="ebook">{t('mediaType.ebook', 'Ebook')}</option>
-            <option value="audiobook">{t('mediaType.audiobook', 'Audiobook')}</option>
-            <option value="both">{t('mediaType.both', 'Both')}</option>
-          </select>
+        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
+              {t('settings.general.defaultMediaTypeLabel', 'Default media type')}
+            </label>
+            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+              {t('settings.general.defaultMediaTypeHint', 'Applied to new authors when no explicit choice is made. Existing authors are unaffected — use the Authors page bulk action to migrate them.')}
+            </p>
+            <select
+              value={settings['default.media_type'] ?? 'ebook'}
+              onChange={async e => {
+                const next = e.target.value
+                setSettings(s => ({ ...s, 'default.media_type': next }))
+                await api.setSetting('default.media_type', next).catch(console.error)
+              }}
+              className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+            >
+              <option value="ebook">{t('mediaType.ebook', 'Ebook')}</option>
+              <option value="audiobook">{t('mediaType.audiobook', 'Audiobook')}</option>
+              <option value="both">{t('mediaType.both', 'Both')}</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
+              {t('settings.general.defaultMonitorModeLabel', 'Default monitor mode')}
+            </label>
+            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+              {t('settings.general.defaultMonitorModeHint', 'Applied to newly added authors. Existing authors keep their current mode unless edited.')}
+            </p>
+            <select
+              value={isAuthorMonitorMode(settings['author.default_monitor_mode'] ?? '') ? settings['author.default_monitor_mode'] : 'all'}
+              onChange={async e => {
+                const next = e.target.value as AuthorMonitorMode
+                setSettings(s => ({ ...s, 'author.default_monitor_mode': next }))
+                await api.setSetting('author.default_monitor_mode', next).catch(console.error)
+              }}
+              className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+            >
+              <option value="all">{t('monitorMode.all', 'All books')}</option>
+              <option value="future">{t('monitorMode.future', 'Future books only')}</option>
+              <option value="latest">{t('monitorMode.latest', 'Latest only')}</option>
+              <option value="none">{t('monitorMode.none', 'None')}</option>
+            </select>
+          </div>
+          {(settings['author.default_monitor_mode'] ?? 'all') === 'latest' && (
+            <div>
+              <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
+                {t('settings.general.defaultMonitorLatestCountLabel', 'Latest book count')}
+              </label>
+              <input
+                type="number"
+                min={1}
+                value={settings['author.default_monitor_latest_count'] ?? '1'}
+                onChange={async e => {
+                  const next = e.target.value
+                  setSettings(s => ({ ...s, 'author.default_monitor_latest_count': next }))
+                  if (/^[1-9]\d*$/.test(next)) {
+                    await api.setSetting('author.default_monitor_latest_count', next).catch(console.error)
+                  }
+                }}
+                className="w-28 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+          )}
         </div>
       </section>
 

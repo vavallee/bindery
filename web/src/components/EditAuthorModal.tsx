@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, Author, MetadataProfile, QualityProfile, RootFolder, UpdateAuthorRequest } from '../api/client'
+import { api, Author, AuthorMonitorMode, MetadataProfile, QualityProfile, RootFolder, UpdateAuthorRequest } from '../api/client'
 
 interface Props {
   author: Author
@@ -19,6 +19,9 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
   const [metadataProfileId, setMetadataProfileId] = useState<number | null>(author.metadataProfileId ?? null)
   const [rootFolderId, setRootFolderId] = useState<number | null>(author.rootFolderId ?? null)
   const [audiobookRootFolderId, setAudiobookRootFolderId] = useState<number | null>(author.audiobookRootFolderId ?? null)
+  const [monitorMode, setMonitorMode] = useState<AuthorMonitorMode>(author.monitorMode ?? 'all')
+  const [monitorLatestCount, setMonitorLatestCount] = useState(author.monitorLatestCount ?? 1)
+  const [applyMonitorModeToExisting, setApplyMonitorModeToExisting] = useState(false)
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -63,6 +66,15 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
       } else {
         patch.audiobookRootFolderId = audiobookRootFolderId
       }
+    }
+    if (monitorMode !== (author.monitorMode ?? 'all')) {
+      patch.monitorMode = monitorMode
+    }
+    if (monitorLatestCount !== (author.monitorLatestCount ?? 1)) {
+      patch.monitorLatestCount = monitorLatestCount
+    }
+    if (applyMonitorModeToExisting) {
+      patch.applyMonitorModeToExisting = true
     }
 
     if (Object.keys(patch).length === 0) {
@@ -154,6 +166,43 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                   <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('editAuthorModal.audiobookRootFolderHint', "Where this author's audiobooks are stored. Separate from the ebook root folder.")}</p>
                 </div>
               )}
+              <div className="mb-3">
+                <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('editAuthorModal.monitorMode', 'Monitor mode')}</label>
+                <select
+                  value={monitorMode}
+                  onChange={e => setMonitorMode(e.target.value as AuthorMonitorMode)}
+                  className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="all">{t('monitorMode.all', 'All books')}</option>
+                  <option value="future">{t('monitorMode.future', 'Future books only')}</option>
+                  <option value="latest">{t('monitorMode.latest', 'Latest only')}</option>
+                  <option value="none">{t('monitorMode.none', 'None')}</option>
+                </select>
+              </div>
+              {monitorMode === 'latest' && (
+                <div className="mb-3">
+                  <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('editAuthorModal.monitorLatestCount', 'Latest book count')}</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={monitorLatestCount}
+                    onChange={e => setMonitorLatestCount(Math.max(1, Number(e.target.value) || 1))}
+                    className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              )}
+              <label className="flex items-start gap-2 text-sm mb-3 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={applyMonitorModeToExisting}
+                  onChange={e => setApplyMonitorModeToExisting(e.target.checked)}
+                  className="accent-emerald-500 mt-0.5 flex-shrink-0"
+                />
+                <span>
+                  <span className="font-medium">{t('editAuthorModal.applyMonitorModeToExisting', 'Apply monitor mode to existing books')}</span>
+                  <span className="block text-xs text-slate-600 dark:text-zinc-400 mt-0.5">{t('editAuthorModal.applyMonitorModeToExistingHint', 'Otherwise this only affects books discovered in future refreshes.')}</span>
+                </span>
+              </label>
               {error && (
                 <p className="text-sm text-red-600 dark:text-red-400 mt-2">{error}</p>
               )}

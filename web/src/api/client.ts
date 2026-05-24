@@ -543,6 +543,8 @@ export interface Author {
   ratingsCount: number
   averageRating: number
   monitored: boolean
+  monitorMode?: AuthorMonitorMode
+  monitorLatestCount?: number
   qualityProfileId?: number | null
   metadataProfileId?: number | null
   rootFolderId?: number | null
@@ -568,6 +570,7 @@ export interface MergeAuthorsResult {
 }
 
 export type MediaType = 'ebook' | 'audiobook' | 'both'
+export type AuthorMonitorMode = 'all' | 'future' | 'latest' | 'none'
 
 export interface BookFile {
   id: number
@@ -1063,6 +1066,8 @@ export interface AddAuthorRequest {
   foreignAuthorId: string
   authorName: string
   monitored: boolean
+  monitorMode?: AuthorMonitorMode
+  monitorLatestCount?: number
   searchOnAdd: boolean
   metadataProfileId?: number | null
   qualityProfileId?: number | null
@@ -1076,11 +1081,14 @@ export interface AddAuthorRequest {
 // folder when this flag is true.
 export interface UpdateAuthorRequest {
   monitored?: boolean
+  monitorMode?: AuthorMonitorMode
+  monitorLatestCount?: number
   qualityProfileId?: number | null
   metadataProfileId?: number | null
   rootFolderId?: number | null
   audiobookRootFolderId?: number | null
   clearAudiobookRootFolder?: boolean
+  applyMonitorModeToExisting?: boolean
 }
 
 export interface GrabRequest {

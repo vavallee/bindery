@@ -25,6 +25,14 @@ import (
 // unset falls back to ebook for backwards compatibility.
 const SettingDefaultMediaType = "default.media_type"
 
+// SettingAuthorDefaultMonitorMode controls which newly discovered books are
+// monitored for authors created without an explicit monitorMode.
+const SettingAuthorDefaultMonitorMode = "author.default_monitor_mode"
+
+// SettingAuthorDefaultMonitorLatestCount stores the N for monitor_mode=latest
+// when authors are created without an explicit monitorLatestCount.
+const SettingAuthorDefaultMonitorLatestCount = "author.default_monitor_latest_count"
+
 // SettingDefaultLibraryRootFolderID is the KV key that stores the ID of the
 // root folder used as the fallback library path when an author has no
 // per-author RootFolderID. Value is a decimal integer (the root_folder.id);
@@ -276,6 +284,21 @@ func validateSettingValue(key, value string) error {
 			return nil
 		default:
 			return fmt.Errorf("default.media_type %q is not one of: ebook, audiobook, both", value)
+		}
+	case SettingAuthorDefaultMonitorMode:
+		if value == "" {
+			return nil
+		}
+		if !models.IsAuthorMonitorModeValid(value) {
+			return fmt.Errorf("author.default_monitor_mode %q is not one of: all, future, latest, none", value)
+		}
+	case SettingAuthorDefaultMonitorLatestCount:
+		if value == "" {
+			return nil
+		}
+		n, err := strconv.Atoi(value)
+		if err != nil || n <= 0 {
+			return fmt.Errorf("author.default_monitor_latest_count %q must be a positive integer", value)
 		}
 	case SettingDefaultLibraryRootFolderID:
 		// Empty = unset (fall back to env-var default); non-empty must be a

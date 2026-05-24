@@ -5,19 +5,21 @@ package models
 import "time"
 
 type Author struct {
-	ID                int64   `json:"id"`
-	ForeignID         string  `json:"foreignAuthorId"`
-	Name              string  `json:"authorName"`
-	SortName          string  `json:"sortName"`
-	Description       string  `json:"description"`
-	ImageURL          string  `json:"imageUrl"`
-	Disambiguation    string  `json:"disambiguation"`
-	RatingsCount      int     `json:"ratingsCount"`
-	AverageRating     float64 `json:"averageRating"`
-	Monitored         bool    `json:"monitored"`
-	QualityProfileID  *int64  `json:"qualityProfileId"`
-	MetadataProfileID *int64  `json:"metadataProfileId"`
-	RootFolderID      *int64  `json:"rootFolderId"`
+	ID                 int64   `json:"id"`
+	ForeignID          string  `json:"foreignAuthorId"`
+	Name               string  `json:"authorName"`
+	SortName           string  `json:"sortName"`
+	Description        string  `json:"description"`
+	ImageURL           string  `json:"imageUrl"`
+	Disambiguation     string  `json:"disambiguation"`
+	RatingsCount       int     `json:"ratingsCount"`
+	AverageRating      float64 `json:"averageRating"`
+	Monitored          bool    `json:"monitored"`
+	MonitorMode        string  `json:"monitorMode"`
+	MonitorLatestCount int     `json:"monitorLatestCount"`
+	QualityProfileID   *int64  `json:"qualityProfileId"`
+	MetadataProfileID  *int64  `json:"metadataProfileId"`
+	RootFolderID       *int64  `json:"rootFolderId"`
 	// AudiobookRootFolderID overrides the audiobook destination for this
 	// author. Distinct from RootFolderID, which only routes ebooks: keeping
 	// them separate ensures an ebook root folder never redirects audiobooks
@@ -36,6 +38,25 @@ type Author struct {
 	// Transient: populated from the metadata provider during add/refresh; not stored in DB.
 	// Used to seed author_aliases so non-latin primary names get latin-script alternates.
 	AlternateNames []string `json:"-"`
+}
+
+const (
+	AuthorMonitorModeAll    = "all"
+	AuthorMonitorModeFuture = "future"
+	AuthorMonitorModeLatest = "latest"
+	AuthorMonitorModeNone   = "none"
+
+	DefaultAuthorMonitorMode        = AuthorMonitorModeAll
+	DefaultAuthorMonitorLatestCount = 1
+)
+
+func IsAuthorMonitorModeValid(mode string) bool {
+	switch mode {
+	case AuthorMonitorModeAll, AuthorMonitorModeFuture, AuthorMonitorModeLatest, AuthorMonitorModeNone:
+		return true
+	default:
+		return false
+	}
 }
 
 type AuthorStats struct {

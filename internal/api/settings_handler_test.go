@@ -182,6 +182,46 @@ func TestSettings_SetBadBody(t *testing.T) {
 	}
 }
 
+func TestSettings_AuthorMonitorDefaultsValidation(t *testing.T) {
+	h, repo, ctx := settingsFixture(t)
+
+	validReq := withKey(httptest.NewRequest(http.MethodPut, "/api/v1/settings/"+SettingAuthorDefaultMonitorMode, bytes.NewBufferString(`{"value":"future"}`)), SettingAuthorDefaultMonitorMode)
+	validRec := httptest.NewRecorder()
+	h.Set(validRec, validReq)
+	if validRec.Code != http.StatusOK {
+		t.Fatalf("expected valid mode 200, got %d: %s", validRec.Code, validRec.Body.String())
+	}
+	got, _ := repo.Get(ctx, SettingAuthorDefaultMonitorMode)
+	if got == nil || got.Value != models.AuthorMonitorModeFuture {
+		t.Fatalf("expected future setting persisted, got %+v", got)
+	}
+
+	badModeReq := withKey(httptest.NewRequest(http.MethodPut, "/api/v1/settings/"+SettingAuthorDefaultMonitorMode, bytes.NewBufferString(`{"value":"yesterday"}`)), SettingAuthorDefaultMonitorMode)
+	badModeRec := httptest.NewRecorder()
+	h.Set(badModeRec, badModeReq)
+	if badModeRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid mode 400, got %d", badModeRec.Code)
+	}
+
+	validCountReq := withKey(httptest.NewRequest(http.MethodPut, "/api/v1/settings/"+SettingAuthorDefaultMonitorLatestCount, bytes.NewBufferString(`{"value":"5"}`)), SettingAuthorDefaultMonitorLatestCount)
+	validCountRec := httptest.NewRecorder()
+	h.Set(validCountRec, validCountReq)
+	if validCountRec.Code != http.StatusOK {
+		t.Fatalf("expected valid count 200, got %d: %s", validCountRec.Code, validCountRec.Body.String())
+	}
+	got, _ = repo.Get(ctx, SettingAuthorDefaultMonitorLatestCount)
+	if got == nil || got.Value != "5" {
+		t.Fatalf("expected latest count persisted, got %+v", got)
+	}
+
+	badCountReq := withKey(httptest.NewRequest(http.MethodPut, "/api/v1/settings/"+SettingAuthorDefaultMonitorLatestCount, bytes.NewBufferString(`{"value":"0"}`)), SettingAuthorDefaultMonitorLatestCount)
+	badCountRec := httptest.NewRecorder()
+	h.Set(badCountRec, badCountReq)
+	if badCountRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid count 400, got %d", badCountRec.Code)
+	}
+}
+
 func TestSettings_GetABSSecretReturns404(t *testing.T) {
 	h, repo, ctx := settingsFixture(t)
 	if err := repo.Set(ctx, SettingABSAPIKey, "supersecret"); err != nil {

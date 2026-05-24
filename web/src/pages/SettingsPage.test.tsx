@@ -449,9 +449,18 @@ describe('SettingsPage', () => {
     expect(defaultLocation.getByRole('combobox')).toHaveValue('8')
 
     const authorDefaults = sectionForHeading('Author defaults')
-    fireEvent.change(authorDefaults.getByRole('combobox'), { target: { value: 'audiobook' } })
+    const authorDefaultSelects = authorDefaults.getAllByRole('combobox')
+    fireEvent.change(authorDefaultSelects[0], { target: { value: 'audiobook' } })
     await waitFor(() => {
       expect(api.setSetting).toHaveBeenCalledWith('default.media_type', 'audiobook')
+    })
+    fireEvent.change(authorDefaultSelects[1], { target: { value: 'latest' } })
+    await waitFor(() => {
+      expect(api.setSetting).toHaveBeenCalledWith('author.default_monitor_mode', 'latest')
+    })
+    fireEvent.change(authorDefaults.getByRole('spinbutton'), { target: { value: '3' } })
+    await waitFor(() => {
+      expect(api.setSetting).toHaveBeenCalledWith('author.default_monitor_latest_count', '3')
     })
   })
 

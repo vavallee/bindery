@@ -480,6 +480,132 @@ func TestFetchAuthorBooks_SkipsSearchWhenNotMonitored(t *testing.T) {
 	}
 }
 
+func TestFetchAuthorBooks_AppliesAuthorMonitorModes(t *testing.T) {
+	now := time.Now().UTC()
+	oldDate := now.AddDate(0, 0, -30)
+	middleDate := now.AddDate(0, 0, -7)
+	futureDate := now.AddDate(0, 0, 7)
+
+	testCases := []struct {
+		name        string
+		mode        string
+		latestCount int
+		want        map[string]bool
+	}{
+		{
+			name:        "all",
+			mode:        models.AuthorMonitorModeAll,
+			latestCount: 1,
+			want: map[string]bool{
+				"Old Book":     true,
+				"Middle Book":  true,
+				"Future Book":  true,
+				"Unknown Book": true,
+			},
+		},
+		{
+			name:        "future",
+			mode:        models.AuthorMonitorModeFuture,
+			latestCount: 1,
+			want: map[string]bool{
+				"Old Book":     false,
+				"Middle Book":  false,
+				"Future Book":  true,
+				"Unknown Book": false,
+			},
+		},
+		{
+			name:        "latest",
+			mode:        models.AuthorMonitorModeLatest,
+			latestCount: 2,
+			want: map[string]bool{
+				"Old Book":     false,
+				"Middle Book":  true,
+				"Future Book":  true,
+				"Unknown Book": false,
+			},
+		},
+		{
+			name:        "none",
+			mode:        models.AuthorMonitorModeNone,
+			latestCount: 1,
+			want: map[string]bool{
+				"Old Book":     false,
+				"Middle Book":  false,
+				"Future Book":  false,
+				"Unknown Book": false,
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			database, err := db.OpenMemory()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+
+			authorRepo := db.NewAuthorRepo(database)
+			bookRepo := db.NewBookRepo(database)
+			profileRepo := db.NewMetadataProfileRepo(database)
+			ctx := context.Background()
+
+			author := &models.Author{
+				ForeignID:          "OL-MODE-" + tc.name,
+				Name:               "Mode Author",
+				SortName:           "Author, Mode",
+				MetadataProvider:   "openlibrary",
+				Monitored:          true,
+				MonitorMode:        tc.mode,
+				MonitorLatestCount: tc.latestCount,
+			}
+			if err := authorRepo.Create(ctx, author); err != nil {
+				t.Fatal(err)
+			}
+
+			stub := &stubMetaProvider{
+				works: []models.Book{
+					{ForeignID: "OL-MODE-OLD-" + tc.name, Title: "Old Book", SortTitle: "old book", ReleaseDate: &oldDate, Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+					{ForeignID: "OL-MODE-MID-" + tc.name, Title: "Middle Book", SortTitle: "middle book", ReleaseDate: &middleDate, Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+					{ForeignID: "OL-MODE-FUT-" + tc.name, Title: "Future Book", SortTitle: "future book", ReleaseDate: &futureDate, Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+					{ForeignID: "OL-MODE-UNK-" + tc.name, Title: "Unknown Book", SortTitle: "unknown book", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+				},
+			}
+			spy := &searcherSpy{}
+			h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(stub), nil, profileRepo, spy)
+			h.FetchAuthorBooks(author, true, "")
+
+			books, err := bookRepo.ListByAuthor(ctx, author.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(books) != len(tc.want) {
+				t.Fatalf("books = %d, want %d", len(books), len(tc.want))
+			}
+			for _, book := range books {
+				want, ok := tc.want[book.Title]
+				if !ok {
+					t.Fatalf("unexpected book %q", book.Title)
+				}
+				if book.Monitored != want {
+					t.Errorf("%s monitored = %v, want %v", book.Title, book.Monitored, want)
+				}
+			}
+
+			seenSearches := map[string]bool{}
+			for _, title := range spy.titles() {
+				seenSearches[title] = true
+			}
+			for title, wantMonitored := range tc.want {
+				if seenSearches[title] != wantMonitored {
+					t.Errorf("search for %q = %v, want %v", title, seenSearches[title], wantMonitored)
+				}
+			}
+		})
+	}
+}
+
 // TestFetchAuthorBooks_DedupsEditionSuffix is a regression test for issue #283.
 // When two provider results for the same work differ only in a trailing
 // parenthesised edition qualifier (e.g. "Dune" vs "Dune (German Edition)"),
@@ -793,6 +919,136 @@ func TestCreateAuthor_UsesCanonicalMetadataAndRecordsAlias(t *testing.T) {
 	}
 	if len(aliases) != 1 || aliases[0].Name != "J.K. Rowling" {
 		t.Fatalf("aliases = %+v, want J.K. Rowling alias", aliases)
+	}
+}
+
+func TestCreateAuthor_UsesGlobalMonitorDefaultsWhenOmitted(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	if err := settingsRepo.Set(ctx, SettingAuthorDefaultMonitorMode, models.AuthorMonitorModeFuture); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingsRepo.Set(ctx, SettingAuthorDefaultMonitorLatestCount, "4"); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &fixedAuthorProvider{
+		result: &models.Author{
+			ForeignID:        "OL-GLOBAL-A",
+			Name:             "Global Defaults",
+			SortName:         "Defaults, Global",
+			MetadataProvider: "openlibrary",
+		},
+	}
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(provider), settingsRepo, profileRepo, nil)
+	body, _ := json.Marshal(map[string]any{
+		"foreignAuthorId": "OL-GLOBAL-A",
+		"authorName":      "Global Defaults",
+		"monitored":       true,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/author", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.Create(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, err := authorRepo.GetByForeignID(ctx, "OL-GLOBAL-A")
+	if err != nil || got == nil {
+		t.Fatalf("fetch author: %v, got=%+v", err, got)
+	}
+	if got.MonitorMode != models.AuthorMonitorModeFuture || got.MonitorLatestCount != 4 {
+		t.Fatalf("monitor defaults = %q/%d, want future/4", got.MonitorMode, got.MonitorLatestCount)
+	}
+}
+
+func TestUpdateAuthor_ApplyMonitorModeToExistingBooks(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID:        "OL-APPLY-A",
+		Name:             "Apply Author",
+		SortName:         "Author, Apply",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+		MonitorMode:      models.AuthorMonitorModeAll,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	oldDate := time.Now().UTC().AddDate(0, 0, -3)
+	futureDate := time.Now().UTC().AddDate(0, 0, 3)
+	books := []*models.Book{
+		{ForeignID: "OL-APPLY-OLD", AuthorID: author.ID, Title: "Old Book", SortTitle: "old book", ReleaseDate: &oldDate, Status: models.BookStatusWanted, Monitored: true, Genres: []string{}, MetadataProvider: "openlibrary"},
+		{ForeignID: "OL-APPLY-FUTURE", AuthorID: author.ID, Title: "Future Book", SortTitle: "future book", ReleaseDate: &futureDate, Status: models.BookStatusWanted, Monitored: true, Genres: []string{}, MetadataProvider: "openlibrary"},
+		{ForeignID: "OL-APPLY-UNKNOWN", AuthorID: author.ID, Title: "Unknown Book", SortTitle: "unknown book", Status: models.BookStatusWanted, Monitored: true, Genres: []string{}, MetadataProvider: "openlibrary"},
+		{ForeignID: "OL-APPLY-EXCLUDED", AuthorID: author.ID, Title: "Excluded Book", SortTitle: "excluded book", ReleaseDate: &futureDate, Status: models.BookStatusWanted, Monitored: true, Genres: []string{}, MetadataProvider: "openlibrary"},
+	}
+	for _, book := range books {
+		if err := bookRepo.Create(ctx, book); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := bookRepo.SetExcluded(ctx, books[3].ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, nil, nil, profileRepo, nil)
+	body, _ := json.Marshal(map[string]any{
+		"monitorMode":                models.AuthorMonitorModeFuture,
+		"applyMonitorModeToExisting": true,
+	})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/author/"+strconv.FormatInt(author.ID, 10), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", strconv.FormatInt(author.ID, 10))
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.Update(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	gotBooks, err := bookRepo.ListByAuthorIncludingExcluded(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, book := range gotBooks {
+		got[book.Title] = book.Monitored
+	}
+	want := map[string]bool{
+		"Old Book":      false,
+		"Future Book":   true,
+		"Unknown Book":  false,
+		"Excluded Book": false,
+	}
+	for title, wantMonitored := range want {
+		if got[title] != wantMonitored {
+			t.Errorf("%s monitored = %v, want %v", title, got[title], wantMonitored)
+		}
 	}
 }
 
