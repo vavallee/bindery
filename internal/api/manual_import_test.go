@@ -307,24 +307,31 @@ func TestManualImportImport_BookNotFound(t *testing.T) {
 }
 
 func TestManualImportImport_DownloadCreateFails(t *testing.T) {
-	// Close the database after the book is seeded but before the request, so
-	// that downloads.Create hits a closed-connection error while books.GetByID
-	// would have succeeded on the live DB. We use a separate connection for
-	// seeding so the close only affects the handler's repos.
-	database, err := db.OpenMemory()
+	// Use two separate in-memory DBs so books.GetByID can succeed (bookDB stays
+	// open) while downloads.Create fails (downloadsDB is closed before the
+	// request). This isolates exactly the "failed to create import record" 500
+	// path without inadvertently causing GetByID to fail first.
+	bookDB, err := db.OpenMemory()
 	if err != nil {
 		t.Fatal(err)
 	}
-	authors := db.NewAuthorRepo(database)
-	books := db.NewBookRepo(database)
+	t.Cleanup(func() { bookDB.Close() })
+
+	downloadsDB, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// downloadsDB is closed manually below to make downloads.Create fail.
+
+	authors := db.NewAuthorRepo(bookDB)
+	books := db.NewBookRepo(bookDB)
 	ctx := context.Background()
 	book := seedBook(t, authors, books, ctx)
 
-	// Now close the shared DB — both repos will fail from here on.
-	database.Close()
+	downloadsDB.Close()
 
 	stub := &stubManualImportScanner{}
-	h := NewManualImportHandler(stub, db.NewDownloadRepo(database), db.NewBookRepo(database))
+	h := NewManualImportHandler(stub, db.NewDownloadRepo(downloadsDB), books)
 
 	tmp := t.TempDir()
 	epub := filepath.Join(tmp, "book.epub")
@@ -335,11 +342,11 @@ func TestManualImportImport_DownloadCreateFails(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{"path": epub, "bookId": book.ID})
 	rec := httptest.NewRecorder()
 	h.Import(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import", bytes.NewReader(body)))
-	// Both GetByID and Create will fail on the closed DB; either a 400 (book
-	// not found) or a 500 (create failed) is acceptable — the point is that
-	// the handler does not panic.
-	if rec.Code != http.StatusBadRequest && rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 400 or 500 after DB close", rec.Code)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 when downloads.Create fails; body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "failed to create import record") {
+		t.Errorf("body = %q, want 'failed to create import record'", rec.Body.String())
 	}
 }
 

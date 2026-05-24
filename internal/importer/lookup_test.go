@@ -409,6 +409,38 @@ func TestScanner_Lookup_AuthorFilterRejects(t *testing.T) {
 	}
 }
 
+// TestScanner_Lookup_TitleMismatch verifies that books whose title does not
+// match the parsed filename are skipped (the !titleMatch → continue branch).
+// The catalogue contains one book with a completely different title; the
+// lookup finds no match and returns "none".
+func TestScanner_Lookup_TitleMismatch(t *testing.T) {
+	t.Parallel()
+	s, books, authors, ctx := scannerFixture(t, t.TempDir())
+
+	a := &models.Author{Name: "Mismatch Author", ForeignID: "mm-a", SortName: "Author, Mismatch"}
+	if err := authors.Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	b := &models.Book{AuthorID: a.ID, Title: "Completely Different Book", ForeignID: "mm-b", Status: "wanted"}
+	if err := books.Create(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+
+	tmp := t.TempDir()
+	f := filepath.Join(tmp, "Unknown.Title.epub")
+	if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := s.Lookup(ctx, f)
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if result.Match != "none" {
+		t.Errorf("match = %q, want none (title mismatch should skip the catalogue entry)", result.Match)
+	}
+}
+
 // TestScanner_Lookup_BooksListError verifies that a database error from
 // books.List is surfaced as a wrapped "lookup: list books" error.
 func TestScanner_Lookup_BooksListError(t *testing.T) {
