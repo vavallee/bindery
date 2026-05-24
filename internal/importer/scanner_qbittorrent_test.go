@@ -622,3 +622,65 @@ func TestIsBookAlreadyImported_NilBookID(t *testing.T) {
 		t.Error("expected false for download with no BookID, got true")
 	}
 }
+
+// TestIsBookAlreadyImported_BookNotFound verifies that a non-nil BookID that
+// resolves to no book (GetByID returns nil, nil) causes isBookAlreadyImported
+// to return false rather than panic or return true.
+func TestIsBookAlreadyImported_BookNotFound(t *testing.T) {
+	s, _, _, ctx := scannerFixture(t, t.TempDir())
+	// Use a BookID that was never inserted — GetByID returns nil, nil.
+	missingID := int64(99999)
+	dl := &models.Download{
+		GUID:   "orphan-book",
+		Status: models.StateGrabbed,
+		BookID: &missingID,
+	}
+	if s.isBookAlreadyImported(ctx, dl) {
+		t.Error("expected false for download whose book does not exist, got true")
+	}
+}
+
+// TestIsBookAlreadyImported_MediaTypeBoth exercises the default branch of
+// isBookAlreadyImported for a MediaTypeBoth book where the ebook is already on
+// disk but no audiobook file exists. The audiobook check returns false (so both
+// sides of the || are evaluated) and the ebook check returns true, so the
+// function must return true.
+func TestIsBookAlreadyImported_MediaTypeBoth(t *testing.T) {
+	libraryDir := t.TempDir()
+	s, bookRepo, authorRepo, ctx := scannerFixture(t, libraryDir)
+
+	// Put an ebook in the library.
+	libEpub := filepath.Join(libraryDir, "book.epub")
+	if err := os.WriteFile(libEpub, []byte("epub-content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	author := &models.Author{Name: "Both Author", ForeignID: "a-both", SortName: "Author, Both"}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{
+		AuthorID:  author.ID,
+		Title:     "Dual Format Book",
+		ForeignID: "b-both",
+		Status:    "wanted",
+		MediaType: models.MediaTypeBoth,
+	}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	// Track only the ebook — no audiobook file — so the audiobook arm of the
+	// default case returns false before the ebook arm returns true.
+	if err := bookRepo.AddBookFile(ctx, book.ID, models.MediaTypeEbook, libEpub); err != nil {
+		t.Fatal(err)
+	}
+
+	dl := &models.Download{
+		GUID:   "guid-both",
+		Status: models.StateGrabbed,
+		BookID: &book.ID,
+	}
+	if !s.isBookAlreadyImported(ctx, dl) {
+		t.Error("expected true for MediaTypeBoth book with ebook already on disk, got false")
+	}
+}
