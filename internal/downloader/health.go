@@ -144,7 +144,15 @@ func checkQbittorrentCategoryPath(ctx context.Context, client *models.DownloadCl
 
 	localPath := filepath.Clean(pathmap.Parse(client.PathRemap).Apply(savePath))
 	if !pathIsAtOrUnder(localPath, expected) {
-		return healthError(fmt.Sprintf("qBittorrent category %q saves to %q, which maps to %q; expected a path at or under %q", category, savePath, localPath, expected))
+		// #800: the error message above told the user where the paths
+		// disagreed but never named the fix. Most users hit this when
+		// qBittorrent and Bindery mount the same storage at different paths
+		// (e.g. /torrents in qBit, /downloads in Bindery). Spell out the
+		// path-remap recipe and reference the two settings that need to
+		// match so the user has a concrete next step rather than just a
+		// validation refusal.
+		hint := fmt.Sprintf("set this client's path remap to translate the qBittorrent prefix to Bindery's (e.g. %q), or mount the same directory at %q inside Bindery and set BINDERY_DOWNLOAD_DIR to match", remapHint(savePath, expected), localPath)
+		return healthError(fmt.Sprintf("qBittorrent category %q saves to %q, which maps to %q inside Bindery; expected a path at or under %q — %s", category, savePath, localPath, expected, hint))
 	}
 
 	return models.DownloadClientHealth{
@@ -155,6 +163,25 @@ func checkQbittorrentCategoryPath(ctx context.Context, client *models.DownloadCl
 
 func healthError(message string) models.DownloadClientHealth {
 	return models.DownloadClientHealth{Status: HealthError, Message: message}
+}
+
+// remapHint derives a "src:dst" PathRemap suggestion from the qBittorrent
+// save path and Bindery's expected download dir. It strips one path segment
+// from each so the suggestion translates the shared parent rather than the
+// fully-qualified leaf path: a user with qBit at "/torrents/complete/library"
+// and Bindery at "/downloads" gets "/torrents/complete:/downloads", which
+// also covers any sibling category save paths under the same root. When
+// either path is "/" the hint falls back to the full strings.
+func remapHint(savePath, expected string) string {
+	src := strings.TrimRight(filepath.Dir(filepath.Clean(savePath)), string(filepath.Separator))
+	dst := strings.TrimRight(filepath.Clean(expected), string(filepath.Separator))
+	if src == "" || src == "." {
+		src = filepath.Clean(savePath)
+	}
+	if dst == "" {
+		dst = "/"
+	}
+	return src + ":" + dst
 }
 
 // pathIsAtOrUnder reports whether candidate is equal to base or is a

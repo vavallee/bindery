@@ -107,3 +107,49 @@ func TestExpectedDownloadDirForClient_AudiobookCategory(t *testing.T) {
 		t.Fatalf("expected audiobook download dir, got %q", got)
 	}
 }
+
+// TestQbittorrentCategoryPath_MismatchMessageGuidesUserToPathRemap is the #800
+// regression: when the category save path doesn't fall under Bindery's
+// download dir, the error message must name the fix (PathRemap) and include a
+// concrete src:dst suggestion the user can copy. The previous wording said
+// what was wrong but not how to fix it; reporter at #800 and #704 both bounced
+// off it.
+func TestQbittorrentCategoryPath_MismatchMessageGuidesUserToPathRemap(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/categories":
+			_, _ = w.Write([]byte(`{"library":{"name":"library","savePath":"/torrents/complete/library"}}`))
+		case "/api/v2/app/defaultSavePath":
+			_, _ = w.Write([]byte("/torrents"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	host, port := serverHostPort(t, srv.URL)
+	client := &models.DownloadClient{
+		Type:     "qbittorrent",
+		Host:     host,
+		Port:     port,
+		Username: "u",
+		Password: "p",
+		Category: "library",
+	}
+	got := CheckDownloadClientHealth(context.Background(), client, "/downloads", "")
+	if got.Status != HealthError {
+		t.Fatalf("status = %q, want %q; message=%s", got.Status, HealthError, got.Message)
+	}
+	wants := []string{
+		`expected a path at or under "/downloads"`,
+		"path remap",
+		`"/torrents/complete:/downloads"`,
+	}
+	for _, w := range wants {
+		if !strings.Contains(got.Message, w) {
+			t.Errorf("message missing %q\nfull: %s", w, got.Message)
+		}
+	}
+}
