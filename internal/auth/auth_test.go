@@ -938,6 +938,52 @@ func TestAPIKeyAuthRoleVisibleInContext(t *testing.T) {
 	}
 }
 
+// TestLocalOnlyBypassGrantsAdminRole is the #799 regression test for the
+// local-only bypass branch in Middleware: a trusted-local request to a
+// RequireAdmin-protected endpoint must reach the handler. The whole point of
+// local-only mode is frictionless access from a trusted private network, so
+// returning "admin role required" 403 to a LAN client (as Middleware did
+// before this fix) was a regression of the API-key fix (Bug 11) into a
+// different code path.
+func TestLocalOnlyBypassGrantsAdminRole(t *testing.T) {
+	p := &fakeProvider{mode: ModeLocalOnly}
+
+	called := false
+	stack := Middleware(p)(
+		RequireAdmin(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			called = true
+			w.WriteHeader(http.StatusOK)
+		})),
+	)
+
+	req, _ := http.NewRequest("POST", "/api/v1/settings/auth/mode", nil)
+	req.RemoteAddr = "192.168.1.5:12345"
+	rw := &captureWriter{}
+	stack.ServeHTTP(rw, req)
+	if !called {
+		t.Fatalf("local-only LAN POST to admin-protected endpoint must reach the handler; got status %d", rw.status)
+	}
+}
+
+// TestLocalOnlyBypassRoleVisibleInContext verifies that the admin role is
+// present in the request context for a local-only bypassed request, so
+// handlers that inspect the role see "admin" rather than "".
+func TestLocalOnlyBypassRoleVisibleInContext(t *testing.T) {
+	p := &fakeProvider{mode: ModeLocalOnly}
+
+	var gotRole string
+	stack := Middleware(p)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		gotRole = UserRoleFromContext(r.Context())
+	}))
+
+	req, _ := http.NewRequest("GET", "/api/v1/author", nil)
+	req.RemoteAddr = "192.168.1.5:12345"
+	stack.ServeHTTP(nopWriter{}, req)
+	if gotRole != "admin" {
+		t.Errorf("role in context = %q; want \"admin\"", gotRole)
+	}
+}
+
 func TestCSRFStack_BrowserSessionWithoutCSRFTokenIsRejected(t *testing.T) {
 	secret := stackSecret32
 	p := &fakeProvider{mode: ModeEnabled, apiKey: "harpoon-key", secret: secret}
