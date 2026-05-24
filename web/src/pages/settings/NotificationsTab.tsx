@@ -117,6 +117,7 @@ export default function NotificationsTab() {
 }
 
 function EditNotificationForm({ notification, onClose, onSaved }: { notification: NotificationConfig; onClose: () => void; onSaved: (n: NotificationConfig) => void }) {
+  const { t } = useTranslation()
   const [name, setName] = useState(notification.name)
   const [url, setUrl] = useState(notification.url)
   const [method, setMethod] = useState(notification.method || 'POST')
@@ -125,10 +126,20 @@ function EditNotificationForm({ notification, onClose, onSaved }: { notification
   const [onFailure, setOnFailure] = useState(notification.onFailure)
   const [onUpgrade, setOnUpgrade] = useState(notification.onUpgrade)
   const [onHealth, setOnHealth] = useState(notification.onHealth)
+  const [saveError, setSaveError] = useState('')
+  const [saving, setSaving] = useState(false)
 
   const submit = async () => {
-    const updated = await api.updateNotification(notification.id, { ...notification, name, url, method, onGrab, onImport, onFailure, onUpgrade, onHealth })
-    onSaved(updated)
+    setSaveError('')
+    setSaving(true)
+    try {
+      const updated = await api.updateNotification(notification.id, { ...notification, name, url, method, onGrab, onImport, onFailure, onUpgrade, onHealth })
+      onSaved(updated)
+    } catch (err: unknown) {
+      setSaveError(t('settings.notifications.saveFailed', { error: err instanceof Error ? err.message : 'Unknown error' }))
+    } finally {
+      setSaving(false)
+    }
   }
 
   const toggleCls = (active: boolean) =>
@@ -159,15 +170,21 @@ function EditNotificationForm({ notification, onClose, onSaved }: { notification
           <button type="button" onClick={() => setOnHealth(!onHealth)} className={toggleCls(onHealth)}>Health</button>
         </div>
       </div>
+      {saveError && (
+        <div role="alert" className="px-3 py-1.5 rounded text-xs bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300">
+          {saveError}
+        </div>
+      )}
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">Cancel</button>
-        <button onClick={submit} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium">Save</button>
+        <button onClick={submit} disabled={saving} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 disabled:cursor-not-allowed rounded text-sm font-medium">Save</button>
       </div>
     </div>
   )
 }
 
 function AddNotificationForm({ onClose, onAdded }: { onClose: () => void; onAdded: (n: NotificationConfig) => void }) {
+  const { t } = useTranslation()
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
   const [method, setMethod] = useState('POST')
@@ -176,15 +193,25 @@ function AddNotificationForm({ onClose, onAdded }: { onClose: () => void; onAdde
   const [onFailure, setOnFailure] = useState(true)
   const [onUpgrade, setOnUpgrade] = useState(false)
   const [onHealth, setOnHealth] = useState(false)
+  const [saveError, setSaveError] = useState('')
+  const [saving, setSaving] = useState(false)
 
   const submit = async () => {
-    const n = await api.addNotification({
-      name, url, method, type: 'webhook',
-      headers: '{}',
-      onGrab, onImport, onFailure, onUpgrade, onHealth,
-      enabled: true,
-    })
-    onAdded(n)
+    setSaveError('')
+    setSaving(true)
+    try {
+      const n = await api.addNotification({
+        name, url, method, type: 'webhook',
+        headers: '{}',
+        onGrab, onImport, onFailure, onUpgrade, onHealth,
+        enabled: true,
+      })
+      onAdded(n)
+    } catch (err: unknown) {
+      setSaveError(t('settings.notifications.saveFailed', { error: err instanceof Error ? err.message : 'Unknown error' }))
+    } finally {
+      setSaving(false)
+    }
   }
 
   const toggleCls = (active: boolean) =>
@@ -215,9 +242,14 @@ function AddNotificationForm({ onClose, onAdded }: { onClose: () => void; onAdde
           <button type="button" onClick={() => setOnHealth(!onHealth)} className={toggleCls(onHealth)}>Health</button>
         </div>
       </div>
+      {saveError && (
+        <div role="alert" className="px-3 py-1.5 rounded text-xs bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300">
+          {saveError}
+        </div>
+      )}
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">Cancel</button>
-        <button onClick={submit} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium">Save</button>
+        <button onClick={submit} disabled={saving} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 disabled:cursor-not-allowed rounded text-sm font-medium">Save</button>
       </div>
     </div>
   )

@@ -237,7 +237,8 @@
       "onUpgrade": "Beim Upgrade",
       "onFailure": "Bei Fehler",
       "onHealth": "Bei Gesundheitsstatus",
-      "testSent": "Testbenachrichtigung gesendet!"
+      "testSent": "Testbenachrichtigung gesendet!",
+      "saveFailed": "Benachrichtigung konnte nicht gespeichert werden: {{error}}"
     },
     "quality": {
       "heading": "Qualitätsprofile",

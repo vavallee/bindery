@@ -237,7 +237,8 @@
       "onUpgrade": "À la mise à niveau",
       "onFailure": "En cas d'échec",
       "onHealth": "À l'état de santé",
-      "testSent": "Notification de test envoyée !"
+      "testSent": "Notification de test envoyée !",
+      "saveFailed": "Impossible d'enregistrer la notification : {{error}}"
     },
     "quality": {
       "heading": "Profils de qualité",

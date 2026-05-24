@@ -259,7 +259,8 @@
       "onUpgrade": "Kapag Na-upgrade",
       "onFailure": "Kapag Nabigo",
       "onHealth": "Sa Kalusugan",
-      "testSent": "Naipadala ang test notification!"
+      "testSent": "Naipadala ang test notification!",
+      "saveFailed": "Hindi ma-save ang notification: {{error}}"
     },
     "quality": {
       "heading": "Mga Quality Profile",

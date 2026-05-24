@@ -259,7 +259,8 @@
       "onUpgrade": "Saat Ditingkatkan",
       "onFailure": "Saat Gagal",
       "onHealth": "Saat Kesehatan",
-      "testSent": "Notifikasi uji terkirim!"
+      "testSent": "Notifikasi uji terkirim!",
+      "saveFailed": "Tidak dapat menyimpan notifikasi: {{error}}"
     },
     "quality": {
       "heading": "Profil Kualitas",

@@ -271,7 +271,8 @@
       "onUpgrade": "On Upgrade",
       "onFailure": "On Failure",
       "onHealth": "On Health",
-      "testSent": "Test notification sent!"
+      "testSent": "Test notification sent!",
+      "saveFailed": "Couldn't save notification: {{error}}"
     },
     "quality": {
       "heading": "Quality Profiles",

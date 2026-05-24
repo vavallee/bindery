@@ -259,7 +259,8 @@
       "onUpgrade": "Al actualizar",
       "onFailure": "Al fallar",
       "onHealth": "En estado de salud",
-      "testSent": "¡Notificación de prueba enviada!"
+      "testSent": "¡Notificación de prueba enviada!",
+      "saveFailed": "No se pudo guardar la notificación: {{error}}"
     },
     "quality": {
       "heading": "Perfiles de calidad",

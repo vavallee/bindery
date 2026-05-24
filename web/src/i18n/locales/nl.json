@@ -237,7 +237,8 @@
       "onUpgrade": "Bij upgrade",
       "onFailure": "Bij fout",
       "onHealth": "Bij gezondheidsstatus",
-      "testSent": "Testmelding verzonden!"
+      "testSent": "Testmelding verzonden!",
+      "saveFailed": "Kan melding niet opslaan: {{error}}"
     },
     "quality": {
       "heading": "Kwaliteitsprofielen",
