@@ -87,6 +87,7 @@ func HydrateHardcoverEditions(ctx context.Context, opts Options) Result {
 	}
 	result.Fetched = len(editions)
 
+	acceptedAudioEditions := make([]models.Edition, 0, len(editions))
 	for i := range editions {
 		editions[i].BookID = book.ID
 		if strings.TrimSpace(editions[i].Title) == "" {
@@ -105,9 +106,12 @@ func HydrateHardcoverEditions(ctx context.Context, opts Options) Result {
 			continue
 		}
 		result.Upserted++
+		if isLikelyAudioEdition(editions[i]) {
+			acceptedAudioEditions = append(acceptedAudioEditions, editions[i])
+		}
 	}
 
-	if maybePromoteASIN(book, editions) {
+	if maybePromoteASIN(book, acceptedAudioEditions) {
 		result.ASINPromoted = true
 		if opts.Enricher != nil {
 			if err := opts.Enricher.EnrichAudiobook(ctx, book); err != nil {
@@ -176,14 +180,28 @@ func audioEditionScore(edition models.Edition) int {
 		edition.EditionInfo,
 	}, " "))
 	score := 0
-	for _, marker := range []string{"audio", "audible", "mp3", "cd", "cassette"} {
-		if strings.Contains(text, marker) {
-			score += 10
-			break
-		}
+	if editionHasAudioMarker(text) {
+		score += 10
 	}
 	if !edition.IsEbook {
 		score++
 	}
 	return score
+}
+
+func isLikelyAudioEdition(edition models.Edition) bool {
+	text := strings.ToLower(strings.Join([]string{
+		edition.Format,
+		edition.EditionInfo,
+	}, " "))
+	return editionHasAudioMarker(text)
+}
+
+func editionHasAudioMarker(text string) bool {
+	for _, marker := range []string{"audio", "audible", "mp3", "cd", "cassette"} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
 }
