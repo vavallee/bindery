@@ -1466,6 +1466,93 @@ func TestAddBook_DNBDirectInsertSucceeds(t *testing.T) {
 	}
 }
 
+// TestAddBook_DirectInsertCoversSlowAsyncSync is the #804 regression test.
+//
+// Scenario from the bug report: a user adds a single book by a prolific
+// author (Stephenie Meyer, 175 works). OpenLibrary's GetAuthorWorks takes
+// longer than the 15s poll budget. The poll loop times out → 404 → the
+// orphan-cleanup defer deletes the just-created author row → the still-
+// running async goroutine then logs a FK-constraint failure for every
+// book it tries to insert against the now-deleted author_id.
+//
+// The fix lifts the existing DNB direct-insert path so it also fires when
+// the author was just created, regardless of provider. We simulate the
+// slow OL by having GetAuthorWorks block past the test's wall-clock
+// budget; the test asserts that AddBook still returns 201 because the
+// direct-insert ran synchronously before the poll loop.
+func TestAddBook_DirectInsertCoversSlowAsyncSync(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+
+	// Mirrors OpenLibrary's response for the user's requested book.
+	primary := &models.Book{
+		ForeignID:        "OL12345W",
+		Title:            "Twilight",
+		SortTitle:        "Twilight",
+		Language:         "eng",
+		Status:           models.BookStatusWanted,
+		Genres:           []string{},
+		MetadataProvider: "openlibrary",
+	}
+	// works empty: simulates an OL author whose works list is still being
+	// fetched when the poll loop starts. Without the direct-insert path the
+	// poll would time out (no books appear) and the cleanup defer would
+	// delete the just-created author.
+	stub := &stubMetaProvider{
+		name:  "openlibrary",
+		works: nil,
+		getBookByID: map[string]*models.Book{
+			"OL12345W": primary,
+		},
+	}
+	agg := metadata.NewAggregator(stub)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, nil, profileRepo, nil)
+
+	body, _ := json.Marshal(map[string]any{
+		"foreignBookId":   "OL12345W",
+		"foreignAuthorId": "OL1391085A",
+		"authorName":      "Stephenie Meyer",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	h.AddBook(rec, req)
+
+	// 201 (not 404) proves the direct-insert ran before the poll loop —
+	// without the fix, this fails with "book not found after author sync".
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	got, err := bookRepo.GetByForeignID(context.Background(), "OL12345W")
+	if err != nil || got == nil {
+		t.Fatalf("book not persisted: err=%v got=%v", err, got)
+	}
+	if !got.Monitored {
+		t.Errorf("book should be Monitored=true after AddBook success")
+	}
+	if got.AuthorID == 0 {
+		t.Errorf("book AuthorID should be linked to the author row")
+	}
+
+	// Author kept (not orphan-cleaned): the direct-insert persisted a book
+	// against author.ID, so cleanupOrphanIfNoBooks sees len(books)>0 and
+	// skips deletion. Before the fix, the goroutine's inserts all FK-failed
+	// because the author row had already been removed.
+	auth, err := authorRepo.GetByForeignID(context.Background(), "OL1391085A")
+	if err != nil || auth == nil {
+		t.Fatalf("author was orphan-cleaned despite direct-insert: err=%v auth=%v", err, auth)
+	}
+}
+
 // TestCanUpgradeToBoth validates the helper that decides whether two
 // complementary media types should be merged into a dual-format row.
 func TestCanUpgradeToBoth(t *testing.T) {

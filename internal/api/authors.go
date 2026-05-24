@@ -1193,6 +1193,14 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	// issue #667 bug 3.
 	bookCreated := false
 
+	// authorWasJustCreated tracks whether this request inserted the author
+	// row (vs. found it already present). Used by both the orphan-cleanup
+	// defer and the direct-insert block below — when the author was just
+	// created the async catalogue sync may take longer than the 15s poll
+	// budget for prolific authors, so we synchronously persist the requested
+	// book to guarantee it exists before the cleanup defer runs (#804).
+	authorWasJustCreated := false
+
 	if req.ForeignAuthorID == "" {
 		resolved, err := h.resolveAuthorForBook(ctx, req.ForeignBookID)
 		if err != nil {
@@ -1258,13 +1266,11 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// authorWasJustCreated tracks whether this request's CreateForUser
-		// succeeded (vs. the UNIQUE-race fallback at line 1247). When the
-		// poll loop below times out without seeing the requested book, we
-		// roll back this insert iff the author currently has zero books —
-		// otherwise the user is left with a permanent orphan author (the
-		// failure mode reported in issue #667).
-		authorWasJustCreated := false
+		// CreateForUser may collide with a concurrent request inserting the
+		// same author; the UNIQUE-constraint branch below recovers by
+		// re-fetching the row. authorWasJustCreated stays false on the race
+		// path so the orphan-cleanup defer never rolls back somebody else's
+		// author row (issue #667).
 		if author == nil {
 			if err := h.authors.CreateForUser(ctx, fetched, auth.UserIDFromContext(ctx)); err != nil {
 				if !strings.Contains(err.Error(), "UNIQUE constraint failed") {
@@ -1290,18 +1296,28 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1b. Direct insert for providers without a queryable author-works
-	// endpoint. DNB's public SRU has no author→works relationship, so the
-	// async FetchAuthorBooks goroutine returns zero books for synthetic
-	// dnb:gnd:* / dnb:author:* IDs — the poll loop below would time out
-	// every time. Fetch the single requested record now and persist it
-	// so the poll finds it on its first iteration. UNIQUE-constraint
-	// races against a concurrent FetchAuthorBooks insert are tolerated.
-	if strings.HasPrefix(req.ForeignBookID, "dnb:") {
+	// 1b. Direct insert for the requested book.
+	//
+	// Originally added (#667) for DNB synthetic IDs, whose async sync returns
+	// zero books because DNB's public SRU has no author→works relationship.
+	// #804 widened this: for any author the request just created, the async
+	// catalogue sync can take longer than the 15 s poll budget (OpenLibrary
+	// took >32 s for a 175-work author in the bug report). When the poll
+	// times out, the orphan-cleanup defer deletes the author row — and the
+	// still-running goroutine then logs a FK-constraint failure for every
+	// book it tries to insert against the now-deleted author_id.
+	//
+	// Synchronously fetching and persisting the single requested record
+	// guarantees the poll succeeds on its first iteration AND that the
+	// cleanup defer sees a non-empty book list (so it keeps the author).
+	// The async sync still runs as a backfill for the rest of the catalogue;
+	// any UNIQUE collision against this row is silently tolerated.
+	directInsertNeeded := authorWasJustCreated || strings.HasPrefix(req.ForeignBookID, "dnb:")
+	if directInsertNeeded {
 		if existing, _ := h.books.GetByForeignID(ctx, req.ForeignBookID); existing == nil {
 			primary, err := h.meta.GetBook(ctx, req.ForeignBookID)
 			if err != nil {
-				slog.Warn("AddBook: DNB direct fetch failed",
+				slog.Warn("AddBook: direct fetch failed",
 					"foreignBookId", req.ForeignBookID, "error", err)
 			} else if primary != nil {
 				primary.AuthorID = author.ID
@@ -1311,7 +1327,7 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 				}
 				if err := h.books.Create(ctx, primary); err != nil &&
 					!strings.Contains(err.Error(), "UNIQUE constraint failed") {
-					slog.Warn("AddBook: DNB direct insert failed",
+					slog.Warn("AddBook: direct insert failed",
 						"foreignBookId", req.ForeignBookID, "error", err)
 				}
 			}
