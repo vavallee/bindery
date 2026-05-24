@@ -216,6 +216,15 @@
       "grimmory": "Grimmory",
       "blocklist": "Liste de blocage"
     },
+    "abs": {
+      "review": {
+        "runHeading": "Exécution n°{{runId}} · {{count}} éléments",
+        "unknownRunHeading": "Anciens éléments · {{count}}",
+        "dismissRun": "Ignorer tous les éléments de cette exécution",
+        "dismissingRun": "Suppression…",
+        "dismissRunConfirm": "Ignorer {{count}} éléments de revue de l'exécution n°{{runId}} ? Cette action est irréversible."
+      }
+    },
     "indexers": {
       "heading": "Indexeurs",
       "addButton": "+ Ajouter un indexeur",

@@ -460,6 +460,8 @@ export const api = {
   resolveAbsReviewBook: (id: number, data: { foreignBookId: string; title: string; editedTitle?: string }) =>
     request<ABSReviewItem>(`/abs/review/${id}/resolve-book`, { method: 'POST', body: JSON.stringify(data) }),
   dismissAbsReviewItem: (id: number) => request<ABSReviewItem>(`/abs/review/${id}/dismiss`, { method: 'POST' }),
+  dismissAbsReviewRun: (runId: number) =>
+    request<{ dismissed: number }>(`/abs/review/dismiss-run/${runId}`, { method: 'POST' }),
   absConflicts: (params?: { limit?: number; offset?: number }) => {
     const q = new URLSearchParams()
     if (params?.limit) q.set('limit', String(params.limit))

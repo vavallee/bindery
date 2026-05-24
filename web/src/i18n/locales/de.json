@@ -216,6 +216,15 @@
       "grimmory": "Grimmory",
       "blocklist": "Blockliste"
     },
+    "abs": {
+      "review": {
+        "runHeading": "Lauf #{{runId}} · {{count}} Einträge",
+        "unknownRunHeading": "Ältere Einträge · {{count}}",
+        "dismissRun": "Alle aus diesem Lauf verwerfen",
+        "dismissingRun": "Wird verworfen…",
+        "dismissRunConfirm": "{{count}} Prüfeinträge aus Lauf #{{runId}} verwerfen? Das kann nicht rückgängig gemacht werden."
+      }
+    },
     "indexers": {
       "heading": "Indexer",
       "addButton": "+ Indexer hinzufügen",

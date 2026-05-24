@@ -235,6 +235,15 @@
       "grimmory": "Grimmory",
       "blocklist": "Daftar blokir"
     },
+    "abs": {
+      "review": {
+        "runHeading": "Jalankan #{{runId}} · {{count}} item",
+        "unknownRunHeading": "Item lama · {{count}}",
+        "dismissRun": "Tolak semua dari jalankan ini",
+        "dismissingRun": "Menolak…",
+        "dismissRunConfirm": "Tolak {{count}} item tinjauan dari jalankan #{{runId}}? Tindakan ini tidak dapat dibatalkan."
+      }
+    },
     "indexers": {
       "heading": "Indexer",
       "addButton": "+ Tambah Indexer",

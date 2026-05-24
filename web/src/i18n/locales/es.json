@@ -235,6 +235,15 @@
       "grimmory": "Grimmory",
       "blocklist": "Lista de bloqueo"
     },
+    "abs": {
+      "review": {
+        "runHeading": "Ejecución n.º {{runId}} · {{count}} elementos",
+        "unknownRunHeading": "Elementos anteriores · {{count}}",
+        "dismissRun": "Descartar todos los de esta ejecución",
+        "dismissingRun": "Descartando…",
+        "dismissRunConfirm": "¿Descartar {{count}} elementos de revisión de la ejecución n.º {{runId}}? Esto no se puede deshacer."
+      }
+    },
     "indexers": {
       "heading": "Indexadores",
       "addButton": "+ Añadir indexador",

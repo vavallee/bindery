@@ -21,6 +21,7 @@ type absReviewImporter interface {
 
 type ABSReviewHandler struct {
 	reviews  *db.ABSReviewItemRepo
+	runs     *db.ABSImportRunRepo
 	importer absReviewImporter
 	loadCfg  func(context.Context) ABSStoredConfig
 }
@@ -32,8 +33,8 @@ type absReviewListResponse struct {
 	Offset int                    `json:"offset"`
 }
 
-func NewABSReviewHandler(reviews *db.ABSReviewItemRepo, importer absReviewImporter, loadCfg func(context.Context) ABSStoredConfig) *ABSReviewHandler {
-	return &ABSReviewHandler{reviews: reviews, importer: importer, loadCfg: loadCfg}
+func NewABSReviewHandler(reviews *db.ABSReviewItemRepo, runs *db.ABSImportRunRepo, importer absReviewImporter, loadCfg func(context.Context) ABSStoredConfig) *ABSReviewHandler {
+	return &ABSReviewHandler{reviews: reviews, runs: runs, importer: importer, loadCfg: loadCfg}
 }
 
 func (h *ABSReviewHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -217,6 +218,36 @@ func (h *ABSReviewHandler) Dismiss(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, updated)
+}
+
+func (h *ABSReviewHandler) DismissRun(w http.ResponseWriter, r *http.Request) {
+	raw := strings.TrimSpace(chi.URLParam(r, "runID"))
+	if raw == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "run id is required"})
+		return
+	}
+	runID, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || runID <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid run id"})
+		return
+	}
+	if h.runs != nil {
+		run, err := h.runs.GetByID(r.Context(), runID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if run == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "import run not found"})
+			return
+		}
+	}
+	dismissed, err := h.reviews.DismissByRunID(r.Context(), runID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"dismissed": dismissed})
 }
 
 func (h *ABSReviewHandler) reviewItemFromRequest(r *http.Request) (*models.ABSReviewItem, error) {

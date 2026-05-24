@@ -247,6 +247,15 @@
       "grimmory": "Grimmory",
       "blocklist": "Blocklist"
     },
+    "abs": {
+      "review": {
+        "runHeading": "Run #{{runId}} · {{count}} items",
+        "unknownRunHeading": "Older items · {{count}}",
+        "dismissRun": "Dismiss all from this run",
+        "dismissingRun": "Dismissing…",
+        "dismissRunConfirm": "Dismiss {{count}} review items from run #{{runId}}? This cannot be undone."
+      }
+    },
     "indexers": {
       "heading": "Indexers",
       "addButton": "+ Add Indexer",

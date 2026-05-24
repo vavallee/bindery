@@ -12,7 +12,26 @@ vi.mock('../auth/AuthContext', () => ({
 }))
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (_key: string, fallback?: string) => fallback ?? _key,
+    t: (key: string, fallbackOrOpts?: unknown, maybeOpts?: unknown) => {
+      let template: string | undefined
+      let opts: Record<string, unknown> | undefined
+      if (typeof fallbackOrOpts === 'string') {
+        template = fallbackOrOpts
+        opts = (maybeOpts as Record<string, unknown> | undefined) ?? undefined
+      } else if (fallbackOrOpts && typeof fallbackOrOpts === 'object') {
+        opts = fallbackOrOpts as Record<string, unknown>
+        const dv = opts.defaultValue
+        if (typeof dv === 'string') template = dv
+      }
+      let out = template ?? key
+      if (opts) {
+        for (const [k, v] of Object.entries(opts)) {
+          if (k === 'defaultValue') continue
+          out = out.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), String(v))
+        }
+      }
+      return out
+    },
     i18n: { changeLanguage: vi.fn() },
   }),
 }))
@@ -35,6 +54,7 @@ vi.mock('../api/client', async importOriginal => {
       absConflicts: vi.fn(),
       resolveAbsReviewAuthor: vi.fn(),
       resolveAbsReviewBook: vi.fn(),
+      dismissAbsReviewRun: vi.fn(),
       searchAuthors: vi.fn(),
       searchBooks: vi.fn(),
       listSettings: vi.fn(),
@@ -266,5 +286,44 @@ describe('SettingsPage ABS review search', () => {
       expect(api.resolveAbsReviewBook).toHaveBeenCalled()
     })
     expect(api.resolveAbsReviewAuthor).not.toHaveBeenCalled()
+  })
+
+  it('dismisses all review items from a run when the per-run button is confirmed', async () => {
+    const itemA = makeReviewItem({ id: 1, itemId: 'item-1', latestRunId: 42 })
+    const itemB = makeReviewItem({ id: 2, itemId: 'item-2', latestRunId: 42 })
+    const itemC = makeReviewItem({ id: 3, itemId: 'item-3', latestRunId: 99 })
+    vi.mocked(api.dismissAbsReviewRun).mockResolvedValue({ dismissed: 2 })
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    try {
+      await renderABSReview([itemA, itemB, itemC])
+
+      const button = await screen.findAllByRole('button', { name: /Dismiss all from this run/ })
+      // Two groups (run 42 and run 99). Most-recent (99) renders first, so
+      // index 1 is the 42-group click target.
+      expect(button.length).toBe(2)
+
+      fireEvent.click(button[1])
+
+      await waitFor(() => {
+        expect(api.dismissAbsReviewRun).toHaveBeenCalledWith(42)
+      })
+      expect(confirmSpy).toHaveBeenCalled()
+    } finally {
+      confirmSpy.mockRestore()
+    }
+  })
+
+  it('does nothing when the per-run dismiss confirmation is cancelled', async () => {
+    const itemA = makeReviewItem({ id: 1, itemId: 'item-1', latestRunId: 42 })
+    vi.mocked(api.dismissAbsReviewRun).mockResolvedValue({ dismissed: 1 })
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    try {
+      await renderABSReview([itemA])
+      const buttons = await screen.findAllByRole('button', { name: /Dismiss all from this run/ })
+      fireEvent.click(buttons[0])
+      expect(api.dismissAbsReviewRun).not.toHaveBeenCalled()
+    } finally {
+      confirmSpy.mockRestore()
+    }
   })
 })

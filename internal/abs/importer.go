@@ -375,6 +375,7 @@ func (i *Importer) runLibrary(ctx context.Context, cfg ImportConfig, authorMatch
 		return diffImportStats(before, totalStats), err
 	}
 
+	var matchedItemIDs []string
 	enumStats, err := enumFn(ctx, cfg.LibraryID, func(ctx context.Context, item NormalizedLibraryItem) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -383,6 +384,9 @@ func (i *Importer) runLibrary(ctx context.Context, cfg ImportConfig, authorMatch
 			p.Message = importItemMessage(cfg.DryRun, firstNonEmpty(item.Title, item.ItemID))
 		})
 		result := i.importOne(ctx, cfg, run.ID, item, totalStats, allowImmediateImport(item), authorMatcher)
+		if isMatchedOutcome(result.Outcome) {
+			matchedItemIDs = append(matchedItemIDs, item.ItemID)
+		}
 		i.setProgress(func(p *ImportProgress) {
 			p.Processed++
 			p.Results = appendImportProgressResult(p.Results, result)
@@ -410,6 +414,18 @@ func (i *Importer) runLibrary(ctx context.Context, cfg ImportConfig, authorMatch
 	summary.Checkpoint = nil
 	libStats := diffImportStats(before, totalStats)
 	summary.Stats = *libStats
+	if !cfg.DryRun && i.reviews != nil && len(matchedItemIDs) > 0 {
+		// A book that previously fell into the no-match review queue can be
+		// matched on a later rescan once the user fixes its ABS metadata
+		// (e.g. adds an ISBN). Without this reconcile the old pending row
+		// lingers forever alongside genuine no-matches — see issue #767.
+		resolved, err := i.reviews.MarkResolvedByItemIDs(ctx, cfg.SourceID, cfg.LibraryID, matchedItemIDs)
+		if err != nil {
+			slog.Warn("abs import: auto-reconcile review items failed", "runID", run.ID, "libraryID", cfg.LibraryID, "error", err)
+		} else if resolved > 0 {
+			slog.Info("abs import: auto-reconciled stale review items", "runID", run.ID, "libraryID", cfg.LibraryID, "resolved", resolved)
+		}
+	}
 	if run.ID != 0 && i.runs != nil {
 		if err := i.runs.Finish(ctx, run.ID, runStatusCompleted, summary); err != nil {
 			slog.Warn("abs import: finish run failed", "runID", run.ID, "error", err)
@@ -430,6 +446,15 @@ func (i *Importer) runLibrary(ctx context.Context, cfg ImportConfig, authorMatch
 		"skipped", libStats.Skipped,
 		"failed", libStats.Failed)
 	return libStats, nil
+}
+
+func isMatchedOutcome(outcome string) bool {
+	switch outcome {
+	case itemOutcomeCreated, itemOutcomeLinked, itemOutcomeUpdated:
+		return true
+	default:
+		return false
+	}
 }
 
 func libraryStartIndex(libraryIDs []string, current string) int {

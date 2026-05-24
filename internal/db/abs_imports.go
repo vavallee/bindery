@@ -694,6 +694,76 @@ func (r *ABSReviewItemRepo) UpdateStatus(ctx context.Context, id int64, status s
 	return nil
 }
 
+// MarkResolvedByItemIDs flips pending review items for the given
+// (sourceID, libraryID, itemID) tuples to dismissed. Items that have already
+// left pending state (approved, dismissed) are left untouched so a previous
+// user decision is never overwritten by a later auto-reconcile pass.
+func (r *ABSReviewItemRepo) MarkResolvedByItemIDs(ctx context.Context, sourceID, libraryID string, itemIDs []string) (int64, error) {
+	if len(itemIDs) == 0 {
+		return 0, nil
+	}
+	sourceID = strings.TrimSpace(sourceID)
+	libraryID = strings.TrimSpace(libraryID)
+	if sourceID == "" || libraryID == "" {
+		return 0, nil
+	}
+	placeholders := make([]string, 0, len(itemIDs))
+	args := make([]any, 0, len(itemIDs)+3)
+	now := time.Now().UTC()
+	args = append(args, now, sourceID, libraryID)
+	for _, id := range itemIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	if len(placeholders) == 0 {
+		return 0, nil
+	}
+	//nolint:gosec // placeholders are a fixed-length list of "?" controlled here, real values bound via args
+	query := fmt.Sprintf(`
+		UPDATE abs_review_queue
+		SET status = 'dismissed', updated_at = ?
+		WHERE status = 'pending'
+		  AND source_id = ?
+		  AND library_id = ?
+		  AND item_id IN (%s)`, strings.Join(placeholders, ","))
+	result, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("auto-resolve abs review items: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count auto-resolved abs review items: %w", err)
+	}
+	return count, nil
+}
+
+// DismissByRunID flips every pending review item whose latest_run_id matches
+// runID to dismissed in a single statement. Returns the number of rows
+// affected so the caller can report it to the user.
+func (r *ABSReviewItemRepo) DismissByRunID(ctx context.Context, runID int64) (int64, error) {
+	if runID <= 0 {
+		return 0, nil
+	}
+	now := time.Now().UTC()
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE abs_review_queue
+		SET status = 'dismissed', updated_at = ?
+		WHERE status = 'pending'
+		  AND latest_run_id = ?`, now, runID)
+	if err != nil {
+		return 0, fmt.Errorf("dismiss abs review items for run %d: %w", runID, err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count dismissed abs review items for run %d: %w", runID, err)
+	}
+	return count, nil
+}
+
 type absReviewItemRowScanner interface {
 	Scan(dest ...any) error
 }

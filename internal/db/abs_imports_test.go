@@ -264,3 +264,109 @@ func TestABSImportRunRepoLatestRunningWithCheckpoint(t *testing.T) {
 		t.Fatalf("checkpoint_json = %q, want page 2", got.CheckpointJSON)
 	}
 }
+
+func TestABSReviewItemRepoMarkResolvedByItemIDs(t *testing.T) {
+	t.Parallel()
+
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatalf("OpenMemory: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	ctx := context.Background()
+	repo := NewABSReviewItemRepo(database)
+
+	for _, item := range []models.ABSReviewItem{
+		{SourceID: "default", LibraryID: "lib-books", ItemID: "it-1", Title: "A", PrimaryAuthor: "X", PayloadJSON: "{}", ReviewReason: "unmatched_book"},
+		{SourceID: "default", LibraryID: "lib-books", ItemID: "it-2", Title: "B", PrimaryAuthor: "X", PayloadJSON: "{}", ReviewReason: "unmatched_book"},
+		{SourceID: "default", LibraryID: "lib-books", ItemID: "it-3", Title: "C", PrimaryAuthor: "X", PayloadJSON: "{}", ReviewReason: "unmatched_book"},
+		{SourceID: "default", LibraryID: "lib-other", ItemID: "it-1", Title: "D", PrimaryAuthor: "X", PayloadJSON: "{}", ReviewReason: "unmatched_book"},
+	} {
+		item := item
+		if err := repo.UpsertPending(ctx, &item); err != nil {
+			t.Fatalf("UpsertPending: %v", err)
+		}
+	}
+
+	// Manually dismiss it-2 to confirm we never touch non-pending rows.
+	if _, err := database.ExecContext(ctx, `UPDATE abs_review_queue SET status = 'dismissed' WHERE item_id = 'it-2' AND library_id = 'lib-books'`); err != nil {
+		t.Fatalf("manual dismiss: %v", err)
+	}
+
+	count, err := repo.MarkResolvedByItemIDs(ctx, "default", "lib-books", []string{"it-1", "it-2", "it-3", ""})
+	if err != nil {
+		t.Fatalf("MarkResolvedByItemIDs: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("count = %d, want 2 (it-1 and it-3 in lib-books only; it-2 already dismissed)", count)
+	}
+
+	// Empty ID slice is a no-op, no error.
+	count, err = repo.MarkResolvedByItemIDs(ctx, "default", "lib-books", nil)
+	if err != nil {
+		t.Fatalf("empty MarkResolvedByItemIDs: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("empty count = %d, want 0", count)
+	}
+
+	// Other library kept untouched.
+	pending, err := repo.ListByStatus(ctx, "pending")
+	if err != nil {
+		t.Fatalf("ListByStatus: %v", err)
+	}
+	if len(pending) != 1 || pending[0].LibraryID != "lib-other" {
+		t.Fatalf("pending = %+v, want only lib-other untouched", pending)
+	}
+}
+
+func TestABSReviewItemRepoDismissByRunID(t *testing.T) {
+	t.Parallel()
+
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatalf("OpenMemory: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	ctx := context.Background()
+	repo := NewABSReviewItemRepo(database)
+
+	for i, runID := range []int64{1, 1, 2, 0} {
+		item := &models.ABSReviewItem{
+			SourceID:      "default",
+			LibraryID:     "lib-books",
+			ItemID:        "it-" + string(rune('a'+i)),
+			PayloadJSON:   "{}",
+			ReviewReason:  "unmatched_book",
+			PrimaryAuthor: "X",
+		}
+		if runID != 0 {
+			rid := runID
+			item.LatestRunID = &rid
+		}
+		if err := repo.UpsertPending(ctx, item); err != nil {
+			t.Fatalf("UpsertPending: %v", err)
+		}
+		if runID != 0 {
+			if _, err := database.ExecContext(ctx, `UPDATE abs_review_queue SET latest_run_id = ? WHERE id = ?`, runID, item.ID); err != nil {
+				t.Fatalf("set latest_run_id: %v", err)
+			}
+		}
+	}
+
+	count, err := repo.DismissByRunID(ctx, 1)
+	if err != nil {
+		t.Fatalf("DismissByRunID: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("count = %d, want 2", count)
+	}
+	count, err = repo.DismissByRunID(ctx, 0)
+	if err != nil || count != 0 {
+		t.Fatalf("DismissByRunID(0) = %d err=%v, want 0/nil", count, err)
+	}
+	count, err = repo.DismissByRunID(ctx, 999)
+	if err != nil || count != 0 {
+		t.Fatalf("DismissByRunID(unknown) = %d err=%v, want 0/nil", count, err)
+	}
+}

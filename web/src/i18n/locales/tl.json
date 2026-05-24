@@ -235,6 +235,15 @@
       "grimmory": "Grimmory",
       "blocklist": "Blocklist"
     },
+    "abs": {
+      "review": {
+        "runHeading": "Run #{{runId}} · {{count}} items",
+        "unknownRunHeading": "Mga lumang item · {{count}}",
+        "dismissRun": "I-dismiss lahat sa run na ito",
+        "dismissingRun": "Ini-dismiss…",
+        "dismissRunConfirm": "I-dismiss ang {{count}} review item mula sa run #{{runId}}? Hindi ito mababawi."
+      }
+    },
     "indexers": {
       "heading": "Mga Indexer",
       "addButton": "+ Magdagdag ng Indexer",

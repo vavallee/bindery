@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { api, ABSConfig, ABSImportProgress, ABSImportRun, ABSLibrary, ABSMetadataConflict, ABSReviewItem, ABSRollbackAction, ABSRollbackResult, ABSTestResult, Author, Book } from '../../api/client'
 import ABSConflictPanel from '../../components/ABSAuthorConflictsPanel'
 import { inputCls } from './formStyles'
@@ -36,6 +37,7 @@ export default function ABSTab() {
 }
 
 function AudiobookshelfSection() {
+  const { t } = useTranslation()
   const [config, setConfig] = useState<ABSConfig | null>(null)
   const [draft, setDraft] = useState({ baseUrl: '', apiKey: '', label: 'Audiobookshelf', enabled: false, libraryIds: [] as string[], pathRemap: '' })
   const [libraries, setLibraries] = useState<ABSLibrary[]>([])
@@ -62,6 +64,7 @@ function AudiobookshelfSection() {
   const [reviewItems, setReviewItems] = useState<ABSReviewItem[]>([])
   const [reviewError, setReviewError] = useState<string | null>(null)
   const [reviewActionId, setReviewActionId] = useState<number | null>(null)
+  const [dismissingRunId, setDismissingRunId] = useState<number | null>(null)
   const [authorQueries, setAuthorQueries] = useState<Record<number, string>>({})
   const [authorResults, setAuthorResults] = useState<Record<number, Author[]>>({})
   const [authorSearchId, setAuthorSearchId] = useState<number | null>(null)
@@ -327,6 +330,20 @@ function AudiobookshelfSection() {
     }
   }
 
+  const dismissReviewRun = async (runId: number, count: number) => {
+    if (!confirm(t('settings.abs.review.dismissRunConfirm', { count, runId, defaultValue: 'Dismiss {{count}} review items from run #{{runId}}? This cannot be undone.' }))) return
+    setDismissingRunId(runId)
+    setReviewError(null)
+    try {
+      await api.dismissAbsReviewRun(runId)
+      await refreshReviewItems()
+    } catch (err: unknown) {
+      setReviewError(err instanceof Error ? err.message : 'Failed to dismiss review run')
+    } finally {
+      setDismissingRunId(null)
+    }
+  }
+
   const searchReviewAuthors = async (item: ABSReviewItem) => {
     const query = (authorQueries[item.id] ?? item.primaryAuthor).trim()
     if (!query) return
@@ -374,6 +391,27 @@ function AudiobookshelfSection() {
       setBookSearchId(null)
     }
   }
+
+  const groupedReviewItems = useMemo(() => {
+    type Group = { runId: number | null; items: ABSReviewItem[] }
+    const order: (number | null)[] = []
+    const map = new Map<number | null, ABSReviewItem[]>()
+    for (const item of reviewItems) {
+      const key = typeof item.latestRunId === 'number' && item.latestRunId > 0 ? item.latestRunId : null
+      const bucket = map.get(key)
+      if (bucket) {
+        bucket.push(item)
+      } else {
+        map.set(key, [item])
+        order.push(key)
+      }
+    }
+    // Most recent run first (numerically highest id), unknown last.
+    const numeric = order.filter((k): k is number => k !== null).sort((a, b) => b - a)
+    const hasUnknown = order.includes(null)
+    const sortedKeys: (number | null)[] = hasUnknown ? [...numeric, null] : numeric
+    return sortedKeys.map<Group>(runId => ({ runId, items: map.get(runId) ?? [] }))
+  }, [reviewItems])
 
   const resolveReviewBook = async (item: ABSReviewItem, book: Book) => {
     setReviewActionId(item.id)
@@ -962,7 +1000,28 @@ function AudiobookshelfSection() {
                 <p className="text-sm text-slate-500 dark:text-zinc-500">No queued ABS review items.</p>
               )}
 
-              {reviewItems.map(item => (
+              {groupedReviewItems.map(group => (
+                <div key={group.runId ?? 'unknown'} className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-zinc-400">
+                      {group.runId !== null
+                        ? t('settings.abs.review.runHeading', { runId: group.runId, count: group.items.length, defaultValue: 'Run #{{runId}} · {{count}} items' })
+                        : t('settings.abs.review.unknownRunHeading', { count: group.items.length, defaultValue: 'Older items · {{count}}' })}
+                    </p>
+                    {group.runId !== null && group.items.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => dismissReviewRun(group.runId as number, group.items.length)}
+                        disabled={dismissingRunId === group.runId || reviewActionId !== null}
+                        className="px-2 py-1 bg-amber-600 hover:bg-amber-500 rounded text-[11px] font-medium disabled:opacity-50"
+                      >
+                        {dismissingRunId === group.runId
+                          ? t('settings.abs.review.dismissingRun', { defaultValue: 'Dismissing…' })
+                          : t('settings.abs.review.dismissRun', { defaultValue: 'Dismiss all from this run' })}
+                      </button>
+                    )}
+                  </div>
+                  {group.items.map(item => (
                 <div key={item.id} className="rounded border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950 px-3 py-3 space-y-2">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -1075,6 +1134,8 @@ function AudiobookshelfSection() {
                       Dismiss
                     </button>
                   </div>
+                </div>
+                  ))}
                 </div>
               ))}
             </>

@@ -43,7 +43,7 @@ func absReviewFixture(t *testing.T) (*sql.DB, *ABSReviewHandler, *db.ABSReviewIt
 	t.Cleanup(func() { _ = database.Close() })
 	database.SetMaxOpenConns(1)
 	reviews := db.NewABSReviewItemRepo(database)
-	h := NewABSReviewHandler(reviews, &stubABSReviewImporter{}, func(context.Context) ABSStoredConfig { return ABSStoredConfig{} })
+	h := NewABSReviewHandler(reviews, db.NewABSImportRunRepo(database), &stubABSReviewImporter{}, func(context.Context) ABSStoredConfig { return ABSStoredConfig{} })
 	return database, h, reviews
 }
 
@@ -184,7 +184,7 @@ func TestABSReviewHandler_Approve(t *testing.T) {
 	importer := &stubABSReviewImporter{}
 	type ctxKey struct{}
 	key := ctxKey{}
-	h := NewABSReviewHandler(reviews, importer, func(ctx context.Context) ABSStoredConfig {
+	h := NewABSReviewHandler(reviews, db.NewABSImportRunRepo(database), importer, func(ctx context.Context) ABSStoredConfig {
 		if ctx.Value(key) != "request" {
 			t.Fatalf("load config context value = %v, want request", ctx.Value(key))
 		}
@@ -241,7 +241,7 @@ func TestABSReviewHandler_ResolveAuthorGroupsByPrimaryAuthor(t *testing.T) {
 		}
 	}
 
-	h := NewABSReviewHandler(reviews, &stubABSReviewImporter{}, func(context.Context) ABSStoredConfig { return ABSStoredConfig{} })
+	h := NewABSReviewHandler(reviews, db.NewABSImportRunRepo(database), &stubABSReviewImporter{}, func(context.Context) ABSStoredConfig { return ABSStoredConfig{} })
 	body := bytes.NewBufferString(`{"foreignAuthorId":"OL123A","authorName":"Brandon Sanderson","applyTo":"same_author"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/abs/review/1/resolve-author", body)
 	rctx := chi.NewRouteContext()
@@ -299,7 +299,7 @@ func TestABSReviewHandler_ResolveBookStoresEditedTitle(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	h := NewABSReviewHandler(reviews, &stubABSReviewImporter{}, func(context.Context) ABSStoredConfig { return ABSStoredConfig{} })
+	h := NewABSReviewHandler(reviews, db.NewABSImportRunRepo(database), &stubABSReviewImporter{}, func(context.Context) ABSStoredConfig { return ABSStoredConfig{} })
 	body := bytes.NewBufferString(`{"foreignBookId":"OL456W","title":"The Bands of Mourning","editedTitle":"The Bands of Mourning"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/abs/review/1/resolve-book", body)
 	rctx := chi.NewRouteContext()
@@ -344,7 +344,7 @@ func TestABSReviewHandler_Dismiss(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := NewABSReviewHandler(reviews, &stubABSReviewImporter{}, func(context.Context) ABSStoredConfig { return ABSStoredConfig{} })
+	h := NewABSReviewHandler(reviews, db.NewABSImportRunRepo(database), &stubABSReviewImporter{}, func(context.Context) ABSStoredConfig { return ABSStoredConfig{} })
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/abs/review/1/dismiss", bytes.NewReader(nil))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", "1")
@@ -362,5 +362,124 @@ func TestABSReviewHandler_Dismiss(t *testing.T) {
 	}
 	if updated == nil || updated.Status != "dismissed" {
 		t.Fatalf("updated review = %+v, want dismissed", updated)
+	}
+}
+
+func TestABSReviewHandler_DismissRunHappyPath(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	runs := db.NewABSImportRunRepo(database)
+	run := &models.ABSImportRun{SourceID: abs.DefaultSourceID, Status: "completed"}
+	if err := runs.Create(context.Background(), run); err != nil {
+		t.Fatal(err)
+	}
+	otherRun := &models.ABSImportRun{SourceID: abs.DefaultSourceID, Status: "completed"}
+	if err := runs.Create(context.Background(), otherRun); err != nil {
+		t.Fatal(err)
+	}
+
+	reviews := db.NewABSReviewItemRepo(database)
+	for i, runID := range []int64{run.ID, run.ID, otherRun.ID} {
+		item := &models.ABSReviewItem{
+			SourceID:      abs.DefaultSourceID,
+			LibraryID:     "lib-books",
+			ItemID:        "item-" + strconv.Itoa(i+1),
+			Title:         "Title",
+			PrimaryAuthor: "Author",
+			MediaType:     models.MediaTypeAudiobook,
+			ReviewReason:  "unmatched_book",
+			PayloadJSON:   `{}`,
+			Status:        "pending",
+			LatestRunID:   &runID,
+		}
+		if err := reviews.UpsertPending(context.Background(), item); err != nil {
+			t.Fatal(err)
+		}
+		// UpsertPending only honours LatestRunID via INSERT, so reapply it
+		// for the second-and-later rows that conflict.
+		if _, err := database.ExecContext(context.Background(),
+			`UPDATE abs_review_queue SET latest_run_id = ? WHERE item_id = ?`, runID, item.ItemID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	h := NewABSReviewHandler(reviews, runs, &stubABSReviewImporter{}, func(context.Context) ABSStoredConfig { return ABSStoredConfig{} })
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/abs/review/dismiss-run/"+strconv.FormatInt(run.ID, 10), nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("runID", strconv.FormatInt(run.ID, 10))
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.DismissRun(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]int64
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["dismissed"] != 2 {
+		t.Fatalf("dismissed = %d, want 2", body["dismissed"])
+	}
+	pending, err := reviews.ListByStatus(context.Background(), "pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 || pending[0].ItemID != "item-3" {
+		t.Fatalf("pending = %+v, want only item-3 (other run) left pending", pending)
+	}
+}
+
+func TestABSReviewHandler_DismissRunUnknownRun404(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	reviews := db.NewABSReviewItemRepo(database)
+	runs := db.NewABSImportRunRepo(database)
+	h := NewABSReviewHandler(reviews, runs, &stubABSReviewImporter{}, func(context.Context) ABSStoredConfig { return ABSStoredConfig{} })
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/abs/review/dismiss-run/9999", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("runID", "9999")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.DismissRun(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestABSReviewHandler_DismissRunInvalidID(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	reviews := db.NewABSReviewItemRepo(database)
+	runs := db.NewABSImportRunRepo(database)
+	h := NewABSReviewHandler(reviews, runs, &stubABSReviewImporter{}, func(context.Context) ABSStoredConfig { return ABSStoredConfig{} })
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/abs/review/dismiss-run/abc", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("runID", "abc")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.DismissRun(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

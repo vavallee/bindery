@@ -506,7 +506,7 @@ func main() {
 	absImportHandler := api.NewABSImportHandler(absImporter, func(ctx context.Context) api.ABSStoredConfig {
 		return api.LoadABSConfig(ctx, settingsRepo)
 	})
-	absReviewHandler := api.NewABSReviewHandler(absReviewRepo, absImporter, func(ctx context.Context) api.ABSStoredConfig {
+	absReviewHandler := api.NewABSReviewHandler(absReviewRepo, absImportRunRepo, absImporter, func(ctx context.Context) api.ABSStoredConfig {
 		return api.LoadABSConfig(ctx, settingsRepo)
 	})
 	calibreImportHandler := api.NewCalibreImportHandler(calibreImporter, func() calibre.Config {
@@ -764,6 +764,7 @@ func main() {
 			r.Post("/abs/review/{id}/resolve-author", absReviewHandler.ResolveAuthor)
 			r.Post("/abs/review/{id}/resolve-book", absReviewHandler.ResolveBook)
 			r.Post("/abs/review/{id}/dismiss", absReviewHandler.Dismiss)
+			r.Post("/abs/review/dismiss-run/{runID}", absReviewHandler.DismissRun)
 			r.Get("/abs/conflicts", absConflictHandler.List)
 			r.Post("/abs/conflicts/{id}/resolve", absConflictHandler.Resolve)
 		})

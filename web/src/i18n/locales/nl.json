@@ -216,6 +216,15 @@
       "grimmory": "Grimmory",
       "blocklist": "Blokkeerlijst"
     },
+    "abs": {
+      "review": {
+        "runHeading": "Run #{{runId}} · {{count}} items",
+        "unknownRunHeading": "Oudere items · {{count}}",
+        "dismissRun": "Alles uit deze run negeren",
+        "dismissingRun": "Negeren…",
+        "dismissRunConfirm": "{{count}} reviewitems uit run #{{runId}} negeren? Dit kan niet ongedaan worden gemaakt."
+      }
+    },
     "indexers": {
       "heading": "Indexers",
       "addButton": "+ Indexer toevoegen",

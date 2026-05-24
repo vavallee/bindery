@@ -4475,6 +4475,104 @@ func TestImporter_RollbackSkipsSnapshotWhenProvenanceLocalChanged(t *testing.T) 
 	}
 }
 
+// TestImporter_AutoReconcilesStaleReviewItemsOnRescan covers issue #767: a
+// previously-no-match book that becomes matchable on a later rescan must have
+// its old pending review row reconciled, not left to rot in the queue next to
+// genuine no-matches.
+func TestImporter_AutoReconcilesStaleReviewItemsOnRescan(t *testing.T) {
+	t.Parallel()
+
+	importer, _, _, _, _, _, _, _, reviewRepo, _ := newABSImporterFixture(t)
+	ctx := context.Background()
+	const libraryID = "lib-books"
+	const itemID = "li-stale-review"
+
+	// Seed a pre-existing pending review item (no match on the first run) so
+	// we can prove the reconcile flips it back out of the queue on rescan.
+	stale := int64(0)
+	if err := reviewRepo.UpsertPending(ctx, &models.ABSReviewItem{
+		SourceID:      DefaultSourceID,
+		LibraryID:     libraryID,
+		ItemID:        itemID,
+		Title:         "Stale",
+		PrimaryAuthor: "Author",
+		MediaType:     models.MediaTypeAudiobook,
+		ReviewReason:  reviewReasonUnmatchedBook,
+		PayloadJSON:   `{}`,
+		Status:        "pending",
+		LatestRunID:   &stale,
+	}); err != nil {
+		t.Fatalf("seed UpsertPending: %v", err)
+	}
+	// Untouched-by-this-run row stays pending — proves we scope by item id.
+	if err := reviewRepo.UpsertPending(ctx, &models.ABSReviewItem{
+		SourceID:      DefaultSourceID,
+		LibraryID:     libraryID,
+		ItemID:        "li-other",
+		Title:         "Other",
+		PrimaryAuthor: "Author",
+		MediaType:     models.MediaTypeAudiobook,
+		ReviewReason:  reviewReasonUnmatchedBook,
+		PayloadJSON:   `{}`,
+		Status:        "pending",
+	}); err != nil {
+		t.Fatalf("seed unrelated UpsertPending: %v", err)
+	}
+	// User-dismissed row must not be re-touched.
+	if err := reviewRepo.UpsertPending(ctx, &models.ABSReviewItem{
+		SourceID:      DefaultSourceID,
+		LibraryID:     libraryID,
+		ItemID:        "li-user-dismissed",
+		Title:         "Dismissed",
+		PrimaryAuthor: "Author",
+		MediaType:     models.MediaTypeAudiobook,
+		ReviewReason:  reviewReasonUnmatchedBook,
+		PayloadJSON:   `{}`,
+		Status:        "pending",
+	}); err != nil {
+		t.Fatalf("seed dismissed UpsertPending: %v", err)
+	}
+	dismissedItems, err := reviewRepo.ListByStatus(ctx, "pending")
+	if err != nil {
+		t.Fatalf("ListByStatus: %v", err)
+	}
+	var dismissedID int64
+	for _, item := range dismissedItems {
+		if item.ItemID == "li-user-dismissed" {
+			dismissedID = item.ID
+			break
+		}
+	}
+	if dismissedID == 0 {
+		t.Fatal("could not find seeded dismissed-target row")
+	}
+	if err := reviewRepo.UpdateStatus(ctx, dismissedID, "dismissed"); err != nil {
+		t.Fatalf("UpdateStatus dismissed: %v", err)
+	}
+
+	// Now rescan with a matchable normalized item — the same ItemID the
+	// pending review row references — and confirm it gets reconciled.
+	item := sampleABSItem()
+	item.LibraryID = libraryID
+	item.ItemID = itemID
+	runSingleABSImport(t, importer, item)
+
+	pending, err := reviewRepo.ListByStatus(ctx, "pending")
+	if err != nil {
+		t.Fatalf("ListByStatus pending: %v", err)
+	}
+	if len(pending) != 1 || pending[0].ItemID != "li-other" {
+		t.Fatalf("pending after rescan = %+v, want only li-other left", pending)
+	}
+	dismissed, err := reviewRepo.ListByStatus(ctx, "dismissed")
+	if err != nil {
+		t.Fatalf("ListByStatus dismissed: %v", err)
+	}
+	if len(dismissed) != 2 {
+		t.Fatalf("dismissed after rescan = %d, want auto-reconciled + manual dismiss totalling 2", len(dismissed))
+	}
+}
+
 func TestImporter_Rollback_NilReposAreSafe(t *testing.T) {
 	t.Parallel()
 
