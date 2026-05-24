@@ -376,6 +376,13 @@ export const api = {
 
   // Quality Profiles
   listQualityProfiles: () => request<QualityProfile[]>('/qualityprofile'),
+  getQualityProfile: (id: number) => request<QualityProfile>(`/qualityprofile/${id}`),
+  addQualityProfile: (data: Partial<QualityProfile>) =>
+    request<QualityProfile>('/qualityprofile', { method: 'POST', body: JSON.stringify(data) }),
+  updateQualityProfile: (id: number, data: Partial<QualityProfile>) =>
+    request<QualityProfile>(`/qualityprofile/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteQualityProfile: (id: number) =>
+    request<void>(`/qualityprofile/${id}`, { method: 'DELETE' }),
 
   // Series
   listSeries: () => request<Series[]>('/series'),

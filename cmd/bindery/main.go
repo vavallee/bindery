@@ -738,9 +738,15 @@ func main() {
 		r.Delete("/notification/{id}", notificationHandler.Delete)
 		r.Post("/notification/{id}/test", notificationHandler.Test)
 
-		// Quality Profiles
+		// Quality Profiles — reads available to all; mutations admin-only.
 		r.Get("/qualityprofile", qualityProfileHandler.List)
 		r.Get("/qualityprofile/{id}", qualityProfileHandler.Get)
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireAdmin)
+			r.Post("/qualityprofile", qualityProfileHandler.Create)
+			r.Put("/qualityprofile/{id}", qualityProfileHandler.Update)
+			r.Delete("/qualityprofile/{id}", qualityProfileHandler.Delete)
+		})
 
 		// Settings — reads available to all; mutations admin-only.
 		r.Get("/setting", settingsHandler.List)

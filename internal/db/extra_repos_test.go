@@ -458,6 +458,163 @@ func TestQualityProfileRepo(t *testing.T) {
 	}
 }
 
+// TestQualityProfileRepo_CRUD covers Create/Update/Delete and the items JSON
+// round-trip — the items column is the only non-trivial bit (everything else
+// is a flat column) so we explicitly verify order and allowed flags persist.
+func TestQualityProfileRepo_CRUD(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewQualityProfileRepo(database)
+
+	in := &models.QualityProfile{
+		Name:           "Ebook Only",
+		UpgradeAllowed: true,
+		Cutoff:         "epub",
+		Items: []models.QualityItem{
+			{Quality: "pdf", Allowed: false},
+			{Quality: "mobi", Allowed: true},
+			{Quality: "epub", Allowed: true},
+			{Quality: "azw3", Allowed: true},
+		},
+	}
+	if err := repo.Create(ctx, in); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if in.ID == 0 {
+		t.Fatal("Create did not populate ID")
+	}
+
+	got, err := repo.GetByID(ctx, in.ID)
+	if err != nil || got == nil {
+		t.Fatalf("GetByID after Create: got=%v err=%v", got, err)
+	}
+	if got.Name != "Ebook Only" || got.Cutoff != "epub" || !got.UpgradeAllowed {
+		t.Errorf("Create round-trip lost fields: %+v", got)
+	}
+	if len(got.Items) != 4 {
+		t.Fatalf("expected 4 items, got %d", len(got.Items))
+	}
+	// Order matters — QualityCutoff uses item index to compare formats.
+	want := []string{"pdf", "mobi", "epub", "azw3"}
+	for i, w := range want {
+		if got.Items[i].Quality != w {
+			t.Errorf("item[%d]: want %q, got %q", i, w, got.Items[i].Quality)
+		}
+	}
+	if got.Items[0].Allowed {
+		t.Error("item[0].allowed should be false (pdf)")
+	}
+	if !got.Items[2].Allowed {
+		t.Error("item[2].allowed should be true (epub)")
+	}
+
+	// Update — replace items wholesale.
+	in.Name = "Ebook Strict"
+	in.Cutoff = "azw3"
+	in.UpgradeAllowed = false
+	in.Items = []models.QualityItem{
+		{Quality: "epub", Allowed: true},
+		{Quality: "azw3", Allowed: true},
+	}
+	if err := repo.Update(ctx, in); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	got, _ = repo.GetByID(ctx, in.ID)
+	if got.Name != "Ebook Strict" || got.Cutoff != "azw3" || got.UpgradeAllowed {
+		t.Errorf("Update did not persist scalars: %+v", got)
+	}
+	if len(got.Items) != 2 || got.Items[1].Quality != "azw3" {
+		t.Errorf("Update did not replace items: %+v", got.Items)
+	}
+
+	// Update — non-existent profile returns sql.ErrNoRows so handlers can map
+	// it to 404 rather than 500.
+	bogus := &models.QualityProfile{ID: 999999, Name: "X", Cutoff: "epub",
+		Items: []models.QualityItem{{Quality: "epub", Allowed: true}}}
+	if err := repo.Update(ctx, bogus); err == nil {
+		t.Error("Update on missing id should fail")
+	}
+
+	// NameExists — the new name is taken by this row, not by any other.
+	taken, err := repo.NameExists(ctx, "Ebook Strict", in.ID)
+	if err != nil {
+		t.Fatalf("NameExists: %v", err)
+	}
+	if taken {
+		t.Error("NameExists should ignore the excluded id")
+	}
+	taken, _ = repo.NameExists(ctx, "Ebook Strict", 0)
+	if !taken {
+		t.Error("NameExists should report the row when no exclusion")
+	}
+
+	// Delete — succeeds when nothing references the profile.
+	if err := repo.Delete(ctx, in.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if got, _ := repo.GetByID(ctx, in.ID); got != nil {
+		t.Error("profile still present after Delete")
+	}
+}
+
+func TestQualityProfileRepo_DeleteInUse(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewQualityProfileRepo(database)
+
+	p := &models.QualityProfile{
+		Name: "Used", Cutoff: "epub",
+		Items: []models.QualityItem{{Quality: "epub", Allowed: true}},
+	}
+	if err := repo.Create(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := database.ExecContext(ctx,
+		`INSERT INTO authors (foreign_id, name, sort_name, quality_profile_id) VALUES (?, ?, ?, ?)`,
+		"x:y", "Author A", "author a", p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx,
+		`INSERT INTO authors (foreign_id, name, sort_name, quality_profile_id) VALUES (?, ?, ?, ?)`,
+		"x:z", "Author B", "author b", p.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := repo.CountAuthorsUsing(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("CountAuthorsUsing: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("expected count 2, got %d", n)
+	}
+
+	err = repo.Delete(ctx, p.ID)
+	inUse, ok := AsInUseError(err)
+	if !ok {
+		t.Fatalf("expected ErrQualityProfileInUse, got %v", err)
+	}
+	if inUse.AuthorCount != 2 {
+		t.Errorf("expected AuthorCount=2, got %d", inUse.AuthorCount)
+	}
+
+	names, err := repo.AuthorNamesUsing(ctx, p.ID, 5)
+	if err != nil {
+		t.Fatalf("AuthorNamesUsing: %v", err)
+	}
+	if len(names) != 2 || names[0] != "Author A" {
+		t.Errorf("unexpected names: %v", names)
+	}
+}
+
 // TestDownloadClientRepo_ExtraMethods covers List, Update, Delete, GetFirstEnabled.
 func TestDownloadClientRepo_ExtraMethods(t *testing.T) {
 	database, err := OpenMemory()
