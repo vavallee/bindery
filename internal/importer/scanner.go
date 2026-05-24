@@ -1053,8 +1053,9 @@ func (s *Scanner) alreadyImportedFormat(ctx context.Context, book *models.Book, 
 	return false
 }
 
-// isBookAlreadyImported reports whether any on-disk file is tracked in
-// book_files for the book linked to dl, in either ebook or audiobook format.
+// isBookAlreadyImported reports whether the book linked to dl already has an
+// on-disk file tracked in book_files, scoped to the format(s) the book is
+// monitored for.
 //
 // It is used as a guard for duplicate-add re-grabs (#769): when a torrent is
 // re-grabbed after qBittorrent already holds it (409 response), the original
@@ -1062,6 +1063,14 @@ func (s *Scanner) alreadyImportedFormat(ctx context.Context, book *models.Book, 
 // (move mode), leaving the download path empty. Rather than failing with "no
 // book files found" and burning through the retry budget, the caller can check
 // this and mark the Download StateImported directly.
+//
+// Scoping: the check is limited to the format(s) the book is configured for
+// (book.MediaType). For single-format books (ebook or audiobook) this avoids
+// falsely marking a fresh download as imported when only the other format
+// already exists. For dual-format books (MediaTypeBoth) the Download record
+// does not carry which format this particular grab targets, so both formats
+// are checked; a re-grab of one format where only the other is on disk is
+// an accepted narrow false-positive in that case.
 func (s *Scanner) isBookAlreadyImported(ctx context.Context, dl *models.Download) bool {
 	if dl.BookID == nil {
 		return false
@@ -1070,8 +1079,15 @@ func (s *Scanner) isBookAlreadyImported(ctx context.Context, dl *models.Download
 	if err != nil || book == nil {
 		return false
 	}
-	return s.alreadyImportedFormat(ctx, book, models.MediaTypeAudiobook) ||
-		s.alreadyImportedFormat(ctx, book, models.MediaTypeEbook)
+	switch book.MediaType {
+	case models.MediaTypeEbook:
+		return s.alreadyImportedFormat(ctx, book, models.MediaTypeEbook)
+	case models.MediaTypeAudiobook:
+		return s.alreadyImportedFormat(ctx, book, models.MediaTypeAudiobook)
+	default: // MediaTypeBoth or unknown
+		return s.alreadyImportedFormat(ctx, book, models.MediaTypeAudiobook) ||
+			s.alreadyImportedFormat(ctx, book, models.MediaTypeEbook)
+	}
 }
 
 // alreadyImportedPath reports whether the exact destination path is already
