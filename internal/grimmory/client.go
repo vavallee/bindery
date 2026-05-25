@@ -135,7 +135,13 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader, ou
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	// Grimmory v3.x does not have API keys; the maintainer confirmed this on
+	// grimmory-tools/grimmory#1487 (#818). Send the Authorization header only
+	// when the user actually configured one — sending "Bearer " with an empty
+	// token is a no-op against current Grimmory and just noise on the wire.
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 	req.Header.Set("User-Agent", c.userAgent)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")

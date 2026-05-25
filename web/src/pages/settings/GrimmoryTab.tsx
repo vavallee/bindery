@@ -67,8 +67,13 @@ export default function GrimmoryTab() {
         <p className="text-xs text-slate-600 dark:text-zinc-500 mb-4">
           Push newly imported books to a{' '}
           <a href="https://grimmory.org" target="_blank" rel="noopener noreferrer" className="underline">Grimmory</a>{' '}
-          self-hosted library. Enable the Grimmory REST API (<code>API_DOCS_ENABLED=true</code>) and provide
-          your server URL and API token.
+          self-hosted library. Enable the Grimmory REST API on your Grimmory server with{' '}
+          <code>API_DOCS_ENABLED=true</code> and enter its URL below.
+        </p>
+        <p className="text-xs text-amber-700 dark:text-amber-400 mb-4">
+          Grimmory v3.x does not have API keys
+          (<a href="https://github.com/orgs/grimmory-tools/discussions/1487" target="_blank" rel="noopener noreferrer" className="underline">grimmory-tools/grimmory#1487</a>)
+          — leave the field blank unless a future Grimmory release adds token auth.
         </p>
       </div>
 
@@ -95,13 +100,16 @@ export default function GrimmoryTab() {
         </div>
         <div>
           <label className="block text-xs font-medium mb-1">
-            API Key{config?.apiKeyConfigured && !draft.apiKey ? ' (configured — leave blank to keep)' : ''}
+            API Key
+            <span className="ml-1 text-slate-500 dark:text-zinc-500 font-normal">
+              {config?.apiKeyConfigured && !draft.apiKey ? '(configured — leave blank to keep)' : '(optional, see above)'}
+            </span>
           </label>
           <input
             type="password"
             value={draft.apiKey}
             onChange={e => setDraft(prev => ({ ...prev, apiKey: e.target.value }))}
-            placeholder={config?.apiKeyConfigured ? '••••••••' : 'Paste API token here'}
+            placeholder={config?.apiKeyConfigured ? '••••••••' : 'Leave blank for current Grimmory'}
             className={inputCls}
           />
         </div>
