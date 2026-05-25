@@ -296,6 +296,53 @@ func TestImportFromPath_FormatHintAudiobook(t *testing.T) {
 	}
 }
 
+// TestImportFromPath_FormatHintEbook exercises the right-hand side of the
+// || condition on scanner.go line 1158:
+//
+//	if formatHint == models.MediaTypeAudiobook || formatHint == models.MediaTypeEbook
+//
+// Passing "ebook" for a .m4b file (which auto-detects as audiobook) makes the
+// left side false and the right side true, so both operands are evaluated.
+// The import must be routed through the ebook path — confirmed by a file
+// landing under the library root (ebook dest), not the audiobook dir.
+func TestImportFromPath_FormatHintEbook(t *testing.T) {
+	tmp := t.TempDir()
+	m4bFile := filepath.Join(tmp, "test.m4b")
+	if err := os.WriteFile(m4bFile, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	libDir := t.TempDir()
+	s, books, authors, ctx := scannerFixture(t, libDir)
+
+	author := &models.Author{Name: "Ebook Hint Author", ForeignID: "feha3", SortName: "Author, Ebook Hint"}
+	if err := authors.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{AuthorID: author.ID, Title: "Ebook Hint Book", ForeignID: "fehb3", Status: "wanted"}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	dl := &models.Download{
+		GUID:   "hint-ebook",
+		BookID: &book.ID,
+		Title:  "Ebook Hint Book",
+		Status: models.StateCompleted,
+	}
+	// "ebook" hint overrides .m4b auto-detection → ebook path is taken.
+	s.ImportFromPath(ctx, dl, m4bFile, models.MediaTypeEbook)
+
+	// The ebook path creates an author/book directory under libDir.
+	entries, err := os.ReadDir(libDir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Error("expected an author directory under libDir after ebook import with hint (m4b routed as ebook)")
+	}
+}
+
 // TestScanner_Lookup_Ambiguous verifies that two books with the same title and
 // no author in the filename produces a match = "ambiguous" result with both
 // books listed as candidates.
