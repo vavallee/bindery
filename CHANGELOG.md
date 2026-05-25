@@ -6,6 +6,24 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.14.2] — 2026-05-24
+
+### Fixed
+
+- **Hardcover import lists paginate and reuse the saved global token** (#789) — large custom lists previously stopped at the first page, built-in shelves (To Read / Currently Reading / Read / Did Not Finish) did not page through all books, and a global-token deployment had to duplicate the Hardcover token per list to make sync work at all. Built-in shelves now expose item counts in the list picker, both custom lists and shelves paginate fully, and an import list with no per-list override now falls back to the workspace-wide saved Hardcover token. Thanks to @magrhino.
+
+- **qBittorrent re-grab of an already-imported book now resolves to imported instead of looping or being blocked** (#769) — the v1.14.0 hash-recovery fix landed the download row in `StateGrabbed` when qBittorrent returned 409 for a duplicate add, but three gaps prevented it from completing on its own: a missing `content_path` in move-mode left the download polling forever; an empty download directory tripped `StateImportFailed → StateImportBlocked` after three retries; and the `grabbed → completed` transition was rejected by the state-machine guard. Bindery now detects "already in library" via `book_files` + `os.Stat`, walks the import states through to `StateImported`, and the missing transition has been added. Thanks to @statte.
+
+- **"Local-only" auth bypass now grants the admin role to trusted-LAN requests** (#799) — admin-only endpoints (auth mode change, user CRUD, settings writes) returned `admin role required` 403 for requests on a trusted private network, even though local-only mode is meant to grant frictionless access from one. The trusted-LAN bypass now sets the request's role to `admin`, mirroring the API-key bypass.
+
+- **Webhook notification saves surface their errors instead of failing silently** (#799) — saving a webhook notification under Settings → Notifications dropped errors on the floor, so a URL rejected by the default-strict outbound policy gave the user no feedback at all. Add and edit forms now display the error inline and disable the Save button while the request is in flight.
+
+- **qBittorrent category-path mismatch error now tells you how to fix it** (#800) — when a qBittorrent category's save path resolves outside Bindery's expected download directory, the health-check error named the problem but never the remedy. The error now suggests a derived `PathRemap` value (e.g. `/torrents/complete:/downloads`) and the alternative of mounting the same directory inside Bindery to match `BINDERY_DOWNLOAD_DIR`.
+
+- **Adding a new author no longer risks deleting the author row before the requested book is saved** (#804) — for prolific authors the async catalogue sync that follows `AddBook` can exceed the 15s poll budget; when it did, the orphan-cleanup defer treated the just-created author as orphaned and deleted it, and the async goroutine's later inserts cascaded into FOREIGN-KEY failures. The handler now directly persists the requested book before the cleanup defer runs whenever the author was newly created, mirroring the existing DNB path from #667. The async sync continues to do catalogue backfill — it just no longer races for the requested book.
+
+- **Stale ABS no-match review items are auto-reconciled on rescan, plus per-run bulk dismiss** (#767) — fixing metadata in Audiobookshelf and re-running the import previously left old no-match rows in the review queue forever, indistinguishable from genuine no-matches. Bindery now flips pending review rows for any item that matched on the current run (preserving any user-applied decisions on rows that have already left pending), and a new "Dismiss all from this run" button on the ABS review page lets you clear the residue from a previous run.
+
 ## [v1.14.1] — 2026-05-22
 
 ### Fixed
