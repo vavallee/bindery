@@ -868,6 +868,8 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 		torrentsMap[strings.ToLower(t.Hash)] = t
 	}
 
+	slog.Debug("qbittorrent poll", "torrents", len(torrents), "downloads", len(allDownloads), "category", client.Category)
+
 	// Track which downloads' sources we observed this cycle (issue #706 finding 4).
 	seenSourceIDs := make(map[int64]bool)
 
@@ -877,6 +879,12 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 		}
 		torrent, ok := torrentsMap[strings.ToLower(*dl.TorrentID)]
 		if !ok {
+			// The torrent is not in qBittorrent's list. Common causes: category
+			// filter mismatch, the torrent was manually removed, or the hash stored
+			// in Bindery doesn't match what qBittorrent returned. This is
+			// blockStaleImportFailures territory; only log at Debug to avoid noise.
+			slog.Debug("qbittorrent: download not found in torrent list",
+				"title", dl.Title, "hash", *dl.TorrentID, "dl_status", dl.Status)
 			continue
 		}
 		seenSourceIDs[dl.ID] = true
@@ -888,6 +896,13 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 		state := strings.ToLower(torrent.State)
 		isComplete := torrent.Progress >= 1.0 || strings.Contains(state, "upload") || strings.Contains(state, "stalledup") || strings.Contains(state, "checkingup")
 		isFailed := strings.Contains(state, "error")
+
+		slog.Debug("qbittorrent: torrent status",
+			"title", dl.Title,
+			"qbit_state", torrent.State,
+			"progress", fmt.Sprintf("%.1f%%", torrent.Progress*100),
+			"dl_status", dl.Status,
+			"is_complete", isComplete)
 
 		if isComplete && (dl.Status == models.StateDownloading || dl.Status == models.StateGrabbed) {
 			rawPath, ok := resolveQbitContentPath(torrent)
@@ -921,7 +936,7 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 			}
 			downloadPath := s.remapDownloadClientPath(client, rawPath)
 
-			slog.Info("download completed", "title", dl.Title, "path", downloadPath)
+			slog.Info("download completed", "title", dl.Title, "path", downloadPath, "raw_path", rawPath)
 			s.updateDownloadStatus(ctx, dl.ID, models.StateCompleted)
 			s.tryImportQbittorrent(ctx, &dl, downloadPath)
 		} else if isComplete && dl.Status == models.StateImportFailed && dl.ImportRetryCount < importRetryLimit {
@@ -1183,6 +1198,16 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			// Walk: importPending → importing → imported.
 			s.updateDownloadStatus(ctx, dl.ID, models.StateImporting)
 			s.updateDownloadStatus(ctx, dl.ID, models.StateImported)
+			return
+		}
+		// Distinguish "path doesn't exist on this host" from "path exists but
+		// has no recognised book files" — the former almost always means PathRemap
+		// is not configured (qBittorrent and Bindery see different filesystem roots).
+		if _, statErr := os.Stat(downloadPath); os.IsNotExist(statErr) {
+			slog.Warn("download path not found on this host — check PathRemap setting on the download client",
+				"path", downloadPath)
+			s.failImport(ctx, dl, models.StateImportFailed,
+				fmt.Sprintf("download path not found: %q — configure PathRemap on the download client so Bindery can resolve the path", downloadPath))
 			return
 		}
 		slog.Warn("no book files found in download", "path", downloadPath)
