@@ -59,6 +59,34 @@ func TestTryImportInternal_PathNotFound(t *testing.T) {
 	}
 }
 
+// TestTryImportInternal_PathExistsNoBooks covers the false branch of the
+// os.IsNotExist check on line 1206: when the download path exists on disk but
+// contains no recognised book formats, tryImportInternal must fall through to
+// the generic "no book files found" failure (not the PathRemap hint). This
+// distinguishes an empty/wrong-format download from a path that doesn't exist
+// at all.
+func TestTryImportInternal_PathExistsNoBooks(t *testing.T) {
+	libraryDir := t.TempDir()
+	s, dl, dlRepo, _, ctx := dataLossFixture(t, libraryDir, "")
+
+	// An existing but empty directory — os.Stat succeeds, IsNotExist is false.
+	emptyDir := t.TempDir()
+
+	s.tryImportInternal(ctx, dl, emptyDir, "", "", nil)
+
+	got, err := dlRepo.GetByGUID(ctx, dl.GUID)
+	if err != nil {
+		t.Fatalf("GetByGUID: %v", err)
+	}
+	if got.Status != models.StateImportFailed {
+		t.Errorf("expected StateImportFailed when path exists but has no book files, got %q", got.Status)
+	}
+	// The error must NOT mention PathRemap — the path was accessible, just empty.
+	if strings.Contains(got.ErrorMessage, "PathRemap") {
+		t.Errorf("error message must not mention PathRemap when path exists: %q", got.ErrorMessage)
+	}
+}
+
 // TestCheckQbittorrentDownloads_GetTorrentsFails verifies that
 // checkQbittorrentDownloads handles a qBittorrent API error gracefully — it
 // must return early without panicking or modifying any download records.
