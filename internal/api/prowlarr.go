@@ -135,6 +135,7 @@ func (h *ProwlarrHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
+	previousKey := existing.APIKey
 	if err := json.NewDecoder(r.Body).Decode(existing); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
@@ -147,6 +148,12 @@ func (h *ProwlarrHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if err := h.instances.Update(r.Context(), existing); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
+	}
+	if existing.APIKey != previousKey && h.indexers != nil {
+		if _, err := h.indexers.UpdateAPIKeyByProwlarrInstance(r.Context(), id, existing.APIKey); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, existing)
 }

@@ -17,6 +17,7 @@ interface Props {
 export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, setProwlarrInstances }: Props) {
   const { t } = useTranslation()
   const [showAddProwlarr, setShowAddProwlarr] = useState(false)
+  const [editingProwlarr, setEditingProwlarr] = useState<number | null>(null)
   const [prowlarrSyncResult, setProwlarrSyncResult] = useState<Record<number, string>>({})
   const [showAddIndexer, setShowAddIndexer] = useState(false)
   const [editingIndexer, setEditingIndexer] = useState<number | null>(null)
@@ -164,6 +165,9 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
                   )}
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
+                  <button onClick={() => setEditingProwlarr(editingProwlarr === p.id ? null : p.id)} className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">
+                    {t('common.edit')}
+                  </button>
                   <button
                     onClick={async () => {
                       try {
@@ -205,6 +209,17 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
                   </button>
                 </div>
               </div>
+              {editingProwlarr === p.id && (
+                <EditProwlarrForm
+                  instance={p}
+                  onClose={() => setEditingProwlarr(null)}
+                  onSaved={(updated) => {
+                    setProwlarrInstances(prev => prev.map(i => i.id === updated.id ? updated : i))
+                    setEditingProwlarr(null)
+                    api.listIndexers().then(setIndexers).catch(console.error)
+                  }}
+                />
+              )}
             </div>
           ))}
         </div>
@@ -318,6 +333,70 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">Cancel</button>
         <button onClick={submit} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium">Save</button>
+      </div>
+    </div>
+  )
+}
+
+function EditProwlarrForm({ instance, onClose, onSaved }: { instance: ProwlarrInstance; onClose: () => void; onSaved: (p: ProwlarrInstance) => void }) {
+  const [name, setName] = useState(instance.name)
+  const [url, setUrl] = useState(instance.url)
+  // Empty means "keep existing key" — payload omits apiKey when blank so the
+  // backend's struct-decode leaves the column alone (#820).
+  const [apiKey, setApiKey] = useState('')
+  const [syncOnStartup, setSyncOnStartup] = useState(instance.syncOnStartup)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const urlChanged = url.trim() !== instance.url.trim()
+  const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
+
+  const submit = async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      const payload: Partial<ProwlarrInstance> = { name, url, syncOnStartup, enabled: instance.enabled }
+      if (apiKey) payload.apiKey = apiKey
+      const updated = await api.updateProwlarr(instance.id, payload)
+      onSaved(updated)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="mt-3 p-4 border border-slate-300 dark:border-zinc-700 rounded-lg bg-slate-200/50 dark:bg-zinc-800/50 space-y-3">
+      <div>
+        <label className={labelCls}>Name</label>
+        <input value={name} onChange={e => setName(e.target.value)} placeholder="Prowlarr" className={inputCls} />
+      </div>
+      <div>
+        <label className={labelCls}>URL</label>
+        <input value={url} onChange={e => setUrl(e.target.value)} placeholder="http://prowlarr:9696" className={inputCls} />
+        {urlChanged && (
+          <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+            Click <strong>Sync now</strong> after saving to rebuild the per-indexer URLs against the new base.
+          </p>
+        )}
+      </div>
+      <div>
+        <label className={labelCls}>API Key (leave blank to keep current)</label>
+        <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="••••••••" type="password" className={inputCls} />
+        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">A new key is propagated to every indexer synced from this Prowlarr instance immediately.</p>
+      </div>
+      <div className="flex items-center gap-2">
+        <Toggle checked={syncOnStartup} onChange={() => setSyncOnStartup(!syncOnStartup)} />
+        <span className="text-xs text-slate-600 dark:text-zinc-400">Sync on startup</span>
+      </div>
+      {error && (
+        <div className="text-xs text-red-600 dark:text-red-400 break-words">{error}</div>
+      )}
+      <div className="flex gap-2 justify-end">
+        <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">Cancel</button>
+        <button onClick={submit} disabled={!url || saving} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium disabled:opacity-50">
+          {saving ? 'Saving…' : 'Save'}
+        </button>
       </div>
     </div>
   )

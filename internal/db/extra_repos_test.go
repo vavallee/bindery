@@ -667,6 +667,76 @@ func TestIndexerRepo_Update(t *testing.T) {
 	}
 }
 
+// TestIndexerRepo_UpdateAPIKeyByProwlarrInstance verifies that rotating the
+// Prowlarr instance's API key via this helper rewrites only the rows belonging
+// to that instance, leaving manual indexers and indexers from a different
+// Prowlarr instance untouched (#820).
+func TestIndexerRepo_UpdateAPIKeyByProwlarrInstance(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewIndexerRepo(database)
+	prowlarrRepo := NewProwlarrRepo(database)
+
+	a := &models.ProwlarrInstance{Name: "A", URL: "http://a:9696", APIKey: "oldA"}
+	b := &models.ProwlarrInstance{Name: "B", URL: "http://b:9696", APIKey: "oldB"}
+	if err := prowlarrRepo.Create(ctx, a); err != nil {
+		t.Fatalf("Create prowlarr A: %v", err)
+	}
+	if err := prowlarrRepo.Create(ctx, b); err != nil {
+		t.Fatalf("Create prowlarr B: %v", err)
+	}
+	instanceA := a.ID
+	instanceB := b.ID
+	idxA := 1
+	idxB := 9
+	synced := &models.Indexer{
+		Name: "Synced from A", Type: "torznab", URL: "http://prowlarr:9696/1/api",
+		APIKey: "oldKeyA", Categories: []int{7000}, Enabled: true, SupportsSearch: true,
+		ProwlarrInstanceID: &instanceA,
+		ProwlarrIndexerID:  &idxA,
+	}
+	other := &models.Indexer{
+		Name: "Synced from B", Type: "torznab", URL: "http://prowlarr:9696/9/api",
+		APIKey: "oldKeyB", Categories: []int{7000}, Enabled: true, SupportsSearch: true,
+		ProwlarrInstanceID: &instanceB,
+		ProwlarrIndexerID:  &idxB,
+	}
+	manual := &models.Indexer{
+		Name: "Manual", Type: "newznab", URL: "https://example.com/api",
+		APIKey: "manualKey", Categories: []int{7000}, Enabled: true, SupportsSearch: true,
+	}
+	for _, idx := range []*models.Indexer{synced, other, manual} {
+		if err := repo.Create(ctx, idx); err != nil {
+			t.Fatalf("Create %q: %v", idx.Name, err)
+		}
+	}
+
+	n, err := repo.UpdateAPIKeyByProwlarrInstance(ctx, instanceA, "newKeyA")
+	if err != nil {
+		t.Fatalf("UpdateAPIKeyByProwlarrInstance: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("RowsAffected = %d, want 1", n)
+	}
+
+	got, _ := repo.GetByID(ctx, synced.ID)
+	if got.APIKey != "newKeyA" {
+		t.Errorf("synced.APIKey = %q, want newKeyA", got.APIKey)
+	}
+	gotOther, _ := repo.GetByID(ctx, other.ID)
+	if gotOther.APIKey != "oldKeyB" {
+		t.Errorf("other instance's key was overwritten: %q", gotOther.APIKey)
+	}
+	gotManual, _ := repo.GetByID(ctx, manual.ID)
+	if gotManual.APIKey != "manualKey" {
+		t.Errorf("manual indexer's key was overwritten: %q", gotManual.APIKey)
+	}
+}
+
 // TestSettingsRepo_SetMany_WritesAllAtomically verifies SetMany persists every
 // key/value pair when the batch succeeds.
 func TestSettingsRepo_SetMany_WritesAllAtomically(t *testing.T) {
