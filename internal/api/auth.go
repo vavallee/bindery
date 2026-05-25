@@ -132,7 +132,7 @@ func (h *AuthHandler) Status(w http.ResponseWriter, r *http.Request) {
 			resp.Username = u.Username
 			resp.Role = u.Role
 		}
-	} else if mode == auth.ModeDisabled || (mode == auth.ModeLocalOnly && auth.IsLocalRequest(r)) {
+	} else if requestHasAdminSemantics(r, h.settings) {
 		// Trusted bypass — the UI should render normally without a login screen.
 		// Treat as admin so role-gated UI surfaces correctly.
 		resp.Authenticated = true
@@ -422,11 +422,26 @@ func (h *AuthHandler) SetMode(w http.ResponseWriter, r *http.Request) {
 // --- helpers -----------------------------------------------------------------
 
 func (h *AuthHandler) mode(ctx context.Context) auth.Mode {
-	s, _ := h.settings.Get(ctx, SettingAuthMode)
+	return authModeFor(ctx, h.settings)
+}
+
+func authModeFor(ctx context.Context, settings *db.SettingsRepo) auth.Mode {
+	if settings == nil {
+		return auth.ModeEnabled
+	}
+	s, _ := settings.Get(ctx, SettingAuthMode)
 	if s == nil {
 		return auth.ModeEnabled
 	}
 	return auth.ParseMode(s.Value)
+}
+
+func requestHasAdminSemantics(r *http.Request, settings *db.SettingsRepo) bool {
+	if auth.UserRoleFromContext(r.Context()) == "admin" {
+		return true
+	}
+	mode := authModeFor(r.Context(), settings)
+	return mode == auth.ModeDisabled || (mode == auth.ModeLocalOnly && auth.IsLocalRequest(r))
 }
 
 func (h *AuthHandler) apiKey(ctx context.Context) string {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, HardcoverList, ImportList } from '../../api/client'
 import { inputCls } from './formStyles'
@@ -123,16 +123,58 @@ export default function ImportTab() {
   )
 }
 
+function sortImportLists(items: ImportList[]) {
+  return [...items].sort((a, b) => a.name.localeCompare(b.name))
+}
+
+interface HardcoverImportListRow {
+  slug: string
+  name: string
+  booksCount: number
+  remote?: HardcoverList
+  local?: ImportList
+  stale: boolean
+}
+
 function HardcoverListsSection() {
   const { t } = useTranslation()
   const [lists, setLists] = useState<ImportList[]>([])
-  const [showAdd, setShowAdd] = useState(false)
+  const [hcLists, setHcLists] = useState<HardcoverList[]>([])
+  const [loadingLists, setLoadingLists] = useState(true)
+  const [pickerToken, setPickerToken] = useState('')
+  const [activePickerToken, setActivePickerToken] = useState('')
   const [syncingId, setSyncingId] = useState<number | null>(null)
-  const [syncError, setSyncError] = useState<{ id: number; message: string } | null>(null)
+  const [actionSlug, setActionSlug] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [overrideOpen, setOverrideOpen] = useState<Record<number, boolean>>({})
+  const [overrideDraft, setOverrideDraft] = useState<Record<number, string>>({})
+
+  const loadLists = useCallback(async (token: string) => {
+    setLoadingLists(true)
+    setError(null)
+    try {
+      const all = await api.listImportLists()
+      setLists(sortImportLists(all.filter(l => l.type === 'hardcover')))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load saved Hardcover lists')
+    }
+    try {
+      setHcLists(await api.hardcoverLists(token || undefined))
+    } catch (err) {
+      setHcLists([])
+      setError(err instanceof Error ? err.message : 'Failed to load Hardcover lists')
+    } finally {
+      setLoadingLists(false)
+    }
+  }, [])
 
   useEffect(() => {
-    api.listImportLists().then(all => setLists(all.filter(l => l.type === 'hardcover'))).catch(console.error)
-  }, [])
+    void loadLists('')
+  }, [loadLists])
+
+  const updateLocalList = (updated: ImportList) => {
+    setLists(prev => sortImportLists(prev.map(l => l.id === updated.id ? updated : l)))
+  }
 
   const handleDelete = async (id: number) => {
     await api.deleteImportList(id)
@@ -140,21 +182,113 @@ function HardcoverListsSection() {
   }
 
   const handleToggle = async (il: ImportList) => {
-    const updated = await api.updateImportList(il.id, { ...il, enabled: !il.enabled })
-    setLists(prev => prev.map(l => l.id === il.id ? updated : l))
+    const updated = await api.updateImportList(il.id, { enabled: !il.enabled })
+    updateLocalList(updated)
+  }
+
+  const handleSelectList = async (list: HardcoverList, existing?: ImportList) => {
+    setActionSlug(list.slug)
+    setError(null)
+    try {
+      if (existing) {
+        const updated = await api.updateImportList(existing.id, { enabled: !existing.enabled })
+        updateLocalList(updated)
+        return
+      }
+
+      const tokenOverride = activePickerToken.trim()
+      const created = await api.addImportList({
+        name: list.name,
+        type: 'hardcover',
+        url: list.slug,
+        apiKey: tokenOverride,
+        enabled: Boolean(tokenOverride),
+        monitorNew: true,
+        autoAdd: true,
+      })
+      setLists(prev => sortImportLists([...prev, created]))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update Hardcover import list')
+    } finally {
+      setActionSlug(null)
+    }
+  }
+
+  const handleLoadOverrideLists = async () => {
+    const token = pickerToken.trim()
+    if (!token) return
+    setActivePickerToken(token)
+    await loadLists(token)
+  }
+
+  const handleUseSavedToken = async () => {
+    setPickerToken('')
+    setActivePickerToken('')
+    await loadLists('')
   }
 
   const handleSync = async (id: number) => {
     setSyncingId(id)
-    setSyncError(null)
+    setError(null)
     try {
       await api.syncImportList(id)
       const all = await api.listImportLists()
-      setLists(all.filter(l => l.type === 'hardcover'))
+      setLists(sortImportLists(all.filter(l => l.type === 'hardcover')))
     } catch (e: unknown) {
-      setSyncError({ id, message: e instanceof Error ? e.message : 'Sync failed' })
+      setError(e instanceof Error ? e.message : 'Sync failed')
     } finally {
       setSyncingId(null)
+    }
+  }
+
+  const handleSaveOverride = async (il: ImportList) => {
+    const token = (overrideDraft[il.id] ?? '').trim()
+    if (!token) return
+    setActionSlug(il.url)
+    setError(null)
+    try {
+      const updated = await api.updateImportList(il.id, { apiKey: token })
+      updateLocalList(updated)
+      setOverrideDraft(prev => ({ ...prev, [il.id]: '' }))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save token override')
+    } finally {
+      setActionSlug(null)
+    }
+  }
+
+  const handleClearOverride = async (il: ImportList) => {
+    setActionSlug(il.url)
+    setError(null)
+    try {
+      const updated = await api.updateImportList(il.id, { clearApiKey: true })
+      updateLocalList(updated)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to clear token override')
+    } finally {
+      setActionSlug(null)
+    }
+  }
+
+  const localsBySlug = new Map<string, ImportList[]>()
+  for (const il of lists) {
+    localsBySlug.set(il.url, [...(localsBySlug.get(il.url) ?? []), il])
+  }
+  const remoteSlugs = new Set(hcLists.map(l => l.slug))
+  const rows: HardcoverImportListRow[] = []
+  for (const list of hcLists) {
+    const locals = localsBySlug.get(list.slug)
+    if (locals?.length) {
+      for (const il of locals) {
+        rows.push({ slug: il.url, name: il.name, booksCount: list.booksCount, remote: list, local: il, stale: false })
+      }
+      continue
+    }
+    rows.push({ slug: list.slug, name: list.name, booksCount: list.booksCount, remote: list, stale: false })
+  }
+  for (const il of lists) {
+    if (!remoteSlugs.has(il.url)) {
+      rows.push({ slug: il.url, name: il.name, booksCount: 0, local: il, stale: true })
     }
   }
 
@@ -162,157 +296,131 @@ function HardcoverListsSection() {
     <section>
       <div className="flex justify-between items-center mb-2">
         <h3 className="text-base font-semibold text-slate-800 dark:text-zinc-200">{t('settings.import.hardcoverHeading')}</h3>
-        <button onClick={() => setShowAdd(true)} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium">
-          {t('settings.import.hardcoverAddButton')}
+        <button onClick={() => loadLists(activePickerToken)} disabled={loadingLists} className="px-3 py-1.5 bg-slate-300 dark:bg-zinc-700 hover:bg-slate-400 dark:hover:bg-zinc-600 disabled:opacity-50 rounded text-xs font-medium">
+          {loadingLists ? t('settings.import.hardcoverListLoading') : t('common.refresh', 'Refresh')}
         </button>
       </div>
       <p className="text-xs text-slate-600 dark:text-zinc-500 mb-3">
         {t('settings.import.hardcoverDescription')}
       </p>
 
-      {lists.length === 0 && !showAdd && (
+      <div className="mb-3 flex flex-col sm:flex-row gap-2">
+        <input
+          className={inputCls}
+          type="password"
+          placeholder={t('settings.import.hardcoverTokenPlaceholder')}
+          value={pickerToken}
+          onChange={e => setPickerToken(e.target.value)}
+        />
+        <button
+          onClick={handleLoadOverrideLists}
+          disabled={!pickerToken.trim() || loadingLists}
+          className="px-3 py-2 bg-slate-300 dark:bg-zinc-700 hover:bg-slate-400 dark:hover:bg-zinc-600 disabled:opacity-50 rounded text-xs font-medium"
+        >
+          {t('settings.import.hardcoverLoadOverride', 'Load token lists')}
+        </button>
+        {activePickerToken && (
+          <button
+            onClick={handleUseSavedToken}
+            disabled={loadingLists}
+            className="px-3 py-2 bg-slate-300 dark:bg-zinc-700 hover:bg-slate-400 dark:hover:bg-zinc-600 disabled:opacity-50 rounded text-xs font-medium"
+          >
+            {t('settings.import.hardcoverUseSavedToken', 'Use saved token')}
+          </button>
+        )}
+      </div>
+
+      {rows.length === 0 && !loadingLists && (
         <p className="text-sm text-slate-500 dark:text-zinc-600">{t('settings.import.hardcoverEmpty')}</p>
       )}
 
-      {lists.map(il => (
-        <div key={il.id} className="flex items-center justify-between p-3 mb-2 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">{il.name}</span>
-              <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">{il.url}</span>
+      <div className="space-y-2">
+        {rows.map(row => {
+          const il = row.local
+          const rowKey = il ? `local-${il.id}` : `remote-${row.slug}`
+          const active = Boolean(il?.enabled)
+          const busy = actionSlug === row.slug
+          return (
+            <div key={rowKey} className="p-3 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+              <div className="flex items-start justify-between gap-3">
+                <label className="flex items-start gap-3 min-w-0 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={active}
+                    disabled={busy}
+                    onChange={() => row.remote ? handleSelectList(row.remote, il) : il && handleToggle(il)}
+                    aria-label={t('settings.import.hardcoverImportList', { name: row.name, defaultValue: `Import ${row.name}` })}
+                  />
+                  <span className="min-w-0">
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium">{row.name}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">{row.slug}</span>
+                      {row.stale && <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400 rounded">{t('settings.import.hardcoverSavedOnly', 'Saved only')}</span>}
+                      {il && <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">{il.apiKeyConfigured ? t('settings.import.hardcoverOverrideConfigured', 'Override token') : t('settings.import.hardcoverGlobalToken', 'Global token')}</span>}
+                    </span>
+                    <span className="block text-xs text-slate-500 dark:text-zinc-600 mt-0.5">
+                      {il?.lastSyncAt
+                        ? t('settings.import.hardcoverLastSync', { date: new Date(il.lastSyncAt).toLocaleString() })
+                        : il
+                          ? t('settings.import.hardcoverNeverSynced')
+                          : t('settings.import.hardcoverNotSelected', 'Not selected')}
+                      {row.remote && ` · ${row.booksCount} books`}
+                    </span>
+                  </span>
+                </label>
+                {il && (
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <button
+                      onClick={() => handleSync(il.id)}
+                      disabled={syncingId === il.id || !il.enabled}
+                      className="text-xs px-2 py-1 rounded bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 hover:bg-slate-300 dark:hover:bg-zinc-700 disabled:opacity-50"
+                    >
+                      {syncingId === il.id ? 'Syncing...' : 'Sync now'}
+                    </button>
+                    <button
+                      onClick={() => setOverrideOpen(prev => ({ ...prev, [il.id]: !prev[il.id] }))}
+                      className="text-xs px-2 py-1 rounded bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 hover:bg-slate-300 dark:hover:bg-zinc-700"
+                    >
+                      {t('settings.import.hardcoverTokenOverride', 'Token override')}
+                    </button>
+                    <button onClick={() => handleDelete(il.id)} className="text-xs text-red-600 dark:text-red-400 hover:underline">{t('common.delete')}</button>
+                  </div>
+                )}
+              </div>
+              {il && overrideOpen[il.id] && (
+                <div className="mt-3 flex flex-col sm:flex-row gap-2">
+                  <input
+                    className={inputCls}
+                    type="password"
+                    placeholder={il.apiKeyConfigured ? t('settings.import.hardcoverTokenOverridePlaceholderConfigured', 'Override token is hidden. Enter a new token to replace it.') : t('settings.import.hardcoverTokenOverridePlaceholder', 'Paste a per-list token override')}
+                    value={overrideDraft[il.id] ?? ''}
+                    onChange={e => setOverrideDraft(prev => ({ ...prev, [il.id]: e.target.value }))}
+                  />
+                  <button
+                    onClick={() => handleSaveOverride(il)}
+                    disabled={busy || !(overrideDraft[il.id] ?? '').trim()}
+                    className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded text-xs font-medium"
+                  >
+                    {t('common.save')}
+                  </button>
+                  {il.apiKeyConfigured && (
+                    <button
+                      onClick={() => handleClearOverride(il)}
+                      disabled={busy}
+                      className="px-3 py-2 bg-slate-300 dark:bg-zinc-700 hover:bg-slate-400 dark:hover:bg-zinc-600 disabled:opacity-50 rounded text-xs font-medium"
+                    >
+                      {t('settings.import.hardcoverClearOverride', 'Clear override')}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
-            <div className="text-xs text-slate-500 dark:text-zinc-600 mt-0.5">
-              {il.lastSyncAt
-                ? t('settings.import.hardcoverLastSync', { date: new Date(il.lastSyncAt).toLocaleString() })
-                : t('settings.import.hardcoverNeverSynced')}
-            </div>
-            {syncError?.id === il.id && (
-              <div className="text-xs text-red-600 dark:text-red-400 mt-1 break-words">{syncError.message}</div>
-            )}
-          </div>
-          <div className="flex items-center gap-2 ml-3">
-            <button
-              onClick={() => handleSync(il.id)}
-              disabled={syncingId === il.id}
-              className="text-xs px-2 py-1 rounded bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 hover:bg-slate-300 dark:hover:bg-zinc-700 disabled:opacity-50"
-            >
-              {syncingId === il.id ? 'Syncing…' : 'Sync now'}
-            </button>
-            <button
-              onClick={() => handleToggle(il)}
-              className={`text-xs px-2 py-1 rounded ${il.enabled ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400' : 'bg-slate-200 dark:bg-zinc-800 text-slate-500 dark:text-zinc-500'}`}
-            >
-              {il.enabled ? t('common.enable') : t('common.disable')}
-            </button>
-            <button onClick={() => handleDelete(il.id)} className="text-xs text-red-600 dark:text-red-400 hover:underline">{t('common.delete')}</button>
-          </div>
-        </div>
-      ))}
+          )
+        })}
+      </div>
 
-      {showAdd && (
-        <AddHardcoverListForm
-          onSaved={il => { setLists(prev => [...prev, il]); setShowAdd(false) }}
-          onCancel={() => setShowAdd(false)}
-        />
-      )}
+      {error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
     </section>
-  )
-}
-
-function AddHardcoverListForm({ onSaved, onCancel }: { onSaved: (il: ImportList) => void; onCancel: () => void }) {
-  const { t } = useTranslation()
-  const [name, setName] = useState('')
-  const [token, setToken] = useState('')
-  const [hcLists, setHcLists] = useState<HardcoverList[]>([])
-  const [selectedSlug, setSelectedSlug] = useState('')
-  const [loadingLists, setLoadingLists] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const fetchLists = (tok: string) => {
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    if (!tok.trim()) { setHcLists([]); return }
-    debounceRef.current = setTimeout(async () => {
-      setLoadingLists(true)
-      try {
-        const lists = await api.hardcoverLists(tok)
-        setHcLists(lists)
-        if (lists.length > 0 && !selectedSlug) setSelectedSlug(lists[0].slug)
-      } catch (e) {
-        setHcLists([])
-        setError(e instanceof Error ? e.message : 'Failed to load lists')
-      } finally {
-        setLoadingLists(false)
-      }
-    }, 500)
-  }
-
-  const handleTokenChange = (tok: string) => {
-    setToken(tok)
-    setError(null)
-    fetchLists(tok)
-  }
-
-  const handleSave = async () => {
-    if (!name.trim() || !token.trim() || !selectedSlug) return
-    setSaving(true)
-    setError(null)
-    try {
-      const il = await api.addImportList({
-        name: name.trim(),
-        type: 'hardcover',
-        apiKey: token.trim(),
-        url: selectedSlug,
-        enabled: true,
-        monitorNew: true,
-        autoAdd: true,
-      })
-      onSaved(il)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to save')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-3">
-      <div>
-        <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.import.hardcoverName')}</label>
-        <input className={inputCls} placeholder={t('settings.import.hardcoverNamePlaceholder')} value={name} onChange={e => setName(e.target.value)} />
-      </div>
-      <div>
-        <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.import.hardcoverToken')}</label>
-        <input className={inputCls} type="password" placeholder={t('settings.import.hardcoverTokenPlaceholder')} value={token} onChange={e => handleTokenChange(e.target.value)} />
-      </div>
-      <div>
-        <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.import.hardcoverList')}</label>
-        {loadingLists ? (
-          <p className="text-xs text-slate-500">{t('settings.import.hardcoverListLoading')}</p>
-        ) : hcLists.length > 0 ? (
-          <select className={inputCls} value={selectedSlug} onChange={e => setSelectedSlug(e.target.value)}>
-            {hcLists.map(l => (
-              <option key={l.slug} value={l.slug}>{l.name} ({l.booksCount} books)</option>
-            ))}
-          </select>
-        ) : (
-          <p className="text-xs text-slate-500">{token ? t('settings.import.hardcoverNoLists') : t('settings.import.hardcoverListPlaceholder')}</p>
-        )}
-      </div>
-      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
-      <div className="flex gap-2">
-        <button
-          onClick={handleSave}
-          disabled={saving || !name.trim() || !token.trim() || !selectedSlug}
-          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded text-xs font-medium"
-        >
-          {saving ? t('common.saving') : t('common.save')}
-        </button>
-        <button onClick={onCancel} className="px-3 py-1.5 bg-slate-300 dark:bg-zinc-700 hover:bg-slate-400 dark:hover:bg-zinc-600 rounded text-xs font-medium">
-          {t('common.cancel')}
-        </button>
-      </div>
-    </div>
   )
 }

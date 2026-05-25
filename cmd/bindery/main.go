@@ -381,14 +381,15 @@ func main() {
 	recRepo := db.NewRecommendationRepo(database)
 	recEngine := recommender.New(bookRepo, authorRepo, seriesRepo, recRepo, settingsRepo)
 	recEngine.WithOLClient(olClient)
-	if s, _ := settingsRepo.Get(context.Background(), api.SettingHardcoverAPIToken); s != nil && s.Value != "" {
-		recEngine.WithHCClient(hardcover.New().WithToken(s.Value))
-		slog.Info("hardcover wishlist integration enabled for recommendations")
-	}
+	recEngine.WithHCClient(hcClient)
+	slog.Info("hardcover wishlist integration enabled for recommendations when a token is configured")
 	sched.WithRecommender(recEngine)
 
 	// Register the Hardcover list syncer (24-hour job).
-	hcSyncer := hardcoverlistsyncer.New(importListRepo, authorRepo, bookRepo)
+	hcSyncer := hardcoverlistsyncer.New(importListRepo, authorRepo, bookRepo).
+		WithTokenSource(func(ctx context.Context) string {
+			return api.GetHardcoverAPIToken(ctx, settingsRepo)
+		})
 	sched.WithHardcoverSyncer(hcSyncer)
 	sched.WithLogRepo(logRepo, cfg.LogRetentionDays)
 
@@ -490,7 +491,7 @@ func main() {
 		WithHardcoverFeatureSettings(settingsRepo, cfg.EnhancedHardcoverAPI).
 		WithFinder(importScanner)
 	tagHandler := api.NewTagHandler(tagRepo)
-	importListHandler := api.NewImportListHandler(importListRepo, hcSyncer)
+	importListHandler := api.NewImportListHandler(importListRepo, settingsRepo, hcSyncer)
 	metadataProfileHandler := api.NewMetadataProfileHandler(metadataProfileRepo)
 	delayProfileHandler := api.NewDelayProfileHandler(delayProfileRepo)
 	customFormatHandler := api.NewCustomFormatHandler(customFormatRepo)

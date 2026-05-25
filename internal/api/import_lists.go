@@ -22,13 +22,26 @@ type HardcoverListSyncer interface {
 	SyncOne(ctx context.Context, id int64) error
 }
 
-type ImportListHandler struct {
-	repo   *db.ImportListRepo
-	hcSync HardcoverListSyncer
+type hardcoverUserListClient interface {
+	GetUserLists(ctx context.Context) ([]hardcover.HCList, error)
 }
 
-func NewImportListHandler(repo *db.ImportListRepo, hcSync HardcoverListSyncer) *ImportListHandler {
-	return &ImportListHandler{repo: repo, hcSync: hcSync}
+type ImportListHandler struct {
+	repo         *db.ImportListRepo
+	settings     *db.SettingsRepo
+	hcSync       HardcoverListSyncer
+	hcListClient func(token string) hardcoverUserListClient
+}
+
+func NewImportListHandler(repo *db.ImportListRepo, settings *db.SettingsRepo, hcSync HardcoverListSyncer) *ImportListHandler {
+	return &ImportListHandler{
+		repo:     repo,
+		settings: settings,
+		hcSync:   hcSync,
+		hcListClient: func(token string) hardcoverUserListClient {
+			return hardcover.NewAuthenticated(token)
+		},
+	}
 }
 
 func (h *ImportListHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -40,7 +53,7 @@ func (h *ImportListHandler) List(w http.ResponseWriter, r *http.Request) {
 	if lists == nil {
 		lists = []models.ImportList{}
 	}
-	writeJSON(w, http.StatusOK, lists)
+	writeJSON(w, http.StatusOK, importListResponses(lists))
 }
 
 func (h *ImportListHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -58,7 +71,7 @@ func (h *ImportListHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "import list not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, il)
+	writeJSON(w, http.StatusOK, importListResponse(*il))
 }
 
 func (h *ImportListHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -74,11 +87,12 @@ func (h *ImportListHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if il.Type == "" {
 		il.Type = "csv"
 	}
+	il.APIKey = hardcover.NormalizeAPIToken(il.APIKey)
 	if err := h.repo.Create(r.Context(), &il); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusCreated, il)
+	writeJSON(w, http.StatusCreated, importListResponse(il))
 }
 
 func (h *ImportListHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -92,8 +106,13 @@ func (h *ImportListHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "import list not found"})
 		return
 	}
-	var il models.ImportList
-	if err := json.NewDecoder(r.Body).Decode(&il); err != nil {
+	il := *existing
+	raw := map[string]json.RawMessage{}
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if err := applyImportListPatch(&il, raw); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -102,7 +121,7 @@ func (h *ImportListHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, il)
+	writeJSON(w, http.StatusOK, importListResponse(il))
 }
 
 func (h *ImportListHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -118,17 +137,25 @@ func (h *ImportListHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// HardcoverLists returns the authenticated user's Hardcover reading lists.
-// GET /api/v1/importlist/hardcover/lists  (Authorization: Bearer <tok>)
-// The Hardcover client normalizes the token before forwarding it upstream.
+// HardcoverLists returns the authenticated user's Hardcover reading lists. A
+// request Authorization header can supply a one-off token; otherwise admins can
+// use the saved global Hardcover token. The saved-token path is admin-only
+// because it reveals the configured account's list names.
 func (h *ImportListHandler) HardcoverLists(w http.ResponseWriter, r *http.Request) {
 	authHeader := r.Header.Get("Authorization")
 	token := hardcover.NormalizeAPIToken(authHeader)
 	if token == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing authorization header"})
-		return
+		if !requestHasAdminSemantics(r, h.settings) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin role required"})
+			return
+		}
+		token = GetHardcoverAPIToken(r.Context(), h.settings)
+		if token == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "hardcover API token is not configured"})
+			return
+		}
 	}
-	client := hardcover.NewAuthenticated(token)
+	client := h.hcListClient(token)
 	lists, err := client.GetUserLists(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
@@ -208,7 +235,81 @@ func (h *ImportListHandler) Sync(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 	case errors.Is(err, hardcoverlistsyncer.ErrWrongType):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+	case errors.Is(err, hardcoverlistsyncer.ErrDisabled):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+	case errors.Is(err, hardcoverlistsyncer.ErrMissingToken):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 	default:
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 	}
+}
+
+func importListResponses(lists []models.ImportList) []models.ImportList {
+	out := make([]models.ImportList, 0, len(lists))
+	for _, il := range lists {
+		out = append(out, importListResponse(il))
+	}
+	return out
+}
+
+func importListResponse(il models.ImportList) models.ImportList {
+	il.APIKeyConfigured = hardcover.NormalizeAPIToken(il.APIKey) != ""
+	il.APIKey = ""
+	return il
+}
+
+func applyImportListPatch(il *models.ImportList, raw map[string]json.RawMessage) error {
+	apply := func(key string, dest any) error {
+		if value, ok := raw[key]; ok {
+			return json.Unmarshal(value, dest)
+		}
+		return nil
+	}
+	if err := apply("name", &il.Name); err != nil {
+		return err
+	}
+	if err := apply("type", &il.Type); err != nil {
+		return err
+	}
+	if err := apply("url", &il.URL); err != nil {
+		return err
+	}
+	if err := apply("rootFolderId", &il.RootFolderID); err != nil {
+		return err
+	}
+	if err := apply("qualityProfileId", &il.QualityProfileID); err != nil {
+		return err
+	}
+	if err := apply("monitorNew", &il.MonitorNew); err != nil {
+		return err
+	}
+	if err := apply("autoAdd", &il.AutoAdd); err != nil {
+		return err
+	}
+	if err := apply("enabled", &il.Enabled); err != nil {
+		return err
+	}
+	clearAPIKey := false
+	if value, ok := raw["clearApiKey"]; ok {
+		if err := json.Unmarshal(value, &clearAPIKey); err != nil {
+			return err
+		}
+	}
+	apiKey := ""
+	if value, ok := raw["apiKey"]; ok {
+		var apiKeyValue string
+		if err := json.Unmarshal(value, &apiKeyValue); err != nil {
+			return err
+		}
+		apiKey = hardcover.NormalizeAPIToken(apiKeyValue)
+	}
+	if clearAPIKey && apiKey != "" {
+		return errors.New("apiKey and clearApiKey cannot both be set")
+	}
+	if clearAPIKey {
+		il.APIKey = ""
+	} else if apiKey != "" {
+		il.APIKey = apiKey
+	}
+	return nil
 }

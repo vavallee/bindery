@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -151,4 +152,95 @@ func TestSyncOne_ErrWrongType(t *testing.T) {
 	if !errors.Is(err, ErrWrongType) {
 		t.Errorf("SyncOne(goodreads list): want ErrWrongType, got %v", err)
 	}
+}
+
+func TestSyncOne_ErrDisabled(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	il := testImportList("Disabled", "hardcover", false)
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	err := s.SyncOne(ctx, il.ID)
+	if !errors.Is(err, ErrDisabled) {
+		t.Errorf("SyncOne(disabled list): want ErrDisabled, got %v", err)
+	}
+}
+
+func TestSyncOne_UsesGlobalTokenWhenListHasNoOverride(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	il := testImportList("Global", "hardcover", true)
+	il.APIKey = ""
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	s.WithTokenSource(func(context.Context) string { return "global-token" })
+	var gotToken string
+	s.hardcoverClient = func(token string) hardcoverListClient {
+		gotToken = token
+		return fakeHardcoverListClient{lists: []hardcover.HCList{{ID: 12, Slug: il.URL, Name: il.Name}}}
+	}
+
+	if err := s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatalf("SyncOne: %v", err)
+	}
+	if gotToken != "global-token" {
+		t.Fatalf("token = %q, want global-token", gotToken)
+	}
+}
+
+func TestSyncOne_PerListTokenOverridesGlobalToken(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	il := testImportList("Override", "hardcover", true)
+	il.APIKey = "per-list-token"
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	s.WithTokenSource(func(context.Context) string { return "global-token" })
+	var gotToken string
+	s.hardcoverClient = func(token string) hardcoverListClient {
+		gotToken = token
+		return fakeHardcoverListClient{lists: []hardcover.HCList{{ID: 24, Slug: il.URL, Name: il.Name}}}
+	}
+
+	if err := s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatalf("SyncOne: %v", err)
+	}
+	if gotToken != "per-list-token" {
+		t.Fatalf("token = %q, want per-list-token", gotToken)
+	}
+}
+
+func TestSyncOne_ErrMissingToken(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	il := testImportList("No token", "hardcover", true)
+	il.APIKey = ""
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	err := s.SyncOne(ctx, il.ID)
+	if !errors.Is(err, ErrMissingToken) {
+		t.Errorf("SyncOne(no token): want ErrMissingToken, got %v", err)
+	}
+}
+
+type fakeHardcoverListClient struct {
+	lists []hardcover.HCList
+	books []models.Book
+}
+
+func (f fakeHardcoverListClient) GetUserLists(context.Context) ([]hardcover.HCList, error) {
+	return f.lists, nil
+}
+
+func (f fakeHardcoverListClient) GetListBooks(context.Context, int) ([]models.Book, error) {
+	return f.books, nil
 }

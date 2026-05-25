@@ -472,12 +472,12 @@ export const api = {
   // Import lists
   listImportLists: () => request<ImportList[]>('/importlist'),
   addImportList: (data: Partial<ImportList>) => request<ImportList>('/importlist', { method: 'POST', body: JSON.stringify(data) }),
-  updateImportList: (id: number, data: Partial<ImportList>) => request<ImportList>(`/importlist/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  updateImportList: (id: number, data: ImportListUpdate) => request<ImportList>(`/importlist/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteImportList: (id: number) => request<void>(`/importlist/${id}`, { method: 'DELETE' }),
   syncImportList: (id: number) => request<{ status: string }>(`/importlist/${id}/sync`, { method: 'POST' }),
-  hardcoverLists: (token: string) =>
+  hardcoverLists: (token?: string) =>
     request<HardcoverList[]>('/importlist/hardcover/lists', {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     }),
   uploadMigrate: <T>(endpoint: 'csv' | 'readarr', body: FormData) =>
     uploadFile<T>(`/migrate/${endpoint}`, body),
@@ -1281,6 +1281,7 @@ export interface ImportList {
   type: string
   url: string
   apiKey: string
+  apiKeyConfigured: boolean
   rootFolderId?: number | null
   qualityProfileId?: number | null
   monitorNew: boolean
@@ -1289,6 +1290,10 @@ export interface ImportList {
   lastSyncAt?: string | null
   createdAt: string
   updatedAt: string
+}
+
+export type ImportListUpdate = Partial<ImportList> & {
+  clearApiKey?: boolean
 }
 
 export interface HardcoverList {

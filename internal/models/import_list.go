@@ -8,6 +8,7 @@ type ImportList struct {
 	Type             string     `json:"type"`
 	URL              string     `json:"url"`
 	APIKey           string     `json:"apiKey"`
+	APIKeyConfigured bool       `json:"apiKeyConfigured"`
 	RootFolderID     *int64     `json:"rootFolderId"`
 	QualityProfileID *int64     `json:"qualityProfileId"`
 	MonitorNew       bool       `json:"monitorNew"`

@@ -1604,6 +1604,29 @@ func TestGetUserWishlist_NoToken(t *testing.T) {
 	}
 }
 
+func TestGetUserWishlist_UsesTokenSource(t *testing.T) {
+	var gotAuth string
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		gotAuth = r.Header.Get("Authorization")
+		return gqlResponse(t, http.StatusOK, map[string]interface{}{
+			"me": []map[string]interface{}{{"user_books": []interface{}{}}},
+		}), nil
+	}).WithTokenSource(func(context.Context) string {
+		return "Bearer source-token"
+	})
+
+	candidates, err := c.GetUserWishlist(context.Background(), 100)
+	if err != nil {
+		t.Fatalf("GetUserWishlist: %v", err)
+	}
+	if len(candidates) != 0 {
+		t.Fatalf("expected empty candidates, got %d", len(candidates))
+	}
+	if gotAuth != "Bearer source-token" {
+		t.Fatalf("Authorization = %q, want Bearer source-token", gotAuth)
+	}
+}
+
 func TestGetUserWishlist_Success(t *testing.T) {
 	var gotAuth string
 	year := 2019
@@ -1751,8 +1774,19 @@ func TestGetUserWishlist_HTTPError(t *testing.T) {
 func TestGetUserLists_IncludesBuiltinShelves(t *testing.T) {
 	// When me.lists returns an empty array (user has no custom lists),
 	// GetUserLists must still return the 4 built-in shelf entries.
+	var gotQuery string
 	c := newMockClient(func(r *http.Request) (*http.Response, error) {
-		body := `{"data":{"me":[{"lists":[]}]}}`
+		bodyBytes, _ := io.ReadAll(r.Body)
+		var req gqlRequest
+		_ = json.Unmarshal(bodyBytes, &req)
+		gotQuery = req.Query
+		body := `{"data":{"me":[{
+			"want_to_read":{"aggregate":{"count":11}},
+			"currently_reading":{"aggregate":{"count":2}},
+			"read":{"aggregate":{"count":30}},
+			"did_not_finish":{"aggregate":{"count":4}},
+			"lists":[]
+		}]}}`
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(body)),
@@ -1769,14 +1803,25 @@ func TestGetUserLists_IncludesBuiltinShelves(t *testing.T) {
 		t.Fatalf("want %d lists (built-ins only), got %d", len(hcBuiltinShelves), len(lists))
 	}
 	want := []HCList{
-		{ID: -1, Name: "Want to Read", Slug: "want-to-read"},
-		{ID: -2, Name: "Currently Reading", Slug: "currently-reading"},
-		{ID: -3, Name: "Read", Slug: "read"},
-		{ID: -4, Name: "Did Not Finish", Slug: "did-not-finish"},
+		{ID: -1, Name: "Want to Read", Slug: "want-to-read", BooksCount: 11},
+		{ID: -2, Name: "Currently Reading", Slug: "currently-reading", BooksCount: 2},
+		{ID: -3, Name: "Read", Slug: "read", BooksCount: 30},
+		{ID: -4, Name: "Did Not Finish", Slug: "did-not-finish", BooksCount: 4},
 	}
 	for i, wantShelf := range want {
 		if lists[i] != wantShelf {
 			t.Errorf("list[%d] = %+v, want %+v", i, lists[i], wantShelf)
+		}
+	}
+	for _, wantFragment := range []string{
+		"want_to_read: user_books_aggregate",
+		"currently_reading: user_books_aggregate",
+		"read: user_books_aggregate",
+		"did_not_finish: user_books_aggregate",
+		"aggregate { count }",
+	} {
+		if !strings.Contains(gotQuery, wantFragment) {
+			t.Errorf("query missing %q: %s", wantFragment, gotQuery)
 		}
 	}
 }
@@ -1845,7 +1890,59 @@ func TestGetListBooks_BuiltinShelfRoutesToUserBooks(t *testing.T) {
 			if gotVars["statusID"] != wantStatusID {
 				t.Errorf("statusID var = %v, want %v", gotVars["statusID"], wantStatusID)
 			}
+			if gotVars["limit"] != float64(listBooksPageSize) {
+				t.Errorf("limit var = %v, want %d", gotVars["limit"], listBooksPageSize)
+			}
+			if gotVars["offset"] != float64(0) {
+				t.Errorf("offset var = %v, want 0", gotVars["offset"])
+			}
 		})
+	}
+}
+
+func TestGetListBooks_BuiltinShelfPaginates(t *testing.T) {
+	var offsets []int
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		var req gqlRequest
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		offset := int(req.Variables["offset"].(float64))
+		offsets = append(offsets, offset)
+		count := listBooksPageSize
+		if offset > 0 {
+			count = 2
+		}
+		userBooks := make([]map[string]interface{}, 0, count)
+		for i := 0; i < count; i++ {
+			bookID := offset + i + 1
+			userBooks = append(userBooks, map[string]interface{}{
+				"book": map[string]interface{}{
+					"id":    bookID,
+					"title": "Paged Shelf Book",
+					"slug":  "paged-shelf-book",
+					"contributions": []map[string]interface{}{
+						{"author": map[string]interface{}{"id": 1, "name": "Author", "slug": "author"}},
+					},
+				},
+			})
+		}
+		return gqlResponse(t, http.StatusOK, map[string]interface{}{
+			"me": []map[string]interface{}{{"user_books": userBooks}},
+		}), nil
+	})
+	c = c.WithToken("hc-token")
+
+	books, err := c.GetListBooks(context.Background(), -1)
+	if err != nil {
+		t.Fatalf("GetListBooks shelf: %v", err)
+	}
+	if len(books) != listBooksPageSize+2 {
+		t.Fatalf("book count = %d, want %d", len(books), listBooksPageSize+2)
+	}
+	if len(offsets) != 2 || offsets[0] != 0 || offsets[1] != listBooksPageSize {
+		t.Fatalf("offsets = %v, want [0 %d]", offsets, listBooksPageSize)
 	}
 }
 
@@ -1858,7 +1955,7 @@ func TestGetListBooks_PositiveID(t *testing.T) {
 		_ = json.Unmarshal(body, &req)
 		gotVars = req.Variables
 		gotQuery = req.Query
-		resp := `{"data":{"lists":[{"id":42,"name":"Favorites","slug":"favorites","list_books":[{"book":{"id":99,"title":"Dune","slug":"dune","contributions":[{"author":{"id":1,"name":"Frank Herbert","slug":"frank-herbert"}}]}}]}]}}`
+		resp := `{"data":{"list_books":[{"book":{"id":99,"title":"Dune","slug":"dune","contributions":[{"author":{"id":1,"name":"Frank Herbert","slug":"frank-herbert"}}]}}]}}`
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(resp)),
@@ -1877,8 +1974,70 @@ func TestGetListBooks_PositiveID(t *testing.T) {
 	if gotVars["id"] != float64(42) {
 		t.Errorf("id var = %v, want 42", gotVars["id"])
 	}
-	if !strings.Contains(gotQuery, "lists(where:") {
-		t.Errorf("query should use plural lists(where:) field, got: %q", gotQuery)
+	if gotVars["limit"] != float64(listBooksPageSize) {
+		t.Errorf("limit var = %v, want %d", gotVars["limit"], listBooksPageSize)
+	}
+	if gotVars["offset"] != float64(0) {
+		t.Errorf("offset var = %v, want 0", gotVars["offset"])
+	}
+	if !strings.Contains(gotQuery, "list_books(") {
+		t.Errorf("query should use root list_books field, got: %q", gotQuery)
+	}
+	if !strings.Contains(gotQuery, "list_id: {_eq: $id}") {
+		t.Errorf("query should scope by list_id, got: %q", gotQuery)
+	}
+	if !strings.Contains(gotQuery, "limit: $limit") || !strings.Contains(gotQuery, "offset: $offset") {
+		t.Errorf("query should include limit and offset, got: %q", gotQuery)
+	}
+	if !strings.Contains(gotQuery, "order_by: [{position: asc}, {id: asc}]") {
+		t.Errorf("query should order by position and id, got: %q", gotQuery)
+	}
+	if strings.Contains(gotQuery, "lists(where:") {
+		t.Errorf("query should not use nested lists field, got: %q", gotQuery)
+	}
+}
+
+func TestGetListBooks_PositiveIDPaginates(t *testing.T) {
+	var offsets []int
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		var req gqlRequest
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		offset := int(req.Variables["offset"].(float64))
+		offsets = append(offsets, offset)
+		count := listBooksPageSize
+		if offset > 0 {
+			count = 1
+		}
+		listBooks := make([]map[string]interface{}, 0, count)
+		for i := 0; i < count; i++ {
+			bookID := offset + i + 1
+			listBooks = append(listBooks, map[string]interface{}{
+				"book": map[string]interface{}{
+					"id":    bookID,
+					"title": "Paged Book",
+					"slug":  "paged-book",
+					"contributions": []map[string]interface{}{
+						{"author": map[string]interface{}{"id": 1, "name": "Author", "slug": "author"}},
+					},
+				},
+			})
+		}
+		return gqlResponse(t, http.StatusOK, map[string]interface{}{"list_books": listBooks}), nil
+	})
+	c = c.WithToken("hc-token")
+
+	books, err := c.GetListBooks(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("GetListBooks: %v", err)
+	}
+	if len(books) != listBooksPageSize+1 {
+		t.Fatalf("book count = %d, want %d", len(books), listBooksPageSize+1)
+	}
+	if len(offsets) != 2 || offsets[0] != 0 || offsets[1] != listBooksPageSize {
+		t.Fatalf("offsets = %v, want [0 %d]", offsets, listBooksPageSize)
 	}
 }
 

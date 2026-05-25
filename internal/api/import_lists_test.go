@@ -2,27 +2,32 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/models"
 )
 
-func importListFixture(t *testing.T) *ImportListHandler {
+func importListFixture(t *testing.T) (*ImportListHandler, *db.ImportListRepo, *db.SettingsRepo) {
 	t.Helper()
 	database, err := db.OpenMemory()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	return NewImportListHandler(db.NewImportListRepo(database), nil)
+	importLists := db.NewImportListRepo(database)
+	settings := db.NewSettingsRepo(database)
+	return NewImportListHandler(importLists, settings, nil), importLists, settings
 }
 
 func TestImportListList_Empty(t *testing.T) {
-	h := importListFixture(t)
+	h, _, _ := importListFixture(t)
 	rec := httptest.NewRecorder()
 	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/import-list", nil))
 	if rec.Code != http.StatusOK {
@@ -35,7 +40,7 @@ func TestImportListList_Empty(t *testing.T) {
 }
 
 func TestImportListCRUD(t *testing.T) {
-	h := importListFixture(t)
+	h, _, _ := importListFixture(t)
 
 	// Create (name-only; Type should default to "csv")
 	rec := httptest.NewRecorder()
@@ -124,7 +129,7 @@ func TestImportListCRUD(t *testing.T) {
 }
 
 func TestImportListCreate_Validation(t *testing.T) {
-	h := importListFixture(t)
+	h, _, _ := importListFixture(t)
 	for _, tc := range []struct {
 		body string
 		desc string
@@ -141,7 +146,7 @@ func TestImportListCreate_Validation(t *testing.T) {
 }
 
 func TestImportListExclusions(t *testing.T) {
-	h := importListFixture(t)
+	h, _, _ := importListFixture(t)
 
 	// List empty
 	rec := httptest.NewRecorder()
@@ -190,4 +195,262 @@ func TestImportListExclusions(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("bad id: expected 400, got %d", rec.Code)
 	}
+}
+
+func TestImportListSecretsAreWriteOnlyAndPreservedOnUpdate(t *testing.T) {
+	h, repo, _ := importListFixture(t)
+	ctx := context.Background()
+
+	rec := httptest.NewRecorder()
+	h.Create(rec, httptest.NewRequest(http.MethodPost, "/api/v1/import-list",
+		bytes.NewBufferString(`{"name":"Want","type":"hardcover","url":"want-to-read","apiKey":"Bearer hc-secret","enabled":true}`)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var created models.ImportList
+	if err := json.NewDecoder(rec.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+	if created.APIKey != "" || !created.APIKeyConfigured {
+		t.Fatalf("create response leaked or missed secret state: %+v", created)
+	}
+	stored, err := repo.GetByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get stored: %v", err)
+	}
+	if stored == nil || stored.APIKey != "hc-secret" {
+		t.Fatalf("stored token = %+v, want normalized hc-secret", stored)
+	}
+
+	rec = httptest.NewRecorder()
+	h.Update(rec, withURLParam(
+		httptest.NewRequest(http.MethodPut, "/api/v1/import-list/1", bytes.NewBufferString(`{"enabled":false}`)),
+		"id", "1"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var updated models.ImportList
+	if err := json.NewDecoder(rec.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode update: %v", err)
+	}
+	if updated.APIKey != "" || !updated.APIKeyConfigured || updated.Enabled {
+		t.Fatalf("update response = %+v, want hidden configured token and disabled list", updated)
+	}
+	stored, err = repo.GetByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get stored after update: %v", err)
+	}
+	if stored == nil || stored.APIKey != "hc-secret" {
+		t.Fatalf("stored token after omitted apiKey = %+v, want preserved hc-secret", stored)
+	}
+
+	rec = httptest.NewRecorder()
+	h.Get(rec, withURLParam(httptest.NewRequest(http.MethodGet, "/api/v1/import-list/1", nil), "id", "1"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get redacted: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var full models.ImportList
+	if err := json.NewDecoder(rec.Body).Decode(&full); err != nil {
+		t.Fatalf("decode get: %v", err)
+	}
+	full.Name = "Want Round Trip"
+	body, err := json.Marshal(full)
+	if err != nil {
+		t.Fatalf("marshal full round trip: %v", err)
+	}
+	rec = httptest.NewRecorder()
+	h.Update(rec, withURLParam(
+		httptest.NewRequest(http.MethodPut, "/api/v1/import-list/1", bytes.NewReader(body)),
+		"id", "1"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("full round-trip update: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode full round-trip update: %v", err)
+	}
+	if updated.APIKey != "" || !updated.APIKeyConfigured || updated.Name != "Want Round Trip" {
+		t.Fatalf("full round-trip response = %+v, want hidden configured token and renamed list", updated)
+	}
+	stored, err = repo.GetByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get stored after full round trip: %v", err)
+	}
+	if stored == nil || stored.APIKey != "hc-secret" {
+		t.Fatalf("stored token after full round trip = %+v, want preserved hc-secret", stored)
+	}
+
+	rec = httptest.NewRecorder()
+	h.Update(rec, withURLParam(
+		httptest.NewRequest(http.MethodPut, "/api/v1/import-list/1", bytes.NewBufferString(`{"apiKey":""}`)),
+		"id", "1"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("empty token update: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode empty token update: %v", err)
+	}
+	if updated.APIKey != "" || !updated.APIKeyConfigured {
+		t.Fatalf("empty token response = %+v, want hidden configured token", updated)
+	}
+	stored, err = repo.GetByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get stored after empty token update: %v", err)
+	}
+	if stored == nil || stored.APIKey != "hc-secret" {
+		t.Fatalf("stored token after empty token update = %+v, want preserved hc-secret", stored)
+	}
+
+	rec = httptest.NewRecorder()
+	h.Update(rec, withURLParam(
+		httptest.NewRequest(http.MethodPut, "/api/v1/import-list/1", bytes.NewBufferString(`{"clearApiKey":true,"apiKey":"new-token"}`)),
+		"id", "1"))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("conflicting token update: expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	stored, err = repo.GetByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get stored after conflicting token update: %v", err)
+	}
+	if stored == nil || stored.APIKey != "hc-secret" {
+		t.Fatalf("stored token after conflicting token update = %+v, want preserved hc-secret", stored)
+	}
+
+	rec = httptest.NewRecorder()
+	h.Update(rec, withURLParam(
+		httptest.NewRequest(http.MethodPut, "/api/v1/import-list/1", bytes.NewBufferString(`{"clearApiKey":true}`)),
+		"id", "1"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clear token: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode clear: %v", err)
+	}
+	if updated.APIKeyConfigured {
+		t.Fatalf("clear response still reports token configured: %+v", updated)
+	}
+	stored, err = repo.GetByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get stored after clear: %v", err)
+	}
+	if stored == nil || stored.APIKey != "" {
+		t.Fatalf("stored token after explicit clear = %+v, want empty", stored)
+	}
+}
+
+func TestHardcoverListsUsesSavedTokenForAdmins(t *testing.T) {
+	h, _, settings := importListFixture(t)
+	ctx := auth.WithUserRole(context.Background(), "admin")
+	if err := settings.Set(ctx, SettingHardcoverAPIToken, "Bearer global-token"); err != nil {
+		t.Fatalf("set token: %v", err)
+	}
+	var gotToken string
+	h.hcListClient = func(token string) hardcoverUserListClient {
+		gotToken = token
+		return fakeHardcoverUserListClient{lists: []hardcover.HCList{{ID: -1, Name: "Want to Read", Slug: "want-to-read"}}}
+	}
+
+	rec := httptest.NewRecorder()
+	h.HardcoverLists(rec, httptest.NewRequest(http.MethodGet, "/api/v1/importlist/hardcover/lists", nil).WithContext(ctx))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if gotToken != "global-token" {
+		t.Fatalf("token = %q, want normalized saved global-token", gotToken)
+	}
+}
+
+func TestHardcoverListsUsesSavedTokenInDisabledAuthMode(t *testing.T) {
+	h, _, settings := importListFixture(t)
+	ctx := context.Background()
+	if err := settings.Set(ctx, SettingAuthMode, string(auth.ModeDisabled)); err != nil {
+		t.Fatalf("set auth mode: %v", err)
+	}
+	if err := settings.Set(ctx, SettingHardcoverAPIToken, "global-token"); err != nil {
+		t.Fatalf("set token: %v", err)
+	}
+	var gotToken string
+	h.hcListClient = func(token string) hardcoverUserListClient {
+		gotToken = token
+		return fakeHardcoverUserListClient{lists: []hardcover.HCList{{ID: -1, Name: "Want to Read", Slug: "want-to-read"}}}
+	}
+
+	rec := httptest.NewRecorder()
+	h.HardcoverLists(rec, httptest.NewRequest(http.MethodGet, "/api/v1/importlist/hardcover/lists", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if gotToken != "global-token" {
+		t.Fatalf("token = %q, want global-token", gotToken)
+	}
+}
+
+func TestHardcoverListsUsesSavedTokenForLocalOnlyLocalRequests(t *testing.T) {
+	h, _, settings := importListFixture(t)
+	ctx := context.Background()
+	if err := settings.Set(ctx, SettingAuthMode, string(auth.ModeLocalOnly)); err != nil {
+		t.Fatalf("set auth mode: %v", err)
+	}
+	if err := settings.Set(ctx, SettingHardcoverAPIToken, "global-token"); err != nil {
+		t.Fatalf("set token: %v", err)
+	}
+	var gotToken string
+	h.hcListClient = func(token string) hardcoverUserListClient {
+		gotToken = token
+		return fakeHardcoverUserListClient{lists: []hardcover.HCList{{ID: -1, Name: "Want to Read", Slug: "want-to-read"}}}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/importlist/hardcover/lists", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	rec := httptest.NewRecorder()
+	h.HardcoverLists(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if gotToken != "global-token" {
+		t.Fatalf("token = %q, want global-token", gotToken)
+	}
+}
+
+func TestHardcoverListsSavedTokenRequiresAdmin(t *testing.T) {
+	h, _, settings := importListFixture(t)
+	if err := settings.Set(context.Background(), SettingHardcoverAPIToken, "global-token"); err != nil {
+		t.Fatalf("set token: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/importlist/hardcover/lists", nil).
+		WithContext(auth.WithUserRole(context.Background(), "user"))
+	h.HardcoverLists(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHardcoverListsHeaderOverrideDoesNotRequireAdmin(t *testing.T) {
+	h, _, _ := importListFixture(t)
+	var gotToken string
+	h.hcListClient = func(token string) hardcoverUserListClient {
+		gotToken = token
+		return fakeHardcoverUserListClient{lists: []hardcover.HCList{{ID: 42, Name: "Favorites", Slug: "favorites"}}}
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/importlist/hardcover/lists", nil).
+		WithContext(auth.WithUserRole(context.Background(), "user"))
+	req.Header.Set("Authorization", "Bearer override-token")
+
+	rec := httptest.NewRecorder()
+	h.HardcoverLists(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if gotToken != "override-token" {
+		t.Fatalf("token = %q, want override-token", gotToken)
+	}
+}
+
+type fakeHardcoverUserListClient struct {
+	lists []hardcover.HCList
+	err   error
+}
+
+func (f fakeHardcoverUserListClient) GetUserLists(context.Context) ([]hardcover.HCList, error) {
+	return f.lists, f.err
 }

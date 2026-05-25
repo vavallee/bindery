@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import SettingsPage from './SettingsPage'
-import { api, type ABSImportRun, type DownloadClient, type Indexer, type OidcProvider, type ProwlarrInstance, type RootFolder, type SystemStatus } from '../api/client'
+import { api, type ABSImportRun, type DownloadClient, type HardcoverList, type ImportList, type Indexer, type OidcProvider, type ProwlarrInstance, type RootFolder, type SystemStatus } from '../api/client'
 
 const mockAuthContext = vi.hoisted(() => ({
   status: {
@@ -65,6 +65,12 @@ vi.mock('../api/client', async importOriginal => {
       status: vi.fn(),
       setSetting: vi.fn(),
       testHardcover: vi.fn(),
+      listImportLists: vi.fn(),
+      addImportList: vi.fn(),
+      updateImportList: vi.fn(),
+      deleteImportList: vi.fn(),
+      syncImportList: vi.fn(),
+      hardcoverLists: vi.fn(),
       triggerLibraryScan: vi.fn(),
       createBackup: vi.fn(),
       deleteBackup: vi.fn(),
@@ -195,6 +201,36 @@ function makeABSImportRun(id: number, libraryId: string): ABSImportRun {
   }
 }
 
+function makeImportList(overrides: Partial<ImportList> = {}): ImportList {
+  return {
+    id: 1,
+    name: 'Want to Read',
+    type: 'hardcover',
+    url: 'want-to-read',
+    apiKey: '',
+    apiKeyConfigured: false,
+    rootFolderId: null,
+    qualityProfileId: null,
+    monitorNew: true,
+    autoAdd: true,
+    enabled: false,
+    lastSyncAt: null,
+    createdAt: '2026-05-06T12:00:00Z',
+    updatedAt: '2026-05-06T12:00:00Z',
+    ...overrides,
+  }
+}
+
+function makeHardcoverList(overrides: Partial<HardcoverList> = {}): HardcoverList {
+  return {
+    id: -1,
+    name: 'Want to Read',
+    slug: 'want-to-read',
+    booksCount: 12,
+    ...overrides,
+  }
+}
+
 function seedSettingsMocks(options: {
   indexers?: Indexer[]
   clients?: DownloadClient[]
@@ -203,6 +239,8 @@ function seedSettingsMocks(options: {
   settings?: Array<{ key: string; value: string }>
   rootFolders?: RootFolder[]
   oidcProviders?: OidcProvider[]
+  importLists?: ImportList[]
+  hardcoverLists?: HardcoverList[]
 } = {}) {
   vi.mocked(api.listIndexers).mockResolvedValue(options.indexers ?? [])
   vi.mocked(api.addIndexer).mockImplementation(async data => makeIndexer({ id: 100, ...data }))
@@ -237,6 +275,12 @@ function seedSettingsMocks(options: {
     vi.mocked(api.listRootFolders).mockResolvedValue(options.rootFolders ?? [])
     vi.mocked(api.status).mockResolvedValue(options.status ?? defaultStatus)
     vi.mocked(api.setSetting).mockResolvedValue(undefined)
+    vi.mocked(api.listImportLists).mockResolvedValue(options.importLists ?? [])
+    vi.mocked(api.addImportList).mockImplementation(async data => makeImportList({ id: 900, ...data }))
+    vi.mocked(api.updateImportList).mockImplementation(async (id, data) => makeImportList({ id, ...data }))
+    vi.mocked(api.deleteImportList).mockResolvedValue(undefined)
+    vi.mocked(api.syncImportList).mockResolvedValue({ status: 'ok' })
+    vi.mocked(api.hardcoverLists).mockResolvedValue(options.hardcoverLists ?? [])
     vi.mocked(api.triggerLibraryScan).mockResolvedValue({ message: 'started' })
     vi.mocked(api.createBackup).mockResolvedValue({ name: 'bindery-backup.zip', size: 0, modTime: '' })
     vi.mocked(api.deleteBackup).mockResolvedValue(undefined)
@@ -280,6 +324,10 @@ async function openIndexersTab() {
 
 async function openClientsTab() {
   fireEvent.click(await screen.findByRole('button', { name: 'settings.tabs.clients' }))
+}
+
+async function openImportTab() {
+  fireEvent.click(await screen.findByRole('button', { name: 'settings.tabs.import' }))
 }
 
 function sectionForHeading(name: string) {
@@ -353,6 +401,96 @@ describe('SettingsPage', () => {
     })
     expect(await screen.findByText('Found 2 series; catalog "Dune" has 8 books')).toBeInTheDocument()
     expect(screen.queryByText('hc-secret')).not.toBeInTheDocument()
+  })
+
+  it('adds global-token Hardcover lists disabled by default from the import picker', async () => {
+    renderSettings({
+      status: {
+        version: 'dev',
+        commit: 'unknown',
+        buildDate: '',
+        enhancedHardcoverApi: false,
+        hardcoverTokenConfigured: true,
+      },
+      hardcoverLists: [makeHardcoverList({ name: 'Sci-Fi Backlog', slug: 'sci-fi-backlog', booksCount: 7 })],
+    })
+
+    await openImportTab()
+    expect(await screen.findByText('Sci-Fi Backlog')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(api.hardcoverLists).toHaveBeenCalledWith(undefined)
+    })
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'settings.import.hardcoverImportList' }))
+
+    await waitFor(() => {
+      expect(api.addImportList).toHaveBeenCalledWith(expect.objectContaining({
+        name: 'Sci-Fi Backlog',
+        type: 'hardcover',
+        url: 'sci-fi-backlog',
+        apiKey: '',
+        enabled: false,
+      }))
+    })
+  })
+
+  it('keeps per-list Hardcover override tokens write-only in the import picker', async () => {
+    renderSettings({
+      importLists: [makeImportList({ id: 44, name: 'Want to Read', url: 'want-to-read', apiKeyConfigured: true, enabled: true })],
+      hardcoverLists: [makeHardcoverList()],
+    })
+
+    await openImportTab()
+    expect(await screen.findByText('Override token')).toBeInTheDocument()
+    expect(screen.queryByText('stored-hc-secret')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Token override' }))
+    expect(screen.getByPlaceholderText('Override token is hidden. Enter a new token to replace it.')).toHaveValue('')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear override' }))
+    await waitFor(() => {
+      expect(api.updateImportList).toHaveBeenCalledWith(44, { clearApiKey: true })
+    })
+  })
+
+  it('keeps duplicate saved Hardcover lists with the same slug visible and actionable', async () => {
+    renderSettings({
+      importLists: [
+        makeImportList({ id: 44, name: 'Global Want to Read', url: 'want-to-read', apiKeyConfigured: false, enabled: false }),
+        makeImportList({ id: 45, name: 'Override Want to Read', url: 'want-to-read', apiKeyConfigured: true, enabled: true }),
+      ],
+      hardcoverLists: [makeHardcoverList({ name: 'Remote Want to Read', slug: 'want-to-read', booksCount: 12 })],
+    })
+
+    await openImportTab()
+    const globalName = await screen.findByText('Global Want to Read')
+    expect(screen.getByText('Override Want to Read')).toBeInTheDocument()
+    expect(screen.getAllByText('want-to-read')).toHaveLength(2)
+    expect(screen.getByText('Global token')).toBeInTheDocument()
+    expect(screen.getByText('Override token')).toBeInTheDocument()
+
+    const globalRow = globalName.closest('label')
+    expect(globalRow).not.toBeNull()
+    fireEvent.click(within(globalRow as HTMLElement).getByRole('checkbox'))
+
+    await waitFor(() => {
+      expect(api.updateImportList).toHaveBeenCalledWith(44, { enabled: true })
+    })
+  })
+
+  it('can load Hardcover list picker results from a per-list override token', async () => {
+    renderSettings({
+      hardcoverLists: [makeHardcoverList({ id: 51, name: 'Other Account', slug: 'other-account', booksCount: 3 })],
+    })
+
+    await openImportTab()
+    expect(await screen.findByText('Other Account')).toBeInTheDocument()
+    fireEvent.change(screen.getByPlaceholderText('settings.import.hardcoverTokenPlaceholder'), { target: { value: 'override-token' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Load token lists' }))
+
+    await waitFor(() => {
+      expect(api.hardcoverLists).toHaveBeenCalledWith('override-token')
+    })
   })
 
   it('persists import mode, naming templates, and preferred language', async () => {

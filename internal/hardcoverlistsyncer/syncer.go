@@ -16,9 +16,16 @@ import (
 
 // ListSyncer syncs enabled Hardcover import lists into Bindery's book catalogue.
 type ListSyncer struct {
-	importLists *db.ImportListRepo
-	authors     *db.AuthorRepo
-	books       *db.BookRepo
+	importLists     *db.ImportListRepo
+	authors         *db.AuthorRepo
+	books           *db.BookRepo
+	tokenSource     func(context.Context) string
+	hardcoverClient func(token string) hardcoverListClient
+}
+
+type hardcoverListClient interface {
+	GetUserLists(ctx context.Context) ([]hardcover.HCList, error)
+	GetListBooks(ctx context.Context, listID int) ([]models.Book, error)
 }
 
 // New creates a new ListSyncer.
@@ -27,7 +34,17 @@ func New(importLists *db.ImportListRepo, authors *db.AuthorRepo, books *db.BookR
 		importLists: importLists,
 		authors:     authors,
 		books:       books,
+		hardcoverClient: func(token string) hardcoverListClient {
+			return hardcover.NewAuthenticated(token)
+		},
 	}
+}
+
+// WithTokenSource configures the fallback Hardcover API token used when an
+// import list has no per-list override token.
+func (s *ListSyncer) WithTokenSource(source func(context.Context) string) *ListSyncer {
+	s.tokenSource = source
+	return s
 }
 
 // Sync processes all enabled import lists of type "hardcover".
@@ -71,6 +88,9 @@ func (s *ListSyncer) SyncOne(ctx context.Context, id int64) error {
 	if il.Type != "hardcover" {
 		return ErrWrongType
 	}
+	if !il.Enabled {
+		return ErrDisabled
+	}
 	if err := s.syncList(ctx, *il); err != nil {
 		return err
 	}
@@ -83,12 +103,18 @@ func (s *ListSyncer) SyncOne(ctx context.Context, id int64) error {
 // Sentinel errors for SyncOne so the API handler can map them to HTTP status
 // codes without string-matching.
 var (
-	ErrNotFound  = errors.New("import list not found")
-	ErrWrongType = errors.New("import list is not a hardcover list")
+	ErrNotFound     = errors.New("import list not found")
+	ErrWrongType    = errors.New("import list is not a hardcover list")
+	ErrDisabled     = errors.New("import list is disabled")
+	ErrMissingToken = errors.New("hardcover API token is not configured")
 )
 
 func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
-	client := hardcover.NewAuthenticated(il.APIKey)
+	token := s.tokenForList(ctx, il)
+	if token == "" {
+		return ErrMissingToken
+	}
+	client := s.hardcoverClient(token)
 
 	// Resolve the list by slug
 	userLists, err := client.GetUserLists(ctx)
@@ -152,6 +178,16 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 	}
 
 	return nil
+}
+
+func (s *ListSyncer) tokenForList(ctx context.Context, il models.ImportList) string {
+	if token := hardcover.NormalizeAPIToken(il.APIKey); token != "" {
+		return token
+	}
+	if s.tokenSource == nil {
+		return ""
+	}
+	return hardcover.NormalizeAPIToken(s.tokenSource(ctx))
 }
 
 // ensureAuthor looks up the author by foreign ID, creating a minimal record if
