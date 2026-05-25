@@ -2445,6 +2445,90 @@ func TestAddBook_DirectInsertCoversSlowAsyncSync(t *testing.T) {
 	}
 }
 
+func TestAddBook_DirectInsertHydratesMatchedHardcoverEditions(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	editionRepo := db.NewEditionRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+	enableHardcoverFeatureForTest(t, ctx, settingsRepo)
+
+	primaryBook := &models.Book{
+		ForeignID:          "OL-TWILIGHT-W",
+		Title:              "Twilight",
+		SortTitle:          "Twilight",
+		Language:           "eng",
+		Status:             models.BookStatusWanted,
+		Genres:             []string{},
+		MetadataProvider:   "openlibrary",
+		MediaType:          models.MediaTypeAudiobook,
+		HardcoverForeignID: "hc:twilight",
+	}
+	primary := &stubMetaProvider{
+		name:  "openlibrary",
+		works: nil,
+		getBookByID: map[string]*models.Book{
+			"OL-TWILIGHT-W": primaryBook,
+		},
+	}
+	audioASIN := "B000TWILIT"
+	hardcover := &stubMetaProvider{
+		name: "hardcover",
+		editionsByBook: map[string][]models.Edition{
+			"hc:twilight": {{
+				ForeignID: "hc:twilight-audio",
+				Title:     "Twilight",
+				ASIN:      &audioASIN,
+				Format:    "Audiobook",
+				Monitored: true,
+			}},
+		},
+	}
+	agg := metadata.NewAggregator(primary, hardcover).WithAudnexClient(nil)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil).
+		WithHardcoverFeatureSettings(settingsRepo, true).
+		WithEditionHydration(editionRepo)
+
+	body, _ := json.Marshal(map[string]any{
+		"foreignBookId":   "OL-TWILIGHT-W",
+		"foreignAuthorId": "OL1391085A",
+		"authorName":      "Stephenie Meyer",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	h.AddBook(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(hardcover.editionCalls) != 1 || hardcover.editionCalls[0] != "hc:twilight" {
+		t.Fatalf("hardcover edition calls = %+v, want [hc:twilight]", hardcover.editionCalls)
+	}
+	got, err := bookRepo.GetByForeignID(ctx, "OL-TWILIGHT-W")
+	if err != nil || got == nil {
+		t.Fatalf("book not persisted: err=%v got=%v", err, got)
+	}
+	if got.ASIN != audioASIN {
+		t.Fatalf("book ASIN = %q, want %q", got.ASIN, audioASIN)
+	}
+	editions, err := editionRepo.ListByBook(ctx, got.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(editions) != 1 || editions[0].ForeignID != "hc:twilight-audio" {
+		t.Fatalf("expected hydrated edition, got %+v", editions)
+	}
+}
+
 // TestCanUpgradeToBoth validates the helper that decides whether two
 // complementary media types should be merged into a dual-format row.
 func TestCanUpgradeToBoth(t *testing.T) {

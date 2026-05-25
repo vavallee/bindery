@@ -1767,10 +1767,13 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 				if primary.Status == "" {
 					primary.Status = models.BookStatusWanted
 				}
-				if err := h.books.Create(ctx, primary); err != nil &&
-					!strings.Contains(err.Error(), "UNIQUE constraint failed") {
-					slog.Warn("AddBook: direct insert failed",
-						"foreignBookId", req.ForeignBookID, "error", err)
+				if err := h.books.Create(ctx, primary); err != nil {
+					if !strings.Contains(err.Error(), "UNIQUE constraint failed") {
+						slog.Warn("AddBook: direct insert failed",
+							"foreignBookId", req.ForeignBookID, "error", err)
+					}
+				} else {
+					h.hydrateHardcoverEditions(ctx, primary)
 				}
 			}
 		}
