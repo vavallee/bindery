@@ -64,6 +64,11 @@ export default function GrimmoryTab() {
     <div className="space-y-6 max-w-lg">
       <div>
         <h3 className="text-lg font-semibold mb-1">Grimmory</h3>
+        <div role="alert" className="mb-4 px-3 py-2 rounded border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-900/20 text-xs text-amber-800 dark:text-amber-300">
+          <strong>Configuration only.</strong> Bindery does not yet push imported books to Grimmory — the
+          settings here are persisted and the connection can be tested, but no books will be sent.{' '}
+          <a href="https://github.com/vavallee/bindery/issues/826" target="_blank" rel="noopener noreferrer" className="underline">Tracking issue #826</a>.
+        </div>
         <p className="text-xs text-slate-600 dark:text-zinc-500 mb-4">
           Push newly imported books to a{' '}
           <a href="https://grimmory.org" target="_blank" rel="noopener noreferrer" className="underline">Grimmory</a>{' '}
