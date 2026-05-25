@@ -210,6 +210,14 @@ func Middleware(p Provider) func(http.Handler) http.Handler {
 				return
 			}
 			if mode == ModeLocalOnly && IsLocalRequestTrusted(r, p.TrustedProxyCIDRs()) {
+				// Local-only bypass is always treated as admin, mirroring the
+				// API-key branch below. Without this, RequireAdmin-protected
+				// endpoints (auth mode change, user CRUD, settings writes)
+				// return "admin role required" 403 to trusted-local requests
+				// even though the whole point of local-only mode is to grant
+				// frictionless access from a trusted private network (#799).
+				ctx := context.WithValue(r.Context(), userRoleCtxKey, "admin")
+				r = r.WithContext(ctx)
 				next.ServeHTTP(w, r)
 				return
 			}
