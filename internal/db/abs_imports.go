@@ -722,7 +722,7 @@ func (r *ABSReviewItemRepo) MarkResolvedByItemIDs(ctx context.Context, sourceID,
 	if len(placeholders) == 0 {
 		return 0, nil
 	}
-	//nolint:gosec // placeholders are a fixed-length list of "?" controlled here, real values bound via args
+	// #nosec G201 -- placeholders is a fixed-length slice of "?" controlled here; real values are bound via args.
 	query := fmt.Sprintf(`
 		UPDATE abs_review_queue
 		SET status = 'dismissed', updated_at = ?
