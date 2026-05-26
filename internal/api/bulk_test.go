@@ -452,6 +452,54 @@ func TestBooksBulk_Delete(t *testing.T) {
 	}
 }
 
+// TestBooksBulk_Exclude covers the bulk "exclude" action added for #791:
+// the Author detail page lets users mass-exclude unwanted OL imports without
+// clicking through each book's exclude toggle.
+func TestBooksBulk_Exclude(t *testing.T) {
+	h, _, books, author, ctx := bulkFixture(t)
+
+	book := mustCreateBook(t, books, ctx, &models.Book{
+		ForeignID: "B_EXC", AuthorID: author.ID, Title: "Exclude Me",
+		SortTitle: "exclude me", Status: models.BookStatusWanted,
+		Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	})
+
+	body := fmt.Sprintf(`{"ids":[%d],"action":"exclude"}`, book.ID)
+	rec := postBulk(t, h.BooksBulk, body)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp bulkResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	key := fmt.Sprintf("%d", book.ID)
+	if r := resp.Results[key]; !r.OK {
+		t.Errorf("expected ok for book %d, got %+v", book.ID, r)
+	}
+
+	// SetExcluded hides the row from default List queries; use the
+	// IncludingExcluded variant to confirm the flag round-trips.
+	all, err := books.ListByAuthorIncludingExcluded(ctx, author.ID)
+	if err != nil {
+		t.Fatalf("ListByAuthorIncludingExcluded: %v", err)
+	}
+	var found *models.Book
+	for i := range all {
+		if all[i].ID == book.ID {
+			found = &all[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("book %d missing from ListByAuthorIncludingExcluded", book.ID)
+	}
+	if !found.Excluded {
+		t.Errorf("book.Excluded: want true after bulk exclude, got false")
+	}
+}
+
 func TestBooksBulk_SetMediaType_Ebook(t *testing.T) {
 	h, _, books, author, ctx := bulkFixture(t)
 

@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 export interface BulkAction {
   label: string
   onClick: () => void
-  variant?: 'default' | 'danger'
+  variant?: 'default' | 'caution' | 'danger'
 }
 
 interface BulkActionBarProps {
@@ -35,7 +35,9 @@ export default function BulkActionBar({ count, actions, onClear, busy = false }:
             className={`px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
               action.variant === 'danger'
                 ? 'bg-red-600 hover:bg-red-500 text-white'
-                : 'bg-slate-600 hover:bg-slate-500 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-white'
+                : action.variant === 'caution'
+                  ? 'bg-amber-600 hover:bg-amber-500 text-white'
+                  : 'bg-slate-600 hover:bg-slate-500 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-white'
             }`}
           >
             {action.label}

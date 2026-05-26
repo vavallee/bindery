@@ -1,9 +1,11 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { api, Author, Book } from '../api/client'
+import { useTranslation } from 'react-i18next'
+import { api, Author, Book, BookBulkAction } from '../api/client'
 import ViewToggle from '../components/ViewToggle'
 import MergeAuthorsModal from '../components/MergeAuthorsModal'
 import EditAuthorModal from '../components/EditAuthorModal'
+import BulkActionBar from '../components/BulkActionBar'
 import { useView } from '../components/useView'
 
 const statusColors: Record<string, string> = {
@@ -49,6 +51,7 @@ function mediaLabel(mediaType?: Book['mediaType']): string {
 export default function AuthorDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const authorId = Number(id)
 
   const [author, setAuthor] = useState<Author | null>(null)
@@ -61,6 +64,13 @@ export default function AuthorDetailPage() {
   const [showEdit, setShowEdit] = useState(false)
   const [showExcluded, setShowExcluded] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Bulk multi-select state (#791). Selection is keyed by book.id and
+  // intentionally scoped to the filtered view: hidden books can't be
+  // accidentally swept up by select-all.
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const selectAllRef = useRef<HTMLInputElement>(null)
 
   const [view, setView] = useView('author-detail', 'grid')
 
@@ -192,6 +202,71 @@ export default function AuthorDetailPage() {
     }
   }
 
+  const toggleSelect = (bookId: number) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(bookId)) next.delete(bookId)
+      else next.add(bookId)
+      return next
+    })
+  }
+
+  const clearSelection = () => setSelected(new Set())
+
+  // reloadBooks refetches the author's books without clobbering loading state —
+  // used after a bulk action to reflect changes (e.g. exclude hides rows
+  // unless showExcluded is on; delete removes them outright).
+  const reloadBooks = async () => {
+    try {
+      const bs = await api.listBooks({ authorId, includeExcluded: showExcluded })
+      setBooks(bs)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Reload failed')
+    }
+  }
+
+  // runBulk routes a multi-select action through the existing /book/bulk
+  // endpoint. The handler returns 200 with per-id outcomes even when some
+  // rows fail (stale IDs, missing books) — surface the first error inline
+  // so the user knows partial success happened without burying it.
+  const runBulk = async (action: BookBulkAction, actionLabel: string, confirmMsg?: string) => {
+    if (selected.size === 0) return
+    if (confirmMsg && !confirm(confirmMsg)) return
+    setBulkBusy(true)
+    setError(null)
+    try {
+      const ids = Array.from(selected)
+      const res = await api.bulkActionBooks(ids, action)
+      let okCount = 0
+      let firstError = ''
+      for (const id of ids) {
+        const r = res.results[String(id)]
+        if (r?.ok) {
+          okCount++
+        } else if (!firstError) {
+          firstError = r?.error || 'unknown error'
+        }
+      }
+      if (okCount < ids.length) {
+        setError(t('authorDetail.bulk.partial', {
+          action: actionLabel,
+          ok: okCount,
+          total: ids.length,
+          error: firstError,
+        }))
+      }
+      clearSelection()
+      await reloadBooks()
+    } catch (e) {
+      setError(t('authorDetail.bulk.failed', {
+        action: actionLabel,
+        error: e instanceof Error ? e.message : String(e),
+      }))
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
   const filteredBooks = useMemo(() => {
     let list = books
     if (typeFilter) list = list.filter(b => (b.mediaType || 'ebook') === typeFilter)
@@ -210,6 +285,29 @@ export default function AuthorDetailPage() {
     }
     return list
   }, [books, typeFilter, statusFilter, publishedFilter, dateSort])
+
+  // Drop any selected IDs that are no longer in the filtered view so the
+  // bulk bar count never lies about what's about to be acted on.
+  const visibleIds = useMemo(() => new Set(filteredBooks.map(b => b.id)), [filteredBooks])
+  useEffect(() => {
+    setSelected(prev => {
+      let changed = false
+      const next = new Set<number>()
+      for (const id of prev) {
+        if (visibleIds.has(id)) next.add(id)
+        else changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [visibleIds])
+
+  const allVisibleSelected = filteredBooks.length > 0 && filteredBooks.every(b => selected.has(b.id))
+  const someVisibleSelected = filteredBooks.some(b => selected.has(b.id)) && !allVisibleSelected
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = someVisibleSelected
+  }, [someVisibleSelected])
+
+  const selectAllVisible = () => setSelected(new Set(filteredBooks.map(b => b.id)))
 
   if (loading) return <div className="text-slate-600 dark:text-zinc-500">Loading…</div>
   if (!author) return <div className="text-slate-600 dark:text-zinc-500">Author not found</div>
@@ -231,7 +329,7 @@ export default function AuthorDetailPage() {
   const dateSortIcon = dateSort === 'asc' ? ' ↑' : dateSort === 'desc' ? ' ↓' : ''
 
   return (
-    <div className="max-w-5xl">
+    <div className={`max-w-5xl${selected.size > 0 ? ' pb-20' : ''}`}>
       <div className="mb-4 flex items-center gap-3 text-sm">
         <button onClick={() => navigate(-1)} className="text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">← Back</button>
       </div>
@@ -409,6 +507,17 @@ export default function AuthorDetailPage() {
               <table className="w-full table-fixed text-sm">
                 <thead>
                   <tr className="bg-slate-100 dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800">
+                    <th className="w-10 px-3 py-2">
+                      <input
+                        ref={selectAllRef}
+                        type="checkbox"
+                        checked={allVisibleSelected}
+                        onChange={e => e.target.checked ? selectAllVisible() : clearSelection()}
+                        className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                        title={t('common.selectAllPage')}
+                        aria-label={t('common.selectAllPage')}
+                      />
+                    </th>
                     <th className="w-full sm:w-[46%] text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase">Title</th>
                     <th
                       className="hidden sm:table-cell sm:w-28 text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase cursor-pointer select-none hover:text-slate-900 dark:hover:text-white whitespace-nowrap"
@@ -425,9 +534,18 @@ export default function AuthorDetailPage() {
                   {filteredBooks.map(book => (
                     <tr
                       key={book.id}
-                      className="bg-slate-100/50 dark:bg-zinc-900/50 hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 cursor-pointer"
+                      className={`${selected.has(book.id) ? 'bg-emerald-500/10 dark:bg-emerald-500/10' : 'bg-slate-100/50 dark:bg-zinc-900/50'} hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 cursor-pointer`}
                       onClick={() => (window.location.href = `/book/${book.id}`)}
                     >
+                      <td className="px-3 py-2 w-10 align-middle" onClick={e => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selected.has(book.id)}
+                          onChange={() => toggleSelect(book.id)}
+                          className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                          aria-label={`Select ${book.title}`}
+                        />
+                      </td>
                       <td className="px-3 py-2 align-middle">
                         <Link to={`/book/${book.id}`} className="flex items-center gap-2 min-w-0" onClick={e => e.stopPropagation()}>
                           {book.imageUrl ? (
@@ -479,42 +597,71 @@ export default function AuthorDetailPage() {
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
             {filteredBooks.map(book => (
-              <Link
+              <div
                 key={book.id}
-                to={`/book/${book.id}`}
-                className="border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden group hover:border-emerald-500 transition-colors"
+                className={`relative border rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden group transition-colors ${selected.has(book.id) ? 'border-emerald-500' : 'border-slate-200 dark:border-zinc-800 hover:border-emerald-500'}`}
               >
-                <div className="aspect-[2/3] bg-slate-200 dark:bg-zinc-800 relative">
-                  {book.imageUrl ? (
-                    <img src={book.imageUrl} alt={book.title} className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center p-3 text-center">
-                      <span className="text-sm text-slate-500 dark:text-zinc-600">{book.title}</span>
-                    </div>
-                  )}
-                </div>
-                <div className="p-2">
-                  <h4 className="text-xs font-medium truncate" title={book.title}>{book.title}</h4>
-                  <div className="flex items-center gap-1 mt-1 flex-wrap">
-                    <span className={statusBadgeClass(book.status, 'px-1.5 py-0.5 rounded text-[10px] font-medium')}>
-                      {statusLabel[book.status] ?? book.status}
-                    </span>
-                    {book.mediaType === 'audiobook' && (
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">🎧 Audio</span>
-                    )}
-                    {book.excluded && (
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">Excluded</span>
+                <input
+                  type="checkbox"
+                  checked={selected.has(book.id)}
+                  onChange={() => toggleSelect(book.id)}
+                  onClick={e => e.stopPropagation()}
+                  className="absolute top-2 left-2 z-10 rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 bg-white/80 dark:bg-zinc-900/80"
+                  aria-label={`Select ${book.title}`}
+                />
+                <Link to={`/book/${book.id}`} className="block">
+                  <div className="aspect-[2/3] bg-slate-200 dark:bg-zinc-800 relative">
+                    {book.imageUrl ? (
+                      <img src={book.imageUrl} alt={book.title} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center p-3 text-center">
+                        <span className="text-sm text-slate-500 dark:text-zinc-600">{book.title}</span>
+                      </div>
                     )}
                   </div>
-                  {book.releaseDate && (
-                    <p className="text-[10px] text-slate-600 dark:text-zinc-500 mt-0.5">{fmtPublishedYear(book.releaseDate)}</p>
-                  )}
-                </div>
-              </Link>
+                  <div className="p-2">
+                    <h4 className="text-xs font-medium truncate" title={book.title}>{book.title}</h4>
+                    <div className="flex items-center gap-1 mt-1 flex-wrap">
+                      <span className={statusBadgeClass(book.status, 'px-1.5 py-0.5 rounded text-[10px] font-medium')}>
+                        {statusLabel[book.status] ?? book.status}
+                      </span>
+                      {book.mediaType === 'audiobook' && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">🎧 Audio</span>
+                      )}
+                      {book.excluded && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">Excluded</span>
+                      )}
+                    </div>
+                    {book.releaseDate && (
+                      <p className="text-[10px] text-slate-600 dark:text-zinc-500 mt-0.5">{fmtPublishedYear(book.releaseDate)}</p>
+                    )}
+                  </div>
+                </Link>
+              </div>
             ))}
           </div>
         )}
       </section>
+
+      <BulkActionBar
+        count={selected.size}
+        onClear={clearSelection}
+        busy={bulkBusy}
+        actions={[
+          { label: t('authorDetail.bulk.monitor'), onClick: () => runBulk('monitor', t('authorDetail.bulk.monitor')) },
+          { label: t('authorDetail.bulk.unmonitor'), onClick: () => runBulk('unmonitor', t('authorDetail.bulk.unmonitor')) },
+          {
+            label: t('authorDetail.bulk.exclude'),
+            variant: 'caution',
+            onClick: () => runBulk('exclude', t('authorDetail.bulk.exclude'), t('authorDetail.bulk.excludeConfirm', { count: selected.size })),
+          },
+          {
+            label: t('authorDetail.bulk.delete'),
+            variant: 'danger',
+            onClick: () => runBulk('delete', t('authorDetail.bulk.delete'), t('authorDetail.bulk.deleteConfirm', { count: selected.size })),
+          },
+        ]}
+      />
     </div>
   )
 }

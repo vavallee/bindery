@@ -115,6 +115,19 @@
     "deleteWithFilesConfirm": "Delete this author, {{total}} book(s), AND {{withFiles}} file(s)/folder(s) on disk?\n\nThis cannot be undone.",
     "bulkDeleteConfirm": "Delete {{count}} author(s) and all their books?"
   },
+  "authorDetail": {
+    "bulk": {
+      "monitor": "Monitor",
+      "unmonitor": "Unmonitor",
+      "exclude": "Exclude",
+      "delete": "Delete",
+      "excludeConfirm": "Exclude {{count}} book(s)? Excluded books are hidden and blocked from re-import on the next metadata refresh.",
+      "deleteConfirm": "Delete {{count}} book(s)? Files on disk are not removed.",
+      "success": "{{action}} applied to {{count}} book(s).",
+      "partial": "{{action}}: {{ok}} of {{total}} succeeded. First error: {{error}}",
+      "failed": "Bulk {{action}} failed: {{error}}"
+    }
+  },
   "books": {
     "title": "Books",
     "searchPlaceholder": "Search books or authors...",
