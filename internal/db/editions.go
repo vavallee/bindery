@@ -16,11 +16,20 @@ import (
 // upsert editions from outside that flow, so we now expose a dedicated
 // repo rather than leaking SQL into the importer.
 type EditionRepo struct {
-	db *sql.DB
+	db   *sql.DB
+	exec dbExecutor
 }
 
 func NewEditionRepo(db *sql.DB) *EditionRepo {
-	return &EditionRepo{db: db}
+	return &EditionRepo{db: db, exec: db}
+}
+
+// WithTx returns a clone of this repo with its tx-aware methods (Delete)
+// routed through tx. See dbExecutor for the rationale.
+func (r *EditionRepo) WithTx(tx *sql.Tx) *EditionRepo {
+	clone := *r
+	clone.exec = tx
+	return &clone
 }
 
 // GetByForeignID returns the edition keyed by its globally-unique foreign
@@ -51,7 +60,7 @@ func (r *EditionRepo) GetByForeignID(ctx context.Context, foreignID string) (*mo
 
 // ListByBook returns every edition linked to bookID, in insertion order.
 func (r *EditionRepo) ListByBook(ctx context.Context, bookID int64) ([]models.Edition, error) {
-	rows, err := r.db.QueryContext(ctx, `
+	rows, err := r.exec.QueryContext(ctx, `
 		SELECT id, foreign_id, book_id, title, isbn_13, isbn_10, asin, publisher,
 		       publish_date, format, num_pages, language, image_url, is_ebook,
 		       edition_info, monitored, created_at, updated_at
@@ -134,7 +143,7 @@ func (r *EditionRepo) Upsert(ctx context.Context, e *models.Edition) error {
 }
 
 func (r *EditionRepo) Delete(ctx context.Context, id int64) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM editions WHERE id = ?`, id)
+	_, err := r.exec.ExecContext(ctx, `DELETE FROM editions WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete edition %d: %w", id, err)
 	}

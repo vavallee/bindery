@@ -11,11 +11,23 @@ import (
 )
 
 type AuthorRepo struct {
-	db *sql.DB
+	db   *sql.DB
+	exec dbExecutor
 }
 
 func NewAuthorRepo(db *sql.DB) *AuthorRepo {
-	return &AuthorRepo{db: db}
+	return &AuthorRepo{db: db, exec: db}
+}
+
+// WithTx returns a clone of this repo whose tx-aware methods (GetByID,
+// Update, Delete) route through tx instead of the bare *sql.DB. Used by
+// calibre.Rollback to wrap a multi-repo operation in one atomic
+// transaction. Methods that begin their own transaction (e.g.
+// SetMonitoredSeriesIDs) stay on *sql.DB.
+func (r *AuthorRepo) WithTx(tx *sql.Tx) *AuthorRepo {
+	clone := *r
+	clone.exec = tx
+	return &clone
 }
 
 const authorSelectCols = `id, foreign_id, name, sort_name, description, image_url, disambiguation,
@@ -62,7 +74,7 @@ func (r *AuthorRepo) ListByUser(ctx context.Context, userID int64) ([]models.Aut
 }
 
 func (r *AuthorRepo) GetByID(ctx context.Context, id int64) (*models.Author, error) {
-	row := r.db.QueryRowContext(ctx, `
+	row := r.exec.QueryRowContext(ctx, `
 		SELECT `+authorSelectCols+`
 		FROM authors WHERE id = ?`, id)
 
@@ -228,7 +240,7 @@ func (r *AuthorRepo) UpgradeSyntheticDNB(ctx context.Context, currentForeignID s
 func (r *AuthorRepo) Update(ctx context.Context, a *models.Author) error {
 	now := time.Now().UTC()
 	normalizeAuthorMonitorDefaults(a)
-	_, err := r.db.ExecContext(ctx, `
+	_, err := r.exec.ExecContext(ctx, `
 		UPDATE authors SET foreign_id=?, name=?, sort_name=?, description=?, image_url=?, disambiguation=?,
 		                   ratings_count=?, average_rating=?, monitored=?, quality_profile_id=?,
 		                   metadata_profile_id=?, root_folder_id=?, audiobook_root_folder_id=?, monitor_mode=?,
@@ -246,7 +258,7 @@ func (r *AuthorRepo) Update(ctx context.Context, a *models.Author) error {
 }
 
 func (r *AuthorRepo) Delete(ctx context.Context, id int64) error {
-	_, err := r.db.ExecContext(ctx, "DELETE FROM authors WHERE id=?", id)
+	_, err := r.exec.ExecContext(ctx, "DELETE FROM authors WHERE id=?", id)
 	if err != nil {
 		return fmt.Errorf("delete author %d: %w", id, err)
 	}

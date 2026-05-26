@@ -15,11 +15,29 @@ import (
 // ABSImportRunRepo line-for-line modulo the dropped checkpoint column
 // (Calibre imports have no mid-run resumable state).
 type CalibreImportRunRepo struct {
-	db *sql.DB
+	db   *sql.DB
+	exec dbExecutor
 }
 
 func NewCalibreImportRunRepo(db *sql.DB) *CalibreImportRunRepo {
-	return &CalibreImportRunRepo{db: db}
+	return &CalibreImportRunRepo{db: db, exec: db}
+}
+
+// WithTx returns a clone of this repo with its tx-aware methods
+// (UpdateStatus) routed through tx. See dbExecutor for the rationale.
+func (r *CalibreImportRunRepo) WithTx(tx *sql.Tx) *CalibreImportRunRepo {
+	clone := *r
+	clone.exec = tx
+	return &clone
+}
+
+// BeginTx exposes the underlying *sql.DB's BeginTx so callers driving a
+// multi-repo atomic operation (calibre.Rollback) can obtain the
+// transaction without separately injecting *sql.DB. The repo already owns
+// the DB handle, so this avoids fanning out the *sql.DB to every consumer
+// just to start a tx.
+func (r *CalibreImportRunRepo) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	return r.db.BeginTx(ctx, opts)
 }
 
 func (r *CalibreImportRunRepo) Create(ctx context.Context, run *models.CalibreImportRun) error {
@@ -81,7 +99,7 @@ func (r *CalibreImportRunRepo) UpdateStatus(ctx context.Context, id int64, statu
 	if id == 0 {
 		return nil
 	}
-	_, err := r.db.ExecContext(ctx, `
+	_, err := r.exec.ExecContext(ctx, `
 		UPDATE calibre_import_runs
 		SET status = ?
 		WHERE id = ?`,
@@ -140,15 +158,25 @@ func (r *CalibreImportRunRepo) ListRecent(ctx context.Context, limit int) ([]mod
 // (entity_type, external_id) → local_id mapping rollback uses to prove a
 // run still owns the row it's about to delete.
 type CalibreProvenanceRepo struct {
-	db *sql.DB
+	db   *sql.DB
+	exec dbExecutor
 }
 
 func NewCalibreProvenanceRepo(db *sql.DB) *CalibreProvenanceRepo {
-	return &CalibreProvenanceRepo{db: db}
+	return &CalibreProvenanceRepo{db: db, exec: db}
+}
+
+// WithTx returns a clone of this repo with its tx-aware methods
+// (GetByExternal, ListByLocal, DeleteByLocal, DeleteByExternal) routed
+// through tx. See dbExecutor for the rationale.
+func (r *CalibreProvenanceRepo) WithTx(tx *sql.Tx) *CalibreProvenanceRepo {
+	clone := *r
+	clone.exec = tx
+	return &clone
 }
 
 func (r *CalibreProvenanceRepo) GetByExternal(ctx context.Context, sourceID, entityType, externalID string) (*models.CalibreProvenance, error) {
-	row := r.db.QueryRowContext(ctx, `
+	row := r.exec.QueryRowContext(ctx, `
 		SELECT id, source_id, entity_type, external_id, local_id, import_run_id, created_at, updated_at
 		FROM calibre_provenance
 		WHERE source_id = ? AND entity_type = ? AND external_id = ?`,
@@ -157,7 +185,7 @@ func (r *CalibreProvenanceRepo) GetByExternal(ctx context.Context, sourceID, ent
 }
 
 func (r *CalibreProvenanceRepo) ListByLocal(ctx context.Context, entityType string, localID int64) ([]models.CalibreProvenance, error) {
-	rows, err := r.db.QueryContext(ctx, `
+	rows, err := r.exec.QueryContext(ctx, `
 		SELECT id, source_id, entity_type, external_id, local_id, import_run_id, created_at, updated_at
 		FROM calibre_provenance
 		WHERE entity_type = ? AND local_id = ?
@@ -206,7 +234,7 @@ func (r *CalibreProvenanceRepo) Upsert(ctx context.Context, p *models.CalibrePro
 }
 
 func (r *CalibreProvenanceRepo) DeleteByExternal(ctx context.Context, sourceID, entityType, externalID string) error {
-	_, err := r.db.ExecContext(ctx, `
+	_, err := r.exec.ExecContext(ctx, `
 		DELETE FROM calibre_provenance
 		WHERE source_id = ? AND entity_type = ? AND external_id = ?`,
 		sourceID, entityType, externalID)
@@ -220,7 +248,7 @@ func (r *CalibreProvenanceRepo) DeleteByLocal(ctx context.Context, entityType st
 	if localID == 0 {
 		return 0, nil
 	}
-	result, err := r.db.ExecContext(ctx, `
+	result, err := r.exec.ExecContext(ctx, `
 		DELETE FROM calibre_provenance
 		WHERE entity_type = ? AND local_id = ?`,
 		entityType, localID)

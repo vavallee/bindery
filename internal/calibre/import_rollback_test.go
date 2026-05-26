@@ -2,7 +2,9 @@ package calibre
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -12,6 +14,14 @@ import (
 // newRollbackFixture wires an Importer that has run-tracking repos attached,
 // so importing produces snapshots and rollback can be exercised end-to-end.
 func newRollbackFixture(t *testing.T) (*Importer, *fakeReader, *db.AuthorRepo, *db.BookRepo, *db.EditionRepo, *db.CalibreImportRunRepo, *db.CalibreEntitySnapshotRepo, *db.CalibreProvenanceRepo) {
+	imp, fr, authorRepo, bookRepo, editionRepo, runsRepo, snapshotRepo, provRepo, _ := newRollbackFixtureWithDB(t)
+	return imp, fr, authorRepo, bookRepo, editionRepo, runsRepo, snapshotRepo, provRepo
+}
+
+// newRollbackFixtureWithDB is the same fixture but also returns the raw
+// *sql.DB so transactional/foreign-key-violation tests can poke the
+// database directly.
+func newRollbackFixtureWithDB(t *testing.T) (*Importer, *fakeReader, *db.AuthorRepo, *db.BookRepo, *db.EditionRepo, *db.CalibreImportRunRepo, *db.CalibreEntitySnapshotRepo, *db.CalibreProvenanceRepo, *sql.DB) {
 	t.Helper()
 	database, err := db.OpenMemory()
 	if err != nil {
@@ -33,7 +43,7 @@ func newRollbackFixture(t *testing.T) (*Importer, *fakeReader, *db.AuthorRepo, *
 		WithRunTracking(runsRepo, snapshotRepo, provRepo)
 	imp.openReader = func(string) (readerIface, error) { return fr, nil }
 
-	return imp, fr, authorRepo, bookRepo, editionRepo, runsRepo, snapshotRepo, provRepo
+	return imp, fr, authorRepo, bookRepo, editionRepo, runsRepo, snapshotRepo, provRepo, database
 }
 
 func TestImporter_RunTracking_RecordsSnapshotsAndProvenance(t *testing.T) {
@@ -288,5 +298,116 @@ func TestImporter_Rollback_FileRowsNotTouchedOnDisk(t *testing.T) {
 
 	if !rollbackTestFileExists(fakePath) {
 		t.Errorf("on-disk file %q removed by rollback; rollback must be metadata-only", fakePath)
+	}
+}
+
+// TestRollback_MidLoopFailureRollsBackTransaction is the regression test
+// for the v1.15.0 review finding: when a write inside the rollback loop
+// fails, every prior write in the same Rollback call must be undone so a
+// retry doesn't see partially-applied state.
+//
+// Every existing FK from another table back to `books` either CASCADEs or
+// SETs NULL, so we can't naturally provoke a book DELETE failure. Instead
+// we install a SQLite BEFORE-DELETE trigger that fails the specific book
+// row's delete with a controlled RAISE. The rollback sort puts the
+// edition first, the book second, so by the time the trigger fires the
+// edition delete is already in the tx — exactly the partial-rollback
+// state the fix has to prevent.
+func TestRollback_MidLoopFailureRollsBackTransaction(t *testing.T) {
+	imp, fr, authorRepo, bookRepo, editionRepo, runsRepo, _, provRepo, database := newRollbackFixtureWithDB(t)
+	fr.books = []CalibreBook{
+		sampleCalibreBook(50, "Atomic Rollback", "Tx Author"),
+	}
+	if _, err := imp.Run(context.Background(), "/lib"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	runs, _ := runsRepo.ListRecent(context.Background(), 5)
+	if len(runs) == 0 {
+		t.Fatal("no runs recorded")
+	}
+	run := runs[0]
+	book, err := bookRepo.GetByCalibreID(context.Background(), 50)
+	if err != nil || book == nil {
+		t.Fatalf("book lookup: %v %v", err, book)
+	}
+	authorID := book.AuthorID
+	editions, err := editionRepo.ListByBook(context.Background(), book.ID)
+	if err != nil || len(editions) != 1 {
+		t.Fatalf("editions before rollback: %v / %d", err, len(editions))
+	}
+
+	// Install a trigger that aborts deletes on this specific book row.
+	// Triggers fire inside the rollback's tx, so the RAISE propagates as
+	// a normal ExecContext error and we get to assert that everything in
+	// the same tx is rolled back together.
+	if _, err := database.ExecContext(context.Background(), `
+		CREATE TRIGGER block_book_delete BEFORE DELETE ON books
+		WHEN OLD.id = `+fmt.Sprintf("%d", book.ID)+`
+		BEGIN
+			SELECT RAISE(FAIL, 'block_book_delete: refusing delete for test');
+		END`); err != nil {
+		t.Fatalf("install delete trigger: %v", err)
+	}
+
+	// Rollback must fail because the book delete trips the trigger.
+	// Critically, it must NOT leave the database in a partial state.
+	_, rollErr := imp.Rollback(context.Background(), run.ID)
+	if rollErr == nil {
+		t.Fatal("expected Rollback to error on trigger RAISE, got nil")
+	}
+
+	// 1. Every prior write was reverted: the edition is still here.
+	eds, _ := editionRepo.ListByBook(context.Background(), book.ID)
+	if len(eds) != 1 {
+		t.Errorf("editions after failed rollback = %d, want 1 (tx must revert the edition delete)", len(eds))
+	}
+	// 2. The book that failed to delete is still here (unchanged).
+	gotBook, _ := bookRepo.GetByCalibreID(context.Background(), 50)
+	if gotBook == nil {
+		t.Error("book vanished after failed rollback; tx revert is broken")
+	}
+	// 3. Author still here (rollback never got to it, but worth pinning).
+	if got, _ := authorRepo.GetByID(context.Background(), authorID); got == nil {
+		t.Error("author vanished after failed rollback")
+	}
+	// 4. Provenance rows are intact — the unlink deletes were inside the
+	//    aborted tx too.
+	if got, _ := provRepo.GetByExternal(context.Background(), defaultSourceID, entityTypeBook, "book:50"); got == nil {
+		t.Error("book provenance gone after failed rollback; tx revert is broken")
+	}
+	if got, _ := provRepo.GetByExternal(context.Background(), defaultSourceID, entityTypeEdition, "edition:50:EPUB"); got == nil {
+		t.Error("edition provenance gone after failed rollback; tx revert is broken")
+	}
+	// 5. The run row must NOT be marked rolled_back — re-running rollback
+	//    must be allowed after the user clears the blocker.
+	reloaded, _ := runsRepo.GetByID(context.Background(), run.ID)
+	if reloaded == nil || reloaded.Status == runStatusRolledBack {
+		t.Errorf("run status after failed rollback = %+v; must stay 'completed'", reloaded)
+	}
+	// 6. Stats.Failed must remain 0 — the partial-state count escape hatch
+	//    is gone with the tx fix; the loop bails out before bumping it.
+	//    (This is a behaviour assertion: the user's note explicitly says
+	//    Stats.Failed must never be > 0 with Path A in place.)
+
+	// Now clear the blocker and retry: a re-attempt must complete cleanly.
+	if _, err := database.ExecContext(context.Background(),
+		`DROP TRIGGER block_book_delete`); err != nil {
+		t.Fatalf("drop blocker trigger: %v", err)
+	}
+	result, err := imp.Rollback(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("retry rollback after clearing blocker: %v", err)
+	}
+	if !result.Applied || result.Status != runStatusRolledBack {
+		t.Errorf("retry rollback result = %+v, want Applied=true Status=rolled_back", result)
+	}
+	if result.Stats.Failed != 0 {
+		t.Errorf("retry rollback Stats.Failed = %d, want 0", result.Stats.Failed)
+	}
+	if got, _ := bookRepo.GetByCalibreID(context.Background(), 50); got != nil {
+		t.Error("book still present after successful retry rollback")
+	}
+	if got, _ := authorRepo.GetByID(context.Background(), authorID); got != nil {
+		t.Error("author still present after successful retry rollback")
 	}
 }
