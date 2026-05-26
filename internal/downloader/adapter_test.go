@@ -640,6 +640,116 @@ func TestSendDownload_QbittorrentAudiobookSavePath(t *testing.T) {
 	}
 }
 
+// TestSendDownload_QbittorrentAudiobookCategory verifies that when a client has
+// CategoryAudiobook set and the send is for an audiobook, the qBittorrent
+// `category` form field reflects the audiobook category — not the ebook one
+// (#700). The savepath is also validated to round-trip the audiobook dir.
+func TestSendDownload_QbittorrentAudiobookCategory(t *testing.T) {
+	var gotCategory, gotSavePath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/add":
+			_ = r.ParseForm()
+			gotCategory = r.FormValue("category")
+			gotSavePath = r.FormValue("savepath")
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			_, _ = w.Write([]byte("[]"))
+		}
+	}))
+	defer srv.Close()
+	host, port := serverHostPort(t, srv.URL)
+	client := &models.DownloadClient{
+		Type:              "qbittorrent",
+		Host:              host,
+		Port:              port,
+		Username:          "u",
+		Password:          "p",
+		PathRemap:         "/media:/books",
+		Category:          "books",
+		CategoryAudiobook: "audiobooks",
+	}
+	_, err := SendDownload(context.Background(), client, "magnet:?xt=urn:btih:ABCDEF123&dn=Book", "", SendOptions{
+		MediaType:            models.MediaTypeAudiobook,
+		DownloadDir:          "/books/downloads",
+		AudiobookDownloadDir: "/books/audio-downloads",
+	})
+	if err != nil {
+		t.Fatalf("SendDownload: %v", err)
+	}
+	if gotCategory != "audiobooks" {
+		t.Errorf("category: want %q, got %q", "audiobooks", gotCategory)
+	}
+	if gotSavePath != "/media/audio-downloads" {
+		t.Errorf("savepath: want %q, got %q", "/media/audio-downloads", gotSavePath)
+	}
+}
+
+// TestSendDownload_QbittorrentEbookCategoryUnchanged confirms that grabs for
+// non-audiobook media types continue to use the existing Category even when
+// CategoryAudiobook is configured — backwards-compat guard for #700.
+func TestSendDownload_QbittorrentEbookCategoryUnchanged(t *testing.T) {
+	var gotCategory string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/add":
+			_ = r.ParseForm()
+			gotCategory = r.FormValue("category")
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			_, _ = w.Write([]byte("[]"))
+		}
+	}))
+	defer srv.Close()
+	host, port := serverHostPort(t, srv.URL)
+	client := &models.DownloadClient{
+		Type:              "qbittorrent",
+		Host:              host,
+		Port:              port,
+		Username:          "u",
+		Password:          "p",
+		Category:          "books",
+		CategoryAudiobook: "audiobooks",
+	}
+	if _, err := SendDownload(context.Background(), client, "magnet:?xt=urn:btih:ABCDEF123&dn=Book", "", SendOptions{MediaType: models.MediaTypeEbook}); err != nil {
+		t.Fatalf("SendDownload: %v", err)
+	}
+	if gotCategory != "books" {
+		t.Errorf("ebook send used category %q, want %q", gotCategory, "books")
+	}
+}
+
+// TestSendDownload_SABnzbdAudiobookCategory verifies the audiobook category
+// flows through SABnzbd's send path as well — the non-torrent branch of #700.
+func TestSendDownload_SABnzbdAudiobookCategory(t *testing.T) {
+	var gotCategory string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotCategory = r.FormValue("cat")
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": true, "nzo_ids": []string{"nzoAUDIO"}})
+	}))
+	defer srv.Close()
+	host, port := serverHostPort(t, srv.URL)
+	client := &models.DownloadClient{
+		Type:              "sabnzbd",
+		Host:              host,
+		Port:              port,
+		APIKey:            "k",
+		Category:          "books",
+		CategoryAudiobook: "audiobooks",
+	}
+	if _, err := SendDownload(context.Background(), client, "https://example.com/file.nzb", "My Book", SendOptions{MediaType: models.MediaTypeAudiobook}); err != nil {
+		t.Fatalf("SendDownload: %v", err)
+	}
+	if gotCategory != "audiobooks" {
+		t.Errorf("cat: want %q, got %q", "audiobooks", gotCategory)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // RemoveDownload
 // ---------------------------------------------------------------------------

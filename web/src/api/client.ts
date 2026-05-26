@@ -966,6 +966,10 @@ export interface DownloadClient {
   useSsl: boolean
   urlBase: string
   category: string
+  // categoryAudiobook overrides category for audiobook grabs only.
+  // Optional; when empty (the default for pre-#700 rows) audiobook grabs
+  // fall back to `category`.
+  categoryAudiobook?: string
   pathRemap?: string
   enabled: boolean
   health?: DownloadClientHealth

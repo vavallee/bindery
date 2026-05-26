@@ -1162,6 +1162,7 @@ describe('SettingsPage', () => {
         username: '',
         password: '',
         category: 'ebooks',
+        categoryAudiobook: '',
         pathRemap: '/media:/books',
         type: 'sabnzbd',
         enabled: true,
@@ -1229,6 +1230,7 @@ describe('SettingsPage', () => {
         password,
         apiKey: '',
         category,
+        categoryAudiobook: '',
         pathRemap: '',
         type,
         enabled: true,
@@ -1268,12 +1270,36 @@ describe('SettingsPage', () => {
         password: 'qbit-pass',
         apiKey: '',
         category: 'ebooks',
+        categoryAudiobook: '',
         pathRemap: '/media:/books',
         useSsl: true,
         urlBase: '/qbittorrent',
       })
     })
     expect(await screen.findByText('qBit Books')).toBeInTheDocument()
+  })
+
+  // #700: per-media-type categories. Verifies the audiobook category field
+  // round-trips through the add form. The transmission case is excluded — its
+  // "Category" field is repurposed as a download-directory override; an audiobook
+  // category for it would need a separate path UI (left to a follow-up).
+  it('adds a download client with a separate audiobook category', async () => {
+    renderSettings()
+    await openClientsTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.clients.addButton' }))
+    fireEvent.change(screen.getByPlaceholderText('Host'), { target: { value: 'sabnzbd' } })
+    fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'k' } })
+    fireEvent.change(screen.getByDisplayValue('books'), { target: { value: 'ebooks' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.clients.audiobookCategoryPlaceholder'), { target: { value: ' audiobooks ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(api.addDownloadClient).toHaveBeenCalledWith(expect.objectContaining({
+        category: 'ebooks',
+        categoryAudiobook: 'audiobooks',
+      }))
+    })
   })
 
   it('shows qBittorrent path health errors under the client', async () => {

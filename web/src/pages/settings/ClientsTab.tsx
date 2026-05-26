@@ -120,6 +120,7 @@ export default function ClientsTab({ clients, setClients }: Props) {
 }
 
 function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; onClose: () => void; onSaved: (c: DownloadClient) => void }) {
+  const { t } = useTranslation()
   const [name, setName] = useState(client.name)
   const [type, setType] = useState(client.type || 'sabnzbd')
   const [host, setHost] = useState(client.host)
@@ -130,6 +131,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
   const [useSSL, setUseSSL] = useState(client.useSsl || false)
   const [urlBase, setUrlBase] = useState(client.urlBase || '')
   const [category, setCategory] = useState(client.category)
+  const [categoryAudiobook, setCategoryAudiobook] = useState(client.categoryAudiobook || '')
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [pathRemap, setPathRemap] = useState(client.pathRemap || '')
@@ -146,8 +148,8 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
 
   const submit = async () => {
     const data = isPasswordClient(type)
-      ? { ...client, name, type, host, port: parseInt(port), username: hasUsername(type) ? username : '', password: credential, apiKey: '', category, pathRemap: pathRemap.trim(), useSsl: useSSL, urlBase: urlBase.trim() }
-      : { ...client, name, type, host, port: parseInt(port), apiKey: credential, username: '', password: '', category, pathRemap: pathRemap.trim(), useSsl: useSSL, urlBase: urlBase.trim() }
+      ? { ...client, name, type, host, port: parseInt(port), username: hasUsername(type) ? username : '', password: credential, apiKey: '', category, categoryAudiobook: categoryAudiobook.trim(), pathRemap: pathRemap.trim(), useSsl: useSSL, urlBase: urlBase.trim() }
+      : { ...client, name, type, host, port: parseInt(port), apiKey: credential, username: '', password: '', category, categoryAudiobook: categoryAudiobook.trim(), pathRemap: pathRemap.trim(), useSsl: useSSL, urlBase: urlBase.trim() }
     setSaving(true)
     setSaveError(null)
     try {
@@ -217,6 +219,13 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
         {type === 'transmission' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Optional absolute path override. Leave blank to use Transmission's configured default download directory.</p>}
         {type === 'deluge' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Applied via the Deluge label plugin. Leave blank if the plugin is not installed.</p>}
       </div>
+      {type !== 'transmission' && (
+        <div>
+          <label className={labelCls}>{t('settings.clients.audiobookCategoryLabel')}</label>
+          <input value={categoryAudiobook} onChange={e => setCategoryAudiobook(e.target.value)} placeholder={t('settings.clients.audiobookCategoryPlaceholder')} className={inputCls} />
+          <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.clients.audiobookCategoryHelp')}</p>
+        </div>
+      )}
       <PathRemapField
         id={`edit-client-path-remap-${client.id}`}
         label="Download client path remap"
@@ -235,6 +244,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
 }
 
 function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c: DownloadClient) => void }) {
+  const { t } = useTranslation()
   const [name, setName] = useState('SABnzbd')
   const [type, setType] = useState<'sabnzbd' | 'nzbget' | 'qbittorrent' | 'transmission' | 'deluge'>('sabnzbd')
   const [host, setHost] = useState('')
@@ -244,6 +254,7 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
   const [useSSL, setUseSSL] = useState(false)
   const [urlBase, setUrlBase] = useState('')
   const [category, setCategory] = useState('books')
+  const [categoryAudiobook, setCategoryAudiobook] = useState('')
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [pathRemap, setPathRemap] = useState('')
@@ -282,8 +293,8 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
 
   const submit = async () => {
     const data = isPasswordClient(type)
-      ? { name, host, port: parseInt(port), username: hasUsername(type) ? username : '', password: credential, apiKey: '', category, pathRemap: pathRemap.trim(), type, enabled: true, useSsl: useSSL, urlBase: urlBase.trim() }
-      : { name, host, port: parseInt(port), apiKey: credential, username: '', password: '', category, pathRemap: pathRemap.trim(), type, enabled: true, useSsl: useSSL, urlBase: urlBase.trim() }
+      ? { name, host, port: parseInt(port), username: hasUsername(type) ? username : '', password: credential, apiKey: '', category, categoryAudiobook: categoryAudiobook.trim(), pathRemap: pathRemap.trim(), type, enabled: true, useSsl: useSSL, urlBase: urlBase.trim() }
+      : { name, host, port: parseInt(port), apiKey: credential, username: '', password: '', category, categoryAudiobook: categoryAudiobook.trim(), pathRemap: pathRemap.trim(), type, enabled: true, useSsl: useSSL, urlBase: urlBase.trim() }
     setSaving(true)
     setSaveError(null)
     try {
@@ -353,6 +364,13 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
         {type === 'transmission' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Optional absolute path override. Leave blank to use Transmission's configured default download directory.</p>}
         {type === 'deluge' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Applied via the Deluge label plugin. Leave blank if the plugin is not installed.</p>}
       </div>
+      {type !== 'transmission' && (
+        <div>
+          <label className={labelCls}>{t('settings.clients.audiobookCategoryLabel')}</label>
+          <input value={categoryAudiobook} onChange={e => setCategoryAudiobook(e.target.value)} placeholder={t('settings.clients.audiobookCategoryPlaceholder')} className={inputCls} />
+          <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.clients.audiobookCategoryHelp')}</p>
+        </div>
+      )}
       <PathRemapField
         id="add-client-path-remap"
         label="Download client path remap"

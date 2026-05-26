@@ -122,7 +122,7 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 	case "qbittorrent":
 		qb := qbittorrent.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
 		savePath := qbitSavePath(client, opts)
-		hash, err := qb.AddTorrent(ctx, sourceURL, client.Category, savePath)
+		hash, err := qb.AddTorrent(ctx, sourceURL, ResolveCategory(client, opts.MediaType), savePath)
 		if err != nil {
 			return nil, err
 		}
@@ -134,7 +134,7 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		return result, nil
 	case "deluge":
 		dl := deluge.New(client.Host, client.Port, client.Password, client.URLBase, client.UseSSL)
-		hash, err := dl.AddTorrent(ctx, sourceURL, client.Category)
+		hash, err := dl.AddTorrent(ctx, sourceURL, ResolveCategory(client, opts.MediaType))
 		if err != nil {
 			return nil, err
 		}
@@ -145,7 +145,7 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		return result, nil
 	case "nzbget":
 		ng := nzbget.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
-		nzbID, err := ng.Add(ctx, sourceURL, title, client.Category, 0)
+		nzbID, err := ng.Add(ctx, sourceURL, title, ResolveCategory(client, opts.MediaType), 0)
 		if err != nil {
 			return nil, err
 		}
@@ -153,7 +153,7 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		return result, nil
 	default:
 		sab := sabnzbd.New(client.Host, client.Port, client.APIKey, client.URLBase, client.UseSSL)
-		resp, err := sab.AddURL(ctx, sourceURL, title, client.Category, 0)
+		resp, err := sab.AddURL(ctx, sourceURL, title, ResolveCategory(client, opts.MediaType), 0)
 		if err != nil {
 			return nil, err
 		}
@@ -229,15 +229,20 @@ func GetStalledIDs(ctx context.Context, client *models.DownloadClient) (map[stri
 	switch client.Type {
 	case "qbittorrent":
 		qb := qbittorrent.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
-		torrents, err := qb.GetTorrents(ctx, client.Category)
-		if err != nil {
-			return nil, true, err
-		}
-		out := make(map[string]bool, len(torrents))
-		for _, t := range torrents {
-			state := strings.ToLower(t.State)
-			if state == "stalleddl" {
-				out[strings.ToLower(t.Hash)] = true
+		// Poll every category this client may have grabbed under; categoriesToPoll
+		// returns both Category and CategoryAudiobook when the latter is set
+		// (closes #700).
+		out := make(map[string]bool)
+		for _, cat := range categoriesToPoll(client) {
+			torrents, err := qb.GetTorrents(ctx, cat)
+			if err != nil {
+				return nil, true, err
+			}
+			for _, t := range torrents {
+				state := strings.ToLower(t.State)
+				if state == "stalleddl" {
+					out[strings.ToLower(t.Hash)] = true
+				}
 			}
 		}
 		return out, true, nil
@@ -380,20 +385,24 @@ func getTorrentLiveStatuses(ctx context.Context, client *models.DownloadClient) 
 	}
 
 	qb := qbittorrent.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
-	torrents, err := qb.GetTorrents(ctx, client.Category)
-	if err != nil {
-		return nil, err
-	}
-
-	out := make(map[string]LiveStatus, len(torrents))
-	for _, t := range torrents {
-		out[strings.ToLower(t.Hash)] = LiveStatus{
-			Percentage: fmt.Sprintf("%.1f", t.Progress*100),
-			TimeLeft:   etaToTimeLeft(int64(t.ETA)),
-			Speed:      bytesPerSecondToString(t.DLSpeed),
-			Size:       t.Size,
-			SizeLeft:   t.AmountLeft,
-			Status:     t.State,
+	// Poll every category this client may have grabbed under; categoriesToPoll
+	// returns both Category and CategoryAudiobook when the latter is set
+	// (closes #700).
+	out := make(map[string]LiveStatus)
+	for _, cat := range categoriesToPoll(client) {
+		torrents, err := qb.GetTorrents(ctx, cat)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range torrents {
+			out[strings.ToLower(t.Hash)] = LiveStatus{
+				Percentage: fmt.Sprintf("%.1f", t.Progress*100),
+				TimeLeft:   etaToTimeLeft(int64(t.ETA)),
+				Speed:      bytesPerSecondToString(t.DLSpeed),
+				Size:       t.Size,
+				SizeLeft:   t.AmountLeft,
+				Status:     t.State,
+			}
 		}
 	}
 	return out, nil

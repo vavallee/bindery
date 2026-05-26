@@ -101,10 +101,81 @@ func TestCheckDownloadClientHealth_QBittorrentCategoryPath(t *testing.T) {
 	}
 }
 
-func TestExpectedDownloadDirForClient_AudiobookCategory(t *testing.T) {
-	client := &models.DownloadClient{Category: "audiobooks"}
-	if got := ExpectedDownloadDirForClient(client, "/books/downloads", "/books/audio-downloads"); got != "/books/audio-downloads" {
-		t.Fatalf("expected audiobook download dir, got %q", got)
+func TestExpectedDownloadDirForClient_AudiobookMediaType(t *testing.T) {
+	client := &models.DownloadClient{Category: "books", CategoryAudiobook: "audiobooks"}
+	if got := ExpectedDownloadDirForClient(client, models.MediaTypeAudiobook, "/books/downloads", "/books/audio-downloads"); got != "/books/audio-downloads" {
+		t.Fatalf("audiobook mediaType: expected audiobook download dir, got %q", got)
+	}
+	if got := ExpectedDownloadDirForClient(client, models.MediaTypeEbook, "/books/downloads", "/books/audio-downloads"); got != "/books/downloads" {
+		t.Fatalf("ebook mediaType: expected ebook download dir, got %q", got)
+	}
+}
+
+// TestCheckDownloadClientHealth_QBittorrentAudiobookCategory exercises the
+// per-media-type validation added in #700: when CategoryAudiobook is set, the
+// health check must validate the audiobook category's save path against the
+// audiobook download dir as well, and only return OK when both pass.
+func TestCheckDownloadClientHealth_QBittorrentAudiobookCategory(t *testing.T) {
+	tests := []struct {
+		name       string
+		categories string
+		wantStatus string
+		wantText   string
+	}{
+		{
+			name:       "both categories valid",
+			categories: `{"books":{"name":"books","savePath":"/media/downloads"},"audiobooks":{"name":"audiobooks","savePath":"/media/audio-downloads"}}`,
+			wantStatus: HealthOK,
+			wantText:   "audiobooks",
+		},
+		{
+			name:       "audiobook category missing",
+			categories: `{"books":{"name":"books","savePath":"/media/downloads"}}`,
+			wantStatus: HealthError,
+			wantText:   `qBittorrent category "audiobooks" was not found`,
+		},
+		{
+			name:       "audiobook category points outside audiobook dir",
+			categories: `{"books":{"name":"books","savePath":"/media/downloads"},"audiobooks":{"name":"audiobooks","savePath":"/media/downloads"}}`,
+			wantStatus: HealthError,
+			wantText:   `expected a path at or under "/books/audio-downloads"`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v2/auth/login":
+					_, _ = w.Write([]byte("Ok."))
+				case "/api/v2/torrents/categories":
+					_, _ = w.Write([]byte(tc.categories))
+				case "/api/v2/app/defaultSavePath":
+					_, _ = w.Write([]byte("/media/default"))
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+			host, port := serverHostPort(t, srv.URL)
+			client := &models.DownloadClient{
+				Type:              "qbittorrent",
+				Host:              host,
+				Port:              port,
+				Username:          "u",
+				Password:          "p",
+				Category:          "books",
+				CategoryAudiobook: "audiobooks",
+				PathRemap:         "/media:/books",
+			}
+			got := CheckDownloadClientHealth(context.Background(), client, "/books/downloads", "/books/audio-downloads")
+			if got.Status != tc.wantStatus {
+				t.Fatalf("status = %q, want %q; message=%s", got.Status, tc.wantStatus, got.Message)
+			}
+			if tc.wantText != "" && !strings.Contains(got.Message, tc.wantText) {
+				t.Fatalf("message %q does not contain %q", got.Message, tc.wantText)
+			}
+		})
 	}
 }
 

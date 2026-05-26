@@ -282,7 +282,10 @@
     "clients": {
       "heading": "Download Clients",
       "addButton": "+ Add Client",
-      "empty": "No download clients configured. Add SABnzbd to enable downloads."
+      "empty": "No download clients configured. Add SABnzbd to enable downloads.",
+      "audiobookCategoryLabel": "Audiobook Category / Label",
+      "audiobookCategoryPlaceholder": "audiobooks",
+      "audiobookCategoryHelp": "Optional. When set, audiobook grabs use this category instead of the one above. Leave blank to use the same category as ebooks."
     },
     "notifications": {
       "heading": "Webhook Notifications",

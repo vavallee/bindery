@@ -658,6 +658,10 @@ func TestPickClientForMediaType(t *testing.T) {
 	audioClient := models.DownloadClient{ID: 1, Name: "SAB-audio", Category: "audiobooks", Type: "sabnzbd"}
 	ebookClient := models.DownloadClient{ID: 2, Name: "SAB-ebook", Category: "ebooks", Type: "sabnzbd"}
 	genericClient := models.DownloadClient{ID: 3, Name: "SAB-generic", Category: "books", Type: "sabnzbd"}
+	// #700: a "dual" client uses the explicit CategoryAudiobook field; the
+	// picker should treat that as a stronger signal than the legacy "category
+	// contains audio" heuristic.
+	dualClient := models.DownloadClient{ID: 4, Name: "SAB-dual", Category: "books", CategoryAudiobook: "audiobooks", Type: "sabnzbd"}
 
 	tests := []struct {
 		name      string
@@ -671,6 +675,8 @@ func TestPickClientForMediaType(t *testing.T) {
 		{"ebook prefers non-audio category", []models.DownloadClient{audioClient, ebookClient}, "ebook", 2},
 		{"audiobook falls back to first when no match", []models.DownloadClient{ebookClient, genericClient}, "audiobook", 2},
 		{"ebook falls back to first when all audio", []models.DownloadClient{audioClient}, "ebook", 1},
+		{"audiobook prefers explicit CategoryAudiobook over legacy heuristic", []models.DownloadClient{audioClient, dualClient}, "audiobook", 4},
+		{"ebook on dual-config client returns it via fallback path", []models.DownloadClient{dualClient}, "ebook", 4},
 	}
 
 	for _, tt := range tests {

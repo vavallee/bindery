@@ -96,11 +96,16 @@ func CheckDownloadClientHealth(ctx context.Context, client *models.DownloadClien
 	return checkQbittorrentCategoryPath(ctx, client, downloadDir, audiobookDownloadDir)
 }
 
-func ExpectedDownloadDirForClient(client *models.DownloadClient, downloadDir, audiobookDownloadDir string) string {
+// ExpectedDownloadDirForClient returns the local download directory Bindery
+// expects the given client's category to map to for the supplied media type.
+// Before #700 this used a fuzzy strings.Contains(category, "audio") heuristic
+// because the client had no explicit media-type binding; now the caller
+// passes the media type explicitly and we honour that without guessing.
+func ExpectedDownloadDirForClient(client *models.DownloadClient, mediaType, downloadDir, audiobookDownloadDir string) string {
 	if client == nil {
 		return strings.TrimSpace(downloadDir)
 	}
-	if strings.Contains(strings.ToLower(client.Category), "audio") && strings.TrimSpace(audiobookDownloadDir) != "" {
+	if mediaType == models.MediaTypeAudiobook && strings.TrimSpace(audiobookDownloadDir) != "" {
 		return strings.TrimSpace(audiobookDownloadDir)
 	}
 	return strings.TrimSpace(downloadDir)
@@ -118,7 +123,7 @@ func checkQbittorrentCategoryPath(ctx context.Context, client *models.DownloadCl
 	if category == "" {
 		return healthError("qBittorrent category is empty; configure a category with a save path")
 	}
-	expected := filepath.Clean(ExpectedDownloadDirForClient(client, downloadDir, audiobookDownloadDir))
+	expected := filepath.Clean(ExpectedDownloadDirForClient(client, models.MediaTypeEbook, downloadDir, audiobookDownloadDir))
 	if expected == "." || expected == "" {
 		return healthError("Bindery download directory is empty; check BINDERY_DOWNLOAD_DIR")
 	}
@@ -128,6 +133,40 @@ func checkQbittorrentCategoryPath(ctx context.Context, client *models.DownloadCl
 	if err != nil {
 		return healthError(fmt.Sprintf("qBittorrent category path check failed: %v", err))
 	}
+
+	// Validate the ebook category first; if it fails, return immediately.
+	// When CategoryAudiobook is set, validate it against audiobookDownloadDir
+	// as well — both must be healthy for the client to be healthy (#700).
+	if h := validateQbittorrentCategorySavePath(ctx, qb, client, category, expected, categories); h.Status != HealthOK {
+		return h
+	}
+
+	audioCategory := strings.TrimSpace(client.CategoryAudiobook)
+	if audioCategory != "" && audioCategory != category {
+		expectedAudio := filepath.Clean(ExpectedDownloadDirForClient(client, models.MediaTypeAudiobook, downloadDir, audiobookDownloadDir))
+		if expectedAudio == "." || expectedAudio == "" {
+			return healthError("Bindery audiobook download directory is empty; check BINDERY_AUDIOBOOK_DOWNLOAD_DIR")
+		}
+		if h := validateQbittorrentCategorySavePath(ctx, qb, client, audioCategory, expectedAudio, categories); h.Status != HealthOK {
+			return h
+		}
+	}
+
+	if audioCategory != "" && audioCategory != category {
+		return models.DownloadClientHealth{
+			Status:  HealthOK,
+			Message: fmt.Sprintf("qBittorrent categories %q and %q (audiobook) both validated", category, audioCategory),
+		}
+	}
+	return models.DownloadClientHealth{
+		Status:  HealthOK,
+		Message: fmt.Sprintf("qBittorrent category %q saves under %q", category, expected),
+	}
+}
+
+// validateQbittorrentCategorySavePath checks that a single qBittorrent category
+// exists and that its (path-remapped) save path falls at or under expected.
+func validateQbittorrentCategorySavePath(ctx context.Context, qb *qbittorrent.Client, client *models.DownloadClient, category, expected string, categories map[string]qbittorrent.Category) models.DownloadClientHealth {
 	qbCategory, ok := categories[category]
 	if !ok {
 		return healthError(fmt.Sprintf("qBittorrent category %q was not found; create it with save path %q", category, expected))
@@ -155,10 +194,7 @@ func checkQbittorrentCategoryPath(ctx context.Context, client *models.DownloadCl
 		return healthError(fmt.Sprintf("qBittorrent category %q saves to %q, which maps to %q inside Bindery; expected a path at or under %q — %s", category, savePath, localPath, expected, hint))
 	}
 
-	return models.DownloadClientHealth{
-		Status:  HealthOK,
-		Message: fmt.Sprintf("qBittorrent category %q saves to %q", category, savePath),
-	}
+	return models.DownloadClientHealth{Status: HealthOK}
 }
 
 func healthError(message string) models.DownloadClientHealth {
