@@ -87,6 +87,94 @@ func TestTryImportInternal_PathExistsNoBooks(t *testing.T) {
 	}
 }
 
+// TestCheckQbittorrentDownloads_CompletedGrabbedLogsRawPath verifies that
+// checkQbittorrentDownloads reaches the "download completed" log line (which
+// now includes raw_path) when a StateGrabbed download's torrent is complete
+// and content_path is set. This is the normal first-import trigger path —
+// distinct from the retry (StateImportFailed) and re-grab (content_path gone)
+// paths that the other qBittorrent tests cover.
+//
+// The download path intentionally has no book files so the import ends in
+// StateImportFailed; the goal is only to reach line 939, not a full import.
+func TestCheckQbittorrentDownloads_CompletedGrabbedLogsRawPath(t *testing.T) {
+	downloadDir := t.TempDir() // exists but empty — import will fail fast
+
+	const torrentHash = "1111aaaa2222bbbb3333cccc4444dddd5555eeee"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			torrents := []map[string]any{{
+				"hash":         torrentHash,
+				"name":         "My Book",
+				"state":        "stalledUP",
+				"progress":     1.0,
+				"save_path":    downloadDir,
+				"content_path": downloadDir, // valid path — triggers line 939
+			}}
+			_ = json.NewEncoder(w).Encode(torrents)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	ctx := context.Background()
+	dlRepo := db.NewDownloadRepo(database)
+	clientRepo := db.NewDownloadClientRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	authorRepo := db.NewAuthorRepo(database)
+	histRepo := db.NewHistoryRepo(database)
+
+	s := NewScanner(dlRepo, clientRepo, bookRepo, authorRepo, histRepo, t.TempDir(), "", "", "", "")
+
+	host, port := scannerTestHostPort(t, srv.URL)
+	client := &models.DownloadClient{
+		Name:    "qbit-rawpath",
+		Type:    "qbittorrent",
+		Host:    host,
+		Port:    port,
+		Enabled: true,
+	}
+	if err := clientRepo.Create(ctx, client); err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	hash := torrentHash
+	dl := &models.Download{
+		GUID:             "guid-rawpath",
+		Title:            "My Book",
+		Status:           models.StateGrabbed,
+		Protocol:         "torrent",
+		TorrentID:        &hash,
+		DownloadClientID: &client.ID,
+	}
+	if err := dlRepo.Create(ctx, dl); err != nil {
+		t.Fatalf("create download: %v", err)
+	}
+
+	s.checkQbittorrentDownloads(ctx, client)
+
+	got, err := dlRepo.GetByGUID(ctx, dl.GUID)
+	if err != nil {
+		t.Fatalf("GetByGUID: %v", err)
+	}
+	// The download must have advanced past StateGrabbed — confirming line 939
+	// (the "download completed" log) was reached and tryImportQbittorrent fired.
+	if got.Status == models.StateGrabbed {
+		t.Errorf("download must advance past StateGrabbed when torrent is complete " +
+			"and content_path is set; status stayed %q", got.Status)
+	}
+}
+
 // TestCheckQbittorrentDownloads_GetTorrentsFails verifies that
 // checkQbittorrentDownloads handles a qBittorrent API error gracefully — it
 // must return early without panicking or modifying any download records.
