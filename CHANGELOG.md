@@ -6,6 +6,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **OpenLibrary name/title searches no longer fail with HTTP 403** (#834) — OpenLibrary's API now blocks requests whose `User-Agent` does not include a contact pointer (email or URL), and Bindery's previous `bindery/<version> (<os>)` UA matched that block. Name/title book additions failed immediately against OpenLibrary while ISBN lookups (which fall through to Hardcover enrichment) still worked, so the breakage was easy to miss in smoke checks. The User-Agent now appends the project URL — `bindery/<version> (<os>; https://github.com/vavallee/bindery)` — which satisfies OpenLibrary's policy and unlocks its higher rate limit. Thanks to @thetic for the precise repro and root-cause analysis.
+
 ## [v1.14.2] — 2026-05-24
 
 ### Fixed
