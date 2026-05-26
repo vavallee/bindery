@@ -913,6 +913,77 @@ func TestGetTorrents_InvalidJSON(t *testing.T) {
 	}
 }
 
+// TestGetTorrents_NormalizesWindowsPaths is the PixieApples follow-up to
+// #800: a qBittorrent instance running on Windows reports SavePath /
+// ContentPath / Name with backslash separators, which downstream Linux
+// path code in Bindery (filepath.Walk, PathRemap.Apply, pathIsAtOrUnder)
+// cannot process. The normalization must happen at the API boundary so
+// every consumer sees forward-slash paths regardless of qBit's host OS.
+func TestGetTorrents_NormalizesWindowsPaths(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			// Backslashes in JSON strings are escaped as \\; the resulting
+			// Go string contains single backslashes.
+			_, _ = w.Write([]byte(`[{
+				"hash":"abc",
+				"name":"Book Title",
+				"state":"pausedUP",
+				"progress":1.0,
+				"save_path":"N:\\Torrents\\complete",
+				"content_path":"N:\\Torrents\\complete\\library\\book"
+			}]`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	torrents, err := c.GetTorrents(context.Background(), "")
+	if err != nil {
+		t.Fatalf("GetTorrents: %v", err)
+	}
+	if len(torrents) != 1 {
+		t.Fatalf("expected 1 torrent, got %d", len(torrents))
+	}
+	if got, want := torrents[0].SavePath, "N:/Torrents/complete"; got != want {
+		t.Errorf("SavePath = %q, want %q (backslashes should be normalized)", got, want)
+	}
+	if got, want := torrents[0].ContentPath, "N:/Torrents/complete/library/book"; got != want {
+		t.Errorf("ContentPath = %q, want %q (backslashes should be normalized)", got, want)
+	}
+}
+
+// TestGetCategories_NormalizesWindowsSavePath asserts the same normalization
+// applies to Category.SavePath returned by GET /torrents/categories, so the
+// qBit health-check (which uses category save paths) doesn't fail on a
+// Windows-qBit deployment.
+func TestGetCategories_NormalizesWindowsSavePath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/categories":
+			_, _ = w.Write([]byte(`{"library":{"name":"library","savePath":"N:\\Torrents\\complete\\library"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	cats, err := c.GetCategories(context.Background())
+	if err != nil {
+		t.Fatalf("GetCategories: %v", err)
+	}
+	if got, want := cats["library"].SavePath, "N:/Torrents/complete/library"; got != want {
+		t.Errorf("SavePath = %q, want %q (backslashes should be normalized)", got, want)
+	}
+}
+
 func TestDeleteTorrent_Success(t *testing.T) {
 	var gotHash, gotDeleteFiles string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
