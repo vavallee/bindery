@@ -3,6 +3,7 @@ package downloader
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -194,7 +195,68 @@ func validateQbittorrentCategorySavePath(ctx context.Context, qb *qbittorrent.Cl
 		return healthError(fmt.Sprintf("qBittorrent category %q saves to %q, which maps to %q inside Bindery; expected a path at or under %q — %s", category, savePath, localPath, expected, hint))
 	}
 
+	// pathIsAtOrUnder passes — the strings agree. Now verify the resolved
+	// path is actually reachable from Bindery's filesystem, because Linux is
+	// case-sensitive and a user with a Windows/WSL/Docker setup can produce
+	// a textually-correct remap that silently points at nothing (PixieApples,
+	// follow-up to #800). When the path is missing but a case-variant exists,
+	// name the divergent component so the user knows exactly which letter to
+	// fix instead of brute-forcing combinations.
+	if _, err := os.Stat(localPath); os.IsNotExist(err) {
+		if resolved, divergedAt := findCaseInsensitivePath(localPath); resolved != "" {
+			return healthError(fmt.Sprintf("qBittorrent category %q saves to %q, which maps to %q inside Bindery — that exact path does not exist, but %q does. Linux is case-sensitive; update the path remap so it produces %q (the segment %q must match the on-disk case).", category, savePath, localPath, resolved, resolved, filepath.Base(divergedAt)))
+		}
+		return healthError(fmt.Sprintf("qBittorrent category %q saves to %q, which maps to %q inside Bindery — but that path does not exist. Check the path remap and the directory Bindery is mounting.", category, savePath, localPath))
+	}
+
 	return models.DownloadClientHealth{Status: HealthOK}
+}
+
+// findCaseInsensitivePath walks p from root and, if the literal path does not
+// exist but a case-insensitive sibling does at some level, returns the
+// case-corrected path and the first divergent component. Returns ("", "") if
+// the path can't be resolved even case-insensitively. Used by the qBittorrent
+// health-check to give Windows/WSL/Docker users a concrete fix when their
+// PathRemap is textually right but on the wrong-cased mount point.
+func findCaseInsensitivePath(p string) (resolved, divergedAt string) {
+	if !filepath.IsAbs(p) {
+		return "", ""
+	}
+	sep := string(filepath.Separator)
+	parts := strings.Split(strings.TrimPrefix(filepath.Clean(p), sep), sep)
+	cur := sep
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		candidate := filepath.Join(cur, part)
+		if _, err := os.Stat(candidate); err == nil {
+			cur = candidate
+			continue
+		}
+		entries, err := os.ReadDir(cur)
+		if err != nil {
+			return "", ""
+		}
+		var match string
+		for _, entry := range entries {
+			if strings.EqualFold(entry.Name(), part) {
+				match = entry.Name()
+				break
+			}
+		}
+		if match == "" {
+			return "", ""
+		}
+		if divergedAt == "" {
+			divergedAt = filepath.Join(cur, match)
+		}
+		cur = filepath.Join(cur, match)
+	}
+	if divergedAt == "" {
+		return "", ""
+	}
+	return cur, divergedAt
 }
 
 func healthError(message string) models.DownloadClientHealth {
