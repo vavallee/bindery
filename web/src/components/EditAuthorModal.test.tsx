@@ -198,8 +198,8 @@ describe('EditAuthorModal', () => {
 
   it('lazy-loads the author series picker when monitor mode is set to series', async () => {
     const series: Series[] = [
-      { id: 1, foreignSeriesId: 'ol-s:1', title: 'Stormlight Archive', description: '', monitored: false, createdAt: '', hardcoverLink: { id: 1, seriesId: 1, hardcoverSeriesId: 'hc:1', hardcoverProviderId: 'p', hardcoverTitle: 'Stormlight Archive', hardcoverAuthorName: 'Brandon Sanderson', hardcoverBookCount: 10, confidence: 1, linkedBy: 'user', linkedAt: '', createdAt: '', updatedAt: '' } },
-      { id: 2, foreignSeriesId: 'ol-s:2', title: 'Mistborn', description: '', monitored: false, createdAt: '' },
+      { id: 1, foreignSeriesId: 'ol-s:1', title: 'Stormlight Archive', description: '', monitored: false, hardcoverLink: { id: 1, seriesId: 1, hardcoverSeriesId: 'hc:1', hardcoverProviderId: 'p', hardcoverTitle: 'Stormlight Archive', hardcoverAuthorName: 'Brandon Sanderson', hardcoverBookCount: 10, confidence: 1, linkedBy: 'user', linkedAt: '', createdAt: '', updatedAt: '' } },
+      { id: 2, foreignSeriesId: 'ol-s:2', title: 'Mistborn', description: '', monitored: false },
     ]
     vi.mocked(api.listAuthorSeries).mockResolvedValue(series)
 
