@@ -681,43 +681,19 @@ func main() {
 		r.Get("/wanted/missing", bookHandler.ListWanted)
 		r.Post("/wanted/bulk", bulkHandler.WantedBulk)
 
-		// Indexers — reads available to all; mutations admin-only.
-		r.Get("/indexer", indexerHandler.List)
-		r.Get("/indexer/{id}", indexerHandler.Get)
-		r.Get("/indexer/search", indexerHandler.SearchQuery)
-		r.Get("/search/last-debug", indexerHandler.LastSearchDebug)
-		r.Group(func(r chi.Router) {
-			r.Use(auth.RequireAdmin)
-			r.Post("/indexer", indexerHandler.Create)
-			r.Put("/indexer/{id}", indexerHandler.Update)
-			r.Delete("/indexer/{id}", indexerHandler.Delete)
-			r.Post("/indexer/{id}/test", indexerHandler.Test)
-		})
-
-		// Prowlarr indexer sync
-		r.Get("/prowlarr", prowlarrHandler.List)
-		r.Post("/prowlarr", prowlarrHandler.Create)
-		r.Get("/prowlarr/{id}", prowlarrHandler.Get)
-		r.Put("/prowlarr/{id}", prowlarrHandler.Update)
-		r.Delete("/prowlarr/{id}", prowlarrHandler.Delete)
-		r.Post("/prowlarr/{id}/test", prowlarrHandler.Test)
-		r.Post("/prowlarr/{id}/sync", prowlarrHandler.Sync)
+		// Indexers, Prowlarr, and Download clients all return responses that
+		// embed third-party credentials (APIKey, Password). Their routes are
+		// registered via dedicated helpers so the admin-gate boundary is
+		// enforced by a single, testable shape — see cmd/bindery/sensitive_routes.go.
+		registerIndexerRoutes(r, indexerHandler)
+		registerProwlarrRoutes(r, prowlarrHandler)
 
 		// Root folders
 		r.Get("/rootfolder", rootFolderHandler.List)
 		r.Post("/rootfolder", rootFolderHandler.Create)
 		r.Delete("/rootfolder/{id}", rootFolderHandler.Delete)
 
-		// Download clients — reads available to all; mutations admin-only.
-		r.Get("/downloadclient", dlClientHandler.List)
-		r.Get("/downloadclient/{id}", dlClientHandler.Get)
-		r.Group(func(r chi.Router) {
-			r.Use(auth.RequireAdmin)
-			r.Post("/downloadclient", dlClientHandler.Create)
-			r.Put("/downloadclient/{id}", dlClientHandler.Update)
-			r.Delete("/downloadclient/{id}", dlClientHandler.Delete)
-			r.Post("/downloadclient/{id}/test", dlClientHandler.Test)
-		})
+		registerDownloadClientRoutes(r, dlClientHandler)
 
 		// Queue
 		r.Get("/queue", queueHandler.List)
