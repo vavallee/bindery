@@ -158,10 +158,12 @@ func TestImporter_ExecuteRollback_DeletesEntitiesAndMarksRun(t *testing.T) {
 	book, _ := bookRepo.GetByCalibreID(context.Background(), 20)
 	if book == nil {
 		t.Fatal("book missing before rollback")
+		return
 	}
 	author, _ := authorRepo.GetByID(context.Background(), book.AuthorID)
 	if author == nil {
 		t.Fatal("author missing before rollback")
+		return
 	}
 	eds, _ := editionRepo.ListByBook(context.Background(), book.ID)
 	if len(eds) != 1 {
@@ -272,6 +274,7 @@ func TestImporter_Rollback_FileRowsNotTouchedOnDisk(t *testing.T) {
 	book, _ := bookRepo.GetByCalibreID(context.Background(), 40)
 	if book == nil {
 		t.Fatal("book missing")
+		return
 	}
 	if book.FilePath == "" {
 		book.FilePath = fakePath

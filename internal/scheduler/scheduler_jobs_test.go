@@ -66,6 +66,7 @@ func TestNew_Construction(t *testing.T) {
 	s := New(context.Background(), nil, nil, nil, authors, books, indexers, downloads, clients, settings, blocklist)
 	if s == nil {
 		t.Fatal("New returned nil")
+		return
 	}
 	if s.cron == nil {
 		t.Fatal("cron field not initialized")

@@ -324,6 +324,7 @@ func TestAddTorrent_URL_HashLookupTimeout(t *testing.T) {
 	_, err := c.AddTorrent(context.Background(), "http://example.com/book.torrent", "scifi")
 	if err == nil {
 		t.Fatal("expected error on timeout, got nil")
+		return
 	}
 	if !strings.Contains(err.Error(), "hash could not be determined") {
 		t.Errorf("unexpected error: %v", err)
@@ -369,6 +370,7 @@ func TestTest_DNSNotFound(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	if !strings.Contains(err.Error(), "same Docker network") {
 		t.Errorf("expected Docker network hint, got: %q", err.Error())
@@ -385,6 +387,7 @@ func TestTest_ConnectionRefused(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	if !strings.Contains(err.Error(), "host firewall is rejecting") {
 		t.Errorf("expected port hint, got: %q", err.Error())
@@ -401,6 +404,7 @@ func TestTest_Timeout(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	if !strings.Contains(err.Error(), "firewall or proxy") {
 		t.Errorf("expected firewall hint, got: %q", err.Error())
@@ -418,6 +422,7 @@ func TestTest_ServerError_NoHint(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	msg := err.Error()
 	for _, hint := range []string{"Docker network", "host firewall is rejecting", "firewall or proxy"} {

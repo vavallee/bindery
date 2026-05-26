@@ -61,6 +61,7 @@ func TestLiveISBNProviderFallbackTortureCorpus(t *testing.T) {
 					}
 					if got == nil {
 						t.Fatalf("GetBookByISBN(%q) = nil, want OpenLibrary work %s", isbnInput, tc.expectedOpenLibraryWork)
+						return
 					}
 					if got.MetadataProvider != "openlibrary" || got.ForeignID != tc.expectedOpenLibraryWork {
 						t.Fatalf("GetBookByISBN(%q) = %s, want provider=%q foreignID=%q", isbnInput, describeLiveISBNBook(got), "openlibrary", tc.expectedOpenLibraryWork)

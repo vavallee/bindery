@@ -1308,6 +1308,7 @@ func TestSeriesFillCreatesMissingHardcoverBook(t *testing.T) {
 	}
 	if created == nil {
 		t.Fatal("expected Hardcover book to be created")
+		return
 	}
 	if created.MetadataProvider != "hardcover" {
 		t.Fatalf("expected metadata provider to be preserved, got %q", created.MetadataProvider)

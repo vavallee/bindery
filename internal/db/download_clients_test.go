@@ -38,6 +38,7 @@ func TestDownloadClientRepoHydratesLegacyCredentialStorage(t *testing.T) {
 	}
 	if client == nil {
 		t.Fatal("expected download client")
+		return
 	}
 	if client.Username != "old-user" || client.Password != "old-pass" {
 		t.Fatalf("credentials = %q/%q, want legacy values", client.Username, client.Password)
@@ -75,6 +76,7 @@ func TestDownloadClientRepoPreservesRealURLBase(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected download client")
+		return
 	}
 	if got.URLBase != "/qbit" {
 		t.Fatalf("urlBase = %q, want /qbit", got.URLBase)
@@ -109,6 +111,7 @@ func TestDownloadClientRepoPreservesBareURLBaseMatchingUsername(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected download client")
+		return
 	}
 	if got.URLBase != "transmission" {
 		t.Fatalf("urlBase = %q, want bare reverse-proxy path preserved", got.URLBase)
@@ -149,6 +152,7 @@ func TestDownloadClientRepoRoundTripsCategoryAudiobook(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected download client")
+		return
 	}
 	if got.Category != "books" || got.CategoryAudiobook != "audiobooks" {
 		t.Fatalf("categories = %q/%q, want books/audiobooks", got.Category, got.CategoryAudiobook)
@@ -201,6 +205,7 @@ func TestDownloadClientRepoDefaultsCategoryAudiobookEmpty(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected download client")
+		return
 	}
 	if got.CategoryAudiobook != "" {
 		t.Fatalf("CategoryAudiobook = %q, want empty fallback", got.CategoryAudiobook)
@@ -237,6 +242,7 @@ func TestDownloadClientRepoPreservesNewBareURLBaseWithoutLegacyAPIKey(t *testing
 	}
 	if client == nil {
 		t.Fatal("expected download client")
+		return
 	}
 	if client.URLBase != "transmission" {
 		t.Fatalf("urlBase = %q, want bare reverse-proxy path preserved", client.URLBase)

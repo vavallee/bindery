@@ -343,6 +343,7 @@ func TestCallback_EmailLink_UnverifiedEmail(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected a new account to be provisioned for the attacker's subject")
+		return
 	}
 	if got.ID == victim.ID {
 		t.Fatal("SECURITY: unverified email claim was linked to the victim's account — account takeover")

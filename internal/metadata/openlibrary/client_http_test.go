@@ -422,6 +422,7 @@ func TestGetBookByISBN_HTTP_WithWorkRef(t *testing.T) {
 	}
 	if book == nil {
 		t.Fatal("expected non-nil book")
+		return
 	}
 	// Should resolve the work, not the edition stub
 	if book.Title != "Dune" {

@@ -248,6 +248,7 @@ func TestEnumerator_ResumeFromCheckpoint(t *testing.T) {
 	}
 	if setting == nil {
 		t.Fatal("expected checkpoint to be stored")
+		return
 	}
 	var checkpoint ImportCheckpoint
 	if err := json.Unmarshal([]byte(setting.Value), &checkpoint); err != nil {

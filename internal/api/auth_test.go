@@ -176,6 +176,7 @@ func TestLogin_CookieMaxAge_Short(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected session cookie")
+		return
 	}
 	want := int(auth.SessionDurationShort.Seconds())
 	if got.MaxAge != want {
@@ -207,6 +208,7 @@ func TestLogin_CookieMaxAge_RememberMe(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected session cookie")
+		return
 	}
 	want := int(auth.SessionDuration.Seconds())
 	if got.MaxAge != want {

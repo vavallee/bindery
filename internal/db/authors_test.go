@@ -71,6 +71,7 @@ func TestAuthorRepo_MonitorDefaultsRoundTrip(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("author not found")
+		return
 	}
 	if got.MonitorMode != models.AuthorMonitorModeAll || got.MonitorLatestCount != models.DefaultAuthorMonitorLatestCount {
 		t.Fatalf("defaults did not round trip: %+v", got)
@@ -224,6 +225,7 @@ func TestAuthorRepo_UpgradeSyntheticDNB_RowUpdatedInPlace(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected row with canonical foreign_id to exist after upgrade")
+		return
 	}
 	if got.ID != originalID {
 		t.Errorf("primary key changed: want %d, got %d (in-place update broken)", originalID, got.ID)

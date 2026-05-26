@@ -78,6 +78,7 @@ func TestValidate_OIDCRedirectBaseURL_Invalid(t *testing.T) {
 			err := cfg.Validate(discardLogger())
 			if err == nil {
 				t.Fatalf("expected error for invalid URL %q, got nil", tc.url)
+				return
 			}
 			if !strings.Contains(err.Error(), tc.wantErr) {
 				t.Errorf("error %q does not mention %q", err.Error(), tc.wantErr)

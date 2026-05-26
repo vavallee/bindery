@@ -26,6 +26,7 @@ func TestGetByEmail_Found(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected user, got nil")
+		return
 	}
 	if got.Username != "alice" {
 		t.Errorf("Username=%q, want alice", got.Username)
@@ -89,6 +90,7 @@ func TestDeleteLastAdmin(t *testing.T) {
 	err = repo.Delete(ctx, admin.ID)
 	if err == nil {
 		t.Fatal("expected error when deleting last admin, got nil")
+		return
 	}
 	if !strings.Contains(err.Error(), "last admin") {
 		t.Errorf("unexpected error: %v", err)
@@ -146,6 +148,7 @@ func TestSetRoleLastAdmin(t *testing.T) {
 	err = repo.SetRole(ctx, admin.ID, "user")
 	if err == nil {
 		t.Fatal("expected error when demoting last admin, got nil")
+		return
 	}
 	if !strings.Contains(err.Error(), "last admin") {
 		t.Errorf("unexpected error: %v", err)
@@ -218,6 +221,7 @@ func TestLinkOIDCSubject(t *testing.T) {
 	}
 	if after == nil {
 		t.Fatal("expected user after link, got nil")
+		return
 	}
 	if after.ID != u.ID {
 		t.Errorf("user ID after link: got %d, want %d", after.ID, u.ID)

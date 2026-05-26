@@ -40,6 +40,7 @@ func TestPreflightReadOnlyParent(t *testing.T) {
 	err := preflight(filepath.Join(parent, "bindery.db"))
 	if err == nil {
 		t.Fatal("expected preflight to fail on read-only parent")
+		return
 	}
 	// The message must name the path and mention writability; that's the
 	// whole point of the check.
@@ -376,6 +377,7 @@ func TestAuthorCRUD(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected author by foreign id")
+		return
 	}
 
 	// List
@@ -690,6 +692,7 @@ func TestPickClientForMediaType(t *testing.T) {
 			}
 			if got == nil {
 				t.Fatal("expected a client, got nil")
+				return
 			}
 			if got.ID != tt.wantID {
 				t.Errorf("expected client ID %d, got %d (%s)", tt.wantID, got.ID, got.Name)

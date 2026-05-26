@@ -57,6 +57,7 @@ func TestEditionRepo_UpsertInsertAndUpdate(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected edition, got nil")
+		return
 	}
 	if got.Title != "First Edition" || !got.IsEbook || !got.Monitored {
 		t.Errorf("unexpected round-trip: %+v", got)

@@ -91,6 +91,7 @@ func TestAliasCreate_RejectsReassignment(t *testing.T) {
 	err = aliasRepo.Create(ctx, &models.AuthorAlias{AuthorID: b.ID, Name: "shared name"})
 	if err == nil {
 		t.Fatal("expected error when reassigning alias to different author")
+		return
 	}
 	if !strings.Contains(err.Error(), "already points") {
 		t.Errorf("expected 'already points' error, got: %v", err)

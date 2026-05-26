@@ -236,6 +236,7 @@ func TestGetBook_Success(t *testing.T) {
 	}
 	if book == nil {
 		t.Fatal("expected non-nil book")
+		return
 	}
 	if book.ForeignID != "dnb:1234567890" {
 		t.Errorf("ForeignID = %q, want dnb:1234567890", book.ForeignID)
@@ -848,6 +849,7 @@ func TestRecordToBook_TitleHasNoNonSortingBrackets(t *testing.T) {
 	}
 	if book == nil {
 		t.Fatal("GetBookByISBN returned nil book")
+		return
 	}
 	if strings.ContainsRune(book.Title, '\u0098') || strings.ContainsRune(book.Title, '\u009c') {
 		t.Fatalf("Title %q still contains MARC NSB/NSE control characters", book.Title)
@@ -890,6 +892,7 @@ func TestRecordToBook_FallsBackTo700AUT(t *testing.T) {
 	}
 	if book == nil {
 		t.Fatal("nil book returned")
+		return
 	}
 	if book.Author == nil {
 		t.Fatal("Author is nil — 700 fallback did not fire")
@@ -1030,6 +1033,7 @@ func TestRecordToBook_NoAuthorWhenNo100NoAny700(t *testing.T) {
 	}
 	if book == nil {
 		t.Fatal("nil book")
+		return
 	}
 	if book.Author != nil {
 		t.Fatalf("Author should be nil (no 100, no 700); got %+v", book.Author)

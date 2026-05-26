@@ -207,6 +207,7 @@ func TestTest_DNSNotFound(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	msg := err.Error()
 	if !strings.Contains(msg, "same Docker network") {
@@ -226,6 +227,7 @@ func TestTest_ConnectionRefused(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	msg := err.Error()
 	if !strings.Contains(msg, "host firewall is rejecting") {
@@ -245,6 +247,7 @@ func TestTest_Timeout(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	msg := err.Error()
 	if !strings.Contains(msg, "firewall or proxy") {
@@ -265,6 +268,7 @@ func TestTest_ServerError(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	msg := err.Error()
 	for _, hint := range []string{"Docker network", "host firewall is rejecting", "firewall or proxy"} {

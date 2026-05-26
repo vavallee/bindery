@@ -316,6 +316,7 @@ func TestNewDialContext_BlocksLoopback(t *testing.T) {
 	_, err := client.Get(srv.URL) //nolint:bodyclose
 	if err == nil {
 		t.Fatal("expected dial to be rejected for loopback address, got nil error")
+		return
 	}
 	if !strings.Contains(err.Error(), "loopback") {
 		t.Errorf("expected 'loopback' in error, got: %v", err)
@@ -350,6 +351,7 @@ func TestNewDialContext_BlocksRFC1918UnderStrict(t *testing.T) {
 	_, err := dialCtx(ctx, "tcp", "192.168.1.1:80")
 	if err == nil {
 		t.Fatal("expected dial to RFC1918 to be rejected under PolicyStrict")
+		return
 	}
 	if !strings.Contains(err.Error(), "private network") {
 		t.Errorf("expected 'private network' in error, got: %v", err)

@@ -36,6 +36,7 @@ func TestGetBook(t *testing.T) {
 	}
 	if b == nil {
 		t.Fatal("expected book, got nil")
+		return
 	}
 	if b.NarratorList() != "Scott Brick, Simon Vance" {
 		t.Errorf("NarratorList = %q", b.NarratorList())

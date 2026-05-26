@@ -68,6 +68,7 @@ func TestLiveAggregatorCanonicalPrimaryBookTortureCorpus(t *testing.T) {
 					}
 					if canonical == nil {
 						t.Fatalf("canonicalPrimaryBook(%q source=%s) = nil, want OpenLibrary work %s", isbnInput, describeCanonicalLiveBook(source), tc.expectedOpenLibraryWork)
+						return
 					}
 					if canonical.ForeignID != tc.expectedOpenLibraryWork {
 						t.Fatalf("canonical.ForeignID = %q, want %q (isbn=%q source=%s)", canonical.ForeignID, tc.expectedOpenLibraryWork, isbnInput, describeCanonicalLiveBook(source))
@@ -104,6 +105,7 @@ func TestLiveAggregatorCanonicalPrimaryBookTortureCorpus(t *testing.T) {
 					}
 					if canonical == nil {
 						t.Fatalf("canonicalPrimaryBook(%q, %q) = nil, want OpenLibrary work %s", titleInput, authorInput, tc.expectedOpenLibraryWork)
+						return
 					}
 					if canonical.ForeignID != tc.expectedOpenLibraryWork {
 						t.Fatalf("canonical.ForeignID = %q, want %q (title=%q author=%q)", canonical.ForeignID, tc.expectedOpenLibraryWork, titleInput, authorInput)
@@ -133,6 +135,7 @@ func assertCanonicalProviderSource(t *testing.T, source *models.Book, tc canonic
 	t.Helper()
 	if source == nil {
 		t.Fatalf("%s source = nil, want provider result", tc.provider)
+		return
 	}
 	if source.MetadataProvider != tc.expectedSourceProvider {
 		t.Fatalf("source provider = %q, want %q (source=%s)", source.MetadataProvider, tc.expectedSourceProvider, describeCanonicalLiveBook(source))
