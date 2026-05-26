@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -2162,6 +2163,14 @@ func TestRelinkCandidates_SearchesPrimaryAndEnrichers(t *testing.T) {
 			searchAuthorsByQuery: map[string][]models.Author{
 				"Emilia Jae": {{ForeignID: "OL13200512A", Name: "Emilia Jae", MetadataProvider: "openlibrary"}},
 			},
+			authors: map[string]*models.Author{
+				"OL13200512A": {
+					ForeignID:        "OL13200512A",
+					Name:             "Emilia Jae",
+					ImageURL:         "https://example.com/emilia.jpg",
+					MetadataProvider: "openlibrary",
+				},
+			},
 		},
 		&searchableAuthorProvider{
 			stubMetaProvider: stubMetaProvider{name: "hardcover"},
@@ -2192,6 +2201,12 @@ func TestRelinkCandidates_SearchesPrimaryAndEnrichers(t *testing.T) {
 	}
 	if got[0].ForeignID != "OL13200512A" || got[1].ForeignID != "hc:emilia-jae" {
 		t.Fatalf("candidate ids = %+v", got)
+	}
+	if !strings.HasPrefix(got[0].ImageURL, "/api/v1/images?url=") || !strings.Contains(got[0].ImageURL, "emilia.jpg") {
+		t.Fatalf("openlibrary candidate image = %q, want proxied hydrated image", got[0].ImageURL)
+	}
+	if got[1].ImageURL != "" {
+		t.Fatalf("hardcover candidate image = %q, want unchanged empty image", got[1].ImageURL)
 	}
 }
 

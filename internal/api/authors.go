@@ -1028,10 +1028,39 @@ func (h *AuthorHandler) RelinkCandidates(w http.ResponseWriter, r *http.Request)
 		candidates = []models.Author{}
 	}
 	for i := range candidates {
+		h.hydrateOpenLibraryRelinkCandidateImage(r.Context(), &candidates[i])
 		proxyAuthorImages(&candidates[i])
 		cleanAuthorDescription(&candidates[i])
 	}
 	writeJSON(w, http.StatusOK, candidates)
+}
+
+func (h *AuthorHandler) hydrateOpenLibraryRelinkCandidateImage(ctx context.Context, candidate *models.Author) {
+	if candidate == nil || h.meta == nil || strings.TrimSpace(candidate.ImageURL) != "" || !isOpenLibraryAuthorCandidate(candidate) {
+		return
+	}
+	foreignID := strings.TrimSpace(candidate.ForeignID)
+	upstream, err := h.meta.GetAuthor(ctx, foreignID)
+	if err != nil {
+		slog.Warn("author relink candidate image lookup failed", "foreign_id", foreignID, "error", err)
+		return
+	}
+	if upstream == nil {
+		return
+	}
+	if imageURL := strings.TrimSpace(upstream.ImageURL); imageURL != "" {
+		candidate.ImageURL = imageURL
+	}
+}
+
+func isOpenLibraryAuthorCandidate(author *models.Author) bool {
+	if author == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(author.MetadataProvider), "openlibrary") {
+		return true
+	}
+	return strings.HasPrefix(strings.TrimSpace(author.ForeignID), "OL")
 }
 
 func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
