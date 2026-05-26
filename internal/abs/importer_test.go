@@ -2938,6 +2938,7 @@ func TestImporter_HardcoverSeriesMatchLinksItemWithoutABSSeries(t *testing.T) {
 	}
 	if series == nil {
 		t.Fatal("expected Hardcover series")
+		return
 	}
 	link, err := seriesRepo.GetHardcoverLink(context.Background(), series.ID)
 	if err != nil {
@@ -3064,6 +3065,7 @@ func TestImporter_HardcoverSeriesLinksExistingCatalogBookWithRollback(t *testing
 	}
 	if series == nil {
 		t.Fatal("expected Hardcover series")
+		return
 	}
 	hydrated, err := seriesRepo.GetByID(ctx, series.ID)
 	if err != nil {
@@ -3574,6 +3576,7 @@ func TestImporter_RollbackKeepsRunCreatedSeriesWithUserMembership(t *testing.T) 
 	}
 	if series == nil {
 		t.Fatal("expected imported series before rollback")
+		return
 	}
 	authors, err := authorRepo.List(ctx)
 	if err != nil {
