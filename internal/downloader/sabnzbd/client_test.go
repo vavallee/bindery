@@ -228,7 +228,7 @@ func TestTest_ConnectionRefused(t *testing.T) {
 		t.Fatal("expected error")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "service may not be running") {
+	if !strings.Contains(msg, "host firewall is rejecting") {
 		t.Errorf("expected port hint, got: %q", msg)
 	}
 }
@@ -267,7 +267,7 @@ func TestTest_ServerError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 	msg := err.Error()
-	for _, hint := range []string{"Docker network", "service may not be running", "firewall or proxy"} {
+	for _, hint := range []string{"Docker network", "host firewall is rejecting", "firewall or proxy"} {
 		if strings.Contains(msg, hint) {
 			t.Errorf("clean server error must not produce hint %q; got: %q", hint, msg)
 		}
