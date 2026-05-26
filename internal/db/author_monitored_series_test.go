@@ -43,6 +43,7 @@ func TestAuthorMonitoredSeriesRoundTrip(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatalf("expected non-nil empty slice")
+		return
 	}
 	if len(got) != 0 {
 		t.Fatalf("expected 0 ids, got %v", got)

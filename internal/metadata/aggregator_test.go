@@ -306,6 +306,7 @@ func TestAggregator_ResolveBookByISBN_AcceptsDNBWithSyntheticAuthorID(t *testing
 	}
 	if got == nil {
 		t.Fatal("expected DNB result with synthetic author ForeignID to be accepted, got nil")
+		return
 	}
 	if got.Author == nil || got.Author.ForeignID != "dnb:gnd:118585665" {
 		t.Errorf("unexpected resolved author: %+v", got.Author)

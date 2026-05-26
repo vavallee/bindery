@@ -397,6 +397,7 @@ func TestFetchIndexers_ReturnsApplicationScopeError(t *testing.T) {
 	_, err := New(srv.URL, "key").FetchIndexers(context.Background())
 	if err == nil {
 		t.Fatal("expected application scope error, got nil")
+		return
 	}
 	if !strings.Contains(err.Error(), "fetch prowlarr applications") {
 		t.Fatalf("error = %v, want fetch prowlarr applications", err)
@@ -460,6 +461,7 @@ func TestFetchIndexers_Unauthorized(t *testing.T) {
 	_, err := c.FetchIndexers(context.Background())
 	if err == nil {
 		t.Fatal("expected error on 401, got nil")
+		return
 	}
 	if !strings.Contains(err.Error(), "invalid Prowlarr API key") {
 		t.Errorf("unexpected error %v", err)
@@ -477,6 +479,7 @@ func TestFetchIndexers_Non200(t *testing.T) {
 	_, err := c.FetchIndexers(context.Background())
 	if err == nil {
 		t.Fatal("expected error on 500, got nil")
+		return
 	}
 	if !strings.Contains(err.Error(), "500") {
 		t.Errorf("expected 500 in error, got %v", err)
@@ -494,6 +497,7 @@ func TestFetchIndexers_BadJSON(t *testing.T) {
 	_, err := c.FetchIndexers(context.Background())
 	if err == nil {
 		t.Fatal("expected error on bad JSON, got nil")
+		return
 	}
 	if !strings.Contains(err.Error(), "decode prowlarr indexers") {
 		t.Errorf("expected decode error, got %v", err)
@@ -547,6 +551,7 @@ func TestTest_NetworkError(t *testing.T) {
 	_, err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error on connection refused, got nil")
+		return
 	}
 	if !strings.Contains(err.Error(), "could not reach Prowlarr") {
 		t.Errorf("expected 'could not reach Prowlarr' in error, got %v", err)

@@ -136,6 +136,7 @@ func TestClientRejectsAPIKeyControlCharacters(t *testing.T) {
 			_, err := NewClient("https://abs.example.com", key)
 			if err == nil {
 				t.Fatal("expected error")
+				return
 			}
 			if strings.Contains(err.Error(), key) {
 				t.Fatalf("error leaked api key: %q", err.Error())

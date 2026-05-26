@@ -163,6 +163,7 @@ func TestPluginClient_Add401ReturnsDescriptiveError(t *testing.T) {
 	_, err := c.Add(context.Background(), "/a.epub", Metadata{})
 	if err == nil {
 		t.Fatal("expected error, got nil")
+		return
 	}
 	if !strings.Contains(err.Error(), "authentication failed") {
 		t.Errorf("error = %v, want it to mention authentication failure", err)

@@ -49,6 +49,7 @@ func TestMetadataProfileRepo_CRUD(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected profile")
+		return
 	}
 	if got.Name != "Strict" || got.MinPopularity != 100 || got.MinPages != 50 {
 		t.Errorf("scalar fields mismatch: %+v", got)

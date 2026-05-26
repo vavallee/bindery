@@ -82,6 +82,7 @@ func TestDiscover_NonOK(t *testing.T) {
 	_, err := Discover(context.Background(), srv.URL)
 	if err == nil {
 		t.Fatal("expected error for 404 response")
+		return
 	}
 	if !strings.Contains(err.Error(), "404") {
 		t.Errorf("error=%q, want it to mention 404 status", err.Error())

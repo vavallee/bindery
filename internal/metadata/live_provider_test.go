@@ -337,6 +337,7 @@ func assertLiveBook(t *testing.T, book *models.Book, provider string, want liveB
 	t.Helper()
 	if book == nil {
 		t.Fatal("book = nil, want live provider result")
+		return
 	}
 	if book.ForeignID == "" {
 		t.Fatal("ForeignID is empty")

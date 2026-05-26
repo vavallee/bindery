@@ -494,6 +494,7 @@ func TestBooksBulk_Exclude(t *testing.T) {
 	}
 	if found == nil {
 		t.Fatalf("book %d missing from ListByAuthorIncludingExcluded", book.ID)
+		return
 	}
 	if !found.Excluded {
 		t.Errorf("book.Excluded: want true after bulk exclude, got false")

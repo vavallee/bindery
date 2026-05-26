@@ -220,6 +220,7 @@ func TestDelayProfileRepoCRUD(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected non-nil delay profile")
+		return
 	}
 	if got.UsenetDelay != 60 {
 		t.Errorf("UsenetDelay: want 60, got %d", got.UsenetDelay)

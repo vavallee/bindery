@@ -196,6 +196,7 @@ func TestAdd_FetchFailure(t *testing.T) {
 	_, err := c.Add(context.Background(), indexerSrv.URL+"/file.nzb", "Book", "books", 0)
 	if err == nil {
 		t.Fatal("expected error on fetch failure")
+		return
 	}
 	if !strings.Contains(err.Error(), "401") {
 		t.Errorf("expected HTTP 401 in error, got: %v", err)
@@ -217,6 +218,7 @@ func TestAdd_SSRFBlocked(t *testing.T) {
 	_, err := c.Add(context.Background(), "http://127.0.0.1:9999/file.nzb", "Book", "books", 0)
 	if err == nil {
 		t.Fatal("expected SSRF guard to block loopback URL")
+		return
 	}
 	if !strings.Contains(err.Error(), "url not allowed") {
 		t.Errorf("expected 'url not allowed' in error, got: %v", err)
@@ -456,6 +458,7 @@ func TestTest_DNSNotFound(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	if !strings.Contains(err.Error(), "same Docker network") {
 		t.Errorf("expected Docker network hint, got: %q", err.Error())
@@ -474,6 +477,7 @@ func TestTest_ConnectionRefused(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	if !strings.Contains(err.Error(), "host firewall is rejecting") {
 		t.Errorf("expected port hint, got: %q", err.Error())
@@ -492,6 +496,7 @@ func TestTest_Timeout(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	if !strings.Contains(err.Error(), "firewall or proxy") {
 		t.Errorf("expected firewall hint, got: %q", err.Error())
@@ -512,6 +517,7 @@ func TestTest_ServerError_NoHint(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	msg := err.Error()
 	for _, hint := range []string{"Docker network", "host firewall is rejecting", "firewall or proxy"} {
