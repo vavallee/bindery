@@ -2735,6 +2735,7 @@ func TestImporter_RepeatedABSSeriesRollbackUnlinksAllRunMemberships(t *testing.T
 	}
 	if series == nil {
 		t.Fatal("expected imported series")
+		return
 	}
 	hydrated, err := seriesRepo.GetByID(ctx, series.ID)
 	if err != nil {
@@ -2824,6 +2825,7 @@ func TestImporter_ABSSeriesRerunRollbackPreservesOriginalMembership(t *testing.T
 	}
 	if series == nil {
 		t.Fatal("series after second rollback = nil, want original series preserved")
+		return
 	}
 	hydrated, err := seriesRepo.GetByID(ctx, series.ID)
 	if err != nil {
