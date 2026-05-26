@@ -34,6 +34,10 @@ type Author struct {
 	Books      []Book        `json:"books,omitempty"`
 	Statistics *AuthorStats  `json:"statistics,omitempty"`
 	Aliases    []AuthorAlias `json:"aliases,omitempty"`
+	// MonitoredSeriesIDs is the user-selected subset of series the author is
+	// pinned to when MonitorMode == AuthorMonitorModeSeries (#810). Populated
+	// by the author Get handler so the edit modal can preselect chips.
+	MonitoredSeriesIDs []int64 `json:"monitoredSeriesIds,omitempty"`
 
 	// Transient: populated from the metadata provider during add/refresh; not stored in DB.
 	// Used to seed author_aliases so non-latin primary names get latin-script alternates.
@@ -45,6 +49,11 @@ const (
 	AuthorMonitorModeFuture = "future"
 	AuthorMonitorModeLatest = "latest"
 	AuthorMonitorModeNone   = "none"
+	// AuthorMonitorModeSeries restricts monitoring to books belonging to a
+	// user-selected subset of the author's series (#810). The selection lives
+	// in the author_monitored_series join table rather than overloading
+	// series.monitored, which is a separate global-watchlist flag.
+	AuthorMonitorModeSeries = "series"
 
 	DefaultAuthorMonitorMode        = AuthorMonitorModeAll
 	DefaultAuthorMonitorLatestCount = 1
@@ -52,11 +61,18 @@ const (
 
 func IsAuthorMonitorModeValid(mode string) bool {
 	switch mode {
-	case AuthorMonitorModeAll, AuthorMonitorModeFuture, AuthorMonitorModeLatest, AuthorMonitorModeNone:
+	case AuthorMonitorModeAll, AuthorMonitorModeFuture, AuthorMonitorModeLatest, AuthorMonitorModeNone, AuthorMonitorModeSeries:
 		return true
 	default:
 		return false
 	}
+}
+
+// IsAuthorMonitorModeValidAsGlobalDefault returns true when mode is acceptable
+// as the install-wide default. Series mode is excluded because a per-author
+// series selection has no sensible global value.
+func IsAuthorMonitorModeValidAsGlobalDefault(mode string) bool {
+	return IsAuthorMonitorModeValid(mode) && mode != AuthorMonitorModeSeries
 }
 
 type AuthorStats struct {

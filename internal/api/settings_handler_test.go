@@ -220,6 +220,16 @@ func TestSettings_AuthorMonitorDefaultsValidation(t *testing.T) {
 	if badCountRec.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid count 400, got %d", badCountRec.Code)
 	}
+
+	// "series" is a per-author mode only — rejecting it as a global default
+	// prevents an install from booting every new author into a mode that has
+	// no global selection (#810).
+	seriesReq := withKey(httptest.NewRequest(http.MethodPut, "/api/v1/settings/"+SettingAuthorDefaultMonitorMode, bytes.NewBufferString(`{"value":"series"}`)), SettingAuthorDefaultMonitorMode)
+	seriesRec := httptest.NewRecorder()
+	h.Set(seriesRec, seriesReq)
+	if seriesRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected series-as-default 400, got %d: %s", seriesRec.Code, seriesRec.Body.String())
+	}
 }
 
 func TestSettings_GetABSSecretReturns404(t *testing.T) {

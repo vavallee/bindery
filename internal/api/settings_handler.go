@@ -289,8 +289,11 @@ func validateSettingValue(key, value string) error {
 		if value == "" {
 			return nil
 		}
-		if !models.IsAuthorMonitorModeValid(value) {
-			return fmt.Errorf("author.default_monitor_mode %q is not one of: all, future, latest, none", value)
+		// "series" is per-author by definition (#810) — there is no
+		// install-wide series selection that would make sense, so reject it
+		// here even though IsAuthorMonitorModeValid accepts it.
+		if !models.IsAuthorMonitorModeValidAsGlobalDefault(value) {
+			return fmt.Errorf("author.default_monitor_mode %q is not one of: all, future, latest, none (series is per-author only)", value)
 		}
 	case SettingAuthorDefaultMonitorLatestCount:
 		if value == "" {

@@ -37,7 +37,8 @@
     "all": "All books",
     "future": "Future books only",
     "latest": "Latest only",
-    "none": "None"
+    "none": "None",
+    "series": "By series"
   },
   "nav": {
     "authors": "Authors",

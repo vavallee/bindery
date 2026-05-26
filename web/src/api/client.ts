@@ -262,6 +262,9 @@ export const api = {
   refreshAuthor: (id: number) => request<void>(`/author/${id}/refresh`, { method: 'POST' }),
   relinkAuthorUpstream: (id: number) => request<Author>(`/author/${id}/relink-upstream`, { method: 'POST' }),
   listAuthorAliases: (id: number) => request<AuthorAlias[]>(`/author/${id}/aliases`),
+  // listAuthorSeries returns the series the author has books in. Backs the
+  // per-author monitor-by-series picker in EditAuthorModal (#810).
+  listAuthorSeries: (id: number) => request<Series[]>(`/author/${id}/series`),
   mergeAuthors: (targetId: number, sourceId: number, overwriteDefaults = true) =>
     request<MergeAuthorsResult>(`/author/${targetId}/merge`, {
       method: 'POST',
@@ -559,6 +562,9 @@ export interface Author {
   books?: Book[]
   statistics?: { bookCount: number; availableBookCount: number; wantedBookCount: number }
   aliases?: AuthorAlias[]
+  // Populated by the author Get response when monitorMode === 'series' (#810).
+  // The Update endpoint accepts an updated array via UpdateAuthorRequest.
+  monitoredSeriesIds?: number[]
 }
 
 export interface AuthorAlias {
@@ -577,7 +583,7 @@ export interface MergeAuthorsResult {
 }
 
 export type MediaType = 'ebook' | 'audiobook' | 'both'
-export type AuthorMonitorMode = 'all' | 'future' | 'latest' | 'none'
+export type AuthorMonitorMode = 'all' | 'future' | 'latest' | 'none' | 'series'
 
 export interface BookFile {
   id: number
@@ -1145,6 +1151,10 @@ export interface UpdateAuthorRequest {
   audiobookRootFolderId?: number | null
   clearAudiobookRootFolder?: boolean
   applyMonitorModeToExisting?: boolean
+  // monitoredSeriesIds is the per-author series pin set (#810). Only valid
+  // when monitorMode === 'series'. Backend rejects ids that don't belong to
+  // this author.
+  monitoredSeriesIds?: number[]
 }
 
 export interface GrabRequest {

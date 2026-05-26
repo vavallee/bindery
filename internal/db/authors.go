@@ -253,6 +253,70 @@ func (r *AuthorRepo) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
+// ListMonitoredSeriesIDs returns the series IDs the author is pinned to when
+// MonitorMode == AuthorMonitorModeSeries. Returns an empty slice (not nil)
+// when nothing is pinned so the JSON encoder produces `[]` rather than null,
+// which keeps the UI's chip list happy.
+func (r *AuthorRepo) ListMonitoredSeriesIDs(ctx context.Context, authorID int64) ([]int64, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT series_id FROM author_monitored_series WHERE author_id = ? ORDER BY series_id`, authorID)
+	if err != nil {
+		return nil, fmt.Errorf("list monitored series ids for author %d: %w", authorID, err)
+	}
+	defer rows.Close()
+	ids := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan monitored series id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// SetMonitoredSeriesIDs replaces the author's monitored-series selection
+// atomically. Passing an empty slice clears the selection. Callers must
+// validate that every ID belongs to a series the author actually has books in
+// before calling — this repo trusts its inputs.
+func (r *AuthorRepo) SetMonitoredSeriesIDs(ctx context.Context, authorID int64, seriesIDs []int64) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin set monitored series tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM author_monitored_series WHERE author_id = ?`, authorID); err != nil {
+		return fmt.Errorf("clear monitored series for author %d: %w", authorID, err)
+	}
+
+	if len(seriesIDs) > 0 {
+		now := time.Now().UTC()
+		stmt, err := tx.PrepareContext(ctx,
+			`INSERT INTO author_monitored_series (author_id, series_id, created_at) VALUES (?, ?, ?)`)
+		if err != nil {
+			return fmt.Errorf("prepare insert monitored series: %w", err)
+		}
+		defer func() { _ = stmt.Close() }()
+		// Dedupe input — callers may pass duplicates and we want a clean PK insert.
+		seen := make(map[int64]struct{}, len(seriesIDs))
+		for _, id := range seriesIDs {
+			if _, dup := seen[id]; dup {
+				continue
+			}
+			seen[id] = struct{}{}
+			if _, err := stmt.ExecContext(ctx, authorID, id, now); err != nil {
+				return fmt.Errorf("insert monitored series (%d, %d): %w", authorID, id, err)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit set monitored series: %w", err)
+	}
+	return nil
+}
+
 func scanAuthor(rows *sql.Rows) (models.Author, error) {
 	var a models.Author
 	var monitored int

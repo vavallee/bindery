@@ -105,9 +105,40 @@ func (h *AuthorHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Attach the per-author monitored-series pin set when applicable. The
+	// field is omitempty so non-series modes don't bloat the payload, but the
+	// edit modal still needs the existing selection to preselect chips.
+	if author.MonitorMode == models.AuthorMonitorModeSeries {
+		if ids, err := h.authors.ListMonitoredSeriesIDs(r.Context(), id); err == nil {
+			author.MonitoredSeriesIDs = ids
+		}
+	}
+
 	proxyAuthorImages(author)
 	cleanAuthorDescription(author)
 	writeJSON(w, http.StatusOK, author)
+}
+
+// ListSeries returns the series belonging to the author — i.e. the series
+// that any of the author's books are linked to. Backs the monitor-by-series
+// picker (#810) so the edit modal can render a checkbox list scoped to this
+// author rather than the global /series collection.
+func (h *AuthorHandler) ListSeries(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	if h.series == nil {
+		writeJSON(w, http.StatusOK, []models.Series{})
+		return
+	}
+	series, err := h.series.ListByAuthor(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, series)
 }
 
 func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -557,6 +588,11 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 		// the UI sends this flag when the user picks the default option.
 		ClearAudiobookRootFolder   bool `json:"clearAudiobookRootFolder"`
 		ApplyMonitorModeToExisting bool `json:"applyMonitorModeToExisting"`
+		// MonitoredSeriesIDs is the per-author series pin set (#810). Only
+		// meaningful when MonitorMode == "series". A nil pointer means "do
+		// not touch the existing selection" — an explicit empty array clears
+		// it. Validated against the author's own series before persistence.
+		MonitoredSeriesIDs *[]int64 `json:"monitoredSeriesIds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -568,7 +604,7 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.MonitorMode != nil {
 		mode := strings.TrimSpace(*req.MonitorMode)
 		if !models.IsAuthorMonitorModeValid(mode) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "monitorMode must be one of: all, future, latest, none"})
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "monitorMode must be one of: all, future, latest, none, series"})
 			return
 		}
 		author.MonitorMode = mode
@@ -599,6 +635,42 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+
+	// Persist the per-author series pin set before applying so the apply pass
+	// reads the freshly-written rows. Validate every ID belongs to this
+	// author's series — accepting arbitrary series IDs would let one author's
+	// monitor selection silently reference an unrelated catalog row.
+	if req.MonitoredSeriesIDs != nil {
+		if len(*req.MonitoredSeriesIDs) > 0 {
+			ownSeries, err := h.series.ListByAuthor(r.Context(), author.ID)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			owned := make(map[int64]struct{}, len(ownSeries))
+			for _, s := range ownSeries {
+				owned[s.ID] = struct{}{}
+			}
+			for _, id := range *req.MonitoredSeriesIDs {
+				if _, ok := owned[id]; !ok {
+					writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("series %d does not belong to author %d", id, author.ID)})
+					return
+				}
+			}
+		}
+		if err := h.authors.SetMonitoredSeriesIDs(r.Context(), author.ID, *req.MonitoredSeriesIDs); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		author.MonitoredSeriesIDs = append([]int64(nil), (*req.MonitoredSeriesIDs)...)
+	} else if author.MonitorMode == models.AuthorMonitorModeSeries {
+		// Mode unchanged or set without overriding the pin set: surface the
+		// current selection so the client can render chips without a refetch.
+		if ids, err := h.authors.ListMonitoredSeriesIDs(r.Context(), author.ID); err == nil {
+			author.MonitoredSeriesIDs = ids
+		}
+	}
+
 	if req.ApplyMonitorModeToExisting {
 		if err := h.applyMonitorModeToExistingBooks(r.Context(), author); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -616,9 +688,38 @@ func (h *AuthorHandler) applyMonitorModeToExistingBooks(ctx context.Context, aut
 	latestKeys := latestBookMonitorKeys(books, author.MonitorLatestCount, func(b models.Book) bool {
 		return !b.Excluded
 	})
+
+	// For series mode the decision needs book→series membership. Bulk-load
+	// once to avoid an N+1 over GetSeriesIDsForBook in the loop below.
+	var (
+		monitoredSet map[int64]struct{}
+		bookSeries   map[int64][]int64
+	)
+	if author.MonitorMode == models.AuthorMonitorModeSeries {
+		ids, err := h.authors.ListMonitoredSeriesIDs(ctx, author.ID)
+		if err != nil {
+			return fmt.Errorf("list monitored series ids: %w", err)
+		}
+		monitoredSet = make(map[int64]struct{}, len(ids))
+		for _, id := range ids {
+			monitoredSet[id] = struct{}{}
+		}
+		if h.series != nil {
+			bookSeries, err = h.series.ListBookSeriesByAuthor(ctx, author.ID)
+			if err != nil {
+				return fmt.Errorf("list book→series for author: %w", err)
+			}
+		}
+	}
+
 	today := dateOnly(time.Now().UTC())
 	for i := range books {
 		next := shouldMonitorBookForAuthor(author, books[i], latestKeys, today)
+		if author.MonitorMode == models.AuthorMonitorModeSeries {
+			next = bookInMonitoredSeries(books[i].ID, bookSeries, monitoredSet)
+		}
+		// Excluded wins over every mode — a user-excluded book must never
+		// flip back to monitored regardless of series membership.
 		if books[i].Excluded {
 			next = false
 		}
@@ -631,6 +732,22 @@ func (h *AuthorHandler) applyMonitorModeToExistingBooks(ctx context.Context, aut
 		}
 	}
 	return nil
+}
+
+// bookInMonitoredSeries reports whether the book belongs to at least one
+// series in the author's monitored set. An empty monitored set means "monitor
+// nothing" — which is the right default when the user picks series mode
+// without selecting any series yet.
+func bookInMonitoredSeries(bookID int64, bookSeries map[int64][]int64, monitoredSet map[int64]struct{}) bool {
+	if len(monitoredSet) == 0 {
+		return false
+	}
+	for _, sid := range bookSeries[bookID] {
+		if _, ok := monitoredSet[sid]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
@@ -933,6 +1050,34 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 	})
 	today := dateOnly(time.Now().UTC())
 
+	// Build a foreign-id index of the author's monitored series so that, in
+	// series mode, freshly-discovered books can be flipped to monitored at
+	// creation time if their provider-supplied SeriesRefs already match one
+	// of the pinned series. Without this lookup the user would have to wait
+	// for a subsequent apply pass to flip them on.
+	monitoredSeriesForeignIDs := map[string]struct{}{}
+	if author.MonitorMode == models.AuthorMonitorModeSeries && h.series != nil {
+		pinIDs, err := h.authors.ListMonitoredSeriesIDs(ctx, author.ID)
+		if err != nil {
+			slog.Warn("failed to load monitored series ids for author works fetch", "author", author.Name, "error", err)
+		} else if len(pinIDs) > 0 {
+			ownSeries, err := h.series.ListByAuthor(ctx, author.ID)
+			if err != nil {
+				slog.Warn("failed to load author series for series-mode fetch", "author", author.Name, "error", err)
+			} else {
+				pinSet := make(map[int64]struct{}, len(pinIDs))
+				for _, id := range pinIDs {
+					pinSet[id] = struct{}{}
+				}
+				for _, s := range ownSeries {
+					if _, ok := pinSet[s.ID]; ok && s.ForeignID != "" {
+						monitoredSeriesForeignIDs[s.ForeignID] = struct{}{}
+					}
+				}
+			}
+		}
+	}
+
 	searchQueue := make([]models.Book, 0)
 	autoSearchEnabled := autoSearch && h.searcher != nil && author.Monitored && h.isAutoGrabEnabled(ctx)
 
@@ -968,6 +1113,17 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 			continue
 		}
 		b.Monitored = shouldMonitorBookForAuthor(author, b, latestKeys, today)
+		// Series mode short-circuit: if the upstream provider already says
+		// this book is in one of the user's pinned series, monitor it on
+		// first discovery instead of waiting for the apply pass.
+		if author.MonitorMode == models.AuthorMonitorModeSeries && author.Monitored && len(monitoredSeriesForeignIDs) > 0 {
+			for _, ref := range b.SeriesRefs {
+				if _, ok := monitoredSeriesForeignIDs[ref.ForeignID]; ok {
+					b.Monitored = true
+					break
+				}
+			}
+		}
 
 		// Update ratings on existing books so the recommender has data to work with,
 		// then skip further processing (we don't want to overwrite user state like status).
@@ -1141,6 +1297,13 @@ func shouldMonitorBookForAuthor(author *models.Author, book models.Book, latestK
 		_, ok := latestKeys[indexer.NormalizeTitleForDedup(book.Title)]
 		return ok
 	case models.AuthorMonitorModeNone:
+		return false
+	case models.AuthorMonitorModeSeries:
+		// Newly-discovered books default to unmonitored under series mode:
+		// the series-membership join is established by the series sync
+		// later, so we don't yet know which series this book belongs to.
+		// A subsequent ApplyMonitorModeToExisting (manual or scheduled
+		// refresh) flips the flag on once the join row exists.
 		return false
 	case models.AuthorMonitorModeAll, "":
 		return true

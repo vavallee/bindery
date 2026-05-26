@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, Author, AuthorMonitorMode, MetadataProfile, QualityProfile, RootFolder, UpdateAuthorRequest } from '../api/client'
+import { api, Author, AuthorMonitorMode, MetadataProfile, QualityProfile, RootFolder, Series, UpdateAuthorRequest } from '../api/client'
 
 interface Props {
   author: Author
@@ -14,6 +14,8 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
   const [qualityProfiles, setQualityProfiles] = useState<QualityProfile[]>([])
   const [metadataProfiles, setMetadataProfiles] = useState<MetadataProfile[]>([])
   const [rootFolders, setRootFolders] = useState<RootFolder[]>([])
+  const [authorSeries, setAuthorSeries] = useState<Series[]>([])
+  const [seriesLoaded, setSeriesLoaded] = useState(false)
 
   const [qualityProfileId, setQualityProfileId] = useState<number | null>(author.qualityProfileId ?? null)
   const [metadataProfileId, setMetadataProfileId] = useState<number | null>(author.metadataProfileId ?? null)
@@ -22,6 +24,7 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
   const [monitorMode, setMonitorMode] = useState<AuthorMonitorMode>(author.monitorMode ?? 'all')
   const [monitorLatestCount, setMonitorLatestCount] = useState(author.monitorLatestCount ?? 1)
   const [applyMonitorModeToExisting, setApplyMonitorModeToExisting] = useState(false)
+  const [monitoredSeriesIds, setMonitoredSeriesIds] = useState<number[]>(author.monitoredSeriesIds ?? [])
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -43,6 +46,32 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [])
+
+  // Lazy-load the author's series only when the user actually picks series
+  // mode. The list can be hundreds of rows for prolific authors and most
+  // edits never touch it.
+  useEffect(() => {
+    if (monitorMode !== 'series' || seriesLoaded) return
+    let cancelled = false
+    api.listAuthorSeries(author.id)
+      .then(list => { if (!cancelled) { setAuthorSeries(list); setSeriesLoaded(true) } })
+      .catch(() => { if (!cancelled) { setAuthorSeries([]); setSeriesLoaded(true) } })
+    return () => { cancelled = true }
+  }, [monitorMode, seriesLoaded, author.id])
+
+  const selectedSet = useMemo(() => new Set(monitoredSeriesIds), [monitoredSeriesIds])
+
+  const toggleSeries = (id: number) => {
+    setMonitoredSeriesIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  }
+
+  // The Hardcover-fill behaviour relies on the selected series having a
+  // catalog link; surface a warning when any selection is missing one so the
+  // user knows the apply pass will only act on locally-known books for those.
+  const selectedWithoutHardcover = useMemo(
+    () => authorSeries.filter(s => selectedSet.has(s.id) && !s.hardcoverLink),
+    [authorSeries, selectedSet],
+  )
 
   const save = async () => {
     // Build a patch with only the fields that actually changed — sending
@@ -75,6 +104,17 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
     }
     if (applyMonitorModeToExisting) {
       patch.applyMonitorModeToExisting = true
+    }
+    // Only include the series selection on the wire when the user is in
+    // series mode and the set actually differs from what came back from the
+    // Get. An undefined field leaves the existing selection untouched.
+    if (monitorMode === 'series') {
+      const original = (author.monitoredSeriesIds ?? []).slice().sort()
+      const current = monitoredSeriesIds.slice().sort()
+      const changed = original.length !== current.length || original.some((id, i) => id !== current[i])
+      if (changed || monitorMode !== (author.monitorMode ?? 'all')) {
+        patch.monitoredSeriesIds = monitoredSeriesIds
+      }
     }
 
     if (Object.keys(patch).length === 0) {
@@ -177,8 +217,47 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                   <option value="future">{t('monitorMode.future', 'Future books only')}</option>
                   <option value="latest">{t('monitorMode.latest', 'Latest only')}</option>
                   <option value="none">{t('monitorMode.none', 'None')}</option>
+                  <option value="series">{t('monitorMode.series', 'By series')}</option>
                 </select>
               </div>
+              {monitorMode === 'series' && (
+                <div className="mb-3">
+                  <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('editAuthorModal.monitoredSeries', 'Monitored series')}</label>
+                  {!seriesLoaded ? (
+                    <p className="text-xs text-slate-500 dark:text-zinc-500">{t('common.loading', 'Loading...')}</p>
+                  ) : authorSeries.length === 0 ? (
+                    <p className="text-xs text-slate-500 dark:text-zinc-500">
+                      {t('editAuthorModal.monitoredSeriesEmpty', 'No series found for this author yet. Refresh the author to pull series data first.')}
+                    </p>
+                  ) : (
+                    <div className="max-h-48 overflow-y-auto border border-slate-300 dark:border-zinc-700 rounded-md p-2 bg-slate-50 dark:bg-zinc-950">
+                      {authorSeries.map(s => (
+                        <label key={s.id} className="flex items-start gap-2 text-sm py-1 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={selectedSet.has(s.id)}
+                            onChange={() => toggleSeries(s.id)}
+                            className="accent-emerald-500 mt-0.5 flex-shrink-0"
+                          />
+                          <span className="flex-1">
+                            <span className="font-medium">{s.title}</span>
+                            {!s.hardcoverLink && (
+                              <span className="ml-2 text-xs text-amber-700 dark:text-amber-400">
+                                {t('editAuthorModal.seriesNoHardcoverLink', '(no Hardcover link)')}
+                              </span>
+                            )}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  {selectedWithoutHardcover.length > 0 && (
+                    <p className="text-xs text-amber-700 dark:text-amber-400 mt-2">
+                      {t('editAuthorModal.seriesNoHardcoverWarning', 'Some selected series have no Hardcover link. Only books Bindery already knows about will be monitored — missing entries will not be auto-filled.')}
+                    </p>
+                  )}
+                </div>
+              )}
               {monitorMode === 'latest' && (
                 <div className="mb-3">
                   <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('editAuthorModal.monitorLatestCount', 'Latest book count')}</label>

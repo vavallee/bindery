@@ -1052,6 +1052,246 @@ func TestUpdateAuthor_ApplyMonitorModeToExistingBooks(t *testing.T) {
 	}
 }
 
+// TestUpdateAuthor_ApplyMonitorModeSeries covers the per-series monitor mode
+// (#810): selected series → monitored, others → unmonitored, excluded books
+// stay unmonitored regardless of series membership.
+func TestUpdateAuthor_ApplyMonitorModeSeries(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	seriesRepo := db.NewSeriesRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID: "OL-S-A", Name: "Series Author", SortName: "Author, Series",
+		MetadataProvider: "openlibrary", Monitored: true, MonitorMode: models.AuthorMonitorModeAll,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	// 5 books: 3 in series A, 1 in series B, 1 standalone.
+	mk := func(fid, title string) *models.Book {
+		return &models.Book{
+			ForeignID: fid, AuthorID: author.ID, Title: title, SortTitle: title,
+			Status: models.BookStatusWanted, Monitored: true, Genres: []string{}, MetadataProvider: "openlibrary",
+		}
+	}
+	a1, a2, a3 := mk("OL-A1", "A1"), mk("OL-A2", "A2"), mk("OL-A3", "A3")
+	b1 := mk("OL-B1", "B1")
+	solo := mk("OL-SOLO", "Solo")
+	for _, b := range []*models.Book{a1, a2, a3, b1, solo} {
+		if err := bookRepo.Create(ctx, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Exclude one of the A-series books — it must stay unmonitored even
+	// though the user picks series A.
+	if err := bookRepo.SetExcluded(ctx, a3.ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	sA := &models.Series{ForeignID: "ol-series:A", Title: "A"}
+	sB := &models.Series{ForeignID: "ol-series:B", Title: "B"}
+	if err := seriesRepo.CreateOrGet(ctx, sA); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.CreateOrGet(ctx, sB); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{a1.ID, a2.ID, a3.ID} {
+		if err := seriesRepo.LinkBook(ctx, sA.ID, id, "", true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := seriesRepo.LinkBook(ctx, sB.ID, b1.ID, "", true); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, seriesRepo, nil, nil, profileRepo, nil)
+	body, _ := json.Marshal(map[string]any{
+		"monitorMode":                models.AuthorMonitorModeSeries,
+		"monitoredSeriesIds":         []int64{sA.ID},
+		"applyMonitorModeToExisting": true,
+	})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/author/"+strconv.FormatInt(author.ID, 10), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", strconv.FormatInt(author.ID, 10))
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.Update(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	got, err := bookRepo.ListByAuthorIncludingExcluded(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTitle := map[string]bool{}
+	for _, b := range got {
+		byTitle[b.Title] = b.Monitored
+	}
+	want := map[string]bool{
+		"A1":   true,  // in selected series
+		"A2":   true,  // in selected series
+		"A3":   false, // excluded — wins over series membership
+		"B1":   false, // series B not selected
+		"Solo": false, // no series at all
+	}
+	for title, wantMon := range want {
+		if byTitle[title] != wantMon {
+			t.Errorf("%s monitored = %v, want %v", title, byTitle[title], wantMon)
+		}
+	}
+
+	// Verify the response carries the pinned series IDs back.
+	var respAuthor models.Author
+	if err := json.Unmarshal(rec.Body.Bytes(), &respAuthor); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(respAuthor.MonitoredSeriesIDs) != 1 || respAuthor.MonitoredSeriesIDs[0] != sA.ID {
+		t.Errorf("response MonitoredSeriesIDs = %v, want [%d]", respAuthor.MonitoredSeriesIDs, sA.ID)
+	}
+}
+
+// TestUpdateAuthor_RejectsForeignSeriesID covers the validation that a
+// monitored series id must belong to the author. Accepting any id would let
+// one author's pin set reference an unrelated catalog row.
+func TestUpdateAuthor_RejectsForeignSeriesID(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	seriesRepo := db.NewSeriesRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	owner := &models.Author{ForeignID: "OL-OWN", Name: "Owner", SortName: "Owner", MetadataProvider: "openlibrary", Monitored: true}
+	other := &models.Author{ForeignID: "OL-OTH", Name: "Other", SortName: "Other", MetadataProvider: "openlibrary", Monitored: true}
+	if err := authorRepo.Create(ctx, owner); err != nil {
+		t.Fatal(err)
+	}
+	if err := authorRepo.Create(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+
+	ownerBook := &models.Book{ForeignID: "OL-OB", AuthorID: owner.ID, Title: "OB", SortTitle: "ob", Status: models.BookStatusWanted, Monitored: true, Genres: []string{}, MetadataProvider: "openlibrary"}
+	otherBook := &models.Book{ForeignID: "OL-XB", AuthorID: other.ID, Title: "XB", SortTitle: "xb", Status: models.BookStatusWanted, Monitored: true, Genres: []string{}, MetadataProvider: "openlibrary"}
+	if err := bookRepo.Create(ctx, ownerBook); err != nil {
+		t.Fatal(err)
+	}
+	if err := bookRepo.Create(ctx, otherBook); err != nil {
+		t.Fatal(err)
+	}
+
+	ownerSeries := &models.Series{ForeignID: "ol-series:own", Title: "Own"}
+	foreignSeries := &models.Series{ForeignID: "ol-series:foreign", Title: "Foreign"}
+	if err := seriesRepo.CreateOrGet(ctx, ownerSeries); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.CreateOrGet(ctx, foreignSeries); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.LinkBook(ctx, ownerSeries.ID, ownerBook.ID, "", true); err != nil {
+		t.Fatal(err)
+	}
+	// foreignSeries is linked only to other author's book.
+	if err := seriesRepo.LinkBook(ctx, foreignSeries.ID, otherBook.ID, "", true); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, seriesRepo, nil, nil, profileRepo, nil)
+	body, _ := json.Marshal(map[string]any{
+		"monitorMode":        models.AuthorMonitorModeSeries,
+		"monitoredSeriesIds": []int64{foreignSeries.ID},
+	})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/author/"+strconv.FormatInt(owner.ID, 10), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", strconv.FormatInt(owner.ID, 10))
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.Update(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for foreign series id, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// Nothing should have been persisted.
+	got, _ := authorRepo.ListMonitoredSeriesIDs(ctx, owner.ID)
+	if len(got) != 0 {
+		t.Errorf("expected empty pin set after rejection, got %v", got)
+	}
+}
+
+// TestListAuthorSeries returns only series the author actually has books in.
+func TestListAuthorSeries(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	seriesRepo := db.NewSeriesRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	a := &models.Author{ForeignID: "OL-LS", Name: "LS", SortName: "LS", MetadataProvider: "openlibrary", Monitored: true}
+	if err := authorRepo.Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{ForeignID: "OL-LS-B", AuthorID: a.ID, Title: "T", SortTitle: "t", Status: models.BookStatusWanted, Monitored: true, Genres: []string{}, MetadataProvider: "openlibrary"}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	s := &models.Series{ForeignID: "ol-series:t", Title: "T-Series"}
+	if err := seriesRepo.CreateOrGet(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.LinkBook(ctx, s.ID, book.ID, "", true); err != nil {
+		t.Fatal(err)
+	}
+	// A second unlinked series exists globally — must not appear in the
+	// per-author response.
+	noise := &models.Series{ForeignID: "ol-series:noise", Title: "Noise"}
+	if err := seriesRepo.CreateOrGet(ctx, noise); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, seriesRepo, nil, nil, profileRepo, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/author/"+strconv.FormatInt(a.ID, 10)+"/series", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", strconv.FormatInt(a.ID, 10))
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.ListSeries(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var got []models.Series
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != s.ID {
+		t.Fatalf("got %d series, want only the linked one (id %d): %+v", len(got), s.ID, got)
+	}
+}
+
 func TestCreateAuthor_RelinksExistingABSAuthor(t *testing.T) {
 	database, err := db.OpenMemory()
 	if err != nil {
