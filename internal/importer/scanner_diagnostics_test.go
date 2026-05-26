@@ -170,8 +170,7 @@ func TestCheckQbittorrentDownloads_CompletedGrabbedLogsRawPath(t *testing.T) {
 	// The download must have advanced past StateGrabbed — confirming line 939
 	// (the "download completed" log) was reached and tryImportQbittorrent fired.
 	if got.Status == models.StateGrabbed {
-		t.Errorf("download must advance past StateGrabbed when torrent is complete " +
-			"and content_path is set; status stayed %q", got.Status)
+		t.Errorf("download must advance past StateGrabbed when torrent is complete and content_path is set; status stayed %q", got.Status)
 	}
 }
 
