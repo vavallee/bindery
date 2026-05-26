@@ -196,6 +196,16 @@ func migrate(database *sql.DB) error {
 		return entries[i].Name() < entries[j].Name()
 	})
 
+	// Refuse to start if two migration files share a numeric prefix. The apply
+	// loop keys on version number (SELECT COUNT(*) FROM schema_migrations WHERE
+	// version = ?) so a second NNN_*.sql file is silently skipped on any DB
+	// that already applied the first — the schema change in the skipped file
+	// is lost. This bit the 043 collision incident on 2026-05-26; the fail-
+	// loud guard prevents recurrence.
+	if err := assertUniqueMigrationVersions(entries); err != nil {
+		return err
+	}
+
 	// Older Bindery builds recorded schema_migrations.version as the 0-based
 	// slice index + 1 instead of the filename number. Reconcile any such DB to
 	// filename-based versions exactly once, before the apply loop, so neither
@@ -256,6 +266,25 @@ func migrate(database *sql.DB) error {
 //     no longer fires.
 //
 // A fresh database has no schema_migrations rows and is left untouched.
+// assertUniqueMigrationVersions returns an error when two migration files share
+// the same numeric prefix. Without this guard the apply loop silently skips
+// the second file on any DB that already recorded that version, losing its
+// schema change. See the 043 collision incident on 2026-05-26.
+func assertUniqueMigrationVersions(entries []os.DirEntry) error {
+	byVersion := make(map[int]string, len(entries))
+	for _, entry := range entries {
+		v, err := migrationVersion(entry.Name())
+		if err != nil {
+			return err
+		}
+		if existing, ok := byVersion[v]; ok {
+			return fmt.Errorf("duplicate migration version %d: %q and %q share the same numeric prefix; rename one before booting", v, existing, entry.Name())
+		}
+		byVersion[v] = entry.Name()
+	}
+	return nil
+}
+
 func reconcileMigrationVersions(database *sql.DB, entries []os.DirEntry) error {
 	// Build the set of valid filename-based versions, and the index->filename
 	// mapping (1-based index, matching the legacy +1 numbering).

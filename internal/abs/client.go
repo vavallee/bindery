@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/useragent"
 )
 
@@ -56,6 +57,23 @@ func NormalizeBaseURL(raw string) (string, error) {
 		u.Path = ""
 	}
 	return u.String(), nil
+}
+
+// ValidateBaseURLSecure layers an SSRF policy check on top of NormalizeBaseURL.
+// Use this at the admin-input boundary (settings save) to refuse base URLs
+// that point at link-local or cloud-metadata endpoints. Loopback and RFC1918
+// are still allowed via PolicyLAN for typical homelab deployments. NewClient
+// callers should keep using NormalizeBaseURL directly so test fixtures with
+// httptest (loopback) still work.
+func ValidateBaseURLSecure(raw string) (string, error) {
+	u, err := NormalizeBaseURL(raw)
+	if err != nil {
+		return "", err
+	}
+	if err := httpsec.ValidateOutboundURL(u, httpsec.PolicyLAN); err != nil {
+		return "", fmt.Errorf("base_url %q: %w", raw, err)
+	}
+	return u, nil
 }
 
 func NormalizeAPIKey(raw string) (string, error) {

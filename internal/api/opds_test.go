@@ -75,7 +75,9 @@ func opdsFixture(t *testing.T) (*chi.Mux, *db.UserRepo, *db.SettingsRepo, string
 	}
 
 	builder := opds.NewBuilder(opds.Config{PageSize: 50}, books, authors, series)
-	fh := NewFileHandler(books)
+	// FileHandler fails closed without allowedRoots — seed it with the
+	// fixture's tmp dir so the OPDS download path resolves through it.
+	fh := NewFileHandler(books, tmp)
 	h := NewOPDSHandler(builder, books, fh)
 	p := &testProvider{settings: settings}
 
