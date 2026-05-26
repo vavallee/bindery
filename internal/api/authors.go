@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -250,7 +251,7 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromContext(r.Context())
 	existing, _ := h.authors.GetByForeignIDForUser(r.Context(), req.ForeignID, userID)
 	if existing != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "author already exists"})
+		h.writeCanonicalAuthorConflict(w, existing, "author already exists")
 		return
 	}
 
@@ -294,6 +295,10 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err := h.authors.CreateForUser(r.Context(), author, auth.UserIDFromContext(r.Context())); err != nil {
 		slog.Error("create author failed", "foreign_id", req.ForeignID, "error", err)
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			if existing, _ := h.authors.GetByForeignIDForUser(r.Context(), req.ForeignID, userID); existing != nil {
+				h.writeCanonicalAuthorConflict(w, existing, "author already exists")
+				return
+			}
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "author already exists"})
 			return
 		}
@@ -444,7 +449,7 @@ func canRelinkAuthorToUpstream(author *models.Author) bool {
 	}
 	provider := strings.TrimSpace(strings.ToLower(author.MetadataProvider))
 	foreignID := strings.TrimSpace(author.ForeignID)
-	return foreignID == "" || strings.HasPrefix(foreignID, "abs:") || provider == "audiobookshelf"
+	return foreignID == "" || strings.HasPrefix(foreignID, "abs:") || strings.HasPrefix(foreignID, "calibre:") || provider == "audiobookshelf"
 }
 
 func (h *AuthorHandler) relinkExistingAuthorToUpstream(ctx context.Context, author, upstream *models.Author, requestedName string, monitored bool, monitorMode string, monitorLatestCount int, qualityProfileID, metadataProfileID, rootFolderID, audiobookRootFolderID *int64) error {
@@ -831,6 +836,16 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
 		return
 	}
+	var req struct {
+		ForeignID string `json:"foreignAuthorId"`
+	}
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+			return
+		}
+	}
+	req.ForeignID = strings.TrimSpace(req.ForeignID)
 
 	author, err := h.authors.GetByID(r.Context(), id)
 	if err != nil {
@@ -841,12 +856,12 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
 		return
 	}
-	if !canRelinkAuthorToUpstream(author) {
+	if req.ForeignID == "" && !canRelinkAuthorToUpstream(author) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "author is already linked to upstream metadata"})
 		return
 	}
 
-	upstream, err := h.lookupUpstreamAuthorByName(r.Context(), author.Name)
+	upstream, err := h.resolveRelinkUpstreamAuthor(r.Context(), author.Name, req.ForeignID)
 	switch {
 	case err == nil:
 	case errors.Is(err, errNoMetadataAggregator):
@@ -893,6 +908,44 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 	proxyAuthorImages(author)
 	cleanAuthorDescription(author)
 	writeJSON(w, http.StatusOK, author)
+}
+
+func (h *AuthorHandler) RelinkCandidates(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	author, err := h.authors.GetByID(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if author == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
+		return
+	}
+	if h.meta == nil {
+		writeJSON(w, http.StatusFailedDependency, map[string]string{"error": errNoMetadataAggregator.Error()})
+		return
+	}
+	term := strings.TrimSpace(r.URL.Query().Get("term"))
+	if term == "" {
+		term = author.Name
+	}
+	candidates, err := h.meta.SearchAuthorCandidates(r.Context(), term)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	if candidates == nil {
+		candidates = []models.Author{}
+	}
+	for i := range candidates {
+		proxyAuthorImages(&candidates[i])
+		cleanAuthorDescription(&candidates[i])
+	}
+	writeJSON(w, http.StatusOK, candidates)
 }
 
 func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -1461,6 +1514,24 @@ func dateOnly(t time.Time) time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
 
+func (h *AuthorHandler) resolveRelinkUpstreamAuthor(ctx context.Context, name, foreignID string) (*models.Author, error) {
+	if h.meta == nil {
+		return nil, errNoMetadataAggregator
+	}
+	foreignID = strings.TrimSpace(foreignID)
+	if foreignID == "" {
+		return h.lookupUpstreamAuthorByName(ctx, name)
+	}
+	upstream, err := h.meta.GetAuthor(ctx, foreignID)
+	if err != nil {
+		return nil, err
+	}
+	if upstream == nil {
+		return nil, errNoMetadataMatch
+	}
+	return upstream, nil
+}
+
 func (h *AuthorHandler) lookupUpstreamAuthorByName(ctx context.Context, name string) (*models.Author, error) {
 	if h.meta == nil {
 		return nil, errNoMetadataAggregator
@@ -1478,7 +1549,7 @@ func (h *AuthorHandler) lookupUpstreamAuthorByName(ctx context.Context, name str
 	var match *models.Author
 	matchedQuery := ""
 	for _, query := range queries {
-		results, err := h.meta.SearchAuthors(ctx, query)
+		results, err := h.meta.SearchAuthorCandidates(ctx, query)
 		if err != nil {
 			return nil, err
 		}

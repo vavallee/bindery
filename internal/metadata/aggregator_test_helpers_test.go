@@ -8,34 +8,42 @@ import (
 )
 
 type mockProvider struct {
-	name               string
-	searchBooks        []models.Book
-	searchBooksByQuery map[string][]models.Book
-	searchBookErr      error
-	searchAuthors      []models.Author
-	searchAuthErr      error
-	getAuthor          *models.Author
-	getAuthorErr       error
-	getBook            *models.Book
-	getBookByID        map[string]*models.Book
-	getBookErr         error
-	getBookCalls       int
-	gotBookIDs         []string
-	getEditions        []models.Edition
-	getEditionsErr     error
-	getByISBN          *models.Book
-	getByISBNByISBN    map[string]*models.Book
-	getByISBNErr       error
-	getByISBNCalls     int
-	gotISBNs           []string
-	searchBookQueries  []string
+	name                 string
+	searchBooks          []models.Book
+	searchBooksByQuery   map[string][]models.Book
+	searchBookErr        error
+	searchAuthors        []models.Author
+	searchAuthorsByQuery map[string][]models.Author
+	searchAuthErr        error
+	searchAuthorQueries  []string
+	getAuthor            *models.Author
+	getAuthorErr         error
+	getBook              *models.Book
+	getBookByID          map[string]*models.Book
+	getBookErr           error
+	getBookCalls         int
+	gotBookIDs           []string
+	getEditions          []models.Edition
+	getEditionsErr       error
+	getByISBN            *models.Book
+	getByISBNByISBN      map[string]*models.Book
+	getByISBNErr         error
+	getByISBNCalls       int
+	gotISBNs             []string
+	searchBookQueries    []string
 	// authorWorks implements worksProvider interface
 	authorWorks    []models.Book
 	authorWorksErr error
 }
 
 func (m *mockProvider) Name() string { return m.name }
-func (m *mockProvider) SearchAuthors(_ context.Context, _ string) ([]models.Author, error) {
+func (m *mockProvider) SearchAuthors(_ context.Context, query string) ([]models.Author, error) {
+	m.searchAuthorQueries = append(m.searchAuthorQueries, query)
+	if m.searchAuthorsByQuery != nil {
+		if authors, ok := m.searchAuthorsByQuery[query]; ok {
+			return authors, m.searchAuthErr
+		}
+	}
 	return m.searchAuthors, m.searchAuthErr
 }
 func (m *mockProvider) SearchBooks(_ context.Context, query string) ([]models.Book, error) {

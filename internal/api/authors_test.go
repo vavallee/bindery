@@ -1146,10 +1146,11 @@ type relinkUpstreamFixture struct {
 	ctx     context.Context
 	authors *db.AuthorRepo
 	aliases *db.AuthorAliasRepo
+	books   *db.BookRepo
 	handler *AuthorHandler
 }
 
-func newRelinkUpstreamFixture(t *testing.T, provider metadata.Provider) *relinkUpstreamFixture {
+func newRelinkUpstreamFixture(t *testing.T, provider metadata.Provider, enrichers ...metadata.Provider) *relinkUpstreamFixture {
 	t.Helper()
 
 	database, err := db.OpenMemory()
@@ -1169,7 +1170,8 @@ func newRelinkUpstreamFixture(t *testing.T, provider metadata.Provider) *relinkU
 		ctx:     context.Background(),
 		authors: authorRepo,
 		aliases: aliasRepo,
-		handler: NewAuthorHandler(authorRepo, aliasRepo, bookRepo, nil, metadata.NewAggregator(provider), nil, profileRepo, nil),
+		books:   bookRepo,
+		handler: NewAuthorHandler(authorRepo, aliasRepo, bookRepo, nil, metadata.NewAggregator(provider, enrichers...), nil, profileRepo, nil),
 	}
 }
 
@@ -1191,6 +1193,34 @@ func (f *relinkUpstreamFixture) relink(t *testing.T, authorID int64) *httptest.R
 	rec := httptest.NewRecorder()
 
 	f.handler.RelinkUpstream(rec, req)
+	return rec
+}
+
+func (f *relinkUpstreamFixture) relinkTo(t *testing.T, authorID int64, foreignID string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	body, _ := json.Marshal(map[string]string{"foreignAuthorId": foreignID})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/author/"+strconv.FormatInt(authorID, 10)+"/relink-upstream", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", strconv.FormatInt(authorID, 10))
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	f.handler.RelinkUpstream(rec, req)
+	return rec
+}
+
+func (f *relinkUpstreamFixture) candidates(t *testing.T, authorID int64, term string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/author/"+strconv.FormatInt(authorID, 10)+"/relink-upstream/candidates?term="+term, nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", strconv.FormatInt(authorID, 10))
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	f.handler.RelinkCandidates(rec, req)
 	return rec
 }
 
@@ -1262,6 +1292,56 @@ func TestCreateAuthor_DuplicateConstraint_Returns409(t *testing.T) {
 	}
 	if _, ok := resp["canonicalAuthor"]; !ok {
 		t.Error("expected canonicalAuthor in response body")
+	}
+}
+
+func TestCreateAuthor_DirectDuplicateReturnsCanonicalAuthor(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	existing := &models.Author{
+		ForeignID:        "OL13200512A",
+		Name:             "Emilia Jae",
+		SortName:         "Jae, Emilia",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := authorRepo.Create(ctx, existing); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(&stubMetaProvider{}), nil, profileRepo, nil)
+	body, _ := json.Marshal(map[string]any{
+		"foreignAuthorId": "OL13200512A",
+		"authorName":      "Emilia Jae",
+		"monitored":       true,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/author", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.Create(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if int(resp["canonicalAuthorId"].(float64)) != int(existing.ID) {
+		t.Fatalf("canonicalAuthorId = %v, want %d", resp["canonicalAuthorId"], existing.ID)
+	}
+	if resp["canonicalAuthor"] == nil {
+		t.Fatalf("canonicalAuthor missing from response: %+v", resp)
 	}
 }
 
@@ -1868,6 +1948,113 @@ func TestRelinkUpstream_RelinksPlaceholderAuthorUsingInitialsFallback(t *testing
 	}
 	if len(aliases) != 1 || aliases[0].Name != "J. R. R. Tolkien" {
 		t.Fatalf("aliases = %+v, want original placeholder spelling", aliases)
+	}
+}
+
+func TestRelinkUpstream_ManualCandidateReplacesSparseCanonicalLink(t *testing.T) {
+	fixture := newRelinkUpstreamFixture(t,
+		&searchableAuthorProvider{stubMetaProvider: stubMetaProvider{name: "openlibrary"}},
+		&searchableAuthorProvider{
+			stubMetaProvider: stubMetaProvider{name: "hardcover"},
+			authors: map[string]*models.Author{
+				"hc:emilia-jae": {
+					ForeignID:        "hc:emilia-jae",
+					Name:             "Emilia Jae",
+					SortName:         "Jae, Emilia",
+					Description:      "Fantasy author.",
+					ImageURL:         "https://example.com/emilia.jpg",
+					MetadataProvider: "hardcover",
+				},
+			},
+		},
+	)
+
+	existing := fixture.createAuthor(t, &models.Author{
+		ForeignID:          "OL13200512A",
+		Name:               "Emilia Jae",
+		SortName:           "Jae, Emilia",
+		MetadataProvider:   "openlibrary",
+		Monitored:          true,
+		MonitorMode:        models.AuthorMonitorModeLatest,
+		MonitorLatestCount: 2,
+	})
+	book := &models.Book{
+		ForeignID:        "hc:a-throne-of-wings-and-embers-2024",
+		AuthorID:         existing.ID,
+		Title:            "A Throne of Wings and Embers",
+		SortTitle:        "A Throne of Wings and Embers",
+		Status:           models.BookStatusImported,
+		MediaType:        models.MediaTypeAudiobook,
+		MetadataProvider: "hardcover",
+	}
+	if err := fixture.books.Create(fixture.ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := fixture.relinkTo(t, existing.ID, "hc:emilia-jae")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, err := fixture.authors.GetByID(fixture.ctx, existing.ID)
+	if err != nil || got == nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.ID != existing.ID || got.ForeignID != "hc:emilia-jae" || got.MetadataProvider != "hardcover" {
+		t.Fatalf("author identity = %+v, want same ID relinked to Hardcover", got)
+	}
+	if got.Description != "Fantasy author." || got.ImageURL != "https://example.com/emilia.jpg" {
+		t.Fatalf("author metadata not updated: %+v", got)
+	}
+	if got.MonitorMode != models.AuthorMonitorModeLatest || got.MonitorLatestCount != 2 || !got.Monitored {
+		t.Fatalf("monitor settings changed unexpectedly: %+v", got)
+	}
+	books, err := fixture.books.ListByAuthor(fixture.ctx, existing.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 1 || books[0].ID != book.ID {
+		t.Fatalf("books = %+v, want existing book preserved", books)
+	}
+}
+
+func TestRelinkCandidates_SearchesPrimaryAndEnrichers(t *testing.T) {
+	fixture := newRelinkUpstreamFixture(t,
+		&searchableAuthorProvider{
+			stubMetaProvider: stubMetaProvider{name: "openlibrary"},
+			searchAuthorsByQuery: map[string][]models.Author{
+				"Emilia Jae": {{ForeignID: "OL13200512A", Name: "Emilia Jae", MetadataProvider: "openlibrary"}},
+			},
+		},
+		&searchableAuthorProvider{
+			stubMetaProvider: stubMetaProvider{name: "hardcover"},
+			searchAuthorsByQuery: map[string][]models.Author{
+				"Emilia Jae": {{ForeignID: "hc:emilia-jae", Name: "Emilia Jae", Description: "Fantasy author.", MetadataProvider: "hardcover"}},
+			},
+		},
+	)
+	existing := fixture.createAuthor(t, &models.Author{
+		ForeignID:        "OL13200512A",
+		Name:             "Emilia Jae",
+		SortName:         "Jae, Emilia",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	})
+
+	rec := fixture.candidates(t, existing.ID, "Emilia%20Jae")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var got []models.Author
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("candidates = %d, want 2: %+v", len(got), got)
+	}
+	if got[0].ForeignID != "OL13200512A" || got[1].ForeignID != "hc:emilia-jae" {
+		t.Fatalf("candidate ids = %+v", got)
 	}
 }
 

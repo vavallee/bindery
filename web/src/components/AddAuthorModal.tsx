@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, AddAuthorRequest, Author, AuthorMonitorMode, MediaType, MetadataProfile, RootFolder } from '../api/client'
+import { api, AddAuthorRequest, Author, AuthorConflictBody, AuthorMonitorMode, MediaType, MetadataProfile, RootFolder } from '../api/client'
 import { splitAuthorSearchResults } from './addAuthorTitleGuard'
 
 interface Props {
@@ -26,6 +26,30 @@ function loadAutoGrabDefault(): boolean {
   }
 }
 
+function basePath(): string {
+  return (window as unknown as { __BINDERY_BASE__?: string }).__BINDERY_BASE__ ?? ''
+}
+
+function conflictBody(err: unknown): AuthorConflictBody | null {
+  if (err && typeof err === 'object' && 'body' in err) {
+    const body = (err as { body?: unknown }).body
+    if (body && typeof body === 'object') return body as AuthorConflictBody
+  }
+  return null
+}
+
+function canLinkAuthorMetadata(author?: Author): boolean {
+  if (!author) return true
+  const foreignId = (author.foreignAuthorId || '').trim()
+  const provider = (author.metadataProvider || '').trim().toLowerCase()
+  return foreignId === '' || foreignId.startsWith('abs:') || foreignId.startsWith('calibre:') || provider === 'audiobookshelf'
+}
+
+function hasSparseMetadata(author?: Author): boolean {
+  if (!author) return true
+  return !author.description && !author.imageUrl && !author.disambiguation && (author.ratingsCount ?? 0) === 0 && (author.averageRating ?? 0) === 0
+}
+
 export default function AddAuthorModal({ onClose, onAdded }: Props) {
   const { t } = useTranslation()
   const [query, setQuery] = useState('')
@@ -34,6 +58,8 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
   const [showHiddenResults, setShowHiddenResults] = useState(false)
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
+  const [addError, setAddError] = useState<string | null>(null)
+  const [addConflict, setAddConflict] = useState<AuthorConflictBody | null>(null)
   const [adding, setAdding] = useState<string | null>(null)
   const [profiles, setProfiles] = useState<MetadataProfile[]>([])
   const [profileId, setProfileId] = useState<number | null>(null)
@@ -84,6 +110,8 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
     if (!q) return
     setSearching(true)
     setSearchError(null)
+    setAddError(null)
+    setAddConflict(null)
     setShowHiddenResults(false)
     try {
       const [authors, books] = await Promise.all([
@@ -104,6 +132,8 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
 
   const addAuthor = async (author: Author) => {
     setAdding(author.foreignAuthorId)
+    setAddError(null)
+    setAddConflict(null)
     try {
       const request: AddAuthorRequest = {
         foreignAuthorId: author.foreignAuthorId,
@@ -127,11 +157,14 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
       onAdded()
       onClose()
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : t('addAuthorModal.addFail'))
+      setAddError(err instanceof Error ? err.message : t('addAuthorModal.addFail'))
+      setAddConflict(conflictBody(err))
     } finally {
       setAdding(null)
     }
   }
+
+  const showConflictFindMetadata = addConflict?.canonicalAuthorId && (canLinkAuthorMetadata(addConflict.canonicalAuthor) || hasSparseMetadata(addConflict.canonicalAuthor))
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50" onClick={onClose}>
@@ -249,6 +282,24 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
               {searching ? t('addAuthorModal.searching') : t('addAuthorModal.search')}
             </button>
           </div>
+
+          {addError && (
+            <div className="mt-3 px-3 py-2 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900 rounded text-sm text-red-800 dark:text-red-300">
+              <div>{addError}</div>
+              {addConflict?.canonicalAuthorId && (
+                <div className="mt-2 flex flex-wrap gap-3 text-xs font-medium">
+                  <a href={`${basePath()}/author/${addConflict.canonicalAuthorId}`} className="underline">
+                    {t('addAuthorModal.openExisting', 'Open existing author')}
+                  </a>
+                  {showConflictFindMetadata && (
+                    <a href={`${basePath()}/author/${addConflict.canonicalAuthorId}?linkMetadata=1`} className="underline">
+                      {t('addAuthorModal.findMetadata', 'Find metadata')}
+                    </a>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="mt-4 max-h-80 overflow-y-auto space-y-2">
             {(showHiddenResults ? [...results, ...hiddenResults] : results).map(author => (

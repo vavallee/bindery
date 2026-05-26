@@ -653,7 +653,25 @@
     "showHiddenResults_one": "Show {{count}} hidden result",
     "showHiddenResults_other": "Show {{count}} hidden results",
     "searchError": "Could not reach the metadata provider — {{error}}",
+    "openExisting": "Open existing author",
+    "findMetadata": "Find metadata",
     "addFail": "Failed to add author"
+  },
+  "authorMetadataLink": {
+    "actionLink": "Link metadata",
+    "actionFindBetter": "Find better metadata",
+    "title": "Link metadata",
+    "searchPlaceholder": "Search by author name...",
+    "search": "Search",
+    "searching": "Searching...",
+    "searchFailed": "Search failed",
+    "link": "Link",
+    "linking": "Linking...",
+    "linkFailed": "Link failed",
+    "openExisting": "Open existing author",
+    "books": "{{count}} books",
+    "ratings": "{{count}} ratings",
+    "noResults": "No alternate metadata candidates found"
   },
   "mergeAuthorsModal": {
     "title": "Merge Authors",
