@@ -19,6 +19,7 @@ type ListSyncer struct {
 	importLists     *db.ImportListRepo
 	authors         *db.AuthorRepo
 	books           *db.BookRepo
+	series          seriesLinker
 	tokenSource     func(context.Context) string
 	hardcoverClient func(token string) hardcoverListClient
 }
@@ -26,6 +27,14 @@ type ListSyncer struct {
 type hardcoverListClient interface {
 	GetUserLists(ctx context.Context) ([]hardcover.HCList, error)
 	GetListBooks(ctx context.Context, listID int) ([]models.Book, error)
+}
+
+// seriesLinker is the slice of *db.SeriesRepo the syncer needs to persist
+// the primary-series association attached to imported books. Declared as an
+// interface so tests can stub it without standing up the full SQL schema.
+type seriesLinker interface {
+	CreateOrGet(ctx context.Context, s *models.Series) error
+	LinkBook(ctx context.Context, seriesID, bookID int64, position string, primary bool) error
 }
 
 // New creates a new ListSyncer.
@@ -38,6 +47,18 @@ func New(importLists *db.ImportListRepo, authors *db.AuthorRepo, books *db.BookR
 			return hardcover.NewAuthenticated(token)
 		},
 	}
+}
+
+// WithSeriesRepo wires the series persistence layer so that books imported
+// from Hardcover lists carry forward their primary-series association.
+// Without it, SeriesRefs on imported books are silently dropped.
+func (s *ListSyncer) WithSeriesRepo(repo *db.SeriesRepo) *ListSyncer {
+	if repo == nil {
+		s.series = nil
+		return s
+	}
+	s.series = repo
+	return s
 }
 
 // WithTokenSource configures the fallback Hardcover API token used when an
@@ -175,9 +196,30 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 			continue
 		}
 		slog.Info("imported book from hardcover list", "title", book.Title, "author_id", authorID)
+
+		s.linkSeriesRefs(ctx, &book)
 	}
 
 	return nil
+}
+
+// linkSeriesRefs persists each Hardcover SeriesRef into the series table and
+// links it to the freshly imported book. Best-effort: a failed link must not
+// roll back or block the book import — log and move on.
+func (s *ListSyncer) linkSeriesRefs(ctx context.Context, book *models.Book) {
+	if s.series == nil || len(book.SeriesRefs) == 0 || book.ID == 0 {
+		return
+	}
+	for _, ref := range book.SeriesRefs {
+		ser := &models.Series{ForeignID: ref.ForeignID, Title: ref.Title}
+		if err := s.series.CreateOrGet(ctx, ser); err != nil {
+			slog.Warn("hardcover list sync: upsert series failed", "series", ref.Title, "book", book.Title, "error", err)
+			continue
+		}
+		if err := s.series.LinkBook(ctx, ser.ID, book.ID, ref.Position, ref.Primary); err != nil {
+			slog.Warn("hardcover list sync: link book to series failed", "series", ref.Title, "book", book.Title, "error", err)
+		}
+	}
 }
 
 func (s *ListSyncer) tokenForList(ctx context.Context, il models.ImportList) string {

@@ -564,26 +564,38 @@ type hcContribution struct {
 }
 
 type hcBook struct {
-	ID                    int              `json:"id"`
-	Title                 string           `json:"title"`
-	Subtitle              string           `json:"subtitle"`
-	Slug                  string           `json:"slug"`
-	Description           string           `json:"description"`
-	Image                 *hcImage         `json:"image"`
-	ReleaseYear           *int             `json:"release_year"`
-	RatingsCount          int              `json:"ratings_count"`
-	Rating                float64          `json:"rating"`
-	UsersCount            int              `json:"users_count"`
-	Genres                []string         `json:"genres"`
-	ISBNs                 []string         `json:"isbns"`
-	HasAudiobook          bool             `json:"has_audiobook"`
-	HasEbook              bool             `json:"has_ebook"`
-	AudioSeconds          *int             `json:"audio_seconds"`
-	DefaultAudioEditionID *int             `json:"default_audio_edition_id"`
-	DefaultEbookEditionID *int             `json:"default_ebook_edition_id"`
-	Contributions         []hcContribution `json:"contributions"`
-	AuthorNames           []string         `json:"author_names"`
-	SeriesRefs            []models.SeriesRef
+	ID                     int                `json:"id"`
+	Title                  string             `json:"title"`
+	Subtitle               string             `json:"subtitle"`
+	Slug                   string             `json:"slug"`
+	Description            string             `json:"description"`
+	Image                  *hcImage           `json:"image"`
+	ReleaseYear            *int               `json:"release_year"`
+	RatingsCount           int                `json:"ratings_count"`
+	Rating                 float64            `json:"rating"`
+	UsersCount             int                `json:"users_count"`
+	Genres                 []string           `json:"genres"`
+	ISBNs                  []string           `json:"isbns"`
+	HasAudiobook           bool               `json:"has_audiobook"`
+	HasEbook               bool               `json:"has_ebook"`
+	AudioSeconds           *int               `json:"audio_seconds"`
+	DefaultAudioEditionID  *int               `json:"default_audio_edition_id"`
+	DefaultEbookEditionID  *int               `json:"default_ebook_edition_id"`
+	Contributions          []hcContribution   `json:"contributions"`
+	AuthorNames            []string           `json:"author_names"`
+	FeaturedSeries         *hcFeaturedSeries  `json:"featured_series"`
+	FeaturedSeriesID       *int               `json:"featured_series_id"`
+	FeaturedSeriesPosition any                `json:"featured_series_position"`
+	SeriesRefs             []models.SeriesRef `json:"-"`
+}
+
+// hcFeaturedSeries captures the Hardcover GraphQL `featured_series` relation
+// on a book — the primary series the book belongs to. Used to hydrate
+// SeriesRefs for list/shelf books, which would otherwise lose their series
+// association at import time.
+type hcFeaturedSeries struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
 }
 
 type hcEdition struct {
@@ -963,6 +975,34 @@ func searchBool(value any) bool {
 	}
 }
 
+// featuredSeriesRefs builds SeriesRefs from the GraphQL featured_series fields
+// on a book. Mirrors searchSeriesRefs (Typesense) so list/shelf imports get
+// the same primary-series linking the search path already provides.
+func featuredSeriesRefs(series *hcFeaturedSeries, idValue *int, positionValue any) []models.SeriesRef {
+	var (
+		title string
+		id    string
+	)
+	if series != nil {
+		title = strings.TrimSpace(series.Name)
+		if series.ID > 0 {
+			id = strconv.Itoa(series.ID)
+		}
+	}
+	if id == "" && idValue != nil && *idValue > 0 {
+		id = strconv.Itoa(*idValue)
+	}
+	if title == "" || id == "" {
+		return nil
+	}
+	return []models.SeriesRef{{
+		ForeignID: seriesIDPrefix + id,
+		Title:     title,
+		Position:  formatSeriesPosition(positionValue),
+		Primary:   true,
+	}}
+}
+
 func searchSeriesRefs(seriesValue, idValue, positionValue any) []models.SeriesRef {
 	title, id := searchFeaturedSeries(seriesValue)
 	if id == "" {
@@ -1066,6 +1106,10 @@ func (c *Client) toBook(b hcBook) models.Book {
 	if slug == "" {
 		slug = fmt.Sprintf("%d", b.ID)
 	}
+	seriesRefs := b.SeriesRefs
+	if len(seriesRefs) == 0 {
+		seriesRefs = featuredSeriesRefs(b.FeaturedSeries, b.FeaturedSeriesID, b.FeaturedSeriesPosition)
+	}
 	bk := models.Book{
 		ForeignID:        idPrefix + slug,
 		Title:            b.Title,
@@ -1078,7 +1122,7 @@ func (c *Client) toBook(b hcBook) models.Book {
 		Status:           models.BookStatusWanted,
 		Genres:           []string{},
 		ISBNs:            b.ISBNs,
-		SeriesRefs:       b.SeriesRefs,
+		SeriesRefs:       seriesRefs,
 	}
 	if len(b.Genres) > 0 {
 		bk.Genres = b.Genres

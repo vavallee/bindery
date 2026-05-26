@@ -244,3 +244,179 @@ func (f fakeHardcoverListClient) GetUserLists(context.Context) ([]hardcover.HCLi
 func (f fakeHardcoverListClient) GetListBooks(context.Context, int) ([]models.Book, error) {
 	return f.books, nil
 }
+
+// newTestSyncerWithSeries returns a syncer wired against a real in-memory DB
+// and gives the test direct access to the SeriesRepo so it can verify links
+// were actually persisted.
+func newTestSyncerWithSeries(t *testing.T) (*ListSyncer, *db.ImportListRepo, *db.SeriesRepo) {
+	t.Helper()
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatalf("open memory db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	importLists := db.NewImportListRepo(database)
+	authors := db.NewAuthorRepo(database)
+	books := db.NewBookRepo(database)
+	series := db.NewSeriesRepo(database)
+	s := New(importLists, authors, books).WithSeriesRepo(series)
+	return s, importLists, series
+}
+
+func bookWithSeriesRef(foreignID, title string, refs []models.SeriesRef) models.Book {
+	return models.Book{
+		ForeignID:        foreignID,
+		Title:            title,
+		SortTitle:        title,
+		MetadataProvider: "hardcover",
+		Author: &models.Author{
+			ForeignID:        "hc:author-x",
+			Name:             "Author X",
+			SortName:         "X, Author",
+			MetadataProvider: "hardcover",
+		},
+		SeriesRefs: refs,
+	}
+}
+
+// TestSyncOne_LinksSeriesRefsAfterBookImport is the issue #805 happy path:
+// books that arrive with a populated SeriesRefs slice must be linked through
+// the SeriesRepo so the import doesn't quietly lose series membership.
+func TestSyncOne_LinksSeriesRefsAfterBookImport(t *testing.T) {
+	s, repo, series := newTestSyncerWithSeries(t)
+	ctx := context.Background()
+
+	il := testImportList("With Series", "hardcover", true)
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	book := bookWithSeriesRef("hc:dune", "Dune", []models.SeriesRef{{
+		ForeignID: "hc-series:17",
+		Title:     "Dune Chronicles",
+		Position:  "1",
+		Primary:   true,
+	}})
+	s.hardcoverClient = func(string) hardcoverListClient {
+		return fakeHardcoverListClient{
+			lists: []hardcover.HCList{{ID: 12, Slug: il.URL, Name: il.Name}},
+			books: []models.Book{book},
+		}
+	}
+
+	if err := s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatalf("SyncOne: %v", err)
+	}
+
+	persisted, err := series.GetByForeignID(ctx, "hc-series:17")
+	if err != nil {
+		t.Fatalf("GetByForeignID: %v", err)
+	}
+	if persisted == nil {
+		t.Fatal("series was not created during sync")
+	}
+	booksInSeries, err := series.ListBooksInSeries(ctx, persisted.ID)
+	if err != nil {
+		t.Fatalf("ListBooksInSeries: %v", err)
+	}
+	if len(booksInSeries) != 1 || booksInSeries[0].ForeignID != "hc:dune" {
+		t.Fatalf("series should contain the imported book, got %+v", booksInSeries)
+	}
+}
+
+// TestSyncOne_SeriesLinkErrorDoesNotBlockImport guarantees the best-effort
+// contract: when the SeriesRepo errors out, the book is still imported and
+// the sync does not fail the whole list. Regression guard for the warning
+// path.
+func TestSyncOne_SeriesLinkErrorDoesNotBlockImport(t *testing.T) {
+	s, repo, _ := newTestSyncerWithSeries(t)
+	ctx := context.Background()
+
+	stub := &erroringSeriesRepo{}
+	s.series = stub
+
+	il := testImportList("Series Error", "hardcover", true)
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	book := bookWithSeriesRef("hc:dune", "Dune", []models.SeriesRef{{
+		ForeignID: "hc-series:17",
+		Title:     "Dune Chronicles",
+		Position:  "1",
+		Primary:   true,
+	}})
+	s.hardcoverClient = func(string) hardcoverListClient {
+		return fakeHardcoverListClient{
+			lists: []hardcover.HCList{{ID: 12, Slug: il.URL, Name: il.Name}},
+			books: []models.Book{book},
+		}
+	}
+
+	if err := s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatalf("SyncOne should succeed even when series linking errors: %v", err)
+	}
+	if stub.upsertCalls == 0 {
+		t.Errorf("expected CreateOrGet to be attempted, got 0 calls")
+	}
+
+	imported, err := s.books.GetByForeignID(ctx, "hc:dune")
+	if err != nil || imported == nil {
+		t.Fatalf("book should still be imported despite series link failure: %v, %v", imported, err)
+	}
+}
+
+// erroringSeriesRepo always fails CreateOrGet so we can prove the syncer
+// swallows the error.
+type erroringSeriesRepo struct {
+	upsertCalls int
+	linkCalls   int
+}
+
+func (e *erroringSeriesRepo) CreateOrGet(context.Context, *models.Series) error {
+	e.upsertCalls++
+	return errors.New("simulated upsert failure")
+}
+
+func (e *erroringSeriesRepo) LinkBook(context.Context, int64, int64, string, bool) error {
+	e.linkCalls++
+	return errors.New("should not be called when upsert fails")
+}
+
+// TestSyncOne_NoSeriesRepo_NoSeriesLinkAttempted protects the optional
+// nature of the repo: the syncer must remain functional when WithSeriesRepo
+// was never called (e.g. older deployments wired before #805 landed).
+func TestSyncOne_NoSeriesRepo_NoSeriesLinkAttempted(t *testing.T) {
+	s, _ := newTestSyncer(t)
+	if s.series != nil {
+		t.Fatalf("default syncer should have no series repo, got %T", s.series)
+	}
+
+	il := testImportList("No Series Repo", "hardcover", true)
+	importLists := s.importLists
+	ctx := context.Background()
+	if err := importLists.Create(ctx, &il); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	book := bookWithSeriesRef("hc:dune", "Dune", []models.SeriesRef{{
+		ForeignID: "hc-series:17",
+		Title:     "Dune Chronicles",
+		Position:  "1",
+		Primary:   true,
+	}})
+	s.hardcoverClient = func(string) hardcoverListClient {
+		return fakeHardcoverListClient{
+			lists: []hardcover.HCList{{ID: 12, Slug: il.URL, Name: il.Name}},
+			books: []models.Book{book},
+		}
+	}
+
+	if err := s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatalf("SyncOne: %v", err)
+	}
+	imported, err := s.books.GetByForeignID(ctx, "hc:dune")
+	if err != nil || imported == nil {
+		t.Fatalf("book should be imported: %v, %v", imported, err)
+	}
+}

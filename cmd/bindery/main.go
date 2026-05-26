@@ -391,6 +391,7 @@ func main() {
 
 	// Register the Hardcover list syncer (24-hour job).
 	hcSyncer := hardcoverlistsyncer.New(importListRepo, authorRepo, bookRepo).
+		WithSeriesRepo(seriesRepo).
 		WithTokenSource(func(ctx context.Context) string {
 			return api.GetHardcoverAPIToken(ctx, settingsRepo)
 		})
