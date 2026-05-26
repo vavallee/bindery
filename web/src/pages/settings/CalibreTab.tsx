@@ -1,5 +1,12 @@
-import { useEffect, useState } from 'react'
-import { api, CalibreImportProgress, CalibreSyncProgress } from '../../api/client'
+import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import {
+  api,
+  CalibreImportProgress,
+  CalibreImportRun,
+  CalibreRollbackResult,
+  CalibreSyncProgress,
+} from '../../api/client'
 import Toggle from './Toggle'
 
 export default function CalibreTab() {
@@ -61,6 +68,9 @@ function CalibreSection({
   const [syncError, setSyncError] = useState<string | null>(null)
   const [syncModalOpen, setSyncModalOpen] = useState(false)
   const [bridgeReachable, setBridgeReachable] = useState<boolean | null>(null)
+  // Recent imports + rollback (issue #643).
+  const [runs, setRuns] = useState<CalibreImportRun[]>([])
+  const [rollbackRun, setRollbackRun] = useState<CalibreImportRun | null>(null)
 
   const saveSettingWithError = async (key: string) => {
     setSaveError(null)
@@ -86,6 +96,10 @@ function CalibreSection({
 
   // Hydrate progress on mount so navigating back mid-import still shows
   // the live bar instead of a dead "Import library" button.
+  const refreshRuns = useCallback(() => {
+    api.calibreRuns(10).then(setRuns).catch(() => {})
+  }, [])
+
   useEffect(() => {
     api.calibreImportStatus().then(setImportProgress).catch(() => {})
     api.calibreSyncStatus().then(p => {
@@ -95,7 +109,16 @@ function CalibreSection({
       // the disabled button is doing.
       if (p.running) setSyncModalOpen(true)
     }).catch(() => {})
-  }, [])
+    refreshRuns()
+  }, [refreshRuns])
+
+  // Refresh runs after an import finishes so the new run shows up without
+  // requiring a manual click.
+  useEffect(() => {
+    if (!importProgress) return
+    if (importProgress.running) return
+    refreshRuns()
+  }, [importProgress, refreshRuns])
 
   // Silently probe plugin reachability so the "Push all to Calibre"
   // button can enable/disable without the user having to click Test
@@ -459,6 +482,12 @@ function CalibreSection({
                   )}
                 </div>
               )}
+
+              <CalibreRunsList
+                runs={runs}
+                onRefresh={refreshRuns}
+                onRollback={setRollbackRun}
+              />
             </>
           )}
         </div>
@@ -502,7 +531,281 @@ function CalibreSection({
           onClose={() => setSyncModalOpen(false)}
         />
       )}
+
+      {rollbackRun && (
+        <CalibreRollbackModal
+          run={rollbackRun}
+          onClose={() => setRollbackRun(null)}
+          onApplied={() => {
+            refreshRuns()
+          }}
+        />
+      )}
     </section>
+  )
+}
+
+// CalibreRunsList renders the "Recent imports" panel inside the Library
+// import block. Each run gets a per-row Rollback button that pops the
+// CalibreRollbackModal.
+function CalibreRunsList({
+  runs,
+  onRefresh,
+  onRollback,
+}: {
+  runs: CalibreImportRun[]
+  onRefresh: () => void
+  onRollback: (run: CalibreImportRun) => void
+}) {
+  const { t } = useTranslation()
+
+  const statusLabel = (status: string) => {
+    switch (status) {
+      case 'running':
+        return t('settings.calibre.runs.statusRunning')
+      case 'completed':
+        return t('settings.calibre.runs.statusCompleted')
+      case 'failed':
+        return t('settings.calibre.runs.statusFailed')
+      case 'rolled_back':
+        return t('settings.calibre.runs.statusRolledBack')
+      default:
+        return status
+    }
+  }
+
+  return (
+    <div className="rounded border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950 px-3 py-3 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium text-slate-800 dark:text-zinc-200">
+            {t('settings.calibre.runs.heading')}
+          </p>
+          <p className="text-xs text-slate-600 dark:text-zinc-500">
+            {t('settings.calibre.runs.description')}
+          </p>
+        </div>
+        <button
+          onClick={onRefresh}
+          className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm font-medium text-white"
+        >
+          {t('settings.calibre.runs.refresh')}
+        </button>
+      </div>
+
+      {runs.length === 0 && (
+        <p className="text-sm text-slate-500 dark:text-zinc-500">
+          {t('settings.calibre.runs.empty')}
+        </p>
+      )}
+
+      {runs.slice(0, 10).map(run => {
+        const rolledBack = run.status === 'rolled_back'
+        const running = run.status === 'running'
+        return (
+          <div
+            key={run.id}
+            className={`rounded border px-3 py-2 ${
+              rolledBack
+                ? 'border-slate-200 dark:border-zinc-800 bg-slate-100/70 dark:bg-zinc-900/50 opacity-75'
+                : 'border-slate-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-950/40'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-slate-800 dark:text-zinc-200 truncate">
+                  {t('settings.calibre.runs.runLabel', { runId: run.id, status: statusLabel(run.status) })}
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-zinc-500">
+                  {t('settings.calibre.runs.startedAt', {
+                    startedAt: new Date(run.startedAt).toLocaleString(),
+                  })}
+                  {run.libraryPath ? ` · ${run.libraryPath}` : ''}
+                </p>
+              </div>
+              <button
+                onClick={() => onRollback(run)}
+                disabled={rolledBack || running}
+                className={`px-3 py-1.5 rounded text-xs font-medium text-white disabled:opacity-50 ${
+                  rolledBack ? 'bg-slate-500 cursor-not-allowed' : 'bg-amber-600 hover:bg-amber-500'
+                }`}
+                title={rolledBack ? t('settings.calibre.runs.rolledBack') : ''}
+              >
+                {rolledBack ? t('settings.calibre.runs.rolledBack') : t('settings.calibre.runs.rollback')}
+              </button>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// CalibreRollbackModal shows the rollback preview, lets the admin confirm,
+// and surfaces the resulting per-action list. Apply uses amber styling
+// rather than red because rollback restores Bindery state — it does not
+// delete on-disk files.
+function CalibreRollbackModal({
+  run,
+  onClose,
+  onApplied,
+}: {
+  run: CalibreImportRun
+  onClose: () => void
+  onApplied: () => void
+}) {
+  const { t } = useTranslation()
+  const [preview, setPreview] = useState<CalibreRollbackResult | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(true)
+  const [applied, setApplied] = useState<CalibreRollbackResult | null>(null)
+  const [applying, setApplying] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setPreviewLoading(true)
+    setError(null)
+    api.calibreRunRollbackPreview(run.id)
+      .then(setPreview)
+      .catch(err => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setPreviewLoading(false))
+  }, [run.id])
+
+  const apply = async () => {
+    setApplying(true)
+    setError(null)
+    try {
+      const result = await api.calibreRunRollback(run.id)
+      setApplied(result)
+      onApplied()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setApplying(false)
+    }
+  }
+
+  const display = applied ?? preview
+  const closable = !applying
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+      <div className="w-full max-w-2xl rounded-lg bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 shadow-xl">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-zinc-800">
+          <h3 className="text-base font-semibold text-slate-800 dark:text-zinc-100">
+            {t('settings.calibre.runs.modalTitle', { runId: run.id })}
+          </h3>
+          <button
+            onClick={closable ? onClose : undefined}
+            disabled={!closable}
+            className="text-slate-500 hover:text-slate-700 dark:text-zinc-400 dark:hover:text-zinc-200 disabled:opacity-40"
+            title={closable ? '' : t('settings.calibre.runs.applying')}
+          >
+            ✕
+          </button>
+        </div>
+        <div className="p-4 space-y-3">
+          <p className="text-xs text-slate-600 dark:text-zinc-400">{t('settings.calibre.runs.modalIntro')}</p>
+
+          {previewLoading && (
+            <p className="text-sm text-slate-500 dark:text-zinc-500">{t('settings.calibre.runs.previewing')}</p>
+          )}
+
+          {error && (
+            <p className="text-sm text-red-600 dark:text-red-400">
+              {t('settings.calibre.runs.error', { error })}
+            </p>
+          )}
+
+          {display && (
+            <>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded border border-slate-200 dark:border-zinc-800 px-2 py-1.5">
+                  <div className="text-slate-600 dark:text-zinc-500">{t('settings.calibre.runs.actionsPlanned', { count: display.stats.actionsPlanned })}</div>
+                </div>
+                <div className="rounded border border-slate-200 dark:border-zinc-800 px-2 py-1.5">
+                  <div className="text-slate-600 dark:text-zinc-500">{t('settings.calibre.runs.entitiesDeleted', { count: display.stats.entitiesDeleted })}</div>
+                </div>
+                <div className="rounded border border-slate-200 dark:border-zinc-800 px-2 py-1.5">
+                  <div className="text-slate-600 dark:text-zinc-500">{t('settings.calibre.runs.provenanceUnlinked', { count: display.stats.provenanceUnlinked })}</div>
+                </div>
+                <div className="rounded border border-slate-200 dark:border-zinc-800 px-2 py-1.5">
+                  <div className="text-slate-600 dark:text-zinc-500">{t('settings.calibre.runs.skipped', { count: display.stats.skipped })}</div>
+                </div>
+              </div>
+
+              {display.stats.filesAffected > 0 && (
+                <div className="rounded border border-amber-300 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+                  <p className="font-medium">{t('settings.calibre.runs.filesAffected', { count: display.stats.filesAffected })}</p>
+                  <p>{display.filesOnDiskWarning || t('settings.calibre.runs.filesOnDiskWarning')}</p>
+                </div>
+              )}
+
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-700 dark:text-zinc-300 mb-1">
+                  {t('settings.calibre.runs.actionsHeading')}
+                </p>
+                {display.actions.length === 0 ? (
+                  <p className="text-xs text-slate-500 dark:text-zinc-500">{t('settings.calibre.runs.noActions')}</p>
+                ) : (
+                  <div className="max-h-64 overflow-y-auto rounded border border-slate-200 dark:border-zinc-800">
+                    <table className="w-full text-xs">
+                      <tbody>
+                        {display.actions.map(action => (
+                          <tr
+                            key={`${action.entityType}-${action.externalId}-${action.localId}-${action.action}`}
+                            className="border-t border-slate-200 dark:border-zinc-800"
+                          >
+                            <td className="px-2 py-1 text-slate-800 dark:text-zinc-200 font-medium">
+                              {action.action}
+                            </td>
+                            <td className="px-2 py-1 text-slate-600 dark:text-zinc-400">{action.entityType}</td>
+                            <td className="px-2 py-1 text-slate-600 dark:text-zinc-400 truncate">
+                              {action.displayName || action.externalId}
+                            </td>
+                            <td className="px-2 py-1 text-slate-500 dark:text-zinc-500 truncate">
+                              {action.reason || ''}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {applied && (
+                <p className="text-xs text-emerald-700 dark:text-emerald-400">
+                  {t('settings.calibre.runs.appliedSummary', {
+                    deleted: applied.stats.entitiesDeleted,
+                    unlinked: applied.stats.provenanceUnlinked,
+                    skipped: applied.stats.skipped,
+                    failed: applied.stats.failed,
+                  })}
+                </p>
+              )}
+            </>
+          )}
+        </div>
+        <div className="px-4 py-3 border-t border-slate-200 dark:border-zinc-800 flex justify-end gap-2">
+          <button
+            onClick={closable ? onClose : undefined}
+            disabled={!closable}
+            className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 rounded text-sm font-medium text-white disabled:opacity-50"
+          >
+            {t('settings.calibre.runs.cancel')}
+          </button>
+          {!applied && (
+            <button
+              onClick={apply}
+              disabled={applying || previewLoading || !!error}
+              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 rounded text-sm font-medium text-white disabled:opacity-50"
+            >
+              {applying ? t('settings.calibre.runs.applying') : t('settings.calibre.runs.applyRollback')}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
   )
 }
 

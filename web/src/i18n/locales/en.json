@@ -269,6 +269,40 @@
         "dismissRunConfirm": "Dismiss {{count}} review items from run #{{runId}}? This cannot be undone."
       }
     },
+    "calibre": {
+      "runs": {
+        "heading": "Recent imports",
+        "description": "Bindery tracks every live import so you can preview and undo it. Files on disk are never touched — only the metadata rows Bindery created or modified.",
+        "refresh": "Refresh",
+        "empty": "No Calibre imports recorded yet.",
+        "runLabel": "Run #{{runId}} · {{status}}",
+        "startedAt": "Started {{startedAt}}",
+        "statusRunning": "Running",
+        "statusCompleted": "Completed",
+        "statusFailed": "Failed",
+        "statusRolledBack": "Rolled back",
+        "preview": "Preview rollback",
+        "previewing": "Previewing…",
+        "rollback": "Roll back…",
+        "rolledBack": "Rolled back",
+        "rollingBack": "Rolling back…",
+        "modalTitle": "Roll back Calibre import #{{runId}}",
+        "modalIntro": "Bindery will revert metadata changes made by this import. Files on disk are never deleted.",
+        "actionsPlanned": "{{count}} action(s) planned",
+        "entitiesDeleted": "{{count}} entities will be deleted",
+        "provenanceUnlinked": "{{count}} link(s) will be removed",
+        "filesAffected": "{{count}} book row(s) referenced files on disk",
+        "filesOnDiskWarning": "Files on disk are NOT removed by rollback. Delete them manually if you need to.",
+        "skipped": "{{count}} entries will be skipped (already rolled back or out of scope)",
+        "actionsHeading": "Planned actions",
+        "noActions": "Nothing to do.",
+        "applyRollback": "Apply rollback",
+        "applying": "Applying…",
+        "cancel": "Cancel",
+        "error": "Rollback failed: {{error}}",
+        "appliedSummary": "Rollback complete — {{deleted}} deleted, {{unlinked}} link(s) removed, {{skipped}} skipped, {{failed}} failures."
+      }
+    },
     "indexers": {
       "heading": "Indexers",
       "addButton": "+ Add Indexer",

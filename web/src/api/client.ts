@@ -426,6 +426,11 @@ export const api = {
   calibreImportStatus: () => request<CalibreImportProgress>('/calibre/import/status'),
   calibreSyncStart: () => request<CalibreSyncProgress>('/calibre/sync', { method: 'POST' }),
   calibreSyncStatus: () => request<CalibreSyncProgress>('/calibre/sync/status'),
+  calibreRuns: (limit = 10) => request<CalibreImportRun[]>(`/calibre/runs?limit=${limit}`),
+  calibreRunRollbackPreview: (runId: number) =>
+    request<CalibreRollbackResult>(`/calibre/runs/${runId}/rollback/preview`),
+  calibreRunRollback: (runId: number) =>
+    request<CalibreRollbackResult>(`/calibre/runs/${runId}/rollback`, { method: 'POST' }),
 
   // Grimmory
   grimmoryConfig: () => request<GrimmoryConfig>('/grimmory/config'),
@@ -679,6 +684,51 @@ export interface CalibreSyncProgress {
   error?: string
   stats: CalibreSyncStats
   errors: CalibreSyncError[]
+}
+
+// CalibreImportRun is one persisted Calibre import run (issue #643). Used
+// by the "Recent imports" list in the Calibre settings tab.
+export interface CalibreImportRun {
+  id: number
+  sourceId: string
+  libraryPath: string
+  status: string
+  dryRun: boolean
+  sourceConfigJson?: string
+  summaryJson?: string
+  startedAt: string
+  finishedAt?: string
+}
+
+export interface CalibreRollbackStats {
+  actionsPlanned: number
+  entitiesDeleted: number
+  provenanceUnlinked: number
+  filesAffected: number
+  skipped: number
+  failed: number
+}
+
+export interface CalibreRollbackAction {
+  entityType: string
+  externalId: string
+  localId: number
+  displayName?: string
+  outcome: string
+  action: string
+  reason?: string
+}
+
+export interface CalibreRollbackResult {
+  runId: number
+  preview: boolean
+  applied: boolean
+  dryRun: boolean
+  status: string
+  stats: CalibreRollbackStats
+  actions: CalibreRollbackAction[]
+  filesOnDiskWarning?: string
+  finishedAt: string
 }
 
 export interface GrimmoryConfig {

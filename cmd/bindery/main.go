@@ -142,6 +142,9 @@ func main() {
 	absProvenanceRepo := db.NewABSProvenanceRepo(database)
 	absConflictRepo := db.NewABSMetadataConflictRepo(database)
 	absReviewRepo := db.NewABSReviewItemRepo(database)
+	calibreImportRunRepo := db.NewCalibreImportRunRepo(database)
+	calibreSnapshotRepo := db.NewCalibreEntitySnapshotRepo(database)
+	calibreProvenanceRepo := db.NewCalibreProvenanceRepo(database)
 	indexerRepo := db.NewIndexerRepo(database)
 	dlClientRepo := db.NewDownloadClientRepo(database)
 	downloadRepo := db.NewDownloadRepo(database)
@@ -296,7 +299,8 @@ func main() {
 	// runs. A single instance is shared between the API handler and the
 	// startup-sync branch below — both paths share the "only one import
 	// at a time" guard.
-	calibreImporter := calibre.NewImporter(authorRepo, authorAliasRepo, bookRepo, editionRepo, settingsRepo)
+	calibreImporter := calibre.NewImporter(authorRepo, authorAliasRepo, bookRepo, editionRepo, settingsRepo).
+		WithRunTracking(calibreImportRunRepo, calibreSnapshotRepo, calibreProvenanceRepo)
 	absImporter := abs.NewImporter(authorRepo, authorAliasRepo, bookRepo, editionRepo, seriesRepo, settingsRepo, absImportRunRepo, absImportRunEntityRepo, absProvenanceRepo, absReviewRepo, absConflictRepo).
 		WithVersion(version).
 		WithStoragePaths(cfg.LibraryDir, cfg.AudiobookDir, rootFolderRepo).
@@ -513,6 +517,7 @@ func main() {
 	calibreImportHandler := api.NewCalibreImportHandler(calibreImporter, func() calibre.Config {
 		return api.LoadCalibreConfig(settingsRepo)
 	})
+	calibreRunsHandler := api.NewCalibreRunsHandler(calibreImporter)
 	calibreSyncer := calibre.NewSyncer(bookRepo).WithMetadata(authorRepo, editionRepo)
 	calibreSyncHandler := api.NewCalibreSyncHandler(
 		calibreSyncer,
@@ -861,6 +866,17 @@ func main() {
 		// idempotent. Single-job policy — second call returns 409.
 		r.Post("/calibre/sync", calibreSyncHandler.Start)
 		r.Get("/calibre/sync/status", calibreSyncHandler.Status)
+
+		// Calibre import run history + rollback (#643). Admin-only — a bad
+		// rollback can delete authors/books wholesale, so the destructive
+		// path is gated by RequireAdmin and the read-only list is grouped
+		// here for consistency.
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireAdmin)
+			r.Get("/calibre/runs", calibreRunsHandler.List)
+			r.Get("/calibre/runs/{runID}/rollback/preview", calibreRunsHandler.RollbackPreview)
+			r.Post("/calibre/runs/{runID}/rollback", calibreRunsHandler.Rollback)
+		})
 
 		// Migration imports (CSV of author names, or Readarr SQLite DB).
 		// The Readarr import is async — POST returns 202 immediately and the
