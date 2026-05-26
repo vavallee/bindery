@@ -178,6 +178,21 @@ func main() {
 	// and the proxy-auth identity check).
 	trustedCIDRs := parseTrustedProxyCIDRs(os.Getenv("BINDERY_TRUSTED_PROXY"))
 
+	// Warn loudly when the trusted-proxy allowlist effectively trusts every
+	// possible peer (0.0.0.0/0 or ::/0). In that shape every client's
+	// X-Forwarded-For header is honoured, defeating the login rate-limiter
+	// (which keys off the post-RealIP `RemoteAddr`) and any other per-IP
+	// decision in the stack. Operators sometimes do this in Helm charts to
+	// silence the proxy-mode safety gate without thinking through the
+	// implication; surfacing it at boot makes the misconfiguration obvious.
+	for _, c := range trustedCIDRs {
+		ones, bits := c.Mask.Size()
+		if ones == 0 && bits > 0 {
+			slog.Warn("BINDERY_TRUSTED_PROXY entry trusts every peer — login rate-limiter and per-IP decisions are effectively disabled",
+				"cidr", c.String())
+		}
+	}
+
 	// Safety gate: proxy auth mode requires at least one trusted proxy CIDR so
 	// that the identity header cannot be forged by arbitrary LAN hosts.
 	if s, _ := settingsRepo.Get(ctxBoot, api.SettingAuthMode); s != nil && s.Value == string(auth.ModeProxy) {
@@ -836,11 +851,17 @@ func main() {
 		r.Put("/customformat/{id}", customFormatHandler.Update)
 		r.Delete("/customformat/{id}", customFormatHandler.Delete)
 
-		// Backups
-		r.Get("/backup", backupHandler.List)
-		r.Post("/backup", backupHandler.Create)
-		r.Post("/backup/{filename}/restore", backupHandler.Restore)
-		r.Delete("/backup/{filename}", backupHandler.Delete)
+		// Backups — Restore overwrites the live database, Delete removes
+		// stored backups, and List leaks filenames containing timestamps that
+		// help an attacker target Restore. Admin-only across the whole
+		// surface.
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireAdmin)
+			r.Get("/backup", backupHandler.List)
+			r.Post("/backup", backupHandler.Create)
+			r.Post("/backup/{filename}/restore", backupHandler.Restore)
+			r.Delete("/backup/{filename}", backupHandler.Delete)
+		})
 
 		// System logs
 		r.Get("/system/logs", logHandler.List)
