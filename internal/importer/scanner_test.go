@@ -621,6 +621,7 @@ func TestImportSuccess_FiresBookImported(t *testing.T) {
 	call := spy.lookup(notifierEventBookImported)
 	if call == nil {
 		t.Fatalf("expected EventBookImported to fire; got calls: %+v", spy.calls)
+		return
 	}
 	if got, want := call.payload["title"], book.Title; got != want {
 		t.Errorf("payload title = %q, want %q", got, want)
@@ -657,6 +658,7 @@ func TestFailImport_FiresDownloadFailed(t *testing.T) {
 	call := spy.lookup(notifierEventDownloadFailed)
 	if call == nil {
 		t.Fatalf("expected EventDownloadFailed to fire; got calls: %+v", spy.calls)
+		return
 	}
 	if got, want := call.payload["title"], dl.Title; got != want {
 		t.Errorf("payload title = %q, want %q", got, want)
@@ -690,6 +692,7 @@ func TestMarkDownloadFailed_FiresDownloadFailed(t *testing.T) {
 	call := spy.lookup(notifierEventDownloadFailed)
 	if call == nil {
 		t.Fatalf("expected EventDownloadFailed; got calls: %+v", spy.calls)
+		return
 	}
 	if got := call.payload["message"]; got != "torrent errored" {
 		t.Errorf("payload message = %v, want %q", got, "torrent errored")

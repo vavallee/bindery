@@ -364,6 +364,7 @@ func TestNotify_DispatchesEventGrabbed(t *testing.T) {
 	call := spy.lookup(notifierEventGrabbed)
 	if call == nil {
 		t.Fatalf("expected EventGrabbed call; got %+v", spy.calls)
+		return
 	}
 	if got, want := call.payload["title"], "Dune"; got != want {
 		t.Errorf("payload title = %v, want %q", got, want)
