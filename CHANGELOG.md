@@ -6,6 +6,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`BINDERY_CONTACT` env var lets each install advertise its own User-Agent contact** (#848) — OpenLibrary's `/search/authors.json` endpoint applies per-User-Agent rate-limiting that the shared default contact pointer (the Bindery project URL) was tripping across the entire fleet, leaving users with HTTP 403 on every "Add author" attempt even though name/title book searches still worked. Setting `BINDERY_CONTACT` to a per-instance email or URL — e.g. `BINDERY_CONTACT=you@example.org` — makes each install's User-Agent distinct and lifts the block. Bare email addresses are auto-prefixed with `mailto:`. The default (project URL) is unchanged for installs that don't set the env var; users hitting the 403 should set it. Thanks to @wirecutter313 and the Reddit reporter for the independent confirmations.
+
 ## [v1.15.0] — 2026-05-26
 
 Six feature drops plus a sweep of fixes for default-install breaks that v1.14.2 didn't catch.
