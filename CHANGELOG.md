@@ -6,9 +6,39 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.15.1] — 2026-05-27
+
+Patch release. Five security/correctness fixes from a post-v1.15.0 review pass plus two user-visible bug fixes that affect every install (OpenLibrary author-search 403, notifications silently inert for everything but manual grabs).
+
 ### Fixed
 
-- **`BINDERY_CONTACT` env var lets each install advertise its own User-Agent contact** (#848) — OpenLibrary's `/search/authors.json` endpoint applies per-User-Agent rate-limiting that the shared default contact pointer (the Bindery project URL) was tripping across the entire fleet, leaving users with HTTP 403 on every "Add author" attempt even though name/title book searches still worked. Setting `BINDERY_CONTACT` to a per-instance email or URL — e.g. `BINDERY_CONTACT=you@example.org` — makes each install's User-Agent distinct and lifts the block. Bare email addresses are auto-prefixed with `mailto:`. The default (project URL) is unchanged for installs that don't set the env var; users hitting the 403 should set it. Thanks to @wirecutter313 and the Reddit reporter for the independent confirmations.
+- **Notifications actually fire on real events now** (#849, follow-up to #799) — before this release the notifier was only wired into the manual-grab path. Auto-grab (Wanted searches, series fill, recommendations, bulk monitor), import success, import failure, and download-client health-check failures all looked configured (`Test` worked, settings saved) but never produced webhooks. `EventGrabbed` now fires on every successful auto-grab, `EventBookImported` on every clean import, `EventDownloadFailed` from the importer's failure paths, and `EventHealth` is edge-triggered when a download client enters the error state (suppressed for the `checking → error` transient and for repeated `error → error` polls so a persistently-broken client doesn't spam every refresh cycle). `EventUpgrade` is intentionally deferred — Bindery does not currently have a distinct upgrade-grab code path. Thanks to @wirecutter313 for the original report.
+
+- **`BINDERY_CONTACT` env var lets each install advertise its own User-Agent contact** (#848) — OpenLibrary's `/search/authors.json` endpoint applies per-User-Agent rate-limiting that the shared default contact pointer (the Bindery project URL) was tripping across the entire fleet, leaving users with HTTP 403 on every "Add author" attempt even though name/title book searches still worked. Setting `BINDERY_CONTACT` to a per-instance email or URL — e.g. `BINDERY_CONTACT=you@example.org` — makes each install's User-Agent distinct and lifts the block. Bare email addresses are auto-prefixed with `mailto:`. The default (project URL) is unchanged for installs that don't set the env var; users hitting the 403 should set it. Thanks to @wirecutter313 and a Reddit reporter for the independent confirmations.
+
+- **Notification webhook URL on a private network can be set with a clear escape hatch** (#799 follow-up) — the bare `url not allowed: points to private network` error now appends a hint pointing at the `BINDERY_NOTIFICATIONS_ALLOW_PRIVATE=1` env var, so users running ntfy / Gotify / Home Assistant on the same Docker network know how to unblock the save. Thanks to @joncrangle.
+
+- **Custom HTTP headers are now editable in the notification UI** (#799 follow-up) — the `Headers` field has always existed in the model and the notifier honoured it, but the UI hardcoded `'{}'` so users had no way to provide an `Authorization` header for ntfy / Gotify / webhook routing. Both Add and Edit forms now expose a "Custom headers (JSON)" textarea with client-side validation and an ntfy auth placeholder. Thanks to @wirecutter313.
+
+### Security
+
+- **Indexer / Prowlarr / Download-client list endpoints behind RequireAdmin** (#844) — before this release, any authenticated user (role `user`, not just `admin`) could `GET /api/v1/indexer/{id}` and read the indexer's API key, or `GET /api/v1/downloadclient/{id}` and read the qBittorrent password. The entire `/api/v1/prowlarr/*` subtree (including Create/Update/Delete/Test/Sync) was ungated and a non-admin could delete an admin's Prowlarr instance. All these routes now require admin role. Tested by `TestSensitiveRoutesRequireAdmin`. Found in the post-v1.15.0 security review.
+
+- **Notification routes behind RequireAdmin** (#799 follow-up) — same shape as the indexer/prowlarr leak: `Notification.Headers` carries arbitrary HTTP auth tokens (ntfy auth, Discord routing), but `GET /api/v1/notification` was ungated. Now admin-only across the whole subtree.
+
+- **Backup endpoints behind RequireAdmin** (#845) — the `POST /api/v1/backup/{filename}/restore` endpoint overwrites the live SQLite database with the named backup file. Before this release, any authenticated user could roll the instance back. Now admin-only.
+
+- **OIDC promote-first-admin race condition fixed** (#845) — two concurrent first-time OIDC logins against an admin-less instance with local auth disabled could both pass the "no admins exist" check and both be auto-promoted to admin. The decision is now atomic via `SettingsRepo.SetIfAbsent` (SQLite `INSERT … ON CONFLICT DO NOTHING`): exactly one concurrent first-time login wins; any other simultaneous login falls back to the default role.
+
+- **Calibre import rollback is now transactional** (#643 follow-up, #847) — when a rollback hit a per-entity failure partway through, prior deletes/restores were already committed but the run wasn't marked rolled back, so retrying re-applied successful actions against shifted state and `restore_*` ops could mis-revert. The entire rollback now runs inside a single `sql.Tx` — any failure rolls back every prior write atomically, and `Stats.Failed > 0` is impossible on a successful return.
+
+- **Migration runner refuses duplicate version numbers at boot** (#845) — the 043 collision incident during the v1.15.0 cycle was silently lost on every existing install (the apply loop skipped the second `043_*.sql` because the version was already recorded). A new startup guard fails with a clear error when two migration files share a numeric prefix, so the failure mode can't recur.
+
+- **ABS / Grimmory / Calibre plugin base URLs validated against SSRF policy at save** (#845) — the admin-input boundary for these provider URLs now blocks link-local (169.254/16, AWS IMDSv4) and cloud-metadata endpoints via `httpsec.ValidateOutboundURL(PolicyLAN)`, matching the existing indexer/prowlarr/downloadclient policy. Loopback and RFC1918 are still allowed for typical homelab deployments. NewClient callers continue to use the format-only `NormalizeBaseURL` so test fixtures with `httptest` (loopback) still construct clients.
+
+- **File handler path check fails closed when no library roots are configured** (#845) — previously allowed any path when `BINDERY_LIBRARY_DIR` was unset (intended for test fixtures, but a silent prod misconfiguration). Now returns 403 unless the path falls under a configured root; tests seed an explicit `t.TempDir()` root.
+
+- **Trusted-proxy `0.0.0.0/0` boot warning** (#845) — operators sometimes set `BINDERY_TRUSTED_PROXY=0.0.0.0/0` to silence the proxy-mode safety gate, but in that shape every client's `X-Forwarded-For` is honoured, defeating the login rate-limiter and any per-IP decision. A boot-time `slog.Warn` makes the misconfiguration visible in logs.
 
 ## [v1.15.0] — 2026-05-26
 
