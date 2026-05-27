@@ -264,6 +264,13 @@ func main() {
 		return
 	}
 
+	// Notifier — constructed early so it can be passed into the import scanner,
+	// scheduler, and download-client health store before they start firing
+	// events. Before issue #849 was fixed, this was constructed only after
+	// scheduler.Start() and only injected into QueueHandler, which is why
+	// auto-grab / import / download-failure events never reached webhooks.
+	notif := notifier.New(notificationRepo)
+
 	// Indexer searcher
 	idxSearcher := indexer.NewSearcher()
 
@@ -275,6 +282,7 @@ func main() {
 		cfg.LibraryDir, cfg.AudiobookDir, namingTemplate, audiobookTemplate,
 		cfg.DownloadPathRemap,
 	)
+	importScanner.WithNotifier(notif)
 	if cfg.AudiobookDownloadDir != "" {
 		importScanner.WithAudiobookDownloadDir(cfg.AudiobookDownloadDir)
 		slog.Info("audiobook download dir configured", "path", cfg.AudiobookDownloadDir)
@@ -392,6 +400,7 @@ func main() {
 	sched.WithDelayProfiles(delayProfileRepo)
 	sched.WithPendingReleases(pendingReleaseRepo)
 	sched.WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir)
+	sched.WithNotifier(notif)
 	// Register the Calibre importer as the 24-hour sync job. The scheduler
 	// only fires the job when the syncer is non-nil, so no guard needed here.
 	sched.WithCalibreSyncer(calibreImporter)
@@ -426,9 +435,6 @@ func main() {
 
 	sched.Start()
 	defer sched.Stop()
-
-	// Notifier
-	notif := notifier.New(notificationRepo)
 
 	// OIDC manager — loaded from settings, reload on config change. The
 	// redirect base URL is resolved per-request from the Login/Callback
@@ -466,7 +472,7 @@ func main() {
 	authorAliasHandler := api.NewAuthorAliasHandler(authorRepo, authorAliasRepo)
 	bookHandler := api.NewBookHandler(bookRepo, metaAgg, historyRepo, sched).WithSettings(settingsRepo).WithDownloads(downloadRepo).WithAuthors(authorRepo).WithSeries(seriesRepo)
 	indexerHandler := api.NewIndexerHandler(indexerRepo, bookRepo, authorRepo, metadataProfileRepo, idxSearcher, settingsRepo, blocklistRepo).WithAliases(authorAliasRepo)
-	downloadHealth := downloader.NewHealthStore()
+	downloadHealth := downloader.NewHealthStore().WithNotifier(notif)
 	if clients, err := dlClientRepo.List(ctxBoot); err == nil {
 		downloader.RefreshDownloadClientHealthAsync(context.Background(), downloadHealth, clients, cfg.DownloadDir, cfg.AudiobookDownloadDir)
 	} else {

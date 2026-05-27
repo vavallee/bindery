@@ -20,14 +20,38 @@ const (
 	HealthError    = "error"
 )
 
+// eventNotifier publishes a webhook event for a downstream notification
+// target. Narrow shape of *notifier.Notifier so the HealthStore can be tested
+// without an HTTP fixture (issue #849).
+type eventNotifier interface {
+	Send(ctx context.Context, eventType string, payload map[string]interface{})
+}
+
+const notifierEventHealth = "health"
+
 // HealthStore keeps non-persistent download-client health diagnostics.
 type HealthStore struct {
-	mu   sync.RWMutex
-	byID map[int64]models.DownloadClientHealth
+	mu    sync.RWMutex
+	byID  map[int64]models.DownloadClientHealth
+	notif eventNotifier
 }
 
 func NewHealthStore() *HealthStore {
 	return &HealthStore{byID: make(map[int64]models.DownloadClientHealth)}
+}
+
+// WithNotifier attaches a webhook event notifier so transitions into
+// HealthError publish EventHealth (issue #849). Transitions out of error and
+// transitions within error (message changes) are deliberately silent — they
+// would either spam the channel or under-report the actionable signal.
+func (s *HealthStore) WithNotifier(n eventNotifier) *HealthStore {
+	if s == nil {
+		return s
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.notif = n
+	return s
 }
 
 func (s *HealthStore) Set(id int64, health models.DownloadClientHealth) {
@@ -35,8 +59,33 @@ func (s *HealthStore) Set(id int64, health models.DownloadClientHealth) {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	prev, hadPrev := s.byID[id]
 	s.byID[id] = health
+	notif := s.notif
+	s.mu.Unlock()
+
+	// Edge-trigger on entry into the error state. "Entry" means the previous
+	// status was anything-but-error AND wasn't the transient "checking"
+	// placeholder — RefreshDownloadClientHealthAsync writes Checking before
+	// every refresh, so without the checking exclusion a persistently-broken
+	// client would webhook on every poll cycle (error → checking → error).
+	// Repeating error → error stays silent for the same anti-spam reason;
+	// out-of-error transitions don't fire because there is no
+	// EventHealthRecovered enum today (issue #849, deferred follow-up).
+	if notif == nil || health.Status != HealthError {
+		return
+	}
+	if hadPrev && (prev.Status == HealthError || prev.Status == HealthChecking) {
+		return
+	}
+	// Background context: this is a fire-and-forget side effect of a state
+	// transition; it must not block Set or be cancelled by the caller's
+	// request context tearing down.
+	notif.Send(context.Background(), notifierEventHealth, map[string]interface{}{
+		"clientId": id,
+		"status":   health.Status,
+		"message":  health.Message,
+	})
 }
 
 func (s *HealthStore) Delete(id int64) {
