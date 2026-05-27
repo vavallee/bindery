@@ -121,6 +121,13 @@ function EditNotificationForm({ notification, onClose, onSaved }: { notification
   const [name, setName] = useState(notification.name)
   const [url, setUrl] = useState(notification.url)
   const [method, setMethod] = useState(notification.method || 'POST')
+  // Prefill the textarea pretty-printed when the stored value is non-empty;
+  // empty string when the row is "{}" so the placeholder still shows.
+  const [headers, setHeaders] = useState(() => {
+    const raw = (notification.headers || '').trim()
+    if (raw === '' || raw === '{}') return ''
+    try { return JSON.stringify(JSON.parse(raw), null, 2) } catch { return raw }
+  })
   const [onGrab, setOnGrab] = useState(notification.onGrab)
   const [onImport, setOnImport] = useState(notification.onImport)
   const [onFailure, setOnFailure] = useState(notification.onFailure)
@@ -131,9 +138,14 @@ function EditNotificationForm({ notification, onClose, onSaved }: { notification
 
   const submit = async () => {
     setSaveError('')
+    const headersJSON = normalizeHeadersJSON(headers)
+    if (headersJSON === null) {
+      setSaveError('Headers must be valid JSON object with string values, or empty.')
+      return
+    }
     setSaving(true)
     try {
-      const updated = await api.updateNotification(notification.id, { ...notification, name, url, method, onGrab, onImport, onFailure, onUpgrade, onHealth })
+      const updated = await api.updateNotification(notification.id, { ...notification, name, url, method, headers: headersJSON, onGrab, onImport, onFailure, onUpgrade, onHealth })
       onSaved(updated)
     } catch (err: unknown) {
       setSaveError(t('settings.notifications.saveFailed', { error: err instanceof Error ? err.message : 'Unknown error' }))
@@ -160,6 +172,17 @@ function EditNotificationForm({ notification, onClose, onSaved }: { notification
         </select>
       </div>
       <input value={url} onChange={e => setUrl(e.target.value)} placeholder="Webhook URL" className={inputCls} />
+      <div>
+        <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Custom headers (JSON, optional)</label>
+        <textarea
+          value={headers}
+          onChange={e => setHeaders(e.target.value)}
+          placeholder={'{"Authorization": "Bearer YOUR_NTFY_TOKEN"}'}
+          rows={3}
+          className={`${inputCls} font-mono text-xs`}
+        />
+        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">For ntfy auth, Discord routing, or any custom header. Leave blank to send none.</p>
+      </div>
       <div>
         <p className="text-xs text-slate-600 dark:text-zinc-400 mb-2">Trigger on:</p>
         <div className="flex flex-wrap gap-2">
@@ -188,6 +211,7 @@ function AddNotificationForm({ onClose, onAdded }: { onClose: () => void; onAdde
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
   const [method, setMethod] = useState('POST')
+  const [headers, setHeaders] = useState('')
   const [onGrab, setOnGrab] = useState(true)
   const [onImport, setOnImport] = useState(true)
   const [onFailure, setOnFailure] = useState(true)
@@ -198,11 +222,16 @@ function AddNotificationForm({ onClose, onAdded }: { onClose: () => void; onAdde
 
   const submit = async () => {
     setSaveError('')
+    const headersJSON = normalizeHeadersJSON(headers)
+    if (headersJSON === null) {
+      setSaveError('Headers must be valid JSON or empty.')
+      return
+    }
     setSaving(true)
     try {
       const n = await api.addNotification({
         name, url, method, type: 'webhook',
-        headers: '{}',
+        headers: headersJSON,
         onGrab, onImport, onFailure, onUpgrade, onHealth,
         enabled: true,
       })
@@ -233,6 +262,17 @@ function AddNotificationForm({ onClose, onAdded }: { onClose: () => void; onAdde
       </div>
       <input value={url} onChange={e => setUrl(e.target.value)} placeholder="Webhook URL" className={inputCls} />
       <div>
+        <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Custom headers (JSON, optional)</label>
+        <textarea
+          value={headers}
+          onChange={e => setHeaders(e.target.value)}
+          placeholder={'{"Authorization": "Bearer YOUR_NTFY_TOKEN"}'}
+          rows={3}
+          className={`${inputCls} font-mono text-xs`}
+        />
+        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">For ntfy auth, Discord routing, or any custom header. Leave blank to send none.</p>
+      </div>
+      <div>
         <p className="text-xs text-slate-600 dark:text-zinc-400 mb-2">Trigger on:</p>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => setOnGrab(!onGrab)} className={toggleCls(onGrab)}>Grab</button>
@@ -253,4 +293,23 @@ function AddNotificationForm({ onClose, onAdded }: { onClose: () => void; onAdde
       </div>
     </div>
   )
+}
+
+// normalizeHeadersJSON coerces the headers textarea value into the JSON
+// string the backend expects. Returns null on parse error so the caller
+// can refuse to submit. Empty input maps to "{}" — semantically equal to
+// "send no extra headers".
+function normalizeHeadersJSON(raw: string): string | null {
+  const trimmed = raw.trim()
+  if (trimmed === '') return '{}'
+  try {
+    const parsed = JSON.parse(trimmed)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
+    for (const v of Object.values(parsed)) {
+      if (typeof v !== 'string') return null
+    }
+    return JSON.stringify(parsed)
+  } catch {
+    return null
+  }
 }

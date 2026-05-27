@@ -729,13 +729,19 @@ func main() {
 		r.Delete("/blocklist/bulk", blocklistHandler.BulkDelete)
 		r.Delete("/blocklist/{id}", blocklistHandler.Delete)
 
-		// Notifications
-		r.Get("/notification", notificationHandler.List)
-		r.Post("/notification", notificationHandler.Create)
-		r.Get("/notification/{id}", notificationHandler.Get)
-		r.Put("/notification/{id}", notificationHandler.Update)
-		r.Delete("/notification/{id}", notificationHandler.Delete)
-		r.Post("/notification/{id}/test", notificationHandler.Test)
+		// Notifications — Notification.Headers carries arbitrary HTTP
+		// headers (often auth tokens for ntfy / Gotify / webhook routing).
+		// Admin-only across the whole surface so non-admin users can't read
+		// those credentials via List / Get.
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireAdmin)
+			r.Get("/notification", notificationHandler.List)
+			r.Post("/notification", notificationHandler.Create)
+			r.Get("/notification/{id}", notificationHandler.Get)
+			r.Put("/notification/{id}", notificationHandler.Update)
+			r.Delete("/notification/{id}", notificationHandler.Delete)
+			r.Post("/notification/{id}/test", notificationHandler.Test)
+		})
 
 		// Quality Profiles — reads available to all; mutations admin-only.
 		r.Get("/qualityprofile", qualityProfileHandler.List)
