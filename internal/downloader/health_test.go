@@ -307,3 +307,69 @@ func TestQbittorrentCategoryPath_MismatchMessageGuidesUserToPathRemap(t *testing
 		}
 	}
 }
+
+// healthSpy records Send calls so HealthStore notification tests can assert.
+type healthSpy struct {
+	calls []struct {
+		eventType string
+		payload   map[string]interface{}
+	}
+}
+
+func (h *healthSpy) Send(_ context.Context, eventType string, payload map[string]interface{}) {
+	h.calls = append(h.calls, struct {
+		eventType string
+		payload   map[string]interface{}
+	}{eventType, payload})
+}
+
+// TestHealthStore_Set_FiresEventHealthOnEntryToError verifies that a
+// healthy→error (and absent→error) transition publishes EventHealth, but
+// repeated error→error transitions do not. This is the wiring for issue #849
+// so user-configured webhooks see download-client breakage.
+func TestHealthStore_Set_FiresEventHealthOnEntryToError(t *testing.T) {
+	spy := &healthSpy{}
+	s := NewHealthStore().WithNotifier(spy)
+
+	// Absent → error: must fire (covers a freshly-added client coming up bad).
+	s.Set(1, models.DownloadClientHealth{Status: HealthError, Message: "save path missing"})
+	if len(spy.calls) != 1 {
+		t.Fatalf("absent->error: want 1 Send, got %d (%+v)", len(spy.calls), spy.calls)
+	}
+	if got, want := spy.calls[0].eventType, notifierEventHealth; got != want {
+		t.Errorf("eventType = %q, want %q", got, want)
+	}
+	if got, want := spy.calls[0].payload["status"], HealthError; got != want {
+		t.Errorf("payload status = %v, want %q", got, want)
+	}
+
+	// error → error (different message): NOT a new failure; must be silent
+	// to avoid spamming the webhook on every poll.
+	s.Set(1, models.DownloadClientHealth{Status: HealthError, Message: "still broken"})
+	if len(spy.calls) != 1 {
+		t.Fatalf("error->error: want 1 Send total, got %d", len(spy.calls))
+	}
+
+	// Recover then re-fail: ok->error must fire again.
+	s.Set(1, models.DownloadClientHealth{Status: HealthOK, Message: "fixed"})
+	s.Set(1, models.DownloadClientHealth{Status: HealthError, Message: "broke again"})
+	if len(spy.calls) != 2 {
+		t.Fatalf("ok->error after recovery: want 2 Sends total, got %d", len(spy.calls))
+	}
+
+	// checking → error: must NOT fire — RefreshDownloadClientHealthAsync
+	// writes Checking before every refresh, so without the suppression a
+	// persistently-broken client would webhook on every poll cycle.
+	s.Set(1, models.DownloadClientHealth{Status: HealthChecking, Message: "polling"})
+	s.Set(1, models.DownloadClientHealth{Status: HealthError, Message: "still broken"})
+	if len(spy.calls) != 2 {
+		t.Fatalf("checking->error: want 2 Sends total (no new fire), got %d", len(spy.calls))
+	}
+}
+
+// TestHealthStore_Set_NilNotifierDoesNotPanic guards optional wiring: a store
+// built without WithNotifier must still work.
+func TestHealthStore_Set_NilNotifierDoesNotPanic(t *testing.T) {
+	s := NewHealthStore()
+	s.Set(1, models.DownloadClientHealth{Status: HealthError, Message: "broken"})
+}

@@ -309,6 +309,74 @@ func TestSearchAndGrabBook_WithLanguageSetting(t *testing.T) {
 	s.SearchAndGrabBook(ctx, models.Book{Title: "Le Petit Prince"})
 }
 
+// spyNotifier records Send calls so emit-site tests can assert the
+// notification was published with the expected event type and payload.
+type spyNotifier struct {
+	mu    sync.Mutex
+	calls []spyCall
+}
+
+type spyCall struct {
+	eventType string
+	payload   map[string]interface{}
+}
+
+func (n *spyNotifier) Send(_ context.Context, eventType string, payload map[string]interface{}) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.calls = append(n.calls, spyCall{eventType: eventType, payload: payload})
+}
+
+func (n *spyNotifier) lookup(eventType string) *spyCall {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for i := range n.calls {
+		if n.calls[i].eventType == eventType {
+			return &n.calls[i]
+		}
+	}
+	return nil
+}
+
+// TestNotify_NilNotifierIsSafe guards the optional-injection contract:
+// auto-grab paths run on schedulers built without notifier wiring (legacy
+// tests, embedded use) and must not crash when notify() is called.
+func TestNotify_NilNotifierIsSafe(t *testing.T) {
+	s := &Scheduler{}
+	s.notify(context.Background(), notifierEventGrabbed, map[string]interface{}{"title": "x"})
+}
+
+// TestNotify_DispatchesEventGrabbed verifies that WithNotifier actually wires
+// the field so the Send call lands on the spy. This is the unit-level
+// guarantee that auto-grab successes will publish; the searchAndGrabFormat
+// integration is verified by reading the code (issue #849).
+func TestNotify_DispatchesEventGrabbed(t *testing.T) {
+	spy := &spyNotifier{}
+	s := &Scheduler{}
+	s.WithNotifier(spy)
+
+	s.notify(context.Background(), notifierEventGrabbed, map[string]interface{}{
+		"title":  "Dune",
+		"size":   int64(1024),
+		"author": "Frank Herbert",
+	})
+
+	call := spy.lookup(notifierEventGrabbed)
+	if call == nil {
+		t.Fatalf("expected EventGrabbed call; got %+v", spy.calls)
+		return
+	}
+	if got, want := call.payload["title"], "Dune"; got != want {
+		t.Errorf("payload title = %v, want %q", got, want)
+	}
+	if got, want := call.payload["author"], "Frank Herbert"; got != want {
+		t.Errorf("payload author = %v, want %q", got, want)
+	}
+	if got, want := call.payload["size"], int64(1024); got != want {
+		t.Errorf("payload size = %v, want %d", got, want)
+	}
+}
+
 // TestRefreshMetadata_MonitoredAuthor_MetaError exercises the error-continue
 // branch of the refreshMetadata loop by using a metadata provider that always
 // returns a valid author. This pushes coverage into the loop update path.

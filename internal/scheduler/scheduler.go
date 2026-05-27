@@ -57,6 +57,20 @@ type TelemetryPinger interface {
 	Ping(ctx context.Context)
 }
 
+// eventNotifier publishes a webhook event for a downstream notification
+// target (Discord/ntfy/etc.). Narrow shape of *notifier.Notifier so tests can
+// spy on auto-grab Send calls without standing up an HTTP fixture (issue #849).
+type eventNotifier interface {
+	Send(ctx context.Context, eventType string, payload map[string]interface{})
+}
+
+// Event-type strings. Kept in sync with internal/notifier.Event* — declared
+// here to avoid having the scheduler import notifier just for two string
+// constants (and to keep the eventNotifier interface untied to the real type).
+const (
+	notifierEventGrabbed = "grabbed"
+)
+
 // Scheduler runs background jobs on configurable intervals.
 type Scheduler struct {
 	// appCtx is the process-lifecycle context: it is not tied to any single
@@ -92,6 +106,7 @@ type Scheduler struct {
 	hcSyncer             HCListSyncer         // optional; syncs Hardcover import lists
 	telemetry            TelemetryPinger      // optional; sends daily anonymous install ping
 	logs                 *db.LogRepo          // optional; enables periodic log retention trim
+	notif                eventNotifier        // optional; fires EventGrabbed on auto-grab success (#849)
 	logRetainDays        int                  // 0 = use default (14)
 	downloadDir          string
 	audiobookDownloadDir string
@@ -199,6 +214,22 @@ func (s *Scheduler) WithTelemetry(p TelemetryPinger) {
 func (s *Scheduler) WithLogRepo(logs *db.LogRepo, retainDays int) {
 	s.logs = logs
 	s.logRetainDays = retainDays
+}
+
+// WithNotifier attaches a webhook event notifier so auto-grab successes
+// publish EventGrabbed (issue #849). Manual grabs from the queue page already
+// fire via QueueHandler; without this wiring the auto-grab path (wanted-scan,
+// on-add hook, bulk grab, recommendation grab, series grab) was silent.
+func (s *Scheduler) WithNotifier(n eventNotifier) {
+	s.notif = n
+}
+
+// notify is a nil-safe Send wrapper so the auto-grab path stays a one-liner.
+func (s *Scheduler) notify(ctx context.Context, eventType string, payload map[string]interface{}) {
+	if s.notif == nil {
+		return
+	}
+	s.notif.Send(ctx, eventType, payload)
 }
 
 // ctx returns the process-lifecycle context, falling back to
@@ -542,6 +573,20 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		slog.Warn("failed to update download status", "download_id", dl.ID, "status", models.StateDownloading, "error", err)
 	}
 	slog.Info("sent to downloader", "client", client.Type, "title", best.Title)
+	// Publish EventGrabbed so user-configured notification webhooks fire for
+	// auto-grabs as well as the queue-page manual grabs (issue #849). Payload
+	// shape mirrors the queue.go manual-grab Send so existing webhook
+	// templates keep working without modification; "author" is added because
+	// we have it here and it costs nothing.
+	//
+	// TODO(#849): when an upgrade-grab code path exists (the quality cutoff
+	// is currently used only to reject, not to trigger an upgrade re-grab),
+	// emit EventUpgrade here instead of EventGrabbed for upgrade grabs.
+	s.notify(ctx, notifierEventGrabbed, map[string]interface{}{
+		"title":  best.Title,
+		"size":   best.Size,
+		"author": authorName,
+	})
 	// Scope the deletion to the format just grabbed. Deleting all pending
 	// entries for the book would discard the other format's candidates for a
 	// dual-format ('both') book, forcing an unnecessary re-search (see #707).
