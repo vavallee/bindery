@@ -31,7 +31,11 @@
     "connOk": "Verbindung erfolgreich!",
     "connFail": "Test fehlgeschlagen: {{error}}",
     "prev": "Prev",
-    "next": "Next"
+    "next": "Next",
+    "copy": "Kopieren",
+    "copied": "Kopiert",
+    "clipboardBlocked": "Der Zugriff auf die Zwischenablage ist blockiert. Kopiere den ausgewählten Text unten.",
+    "clipboardTextLabel": "Zu kopierender Text"
   },
   "nav": {
     "authors": "Autoren",

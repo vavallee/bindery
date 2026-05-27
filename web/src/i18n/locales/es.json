@@ -32,7 +32,11 @@
     "connOk": "¡Conexión exitosa!",
     "connFail": "Error en la prueba: {{error}}",
     "prev": "Prev",
-    "next": "Next"
+    "next": "Next",
+    "copy": "Copiar",
+    "copied": "Copiado",
+    "clipboardBlocked": "El acceso al portapapeles está bloqueado. Copia el texto seleccionado abajo.",
+    "clipboardTextLabel": "Texto para copiar"
   },
   "nav": {
     "authors": "Autores",

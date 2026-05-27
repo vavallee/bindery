@@ -353,6 +353,14 @@ describe('SettingsPage', () => {
       value: { writeText: vi.fn().mockResolvedValue(undefined) },
       configurable: true,
     })
+    Object.defineProperty(window, 'isSecureContext', {
+      value: true,
+      configurable: true,
+    })
+    Object.defineProperty(document, 'execCommand', {
+      value: vi.fn().mockReturnValue(false),
+      configurable: true,
+    })
     seedSettingsMocks()
   })
 
@@ -671,6 +679,28 @@ describe('SettingsPage', () => {
     } finally {
       confirmSpy.mockRestore()
     }
+  })
+
+  it('shows manual copy fallback when security API key clipboard access is blocked', async () => {
+    vi.mocked(api.authConfig).mockResolvedValue({ mode: 'enabled', apiKey: 'api-secret', username: 'admin' })
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
+      configurable: true,
+    })
+
+    renderSettings()
+
+    await screen.findByRole('heading', { name: 'Security' })
+    const security = sectionForHeading('Security')
+    expect(security.queryByDisplayValue('api-secret')).not.toBeInTheDocument()
+
+    fireEvent.click(security.getByRole('button', { name: 'Copy' }))
+    await waitFor(() => {
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith('api-secret')
+    })
+
+    expect(await security.findByRole('status')).toHaveTextContent('Clipboard access is blocked')
+    expect(security.getByLabelText('Text to copy')).toHaveValue('api-secret')
   })
 
   it('validates and submits password changes', async () => {

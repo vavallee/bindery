@@ -32,7 +32,11 @@
     "connOk": "Connection successful!",
     "connFail": "Test failed: {{error}}",
     "prev": "Prev",
-    "next": "Next"
+    "next": "Next",
+    "copy": "Copy",
+    "copied": "Copied",
+    "clipboardBlocked": "Clipboard access is blocked. Copy the selected text below.",
+    "clipboardTextLabel": "Text to copy"
   },
   "monitorMode": {
     "all": "All books",

@@ -32,7 +32,11 @@
     "connOk": "Koneksi berhasil!",
     "connFail": "Uji gagal: {{error}}",
     "prev": "Prev",
-    "next": "Next"
+    "next": "Next",
+    "copy": "Salin",
+    "copied": "Disalin",
+    "clipboardBlocked": "Akses clipboard diblokir. Salin teks yang dipilih di bawah ini.",
+    "clipboardTextLabel": "Teks untuk disalin"
   },
   "nav": {
     "authors": "Penulis",

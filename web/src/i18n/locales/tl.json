@@ -32,7 +32,11 @@
     "connOk": "Matagumpay ang koneksyon!",
     "connFail": "Nabigo ang pagsubok: {{error}}",
     "prev": "Prev",
-    "next": "Next"
+    "next": "Next",
+    "copy": "Kopyahin",
+    "copied": "Nakopya",
+    "clipboardBlocked": "Naka-block ang access sa clipboard. Kopyahin ang napiling text sa ibaba.",
+    "clipboardTextLabel": "Text na kokopyahin"
   },
   "nav": {
     "authors": "Mga May-akda",

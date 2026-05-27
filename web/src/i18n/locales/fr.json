@@ -31,7 +31,11 @@
     "connOk": "Connexion réussie !",
     "connFail": "Test échoué : {{error}}",
     "prev": "Prev",
-    "next": "Next"
+    "next": "Next",
+    "copy": "Copier",
+    "copied": "Copié",
+    "clipboardBlocked": "L’accès au presse-papiers est bloqué. Copiez le texte sélectionné ci-dessous.",
+    "clipboardTextLabel": "Texte à copier"
   },
   "nav": {
     "authors": "Auteurs",

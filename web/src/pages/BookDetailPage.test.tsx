@@ -180,7 +180,18 @@ beforeEach(() => {
   vi.mocked(api.toggleExcluded).mockImplementation(async () => makeBook({ excluded: true }))
   vi.mocked(api.enrichAudiobook).mockImplementation(async () => makeBook())
   // jsdom has no clipboard by default.
-  Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } })
+  Object.defineProperty(navigator, 'clipboard', {
+    value: { writeText: vi.fn().mockResolvedValue(undefined) },
+    configurable: true,
+  })
+  Object.defineProperty(window, 'isSecureContext', {
+    value: true,
+    configurable: true,
+  })
+  Object.defineProperty(document, 'execCommand', {
+    value: vi.fn().mockReturnValue(false),
+    configurable: true,
+  })
 })
 
 describe('SearchResultsSection — dual-format book', () => {

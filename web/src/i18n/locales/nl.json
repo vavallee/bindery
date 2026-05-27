@@ -31,7 +31,11 @@
     "connOk": "Verbinding geslaagd!",
     "connFail": "Test mislukt: {{error}}",
     "prev": "Prev",
-    "next": "Next"
+    "next": "Next",
+    "copy": "Kopiëren",
+    "copied": "Gekopieerd",
+    "clipboardBlocked": "Toegang tot het klembord is geblokkeerd. Kopieer de geselecteerde tekst hieronder.",
+    "clipboardTextLabel": "Te kopiëren tekst"
   },
   "nav": {
     "authors": "Auteurs",
