@@ -1,6 +1,29 @@
 import { useState } from 'react'
 import { SearchDebug } from '../api/client'
 
+// legacyCopyToClipboard implements the document.execCommand('copy') fallback
+// for browsers running in non-secure contexts (plain-HTTP LAN deployments —
+// the common Bindery shape). Returns true on success. The temp textarea is
+// positioned off-screen and removed even when execCommand throws.
+function legacyCopyToClipboard(text: string): boolean {
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.setAttribute('readonly', '')
+  ta.style.position = 'fixed'
+  ta.style.top = '-9999px'
+  ta.style.left = '-9999px'
+  document.body.appendChild(ta)
+  ta.focus()
+  ta.select()
+  try {
+    return document.execCommand('copy')
+  } catch {
+    return false
+  } finally {
+    document.body.removeChild(ta)
+  }
+}
+
 interface Props {
   debug: SearchDebug
   resultCount: number
@@ -13,16 +36,33 @@ interface Props {
 export default function SearchDebugPanel({ debug, resultCount, defaultOpen }: Props) {
   const [open, setOpen] = useState(!!defaultOpen)
   const [copied, setCopied] = useState(false)
+  const [copyError, setCopyError] = useState(false)
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(debug, null, 2))
+    const text = JSON.stringify(debug, null, 2)
+    // Modern path requires a secure context (HTTPS or localhost). Most
+    // Bindery installs run over plain HTTP on a LAN at e.g.
+    // http://192.168.x.x:8787, where navigator.clipboard is undefined and
+    // the previous catch-and-do-nothing left the button silently broken
+    // (#850). Try the modern API first, then fall back to the legacy
+    // execCommand-on-temp-textarea trick that works in non-secure contexts.
+    if (window.isSecureContext && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1500)
+        return
+      } catch {
+        // fall through to legacy fallback
+      }
+    }
+    if (legacyCopyToClipboard(text)) {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
-    } catch {
-      // Clipboard API unavailable (insecure context, permission denied) —
-      // fall back to selecting the <pre> so users can copy manually.
+      return
     }
+    setCopyError(true)
+    setTimeout(() => setCopyError(false), 3000)
   }
 
   const indexers = debug.indexers ?? []
@@ -62,7 +102,7 @@ export default function SearchDebugPanel({ debug, resultCount, defaultOpen }: Pr
               onClick={copy}
               className="px-2 py-1 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded font-medium"
             >
-              {copied ? 'Copied!' : 'Copy debug info (JSON)'}
+              {copyError ? 'Copy failed — select & ⌘C' : copied ? 'Copied!' : 'Copy debug info (JSON)'}
             </button>
           </div>
 
