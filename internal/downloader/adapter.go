@@ -82,7 +82,14 @@ func TestClient(ctx context.Context, client *models.DownloadClient) error {
 		return dl.Test(ctx)
 	case "nzbget":
 		ng := nzbget.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
-		return ng.Test(ctx)
+		if err := ng.Test(ctx); err != nil {
+			return err
+		}
+		// Catch the most common misconfig (category in Bindery doesn't exist
+		// in NZBGet) at save time rather than on the first grab. Surfaces
+		// both list-RPC errors and mismatch errors; if version succeeded but
+		// config doesn't, that's a real configuration question worth showing.
+		return ng.CheckCategories(ctx, client.Category, client.CategoryAudiobook)
 	default:
 		sab := sabnzbd.New(client.Host, client.Port, client.APIKey, client.URLBase, client.UseSSL)
 		return sab.Test(ctx)

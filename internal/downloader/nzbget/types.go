@@ -56,3 +56,17 @@ type HistoryItem struct {
 type historyResponse struct {
 	Result []HistoryItem `json:"result"`
 }
+
+// configEntry is a single name/value pair from NZBGet's "config" RPC. Both
+// fields come through as strings regardless of the underlying option type.
+type configEntry struct {
+	Name  string `json:"Name"`
+	Value string `json:"Value"`
+}
+
+// configResponse is the result of calling "config", a flat list of name/value
+// pairs covering every option in NZBGet's nzbget.conf. Categories show up as
+// CategoryN.Name=Books, CategoryN.DestDir=…, CategoryN.Unpack=yes, etc.
+type configResponse struct {
+	Result []configEntry `json:"result"`
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -99,6 +100,47 @@ func allowNZBFetch(c *Client) {
 	c.validateNZBURL = func(string) error { return nil }
 }
 
+// configWithCategories returns a configResponse JSON payload exposing the
+// given category names as Category1.Name, Category2.Name, … entries. Used to
+// satisfy the preflight call Add() makes before append.
+func configWithCategories(names ...string) configResponse {
+	entries := make([]configEntry, 0, len(names))
+	for i, n := range names {
+		entries = append(entries, configEntry{
+			Name:  fmt.Sprintf("Category%d.Name", i+1),
+			Value: n,
+		})
+	}
+	return configResponse{Result: entries}
+}
+
+// nzbgetTestServer returns a server that routes by JSON-RPC method:
+// "config" responds with configWithCategories(cats...), "append" calls the
+// supplied handler, and anything else 500s.
+func nzbgetTestServer(t *testing.T, cats []string, append http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var probe rpcRequest
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		if err := json.Unmarshal(body, &probe); err != nil {
+			t.Fatalf("decode probe: %v", err)
+		}
+		switch probe.Method {
+		case "config":
+			json.NewEncoder(w).Encode(configWithCategories(cats...))
+		case "append":
+			// rewind the body so append handler can decode it itself
+			r.Body = io.NopCloser(strings.NewReader(string(body)))
+			append(w, r)
+		default:
+			http.Error(w, "unexpected method "+probe.Method, http.StatusInternalServerError)
+		}
+	}))
+}
+
 // TestAdd verifies that Add fetches NZB content from the indexer and submits it
 // as base64 to NZBGet's append RPC (rather than sending a URL for NZBGet to
 // fetch itself, which fails when NZBGet can't reach the indexer).
@@ -111,10 +153,10 @@ func TestAdd(t *testing.T) {
 	defer indexerSrv.Close()
 
 	var gotReq rpcRequest
-	nzbgetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	nzbgetSrv := nzbgetTestServer(t, []string{"books"}, func(w http.ResponseWriter, r *http.Request) {
 		gotReq = decodeRequest(t, r)
 		json.NewEncoder(w).Encode(appendResponse{Result: 42})
-	}))
+	})
 	defer nzbgetSrv.Close()
 
 	host, port := serverHostPort(t, nzbgetSrv.URL)
@@ -151,16 +193,18 @@ func TestAdd(t *testing.T) {
 	}
 }
 
-// TestAdd_Rejected verifies that Add returns an error when NZBGet rejects the download.
+// TestAdd_Rejected verifies that when append still returns id 0 after the
+// preflight has cleared the category, Add surfaces an actionable error that
+// points the user at NZBGet's log and enumerates the likely causes.
 func TestAdd_Rejected(t *testing.T) {
 	indexerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, testNZBContent)
 	}))
 	defer indexerSrv.Close()
 
-	nzbgetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	nzbgetSrv := nzbgetTestServer(t, []string{"books"}, func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(appendResponse{Result: 0})
-	}))
+	})
 	defer nzbgetSrv.Close()
 
 	host, port := serverHostPort(t, nzbgetSrv.URL)
@@ -170,6 +214,112 @@ func TestAdd_Rejected(t *testing.T) {
 	_, err := c.Add(context.Background(), indexerSrv.URL+"/bad.nzb", "Bad NZB", "books", 0)
 	if err == nil {
 		t.Fatal("expected error when NZBGet rejects download")
+		return
+	}
+	for _, want := range []string{"append returned id 0", "NZBGet's log", "disk full"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected error to contain %q, got: %q", want, err.Error())
+		}
+	}
+}
+
+// TestAdd_UnknownCategory verifies that the preflight rejects a category that
+// isn't defined in NZBGet, listing both the missing and the existing names so
+// the user can fix either side. append must not be called in this path.
+func TestAdd_UnknownCategory(t *testing.T) {
+	indexerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, testNZBContent)
+	}))
+	defer indexerSrv.Close()
+
+	nzbgetSrv := nzbgetTestServer(t, []string{"books", "movies"}, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("append must not be called when preflight rejects the category")
+		json.NewEncoder(w).Encode(appendResponse{Result: 1})
+	})
+	defer nzbgetSrv.Close()
+
+	host, port := serverHostPort(t, nzbgetSrv.URL)
+	c := New(host, port, "", "", "", false)
+	allowNZBFetch(c)
+
+	_, err := c.Add(context.Background(), indexerSrv.URL+"/file.nzb", "Book", "audiobooks", 0)
+	if err == nil {
+		t.Fatal("expected error when category isn't configured in NZBGet")
+		return
+	}
+	for _, want := range []string{`"audiobooks"`, `"books"`, `"movies"`, "Settings → Categories"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected error to contain %q, got: %q", want, err.Error())
+		}
+	}
+}
+
+// TestAdd_EmptyCategory verifies that when no category is set, the preflight
+// is skipped entirely (no config RPC) and append proceeds with category="".
+// NZBGet treats an empty category as "use the default destination".
+func TestAdd_EmptyCategory(t *testing.T) {
+	indexerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, testNZBContent)
+	}))
+	defer indexerSrv.Close()
+
+	var methods []string
+	nzbgetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		methods = append(methods, req.Method)
+		json.NewEncoder(w).Encode(appendResponse{Result: 7})
+	}))
+	defer nzbgetSrv.Close()
+
+	host, port := serverHostPort(t, nzbgetSrv.URL)
+	c := New(host, port, "", "", "", false)
+	allowNZBFetch(c)
+
+	id, err := c.Add(context.Background(), indexerSrv.URL+"/file.nzb", "Book", "", 0)
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if id != 7 {
+		t.Errorf("expected id=7, got %d", id)
+	}
+	if len(methods) != 1 || methods[0] != "append" {
+		t.Errorf("expected exactly one append call, got %v", methods)
+	}
+}
+
+// TestAdd_PreflightUnreachable verifies that when the config RPC fails (e.g.
+// older NZBGet, ControlIP restriction), Add doesn't pretend the category is
+// wrong — it falls through to append and lets that response stand. The
+// existing rejection-message path covers the case where append also fails.
+func TestAdd_PreflightUnreachable(t *testing.T) {
+	indexerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, testNZBContent)
+	}))
+	defer indexerSrv.Close()
+
+	nzbgetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		switch req.Method {
+		case "config":
+			http.Error(w, "method not found", http.StatusNotFound)
+		case "append":
+			json.NewEncoder(w).Encode(appendResponse{Result: 99})
+		default:
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	defer nzbgetSrv.Close()
+
+	host, port := serverHostPort(t, nzbgetSrv.URL)
+	c := New(host, port, "", "", "", false)
+	allowNZBFetch(c)
+
+	id, err := c.Add(context.Background(), indexerSrv.URL+"/file.nzb", "Book", "anything", 0)
+	if err != nil {
+		t.Fatalf("Add should fall through to append when preflight fails: %v", err)
+	}
+	if id != 99 {
+		t.Errorf("expected id=99, got %d", id)
 	}
 }
 
@@ -524,5 +674,171 @@ func TestTest_ServerError_NoHint(t *testing.T) {
 		if strings.Contains(msg, hint) {
 			t.Errorf("clean server error must not produce hint %q; got: %q", hint, msg)
 		}
+	}
+}
+
+// TestListCategories_Parses verifies CategoryN.Name entries are extracted in
+// order and that non-Name entries (DestDir/Unpack/PostScript) and empty
+// Values are filtered out.
+func TestListCategories_Parses(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		if req.Method != "config" {
+			t.Errorf("expected method=config, got %q", req.Method)
+		}
+		json.NewEncoder(w).Encode(configResponse{
+			Result: []configEntry{
+				{Name: "MainDir", Value: "/downloads"},
+				{Name: "Category1.Name", Value: "Books"},
+				{Name: "Category1.DestDir", Value: "/downloads/books"},
+				{Name: "Category1.Unpack", Value: "yes"},
+				{Name: "Category2.Name", Value: "Audiobooks"},
+				{Name: "Category2.Aliases", Value: ""},
+				{Name: "Category3.Name", Value: ""}, // empty — filtered
+				{Name: "Category10.Name", Value: "Movies"},
+				{Name: "DupeCheck", Value: "yes"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	host, port := serverHostPort(t, srv.URL)
+	c := New(host, port, "", "", "", false)
+
+	cats, err := c.ListCategories(context.Background())
+	if err != nil {
+		t.Fatalf("ListCategories: %v", err)
+	}
+	want := []string{"Books", "Audiobooks", "Movies"}
+	if len(cats) != len(want) {
+		t.Fatalf("expected %d categories, got %d (%v)", len(want), len(cats), cats)
+	}
+	for i, w := range want {
+		if cats[i] != w {
+			t.Errorf("cats[%d]: want %q, got %q", i, w, cats[i])
+		}
+	}
+}
+
+// TestCheckCategories_Match verifies the common case: every wanted category
+// is present, no error returned.
+func TestCheckCategories_Match(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(configWithCategories("Books", "Audiobooks"))
+	}))
+	defer srv.Close()
+	host, port := serverHostPort(t, srv.URL)
+	c := New(host, port, "", "", "", false)
+
+	if err := c.CheckCategories(context.Background(), "Books", "Audiobooks"); err != nil {
+		t.Errorf("expected nil error, got: %v", err)
+	}
+}
+
+// TestCheckCategories_EmptySkipped verifies that all-empty wanted entries
+// short-circuit and don't hit the RPC at all (important: an unconfigured
+// Bindery client shouldn't gratuitously fail Test against a working NZBGet).
+func TestCheckCategories_EmptySkipped(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		http.Error(w, "should not be called", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	host, port := serverHostPort(t, srv.URL)
+	c := New(host, port, "", "", "", false)
+
+	if err := c.CheckCategories(context.Background(), "", ""); err != nil {
+		t.Errorf("expected nil error for all-empty wanted, got: %v", err)
+	}
+	if called {
+		t.Error("CheckCategories must not call config RPC when all wanted are empty")
+	}
+}
+
+// TestCheckCategories_OneMissing verifies the single-missing case produces a
+// singular "no category" message that names both sides.
+func TestCheckCategories_OneMissing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(configWithCategories("Books"))
+	}))
+	defer srv.Close()
+	host, port := serverHostPort(t, srv.URL)
+	c := New(host, port, "", "", "", false)
+
+	err := c.CheckCategories(context.Background(), "Books", "Audiobooks")
+	if err == nil {
+		t.Fatal("expected error when one category is missing")
+		return
+	}
+	for _, want := range []string{`no category "Audiobooks"`, `"Books"`, "Settings → Categories"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected error to contain %q, got: %q", want, err.Error())
+		}
+	}
+}
+
+// TestCheckCategories_MultipleMissing verifies the plural variant fires when
+// both wanted categories are absent.
+func TestCheckCategories_MultipleMissing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(configWithCategories("Movies"))
+	}))
+	defer srv.Close()
+	host, port := serverHostPort(t, srv.URL)
+	c := New(host, port, "", "", "", false)
+
+	err := c.CheckCategories(context.Background(), "Books", "Audiobooks")
+	if err == nil {
+		t.Fatal("expected error when both categories are missing")
+		return
+	}
+	for _, want := range []string{"no categories", `"Books"`, `"Audiobooks"`, `"Movies"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected error to contain %q, got: %q", want, err.Error())
+		}
+	}
+}
+
+// TestCheckCategories_NoneDefined verifies that when NZBGet has zero
+// categories configured, the error message says "none defined" rather than
+// listing an empty set.
+func TestCheckCategories_NoneDefined(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(configResponse{Result: []configEntry{
+			{Name: "MainDir", Value: "/downloads"},
+		}})
+	}))
+	defer srv.Close()
+	host, port := serverHostPort(t, srv.URL)
+	c := New(host, port, "", "", "", false)
+
+	err := c.CheckCategories(context.Background(), "Books")
+	if err == nil {
+		t.Fatal("expected error")
+		return
+	}
+	if !strings.Contains(err.Error(), "none defined") {
+		t.Errorf("expected 'none defined' in error, got: %q", err.Error())
+	}
+}
+
+// TestCheckCategories_ListFails verifies the list-RPC error is surfaced
+// directly (so the adapter's Test path can show it to the user).
+func TestCheckCategories_ListFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+	host, port := serverHostPort(t, srv.URL)
+	c := New(host, port, "", "", "", false)
+
+	err := c.CheckCategories(context.Background(), "Books")
+	if err == nil {
+		t.Fatal("expected error from list-RPC failure")
+		return
+	}
+	if !strings.Contains(err.Error(), "list nzbget categories") {
+		t.Errorf("expected wrapped list error, got: %q", err.Error())
 	}
 }

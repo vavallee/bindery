@@ -6,6 +6,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **NZBGet rejections now name the actual problem** (#861) — when NZBGet's `append` JSON-RPC returns id 0 (rejection), Bindery's error was `NZBGet rejected download (returned id 0)` with nothing more, which gave users no path forward. The most common cause is that the category configured in Bindery's download-client (e.g. `Audiobooks`) isn't defined in NZBGet's own Settings → Categories — NZBGet silently rejects in that case. Bindery now preflights the category list via NZBGet's `config` RPC before submitting; on mismatch the error names both the missing category and what NZBGet actually has configured. The same check runs at Test-Connection time so the misconfig surfaces when saving the client, not on the first grab. If preflight passes but append still returns 0 (disk full, write-permission on intermediate dir, NZBGet paused with quota reached, invalid NZB content), the fallback error now enumerates those causes and points the user at NZBGet's own log. Thanks to @BraynArts for the report.
+
 ## [v1.15.1] — 2026-05-27
 
 Patch release. Five security/correctness fixes from a post-v1.15.0 review pass plus two user-visible bug fixes that affect every install (OpenLibrary author-search 403, notifications silently inert for everything but manual grabs).

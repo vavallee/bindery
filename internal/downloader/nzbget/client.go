@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,11 @@ import (
 	"github.com/vavallee/bindery/internal/downloader/urlbase"
 	"github.com/vavallee/bindery/internal/httpsec"
 )
+
+// categoryNameKey matches the NZBGet config keys that carry a category's
+// display name (Category1.Name, Category2.Name, …). NZBGet config also has
+// CategoryN.DestDir/Unpack/PostScript/Aliases — those are filtered out here.
+var categoryNameKey = regexp.MustCompile(`^Category\d+\.Name$`)
 
 // Client interacts with the NZBGet JSON-RPC API.
 type Client struct {
@@ -62,6 +68,79 @@ func (c *Client) Test(ctx context.Context) error {
 	return nil
 }
 
+// ListCategories returns the category display names defined in NZBGet's
+// nzbget.conf. NZBGet's append RPC silently rejects a download (returning id
+// 0) when the submitted category isn't one of these, so Bindery uses this to
+// preflight-validate before submitting.
+func (c *Client) ListCategories(ctx context.Context) ([]string, error) {
+	var resp configResponse
+	if err := c.call(ctx, "config", nil, &resp); err != nil {
+		return nil, fmt.Errorf("list nzbget categories: %w", err)
+	}
+	cats := make([]string, 0, 8)
+	for _, e := range resp.Result {
+		if categoryNameKey.MatchString(e.Name) && e.Value != "" {
+			cats = append(cats, e.Value)
+		}
+	}
+	return cats, nil
+}
+
+// CheckCategories reports an error when any of wanted is not present in
+// NZBGet's configured category list. Empty entries in wanted are skipped —
+// NZBGet treats an empty category as "use the default destination". When all
+// wanted entries are empty the call short-circuits and never hits the RPC.
+func (c *Client) CheckCategories(ctx context.Context, wanted ...string) error {
+	var nonEmpty []string
+	for _, w := range wanted {
+		if w != "" {
+			nonEmpty = append(nonEmpty, w)
+		}
+	}
+	if len(nonEmpty) == 0 {
+		return nil
+	}
+	have, err := c.ListCategories(ctx)
+	if err != nil {
+		return err
+	}
+	haveSet := make(map[string]struct{}, len(have))
+	for _, h := range have {
+		haveSet[h] = struct{}{}
+	}
+	var missing []string
+	for _, w := range nonEmpty {
+		if _, ok := haveSet[w]; !ok {
+			missing = append(missing, w)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return categoryMismatchError(missing, have)
+}
+
+// categoryMismatchError formats the actionable error returned when one or
+// more Bindery-configured categories aren't defined in NZBGet. We surface
+// both sides so the user can see what to rename on which side.
+func categoryMismatchError(missing, have []string) error {
+	quote := func(in []string) string {
+		out := make([]string, len(in))
+		for i, s := range in {
+			out[i] = strconv.Quote(s)
+		}
+		return strings.Join(out, ", ")
+	}
+	haveStr := "none defined"
+	if len(have) > 0 {
+		haveStr = quote(have)
+	}
+	if len(missing) == 1 {
+		return fmt.Errorf("NZBGet has no category %s configured (existing categories: %s). Add it in NZBGet's Settings → Categories, or change the category in Bindery's download-client config to match", strconv.Quote(missing[0]), haveStr)
+	}
+	return fmt.Errorf("NZBGet has no categories %s configured (existing categories: %s). Add them in NZBGet's Settings → Categories, or change the categories in Bindery's download-client config to match", quote(missing), haveStr)
+}
+
 // Add fetches the NZB file from nzbURL (using Bindery's own HTTP client, which
 // holds the indexer credentials and network path) then submits the content to
 // NZBGet as base64. Sending content rather than a URL means NZBGet never needs
@@ -75,6 +154,18 @@ func (c *Client) Add(ctx context.Context, nzbURL, name, category string, priorit
 	if err != nil {
 		return 0, err
 	}
+	// Best-effort preflight: if the category isn't defined in NZBGet, append
+	// will silently return id 0 with no other context. Surface a clear error
+	// here instead. If we can't reach the config RPC for any reason (older
+	// NZBGet, restricted ControlIP, transient failure) the mismatch error
+	// would be misleading — fall through and let append's response stand.
+	if category != "" {
+		if have, listErr := c.ListCategories(ctx); listErr == nil {
+			if !containsString(have, category) {
+				return 0, categoryMismatchError([]string{category}, have)
+			}
+		}
+	}
 	encoded := base64.StdEncoding.EncodeToString(content)
 	// append params: name, content, category, priority, dupecheck, dupekey, dupescore,
 	//                ppparameters (array), addtoTop, addpaused, urlpassword, postscript
@@ -84,9 +175,25 @@ func (c *Client) Add(ctx context.Context, nzbURL, name, category string, priorit
 		return 0, fmt.Errorf("add nzb: %w", err)
 	}
 	if resp.Result <= 0 {
-		return 0, fmt.Errorf("NZBGet rejected download (returned id %d)", resp.Result)
+		// Preflight already validated the category exists (or skipped because
+		// it's empty / the config call failed), so this branch is for the
+		// other classes of rejection: disk full, write-permission on
+		// NZBGet's intermediate dir, NZBGet paused with quota exhausted,
+		// invalid NZB content. NZBGet's own log carries the actual reason.
+		return 0, fmt.Errorf("NZBGet rejected the download (append returned id 0) — check NZBGet's log for the reason. Common causes: disk full, write-permission on the intermediate or destination directory, NZBGet paused with quota reached, or invalid NZB content")
 	}
 	return resp.Result, nil
+}
+
+// containsString returns true when needle appears in haystack. Tiny helper
+// kept local to avoid a slices import for the one site that needs it.
+func containsString(haystack []string, needle string) bool {
+	for _, h := range haystack {
+		if h == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) validateNZBFetchURL(raw string) error {
