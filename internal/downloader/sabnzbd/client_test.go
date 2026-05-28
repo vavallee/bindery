@@ -209,14 +209,14 @@ func TestAddURL_SSRFBlocked(t *testing.T) {
 // and falls back to "bindery.nzb" on empty.
 func TestNZBFilename(t *testing.T) {
 	cases := map[string]string{
-		"Hello World":              "Hello World.nzb",
-		"with/slash":               "with_slash.nzb",
-		"with\\backslash":          "with_backslash.nzb",
-		"with\x00null":             "with_null.nzb",
-		"   ":                      "bindery.nzb",
-		"":                         "bindery.nzb",
-		"normal Title (2023)":      "normal Title (2023).nzb",
-		"path/sep\\both\x00bytes":  "path_sep_both_bytes.nzb",
+		"Hello World":             "Hello World.nzb",
+		"with/slash":              "with_slash.nzb",
+		"with\\backslash":         "with_backslash.nzb",
+		"with\x00null":            "with_null.nzb",
+		"   ":                     "bindery.nzb",
+		"":                        "bindery.nzb",
+		"normal Title (2023)":     "normal Title (2023).nzb",
+		"path/sep\\both\x00bytes": "path_sep_both_bytes.nzb",
 	}
 	for in, want := range cases {
 		if got := nzbFilename(in); got != want {
