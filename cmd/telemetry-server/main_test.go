@@ -250,10 +250,10 @@ func TestComputeStats_ActiveWindowsAreSeparate(t *testing.T) {
 	s := newTestServer(t, "v1.15.2")
 	now := time.Now().UTC()
 
-	insertInstall(t, s, uuid('1'), "1.15.2", now.Add(-2*24*time.Hour), now.Add(-1*time.Hour))     // 7d + 30d
-	insertInstall(t, s, uuid('2'), "1.15.1", now.Add(-10*24*time.Hour), now.Add(-3*24*time.Hour)) // 7d + 30d
+	insertInstall(t, s, uuid('1'), "1.15.2", now.Add(-2*24*time.Hour), now.Add(-1*time.Hour))      // 7d + 30d
+	insertInstall(t, s, uuid('2'), "1.15.1", now.Add(-10*24*time.Hour), now.Add(-3*24*time.Hour))  // 7d + 30d
 	insertInstall(t, s, uuid('3'), "1.14.0", now.Add(-30*24*time.Hour), now.Add(-15*24*time.Hour)) // 30d only
-	insertInstall(t, s, uuid('4'), "1.8.1", now.Add(-90*24*time.Hour), now.Add(-50*24*time.Hour)) // neither
+	insertInstall(t, s, uuid('4'), "1.8.1", now.Add(-90*24*time.Hour), now.Add(-50*24*time.Hour))  // neither
 
 	d, err := s.computeStats(context.Background())
 	if err != nil {
@@ -360,9 +360,9 @@ func TestSweepStaleAndDev(t *testing.T) {
 	s := newTestServer(t, "v1.15.2")
 	now := time.Now().UTC()
 
-	insertInstall(t, s, uuid('1'), "1.15.2", now.Add(-2*24*time.Hour), now.Add(-1*time.Hour)) // keep
+	insertInstall(t, s, uuid('1'), "1.15.2", now.Add(-2*24*time.Hour), now.Add(-1*time.Hour))      // keep
 	insertInstall(t, s, uuid('2'), "1.15.1", now.Add(-90*24*time.Hour), now.Add(-65*24*time.Hour)) // drop (stale)
-	insertInstall(t, s, uuid('3'), "dev", now.Add(-1*time.Hour), now.Add(-1*time.Hour)) // drop (dev version)
+	insertInstall(t, s, uuid('3'), "dev", now.Add(-1*time.Hour), now.Add(-1*time.Hour))            // drop (dev version)
 	// Non-UUID install_id (legacy): goes via raw SQL since insertInstall
 	// would have rejected it through normal handlePing flow.
 	if _, err := s.db.ExecContext(context.Background(),

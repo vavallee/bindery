@@ -456,25 +456,25 @@ type versionTrendDay struct {
 // statsData is the complete aggregated telemetry view used by both the
 // auth-gated JSON API and the public HTML dashboard.
 type statsData struct {
-	Active7d     int
-	Active30d    int
-	Total        int
-	Versions     []statsBucket
+	Active7d  int
+	Active30d int
+	Total     int
+	Versions  []statsBucket
 	// VersionsRecent is the same set of buckets restricted to installs that
 	// pinged in the last 7 days. Dashboard renders both alongside each other
 	// so dormant installs (e.g. v1.8.1 pinged once and never again) stop
 	// inflating the headline.
-	VersionsRecent     []statsBucket
-	OS                 []statsBucket
-	Arch               []statsBucket
-	Deploy             []statsBucket
-	Daily              []dailyBucket
-	DailyNew           []dailyBucket     // new installs per day (first_seen), 30 days
-	Longevity          []statsBucket     // age buckets for 30d-active installs
-	LongevityYoungDB   bool              // true when DB span < 30d, so higher buckets cannot fire
-	Monthly            []statsBucket     // new installs per calendar month, last 12 mo
-	VersionTrend       []versionTrendDay // per-day per-version active counts, 30 days
-	TopVersions        []string          // top-N versions for VersionTrend legend
+	VersionsRecent   []statsBucket
+	OS               []statsBucket
+	Arch             []statsBucket
+	Deploy           []statsBucket
+	Daily            []dailyBucket
+	DailyNew         []dailyBucket     // new installs per day (first_seen), 30 days
+	Longevity        []statsBucket     // age buckets for 30d-active installs
+	LongevityYoungDB bool              // true when DB span < 30d, so higher buckets cannot fire
+	Monthly          []statsBucket     // new installs per calendar month, last 12 mo
+	VersionTrend     []versionTrendDay // per-day per-version active counts, 30 days
+	TopVersions      []string          // top-N versions for VersionTrend legend
 }
 
 // computeStats runs every dashboard query and returns one assembled snapshot.
