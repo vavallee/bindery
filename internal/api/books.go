@@ -521,13 +521,13 @@ func removeBookPathScoped(p, format string) error {
 			if !strings.EqualFold(s, stem) {
 				continue
 			}
-			if rmErr := os.Remove(filepath.Join(parent, n)); rmErr != nil && !os.IsNotExist(rmErr) { //nosec G304 G703 -- parent + stem both from importer-sanitized DB row; #865 plans defense-in-depth root-check
+			if rmErr := os.Remove(filepath.Join(parent, n)); rmErr != nil && !os.IsNotExist(rmErr) { // #nosec G304 G703 -- parent + stem both from importer-sanitized DB row; #865 plans defense-in-depth root-check
 				slog.Warn("book delete: failed to remove sibling file", "path", filepath.Join(parent, n), "error", rmErr)
 			}
 		}
 	} else {
 		// ReadDir failed — fall back to deleting only the target file.
-		if err := os.Remove(p); err != nil { //nosec G304 G703 -- p is from book_files row written by importer's sanitizePath; #865 plans defense-in-depth root-check
+		if err := os.Remove(p); err != nil { // #nosec G304 G703 -- p is from book_files row written by importer's sanitizePath; #865 plans defense-in-depth root-check
 			return err
 		}
 	}
@@ -535,7 +535,7 @@ func removeBookPathScoped(p, format string) error {
 	// Clean up parent directory if it is now empty.
 	remaining, err := os.ReadDir(parent)
 	if err == nil && len(remaining) == 0 {
-		_ = os.Remove(parent) //nosec G304 G703 -- parent = filepath.Dir of importer-sanitized DB row; #865 plans defense-in-depth root-check
+		_ = os.Remove(parent) // #nosec G304 G703 -- parent = filepath.Dir of importer-sanitized DB row; #865 plans defense-in-depth root-check
 	}
 	return nil
 }
