@@ -50,10 +50,70 @@ func isReleaseVersion(v string) bool {
 
 type server struct {
 	db            *sql.DB
-	dbDir         string // directory holding the DB — the writable data volume
+	dbDir         string // directory holding the DB, the writable data volume
 	latestVersion string
 	statsToken    string
 	limiter       *rateLimiter
+}
+
+// retentionWindow is the cutoff after which an install row that has stopped
+// pinging is considered dormant and deleted. Picked to be generous enough
+// that an install on a NAS the user only boots every couple of months
+// survives, but tight enough that the table doesn't accumulate ghost rows
+// forever. The active-install counts on the dashboard use shorter windows
+// (7d, 30d); 60d is purely about garbage collection.
+const retentionWindow = 60 * 24 * time.Hour
+
+// retentionInterval is the cadence for sweepStaleAndDev when running as a
+// daemon. Picked to be much smaller than the retention window so a dormant
+// install drops off within a day of crossing the threshold.
+var retentionInterval = 24 * time.Hour
+
+// sweepStaleAndDev drops two kinds of row in one pass:
+//
+//  1. Anything with last_seen older than retentionWindow. Once an install
+//     has been silent for 60 days, the next ping (if any) will treat it as
+//     a brand new install. We don't lose anything by removing the row.
+//  2. Dev/test rows: version literal "dev" plus install_ids that don't
+//     match the UUID v4 shape. The server rejects new posts of these (see
+//     handlePing) but older clients still get through and the startup-only
+//     sweep doesn't catch them after boot. Periodic cleanup closes the gap.
+//
+// Returns the number of rows deleted across both kinds.
+func sweepStaleAndDev(ctx context.Context, db *sql.DB) (int64, error) {
+	cutoff := time.Now().UTC().Add(-retentionWindow)
+	res, err := db.ExecContext(ctx, `
+		DELETE FROM installs
+		WHERE last_seen < ?
+		   OR version = 'dev'
+		   OR install_id NOT GLOB '????????-????-????-????-????????????'
+	`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// runRetentionLoop fires sweepStaleAndDev immediately, then every
+// retentionInterval until ctx is cancelled. Logged at info on each pass so
+// operator can see the count in pod logs.
+func (s *server) runRetentionLoop(ctx context.Context) {
+	tick := time.NewTicker(retentionInterval)
+	defer tick.Stop()
+	for {
+		n, err := sweepStaleAndDev(ctx, s.db)
+		if err != nil {
+			slog.Warn("retention sweep failed", "error", err)
+		} else if n > 0 {
+			slog.Info("retention sweep", "rows_deleted", n)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
 }
 
 type pingRequest struct {
@@ -140,15 +200,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Sweep test fixtures and locally-built dev rows. These are throwaway
-	// UUIDs from `go run` / `go build` sessions that inflate the active count
-	// without representing a real installation. New clients no longer send
-	// these pings (see internal/telemetry/client.go); the server still drops
-	// them belt-and-suspenders below.
-	if _, err := db.ExecContext(context.Background(),
-		`DELETE FROM installs WHERE version = 'dev' OR install_id NOT GLOB '????????-????-????-????-????????????'`,
-	); err != nil {
-		slog.Error("cleanup dev rows", "error", err)
+	// Boot-time sweep so dashboards on a fresh process are clean immediately;
+	// the nightly cron below keeps them clean from then on.
+	if _, err := sweepStaleAndDev(context.Background(), db); err != nil {
+		slog.Error("startup sweep", "error", err)
 		os.Exit(1)
 	}
 
@@ -160,6 +215,14 @@ func main() {
 		// Each IP may ping at most once per hour.
 		limiter: newRateLimiter(1*time.Hour, 5*time.Minute),
 	}
+
+	// Nightly retention job: drop rows whose last_seen is older than 60 days
+	// (dormant installs that won't return) and any dev/test rows that older
+	// clients still post. Runs once a day, fired immediately after startup
+	// so the process doesn't have to wait 24 hours for first cleanup. The
+	// 60-day window matches the active-install definition used downstream
+	// (60-day evict means an install ID is either active or absent).
+	go s.runRetentionLoop(context.Background())
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.handleHome)
@@ -393,26 +456,41 @@ type versionTrendDay struct {
 // statsData is the complete aggregated telemetry view used by both the
 // auth-gated JSON API and the public HTML dashboard.
 type statsData struct {
+	Active7d     int
 	Active30d    int
 	Total        int
 	Versions     []statsBucket
-	OS           []statsBucket
-	Arch         []statsBucket
-	Deploy       []statsBucket
-	Daily        []dailyBucket
-	DailyNew     []dailyBucket     // new installs per day (first_seen), 30 days
-	Longevity    []statsBucket     // age buckets for 30d-active installs
-	Monthly      []statsBucket     // new installs per calendar month, last 12 mo
-	VersionTrend []versionTrendDay // per-day per-version active counts, 30 days
-	TopVersions  []string          // top-N versions for VersionTrend legend
+	// VersionsRecent is the same set of buckets restricted to installs that
+	// pinged in the last 7 days. Dashboard renders both alongside each other
+	// so dormant installs (e.g. v1.8.1 pinged once and never again) stop
+	// inflating the headline.
+	VersionsRecent     []statsBucket
+	OS                 []statsBucket
+	Arch               []statsBucket
+	Deploy             []statsBucket
+	Daily              []dailyBucket
+	DailyNew           []dailyBucket     // new installs per day (first_seen), 30 days
+	Longevity          []statsBucket     // age buckets for 30d-active installs
+	LongevityYoungDB   bool              // true when DB span < 30d, so higher buckets cannot fire
+	Monthly            []statsBucket     // new installs per calendar month, last 12 mo
+	VersionTrend       []versionTrendDay // per-day per-version active counts, 30 days
+	TopVersions        []string          // top-N versions for VersionTrend legend
 }
 
 // computeStats runs every dashboard query and returns one assembled snapshot.
-// All counts are scoped to the active-30-day window except Total.
+// All counts are scoped to the active-30-day window except Total and the
+// recent-7d cohort.
 func (s *server) computeStats(ctx context.Context) (*statsData, error) {
-	cutoff := time.Now().UTC().Add(-30 * 24 * time.Hour)
+	now := time.Now().UTC()
+	cutoff := now.Add(-30 * 24 * time.Hour)
+	cutoff7d := now.Add(-7 * 24 * time.Hour)
 	d := &statsData{}
 
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM installs WHERE last_seen >= ?`, cutoff7d,
+	).Scan(&d.Active7d); err != nil {
+		return nil, err
+	}
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM installs WHERE last_seen >= ?`, cutoff,
 	).Scan(&d.Active30d); err != nil {
@@ -424,10 +502,10 @@ func (s *server) computeStats(ctx context.Context) (*statsData, error) {
 		return nil, err
 	}
 
-	queryBuckets := func(col string) ([]statsBucket, error) {
-		// #nosec G202 — col is a literal from the caller, not user input.
+	queryBuckets := func(col string, since time.Time) ([]statsBucket, error) {
+		// #nosec G202 -- col is a literal from the caller, not user input.
 		q := `SELECT ` + col + `, COUNT(*) FROM installs WHERE last_seen >= ? GROUP BY ` + col + ` ORDER BY COUNT(*) DESC`
-		rows, err := s.db.QueryContext(ctx, q, cutoff)
+		rows, err := s.db.QueryContext(ctx, q, since)
 		if err != nil {
 			return nil, err
 		}
@@ -447,16 +525,19 @@ func (s *server) computeStats(ctx context.Context) (*statsData, error) {
 	}
 
 	var err error
-	if d.Versions, err = queryBuckets("version"); err != nil {
+	if d.Versions, err = queryBuckets("version", cutoff); err != nil {
 		return nil, err
 	}
-	if d.OS, err = queryBuckets("os"); err != nil {
+	if d.VersionsRecent, err = queryBuckets("version", cutoff7d); err != nil {
 		return nil, err
 	}
-	if d.Arch, err = queryBuckets("arch"); err != nil {
+	if d.OS, err = queryBuckets("os", cutoff); err != nil {
 		return nil, err
 	}
-	if d.Deploy, err = queryBuckets("deploy"); err != nil {
+	if d.Arch, err = queryBuckets("arch", cutoff); err != nil {
+		return nil, err
+	}
+	if d.Deploy, err = queryBuckets("deploy", cutoff); err != nil {
 		return nil, err
 	}
 
@@ -548,6 +629,26 @@ func (s *server) computeStats(ctx context.Context) (*statsData, error) {
 	for _, label := range []string{"< 1 week", "1–4 weeks", "1–3 months", "3+ months"} {
 		if cnt, ok := lonMap[label]; ok {
 			d.Longevity = append(d.Longevity, statsBucket{Label: label, Count: cnt})
+		}
+	}
+
+	// If the DB itself hasn't been collecting for 30 days, the "1 to 3 months"
+	// and "3+ months" buckets are structurally empty: max(last_seen - first_seen)
+	// is bounded by the data span. Flag this so the dashboard can render a
+	// footnote instead of silently showing only the lower buckets, which a
+	// reader would otherwise interpret as "no install has been alive that long."
+	var earliestStr string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MIN(substr(first_seen, 1, 19)), '')
+		   FROM installs`,
+	).Scan(&earliestStr); err != nil {
+		return nil, err
+	}
+	if earliestStr != "" {
+		if earliest, perr := time.Parse("2006-01-02 15:04:05", earliestStr); perr == nil {
+			if now.Sub(earliest) < 30*24*time.Hour {
+				d.LongevityYoungDB = true
+			}
 		}
 	}
 
@@ -834,6 +935,108 @@ func renderBarChart(buckets []statsBucket, maxBars int, pinLabel string) string 
 	return sb.String()
 }
 
+// renderVersionsTable extends renderBarChart for the Versions section by
+// surfacing two cohorts side-by-side: the 30d window (the bar widths are
+// scaled to this, matching the rest of the page) and the 7d window in a
+// second count column. Versions present in the 30d set but not in the 7d
+// set still appear with a 7d count of zero so a dormant version (e.g. an
+// older release whose installs pinged once weeks ago and never returned)
+// is visible rather than silently dropping out of the table.
+func renderVersionsTable(buckets30d, buckets7d []statsBucket, maxBars int, pinLabel string) string {
+	if len(buckets30d) == 0 {
+		return `<p class="empty">No data yet.</p>`
+	}
+
+	recent := make(map[string]int, len(buckets7d))
+	for _, b := range buckets7d {
+		recent[b.Label] = b.Count
+	}
+
+	// Collapse the long tail the same way renderBarChart does so the
+	// table stays at most maxBars+1 rows.
+	display := buckets30d
+	if maxBars > 0 && len(display) > maxBars {
+		work := make([]statsBucket, len(display))
+		copy(work, display)
+
+		if pinLabel != "" {
+			pinIdx := -1
+			for i := maxBars; i < len(work); i++ {
+				if work[i].Label == pinLabel {
+					pinIdx = i
+					break
+				}
+			}
+			if pinIdx >= 0 {
+				work[maxBars-1], work[pinIdx] = work[pinIdx], work[maxBars-1]
+			}
+		}
+
+		head := work[:maxBars]
+		tail30d := 0
+		tail7d := 0
+		for _, b := range work[maxBars:] {
+			tail30d += b.Count
+			tail7d += recent[b.Label]
+		}
+		head = append(head, statsBucket{Label: "(other)", Count: tail30d})
+		recent["(other)"] = tail7d
+		display = head
+	}
+
+	max := display[0].Count
+	for _, b := range display {
+		if b.Count > max {
+			max = b.Count
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(`<div class="chart">`)
+	sb.WriteString(`<table class="bars bars-2col" role="presentation">`)
+	sb.WriteString(`<thead><tr>` +
+		`<th class="legend-cell"></th>` +
+		`<th class="bar-cell"></th>` +
+		`<th class="count-cell count-header">7d</th>` +
+		`<th class="count-cell count-header">30d</th>` +
+		`</tr></thead><tbody>`)
+	for i, b := range display {
+		colour := paletteColor(i)
+		pct := 0
+		if max > 0 {
+			pct = b.Count * 100 / max
+		}
+		label := b.Label
+		if pinLabel != "" && b.Label == pinLabel {
+			label = b.Label + " (latest)"
+		}
+		fmt.Fprintf(&sb,
+			`<tr><td class="legend-cell"><span class="swatch" style="background:%s"></span>%s</td>`+
+				`<td class="bar-cell"><div class="bar" style="width:%d%%;background:%s"></div></td>`+
+				`<td class="count-cell">%d</td>`+
+				`<td class="count-cell">%d</td></tr>`,
+			colour, html.EscapeString(label), pct, colour, recent[b.Label], b.Count)
+	}
+	sb.WriteString(`</tbody></table></div>`)
+	return sb.String()
+}
+
+// renderLongevity wraps renderBarChart with a footnote that fires when the
+// DB has been collecting for less than 30 days. In that case the "1 to 3
+// months" and "3+ months" buckets cannot exist no matter how many installs
+// there are, and the table looks misleadingly small. The footnote tells a
+// reader the lower buckets are empty by construction, not by population.
+func renderLongevity(buckets []statsBucket, youngDB bool) string {
+	chart := renderBarChart(buckets, 0, "")
+	if !youngDB {
+		return chart
+	}
+	return chart + `<p class="empty" style="margin-top:.5rem">` +
+		`Telemetry DB has been collecting for less than 30 days; the ` +
+		`"1 to 3 months" and "3+ months" buckets cannot populate yet ` +
+		`(every install's age is bounded by the data span).</p>`
+}
+
 // renderSparkline returns inline SVG for a 30-day daily-activity bar chart.
 func renderSparkline(daily []dailyBucket) string {
 	if len(daily) == 0 {
@@ -1050,6 +1253,11 @@ func (s *server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
   td.legend-cell { width: 35%%; color: #cbd5e1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   td.bar-cell { width: 50%%; }
   td.count-cell { width: 15%%; text-align: right; color: #94a3b8; font-variant-numeric: tabular-nums; }
+  table.bars-2col td.legend-cell { width: 30%%; }
+  table.bars-2col td.bar-cell    { width: 40%%; }
+  table.bars-2col td.count-cell  { width: 15%%; }
+  table.bars-2col th { text-align: right; color: #64748b; font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; padding: .25rem .5rem .5rem; }
+  table.bars-2col th.count-header { color: #94a3b8; }
   .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: .5rem; vertical-align: middle; }
   .bar { height: 14px; border-radius: 2px; min-width: 2px; }
   .sparkline { width: 100%%; height: 80px; display: block; }
@@ -1068,10 +1276,11 @@ func (s *server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
   <header>
     <a class="back" href="/">← Bindery</a>
     <h1>Telemetry</h1>
-    <p>Anonymous install counts from instances that opted in to update checks. No identifying information is collected — only an opaque install UUID, the version, and the OS/arch reported by Go's runtime. Active = pinged in the last 30 days.</p>
+    <p>Anonymous install counts from instances that opted in to update checks. No identifying information is collected, only an opaque install UUID, the version, and the OS/arch reported by Go's runtime. "Active 7d" is the count of installs that pinged in the last seven days (the closest proxy we have for "running right now"); "Active 30d" is the wider 30-day window and includes dormant installs that have not pinged in a while.</p>
   </header>
 
   <div class="summary">
+    <div class="stat"><div class="num">%d</div><div class="label">Active installs (7d)</div></div>
     <div class="stat"><div class="num">%d</div><div class="label">Active installs (30d)</div></div>
     <div class="stat"><div class="num">%d</div><div class="label">Total installs (all-time)</div></div>
   </div>
@@ -1127,15 +1336,15 @@ func (s *server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
 </div>
 </body>
 </html>`,
-		d.Active30d, d.Total,
-		renderBarChart(d.Versions, 8, normalizeVersion(s.latestVersion)),
+		d.Active7d, d.Active30d, d.Total,
+		renderVersionsTable(d.Versions, d.VersionsRecent, 8, normalizeVersion(s.latestVersion)),
 		renderBarChart(d.OS, 0, ""),
 		renderBarChart(d.Arch, 0, ""),
 		renderBarChart(d.Deploy, 0, ""),
 		renderSparkline(d.Daily),
 		renderSparkline(d.DailyNew),
 		renderMonthlyChart(d.Monthly),
-		renderBarChart(d.Longevity, 0, ""),
+		renderLongevity(d.Longevity, d.LongevityYoungDB),
 		renderVersionTrend(d.VersionTrend, d.TopVersions),
 		time.Now().UTC().Format("2006-01-02 15:04 MST"),
 	); err != nil {
