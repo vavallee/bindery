@@ -40,6 +40,28 @@ func (r *SettingsRepo) Set(ctx context.Context, key, value string) error {
 	return err
 }
 
+// SetIfAbsent atomically inserts a settings row only when the key does not
+// already exist, and reports whether the insert won (true) or lost the race
+// (false). Used as a one-shot lock for irreversible decisions like the OIDC
+// promote-first-admin guard: two concurrent first-time logins both see no
+// admins, both want to claim admin, but only one wins SetIfAbsent and the
+// other falls back to the default role.
+func (r *SettingsRepo) SetIfAbsent(ctx context.Context, key, value string) (bool, error) {
+	now := time.Now().UTC()
+	res, err := r.db.ExecContext(ctx, `
+		INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+		ON CONFLICT(key) DO NOTHING`,
+		key, value, now)
+	if err != nil {
+		return false, err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows == 1, nil
+}
+
 // SettingKV is a single key/value pair for SetMany.
 type SettingKV struct {
 	Key   string

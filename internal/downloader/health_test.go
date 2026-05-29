@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,6 +13,18 @@ import (
 )
 
 func TestCheckDownloadClientHealth_QBittorrentCategoryPath(t *testing.T) {
+	// Build real on-disk paths so the post-pathIsAtOrUnder stat() check
+	// passes on the happy paths. Cases that should fail before stat (missing
+	// category, empty save path, pathIsAtOrUnder mismatch) are unaffected.
+	tmp := t.TempDir()
+	expected := filepath.Join(tmp, "books", "downloads")
+	if err := os.MkdirAll(filepath.Join(expected, "books"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(expected, "Torrents", "books"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
 	tests := []struct {
 		name       string
 		categories string
@@ -20,13 +34,14 @@ func TestCheckDownloadClientHealth_QBittorrentCategoryPath(t *testing.T) {
 	}{
 		{
 			name:       "remapped category path matches",
-			categories: `{"books":{"name":"books","savePath":"/media/downloads"}}`,
+			categories: `{"books":{"name":"books","savePath":"/media/downloads/books"}}`,
+			pathRemap:  "/media/downloads:" + expected,
 			wantStatus: HealthOK,
 		},
 		{
 			name:       "qbit v5 boolean download_path still remaps category path",
-			categories: `{"books":{"download_path":false,"name":"books","savePath":"/media/books/downloads"}}`,
-			pathRemap:  "/media/books:/books",
+			categories: `{"books":{"download_path":false,"name":"books","savePath":"/media/books/downloads/books"}}`,
+			pathRemap:  "/media/books/downloads:" + expected,
 			wantStatus: HealthOK,
 		},
 		{
@@ -45,18 +60,20 @@ func TestCheckDownloadClientHealth_QBittorrentCategoryPath(t *testing.T) {
 			name:       "mismatched category path",
 			categories: `{"books":{"name":"books","savePath":"/media/other"}}`,
 			wantStatus: HealthError,
-			wantText:   `expected a path at or under "/books/downloads"`,
+			wantText:   `expected a path at or under`,
 		},
 		{
 			name:       "category path is a subdirectory of download dir",
 			categories: `{"books":{"name":"books","savePath":"/media/downloads/Torrents/books"}}`,
+			pathRemap:  "/media/downloads:" + expected,
 			wantStatus: HealthOK,
 		},
 		{
 			name:       "category path under sibling dir is still rejected",
 			categories: `{"books":{"name":"books","savePath":"/media/downloads-extra/books"}}`,
+			pathRemap:  "/media/downloads:" + expected,
 			wantStatus: HealthError,
-			wantText:   `expected a path at or under "/books/downloads"`,
+			wantText:   `expected a path at or under`,
 		},
 	}
 
@@ -77,10 +94,6 @@ func TestCheckDownloadClientHealth_QBittorrentCategoryPath(t *testing.T) {
 			defer srv.Close()
 
 			host, port := serverHostPort(t, srv.URL)
-			pathRemap := tc.pathRemap
-			if pathRemap == "" {
-				pathRemap = "/media:/books"
-			}
 			client := &models.DownloadClient{
 				Type:      "qbittorrent",
 				Host:      host,
@@ -88,9 +101,9 @@ func TestCheckDownloadClientHealth_QBittorrentCategoryPath(t *testing.T) {
 				Username:  "u",
 				Password:  "p",
 				Category:  "books",
-				PathRemap: pathRemap,
+				PathRemap: tc.pathRemap,
 			}
-			got := CheckDownloadClientHealth(context.Background(), client, "/books/downloads", "")
+			got := CheckDownloadClientHealth(context.Background(), client, expected, "")
 			if got.Status != tc.wantStatus {
 				t.Fatalf("status = %q, want %q; message=%s", got.Status, tc.wantStatus, got.Message)
 			}
@@ -114,8 +127,20 @@ func TestExpectedDownloadDirForClient_AudiobookMediaType(t *testing.T) {
 // TestCheckDownloadClientHealth_QBittorrentAudiobookCategory exercises the
 // per-media-type validation added in #700: when CategoryAudiobook is set, the
 // health check must validate the audiobook category's save path against the
-// audiobook download dir as well, and only return OK when both pass.
+// audiobook download dir as well, and only return OK when both pass. Uses
+// real on-disk t.TempDir paths so the post-pathIsAtOrUnder stat() check
+// (#800 case-mismatch follow-up) doesn't fire on the happy paths.
 func TestCheckDownloadClientHealth_QBittorrentAudiobookCategory(t *testing.T) {
+	tmp := t.TempDir()
+	ebookDir := filepath.Join(tmp, "books", "downloads")
+	audioDir := filepath.Join(tmp, "books", "audio-downloads")
+	if err := os.MkdirAll(filepath.Join(ebookDir, "books"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(audioDir, "audiobooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
 	tests := []struct {
 		name       string
 		categories string
@@ -124,21 +149,21 @@ func TestCheckDownloadClientHealth_QBittorrentAudiobookCategory(t *testing.T) {
 	}{
 		{
 			name:       "both categories valid",
-			categories: `{"books":{"name":"books","savePath":"/media/downloads"},"audiobooks":{"name":"audiobooks","savePath":"/media/audio-downloads"}}`,
+			categories: `{"books":{"name":"books","savePath":"/media/downloads/books"},"audiobooks":{"name":"audiobooks","savePath":"/media/audio-downloads/audiobooks"}}`,
 			wantStatus: HealthOK,
 			wantText:   "audiobooks",
 		},
 		{
 			name:       "audiobook category missing",
-			categories: `{"books":{"name":"books","savePath":"/media/downloads"}}`,
+			categories: `{"books":{"name":"books","savePath":"/media/downloads/books"}}`,
 			wantStatus: HealthError,
 			wantText:   `qBittorrent category "audiobooks" was not found`,
 		},
 		{
 			name:       "audiobook category points outside audiobook dir",
-			categories: `{"books":{"name":"books","savePath":"/media/downloads"},"audiobooks":{"name":"audiobooks","savePath":"/media/downloads"}}`,
+			categories: `{"books":{"name":"books","savePath":"/media/downloads/books"},"audiobooks":{"name":"audiobooks","savePath":"/media/downloads/books"}}`,
 			wantStatus: HealthError,
-			wantText:   `expected a path at or under "/books/audio-downloads"`,
+			wantText:   `expected a path at or under`,
 		},
 	}
 
@@ -166,9 +191,9 @@ func TestCheckDownloadClientHealth_QBittorrentAudiobookCategory(t *testing.T) {
 				Password:          "p",
 				Category:          "books",
 				CategoryAudiobook: "audiobooks",
-				PathRemap:         "/media:/books",
+				PathRemap:         "/media/downloads:" + ebookDir + ",/media/audio-downloads:" + audioDir,
 			}
-			got := CheckDownloadClientHealth(context.Background(), client, "/books/downloads", "/books/audio-downloads")
+			got := CheckDownloadClientHealth(context.Background(), client, ebookDir, audioDir)
 			if got.Status != tc.wantStatus {
 				t.Fatalf("status = %q, want %q; message=%s", got.Status, tc.wantStatus, got.Message)
 			}
@@ -176,6 +201,64 @@ func TestCheckDownloadClientHealth_QBittorrentAudiobookCategory(t *testing.T) {
 				t.Fatalf("message %q does not contain %q", got.Message, tc.wantText)
 			}
 		})
+	}
+}
+
+// TestQbittorrentCategoryPath_DetectsCaseMismatch covers the PixieApples
+// follow-up to #800: when the path remap is textually correct (pathIsAtOrUnder
+// passes against BINDERY_DOWNLOAD_DIR) but the resolved path does not exist on
+// Bindery's filesystem because of case differences — common in WSL + Docker on
+// Windows — the health-check must surface the divergent segment by name
+// rather than silently reporting OK while later imports fail to find files.
+func TestQbittorrentCategoryPath_DetectsCaseMismatch(t *testing.T) {
+	tmp := t.TempDir()
+	// Skip on case-insensitive filesystems (macOS default, Windows) since
+	// the detection is a no-op when the OS itself smooths case over.
+	probe := filepath.Join(tmp, "casetest")
+	if err := os.MkdirAll(probe, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "CASETEST")); err == nil {
+		t.Skip("filesystem is case-insensitive; case-mismatch detection is a no-op here")
+	}
+
+	// Real on-disk path uses capital D; the user's configuration in qBit and
+	// BINDERY_DOWNLOAD_DIR both use lowercase d. pathIsAtOrUnder passes
+	// (strings agree), but the path does not exist on disk.
+	realDir := filepath.Join(tmp, "Downloads", "books")
+	if err := os.MkdirAll(realDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configuredDir := filepath.Join(tmp, "downloads")       // BINDERY_DOWNLOAD_DIR (wrong case)
+	qbSavePath := filepath.Join(tmp, "downloads", "books") // qBit reports lowercase
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/categories":
+			_, _ = w.Write([]byte(`{"books":{"name":"books","savePath":"` + qbSavePath + `"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	host, port := serverHostPort(t, srv.URL)
+	client := &models.DownloadClient{
+		Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p",
+		Category: "books",
+		// No PathRemap — qbSavePath already sits under configuredDir
+		// textually, so pathIsAtOrUnder passes and the stat check fires.
+	}
+	got := CheckDownloadClientHealth(context.Background(), client, configuredDir, "")
+	if got.Status != HealthError {
+		t.Fatalf("status = %q, want %q; message=%s", got.Status, HealthError, got.Message)
+	}
+	for _, want := range []string{"does not exist", "case-sensitive", realDir, "Downloads"} {
+		if !strings.Contains(got.Message, want) {
+			t.Errorf("message missing %q\nfull: %s", want, got.Message)
+		}
 	}
 }
 
@@ -223,4 +306,70 @@ func TestQbittorrentCategoryPath_MismatchMessageGuidesUserToPathRemap(t *testing
 			t.Errorf("message missing %q\nfull: %s", w, got.Message)
 		}
 	}
+}
+
+// healthSpy records Send calls so HealthStore notification tests can assert.
+type healthSpy struct {
+	calls []struct {
+		eventType string
+		payload   map[string]interface{}
+	}
+}
+
+func (h *healthSpy) Send(_ context.Context, eventType string, payload map[string]interface{}) {
+	h.calls = append(h.calls, struct {
+		eventType string
+		payload   map[string]interface{}
+	}{eventType, payload})
+}
+
+// TestHealthStore_Set_FiresEventHealthOnEntryToError verifies that a
+// healthy→error (and absent→error) transition publishes EventHealth, but
+// repeated error→error transitions do not. This is the wiring for issue #849
+// so user-configured webhooks see download-client breakage.
+func TestHealthStore_Set_FiresEventHealthOnEntryToError(t *testing.T) {
+	spy := &healthSpy{}
+	s := NewHealthStore().WithNotifier(spy)
+
+	// Absent → error: must fire (covers a freshly-added client coming up bad).
+	s.Set(1, models.DownloadClientHealth{Status: HealthError, Message: "save path missing"})
+	if len(spy.calls) != 1 {
+		t.Fatalf("absent->error: want 1 Send, got %d (%+v)", len(spy.calls), spy.calls)
+	}
+	if got, want := spy.calls[0].eventType, notifierEventHealth; got != want {
+		t.Errorf("eventType = %q, want %q", got, want)
+	}
+	if got, want := spy.calls[0].payload["status"], HealthError; got != want {
+		t.Errorf("payload status = %v, want %q", got, want)
+	}
+
+	// error → error (different message): NOT a new failure; must be silent
+	// to avoid spamming the webhook on every poll.
+	s.Set(1, models.DownloadClientHealth{Status: HealthError, Message: "still broken"})
+	if len(spy.calls) != 1 {
+		t.Fatalf("error->error: want 1 Send total, got %d", len(spy.calls))
+	}
+
+	// Recover then re-fail: ok->error must fire again.
+	s.Set(1, models.DownloadClientHealth{Status: HealthOK, Message: "fixed"})
+	s.Set(1, models.DownloadClientHealth{Status: HealthError, Message: "broke again"})
+	if len(spy.calls) != 2 {
+		t.Fatalf("ok->error after recovery: want 2 Sends total, got %d", len(spy.calls))
+	}
+
+	// checking → error: must NOT fire — RefreshDownloadClientHealthAsync
+	// writes Checking before every refresh, so without the suppression a
+	// persistently-broken client would webhook on every poll cycle.
+	s.Set(1, models.DownloadClientHealth{Status: HealthChecking, Message: "polling"})
+	s.Set(1, models.DownloadClientHealth{Status: HealthError, Message: "still broken"})
+	if len(spy.calls) != 2 {
+		t.Fatalf("checking->error: want 2 Sends total (no new fire), got %d", len(spy.calls))
+	}
+}
+
+// TestHealthStore_Set_NilNotifierDoesNotPanic guards optional wiring: a store
+// built without WithNotifier must still work.
+func TestHealthStore_Set_NilNotifierDoesNotPanic(t *testing.T) {
+	s := NewHealthStore()
+	s.Set(1, models.DownloadClientHealth{Status: HealthError, Message: "broken"})
 }

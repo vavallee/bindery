@@ -348,6 +348,7 @@ func TestLogin_AuthError_BadCreds(t *testing.T) {
 	err := c.Login(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	var authErr *AuthError
 	if !errors.As(err, &authErr) {
@@ -374,6 +375,7 @@ func TestLogin_AuthError_BanEmpty403(t *testing.T) {
 	err := c.Login(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	var authErr *AuthError
 	if !errors.As(err, &authErr) {
@@ -404,6 +406,7 @@ func TestTest_AuthErrorDoesNotMisdirect(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	msg := err.Error()
 	if strings.Contains(msg, "could not reach") {
@@ -716,6 +719,7 @@ func TestAddTorrent_TorrentURL_FetchFailure(t *testing.T) {
 	_, err := c.AddTorrent(context.Background(), indexer.URL+"/torrent", "", "")
 	if err == nil {
 		t.Fatal("expected error when indexer returns 401")
+		return
 	}
 	if !strings.Contains(err.Error(), "401") {
 		t.Errorf("error should mention 401, got: %v", err)
@@ -792,6 +796,7 @@ func TestAddTorrent_TorrentURL_OversizedResponseDoesNotCallQbitAdd(t *testing.T)
 	_, err := c.AddTorrent(context.Background(), indexer.URL+"/too-large.torrent", "", "")
 	if err == nil {
 		t.Fatal("expected oversized response error")
+		return
 	}
 	if !strings.Contains(err.Error(), "exceeds") {
 		t.Errorf("expected oversized error, got: %v", err)
@@ -827,6 +832,7 @@ func TestAddTorrent_TorrentURL_DefaultValidationRejectsLoopbackBeforeFetch(t *te
 	_, err := c.AddTorrent(context.Background(), indexer.URL+"/blocked.torrent", "", "")
 	if err == nil {
 		t.Fatal("expected loopback URL validation failure")
+		return
 	}
 	if !strings.Contains(err.Error(), "url not allowed") {
 		t.Errorf("expected URL validation error, got: %v", err)
@@ -1258,6 +1264,7 @@ func TestAddTorrent_HashLookupTimeout(t *testing.T) {
 	_, err := c.AddTorrent(context.Background(), indexer.URL+"/torrent", "books", "")
 	if err == nil {
 		t.Fatal("expected error on timeout, got nil")
+		return
 	}
 	if !strings.Contains(err.Error(), "hash could not be determined") {
 		t.Errorf("unexpected error: %v", err)
@@ -1309,6 +1316,7 @@ func TestTest_DNSNotFound(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	msg := err.Error()
 	if strings.Contains(msg, "connected to qBittorrent") {
@@ -1328,6 +1336,7 @@ func TestTest_ConnectionRefused(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	if !strings.Contains(err.Error(), "host firewall is rejecting") {
 		t.Errorf("expected port hint, got: %q", err.Error())
@@ -1343,6 +1352,7 @@ func TestTest_Timeout_QBit(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	if !strings.Contains(err.Error(), "firewall or proxy") {
 		t.Errorf("expected firewall hint, got: %q", err.Error())
@@ -1366,6 +1376,7 @@ func TestTest_ServerError_NoHint_QBit(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	msg := err.Error()
 	for _, hint := range []string{"Docker network", "host firewall is rejecting", "firewall or proxy"} {

@@ -82,10 +82,27 @@ func (s *Searcher) makeClient(baseURL, apiKey string) *newznab.Client {
 // indexers returns unrelated results because the standard IDs do not cover
 // the indexer's extended subcategory tree.
 func filterCategoriesForMedia(cats []int, mediaType string) []int {
-	wantTens := 702
+	// Newznab category convention: 7xxx is the Books parent (7020 ebook,
+	// 7030 magazines), 3xxx is Audio (3030 audiobook). The bare parents
+	// (7000 / 3000) are deliberately dropped: Prowlarr reports them for
+	// generic book trackers and sending them as-is returns the entire
+	// books or audio surface, which is noise.
+	//
+	// Beyond that, every non-parent subcategory in the matching bucket is
+	// trusted: the user explicitly added it to the indexer's category list
+	// in Settings → Indexers. Previously the filter narrowly matched
+	// 702x / 303x and silently dropped foreign-language IDs like 7120
+	// (German ebooks), 7150, 7180, and any 31xx audiobook variants (#851),
+	// leaving non-English users searching only the English bucket. Now any
+	// 7xxx (except 7000) flows through for ebook search, and any 3xxx
+	// (except 3000) flows through for audiobook search. Standard 7020 /
+	// 3030 remain the fallback for empty input or zero matches.
+	wantThousand := 7
+	parent := 7000
 	fallback := []int{7020}
 	if mediaType == "audiobook" {
-		wantTens = 303
+		wantThousand = 3
+		parent = 3000
 		fallback = []int{3030}
 	}
 	if len(cats) == 0 {
@@ -94,7 +111,7 @@ func filterCategoriesForMedia(cats []int, mediaType string) []int {
 	var out []int
 	hasNonStandard := false
 	for _, c := range cats {
-		if c/10 == wantTens {
+		if c/1000 == wantThousand && c != parent {
 			out = append(out, c)
 		}
 		if c > 9999 {

@@ -197,6 +197,7 @@ func TestReload_FailedProviderRecorded(t *testing.T) {
 	st := mgr.Status("x")
 	if st == nil {
 		t.Fatal("status should exist for a configured-but-failed provider")
+		return
 	}
 	if st.State != "failed" {
 		t.Fatalf("want state=failed, got %q", st.State)
@@ -326,6 +327,7 @@ func TestAuthURL_StillFailsWhenIdPDown(t *testing.T) {
 	_, err := mgr.AuthURL(context.Background(), "https://bindery.example.com", "q", "state", "nonce", verifier)
 	if err == nil {
 		t.Fatal("AuthURL should fail when IdP is still down after retry attempt")
+		return
 	}
 	if !strings.Contains(err.Error(), "unknown oidc provider") {
 		t.Fatalf("expected unknown-provider error, got: %v", err)

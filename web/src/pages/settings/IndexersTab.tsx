@@ -135,12 +135,12 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
       <div className="mt-8 border-t border-slate-200 dark:border-zinc-800 pt-6">
         <div className="flex justify-between items-center mb-4">
           <div>
-            <h4 className="text-base font-semibold">Prowlarr</h4>
-            <p className="text-xs text-slate-500 dark:text-zinc-500 mt-0.5">Add Prowlarr once — all configured indexers sync automatically.</p>
+            <h4 className="text-base font-semibold">{t('settings.prowlarr.heading')}</h4>
+            <p className="text-xs text-slate-500 dark:text-zinc-500 mt-0.5">{t('settings.prowlarr.description')}</p>
           </div>
           {prowlarrInstances.length === 0 && (
             <button onClick={() => setShowAddProwlarr(true)} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium">
-              Add Prowlarr
+              {t('settings.prowlarr.addButton')}
             </button>
           )}
         </div>
@@ -153,8 +153,10 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
                   <p className="text-xs text-slate-500 dark:text-zinc-500">{p.url}</p>
                   {p.lastSyncAt && (
                     <p className="text-xs text-slate-400 dark:text-zinc-600 mt-0.5">
-                      Last synced: {new Date(p.lastSyncAt).toLocaleString()}
-                      {' · '}{indexers.filter(i => i.prowlarrInstanceId === p.id).length} indexers
+                      {t('settings.prowlarr.lastSynced', {
+                        at: new Date(p.lastSyncAt).toLocaleString(),
+                        count: indexers.filter(i => i.prowlarrInstanceId === p.id).length,
+                      })}
                     </p>
                   )}
                   {prowlarrSyncResult[p.id] && (
@@ -166,46 +168,46 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
                   <button onClick={() => setEditingProwlarr(editingProwlarr === p.id ? null : p.id)} className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">
-                    {t('common.edit')}
+                    {t('settings.prowlarr.edit')}
                   </button>
                   <button
                     onClick={async () => {
                       try {
                         const r = await api.testProwlarr(p.id)
-                        setProwlarrTestResult(prev => ({ ...prev, [p.id]: { ok: r.ok === 'true', msg: r.ok === 'true' ? `Connected — Prowlarr ${r.version}` : `Connection failed: ${r.error}` } }))
+                        setProwlarrTestResult(prev => ({ ...prev, [p.id]: { ok: r.ok === 'true', msg: r.ok === 'true' ? t('settings.prowlarr.connectedVersion', { version: r.version }) : t('settings.prowlarr.connFailed', { error: r.error }) } }))
                       } catch (err: unknown) {
-                        setProwlarrTestResult(prev => ({ ...prev, [p.id]: { ok: false, msg: err instanceof Error ? err.message : 'Connection failed' } }))
+                        setProwlarrTestResult(prev => ({ ...prev, [p.id]: { ok: false, msg: err instanceof Error ? err.message : t('settings.prowlarr.connFailedGeneric') } }))
                       }
                     }}
                     className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white"
                   >
-                    Test
+                    {t('settings.prowlarr.test')}
                   </button>
                   <button
                     onClick={async () => {
                       try {
                         const r = await api.syncProwlarr(p.id)
-                        setProwlarrSyncResult(prev => ({ ...prev, [p.id]: `Synced — added ${r.added}, updated ${r.updated}, removed ${r.removed}` }))
+                        setProwlarrSyncResult(prev => ({ ...prev, [p.id]: t('settings.prowlarr.synced', { added: r.added, updated: r.updated, removed: r.removed }) }))
                         api.listIndexers().then(setIndexers).catch(console.error)
                         api.listProwlarr().then(r => setProwlarrInstances(r ?? [])).catch(console.error)
                       } catch (err: unknown) {
-                        setProwlarrSyncResult(prev => ({ ...prev, [p.id]: `Sync failed: ${err instanceof Error ? err.message : 'Unknown error'}` }))
+                        setProwlarrSyncResult(prev => ({ ...prev, [p.id]: t('settings.prowlarr.syncFailed', { error: err instanceof Error ? err.message : t('settings.prowlarr.unknownError') }) }))
                       }
                     }}
                     className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white"
                   >
-                    Sync now
+                    {t('settings.prowlarr.syncNow')}
                   </button>
                   <button
                     onClick={async () => {
-                      if (!confirm(`Delete Prowlarr instance "${p.name}" and all its synced indexers?`)) return
+                      if (!confirm(t('settings.prowlarr.confirmDelete', { name: p.name }))) return
                       await api.deleteProwlarr(p.id)
                       setProwlarrInstances(prev => prev.filter(i => i.id !== p.id))
                       api.listIndexers().then(setIndexers).catch(console.error)
                     }}
                     className="text-xs text-red-400 hover:text-red-300"
                   >
-                    Delete
+                    {t('settings.prowlarr.delete')}
                   </button>
                 </div>
               </div>
@@ -239,6 +241,7 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
 }
 
 function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onClose: () => void; onSaved: (idx: Indexer) => void }) {
+  const { t } = useTranslation()
   const [name, setName] = useState(indexer.name)
   const [type, setType] = useState(indexer.type || 'newznab')
   const [url, setUrl] = useState(indexer.url)
@@ -255,40 +258,41 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
     <div className="mt-1 p-4 border border-slate-300 dark:border-zinc-700 rounded-lg bg-slate-200/50 dark:bg-zinc-800/50 space-y-3">
       <div className="flex gap-2">
         <div className="flex-1">
-          <label className={labelCls}>Name</label>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
+          <label className={labelCls}>{t('settings.indexers.form.name')}</label>
+          <input value={name} onChange={e => setName(e.target.value)} placeholder={t('settings.indexers.form.namePlaceholder')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
         </div>
         <div className="w-48">
-          <label className={labelCls}>Indexer Type</label>
+          <label className={labelCls}>{t('settings.indexers.form.type')}</label>
           <select value={type} onChange={e => setType(e.target.value)} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600">
-            <option value="newznab">Newznab (Usenet)</option>
-            <option value="torznab">Torznab (Torrent)</option>
+            <option value="newznab">{t('settings.indexers.form.typeNewznabUsenet')}</option>
+            <option value="torznab">{t('settings.indexers.form.typeTorznabTorrent')}</option>
           </select>
         </div>
       </div>
       <div>
-        <label className={labelCls}>URL</label>
-        <input value={url} onChange={e => setUrl(e.target.value)} placeholder="URL" className={inputCls} />
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Use a base Newznab URL (for example: https://api.nzbgeek.info) or a full Torznab endpoint (for example: http://prowlarr:9696/1/api).</p>
+        <label className={labelCls}>{t('settings.indexers.form.url')}</label>
+        <input value={url} onChange={e => setUrl(e.target.value)} placeholder={t('settings.indexers.form.urlPlaceholder')} className={inputCls} />
+        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.urlHintEdit')}</p>
       </div>
       <div>
-        <label className={labelCls}>API Key</label>
-        <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="API Key" type="password" className={inputCls} />
+        <label className={labelCls}>{t('settings.indexers.form.apiKey')}</label>
+        <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder={t('settings.indexers.form.apiKey')} type="password" className={inputCls} />
       </div>
       <div>
-        <label className={labelCls}>Categories</label>
-        <input value={categories} onChange={e => setCategories(e.target.value)} placeholder="Categories (e.g. 7020, 7120, 3030)" className={inputCls} />
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Comma-separated Newznab category IDs. 7020 = eBooks, 3030 = Audiobooks. Add custom IDs for indexers with non-standard categories (e.g. 7120 for German books).</p>
+        <label className={labelCls}>{t('settings.indexers.form.categories')}</label>
+        <input value={categories} onChange={e => setCategories(e.target.value)} placeholder={t('settings.indexers.form.categoriesPlaceholder')} className={inputCls} />
+        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.categoriesHint')}</p>
       </div>
       <div className="flex gap-2 justify-end">
-        <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">Cancel</button>
-        <button onClick={submit} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium">Save</button>
+        <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">{t('common.cancel')}</button>
+        <button onClick={submit} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium">{t('common.save')}</button>
       </div>
     </div>
   )
 }
 
 function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (idx: Indexer) => void }) {
+  const { t } = useTranslation()
   const [name, setName] = useState('')
   const [type, setType] = useState<'newznab' | 'torznab'>('newznab')
   const [url, setUrl] = useState('')
@@ -305,40 +309,41 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
     <div className="mt-4 p-4 border border-slate-300 dark:border-zinc-700 rounded-lg bg-slate-200/50 dark:bg-zinc-800/50 space-y-3">
       <div className="flex gap-2">
         <div className="flex-1">
-          <label className={labelCls}>Name</label>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="Name (e.g. NZBGeek)" className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
+          <label className={labelCls}>{t('settings.indexers.form.name')}</label>
+          <input value={name} onChange={e => setName(e.target.value)} placeholder={t('settings.indexers.form.namePlaceholderExample')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
         </div>
         <div className="w-40">
-          <label className={labelCls}>Indexer Type</label>
+          <label className={labelCls}>{t('settings.indexers.form.type')}</label>
           <select value={type} onChange={e => setType(e.target.value as 'newznab' | 'torznab')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600">
-            <option value="newznab">Newznab</option>
-            <option value="torznab">Torznab</option>
+            <option value="newznab">{t('settings.indexers.form.typeNewznab')}</option>
+            <option value="torznab">{t('settings.indexers.form.typeTorznab')}</option>
           </select>
         </div>
       </div>
       <div>
-        <label className={labelCls}>URL</label>
-        <input value={url} onChange={e => setUrl(e.target.value)} placeholder="URL (e.g. https://api.nzbgeek.info or http://prowlarr:9696/1/api)" className={inputCls} />
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">For Prowlarr, paste the Torznab endpoint URL (usually ending in /api) and API key.</p>
+        <label className={labelCls}>{t('settings.indexers.form.url')}</label>
+        <input value={url} onChange={e => setUrl(e.target.value)} placeholder={t('settings.indexers.form.urlPlaceholderExample')} className={inputCls} />
+        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.urlHintAdd')}</p>
       </div>
       <div>
-        <label className={labelCls}>API Key</label>
-        <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="API Key" type="password" className={inputCls} />
+        <label className={labelCls}>{t('settings.indexers.form.apiKey')}</label>
+        <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder={t('settings.indexers.form.apiKey')} type="password" className={inputCls} />
       </div>
       <div>
-        <label className={labelCls}>Categories</label>
-        <input value={categories} onChange={e => setCategories(e.target.value)} placeholder="Categories (e.g. 7020, 7120, 3030)" className={inputCls} />
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Comma-separated Newznab category IDs. 7020 = eBooks, 3030 = Audiobooks. Add custom IDs for indexers with non-standard categories (e.g. 7120 for German books).</p>
+        <label className={labelCls}>{t('settings.indexers.form.categories')}</label>
+        <input value={categories} onChange={e => setCategories(e.target.value)} placeholder={t('settings.indexers.form.categoriesPlaceholder')} className={inputCls} />
+        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.categoriesHint')}</p>
       </div>
       <div className="flex gap-2 justify-end">
-        <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">Cancel</button>
-        <button onClick={submit} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium">Save</button>
+        <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">{t('common.cancel')}</button>
+        <button onClick={submit} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium">{t('common.save')}</button>
       </div>
     </div>
   )
 }
 
 function EditProwlarrForm({ instance, onClose, onSaved }: { instance: ProwlarrInstance; onClose: () => void; onSaved: (p: ProwlarrInstance) => void }) {
+  const { t } = useTranslation()
   const [name, setName] = useState(instance.name)
   const [url, setUrl] = useState(instance.url)
   // Empty means "keep existing key" — payload omits apiKey when blank so the
@@ -359,7 +364,7 @@ function EditProwlarrForm({ instance, onClose, onSaved }: { instance: ProwlarrIn
       const updated = await api.updateProwlarr(instance.id, payload)
       onSaved(updated)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Save failed')
+      setError(e instanceof Error ? e.message : t('settings.prowlarr.saveFailed'))
     } finally {
       setSaving(false)
     }
@@ -368,34 +373,32 @@ function EditProwlarrForm({ instance, onClose, onSaved }: { instance: ProwlarrIn
   return (
     <div className="mt-3 p-4 border border-slate-300 dark:border-zinc-700 rounded-lg bg-slate-200/50 dark:bg-zinc-800/50 space-y-3">
       <div>
-        <label className={labelCls}>Name</label>
-        <input value={name} onChange={e => setName(e.target.value)} placeholder="Prowlarr" className={inputCls} />
+        <label className={labelCls}>{t('settings.indexers.form.name')}</label>
+        <input value={name} onChange={e => setName(e.target.value)} placeholder={t('settings.prowlarr.namePlaceholder')} className={inputCls} />
       </div>
       <div>
-        <label className={labelCls}>URL</label>
-        <input value={url} onChange={e => setUrl(e.target.value)} placeholder="http://prowlarr:9696" className={inputCls} />
+        <label className={labelCls}>{t('settings.indexers.form.url')}</label>
+        <input value={url} onChange={e => setUrl(e.target.value)} placeholder={t('settings.prowlarr.urlPlaceholder')} className={inputCls} />
         {urlChanged && (
-          <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
-            Click <strong>Sync now</strong> after saving to rebuild the per-indexer URLs against the new base.
-          </p>
+          <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">{t('settings.prowlarr.urlChangeWarning')}</p>
         )}
       </div>
       <div>
-        <label className={labelCls}>API Key (leave blank to keep current)</label>
+        <label className={labelCls}>{t('settings.prowlarr.apiKeyEditLabel')}</label>
         <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="••••••••" type="password" className={inputCls} />
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">A new key is propagated to every indexer synced from this Prowlarr instance immediately.</p>
+        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.prowlarr.apiKeyEditHint')}</p>
       </div>
       <div className="flex items-center gap-2">
         <Toggle checked={syncOnStartup} onChange={() => setSyncOnStartup(!syncOnStartup)} />
-        <span className="text-xs text-slate-600 dark:text-zinc-400">Sync on startup</span>
+        <span className="text-xs text-slate-600 dark:text-zinc-400">{t('settings.prowlarr.syncOnStartup')}</span>
       </div>
       {error && (
         <div className="text-xs text-red-600 dark:text-red-400 break-words">{error}</div>
       )}
       <div className="flex gap-2 justify-end">
-        <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">Cancel</button>
+        <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">{t('common.cancel')}</button>
         <button onClick={submit} disabled={!url || saving} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium disabled:opacity-50">
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? t('common.saving') : t('common.save')}
         </button>
       </div>
     </div>
@@ -403,6 +406,7 @@ function EditProwlarrForm({ instance, onClose, onSaved }: { instance: ProwlarrIn
 }
 
 function AddProwlarrForm({ onClose, onAdded }: { onClose: () => void; onAdded: (p: ProwlarrInstance) => void }) {
+  const { t } = useTranslation()
   const [name, setName] = useState('Prowlarr')
   const [url, setUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
@@ -418,7 +422,7 @@ function AddProwlarrForm({ onClose, onAdded }: { onClose: () => void; onAdded: (
     try {
       p = await api.addProwlarr({ name, url, apiKey, syncOnStartup, enabled: true })
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Save failed')
+      setError(e instanceof Error ? e.message : t('settings.prowlarr.saveFailed'))
       setSyncing(false)
       return
     }
@@ -440,29 +444,29 @@ function AddProwlarrForm({ onClose, onAdded }: { onClose: () => void; onAdded: (
     <div className="mt-4 p-4 border border-slate-300 dark:border-zinc-700 rounded-lg bg-slate-200/50 dark:bg-zinc-800/50 space-y-3">
       <div className="flex gap-2">
         <div className="flex-1">
-          <label className={labelCls}>Name</label>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="Prowlarr" className={inputCls} />
+          <label className={labelCls}>{t('settings.indexers.form.name')}</label>
+          <input value={name} onChange={e => setName(e.target.value)} placeholder={t('settings.prowlarr.namePlaceholder')} className={inputCls} />
         </div>
       </div>
       <div>
-        <label className={labelCls}>URL</label>
-        <input value={url} onChange={e => setUrl(e.target.value)} placeholder="http://prowlarr:9696" className={inputCls} />
+        <label className={labelCls}>{t('settings.indexers.form.url')}</label>
+        <input value={url} onChange={e => setUrl(e.target.value)} placeholder={t('settings.prowlarr.urlPlaceholder')} className={inputCls} />
       </div>
       <div>
-        <label className={labelCls}>API Key</label>
-        <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="API Key" type="password" className={inputCls} />
+        <label className={labelCls}>{t('settings.indexers.form.apiKey')}</label>
+        <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder={t('settings.prowlarr.apiKeyPlaceholder')} type="password" className={inputCls} />
       </div>
       <div className="flex items-center gap-2">
         <Toggle checked={syncOnStartup} onChange={() => setSyncOnStartup(!syncOnStartup)} />
-        <span className="text-xs text-slate-600 dark:text-zinc-400">Sync on startup</span>
+        <span className="text-xs text-slate-600 dark:text-zinc-400">{t('settings.prowlarr.syncOnStartup')}</span>
       </div>
       {error && (
         <div className="text-xs text-red-600 dark:text-red-400 break-words">{error}</div>
       )}
       <div className="flex gap-2 justify-end">
-        <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">Cancel</button>
+        <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">{t('common.cancel')}</button>
         <button onClick={submit} disabled={!url || !apiKey || syncing} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium disabled:opacity-50">
-          {syncing ? 'Saving & syncing…' : 'Save & sync'}
+          {syncing ? t('settings.prowlarr.savingAndSyncing') : t('settings.prowlarr.saveAndSync')}
         </button>
       </div>
     </div>

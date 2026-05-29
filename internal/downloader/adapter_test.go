@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -445,14 +446,28 @@ func TestTestClient_TimeoutMatrix(t *testing.T) {
 // SendDownload
 // ---------------------------------------------------------------------------
 
+// fakeNZBIndexer returns a test server serving a minimal valid NZB body.
+// SAB's AddURL fetches the NZB itself now (rather than handing SAB a URL), so
+// the adapter tests need a local "indexer" that actually responds.
+func fakeNZBIndexer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-nzb")
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><nzb></nzb>`))
+	}))
+}
+
 func TestSendDownload_SABnzbd(t *testing.T) {
+	defer httpsec.AllowLoopbackForTests()()
+	indexerSrv := fakeNZBIndexer(t)
+	defer indexerSrv.Close()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": true, "nzo_ids": []string{"nzo42"}})
 	}))
 	defer srv.Close()
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{Type: "sabnzbd", Host: host, Port: port, APIKey: "k"}
-	result, err := SendDownload(context.Background(), client, "https://example.com/file.nzb", "My Book")
+	result, err := SendDownload(context.Background(), client, indexerSrv.URL+"/file.nzb", "My Book")
 	if err != nil {
 		t.Fatalf("SendDownload: %v", err)
 	}
@@ -471,13 +486,16 @@ func TestSendDownload_SABnzbd_NoNzoID(t *testing.T) {
 	// SABnzbd may report status:true but return an empty nzo_ids slice.
 	// This is not a usable success — the download becomes untrackable.
 	// SendDownload must return an error rather than a silent empty RemoteID.
+	defer httpsec.AllowLoopbackForTests()()
+	indexerSrv := fakeNZBIndexer(t)
+	defer indexerSrv.Close()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": true, "nzo_ids": []string{}})
 	}))
 	defer srv.Close()
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{Type: "sabnzbd", Host: host, Port: port, APIKey: "k"}
-	_, err := SendDownload(context.Background(), client, "https://example.com/file.nzb", "My Book")
+	_, err := SendDownload(context.Background(), client, indexerSrv.URL+"/file.nzb", "My Book")
 	if err == nil {
 		t.Fatal("expected an error when SABnzbd returns no NZO id, got nil")
 	}
@@ -725,11 +743,15 @@ func TestSendDownload_QbittorrentEbookCategoryUnchanged(t *testing.T) {
 
 // TestSendDownload_SABnzbdAudiobookCategory verifies the audiobook category
 // flows through SABnzbd's send path as well — the non-torrent branch of #700.
+// The category lives in the query string (not the multipart body), so reading
+// it via r.URL.Query is correct regardless of POST vs GET.
 func TestSendDownload_SABnzbdAudiobookCategory(t *testing.T) {
+	defer httpsec.AllowLoopbackForTests()()
+	indexerSrv := fakeNZBIndexer(t)
+	defer indexerSrv.Close()
 	var gotCategory string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
-		gotCategory = r.FormValue("cat")
+		gotCategory = r.URL.Query().Get("cat")
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": true, "nzo_ids": []string{"nzoAUDIO"}})
 	}))
 	defer srv.Close()
@@ -742,7 +764,7 @@ func TestSendDownload_SABnzbdAudiobookCategory(t *testing.T) {
 		Category:          "books",
 		CategoryAudiobook: "audiobooks",
 	}
-	if _, err := SendDownload(context.Background(), client, "https://example.com/file.nzb", "My Book", SendOptions{MediaType: models.MediaTypeAudiobook}); err != nil {
+	if _, err := SendDownload(context.Background(), client, indexerSrv.URL+"/file.nzb", "My Book", SendOptions{MediaType: models.MediaTypeAudiobook}); err != nil {
 		t.Fatalf("SendDownload: %v", err)
 	}
 	if gotCategory != "audiobooks" {

@@ -8,7 +8,89 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ### Fixed
 
+- **SABnzbd submissions no longer hang in "Waiting" with a resetting countdown** — Bindery was using SAB's `mode=addurl`, which makes SAB itself fetch the NZB from the indexer URL. In containerised setups where Bindery and SAB sit on different Docker networks (or only Bindery has DNS/route for the indexer), SAB can't reach the URL and parks the job in retry-backoff forever; Bindery's `sent to downloader` log line was misleading because addurl returned `status: true` regardless. Bindery now fetches the NZB itself through its own HTTP client (which holds the indexer credentials and network path) and submits the content via SAB's `mode=addfile` multipart upload — the same shape the NZBGet client has used since #837. The same `httpsec.PolicyLAN` SSRF guard and 50 MB cap apply. Thanks to @ibsfox for the precise repro (manual `.nzb` upload to SAB worked; the URL-handoff did not).
+
+- **NZBGet rejections now name the actual problem** (#861) — when NZBGet's `append` JSON-RPC returns id 0 (rejection), Bindery's error was `NZBGet rejected download (returned id 0)` with nothing more, which gave users no path forward. The most common cause is that the category configured in Bindery's download-client (e.g. `Audiobooks`) isn't defined in NZBGet's own Settings → Categories — NZBGet silently rejects in that case. Bindery now preflights the category list via NZBGet's `config` RPC before submitting; on mismatch the error names both the missing category and what NZBGet actually has configured. The same check runs at Test-Connection time so the misconfig surfaces when saving the client, not on the first grab. If preflight passes but append still returns 0 (disk full, write-permission on intermediate dir, NZBGet paused with quota reached, invalid NZB content), the fallback error now enumerates those causes and points the user at NZBGet's own log. Thanks to @BraynArts for the report.
+
+## [v1.15.1] — 2026-05-27
+
+Patch release. Five security/correctness fixes from a post-v1.15.0 review pass plus two user-visible bug fixes that affect every install (OpenLibrary author-search 403, notifications silently inert for everything but manual grabs).
+
+### Fixed
+
+- **Notifications actually fire on real events now** (#849, follow-up to #799) — before this release the notifier was only wired into the manual-grab path. Auto-grab (Wanted searches, series fill, recommendations, bulk monitor), import success, import failure, and download-client health-check failures all looked configured (`Test` worked, settings saved) but never produced webhooks. `EventGrabbed` now fires on every successful auto-grab, `EventBookImported` on every clean import, `EventDownloadFailed` from the importer's failure paths, and `EventHealth` is edge-triggered when a download client enters the error state (suppressed for the `checking → error` transient and for repeated `error → error` polls so a persistently-broken client doesn't spam every refresh cycle). `EventUpgrade` is intentionally deferred — Bindery does not currently have a distinct upgrade-grab code path. Thanks to @wirecutter313 for the original report.
+
+- **`BINDERY_CONTACT` env var lets each install advertise its own User-Agent contact** (#848) — OpenLibrary's `/search/authors.json` endpoint applies per-User-Agent rate-limiting that the shared default contact pointer (the Bindery project URL) was tripping across the entire fleet, leaving users with HTTP 403 on every "Add author" attempt even though name/title book searches still worked. Setting `BINDERY_CONTACT` to a per-instance email or URL — e.g. `BINDERY_CONTACT=you@example.org` — makes each install's User-Agent distinct and lifts the block. Bare email addresses are auto-prefixed with `mailto:`. The default (project URL) is unchanged for installs that don't set the env var; users hitting the 403 should set it. Thanks to @wirecutter313 and a Reddit reporter for the independent confirmations.
+
+- **Notification webhook URL on a private network can be set with a clear escape hatch** (#799 follow-up) — the bare `url not allowed: points to private network` error now appends a hint pointing at the `BINDERY_NOTIFICATIONS_ALLOW_PRIVATE=1` env var, so users running ntfy / Gotify / Home Assistant on the same Docker network know how to unblock the save. Thanks to @joncrangle.
+
+- **Custom HTTP headers are now editable in the notification UI** (#799 follow-up) — the `Headers` field has always existed in the model and the notifier honoured it, but the UI hardcoded `'{}'` so users had no way to provide an `Authorization` header for ntfy / Gotify / webhook routing. Both Add and Edit forms now expose a "Custom headers (JSON)" textarea with client-side validation and an ntfy auth placeholder. Thanks to @wirecutter313.
+
+### Security
+
+- **Indexer / Prowlarr / Download-client list endpoints behind RequireAdmin** (#844) — before this release, any authenticated user (role `user`, not just `admin`) could `GET /api/v1/indexer/{id}` and read the indexer's API key, or `GET /api/v1/downloadclient/{id}` and read the qBittorrent password. The entire `/api/v1/prowlarr/*` subtree (including Create/Update/Delete/Test/Sync) was ungated and a non-admin could delete an admin's Prowlarr instance. All these routes now require admin role. Tested by `TestSensitiveRoutesRequireAdmin`. Found in the post-v1.15.0 security review.
+
+- **Notification routes behind RequireAdmin** (#799 follow-up) — same shape as the indexer/prowlarr leak: `Notification.Headers` carries arbitrary HTTP auth tokens (ntfy auth, Discord routing), but `GET /api/v1/notification` was ungated. Now admin-only across the whole subtree.
+
+- **Backup endpoints behind RequireAdmin** (#845) — the `POST /api/v1/backup/{filename}/restore` endpoint overwrites the live SQLite database with the named backup file. Before this release, any authenticated user could roll the instance back. Now admin-only.
+
+- **OIDC promote-first-admin race condition fixed** (#845) — two concurrent first-time OIDC logins against an admin-less instance with local auth disabled could both pass the "no admins exist" check and both be auto-promoted to admin. The decision is now atomic via `SettingsRepo.SetIfAbsent` (SQLite `INSERT … ON CONFLICT DO NOTHING`): exactly one concurrent first-time login wins; any other simultaneous login falls back to the default role.
+
+- **Calibre import rollback is now transactional** (#643 follow-up, #847) — when a rollback hit a per-entity failure partway through, prior deletes/restores were already committed but the run wasn't marked rolled back, so retrying re-applied successful actions against shifted state and `restore_*` ops could mis-revert. The entire rollback now runs inside a single `sql.Tx` — any failure rolls back every prior write atomically, and `Stats.Failed > 0` is impossible on a successful return.
+
+- **Migration runner refuses duplicate version numbers at boot** (#845) — the 043 collision incident during the v1.15.0 cycle was silently lost on every existing install (the apply loop skipped the second `043_*.sql` because the version was already recorded). A new startup guard fails with a clear error when two migration files share a numeric prefix, so the failure mode can't recur.
+
+- **ABS / Grimmory / Calibre plugin base URLs validated against SSRF policy at save** (#845) — the admin-input boundary for these provider URLs now blocks link-local (169.254/16, AWS IMDSv4) and cloud-metadata endpoints via `httpsec.ValidateOutboundURL(PolicyLAN)`, matching the existing indexer/prowlarr/downloadclient policy. Loopback and RFC1918 are still allowed for typical homelab deployments. NewClient callers continue to use the format-only `NormalizeBaseURL` so test fixtures with `httptest` (loopback) still construct clients.
+
+- **File handler path check fails closed when no library roots are configured** (#845) — previously allowed any path when `BINDERY_LIBRARY_DIR` was unset (intended for test fixtures, but a silent prod misconfiguration). Now returns 403 unless the path falls under a configured root; tests seed an explicit `t.TempDir()` root.
+
+- **Trusted-proxy `0.0.0.0/0` boot warning** (#845) — operators sometimes set `BINDERY_TRUSTED_PROXY=0.0.0.0/0` to silence the proxy-mode safety gate, but in that shape every client's `X-Forwarded-For` is honoured, defeating the login rate-limiter and any per-IP decision. A boot-time `slog.Warn` makes the misconfiguration visible in logs.
+
+## [v1.15.0] — 2026-05-26
+
+Six feature drops plus a sweep of fixes for default-install breaks that v1.14.2 didn't catch.
+
+### Added
+
+- **Editable Quality Profiles** (#768) — quality profiles existed in the model and had a read-only Settings tab, but no way to create, edit, or delete them existed. The `/api/v1/qualityprofile` endpoint gains CRUD behind `RequireAdmin`, and Settings → Quality Profiles is now a full editor: reorderable preference list, per-format allow toggle, cutoff `<select>` restricted to allowed items, audiobook badge on m4b/mp3/flac/m4a entries. Delete-in-use returns 409 with the conflicting author count. Closes the obvious migration story from *arr that the read-only UI implied but didn't deliver.
+
+- **Configurable author monitor modes** (#792, #809, #810) — adding a prolific author no longer floods Wanted with the full back catalogue. The Edit Author dialog gains a `MonitorMode` selector with five values: `all` (existing behaviour), `future` (only books with a future release date), `latest N`, `none`, and `series` — the last lets the user pick one or more of that author's series and monitor only books in those series. `BINDERY_AUTHOR_DEFAULT_MONITOR_MODE` sets the global default for new authors (any mode except `series`, which is per-author by design). Existing books can be retroactively re-monitored to match the new mode via an "apply to existing" checkbox. Thanks to @anthonysnyder for the original ask and @magrhino for implementing #809.
+
+- **Bulk monitor/exclude/delete on Author detail** (#791) — per-row checkboxes + select-all header with indeterminate state + sticky bulk-action bar. Monitor / Unmonitor immediate, Exclude / Delete behind a confirm. Selection auto-prunes when filters hide rows. Pairs with the new monitor modes for a coherent "add prolific author" workflow. Thanks to @anthonysnyder.
+
+- **Per-media-type download client category** (#700) — a download client now accepts a second `CategoryAudiobook` field. When set, audiobook grabs go under that category and validate against `BINDERY_AUDIOBOOK_DOWNLOAD_DIR`; ebook grabs use the existing `Category` against `BINDERY_DOWNLOAD_DIR`. The fuzzy `strings.Contains(category, "audio")` heuristic is gone. Multi-client setups can now use `PickClientForMediaType` to route by explicit field. Thanks to @strenkml.
+
+- **Calibre import/sync rollback** (#643) — Calibre import gains run tracking + entity snapshots + rollback preview + rollback execute, modelled on the existing ABS rollback. A bad Calibre import is now revertible without a database-level snapshot. Metadata-only revert — on-disk files are not touched. New endpoints under `/api/v1/calibre/runs[/{id}/rollback[/preview]]` behind `RequireAdmin`; Settings → Calibre gains a "Recent imports" panel with per-run Rollback. Sync-side (push to Calibre) intentionally excluded — it only mutates `calibre_id`, no data damage. Thanks to @magrhino.
+
+- **Edit existing Prowlarr connection** (#820) — the Prowlarr card in Settings → Indexers gained Add/Test/Sync/Delete but never Edit, so rotating the Prowlarr API key required deleting and recreating the instance (which cascade-deleted every synced indexer row and the user's local toggles/priorities). New Edit form is wired to the existing `PUT /api/v1/prowlarr/{id}`. Key rotation propagates immediately to every indexer row managed by the instance, so synced indexers never authenticate with a stale key. URL changes still need a manual Sync to rebuild per-indexer torznab URLs; the form warns when URL is edited. Thanks to @magrhino.
+
+- **Hardcover series refs populated during list sync** (#805) — Hardcover GraphQL queries for custom lists and built-in shelves now request `featured_series` fields; the list syncer wires those refs into `SeriesRepo.LinkSeriesRefs` best-effort after each book create. Series links appear immediately for books imported from Hardcover lists rather than requiring a later manual rebind. Thanks to @magrhino.
+
+### Fixed
+
 - **OpenLibrary name/title searches no longer fail with HTTP 403** (#834) — OpenLibrary's API now blocks requests whose `User-Agent` does not include a contact pointer (email or URL), and Bindery's previous `bindery/<version> (<os>)` UA matched that block. Name/title book additions failed immediately against OpenLibrary while ISBN lookups (which fall through to Hardcover enrichment) still worked, so the breakage was easy to miss in smoke checks. The User-Agent now appends the project URL — `bindery/<version> (<os>; https://github.com/vavallee/bindery)` — which satisfies OpenLibrary's policy and unlocks its higher rate limit. Thanks to @thetic for the precise repro and root-cause analysis.
+
+- **qBittorrent on Windows reports paths with backslashes; Bindery now normalizes them** (#800 follow-up) — a qBittorrent instance running on Windows reports `SavePath`, `ContentPath`, and category `SavePath` with backslash separators (e.g. `N:\Torrents\complete\library\book`). Bindery's downstream Linux path code (`filepath.Walk`, `PathRemap.Apply`, `pathIsAtOrUnder`) cannot process those, so a Docker-on-Windows user's import failed with `no book files found in N:\...` even though their PathRemap looked right. Backslashes are now normalized to forward slashes at the qBit API boundary; PathRemap configuration becomes predictable across deployments. Reported by PixieApples on Discord.
+
+- **qBittorrent path remap is now verified against the on-disk filesystem** (#800 follow-up) — the PathRemap suggestion shipped in v1.14.2 only checked whether the remapped string was at-or-under `BINDERY_DOWNLOAD_DIR`, never that the resolved path actually existed. Linux is case-sensitive, so a Windows/WSL/Docker user with their drive mounted at `/N/` but Bindery configured with `/n/` (or vice versa) got a textually-correct remap suggestion that silently pointed at nothing. The health check now stat()s the resolved path; if missing but a case-variant exists, the error names the divergent segment so the user knows exactly which letter to fix. Also reported by PixieApples.
+
+- **qBittorrent import diagnostics now surface real failure modes** (#824) — three gaps made torrent import failures near-invisible even with debug logging on: `GetTorrents` API errors were debug-level, loop-level skip-on-no-match was silent, and the "no book files found" error didn't distinguish path-doesn't-exist from path-exists-but-empty. API errors now log at Warn, the poll loop emits per-skip and per-match debug context, and when the download path doesn't exist a separate Warn names PathRemap as the likely fix. Thanks to @statte.
+
+- **Docker → bare-metal host firewall is now named in the ECONNREFUSED hint** — `(service may not be running on that port)` was misleading when the service was running and a host firewall was REJECTing traffic from the Docker bridge subnet (REJECT sends RST → ECONNREFUSED). The hint now reads `(connection refused — service may not be listening on that port, or a host firewall is rejecting traffic from the Docker subnet)`. Reported by Daize on Discord.
+
+- **Grimmory integration is now honest about being configuration-only** (#818) — Grimmory v3.x has no API keys (confirmed upstream at grimmory-tools/grimmory#1487), but the Bindery UI implied the API key was required, sending users on wild-goose chases when they tried to find one. The field is now optional with a clear note, the empty `Authorization` header is suppressed when no key is set, and a banner at the top of the tab acknowledges that Bindery does not yet push books to Grimmory — that's tracked in #826. Reported by Merijeek.
+
+- **Migration version collision (043)** (#832) — internal hotfix during the v1.15.0 cycle: two unrelated PRs both shipped a `043_*.sql` migration and the runner skips any version it has already applied, so on existing installs only the first 043 would run and the second's schema change would be silently lost. The author-monitor-mode migration was renumbered to 045 before any release shipped the collision.
+
+### Changed
+
+- **Per-media-type expected-dir resolution** (#700 ripple) — `ExpectedDownloadDirForClient` now takes a `mediaType` parameter rather than guessing from category name. The fuzzy `strings.Contains(category, "audio")` heuristic is gone.
+
+### Chores
+
+- Dependency bumps via dependabot (#815, #817) and vulnerable Go modules update (#819).
+- IndexersTab i18n migration (#838) — Settings → Indexers strings now route through `t()` so they translate per locale.
+- Sweep of 113 `t.Fatal` nil-check sites in test files to satisfy staticcheck's SA5011 analyzer (#841); no runtime behaviour change.
 
 ## [v1.14.2] — 2026-05-24
 

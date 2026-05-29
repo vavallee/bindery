@@ -161,6 +161,7 @@ func TestQuery_GraphQLErrorsReturnError(t *testing.T) {
 	_, err := c.SearchAuthors(context.Background(), "Sanderson")
 	if err == nil {
 		t.Fatal("expected GraphQL error")
+		return
 	}
 	if !strings.Contains(err.Error(), "Malformed Authorization header") || !strings.Contains(err.Error(), "invalid-headers") {
 		t.Fatalf("unexpected error: %v", err)
@@ -735,6 +736,7 @@ func TestGetAuthor_Found(t *testing.T) {
 	}
 	if author == nil {
 		t.Fatal("expected non-nil author")
+		return
 	}
 	if author.Name != "Neil Gaiman" {
 		t.Errorf("Name: want 'Neil Gaiman', got %q", author.Name)
@@ -832,6 +834,7 @@ func TestGetBook_Found(t *testing.T) {
 	}
 	if book == nil {
 		t.Fatal("expected non-nil book")
+		return
 	}
 	if book.Title != "American Gods" {
 		t.Errorf("Title: want 'American Gods', got %q", book.Title)
@@ -1131,6 +1134,7 @@ func TestGetEditions_GraphQLError(t *testing.T) {
 	_, err := c.GetEditions(context.Background(), "hc:dune")
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	if !strings.Contains(err.Error(), "hardcover get editions") {
 		t.Fatalf("error = %v, want hardcover get editions wrapper", err)
@@ -1149,6 +1153,7 @@ func TestGetEditions_HTTPError(t *testing.T) {
 	_, err := c.GetEditions(context.Background(), "hc:dune")
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	if !strings.Contains(err.Error(), "hardcover get editions") {
 		t.Fatalf("error = %v, want hardcover get editions wrapper", err)
@@ -1177,6 +1182,7 @@ func TestGetBookByISBN_Found(t *testing.T) {
 	}
 	if book == nil {
 		t.Fatal("expected non-nil book")
+		return
 	}
 	if book.Title != "The Name of the Wind" {
 		t.Errorf("Title: want 'The Name of the Wind', got %q", book.Title)
@@ -1213,6 +1219,7 @@ func TestGetBookByISBN_WithLanguage(t *testing.T) {
 	}
 	if book == nil {
 		t.Fatal("expected non-nil book")
+		return
 	}
 	if strings.Contains(gotQuery, "iso_639_1") {
 		t.Fatalf("GetBookByISBN query uses unsupported language field: %s", gotQuery)
@@ -1248,6 +1255,7 @@ func TestGetBookByISBN_NoLanguage(t *testing.T) {
 	}
 	if book == nil {
 		t.Fatal("expected non-nil book")
+		return
 	}
 	if book.Language != "" {
 		t.Errorf("Language: want empty, got %q", book.Language)
@@ -1349,6 +1357,7 @@ func TestSearchSeries_ErrorsWhenMatchesCannotBeMapped(t *testing.T) {
 	_, err := c.SearchSeries(context.Background(), "Dune", 5)
 	if err == nil {
 		t.Fatal("expected unmappable search response error")
+		return
 	}
 	if !strings.Contains(err.Error(), "no mappable series documents") {
 		t.Fatalf("unexpected error: %v", err)
@@ -1433,6 +1442,7 @@ func TestGetSeriesCatalog_ParsesAndDedupesBooks(t *testing.T) {
 	}
 	if catalog == nil {
 		t.Fatal("expected catalog")
+		return
 	}
 	if catalog.ForeignID != "hc-series:123" || catalog.Title != "Foundation" || catalog.AuthorName != "Isaac Asimov" {
 		t.Fatalf("unexpected catalog: %+v", catalog)

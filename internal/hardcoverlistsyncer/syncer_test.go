@@ -34,6 +34,7 @@ func TestNew_WiresRepos(t *testing.T) {
 	s, _ := newTestSyncer(t)
 	if s == nil {
 		t.Fatal("New returned nil")
+		return
 	}
 	if s.importLists == nil || s.authors == nil || s.books == nil {
 		t.Errorf("expected all repo fields to be set, got %+v", s)
@@ -314,6 +315,7 @@ func TestSyncOne_LinksSeriesRefsAfterBookImport(t *testing.T) {
 	}
 	if persisted == nil {
 		t.Fatal("series was not created during sync")
+		return
 	}
 	booksInSeries, err := series.ListBooksInSeries(ctx, persisted.ID)
 	if err != nil {

@@ -105,7 +105,7 @@ func (h *GrimmoryHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 		set(SettingGrimmoryEnabled, val)
 	}
 	if req.BaseURL != nil {
-		u, err := grimmory.NormalizeBaseURL(*req.BaseURL)
+		u, err := grimmory.ValidateBaseURLSecure(*req.BaseURL)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return

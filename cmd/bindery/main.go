@@ -178,6 +178,21 @@ func main() {
 	// and the proxy-auth identity check).
 	trustedCIDRs := parseTrustedProxyCIDRs(os.Getenv("BINDERY_TRUSTED_PROXY"))
 
+	// Warn loudly when the trusted-proxy allowlist effectively trusts every
+	// possible peer (0.0.0.0/0 or ::/0). In that shape every client's
+	// X-Forwarded-For header is honoured, defeating the login rate-limiter
+	// (which keys off the post-RealIP `RemoteAddr`) and any other per-IP
+	// decision in the stack. Operators sometimes do this in Helm charts to
+	// silence the proxy-mode safety gate without thinking through the
+	// implication; surfacing it at boot makes the misconfiguration obvious.
+	for _, c := range trustedCIDRs {
+		ones, bits := c.Mask.Size()
+		if ones == 0 && bits > 0 {
+			slog.Warn("BINDERY_TRUSTED_PROXY entry trusts every peer — login rate-limiter and per-IP decisions are effectively disabled",
+				"cidr", c.String())
+		}
+	}
+
 	// Safety gate: proxy auth mode requires at least one trusted proxy CIDR so
 	// that the identity header cannot be forged by arbitrary LAN hosts.
 	if s, _ := settingsRepo.Get(ctxBoot, api.SettingAuthMode); s != nil && s.Value == string(auth.ModeProxy) {
@@ -249,6 +264,13 @@ func main() {
 		return
 	}
 
+	// Notifier — constructed early so it can be passed into the import scanner,
+	// scheduler, and download-client health store before they start firing
+	// events. Before issue #849 was fixed, this was constructed only after
+	// scheduler.Start() and only injected into QueueHandler, which is why
+	// auto-grab / import / download-failure events never reached webhooks.
+	notif := notifier.New(notificationRepo)
+
 	// Indexer searcher
 	idxSearcher := indexer.NewSearcher()
 
@@ -260,6 +282,7 @@ func main() {
 		cfg.LibraryDir, cfg.AudiobookDir, namingTemplate, audiobookTemplate,
 		cfg.DownloadPathRemap,
 	)
+	importScanner.WithNotifier(notif)
 	if cfg.AudiobookDownloadDir != "" {
 		importScanner.WithAudiobookDownloadDir(cfg.AudiobookDownloadDir)
 		slog.Info("audiobook download dir configured", "path", cfg.AudiobookDownloadDir)
@@ -377,6 +400,7 @@ func main() {
 	sched.WithDelayProfiles(delayProfileRepo)
 	sched.WithPendingReleases(pendingReleaseRepo)
 	sched.WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir)
+	sched.WithNotifier(notif)
 	// Register the Calibre importer as the 24-hour sync job. The scheduler
 	// only fires the job when the syncer is non-nil, so no guard needed here.
 	sched.WithCalibreSyncer(calibreImporter)
@@ -411,9 +435,6 @@ func main() {
 
 	sched.Start()
 	defer sched.Stop()
-
-	// Notifier
-	notif := notifier.New(notificationRepo)
 
 	// OIDC manager — loaded from settings, reload on config change. The
 	// redirect base URL is resolved per-request from the Login/Callback
@@ -451,7 +472,7 @@ func main() {
 	authorAliasHandler := api.NewAuthorAliasHandler(authorRepo, authorAliasRepo)
 	bookHandler := api.NewBookHandler(bookRepo, metaAgg, historyRepo, sched).WithSettings(settingsRepo).WithDownloads(downloadRepo).WithAuthors(authorRepo).WithSeries(seriesRepo)
 	indexerHandler := api.NewIndexerHandler(indexerRepo, bookRepo, authorRepo, metadataProfileRepo, idxSearcher, settingsRepo, blocklistRepo).WithAliases(authorAliasRepo)
-	downloadHealth := downloader.NewHealthStore()
+	downloadHealth := downloader.NewHealthStore().WithNotifier(notif)
 	if clients, err := dlClientRepo.List(ctxBoot); err == nil {
 		downloader.RefreshDownloadClientHealthAsync(context.Background(), downloadHealth, clients, cfg.DownloadDir, cfg.AudiobookDownloadDir)
 	} else {
@@ -681,43 +702,19 @@ func main() {
 		r.Get("/wanted/missing", bookHandler.ListWanted)
 		r.Post("/wanted/bulk", bulkHandler.WantedBulk)
 
-		// Indexers — reads available to all; mutations admin-only.
-		r.Get("/indexer", indexerHandler.List)
-		r.Get("/indexer/{id}", indexerHandler.Get)
-		r.Get("/indexer/search", indexerHandler.SearchQuery)
-		r.Get("/search/last-debug", indexerHandler.LastSearchDebug)
-		r.Group(func(r chi.Router) {
-			r.Use(auth.RequireAdmin)
-			r.Post("/indexer", indexerHandler.Create)
-			r.Put("/indexer/{id}", indexerHandler.Update)
-			r.Delete("/indexer/{id}", indexerHandler.Delete)
-			r.Post("/indexer/{id}/test", indexerHandler.Test)
-		})
-
-		// Prowlarr indexer sync
-		r.Get("/prowlarr", prowlarrHandler.List)
-		r.Post("/prowlarr", prowlarrHandler.Create)
-		r.Get("/prowlarr/{id}", prowlarrHandler.Get)
-		r.Put("/prowlarr/{id}", prowlarrHandler.Update)
-		r.Delete("/prowlarr/{id}", prowlarrHandler.Delete)
-		r.Post("/prowlarr/{id}/test", prowlarrHandler.Test)
-		r.Post("/prowlarr/{id}/sync", prowlarrHandler.Sync)
+		// Indexers, Prowlarr, and Download clients all return responses that
+		// embed third-party credentials (APIKey, Password). Their routes are
+		// registered via dedicated helpers so the admin-gate boundary is
+		// enforced by a single, testable shape — see cmd/bindery/sensitive_routes.go.
+		registerIndexerRoutes(r, indexerHandler)
+		registerProwlarrRoutes(r, prowlarrHandler)
 
 		// Root folders
 		r.Get("/rootfolder", rootFolderHandler.List)
 		r.Post("/rootfolder", rootFolderHandler.Create)
 		r.Delete("/rootfolder/{id}", rootFolderHandler.Delete)
 
-		// Download clients — reads available to all; mutations admin-only.
-		r.Get("/downloadclient", dlClientHandler.List)
-		r.Get("/downloadclient/{id}", dlClientHandler.Get)
-		r.Group(func(r chi.Router) {
-			r.Use(auth.RequireAdmin)
-			r.Post("/downloadclient", dlClientHandler.Create)
-			r.Put("/downloadclient/{id}", dlClientHandler.Update)
-			r.Delete("/downloadclient/{id}", dlClientHandler.Delete)
-			r.Post("/downloadclient/{id}/test", dlClientHandler.Test)
-		})
+		registerDownloadClientRoutes(r, dlClientHandler)
 
 		// Queue
 		r.Get("/queue", queueHandler.List)
@@ -738,13 +735,19 @@ func main() {
 		r.Delete("/blocklist/bulk", blocklistHandler.BulkDelete)
 		r.Delete("/blocklist/{id}", blocklistHandler.Delete)
 
-		// Notifications
-		r.Get("/notification", notificationHandler.List)
-		r.Post("/notification", notificationHandler.Create)
-		r.Get("/notification/{id}", notificationHandler.Get)
-		r.Put("/notification/{id}", notificationHandler.Update)
-		r.Delete("/notification/{id}", notificationHandler.Delete)
-		r.Post("/notification/{id}/test", notificationHandler.Test)
+		// Notifications — Notification.Headers carries arbitrary HTTP
+		// headers (often auth tokens for ntfy / Gotify / webhook routing).
+		// Admin-only across the whole surface so non-admin users can't read
+		// those credentials via List / Get.
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireAdmin)
+			r.Get("/notification", notificationHandler.List)
+			r.Post("/notification", notificationHandler.Create)
+			r.Get("/notification/{id}", notificationHandler.Get)
+			r.Put("/notification/{id}", notificationHandler.Update)
+			r.Delete("/notification/{id}", notificationHandler.Delete)
+			r.Post("/notification/{id}/test", notificationHandler.Test)
+		})
 
 		// Quality Profiles — reads available to all; mutations admin-only.
 		r.Get("/qualityprofile", qualityProfileHandler.List)
@@ -836,11 +839,17 @@ func main() {
 		r.Put("/customformat/{id}", customFormatHandler.Update)
 		r.Delete("/customformat/{id}", customFormatHandler.Delete)
 
-		// Backups
-		r.Get("/backup", backupHandler.List)
-		r.Post("/backup", backupHandler.Create)
-		r.Post("/backup/{filename}/restore", backupHandler.Restore)
-		r.Delete("/backup/{filename}", backupHandler.Delete)
+		// Backups — Restore overwrites the live database, Delete removes
+		// stored backups, and List leaks filenames containing timestamps that
+		// help an attacker target Restore. Admin-only across the whole
+		// surface.
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireAdmin)
+			r.Get("/backup", backupHandler.List)
+			r.Post("/backup", backupHandler.Create)
+			r.Post("/backup/{filename}/restore", backupHandler.Restore)
+			r.Delete("/backup/{filename}", backupHandler.Delete)
+		})
 
 		// System logs
 		r.Get("/system/logs", logHandler.List)

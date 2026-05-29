@@ -13,11 +13,24 @@ import (
 
 type BookRepo struct {
 	db    *sql.DB
+	exec  dbExecutor
 	files *BookFileRepo
 }
 
 func NewBookRepo(db *sql.DB) *BookRepo {
-	return &BookRepo{db: db, files: NewBookFileRepo(db)}
+	r := &BookRepo{db: db, files: NewBookFileRepo(db)}
+	r.exec = db
+	return r
+}
+
+// WithTx returns a clone of this repo whose tx-aware methods (the ones
+// rolled into calibre.Rollback's single transaction) route through tx
+// instead of the bare *sql.DB. Methods outside that set keep using *sql.DB
+// — those repos are not currently exercised inside multi-repo transactions.
+func (r *BookRepo) WithTx(tx *sql.Tx) *BookRepo {
+	clone := *r
+	clone.exec = tx
+	return &clone
 }
 
 // bookCTE is a WITH clause that materialises the first book_files row per
@@ -166,7 +179,7 @@ func (r *BookRepo) Update(ctx context.Context, b *models.Book) error {
 		mediaType = models.MediaTypeEbook
 	}
 
-	_, err = r.db.ExecContext(ctx, `
+	_, err = r.exec.ExecContext(ctx, `
 		UPDATE books SET foreign_id=?, author_id=?, title=?, sort_title=?, original_title=?, description=?, image_url=?,
 		                 release_date=?, genres=?, average_rating=?, ratings_count=?,
 		                 monitored=?, status=?, any_edition_ok=?, selected_edition_id=?,
@@ -374,7 +387,7 @@ func (r *BookRepo) SetExcluded(ctx context.Context, id int64, excluded bool) err
 
 func (r *BookRepo) Delete(ctx context.Context, id int64) error {
 	// book_files rows are removed via ON DELETE CASCADE on the FK.
-	_, err := r.db.ExecContext(ctx, "DELETE FROM books WHERE id=?", id)
+	_, err := r.exec.ExecContext(ctx, "DELETE FROM books WHERE id=?", id)
 	return err
 }
 
@@ -382,9 +395,9 @@ func (r *BookRepo) query(ctx context.Context, q string, args []any) ([]models.Bo
 	var rows *sql.Rows
 	var err error
 	if args != nil {
-		rows, err = r.db.QueryContext(ctx, q, args...)
+		rows, err = r.exec.QueryContext(ctx, q, args...)
 	} else {
-		rows, err = r.db.QueryContext(ctx, q)
+		rows, err = r.exec.QueryContext(ctx, q)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("query books: %w", err)

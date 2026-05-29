@@ -983,12 +983,12 @@ describe('SettingsPage', () => {
     await openIndexersTab()
 
     fireEvent.click(screen.getByRole('button', { name: 'settings.indexers.addButton' }))
-    fireEvent.change(screen.getByPlaceholderText('Name (e.g. NZBGeek)'), { target: { value: 'SceneNZBs' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.namePlaceholderExample'), { target: { value: 'SceneNZBs' } })
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'torznab' } })
-    fireEvent.change(screen.getByPlaceholderText('URL (e.g. https://api.nzbgeek.info or http://prowlarr:9696/1/api)'), { target: { value: 'http://prowlarr:9696/1/api' } })
-    fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'scene-key' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.urlPlaceholderExample'), { target: { value: 'http://prowlarr:9696/1/api' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.apiKey'), { target: { value: 'scene-key' } })
     fireEvent.change(screen.getByDisplayValue('7020'), { target: { value: '7020, 7120, bad, 3030' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
 
     await waitFor(() => {
       expect(api.addIndexer).toHaveBeenCalledWith({
@@ -1010,12 +1010,12 @@ describe('SettingsPage', () => {
     await openIndexersTab()
 
     fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
-    fireEvent.change(screen.getByPlaceholderText('Name'), { target: { value: 'DrunkenSlug' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.namePlaceholder'), { target: { value: 'DrunkenSlug' } })
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'torznab' } })
-    fireEvent.change(screen.getByPlaceholderText('URL'), { target: { value: 'https://slug.example.com/api' } })
-    fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'slug-key' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.urlPlaceholder'), { target: { value: 'https://slug.example.com/api' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.apiKey'), { target: { value: 'slug-key' } })
     fireEvent.change(screen.getByDisplayValue('7020, 3030'), { target: { value: '7020, bad, 3030' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
 
     await waitFor(() => {
       expect(api.updateIndexer).toHaveBeenCalledWith(7, {
@@ -1079,11 +1079,11 @@ describe('SettingsPage', () => {
     renderSettings()
     await openIndexersTab()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Add Prowlarr' }))
-    fireEvent.change(screen.getByPlaceholderText('Prowlarr'), { target: { value: 'Main Prowlarr' } })
-    fireEvent.change(screen.getByPlaceholderText('http://prowlarr:9696'), { target: { value: 'http://prowlarr:9696' } })
-    fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'prowlarr-secret' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save & sync' }))
+    fireEvent.click(screen.getByRole('button', { name: 'settings.prowlarr.addButton' }))
+    fireEvent.change(screen.getByPlaceholderText('settings.prowlarr.namePlaceholder'), { target: { value: 'Main Prowlarr' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.prowlarr.urlPlaceholder'), { target: { value: 'http://prowlarr:9696' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.prowlarr.apiKeyPlaceholder'), { target: { value: 'prowlarr-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: 'settings.prowlarr.saveAndSync' }))
 
     await waitFor(() => {
       expect(api.addProwlarr).toHaveBeenCalledWith({
@@ -1107,15 +1107,15 @@ describe('SettingsPage', () => {
     renderSettings()
     await openIndexersTab()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Add Prowlarr' }))
-    fireEvent.change(screen.getByPlaceholderText('Prowlarr'), { target: { value: 'Fallback Prowlarr' } })
-    fireEvent.change(screen.getByPlaceholderText('http://prowlarr:9696'), { target: { value: 'http://prowlarr:9696' } })
-    fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'prowlarr-secret' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save & sync' }))
+    fireEvent.click(screen.getByRole('button', { name: 'settings.prowlarr.addButton' }))
+    fireEvent.change(screen.getByPlaceholderText('settings.prowlarr.namePlaceholder'), { target: { value: 'Fallback Prowlarr' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.prowlarr.urlPlaceholder'), { target: { value: 'http://prowlarr:9696' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.prowlarr.apiKeyPlaceholder'), { target: { value: 'prowlarr-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: 'settings.prowlarr.saveAndSync' }))
 
     await waitFor(() => expect(api.syncProwlarr).toHaveBeenCalledWith(32))
     expect(await screen.findByText('Fallback Prowlarr')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Save & sync' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'settings.prowlarr.saveAndSync' })).not.toBeInTheDocument()
   })
 
   it('tests, syncs, and deletes an existing Prowlarr instance', async () => {
@@ -1128,19 +1128,19 @@ describe('SettingsPage', () => {
       vi.mocked(api.listProwlarr).mockResolvedValue([{ ...prowlarr, lastSyncAt: '2026-05-06T13:00:00Z' }])
       await openIndexersTab()
 
-      fireEvent.click(screen.getByRole('button', { name: 'Test' }))
+      fireEvent.click(screen.getByRole('button', { name: 'settings.prowlarr.test' }))
       await waitFor(() => expect(api.testProwlarr).toHaveBeenCalledWith(33))
-      expect(await screen.findByText('Connected — Prowlarr 1.0.0')).toBeInTheDocument()
+      expect(await screen.findByText('settings.prowlarr.connectedVersion')).toBeInTheDocument()
 
-      fireEvent.click(screen.getByRole('button', { name: 'Sync now' }))
+      fireEvent.click(screen.getByRole('button', { name: 'settings.prowlarr.syncNow' }))
       await waitFor(() => expect(api.syncProwlarr).toHaveBeenCalledWith(33))
-      expect(await screen.findByText(/Synced.*added 1, updated 2, removed 3/)).toBeInTheDocument()
+      expect(await screen.findByText('settings.prowlarr.synced')).toBeInTheDocument()
       await waitFor(() => expect(api.listIndexers).toHaveBeenCalledTimes(2))
       await waitFor(() => expect(api.listProwlarr).toHaveBeenCalledTimes(2))
 
-      fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+      fireEvent.click(screen.getByRole('button', { name: 'settings.prowlarr.delete' }))
       await waitFor(() => expect(api.deleteProwlarr).toHaveBeenCalledWith(33))
-      expect(confirmSpy).toHaveBeenCalledWith('Delete Prowlarr instance "Library Prowlarr" and all its synced indexers?')
+      expect(confirmSpy).toHaveBeenCalledWith('settings.prowlarr.confirmDelete')
       await waitFor(() => expect(screen.queryByText('Library Prowlarr')).not.toBeInTheDocument())
     } finally {
       confirmSpy.mockRestore()

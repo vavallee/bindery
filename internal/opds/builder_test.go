@@ -248,6 +248,7 @@ func TestBuildAuthor_Acquisition(t *testing.T) {
 	acq := findLink(entry.Links, RelAcquisition)
 	if acq == nil {
 		t.Fatal("acquisition link missing")
+		return
 	}
 	if acq.Href != "http://host:8787/opds/book/10/file" {
 		t.Errorf("acq href = %q", acq.Href)
@@ -421,6 +422,7 @@ func mustHaveRel(t *testing.T, links []Link, rel, href string) {
 	l := findLink(links, rel)
 	if l == nil {
 		t.Fatalf("missing rel=%s", rel)
+		return
 	}
 	if l.Href != href {
 		t.Errorf("rel=%s href = %q, want %q", rel, l.Href, href)

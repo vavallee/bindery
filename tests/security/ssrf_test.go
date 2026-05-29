@@ -112,6 +112,7 @@ func TestSSRF_ErrorMessages(t *testing.T) {
 	err := httpsec.ValidateOutboundURL("http://127.0.0.1/", httpsec.PolicyStrict)
 	if err == nil {
 		t.Fatal("expected error for loopback")
+		return
 	}
 	msg := strings.ToLower(err.Error())
 	allowed := []string{"loopback", "private", "disallowed", "blocked", "not allowed"}

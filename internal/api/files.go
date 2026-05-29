@@ -116,13 +116,13 @@ func asciiFallback(name string) string {
 
 // isAllowedPath reports whether p falls under one of the configured library
 // roots. Paths are compared after filepath.Clean so trailing slashes and
-// `..` traversal don't bypass the check. If no roots are configured the
-// handler falls back to allowing any path — this preserves behaviour for
-// installs that haven't set BINDERY_LIBRARY_DIR and for tests that wire
-// the handler without roots.
+// `..` traversal don't bypass the check. Fails CLOSED when no roots are
+// configured — a production install missing BINDERY_LIBRARY_DIR should not
+// silently degrade to "serve any path on disk". Tests that need an unscoped
+// handler must seed allowedRoots explicitly (e.g. t.TempDir()).
 func (h *FileHandler) isAllowedPath(p string) bool {
 	if len(h.allowedRoots) == 0 {
-		return true
+		return false
 	}
 	p = filepath.Clean(p)
 	for _, root := range h.allowedRoots {

@@ -240,6 +240,7 @@ func TestAdd_WrapsRunnerError(t *testing.T) {
 	_, err := c.Add(context.Background(), "/x.epub", Metadata{})
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	// Both the runner error and the stderr payload must appear in the
 	// wrapped message — operators rely on stderr to diagnose permission

@@ -45,6 +45,7 @@ func TestABSImportRunRepoFinishRetainsCheckpointOnFailure(t *testing.T) {
 	}
 	if stored == nil {
 		t.Fatal("expected stored run")
+		return
 	}
 	if stored.CheckpointJSON == "" || stored.CheckpointJSON == "{}" {
 		t.Fatalf("checkpoint_json = %q, want persisted checkpoint", stored.CheckpointJSON)

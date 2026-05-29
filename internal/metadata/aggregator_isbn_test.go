@@ -52,6 +52,7 @@ func TestAggregator_GetBookByISBN_SearchesRegisteredEnrichers(t *testing.T) {
 			}
 			if got == nil {
 				t.Fatal("expected secondary provider result")
+				return
 			}
 			if got.MetadataProvider != tt.provider {
 				t.Fatalf("MetadataProvider = %q, want %q", got.MetadataProvider, tt.provider)
@@ -488,6 +489,7 @@ func TestAggregator_GetBookByISBN_EnrichesShortDescription(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected book")
+		return
 	}
 	if got.Description == "Short." {
 		t.Fatalf("expected enriched description, got %q", got.Description)

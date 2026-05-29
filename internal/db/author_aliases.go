@@ -95,7 +95,7 @@ func (r *AuthorAliasRepo) Create(ctx context.Context, a *models.AuthorAlias) err
 	return r.createTx(ctx, r.db, a)
 }
 
-func (r *AuthorAliasRepo) createTx(ctx context.Context, exec sqlExecutor, a *models.AuthorAlias) error {
+func (r *AuthorAliasRepo) createTx(ctx context.Context, exec dbExecutor, a *models.AuthorAlias) error {
 	now := time.Now().UTC()
 	name := strings.TrimSpace(a.Name)
 	if name == "" {
@@ -383,11 +383,4 @@ func loadAuthorForMerge(ctx context.Context, tx *sql.Tx, id int64) (*mergeAuthor
 	}
 	a.Monitored = monitored == 1
 	return &a, nil
-}
-
-// sqlExecutor is the shared subset of *sql.DB and *sql.Tx we need so Create
-// can work either standalone or inside a caller's transaction.
-type sqlExecutor interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }

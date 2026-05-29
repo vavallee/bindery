@@ -271,6 +271,7 @@ func TestGetBookByISBN_Found(t *testing.T) {
 	}
 	if book == nil {
 		t.Fatal("expected non-nil book")
+		return
 	}
 	if book.Title != "ISBN Book" {
 		t.Errorf("Title: want 'ISBN Book', got %q", book.Title)

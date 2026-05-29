@@ -2,12 +2,14 @@ package calibre
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -135,18 +137,69 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 		return rollbackEntityRank(entities[a]) < rollbackEntityRank(entities[b])
 	})
 
+	// Execute mode: wrap every write (and every read inside the loop —
+	// MaxOpenConns=1 means r.db reads would deadlock against an open tx)
+	// in a single transaction so a mid-loop failure aborts cleanly with
+	// the database untouched. Without this, partial rollbacks leave the
+	// run in 'completed' status with some entities deleted and some not;
+	// re-running the rollback then mis-applies restore_* ops against
+	// shifted state. Preview keeps the unwrapped repos — it issues no
+	// writes anyway.
+	books := i.books
+	authors := i.authors
+	editions := i.editions
+	provenance := i.provenance
+	runs := i.runs
+	var tx *sql.Tx
+	if !preview {
+		t, err := i.runs.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, fmt.Errorf("begin rollback tx: %w", err)
+		}
+		tx = t
+		books = i.books.WithTx(tx)
+		authors = i.authors.WithTx(tx)
+		editions = i.editions.WithTx(tx)
+		provenance = i.provenance.WithTx(tx)
+		runs = i.runs.WithTx(tx)
+		// Deferred Rollback no-ops after Commit (ErrTxDone) — safe to
+		// always defer it as the abort-on-failure path.
+		defer func() {
+			if tx != nil {
+				_ = tx.Rollback()
+			}
+		}()
+	}
+
 	deletedBooks := map[int64]struct{}{}
 	filesTouched := 0
 
+	// abortOnFail wraps an error path inside the !preview loop. With the
+	// whole rollback inside one tx a single repo failure is fatal: every
+	// subsequent query would error against the poisoned tx, and the deferred
+	// Rollback will revert all earlier writes. Returning a sentinel up the
+	// stack lets the loop break out cleanly. In preview mode we keep the
+	// existing soft-skip behaviour so a partially-broken run still produces
+	// a readable plan for the UI.
+	var rollbackErr error
+	bailOut := func() bool { return !preview && rollbackErr != nil }
+
 	for _, entity := range entities {
-		current, perr := i.provenance.GetByExternal(ctx, entity.SourceID, entity.EntityType, entity.ExternalID)
+		if bailOut() {
+			break
+		}
+		current, perr := provenance.GetByExternal(ctx, entity.SourceID, entity.EntityType, entity.ExternalID)
 		if perr != nil {
+			if !preview {
+				rollbackErr = fmt.Errorf("provenance lookup %s/%s: %w", entity.EntityType, entity.ExternalID, perr)
+				continue
+			}
 			result.Stats.Failed++
 			result.Actions = append(result.Actions, RollbackAction{
 				EntityType:  entity.EntityType,
 				ExternalID:  entity.ExternalID,
 				LocalID:     entity.LocalID,
-				DisplayName: i.rollbackDisplayName(ctx, entity),
+				DisplayName: rollbackDisplayName(ctx, books, authors, editions, entity),
 				Outcome:     entity.Outcome,
 				Action:      "inspect",
 				Reason:      perr.Error(),
@@ -159,7 +212,7 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 				EntityType:  entity.EntityType,
 				ExternalID:  entity.ExternalID,
 				LocalID:     entity.LocalID,
-				DisplayName: i.rollbackDisplayName(ctx, entity),
+				DisplayName: rollbackDisplayName(ctx, books, authors, editions, entity),
 				Outcome:     entity.Outcome,
 				Action:      "skip",
 				Reason:      "already rolled back",
@@ -174,7 +227,7 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 				EntityType:  entity.EntityType,
 				ExternalID:  entity.ExternalID,
 				LocalID:     entity.LocalID,
-				DisplayName: i.rollbackDisplayName(ctx, entity),
+				DisplayName: rollbackDisplayName(ctx, books, authors, editions, entity),
 				Outcome:     entity.Outcome,
 				Action:      "skip",
 				Reason:      "provenance now points to a different local entity",
@@ -186,7 +239,7 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 			EntityType:  entity.EntityType,
 			ExternalID:  entity.ExternalID,
 			LocalID:     entity.LocalID,
-			DisplayName: i.rollbackDisplayName(ctx, entity),
+			DisplayName: rollbackDisplayName(ctx, books, authors, editions, entity),
 			Outcome:     entity.Outcome,
 		}
 
@@ -209,19 +262,13 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 			action.Action = "delete_edition"
 			result.Stats.ActionsPlanned++
 			if !preview {
-				if err := i.editions.Delete(ctx, entity.LocalID); err != nil {
-					action.Action = "skip"
-					action.Reason = err.Error()
-					result.Stats.Failed++
-					result.Actions = append(result.Actions, action)
+				if err := editions.Delete(ctx, entity.LocalID); err != nil {
+					rollbackErr = fmt.Errorf("delete edition %d: %w", entity.LocalID, err)
 					continue
 				}
-				unlinked, err := i.provenance.DeleteByLocal(ctx, entity.EntityType, entity.LocalID)
+				unlinked, err := provenance.DeleteByLocal(ctx, entity.EntityType, entity.LocalID)
 				if err != nil {
-					action.Action = "skip"
-					action.Reason = err.Error()
-					result.Stats.Failed++
-					result.Actions = append(result.Actions, action)
+					rollbackErr = fmt.Errorf("unlink edition %d provenance: %w", entity.LocalID, err)
 					continue
 				}
 				result.Stats.EntitiesDeleted++
@@ -236,8 +283,12 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 				result.Actions = append(result.Actions, action)
 				continue
 			}
-			retain, err := i.hasProvenanceOutsideRun(ctx, entity.EntityType, entity.LocalID, runID)
+			retain, err := hasProvenanceOutsideRun(ctx, provenance, entity.EntityType, entity.LocalID, runID)
 			if err != nil {
+				if !preview {
+					rollbackErr = fmt.Errorf("provenance list for book %d: %w", entity.LocalID, err)
+					continue
+				}
 				action.Action = "skip"
 				action.Reason = err.Error()
 				result.Stats.Failed++
@@ -249,11 +300,8 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 				action.Reason = "local book retained because another Calibre import link references it"
 				result.Stats.ActionsPlanned++
 				if !preview {
-					if err := i.provenance.DeleteByExternal(ctx, entity.SourceID, entity.EntityType, entity.ExternalID); err != nil {
-						action.Action = "skip"
-						action.Reason = err.Error()
-						result.Stats.Failed++
-						result.Actions = append(result.Actions, action)
+					if err := provenance.DeleteByExternal(ctx, entity.SourceID, entity.EntityType, entity.ExternalID); err != nil {
+						rollbackErr = fmt.Errorf("unlink book %s provenance: %w", entity.ExternalID, err)
 						continue
 					}
 					result.Stats.ProvenanceUnlinked++
@@ -265,7 +313,7 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 			// API response can warn the caller that on-disk files are NOT
 			// removed by rollback. Metadata-only rollback is deliberate —
 			// see PR description.
-			if book, lookupErr := i.books.GetByID(ctx, entity.LocalID); lookupErr == nil && book != nil {
+			if book, lookupErr := books.GetByID(ctx, entity.LocalID); lookupErr == nil && book != nil {
 				if strings.TrimSpace(book.FilePath) != "" || strings.TrimSpace(book.EbookFilePath) != "" || strings.TrimSpace(book.AudiobookFilePath) != "" {
 					filesTouched++
 				}
@@ -279,19 +327,13 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 			// diff against execute.
 			deletedBooks[entity.LocalID] = struct{}{}
 			if !preview {
-				if err := i.books.Delete(ctx, entity.LocalID); err != nil {
-					action.Action = "skip"
-					action.Reason = err.Error()
-					result.Stats.Failed++
-					result.Actions = append(result.Actions, action)
+				if err := books.Delete(ctx, entity.LocalID); err != nil {
+					rollbackErr = fmt.Errorf("delete book %d: %w", entity.LocalID, err)
 					continue
 				}
-				unlinked, err := i.provenance.DeleteByLocal(ctx, entity.EntityType, entity.LocalID)
+				unlinked, err := provenance.DeleteByLocal(ctx, entity.EntityType, entity.LocalID)
 				if err != nil {
-					action.Action = "skip"
-					action.Reason = err.Error()
-					result.Stats.Failed++
-					result.Actions = append(result.Actions, action)
+					rollbackErr = fmt.Errorf("unlink book %d provenance: %w", entity.LocalID, err)
 					continue
 				}
 				result.Stats.EntitiesDeleted++
@@ -313,12 +355,9 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 			action.Action = "restore_book"
 			result.Stats.ActionsPlanned++
 			if !preview {
-				book, err := i.books.GetByID(ctx, entity.LocalID)
+				book, err := books.GetByID(ctx, entity.LocalID)
 				if err != nil {
-					action.Action = "skip"
-					action.Reason = err.Error()
-					result.Stats.Failed++
-					result.Actions = append(result.Actions, action)
+					rollbackErr = fmt.Errorf("get book %d for restore: %w", entity.LocalID, err)
 					continue
 				}
 				if book == nil {
@@ -329,20 +368,14 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 					continue
 				}
 				if restoreBookFromSnapshot(book, before, after) {
-					if err := i.books.Update(ctx, book); err != nil {
-						action.Action = "skip"
-						action.Reason = err.Error()
-						result.Stats.Failed++
-						result.Actions = append(result.Actions, action)
+					if err := books.Update(ctx, book); err != nil {
+						rollbackErr = fmt.Errorf("restore book %d: %w", entity.LocalID, err)
 						continue
 					}
 				}
 				if ownedByRun {
-					if err := i.provenance.DeleteByExternal(ctx, entity.SourceID, entity.EntityType, entity.ExternalID); err != nil {
-						action.Action = "skip"
-						action.Reason = err.Error()
-						result.Stats.Failed++
-						result.Actions = append(result.Actions, action)
+					if err := provenance.DeleteByExternal(ctx, entity.SourceID, entity.EntityType, entity.ExternalID); err != nil {
+						rollbackErr = fmt.Errorf("unlink book %s provenance: %w", entity.ExternalID, err)
 						continue
 					}
 					result.Stats.ProvenanceUnlinked++
@@ -359,8 +392,12 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 			}
 			// Check books still attached to this author that weren't
 			// themselves deleted above; if any remain, retain the author.
-			books, err := i.books.ListByAuthorIncludingExcluded(ctx, entity.LocalID)
+			attachedBooks, err := books.ListByAuthorIncludingExcluded(ctx, entity.LocalID)
 			if err != nil {
+				if !preview {
+					rollbackErr = fmt.Errorf("list books for author %d: %w", entity.LocalID, err)
+					continue
+				}
 				action.Action = "skip"
 				action.Reason = err.Error()
 				result.Stats.Failed++
@@ -368,7 +405,7 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 				continue
 			}
 			remaining := 0
-			for _, book := range books {
+			for _, book := range attachedBooks {
 				if _, ok := deletedBooks[book.ID]; ok {
 					continue
 				}
@@ -379,11 +416,8 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 				action.Reason = "local author retained because it still has linked books"
 				result.Stats.ActionsPlanned++
 				if !preview {
-					if err := i.provenance.DeleteByExternal(ctx, entity.SourceID, entity.EntityType, entity.ExternalID); err != nil {
-						action.Action = "skip"
-						action.Reason = err.Error()
-						result.Stats.Failed++
-						result.Actions = append(result.Actions, action)
+					if err := provenance.DeleteByExternal(ctx, entity.SourceID, entity.EntityType, entity.ExternalID); err != nil {
+						rollbackErr = fmt.Errorf("unlink author %s provenance: %w", entity.ExternalID, err)
 						continue
 					}
 					result.Stats.ProvenanceUnlinked++
@@ -391,8 +425,12 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 				result.Actions = append(result.Actions, action)
 				continue
 			}
-			retain, err := i.hasProvenanceOutsideRun(ctx, entity.EntityType, entity.LocalID, runID)
+			retain, err := hasProvenanceOutsideRun(ctx, provenance, entity.EntityType, entity.LocalID, runID)
 			if err != nil {
+				if !preview {
+					rollbackErr = fmt.Errorf("provenance list for author %d: %w", entity.LocalID, err)
+					continue
+				}
 				action.Action = "skip"
 				action.Reason = err.Error()
 				result.Stats.Failed++
@@ -404,11 +442,8 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 				action.Reason = "local author retained because another Calibre import link references it"
 				result.Stats.ActionsPlanned++
 				if !preview {
-					if err := i.provenance.DeleteByExternal(ctx, entity.SourceID, entity.EntityType, entity.ExternalID); err != nil {
-						action.Action = "skip"
-						action.Reason = err.Error()
-						result.Stats.Failed++
-						result.Actions = append(result.Actions, action)
+					if err := provenance.DeleteByExternal(ctx, entity.SourceID, entity.EntityType, entity.ExternalID); err != nil {
+						rollbackErr = fmt.Errorf("unlink author %s provenance: %w", entity.ExternalID, err)
 						continue
 					}
 					result.Stats.ProvenanceUnlinked++
@@ -419,19 +454,13 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 			action.Action = "delete_author"
 			result.Stats.ActionsPlanned++
 			if !preview {
-				if err := i.authors.Delete(ctx, entity.LocalID); err != nil {
-					action.Action = "skip"
-					action.Reason = err.Error()
-					result.Stats.Failed++
-					result.Actions = append(result.Actions, action)
+				if err := authors.Delete(ctx, entity.LocalID); err != nil {
+					rollbackErr = fmt.Errorf("delete author %d: %w", entity.LocalID, err)
 					continue
 				}
-				unlinked, err := i.provenance.DeleteByLocal(ctx, entity.EntityType, entity.LocalID)
+				unlinked, err := provenance.DeleteByLocal(ctx, entity.EntityType, entity.LocalID)
 				if err != nil {
-					action.Action = "skip"
-					action.Reason = err.Error()
-					result.Stats.Failed++
-					result.Actions = append(result.Actions, action)
+					rollbackErr = fmt.Errorf("unlink author %d provenance: %w", entity.LocalID, err)
 					continue
 				}
 				result.Stats.EntitiesDeleted++
@@ -450,12 +479,9 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 			action.Action = "restore_author"
 			result.Stats.ActionsPlanned++
 			if !preview {
-				author, err := i.authors.GetByID(ctx, entity.LocalID)
+				author, err := authors.GetByID(ctx, entity.LocalID)
 				if err != nil {
-					action.Action = "skip"
-					action.Reason = err.Error()
-					result.Stats.Failed++
-					result.Actions = append(result.Actions, action)
+					rollbackErr = fmt.Errorf("get author %d for restore: %w", entity.LocalID, err)
 					continue
 				}
 				if author == nil {
@@ -466,20 +492,14 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 					continue
 				}
 				if restoreAuthorFromSnapshot(author, before, after) {
-					if err := i.authors.Update(ctx, author); err != nil {
-						action.Action = "skip"
-						action.Reason = err.Error()
-						result.Stats.Failed++
-						result.Actions = append(result.Actions, action)
+					if err := authors.Update(ctx, author); err != nil {
+						rollbackErr = fmt.Errorf("restore author %d: %w", entity.LocalID, err)
 						continue
 					}
 				}
 				if ownedByRun {
-					if err := i.provenance.DeleteByExternal(ctx, entity.SourceID, entity.EntityType, entity.ExternalID); err != nil {
-						action.Action = "skip"
-						action.Reason = err.Error()
-						result.Stats.Failed++
-						result.Actions = append(result.Actions, action)
+					if err := provenance.DeleteByExternal(ctx, entity.SourceID, entity.EntityType, entity.ExternalID); err != nil {
+						rollbackErr = fmt.Errorf("unlink author %s provenance: %w", entity.ExternalID, err)
 						continue
 					}
 					result.Stats.ProvenanceUnlinked++
@@ -500,21 +520,39 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 		result.FilesOnDiskWarning = fmt.Sprintf("%d book row(s) referenced on-disk files; rollback removes the metadata row only, the files on disk are untouched.", filesTouched)
 	}
 
-	if !preview && result.Stats.Failed == 0 {
-		if err := i.runs.UpdateStatus(ctx, runID, runStatusRolledBack); err != nil {
-			return nil, err
+	if !preview {
+		if rollbackErr != nil {
+			// Deferred tx.Rollback above reverts every write recorded in
+			// this scope; the run row stays in 'completed' so a retry is
+			// safe. Surface the error so the API layer can render it.
+			return nil, rollbackErr
 		}
+		// UpdateStatus runs inside the same tx so the run-status flip and
+		// the entity deletions commit (or roll back) atomically.
+		if err := runs.UpdateStatus(ctx, runID, runStatusRolledBack); err != nil {
+			return nil, fmt.Errorf("mark run rolled back: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("commit rollback tx: %w", err)
+		}
+		// Clear tx so the deferred Rollback above no-ops (it would
+		// otherwise log ErrTxDone which is harmless but noisy).
+		tx = nil
 		result.Status = runStatusRolledBack
 		result.Applied = true
 	}
 	return result, nil
 }
 
-func (i *Importer) hasProvenanceOutsideRun(ctx context.Context, entityType string, localID, runID int64) (bool, error) {
-	if i.provenance == nil || localID == 0 {
+// hasProvenanceOutsideRun reports whether any provenance row points at the
+// same local entity but belongs to a different import run. provenance must
+// be the tx-wrapped repo when called inside rollback's transaction so the
+// read doesn't deadlock against the open writer.
+func hasProvenanceOutsideRun(ctx context.Context, provenance *db.CalibreProvenanceRepo, entityType string, localID, runID int64) (bool, error) {
+	if provenance == nil || localID == 0 {
 		return false, nil
 	}
-	links, err := i.provenance.ListByLocal(ctx, entityType, localID)
+	links, err := provenance.ListByLocal(ctx, entityType, localID)
 	if err != nil {
 		return false, err
 	}
@@ -526,34 +564,37 @@ func (i *Importer) hasProvenanceOutsideRun(ctx context.Context, entityType strin
 	return false, nil
 }
 
-func (i *Importer) rollbackDisplayName(ctx context.Context, entity models.CalibreEntitySnapshot) string {
+// rollbackDisplayName returns a human-readable label for an action. Takes
+// the tx-wrapped repos when called inside rollback's transaction (same
+// deadlock-avoidance reason as hasProvenanceOutsideRun).
+func rollbackDisplayName(ctx context.Context, books *db.BookRepo, authors *db.AuthorRepo, editions *db.EditionRepo, entity models.CalibreEntitySnapshot) string {
 	if entity.LocalID == 0 {
 		return ""
 	}
 	switch entity.EntityType {
 	case entityTypeBook:
-		if i.books == nil {
+		if books == nil {
 			return ""
 		}
-		b, err := i.books.GetByID(ctx, entity.LocalID)
+		b, err := books.GetByID(ctx, entity.LocalID)
 		if err != nil || b == nil {
 			return ""
 		}
 		return strings.TrimSpace(b.Title)
 	case entityTypeAuthor:
-		if i.authors == nil {
+		if authors == nil {
 			return ""
 		}
-		a, err := i.authors.GetByID(ctx, entity.LocalID)
+		a, err := authors.GetByID(ctx, entity.LocalID)
 		if err != nil || a == nil {
 			return ""
 		}
 		return strings.TrimSpace(a.Name)
 	case entityTypeEdition:
-		if i.editions == nil {
+		if editions == nil {
 			return ""
 		}
-		eds, err := i.editions.ListByBook(ctx, 0)
+		eds, err := editions.ListByBook(ctx, 0)
 		if err != nil {
 			return ""
 		}

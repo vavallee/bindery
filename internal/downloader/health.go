@@ -3,6 +3,7 @@ package downloader
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -19,14 +20,38 @@ const (
 	HealthError    = "error"
 )
 
+// eventNotifier publishes a webhook event for a downstream notification
+// target. Narrow shape of *notifier.Notifier so the HealthStore can be tested
+// without an HTTP fixture (issue #849).
+type eventNotifier interface {
+	Send(ctx context.Context, eventType string, payload map[string]interface{})
+}
+
+const notifierEventHealth = "health"
+
 // HealthStore keeps non-persistent download-client health diagnostics.
 type HealthStore struct {
-	mu   sync.RWMutex
-	byID map[int64]models.DownloadClientHealth
+	mu    sync.RWMutex
+	byID  map[int64]models.DownloadClientHealth
+	notif eventNotifier
 }
 
 func NewHealthStore() *HealthStore {
 	return &HealthStore{byID: make(map[int64]models.DownloadClientHealth)}
+}
+
+// WithNotifier attaches a webhook event notifier so transitions into
+// HealthError publish EventHealth (issue #849). Transitions out of error and
+// transitions within error (message changes) are deliberately silent — they
+// would either spam the channel or under-report the actionable signal.
+func (s *HealthStore) WithNotifier(n eventNotifier) *HealthStore {
+	if s == nil {
+		return s
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.notif = n
+	return s
 }
 
 func (s *HealthStore) Set(id int64, health models.DownloadClientHealth) {
@@ -34,8 +59,33 @@ func (s *HealthStore) Set(id int64, health models.DownloadClientHealth) {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	prev, hadPrev := s.byID[id]
 	s.byID[id] = health
+	notif := s.notif
+	s.mu.Unlock()
+
+	// Edge-trigger on entry into the error state. "Entry" means the previous
+	// status was anything-but-error AND wasn't the transient "checking"
+	// placeholder — RefreshDownloadClientHealthAsync writes Checking before
+	// every refresh, so without the checking exclusion a persistently-broken
+	// client would webhook on every poll cycle (error → checking → error).
+	// Repeating error → error stays silent for the same anti-spam reason;
+	// out-of-error transitions don't fire because there is no
+	// EventHealthRecovered enum today (issue #849, deferred follow-up).
+	if notif == nil || health.Status != HealthError {
+		return
+	}
+	if hadPrev && (prev.Status == HealthError || prev.Status == HealthChecking) {
+		return
+	}
+	// Background context: this is a fire-and-forget side effect of a state
+	// transition; it must not block Set or be cancelled by the caller's
+	// request context tearing down.
+	notif.Send(context.Background(), notifierEventHealth, map[string]interface{}{
+		"clientId": id,
+		"status":   health.Status,
+		"message":  health.Message,
+	})
 }
 
 func (s *HealthStore) Delete(id int64) {
@@ -194,7 +244,68 @@ func validateQbittorrentCategorySavePath(ctx context.Context, qb *qbittorrent.Cl
 		return healthError(fmt.Sprintf("qBittorrent category %q saves to %q, which maps to %q inside Bindery; expected a path at or under %q — %s", category, savePath, localPath, expected, hint))
 	}
 
+	// pathIsAtOrUnder passes — the strings agree. Now verify the resolved
+	// path is actually reachable from Bindery's filesystem, because Linux is
+	// case-sensitive and a user with a Windows/WSL/Docker setup can produce
+	// a textually-correct remap that silently points at nothing (PixieApples,
+	// follow-up to #800). When the path is missing but a case-variant exists,
+	// name the divergent component so the user knows exactly which letter to
+	// fix instead of brute-forcing combinations.
+	if _, err := os.Stat(localPath); os.IsNotExist(err) {
+		if resolved, divergedAt := findCaseInsensitivePath(localPath); resolved != "" {
+			return healthError(fmt.Sprintf("qBittorrent category %q saves to %q, which maps to %q inside Bindery — that exact path does not exist, but %q does. Linux is case-sensitive; update the path remap so it produces %q (the segment %q must match the on-disk case).", category, savePath, localPath, resolved, resolved, filepath.Base(divergedAt)))
+		}
+		return healthError(fmt.Sprintf("qBittorrent category %q saves to %q, which maps to %q inside Bindery — but that path does not exist. Check the path remap and the directory Bindery is mounting.", category, savePath, localPath))
+	}
+
 	return models.DownloadClientHealth{Status: HealthOK}
+}
+
+// findCaseInsensitivePath walks p from root and, if the literal path does not
+// exist but a case-insensitive sibling does at some level, returns the
+// case-corrected path and the first divergent component. Returns ("", "") if
+// the path can't be resolved even case-insensitively. Used by the qBittorrent
+// health-check to give Windows/WSL/Docker users a concrete fix when their
+// PathRemap is textually right but on the wrong-cased mount point.
+func findCaseInsensitivePath(p string) (resolved, divergedAt string) {
+	if !filepath.IsAbs(p) {
+		return "", ""
+	}
+	sep := string(filepath.Separator)
+	parts := strings.Split(strings.TrimPrefix(filepath.Clean(p), sep), sep)
+	cur := sep
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		candidate := filepath.Join(cur, part)
+		if _, err := os.Stat(candidate); err == nil {
+			cur = candidate
+			continue
+		}
+		entries, err := os.ReadDir(cur)
+		if err != nil {
+			return "", ""
+		}
+		var match string
+		for _, entry := range entries {
+			if strings.EqualFold(entry.Name(), part) {
+				match = entry.Name()
+				break
+			}
+		}
+		if match == "" {
+			return "", ""
+		}
+		if divergedAt == "" {
+			divergedAt = filepath.Join(cur, match)
+		}
+		cur = filepath.Join(cur, match)
+	}
+	if divergedAt == "" {
+		return "", ""
+	}
+	return cur, divergedAt
 }
 
 func healthError(message string) models.DownloadClientHealth {

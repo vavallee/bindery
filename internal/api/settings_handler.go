@@ -15,6 +15,7 @@ import (
 	"github.com/vavallee/bindery/internal/abs"
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -338,11 +339,17 @@ func validateSettingValue(key, value string) error {
 		if u.Host == "" {
 			return fmt.Errorf("plugin_url %q is missing a host", value)
 		}
+		// Block link-local and cloud-metadata so the Calibre plugin URL can't
+		// be used as an admin-only SSRF foot-gun (mirrors ABS / Grimmory /
+		// indexer / prowlarr / downloadclient validation).
+		if err := httpsec.ValidateOutboundURL(value, httpsec.PolicyLAN); err != nil {
+			return fmt.Errorf("plugin_url %q: %w", value, err)
+		}
 	case SettingABSBaseURL:
 		if value == "" {
 			return nil
 		}
-		if _, err := abs.NormalizeBaseURL(value); err != nil {
+		if _, err := abs.ValidateBaseURLSecure(value); err != nil {
 			return err
 		}
 	case SettingABSEnabled:

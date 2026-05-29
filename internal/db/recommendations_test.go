@@ -83,6 +83,7 @@ func TestRecommendationRepoReadsLegacyNullGenresAsEmptyArray(t *testing.T) {
 	}
 	if rec == nil {
 		t.Fatal("get recommendation returned nil")
+		return
 	}
 	if rec.Genres == nil {
 		t.Fatal("loaded legacy genres is nil, want empty slice")

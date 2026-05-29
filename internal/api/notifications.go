@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/vavallee/bindery/internal/db"
@@ -11,6 +12,20 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/notifier"
 )
+
+// annotatePrivateNetworkError takes a webhook-save / webhook-test error and,
+// if the failure is the SSRF policy refusing a private-network target,
+// appends a hint pointing at BINDERY_NOTIFICATIONS_ALLOW_PRIVATE. Users with
+// self-hosted ntfy / Gotify / Home Assistant on the same LAN hit this and
+// the bare "url not allowed: points to private network" error was too cryptic
+// to act on (#799).
+func annotatePrivateNetworkError(err error) string {
+	msg := err.Error()
+	if !strings.Contains(msg, "points to private network") {
+		return msg
+	}
+	return msg + " — to allow private-network webhooks (e.g. ntfy on your LAN), set BINDERY_NOTIFICATIONS_ALLOW_PRIVATE=1 on the Bindery container"
+}
 
 type NotificationHandler struct {
 	notifications *db.NotificationRepo
@@ -63,7 +78,7 @@ func (h *NotificationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	policy := httpsec.PolicyFromEnv(httpsec.PolicyStrict, "BINDERY_NOTIFICATIONS_ALLOW_PRIVATE")
 	if err := httpsec.ValidateOutboundURL(n.URL, policy); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": annotatePrivateNetworkError(err)})
 		return
 	}
 	if err := h.notifications.Create(r.Context(), &n); err != nil {
@@ -93,7 +108,7 @@ func (h *NotificationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if n.URL != "" {
 		policy := httpsec.PolicyFromEnv(httpsec.PolicyStrict, "BINDERY_NOTIFICATIONS_ALLOW_PRIVATE")
 		if err := httpsec.ValidateOutboundURL(n.URL, policy); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": annotatePrivateNetworkError(err)})
 			return
 		}
 	}
@@ -130,7 +145,7 @@ func (h *NotificationHandler) Test(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.notifier.Test(r.Context(), n); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": annotatePrivateNetworkError(err)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "ok"})
