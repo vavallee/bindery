@@ -130,7 +130,8 @@ func newTestServer(t *testing.T, latest string) *server {
 		arch        TEXT NOT NULL,
 		first_seen  DATETIME NOT NULL,
 		last_seen   DATETIME NOT NULL,
-		deploy      TEXT NOT NULL DEFAULT ''
+		deploy      TEXT NOT NULL DEFAULT '',
+		features    TEXT
 	)`); err != nil {
 		t.Fatalf("create table: %v", err)
 	}
@@ -441,6 +442,204 @@ func TestRenderLongevityFootnote(t *testing.T) {
 	for _, html := range []string{withFootnote, withoutFootnote} {
 		if !strings.Contains(html, "&lt; 1 week") {
 			t.Errorf("expected bucket label in output; got: %s", html)
+		}
+	}
+}
+
+// insertInstallWithFeatures inserts a row with a serialized features JSON
+// payload. The features arg is marshalled here so callers can pass a literal
+// struct without dealing with json.Marshal.
+func insertInstallWithFeatures(t *testing.T, s *server, id, version string, firstSeen, lastSeen time.Time, features any) {
+	t.Helper()
+	var featuresJSON sql.NullString
+	if features != nil {
+		buf, err := json.Marshal(features)
+		if err != nil {
+			t.Fatalf("marshal features: %v", err)
+		}
+		featuresJSON = sql.NullString{String: string(buf), Valid: true}
+	}
+	if _, err := s.db.ExecContext(context.Background(),
+		`INSERT INTO installs (install_id, version, os, arch, first_seen, last_seen, deploy, features)
+		 VALUES (?, ?, 'linux', 'amd64', ?, ?, 'docker', ?)`,
+		id, version, firstSeen, lastSeen, featuresJSON); err != nil {
+		t.Fatalf("insert install %s: %v", id, err)
+	}
+}
+
+// TestHandlePing_StoresFeatures verifies a ping with a features payload
+// persists it as JSON in the installs.features column, and that a ping
+// without features stores NULL.
+func TestHandlePing_StoresFeatures(t *testing.T) {
+	s := newTestServer(t, "v1.15.3")
+	s.limiter = newRateLimiter(time.Hour, time.Minute)
+
+	t.Run("with features", func(t *testing.T) {
+		body := pingRequest{
+			InstallID: "11111111-1111-1111-1111-111111111111",
+			Version:   "1.15.3",
+			OS:        "linux",
+			Arch:      "amd64",
+			Deploy:    "docker",
+			Features: &featuresPayload{
+				Indexers:       ptr(2),
+				CalibreEnabled: ptr(true),
+			},
+		}
+		buf, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, "/api/ping", bytes.NewReader(buf))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = "192.0.2.1:1234" // bypasses rate limit (unique IP)
+		rec := httptest.NewRecorder()
+		s.handlePing(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+		}
+
+		var stored sql.NullString
+		if err := s.db.QueryRowContext(context.Background(),
+			`SELECT features FROM installs WHERE install_id = ?`, body.InstallID,
+		).Scan(&stored); err != nil {
+			t.Fatalf("read back features: %v", err)
+		}
+		if !stored.Valid {
+			t.Fatal("features column is NULL; expected JSON payload")
+		}
+		if !strings.Contains(stored.String, `"indexers":2`) {
+			t.Errorf("stored features missing indexers:2; got: %s", stored.String)
+		}
+		if !strings.Contains(stored.String, `"calibre_enabled":true`) {
+			t.Errorf("stored features missing calibre_enabled:true; got: %s", stored.String)
+		}
+	})
+
+	t.Run("without features", func(t *testing.T) {
+		body := pingRequest{
+			InstallID: "22222222-2222-2222-2222-222222222222",
+			Version:   "1.15.2",
+			OS:        "linux",
+			Arch:      "amd64",
+			Deploy:    "docker",
+		}
+		buf, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, "/api/ping", bytes.NewReader(buf))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = "192.0.2.2:1234"
+		rec := httptest.NewRecorder()
+		s.handlePing(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+		}
+
+		var stored sql.NullString
+		if err := s.db.QueryRowContext(context.Background(),
+			`SELECT features FROM installs WHERE install_id = ?`, body.InstallID,
+		).Scan(&stored); err != nil {
+			t.Fatalf("read back features: %v", err)
+		}
+		if stored.Valid {
+			t.Errorf("features column should be NULL for legacy payload; got: %s", stored.String)
+		}
+	})
+}
+
+func ptr[T any](v T) *T { return &v }
+
+// TestComputeFeatureAdoption verifies the aggregated counts: denominator is
+// the count of 7d-active installs with non-NULL features, numerator per
+// field is the count of installs whose features payload contains a truthy
+// (non-zero / true) value for that field. Older-client rows (NULL features)
+// don't contribute to either side.
+func TestComputeFeatureAdoption(t *testing.T) {
+	s := newTestServer(t, "v1.15.3")
+	now := time.Now().UTC()
+
+	// Three reporting installs, two with calibre on, one without.
+	insertInstallWithFeatures(t, s, uuid('1'), "1.15.3", now.Add(-1*time.Hour), now.Add(-1*time.Hour),
+		map[string]any{"indexers": 2, "calibre_enabled": true})
+	insertInstallWithFeatures(t, s, uuid('2'), "1.15.3", now.Add(-2*time.Hour), now.Add(-2*time.Hour),
+		map[string]any{"indexers": 1, "calibre_enabled": true, "multi_user": true})
+	insertInstallWithFeatures(t, s, uuid('3'), "1.15.3", now.Add(-3*time.Hour), now.Add(-3*time.Hour),
+		map[string]any{"indexers": 0}) // explicit zero should not count
+
+	// One older client with no features payload at all.
+	insertInstall(t, s, uuid('4'), "1.15.2", now.Add(-4*time.Hour), now.Add(-4*time.Hour))
+
+	// One install that pinged outside the 7d window; ignored entirely.
+	insertInstallWithFeatures(t, s, uuid('5'), "1.15.3", now.Add(-20*24*time.Hour), now.Add(-10*24*time.Hour),
+		map[string]any{"calibre_enabled": true})
+
+	d, err := s.computeStats(context.Background())
+	if err != nil {
+		t.Fatalf("computeStats: %v", err)
+	}
+	if d.FeaturesReporting != 3 {
+		t.Errorf("FeaturesReporting = %d, want 3 (three 7d-active installs with features)", d.FeaturesReporting)
+	}
+
+	got := bucketMap(d.Features)
+	if got["Indexers configured"] != 2 {
+		t.Errorf("Indexers configured = %d, want 2", got["Indexers configured"])
+	}
+	if got["Calibre integration"] != 2 {
+		t.Errorf("Calibre integration = %d, want 2", got["Calibre integration"])
+	}
+	if got["Multi-user"] != 1 {
+		t.Errorf("Multi-user = %d, want 1", got["Multi-user"])
+	}
+	if got["Audiobookshelf integration"] != 0 {
+		t.Errorf("Audiobookshelf integration = %d, want 0 (no install has abs_enabled)", got["Audiobookshelf integration"])
+	}
+}
+
+// TestRenderFeatures_NoData verifies the empty-state message renders when
+// no install has reported features yet (typical immediately after the
+// telemetry-server upgrade but before any v1.15.3+ client has pinged).
+func TestRenderFeatures_NoData(t *testing.T) {
+	html := renderFeatures(nil, 0)
+	if !strings.Contains(html, "No features data yet") {
+		t.Errorf("expected empty-state message; got: %s", html)
+	}
+}
+
+// TestRenderFeatures_WithData verifies the header includes the install
+// count and the bar chart appears.
+func TestRenderFeatures_WithData(t *testing.T) {
+	html := renderFeatures([]statsBucket{
+		{"Indexers configured", 14},
+		{"Calibre integration", 6},
+	}, 20)
+	for _, want := range []string{"Out of 20 installs reporting", "Indexers configured", "Calibre integration", ">14<", ">6<"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("expected output to contain %q; got: %s", want, html)
+		}
+	}
+	// Singular "install" agreement when reporting=1.
+	if !strings.Contains(renderFeatures([]statsBucket{{"X", 1}}, 1), "Out of 1 install reporting") {
+		t.Errorf("expected singular form when reporting=1")
+	}
+}
+
+// TestHandleTelemetryFields verifies the public schema doc renders and
+// includes the core wire fields a privacy-conscious user would want to
+// audit (install_id, version, deploy) plus the opt-out instructions.
+func TestHandleTelemetryFields(t *testing.T) {
+	s := newTestServer(t, "v1.15.3")
+	req := httptest.NewRequest(http.MethodGet, "/telemetry-fields", nil)
+	rec := httptest.NewRecorder()
+	s.handleTelemetryFields(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"install_id", "version", "deploy", "features",
+		"BINDERY_TELEMETRY_DISABLED",
+		"telemetry.enabled",
+		"What we don't collect",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected /telemetry-fields to contain %q", want)
 		}
 	}
 }

@@ -1,13 +1,17 @@
 // Package telemetry sends an anonymous once-daily ping to api.getbindery.dev so
 // the project maintainer can count active installs. The ping carries:
 //
-//   - install_id  — random UUID generated on first run, stored in the DB
-//   - version     — the running binary's version string
-//   - os / arch   — runtime.GOOS / runtime.GOARCH
-//   - deploy      — kubernetes / docker / binary (best-effort runtime detect)
+//   - install_id: random UUID generated on first run, stored in the DB
+//   - version: the running binary's version string
+//   - os / arch: runtime.GOOS / runtime.GOARCH
+//   - deploy: kubernetes / docker / binary (best-effort runtime detect)
+//   - features: counts and booleans summarising which subsystems are
+//     configured. Strictly numeric/boolean, never names or values. Sent
+//     only when a Gatherer is wired via WithGatherer; absent otherwise.
 //
-// No personal data, no hostnames, no library contents. The setting
-// "telemetry.enabled" (default "true") can be set to "false" to opt out.
+// No personal data, no hostnames, no library contents, no titles, no IDs.
+// The setting "telemetry.enabled" (default "true") can be set to "false" to
+// opt out. The published schema lives at getbindery.dev/telemetry-fields.
 package telemetry
 
 import (
@@ -34,6 +38,18 @@ const (
 	timeout          = 10 * time.Second
 )
 
+// pingPayload is the JSON body sent on each ping. Features is a pointer so it
+// is omitted entirely when no Gatherer is configured (the previous payload
+// shape), preserving wire compatibility with older telemetry-server versions.
+type pingPayload struct {
+	InstallID string    `json:"install_id"`
+	Version   string    `json:"version"`
+	OS        string    `json:"os"`
+	Arch      string    `json:"arch"`
+	Deploy    string    `json:"deploy"`
+	Features  *Features `json:"features,omitempty"`
+}
+
 // releaseVersionPattern matches semver-shaped release tags ("1.7.0", "v1.7.0").
 // CI builds inject non-matching strings — the literal "dev" when the binary
 // has no -ldflags, "sha-abc1234" / "dev-abc1234" for non-release branches,
@@ -55,16 +71,59 @@ func isReleaseVersion(v string) bool {
 	return releaseVersionPattern.MatchString(v)
 }
 
+// Features is the per-install feature-adoption snapshot sent with each ping.
+// Every field is a count or boolean; never a name, ID, URL, or value. Fields
+// are added as new subsystems land. The struct is JSON-omit-empty so an
+// install that has nothing configured doesn't emit a wall of zeroes.
+//
+// Add new fields with care: anything here is documented at
+// getbindery.dev/telemetry-fields and committed to the public schema.
+type Features struct {
+	// Counts of enabled configuration rows. Tells the maintainer which
+	// subsystems users actually configure (vs the long tail of "installed
+	// and never touched").
+	Indexers        int `json:"indexers,omitempty"`
+	DownloadClients int `json:"download_clients,omitempty"`
+	Notifications   int `json:"notifications,omitempty"`
+	Users           int `json:"users,omitempty"`
+
+	// Booleans for "is this subsystem turned on at all" where a count would
+	// be misleading (these are 0-or-1 settings, not lists).
+	CalibreEnabled  bool `json:"calibre_enabled,omitempty"`
+	ABSEnabled      bool `json:"abs_enabled,omitempty"`
+	GrimmoryEnabled bool `json:"grimmory_enabled,omitempty"`
+	HardcoverToken  bool `json:"hardcover_token,omitempty"`
+	OIDCEnabled     bool `json:"oidc_enabled,omitempty"`
+	MultiUser       bool `json:"multi_user,omitempty"`
+}
+
+// Gatherer returns the current Features snapshot. Called inline from Ping,
+// so it should be cheap (a handful of small SQL reads, no network). Errors
+// from individual subqueries should be swallowed by the implementation; a
+// missing field is preferable to skipping the whole ping. Nil Gatherer is
+// fine and means the ping carries no features payload (backwards-compatible
+// with older telemetry-server versions).
+type Gatherer func(ctx context.Context) Features
+
 // Client sends anonymous usage pings and surfaces the latest published version.
 type Client struct {
 	settings      *db.SettingsRepo
 	version       string
 	latestVersion string
+	gatherer      Gatherer
 }
 
 // New creates a telemetry client. version is the running binary's version string.
 func New(settings *db.SettingsRepo, version string) *Client {
 	return &Client{settings: settings, version: version}
+}
+
+// WithGatherer wires in a feature-snapshot gatherer. Calling without this
+// keeps the legacy payload shape (no features field). Returns the receiver
+// to support fluent construction (telemetry.New(...).WithGatherer(...)).
+func (c *Client) WithGatherer(g Gatherer) *Client {
+	c.gatherer = g
+	return c
 }
 
 // LatestVersion returns the most recently received latest-version string from
@@ -105,13 +164,18 @@ func (c *Client) Ping(ctx context.Context) {
 		return
 	}
 
-	payload, _ := json.Marshal(map[string]string{
-		"install_id": id,
-		"version":    c.version,
-		"os":         runtime.GOOS,
-		"arch":       runtime.GOARCH,
-		"deploy":     detectDeploy(),
-	})
+	body := pingPayload{
+		InstallID: id,
+		Version:   c.version,
+		OS:        runtime.GOOS,
+		Arch:      runtime.GOARCH,
+		Deploy:    detectDeploy(),
+	}
+	if c.gatherer != nil {
+		f := c.gatherer(ctx)
+		body.Features = &f
+	}
+	payload, _ := json.Marshal(body)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, pingURL, bytes.NewReader(payload))
 	if err != nil {
@@ -132,12 +196,12 @@ func (c *Client) Ping(ctx context.Context) {
 		return
 	}
 
-	var body struct {
+	var reply struct {
 		LatestVersion string `json:"latest_version"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err == nil && body.LatestVersion != "" {
-		c.latestVersion = body.LatestVersion
-		slog.Debug("telemetry: ping ok", "latest", body.LatestVersion)
+	if err := json.NewDecoder(resp.Body).Decode(&reply); err == nil && reply.LatestVersion != "" {
+		c.latestVersion = reply.LatestVersion
+		slog.Debug("telemetry: ping ok", "latest", reply.LatestVersion)
 	}
 }
 

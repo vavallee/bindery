@@ -423,7 +423,10 @@ func main() {
 	sched.WithLogRepo(logRepo, cfg.LogRetentionDays)
 
 	// Anonymous install ping (opt-out via telemetry.enabled=false in settings).
-	telemetryClient := telemetry.New(settingsRepo, version)
+	// The gatherer captures repo handles by closure and runs at ping time. It
+	// must not block on network IO; all queries are local SQLite reads.
+	telemetryClient := telemetry.New(settingsRepo, version).
+		WithGatherer(buildTelemetryGatherer(indexerRepo, dlClientRepo, notificationRepo, userRepo, settingsRepo))
 	sched.WithTelemetry(telemetryClient)
 
 	// Recover downloads wedged mid-import by a prior crash or timeout before the
@@ -1222,4 +1225,96 @@ func routeTemplate(r *http.Request) string {
 		}
 	}
 	return r.URL.Path
+}
+
+// buildTelemetryGatherer returns a telemetry.Gatherer closure that reads the
+// current per-subsystem configuration counts directly from SQLite. Every
+// query is best-effort: a failure on any one subsystem leaves that field at
+// its zero value (which the Features struct omits from the wire), rather
+// than skipping the entire ping. Costs at most a handful of small SELECTs
+// per call; safe to invoke from the daily ping goroutine.
+//
+// Published schema: getbindery.dev/telemetry-fields. Adding a new field
+// here means updating that page so opt-in users know what they're sending.
+func buildTelemetryGatherer(
+	indexers *db.IndexerRepo,
+	clients *db.DownloadClientRepo,
+	notifications *db.NotificationRepo,
+	users *db.UserRepo,
+	settings *db.SettingsRepo,
+) telemetry.Gatherer {
+	return func(ctx context.Context) telemetry.Features {
+		f := telemetry.Features{}
+
+		// Count enabled indexers / download clients / notifications. These
+		// repos don't have a Count() variant so we List() and filter in
+		// memory; the sets are small (under 100 per install in practice).
+		if list, err := indexers.List(ctx); err == nil {
+			for _, ix := range list {
+				if ix.Enabled {
+					f.Indexers++
+				}
+			}
+		}
+		if list, err := clients.List(ctx); err == nil {
+			for _, c := range list {
+				if c.Enabled {
+					f.DownloadClients++
+				}
+			}
+		}
+		if list, err := notifications.List(ctx); err == nil {
+			for _, n := range list {
+				if n.Enabled {
+					f.Notifications++
+				}
+			}
+		}
+		if n, err := users.Count(ctx); err == nil {
+			f.Users = n
+			if n > 1 {
+				f.MultiUser = true
+			}
+		}
+
+		// Per-subsystem enabled flags. "Enabled" is what the user actually
+		// flipped on (not "configured but disabled"), matching the way the
+		// dashboard groups by intent rather than state.
+		f.CalibreEnabled = settingTruthy(ctx, settings, api.SettingCalibreEnabled)
+		f.ABSEnabled = settingTruthy(ctx, settings, api.SettingABSEnabled)
+		f.GrimmoryEnabled = settingTruthy(ctx, settings, api.SettingGrimmoryEnabled)
+
+		// HardcoverToken is "is there a token saved" (presence, not value).
+		// Bindery's enhanced Hardcover mode is gated on having one, so this
+		// closely tracks whether the install uses Hardcover features.
+		if v, err := settings.Get(ctx, api.SettingHardcoverAPIToken); err == nil && v != nil && v.Value != "" {
+			f.HardcoverToken = true
+		}
+
+		// OIDC enabled if the providers list is non-empty (the same gate
+		// the API uses to decide whether to render OIDC login buttons).
+		if v, err := settings.Get(ctx, api.SettingOIDCProviders); err == nil && v != nil {
+			trimmed := strings.TrimSpace(v.Value)
+			if trimmed != "" && trimmed != "[]" && trimmed != "null" {
+				f.OIDCEnabled = true
+			}
+		}
+
+		return f
+	}
+}
+
+// settingTruthy reads a setting key and returns true when the stored value
+// represents "on" ("true" / "1" / "yes"). Missing keys and errors return
+// false; the gatherer treats both as "not enabled."
+func settingTruthy(ctx context.Context, settings *db.SettingsRepo, key string) bool {
+	v, err := settings.Get(ctx, key)
+	if err != nil || v == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(v.Value)) {
+	case "true", "1", "yes", "on":
+		return true
+	}
+	return false
 }

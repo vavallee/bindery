@@ -117,11 +117,32 @@ func (s *server) runRetentionLoop(ctx context.Context) {
 }
 
 type pingRequest struct {
-	InstallID string `json:"install_id"`
-	Version   string `json:"version"`
-	OS        string `json:"os"`
-	Arch      string `json:"arch"`
-	Deploy    string `json:"deploy"`
+	InstallID string           `json:"install_id"`
+	Version   string           `json:"version"`
+	OS        string           `json:"os"`
+	Arch      string           `json:"arch"`
+	Deploy    string           `json:"deploy"`
+	Features  *featuresPayload `json:"features,omitempty"`
+}
+
+// featuresPayload mirrors the bindery client's telemetry.Features struct.
+// Pointer-on-the-request so older clients (no features field) decode cleanly
+// to Features == nil. Count fields use *int instead of int so we can tell
+// "client reported 0 indexers" from "client didn't report this field"
+// during the rollout window with mixed-version traffic; both render as
+// "not reported" / "0" downstream but the distinction is preserved on the
+// wire in case a future query wants it.
+type featuresPayload struct {
+	Indexers        *int  `json:"indexers,omitempty"`
+	DownloadClients *int  `json:"download_clients,omitempty"`
+	Notifications   *int  `json:"notifications,omitempty"`
+	Users           *int  `json:"users,omitempty"`
+	CalibreEnabled  *bool `json:"calibre_enabled,omitempty"`
+	ABSEnabled      *bool `json:"abs_enabled,omitempty"`
+	GrimmoryEnabled *bool `json:"grimmory_enabled,omitempty"`
+	HardcoverToken  *bool `json:"hardcover_token,omitempty"`
+	OIDCEnabled     *bool `json:"oidc_enabled,omitempty"`
+	MultiUser       *bool `json:"multi_user,omitempty"`
 }
 
 // validDeploys constrains the set of deploy strings we accept on /api/ping.
@@ -200,6 +221,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Add the features JSON column for per-subsystem adoption snapshots
+	// (indexer count, ABS enabled, etc.). Stored as a JSON blob so the
+	// schema can grow without further ALTERs; aggregate queries use
+	// SQLite's json_extract. Older clients send no features field and the
+	// row stores NULL, which surfaces as "not reported" on the dashboard.
+	if _, err := db.ExecContext(context.Background(),
+		`ALTER TABLE installs ADD COLUMN features TEXT`,
+	); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		slog.Error("add features column", "error", err)
+		os.Exit(1)
+	}
+
 	// Boot-time sweep so dashboards on a fresh process are clean immediately;
 	// the nightly cron below keeps them clean from then on.
 	if _, err := sweepStaleAndDev(context.Background(), db); err != nil {
@@ -229,6 +262,7 @@ func main() {
 	mux.HandleFunc("GET /stats", s.handleStatsPage)
 	mux.HandleFunc("GET /stats.json", s.handleStatsJSON)
 	mux.HandleFunc("GET /stats/preview", s.handlePreviewPage)
+	mux.HandleFunc("GET /telemetry-fields", s.handleTelemetryFields)
 	mux.HandleFunc("POST /api/ping", s.handlePing)
 	mux.HandleFunc("GET /api/stats", s.handleStats)
 	mux.HandleFunc("GET /api/backup", s.handleBackup)
@@ -372,6 +406,136 @@ func (s *server) handleHome(w http.ResponseWriter, _ *http.Request) {
 </html>`))
 }
 
+// handleTelemetryFields renders the public schema doc: every field a
+// Bindery install can send, with a one-line explanation of why we ask.
+// This is the trust artifact users link to when deciding whether to leave
+// telemetry on. The page lists fields by category (core, features, future)
+// and includes the opt-out instructions in one place.
+func (s *server) handleTelemetryFields(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(telemetryFieldsHTML))
+}
+
+// telemetryFieldsHTML is the static HTML for /telemetry-fields. Inline so
+// the binary has no asset dependencies; the page is small and updates
+// infrequently (only when ping schema gains a field).
+const telemetryFieldsHTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bindery telemetry: what we send</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { min-height: 100svh; background: #0f1117; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 3rem 1.5rem; }
+  .container { max-width: 760px; margin: 0 auto; }
+  a.back { color: #94a3b8; font-size: .85rem; text-decoration: none; }
+  a.back:hover { color: #e2e8f0; }
+  h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; margin: .75rem 0 .5rem; }
+  h2 { font-size: 1.1rem; font-weight: 600; color: #cbd5e1; margin: 2rem 0 .75rem; }
+  p, li { line-height: 1.6; color: #cbd5e1; }
+  p { margin-bottom: 1rem; }
+  ul { padding-left: 1.5rem; margin-bottom: 1rem; }
+  li { margin-bottom: .5rem; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #1e293b; padding: .15rem .4rem; border-radius: 3px; font-size: .9em; color: #f1f5f9; }
+  .field { margin-bottom: 1rem; padding: .85rem 1rem; background: #1e293b; border: 1px solid #334155; border-radius: 8px; }
+  .field code { background: #0f1117; }
+  .field .why { color: #94a3b8; font-size: .9rem; margin-top: .35rem; }
+  footer { margin-top: 3rem; color: #64748b; font-size: .75rem; text-align: center; }
+  .opt-out { background: #1e293b; border-left: 3px solid #10b981; padding: 1rem 1.25rem; border-radius: 4px; margin: 1.5rem 0; }
+  .opt-out code { background: #0f1117; display: inline-block; margin: .25rem 0; }
+</style>
+</head>
+<body>
+<div class="container">
+  <p><a class="back" href="/">&larr; Bindery</a></p>
+  <h1>Telemetry: what we send</h1>
+
+  <p>Every Bindery install sends one anonymous ping per day to <code>api.getbindery.dev/api/ping</code>. The full schema is below. Nothing else leaves your install via telemetry: no library contents, no book titles, no author names, no IPs, no hostnames, no usernames.</p>
+
+  <p>This page is the source of truth. If a future release adds a field, it appears here first.</p>
+
+  <h2>Core fields (always sent)</h2>
+
+  <div class="field">
+    <code>install_id</code>
+    <div class="why">Random UUID generated on first run and stored in your Bindery database. Lets us count distinct installs without tracking who you are. Resetting Bindery's DB resets the UUID; we have no other way to link two installs together.</div>
+  </div>
+
+  <div class="field">
+    <code>version</code>
+    <div class="why">The Bindery binary's release tag (e.g. <code>1.15.2</code>). Lets us see which versions are actually deployed so we know when an old release can be deprecated. Non-release builds (dev / sha-XXXXX / commits past a tag) are dropped client-side and never sent.</div>
+  </div>
+
+  <div class="field">
+    <code>os</code> / <code>arch</code>
+    <div class="why">Output of Go's <code>runtime.GOOS</code> and <code>runtime.GOARCH</code> (e.g. <code>linux</code> / <code>amd64</code>). Lets us prioritise fixes for the OS/arch combos that are actually in use.</div>
+  </div>
+
+  <div class="field">
+    <code>deploy</code>
+    <div class="why">How Bindery is being run: <code>kubernetes</code> (inside a pod), <code>docker</code> (inside any other container), <code>binary</code> (bare metal), <code>helm</code> (Helm chart, when the chart sets <code>BINDERY_DEPLOY_METHOD=helm</code>). Detected from <code>KUBERNETES_SERVICE_HOST</code> and the presence of <code>/.dockerenv</code>. Helps us know which deployment paths are worth supporting.</div>
+  </div>
+
+  <h2>Features (sent starting v1.15.3+, optional)</h2>
+
+  <p>Counts and booleans summarising which subsystems are configured. No names, IDs, URLs, or values are ever sent &mdash; just numbers and on/off flags. Tells the maintainer which features users actually use so support time goes to the parts of Bindery people rely on.</p>
+
+  <div class="field">
+    <code>features.indexers</code> / <code>features.download_clients</code> / <code>features.notifications</code> / <code>features.users</code>
+    <div class="why">Integer count of enabled configuration rows. The user count tells us whether multi-user is in real use; the others tell us how many integrations a typical install has.</div>
+  </div>
+
+  <div class="field">
+    <code>features.calibre_enabled</code> / <code>features.abs_enabled</code> / <code>features.grimmory_enabled</code>
+    <div class="why">Boolean: whether the Calibre, Audiobookshelf, or Grimmory integration is turned on. No URLs, paths, or credentials.</div>
+  </div>
+
+  <div class="field">
+    <code>features.hardcover_token</code>
+    <div class="why">Boolean: whether a Hardcover API token is configured (presence, not the value).</div>
+  </div>
+
+  <div class="field">
+    <code>features.oidc_enabled</code> / <code>features.multi_user</code>
+    <div class="why">Booleans: whether OIDC sign-in is configured, and whether there is more than one user account in the local DB.</div>
+  </div>
+
+  <h2>What we don't collect</h2>
+
+  <ul>
+    <li>Your IP address (the server rate-limits by IP but never stores it).</li>
+    <li>Your hostname, server name, domain, or any DNS-resolvable identifier.</li>
+    <li>Anything about your library: book titles, author names, ISBNs, ratings, file paths.</li>
+    <li>Anything about your network: indexer URLs, download client URLs, notification webhook URLs.</li>
+    <li>Anything about your users: usernames, email addresses, OIDC subject IDs.</li>
+    <li>API keys, tokens, passwords, session secrets.</li>
+    <li>Request logs, error traces, or stack traces.</li>
+  </ul>
+
+  <h2>How to opt out</h2>
+
+  <div class="opt-out">
+    <p>Two ways to disable telemetry entirely. Either is sufficient; the env var wins if both are set.</p>
+    <p><strong>Env var (recommended for fresh installs):</strong><br>
+    <code>BINDERY_TELEMETRY_DISABLED=true</code></p>
+    <p><strong>Settings DB (for running installs):</strong><br>
+    Set the <code>telemetry.enabled</code> setting to <code>false</code>. Survives restarts; takes effect on the next scheduled ping (within 24 hours).</p>
+  </div>
+
+  <h2>How the data is stored</h2>
+
+  <p>Pings land in a small SQLite database on a single VM in Hetzner Cloud (Falkenstein, Germany). Rows whose <code>last_seen</code> is older than 60 days are deleted nightly. The database itself is backed up daily to an off-site object store; backups follow the same 60-day retention.</p>
+
+  <p>The aggregated dashboard at <a href="/stats">/stats</a> is rendered live from the database with no caching. The full source of both the bindery client and the telemetry server lives at <a href="https://github.com/vavallee/bindery">github.com/vavallee/bindery</a> &mdash; the client at <code>internal/telemetry/client.go</code>, the server at <code>cmd/telemetry-server/main.go</code>.</p>
+
+  <footer>
+    Last updated 2026-05-29. If a future release changes any of this, the change lands on this page before it ships.
+  </footer>
+</div>
+</body>
+</html>`
+
 func (s *server) handlePing(w http.ResponseWriter, r *http.Request) {
 	ip := realIP(r)
 	if !s.limiter.allow(ip) {
@@ -409,24 +573,39 @@ func (s *server) handlePing(w http.ResponseWriter, r *http.Request) {
 		req.Deploy = ""
 	}
 
+	// features is stored as JSON or NULL when the client didn't send any.
+	// Re-marshal here instead of forwarding the original JSON bytes so the
+	// stored payload is normalised (whitespace-stripped, key order stable)
+	// regardless of what the client serialised. Any marshal error keeps the
+	// column NULL so a bad features field never blocks a valid ping.
+	var featuresJSON sql.NullString
+	if req.Features != nil {
+		if buf, err := json.Marshal(req.Features); err == nil {
+			featuresJSON = sql.NullString{String: string(buf), Valid: true}
+		} else {
+			slog.Warn("marshal features", "id", req.InstallID[:min(8, len(req.InstallID))], "error", err)
+		}
+	}
+
 	now := time.Now().UTC()
 	_, err := s.db.ExecContext(r.Context(), `
-		INSERT INTO installs (install_id, version, os, arch, deploy, first_seen, last_seen)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO installs (install_id, version, os, arch, deploy, features, first_seen, last_seen)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(install_id) DO UPDATE SET
 			version   = excluded.version,
 			os        = excluded.os,
 			arch      = excluded.arch,
 			deploy    = excluded.deploy,
+			features  = excluded.features,
 			last_seen = excluded.last_seen
-	`, req.InstallID, req.Version, req.OS, req.Arch, req.Deploy, now, now)
+	`, req.InstallID, req.Version, req.OS, req.Arch, req.Deploy, featuresJSON, now, now)
 	if err != nil {
 		slog.Warn("upsert install", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	slog.Info("ping", "id", req.InstallID[:min(8, len(req.InstallID))], "version", req.Version, "os", req.OS, "arch", req.Arch)
+	slog.Info("ping", "id", req.InstallID[:min(8, len(req.InstallID))], "version", req.Version, "os", req.OS, "arch", req.Arch, "features", featuresJSON.Valid)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(pingResponse{LatestVersion: s.latestVersion})
@@ -475,6 +654,14 @@ type statsData struct {
 	Monthly          []statsBucket     // new installs per calendar month, last 12 mo
 	VersionTrend     []versionTrendDay // per-day per-version active counts, 30 days
 	TopVersions      []string          // top-N versions for VersionTrend legend
+
+	// Features (last 7d): per-subsystem adoption counts among installs that
+	// have reported a features payload in the last 7 days. FeaturesReporting
+	// is the denominator; each bucket count is the numerator. Older clients
+	// without the features field don't contribute to either, so the
+	// percentage is "of the installs we have data for."
+	FeaturesReporting int
+	Features          []statsBucket
 }
 
 // computeStats runs every dashboard query and returns one assembled snapshot.
@@ -652,6 +839,14 @@ func (s *server) computeStats(ctx context.Context) (*statsData, error) {
 		}
 	}
 
+	// Features adoption among 7d-active installs that reported a payload.
+	// Older clients send features = NULL and don't appear in either the
+	// numerator or the denominator, which gives an accurate "% of installs
+	// we have data for" rather than a misleading "% of all installs."
+	if err := s.computeFeatureAdoption(ctx, cutoff7d, d); err != nil {
+		return nil, err
+	}
+
 	// Monthly new installs for the last 12 calendar months.
 	monthlyCutoff := time.Now().UTC().AddDate(0, -12, 0)
 	rowsMon, err := s.db.QueryContext(ctx,
@@ -750,6 +945,67 @@ func (s *server) handleStats(w http.ResponseWriter, r *http.Request) {
 		Total:     d.Total,
 		Versions:  versions,
 	})
+}
+
+// featureField describes one row in the Features section: the JSON key
+// inside the stored features blob, the kind of bucket (count vs boolean),
+// and the human label rendered on the dashboard. Count fields are summed
+// across reporting installs (e.g. "12 indexers per install on average")
+// and would render differently; today we just count installs with a
+// non-zero value, matching the booleans, because adoption is more
+// actionable than mean configuration size at this scale.
+type featureField struct {
+	JSONKey string
+	Label   string
+}
+
+var featureFields = []featureField{
+	{"indexers", "Indexers configured"},
+	{"download_clients", "Download clients configured"},
+	{"notifications", "Notifications configured"},
+	{"calibre_enabled", "Calibre integration"},
+	{"abs_enabled", "Audiobookshelf integration"},
+	{"grimmory_enabled", "Grimmory integration"},
+	{"hardcover_token", "Hardcover enhanced"},
+	{"oidc_enabled", "OIDC auth"},
+	{"multi_user", "Multi-user"},
+}
+
+// computeFeatureAdoption fills d.FeaturesReporting and d.Features from
+// installs that pinged in the last 7 days and include a non-null features
+// payload. Uses SQLite's JSON1 extension (modernc.org/sqlite ships with
+// it). Booleans count any truthy JSON value; counts count any non-zero
+// numeric value. Both reduce to "this install has the subsystem in use,"
+// which is the question the dashboard answers.
+func (s *server) computeFeatureAdoption(ctx context.Context, since time.Time, d *statsData) error {
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM installs WHERE last_seen >= ? AND features IS NOT NULL`,
+		since,
+	).Scan(&d.FeaturesReporting); err != nil {
+		return err
+	}
+	if d.FeaturesReporting == 0 {
+		return nil
+	}
+	for _, f := range featureFields {
+		var n int
+		// json_extract returns NULL when the key is missing; the count
+		// then excludes the row. For booleans, true → 1, false → 0; the
+		// > 0 filter catches both true booleans and non-zero counts.
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			  FROM installs
+			 WHERE last_seen >= ?
+			   AND features IS NOT NULL
+			   AND json_extract(features, '$.'||?) > 0
+		`, since, f.JSONKey).Scan(&n); err != nil {
+			// Best-effort; a single bad field shouldn't sink the page.
+			slog.Warn("feature adoption query", "field", f.JSONKey, "error", err)
+			continue
+		}
+		d.Features = append(d.Features, statsBucket{Label: f.Label, Count: n})
+	}
+	return nil
 }
 
 // handleStatsJSON returns a small public JSON payload with active install
@@ -1037,6 +1293,37 @@ func renderLongevity(buckets []statsBucket, youngDB bool) string {
 		`(every install's age is bounded by the data span).</p>`
 }
 
+// renderFeatures renders the per-subsystem adoption table. Bar widths and
+// the count column are denominated in installs (out of reporting); the
+// header notes the denominator so a reader can convert to percent. When no
+// 7d-active install has reported a features payload yet (older clients
+// only), the section renders an explanatory message instead of an empty
+// chart with confusing zero counts.
+func renderFeatures(buckets []statsBucket, reporting int) string {
+	if reporting == 0 {
+		return `<div class="chart"><p class="empty">No features data yet. ` +
+			`Older clients (pre-v1.15.3) don't include a features payload; ` +
+			`this section populates as installs upgrade.</p></div>`
+	}
+	header := fmt.Sprintf(
+		`<p class="empty" style="margin:0 0 .5rem 0">Out of %d install%s reporting features in the last 7 days.</p>`,
+		reporting,
+		pluralS(reporting),
+	)
+	// reuse renderBarChart for the bar/count rows; bar widths scale to
+	// the largest reported count so the row with the highest adoption
+	// pegs at 100 percent and the rest scale down.
+	return header + renderBarChart(buckets, 0, "")
+}
+
+// pluralS returns "" or "s" for English plural agreement based on count.
+func pluralS(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
 // renderSparkline returns inline SVG for a 30-day daily-activity bar chart.
 func renderSparkline(daily []dailyBucket) string {
 	if len(daily) == 0 {
@@ -1276,7 +1563,7 @@ func (s *server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
   <header>
     <a class="back" href="/">← Bindery</a>
     <h1>Telemetry</h1>
-    <p>Anonymous install counts from instances that opted in to update checks. No identifying information is collected, only an opaque install UUID, the version, and the OS/arch reported by Go's runtime. "Active 7d" is the count of installs that pinged in the last seven days (the closest proxy we have for "running right now"); "Active 30d" is the wider 30-day window and includes dormant installs that have not pinged in a while.</p>
+    <p>Anonymous install counts from instances that opted in to update checks. No identifying information is collected, only an opaque install UUID, the version, the OS/arch reported by Go's runtime, and (on v1.15.3+) per-subsystem adoption counts. "Active 7d" is the count of installs that pinged in the last seven days (the closest proxy we have for "running right now"); "Active 30d" is the wider 30-day window and includes dormant installs that have not pinged in a while. Full schema and opt-out instructions: <a href="/telemetry-fields" style="color:#10b981">/telemetry-fields</a>.</p>
   </header>
 
   <div class="summary">
@@ -1326,6 +1613,11 @@ func (s *server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
   </section>
 
   <section>
+    <h2>Feature adoption (last 7 days)</h2>
+    %s
+  </section>
+
+  <section>
     <h2>Version mix (last 30 days)</h2>
     <div class="chart">%s</div>
   </section>
@@ -1345,6 +1637,7 @@ func (s *server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
 		renderSparkline(d.DailyNew),
 		renderMonthlyChart(d.Monthly),
 		renderLongevity(d.Longevity, d.LongevityYoungDB),
+		renderFeatures(d.Features, d.FeaturesReporting),
 		renderVersionTrend(d.VersionTrend, d.TopVersions),
 		time.Now().UTC().Format("2006-01-02 15:04 MST"),
 	); err != nil {
