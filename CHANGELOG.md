@@ -6,11 +6,27 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.15.2] — 2026-05-28
+
+Patch release. Two download-client fixes for users on v1.15.1 with broken SAB/NZBGet submissions, a UI refactor that locks the clipboard-fallback pattern from v1.15.1 into a reusable hook, plus housekeeping (gosec annotation, chi dep bump).
+
 ### Fixed
 
-- **SABnzbd submissions no longer hang in "Waiting" with a resetting countdown** — Bindery was using SAB's `mode=addurl`, which makes SAB itself fetch the NZB from the indexer URL. In containerised setups where Bindery and SAB sit on different Docker networks (or only Bindery has DNS/route for the indexer), SAB can't reach the URL and parks the job in retry-backoff forever; Bindery's `sent to downloader` log line was misleading because addurl returned `status: true` regardless. Bindery now fetches the NZB itself through its own HTTP client (which holds the indexer credentials and network path) and submits the content via SAB's `mode=addfile` multipart upload — the same shape the NZBGet client has used since #837. The same `httpsec.PolicyLAN` SSRF guard and 50 MB cap apply. Thanks to @ibsfox for the precise repro (manual `.nzb` upload to SAB worked; the URL-handoff did not).
+- **SABnzbd submissions no longer hang in "Waiting" with a resetting countdown** (#864) — Bindery was using SAB's `mode=addurl`, which makes SAB itself fetch the NZB from the indexer URL. In containerised setups where Bindery and SAB sit on different Docker networks (or only Bindery has DNS/route for the indexer), SAB can't reach the URL and parks the job in retry-backoff forever; Bindery's `sent to downloader` log line was misleading because addurl returned `status: true` regardless. Bindery now fetches the NZB itself through its own HTTP client (which holds the indexer credentials and network path) and submits the content via SAB's `mode=addfile` multipart upload — the same shape the NZBGet client has used since #837. The same `httpsec.PolicyLAN` SSRF guard and 50 MB cap apply. Thanks to @ibsfox for the precise repro (manual `.nzb` upload to SAB worked; the URL-handoff did not).
 
-- **NZBGet rejections now name the actual problem** (#861) — when NZBGet's `append` JSON-RPC returns id 0 (rejection), Bindery's error was `NZBGet rejected download (returned id 0)` with nothing more, which gave users no path forward. The most common cause is that the category configured in Bindery's download-client (e.g. `Audiobooks`) isn't defined in NZBGet's own Settings → Categories — NZBGet silently rejects in that case. Bindery now preflights the category list via NZBGet's `config` RPC before submitting; on mismatch the error names both the missing category and what NZBGet actually has configured. The same check runs at Test-Connection time so the misconfig surfaces when saving the client, not on the first grab. If preflight passes but append still returns 0 (disk full, write-permission on intermediate dir, NZBGet paused with quota reached, invalid NZB content), the fallback error now enumerates those causes and points the user at NZBGet's own log. Thanks to @BraynArts for the report.
+- **NZBGet rejections now name the actual problem** (#861, #862) — when NZBGet's `append` JSON-RPC returns id 0 (rejection), Bindery's error was `NZBGet rejected download (returned id 0)` with nothing more, which gave users no path forward. The most common cause is that the category configured in Bindery's download-client (e.g. `Audiobooks`) isn't defined in NZBGet's own Settings → Categories — NZBGet silently rejects in that case. Bindery now preflights the category list via NZBGet's `config` RPC before submitting; on mismatch the error names both the missing category and what NZBGet actually has configured. The same check runs at Test-Connection time so the misconfig surfaces when saving the client, not on the first grab. If preflight passes but append still returns 0 (disk full, write-permission on intermediate dir, NZBGet paused with quota reached, invalid NZB content), the fallback error now enumerates those causes and points the user at NZBGet's own log. Thanks to @BraynArts for the report.
+
+### Changed
+
+- **Clipboard-fallback handling is now a shared hook** (#860) — extracts `useClipboardCopy` + `ClipboardManualFallback` from the v1.15.1 inline fix in `SearchDebugPanel` (#850) and applies the same pattern to copy buttons for book file paths, API keys, OPDS feed URLs, and OIDC callback URLs. When the modern Clipboard API is unavailable (plain-HTTP LAN install) and the legacy `document.execCommand('copy')` fallback also fails, the UI now renders the text in a focusable read-only textarea so the user can always copy. Thanks to @magrhino.
+
+### Dependencies
+
+- Bump `github.com/go-chi/chi/v5` from 5.2.5 to 5.3.0 (#839).
+
+### Security (housekeeping)
+
+- Extend `// #nosec` directives on the three `os.Remove` call sites in `removeBookPathScoped` (`internal/api/books.go`) to cover gosec G703 (path-traversal taint analysis) in addition to G304. The paths reaching these calls are already constrained by the importer's `sanitizePath` (strips `..`, `/`, `\`, `:`, etc.), so the alert was a false positive in current code, but the suppression is now explicit and references #865 which tracks the defense-in-depth root-folder containment check.
 
 ## [v1.15.1] — 2026-05-27
 
