@@ -186,21 +186,34 @@ func (s *server) snapshotDay(ctx context.Context, day time.Time) error {
 	if err != nil {
 		return fmt.Errorf("snapshot %s: version rows: %w", dayStr, err)
 	}
+	// Collect rows fully before issuing any INSERTs so the read cursor is
+	// closed before we touch the transaction again (SQLite's cursor can hold
+	// a snapshot-visibility lock that blocks subsequent writes on the same tx).
+	type versionRow struct {
+		version string
+		count   int
+	}
+	var versionRows []versionRow
 	for rows.Next() {
-		var v string
-		var n int
-		if err := rows.Scan(&v, &n); err != nil {
-			rows.Close()
+		var vr versionRow
+		if err := rows.Scan(&vr.version, &vr.count); err != nil {
+			_ = rows.Close()
 			return fmt.Errorf("snapshot %s: version scan: %w", dayStr, err)
 		}
+		versionRows = append(versionRows, vr)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("snapshot %s: version rows iter: %w", dayStr, err)
+	}
+	_ = rows.Close()
+	for _, vr := range versionRows {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO daily_version (day, version, active_count) VALUES (?, ?, ?)`,
-			dayStr, v, n); err != nil {
-			rows.Close()
+			dayStr, vr.version, vr.count); err != nil {
 			return fmt.Errorf("snapshot %s: version insert: %w", dayStr, err)
 		}
 	}
-	rows.Close()
 
 	// daily_features: one row per (day, field). reporting_count is the
 	// denominator (installs active on day with non-null features) and is

@@ -736,6 +736,9 @@ func TestSnapshotDay(t *testing.T) {
 		}
 		versionCounts[v] = n
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate version rows: %v", err)
+	}
 	if versionCounts["1.15.2"] != 2 || versionCounts["1.15.1"] != 1 {
 		t.Errorf("daily_version[2026-05-27] = %v, want {1.15.2: 2, 1.15.1: 1}", versionCounts)
 	}
@@ -761,6 +764,9 @@ func TestSnapshotDay(t *testing.T) {
 		}
 		enabled[f] = e
 		reporting = r // same for every row
+	}
+	if err := featRows.Err(); err != nil {
+		t.Fatalf("iterate feature rows: %v", err)
 	}
 	if reporting != 2 {
 		t.Errorf("reporting_count = %d, want 2 (two installs reported features)", reporting)
