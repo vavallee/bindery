@@ -473,7 +473,10 @@ func makeBookPath(t *testing.T, dir, name string, isDir bool) string {
 func TestManualImportLookup_PathOutsideAllowedRoots(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct{ name, file string; isDir bool }{
+	cases := []struct {
+		name, file string
+		isDir      bool
+	}{
 		{"ebook file", "book.epub", false},
 		{"audiobook file", "narration.m4b", false},
 		{"audiobook directory", "Audiobook Title", true},
@@ -509,7 +512,11 @@ func TestManualImportLookup_PathInsideAllowedRoots(t *testing.T) {
 	ebookRoot := t.TempDir()
 	audiobookRoot := t.TempDir()
 
-	cases := []struct{ name, file string; root string; isDir bool }{
+	cases := []struct {
+		name, file string
+		root       string
+		isDir      bool
+	}{
 		{"ebook file in ebook root", "book.epub", ebookRoot, false},
 		{"audiobook file in audiobook root", "narration.m4b", audiobookRoot, false},
 		{"audiobook directory in audiobook root", "Audiobook Title", audiobookRoot, true},
@@ -538,7 +545,10 @@ func TestManualImportLookup_PathInsideAllowedRoots(t *testing.T) {
 func TestManualImportImport_PathOutsideAllowedRoots(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct{ name, file string; isDir bool }{
+	cases := []struct {
+		name, file string
+		isDir      bool
+	}{
 		{"ebook file", "secret.epub", false},
 		{"audiobook file", "secret.m4b", false},
 		{"audiobook directory", "Secret Audiobook", true},
@@ -584,7 +594,10 @@ func TestManualImportImport_PathOutsideAllowedRoots(t *testing.T) {
 func TestManualImportLookup_SymlinkEscape(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct{ name, file string; isDir bool }{
+	cases := []struct {
+		name, file string
+		isDir      bool
+	}{
 		{"ebook file via symlink", "secret.epub", false},
 		{"audiobook file via symlink", "secret.m4b", false},
 		{"audiobook directory via symlink", "Secret Audiobook Dir", true},
