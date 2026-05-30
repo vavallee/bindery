@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,14 @@ import (
 	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/models"
 )
+
+// lookupRequest builds a GET request for the manual-import lookup endpoint,
+// properly percent-encoding the path so directory names with spaces don't
+// produce a malformed URL.
+func lookupRequest(path string) *http.Request {
+	u := "/api/v1/queue/manual-import/lookup?" + url.Values{"path": {path}}.Encode()
+	return httptest.NewRequest(http.MethodGet, u, nil)
+}
 
 // stubManualImportScanner satisfies manualImportScanner for testing.
 // ImportFromPath is a no-op because the handler calls it in a goroutine and
@@ -435,5 +444,183 @@ func TestManualImportImport_DirectoryPath(t *testing.T) {
 	h.Import(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import", bytes.NewReader(body)))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// ── Path containment checks ─────────────────────────────────────────────────
+
+// makeBookPath creates a path that looks like a supported ebook or audiobook.
+// For audiobooks it creates a real directory (the import handler accepts dirs
+// for multi-part audiobooks).
+func makeBookPath(t *testing.T, dir, name string, isDir bool) string {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	if isDir {
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return p
+}
+
+// TestManualImportLookup_PathOutsideAllowedRoots verifies that Lookup returns
+// 403 for any path (ebook file, audiobook file, audiobook directory) that falls
+// outside the configured allowed roots.
+func TestManualImportLookup_PathOutsideAllowedRoots(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct{ name, file string; isDir bool }{
+		{"ebook file", "book.epub", false},
+		{"audiobook file", "narration.m4b", false},
+		{"audiobook directory", "Audiobook Title", true},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h, _, _, _, _ := manualImportFixture(t)
+			h.WithAllowedRoots(t.TempDir()) // allowed root is a different dir
+
+			outside := t.TempDir()
+			p := makeBookPath(t, outside, tc.file, tc.isDir)
+
+			rec := httptest.NewRecorder()
+			h.Lookup(rec, lookupRequest(p))
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403; body = %s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "outside the configured library roots") {
+				t.Errorf("body = %q, want containment error", rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestManualImportLookup_PathInsideAllowedRoots verifies that Lookup accepts
+// paths under the ebook root (cfg.LibraryDir) and the audiobook root
+// (cfg.AudiobookDir) — two separate roots, mirroring production wiring.
+func TestManualImportLookup_PathInsideAllowedRoots(t *testing.T) {
+	t.Parallel()
+
+	ebookRoot := t.TempDir()
+	audiobookRoot := t.TempDir()
+
+	cases := []struct{ name, file string; root string; isDir bool }{
+		{"ebook file in ebook root", "book.epub", ebookRoot, false},
+		{"audiobook file in audiobook root", "narration.m4b", audiobookRoot, false},
+		{"audiobook directory in audiobook root", "Audiobook Title", audiobookRoot, true},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h, stub, _, _, _ := manualImportFixture(t)
+			h.WithAllowedRoots(ebookRoot, audiobookRoot)
+			stub.lookupResult = importer.LookupResult{Match: "none"}
+
+			p := makeBookPath(t, tc.root, tc.file, tc.isDir)
+
+			rec := httptest.NewRecorder()
+			h.Lookup(rec, lookupRequest(p))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestManualImportImport_PathOutsideAllowedRoots verifies that Import returns
+// 403 for ebook and audiobook paths that fall outside the allowed roots.
+func TestManualImportImport_PathOutsideAllowedRoots(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct{ name, file string; isDir bool }{
+		{"ebook file", "secret.epub", false},
+		{"audiobook file", "secret.m4b", false},
+		{"audiobook directory", "Secret Audiobook", true},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			database, err := db.OpenMemory()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { database.Close() })
+
+			authors := db.NewAuthorRepo(database)
+			downloads := db.NewDownloadRepo(database)
+			books := db.NewBookRepo(database)
+			ctx := context.Background()
+			book := seedBook(t, authors, books, ctx)
+
+			stub := &stubManualImportScanner{}
+			h := NewManualImportHandler(stub, downloads, books).WithAllowedRoots(t.TempDir())
+
+			outside := t.TempDir()
+			p := makeBookPath(t, outside, tc.file, tc.isDir)
+
+			body, _ := json.Marshal(map[string]any{"path": p, "bookId": book.ID})
+			rec := httptest.NewRecorder()
+			h.Import(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import", bytes.NewReader(body)))
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403; body = %s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "outside the configured library roots") {
+				t.Errorf("body = %q, want containment error", rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestManualImportLookup_SymlinkEscape verifies that a symlink inside the
+// allowed root that points to a directory outside the root is rejected after
+// filepath.EvalSymlinks resolves the real target.
+func TestManualImportLookup_SymlinkEscape(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct{ name, file string; isDir bool }{
+		{"ebook file via symlink", "secret.epub", false},
+		{"audiobook file via symlink", "secret.m4b", false},
+		{"audiobook directory via symlink", "Secret Audiobook Dir", true},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h, stub, _, _, _ := manualImportFixture(t)
+
+			tmp := t.TempDir()
+			allowed := filepath.Join(tmp, "safe")
+			outside := filepath.Join(tmp, "secret")
+			if err := os.MkdirAll(allowed, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(outside, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			makeBookPath(t, outside, tc.file, tc.isDir)
+
+			// symlink inside "safe" pointing at the directory outside
+			link := filepath.Join(allowed, "escape")
+			if err := os.Symlink(outside, link); err != nil {
+				t.Fatal(err)
+			}
+
+			h.WithAllowedRoots(allowed)
+			stub.lookupResult = importer.LookupResult{}
+
+			escapedPath := filepath.Join(link, tc.file)
+			rec := httptest.NewRecorder()
+			h.Lookup(rec, lookupRequest(escapedPath))
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403 for symlink escape; body = %s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }

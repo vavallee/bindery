@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,13 +23,68 @@ type manualImportScanner interface {
 
 // ManualImportHandler serves the manual-import lookup and trigger endpoints.
 type ManualImportHandler struct {
-	scanner   manualImportScanner
-	downloads *db.DownloadRepo
-	books     *db.BookRepo
+	scanner        manualImportScanner
+	downloads      *db.DownloadRepo
+	books          *db.BookRepo
+	allowedRoots   []string
+	rootFolderRepo *db.RootFolderRepo
 }
 
 func NewManualImportHandler(scanner manualImportScanner, downloads *db.DownloadRepo, books *db.BookRepo) *ManualImportHandler {
 	return &ManualImportHandler{scanner: scanner, downloads: downloads, books: books}
+}
+
+// WithAllowedRoots registers static filesystem roots (e.g. cfg.LibraryDir, cfg.AudiobookDir)
+// that paths submitted to Lookup and Import must fall under.
+func (h *ManualImportHandler) WithAllowedRoots(roots ...string) *ManualImportHandler {
+	for _, r := range roots {
+		if r != "" {
+			h.allowedRoots = append(h.allowedRoots, filepath.Clean(r))
+		}
+	}
+	return h
+}
+
+// WithRootFolderRepo attaches the root-folder repo so dynamically configured
+// root folders are also enforced by the path containment check.
+func (h *ManualImportHandler) WithRootFolderRepo(rf *db.RootFolderRepo) *ManualImportHandler {
+	h.rootFolderRepo = rf
+	return h
+}
+
+// isAllowedPath reports whether p falls under a configured library root.
+// It resolves symlinks via filepath.EvalSymlinks before comparing so that
+// symlink-traversal escapes are caught. When no roots are configured, all
+// paths are permitted — this preserves behaviour for installs without a
+// library dir and for tests that don't wire roots.
+func (h *ManualImportHandler) isAllowedPath(ctx context.Context, p string) bool {
+	roots := make([]string, len(h.allowedRoots))
+	copy(roots, h.allowedRoots)
+	if h.rootFolderRepo != nil {
+		if dynamic, err := h.rootFolderRepo.List(ctx); err == nil {
+			for _, rf := range dynamic {
+				if rf.Path != "" {
+					roots = append(roots, filepath.Clean(rf.Path))
+				}
+			}
+		}
+	}
+	if len(roots) == 0 {
+		return true
+	}
+	resolved := p
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		resolved = r
+	}
+	for _, root := range roots {
+		if root == "" || root == "." {
+			continue
+		}
+		if resolved == root || strings.HasPrefix(resolved, root+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // Lookup handles GET /api/v1/queue/manual-import/lookup?path=...
@@ -44,7 +100,11 @@ func (h *ManualImportHandler) Lookup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path must be absolute"})
 		return
 	}
-	if _, err := os.Stat(path); err != nil { //nolint:gosec // #nosec G304 -- path is cleaned and validated as absolute; endpoint is admin-only
+	if !h.isAllowedPath(r.Context(), path) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "path is outside the configured library roots"})
+		return
+	}
+	if _, err := os.Stat(path); err != nil { //nolint:gosec // #nosec G304 -- path is cleaned and validated as absolute; RequireAdmin middleware enforced at route level
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("path not accessible: %v", err)})
 		return
 	}
@@ -82,6 +142,10 @@ func (h *ManualImportHandler) Import(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path must be absolute"})
 		return
 	}
+	if !h.isAllowedPath(r.Context(), req.Path) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "path is outside the configured library roots"})
+		return
+	}
 	if req.BookID <= 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bookId is required"})
 		return
@@ -91,7 +155,7 @@ func (h *ManualImportHandler) Import(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := os.Stat(req.Path) //nolint:gosec // #nosec G304 -- path is cleaned and validated as absolute; endpoint is admin-only
+	info, err := os.Stat(req.Path) //nolint:gosec // #nosec G304 -- path is cleaned and validated as absolute; RequireAdmin middleware enforced at route level
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("path not accessible: %v", err)})
 		return
