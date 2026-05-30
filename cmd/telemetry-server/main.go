@@ -132,6 +132,34 @@ var aggregateInterval = 24 * time.Hour
 // approximate counts (installs that pinged then but more recently
 // updated last_seen forward won't be attributed to the older day). Run
 // daily so today's snapshot is captured before the rollover.
+// readVersionCounts returns a map of version → count of installs whose
+// last_seen falls on dayStr. Used by snapshotDay so its INSERT loop runs
+// after the read cursor has been released (defer covers all return paths).
+func readVersionCounts(ctx context.Context, tx *sql.Tx, dayStr string) (map[string]int, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT version, COUNT(*) FROM installs
+		WHERE substr(last_seen, 1, 10) = ?
+		GROUP BY version
+	`, dayStr)
+	if err != nil {
+		return nil, fmt.Errorf("version rows: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]int)
+	for rows.Next() {
+		var v string
+		var n int
+		if err := rows.Scan(&v, &n); err != nil {
+			return nil, fmt.Errorf("version scan: %w", err)
+		}
+		out[v] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("version iter: %w", err)
+	}
+	return out, nil
+}
+
 func (s *server) snapshotDay(ctx context.Context, day time.Time) error {
 	dayStr := day.UTC().Format("2006-01-02")
 
@@ -178,39 +206,16 @@ func (s *server) snapshotDay(ctx context.Context, day time.Time) error {
 	); err != nil {
 		return fmt.Errorf("snapshot %s: clear version: %w", dayStr, err)
 	}
-	rows, err := tx.QueryContext(ctx, `
-		SELECT version, COUNT(*) FROM installs
-		WHERE substr(last_seen, 1, 10) = ?
-		GROUP BY version
-	`, dayStr)
+	// Buffer the version rows fully before issuing any INSERTs so the
+	// scope of the read cursor is bounded by readVersionCounts.
+	versionCounts, err := readVersionCounts(ctx, tx, dayStr)
 	if err != nil {
-		return fmt.Errorf("snapshot %s: version rows: %w", dayStr, err)
+		return fmt.Errorf("snapshot %s: %w", dayStr, err)
 	}
-	// Collect rows fully before issuing any INSERTs so the read cursor is
-	// closed before we touch the transaction again (SQLite's cursor can hold
-	// a snapshot-visibility lock that blocks subsequent writes on the same tx).
-	type versionRow struct {
-		version string
-		count   int
-	}
-	var versionRows []versionRow
-	for rows.Next() {
-		var vr versionRow
-		if err := rows.Scan(&vr.version, &vr.count); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("snapshot %s: version scan: %w", dayStr, err)
-		}
-		versionRows = append(versionRows, vr)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return fmt.Errorf("snapshot %s: version rows iter: %w", dayStr, err)
-	}
-	_ = rows.Close()
-	for _, vr := range versionRows {
+	for v, n := range versionCounts {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO daily_version (day, version, active_count) VALUES (?, ?, ?)`,
-			dayStr, vr.version, vr.count); err != nil {
+			dayStr, v, n); err != nil {
 			return fmt.Errorf("snapshot %s: version insert: %w", dayStr, err)
 		}
 	}
