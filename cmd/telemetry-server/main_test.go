@@ -123,17 +123,40 @@ func newTestServer(t *testing.T, latest string) *server {
 		t.Fatalf("open db: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if _, err := db.ExecContext(context.Background(), `CREATE TABLE installs (
-		install_id  TEXT PRIMARY KEY,
-		version     TEXT NOT NULL,
-		os          TEXT NOT NULL,
-		arch        TEXT NOT NULL,
-		first_seen  DATETIME NOT NULL,
-		last_seen   DATETIME NOT NULL,
-		deploy      TEXT NOT NULL DEFAULT '',
-		features    TEXT
-	)`); err != nil {
-		t.Fatalf("create table: %v", err)
+	for _, stmt := range []string{
+		`CREATE TABLE installs (
+			install_id  TEXT PRIMARY KEY,
+			version     TEXT NOT NULL,
+			os          TEXT NOT NULL,
+			arch        TEXT NOT NULL,
+			first_seen  DATETIME NOT NULL,
+			last_seen   DATETIME NOT NULL,
+			deploy      TEXT NOT NULL DEFAULT '',
+			features    TEXT
+		)`,
+		`CREATE TABLE daily_global (
+			day          TEXT PRIMARY KEY,
+			active_day   INTEGER NOT NULL DEFAULT 0,
+			new_installs INTEGER NOT NULL DEFAULT 0,
+			total        INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE daily_version (
+			day          TEXT NOT NULL,
+			version      TEXT NOT NULL,
+			active_count INTEGER NOT NULL,
+			PRIMARY KEY (day, version)
+		)`,
+		`CREATE TABLE daily_features (
+			day              TEXT NOT NULL,
+			field            TEXT NOT NULL,
+			enabled_count    INTEGER NOT NULL,
+			reporting_count  INTEGER NOT NULL,
+			PRIMARY KEY (day, field)
+		)`,
+	} {
+		if _, err := db.ExecContext(context.Background(), stmt); err != nil {
+			t.Fatalf("create table: %v", err)
+		}
 	}
 	return &server{db: db, latestVersion: latest}
 }
@@ -641,5 +664,260 @@ func TestHandleTelemetryFields(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("expected /telemetry-fields to contain %q", want)
 		}
+	}
+}
+
+// TestSnapshotDay verifies that a single call to snapshotDay populates all
+// three aggregate tables correctly for a target day with mixed data:
+// installs pinged on that day, installs that pinged a different day, and
+// installs that reported features payloads.
+func TestSnapshotDay(t *testing.T) {
+	s := newTestServer(t, "v1.15.3")
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	target := time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC) // snapshot yesterday
+
+	// Three installs pinged on 2026-05-27: two v1.15.2, one v1.15.1
+	// (two with features, one of those with calibre on).
+	insertInstallWithFeatures(t, s, uuid('1'), "1.15.2",
+		now.AddDate(0, 0, -10), time.Date(2026, 5, 27, 8, 0, 0, 0, time.UTC),
+		map[string]any{"indexers": 2, "calibre_enabled": true})
+	insertInstallWithFeatures(t, s, uuid('2'), "1.15.2",
+		now.AddDate(0, 0, -8), time.Date(2026, 5, 27, 15, 0, 0, 0, time.UTC),
+		map[string]any{"indexers": 1})
+	insertInstall(t, s, uuid('3'), "1.15.1",
+		now.AddDate(0, 0, -5), time.Date(2026, 5, 27, 20, 0, 0, 0, time.UTC))
+
+	// One install pinged on a different day; must not contribute to the
+	// 2026-05-27 snapshot.
+	insertInstall(t, s, uuid('4'), "1.14.0",
+		now.AddDate(0, 0, -20), time.Date(2026, 5, 25, 10, 0, 0, 0, time.UTC))
+
+	// A fifth install that was first_seen on 2026-05-27 but pinged later;
+	// should show up in new_installs even though it's not in active_day.
+	insertInstall(t, s, uuid('5'), "1.15.3",
+		time.Date(2026, 5, 27, 6, 0, 0, 0, time.UTC), now.Add(-1*time.Hour))
+
+	if err := s.snapshotDay(context.Background(), target); err != nil {
+		t.Fatalf("snapshotDay: %v", err)
+	}
+
+	// daily_global row for 2026-05-27.
+	var activeDay, newInstalls, total int
+	if err := s.db.QueryRowContext(context.Background(),
+		`SELECT active_day, new_installs, total FROM daily_global WHERE day = ?`,
+		"2026-05-27",
+	).Scan(&activeDay, &newInstalls, &total); err != nil {
+		t.Fatalf("read daily_global: %v", err)
+	}
+	if activeDay != 3 {
+		t.Errorf("active_day = %d, want 3 (two v1.15.2 + one v1.15.1)", activeDay)
+	}
+	if newInstalls != 1 {
+		t.Errorf("new_installs = %d, want 1 (the v1.15.3 install with first_seen=2026-05-27)", newInstalls)
+	}
+	if total != 5 {
+		t.Errorf("total = %d, want 5 (all rows)", total)
+	}
+
+	// daily_version rows for 2026-05-27.
+	rows, err := s.db.QueryContext(context.Background(),
+		`SELECT version, active_count FROM daily_version WHERE day = ? ORDER BY version`,
+		"2026-05-27")
+	if err != nil {
+		t.Fatalf("read daily_version: %v", err)
+	}
+	defer rows.Close()
+	versionCounts := map[string]int{}
+	for rows.Next() {
+		var v string
+		var n int
+		if err := rows.Scan(&v, &n); err != nil {
+			t.Fatalf("scan version row: %v", err)
+		}
+		versionCounts[v] = n
+	}
+	if versionCounts["1.15.2"] != 2 || versionCounts["1.15.1"] != 1 {
+		t.Errorf("daily_version[2026-05-27] = %v, want {1.15.2: 2, 1.15.1: 1}", versionCounts)
+	}
+	if _, present := versionCounts["1.14.0"]; present {
+		t.Errorf("1.14.0 should not appear (last_seen was 2026-05-25)")
+	}
+
+	// daily_features rows for 2026-05-27.
+	featRows, err := s.db.QueryContext(context.Background(),
+		`SELECT field, enabled_count, reporting_count FROM daily_features WHERE day = ?`,
+		"2026-05-27")
+	if err != nil {
+		t.Fatalf("read daily_features: %v", err)
+	}
+	defer featRows.Close()
+	enabled := map[string]int{}
+	var reporting int
+	for featRows.Next() {
+		var f string
+		var e, r int
+		if err := featRows.Scan(&f, &e, &r); err != nil {
+			t.Fatalf("scan feature row: %v", err)
+		}
+		enabled[f] = e
+		reporting = r // same for every row
+	}
+	if reporting != 2 {
+		t.Errorf("reporting_count = %d, want 2 (two installs reported features)", reporting)
+	}
+	if enabled["indexers"] != 2 {
+		t.Errorf("indexers enabled = %d, want 2 (both reporting installs have indexers > 0)", enabled["indexers"])
+	}
+	if enabled["calibre_enabled"] != 1 {
+		t.Errorf("calibre_enabled = %d, want 1 (one install has calibre on)", enabled["calibre_enabled"])
+	}
+}
+
+// TestSnapshotDayReplaceVersionRows verifies that re-snapshotting a day
+// drops version rows whose count went to zero. Without this guard a
+// version that was active on day N but not on day N+1's re-snapshot would
+// be left at its day-N count, exaggerating reach in trend charts.
+func TestSnapshotDayReplaceVersionRows(t *testing.T) {
+	s := newTestServer(t, "v1.15.3")
+	target := time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC)
+
+	// First snapshot: one install on 1.14.0.
+	insertInstall(t, s, uuid('1'), "1.14.0",
+		target.AddDate(0, 0, -10), time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC))
+	if err := s.snapshotDay(context.Background(), target); err != nil {
+		t.Fatalf("first snapshot: %v", err)
+	}
+
+	// Move the install to 1.15.2; re-snapshot. The 1.14.0 row from the
+	// first snapshot must disappear.
+	if _, err := s.db.ExecContext(context.Background(),
+		`UPDATE installs SET version = '1.15.2' WHERE install_id = ?`, uuid('1'),
+	); err != nil {
+		t.Fatalf("update version: %v", err)
+	}
+	if err := s.snapshotDay(context.Background(), target); err != nil {
+		t.Fatalf("second snapshot: %v", err)
+	}
+
+	var rows int
+	if err := s.db.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM daily_version WHERE day = ? AND version = '1.14.0'`,
+		"2026-05-27",
+	).Scan(&rows); err != nil {
+		t.Fatalf("query 1.14.0 rows: %v", err)
+	}
+	if rows != 0 {
+		t.Errorf("expected 1.14.0 row to be cleared on re-snapshot; got %d rows", rows)
+	}
+
+	if err := s.db.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM daily_version WHERE day = ? AND version = '1.15.2'`,
+		"2026-05-27",
+	).Scan(&rows); err != nil {
+		t.Fatalf("query 1.15.2 rows: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("expected 1.15.2 row to exist after re-snapshot; got %d rows", rows)
+	}
+}
+
+// TestBackfillNewInstalls verifies the startup backfill creates
+// daily_global rows for every distinct first_seen day, with the correct
+// counts; idempotent across multiple calls; safe to run alongside an
+// already-populated table (preserves active_day, total).
+func TestBackfillNewInstalls(t *testing.T) {
+	s := newTestServer(t, "v1.15.3")
+	d1 := time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC)
+	d2 := time.Date(2026, 5, 27, 11, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+
+	insertInstall(t, s, uuid('1'), "1.15.2", d1, now)
+	insertInstall(t, s, uuid('2'), "1.15.2", d1, now)
+	insertInstall(t, s, uuid('3'), "1.15.1", d2, now)
+
+	// Pre-seed daily_global for 2026-05-26 with non-zero active_day; the
+	// backfill must update new_installs without clobbering active_day.
+	if _, err := s.db.ExecContext(context.Background(),
+		`INSERT INTO daily_global (day, active_day, new_installs, total)
+		 VALUES ('2026-05-26', 99, 0, 999)`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := s.backfillNewInstalls(context.Background()); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+
+	var active, newCount, total int
+	if err := s.db.QueryRowContext(context.Background(),
+		`SELECT active_day, new_installs, total FROM daily_global WHERE day = '2026-05-26'`,
+	).Scan(&active, &newCount, &total); err != nil {
+		t.Fatalf("read 2026-05-26: %v", err)
+	}
+	if newCount != 2 {
+		t.Errorf("new_installs[2026-05-26] = %d, want 2", newCount)
+	}
+	if active != 99 {
+		t.Errorf("active_day must be preserved across backfill; got %d, want 99", active)
+	}
+	if total != 999 {
+		t.Errorf("total must be preserved across backfill; got %d, want 999", total)
+	}
+
+	if err := s.db.QueryRowContext(context.Background(),
+		`SELECT new_installs FROM daily_global WHERE day = '2026-05-27'`,
+	).Scan(&newCount); err != nil {
+		t.Fatalf("read 2026-05-27: %v", err)
+	}
+	if newCount != 1 {
+		t.Errorf("new_installs[2026-05-27] = %d, want 1", newCount)
+	}
+
+	// Idempotency: second call must leave state identical.
+	if err := s.backfillNewInstalls(context.Background()); err != nil {
+		t.Fatalf("backfill twice: %v", err)
+	}
+	var seen int
+	if err := s.db.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM daily_global`,
+	).Scan(&seen); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if seen != 2 {
+		t.Errorf("daily_global row count after second backfill = %d, want 2", seen)
+	}
+}
+
+// TestComputeStats_MonthlyReadsFromAggregates verifies the monthly new
+// installs chart sources data from daily_global, not from the installs
+// table directly. Once raw rows expire from the 60-day retention window
+// the monthly chart should still show their contribution to history.
+func TestComputeStats_MonthlyReadsFromAggregates(t *testing.T) {
+	s := newTestServer(t, "v1.15.3")
+	now := time.Now().UTC()
+
+	// Seed daily_global with a row that has no corresponding installs row
+	// (simulating data from before the retention window).
+	pastMonth := now.AddDate(0, -3, 0).Format("2006-01-02")
+	if _, err := s.db.ExecContext(context.Background(),
+		`INSERT INTO daily_global (day, active_day, new_installs, total)
+		 VALUES (?, 0, 42, 0)`, pastMonth); err != nil {
+		t.Fatalf("seed past month: %v", err)
+	}
+
+	d, err := s.computeStats(context.Background())
+	if err != nil {
+		t.Fatalf("computeStats: %v", err)
+	}
+
+	monthLabel := now.AddDate(0, -3, 0).Format("Jan '06")
+	var got int
+	for _, b := range d.Monthly {
+		if b.Label == monthLabel {
+			got = b.Count
+			break
+		}
+	}
+	if got != 42 {
+		t.Errorf("Monthly[%s] = %d, want 42 (from daily_global with no raw rows)", monthLabel, got)
 	}
 }

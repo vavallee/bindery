@@ -116,6 +116,179 @@ func (s *server) runRetentionLoop(ctx context.Context) {
 	}
 }
 
+// aggregateInterval is how often runAggregateLoop fires. Same shape as
+// retentionInterval; both run independently so a slow snapshot can't
+// starve the eviction sweep.
+var aggregateInterval = 24 * time.Hour
+
+// snapshotDay writes the daily aggregate rows for `day` from the current
+// installs table state. All three aggregate tables (global, version,
+// features) are upserted in one transaction so a partial failure leaves
+// no orphan rows. day is normalised to UTC YYYY-MM-DD on the way in.
+//
+// The active_day, version split, and feature counts are computed from
+// rows whose last_seen falls on `day`. Because last_seen is the most
+// recent ping per install, snapshotting historical days produces
+// approximate counts (installs that pinged then but more recently
+// updated last_seen forward won't be attributed to the older day). Run
+// daily so today's snapshot is captured before the rollover.
+func (s *server) snapshotDay(ctx context.Context, day time.Time) error {
+	dayStr := day.UTC().Format("2006-01-02")
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("snapshot %s: begin: %w", dayStr, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// daily_global: one row per day with active_day, new_installs, total.
+	var activeDay, newInstalls, total int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM installs WHERE substr(last_seen, 1, 10) = ?`, dayStr,
+	).Scan(&activeDay); err != nil {
+		return fmt.Errorf("snapshot %s: active_day: %w", dayStr, err)
+	}
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM installs WHERE substr(first_seen, 1, 10) = ?`, dayStr,
+	).Scan(&newInstalls); err != nil {
+		return fmt.Errorf("snapshot %s: new_installs: %w", dayStr, err)
+	}
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM installs`,
+	).Scan(&total); err != nil {
+		return fmt.Errorf("snapshot %s: total: %w", dayStr, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO daily_global (day, active_day, new_installs, total)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(day) DO UPDATE SET
+			active_day   = excluded.active_day,
+			new_installs = excluded.new_installs,
+			total        = excluded.total
+	`, dayStr, activeDay, newInstalls, total); err != nil {
+		return fmt.Errorf("snapshot %s: upsert global: %w", dayStr, err)
+	}
+
+	// daily_version: one row per (day, version) with the active count on
+	// that day. Replace any prior rows for `day` first so versions that
+	// dropped to zero aren't left stranded (which would happen if we just
+	// upserted: the row from yesterday's snapshot stays at its old count).
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM daily_version WHERE day = ?`, dayStr,
+	); err != nil {
+		return fmt.Errorf("snapshot %s: clear version: %w", dayStr, err)
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT version, COUNT(*) FROM installs
+		WHERE substr(last_seen, 1, 10) = ?
+		GROUP BY version
+	`, dayStr)
+	if err != nil {
+		return fmt.Errorf("snapshot %s: version rows: %w", dayStr, err)
+	}
+	for rows.Next() {
+		var v string
+		var n int
+		if err := rows.Scan(&v, &n); err != nil {
+			rows.Close()
+			return fmt.Errorf("snapshot %s: version scan: %w", dayStr, err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO daily_version (day, version, active_count) VALUES (?, ?, ?)`,
+			dayStr, v, n); err != nil {
+			rows.Close()
+			return fmt.Errorf("snapshot %s: version insert: %w", dayStr, err)
+		}
+	}
+	rows.Close()
+
+	// daily_features: one row per (day, field). reporting_count is the
+	// denominator (installs active on day with non-null features) and is
+	// the same for every field. enabled_count is the per-field numerator.
+	var reporting int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM installs
+		WHERE substr(last_seen, 1, 10) = ?
+		  AND features IS NOT NULL
+	`, dayStr).Scan(&reporting); err != nil {
+		return fmt.Errorf("snapshot %s: features reporting: %w", dayStr, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM daily_features WHERE day = ?`, dayStr,
+	); err != nil {
+		return fmt.Errorf("snapshot %s: clear features: %w", dayStr, err)
+	}
+	if reporting > 0 {
+		for _, f := range featureFields {
+			var enabled int
+			if err := tx.QueryRowContext(ctx, `
+				SELECT COUNT(*) FROM installs
+				WHERE substr(last_seen, 1, 10) = ?
+				  AND features IS NOT NULL
+				  AND json_extract(features, '$.'||?) > 0
+			`, dayStr, f.JSONKey).Scan(&enabled); err != nil {
+				return fmt.Errorf("snapshot %s: feature %s: %w", dayStr, f.JSONKey, err)
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO daily_features (day, field, enabled_count, reporting_count)
+				VALUES (?, ?, ?, ?)
+			`, dayStr, f.JSONKey, enabled, reporting); err != nil {
+				return fmt.Errorf("snapshot %s: feature insert %s: %w", dayStr, f.JSONKey, err)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("snapshot %s: commit: %w", dayStr, err)
+	}
+	return nil
+}
+
+// backfillNewInstalls populates daily_global.new_installs for every day in
+// the installs table's first_seen range. Only this column is historically
+// recoverable; the others depend on last_seen which has rolled forward.
+// Idempotent: existing rows have new_installs replaced; active_day, total
+// are preserved (only set non-zero when we have current data for the day).
+//
+// Runs once at startup. Cheap: one INSERT ... SELECT against an indexed
+// substring; the installs table holds at most ~5k rows at our scale.
+func (s *server) backfillNewInstalls(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO daily_global (day, active_day, new_installs, total)
+		SELECT substr(first_seen, 1, 10) AS day, 0, COUNT(*), 0
+		  FROM installs
+		 WHERE first_seen IS NOT NULL
+		 GROUP BY day
+		ON CONFLICT(day) DO UPDATE SET
+			new_installs = excluded.new_installs
+	`)
+	return err
+}
+
+// runAggregateLoop drives snapshotDay on the same daily cadence as
+// retention. On each tick it snapshots both today and yesterday: yesterday
+// captures whatever pings landed since the previous tick before any of
+// today's pings have had a chance to roll last_seen forward; today fills
+// in the live "what's happening right now" row that the dashboard reads.
+func (s *server) runAggregateLoop(ctx context.Context) {
+	tick := time.NewTicker(aggregateInterval)
+	defer tick.Stop()
+	for {
+		now := time.Now().UTC()
+		if err := s.snapshotDay(ctx, now); err != nil {
+			slog.Warn("snapshot today failed", "error", err)
+		}
+		if err := s.snapshotDay(ctx, now.AddDate(0, 0, -1)); err != nil {
+			slog.Warn("snapshot yesterday failed", "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
+}
+
 type pingRequest struct {
 	InstallID string           `json:"install_id"`
 	Version   string           `json:"version"`
@@ -233,6 +406,38 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Daily aggregate tables (Phase 4). One row per day for the global
+	// counts, one per (day, version) for the version split, one per
+	// (day, field) for feature adoption. Populated by the nightly snapshot
+	// loop; perpetual retention so charts can extend beyond the 60-day
+	// retention window we keep on raw rows.
+	for _, stmt := range []string{
+		`CREATE TABLE IF NOT EXISTS daily_global (
+			day          TEXT PRIMARY KEY,
+			active_day   INTEGER NOT NULL DEFAULT 0,
+			new_installs INTEGER NOT NULL DEFAULT 0,
+			total        INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS daily_version (
+			day          TEXT NOT NULL,
+			version      TEXT NOT NULL,
+			active_count INTEGER NOT NULL,
+			PRIMARY KEY (day, version)
+		)`,
+		`CREATE TABLE IF NOT EXISTS daily_features (
+			day              TEXT NOT NULL,
+			field            TEXT NOT NULL,
+			enabled_count    INTEGER NOT NULL,
+			reporting_count  INTEGER NOT NULL,
+			PRIMARY KEY (day, field)
+		)`,
+	} {
+		if _, err := db.ExecContext(context.Background(), stmt); err != nil {
+			slog.Error("create aggregate table", "error", err)
+			os.Exit(1)
+		}
+	}
+
 	// Boot-time sweep so dashboards on a fresh process are clean immediately;
 	// the nightly cron below keeps them clean from then on.
 	if _, err := sweepStaleAndDev(context.Background(), db); err != nil {
@@ -256,6 +461,22 @@ func main() {
 	// 60-day window matches the active-install definition used downstream
 	// (60-day evict means an install ID is either active or absent).
 	go s.runRetentionLoop(context.Background())
+
+	// Backfill the one historically-recoverable aggregate (new_installs by
+	// day, computed from first_seen which never changes). active_day,
+	// version splits, and feature adoption can't be backfilled because the
+	// installs table holds only the most-recent ping per install; those
+	// metrics begin accumulating from today's snapshot forward. Best-effort:
+	// a failure here does not block startup.
+	if err := s.backfillNewInstalls(context.Background()); err != nil {
+		slog.Warn("aggregate backfill failed", "error", err)
+	}
+
+	// Daily snapshot job for the aggregate tables. Mirrors the retention
+	// loop's lifecycle: fires immediately, then every 24 hours. Each tick
+	// snapshots the current state into today's row (UPSERT), so a process
+	// restart can recover today's partial counts without manual intervention.
+	go s.runAggregateLoop(context.Background())
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.handleHome)
@@ -525,7 +746,7 @@ const telemetryFieldsHTML = `<!DOCTYPE html>
 
   <h2>How the data is stored</h2>
 
-  <p>Pings land in a small SQLite database on a single VM in Hetzner Cloud (Falkenstein, Germany). Rows whose <code>last_seen</code> is older than 60 days are deleted nightly. The database itself is backed up daily to an off-site object store; backups follow the same 60-day retention.</p>
+  <p>Pings land in a small SQLite database on a single VM in Hetzner Cloud (Falkenstein, Germany). Per-install rows whose <code>last_seen</code> is older than 60 days are deleted nightly. The dashboard's long-running charts (monthly new installs, version adoption over time) are computed from daily aggregate tables that hold only counts per day: how many new installs, how many were active, how many were on each version, how many had each subsystem enabled. The aggregate rows never contain individual install IDs, so they're kept indefinitely. The database itself is backed up daily to an off-site object store; backups follow the same 60-day retention on per-install rows.</p>
 
   <p>The aggregated dashboard at <a href="/stats">/stats</a> is rendered live from the database with no caching. The full source of both the bindery client and the telemetry server lives at <a href="https://github.com/vavallee/bindery">github.com/vavallee/bindery</a> &mdash; the client at <code>internal/telemetry/client.go</code>, the server at <code>cmd/telemetry-server/main.go</code>.</p>
 
@@ -847,11 +1068,18 @@ func (s *server) computeStats(ctx context.Context) (*statsData, error) {
 		return nil, err
 	}
 
-	// Monthly new installs for the last 12 calendar months.
-	monthlyCutoff := time.Now().UTC().AddDate(0, -12, 0)
-	rowsMon, err := s.db.QueryContext(ctx,
-		`SELECT substr(first_seen, 1, 7) AS month, COUNT(*) FROM installs WHERE first_seen >= ? GROUP BY month ORDER BY month`,
-		monthlyCutoff)
+	// Monthly new installs for the last 12 calendar months. Reads from
+	// daily_global rather than installs so the chart survives the 60-day
+	// retention sweep: once a row's first_seen drops out of installs it's
+	// already accumulated into the daily aggregate for that day.
+	monthlyCutoff := time.Now().UTC().AddDate(0, -12, 0).Format("2006-01-02")
+	rowsMon, err := s.db.QueryContext(ctx, `
+		SELECT substr(day, 1, 7) AS month, SUM(new_installs)
+		  FROM daily_global
+		 WHERE day >= ?
+		 GROUP BY month
+		 ORDER BY month
+	`, monthlyCutoff)
 	if err != nil {
 		return nil, err
 	}
