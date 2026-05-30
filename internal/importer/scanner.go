@@ -2118,8 +2118,19 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 	// Precompute per-book reconciliation data once. The title tier previously
 	// called normalizeTitle(book.Title) inside the per-file loop — a pure,
 	// loop-invariant function recomputed files×books times. Hoisting it here
-	// makes it run once per book. Only "wanted" books can reconcile, so the
-	// candidate set is filtered down up front, and ASIN lookups become O(1).
+	// makes it run once per book. The candidate set is filtered down up front
+	// and ASIN lookups become O(1).
+	//
+	// Two book states count as candidates:
+	//   - Wanted: the book has no file yet by definition; this is the main case.
+	//   - Imported with no file actually on disk: covers two situations the
+	//     scanner used to ignore entirely. (a) #875: Calibre import sets
+	//     Status=Imported on every book it creates, but in container setups
+	//     where Calibre's library mount differs from Bindery's view, FilePath
+	//     stays empty and the user's 3700 epubs found 0 reconciliation
+	//     targets. (b) The user moved or renamed their files, leaving Imported
+	//     rows pointing at locations that no longer exist; re-scan now relinks
+	//     them rather than leaving the rows orphaned.
 	wantedBooks := make([]scanBook, 0, len(allBooks))
 	asinIndex := make(map[string][]scanBook)
 	// booksByAuthor maps an author ID to the indices (into wantedBooks, i.e. in
@@ -2129,7 +2140,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 	booksByAuthor := make(map[int64][]int)
 	for i := range allBooks {
 		b := &allBooks[i]
-		if b.Status != models.BookStatusWanted {
+		if !isReconcileCandidate(b) {
 			continue
 		}
 		sb := scanBook{book: b, normTitle: normalizeTitle(b.Title)}
@@ -2401,6 +2412,45 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 		"reconciled", reconciled, "unmatched", unmatched, "tagReadFailed", tagReadFailed)
 
 	s.writeScanResult(ctx, len(foundFiles), reconciled, unmatched, tagReadFailed, unmatchedFiles)
+}
+
+// isReconcileCandidate reports whether a book should be considered for
+// file-to-book matching during library scan. Returns true for:
+//
+//   - Status=Wanted books (the default case: the book has no file yet).
+//   - Status=Imported books whose recorded file paths either are empty or
+//     point at locations that no longer exist on disk. This covers #875
+//     (Calibre import leaves Status=Imported with FilePath unpopulated when
+//     Calibre's library mount differs from Bindery's view) and the related
+//     case of users moving their library and re-running a scan.
+//
+// Books with a valid on-disk file at any recorded path are skipped — the
+// scanner has no reason to re-reconcile a file that's already where it
+// should be, and re-attaching would churn book_files rows for no benefit.
+func isReconcileCandidate(b *models.Book) bool {
+	if b == nil {
+		return false
+	}
+	if b.Status == models.BookStatusWanted {
+		return true
+	}
+	if b.Status != models.BookStatusImported {
+		return false
+	}
+	// Imported books reconcile only when no path we have on file actually
+	// resolves to a real file. A book row may carry up to three legacy
+	// path columns plus the modern book_files rows; the scanner already
+	// trusts the trackedPaths set for book_files, so here we only need to
+	// gate on the legacy columns.
+	for _, p := range []string{b.FilePath, b.EbookFilePath, b.AudiobookFilePath} {
+		if p == "" {
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			return false
+		}
+	}
+	return true
 }
 
 // unmatchedFile represents a file that could not be reconciled during library scan.
