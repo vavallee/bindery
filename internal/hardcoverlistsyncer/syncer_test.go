@@ -180,10 +180,10 @@ func TestSyncOne_UsesGlobalTokenWhenListHasNoOverride(t *testing.T) {
 	}
 	s.WithTokenSource(func(context.Context) string { return "global-token" })
 	var gotToken string
-	s.hardcoverClient = func(token string) hardcoverListClient {
+	s.WithClientFactory(func(token string) hardcoverClient {
 		gotToken = token
-		return fakeHardcoverListClient{lists: []hardcover.HCList{{ID: 12, Slug: il.URL, Name: il.Name}}}
-	}
+		return &fakeHardcoverClient{lists: []hardcover.HCList{{ID: 12, Slug: il.URL, Name: il.Name}}}
+	})
 
 	if err := s.SyncOne(ctx, il.ID); err != nil {
 		t.Fatalf("SyncOne: %v", err)
@@ -204,10 +204,10 @@ func TestSyncOne_PerListTokenOverridesGlobalToken(t *testing.T) {
 	}
 	s.WithTokenSource(func(context.Context) string { return "global-token" })
 	var gotToken string
-	s.hardcoverClient = func(token string) hardcoverListClient {
+	s.WithClientFactory(func(token string) hardcoverClient {
 		gotToken = token
-		return fakeHardcoverListClient{lists: []hardcover.HCList{{ID: 24, Slug: il.URL, Name: il.Name}}}
-	}
+		return &fakeHardcoverClient{lists: []hardcover.HCList{{ID: 24, Slug: il.URL, Name: il.Name}}}
+	})
 
 	if err := s.SyncOne(ctx, il.ID); err != nil {
 		t.Fatalf("SyncOne: %v", err)
@@ -233,17 +233,22 @@ func TestSyncOne_ErrMissingToken(t *testing.T) {
 	}
 }
 
-type fakeHardcoverListClient struct {
-	lists []hardcover.HCList
-	books []models.Book
+type fakeHardcoverClient struct {
+	lists    []hardcover.HCList
+	books    []models.Book
+	editions []models.Edition
 }
 
-func (f fakeHardcoverListClient) GetUserLists(context.Context) ([]hardcover.HCList, error) {
+func (f *fakeHardcoverClient) GetUserLists(context.Context) ([]hardcover.HCList, error) {
 	return f.lists, nil
 }
 
-func (f fakeHardcoverListClient) GetListBooks(context.Context, int) ([]models.Book, error) {
+func (f *fakeHardcoverClient) GetListBooks(context.Context, int) ([]models.Book, error) {
 	return f.books, nil
+}
+
+func (f *fakeHardcoverClient) GetEditions(context.Context, string) ([]models.Edition, error) {
+	return f.editions, nil
 }
 
 // newTestSyncerWithSeries returns a syncer wired against a real in-memory DB
@@ -298,12 +303,12 @@ func TestSyncOne_LinksSeriesRefsAfterBookImport(t *testing.T) {
 		Position:  "1",
 		Primary:   true,
 	}})
-	s.hardcoverClient = func(string) hardcoverListClient {
-		return fakeHardcoverListClient{
+	s.WithClientFactory(func(string) hardcoverClient {
+		return &fakeHardcoverClient{
 			lists: []hardcover.HCList{{ID: 12, Slug: il.URL, Name: il.Name}},
 			books: []models.Book{book},
 		}
-	}
+	})
 
 	if err := s.SyncOne(ctx, il.ID); err != nil {
 		t.Fatalf("SyncOne: %v", err)
@@ -348,12 +353,12 @@ func TestSyncOne_SeriesLinkErrorDoesNotBlockImport(t *testing.T) {
 		Position:  "1",
 		Primary:   true,
 	}})
-	s.hardcoverClient = func(string) hardcoverListClient {
-		return fakeHardcoverListClient{
+	s.WithClientFactory(func(string) hardcoverClient {
+		return &fakeHardcoverClient{
 			lists: []hardcover.HCList{{ID: 12, Slug: il.URL, Name: il.Name}},
 			books: []models.Book{book},
 		}
-	}
+	})
 
 	if err := s.SyncOne(ctx, il.ID); err != nil {
 		t.Fatalf("SyncOne should succeed even when series linking errors: %v", err)
@@ -407,12 +412,12 @@ func TestSyncOne_NoSeriesRepo_NoSeriesLinkAttempted(t *testing.T) {
 		Position:  "1",
 		Primary:   true,
 	}})
-	s.hardcoverClient = func(string) hardcoverListClient {
-		return fakeHardcoverListClient{
+	s.WithClientFactory(func(string) hardcoverClient {
+		return &fakeHardcoverClient{
 			lists: []hardcover.HCList{{ID: 12, Slug: il.URL, Name: il.Name}},
 			books: []models.Book{book},
 		}
-	}
+	})
 
 	if err := s.SyncOne(ctx, il.ID); err != nil {
 		t.Fatalf("SyncOne: %v", err)
@@ -420,5 +425,70 @@ func TestSyncOne_NoSeriesRepo_NoSeriesLinkAttempted(t *testing.T) {
 	imported, err := s.books.GetByForeignID(ctx, "hc:dune")
 	if err != nil || imported == nil {
 		t.Fatalf("book should be imported: %v, %v", imported, err)
+	}
+}
+
+func TestSync_HydratesHardcoverEditions(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	ctx := context.Background()
+	importLists := db.NewImportListRepo(database)
+	authors := db.NewAuthorRepo(database)
+	books := db.NewBookRepo(database)
+	editions := db.NewEditionRepo(database)
+
+	audioASIN := "B123LISTEN"
+	client := &fakeHardcoverClient{
+		lists: []hardcover.HCList{{ID: 10, Slug: "want-to-read", Name: "Want to Read"}},
+		books: []models.Book{{
+			ForeignID:        "hc:list-book",
+			Title:            "List Book",
+			SortTitle:        "List Book",
+			MetadataProvider: "hardcover",
+			MediaType:        models.MediaTypeAudiobook,
+			Genres:           []string{},
+			Author: &models.Author{
+				ForeignID:        "hc:list-author",
+				Name:             "List Author",
+				SortName:         "Author, List",
+				MetadataProvider: "hardcover",
+			},
+		}},
+		editions: []models.Edition{{
+			ForeignID: "hc:list-book-audio",
+			Title:     "List Book",
+			ASIN:      &audioASIN,
+			Format:    "Audiobook",
+			Monitored: true,
+		}},
+	}
+	syncer := New(importLists, authors, books).
+		WithEditionHydration(editions, nil).
+		WithClientFactory(func(string) hardcoverClient { return client })
+	il := testImportList("Want", "hardcover", true)
+	il.URL = "want-to-read"
+	if err := importLists.Create(ctx, &il); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := syncer.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	book, err := books.GetByForeignID(ctx, "hc:list-book")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if book == nil || book.ASIN != audioASIN {
+		t.Fatalf("book was not hydrated: %+v", book)
+	}
+	got, err := editions.ListByBook(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ForeignID != "hc:list-book-audio" {
+		t.Fatalf("expected hydrated edition, got %+v", got)
 	}
 }

@@ -82,6 +82,12 @@ type stubMetaProvider struct {
 	// returned by Name() — required when a test exercises a code path
 	// that routes by prefix via the aggregator (e.g. "dnb" for DNB IDs).
 	name string
+	// editionsByBook lets tests exercise metadata edition hydration.
+	editionsByBook map[string][]models.Edition
+	editionCalls   []string
+	// authorWorksByName lets tests act as an author-scoped supplemental
+	// provider such as Hardcover.
+	authorWorksByName []models.Book
 }
 
 func (p *stubMetaProvider) Name() string {
@@ -107,7 +113,11 @@ func (p *stubMetaProvider) GetBook(_ context.Context, fid string) (*models.Book,
 	}
 	return nil, nil
 }
-func (p *stubMetaProvider) GetEditions(_ context.Context, _ string) ([]models.Edition, error) {
+func (p *stubMetaProvider) GetEditions(_ context.Context, fid string) ([]models.Edition, error) {
+	p.editionCalls = append(p.editionCalls, fid)
+	if p.editionsByBook != nil {
+		return p.editionsByBook[fid], nil
+	}
 	return nil, nil
 }
 func (p *stubMetaProvider) GetBookByISBN(_ context.Context, _ string) (*models.Book, error) {
@@ -117,6 +127,20 @@ func (p *stubMetaProvider) GetBookByISBN(_ context.Context, _ string) (*models.B
 // GetAuthorWorks satisfies the worksProvider sub-interface used by Aggregator.
 func (p *stubMetaProvider) GetAuthorWorks(_ context.Context, _ string) ([]models.Book, error) {
 	return p.works, nil
+}
+
+func (p *stubMetaProvider) GetAuthorWorksByName(_ context.Context, _ string) ([]models.Book, error) {
+	return p.authorWorksByName, nil
+}
+
+func enableHardcoverFeatureForTest(t *testing.T, ctx context.Context, settings *db.SettingsRepo) {
+	t.Helper()
+	if err := settings.Set(ctx, SettingHardcoverAPIToken, "hc-test-token"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settings.Set(ctx, SettingHardcoverEnhancedSeriesEnabled, "true"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // TestDeleteAuthor_WithDeleteFiles verifies the ?deleteFiles=true branch
@@ -603,6 +627,381 @@ func TestFetchAuthorBooks_AppliesAuthorMonitorModes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestFetchAuthorBooksHydratesOnlySupplementalHardcoverBooks(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	editionRepo := db.NewEditionRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+	author := &models.Author{
+		ForeignID:        "OL-HYDRATE-A",
+		Name:             "Author",
+		SortName:         "Author",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	primary := &stubMetaProvider{
+		name: "openlibrary",
+		works: []models.Book{{
+			ForeignID:        "OL-HYDRATE-W",
+			Title:            "Primary Book",
+			SortTitle:        "Primary Book",
+			Status:           models.BookStatusWanted,
+			Genres:           []string{},
+			MetadataProvider: "openlibrary",
+		}},
+	}
+	audioASIN := "B000AUTHOR"
+	hardcover := &stubMetaProvider{
+		name: "hardcover",
+		authorWorksByName: []models.Book{{
+			ForeignID:        "hc:audio-book",
+			Title:            "Audio Book",
+			SortTitle:        "Audio Book",
+			Status:           models.BookStatusWanted,
+			Genres:           []string{},
+			MetadataProvider: "hardcover",
+			MediaType:        models.MediaTypeAudiobook,
+		}},
+		editionsByBook: map[string][]models.Edition{
+			"hc:audio-book": {{
+				ForeignID: "hc:audio-book-edition",
+				Title:     "Audio Book",
+				ASIN:      &audioASIN,
+				Format:    "Audiobook",
+				Monitored: true,
+			}},
+		},
+	}
+	agg := metadata.NewAggregator(primary, hardcover).WithAudnexClient(nil)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, nil, profileRepo, nil).
+		WithEditionHydration(editionRepo)
+	h.FetchAuthorBooks(author, false, "")
+
+	primaryBook, err := bookRepo.GetByForeignID(ctx, "OL-HYDRATE-W")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if primaryBook == nil {
+		t.Fatal("expected primary book")
+		return
+	}
+	if primaryBook.ASIN != "" {
+		t.Fatalf("primary OpenLibrary book was unexpectedly hydrated: %+v", primaryBook)
+	}
+	hardcoverBook, err := bookRepo.GetByForeignID(ctx, "hc:audio-book")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hardcoverBook == nil || hardcoverBook.ASIN != audioASIN {
+		t.Fatalf("hardcover book was not hydrated: %+v", hardcoverBook)
+	}
+	if len(primary.editionCalls) != 0 {
+		t.Fatalf("primary provider edition calls = %+v", primary.editionCalls)
+	}
+	if len(hardcover.editionCalls) != 1 || hardcover.editionCalls[0] != "hc:audio-book" {
+		t.Fatalf("hardcover edition calls = %+v", hardcover.editionCalls)
+	}
+	editions, err := editionRepo.ListByBook(ctx, hardcoverBook.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(editions) != 1 || editions[0].ForeignID != "hc:audio-book-edition" {
+		t.Fatalf("expected hydrated edition, got %+v", editions)
+	}
+}
+
+func TestFetchAuthorBooksHydratesMatchedOpenLibraryHardcoverEditions(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	editionRepo := db.NewEditionRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+	enableHardcoverFeatureForTest(t, ctx, settingsRepo)
+	author := &models.Author{
+		ForeignID:        "OL-MATCH-A",
+		Name:             "Author",
+		SortName:         "Author",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	primary := &stubMetaProvider{
+		name: "openlibrary",
+		works: []models.Book{{
+			ForeignID:        "OL-MATCH-W",
+			Title:            "Matched Book",
+			SortTitle:        "Matched Book",
+			Status:           models.BookStatusWanted,
+			Genres:           []string{},
+			MetadataProvider: "openlibrary",
+		}},
+	}
+	audioASIN := "B000MATCH"
+	hardcover := &stubMetaProvider{
+		name: "hardcover",
+		authorWorksByName: []models.Book{{
+			ForeignID:        "hc:matched-book",
+			Title:            "Matched Book",
+			SortTitle:        "Matched Book",
+			Status:           models.BookStatusWanted,
+			Genres:           []string{},
+			MetadataProvider: "hardcover",
+			MediaType:        models.MediaTypeAudiobook,
+		}},
+		editionsByBook: map[string][]models.Edition{
+			"hc:matched-book": {{
+				ForeignID: "hc:matched-book-audio",
+				Title:     "Matched Book",
+				ASIN:      &audioASIN,
+				Format:    "Audiobook",
+				Monitored: true,
+			}},
+		},
+	}
+	agg := metadata.NewAggregator(primary, hardcover).WithAudnexClient(nil)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil).
+		WithHardcoverFeatureSettings(settingsRepo, true).
+		WithEditionHydration(editionRepo)
+	h.FetchAuthorBooks(author, false, "")
+
+	book, err := bookRepo.GetByForeignID(ctx, "OL-MATCH-W")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if book == nil {
+		t.Fatal("expected OpenLibrary book")
+		return
+	}
+	if book.ForeignID != "OL-MATCH-W" || book.MetadataProvider != "openlibrary" {
+		t.Fatalf("book identity was rebound unexpectedly: %+v", book)
+	}
+	if book.MediaType != models.MediaTypeAudiobook || book.ASIN != audioASIN {
+		t.Fatalf("matched book was not hydrated: %+v", book)
+	}
+	if len(primary.editionCalls) != 0 {
+		t.Fatalf("primary provider edition calls = %+v", primary.editionCalls)
+	}
+	if len(hardcover.editionCalls) != 1 || hardcover.editionCalls[0] != "hc:matched-book" {
+		t.Fatalf("hardcover edition calls = %+v", hardcover.editionCalls)
+	}
+	editions, err := editionRepo.ListByBook(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(editions) != 1 || editions[0].ForeignID != "hc:matched-book-audio" {
+		t.Fatalf("expected matched edition, got %+v", editions)
+	}
+}
+
+func TestFetchAuthorBooksDoesNotHydrateMatchedHardcoverWhenEnhancedDisabled(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	editionRepo := db.NewEditionRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+	author := &models.Author{
+		ForeignID:        "OL-MATCH-DISABLED-A",
+		Name:             "Author",
+		SortName:         "Author",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	primary := &stubMetaProvider{
+		name: "openlibrary",
+		works: []models.Book{{
+			ForeignID:        "OL-MATCH-DISABLED-W",
+			Title:            "Matched Disabled Book",
+			SortTitle:        "Matched Disabled Book",
+			Status:           models.BookStatusWanted,
+			Genres:           []string{},
+			MetadataProvider: "openlibrary",
+		}},
+	}
+	audioASIN := "B000DISABL"
+	hardcover := &stubMetaProvider{
+		name: "hardcover",
+		authorWorksByName: []models.Book{{
+			ForeignID:        "hc:matched-disabled-book",
+			Title:            "Matched Disabled Book",
+			SortTitle:        "Matched Disabled Book",
+			Status:           models.BookStatusWanted,
+			Genres:           []string{},
+			MetadataProvider: "hardcover",
+			MediaType:        models.MediaTypeAudiobook,
+		}},
+		editionsByBook: map[string][]models.Edition{
+			"hc:matched-disabled-book": {{
+				ForeignID: "hc:matched-disabled-book-audio",
+				Title:     "Matched Disabled Book",
+				ASIN:      &audioASIN,
+				Format:    "Audiobook",
+				Monitored: true,
+			}},
+		},
+	}
+	agg := metadata.NewAggregator(primary, hardcover).WithAudnexClient(nil)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil).
+		WithHardcoverFeatureSettings(settingsRepo, true).
+		WithEditionHydration(editionRepo)
+	h.FetchAuthorBooks(author, false, "")
+
+	book, err := bookRepo.GetByForeignID(ctx, "OL-MATCH-DISABLED-W")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if book == nil {
+		t.Fatal("expected OpenLibrary book")
+		return
+	}
+	if book.ASIN != "" {
+		t.Fatalf("matched book was hydrated while enhanced Hardcover was disabled: %+v", book)
+	}
+	if len(hardcover.editionCalls) != 0 {
+		t.Fatalf("hardcover edition calls = %+v, want none", hardcover.editionCalls)
+	}
+	editions, err := editionRepo.ListByBook(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(editions) != 0 {
+		t.Fatalf("editions were persisted while enhanced Hardcover was disabled: %+v", editions)
+	}
+}
+
+func TestFetchAuthorBooksHydratesMatchedHardcoverTitleDedupUpgrade(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	editionRepo := db.NewEditionRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+	enableHardcoverFeatureForTest(t, ctx, settingsRepo)
+	author := &models.Author{
+		ForeignID:        "OL-DEDUP-HYDRATE-A",
+		Name:             "Author",
+		SortName:         "Author",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	existing := &models.Book{
+		ForeignID:        "OL-DEDUP-EXISTING-W",
+		AuthorID:         author.ID,
+		Title:            "Shared Book",
+		SortTitle:        "Shared Book",
+		Status:           models.BookStatusWanted,
+		Genres:           []string{},
+		MetadataProvider: "openlibrary",
+		MediaType:        models.MediaTypeEbook,
+		Monitored:        true,
+	}
+	if err := bookRepo.Create(ctx, existing); err != nil {
+		t.Fatal(err)
+	}
+
+	primary := &stubMetaProvider{
+		name: "openlibrary",
+		works: []models.Book{{
+			ForeignID:        "OL-DEDUP-NEW-W",
+			Title:            "Shared Book",
+			SortTitle:        "Shared Book",
+			Status:           models.BookStatusWanted,
+			Genres:           []string{},
+			MetadataProvider: "openlibrary",
+		}},
+	}
+	audioASIN := "B000DEDUP"
+	hardcover := &stubMetaProvider{
+		name: "hardcover",
+		authorWorksByName: []models.Book{{
+			ForeignID:        "hc:dedup-book",
+			Title:            "Shared Book",
+			SortTitle:        "Shared Book",
+			Status:           models.BookStatusWanted,
+			Genres:           []string{},
+			MetadataProvider: "hardcover",
+			MediaType:        models.MediaTypeAudiobook,
+		}},
+		editionsByBook: map[string][]models.Edition{
+			"hc:dedup-book": {{
+				ForeignID: "hc:dedup-book-audio",
+				Title:     "Shared Book",
+				ASIN:      &audioASIN,
+				Format:    "Audiobook",
+				Monitored: true,
+			}},
+		},
+	}
+	agg := metadata.NewAggregator(primary, hardcover).WithAudnexClient(nil)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil).
+		WithHardcoverFeatureSettings(settingsRepo, true).
+		WithEditionHydration(editionRepo)
+	h.FetchAuthorBooks(author, false, "")
+
+	updated, err := bookRepo.GetByID(ctx, existing.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.MediaType != models.MediaTypeBoth || updated.ASIN != audioASIN {
+		t.Fatalf("existing book was not upgraded and hydrated: %+v", updated)
+	}
+	if created, err := bookRepo.GetByForeignID(ctx, "OL-DEDUP-NEW-W"); err != nil {
+		t.Fatal(err)
+	} else if created != nil {
+		t.Fatalf("dedup path created a second book: %+v", created)
+	}
+	if len(hardcover.editionCalls) != 1 || hardcover.editionCalls[0] != "hc:dedup-book" {
+		t.Fatalf("hardcover edition calls = %+v", hardcover.editionCalls)
+	}
+	editions, err := editionRepo.ListByBook(ctx, existing.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(editions) != 1 || editions[0].ForeignID != "hc:dedup-book-audio" {
+		t.Fatalf("expected dedup hydrated edition, got %+v", editions)
 	}
 }
 
@@ -2046,6 +2445,90 @@ func TestAddBook_DirectInsertCoversSlowAsyncSync(t *testing.T) {
 	auth, err := authorRepo.GetByForeignID(context.Background(), "OL1391085A")
 	if err != nil || auth == nil {
 		t.Fatalf("author was orphan-cleaned despite direct-insert: err=%v auth=%v", err, auth)
+	}
+}
+
+func TestAddBook_DirectInsertHydratesMatchedHardcoverEditions(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	editionRepo := db.NewEditionRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+	enableHardcoverFeatureForTest(t, ctx, settingsRepo)
+
+	primaryBook := &models.Book{
+		ForeignID:          "OL-TWILIGHT-W",
+		Title:              "Twilight",
+		SortTitle:          "Twilight",
+		Language:           "eng",
+		Status:             models.BookStatusWanted,
+		Genres:             []string{},
+		MetadataProvider:   "openlibrary",
+		MediaType:          models.MediaTypeAudiobook,
+		HardcoverForeignID: "hc:twilight",
+	}
+	primary := &stubMetaProvider{
+		name:  "openlibrary",
+		works: nil,
+		getBookByID: map[string]*models.Book{
+			"OL-TWILIGHT-W": primaryBook,
+		},
+	}
+	audioASIN := "B000TWILIT"
+	hardcover := &stubMetaProvider{
+		name: "hardcover",
+		editionsByBook: map[string][]models.Edition{
+			"hc:twilight": {{
+				ForeignID: "hc:twilight-audio",
+				Title:     "Twilight",
+				ASIN:      &audioASIN,
+				Format:    "Audiobook",
+				Monitored: true,
+			}},
+		},
+	}
+	agg := metadata.NewAggregator(primary, hardcover).WithAudnexClient(nil)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil).
+		WithHardcoverFeatureSettings(settingsRepo, true).
+		WithEditionHydration(editionRepo)
+
+	body, _ := json.Marshal(map[string]any{
+		"foreignBookId":   "OL-TWILIGHT-W",
+		"foreignAuthorId": "OL1391085A",
+		"authorName":      "Stephenie Meyer",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	h.AddBook(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(hardcover.editionCalls) != 1 || hardcover.editionCalls[0] != "hc:twilight" {
+		t.Fatalf("hardcover edition calls = %+v, want [hc:twilight]", hardcover.editionCalls)
+	}
+	got, err := bookRepo.GetByForeignID(ctx, "OL-TWILIGHT-W")
+	if err != nil || got == nil {
+		t.Fatalf("book not persisted: err=%v got=%v", err, got)
+	}
+	if got.ASIN != audioASIN {
+		t.Fatalf("book ASIN = %q, want %q", got.ASIN, audioASIN)
+	}
+	editions, err := editionRepo.ListByBook(ctx, got.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(editions) != 1 || editions[0].ForeignID != "hc:twilight-audio" {
+		t.Fatalf("expected hydrated edition, got %+v", editions)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/vavallee/bindery/internal/bookhydrate"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/metadata"
@@ -30,6 +31,9 @@ type BookHandler struct {
 	downloads *db.DownloadRepo
 	authors   *db.AuthorRepo
 	series    *db.SeriesRepo
+	editions  *db.EditionRepo
+
+	editionFetcher bookhydrate.EditionFetcher
 }
 
 func NewBookHandler(books *db.BookRepo, meta *metadata.Aggregator, history *db.HistoryRepo, searcher BookSearcher) *BookHandler {
@@ -71,6 +75,43 @@ func (h *BookHandler) WithAuthors(a *db.AuthorRepo) *BookHandler {
 func (h *BookHandler) WithSeries(s *db.SeriesRepo) *BookHandler {
 	h.series = s
 	return h
+}
+
+// WithEditionHydration wires edition persistence for confident Hardcover
+// metadata identities.
+func (h *BookHandler) WithEditionHydration(editions *db.EditionRepo) *BookHandler {
+	h.editions = editions
+	return h
+}
+
+// WithEditionFetcher overrides the edition fetcher used by tests.
+func (h *BookHandler) WithEditionFetcher(fetcher bookhydrate.EditionFetcher) *BookHandler {
+	h.editionFetcher = fetcher
+	return h
+}
+
+func (h *BookHandler) hydrateHardcoverEditions(ctx context.Context, book *models.Book, provider string) {
+	if book == nil || h.editions == nil {
+		return
+	}
+	providerName := firstNonEmpty(provider, book.MetadataProvider)
+	fetcher := h.editionFetcher
+	if fetcher == nil && h.meta != nil {
+		fetcher = func(ctx context.Context, foreignID string) ([]models.Edition, error) {
+			if strings.EqualFold(strings.TrimSpace(providerName), "hardcover") {
+				return h.meta.GetEditionsFromProvider(ctx, "hardcover", foreignID)
+			}
+			return h.meta.GetEditions(ctx, foreignID)
+		}
+	}
+	bookhydrate.HydrateHardcoverEditions(ctx, bookhydrate.Options{
+		Book:          book,
+		Provider:      providerName,
+		Editions:      h.editions,
+		Books:         h.books,
+		FetchEditions: fetcher,
+		Enricher:      h.meta,
+	})
 }
 
 // EnrichAudiobook fetches audnex data for the book's ASIN and updates
@@ -707,6 +748,7 @@ func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	h.hydrateHardcoverEditions(r.Context(), book, req.Provider)
 
 	// Re-link series membership: remove all existing links for this book, then
 	// attach whatever the upstream record declares.
@@ -831,6 +873,7 @@ func (h *BookHandler) MapMetadata(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	h.hydrateHardcoverEditions(r.Context(), book, book.MetadataProvider)
 	updated, err := h.books.GetByID(r.Context(), book.ID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -39,6 +40,7 @@ func rebindFixture(t *testing.T) (*BookHandler, *db.BookRepo, *db.AuthorRepo, *d
 	authors := db.NewAuthorRepo(database)
 	series := db.NewSeriesRepo(database)
 	history := db.NewHistoryRepo(database)
+	editions := db.NewEditionRepo(database)
 
 	author := &models.Author{
 		ForeignID: "OL1A", Name: "Test Author", SortName: "Author, Test",
@@ -57,7 +59,7 @@ func rebindFixture(t *testing.T) (*BookHandler, *db.BookRepo, *db.AuthorRepo, *d
 		t.Fatal(err)
 	}
 
-	h := NewBookHandler(books, nil, history, nil).WithAuthors(authors).WithSeries(series)
+	h := NewBookHandler(books, nil, history, nil).WithAuthors(authors).WithSeries(series).WithEditionHydration(editions)
 	return h, books, authors, series, author, book, ctx
 }
 
@@ -89,6 +91,102 @@ func TestRebind_HappyPath(t *testing.T) {
 	}
 	if updated.Title != "Correct Book" {
 		t.Errorf("title not updated: got %q", updated.Title)
+	}
+}
+
+func TestRebind_HydratesHardcoverEditions(t *testing.T) {
+	h, books, _, _, author, book, ctx := rebindFixture(t)
+	book.MediaType = models.MediaTypeAudiobook
+	if err := books.Update(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	audioASIN := "B123456789"
+	h.WithMetaLookup(&stubLookup{book: &models.Book{
+		Title:  "Correct Book",
+		Author: &models.Author{ForeignID: author.ForeignID, Name: author.Name},
+	}})
+	h.WithEditionFetcher(func(context.Context, string) ([]models.Edition, error) {
+		return []models.Edition{{
+			ForeignID: "hc:correct-audio",
+			Title:     "Correct Book",
+			ASIN:      &audioASIN,
+			Format:    "Audiobook",
+			Monitored: true,
+		}}, nil
+	})
+
+	rec := httptest.NewRecorder()
+	h.Rebind(rec, rebindRequest(book.ID, map[string]any{
+		"provider": "hardcover", "foreign_id": "123",
+	}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	updated, err := books.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.ASIN != audioASIN {
+		t.Fatalf("ASIN = %q, want %q", updated.ASIN, audioASIN)
+	}
+	editions, err := h.editions.ListByBook(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(editions) != 1 || editions[0].ForeignID != "hc:correct-audio" {
+		t.Fatalf("expected hydrated edition, got %+v", editions)
+	}
+}
+
+func TestMapMetadata_HydratesHardcoverEditions(t *testing.T) {
+	h, books, _, _, author, book, ctx := rebindFixture(t)
+	book.MediaType = models.MediaTypeAudiobook
+	if err := books.Update(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	audioASIN := "B987654321"
+	provider := &stubMetaProvider{
+		name: "hardcover",
+		getBookByID: map[string]*models.Book{
+			"hc:mapped": {
+				ForeignID:        "hc:mapped",
+				Title:            "Mapped Book",
+				SortTitle:        "Mapped Book",
+				MetadataProvider: "hardcover",
+				Author:           &models.Author{ForeignID: author.ForeignID, Name: author.Name},
+			},
+		},
+		editionsByBook: map[string][]models.Edition{
+			"hc:mapped": {{
+				ForeignID: "hc:mapped-audio",
+				Title:     "Mapped Book",
+				ASIN:      &audioASIN,
+				Format:    "Audiobook",
+				Monitored: true,
+			}},
+		},
+	}
+	h.meta = metadata.NewAggregator(provider).WithAudnexClient(nil)
+
+	body := bytes.NewBufferString(`{"foreignBookId":"hc:mapped"}`)
+	rec := httptest.NewRecorder()
+	h.MapMetadata(rec, withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/book/1/map-metadata", body), "id", strconv.FormatInt(book.ID, 10)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	updated, err := books.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.ASIN != audioASIN {
+		t.Fatalf("ASIN = %q, want %q", updated.ASIN, audioASIN)
+	}
+	editions, err := h.editions.ListByBook(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(editions) != 1 || editions[0].ForeignID != "hc:mapped-audio" {
+		t.Fatalf("expected hydrated edition, got %+v", editions)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/vavallee/bindery/internal/bookhydrate"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/models"
@@ -16,17 +17,21 @@ import (
 
 // ListSyncer syncs enabled Hardcover import lists into Bindery's book catalogue.
 type ListSyncer struct {
-	importLists     *db.ImportListRepo
-	authors         *db.AuthorRepo
-	books           *db.BookRepo
-	series          seriesLinker
-	tokenSource     func(context.Context) string
-	hardcoverClient func(token string) hardcoverListClient
+	importLists *db.ImportListRepo
+	authors     *db.AuthorRepo
+	books       *db.BookRepo
+	series      seriesLinker
+	editions    *db.EditionRepo
+
+	tokenSource   func(context.Context) string
+	clientFactory hardcoverClientFactory
+	enricher      bookhydrate.AudiobookEnricher
 }
 
-type hardcoverListClient interface {
-	GetUserLists(ctx context.Context) ([]hardcover.HCList, error)
-	GetListBooks(ctx context.Context, listID int) ([]models.Book, error)
+type hardcoverClient interface {
+	GetUserLists(context.Context) ([]hardcover.HCList, error)
+	GetListBooks(context.Context, int) ([]models.Book, error)
+	GetEditions(context.Context, string) ([]models.Edition, error)
 }
 
 // seriesLinker is the slice of *db.SeriesRepo the syncer needs to persist
@@ -37,15 +42,15 @@ type seriesLinker interface {
 	LinkBook(ctx context.Context, seriesID, bookID int64, position string, primary bool) error
 }
 
+type hardcoverClientFactory func(string) hardcoverClient
+
 // New creates a new ListSyncer.
 func New(importLists *db.ImportListRepo, authors *db.AuthorRepo, books *db.BookRepo) *ListSyncer {
 	return &ListSyncer{
-		importLists: importLists,
-		authors:     authors,
-		books:       books,
-		hardcoverClient: func(token string) hardcoverListClient {
-			return hardcover.NewAuthenticated(token)
-		},
+		importLists:   importLists,
+		authors:       authors,
+		books:         books,
+		clientFactory: func(apiKey string) hardcoverClient { return hardcover.NewAuthenticated(apiKey) },
 	}
 }
 
@@ -58,6 +63,21 @@ func (s *ListSyncer) WithSeriesRepo(repo *db.SeriesRepo) *ListSyncer {
 		return s
 	}
 	s.series = repo
+	return s
+}
+
+// WithEditionHydration wires edition persistence for Hardcover list imports.
+func (s *ListSyncer) WithEditionHydration(editions *db.EditionRepo, enricher bookhydrate.AudiobookEnricher) *ListSyncer {
+	s.editions = editions
+	s.enricher = enricher
+	return s
+}
+
+// WithClientFactory overrides the Hardcover client factory used by tests.
+func (s *ListSyncer) WithClientFactory(factory hardcoverClientFactory) *ListSyncer {
+	if factory != nil {
+		s.clientFactory = factory
+	}
 	return s
 }
 
@@ -135,7 +155,7 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 	if token == "" {
 		return ErrMissingToken
 	}
-	client := s.hardcoverClient(token)
+	client := s.clientFactory(token)
 
 	// Resolve the list by slug
 	userLists, err := client.GetUserLists(ctx)
@@ -195,6 +215,7 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 			slog.Warn("failed to create book", "title", book.Title, "error", err)
 			continue
 		}
+		s.hydrateHardcoverEditions(ctx, &book, client)
 		slog.Info("imported book from hardcover list", "title", book.Title, "author_id", authorID)
 
 		s.linkSeriesRefs(ctx, &book)
@@ -230,6 +251,20 @@ func (s *ListSyncer) tokenForList(ctx context.Context, il models.ImportList) str
 		return ""
 	}
 	return hardcover.NormalizeAPIToken(s.tokenSource(ctx))
+}
+
+func (s *ListSyncer) hydrateHardcoverEditions(ctx context.Context, book *models.Book, client hardcoverClient) {
+	if book == nil || client == nil || s.editions == nil {
+		return
+	}
+	bookhydrate.HydrateHardcoverEditions(ctx, bookhydrate.Options{
+		Book:          book,
+		Provider:      "hardcover",
+		Editions:      s.editions,
+		Books:         s.books,
+		FetchEditions: client.GetEditions,
+		Enricher:      s.enricher,
+	})
 }
 
 // ensureAuthor looks up the author by foreign ID, creating a minimal record if

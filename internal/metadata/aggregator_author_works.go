@@ -173,6 +173,9 @@ func authorWorkMergeKey(title string) string {
 }
 
 func mergeAuthorWorkMetadata(dst *models.Book, src models.Book) {
+	if dst.HardcoverForeignID == "" {
+		dst.HardcoverForeignID = hardcoverForeignIDForAuthorWork(src)
+	}
 	if dst.ImageURL == "" {
 		dst.ImageURL = src.ImageURL
 	}
@@ -200,4 +203,14 @@ func mergeAuthorWorkMetadata(dst *models.Book, src models.Book) {
 	if dst.MediaType == "" {
 		dst.MediaType = src.MediaType
 	}
+}
+
+func hardcoverForeignIDForAuthorWork(book models.Book) string {
+	if id := strings.TrimSpace(book.HardcoverForeignID); strings.HasPrefix(id, "hc:") {
+		return id
+	}
+	if id := strings.TrimSpace(book.ForeignID); strings.HasPrefix(id, "hc:") && normalizedProviderName(book.MetadataProvider) == "hardcover" {
+		return id
+	}
+	return ""
 }

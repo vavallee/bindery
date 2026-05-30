@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/vavallee/bindery/internal/bookhydrate"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
@@ -31,6 +32,9 @@ type SeriesHandler struct {
 	settings                    *db.SettingsRepo
 	finder                      LibraryFinder
 	enhancedHardcoverEnvEnabled bool
+	editions                    *db.EditionRepo
+
+	editionFetcher bookhydrate.EditionFetcher
 }
 
 const (
@@ -54,6 +58,38 @@ func (h *SeriesHandler) WithHardcoverFeatureSettings(settings *db.SettingsRepo, 
 func (h *SeriesHandler) WithFinder(f LibraryFinder) *SeriesHandler {
 	h.finder = f
 	return h
+}
+
+// WithEditionHydration wires edition persistence for Hardcover catalog books.
+func (h *SeriesHandler) WithEditionHydration(editions *db.EditionRepo) *SeriesHandler {
+	h.editions = editions
+	return h
+}
+
+// WithEditionFetcher overrides the edition fetcher used by tests.
+func (h *SeriesHandler) WithEditionFetcher(fetcher bookhydrate.EditionFetcher) *SeriesHandler {
+	h.editionFetcher = fetcher
+	return h
+}
+
+func (h *SeriesHandler) hydrateHardcoverEditions(ctx context.Context, book *models.Book) {
+	if book == nil || h.editions == nil {
+		return
+	}
+	fetcher := h.editionFetcher
+	if fetcher == nil && h.meta != nil {
+		fetcher = func(ctx context.Context, foreignID string) ([]models.Edition, error) {
+			return h.meta.GetEditionsFromProvider(ctx, "hardcover", foreignID)
+		}
+	}
+	bookhydrate.HydrateHardcoverEditions(ctx, bookhydrate.Options{
+		Book:          book,
+		Provider:      "hardcover",
+		Editions:      h.editions,
+		Books:         h.books,
+		FetchEditions: fetcher,
+		Enricher:      h.meta,
+	})
 }
 
 func (h *SeriesHandler) hardcoverFeatureState(ctx context.Context) HardcoverFeatureState {
@@ -413,6 +449,11 @@ func (h *SeriesHandler) queueSeriesBook(ctx context.Context, b models.Book) (boo
 	}
 	if err := h.books.MarkWantedMonitored(ctx, b.ID); err != nil {
 		return false, err
+	}
+	if full, err := h.books.GetByID(ctx, b.ID); err != nil {
+		slog.Warn("series fill: failed to reload queued book metadata", "bookID", b.ID, "error", err)
+	} else if full != nil {
+		b = *full
 	}
 	b.Status = models.BookStatusWanted
 	b.Monitored = true
@@ -1209,6 +1250,7 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 	if err := h.books.Create(ctx, &book); err != nil {
 		return nil, err
 	}
+	h.hydrateHardcoverEditions(ctx, &book)
 	if _, err := h.series.LinkBookIfMissing(ctx, series.ID, book.ID, catalogBook.Position, true); err != nil {
 		return nil, err
 	}

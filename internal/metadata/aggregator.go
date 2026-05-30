@@ -122,6 +122,34 @@ func (a *Aggregator) GetEditions(ctx context.Context, bookForeignID string) ([]m
 	return editions, nil
 }
 
+// GetEditionsFromProvider fetches editions from a named provider, bypassing
+// prefix-based routing. This is used when callers know the provider from UI
+// state but the stored foreign ID is an unprefixed provider-native value.
+func (a *Aggregator) GetEditionsFromProvider(ctx context.Context, providerName, bookForeignID string) ([]models.Edition, error) {
+	providerName = strings.TrimSpace(strings.ToLower(providerName))
+	bookForeignID = strings.TrimSpace(bookForeignID)
+	if providerName == "" || bookForeignID == "" {
+		return nil, nil
+	}
+	key := "editions-provider:" + providerName + ":" + bookForeignID
+	if cached, ok := a.cache.get(key); ok {
+		return cached.([]models.Edition), nil
+	}
+
+	for _, provider := range a.providers() {
+		if provider == nil || normalizedProviderName(provider.Name()) != normalizedProviderName(providerName) {
+			continue
+		}
+		editions, err := provider.GetEditions(ctx, bookForeignID)
+		if err != nil {
+			return nil, err
+		}
+		a.cache.set(key, editions)
+		return editions, nil
+	}
+	return nil, ErrProviderNotConfigured
+}
+
 func (a *Aggregator) GetBookByISBN(ctx context.Context, isbn string) (*models.Book, error) {
 	isbn = isbnutil.Normalize(isbn)
 	key := "isbn:" + isbn
