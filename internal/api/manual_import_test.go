@@ -448,6 +448,10 @@ func TestManualImportImport_DirectoryPath(t *testing.T) {
 }
 
 // ── Path containment checks ─────────────────────────────────────────────────
+//
+// These tests exercise isAllowedPath only. The containment check fires before
+// any repo call, so no database is needed — handlers are constructed with nil
+// repos to avoid the migration overhead under -race.
 
 // makeBookPath creates a path that looks like a supported ebook or audiobook.
 // For audiobooks it creates a real directory (the import handler accepts dirs
@@ -465,6 +469,12 @@ func makeBookPath(t *testing.T, dir, name string, isDir bool) string {
 		}
 	}
 	return p
+}
+
+// containmentHandler returns a ManualImportHandler with the given allowed
+// roots but no backing database — safe for tests that only reach isAllowedPath.
+func containmentHandler(roots ...string) *ManualImportHandler {
+	return NewManualImportHandler(&stubManualImportScanner{}, nil, nil).WithAllowedRoots(roots...)
 }
 
 // TestManualImportLookup_PathOutsideAllowedRoots verifies that Lookup returns
@@ -485,8 +495,7 @@ func TestManualImportLookup_PathOutsideAllowedRoots(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h, _, _, _, _ := manualImportFixture(t)
-			h.WithAllowedRoots(t.TempDir()) // allowed root is a different dir
+			h := containmentHandler(t.TempDir()) // allowed root is a different dir
 
 			outside := t.TempDir()
 			p := makeBookPath(t, outside, tc.file, tc.isDir)
@@ -511,6 +520,8 @@ func TestManualImportLookup_PathInsideAllowedRoots(t *testing.T) {
 
 	ebookRoot := t.TempDir()
 	audiobookRoot := t.TempDir()
+	stub := &stubManualImportScanner{lookupResult: importer.LookupResult{Match: "none"}}
+	h := NewManualImportHandler(stub, nil, nil).WithAllowedRoots(ebookRoot, audiobookRoot)
 
 	cases := []struct {
 		name, file string
@@ -525,10 +536,6 @@ func TestManualImportLookup_PathInsideAllowedRoots(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h, stub, _, _, _ := manualImportFixture(t)
-			h.WithAllowedRoots(ebookRoot, audiobookRoot)
-			stub.lookupResult = importer.LookupResult{Match: "none"}
-
 			p := makeBookPath(t, tc.root, tc.file, tc.isDir)
 
 			rec := httptest.NewRecorder()
@@ -542,6 +549,7 @@ func TestManualImportLookup_PathInsideAllowedRoots(t *testing.T) {
 
 // TestManualImportImport_PathOutsideAllowedRoots verifies that Import returns
 // 403 for ebook and audiobook paths that fall outside the allowed roots.
+// The 403 fires before any repo call so no database is needed.
 func TestManualImportImport_PathOutsideAllowedRoots(t *testing.T) {
 	t.Parallel()
 
@@ -557,25 +565,12 @@ func TestManualImportImport_PathOutsideAllowedRoots(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			database, err := db.OpenMemory()
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { database.Close() })
-
-			authors := db.NewAuthorRepo(database)
-			downloads := db.NewDownloadRepo(database)
-			books := db.NewBookRepo(database)
-			ctx := context.Background()
-			book := seedBook(t, authors, books, ctx)
-
-			stub := &stubManualImportScanner{}
-			h := NewManualImportHandler(stub, downloads, books).WithAllowedRoots(t.TempDir())
+			h := containmentHandler(t.TempDir())
 
 			outside := t.TempDir()
 			p := makeBookPath(t, outside, tc.file, tc.isDir)
 
-			body, _ := json.Marshal(map[string]any{"path": p, "bookId": book.ID})
+			body, _ := json.Marshal(map[string]any{"path": p, "bookId": 1})
 			rec := httptest.NewRecorder()
 			h.Import(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import", bytes.NewReader(body)))
 			if rec.Code != http.StatusForbidden {
@@ -606,8 +601,6 @@ func TestManualImportLookup_SymlinkEscape(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h, stub, _, _, _ := manualImportFixture(t)
-
 			tmp := t.TempDir()
 			allowed := filepath.Join(tmp, "safe")
 			outside := filepath.Join(tmp, "secret")
@@ -625,9 +618,7 @@ func TestManualImportLookup_SymlinkEscape(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			h.WithAllowedRoots(allowed)
-			stub.lookupResult = importer.LookupResult{}
-
+			h := containmentHandler(allowed)
 			escapedPath := filepath.Join(link, tc.file)
 			rec := httptest.NewRecorder()
 			h.Lookup(rec, lookupRequest(escapedPath))
