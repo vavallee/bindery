@@ -98,6 +98,7 @@ func TestSeriesLinkBook(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected series, got nil")
+		return
 	}
 	if got.Title != "Dune Chronicles" {
 		t.Errorf("title: want %q, got %q", "Dune Chronicles", got.Title)

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -445,14 +446,28 @@ func TestTestClient_TimeoutMatrix(t *testing.T) {
 // SendDownload
 // ---------------------------------------------------------------------------
 
+// fakeNZBIndexer returns a test server serving a minimal valid NZB body.
+// SAB's AddURL fetches the NZB itself now (rather than handing SAB a URL), so
+// the adapter tests need a local "indexer" that actually responds.
+func fakeNZBIndexer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-nzb")
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><nzb></nzb>`))
+	}))
+}
+
 func TestSendDownload_SABnzbd(t *testing.T) {
+	defer httpsec.AllowLoopbackForTests()()
+	indexerSrv := fakeNZBIndexer(t)
+	defer indexerSrv.Close()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": true, "nzo_ids": []string{"nzo42"}})
 	}))
 	defer srv.Close()
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{Type: "sabnzbd", Host: host, Port: port, APIKey: "k"}
-	result, err := SendDownload(context.Background(), client, "https://example.com/file.nzb", "My Book")
+	result, err := SendDownload(context.Background(), client, indexerSrv.URL+"/file.nzb", "My Book")
 	if err != nil {
 		t.Fatalf("SendDownload: %v", err)
 	}
@@ -471,13 +486,16 @@ func TestSendDownload_SABnzbd_NoNzoID(t *testing.T) {
 	// SABnzbd may report status:true but return an empty nzo_ids slice.
 	// This is not a usable success — the download becomes untrackable.
 	// SendDownload must return an error rather than a silent empty RemoteID.
+	defer httpsec.AllowLoopbackForTests()()
+	indexerSrv := fakeNZBIndexer(t)
+	defer indexerSrv.Close()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": true, "nzo_ids": []string{}})
 	}))
 	defer srv.Close()
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{Type: "sabnzbd", Host: host, Port: port, APIKey: "k"}
-	_, err := SendDownload(context.Background(), client, "https://example.com/file.nzb", "My Book")
+	_, err := SendDownload(context.Background(), client, indexerSrv.URL+"/file.nzb", "My Book")
 	if err == nil {
 		t.Fatal("expected an error when SABnzbd returns no NZO id, got nil")
 	}
@@ -637,6 +655,120 @@ func TestSendDownload_QbittorrentAudiobookSavePath(t *testing.T) {
 	}
 	if gotSavePath != "/media/audio-downloads" {
 		t.Errorf("savepath: want /media/audio-downloads, got %q", gotSavePath)
+	}
+}
+
+// TestSendDownload_QbittorrentAudiobookCategory verifies that when a client has
+// CategoryAudiobook set and the send is for an audiobook, the qBittorrent
+// `category` form field reflects the audiobook category — not the ebook one
+// (#700). The savepath is also validated to round-trip the audiobook dir.
+func TestSendDownload_QbittorrentAudiobookCategory(t *testing.T) {
+	var gotCategory, gotSavePath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/add":
+			_ = r.ParseForm()
+			gotCategory = r.FormValue("category")
+			gotSavePath = r.FormValue("savepath")
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			_, _ = w.Write([]byte("[]"))
+		}
+	}))
+	defer srv.Close()
+	host, port := serverHostPort(t, srv.URL)
+	client := &models.DownloadClient{
+		Type:              "qbittorrent",
+		Host:              host,
+		Port:              port,
+		Username:          "u",
+		Password:          "p",
+		PathRemap:         "/media:/books",
+		Category:          "books",
+		CategoryAudiobook: "audiobooks",
+	}
+	_, err := SendDownload(context.Background(), client, "magnet:?xt=urn:btih:ABCDEF123&dn=Book", "", SendOptions{
+		MediaType:            models.MediaTypeAudiobook,
+		DownloadDir:          "/books/downloads",
+		AudiobookDownloadDir: "/books/audio-downloads",
+	})
+	if err != nil {
+		t.Fatalf("SendDownload: %v", err)
+	}
+	if gotCategory != "audiobooks" {
+		t.Errorf("category: want %q, got %q", "audiobooks", gotCategory)
+	}
+	if gotSavePath != "/media/audio-downloads" {
+		t.Errorf("savepath: want %q, got %q", "/media/audio-downloads", gotSavePath)
+	}
+}
+
+// TestSendDownload_QbittorrentEbookCategoryUnchanged confirms that grabs for
+// non-audiobook media types continue to use the existing Category even when
+// CategoryAudiobook is configured — backwards-compat guard for #700.
+func TestSendDownload_QbittorrentEbookCategoryUnchanged(t *testing.T) {
+	var gotCategory string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/add":
+			_ = r.ParseForm()
+			gotCategory = r.FormValue("category")
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			_, _ = w.Write([]byte("[]"))
+		}
+	}))
+	defer srv.Close()
+	host, port := serverHostPort(t, srv.URL)
+	client := &models.DownloadClient{
+		Type:              "qbittorrent",
+		Host:              host,
+		Port:              port,
+		Username:          "u",
+		Password:          "p",
+		Category:          "books",
+		CategoryAudiobook: "audiobooks",
+	}
+	if _, err := SendDownload(context.Background(), client, "magnet:?xt=urn:btih:ABCDEF123&dn=Book", "", SendOptions{MediaType: models.MediaTypeEbook}); err != nil {
+		t.Fatalf("SendDownload: %v", err)
+	}
+	if gotCategory != "books" {
+		t.Errorf("ebook send used category %q, want %q", gotCategory, "books")
+	}
+}
+
+// TestSendDownload_SABnzbdAudiobookCategory verifies the audiobook category
+// flows through SABnzbd's send path as well — the non-torrent branch of #700.
+// The category lives in the query string (not the multipart body), so reading
+// it via r.URL.Query is correct regardless of POST vs GET.
+func TestSendDownload_SABnzbdAudiobookCategory(t *testing.T) {
+	defer httpsec.AllowLoopbackForTests()()
+	indexerSrv := fakeNZBIndexer(t)
+	defer indexerSrv.Close()
+	var gotCategory string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCategory = r.URL.Query().Get("cat")
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": true, "nzo_ids": []string{"nzoAUDIO"}})
+	}))
+	defer srv.Close()
+	host, port := serverHostPort(t, srv.URL)
+	client := &models.DownloadClient{
+		Type:              "sabnzbd",
+		Host:              host,
+		Port:              port,
+		APIKey:            "k",
+		Category:          "books",
+		CategoryAudiobook: "audiobooks",
+	}
+	if _, err := SendDownload(context.Background(), client, indexerSrv.URL+"/file.nzb", "My Book", SendOptions{MediaType: models.MediaTypeAudiobook}); err != nil {
+		t.Fatalf("SendDownload: %v", err)
+	}
+	if gotCategory != "audiobooks" {
+		t.Errorf("cat: want %q, got %q", "audiobooks", gotCategory)
 	}
 }
 

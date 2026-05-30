@@ -545,6 +545,7 @@ func TestGetXML_SurfacesNon200(t *testing.T) {
 	_, err := c.Search(context.Background(), "anything", nil)
 	if err == nil {
 		t.Fatalf("expected error on 503, got nil")
+		return
 	}
 	if !strings.Contains(err.Error(), "503") {
 		t.Errorf("expected error to mention 503, got %v", err)
@@ -579,6 +580,7 @@ func TestParseNewznabError(t *testing.T) {
 			}
 			if err == nil {
 				t.Fatalf("expected error containing %q, got nil", tc.want)
+				return
 			}
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("error %q does not contain %q", err.Error(), tc.want)
@@ -601,6 +603,7 @@ func TestSearch_SurfacesNewznabError(t *testing.T) {
 	_, err := c.Search(context.Background(), "anything", nil)
 	if err == nil {
 		t.Fatal("expected error on <error> response, got nil")
+		return
 	}
 	if !strings.Contains(err.Error(), "500") || !strings.Contains(err.Error(), "Request limit reached") {
 		t.Errorf("expected error with indexer code and description, got %v", err)
@@ -809,6 +812,16 @@ func TestSigWords(t *testing.T) {
 		{"Ender's Game", []string{"enders", "game"}},
 		// German umlaut transliteration
 		{"Märchen", []string{"maerchen"}},
+		// Hyphenated titles split into separate keywords so the title
+		// side matches a NormalizeRelease'd release-side string (#871).
+		// "to" is dropped as a stopword; "five"/"mother" survive.
+		{"Slaughterhouse-Five", []string{"slaughterhouse", "five"}},
+		{"Mother-to-Mother", []string{"mother", "mother"}},
+		// Other NormalizeRelease separators (dot, underscore, parens,
+		// brackets) split the same way.
+		{"K.A.M.I", nil}, // single-character remainders dropped by min length
+		{"snake_case_title", []string{"snake", "case", "title"}},
+		{"Title (Subtitle)", []string{"title", "subtitle"}},
 	}
 	for _, c := range cases {
 		got := SigWords(c.in)
@@ -952,6 +965,7 @@ func TestNew_HardenedDialerBlocksLoopback(t *testing.T) {
 	_, err := c.Caps(context.Background())
 	if err == nil {
 		t.Fatal("expected connection to loopback to be rejected by the SSRF dialer, got nil error")
+		return
 	}
 	if !strings.Contains(err.Error(), "loopback") {
 		t.Errorf("expected 'loopback' in SSRF dial error, got: %v", err)

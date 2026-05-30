@@ -281,6 +281,20 @@ func TestAggregator_GetEditions_Cached(t *testing.T) {
 	}
 }
 
+func TestAggregator_GetEditionsFromProvider_RoutesUnprefixedID(t *testing.T) {
+	primary := &mockProvider{name: "ol"}
+	hardcover := &mockProvider{name: "hardcover", getEditions: []models.Edition{{Title: "Audio"}}}
+	agg := newTestAggregator(primary, hardcover)
+
+	got, err := agg.GetEditionsFromProvider(context.Background(), "hardcover", "123")
+	if err != nil {
+		t.Fatalf("GetEditionsFromProvider: %v", err)
+	}
+	if len(got) != 1 || got[0].Title != "Audio" {
+		t.Fatalf("unexpected editions: %+v", got)
+	}
+}
+
 // TestAggregator_ResolveBookByISBN_AcceptsDNBWithSyntheticAuthorID is the
 // regression test for #608: prior to the DNB-author-foreign-id fix, the
 // aggregator silently dropped DNB-only ISBN hits because Author.ForeignID
@@ -306,6 +320,7 @@ func TestAggregator_ResolveBookByISBN_AcceptsDNBWithSyntheticAuthorID(t *testing
 	}
 	if got == nil {
 		t.Fatal("expected DNB result with synthetic author ForeignID to be accepted, got nil")
+		return
 	}
 	if got.Author == nil || got.Author.ForeignID != "dnb:gnd:118585665" {
 		t.Errorf("unexpected resolved author: %+v", got.Author)

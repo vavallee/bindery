@@ -117,6 +117,7 @@ func TestLive_DNB_AllZippokingISBNs(t *testing.T) {
 			if book == nil {
 				failures = append(failures, tc.isbn)
 				t.Fatalf("[%s] no DNB record for ISBN", tc.source)
+				return
 			}
 			if book.Title == "" {
 				failures = append(failures, tc.isbn)

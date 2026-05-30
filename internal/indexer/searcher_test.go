@@ -219,6 +219,32 @@ func TestFilterRelevantApostrophe(t *testing.T) {
 	}
 }
 
+// TestFilterRelevantHyphenatedTitle is a regression test for #871: titles
+// whose entire significant content is a single hyphenated token (e.g.
+// "Slaughterhouse-Five") were tokenised by SigWords as one literal-hyphen
+// keyword, which never matched the de-hyphenated release-side string. Now
+// that SigWords splits on the same separators as NormalizeRelease, the
+// hyphenated title side and the release side line up.
+func TestFilterRelevantHyphenatedTitle(t *testing.T) {
+	results := toResults(
+		"Slaughterhouse-Five by Kurt Vonnegut EPUB",
+		"Kurt.Vonnegut.Slaughterhouse.Five.RETAIL.epub",
+		"Some.Unrelated.Book.epub",
+	)
+	got := filterRelevant(results, "Slaughterhouse-Five", "Kurt Vonnegut", nil)
+	for _, want := range []string{
+		"Slaughterhouse-Five by Kurt Vonnegut EPUB",
+		"Kurt.Vonnegut.Slaughterhouse.Five.RETAIL.epub",
+	} {
+		if !contains(got, want) {
+			t.Errorf("expected %q in results, got %v", want, resultTitles(got))
+		}
+	}
+	if contains(got, "Some.Unrelated.Book.epub") {
+		t.Error("unrelated release must not pass")
+	}
+}
+
 // TestFilterRelevantEditionQualifier — regression test for issue #283.
 // filterRelevant must accept real NZB releases for a book whose metadata
 // title carries a parenthesised edition qualifier. Before the fix,
@@ -315,7 +341,10 @@ func TestFilterByLanguageAny(t *testing.T) {
 func TestFilterCategoriesForMedia(t *testing.T) {
 	all := []int{7000, 7020, 3030}
 	ebook := filterCategoriesForMedia(all, "ebook")
-	if len(ebook) != 1 || ebook[0] != 7020 {
+	// 7000 (books parent) is dropped — sending the broad parent to indexers
+	// returns noise. 7020 is the canonical ebook subcategory. 3030 is audio
+	// so excluded from ebook search.
+	if !equalIntSlice(ebook, []int{7020}) {
 		t.Errorf("ebook filter = %v, want [7020]", ebook)
 	}
 	audio := filterCategoriesForMedia(all, "audiobook")
@@ -591,18 +620,52 @@ func TestFilterRelevantStopWordsBetweenKeywords(t *testing.T) {
 
 // Only standard Newznab ebook (702x) and audiobook (303x) subcategories pass.
 // Site-specific extensions like 7120 or 3130 are outside those ranges.
+// TestFilterCategoriesCustomIDs covers #851: foreign-language ebook/audiobook
+// IDs like 7120/7150/7180 (German) or 3130/3150 (Spanish-audio) must pass
+// through the filter alongside the standard 7020/3030. The previous narrow
+// 702x/303x check silently dropped them, leaving non-English users with
+// search hitting only the English category.
 func TestFilterCategoriesCustomIDs(t *testing.T) {
 	cats := []int{7020, 7120, 3030, 3130}
 
 	ebook := filterCategoriesForMedia(cats, "ebook")
-	if len(ebook) != 1 || ebook[0] != 7020 {
-		t.Errorf("ebook cats = %v, want [7020]", ebook)
+	if !equalIntSlice(ebook, []int{7020, 7120}) {
+		t.Errorf("ebook cats = %v, want [7020, 7120]", ebook)
 	}
 
 	audio := filterCategoriesForMedia(cats, "audiobook")
-	if len(audio) != 1 || audio[0] != 3030 {
+	if !equalIntSlice(audio, []int{3030, 3130}) {
+		t.Errorf("audio cats = %v, want [3030, 3130]", audio)
+	}
+}
+
+// TestFilterCategoriesGermanEbooks is the #851 reporter's exact configuration:
+// the user set 7020 + 7120 + 7150 + 7180 (English + multiple German ebook
+// subcategories) and ALSO had 3030 for audio. Ebook search must pass all four
+// 7xxx categories; audiobook search must keep 3030.
+func TestFilterCategoriesGermanEbooks(t *testing.T) {
+	cats := []int{7020, 7120, 7150, 7180, 3030}
+
+	ebook := filterCategoriesForMedia(cats, "ebook")
+	if !equalIntSlice(ebook, []int{7020, 7120, 7150, 7180}) {
+		t.Errorf("ebook cats = %v, want all four 7xxx categories", ebook)
+	}
+	audio := filterCategoriesForMedia(cats, "audiobook")
+	if !equalIntSlice(audio, []int{3030}) {
 		t.Errorf("audio cats = %v, want [3030]", audio)
 	}
+}
+
+func equalIntSlice(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // TestFilterCategoriesMaM covers indexers like MyAnonamouse whose entire
@@ -656,7 +719,11 @@ func TestFilterCategoriesParentDrop(t *testing.T) {
 		{[]int{7000}, "ebook", []int{7020}},
 		{[]int{3000}, "audiobook", []int{3030}},
 		{[]int{7000, 7020}, "ebook", []int{7020}},
-		{[]int{7000, 7020, 7030}, "ebook", []int{7020}},
+		// Post-#851: a user who configures 7030 alongside 7020 in their ebook
+		// indexer list gets both passed through — we trust the explicit
+		// configuration over the previous narrow 702x-only filter. Only the
+		// bare parent 7000 is dropped.
+		{[]int{7000, 7020, 7030}, "ebook", []int{7020, 7030}},
 		{[]int{3000, 3030}, "audiobook", []int{3030}},
 		{nil, "ebook", []int{7020}},
 		{[]int{7020, 7021, 7022}, "ebook", []int{7020, 7021, 7022}},

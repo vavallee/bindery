@@ -333,6 +333,29 @@ func TestDo_SetsAuthHeader(t *testing.T) {
 	}
 }
 
+// TestDo_OmitsAuthHeaderWhenKeyEmpty covers #818: Grimmory v3.x has no API
+// keys, so the client must not send "Authorization: Bearer " with an empty
+// token when the user leaves the field blank. Sending the header with a
+// trailing space is meaningless and just clutters the request.
+func TestDo_OmitsAuthHeaderWhenKeyEmpty(t *testing.T) {
+	var sawAuth bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, sawAuth = r.Header["Authorization"]
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(srv.URL, "")
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	_, _ = c.Ping(context.Background())
+
+	if sawAuth {
+		t.Error("Authorization header was set with empty api key; expected omission")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // APIError.Error()
 // ---------------------------------------------------------------------------

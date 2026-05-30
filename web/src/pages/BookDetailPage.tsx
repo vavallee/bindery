@@ -6,6 +6,8 @@ import SearchDebugPanel from '../components/SearchDebugPanel'
 import MediaBadge from '../components/MediaBadge'
 import RebindModal from '../components/RebindModal'
 import ConfirmDialog from '../components/ConfirmDialog'
+import ClipboardManualFallback from '../components/ClipboardManualFallback'
+import { useClipboardCopy } from '../components/useClipboardCopy'
 
 function formatSize(n: number): string {
   if (!n || n <= 0) return ''
@@ -168,7 +170,7 @@ export default function BookDetailPage() {
   const [togglingExclude, setTogglingExclude] = useState(false)
   const [showRebind, setShowRebind] = useState(false)
   const [showDeleteBook, setShowDeleteBook] = useState(false)
-  const [copied, setCopied] = useState(false)
+  const pathClipboard = useClipboardCopy()
   // For dual-format books, which format the file section is acting on.
   const [activeFormat, setActiveFormat] = useState<'ebook' | 'audiobook'>('ebook')
 
@@ -337,13 +339,7 @@ export default function BookDetailPage() {
   }
 
   const copyPath = async (path: string) => {
-    try {
-      await navigator.clipboard.writeText(path)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    } catch {
-      /* clipboard unavailable */
-    }
+    await pathClipboard.copy(path)
   }
 
   if (loading) return <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
@@ -554,13 +550,18 @@ export default function BookDetailPage() {
                     className="shrink-0 text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200 text-xs border border-slate-300 dark:border-zinc-700 rounded px-1.5 py-0.5"
                     aria-label={t('bookDetail.copyPath')}
                   >
-                    <span aria-hidden>⧉</span> {copied ? t('bookDetail.copied') : t('bookDetail.copy')}
+                    <span aria-hidden>⧉</span> {pathClipboard.status === 'copied' ? t('bookDetail.copied') : t('bookDetail.copy')}
                   </button>
                 </>
               ) : (
                 <span className="text-xs text-slate-500 dark:text-zinc-500">{t('bookDetail.noFile')}</span>
               )}
             </span>
+            {pathClipboard.status === 'manual' && (
+              <div className="col-start-2">
+                <ClipboardManualFallback text={pathClipboard.manualText} />
+              </div>
+            )}
           </div>
 
           <div className="mt-4 pt-4 border-t border-slate-200 dark:border-zinc-800 flex flex-wrap items-center gap-2">

@@ -348,6 +348,7 @@ func TestLogin_AuthError_BadCreds(t *testing.T) {
 	err := c.Login(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	var authErr *AuthError
 	if !errors.As(err, &authErr) {
@@ -374,6 +375,7 @@ func TestLogin_AuthError_BanEmpty403(t *testing.T) {
 	err := c.Login(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	var authErr *AuthError
 	if !errors.As(err, &authErr) {
@@ -404,6 +406,7 @@ func TestTest_AuthErrorDoesNotMisdirect(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	msg := err.Error()
 	if strings.Contains(msg, "could not reach") {
@@ -716,6 +719,7 @@ func TestAddTorrent_TorrentURL_FetchFailure(t *testing.T) {
 	_, err := c.AddTorrent(context.Background(), indexer.URL+"/torrent", "", "")
 	if err == nil {
 		t.Fatal("expected error when indexer returns 401")
+		return
 	}
 	if !strings.Contains(err.Error(), "401") {
 		t.Errorf("error should mention 401, got: %v", err)
@@ -792,6 +796,7 @@ func TestAddTorrent_TorrentURL_OversizedResponseDoesNotCallQbitAdd(t *testing.T)
 	_, err := c.AddTorrent(context.Background(), indexer.URL+"/too-large.torrent", "", "")
 	if err == nil {
 		t.Fatal("expected oversized response error")
+		return
 	}
 	if !strings.Contains(err.Error(), "exceeds") {
 		t.Errorf("expected oversized error, got: %v", err)
@@ -827,6 +832,7 @@ func TestAddTorrent_TorrentURL_DefaultValidationRejectsLoopbackBeforeFetch(t *te
 	_, err := c.AddTorrent(context.Background(), indexer.URL+"/blocked.torrent", "", "")
 	if err == nil {
 		t.Fatal("expected loopback URL validation failure")
+		return
 	}
 	if !strings.Contains(err.Error(), "url not allowed") {
 		t.Errorf("expected URL validation error, got: %v", err)
@@ -910,6 +916,77 @@ func TestGetTorrents_InvalidJSON(t *testing.T) {
 	c := newTestClient(srv.URL, "admin", "pass")
 	if _, err := c.GetTorrents(context.Background(), ""); err == nil {
 		t.Fatal("expected error on invalid JSON")
+	}
+}
+
+// TestGetTorrents_NormalizesWindowsPaths is the PixieApples follow-up to
+// #800: a qBittorrent instance running on Windows reports SavePath /
+// ContentPath / Name with backslash separators, which downstream Linux
+// path code in Bindery (filepath.Walk, PathRemap.Apply, pathIsAtOrUnder)
+// cannot process. The normalization must happen at the API boundary so
+// every consumer sees forward-slash paths regardless of qBit's host OS.
+func TestGetTorrents_NormalizesWindowsPaths(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			// Backslashes in JSON strings are escaped as \\; the resulting
+			// Go string contains single backslashes.
+			_, _ = w.Write([]byte(`[{
+				"hash":"abc",
+				"name":"Book Title",
+				"state":"pausedUP",
+				"progress":1.0,
+				"save_path":"N:\\Torrents\\complete",
+				"content_path":"N:\\Torrents\\complete\\library\\book"
+			}]`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	torrents, err := c.GetTorrents(context.Background(), "")
+	if err != nil {
+		t.Fatalf("GetTorrents: %v", err)
+	}
+	if len(torrents) != 1 {
+		t.Fatalf("expected 1 torrent, got %d", len(torrents))
+	}
+	if got, want := torrents[0].SavePath, "N:/Torrents/complete"; got != want {
+		t.Errorf("SavePath = %q, want %q (backslashes should be normalized)", got, want)
+	}
+	if got, want := torrents[0].ContentPath, "N:/Torrents/complete/library/book"; got != want {
+		t.Errorf("ContentPath = %q, want %q (backslashes should be normalized)", got, want)
+	}
+}
+
+// TestGetCategories_NormalizesWindowsSavePath asserts the same normalization
+// applies to Category.SavePath returned by GET /torrents/categories, so the
+// qBit health-check (which uses category save paths) doesn't fail on a
+// Windows-qBit deployment.
+func TestGetCategories_NormalizesWindowsSavePath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/categories":
+			_, _ = w.Write([]byte(`{"library":{"name":"library","savePath":"N:\\Torrents\\complete\\library"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	cats, err := c.GetCategories(context.Background())
+	if err != nil {
+		t.Fatalf("GetCategories: %v", err)
+	}
+	if got, want := cats["library"].SavePath, "N:/Torrents/complete/library"; got != want {
+		t.Errorf("SavePath = %q, want %q (backslashes should be normalized)", got, want)
 	}
 }
 
@@ -1187,6 +1264,7 @@ func TestAddTorrent_HashLookupTimeout(t *testing.T) {
 	_, err := c.AddTorrent(context.Background(), indexer.URL+"/torrent", "books", "")
 	if err == nil {
 		t.Fatal("expected error on timeout, got nil")
+		return
 	}
 	if !strings.Contains(err.Error(), "hash could not be determined") {
 		t.Errorf("unexpected error: %v", err)
@@ -1238,6 +1316,7 @@ func TestTest_DNSNotFound(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	msg := err.Error()
 	if strings.Contains(msg, "connected to qBittorrent") {
@@ -1257,8 +1336,9 @@ func TestTest_ConnectionRefused(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
-	if !strings.Contains(err.Error(), "service may not be running") {
+	if !strings.Contains(err.Error(), "host firewall is rejecting") {
 		t.Errorf("expected port hint, got: %q", err.Error())
 	}
 }
@@ -1272,6 +1352,7 @@ func TestTest_Timeout_QBit(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	if !strings.Contains(err.Error(), "firewall or proxy") {
 		t.Errorf("expected firewall hint, got: %q", err.Error())
@@ -1295,9 +1376,10 @@ func TestTest_ServerError_NoHint_QBit(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	msg := err.Error()
-	for _, hint := range []string{"Docker network", "service may not be running", "firewall or proxy"} {
+	for _, hint := range []string{"Docker network", "host firewall is rejecting", "firewall or proxy"} {
 		if strings.Contains(msg, hint) {
 			t.Errorf("server error must not produce hint %q; got: %q", hint, msg)
 		}

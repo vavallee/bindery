@@ -108,6 +108,27 @@ func validateWithResolver(raw string, policy Policy, r Resolver) error {
 	return nil
 }
 
+// testAllowLoopback opts the loopback check out of "always blocked" status,
+// scoped by AllowLoopbackForTests. Never set in production — the call sites
+// for outbound fetches (notifications, indexers, NZB fetch) all rely on
+// loopback being rejected to prevent SSRF against the Bindery host itself.
+var testAllowLoopback bool
+
+// AllowLoopbackForTests permits loopback addresses through ValidateOutboundURL
+// for the lifetime of the returned cleanup. Tests that need to point a
+// guarded outbound call at an httptest.NewServer (which binds 127.0.0.1) use
+// this; production code must never call it. Idiomatic use:
+//
+//	defer httpsec.AllowLoopbackForTests()()
+//
+// Not safe for t.Parallel: the flag is package-global. Sequential tests are
+// fine, including subtests, since each call snapshots and restores.
+func AllowLoopbackForTests() func() {
+	prev := testAllowLoopback
+	testAllowLoopback = true
+	return func() { testAllowLoopback = prev }
+}
+
 // checkIP returns an error if ip is in a range forbidden by policy.
 func checkIP(ip net.IP, policy Policy) error {
 	// Unmap IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1 → 127.0.0.1) so the
@@ -116,8 +137,9 @@ func checkIP(ip net.IP, policy Policy) error {
 		ip = v4
 	}
 
-	// Always blocked: loopback.
-	if ip.IsLoopback() {
+	// Always blocked: loopback (unless explicitly allowed for tests via
+	// AllowLoopbackForTests — never opt in from production code).
+	if ip.IsLoopback() && !testAllowLoopback {
 		return errors.New("url not allowed: points to loopback address")
 	}
 

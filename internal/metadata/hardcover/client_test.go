@@ -161,6 +161,7 @@ func TestQuery_GraphQLErrorsReturnError(t *testing.T) {
 	_, err := c.SearchAuthors(context.Background(), "Sanderson")
 	if err == nil {
 		t.Fatal("expected GraphQL error")
+		return
 	}
 	if !strings.Contains(err.Error(), "Malformed Authorization header") || !strings.Contains(err.Error(), "invalid-headers") {
 		t.Fatalf("unexpected error: %v", err)
@@ -735,6 +736,7 @@ func TestGetAuthor_Found(t *testing.T) {
 	}
 	if author == nil {
 		t.Fatal("expected non-nil author")
+		return
 	}
 	if author.Name != "Neil Gaiman" {
 		t.Errorf("Name: want 'Neil Gaiman', got %q", author.Name)
@@ -832,6 +834,7 @@ func TestGetBook_Found(t *testing.T) {
 	}
 	if book == nil {
 		t.Fatal("expected non-nil book")
+		return
 	}
 	if book.Title != "American Gods" {
 		t.Errorf("Title: want 'American Gods', got %q", book.Title)
@@ -1131,6 +1134,7 @@ func TestGetEditions_GraphQLError(t *testing.T) {
 	_, err := c.GetEditions(context.Background(), "hc:dune")
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	if !strings.Contains(err.Error(), "hardcover get editions") {
 		t.Fatalf("error = %v, want hardcover get editions wrapper", err)
@@ -1149,6 +1153,7 @@ func TestGetEditions_HTTPError(t *testing.T) {
 	_, err := c.GetEditions(context.Background(), "hc:dune")
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	if !strings.Contains(err.Error(), "hardcover get editions") {
 		t.Fatalf("error = %v, want hardcover get editions wrapper", err)
@@ -1177,6 +1182,7 @@ func TestGetBookByISBN_Found(t *testing.T) {
 	}
 	if book == nil {
 		t.Fatal("expected non-nil book")
+		return
 	}
 	if book.Title != "The Name of the Wind" {
 		t.Errorf("Title: want 'The Name of the Wind', got %q", book.Title)
@@ -1213,6 +1219,7 @@ func TestGetBookByISBN_WithLanguage(t *testing.T) {
 	}
 	if book == nil {
 		t.Fatal("expected non-nil book")
+		return
 	}
 	if strings.Contains(gotQuery, "iso_639_1") {
 		t.Fatalf("GetBookByISBN query uses unsupported language field: %s", gotQuery)
@@ -1248,6 +1255,7 @@ func TestGetBookByISBN_NoLanguage(t *testing.T) {
 	}
 	if book == nil {
 		t.Fatal("expected non-nil book")
+		return
 	}
 	if book.Language != "" {
 		t.Errorf("Language: want empty, got %q", book.Language)
@@ -1349,6 +1357,7 @@ func TestSearchSeries_ErrorsWhenMatchesCannotBeMapped(t *testing.T) {
 	_, err := c.SearchSeries(context.Background(), "Dune", 5)
 	if err == nil {
 		t.Fatal("expected unmappable search response error")
+		return
 	}
 	if !strings.Contains(err.Error(), "no mappable series documents") {
 		t.Fatalf("unexpected error: %v", err)
@@ -1433,6 +1442,7 @@ func TestGetSeriesCatalog_ParsesAndDedupesBooks(t *testing.T) {
 	}
 	if catalog == nil {
 		t.Fatal("expected catalog")
+		return
 	}
 	if catalog.ForeignID != "hc-series:123" || catalog.Title != "Foundation" || catalog.AuthorName != "Isaac Asimov" {
 		t.Fatalf("unexpected catalog: %+v", catalog)
@@ -2038,6 +2048,105 @@ func TestGetListBooks_PositiveIDPaginates(t *testing.T) {
 	}
 	if len(offsets) != 2 || offsets[0] != 0 || offsets[1] != listBooksPageSize {
 		t.Fatalf("offsets = %v, want [0 %d]", offsets, listBooksPageSize)
+	}
+}
+
+// TestGetListBooks_PositiveIDPopulatesSeriesRefs covers issue #805: the
+// list_books GraphQL query now asks for featured_series and the parsed book
+// carries those forward as SeriesRefs so the list syncer can persist them.
+func TestGetListBooks_PositiveIDPopulatesSeriesRefs(t *testing.T) {
+	var gotQuery string
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		var req gqlRequest
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &req)
+		gotQuery = req.Query
+		resp := `{"data":{"list_books":[{"book":{"id":99,"title":"Dune","slug":"dune","featured_series":{"id":17,"name":"Dune Chronicles"},"featured_series_id":17,"featured_series_position":1,"contributions":[{"author":{"id":1,"name":"Frank Herbert","slug":"frank-herbert"}}]}}]}}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(resp)),
+			Header:     make(http.Header),
+		}, nil
+	})
+	c = c.WithToken("hc-token")
+
+	books, err := c.GetListBooks(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("GetListBooks: %v", err)
+	}
+	if !strings.Contains(gotQuery, "featured_series { id name }") {
+		t.Errorf("query missing featured_series selection: %q", gotQuery)
+	}
+	if !strings.Contains(gotQuery, "featured_series_position") {
+		t.Errorf("query missing featured_series_position: %q", gotQuery)
+	}
+	if len(books) != 1 {
+		t.Fatalf("books len = %d, want 1", len(books))
+	}
+	if len(books[0].SeriesRefs) != 1 {
+		t.Fatalf("SeriesRefs len = %d, want 1: %+v", len(books[0].SeriesRefs), books[0].SeriesRefs)
+	}
+	ref := books[0].SeriesRefs[0]
+	if ref.ForeignID != "hc-series:17" || ref.Title != "Dune Chronicles" || ref.Position != "1" || !ref.Primary {
+		t.Errorf("SeriesRef = %+v, want hc-series:17/Dune Chronicles/1/primary", ref)
+	}
+}
+
+// TestGetListBooks_BuiltinShelfPopulatesSeriesRefs mirrors the above for the
+// shelf code path (negative listIDs use the me.user_books query).
+func TestGetListBooks_BuiltinShelfPopulatesSeriesRefs(t *testing.T) {
+	var gotQuery string
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		var req gqlRequest
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &req)
+		gotQuery = req.Query
+		resp := `{"data":{"me":[{"user_books":[{"book":{"id":99,"title":"The Way of Kings","slug":"the-way-of-kings","featured_series":{"id":103,"name":"The Stormlight Archive"},"featured_series_id":103,"featured_series_position":1,"contributions":[{"author":{"id":2,"name":"Brandon Sanderson","slug":"brandon-sanderson"}}]}}]}]}}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(resp)),
+			Header:     make(http.Header),
+		}, nil
+	})
+	c = c.WithToken("hc-token")
+
+	books, err := c.GetListBooks(context.Background(), -1)
+	if err != nil {
+		t.Fatalf("GetListBooks shelf: %v", err)
+	}
+	if !strings.Contains(gotQuery, "featured_series { id name }") {
+		t.Errorf("shelf query missing featured_series selection: %q", gotQuery)
+	}
+	if len(books) != 1 || len(books[0].SeriesRefs) != 1 {
+		t.Fatalf("books = %+v", books)
+	}
+	ref := books[0].SeriesRefs[0]
+	if ref.ForeignID != "hc-series:103" || ref.Title != "The Stormlight Archive" || ref.Position != "1" || !ref.Primary {
+		t.Errorf("shelf SeriesRef = %+v", ref)
+	}
+}
+
+// TestFeaturedSeriesRefs_FallbackAndEdgeCases exercises featuredSeriesRefs
+// directly so the conversion rules don't drift silently.
+func TestFeaturedSeriesRefs_FallbackAndEdgeCases(t *testing.T) {
+	// Title from relation, id falls back to scalar featured_series_id.
+	scalarID := 55
+	refs := featuredSeriesRefs(&hcFeaturedSeries{ID: 0, Name: "Foundation"}, &scalarID, 2)
+	if len(refs) != 1 || refs[0].ForeignID != "hc-series:55" || refs[0].Title != "Foundation" || refs[0].Position != "2" {
+		t.Errorf("scalar id fallback: %+v", refs)
+	}
+
+	// Missing id everywhere → drop the ref (we cannot link without a stable
+	// foreign id).
+	if got := featuredSeriesRefs(&hcFeaturedSeries{Name: "Anon"}, nil, nil); got != nil {
+		t.Errorf("missing id should drop ref, got %+v", got)
+	}
+
+	// Nil relation, but scalar id alone (no title) → drop: a series with no
+	// name is unusable upstream.
+	zero := 0
+	if got := featuredSeriesRefs(nil, &zero, nil); got != nil {
+		t.Errorf("zero id should drop ref, got %+v", got)
 	}
 }
 

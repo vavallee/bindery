@@ -506,6 +506,14 @@ func (c *Client) GetTorrents(ctx context.Context, category string) ([]Torrent, e
 	if err := json.Unmarshal(data, &torrents); err != nil {
 		return nil, fmt.Errorf("decode torrents: %w", err)
 	}
+	// Windows-qBit reports paths with backslashes; downstream Linux path code
+	// (filepath.Walk, PathRemap.Apply, pathIsAtOrUnder) can't process them.
+	// Normalize at the API boundary so every consumer sees forward-slash form.
+	for i := range torrents {
+		torrents[i].SavePath = normalizePath(torrents[i].SavePath)
+		torrents[i].ContentPath = normalizePath(torrents[i].ContentPath)
+		torrents[i].Name = normalizePath(torrents[i].Name)
+	}
 	return torrents, nil
 }
 

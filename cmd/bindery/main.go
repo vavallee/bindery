@@ -142,6 +142,9 @@ func main() {
 	absProvenanceRepo := db.NewABSProvenanceRepo(database)
 	absConflictRepo := db.NewABSMetadataConflictRepo(database)
 	absReviewRepo := db.NewABSReviewItemRepo(database)
+	calibreImportRunRepo := db.NewCalibreImportRunRepo(database)
+	calibreSnapshotRepo := db.NewCalibreEntitySnapshotRepo(database)
+	calibreProvenanceRepo := db.NewCalibreProvenanceRepo(database)
 	indexerRepo := db.NewIndexerRepo(database)
 	dlClientRepo := db.NewDownloadClientRepo(database)
 	downloadRepo := db.NewDownloadRepo(database)
@@ -174,6 +177,21 @@ func main() {
 	// Parse trusted-proxy CIDRs once at startup (shared by trustedProxyMiddleware
 	// and the proxy-auth identity check).
 	trustedCIDRs := parseTrustedProxyCIDRs(os.Getenv("BINDERY_TRUSTED_PROXY"))
+
+	// Warn loudly when the trusted-proxy allowlist effectively trusts every
+	// possible peer (0.0.0.0/0 or ::/0). In that shape every client's
+	// X-Forwarded-For header is honoured, defeating the login rate-limiter
+	// (which keys off the post-RealIP `RemoteAddr`) and any other per-IP
+	// decision in the stack. Operators sometimes do this in Helm charts to
+	// silence the proxy-mode safety gate without thinking through the
+	// implication; surfacing it at boot makes the misconfiguration obvious.
+	for _, c := range trustedCIDRs {
+		ones, bits := c.Mask.Size()
+		if ones == 0 && bits > 0 {
+			slog.Warn("BINDERY_TRUSTED_PROXY entry trusts every peer — login rate-limiter and per-IP decisions are effectively disabled",
+				"cidr", c.String())
+		}
+	}
 
 	// Safety gate: proxy auth mode requires at least one trusted proxy CIDR so
 	// that the identity header cannot be forged by arbitrary LAN hosts.
@@ -246,6 +264,13 @@ func main() {
 		return
 	}
 
+	// Notifier — constructed early so it can be passed into the import scanner,
+	// scheduler, and download-client health store before they start firing
+	// events. Before issue #849 was fixed, this was constructed only after
+	// scheduler.Start() and only injected into QueueHandler, which is why
+	// auto-grab / import / download-failure events never reached webhooks.
+	notif := notifier.New(notificationRepo)
+
 	// Indexer searcher
 	idxSearcher := indexer.NewSearcher()
 
@@ -257,6 +282,7 @@ func main() {
 		cfg.LibraryDir, cfg.AudiobookDir, namingTemplate, audiobookTemplate,
 		cfg.DownloadPathRemap,
 	)
+	importScanner.WithNotifier(notif)
 	if cfg.AudiobookDownloadDir != "" {
 		importScanner.WithAudiobookDownloadDir(cfg.AudiobookDownloadDir)
 		slog.Info("audiobook download dir configured", "path", cfg.AudiobookDownloadDir)
@@ -296,7 +322,8 @@ func main() {
 	// runs. A single instance is shared between the API handler and the
 	// startup-sync branch below — both paths share the "only one import
 	// at a time" guard.
-	calibreImporter := calibre.NewImporter(authorRepo, authorAliasRepo, bookRepo, editionRepo, settingsRepo)
+	calibreImporter := calibre.NewImporter(authorRepo, authorAliasRepo, bookRepo, editionRepo, settingsRepo).
+		WithRunTracking(calibreImportRunRepo, calibreSnapshotRepo, calibreProvenanceRepo)
 	absImporter := abs.NewImporter(authorRepo, authorAliasRepo, bookRepo, editionRepo, seriesRepo, settingsRepo, absImportRunRepo, absImportRunEntityRepo, absProvenanceRepo, absReviewRepo, absConflictRepo).
 		WithVersion(version).
 		WithStoragePaths(cfg.LibraryDir, cfg.AudiobookDir, rootFolderRepo).
@@ -373,6 +400,7 @@ func main() {
 	sched.WithDelayProfiles(delayProfileRepo)
 	sched.WithPendingReleases(pendingReleaseRepo)
 	sched.WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir)
+	sched.WithNotifier(notif)
 	// Register the Calibre importer as the 24-hour sync job. The scheduler
 	// only fires the job when the syncer is non-nil, so no guard needed here.
 	sched.WithCalibreSyncer(calibreImporter)
@@ -387,14 +415,19 @@ func main() {
 
 	// Register the Hardcover list syncer (24-hour job).
 	hcSyncer := hardcoverlistsyncer.New(importListRepo, authorRepo, bookRepo).
+		WithSeriesRepo(seriesRepo).
 		WithTokenSource(func(ctx context.Context) string {
 			return api.GetHardcoverAPIToken(ctx, settingsRepo)
-		})
+		}).
+		WithEditionHydration(editionRepo, metaAgg)
 	sched.WithHardcoverSyncer(hcSyncer)
 	sched.WithLogRepo(logRepo, cfg.LogRetentionDays)
 
 	// Anonymous install ping (opt-out via telemetry.enabled=false in settings).
-	telemetryClient := telemetry.New(settingsRepo, version)
+	// The gatherer captures repo handles by closure and runs at ping time. It
+	// must not block on network IO; all queries are local SQLite reads.
+	telemetryClient := telemetry.New(settingsRepo, version).
+		WithGatherer(buildTelemetryGatherer(indexerRepo, dlClientRepo, notificationRepo, userRepo, settingsRepo))
 	sched.WithTelemetry(telemetryClient)
 
 	// Recover downloads wedged mid-import by a prior crash or timeout before the
@@ -406,9 +439,6 @@ func main() {
 
 	sched.Start()
 	defer sched.Stop()
-
-	// Notifier
-	notif := notifier.New(notificationRepo)
 
 	// OIDC manager — loaded from settings, reload on config change. The
 	// redirect base URL is resolved per-request from the Login/Callback
@@ -442,11 +472,19 @@ func main() {
 	userMgmtHandler := api.NewUserManagementHandler(userRepo).
 		WithLocalAuthEnabled(cfg.LocalAuthEnabled)
 	searchHandler := api.NewSearchHandler(metaAgg)
-	authorHandler := api.NewAuthorHandler(authorRepo, authorAliasRepo, bookRepo, seriesRepo, metaAgg, settingsRepo, metadataProfileRepo, sched).WithFinder(importScanner)
+	authorHandler := api.NewAuthorHandler(authorRepo, authorAliasRepo, bookRepo, seriesRepo, metaAgg, settingsRepo, metadataProfileRepo, sched).
+		WithFinder(importScanner).
+		WithHardcoverFeatureSettings(settingsRepo, cfg.EnhancedHardcoverAPI).
+		WithEditionHydration(editionRepo)
 	authorAliasHandler := api.NewAuthorAliasHandler(authorRepo, authorAliasRepo)
-	bookHandler := api.NewBookHandler(bookRepo, metaAgg, historyRepo, sched).WithSettings(settingsRepo).WithDownloads(downloadRepo).WithAuthors(authorRepo).WithSeries(seriesRepo)
+	bookHandler := api.NewBookHandler(bookRepo, metaAgg, historyRepo, sched).
+		WithSettings(settingsRepo).
+		WithDownloads(downloadRepo).
+		WithAuthors(authorRepo).
+		WithSeries(seriesRepo).
+		WithEditionHydration(editionRepo)
 	indexerHandler := api.NewIndexerHandler(indexerRepo, bookRepo, authorRepo, metadataProfileRepo, idxSearcher, settingsRepo, blocklistRepo).WithAliases(authorAliasRepo)
-	downloadHealth := downloader.NewHealthStore()
+	downloadHealth := downloader.NewHealthStore().WithNotifier(notif)
 	if clients, err := dlClientRepo.List(ctxBoot); err == nil {
 		downloader.RefreshDownloadClientHealthAsync(context.Background(), downloadHealth, clients, cfg.DownloadDir, cfg.AudiobookDownloadDir)
 	} else {
@@ -492,7 +530,8 @@ func main() {
 	settingsHandler := api.NewSettingsHandler(settingsRepo)
 	seriesHandler := api.NewSeriesHandler(seriesRepo, bookRepo, authorRepo, metaAgg, sched).
 		WithHardcoverFeatureSettings(settingsRepo, cfg.EnhancedHardcoverAPI).
-		WithFinder(importScanner)
+		WithFinder(importScanner).
+		WithEditionHydration(editionRepo)
 	tagHandler := api.NewTagHandler(tagRepo)
 	importListHandler := api.NewImportListHandler(importListRepo, settingsRepo, hcSyncer)
 	metadataProfileHandler := api.NewMetadataProfileHandler(metadataProfileRepo)
@@ -516,6 +555,7 @@ func main() {
 	calibreImportHandler := api.NewCalibreImportHandler(calibreImporter, func() calibre.Config {
 		return api.LoadCalibreConfig(settingsRepo)
 	})
+	calibreRunsHandler := api.NewCalibreRunsHandler(calibreImporter)
 	calibreSyncer := calibre.NewSyncer(bookRepo).WithMetadata(authorRepo, editionRepo)
 	calibreSyncHandler := api.NewCalibreSyncHandler(
 		calibreSyncer,
@@ -524,6 +564,7 @@ func main() {
 	)
 	recHandler := api.NewRecommendationHandler(recRepo, recEngine, authorRepo, bookRepo, sched).
 		WithFinder(seriesRepo, importScanner).
+		WithEditionHydration(editionRepo, metaAgg).
 		WithAppContext(appCtx)
 	imageProxyHandler := api.NewImageProxyHandler(cfg.DataDir)
 	imageProxyHandler.StartEviction(24 * time.Hour)
@@ -655,6 +696,7 @@ func main() {
 		r.Delete("/author/{id}", authorHandler.Delete)
 		r.Post("/author/{id}/refresh", authorHandler.Refresh)
 		r.Post("/author/{id}/relink-upstream", authorHandler.RelinkUpstream)
+		r.Get("/author/{id}/series", authorHandler.ListSeries)
 		r.Get("/author/{id}/aliases", authorAliasHandler.List)
 		r.Delete("/author/{id}/aliases/{aliasID}", authorAliasHandler.Delete)
 		r.Post("/author/{id}/merge", authorAliasHandler.Merge)
@@ -677,43 +719,19 @@ func main() {
 		r.Get("/wanted/missing", bookHandler.ListWanted)
 		r.Post("/wanted/bulk", bulkHandler.WantedBulk)
 
-		// Indexers — reads available to all; mutations admin-only.
-		r.Get("/indexer", indexerHandler.List)
-		r.Get("/indexer/{id}", indexerHandler.Get)
-		r.Get("/indexer/search", indexerHandler.SearchQuery)
-		r.Get("/search/last-debug", indexerHandler.LastSearchDebug)
-		r.Group(func(r chi.Router) {
-			r.Use(auth.RequireAdmin)
-			r.Post("/indexer", indexerHandler.Create)
-			r.Put("/indexer/{id}", indexerHandler.Update)
-			r.Delete("/indexer/{id}", indexerHandler.Delete)
-			r.Post("/indexer/{id}/test", indexerHandler.Test)
-		})
-
-		// Prowlarr indexer sync
-		r.Get("/prowlarr", prowlarrHandler.List)
-		r.Post("/prowlarr", prowlarrHandler.Create)
-		r.Get("/prowlarr/{id}", prowlarrHandler.Get)
-		r.Put("/prowlarr/{id}", prowlarrHandler.Update)
-		r.Delete("/prowlarr/{id}", prowlarrHandler.Delete)
-		r.Post("/prowlarr/{id}/test", prowlarrHandler.Test)
-		r.Post("/prowlarr/{id}/sync", prowlarrHandler.Sync)
+		// Indexers, Prowlarr, and Download clients all return responses that
+		// embed third-party credentials (APIKey, Password). Their routes are
+		// registered via dedicated helpers so the admin-gate boundary is
+		// enforced by a single, testable shape — see cmd/bindery/sensitive_routes.go.
+		registerIndexerRoutes(r, indexerHandler)
+		registerProwlarrRoutes(r, prowlarrHandler)
 
 		// Root folders
 		r.Get("/rootfolder", rootFolderHandler.List)
 		r.Post("/rootfolder", rootFolderHandler.Create)
 		r.Delete("/rootfolder/{id}", rootFolderHandler.Delete)
 
-		// Download clients — reads available to all; mutations admin-only.
-		r.Get("/downloadclient", dlClientHandler.List)
-		r.Get("/downloadclient/{id}", dlClientHandler.Get)
-		r.Group(func(r chi.Router) {
-			r.Use(auth.RequireAdmin)
-			r.Post("/downloadclient", dlClientHandler.Create)
-			r.Put("/downloadclient/{id}", dlClientHandler.Update)
-			r.Delete("/downloadclient/{id}", dlClientHandler.Delete)
-			r.Post("/downloadclient/{id}/test", dlClientHandler.Test)
-		})
+		registerDownloadClientRoutes(r, dlClientHandler)
 
 		// Queue
 		r.Get("/queue", queueHandler.List)
@@ -741,17 +759,29 @@ func main() {
 		r.Delete("/blocklist/bulk", blocklistHandler.BulkDelete)
 		r.Delete("/blocklist/{id}", blocklistHandler.Delete)
 
-		// Notifications
-		r.Get("/notification", notificationHandler.List)
-		r.Post("/notification", notificationHandler.Create)
-		r.Get("/notification/{id}", notificationHandler.Get)
-		r.Put("/notification/{id}", notificationHandler.Update)
-		r.Delete("/notification/{id}", notificationHandler.Delete)
-		r.Post("/notification/{id}/test", notificationHandler.Test)
+		// Notifications — Notification.Headers carries arbitrary HTTP
+		// headers (often auth tokens for ntfy / Gotify / webhook routing).
+		// Admin-only across the whole surface so non-admin users can't read
+		// those credentials via List / Get.
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireAdmin)
+			r.Get("/notification", notificationHandler.List)
+			r.Post("/notification", notificationHandler.Create)
+			r.Get("/notification/{id}", notificationHandler.Get)
+			r.Put("/notification/{id}", notificationHandler.Update)
+			r.Delete("/notification/{id}", notificationHandler.Delete)
+			r.Post("/notification/{id}/test", notificationHandler.Test)
+		})
 
-		// Quality Profiles
+		// Quality Profiles — reads available to all; mutations admin-only.
 		r.Get("/qualityprofile", qualityProfileHandler.List)
 		r.Get("/qualityprofile/{id}", qualityProfileHandler.Get)
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireAdmin)
+			r.Post("/qualityprofile", qualityProfileHandler.Create)
+			r.Put("/qualityprofile/{id}", qualityProfileHandler.Update)
+			r.Delete("/qualityprofile/{id}", qualityProfileHandler.Delete)
+		})
 
 		// Settings — reads available to all; mutations admin-only.
 		r.Get("/setting", settingsHandler.List)
@@ -833,11 +863,17 @@ func main() {
 		r.Put("/customformat/{id}", customFormatHandler.Update)
 		r.Delete("/customformat/{id}", customFormatHandler.Delete)
 
-		// Backups
-		r.Get("/backup", backupHandler.List)
-		r.Post("/backup", backupHandler.Create)
-		r.Post("/backup/{filename}/restore", backupHandler.Restore)
-		r.Delete("/backup/{filename}", backupHandler.Delete)
+		// Backups — Restore overwrites the live database, Delete removes
+		// stored backups, and List leaks filenames containing timestamps that
+		// help an attacker target Restore. Admin-only across the whole
+		// surface.
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireAdmin)
+			r.Get("/backup", backupHandler.List)
+			r.Post("/backup", backupHandler.Create)
+			r.Post("/backup/{filename}/restore", backupHandler.Restore)
+			r.Delete("/backup/{filename}", backupHandler.Delete)
+		})
 
 		// System logs
 		r.Get("/system/logs", logHandler.List)
@@ -871,6 +907,17 @@ func main() {
 		// idempotent. Single-job policy — second call returns 409.
 		r.Post("/calibre/sync", calibreSyncHandler.Start)
 		r.Get("/calibre/sync/status", calibreSyncHandler.Status)
+
+		// Calibre import run history + rollback (#643). Admin-only — a bad
+		// rollback can delete authors/books wholesale, so the destructive
+		// path is gated by RequireAdmin and the read-only list is grouped
+		// here for consistency.
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireAdmin)
+			r.Get("/calibre/runs", calibreRunsHandler.List)
+			r.Get("/calibre/runs/{runID}/rollback/preview", calibreRunsHandler.RollbackPreview)
+			r.Post("/calibre/runs/{runID}/rollback", calibreRunsHandler.Rollback)
+		})
 
 		// Migration imports (CSV of author names, or Readarr SQLite DB).
 		// The Readarr import is async — POST returns 202 immediately and the
@@ -1199,4 +1246,96 @@ func routeTemplate(r *http.Request) string {
 		}
 	}
 	return r.URL.Path
+}
+
+// buildTelemetryGatherer returns a telemetry.Gatherer closure that reads the
+// current per-subsystem configuration counts directly from SQLite. Every
+// query is best-effort: a failure on any one subsystem leaves that field at
+// its zero value (which the Features struct omits from the wire), rather
+// than skipping the entire ping. Costs at most a handful of small SELECTs
+// per call; safe to invoke from the daily ping goroutine.
+//
+// Published schema: getbindery.dev/telemetry-fields. Adding a new field
+// here means updating that page so opt-in users know what they're sending.
+func buildTelemetryGatherer(
+	indexers *db.IndexerRepo,
+	clients *db.DownloadClientRepo,
+	notifications *db.NotificationRepo,
+	users *db.UserRepo,
+	settings *db.SettingsRepo,
+) telemetry.Gatherer {
+	return func(ctx context.Context) telemetry.Features {
+		f := telemetry.Features{}
+
+		// Count enabled indexers / download clients / notifications. These
+		// repos don't have a Count() variant so we List() and filter in
+		// memory; the sets are small (under 100 per install in practice).
+		if list, err := indexers.List(ctx); err == nil {
+			for _, ix := range list {
+				if ix.Enabled {
+					f.Indexers++
+				}
+			}
+		}
+		if list, err := clients.List(ctx); err == nil {
+			for _, c := range list {
+				if c.Enabled {
+					f.DownloadClients++
+				}
+			}
+		}
+		if list, err := notifications.List(ctx); err == nil {
+			for _, n := range list {
+				if n.Enabled {
+					f.Notifications++
+				}
+			}
+		}
+		if n, err := users.Count(ctx); err == nil {
+			f.Users = n
+			if n > 1 {
+				f.MultiUser = true
+			}
+		}
+
+		// Per-subsystem enabled flags. "Enabled" is what the user actually
+		// flipped on (not "configured but disabled"), matching the way the
+		// dashboard groups by intent rather than state.
+		f.CalibreEnabled = settingTruthy(ctx, settings, api.SettingCalibreEnabled)
+		f.ABSEnabled = settingTruthy(ctx, settings, api.SettingABSEnabled)
+		f.GrimmoryEnabled = settingTruthy(ctx, settings, api.SettingGrimmoryEnabled)
+
+		// HardcoverToken is "is there a token saved" (presence, not value).
+		// Bindery's enhanced Hardcover mode is gated on having one, so this
+		// closely tracks whether the install uses Hardcover features.
+		if v, err := settings.Get(ctx, api.SettingHardcoverAPIToken); err == nil && v != nil && v.Value != "" {
+			f.HardcoverToken = true
+		}
+
+		// OIDC enabled if the providers list is non-empty (the same gate
+		// the API uses to decide whether to render OIDC login buttons).
+		if v, err := settings.Get(ctx, api.SettingOIDCProviders); err == nil && v != nil {
+			trimmed := strings.TrimSpace(v.Value)
+			if trimmed != "" && trimmed != "[]" && trimmed != "null" {
+				f.OIDCEnabled = true
+			}
+		}
+
+		return f
+	}
+}
+
+// settingTruthy reads a setting key and returns true when the stored value
+// represents "on" ("true" / "1" / "yes"). Missing keys and errors return
+// false; the gatherer treats both as "not enabled."
+func settingTruthy(ctx context.Context, settings *db.SettingsRepo, key string) bool {
+	v, err := settings.Get(ctx, key)
+	if err != nil || v == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(v.Value)) {
+	case "true", "1", "yes", "on":
+		return true
+	}
+	return false
 }

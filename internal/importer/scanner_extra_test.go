@@ -113,6 +113,171 @@ func TestScanLibrary_ReconcilesMatchingBook(t *testing.T) {
 	}
 }
 
+// TestScanLibrary_ReconcilesImportedWithEmptyFilePath is the #875 repro:
+// Calibre import creates books with Status=Imported, but in container
+// setups where Calibre's mount differs from Bindery's view the FilePath
+// stays empty. Pre-fix the scanner skipped these entirely (the candidate
+// filter required Status=Wanted), so a 3700-epub library reconciled zero
+// books until each author was metadata-refreshed.
+func TestScanLibrary_ReconcilesImportedWithEmptyFilePath(t *testing.T) {
+	libDir := t.TempDir()
+	epub := filepath.Join(libDir, "Dark Matter.epub")
+	if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, books, authors, ctx := scannerFixture(t, libDir)
+	author := &models.Author{ForeignID: "OL1A", Name: "A", SortName: "A"}
+	if err := authors.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{
+		ForeignID: "calibre:book:1", AuthorID: author.ID,
+		Title: "Dark Matter", Status: models.BookStatusImported, FilePath: "",
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	s.ScanLibrary(ctx)
+
+	got, err := books.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.FilePath != epub {
+		t.Errorf("expected Imported book with empty FilePath to reconcile to %q, got %q", epub, got.FilePath)
+	}
+}
+
+// TestScanLibrary_ReconcilesImportedWithMissingFile covers the related
+// case where the recorded FilePath points at a location the file no
+// longer exists at (user moved the library, file got renamed, etc.).
+// Pre-fix these orphaned rows stayed orphaned forever.
+func TestScanLibrary_ReconcilesImportedWithMissingFile(t *testing.T) {
+	libDir := t.TempDir()
+	epub := filepath.Join(libDir, "Recursion.epub")
+	if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, books, authors, ctx := scannerFixture(t, libDir)
+	author := &models.Author{ForeignID: "OL2A", Name: "B", SortName: "B"}
+	if err := authors.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{
+		ForeignID: "calibre:book:2", AuthorID: author.ID,
+		Title: "Recursion", Status: models.BookStatusImported,
+		FilePath: "/this/path/does/not/exist/Recursion.epub",
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	s.ScanLibrary(ctx)
+
+	got, err := books.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.FilePath != epub {
+		t.Errorf("expected Imported book with stale FilePath to reconcile to %q, got %q", epub, got.FilePath)
+	}
+}
+
+// TestScanLibrary_LeavesImportedWithTrackedFile verifies the candidate
+// filter does not double-attach an Imported book whose file is already
+// on disk and recorded in book_files. Pre-fix, an over-broad filter
+// would have re-reconciled the book and the title tier would have
+// rejected the duplicate at AddBookFile time (UNIQUE on path) but the
+// pre-AddBookFile diagnostics would noisily log every attempted match.
+//
+// The book is created via AddBookFile so book_files is correctly
+// populated and the scanner's trackedPaths set picks up the path. The
+// scanner sees a tracked path and skips the file entirely.
+func TestScanLibrary_LeavesImportedWithTrackedFile(t *testing.T) {
+	libDir := t.TempDir()
+	epubA := filepath.Join(libDir, "First.epub")
+	if err := os.WriteFile(epubA, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, books, authors, ctx := scannerFixture(t, libDir)
+	author := &models.Author{ForeignID: "OL3A", Name: "C", SortName: "C"}
+	if err := authors.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	bookA := &models.Book{
+		ForeignID: "calibre:book:A", AuthorID: author.ID,
+		Title: "First", Status: models.BookStatusImported,
+	}
+	if err := books.Create(ctx, bookA); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.AddBookFile(ctx, bookA.ID, "ebook", epubA); err != nil {
+		t.Fatal(err)
+	}
+
+	s.ScanLibrary(ctx)
+
+	filesA, err := books.ListFiles(ctx, bookA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filesA) != 1 || filesA[0].Path != epubA {
+		t.Errorf("bookA must keep exactly one book_files row at %q; got %d entries: %+v", epubA, len(filesA), filesA)
+	}
+}
+
+// TestIsReconcileCandidate covers the candidate-filter helper in
+// isolation so a future refactor that breaks the precedence of these
+// cases shows up here rather than as a scanner-level surprise.
+func TestIsReconcileCandidate(t *testing.T) {
+	t.Run("wanted is always a candidate", func(t *testing.T) {
+		if !isReconcileCandidate(&models.Book{Status: models.BookStatusWanted}) {
+			t.Error("Wanted should be a candidate")
+		}
+		if !isReconcileCandidate(&models.Book{Status: models.BookStatusWanted, FilePath: "/already/has/file"}) {
+			t.Error("Wanted should remain a candidate even with FilePath set")
+		}
+	})
+	t.Run("imported with no recorded paths is a candidate", func(t *testing.T) {
+		if !isReconcileCandidate(&models.Book{Status: models.BookStatusImported}) {
+			t.Error("Imported with empty FilePath should be a candidate")
+		}
+	})
+	t.Run("imported with nonexistent path is a candidate", func(t *testing.T) {
+		b := &models.Book{Status: models.BookStatusImported, FilePath: "/no/such/file"}
+		if !isReconcileCandidate(b) {
+			t.Error("Imported with nonexistent FilePath should be a candidate")
+		}
+	})
+	t.Run("imported with existing path is not a candidate", func(t *testing.T) {
+		tmp := t.TempDir()
+		f := filepath.Join(tmp, "exists.epub")
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		b := &models.Book{Status: models.BookStatusImported, FilePath: f}
+		if isReconcileCandidate(b) {
+			t.Error("Imported with existing FilePath should not be a candidate")
+		}
+	})
+	t.Run("downloading and downloaded are not candidates", func(t *testing.T) {
+		for _, s := range []string{models.BookStatusDownloading, models.BookStatusDownloaded, models.BookStatusSkipped} {
+			if isReconcileCandidate(&models.Book{Status: s}) {
+				t.Errorf("status %q should not be a candidate", s)
+			}
+		}
+	})
+	t.Run("nil is not a candidate", func(t *testing.T) {
+		if isReconcileCandidate(nil) {
+			t.Error("nil book should not be a candidate")
+		}
+	})
+}
+
 // TestScanLibrary_NonBookFilesIgnored — extensions not in bookExtensions
 // (jpg, nfo, etc.) should not appear in the walked list.
 func TestScanLibrary_NonBookFilesIgnored(t *testing.T) {

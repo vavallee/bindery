@@ -95,6 +95,7 @@ func TestDownloadClientCRUD(t *testing.T) {
 	got, _ := clients.GetByID(ctx, created.ID)
 	if got == nil {
 		t.Fatal("expected client still exists after update")
+		return
 	}
 	if got.PathRemap != "/remote2:/local2" {
 		t.Errorf("updated pathRemap = %q", got.PathRemap)

@@ -1,7 +1,7 @@
 {
   "name": "bindery-web",
   "private": true,
-  "version": "1.14.2",
+  "version": "1.15.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -26,10 +26,10 @@
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.0.0",
     "@testing-library/react": "^16.0.0",
-    "@types/react": "^19.0.0",
+    "@types/react": "^19.2.15",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^6.0.2",
-    "@vitest/coverage-v8": "^4.1.6",
+    "@vitest/coverage-v8": "^4.1.7",
     "autoprefixer": "^10.5.0",
     "eslint": "^10.4.0",
     "eslint-plugin-react-hooks": "^7.1.1",
@@ -37,11 +37,11 @@
     "globals": "^17.6.0",
     "jsdom": "^29.1.0",
     "msw": "^2.14.6",
-    "postcss": "^8.5.14",
+    "postcss": "^8.5.15",
     "tailwindcss": "^4.2.4",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.59.3",
-    "vite": "^8.0.13",
-    "vitest": "^4.1.6"
+    "typescript-eslint": "^8.59.4",
+    "vite": "^8.0.14",
+    "vitest": "^4.1.7"
   }
 }

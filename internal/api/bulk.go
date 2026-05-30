@@ -129,8 +129,13 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 
 // BooksBulk handles POST /api/v1/book/bulk.
 //
-// Supported actions: "monitor", "unmonitor", "delete", "search", "set_media_type".
+// Supported actions: "monitor", "unmonitor", "delete", "search", "set_media_type", "exclude".
 // For "set_media_type" the body must also include "mediaType": "ebook"|"audiobook".
+// "exclude" sets the book's excluded flag to true so it disappears from author
+// lists and is blocked from re-import on the next OL sync — mirrors the
+// single-book PUT /book/:id/exclude path but skips the toggle semantics
+// (bulk callers always want exclude=true; un-excluding remains a per-book
+// affordance).
 func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		IDs       []int64 `json:"ids"`
@@ -147,7 +152,7 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch req.Action {
-	case "monitor", "unmonitor", "delete", "search", "set_media_type":
+	case "monitor", "unmonitor", "delete", "search", "set_media_type", "exclude":
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -181,6 +186,8 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 			}
 		case "set_media_type":
 			opErr = h.setBookMediaType(r.Context(), id, req.MediaType)
+		case "exclude":
+			opErr = h.setBookExcluded(r.Context(), id, true)
 		}
 		if opErr != nil {
 			resp.Results[key] = bulkItemResult{Error: opErr.Error()}
@@ -273,6 +280,21 @@ func (h *BulkHandler) setBookMonitored(ctx context.Context, id int64, monitored 
 	}
 	book.Monitored = monitored
 	return h.books.Update(ctx, book)
+}
+
+// setBookExcluded flags a book as excluded so it is hidden from author/book
+// lists and skipped on subsequent OL refreshes. Unlike the toggle endpoint
+// at PUT /book/:id/exclude, this is a one-way set used by bulk callers; the
+// repo handles the timestamp update.
+func (h *BulkHandler) setBookExcluded(ctx context.Context, id int64, excluded bool) error {
+	book, err := h.books.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if book == nil {
+		return fmt.Errorf("book not found")
+	}
+	return h.books.SetExcluded(ctx, id, excluded)
 }
 
 func (h *BulkHandler) setBookMediaType(ctx context.Context, id int64, mediaType string) error {

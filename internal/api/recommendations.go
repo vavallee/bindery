@@ -9,7 +9,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/vavallee/bindery/internal/bookhydrate"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -27,6 +29,10 @@ type RecommendationHandler struct {
 	series   *db.SeriesRepo
 	searcher BookSearcher
 	finder   LibraryFinder
+	editions *db.EditionRepo
+	meta     *metadata.Aggregator
+
+	editionFetcher bookhydrate.EditionFetcher
 
 	// appCtx is the process-lifecycle context: not tied to any single HTTP
 	// request but cancelled when the process shuts down. Background work
@@ -41,6 +47,40 @@ func (h *RecommendationHandler) WithFinder(series *db.SeriesRepo, finder Library
 	h.series = series
 	h.finder = finder
 	return h
+}
+
+// WithEditionHydration wires edition persistence for Hardcover
+// recommendations accepted into the wanted list.
+func (h *RecommendationHandler) WithEditionHydration(editions *db.EditionRepo, meta *metadata.Aggregator) *RecommendationHandler {
+	h.editions = editions
+	h.meta = meta
+	return h
+}
+
+// WithEditionFetcher overrides the edition fetcher used by tests.
+func (h *RecommendationHandler) WithEditionFetcher(fetcher bookhydrate.EditionFetcher) *RecommendationHandler {
+	h.editionFetcher = fetcher
+	return h
+}
+
+func (h *RecommendationHandler) hydrateHardcoverEditions(ctx context.Context, book *models.Book) {
+	if book == nil || h.editions == nil {
+		return
+	}
+	fetcher := h.editionFetcher
+	if fetcher == nil && h.meta != nil {
+		fetcher = func(ctx context.Context, foreignID string) ([]models.Edition, error) {
+			return h.meta.GetEditionsFromProvider(ctx, "hardcover", foreignID)
+		}
+	}
+	bookhydrate.HydrateHardcoverEditions(ctx, bookhydrate.Options{
+		Book:          book,
+		Provider:      book.MetadataProvider,
+		Editions:      h.editions,
+		Books:         h.books,
+		FetchEditions: fetcher,
+		Enricher:      h.meta,
+	})
 }
 
 // WithAppContext attaches the process-lifecycle context so that background
@@ -155,24 +195,26 @@ func (h *RecommendationHandler) Add(w http.ResponseWriter, r *http.Request) {
 	}
 
 	book := &models.Book{
-		ForeignID:     rec.ForeignID,
-		AuthorID:      authorID,
-		Title:         rec.Title,
-		Description:   rec.Description,
-		ImageURL:      rec.ImageURL,
-		AverageRating: rec.Rating,
-		RatingsCount:  rec.RatingsCount,
-		ReleaseDate:   rec.ReleaseDate,
-		Language:      rec.Language,
-		MediaType:     rec.MediaType,
-		Status:        models.BookStatusWanted,
-		Monitored:     true,
+		ForeignID:        rec.ForeignID,
+		AuthorID:         authorID,
+		Title:            rec.Title,
+		Description:      rec.Description,
+		ImageURL:         rec.ImageURL,
+		AverageRating:    rec.Rating,
+		RatingsCount:     rec.RatingsCount,
+		ReleaseDate:      rec.ReleaseDate,
+		Language:         rec.Language,
+		MediaType:        rec.MediaType,
+		Status:           models.BookStatusWanted,
+		Monitored:        true,
+		MetadataProvider: metadataProviderFromForeignID(rec.ForeignID),
 	}
 
 	if err := h.books.Create(r.Context(), book); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	h.hydrateHardcoverEditions(r.Context(), book)
 
 	fileFound := handleNewWantedBook(r.Context(), h.books, h.series, h.finder, *book, rec.AuthorName)
 

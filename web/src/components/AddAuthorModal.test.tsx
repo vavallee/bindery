@@ -218,6 +218,93 @@ describe('AddAuthorModal — search error handling', () => {
     }))
   })
 
+  it('loads global monitor defaults and lets the backend apply them when unchanged', async () => {
+    vi.mocked(api.getSetting).mockImplementation(async (key: string) => {
+      if (key === 'default.media_type') return { key, value: 'ebook' }
+      if (key === 'author.default_monitor_mode') return { key, value: 'latest' }
+      if (key === 'author.default_monitor_latest_count') return { key, value: '5' }
+      throw new Error('setting not found')
+    })
+    vi.mocked(api.searchAuthors).mockResolvedValue([
+      {
+        id: 0,
+        foreignAuthorId: 'OL26320A',
+        authorName: 'J.R.R. Tolkien',
+        sortName: 'Tolkien, J.R.R.',
+        description: '',
+        imageUrl: '',
+        disambiguation: '',
+        ratingsCount: 0,
+        averageRating: 0,
+        monitored: true,
+      },
+    ])
+
+    render(<AddAuthorModal onClose={onClose} onAdded={onAdded} />)
+
+    await waitFor(() => {
+      const selects = screen.getAllByRole('combobox') as HTMLSelectElement[]
+      expect(selects[1].value).toBe('latest')
+    })
+    expect(screen.getByRole('spinbutton')).toHaveValue(5)
+
+    fireEvent.change(screen.getByPlaceholderText('Search by author name...'), {
+      target: { value: 'tolkien' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
+    await waitFor(() => expect(screen.getByText('J.R.R. Tolkien')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: /^add$/i }))
+
+    await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
+    expect(api.addAuthor).toHaveBeenCalledWith(expect.objectContaining({
+      foreignAuthorId: 'OL26320A',
+      authorName: 'J.R.R. Tolkien',
+    }))
+    const callArg = vi.mocked(api.addAuthor).mock.calls[0][0]
+    expect('monitorMode' in callArg).toBe(false)
+    expect('monitorLatestCount' in callArg).toBe(false)
+  })
+
+  it('sends monitor overrides when the controls are changed', async () => {
+    vi.mocked(api.searchAuthors).mockResolvedValue([
+      {
+        id: 0,
+        foreignAuthorId: 'OL26320A',
+        authorName: 'J.R.R. Tolkien',
+        sortName: 'Tolkien, J.R.R.',
+        description: '',
+        imageUrl: '',
+        disambiguation: '',
+        ratingsCount: 0,
+        averageRating: 0,
+        monitored: true,
+      },
+    ])
+
+    render(<AddAuthorModal onClose={onClose} onAdded={onAdded} />)
+
+    const monitorMode = screen.getAllByRole('combobox')[1]
+    fireEvent.change(monitorMode, { target: { value: 'latest' } })
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '3' } })
+
+    fireEvent.change(screen.getByPlaceholderText('Search by author name...'), {
+      target: { value: 'tolkien' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
+    await waitFor(() => expect(screen.getByText('J.R.R. Tolkien')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: /^add$/i }))
+
+    await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
+    expect(api.addAuthor).toHaveBeenCalledWith(expect.objectContaining({
+      foreignAuthorId: 'OL26320A',
+      authorName: 'J.R.R. Tolkien',
+      monitorMode: 'latest',
+      monitorLatestCount: 3,
+    }))
+  })
+
   it('hides likely book-title results by default and reveals them on request', async () => {
     const hiddenAuthor = author({
       foreignAuthorId: 'OL_BAD_TITLE_A',

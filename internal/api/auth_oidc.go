@@ -336,6 +336,10 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		}
 		// Decide the provisioning role (issue #688). Start from the configured
 		// default; the promote-first-OIDC-user fallback may upgrade it to admin.
+		// The fallback is gated by SettingsRepo.SetIfAbsent on the
+		// FirstAdminPromoted guard — only one concurrent first-time login can
+		// win the race and become admin; any other simultaneous logins fall
+		// back to the default role even when they all observed admins == 0.
 		provisionRole := h.resolveProvisionRole(ctx)
 		user, err = h.users.GetOrCreateByOIDC(ctx,
 			claims.Issuer, claims.Sub,
@@ -346,13 +350,6 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 			slog.Error("oidc: user provisioning failed", "error", err)
 			writeErr(w, http.StatusInternalServerError, "user provisioning failed")
 			return
-		}
-		// If the fallback fired, record the one-shot guard so deleting all
-		// admins later cannot silently re-promote a future first OIDC user.
-		if provisionRole == "admin" && user.Role == "admin" {
-			if err := h.settings.Set(ctx, SettingOIDCFirstAdminPromoted, "true"); err != nil {
-				slog.Warn("oidc: failed to persist first-admin-promoted flag", "error", err)
-			}
 		}
 	}
 
@@ -413,22 +410,29 @@ func (h *OIDCHandler) resolveProvisionRole(ctx context.Context) string {
 	if h.localAuthEnabled {
 		return role // local auth still offers a recovery path
 	}
-	if s, err := h.settings.Get(ctx, SettingOIDCFirstAdminPromoted); err != nil {
-		slog.Warn("oidc: cannot read first-admin-promoted guard; skipping promote-first fallback", "error", err)
-		return role
-	} else if s != nil && s.Value == "true" {
-		return role // fallback already used once
-	}
 	admins, err := h.users.CountAdmins(ctx)
 	if err != nil {
 		slog.Warn("oidc: cannot count admins; skipping promote-first fallback", "error", err)
 		return role
 	}
-	if admins == 0 {
-		slog.Warn("oidc: promoting first OIDC user to admin — local auth disabled and no admin exists")
-		return "admin"
+	if admins != 0 {
+		return role
 	}
-	return role
+	// Atomically claim the promote-first slot. SetIfAbsent is an INSERT ON
+	// CONFLICT DO NOTHING — exactly one concurrent first-time login wins; any
+	// other simultaneous login that also saw admins == 0 loses here and falls
+	// back to the default role. Without this, a TOCTOU race between the count
+	// and the legacy Get+Set guard could promote two users to admin.
+	won, err := h.settings.SetIfAbsent(ctx, SettingOIDCFirstAdminPromoted, "true")
+	if err != nil {
+		slog.Warn("oidc: cannot claim first-admin guard; skipping promote-first fallback", "error", err)
+		return role
+	}
+	if !won {
+		return role // another concurrent first-time login already claimed it
+	}
+	slog.Warn("oidc: promoting first OIDC user to admin — local auth disabled and no admin exists")
+	return "admin"
 }
 
 // TestDiscovery probes <issuer>/.well-known/openid-configuration and returns

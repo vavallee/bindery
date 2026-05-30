@@ -1,5 +1,7 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { SearchDebug } from '../api/client'
+import ClipboardManualFallback from './ClipboardManualFallback'
+import { useClipboardCopy } from './useClipboardCopy'
 
 interface Props {
   debug: SearchDebug
@@ -12,17 +14,11 @@ interface Props {
 // Collapsed by default unless the caller opens it (typically when results=0).
 export default function SearchDebugPanel({ debug, resultCount, defaultOpen }: Props) {
   const [open, setOpen] = useState(!!defaultOpen)
-  const [copied, setCopied] = useState(false)
+  const debugJson = useMemo(() => JSON.stringify(debug, null, 2), [debug])
+  const debugClipboard = useClipboardCopy()
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(debug, null, 2))
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    } catch {
-      // Clipboard API unavailable (insecure context, permission denied) —
-      // fall back to selecting the <pre> so users can copy manually.
-    }
+    await debugClipboard.copy(debugJson)
   }
 
   const indexers = debug.indexers ?? []
@@ -62,9 +58,13 @@ export default function SearchDebugPanel({ debug, resultCount, defaultOpen }: Pr
               onClick={copy}
               className="px-2 py-1 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded font-medium"
             >
-              {copied ? 'Copied!' : 'Copy debug info (JSON)'}
+              {debugClipboard.status === 'copied' ? 'Copied!' : 'Copy debug info (JSON)'}
             </button>
           </div>
+
+          {debugClipboard.status === 'manual' && (
+            <ClipboardManualFallback text={debugClipboard.manualText} />
+          )}
 
           <div>
             <h4 className="font-semibold text-slate-700 dark:text-zinc-300 mb-1">Query</h4>

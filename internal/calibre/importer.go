@@ -53,6 +53,13 @@ type Importer struct {
 	editions *db.EditionRepo
 	settings *db.SettingsRepo
 
+	// Run-tracking + rollback (issue #643). Optional — when any of these is
+	// nil the importer behaves as before with no run record and no
+	// snapshots, so test wiring that only needs the import path still works.
+	runs       *db.CalibreImportRunRepo
+	snapshots  *db.CalibreEntitySnapshotRepo
+	provenance *db.CalibreProvenanceRepo
+
 	openReader func(libraryPath string) (readerIface, error)
 
 	mu       sync.Mutex
@@ -91,6 +98,16 @@ func NewImporter(
 			return r, nil
 		},
 	}
+}
+
+// WithRunTracking attaches the run/provenance/snapshot repos required for
+// rollback (#643). Optional — without it the importer records nothing and
+// rollback APIs return ErrRollbackUnavailable.
+func (i *Importer) WithRunTracking(runs *db.CalibreImportRunRepo, snapshots *db.CalibreEntitySnapshotRepo, provenance *db.CalibreProvenanceRepo) *Importer {
+	i.runs = runs
+	i.snapshots = snapshots
+	i.provenance = provenance
+	return i
 }
 
 // Progress returns a snapshot of the current (or most recent) import.
@@ -165,6 +182,26 @@ func (i *Importer) Run(ctx context.Context, libraryPath string) (*ImportStats, e
 
 func (i *Importer) run(ctx context.Context, libraryPath string) *ImportStats {
 	stats := &ImportStats{}
+	var runID int64
+	// Run record: only created on a real (non-dry-run) import. A dry run
+	// today doesn't exist at the API surface, but the run field is here so
+	// adding one later is a one-line change.
+	if i.runs != nil {
+		run := &models.CalibreImportRun{
+			SourceID:         defaultSourceID,
+			LibraryPath:      libraryPath,
+			Status:           runStatusRunning,
+			DryRun:           false,
+			SourceConfigJSON: encodeSourceConfig(libraryPath),
+			SummaryJSON:      "{}",
+		}
+		if err := i.runs.Create(ctx, run); err != nil {
+			slog.Warn("calibre import: create run record failed", "error", err)
+		} else {
+			runID = run.ID
+		}
+	}
+	failed := false
 	defer func() {
 		now := time.Now().UTC()
 		i.mu.Lock()
@@ -173,10 +210,22 @@ func (i *Importer) run(ctx context.Context, libraryPath string) *ImportStats {
 		i.progress.Stats = stats
 		i.running = false
 		i.mu.Unlock()
+		if runID != 0 && i.runs != nil {
+			status := runStatusCompleted
+			if failed {
+				status = runStatusFailed
+			}
+			// Use Background so we still close out the run even if the
+			// calling ctx was cancelled mid-import.
+			if err := i.runs.Finish(context.Background(), runID, status, stats); err != nil {
+				slog.Warn("calibre import: finish run record failed", "runID", runID, "error", err)
+			}
+		}
 	}()
 
 	reader, err := i.openReader(libraryPath)
 	if err != nil {
+		failed = true
 		i.fail(err)
 		return stats
 	}
@@ -188,6 +237,7 @@ func (i *Importer) run(ctx context.Context, libraryPath string) *ImportStats {
 
 	total, err := reader.Count(ctx)
 	if err != nil {
+		failed = true
 		i.fail(err)
 		return stats
 	}
@@ -200,11 +250,12 @@ func (i *Importer) run(ctx context.Context, libraryPath string) *ImportStats {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		i.importOne(ctx, cb, stats)
+		i.importOne(ctx, runID, cb, stats)
 		i.setProgress(func(p *ImportProgress) { p.Processed++ })
 		return nil
 	})
 	if err != nil {
+		failed = true
 		i.fail(err)
 		return stats
 	}
@@ -213,6 +264,7 @@ func (i *Importer) run(ctx context.Context, libraryPath string) *ImportStats {
 		slog.Warn("calibre import: persist last_import_at failed", "error", err)
 	}
 	slog.Info("calibre import complete",
+		"runID", runID,
 		"authorsAdded", stats.AuthorsAdded, "authorsLinked", stats.AuthorsLinked,
 		"booksAdded", stats.BooksAdded, "booksUpdated", stats.BooksUpdated,
 		"editionsAdded", stats.EditionsAdded, "duplicatesMerged", stats.DuplicatesMerged,
@@ -227,14 +279,14 @@ func (i *Importer) run(ctx context.Context, libraryPath string) *ImportStats {
 // create or update the Bindery book row, then upsert one edition per
 // format. Errors on any step are logged + counted as skipped so one bad
 // record doesn't abort the whole library.
-func (i *Importer) importOne(ctx context.Context, cb CalibreBook, stats *ImportStats) {
+func (i *Importer) importOne(ctx context.Context, runID int64, cb CalibreBook, stats *ImportStats) {
 	if len(cb.Authors) == 0 {
 		slog.Warn("calibre import: book has no authors", "calibre_id", cb.CalibreID, "title", cb.Title)
 		stats.Skipped++
 		return
 	}
 
-	author, created, err := i.resolveAuthor(ctx, cb.Authors[0])
+	author, created, err := i.resolveAuthor(ctx, runID, cb.Authors[0])
 	if err != nil {
 		slog.Warn("calibre import: author resolve failed", "calibre_id", cb.CalibreID, "error", err)
 		stats.Skipped++
@@ -247,7 +299,7 @@ func (i *Importer) importOne(ctx context.Context, cb CalibreBook, stats *ImportS
 	}
 	i.recordSecondaryAuthors(ctx, author.ID, cb.Authors[1:], stats)
 
-	book, newBook, err := i.upsertBook(ctx, author, cb)
+	book, newBook, err := i.upsertBook(ctx, runID, author, cb)
 	if err != nil {
 		slog.Warn("calibre import: book upsert failed", "calibre_id", cb.CalibreID, "error", err)
 		stats.Skipped++
@@ -266,9 +318,28 @@ func (i *Importer) importOne(ctx context.Context, cb CalibreBook, stats *ImportS
 			stats.DuplicatesMerged++
 		}
 	}
+	// Record provenance + after-snapshot for the book regardless of new/old
+	// outcome. The before-snapshot was captured inside upsertBook on the
+	// path that mutates an existing row.
+	bookExternalID := calibreBookExternalID(cb.CalibreID)
+	bookOutcome := outcomeUpdated
+	if newBook {
+		bookOutcome = outcomeCreated
+	} else if book.mergedByTitle {
+		bookOutcome = outcomeLinked
+	}
+	i.upsertProvenance(ctx, runID, entityTypeBook, bookExternalID, book.row.ID)
+	if !newBook {
+		i.recordBookAfterSnapshot(ctx, runID, bookExternalID, book.row.ID, bookOutcome, map[string]any{"matchedBy": book.matchedBy})
+	} else {
+		// For freshly-created books no before-snapshot exists; record an
+		// empty-payload snapshot so the rollback list sees the entity and
+		// knows to delete it.
+		i.recordCreateSnapshot(ctx, runID, entityTypeBook, bookExternalID, book.row.ID)
+	}
 
 	for _, f := range cb.Formats {
-		added, err := i.upsertEdition(ctx, book.row, cb, f)
+		added, edition, err := i.upsertEdition(ctx, runID, book.row, cb, f)
 		if err != nil {
 			slog.Warn("calibre import: edition upsert failed",
 				"calibre_id", cb.CalibreID, "format", f.Format, "error", err)
@@ -277,7 +348,50 @@ func (i *Importer) importOne(ctx context.Context, cb CalibreBook, stats *ImportS
 		if added {
 			stats.EditionsAdded++
 		}
+		if edition != nil {
+			editionExternalID := calibreEditionExternalID(cb.CalibreID, f.Format)
+			i.upsertProvenance(ctx, runID, entityTypeEdition, editionExternalID, edition.ID)
+			if added {
+				i.recordCreateSnapshot(ctx, runID, entityTypeEdition, editionExternalID, edition.ID)
+			}
+		}
 	}
+}
+
+// recordCreateSnapshot records a marker row for an entity that was newly
+// created during this run. Rollback treats outcome=="created" as a hard
+// delete signal regardless of whether a before-snapshot exists.
+func (i *Importer) recordCreateSnapshot(ctx context.Context, runID int64, entityType, externalID string, localID int64) {
+	if runID == 0 || i.snapshots == nil {
+		return
+	}
+	// A minimal envelope: no before/after payload, just kind+version so the
+	// rollback decoder doesn't choke. The "created" outcome is what
+	// rollback keys off; snapshot payload is irrelevant for delete cases.
+	envelope := runEntityMetadataEnvelope{
+		Kind:    runEntityMetadataKind,
+		Version: runEntityMetadataVersion,
+	}
+	i.recordSnapshot(ctx, runID, externalID, entityType, localID, outcomeCreated, envelope)
+}
+
+func calibreBookExternalID(calibreID int64) string {
+	return fmt.Sprintf("book:%d", calibreID)
+}
+
+func calibreAuthorExternalID(calibreID int64) string {
+	return fmt.Sprintf("author:%d", calibreID)
+}
+
+func calibreEditionExternalID(calibreID int64, format string) string {
+	return fmt.Sprintf("edition:%d:%s", calibreID, strings.ToUpper(format))
+}
+
+func encodeSourceConfig(libraryPath string) string {
+	// Tiny payload; written via fmt.Sprintf rather than json.Marshal to
+	// avoid pulling in encoding/json for one field. Path itself is escaped
+	// via %q.
+	return fmt.Sprintf(`{"libraryPath":%q}`, libraryPath)
 }
 
 // resolveAuthor returns the canonical Bindery author for the given Calibre
@@ -289,15 +403,18 @@ func (i *Importer) importOne(ctx context.Context, cb CalibreBook, stats *ImportS
 // `created` is true only for case 3. Calibre's author names are already
 // one-per-row in its metadata.db, so we trust them verbatim rather than
 // re-splitting on commas/separators.
-func (i *Importer) resolveAuthor(ctx context.Context, ca CalibreAuthor) (*models.Author, bool, error) {
+func (i *Importer) resolveAuthor(ctx context.Context, runID int64, ca CalibreAuthor) (*models.Author, bool, error) {
 	name := strings.TrimSpace(ca.Name)
 	if name == "" {
 		return nil, false, errors.New("empty author name")
 	}
 
+	externalID := calibreAuthorExternalID(ca.CalibreID)
+
 	if existing, err := i.findAuthorByName(ctx, name); err != nil {
 		return nil, false, err
 	} else if existing != nil {
+		i.upsertProvenance(ctx, runID, entityTypeAuthor, externalID, existing.ID)
 		return existing, false, nil
 	}
 
@@ -309,6 +426,7 @@ func (i *Importer) resolveAuthor(ctx context.Context, ca CalibreAuthor) (*models
 			return nil, false, err
 		}
 		if existing != nil {
+			i.upsertProvenance(ctx, runID, entityTypeAuthor, externalID, existing.ID)
 			return existing, false, nil
 		}
 	}
@@ -323,6 +441,10 @@ func (i *Importer) resolveAuthor(ctx context.Context, ca CalibreAuthor) (*models
 	if err := i.authors.Create(ctx, author); err != nil {
 		return nil, false, err
 	}
+	// Provenance + creation marker so rollback can delete this author back
+	// out. No before-snapshot — author did not exist prior to this run.
+	i.upsertProvenance(ctx, runID, entityTypeAuthor, externalID, author.ID)
+	i.recordCreateSnapshot(ctx, runID, entityTypeAuthor, externalID, author.ID)
 	return author, true, nil
 }
 
@@ -367,9 +489,12 @@ func (i *Importer) recordSecondaryAuthors(ctx context.Context, canonicalID int64
 
 // bookUpsertResult carries whether a book row was newly created and
 // whether it was discovered via title-match (as opposed to calibre_id).
+// matchedBy is breadcrumbed into the snapshot envelope so rollback previews
+// can report how the original match happened.
 type bookUpsertResult struct {
 	row           *models.Book
 	mergedByTitle bool
+	matchedBy     string
 }
 
 // upsertBook ensures a Bindery books row exists for the given Calibre
@@ -382,17 +507,23 @@ type bookUpsertResult struct {
 //  4. Create a fresh row with the Calibre id set.
 //
 // Returns (result, created). result.mergedByTitle is true only for path 3.
-func (i *Importer) upsertBook(ctx context.Context, author *models.Author, cb CalibreBook) (*bookUpsertResult, bool, error) {
+func (i *Importer) upsertBook(ctx context.Context, runID int64, author *models.Author, cb CalibreBook) (*bookUpsertResult, bool, error) {
+	externalID := calibreBookExternalID(cb.CalibreID)
+
 	// Path 1 — exact calibre_id match.
 	existing, err := i.books.GetByCalibreID(ctx, cb.CalibreID)
 	if err != nil {
 		return nil, false, err
 	}
 	if existing != nil {
+		// Snapshot-before-mutation: must run before applyBookFields, not
+		// after, or rollback gets the post-import state as the "before" and
+		// becomes a no-op.
+		i.recordBookBeforeSnapshot(ctx, runID, externalID, existing, outcomeUpdated, map[string]any{"matchedBy": "calibre_id"})
 		if err := i.applyBookFields(ctx, existing, cb); err != nil {
 			return nil, false, err
 		}
-		return &bookUpsertResult{row: existing}, false, nil
+		return &bookUpsertResult{row: existing, matchedBy: "calibre_id"}, false, nil
 	}
 
 	// Path 2 — foreign_id match: book was created in a previous run but
@@ -401,6 +532,7 @@ func (i *Importer) upsertBook(ctx context.Context, author *models.Author, cb Cal
 	if existing, err := i.books.GetByForeignID(ctx, fid); err != nil {
 		return nil, false, err
 	} else if existing != nil {
+		i.recordBookBeforeSnapshot(ctx, runID, externalID, existing, outcomeUpdated, map[string]any{"matchedBy": "foreign_id"})
 		if existing.CalibreID == nil {
 			if err := i.books.SetCalibreID(ctx, existing.ID, cb.CalibreID); err != nil {
 				return nil, false, err
@@ -411,13 +543,14 @@ func (i *Importer) upsertBook(ctx context.Context, author *models.Author, cb Cal
 		if err := i.applyBookFields(ctx, existing, cb); err != nil {
 			return nil, false, err
 		}
-		return &bookUpsertResult{row: existing}, false, nil
+		return &bookUpsertResult{row: existing, matchedBy: "foreign_id"}, false, nil
 	}
 
 	// Path 3 — same author + title.
 	if existing, err := i.books.FindByAuthorAndTitle(ctx, author.ID, cb.Title); err != nil {
 		return nil, false, err
 	} else if existing != nil {
+		i.recordBookBeforeSnapshot(ctx, runID, externalID, existing, outcomeLinked, map[string]any{"matchedBy": "title"})
 		if err := i.books.SetCalibreID(ctx, existing.ID, cb.CalibreID); err != nil {
 			return nil, false, err
 		}
@@ -426,7 +559,7 @@ func (i *Importer) upsertBook(ctx context.Context, author *models.Author, cb Cal
 		if err := i.applyBookFields(ctx, existing, cb); err != nil {
 			return nil, false, err
 		}
-		return &bookUpsertResult{row: existing, mergedByTitle: true}, false, nil
+		return &bookUpsertResult{row: existing, mergedByTitle: true, matchedBy: "title"}, false, nil
 	}
 
 	// Path 4 — create fresh.
@@ -452,7 +585,7 @@ func (i *Importer) upsertBook(ctx context.Context, author *models.Author, cb Cal
 	if err := i.books.SetCalibreID(ctx, book.ID, cb.CalibreID); err != nil {
 		return nil, false, err
 	}
-	return &bookUpsertResult{row: book}, true, nil
+	return &bookUpsertResult{row: book, matchedBy: "created"}, true, nil
 }
 
 // applyBookFields updates a pre-existing book row with fresh data from
@@ -480,16 +613,24 @@ func (i *Importer) applyBookFields(ctx context.Context, book *models.Book, cb Ca
 }
 
 // upsertEdition upserts one Bindery edition for a single Calibre format.
-// Returns (added, err) where added is true only when a brand-new row was
-// created.
-func (i *Importer) upsertEdition(ctx context.Context, book *models.Book, cb CalibreBook, f CalibreFormat) (bool, error) {
+// Returns (added, edition, err) where added is true only when a brand-new
+// row was created; the returned edition is the resulting row so caller can
+// snapshot it.
+func (i *Importer) upsertEdition(ctx context.Context, runID int64, book *models.Book, cb CalibreBook, f CalibreFormat) (bool, *models.Edition, error) {
 	if f.Format == "" {
-		return false, nil
+		return false, nil, nil
 	}
 	foreignID := fmt.Sprintf("calibre:edition:%d:%s", cb.CalibreID, strings.ToUpper(f.Format))
 	prior, err := i.editions.GetByForeignID(ctx, foreignID)
 	if err != nil {
-		return false, err
+		return false, nil, err
+	}
+	if prior != nil {
+		// Before-snapshot for an updated edition: rollback will skip these
+		// (no field-level edition restore today) but we still want a row in
+		// snapshots so list-by-run reports the touch.
+		externalID := calibreEditionExternalID(cb.CalibreID, f.Format)
+		i.recordEditionBeforeSnapshot(ctx, runID, externalID, prior, outcomeUpdated, nil)
 	}
 
 	isbn13 := ptrStringIfNonEmpty(cb.ISBN)
@@ -511,9 +652,14 @@ func (i *Importer) upsertEdition(ctx context.Context, book *models.Book, cb Cali
 		Monitored:   true,
 	}
 	if err := i.editions.Upsert(ctx, e); err != nil {
-		return false, err
+		return false, nil, err
 	}
-	return prior == nil, nil
+	// Re-fetch to get the assigned ID (Upsert may have created or updated).
+	stored, lookupErr := i.editions.GetByForeignID(ctx, foreignID)
+	if lookupErr != nil {
+		return prior == nil, nil, lookupErr
+	}
+	return prior == nil, stored, nil
 }
 
 // RunSync implements scheduler.CalibreSyncer. It reads the library path from

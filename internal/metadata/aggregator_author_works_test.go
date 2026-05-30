@@ -111,11 +111,17 @@ func TestAggregator_GetAuthorWorksForAuthor_MergesSupplementalByTitle(t *testing
 	if got[0].ForeignID != "OL1W" || got[0].MetadataProvider != "openlibrary" {
 		t.Fatalf("primary identity should win duplicate title: %+v", got[0])
 	}
+	if got[0].HardcoverForeignID != "hc:dune" {
+		t.Fatalf("matched hardcover identity = %q, want hc:dune", got[0].HardcoverForeignID)
+	}
 	if got[0].ImageURL != "https://img/dune.jpg" || got[0].AverageRating != 4.5 || got[0].Description == "" {
 		t.Fatalf("supplemental metadata was not merged: %+v", got[0])
 	}
 	if got[1].ForeignID != "hc:children-of-dune" {
 		t.Fatalf("supplemental-only book missing: %+v", got[1])
+	}
+	if got[1].HardcoverForeignID != "" {
+		t.Fatalf("unmatched supplemental book should not carry matched hardcover identity: %+v", got[1])
 	}
 }
 

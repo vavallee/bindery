@@ -11,16 +11,29 @@ import (
 )
 
 type AuthorRepo struct {
-	db *sql.DB
+	db   *sql.DB
+	exec dbExecutor
 }
 
 func NewAuthorRepo(db *sql.DB) *AuthorRepo {
-	return &AuthorRepo{db: db}
+	return &AuthorRepo{db: db, exec: db}
+}
+
+// WithTx returns a clone of this repo whose tx-aware methods (GetByID,
+// Update, Delete) route through tx instead of the bare *sql.DB. Used by
+// calibre.Rollback to wrap a multi-repo operation in one atomic
+// transaction. Methods that begin their own transaction (e.g.
+// SetMonitoredSeriesIDs) stay on *sql.DB.
+func (r *AuthorRepo) WithTx(tx *sql.Tx) *AuthorRepo {
+	clone := *r
+	clone.exec = tx
+	return &clone
 }
 
 const authorSelectCols = `id, foreign_id, name, sort_name, description, image_url, disambiguation,
 	       ratings_count, average_rating, monitored, quality_profile_id, metadata_profile_id, root_folder_id,
-	       audiobook_root_folder_id, metadata_provider, last_metadata_refresh_at, created_at, updated_at`
+	       audiobook_root_folder_id, monitor_mode, monitor_latest_count, metadata_provider, last_metadata_refresh_at,
+	       created_at, updated_at`
 
 func (r *AuthorRepo) List(ctx context.Context) ([]models.Author, error) {
 	return r.ListByUser(ctx, 0)
@@ -61,7 +74,7 @@ func (r *AuthorRepo) ListByUser(ctx context.Context, userID int64) ([]models.Aut
 }
 
 func (r *AuthorRepo) GetByID(ctx context.Context, id int64) (*models.Author, error) {
-	row := r.db.QueryRowContext(ctx, `
+	row := r.exec.QueryRowContext(ctx, `
 		SELECT `+authorSelectCols+`
 		FROM authors WHERE id = ?`, id)
 
@@ -117,6 +130,7 @@ func (r *AuthorRepo) Create(ctx context.Context, a *models.Author) error {
 
 func (r *AuthorRepo) CreateForUser(ctx context.Context, a *models.Author, ownerUserID int64) error {
 	now := time.Now().UTC()
+	normalizeAuthorMonitorDefaults(a)
 	var ownerArg any
 	if ownerUserID != 0 {
 		ownerArg = ownerUserID
@@ -124,11 +138,12 @@ func (r *AuthorRepo) CreateForUser(ctx context.Context, a *models.Author, ownerU
 	result, err := r.db.ExecContext(ctx, `
 		INSERT INTO authors (foreign_id, name, sort_name, description, image_url, disambiguation,
 		                     ratings_count, average_rating, monitored, quality_profile_id, metadata_profile_id, root_folder_id,
-		                     audiobook_root_folder_id, metadata_provider, owner_user_id, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                     audiobook_root_folder_id, monitor_mode, monitor_latest_count, metadata_provider, owner_user_id,
+		                     created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ForeignID, a.Name, a.SortName, a.Description, a.ImageURL, a.Disambiguation,
 		a.RatingsCount, a.AverageRating, a.Monitored, a.QualityProfileID, a.MetadataProfileID, a.RootFolderID,
-		a.AudiobookRootFolderID, a.MetadataProvider, ownerArg, now, now)
+		a.AudiobookRootFolderID, a.MonitorMode, a.MonitorLatestCount, a.MetadataProvider, ownerArg, now, now)
 	if err != nil {
 		return fmt.Errorf("create author: %w", err)
 	}
@@ -224,15 +239,17 @@ func (r *AuthorRepo) UpgradeSyntheticDNB(ctx context.Context, currentForeignID s
 
 func (r *AuthorRepo) Update(ctx context.Context, a *models.Author) error {
 	now := time.Now().UTC()
-	_, err := r.db.ExecContext(ctx, `
+	normalizeAuthorMonitorDefaults(a)
+	_, err := r.exec.ExecContext(ctx, `
 		UPDATE authors SET foreign_id=?, name=?, sort_name=?, description=?, image_url=?, disambiguation=?,
 		                   ratings_count=?, average_rating=?, monitored=?, quality_profile_id=?,
-		                   metadata_profile_id=?, root_folder_id=?, audiobook_root_folder_id=?, metadata_provider=?,
-		                   last_metadata_refresh_at=?, updated_at=?
+		                   metadata_profile_id=?, root_folder_id=?, audiobook_root_folder_id=?, monitor_mode=?,
+		                   monitor_latest_count=?, metadata_provider=?, last_metadata_refresh_at=?, updated_at=?
 		WHERE id=?`,
 		a.ForeignID, a.Name, a.SortName, a.Description, a.ImageURL, a.Disambiguation,
 		a.RatingsCount, a.AverageRating, a.Monitored, a.QualityProfileID,
-		a.MetadataProfileID, a.RootFolderID, a.AudiobookRootFolderID, a.MetadataProvider, a.LastMetadataRefreshAt, now, a.ID)
+		a.MetadataProfileID, a.RootFolderID, a.AudiobookRootFolderID, a.MonitorMode,
+		a.MonitorLatestCount, a.MetadataProvider, a.LastMetadataRefreshAt, now, a.ID)
 	if err != nil {
 		return fmt.Errorf("update author %d: %w", a.ID, err)
 	}
@@ -241,9 +258,73 @@ func (r *AuthorRepo) Update(ctx context.Context, a *models.Author) error {
 }
 
 func (r *AuthorRepo) Delete(ctx context.Context, id int64) error {
-	_, err := r.db.ExecContext(ctx, "DELETE FROM authors WHERE id=?", id)
+	_, err := r.exec.ExecContext(ctx, "DELETE FROM authors WHERE id=?", id)
 	if err != nil {
 		return fmt.Errorf("delete author %d: %w", id, err)
+	}
+	return nil
+}
+
+// ListMonitoredSeriesIDs returns the series IDs the author is pinned to when
+// MonitorMode == AuthorMonitorModeSeries. Returns an empty slice (not nil)
+// when nothing is pinned so the JSON encoder produces `[]` rather than null,
+// which keeps the UI's chip list happy.
+func (r *AuthorRepo) ListMonitoredSeriesIDs(ctx context.Context, authorID int64) ([]int64, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT series_id FROM author_monitored_series WHERE author_id = ? ORDER BY series_id`, authorID)
+	if err != nil {
+		return nil, fmt.Errorf("list monitored series ids for author %d: %w", authorID, err)
+	}
+	defer rows.Close()
+	ids := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan monitored series id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// SetMonitoredSeriesIDs replaces the author's monitored-series selection
+// atomically. Passing an empty slice clears the selection. Callers must
+// validate that every ID belongs to a series the author actually has books in
+// before calling — this repo trusts its inputs.
+func (r *AuthorRepo) SetMonitoredSeriesIDs(ctx context.Context, authorID int64, seriesIDs []int64) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin set monitored series tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM author_monitored_series WHERE author_id = ?`, authorID); err != nil {
+		return fmt.Errorf("clear monitored series for author %d: %w", authorID, err)
+	}
+
+	if len(seriesIDs) > 0 {
+		now := time.Now().UTC()
+		stmt, err := tx.PrepareContext(ctx,
+			`INSERT INTO author_monitored_series (author_id, series_id, created_at) VALUES (?, ?, ?)`)
+		if err != nil {
+			return fmt.Errorf("prepare insert monitored series: %w", err)
+		}
+		defer func() { _ = stmt.Close() }()
+		// Dedupe input — callers may pass duplicates and we want a clean PK insert.
+		seen := make(map[int64]struct{}, len(seriesIDs))
+		for _, id := range seriesIDs {
+			if _, dup := seen[id]; dup {
+				continue
+			}
+			seen[id] = struct{}{}
+			if _, err := stmt.ExecContext(ctx, authorID, id, now); err != nil {
+				return fmt.Errorf("insert monitored series (%d, %d): %w", authorID, id, err)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit set monitored series: %w", err)
 	}
 	return nil
 }
@@ -253,9 +334,11 @@ func scanAuthor(rows *sql.Rows) (models.Author, error) {
 	var monitored int
 	err := rows.Scan(&a.ID, &a.ForeignID, &a.Name, &a.SortName, &a.Description, &a.ImageURL,
 		&a.Disambiguation, &a.RatingsCount, &a.AverageRating, &monitored,
-		&a.QualityProfileID, &a.MetadataProfileID, &a.RootFolderID, &a.AudiobookRootFolderID, &a.MetadataProvider,
+		&a.QualityProfileID, &a.MetadataProfileID, &a.RootFolderID, &a.AudiobookRootFolderID,
+		&a.MonitorMode, &a.MonitorLatestCount, &a.MetadataProvider,
 		&a.LastMetadataRefreshAt, &a.CreatedAt, &a.UpdatedAt)
 	a.Monitored = monitored == 1
+	normalizeAuthorMonitorDefaults(&a)
 	return a, err
 }
 
@@ -264,8 +347,22 @@ func scanAuthorRow(row *sql.Row) (models.Author, error) {
 	var monitored int
 	err := row.Scan(&a.ID, &a.ForeignID, &a.Name, &a.SortName, &a.Description, &a.ImageURL,
 		&a.Disambiguation, &a.RatingsCount, &a.AverageRating, &monitored,
-		&a.QualityProfileID, &a.MetadataProfileID, &a.RootFolderID, &a.AudiobookRootFolderID, &a.MetadataProvider,
+		&a.QualityProfileID, &a.MetadataProfileID, &a.RootFolderID, &a.AudiobookRootFolderID,
+		&a.MonitorMode, &a.MonitorLatestCount, &a.MetadataProvider,
 		&a.LastMetadataRefreshAt, &a.CreatedAt, &a.UpdatedAt)
 	a.Monitored = monitored == 1
+	normalizeAuthorMonitorDefaults(&a)
 	return a, err
+}
+
+func normalizeAuthorMonitorDefaults(a *models.Author) {
+	if a == nil {
+		return
+	}
+	if !models.IsAuthorMonitorModeValid(a.MonitorMode) {
+		a.MonitorMode = models.DefaultAuthorMonitorMode
+	}
+	if a.MonitorLatestCount <= 0 {
+		a.MonitorLatestCount = models.DefaultAuthorMonitorLatestCount
+	}
 }

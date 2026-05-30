@@ -19,6 +19,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/downloader/nethint"
 	"github.com/vavallee/bindery/internal/downloader/urlbase"
+	"github.com/vavallee/bindery/internal/httpsec"
 )
 
 // Client interacts with the Transmission RPC API.
@@ -29,9 +30,12 @@ type Client struct {
 	initErr   error
 	username  string
 	password  string
-	http      *http.Client
+	http      *http.Client // Transmission RPC transport (validated target)
+	fetchHTTP *http.Client // used to fetch .torrent content from indexers before submission
 	sessionID string
 	mu        sync.Mutex
+	// validateTorrentURL is injectable for tests; nil uses httpsec.ValidateOutboundURL.
+	validateTorrentURL func(string) error
 }
 
 // New creates a Transmission client.
@@ -45,9 +49,13 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 	}
 
 	client := &Client{
-		username: username,
-		password: password,
-		http:     &http.Client{Timeout: 15 * time.Second},
+		username:  username,
+		password:  password,
+		http:      &http.Client{Timeout: 15 * time.Second},
+		fetchHTTP: &http.Client{Timeout: 60 * time.Second},
+		validateTorrentURL: func(raw string) error {
+			return httpsec.ValidateOutboundURL(raw, httpsec.PolicyLAN)
+		},
 	}
 
 	rpcURL, err := buildRPCURL(scheme, host, port, urlBase)
@@ -78,13 +86,30 @@ func (c *Client) Test(ctx context.Context) error {
 	return nil
 }
 
-// AddTorrent submits a magnet link or torrent URL to Transmission for download.
+// AddTorrent submits a magnet link or torrent URL to Transmission for
+// download. For magnet links the URL is passed through to Transmission's
+// filename arg unchanged (the daemon dials the DHT/trackers itself, no HTTP
+// fetch involved). For http(s) URLs Bindery fetches the .torrent file
+// itself and submits the bytes via metainfo, base64-encoded. This is the
+// same shape SAB (#864) and NZBGet (#837) use: in containerised setups
+// where the download client is on a different network than the indexer
+// (e.g. transmission behind a VPN container), the daemon can't fetch the
+// URL, so it sits in retry until Bindery's request deadline expires.
+// Reported by @Bclark117 in #873.
 func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, downloadDir string) (int64, error) {
-	args := map[string]interface{}{
-		"filename": magnetOrURL,
-	}
+	args := map[string]interface{}{}
 	if downloadDir != "" {
 		args["download-dir"] = downloadDir
+	}
+
+	if isMagnetLink(magnetOrURL) {
+		args["filename"] = magnetOrURL
+	} else {
+		content, err := c.fetchTorrentContent(ctx, magnetOrURL)
+		if err != nil {
+			return 0, err
+		}
+		args["metainfo"] = base64.StdEncoding.EncodeToString(content)
 	}
 
 	req, err := c.buildRequest(ctx, "torrent-add", args)
@@ -173,6 +198,48 @@ func (c *Client) RemoveTorrent(ctx context.Context, torrentID int64, deleteFiles
 	}
 	_, err = c.doRequest(req)
 	return err
+}
+
+// isMagnetLink reports whether magnetOrURL is a magnet: scheme URL. Magnet
+// links carry trackers and infohash inline, so Transmission can resolve
+// them via DHT/trackers without needing to make an outbound HTTP fetch.
+// HTTP(S) URLs to .torrent files are the case Bindery now fetches itself.
+func isMagnetLink(magnetOrURL string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(magnetOrURL)), "magnet:")
+}
+
+// validateTorrentFetchURL applies the same SSRF policy SAB/NZBGet use
+// before reaching out for the .torrent content. Loopback and link-local
+// addresses are blocked; private RFC1918 ranges are permitted under
+// PolicyLAN (typical homelab indexer setup).
+func (c *Client) validateTorrentFetchURL(raw string) error {
+	if c.validateTorrentURL == nil {
+		return httpsec.ValidateOutboundURL(raw, httpsec.PolicyLAN)
+	}
+	return c.validateTorrentURL(raw)
+}
+
+// fetchTorrentContent downloads the .torrent file Bindery would otherwise
+// have asked Transmission to fetch. 50 MB cap matches the NZB fetch cap on
+// SAB/NZBGet so an indexer returning HTML by mistake can't OOM the process.
+func (c *Client) fetchTorrentContent(ctx context.Context, torrentURL string) ([]byte, error) {
+	if err := c.validateTorrentFetchURL(torrentURL); err != nil {
+		return nil, fmt.Errorf("fetch torrent: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, torrentURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("fetch torrent: %w", err)
+	}
+	resp, err := c.fetchHTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch torrent from indexer: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return nil, fmt.Errorf("fetch torrent: indexer returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 50<<20)) // 50 MB cap
 }
 
 // buildRequest constructs a Transmission RPC request.

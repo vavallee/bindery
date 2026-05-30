@@ -40,6 +40,7 @@ func TestPreflightReadOnlyParent(t *testing.T) {
 	err := preflight(filepath.Join(parent, "bindery.db"))
 	if err == nil {
 		t.Fatal("expected preflight to fail on read-only parent")
+		return
 	}
 	// The message must name the path and mention writability; that's the
 	// whole point of the check.
@@ -67,6 +68,54 @@ func TestOpenMemory(t *testing.T) {
 		}
 	}
 }
+
+// TestAssertUniqueMigrationVersions covers the duplicate-prefix guard added
+// after the 043 collision incident (2026-05-26): two unrelated PRs both
+// shipped a migration numbered 043, the apply loop silently skipped the
+// second on installs that had already applied the first, and the lost
+// schema change wasn't noticed until prod broke.
+func TestAssertUniqueMigrationVersions(t *testing.T) {
+	t.Run("unique versions pass", func(t *testing.T) {
+		entries := []os.DirEntry{
+			fakeDirEntry{name: "001_a.sql"},
+			fakeDirEntry{name: "002_b.sql"},
+			fakeDirEntry{name: "003_c.sql"},
+		}
+		if err := assertUniqueMigrationVersions(entries); err != nil {
+			t.Errorf("unique versions should not error: %v", err)
+		}
+	})
+	t.Run("duplicate prefix errors", func(t *testing.T) {
+		entries := []os.DirEntry{
+			fakeDirEntry{name: "043_author_monitor_mode.sql"},
+			fakeDirEntry{name: "043_download_client_category_audiobook.sql"},
+		}
+		err := assertUniqueMigrationVersions(entries)
+		if err == nil {
+			t.Fatal("expected duplicate-version error")
+		}
+		if !strings.Contains(err.Error(), "duplicate migration version 43") {
+			t.Errorf("error should name the duplicate version: %v", err)
+		}
+		if !strings.Contains(err.Error(), "043_author_monitor_mode.sql") ||
+			!strings.Contains(err.Error(), "043_download_client_category_audiobook.sql") {
+			t.Errorf("error should name both files: %v", err)
+		}
+	})
+	t.Run("non-numeric prefix bubbles up", func(t *testing.T) {
+		entries := []os.DirEntry{fakeDirEntry{name: "bogus_no_prefix.sql"}}
+		if err := assertUniqueMigrationVersions(entries); err == nil {
+			t.Fatal("expected non-numeric prefix to error")
+		}
+	})
+}
+
+type fakeDirEntry struct{ name string }
+
+func (e fakeDirEntry) Name() string               { return e.name }
+func (e fakeDirEntry) IsDir() bool                { return false }
+func (e fakeDirEntry) Type() os.FileMode          { return 0 }
+func (e fakeDirEntry) Info() (os.FileInfo, error) { return nil, nil }
 
 func TestMigrateIdempotent(t *testing.T) {
 	db, err := OpenMemory()
@@ -376,6 +425,7 @@ func TestAuthorCRUD(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected author by foreign id")
+		return
 	}
 
 	// List
@@ -658,6 +708,10 @@ func TestPickClientForMediaType(t *testing.T) {
 	audioClient := models.DownloadClient{ID: 1, Name: "SAB-audio", Category: "audiobooks", Type: "sabnzbd"}
 	ebookClient := models.DownloadClient{ID: 2, Name: "SAB-ebook", Category: "ebooks", Type: "sabnzbd"}
 	genericClient := models.DownloadClient{ID: 3, Name: "SAB-generic", Category: "books", Type: "sabnzbd"}
+	// #700: a "dual" client uses the explicit CategoryAudiobook field; the
+	// picker should treat that as a stronger signal than the legacy "category
+	// contains audio" heuristic.
+	dualClient := models.DownloadClient{ID: 4, Name: "SAB-dual", Category: "books", CategoryAudiobook: "audiobooks", Type: "sabnzbd"}
 
 	tests := []struct {
 		name      string
@@ -671,6 +725,8 @@ func TestPickClientForMediaType(t *testing.T) {
 		{"ebook prefers non-audio category", []models.DownloadClient{audioClient, ebookClient}, "ebook", 2},
 		{"audiobook falls back to first when no match", []models.DownloadClient{ebookClient, genericClient}, "audiobook", 2},
 		{"ebook falls back to first when all audio", []models.DownloadClient{audioClient}, "ebook", 1},
+		{"audiobook prefers explicit CategoryAudiobook over legacy heuristic", []models.DownloadClient{audioClient, dualClient}, "audiobook", 4},
+		{"ebook on dual-config client returns it via fallback path", []models.DownloadClient{dualClient}, "ebook", 4},
 	}
 
 	for _, tt := range tests {
@@ -684,6 +740,7 @@ func TestPickClientForMediaType(t *testing.T) {
 			}
 			if got == nil {
 				t.Fatal("expected a client, got nil")
+				return
 			}
 			if got.ID != tt.wantID {
 				t.Errorf("expected client ID %d, got %d (%s)", tt.wantID, got.ID, got.Name)

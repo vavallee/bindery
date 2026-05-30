@@ -262,6 +262,9 @@ export const api = {
   refreshAuthor: (id: number) => request<void>(`/author/${id}/refresh`, { method: 'POST' }),
   relinkAuthorUpstream: (id: number) => request<Author>(`/author/${id}/relink-upstream`, { method: 'POST' }),
   listAuthorAliases: (id: number) => request<AuthorAlias[]>(`/author/${id}/aliases`),
+  // listAuthorSeries returns the series the author has books in. Backs the
+  // per-author monitor-by-series picker in EditAuthorModal (#810).
+  listAuthorSeries: (id: number) => request<Series[]>(`/author/${id}/series`),
   mergeAuthors: (targetId: number, sourceId: number, overwriteDefaults = true) =>
     request<MergeAuthorsResult>(`/author/${targetId}/merge`, {
       method: 'POST',
@@ -382,6 +385,13 @@ export const api = {
 
   // Quality Profiles
   listQualityProfiles: () => request<QualityProfile[]>('/qualityprofile'),
+  getQualityProfile: (id: number) => request<QualityProfile>(`/qualityprofile/${id}`),
+  addQualityProfile: (data: Partial<QualityProfile>) =>
+    request<QualityProfile>('/qualityprofile', { method: 'POST', body: JSON.stringify(data) }),
+  updateQualityProfile: (id: number, data: Partial<QualityProfile>) =>
+    request<QualityProfile>(`/qualityprofile/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteQualityProfile: (id: number) =>
+    request<void>(`/qualityprofile/${id}`, { method: 'DELETE' }),
 
   // Series
   listSeries: () => request<Series[]>('/series'),
@@ -432,6 +442,11 @@ export const api = {
   calibreImportStatus: () => request<CalibreImportProgress>('/calibre/import/status'),
   calibreSyncStart: () => request<CalibreSyncProgress>('/calibre/sync', { method: 'POST' }),
   calibreSyncStatus: () => request<CalibreSyncProgress>('/calibre/sync/status'),
+  calibreRuns: (limit = 10) => request<CalibreImportRun[]>(`/calibre/runs?limit=${limit}`),
+  calibreRunRollbackPreview: (runId: number) =>
+    request<CalibreRollbackResult>(`/calibre/runs/${runId}/rollback/preview`),
+  calibreRunRollback: (runId: number) =>
+    request<CalibreRollbackResult>(`/calibre/runs/${runId}/rollback`, { method: 'POST' }),
 
   // Grimmory
   grimmoryConfig: () => request<GrimmoryConfig>('/grimmory/config'),
@@ -551,6 +566,8 @@ export interface Author {
   ratingsCount: number
   averageRating: number
   monitored: boolean
+  monitorMode?: AuthorMonitorMode
+  monitorLatestCount?: number
   qualityProfileId?: number | null
   metadataProfileId?: number | null
   rootFolderId?: number | null
@@ -558,6 +575,9 @@ export interface Author {
   books?: Book[]
   statistics?: { bookCount: number; availableBookCount: number; wantedBookCount: number }
   aliases?: AuthorAlias[]
+  // Populated by the author Get response when monitorMode === 'series' (#810).
+  // The Update endpoint accepts an updated array via UpdateAuthorRequest.
+  monitoredSeriesIds?: number[]
 }
 
 export interface AuthorAlias {
@@ -576,6 +596,7 @@ export interface MergeAuthorsResult {
 }
 
 export type MediaType = 'ebook' | 'audiobook' | 'both'
+export type AuthorMonitorMode = 'all' | 'future' | 'latest' | 'none' | 'series'
 
 export interface BookFile {
   id: number
@@ -685,6 +706,51 @@ export interface CalibreSyncProgress {
   error?: string
   stats: CalibreSyncStats
   errors: CalibreSyncError[]
+}
+
+// CalibreImportRun is one persisted Calibre import run (issue #643). Used
+// by the "Recent imports" list in the Calibre settings tab.
+export interface CalibreImportRun {
+  id: number
+  sourceId: string
+  libraryPath: string
+  status: string
+  dryRun: boolean
+  sourceConfigJson?: string
+  summaryJson?: string
+  startedAt: string
+  finishedAt?: string
+}
+
+export interface CalibreRollbackStats {
+  actionsPlanned: number
+  entitiesDeleted: number
+  provenanceUnlinked: number
+  filesAffected: number
+  skipped: number
+  failed: number
+}
+
+export interface CalibreRollbackAction {
+  entityType: string
+  externalId: string
+  localId: number
+  displayName?: string
+  outcome: string
+  action: string
+  reason?: string
+}
+
+export interface CalibreRollbackResult {
+  runId: number
+  preview: boolean
+  applied: boolean
+  dryRun: boolean
+  status: string
+  stats: CalibreRollbackStats
+  actions: CalibreRollbackAction[]
+  filesOnDiskWarning?: string
+  finishedAt: string
 }
 
 export interface GrimmoryConfig {
@@ -972,6 +1038,10 @@ export interface DownloadClient {
   useSsl: boolean
   urlBase: string
   category: string
+  // categoryAudiobook overrides category for audiobook grabs only.
+  // Optional; when empty (the default for pre-#700 rows) audiobook grabs
+  // fall back to `category`.
+  categoryAudiobook?: string
   pathRemap?: string
   enabled: boolean
   health?: DownloadClientHealth
@@ -1080,6 +1150,8 @@ export interface AddAuthorRequest {
   foreignAuthorId: string
   authorName: string
   monitored: boolean
+  monitorMode?: AuthorMonitorMode
+  monitorLatestCount?: number
   searchOnAdd: boolean
   metadataProfileId?: number | null
   qualityProfileId?: number | null
@@ -1093,11 +1165,18 @@ export interface AddAuthorRequest {
 // folder when this flag is true.
 export interface UpdateAuthorRequest {
   monitored?: boolean
+  monitorMode?: AuthorMonitorMode
+  monitorLatestCount?: number
   qualityProfileId?: number | null
   metadataProfileId?: number | null
   rootFolderId?: number | null
   audiobookRootFolderId?: number | null
   clearAudiobookRootFolder?: boolean
+  applyMonitorModeToExisting?: boolean
+  // monitoredSeriesIds is the per-author series pin set (#810). Only valid
+  // when monitorMode === 'series'. Backend rejects ids that don't belong to
+  // this author.
+  monitoredSeriesIds?: number[]
 }
 
 export interface GrabRequest {
@@ -1399,7 +1478,7 @@ export interface Recommendation {
 }
 
 export type AuthorBulkAction = 'monitor' | 'unmonitor' | 'delete' | 'search' | 'set_media_type'
-export type BookBulkAction = 'monitor' | 'unmonitor' | 'delete' | 'search' | 'set_media_type'
+export type BookBulkAction = 'monitor' | 'unmonitor' | 'delete' | 'search' | 'set_media_type' | 'exclude'
 export type WantedBulkAction = 'search' | 'blocklist' | 'unmonitor'
 
 export interface BulkResult {

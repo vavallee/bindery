@@ -15,6 +15,7 @@ import (
 	"github.com/vavallee/bindery/internal/abs"
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -24,6 +25,14 @@ import (
 // models.MediaTypeEbook / MediaTypeAudiobook / MediaTypeBoth; empty or
 // unset falls back to ebook for backwards compatibility.
 const SettingDefaultMediaType = "default.media_type"
+
+// SettingAuthorDefaultMonitorMode controls which newly discovered books are
+// monitored for authors created without an explicit monitorMode.
+const SettingAuthorDefaultMonitorMode = "author.default_monitor_mode"
+
+// SettingAuthorDefaultMonitorLatestCount stores the N for monitor_mode=latest
+// when authors are created without an explicit monitorLatestCount.
+const SettingAuthorDefaultMonitorLatestCount = "author.default_monitor_latest_count"
 
 // SettingDefaultLibraryRootFolderID is the KV key that stores the ID of the
 // root folder used as the fallback library path when an author has no
@@ -277,6 +286,24 @@ func validateSettingValue(key, value string) error {
 		default:
 			return fmt.Errorf("default.media_type %q is not one of: ebook, audiobook, both", value)
 		}
+	case SettingAuthorDefaultMonitorMode:
+		if value == "" {
+			return nil
+		}
+		// "series" is per-author by definition (#810) — there is no
+		// install-wide series selection that would make sense, so reject it
+		// here even though IsAuthorMonitorModeValid accepts it.
+		if !models.IsAuthorMonitorModeValidAsGlobalDefault(value) {
+			return fmt.Errorf("author.default_monitor_mode %q is not one of: all, future, latest, none (series is per-author only)", value)
+		}
+	case SettingAuthorDefaultMonitorLatestCount:
+		if value == "" {
+			return nil
+		}
+		n, err := strconv.Atoi(value)
+		if err != nil || n <= 0 {
+			return fmt.Errorf("author.default_monitor_latest_count %q must be a positive integer", value)
+		}
 	case SettingDefaultLibraryRootFolderID:
 		// Empty = unset (fall back to env-var default); non-empty must be a
 		// positive integer representing an existing root_folder.id.
@@ -312,11 +339,17 @@ func validateSettingValue(key, value string) error {
 		if u.Host == "" {
 			return fmt.Errorf("plugin_url %q is missing a host", value)
 		}
+		// Block link-local and cloud-metadata so the Calibre plugin URL can't
+		// be used as an admin-only SSRF foot-gun (mirrors ABS / Grimmory /
+		// indexer / prowlarr / downloadclient validation).
+		if err := httpsec.ValidateOutboundURL(value, httpsec.PolicyLAN); err != nil {
+			return fmt.Errorf("plugin_url %q: %w", value, err)
+		}
 	case SettingABSBaseURL:
 		if value == "" {
 			return nil
 		}
-		if _, err := abs.NormalizeBaseURL(value); err != nil {
+		if _, err := abs.ValidateBaseURLSecure(value); err != nil {
 			return err
 		}
 	case SettingABSEnabled:

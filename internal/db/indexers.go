@@ -131,6 +131,21 @@ func (r *IndexerRepo) DeleteByProwlarrInstance(ctx context.Context, instanceID i
 	return err
 }
 
+// UpdateAPIKeyByProwlarrInstance rewrites the api_key column for every indexer
+// synced from the given Prowlarr instance. Called when the parent instance's
+// API key is rotated via the settings UI, so callers do not have to wait for
+// the next Prowlarr sync to refresh credentials on stored per-indexer rows.
+func (r *IndexerRepo) UpdateAPIKeyByProwlarrInstance(ctx context.Context, instanceID int64, apiKey string) (int64, error) {
+	now := time.Now().UTC()
+	result, err := r.db.ExecContext(ctx,
+		"UPDATE indexers SET api_key=?, updated_at=? WHERE prowlarr_instance_id=?",
+		apiKey, now, instanceID)
+	if err != nil {
+		return 0, fmt.Errorf("propagate prowlarr api key to indexers: %w", err)
+	}
+	return result.RowsAffected()
+}
+
 type indexerScanner interface {
 	Scan(dest ...any) error
 }

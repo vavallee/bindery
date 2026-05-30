@@ -50,18 +50,290 @@ func isReleaseVersion(v string) bool {
 
 type server struct {
 	db            *sql.DB
-	dbDir         string // directory holding the DB — the writable data volume
+	dbDir         string // directory holding the DB, the writable data volume
 	latestVersion string
 	statsToken    string
 	limiter       *rateLimiter
 }
 
+// retentionWindow is the cutoff after which an install row that has stopped
+// pinging is considered dormant and deleted. Picked to be generous enough
+// that an install on a NAS the user only boots every couple of months
+// survives, but tight enough that the table doesn't accumulate ghost rows
+// forever. The active-install counts on the dashboard use shorter windows
+// (7d, 30d); 60d is purely about garbage collection.
+const retentionWindow = 60 * 24 * time.Hour
+
+// retentionInterval is the cadence for sweepStaleAndDev when running as a
+// daemon. Picked to be much smaller than the retention window so a dormant
+// install drops off within a day of crossing the threshold.
+var retentionInterval = 24 * time.Hour
+
+// sweepStaleAndDev drops two kinds of row in one pass:
+//
+//  1. Anything with last_seen older than retentionWindow. Once an install
+//     has been silent for 60 days, the next ping (if any) will treat it as
+//     a brand new install. We don't lose anything by removing the row.
+//  2. Dev/test rows: version literal "dev" plus install_ids that don't
+//     match the UUID v4 shape. The server rejects new posts of these (see
+//     handlePing) but older clients still get through and the startup-only
+//     sweep doesn't catch them after boot. Periodic cleanup closes the gap.
+//
+// Returns the number of rows deleted across both kinds.
+func sweepStaleAndDev(ctx context.Context, db *sql.DB) (int64, error) {
+	cutoff := time.Now().UTC().Add(-retentionWindow)
+	res, err := db.ExecContext(ctx, `
+		DELETE FROM installs
+		WHERE last_seen < ?
+		   OR version = 'dev'
+		   OR install_id NOT GLOB '????????-????-????-????-????????????'
+	`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// runRetentionLoop fires sweepStaleAndDev immediately, then every
+// retentionInterval until ctx is cancelled. Logged at info on each pass so
+// operator can see the count in pod logs.
+func (s *server) runRetentionLoop(ctx context.Context) {
+	tick := time.NewTicker(retentionInterval)
+	defer tick.Stop()
+	for {
+		n, err := sweepStaleAndDev(ctx, s.db)
+		if err != nil {
+			slog.Warn("retention sweep failed", "error", err)
+		} else if n > 0 {
+			slog.Info("retention sweep", "rows_deleted", n)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
+}
+
+// aggregateInterval is how often runAggregateLoop fires. Same shape as
+// retentionInterval; both run independently so a slow snapshot can't
+// starve the eviction sweep.
+var aggregateInterval = 24 * time.Hour
+
+// snapshotDay writes the daily aggregate rows for `day` from the current
+// installs table state. All three aggregate tables (global, version,
+// features) are upserted in one transaction so a partial failure leaves
+// no orphan rows. day is normalised to UTC YYYY-MM-DD on the way in.
+//
+// The active_day, version split, and feature counts are computed from
+// rows whose last_seen falls on `day`. Because last_seen is the most
+// recent ping per install, snapshotting historical days produces
+// approximate counts (installs that pinged then but more recently
+// updated last_seen forward won't be attributed to the older day). Run
+// daily so today's snapshot is captured before the rollover.
+// readVersionCounts returns a map of version → count of installs whose
+// last_seen falls on dayStr. Used by snapshotDay so its INSERT loop runs
+// after the read cursor has been released (defer covers all return paths).
+func readVersionCounts(ctx context.Context, tx *sql.Tx, dayStr string) (map[string]int, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT version, COUNT(*) FROM installs
+		WHERE substr(last_seen, 1, 10) = ?
+		GROUP BY version
+	`, dayStr)
+	if err != nil {
+		return nil, fmt.Errorf("version rows: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]int)
+	for rows.Next() {
+		var v string
+		var n int
+		if err := rows.Scan(&v, &n); err != nil {
+			return nil, fmt.Errorf("version scan: %w", err)
+		}
+		out[v] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("version iter: %w", err)
+	}
+	return out, nil
+}
+
+func (s *server) snapshotDay(ctx context.Context, day time.Time) error {
+	dayStr := day.UTC().Format("2006-01-02")
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("snapshot %s: begin: %w", dayStr, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// daily_global: one row per day with active_day, new_installs, total.
+	var activeDay, newInstalls, total int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM installs WHERE substr(last_seen, 1, 10) = ?`, dayStr,
+	).Scan(&activeDay); err != nil {
+		return fmt.Errorf("snapshot %s: active_day: %w", dayStr, err)
+	}
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM installs WHERE substr(first_seen, 1, 10) = ?`, dayStr,
+	).Scan(&newInstalls); err != nil {
+		return fmt.Errorf("snapshot %s: new_installs: %w", dayStr, err)
+	}
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM installs`,
+	).Scan(&total); err != nil {
+		return fmt.Errorf("snapshot %s: total: %w", dayStr, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO daily_global (day, active_day, new_installs, total)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(day) DO UPDATE SET
+			active_day   = excluded.active_day,
+			new_installs = excluded.new_installs,
+			total        = excluded.total
+	`, dayStr, activeDay, newInstalls, total); err != nil {
+		return fmt.Errorf("snapshot %s: upsert global: %w", dayStr, err)
+	}
+
+	// daily_version: one row per (day, version) with the active count on
+	// that day. Replace any prior rows for `day` first so versions that
+	// dropped to zero aren't left stranded (which would happen if we just
+	// upserted: the row from yesterday's snapshot stays at its old count).
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM daily_version WHERE day = ?`, dayStr,
+	); err != nil {
+		return fmt.Errorf("snapshot %s: clear version: %w", dayStr, err)
+	}
+	// Buffer the version rows fully before issuing any INSERTs so the
+	// scope of the read cursor is bounded by readVersionCounts.
+	versionCounts, err := readVersionCounts(ctx, tx, dayStr)
+	if err != nil {
+		return fmt.Errorf("snapshot %s: %w", dayStr, err)
+	}
+	for v, n := range versionCounts {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO daily_version (day, version, active_count) VALUES (?, ?, ?)`,
+			dayStr, v, n); err != nil {
+			return fmt.Errorf("snapshot %s: version insert: %w", dayStr, err)
+		}
+	}
+
+	// daily_features: one row per (day, field). reporting_count is the
+	// denominator (installs active on day with non-null features) and is
+	// the same for every field. enabled_count is the per-field numerator.
+	var reporting int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM installs
+		WHERE substr(last_seen, 1, 10) = ?
+		  AND features IS NOT NULL
+	`, dayStr).Scan(&reporting); err != nil {
+		return fmt.Errorf("snapshot %s: features reporting: %w", dayStr, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM daily_features WHERE day = ?`, dayStr,
+	); err != nil {
+		return fmt.Errorf("snapshot %s: clear features: %w", dayStr, err)
+	}
+	if reporting > 0 {
+		for _, f := range featureFields {
+			var enabled int
+			if err := tx.QueryRowContext(ctx, `
+				SELECT COUNT(*) FROM installs
+				WHERE substr(last_seen, 1, 10) = ?
+				  AND features IS NOT NULL
+				  AND json_extract(features, '$.'||?) > 0
+			`, dayStr, f.JSONKey).Scan(&enabled); err != nil {
+				return fmt.Errorf("snapshot %s: feature %s: %w", dayStr, f.JSONKey, err)
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO daily_features (day, field, enabled_count, reporting_count)
+				VALUES (?, ?, ?, ?)
+			`, dayStr, f.JSONKey, enabled, reporting); err != nil {
+				return fmt.Errorf("snapshot %s: feature insert %s: %w", dayStr, f.JSONKey, err)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("snapshot %s: commit: %w", dayStr, err)
+	}
+	return nil
+}
+
+// backfillNewInstalls populates daily_global.new_installs for every day in
+// the installs table's first_seen range. Only this column is historically
+// recoverable; the others depend on last_seen which has rolled forward.
+// Idempotent: existing rows have new_installs replaced; active_day, total
+// are preserved (only set non-zero when we have current data for the day).
+//
+// Runs once at startup. Cheap: one INSERT ... SELECT against an indexed
+// substring; the installs table holds at most ~5k rows at our scale.
+func (s *server) backfillNewInstalls(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO daily_global (day, active_day, new_installs, total)
+		SELECT substr(first_seen, 1, 10) AS day, 0, COUNT(*), 0
+		  FROM installs
+		 WHERE first_seen IS NOT NULL
+		 GROUP BY day
+		ON CONFLICT(day) DO UPDATE SET
+			new_installs = excluded.new_installs
+	`)
+	return err
+}
+
+// runAggregateLoop drives snapshotDay on the same daily cadence as
+// retention. On each tick it snapshots both today and yesterday: yesterday
+// captures whatever pings landed since the previous tick before any of
+// today's pings have had a chance to roll last_seen forward; today fills
+// in the live "what's happening right now" row that the dashboard reads.
+func (s *server) runAggregateLoop(ctx context.Context) {
+	tick := time.NewTicker(aggregateInterval)
+	defer tick.Stop()
+	for {
+		now := time.Now().UTC()
+		if err := s.snapshotDay(ctx, now); err != nil {
+			slog.Warn("snapshot today failed", "error", err)
+		}
+		if err := s.snapshotDay(ctx, now.AddDate(0, 0, -1)); err != nil {
+			slog.Warn("snapshot yesterday failed", "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
+}
+
 type pingRequest struct {
-	InstallID string `json:"install_id"`
-	Version   string `json:"version"`
-	OS        string `json:"os"`
-	Arch      string `json:"arch"`
-	Deploy    string `json:"deploy"`
+	InstallID string           `json:"install_id"`
+	Version   string           `json:"version"`
+	OS        string           `json:"os"`
+	Arch      string           `json:"arch"`
+	Deploy    string           `json:"deploy"`
+	Features  *featuresPayload `json:"features,omitempty"`
+}
+
+// featuresPayload mirrors the bindery client's telemetry.Features struct.
+// Pointer-on-the-request so older clients (no features field) decode cleanly
+// to Features == nil. Count fields use *int instead of int so we can tell
+// "client reported 0 indexers" from "client didn't report this field"
+// during the rollout window with mixed-version traffic; both render as
+// "not reported" / "0" downstream but the distinction is preserved on the
+// wire in case a future query wants it.
+type featuresPayload struct {
+	Indexers        *int  `json:"indexers,omitempty"`
+	DownloadClients *int  `json:"download_clients,omitempty"`
+	Notifications   *int  `json:"notifications,omitempty"`
+	Users           *int  `json:"users,omitempty"`
+	CalibreEnabled  *bool `json:"calibre_enabled,omitempty"`
+	ABSEnabled      *bool `json:"abs_enabled,omitempty"`
+	GrimmoryEnabled *bool `json:"grimmory_enabled,omitempty"`
+	HardcoverToken  *bool `json:"hardcover_token,omitempty"`
+	OIDCEnabled     *bool `json:"oidc_enabled,omitempty"`
+	MultiUser       *bool `json:"multi_user,omitempty"`
 }
 
 // validDeploys constrains the set of deploy strings we accept on /api/ping.
@@ -140,15 +412,54 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Sweep test fixtures and locally-built dev rows. These are throwaway
-	// UUIDs from `go run` / `go build` sessions that inflate the active count
-	// without representing a real installation. New clients no longer send
-	// these pings (see internal/telemetry/client.go); the server still drops
-	// them belt-and-suspenders below.
+	// Add the features JSON column for per-subsystem adoption snapshots
+	// (indexer count, ABS enabled, etc.). Stored as a JSON blob so the
+	// schema can grow without further ALTERs; aggregate queries use
+	// SQLite's json_extract. Older clients send no features field and the
+	// row stores NULL, which surfaces as "not reported" on the dashboard.
 	if _, err := db.ExecContext(context.Background(),
-		`DELETE FROM installs WHERE version = 'dev' OR install_id NOT GLOB '????????-????-????-????-????????????'`,
-	); err != nil {
-		slog.Error("cleanup dev rows", "error", err)
+		`ALTER TABLE installs ADD COLUMN features TEXT`,
+	); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		slog.Error("add features column", "error", err)
+		os.Exit(1)
+	}
+
+	// Daily aggregate tables (Phase 4). One row per day for the global
+	// counts, one per (day, version) for the version split, one per
+	// (day, field) for feature adoption. Populated by the nightly snapshot
+	// loop; perpetual retention so charts can extend beyond the 60-day
+	// retention window we keep on raw rows.
+	for _, stmt := range []string{
+		`CREATE TABLE IF NOT EXISTS daily_global (
+			day          TEXT PRIMARY KEY,
+			active_day   INTEGER NOT NULL DEFAULT 0,
+			new_installs INTEGER NOT NULL DEFAULT 0,
+			total        INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS daily_version (
+			day          TEXT NOT NULL,
+			version      TEXT NOT NULL,
+			active_count INTEGER NOT NULL,
+			PRIMARY KEY (day, version)
+		)`,
+		`CREATE TABLE IF NOT EXISTS daily_features (
+			day              TEXT NOT NULL,
+			field            TEXT NOT NULL,
+			enabled_count    INTEGER NOT NULL,
+			reporting_count  INTEGER NOT NULL,
+			PRIMARY KEY (day, field)
+		)`,
+	} {
+		if _, err := db.ExecContext(context.Background(), stmt); err != nil {
+			slog.Error("create aggregate table", "error", err)
+			os.Exit(1)
+		}
+	}
+
+	// Boot-time sweep so dashboards on a fresh process are clean immediately;
+	// the nightly cron below keeps them clean from then on.
+	if _, err := sweepStaleAndDev(context.Background(), db); err != nil {
+		slog.Error("startup sweep", "error", err)
 		os.Exit(1)
 	}
 
@@ -161,11 +472,36 @@ func main() {
 		limiter: newRateLimiter(1*time.Hour, 5*time.Minute),
 	}
 
+	// Nightly retention job: drop rows whose last_seen is older than 60 days
+	// (dormant installs that won't return) and any dev/test rows that older
+	// clients still post. Runs once a day, fired immediately after startup
+	// so the process doesn't have to wait 24 hours for first cleanup. The
+	// 60-day window matches the active-install definition used downstream
+	// (60-day evict means an install ID is either active or absent).
+	go s.runRetentionLoop(context.Background())
+
+	// Backfill the one historically-recoverable aggregate (new_installs by
+	// day, computed from first_seen which never changes). active_day,
+	// version splits, and feature adoption can't be backfilled because the
+	// installs table holds only the most-recent ping per install; those
+	// metrics begin accumulating from today's snapshot forward. Best-effort:
+	// a failure here does not block startup.
+	if err := s.backfillNewInstalls(context.Background()); err != nil {
+		slog.Warn("aggregate backfill failed", "error", err)
+	}
+
+	// Daily snapshot job for the aggregate tables. Mirrors the retention
+	// loop's lifecycle: fires immediately, then every 24 hours. Each tick
+	// snapshots the current state into today's row (UPSERT), so a process
+	// restart can recover today's partial counts without manual intervention.
+	go s.runAggregateLoop(context.Background())
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.handleHome)
 	mux.HandleFunc("GET /stats", s.handleStatsPage)
 	mux.HandleFunc("GET /stats.json", s.handleStatsJSON)
 	mux.HandleFunc("GET /stats/preview", s.handlePreviewPage)
+	mux.HandleFunc("GET /telemetry-fields", s.handleTelemetryFields)
 	mux.HandleFunc("POST /api/ping", s.handlePing)
 	mux.HandleFunc("GET /api/stats", s.handleStats)
 	mux.HandleFunc("GET /api/backup", s.handleBackup)
@@ -309,6 +645,136 @@ func (s *server) handleHome(w http.ResponseWriter, _ *http.Request) {
 </html>`))
 }
 
+// handleTelemetryFields renders the public schema doc: every field a
+// Bindery install can send, with a one-line explanation of why we ask.
+// This is the trust artifact users link to when deciding whether to leave
+// telemetry on. The page lists fields by category (core, features, future)
+// and includes the opt-out instructions in one place.
+func (s *server) handleTelemetryFields(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(telemetryFieldsHTML))
+}
+
+// telemetryFieldsHTML is the static HTML for /telemetry-fields. Inline so
+// the binary has no asset dependencies; the page is small and updates
+// infrequently (only when ping schema gains a field).
+const telemetryFieldsHTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bindery telemetry: what we send</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { min-height: 100svh; background: #0f1117; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 3rem 1.5rem; }
+  .container { max-width: 760px; margin: 0 auto; }
+  a.back { color: #94a3b8; font-size: .85rem; text-decoration: none; }
+  a.back:hover { color: #e2e8f0; }
+  h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; margin: .75rem 0 .5rem; }
+  h2 { font-size: 1.1rem; font-weight: 600; color: #cbd5e1; margin: 2rem 0 .75rem; }
+  p, li { line-height: 1.6; color: #cbd5e1; }
+  p { margin-bottom: 1rem; }
+  ul { padding-left: 1.5rem; margin-bottom: 1rem; }
+  li { margin-bottom: .5rem; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #1e293b; padding: .15rem .4rem; border-radius: 3px; font-size: .9em; color: #f1f5f9; }
+  .field { margin-bottom: 1rem; padding: .85rem 1rem; background: #1e293b; border: 1px solid #334155; border-radius: 8px; }
+  .field code { background: #0f1117; }
+  .field .why { color: #94a3b8; font-size: .9rem; margin-top: .35rem; }
+  footer { margin-top: 3rem; color: #64748b; font-size: .75rem; text-align: center; }
+  .opt-out { background: #1e293b; border-left: 3px solid #10b981; padding: 1rem 1.25rem; border-radius: 4px; margin: 1.5rem 0; }
+  .opt-out code { background: #0f1117; display: inline-block; margin: .25rem 0; }
+</style>
+</head>
+<body>
+<div class="container">
+  <p><a class="back" href="/">&larr; Bindery</a></p>
+  <h1>Telemetry: what we send</h1>
+
+  <p>Every Bindery install sends one anonymous ping per day to <code>api.getbindery.dev/api/ping</code>. The full schema is below. Nothing else leaves your install via telemetry: no library contents, no book titles, no author names, no IPs, no hostnames, no usernames.</p>
+
+  <p>This page is the source of truth. If a future release adds a field, it appears here first.</p>
+
+  <h2>Core fields (always sent)</h2>
+
+  <div class="field">
+    <code>install_id</code>
+    <div class="why">Random UUID generated on first run and stored in your Bindery database. Lets us count distinct installs without tracking who you are. Resetting Bindery's DB resets the UUID; we have no other way to link two installs together.</div>
+  </div>
+
+  <div class="field">
+    <code>version</code>
+    <div class="why">The Bindery binary's release tag (e.g. <code>1.15.2</code>). Lets us see which versions are actually deployed so we know when an old release can be deprecated. Non-release builds (dev / sha-XXXXX / commits past a tag) are dropped client-side and never sent.</div>
+  </div>
+
+  <div class="field">
+    <code>os</code> / <code>arch</code>
+    <div class="why">Output of Go's <code>runtime.GOOS</code> and <code>runtime.GOARCH</code> (e.g. <code>linux</code> / <code>amd64</code>). Lets us prioritise fixes for the OS/arch combos that are actually in use.</div>
+  </div>
+
+  <div class="field">
+    <code>deploy</code>
+    <div class="why">How Bindery is being run: <code>kubernetes</code> (inside a pod), <code>docker</code> (inside any other container), <code>binary</code> (bare metal), <code>helm</code> (Helm chart, when the chart sets <code>BINDERY_DEPLOY_METHOD=helm</code>). Detected from <code>KUBERNETES_SERVICE_HOST</code> and the presence of <code>/.dockerenv</code>. Helps us know which deployment paths are worth supporting.</div>
+  </div>
+
+  <h2>Features (sent starting v1.15.3+, optional)</h2>
+
+  <p>Counts and booleans summarising which subsystems are configured. No names, IDs, URLs, or values are ever sent &mdash; just numbers and on/off flags. Tells the maintainer which features users actually use so support time goes to the parts of Bindery people rely on.</p>
+
+  <div class="field">
+    <code>features.indexers</code> / <code>features.download_clients</code> / <code>features.notifications</code> / <code>features.users</code>
+    <div class="why">Integer count of enabled configuration rows. The user count tells us whether multi-user is in real use; the others tell us how many integrations a typical install has.</div>
+  </div>
+
+  <div class="field">
+    <code>features.calibre_enabled</code> / <code>features.abs_enabled</code> / <code>features.grimmory_enabled</code>
+    <div class="why">Boolean: whether the Calibre, Audiobookshelf, or Grimmory integration is turned on. No URLs, paths, or credentials.</div>
+  </div>
+
+  <div class="field">
+    <code>features.hardcover_token</code>
+    <div class="why">Boolean: whether a Hardcover API token is configured (presence, not the value).</div>
+  </div>
+
+  <div class="field">
+    <code>features.oidc_enabled</code> / <code>features.multi_user</code>
+    <div class="why">Booleans: whether OIDC sign-in is configured, and whether there is more than one user account in the local DB.</div>
+  </div>
+
+  <h2>What we don't collect</h2>
+
+  <ul>
+    <li>Your IP address (the server rate-limits by IP but never stores it).</li>
+    <li>Your hostname, server name, domain, or any DNS-resolvable identifier.</li>
+    <li>Anything about your library: book titles, author names, ISBNs, ratings, file paths.</li>
+    <li>Anything about your network: indexer URLs, download client URLs, notification webhook URLs.</li>
+    <li>Anything about your users: usernames, email addresses, OIDC subject IDs.</li>
+    <li>API keys, tokens, passwords, session secrets.</li>
+    <li>Request logs, error traces, or stack traces.</li>
+  </ul>
+
+  <h2>How to opt out</h2>
+
+  <div class="opt-out">
+    <p>Two ways to disable telemetry entirely. Either is sufficient; the env var wins if both are set.</p>
+    <p><strong>Env var (recommended for fresh installs):</strong><br>
+    <code>BINDERY_TELEMETRY_DISABLED=true</code></p>
+    <p><strong>Settings DB (for running installs):</strong><br>
+    Set the <code>telemetry.enabled</code> setting to <code>false</code>. Survives restarts; takes effect on the next scheduled ping (within 24 hours).</p>
+  </div>
+
+  <h2>How the data is stored</h2>
+
+  <p>Pings land in a small SQLite database on a single VM in Hetzner Cloud (Falkenstein, Germany). Per-install rows whose <code>last_seen</code> is older than 60 days are deleted nightly. The dashboard's long-running charts (monthly new installs, version adoption over time) are computed from daily aggregate tables that hold only counts per day: how many new installs, how many were active, how many were on each version, how many had each subsystem enabled. The aggregate rows never contain individual install IDs, so they're kept indefinitely. The database itself is backed up daily to an off-site object store; backups follow the same 60-day retention on per-install rows.</p>
+
+  <p>The aggregated dashboard at <a href="/stats">/stats</a> is rendered live from the database with no caching. The full source of both the bindery client and the telemetry server lives at <a href="https://github.com/vavallee/bindery">github.com/vavallee/bindery</a> &mdash; the client at <code>internal/telemetry/client.go</code>, the server at <code>cmd/telemetry-server/main.go</code>.</p>
+
+  <footer>
+    Last updated 2026-05-29. If a future release changes any of this, the change lands on this page before it ships.
+  </footer>
+</div>
+</body>
+</html>`
+
 func (s *server) handlePing(w http.ResponseWriter, r *http.Request) {
 	ip := realIP(r)
 	if !s.limiter.allow(ip) {
@@ -346,24 +812,39 @@ func (s *server) handlePing(w http.ResponseWriter, r *http.Request) {
 		req.Deploy = ""
 	}
 
+	// features is stored as JSON or NULL when the client didn't send any.
+	// Re-marshal here instead of forwarding the original JSON bytes so the
+	// stored payload is normalised (whitespace-stripped, key order stable)
+	// regardless of what the client serialised. Any marshal error keeps the
+	// column NULL so a bad features field never blocks a valid ping.
+	var featuresJSON sql.NullString
+	if req.Features != nil {
+		if buf, err := json.Marshal(req.Features); err == nil {
+			featuresJSON = sql.NullString{String: string(buf), Valid: true}
+		} else {
+			slog.Warn("marshal features", "id", req.InstallID[:min(8, len(req.InstallID))], "error", err)
+		}
+	}
+
 	now := time.Now().UTC()
 	_, err := s.db.ExecContext(r.Context(), `
-		INSERT INTO installs (install_id, version, os, arch, deploy, first_seen, last_seen)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO installs (install_id, version, os, arch, deploy, features, first_seen, last_seen)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(install_id) DO UPDATE SET
 			version   = excluded.version,
 			os        = excluded.os,
 			arch      = excluded.arch,
 			deploy    = excluded.deploy,
+			features  = excluded.features,
 			last_seen = excluded.last_seen
-	`, req.InstallID, req.Version, req.OS, req.Arch, req.Deploy, now, now)
+	`, req.InstallID, req.Version, req.OS, req.Arch, req.Deploy, featuresJSON, now, now)
 	if err != nil {
 		slog.Warn("upsert install", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	slog.Info("ping", "id", req.InstallID[:min(8, len(req.InstallID))], "version", req.Version, "os", req.OS, "arch", req.Arch)
+	slog.Info("ping", "id", req.InstallID[:min(8, len(req.InstallID))], "version", req.Version, "os", req.OS, "arch", req.Arch, "features", featuresJSON.Valid)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(pingResponse{LatestVersion: s.latestVersion})
@@ -393,26 +874,49 @@ type versionTrendDay struct {
 // statsData is the complete aggregated telemetry view used by both the
 // auth-gated JSON API and the public HTML dashboard.
 type statsData struct {
-	Active30d    int
-	Total        int
-	Versions     []statsBucket
-	OS           []statsBucket
-	Arch         []statsBucket
-	Deploy       []statsBucket
-	Daily        []dailyBucket
-	DailyNew     []dailyBucket     // new installs per day (first_seen), 30 days
-	Longevity    []statsBucket     // age buckets for 30d-active installs
-	Monthly      []statsBucket     // new installs per calendar month, last 12 mo
-	VersionTrend []versionTrendDay // per-day per-version active counts, 30 days
-	TopVersions  []string          // top-N versions for VersionTrend legend
+	Active7d  int
+	Active30d int
+	Total     int
+	Versions  []statsBucket
+	// VersionsRecent is the same set of buckets restricted to installs that
+	// pinged in the last 7 days. Dashboard renders both alongside each other
+	// so dormant installs (e.g. v1.8.1 pinged once and never again) stop
+	// inflating the headline.
+	VersionsRecent   []statsBucket
+	OS               []statsBucket
+	Arch             []statsBucket
+	Deploy           []statsBucket
+	Daily            []dailyBucket
+	DailyNew         []dailyBucket     // new installs per day (first_seen), 30 days
+	Longevity        []statsBucket     // age buckets for 30d-active installs
+	LongevityYoungDB bool              // true when DB span < 30d, so higher buckets cannot fire
+	Monthly          []statsBucket     // new installs per calendar month, last 12 mo
+	VersionTrend     []versionTrendDay // per-day per-version active counts, 30 days
+	TopVersions      []string          // top-N versions for VersionTrend legend
+
+	// Features (last 7d): per-subsystem adoption counts among installs that
+	// have reported a features payload in the last 7 days. FeaturesReporting
+	// is the denominator; each bucket count is the numerator. Older clients
+	// without the features field don't contribute to either, so the
+	// percentage is "of the installs we have data for."
+	FeaturesReporting int
+	Features          []statsBucket
 }
 
 // computeStats runs every dashboard query and returns one assembled snapshot.
-// All counts are scoped to the active-30-day window except Total.
+// All counts are scoped to the active-30-day window except Total and the
+// recent-7d cohort.
 func (s *server) computeStats(ctx context.Context) (*statsData, error) {
-	cutoff := time.Now().UTC().Add(-30 * 24 * time.Hour)
+	now := time.Now().UTC()
+	cutoff := now.Add(-30 * 24 * time.Hour)
+	cutoff7d := now.Add(-7 * 24 * time.Hour)
 	d := &statsData{}
 
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM installs WHERE last_seen >= ?`, cutoff7d,
+	).Scan(&d.Active7d); err != nil {
+		return nil, err
+	}
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM installs WHERE last_seen >= ?`, cutoff,
 	).Scan(&d.Active30d); err != nil {
@@ -424,10 +928,10 @@ func (s *server) computeStats(ctx context.Context) (*statsData, error) {
 		return nil, err
 	}
 
-	queryBuckets := func(col string) ([]statsBucket, error) {
-		// #nosec G202 — col is a literal from the caller, not user input.
+	queryBuckets := func(col string, since time.Time) ([]statsBucket, error) {
+		// #nosec G202 -- col is a literal from the caller, not user input.
 		q := `SELECT ` + col + `, COUNT(*) FROM installs WHERE last_seen >= ? GROUP BY ` + col + ` ORDER BY COUNT(*) DESC`
-		rows, err := s.db.QueryContext(ctx, q, cutoff)
+		rows, err := s.db.QueryContext(ctx, q, since)
 		if err != nil {
 			return nil, err
 		}
@@ -447,16 +951,19 @@ func (s *server) computeStats(ctx context.Context) (*statsData, error) {
 	}
 
 	var err error
-	if d.Versions, err = queryBuckets("version"); err != nil {
+	if d.Versions, err = queryBuckets("version", cutoff); err != nil {
 		return nil, err
 	}
-	if d.OS, err = queryBuckets("os"); err != nil {
+	if d.VersionsRecent, err = queryBuckets("version", cutoff7d); err != nil {
 		return nil, err
 	}
-	if d.Arch, err = queryBuckets("arch"); err != nil {
+	if d.OS, err = queryBuckets("os", cutoff); err != nil {
 		return nil, err
 	}
-	if d.Deploy, err = queryBuckets("deploy"); err != nil {
+	if d.Arch, err = queryBuckets("arch", cutoff); err != nil {
+		return nil, err
+	}
+	if d.Deploy, err = queryBuckets("deploy", cutoff); err != nil {
 		return nil, err
 	}
 
@@ -551,11 +1058,46 @@ func (s *server) computeStats(ctx context.Context) (*statsData, error) {
 		}
 	}
 
-	// Monthly new installs for the last 12 calendar months.
-	monthlyCutoff := time.Now().UTC().AddDate(0, -12, 0)
-	rowsMon, err := s.db.QueryContext(ctx,
-		`SELECT substr(first_seen, 1, 7) AS month, COUNT(*) FROM installs WHERE first_seen >= ? GROUP BY month ORDER BY month`,
-		monthlyCutoff)
+	// If the DB itself hasn't been collecting for 30 days, the "1 to 3 months"
+	// and "3+ months" buckets are structurally empty: max(last_seen - first_seen)
+	// is bounded by the data span. Flag this so the dashboard can render a
+	// footnote instead of silently showing only the lower buckets, which a
+	// reader would otherwise interpret as "no install has been alive that long."
+	var earliestStr string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MIN(substr(first_seen, 1, 19)), '')
+		   FROM installs`,
+	).Scan(&earliestStr); err != nil {
+		return nil, err
+	}
+	if earliestStr != "" {
+		if earliest, perr := time.Parse("2006-01-02 15:04:05", earliestStr); perr == nil {
+			if now.Sub(earliest) < 30*24*time.Hour {
+				d.LongevityYoungDB = true
+			}
+		}
+	}
+
+	// Features adoption among 7d-active installs that reported a payload.
+	// Older clients send features = NULL and don't appear in either the
+	// numerator or the denominator, which gives an accurate "% of installs
+	// we have data for" rather than a misleading "% of all installs."
+	if err := s.computeFeatureAdoption(ctx, cutoff7d, d); err != nil {
+		return nil, err
+	}
+
+	// Monthly new installs for the last 12 calendar months. Reads from
+	// daily_global rather than installs so the chart survives the 60-day
+	// retention sweep: once a row's first_seen drops out of installs it's
+	// already accumulated into the daily aggregate for that day.
+	monthlyCutoff := time.Now().UTC().AddDate(0, -12, 0).Format("2006-01-02")
+	rowsMon, err := s.db.QueryContext(ctx, `
+		SELECT substr(day, 1, 7) AS month, SUM(new_installs)
+		  FROM daily_global
+		 WHERE day >= ?
+		 GROUP BY month
+		 ORDER BY month
+	`, monthlyCutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -649,6 +1191,67 @@ func (s *server) handleStats(w http.ResponseWriter, r *http.Request) {
 		Total:     d.Total,
 		Versions:  versions,
 	})
+}
+
+// featureField describes one row in the Features section: the JSON key
+// inside the stored features blob, the kind of bucket (count vs boolean),
+// and the human label rendered on the dashboard. Count fields are summed
+// across reporting installs (e.g. "12 indexers per install on average")
+// and would render differently; today we just count installs with a
+// non-zero value, matching the booleans, because adoption is more
+// actionable than mean configuration size at this scale.
+type featureField struct {
+	JSONKey string
+	Label   string
+}
+
+var featureFields = []featureField{
+	{"indexers", "Indexers configured"},
+	{"download_clients", "Download clients configured"},
+	{"notifications", "Notifications configured"},
+	{"calibre_enabled", "Calibre integration"},
+	{"abs_enabled", "Audiobookshelf integration"},
+	{"grimmory_enabled", "Grimmory integration"},
+	{"hardcover_token", "Hardcover enhanced"},
+	{"oidc_enabled", "OIDC auth"},
+	{"multi_user", "Multi-user"},
+}
+
+// computeFeatureAdoption fills d.FeaturesReporting and d.Features from
+// installs that pinged in the last 7 days and include a non-null features
+// payload. Uses SQLite's JSON1 extension (modernc.org/sqlite ships with
+// it). Booleans count any truthy JSON value; counts count any non-zero
+// numeric value. Both reduce to "this install has the subsystem in use,"
+// which is the question the dashboard answers.
+func (s *server) computeFeatureAdoption(ctx context.Context, since time.Time, d *statsData) error {
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM installs WHERE last_seen >= ? AND features IS NOT NULL`,
+		since,
+	).Scan(&d.FeaturesReporting); err != nil {
+		return err
+	}
+	if d.FeaturesReporting == 0 {
+		return nil
+	}
+	for _, f := range featureFields {
+		var n int
+		// json_extract returns NULL when the key is missing; the count
+		// then excludes the row. For booleans, true → 1, false → 0; the
+		// > 0 filter catches both true booleans and non-zero counts.
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			  FROM installs
+			 WHERE last_seen >= ?
+			   AND features IS NOT NULL
+			   AND json_extract(features, '$.'||?) > 0
+		`, since, f.JSONKey).Scan(&n); err != nil {
+			// Best-effort; a single bad field shouldn't sink the page.
+			slog.Warn("feature adoption query", "field", f.JSONKey, "error", err)
+			continue
+		}
+		d.Features = append(d.Features, statsBucket{Label: f.Label, Count: n})
+	}
+	return nil
 }
 
 // handleStatsJSON returns a small public JSON payload with active install
@@ -832,6 +1435,139 @@ func renderBarChart(buckets []statsBucket, maxBars int, pinLabel string) string 
 	}
 	sb.WriteString(`</table></div>`)
 	return sb.String()
+}
+
+// renderVersionsTable extends renderBarChart for the Versions section by
+// surfacing two cohorts side-by-side: the 30d window (the bar widths are
+// scaled to this, matching the rest of the page) and the 7d window in a
+// second count column. Versions present in the 30d set but not in the 7d
+// set still appear with a 7d count of zero so a dormant version (e.g. an
+// older release whose installs pinged once weeks ago and never returned)
+// is visible rather than silently dropping out of the table.
+func renderVersionsTable(buckets30d, buckets7d []statsBucket, maxBars int, pinLabel string) string {
+	if len(buckets30d) == 0 {
+		return `<p class="empty">No data yet.</p>`
+	}
+
+	recent := make(map[string]int, len(buckets7d))
+	for _, b := range buckets7d {
+		recent[b.Label] = b.Count
+	}
+
+	// Collapse the long tail the same way renderBarChart does so the
+	// table stays at most maxBars+1 rows.
+	display := buckets30d
+	if maxBars > 0 && len(display) > maxBars {
+		work := make([]statsBucket, len(display))
+		copy(work, display)
+
+		if pinLabel != "" {
+			pinIdx := -1
+			for i := maxBars; i < len(work); i++ {
+				if work[i].Label == pinLabel {
+					pinIdx = i
+					break
+				}
+			}
+			if pinIdx >= 0 {
+				work[maxBars-1], work[pinIdx] = work[pinIdx], work[maxBars-1]
+			}
+		}
+
+		head := work[:maxBars]
+		tail30d := 0
+		tail7d := 0
+		for _, b := range work[maxBars:] {
+			tail30d += b.Count
+			tail7d += recent[b.Label]
+		}
+		head = append(head, statsBucket{Label: "(other)", Count: tail30d})
+		recent["(other)"] = tail7d
+		display = head
+	}
+
+	max := display[0].Count
+	for _, b := range display {
+		if b.Count > max {
+			max = b.Count
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(`<div class="chart">`)
+	sb.WriteString(`<table class="bars bars-2col" role="presentation">`)
+	sb.WriteString(`<thead><tr>` +
+		`<th class="legend-cell"></th>` +
+		`<th class="bar-cell"></th>` +
+		`<th class="count-cell count-header">7d</th>` +
+		`<th class="count-cell count-header">30d</th>` +
+		`</tr></thead><tbody>`)
+	for i, b := range display {
+		colour := paletteColor(i)
+		pct := 0
+		if max > 0 {
+			pct = b.Count * 100 / max
+		}
+		label := b.Label
+		if pinLabel != "" && b.Label == pinLabel {
+			label = b.Label + " (latest)"
+		}
+		fmt.Fprintf(&sb,
+			`<tr><td class="legend-cell"><span class="swatch" style="background:%s"></span>%s</td>`+
+				`<td class="bar-cell"><div class="bar" style="width:%d%%;background:%s"></div></td>`+
+				`<td class="count-cell">%d</td>`+
+				`<td class="count-cell">%d</td></tr>`,
+			colour, html.EscapeString(label), pct, colour, recent[b.Label], b.Count)
+	}
+	sb.WriteString(`</tbody></table></div>`)
+	return sb.String()
+}
+
+// renderLongevity wraps renderBarChart with a footnote that fires when the
+// DB has been collecting for less than 30 days. In that case the "1 to 3
+// months" and "3+ months" buckets cannot exist no matter how many installs
+// there are, and the table looks misleadingly small. The footnote tells a
+// reader the lower buckets are empty by construction, not by population.
+func renderLongevity(buckets []statsBucket, youngDB bool) string {
+	chart := renderBarChart(buckets, 0, "")
+	if !youngDB {
+		return chart
+	}
+	return chart + `<p class="empty" style="margin-top:.5rem">` +
+		`Telemetry DB has been collecting for less than 30 days; the ` +
+		`"1 to 3 months" and "3+ months" buckets cannot populate yet ` +
+		`(every install's age is bounded by the data span).</p>`
+}
+
+// renderFeatures renders the per-subsystem adoption table. Bar widths and
+// the count column are denominated in installs (out of reporting); the
+// header notes the denominator so a reader can convert to percent. When no
+// 7d-active install has reported a features payload yet (older clients
+// only), the section renders an explanatory message instead of an empty
+// chart with confusing zero counts.
+func renderFeatures(buckets []statsBucket, reporting int) string {
+	if reporting == 0 {
+		return `<div class="chart"><p class="empty">No features data yet. ` +
+			`Older clients (pre-v1.15.3) don't include a features payload; ` +
+			`this section populates as installs upgrade.</p></div>`
+	}
+	header := fmt.Sprintf(
+		`<p class="empty" style="margin:0 0 .5rem 0">Out of %d install%s reporting features in the last 7 days.</p>`,
+		reporting,
+		pluralS(reporting),
+	)
+	// reuse renderBarChart for the bar/count rows; bar widths scale to
+	// the largest reported count so the row with the highest adoption
+	// pegs at 100 percent and the rest scale down.
+	return header + renderBarChart(buckets, 0, "")
+}
+
+// pluralS returns "" or "s" for English plural agreement based on count.
+func pluralS(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 // renderSparkline returns inline SVG for a 30-day daily-activity bar chart.
@@ -1050,6 +1786,11 @@ func (s *server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
   td.legend-cell { width: 35%%; color: #cbd5e1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   td.bar-cell { width: 50%%; }
   td.count-cell { width: 15%%; text-align: right; color: #94a3b8; font-variant-numeric: tabular-nums; }
+  table.bars-2col td.legend-cell { width: 30%%; }
+  table.bars-2col td.bar-cell    { width: 40%%; }
+  table.bars-2col td.count-cell  { width: 15%%; }
+  table.bars-2col th { text-align: right; color: #64748b; font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; padding: .25rem .5rem .5rem; }
+  table.bars-2col th.count-header { color: #94a3b8; }
   .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: .5rem; vertical-align: middle; }
   .bar { height: 14px; border-radius: 2px; min-width: 2px; }
   .sparkline { width: 100%%; height: 80px; display: block; }
@@ -1068,10 +1809,11 @@ func (s *server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
   <header>
     <a class="back" href="/">← Bindery</a>
     <h1>Telemetry</h1>
-    <p>Anonymous install counts from instances that opted in to update checks. No identifying information is collected — only an opaque install UUID, the version, and the OS/arch reported by Go's runtime. Active = pinged in the last 30 days.</p>
+    <p>Anonymous install counts from instances that opted in to update checks. No identifying information is collected, only an opaque install UUID, the version, the OS/arch reported by Go's runtime, and (on v1.15.3+) per-subsystem adoption counts. "Active 7d" is the count of installs that pinged in the last seven days (the closest proxy we have for "running right now"); "Active 30d" is the wider 30-day window and includes dormant installs that have not pinged in a while. Full schema and opt-out instructions: <a href="/telemetry-fields" style="color:#10b981">/telemetry-fields</a>.</p>
   </header>
 
   <div class="summary">
+    <div class="stat"><div class="num">%d</div><div class="label">Active installs (7d)</div></div>
     <div class="stat"><div class="num">%d</div><div class="label">Active installs (30d)</div></div>
     <div class="stat"><div class="num">%d</div><div class="label">Total installs (all-time)</div></div>
   </div>
@@ -1117,6 +1859,11 @@ func (s *server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
   </section>
 
   <section>
+    <h2>Feature adoption (last 7 days)</h2>
+    %s
+  </section>
+
+  <section>
     <h2>Version mix (last 30 days)</h2>
     <div class="chart">%s</div>
   </section>
@@ -1127,15 +1874,16 @@ func (s *server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
 </div>
 </body>
 </html>`,
-		d.Active30d, d.Total,
-		renderBarChart(d.Versions, 8, normalizeVersion(s.latestVersion)),
+		d.Active7d, d.Active30d, d.Total,
+		renderVersionsTable(d.Versions, d.VersionsRecent, 8, normalizeVersion(s.latestVersion)),
 		renderBarChart(d.OS, 0, ""),
 		renderBarChart(d.Arch, 0, ""),
 		renderBarChart(d.Deploy, 0, ""),
 		renderSparkline(d.Daily),
 		renderSparkline(d.DailyNew),
 		renderMonthlyChart(d.Monthly),
-		renderBarChart(d.Longevity, 0, ""),
+		renderLongevity(d.Longevity, d.LongevityYoungDB),
+		renderFeatures(d.Features, d.FeaturesReporting),
 		renderVersionTrend(d.VersionTrend, d.TopVersions),
 		time.Now().UTC().Format("2006-01-02 15:04 MST"),
 	); err != nil {

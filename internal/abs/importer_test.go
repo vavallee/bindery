@@ -214,6 +214,7 @@ func TestImporter_ProgressResultsKeepsLatestHundredItems(t *testing.T) {
 	}
 	if progress.Stats == nil {
 		t.Fatal("progress stats = nil, want final stats")
+		return
 	}
 	if progress.Stats.ItemsSeen != itemCount || progress.Stats.BooksCreated != itemCount {
 		t.Fatalf("progress stats = %+v, want full-run counts", progress.Stats)
@@ -2735,6 +2736,7 @@ func TestImporter_RepeatedABSSeriesRollbackUnlinksAllRunMemberships(t *testing.T
 	}
 	if series == nil {
 		t.Fatal("expected imported series")
+		return
 	}
 	hydrated, err := seriesRepo.GetByID(ctx, series.ID)
 	if err != nil {
@@ -2824,6 +2826,7 @@ func TestImporter_ABSSeriesRerunRollbackPreservesOriginalMembership(t *testing.T
 	}
 	if series == nil {
 		t.Fatal("series after second rollback = nil, want original series preserved")
+		return
 	}
 	hydrated, err := seriesRepo.GetByID(ctx, series.ID)
 	if err != nil {
@@ -2936,6 +2939,7 @@ func TestImporter_HardcoverSeriesMatchLinksItemWithoutABSSeries(t *testing.T) {
 	}
 	if series == nil {
 		t.Fatal("expected Hardcover series")
+		return
 	}
 	link, err := seriesRepo.GetHardcoverLink(context.Background(), series.ID)
 	if err != nil {
@@ -3062,6 +3066,7 @@ func TestImporter_HardcoverSeriesLinksExistingCatalogBookWithRollback(t *testing
 	}
 	if series == nil {
 		t.Fatal("expected Hardcover series")
+		return
 	}
 	hydrated, err := seriesRepo.GetByID(ctx, series.ID)
 	if err != nil {
@@ -3102,6 +3107,7 @@ func TestImporter_HardcoverSeriesLinksExistingCatalogBookWithRollback(t *testing
 	}
 	if remainingBook == nil {
 		t.Fatal("existing catalog book was deleted by rollback")
+		return
 	}
 	series, err = seriesRepo.GetByForeignID(ctx, catalog.ForeignID)
 	if err != nil {
@@ -3183,6 +3189,7 @@ func TestImporter_HardcoverSeriesMatchPromotesExactABSSeries(t *testing.T) {
 	}
 	if series == nil {
 		t.Fatal("expected promoted Hardcover series")
+		return
 	}
 	all, err := seriesRepo.List(context.Background())
 	if err != nil {
@@ -3572,6 +3579,7 @@ func TestImporter_RollbackKeepsRunCreatedSeriesWithUserMembership(t *testing.T) 
 	}
 	if series == nil {
 		t.Fatal("expected imported series before rollback")
+		return
 	}
 	authors, err := authorRepo.List(ctx)
 	if err != nil {
@@ -3611,6 +3619,7 @@ func TestImporter_RollbackKeepsRunCreatedSeriesWithUserMembership(t *testing.T) 
 	}
 	if surviving == nil {
 		t.Fatal("series after rollback = nil, want kept because user membership remains")
+		return
 	}
 	if len(surviving.Books) != 1 || surviving.Books[0].BookID != userBook.ID {
 		t.Fatalf("series books after rollback = %+v, want only user-added membership", surviving.Books)
@@ -3911,6 +3920,7 @@ func TestImporter_RollbackFirstLibraryPreservesSecondLibrarySharedBook(t *testin
 	}
 	if series == nil {
 		t.Fatal("series after rollback = nil, want shared local series retained")
+		return
 	}
 	if len(series.Books) != 1 || series.Books[0].BookID != bookID {
 		t.Fatalf("series books after rollback = %+v, want shared local book retained", series.Books)

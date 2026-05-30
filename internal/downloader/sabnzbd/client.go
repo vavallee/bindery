@@ -3,23 +3,30 @@
 package sabnzbd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/vavallee/bindery/internal/downloader/nethint"
 	"github.com/vavallee/bindery/internal/downloader/urlbase"
+	"github.com/vavallee/bindery/internal/httpsec"
 )
 
 // Client interacts with the SABnzbd API.
 type Client struct {
-	baseURL string
-	apiKey  string
-	http    *http.Client
+	baseURL   string
+	apiKey    string
+	http      *http.Client // SABnzbd JSON API transport
+	fetchHTTP *http.Client // used to fetch NZB content from indexers before submission
+	// validateNZBURL is injectable for tests; nil uses httpsec.ValidateOutboundURL.
+	validateNZBURL func(string) error
 }
 
 // New creates a SABnzbd client. urlBase is the optional reverse-proxy
@@ -30,9 +37,13 @@ func New(host string, port int, apiKey, urlBase string, useSSL bool) *Client {
 		scheme = "https"
 	}
 	return &Client{
-		baseURL: fmt.Sprintf("%s://%s:%d%s", scheme, host, port, urlbase.Normalize(urlBase)),
-		apiKey:  apiKey,
-		http:    &http.Client{Timeout: 15 * time.Second},
+		baseURL:   fmt.Sprintf("%s://%s:%d%s", scheme, host, port, urlbase.Normalize(urlBase)),
+		apiKey:    apiKey,
+		http:      &http.Client{Timeout: 15 * time.Second},
+		fetchHTTP: &http.Client{Timeout: 60 * time.Second},
+		validateNZBURL: func(raw string) error {
+			return httpsec.ValidateOutboundURL(raw, httpsec.PolicyLAN)
+		},
 	}
 }
 
@@ -44,11 +55,31 @@ func (c *Client) Test(ctx context.Context) error {
 	return nil
 }
 
-// AddURL sends an NZB URL to SABnzbd for download.
+// AddURL fetches the NZB file from nzbURL (using Bindery's own HTTP client,
+// which holds the indexer credentials and the network path) then submits the
+// content to SABnzbd via mode=addfile multipart upload. The name is kept for
+// call-site compatibility — the URL never reaches SAB.
+//
+// Sending content rather than a URL means SAB never has to reach the indexer
+// directly. In containerised setups where Bindery and SAB sit on different
+// Docker networks (or only Bindery has DNS for the indexer), SAB's addurl
+// path fails silently and the queued item sits in "Waiting" with a resetting
+// retry countdown rather than producing a clear rejection. This mirrors the
+// fix the NZBGet client got — see internal/downloader/nzbget/client.go's Add.
 func (c *Client) AddURL(ctx context.Context, nzbURL, title, category string, priority int) (*AddURLResponse, error) {
+	content, err := c.fetchNZBContent(ctx, nzbURL)
+	if err != nil {
+		return nil, err
+	}
+
+	filename := nzbFilename(title)
+	body, contentType, err := buildAddFileBody(filename, content)
+	if err != nil {
+		return nil, fmt.Errorf("build addfile body: %w", err)
+	}
+
 	params := url.Values{
-		"mode":     {"addurl"},
-		"name":     {nzbURL},
+		"mode":     {"addfile"},
 		"nzbname":  {title},
 		"cat":      {category},
 		"priority": {fmt.Sprintf("%d", priority)},
@@ -56,13 +87,75 @@ func (c *Client) AddURL(ctx context.Context, nzbURL, title, category string, pri
 	}
 
 	var resp AddURLResponse
-	if err := c.apiCall(ctx, params, &resp); err != nil {
-		return nil, fmt.Errorf("add url: %w", err)
+	if err := c.apiUpload(ctx, params, body, contentType, &resp); err != nil {
+		return nil, fmt.Errorf("add nzb: %w", err)
 	}
 	if !resp.Status {
 		return nil, fmt.Errorf("SABnzbd rejected download")
 	}
 	return &resp, nil
+}
+
+// nzbFilename returns a safe .nzb filename for the SAB multipart upload. SAB
+// uses the upload filename as the job's display name when nzbname is not
+// provided; we always set nzbname, but the filename still needs to be benign.
+func nzbFilename(title string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		switch r {
+		case '/', '\\', '\x00':
+			return '_'
+		}
+		return r
+	}, strings.TrimSpace(title))
+	if cleaned == "" {
+		cleaned = "bindery"
+	}
+	return cleaned + ".nzb"
+}
+
+// buildAddFileBody builds the multipart/form-data body SAB expects for
+// mode=addfile. Field name is "name" — that's what SAB looks for.
+func buildAddFileBody(filename string, content []byte) (*bytes.Buffer, string, error) {
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	part, err := mw.CreateFormFile("name", filename)
+	if err != nil {
+		return nil, "", err
+	}
+	if _, err := part.Write(content); err != nil {
+		return nil, "", err
+	}
+	if err := mw.Close(); err != nil {
+		return nil, "", err
+	}
+	return &body, mw.FormDataContentType(), nil
+}
+
+func (c *Client) validateNZBFetchURL(raw string) error {
+	if c.validateNZBURL == nil {
+		return httpsec.ValidateOutboundURL(raw, httpsec.PolicyLAN)
+	}
+	return c.validateNZBURL(raw)
+}
+
+func (c *Client) fetchNZBContent(ctx context.Context, nzbURL string) ([]byte, error) {
+	if err := c.validateNZBFetchURL(nzbURL); err != nil {
+		return nil, fmt.Errorf("fetch nzb: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, nzbURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("fetch nzb: %w", err)
+	}
+	resp, err := c.fetchHTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch nzb from indexer: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return nil, fmt.Errorf("fetch nzb: indexer returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 50<<20)) // 50 MB cap
 }
 
 // GetQueue returns the current download queue.
@@ -195,6 +288,35 @@ func (c *Client) apiCall(ctx context.Context, params url.Values, target interfac
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	return json.NewDecoder(resp.Body).Decode(target)
+}
+
+// apiUpload POSTs a multipart body to the SAB /api endpoint. The api-key
+// and output params still travel as query string (SAB accepts both shapes
+// for addfile; query is what apiCall does for everything else, so keep the
+// surface consistent).
+func (c *Client) apiUpload(ctx context.Context, params url.Values, body *bytes.Buffer, contentType string, target interface{}) error {
+	params.Set("apikey", c.apiKey)
+	params.Set("output", "json")
+
+	u := fmt.Sprintf("%s/api?%s", c.baseURL, params.Encode())
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, body)
+	if err != nil {
+		return fmt.Errorf("build upload for %s: %w", redactAPIURL(u), err)
+	}
+	req.Header.Set("Content-Type", contentType)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("upload to %s: %w", redactAPIURL(u), err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	return json.NewDecoder(resp.Body).Decode(target)

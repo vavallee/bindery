@@ -6,6 +6,7 @@
     "edit": "Edit",
     "save": "Save",
     "saving": "Saving...",
+    "deleting": "Deleting...",
     "test": "Test",
     "testing": "Testing…",
     "refresh": "Refresh",
@@ -31,7 +32,18 @@
     "connOk": "Connection successful!",
     "connFail": "Test failed: {{error}}",
     "prev": "Prev",
-    "next": "Next"
+    "next": "Next",
+    "copy": "Copy",
+    "copied": "Copied",
+    "clipboardBlocked": "Clipboard access is blocked. Copy the selected text below.",
+    "clipboardTextLabel": "Text to copy"
+  },
+  "monitorMode": {
+    "all": "All books",
+    "future": "Future books only",
+    "latest": "Latest only",
+    "none": "None",
+    "series": "By series"
   },
   "nav": {
     "authors": "Authors",
@@ -114,6 +126,19 @@
     "deleteConfirm": "Delete this author and all their books?",
     "deleteWithFilesConfirm": "Delete this author, {{total}} book(s), AND {{withFiles}} file(s)/folder(s) on disk?\n\nThis cannot be undone.",
     "bulkDeleteConfirm": "Delete {{count}} author(s) and all their books?"
+  },
+  "authorDetail": {
+    "bulk": {
+      "monitor": "Monitor",
+      "unmonitor": "Unmonitor",
+      "exclude": "Exclude",
+      "delete": "Delete",
+      "excludeConfirm": "Exclude {{count}} book(s)? Excluded books are hidden and blocked from re-import on the next metadata refresh.",
+      "deleteConfirm": "Delete {{count}} book(s)? Files on disk are not removed.",
+      "success": "{{action}} applied to {{count}} book(s).",
+      "partial": "{{action}}: {{ok}} of {{total}} succeeded. First error: {{error}}",
+      "failed": "Bulk {{action}} failed: {{error}}"
+    }
   },
   "books": {
     "title": "Books",
@@ -256,6 +281,40 @@
         "dismissRunConfirm": "Dismiss {{count}} review items from run #{{runId}}? This cannot be undone."
       }
     },
+    "calibre": {
+      "runs": {
+        "heading": "Recent imports",
+        "description": "Bindery tracks every live import so you can preview and undo it. Files on disk are never touched — only the metadata rows Bindery created or modified.",
+        "refresh": "Refresh",
+        "empty": "No Calibre imports recorded yet.",
+        "runLabel": "Run #{{runId}} · {{status}}",
+        "startedAt": "Started {{startedAt}}",
+        "statusRunning": "Running",
+        "statusCompleted": "Completed",
+        "statusFailed": "Failed",
+        "statusRolledBack": "Rolled back",
+        "preview": "Preview rollback",
+        "previewing": "Previewing…",
+        "rollback": "Roll back…",
+        "rolledBack": "Rolled back",
+        "rollingBack": "Rolling back…",
+        "modalTitle": "Roll back Calibre import #{{runId}}",
+        "modalIntro": "Bindery will revert metadata changes made by this import. Files on disk are never deleted.",
+        "actionsPlanned": "{{count}} action(s) planned",
+        "entitiesDeleted": "{{count}} entities will be deleted",
+        "provenanceUnlinked": "{{count}} link(s) will be removed",
+        "filesAffected": "{{count}} book row(s) referenced files on disk",
+        "filesOnDiskWarning": "Files on disk are NOT removed by rollback. Delete them manually if you need to.",
+        "skipped": "{{count}} entries will be skipped (already rolled back or out of scope)",
+        "actionsHeading": "Planned actions",
+        "noActions": "Nothing to do.",
+        "applyRollback": "Apply rollback",
+        "applying": "Applying…",
+        "cancel": "Cancel",
+        "error": "Rollback failed: {{error}}",
+        "appliedSummary": "Rollback complete — {{deleted}} deleted, {{unlinked}} link(s) removed, {{skipped}} skipped, {{failed}} failures."
+      }
+    },
     "indexers": {
       "heading": "Indexers",
       "addButton": "+ Add Indexer",
@@ -264,12 +323,61 @@
       "connectionFail": "Test failed: {{error}}",
       "testOk": "Connected — HTTP {{status}}, {{categories}} categories, {{results}} results in test search, {{latency}} ms",
       "testWarn": "Connected — but test search returned 0 results. Check your API key permissions and category IDs (HTTP {{status}}, {{categories}} categories, {{latency}} ms)",
-      "testFail": "Error: {{error}}"
+      "testFail": "Error: {{error}}",
+      "form": {
+        "name": "Name",
+        "namePlaceholder": "Name",
+        "namePlaceholderExample": "Name (e.g. NZBGeek)",
+        "type": "Indexer Type",
+        "typeNewznab": "Newznab",
+        "typeNewznabUsenet": "Newznab (Usenet)",
+        "typeTorznab": "Torznab",
+        "typeTorznabTorrent": "Torznab (Torrent)",
+        "url": "URL",
+        "urlPlaceholder": "URL",
+        "urlPlaceholderExample": "URL (e.g. https://api.nzbgeek.info or http://prowlarr:9696/1/api)",
+        "urlHintEdit": "Use a base Newznab URL (for example: https://api.nzbgeek.info) or a full Torznab endpoint (for example: http://prowlarr:9696/1/api).",
+        "urlHintAdd": "For Prowlarr, paste the Torznab endpoint URL (usually ending in /api) and API key.",
+        "apiKey": "API Key",
+        "categories": "Categories",
+        "categoriesPlaceholder": "Categories (e.g. 7020, 7120, 3030)",
+        "categoriesHint": "Comma-separated Newznab category IDs. 7020 = eBooks, 3030 = Audiobooks. Add custom IDs for indexers with non-standard categories (e.g. 7120 for German books)."
+      }
+    },
+    "prowlarr": {
+      "heading": "Prowlarr",
+      "description": "Add Prowlarr once — all configured indexers sync automatically.",
+      "addButton": "Add Prowlarr",
+      "lastSynced": "Last synced: {{at}} · {{count}} indexers",
+      "synced": "Synced — added {{added}}, updated {{updated}}, removed {{removed}}",
+      "syncFailed": "Sync failed: {{error}}",
+      "connectedVersion": "Connected — Prowlarr {{version}}",
+      "connFailed": "Connection failed: {{error}}",
+      "connFailedGeneric": "Connection failed",
+      "edit": "Edit",
+      "test": "Test",
+      "syncNow": "Sync now",
+      "delete": "Delete",
+      "confirmDelete": "Delete Prowlarr instance \"{{name}}\" and all its synced indexers?",
+      "saveFailed": "Save failed",
+      "namePlaceholder": "Prowlarr",
+      "urlPlaceholder": "http://prowlarr:9696",
+      "apiKeyPlaceholder": "API Key",
+      "apiKeyEditLabel": "API Key (leave blank to keep current)",
+      "apiKeyEditHint": "A new key is propagated to every indexer synced from this Prowlarr instance immediately.",
+      "urlChangeWarning": "Click Sync now after saving to rebuild the per-indexer URLs against the new base.",
+      "syncOnStartup": "Sync on startup",
+      "saveAndSync": "Save & sync",
+      "savingAndSyncing": "Saving & syncing…",
+      "unknownError": "Unknown error"
     },
     "clients": {
       "heading": "Download Clients",
       "addButton": "+ Add Client",
-      "empty": "No download clients configured. Add SABnzbd to enable downloads."
+      "empty": "No download clients configured. Add SABnzbd to enable downloads.",
+      "audiobookCategoryLabel": "Audiobook Category / Label",
+      "audiobookCategoryPlaceholder": "audiobooks",
+      "audiobookCategoryHelp": "Optional. When set, audiobook grabs use this category instead of the one above. Leave blank to use the same category as ebooks."
     },
     "notifications": {
       "heading": "Webhook Notifications",
@@ -285,9 +393,32 @@
     },
     "quality": {
       "heading": "Quality Profiles",
+      "newProfile": "+ New Profile",
+      "description": "A profile picks which file formats Bindery will grab and which counts as \"good enough\" to stop searching. Order the list worst-to-best — releases are scored by index.",
       "empty": "No quality profiles configured.",
       "cutoff": "Cutoff:",
-      "upgradesAllowed": "Upgrades allowed"
+      "upgradesAllowed": "Upgrades allowed",
+      "deleteConfirm": "Delete quality profile \"{{name}}\"?",
+      "deleteFail": "Failed to delete profile",
+      "saveFail": "Failed to save profile",
+      "formName": "Name",
+      "formNamePlaceholder": "e.g. Ebook Preferred",
+      "formPreference": "Allowed formats and preference order",
+      "formPreferenceHint": "Tick a format to allow it. Reorder worst → best — releases ranked higher in the list win.",
+      "formAddFormat": "Add format:",
+      "formCutoff": "Cutoff",
+      "formCutoffHint": "Once a book is stored at the cutoff format or better, Bindery stops searching for upgrades.",
+      "formCutoffNoOptions": "Allow at least one format first",
+      "formUpgradeAllowed": "Allow upgrading to a better format",
+      "saveChanges": "Save changes",
+      "createProfile": "Create profile",
+      "errorName": "Name is required",
+      "errorNoFormats": "At least one format is required",
+      "errorNoAllowed": "At least one format must be allowed",
+      "errorCutoffRequired": "Cutoff is required",
+      "errorCutoffNotAllowed": "Cutoff must be one of the allowed formats",
+      "moveUp": "Move up",
+      "moveDown": "Move down"
     },
     "metadata": {
       "heading": "Metadata Profiles",
@@ -521,6 +652,8 @@
     "title": "Add Author",
     "metadataProfile": "Metadata profile",
     "rootFolder": "Root folder",
+    "monitorMode": "Monitor mode",
+    "monitorLatestCount": "Latest book count",
     "autoGrabLabel": "Auto-grab books on add",
     "autoGrabHint": "Bindery will always fetch the book catalogue. Enable this to also queue downloads immediately.",
     "searchPlaceholder": "Search by author name...",

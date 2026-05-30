@@ -17,7 +17,7 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
-func fileFixture(t *testing.T) (*FileHandler, *db.BookRepo, *models.Author, context.Context) {
+func fileFixture(t *testing.T) (*FileHandler, *db.BookRepo, *models.Author, context.Context, string) {
 	t.Helper()
 	database, err := db.OpenMemory()
 	if err != nil {
@@ -31,11 +31,15 @@ func fileFixture(t *testing.T) (*FileHandler, *db.BookRepo, *models.Author, cont
 	if err := authors.Create(ctx, author); err != nil {
 		t.Fatal(err)
 	}
-	return NewFileHandler(books), books, author, ctx
+	// isAllowedPath fails closed when no roots are configured (security
+	// hardening sweep); fixture returns its TempDir as the configured root
+	// and the test stores book file paths under it.
+	root := t.TempDir()
+	return NewFileHandler(books, root), books, author, ctx, root
 }
 
 func TestFileDownload_BadID(t *testing.T) {
-	h, _, _, _ := fileFixture(t)
+	h, _, _, _, _ := fileFixture(t)
 	rec := httptest.NewRecorder()
 	h.Download(rec, withURLParam(httptest.NewRequest(http.MethodGet, "/api/v1/file/abc/download", nil), "id", "abc"))
 	if rec.Code != http.StatusBadRequest {
@@ -44,7 +48,7 @@ func TestFileDownload_BadID(t *testing.T) {
 }
 
 func TestFileDownload_NotFound(t *testing.T) {
-	h, _, _, _ := fileFixture(t)
+	h, _, _, _, _ := fileFixture(t)
 	rec := httptest.NewRecorder()
 	h.Download(rec, withURLParam(httptest.NewRequest(http.MethodGet, "/api/v1/file/999/download", nil), "id", "999"))
 	if rec.Code != http.StatusNotFound {
@@ -53,7 +57,7 @@ func TestFileDownload_NotFound(t *testing.T) {
 }
 
 func TestFileDownload_NoFilePath(t *testing.T) {
-	h, books, author, ctx := fileFixture(t)
+	h, books, author, ctx, _ := fileFixture(t)
 	book := &models.Book{ForeignID: "OL1B", AuthorID: author.ID, Title: "T"}
 	if err := books.Create(ctx, book); err != nil {
 		t.Fatal(err)
@@ -66,13 +70,14 @@ func TestFileDownload_NoFilePath(t *testing.T) {
 }
 
 func TestFileDownload_FileMissingOnDisk(t *testing.T) {
-	h, books, author, ctx := fileFixture(t)
+	h, books, author, ctx, tmp := fileFixture(t)
 	book := &models.Book{ForeignID: "OL1B", AuthorID: author.ID, Title: "T"}
 	if err := books.Create(ctx, book); err != nil {
 		t.Fatal(err)
 	}
-	// FilePath set to a non-existent path.
-	if err := books.SetFilePath(ctx, book.ID, "/nope/not-a-real-path.epub"); err != nil {
+	// FilePath set to a path under the allowed root but the file doesn't
+	// exist — isAllowedPath passes, os.Stat fails → 404.
+	if err := books.SetFilePath(ctx, book.ID, filepath.Join(tmp, "missing.epub")); err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
@@ -82,9 +87,27 @@ func TestFileDownload_FileMissingOnDisk(t *testing.T) {
 	}
 }
 
+func TestFileDownload_PathOutsideAllowedRoots(t *testing.T) {
+	h, books, author, ctx, _ := fileFixture(t)
+	book := &models.Book{ForeignID: "OL1C", AuthorID: author.ID, Title: "T"}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	// Path is outside the configured allowedRoots — isAllowedPath fails
+	// closed → 403, defending against tampered DB rows or importer bugs
+	// that point at /etc/passwd or anywhere else off the library tree.
+	if err := books.SetFilePath(ctx, book.ID, "/etc/passwd"); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.Download(rec, withURLParam(httptest.NewRequest(http.MethodGet, "/api/v1/file/1/download", nil), "id", "1"))
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("out-of-root path: expected 403, got %d", rec.Code)
+	}
+}
+
 func TestFileDownload_EbookFile(t *testing.T) {
-	h, books, author, ctx := fileFixture(t)
-	tmp := t.TempDir()
+	h, books, author, ctx, tmp := fileFixture(t)
 	path := filepath.Join(tmp, "book.epub")
 	if err := os.WriteFile(path, []byte("epub bytes"), 0o644); err != nil {
 		t.Fatal(err)
@@ -111,8 +134,7 @@ func TestFileDownload_EbookFile(t *testing.T) {
 }
 
 func TestFileDownload_NonASCIIFilename(t *testing.T) {
-	h, books, author, ctx := fileFixture(t)
-	tmp := t.TempDir()
+	h, books, author, ctx, tmp := fileFixture(t)
 	name := "日本語.epub"
 	path := filepath.Join(tmp, name)
 	if err := os.WriteFile(path, []byte("epub bytes"), 0o644); err != nil {
@@ -150,8 +172,7 @@ func TestFileDownload_NonASCIIFilename(t *testing.T) {
 }
 
 func TestFileDownload_AudiobookDirStreamsZip(t *testing.T) {
-	h, books, author, ctx := fileFixture(t)
-	tmp := t.TempDir()
+	h, books, author, ctx, tmp := fileFixture(t)
 	dir := filepath.Join(tmp, "Title (2020)")
 	if err := os.MkdirAll(filepath.Join(dir, "nested"), 0o755); err != nil {
 		t.Fatal(err)

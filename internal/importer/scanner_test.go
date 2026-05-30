@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -536,4 +537,171 @@ func TestTryImportInternal_HistoryEventIncludesFormat(t *testing.T) {
 	if got := data["format"]; got != models.MediaTypeEbook {
 		t.Errorf("Bug #13: history event missing format field: got %q, want %q — user cannot tell ebook vs audiobook was imported", got, models.MediaTypeEbook)
 	}
+}
+
+// spyNotifier records every Send so emit-site tests can assert the
+// notification was published with the expected event type and payload.
+type spyNotifier struct {
+	mu    sync.Mutex
+	calls []spyCall
+}
+
+type spyCall struct {
+	eventType string
+	payload   map[string]interface{}
+}
+
+func (n *spyNotifier) Send(_ context.Context, eventType string, payload map[string]interface{}) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.calls = append(n.calls, spyCall{eventType: eventType, payload: payload})
+}
+
+func (n *spyNotifier) lookup(eventType string) *spyCall {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for i := range n.calls {
+		if n.calls[i].eventType == eventType {
+			return &n.calls[i]
+		}
+	}
+	return nil
+}
+
+// TestImportSuccess_FiresBookImported is the regression test for issue #849:
+// before this fix, only manual grabs from the queue page fired notifications.
+// A successful import wrote a HistoryEventBookImported row but never published
+// to the user-configured webhooks. After the fix, every clean import must
+// emit EventBookImported with the book title and format.
+func TestImportSuccess_FiresBookImported(t *testing.T) {
+	libDir := t.TempDir()
+	dlDir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(dlDir, "book.epub"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	ctx := context.Background()
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	dlRepo := db.NewDownloadRepo(database)
+	clientRepo := db.NewDownloadClientRepo(database)
+
+	author := &models.Author{ForeignID: "OLA-849", Name: "Notif Author", SortName: "Author, Notif", Monitored: true, MetadataProvider: "openlibrary"}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{
+		ForeignID: "OLB-849", AuthorID: author.ID, Title: "Issue 849",
+		SortTitle: "Issue 849", Status: models.BookStatusWanted,
+		Monitored: true, AnyEditionOK: true, MetadataProvider: "openlibrary",
+	}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	dl := &models.Download{
+		GUID: "849-guid", Title: "Issue 849", BookID: &book.ID,
+		Status: models.StateCompleted,
+	}
+	if err := dlRepo.Create(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+
+	spy := &spyNotifier{}
+	s := NewScanner(dlRepo, clientRepo, bookRepo, authorRepo, db.NewHistoryRepo(database), libDir, "", "", "", "").
+		WithNotifier(spy)
+	s.tryImportInternal(ctx, dl, dlDir, "", "", nil)
+
+	call := spy.lookup(notifierEventBookImported)
+	if call == nil {
+		t.Fatalf("expected EventBookImported to fire; got calls: %+v", spy.calls)
+		return
+	}
+	if got, want := call.payload["title"], book.Title; got != want {
+		t.Errorf("payload title = %q, want %q", got, want)
+	}
+	if got, want := call.payload["format"], models.MediaTypeEbook; got != want {
+		t.Errorf("payload format = %q, want %q", got, want)
+	}
+}
+
+// TestFailImport_FiresDownloadFailed asserts that failImport — the helper
+// called for unwritable destinations, partial imports, unmatched downloads,
+// etc. — publishes EventDownloadFailed (issue #849). The notifier has no
+// dedicated EventImportFailed; downloadFailed is the channel for both.
+func TestFailImport_FiresDownloadFailed(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	ctx := context.Background()
+	dlRepo := db.NewDownloadRepo(database)
+
+	dl := &models.Download{GUID: "fail-guid", Title: "Broken Book", Status: models.StateImporting}
+	if err := dlRepo.Create(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+
+	spy := &spyNotifier{}
+	s := &Scanner{downloads: dlRepo, history: db.NewHistoryRepo(database), notif: spy}
+
+	s.failImport(ctx, dl, models.StateImportFailed, "destination unwritable")
+
+	call := spy.lookup(notifierEventDownloadFailed)
+	if call == nil {
+		t.Fatalf("expected EventDownloadFailed to fire; got calls: %+v", spy.calls)
+		return
+	}
+	if got, want := call.payload["title"], dl.Title; got != want {
+		t.Errorf("payload title = %q, want %q", got, want)
+	}
+	if got, want := call.payload["message"], "destination unwritable"; got != want {
+		t.Errorf("payload message = %q, want %q", got, want)
+	}
+}
+
+// TestMarkDownloadFailed_FiresDownloadFailed asserts that the inline download-
+// failure helper (used by Transmission/qBittorrent error paths) also fires
+// EventDownloadFailed (issue #849).
+func TestMarkDownloadFailed_FiresDownloadFailed(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	ctx := context.Background()
+	dlRepo := db.NewDownloadRepo(database)
+	dl := &models.Download{GUID: "stall-guid", Title: "Stalled Book", Status: models.StateDownloading}
+	if err := dlRepo.Create(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+
+	spy := &spyNotifier{}
+	s := &Scanner{downloads: dlRepo, history: db.NewHistoryRepo(database), notif: spy}
+	s.markDownloadFailed(ctx, dl, "torrent errored")
+
+	call := spy.lookup(notifierEventDownloadFailed)
+	if call == nil {
+		t.Fatalf("expected EventDownloadFailed; got calls: %+v", spy.calls)
+		return
+	}
+	if got := call.payload["message"]; got != "torrent errored" {
+		t.Errorf("payload message = %v, want %q", got, "torrent errored")
+	}
+}
+
+// TestNotify_NilNotifierDoesNotPanic guards the optional-injection contract:
+// a Scanner with no notifier set must silently skip emission, not crash.
+func TestNotify_NilNotifierDoesNotPanic(t *testing.T) {
+	s := &Scanner{}
+	s.notify(context.Background(), notifierEventGrabbed, map[string]interface{}{"title": "x"})
 }

@@ -95,7 +95,7 @@ func seriesFixtureWithProvider(t *testing.T, provider *stubSeriesProvider, searc
 	if searcher == nil {
 		searcher = &mockBookSearcher{}
 	}
-	return NewSeriesHandler(seriesRepo, bookRepo, authorRepo, metadata.NewAggregator(provider), searcher), seriesRepo, authorRepo, bookRepo
+	return NewSeriesHandler(seriesRepo, bookRepo, authorRepo, metadata.NewAggregator(provider).WithAudnexClient(nil), searcher), seriesRepo, authorRepo, bookRepo
 }
 
 func seriesFixtureWithProviderAndSettings(t *testing.T, provider *stubSeriesProvider, searcher BookSearcher, envEnabled bool) (*SeriesHandler, *db.SeriesRepo, *db.AuthorRepo, *db.BookRepo, *db.SettingsRepo) {
@@ -112,9 +112,28 @@ func seriesFixtureWithProviderAndSettings(t *testing.T, provider *stubSeriesProv
 	if searcher == nil {
 		searcher = &mockBookSearcher{}
 	}
-	handler := NewSeriesHandler(seriesRepo, bookRepo, authorRepo, metadata.NewAggregator(provider), searcher).
+	handler := NewSeriesHandler(seriesRepo, bookRepo, authorRepo, metadata.NewAggregator(provider).WithAudnexClient(nil), searcher).
 		WithHardcoverFeatureSettings(settingsRepo, envEnabled)
 	return handler, seriesRepo, authorRepo, bookRepo, settingsRepo
+}
+
+func seriesFixtureWithProviderAndEditions(t *testing.T, provider *stubSeriesProvider, searcher BookSearcher) (*SeriesHandler, *db.SeriesRepo, *db.AuthorRepo, *db.BookRepo, *db.EditionRepo) {
+	t.Helper()
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	seriesRepo := db.NewSeriesRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	authorRepo := db.NewAuthorRepo(database)
+	editionRepo := db.NewEditionRepo(database)
+	if searcher == nil {
+		searcher = &mockBookSearcher{}
+	}
+	handler := NewSeriesHandler(seriesRepo, bookRepo, authorRepo, metadata.NewAggregator(provider).WithAudnexClient(nil), searcher).
+		WithEditionHydration(editionRepo)
+	return handler, seriesRepo, authorRepo, bookRepo, editionRepo
 }
 
 func TestSeriesList_Empty(t *testing.T) {
@@ -1308,6 +1327,7 @@ func TestSeriesFillCreatesMissingHardcoverBook(t *testing.T) {
 	}
 	if created == nil {
 		t.Fatal("expected Hardcover book to be created")
+		return
 	}
 	if created.MetadataProvider != "hardcover" {
 		t.Fatalf("expected metadata provider to be preserved, got %q", created.MetadataProvider)
@@ -1321,6 +1341,65 @@ func TestSeriesFillCreatesMissingHardcoverBook(t *testing.T) {
 	}
 	if len(books) != 1 || books[0].ForeignID != "hc:the-way-of-kings" {
 		t.Fatalf("expected created book linked to series, got %+v", books)
+	}
+}
+
+func TestSeriesFillHydratesHardcoverEditionsBeforeQueue(t *testing.T) {
+	catalog := stormlightCatalog()
+	catalog.Books[0].Book.MediaType = models.MediaTypeAudiobook
+	searcher := newMockBookSearcher()
+	h, seriesRepo, _, bookRepo, editionRepo := seriesFixtureWithProviderAndEditions(t, &stubSeriesProvider{
+		catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
+	}, searcher)
+	audioASIN := "B000STORML"
+	h.WithEditionFetcher(func(context.Context, string) ([]models.Edition, error) {
+		return []models.Edition{{
+			ForeignID: "hc:stormlight-audio",
+			Title:     "The Way of Kings",
+			ASIN:      &audioASIN,
+			Format:    "Audiobook",
+			Monitored: true,
+		}}, nil
+	})
+	series := &models.Series{ForeignID: "ol-series:stormlight", Title: "The Stormlight Archive"}
+	if err := seriesRepo.Create(contextBackground(), series); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.UpsertHardcoverLink(contextBackground(), &models.SeriesHardcoverLink{
+		SeriesID:            series.ID,
+		HardcoverSeriesID:   catalog.ForeignID,
+		HardcoverProviderID: catalog.ProviderID,
+		HardcoverTitle:      catalog.Title,
+		HardcoverAuthorName: catalog.AuthorName,
+		HardcoverBookCount:  catalog.BookCount,
+		Confidence:          1,
+		LinkedBy:            "manual",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.Fill(rec, withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/series/1/fill", nil), "id", strconv.FormatInt(series.ID, 10)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	queued := searcher.waitForCall(t, time.Second)
+	if queued.ASIN != audioASIN {
+		t.Fatalf("queued book ASIN = %q, want %q", queued.ASIN, audioASIN)
+	}
+	created, err := bookRepo.GetByForeignID(contextBackground(), "hc:the-way-of-kings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created == nil || created.ASIN != audioASIN {
+		t.Fatalf("created book ASIN not persisted: %+v", created)
+	}
+	editions, err := editionRepo.ListByBook(contextBackground(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(editions) != 1 || editions[0].ForeignID != "hc:stormlight-audio" {
+		t.Fatalf("expected hydrated edition, got %+v", editions)
 	}
 }
 

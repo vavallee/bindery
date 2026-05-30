@@ -43,6 +43,24 @@ type absNotifier interface {
 	ScanLibrary(ctx context.Context, libraryID string) error
 }
 
+// eventNotifier publishes a webhook event for a downstream notification target
+// (Discord/ntfy/etc.). It is the narrow shape the scanner needs from
+// *notifier.Notifier — declared locally so tests can spy on Send without
+// pulling the whole notifier package and its HTTP/SSRF machinery into the
+// fixture (issue #849).
+type eventNotifier interface {
+	Send(ctx context.Context, eventType string, payload map[string]interface{})
+}
+
+// Event-type strings. Duplicated from internal/notifier to avoid an import
+// cycle risk and keep this package free of notifier internals. Must stay in
+// sync with notifier.Event* constants (covered by their respective tests).
+const (
+	notifierEventGrabbed        = "grabbed"
+	notifierEventBookImported   = "bookImported"
+	notifierEventDownloadFailed = "downloadFailed"
+)
+
 // Scanner checks for completed downloads and imports them into the library.
 type Scanner struct {
 	downloads            *db.DownloadRepo
@@ -64,6 +82,7 @@ type Scanner struct {
 	audiobookDownloadDir string
 	absLib               absNotifier
 	absLibraryIDsFn      func() []string
+	notif                eventNotifier
 }
 
 // NewScanner creates an import scanner. downloadPathRemap is an optional
@@ -204,6 +223,47 @@ func (s *Scanner) WithABSNotifier(n absNotifier, libraryIDsFn func() []string) *
 	s.absLib = n
 	s.absLibraryIDsFn = libraryIDsFn
 	return s
+}
+
+// WithNotifier attaches a webhook event notifier so import-success and
+// download-failure transitions publish to user-configured ntfy/Discord/etc.
+// endpoints. Before this wiring (issue #849) only manual grabs from the queue
+// page emitted events — every other site that wrote a history row was silent.
+func (s *Scanner) WithNotifier(n eventNotifier) *Scanner {
+	s.notif = n
+	return s
+}
+
+// notify is a nil-safe Send wrapper. Keeps every call site a one-liner without
+// repeating the guard, and lets tests construct a Scanner without a notifier.
+func (s *Scanner) notify(ctx context.Context, eventType string, payload map[string]interface{}) {
+	if s.notif == nil {
+		return
+	}
+	s.notif.Send(ctx, eventType, payload)
+}
+
+// importedPayload builds the EventBookImported webhook payload. The book may
+// be nil in the unmatched-import edge case; in that case fall back to the
+// download title so the webhook still carries a meaningful "title". Path is
+// optional ("" omits it from the payload) — the ebook path varies per file in
+// a multi-format bundle so emitting one of them would be misleading.
+func importedPayload(book *models.Book, dl *models.Download, format, path string) map[string]interface{} {
+	title := ""
+	if book != nil {
+		title = book.Title
+	}
+	if title == "" && dl != nil {
+		title = dl.Title
+	}
+	p := map[string]interface{}{
+		"title":  title,
+		"format": format,
+	}
+	if path != "" {
+		p["path"] = path
+	}
+	return p
 }
 
 // pushToABS triggers an ABS library scan after a successful audiobook import.
@@ -501,6 +561,10 @@ func (s *Scanner) RecoverInterruptedImports(ctx context.Context) {
 			"message": "import interrupted (process restart) — re-queued for retry",
 			"status":  string(models.StateImportFailed),
 		})
+		// Intentionally NOT firing EventDownloadFailed here: this is a benign
+		// startup-recovery transition that re-queues the import for retry, not a
+		// terminal failure. Webhooking every interrupted import on every restart
+		// would be noise for the user (issue #849).
 	}
 }
 
@@ -533,7 +597,10 @@ func (s *Scanner) updateDownloadStatus(ctx context.Context, id int64, status mod
 
 // failImport records an import failure with a user-facing reason. It persists
 // the status + message and emits an importFailed history event so the cause
-// is visible in the Queue/History UI.
+// is visible in the Queue/History UI. Also publishes EventDownloadFailed so
+// user-configured webhooks see the failure (issue #849) — there is no separate
+// "import failed" event in the notifier enum, so importFailed and
+// downloadFailed share the channel.
 func (s *Scanner) failImport(ctx context.Context, dl *models.Download, status models.DownloadState, reason string) {
 	if err := s.downloads.SetErrorWithStatus(ctx, dl.ID, status, reason); err != nil {
 		slog.Warn("failed to persist import error", "download_id", dl.ID, "status", status, "error", err)
@@ -542,6 +609,10 @@ func (s *Scanner) failImport(ctx context.Context, dl *models.Download, status mo
 		"guid":    dl.GUID,
 		"message": reason,
 		"status":  string(status),
+	})
+	s.notify(ctx, notifierEventDownloadFailed, map[string]interface{}{
+		"title":   dl.Title,
+		"message": reason,
 	})
 }
 
@@ -567,6 +638,10 @@ func (s *Scanner) createHistoryEvent(ctx context.Context, eventType string, sour
 func (s *Scanner) markDownloadFailed(ctx context.Context, dl *models.Download, message string) {
 	s.setDownloadError(ctx, dl.ID, message)
 	s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, map[string]string{"guid": dl.GUID, "message": message})
+	s.notify(ctx, notifierEventDownloadFailed, map[string]interface{}{
+		"title":   dl.Title,
+		"message": message,
+	})
 }
 
 // blockStaleImportFailures terminally blocks downloads that are stuck in
@@ -684,6 +759,10 @@ func (s *Scanner) checkSABnzbdDownloads(ctx context.Context, client *models.Down
 				slog.Warn("download failed", "title", dl.Title, "message", slot.FailMessage)
 				s.setDownloadError(ctx, dl.ID, slot.FailMessage)
 				s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, map[string]string{"guid": dl.GUID, "message": slot.FailMessage})
+				s.notify(ctx, notifierEventDownloadFailed, map[string]interface{}{
+					"title":   dl.Title,
+					"message": slot.FailMessage,
+				})
 			}
 		}
 	}
@@ -745,6 +824,10 @@ func (s *Scanner) checkNZBGetDownloads(ctx context.Context, client *models.Downl
 				slog.Warn("download failed", "title", dl.Title, "status", item.Status)
 				s.setDownloadError(ctx, dl.ID, msg)
 				s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, map[string]string{"guid": dl.GUID, "message": msg})
+				s.notify(ctx, notifierEventDownloadFailed, map[string]interface{}{
+					"title":   dl.Title,
+					"message": msg,
+				})
 			}
 		}
 	}
@@ -868,6 +951,8 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 		torrentsMap[strings.ToLower(t.Hash)] = t
 	}
 
+	slog.Debug("qbittorrent poll", "torrents", len(torrents), "downloads", len(allDownloads), "category", client.Category)
+
 	// Track which downloads' sources we observed this cycle (issue #706 finding 4).
 	seenSourceIDs := make(map[int64]bool)
 
@@ -877,6 +962,12 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 		}
 		torrent, ok := torrentsMap[strings.ToLower(*dl.TorrentID)]
 		if !ok {
+			// The torrent is not in qBittorrent's list. Common causes: category
+			// filter mismatch, the torrent was manually removed, or the hash stored
+			// in Bindery doesn't match what qBittorrent returned. This is
+			// blockStaleImportFailures territory; only log at Debug to avoid noise.
+			slog.Debug("qbittorrent: download not found in torrent list",
+				"title", dl.Title, "hash", *dl.TorrentID, "dl_status", dl.Status)
 			continue
 		}
 		seenSourceIDs[dl.ID] = true
@@ -888,6 +979,13 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 		state := strings.ToLower(torrent.State)
 		isComplete := torrent.Progress >= 1.0 || strings.Contains(state, "upload") || strings.Contains(state, "stalledup") || strings.Contains(state, "checkingup")
 		isFailed := strings.Contains(state, "error")
+
+		slog.Debug("qbittorrent: torrent status",
+			"title", dl.Title,
+			"qbit_state", torrent.State,
+			"progress", fmt.Sprintf("%.1f%%", torrent.Progress*100),
+			"dl_status", dl.Status,
+			"is_complete", isComplete)
 
 		if isComplete && (dl.Status == models.StateDownloading || dl.Status == models.StateGrabbed) {
 			rawPath, ok := resolveQbitContentPath(torrent)
@@ -921,7 +1019,7 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 			}
 			downloadPath := s.remapDownloadClientPath(client, rawPath)
 
-			slog.Info("download completed", "title", dl.Title, "path", downloadPath)
+			slog.Info("download completed", "title", dl.Title, "path", downloadPath, "raw_path", rawPath)
 			s.updateDownloadStatus(ctx, dl.ID, models.StateCompleted)
 			s.tryImportQbittorrent(ctx, &dl, downloadPath)
 		} else if isComplete && dl.Status == models.StateImportFailed && dl.ImportRetryCount < importRetryLimit {
@@ -1191,6 +1289,16 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			s.updateDownloadStatus(ctx, dl.ID, models.StateImported)
 			return
 		}
+		// Distinguish "path doesn't exist on this host" from "path exists but
+		// has no recognised book files" — the former almost always means PathRemap
+		// is not configured (qBittorrent and Bindery see different filesystem roots).
+		if _, statErr := os.Stat(downloadPath); os.IsNotExist(statErr) {
+			slog.Warn("download path not found on this host — check PathRemap setting on the download client",
+				"path", downloadPath)
+			s.failImport(ctx, dl, models.StateImportFailed,
+				fmt.Sprintf("download path not found: %q — configure PathRemap on the download client so Bindery can resolve the path", downloadPath))
+			return
+		}
 		slog.Warn("no book files found in download", "path", downloadPath)
 		// No files — retryable if the downloader hasn't flushed them yet.
 		s.failImport(ctx, dl, models.StateImportFailed, fmt.Sprintf("no book files found in %q", downloadPath))
@@ -1327,6 +1435,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		s.pushToABS(ctx)
 
 		s.createHistoryEvent(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, map[string]string{"path": destDir, "format": models.MediaTypeAudiobook})
+		s.notify(ctx, notifierEventBookImported, importedPayload(book, dl, models.MediaTypeAudiobook, destDir))
 		if cleanupFunc != nil {
 			if err := cleanupFunc(); err != nil {
 				slog.Warn("cleanup failed", cleanupWarnAttrs(cleanupClientType, cleanupRemoteID, err)...)
@@ -1451,6 +1560,10 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// download imported exactly once, then clean up.
 	if imported > 0 && failed == 0 {
 		s.updateDownloadStatus(ctx, dl.ID, models.StateImported)
+		// One bookImported notification per download (not per file): a
+		// multi-format ebook bundle (epub + mobi + pdf) is conceptually one
+		// import event from the user's perspective.
+		s.notify(ctx, notifierEventBookImported, importedPayload(book, dl, models.MediaTypeEbook, ""))
 
 		// For "move" mode bindery has no further use for the source files. The
 		// download folder may, however, be a path shared with sibling torrents
@@ -2015,8 +2128,19 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 	// Precompute per-book reconciliation data once. The title tier previously
 	// called normalizeTitle(book.Title) inside the per-file loop — a pure,
 	// loop-invariant function recomputed files×books times. Hoisting it here
-	// makes it run once per book. Only "wanted" books can reconcile, so the
-	// candidate set is filtered down up front, and ASIN lookups become O(1).
+	// makes it run once per book. The candidate set is filtered down up front
+	// and ASIN lookups become O(1).
+	//
+	// Two book states count as candidates:
+	//   - Wanted: the book has no file yet by definition; this is the main case.
+	//   - Imported with no file actually on disk: covers two situations the
+	//     scanner used to ignore entirely. (a) #875: Calibre import sets
+	//     Status=Imported on every book it creates, but in container setups
+	//     where Calibre's library mount differs from Bindery's view, FilePath
+	//     stays empty and the user's 3700 epubs found 0 reconciliation
+	//     targets. (b) The user moved or renamed their files, leaving Imported
+	//     rows pointing at locations that no longer exist; re-scan now relinks
+	//     them rather than leaving the rows orphaned.
 	wantedBooks := make([]scanBook, 0, len(allBooks))
 	asinIndex := make(map[string][]scanBook)
 	// booksByAuthor maps an author ID to the indices (into wantedBooks, i.e. in
@@ -2026,7 +2150,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 	booksByAuthor := make(map[int64][]int)
 	for i := range allBooks {
 		b := &allBooks[i]
-		if b.Status != models.BookStatusWanted {
+		if !isReconcileCandidate(b) {
 			continue
 		}
 		sb := scanBook{book: b, normTitle: normalizeTitle(b.Title)}
@@ -2298,6 +2422,45 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 		"reconciled", reconciled, "unmatched", unmatched, "tagReadFailed", tagReadFailed)
 
 	s.writeScanResult(ctx, len(foundFiles), reconciled, unmatched, tagReadFailed, unmatchedFiles)
+}
+
+// isReconcileCandidate reports whether a book should be considered for
+// file-to-book matching during library scan. Returns true for:
+//
+//   - Status=Wanted books (the default case: the book has no file yet).
+//   - Status=Imported books whose recorded file paths either are empty or
+//     point at locations that no longer exist on disk. This covers #875
+//     (Calibre import leaves Status=Imported with FilePath unpopulated when
+//     Calibre's library mount differs from Bindery's view) and the related
+//     case of users moving their library and re-running a scan.
+//
+// Books with a valid on-disk file at any recorded path are skipped — the
+// scanner has no reason to re-reconcile a file that's already where it
+// should be, and re-attaching would churn book_files rows for no benefit.
+func isReconcileCandidate(b *models.Book) bool {
+	if b == nil {
+		return false
+	}
+	if b.Status == models.BookStatusWanted {
+		return true
+	}
+	if b.Status != models.BookStatusImported {
+		return false
+	}
+	// Imported books reconcile only when no path we have on file actually
+	// resolves to a real file. A book row may carry up to three legacy
+	// path columns plus the modern book_files rows; the scanner already
+	// trusts the trackedPaths set for book_files, so here we only need to
+	// gate on the legacy columns.
+	for _, p := range []string{b.FilePath, b.EbookFilePath, b.AudiobookFilePath} {
+		if p == "" {
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			return false
+		}
+	}
+	return true
 }
 
 // unmatchedFile represents a file that could not be reconciled during library scan.

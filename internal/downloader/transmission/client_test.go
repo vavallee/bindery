@@ -2,7 +2,10 @@ package transmission
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +14,13 @@ import (
 	"syscall"
 	"testing"
 )
+
+// newJSONDecoder is a wrapper so tests don't import encoding/json
+// alongside the helpers; keeps the helper section narrow.
+func newJSONDecoder(r io.Reader) *json.Decoder { return json.NewDecoder(r) }
+
+// decodeBase64 is a wrapper around base64.StdEncoding.DecodeString.
+func decodeBase64(s string) ([]byte, error) { return base64.StdEncoding.DecodeString(s) }
 
 // newTestClient creates a Client pointing at the given test server URL.
 func newTestClient(serverURL, username, password string) *Client {
@@ -405,6 +415,7 @@ func TestTest_DNSNotFound(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	if !strings.Contains(err.Error(), "same Docker network") {
 		t.Errorf("expected Docker network hint, got: %q", err.Error())
@@ -420,8 +431,9 @@ func TestTest_ConnectionRefused(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
-	if !strings.Contains(err.Error(), "service may not be running") {
+	if !strings.Contains(err.Error(), "host firewall is rejecting") {
 		t.Errorf("expected port hint, got: %q", err.Error())
 	}
 }
@@ -435,6 +447,7 @@ func TestTest_Timeout(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	if !strings.Contains(err.Error(), "firewall or proxy") {
 		t.Errorf("expected firewall hint, got: %q", err.Error())
@@ -454,11 +467,194 @@ func TestTest_ServerError_NoHint(t *testing.T) {
 	err := c.Test(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	msg := err.Error()
-	for _, hint := range []string{"Docker network", "service may not be running", "firewall or proxy"} {
+	for _, hint := range []string{"Docker network", "host firewall is rejecting", "firewall or proxy"} {
 		if strings.Contains(msg, hint) {
 			t.Errorf("clean server error must not produce hint %q; got: %q", hint, msg)
+		}
+	}
+}
+
+const testTorrentContent = "d8:announce32:http://tracker.example.com/announce4:infod6:lengthi32e4:name8:test.txt12:piece lengthi32e6:pieces20:" +
+	"01234567890123456789ee"
+
+// allowTorrentFetch bypasses the SSRF guard so a test can point at a
+// loopback httptest server. Mirrors allowNZBFetch in the sabnzbd tests.
+func allowTorrentFetch(c *Client) {
+	c.validateTorrentURL = func(string) error { return nil }
+}
+
+// readRPCArgs decodes the JSON-RPC request body and returns the arguments
+// map. Used to assert against the metainfo/filename keys Transmission sees.
+func readRPCArgs(t *testing.T, r *http.Request) map[string]any {
+	t.Helper()
+	body := struct {
+		Method    string         `json:"method"`
+		Arguments map[string]any `json:"arguments"`
+	}{}
+	if err := decodeJSONBody(r, &body); err != nil {
+		t.Fatalf("decode rpc body: %v", err)
+	}
+	return body.Arguments
+}
+
+func decodeJSONBody(r *http.Request, dst any) error {
+	defer r.Body.Close()
+	dec := newJSONDecoder(r.Body)
+	return dec.Decode(dst)
+}
+
+// TestAddTorrent_HTTPURLFetchesContent verifies that an http(s) URL is
+// fetched by Bindery (not Transmission) and submitted as metainfo. This
+// is the fix path for the VPN-isolated-transmission case in #873.
+func TestAddTorrent_HTTPURLFetchesContent(t *testing.T) {
+	indexerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-bittorrent")
+		_, _ = w.Write([]byte(testTorrentContent))
+	}))
+	defer indexerSrv.Close()
+
+	var gotArgs map[string]any
+	transSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotArgs = readRPCArgs(t, r)
+		_, _ = w.Write([]byte(`{"result":"success","arguments":{"torrent-added":{"id":42,"name":"x"}}}`))
+	}))
+	defer transSrv.Close()
+
+	c := newTestClient(transSrv.URL, "", "")
+	allowTorrentFetch(c)
+
+	id, err := c.AddTorrent(context.Background(), indexerSrv.URL+"/file.torrent", "")
+	if err != nil {
+		t.Fatalf("AddTorrent: %v", err)
+	}
+	if id != 42 {
+		t.Errorf("id = %d, want 42", id)
+	}
+	if gotArgs["filename"] != nil {
+		t.Errorf("filename arg must not be set when content is sent via metainfo; got: %v", gotArgs["filename"])
+	}
+	meta, ok := gotArgs["metainfo"].(string)
+	if !ok || meta == "" {
+		t.Fatalf("metainfo arg missing or non-string; got: %v", gotArgs["metainfo"])
+	}
+	decoded, err := decodeBase64(meta)
+	if err != nil {
+		t.Fatalf("metainfo not base64: %v", err)
+	}
+	if string(decoded) != testTorrentContent {
+		t.Errorf("metainfo payload mismatch:\n want %q\n got  %q", testTorrentContent, string(decoded))
+	}
+}
+
+// TestAddTorrent_MagnetLinkSkipsFetch verifies the magnet-link
+// pass-through preserves the old behaviour: no HTTP fetch, magnet URL
+// goes directly into Transmission's filename arg.
+func TestAddTorrent_MagnetLinkSkipsFetch(t *testing.T) {
+	fetchCalled := false
+	indexerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fetchCalled = true
+	}))
+	defer indexerSrv.Close()
+
+	var gotArgs map[string]any
+	transSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotArgs = readRPCArgs(t, r)
+		_, _ = w.Write([]byte(`{"result":"success","arguments":{"torrent-added":{"id":7,"name":"m"}}}`))
+	}))
+	defer transSrv.Close()
+
+	c := newTestClient(transSrv.URL, "", "")
+	allowTorrentFetch(c)
+
+	magnet := "magnet:?xt=urn:btih:abc123&tr=" + url.QueryEscape(indexerSrv.URL)
+	id, err := c.AddTorrent(context.Background(), magnet, "")
+	if err != nil {
+		t.Fatalf("AddTorrent: %v", err)
+	}
+	if id != 7 {
+		t.Errorf("id = %d, want 7", id)
+	}
+	if fetchCalled {
+		t.Error("magnet link path must not fetch the URL through Bindery")
+	}
+	if gotArgs["metainfo"] != nil {
+		t.Errorf("magnet path must not set metainfo; got: %v", gotArgs["metainfo"])
+	}
+	if gotArgs["filename"] != magnet {
+		t.Errorf("magnet path filename mismatch; got: %v", gotArgs["filename"])
+	}
+}
+
+// TestAddTorrent_HTTPURLFetchFailure verifies that when the indexer
+// returns an error, AddTorrent fails at the fetch step and never reaches
+// Transmission. This is the diagnostic path: a clear "indexer returned
+// HTTP X" beats Transmission timing out 15 seconds later.
+func TestAddTorrent_HTTPURLFetchFailure(t *testing.T) {
+	indexerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	}))
+	defer indexerSrv.Close()
+
+	transSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("Transmission must not be called when torrent fetch fails")
+	}))
+	defer transSrv.Close()
+
+	c := newTestClient(transSrv.URL, "", "")
+	allowTorrentFetch(c)
+
+	_, err := c.AddTorrent(context.Background(), indexerSrv.URL+"/file.torrent", "")
+	if err == nil {
+		t.Fatal("expected error on indexer 401")
+		return
+	}
+	if !strings.Contains(err.Error(), "401") {
+		t.Errorf("expected HTTP 401 in error; got: %v", err)
+	}
+}
+
+// TestAddTorrent_HTTPURLSSRFBlocked verifies the validateTorrentURL guard
+// rejects loopback URLs in production (when the test bypass is not
+// applied). Symmetric with the SAB and NZBGet SSRF tests.
+func TestAddTorrent_HTTPURLSSRFBlocked(t *testing.T) {
+	transSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("Transmission must not be called when SSRF guard blocks the indexer URL")
+	}))
+	defer transSrv.Close()
+
+	c := newTestClient(transSrv.URL, "", "")
+	// Do NOT call allowTorrentFetch; the guard must be active.
+
+	_, err := c.AddTorrent(context.Background(), "http://127.0.0.1:9999/file.torrent", "")
+	if err == nil {
+		t.Fatal("expected SSRF guard to block loopback URL")
+		return
+	}
+	if !strings.Contains(err.Error(), "url not allowed") {
+		t.Errorf("expected 'url not allowed' in error; got: %v", err)
+	}
+}
+
+// TestIsMagnetLink verifies the scheme detection that switches between
+// pass-through and fetch-then-submit. Tested independently so a future
+// refactor that breaks the detection (e.g. case-sensitivity) shows up
+// here rather than as a Transmission-side failure.
+func TestIsMagnetLink(t *testing.T) {
+	cases := map[string]bool{
+		"magnet:?xt=urn:btih:abc":  true,
+		"MAGNET:?xt=urn:btih:abc":  true,
+		"  magnet:?xt=urn:btih:a ": true,
+		"http://x/file.torrent":    false,
+		"https://x/file.torrent":   false,
+		"":                         false,
+		"magneturl":                false,
+	}
+	for in, want := range cases {
+		if got := isMagnetLink(in); got != want {
+			t.Errorf("isMagnetLink(%q) = %v, want %v", in, got, want)
 		}
 	}
 }

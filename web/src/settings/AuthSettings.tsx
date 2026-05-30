@@ -1,6 +1,8 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, OidcProvider, OidcProviderConfig } from '../api/client'
+import ClipboardManualFallback from '../components/ClipboardManualFallback'
+import { useClipboardCopy } from '../components/useClipboardCopy'
 
 const inputCls = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600'
 
@@ -152,7 +154,7 @@ function AddProviderForm({
   const [callbackTemplate, setCallbackTemplate] = useState('/api/v1/auth/oidc/{id}/callback')
   // undefined = still loading, true = env var set, false = derived from headers
   const [baseConfigured, setBaseConfigured] = useState<boolean | undefined>(undefined)
-  const [copied, setCopied] = useState(false)
+  const callbackClipboard = useClipboardCopy()
 
   useEffect(() => {
     api.oidcRedirectBase()
@@ -166,27 +168,13 @@ function AddProviderForm({
       .catch(() => {})
   }, [])
 
-  // Reset the "copied" badge after 1.5s. Lives in an effect (rather than a
-  // bare setTimeout in the click handler) so it's cleared if the form
-  // unmounts before the timer fires.
-  useEffect(() => {
-    if (!copied) return
-    const t = setTimeout(() => setCopied(false), 1500)
-    return () => clearTimeout(t)
-  }, [copied])
-
   const trimmedId = id.trim()
   const callbackPreview = trimmedId
     ? redirectBase + callbackTemplate.replace('{id}', encodeURIComponent(trimmedId))
     : ''
   const copyCallback = async () => {
     if (!callbackPreview) return
-    try {
-      await navigator.clipboard.writeText(callbackPreview)
-      setCopied(true)
-    } catch {
-      /* clipboard unavailable */
-    }
+    await callbackClipboard.copy(callbackPreview)
   }
 
   const submit = (e: FormEvent) => {
@@ -235,9 +223,12 @@ function AddProviderForm({
             disabled={!callbackPreview}
             className="px-2 py-1.5 text-xs rounded border border-slate-300 dark:border-zinc-700 hover:bg-slate-100 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
           >
-            {copied ? t('settings.oidc.callbackUrlCopied') : t('settings.oidc.callbackUrlCopy')}
+            {callbackClipboard.status === 'copied' ? t('settings.oidc.callbackUrlCopied') : t('settings.oidc.callbackUrlCopy')}
           </button>
         </div>
+        {callbackClipboard.status === 'manual' && (
+          <ClipboardManualFallback text={callbackClipboard.manualText} className="mt-2" />
+        )}
         <p className="text-[11px] text-slate-500 dark:text-zinc-500 mt-1">
           {t('settings.oidc.callbackUrlHint')}
         </p>

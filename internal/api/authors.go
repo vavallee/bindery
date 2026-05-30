@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/vavallee/bindery/internal/auth"
+	"github.com/vavallee/bindery/internal/bookhydrate"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/metadata"
@@ -32,15 +34,19 @@ var (
 const authorAutoSearchConcurrency = 4
 
 type AuthorHandler struct {
-	authors  *db.AuthorRepo
-	aliases  *db.AuthorAliasRepo
-	books    *db.BookRepo
-	series   *db.SeriesRepo
-	meta     *metadata.Aggregator
-	settings *db.SettingsRepo
-	profiles *db.MetadataProfileRepo
-	searcher BookSearcher
-	finder   LibraryFinder
+	authors                     *db.AuthorRepo
+	aliases                     *db.AuthorAliasRepo
+	books                       *db.BookRepo
+	series                      *db.SeriesRepo
+	meta                        *metadata.Aggregator
+	settings                    *db.SettingsRepo
+	profiles                    *db.MetadataProfileRepo
+	searcher                    BookSearcher
+	finder                      LibraryFinder
+	editions                    *db.EditionRepo
+	enhancedHardcoverEnvEnabled bool
+
+	editionFetcher bookhydrate.EditionFetcher
 }
 
 func NewAuthorHandler(authors *db.AuthorRepo, aliases *db.AuthorAliasRepo, books *db.BookRepo, series *db.SeriesRepo, meta *metadata.Aggregator, settings *db.SettingsRepo, profiles *db.MetadataProfileRepo, searcher BookSearcher) *AuthorHandler {
@@ -53,6 +59,76 @@ func NewAuthorHandler(authors *db.AuthorRepo, aliases *db.AuthorAliasRepo, books
 func (h *AuthorHandler) WithFinder(f LibraryFinder) *AuthorHandler {
 	h.finder = f
 	return h
+}
+
+// WithEditionHydration wires edition persistence for supplemental Hardcover
+// books created while syncing author catalogues.
+func (h *AuthorHandler) WithEditionHydration(editions *db.EditionRepo) *AuthorHandler {
+	h.editions = editions
+	return h
+}
+
+// WithEditionFetcher overrides the edition fetcher used by tests.
+func (h *AuthorHandler) WithEditionFetcher(fetcher bookhydrate.EditionFetcher) *AuthorHandler {
+	h.editionFetcher = fetcher
+	return h
+}
+
+// WithHardcoverFeatureSettings wires the enhanced Hardcover feature gate used
+// when a primary-provider book has only a supplemental Hardcover match.
+func (h *AuthorHandler) WithHardcoverFeatureSettings(settings *db.SettingsRepo, envEnabled bool) *AuthorHandler {
+	h.settings = settings
+	h.enhancedHardcoverEnvEnabled = envEnabled
+	return h
+}
+
+func (h *AuthorHandler) enhancedHardcoverEnabled(ctx context.Context) bool {
+	if h.settings == nil {
+		return h.enhancedHardcoverEnvEnabled
+	}
+	return HardcoverFeatureStateFor(ctx, h.settings, h.enhancedHardcoverEnvEnabled).EnhancedHardcoverAPI
+}
+
+func (h *AuthorHandler) hydrateHardcoverEditions(ctx context.Context, book *models.Book) {
+	h.hydrateHardcoverEditionsFrom(ctx, book, "")
+}
+
+func (h *AuthorHandler) hydrateMatchedHardcoverEditions(ctx context.Context, book *models.Book, hardcoverForeignID string) {
+	h.hydrateHardcoverEditionsFrom(ctx, book, hardcoverForeignID)
+}
+
+func (h *AuthorHandler) hydrateHardcoverEditionsFrom(ctx context.Context, book *models.Book, hardcoverForeignID string) {
+	if book == nil || h.editions == nil {
+		return
+	}
+	hardcoverForeignID = strings.TrimSpace(hardcoverForeignID)
+	if hardcoverForeignID == "" && !bookhydrate.IsHardcoverBook(book, book.MetadataProvider) {
+		hardcoverForeignID = strings.TrimSpace(book.HardcoverForeignID)
+	}
+	if hardcoverForeignID != "" {
+		if !strings.HasPrefix(hardcoverForeignID, "hc:") || !h.enhancedHardcoverEnabled(ctx) {
+			return
+		}
+	}
+	fetcher := h.editionFetcher
+	if fetcher == nil && h.meta != nil {
+		if hardcoverForeignID != "" {
+			fetcher = func(ctx context.Context, foreignID string) ([]models.Edition, error) {
+				return h.meta.GetEditionsFromProvider(ctx, "hardcover", foreignID)
+			}
+		} else {
+			fetcher = h.meta.GetEditions
+		}
+	}
+	bookhydrate.HydrateHardcoverEditions(ctx, bookhydrate.Options{
+		Book:              book,
+		Provider:          book.MetadataProvider,
+		ProviderForeignID: hardcoverForeignID,
+		Editions:          h.editions,
+		Books:             h.books,
+		FetchEditions:     fetcher,
+		Enricher:          h.meta,
+	})
 }
 
 func (h *AuthorHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -104,22 +180,55 @@ func (h *AuthorHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Attach the per-author monitored-series pin set when applicable. The
+	// field is omitempty so non-series modes don't bloat the payload, but the
+	// edit modal still needs the existing selection to preselect chips.
+	if author.MonitorMode == models.AuthorMonitorModeSeries {
+		if ids, err := h.authors.ListMonitoredSeriesIDs(r.Context(), id); err == nil {
+			author.MonitoredSeriesIDs = ids
+		}
+	}
+
 	proxyAuthorImages(author)
 	cleanAuthorDescription(author)
 	writeJSON(w, http.StatusOK, author)
 }
 
+// ListSeries returns the series belonging to the author — i.e. the series
+// that any of the author's books are linked to. Backs the monitor-by-series
+// picker (#810) so the edit modal can render a checkbox list scoped to this
+// author rather than the global /series collection.
+func (h *AuthorHandler) ListSeries(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	if h.series == nil {
+		writeJSON(w, http.StatusOK, []models.Series{})
+		return
+	}
+	series, err := h.series.ListByAuthor(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, series)
+}
+
 func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ForeignID             string `json:"foreignAuthorId"`
-		Name                  string `json:"authorName"`
-		QualityProfileID      *int64 `json:"qualityProfileId"`
-		MetadataProfileID     *int64 `json:"metadataProfileId"`
-		RootFolderID          *int64 `json:"rootFolderId"`
-		AudiobookRootFolderID *int64 `json:"audiobookRootFolderId"`
-		Monitored             bool   `json:"monitored"`
-		SearchOnAdd           bool   `json:"searchOnAdd"`
-		MediaType             string `json:"mediaType"`
+		ForeignID             string  `json:"foreignAuthorId"`
+		Name                  string  `json:"authorName"`
+		QualityProfileID      *int64  `json:"qualityProfileId"`
+		MetadataProfileID     *int64  `json:"metadataProfileId"`
+		RootFolderID          *int64  `json:"rootFolderId"`
+		AudiobookRootFolderID *int64  `json:"audiobookRootFolderId"`
+		Monitored             bool    `json:"monitored"`
+		MonitorMode           *string `json:"monitorMode"`
+		MonitorLatestCount    *int    `json:"monitorLatestCount"`
+		SearchOnAdd           bool    `json:"searchOnAdd"`
+		MediaType             string  `json:"mediaType"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -127,6 +236,11 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ForeignID == "" || req.Name == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "foreignAuthorId and authorName required"})
+		return
+	}
+	monitorMode, monitorLatestCount, err := h.resolveCreateMonitorOptions(r.Context(), req.MonitorMode, req.MonitorLatestCount)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -159,7 +273,7 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if canonical != nil {
 		if canRelinkAuthorToUpstream(canonical) {
-			if err := h.relinkExistingAuthorToUpstream(r.Context(), canonical, author, req.Name, req.Monitored, req.QualityProfileID, req.MetadataProfileID, req.RootFolderID, req.AudiobookRootFolderID); err != nil {
+			if err := h.relinkExistingAuthorToUpstream(r.Context(), canonical, author, req.Name, req.Monitored, monitorMode, monitorLatestCount, req.QualityProfileID, req.MetadataProfileID, req.RootFolderID, req.AudiobookRootFolderID); err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
 			}
@@ -175,7 +289,7 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		h.writeCanonicalAuthorConflict(w, canonical, "author name already resolves to an existing author — confirm merge")
 		return
 	}
-	applyAuthorCreateOptions(author, req.Monitored, req.QualityProfileID, req.MetadataProfileID, req.RootFolderID, req.AudiobookRootFolderID)
+	applyAuthorCreateOptions(author, req.Monitored, monitorMode, monitorLatestCount, req.QualityProfileID, req.MetadataProfileID, req.RootFolderID, req.AudiobookRootFolderID)
 
 	if err := h.authors.CreateForUser(r.Context(), author, auth.UserIDFromContext(r.Context())); err != nil {
 		slog.Error("create author failed", "foreign_id", req.ForeignID, "error", err)
@@ -260,8 +374,10 @@ func (h *AuthorHandler) fetchAuthorForCreate(ctx context.Context, foreignID, fal
 	return author, nil
 }
 
-func applyAuthorCreateOptions(author *models.Author, monitored bool, qualityProfileID, metadataProfileID, rootFolderID, audiobookRootFolderID *int64) {
+func applyAuthorCreateOptions(author *models.Author, monitored bool, monitorMode string, monitorLatestCount int, qualityProfileID, metadataProfileID, rootFolderID, audiobookRootFolderID *int64) {
 	author.Monitored = monitored
+	author.MonitorMode = monitorMode
+	author.MonitorLatestCount = monitorLatestCount
 	author.QualityProfileID = qualityProfileID
 	author.RootFolderID = rootFolderID
 	author.AudiobookRootFolderID = audiobookRootFolderID
@@ -277,6 +393,51 @@ func applyAuthorCreateOptions(author *models.Author, monitored bool, qualityProf
 	}
 }
 
+func (h *AuthorHandler) resolveCreateMonitorOptions(ctx context.Context, requestedMode *string, requestedLatestCount *int) (string, int, error) {
+	mode := h.resolveDefaultAuthorMonitorMode(ctx)
+	if requestedMode != nil {
+		mode = strings.TrimSpace(*requestedMode)
+	}
+	if !models.IsAuthorMonitorModeValid(mode) {
+		return "", 0, fmt.Errorf("monitorMode must be one of: all, future, latest, none")
+	}
+
+	latestCount := h.resolveDefaultAuthorMonitorLatestCount(ctx)
+	if requestedLatestCount != nil {
+		latestCount = *requestedLatestCount
+	}
+	if latestCount <= 0 {
+		return "", 0, fmt.Errorf("monitorLatestCount must be a positive integer")
+	}
+	return mode, latestCount, nil
+}
+
+func (h *AuthorHandler) resolveDefaultAuthorMonitorMode(ctx context.Context) string {
+	if h.settings == nil {
+		return models.DefaultAuthorMonitorMode
+	}
+	s, _ := h.settings.Get(ctx, SettingAuthorDefaultMonitorMode)
+	if s == nil || s.Value == "" || !models.IsAuthorMonitorModeValid(s.Value) {
+		return models.DefaultAuthorMonitorMode
+	}
+	return s.Value
+}
+
+func (h *AuthorHandler) resolveDefaultAuthorMonitorLatestCount(ctx context.Context) int {
+	if h.settings == nil {
+		return models.DefaultAuthorMonitorLatestCount
+	}
+	s, _ := h.settings.Get(ctx, SettingAuthorDefaultMonitorLatestCount)
+	if s == nil || s.Value == "" {
+		return models.DefaultAuthorMonitorLatestCount
+	}
+	n, err := strconv.Atoi(s.Value)
+	if err != nil || n <= 0 {
+		return models.DefaultAuthorMonitorLatestCount
+	}
+	return n
+}
+
 func canRelinkAuthorToUpstream(author *models.Author) bool {
 	if author == nil {
 		return false
@@ -286,7 +447,7 @@ func canRelinkAuthorToUpstream(author *models.Author) bool {
 	return foreignID == "" || strings.HasPrefix(foreignID, "abs:") || provider == "audiobookshelf"
 }
 
-func (h *AuthorHandler) relinkExistingAuthorToUpstream(ctx context.Context, author, upstream *models.Author, requestedName string, monitored bool, qualityProfileID, metadataProfileID, rootFolderID, audiobookRootFolderID *int64) error {
+func (h *AuthorHandler) relinkExistingAuthorToUpstream(ctx context.Context, author, upstream *models.Author, requestedName string, monitored bool, monitorMode string, monitorLatestCount int, qualityProfileID, metadataProfileID, rootFolderID, audiobookRootFolderID *int64) error {
 	if author == nil || upstream == nil {
 		return errors.New("author relink requires local and upstream authors")
 	}
@@ -322,7 +483,7 @@ func (h *AuthorHandler) relinkExistingAuthorToUpstream(ctx context.Context, auth
 	} else {
 		author.MetadataProvider = "openlibrary"
 	}
-	applyAuthorCreateOptions(author, monitored, qualityProfileID, metadataProfileID, rootFolderID, audiobookRootFolderID)
+	applyAuthorCreateOptions(author, monitored, monitorMode, monitorLatestCount, qualityProfileID, metadataProfileID, rootFolderID, audiobookRootFolderID)
 	now := time.Now().UTC()
 	author.LastMetadataRefreshAt = &now
 	if err := h.authors.Update(ctx, author); err != nil {
@@ -489,16 +650,24 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Monitored             *bool  `json:"monitored"`
-		QualityProfileID      *int64 `json:"qualityProfileId"`
-		MetadataProfileID     *int64 `json:"metadataProfileId"`
-		RootFolderID          *int64 `json:"rootFolderId"`
-		AudiobookRootFolderID *int64 `json:"audiobookRootFolderId"`
+		Monitored             *bool   `json:"monitored"`
+		MonitorMode           *string `json:"monitorMode"`
+		MonitorLatestCount    *int    `json:"monitorLatestCount"`
+		QualityProfileID      *int64  `json:"qualityProfileId"`
+		MetadataProfileID     *int64  `json:"metadataProfileId"`
+		RootFolderID          *int64  `json:"rootFolderId"`
+		AudiobookRootFolderID *int64  `json:"audiobookRootFolderId"`
 		// ClearAudiobookRootFolder lets the client explicitly reset the
 		// per-author audiobook root folder to "use the global dir". A nil
 		// AudiobookRootFolderID alone is ambiguous (omitted vs. cleared), so
 		// the UI sends this flag when the user picks the default option.
-		ClearAudiobookRootFolder bool `json:"clearAudiobookRootFolder"`
+		ClearAudiobookRootFolder   bool `json:"clearAudiobookRootFolder"`
+		ApplyMonitorModeToExisting bool `json:"applyMonitorModeToExisting"`
+		// MonitoredSeriesIDs is the per-author series pin set (#810). Only
+		// meaningful when MonitorMode == "series". A nil pointer means "do
+		// not touch the existing selection" — an explicit empty array clears
+		// it. Validated against the author's own series before persistence.
+		MonitoredSeriesIDs *[]int64 `json:"monitoredSeriesIds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -506,6 +675,21 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Monitored != nil {
 		author.Monitored = *req.Monitored
+	}
+	if req.MonitorMode != nil {
+		mode := strings.TrimSpace(*req.MonitorMode)
+		if !models.IsAuthorMonitorModeValid(mode) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "monitorMode must be one of: all, future, latest, none, series"})
+			return
+		}
+		author.MonitorMode = mode
+	}
+	if req.MonitorLatestCount != nil {
+		if *req.MonitorLatestCount <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "monitorLatestCount must be a positive integer"})
+			return
+		}
+		author.MonitorLatestCount = *req.MonitorLatestCount
 	}
 	if req.QualityProfileID != nil {
 		author.QualityProfileID = req.QualityProfileID
@@ -526,7 +710,119 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+
+	// Persist the per-author series pin set before applying so the apply pass
+	// reads the freshly-written rows. Validate every ID belongs to this
+	// author's series — accepting arbitrary series IDs would let one author's
+	// monitor selection silently reference an unrelated catalog row.
+	if req.MonitoredSeriesIDs != nil {
+		if len(*req.MonitoredSeriesIDs) > 0 {
+			ownSeries, err := h.series.ListByAuthor(r.Context(), author.ID)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			owned := make(map[int64]struct{}, len(ownSeries))
+			for _, s := range ownSeries {
+				owned[s.ID] = struct{}{}
+			}
+			for _, id := range *req.MonitoredSeriesIDs {
+				if _, ok := owned[id]; !ok {
+					writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("series %d does not belong to author %d", id, author.ID)})
+					return
+				}
+			}
+		}
+		if err := h.authors.SetMonitoredSeriesIDs(r.Context(), author.ID, *req.MonitoredSeriesIDs); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		author.MonitoredSeriesIDs = append([]int64(nil), (*req.MonitoredSeriesIDs)...)
+	} else if author.MonitorMode == models.AuthorMonitorModeSeries {
+		// Mode unchanged or set without overriding the pin set: surface the
+		// current selection so the client can render chips without a refetch.
+		if ids, err := h.authors.ListMonitoredSeriesIDs(r.Context(), author.ID); err == nil {
+			author.MonitoredSeriesIDs = ids
+		}
+	}
+
+	if req.ApplyMonitorModeToExisting {
+		if err := h.applyMonitorModeToExistingBooks(r.Context(), author); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, author)
+}
+
+func (h *AuthorHandler) applyMonitorModeToExistingBooks(ctx context.Context, author *models.Author) error {
+	books, err := h.books.ListByAuthorIncludingExcluded(ctx, author.ID)
+	if err != nil {
+		return fmt.Errorf("list author books: %w", err)
+	}
+	latestKeys := latestBookMonitorKeys(books, author.MonitorLatestCount, func(b models.Book) bool {
+		return !b.Excluded
+	})
+
+	// For series mode the decision needs book→series membership. Bulk-load
+	// once to avoid an N+1 over GetSeriesIDsForBook in the loop below.
+	var (
+		monitoredSet map[int64]struct{}
+		bookSeries   map[int64][]int64
+	)
+	if author.MonitorMode == models.AuthorMonitorModeSeries {
+		ids, err := h.authors.ListMonitoredSeriesIDs(ctx, author.ID)
+		if err != nil {
+			return fmt.Errorf("list monitored series ids: %w", err)
+		}
+		monitoredSet = make(map[int64]struct{}, len(ids))
+		for _, id := range ids {
+			monitoredSet[id] = struct{}{}
+		}
+		if h.series != nil {
+			bookSeries, err = h.series.ListBookSeriesByAuthor(ctx, author.ID)
+			if err != nil {
+				return fmt.Errorf("list book→series for author: %w", err)
+			}
+		}
+	}
+
+	today := dateOnly(time.Now().UTC())
+	for i := range books {
+		next := shouldMonitorBookForAuthor(author, books[i], latestKeys, today)
+		if author.MonitorMode == models.AuthorMonitorModeSeries {
+			next = bookInMonitoredSeries(books[i].ID, bookSeries, monitoredSet)
+		}
+		// Excluded wins over every mode — a user-excluded book must never
+		// flip back to monitored regardless of series membership.
+		if books[i].Excluded {
+			next = false
+		}
+		if books[i].Monitored == next {
+			continue
+		}
+		books[i].Monitored = next
+		if err := h.books.Update(ctx, &books[i]); err != nil {
+			return fmt.Errorf("update book %d monitor state: %w", books[i].ID, err)
+		}
+	}
+	return nil
+}
+
+// bookInMonitoredSeries reports whether the book belongs to at least one
+// series in the author's monitored set. An empty monitored set means "monitor
+// nothing" — which is the right default when the user picks series mode
+// without selecting any series yet.
+func bookInMonitoredSeries(bookID int64, bookSeries map[int64][]int64, monitoredSet map[int64]struct{}) bool {
+	if len(monitoredSet) == 0 {
+		return false
+	}
+	for _, sid := range bookSeries[bookID] {
+		if _, ok := monitoredSet[sid]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
@@ -589,7 +885,7 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.relinkExistingAuthorToUpstream(r.Context(), author, upstream, author.Name, author.Monitored, author.QualityProfileID, author.MetadataProfileID, author.RootFolderID, author.AudiobookRootFolderID); err != nil {
+	if err := h.relinkExistingAuthorToUpstream(r.Context(), author, upstream, author.Name, author.Monitored, author.MonitorMode, author.MonitorLatestCount, author.QualityProfileID, author.MetadataProfileID, author.RootFolderID, author.AudiobookRootFolderID); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -824,6 +1120,38 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 	}
 
 	normalizedAuthor := strings.ToLower(strings.TrimSpace(author.Name))
+	latestKeys := latestBookMonitorKeys(books, author.MonitorLatestCount, func(book models.Book) bool {
+		return isAuthorWorkMonitorCandidate(book, normalizedAuthor, allowedLangs, unknownFail)
+	})
+	today := dateOnly(time.Now().UTC())
+
+	// Build a foreign-id index of the author's monitored series so that, in
+	// series mode, freshly-discovered books can be flipped to monitored at
+	// creation time if their provider-supplied SeriesRefs already match one
+	// of the pinned series. Without this lookup the user would have to wait
+	// for a subsequent apply pass to flip them on.
+	monitoredSeriesForeignIDs := map[string]struct{}{}
+	if author.MonitorMode == models.AuthorMonitorModeSeries && h.series != nil {
+		pinIDs, err := h.authors.ListMonitoredSeriesIDs(ctx, author.ID)
+		if err != nil {
+			slog.Warn("failed to load monitored series ids for author works fetch", "author", author.Name, "error", err)
+		} else if len(pinIDs) > 0 {
+			ownSeries, err := h.series.ListByAuthor(ctx, author.ID)
+			if err != nil {
+				slog.Warn("failed to load author series for series-mode fetch", "author", author.Name, "error", err)
+			} else {
+				pinSet := make(map[int64]struct{}, len(pinIDs))
+				for _, id := range pinIDs {
+					pinSet[id] = struct{}{}
+				}
+				for _, s := range ownSeries {
+					if _, ok := pinSet[s.ID]; ok && s.ForeignID != "" {
+						monitoredSeriesForeignIDs[s.ForeignID] = struct{}{}
+					}
+				}
+			}
+		}
+	}
 
 	searchQueue := make([]models.Book, 0)
 	autoSearchEnabled := autoSearch && h.searcher != nil && author.Monitored && h.isAutoGrabEnabled(ctx)
@@ -831,7 +1159,6 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 	var added, skippedLang, skippedJunk int
 	for _, b := range books {
 		b.AuthorID = author.ID
-		b.Monitored = author.Monitored
 		// Apply the caller-provided default media type when the provider
 		// didn't set one. Never overwrite an explicit value — the audiobook
 		// enrichment flow relies on provider-supplied audiobook rows coming
@@ -859,6 +1186,18 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 			skippedLang++
 			slog.Debug("skipping non-allowed-language book", "title", b.Title, "language", b.Language, "allowed", allowedLangs)
 			continue
+		}
+		b.Monitored = shouldMonitorBookForAuthor(author, b, latestKeys, today)
+		// Series mode short-circuit: if the upstream provider already says
+		// this book is in one of the user's pinned series, monitor it on
+		// first discovery instead of waiting for the apply pass.
+		if author.MonitorMode == models.AuthorMonitorModeSeries && author.Monitored && len(monitoredSeriesForeignIDs) > 0 {
+			for _, ref := range b.SeriesRefs {
+				if _, ok := monitoredSeriesForeignIDs[ref.ForeignID]; ok {
+					b.Monitored = true
+					break
+				}
+			}
 		}
 
 		// Update ratings on existing books so the recommender has data to work with,
@@ -889,6 +1228,7 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 		//     truly redundant and is silently skipped (no format gain).
 		dedupKey := indexer.NormalizeTitleForDedup(b.Title)
 		if existing := seenTitles[dedupKey]; existing != nil {
+			hydrateExistingFromMatchedHardcover := false
 			switch {
 			case strings.HasPrefix(existing.ForeignID, "calibre:"):
 				// Upgrade calibre stub to real OL foreign_id.
@@ -902,6 +1242,8 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 				}
 				if err := h.books.Update(ctx, existing); err != nil {
 					slog.Warn("authors: update during dedup", "error", err, "book_id", existing.ID)
+				} else if existing.WantsAudiobook() {
+					hydrateExistingFromMatchedHardcover = true
 				}
 			case canUpgradeToBoth(existing.MediaType, b.MediaType):
 				// One Work is ebook, the other is audiobook — merge into a single
@@ -915,6 +1257,7 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 					slog.Warn("failed to upgrade book to dual-format", "title", existing.Title, "error", err)
 				} else {
 					slog.Debug("upgraded book to dual-format", "title", existing.Title, "foreignId", b.ForeignID)
+					hydrateExistingFromMatchedHardcover = true
 				}
 			default:
 				// Same media type duplicate — just refresh ratings if we have better data.
@@ -925,6 +1268,10 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 						slog.Warn("authors: update during dedup", "error", err, "book_id", existing.ID)
 					}
 				}
+				hydrateExistingFromMatchedHardcover = existing.WantsAudiobook()
+			}
+			if hydrateExistingFromMatchedHardcover {
+				h.hydrateMatchedHardcoverEditions(ctx, existing, b.HardcoverForeignID)
 			}
 			continue
 		}
@@ -939,6 +1286,7 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 			slog.Warn("failed to create book", "title", b.Title, "error", err)
 			continue
 		}
+		h.hydrateHardcoverEditions(ctx, &b)
 		added++
 
 		if fileFound := handleNewWantedBook(ctx, h.books, h.series, h.finder, b, author.Name); fileFound {
@@ -947,7 +1295,7 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 
 		// Auto-search the freshly-added wanted book only when the per-add
 		// flag AND the global auto-grab kill-switch both say yes.
-		if autoSearchEnabled {
+		if autoSearchEnabled && b.Monitored {
 			searchQueue = append(searchQueue, b)
 		}
 	}
@@ -1017,6 +1365,100 @@ func runBookSearches(ctx context.Context, searcher BookSearcher, books []models.
 		}()
 	}
 	wg.Wait()
+}
+
+func shouldMonitorBookForAuthor(author *models.Author, book models.Book, latestKeys map[string]struct{}, today time.Time) bool {
+	if author == nil || !author.Monitored {
+		return false
+	}
+	switch author.MonitorMode {
+	case models.AuthorMonitorModeFuture:
+		if book.ReleaseDate == nil {
+			return false
+		}
+		return dateOnly(book.ReleaseDate.UTC()).After(today)
+	case models.AuthorMonitorModeLatest:
+		_, ok := latestKeys[indexer.NormalizeTitleForDedup(book.Title)]
+		return ok
+	case models.AuthorMonitorModeNone:
+		return false
+	case models.AuthorMonitorModeSeries:
+		// Newly-discovered books default to unmonitored under series mode:
+		// the series-membership join is established by the series sync
+		// later, so we don't yet know which series this book belongs to.
+		// A subsequent ApplyMonitorModeToExisting (manual or scheduled
+		// refresh) flips the flag on once the join row exists.
+		return false
+	case models.AuthorMonitorModeAll, "":
+		return true
+	default:
+		return true
+	}
+}
+
+type latestMonitorCandidate struct {
+	key         string
+	title       string
+	releaseDate time.Time
+}
+
+func latestBookMonitorKeys(books []models.Book, count int, include func(models.Book) bool) map[string]struct{} {
+	if count <= 0 {
+		count = models.DefaultAuthorMonitorLatestCount
+	}
+	byKey := make(map[string]latestMonitorCandidate)
+	for _, book := range books {
+		if book.ReleaseDate == nil {
+			continue
+		}
+		if include != nil && !include(book) {
+			continue
+		}
+		key := indexer.NormalizeTitleForDedup(book.Title)
+		if key == "" {
+			continue
+		}
+		candidate := latestMonitorCandidate{
+			key:         key,
+			title:       book.Title,
+			releaseDate: dateOnly(book.ReleaseDate.UTC()),
+		}
+		if existing, ok := byKey[key]; ok && !candidate.releaseDate.After(existing.releaseDate) {
+			continue
+		}
+		byKey[key] = candidate
+	}
+	candidates := make([]latestMonitorCandidate, 0, len(byKey))
+	for _, candidate := range byKey {
+		candidates = append(candidates, candidate)
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if !candidates[i].releaseDate.Equal(candidates[j].releaseDate) {
+			return candidates[i].releaseDate.After(candidates[j].releaseDate)
+		}
+		return strings.ToLower(candidates[i].title) < strings.ToLower(candidates[j].title)
+	})
+	if len(candidates) > count {
+		candidates = candidates[:count]
+	}
+	keys := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		keys[candidate.key] = struct{}{}
+	}
+	return keys
+}
+
+func isAuthorWorkMonitorCandidate(book models.Book, normalizedAuthor string, allowedLangs []string, unknownFail bool) bool {
+	normalizedTitle := strings.ToLower(strings.TrimSpace(book.Title))
+	if normalizedTitle == "" || normalizedTitle == normalizedAuthor {
+		return false
+	}
+	return models.IsLanguageAllowed(book.Language, allowedLangs, unknownFail)
+}
+
+func dateOnly(t time.Time) time.Time {
+	y, m, d := t.UTC().Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
 
 func (h *AuthorHandler) lookupUpstreamAuthorByName(ctx context.Context, name string) (*models.Author, error) {
@@ -1325,10 +1767,13 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 				if primary.Status == "" {
 					primary.Status = models.BookStatusWanted
 				}
-				if err := h.books.Create(ctx, primary); err != nil &&
-					!strings.Contains(err.Error(), "UNIQUE constraint failed") {
-					slog.Warn("AddBook: direct insert failed",
-						"foreignBookId", req.ForeignBookID, "error", err)
+				if err := h.books.Create(ctx, primary); err != nil {
+					if !strings.Contains(err.Error(), "UNIQUE constraint failed") {
+						slog.Warn("AddBook: direct insert failed",
+							"foreignBookId", req.ForeignBookID, "error", err)
+					}
+				} else {
+					h.hydrateHardcoverEditions(ctx, primary)
 				}
 			}
 		}

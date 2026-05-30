@@ -225,6 +225,7 @@ func TestNew_DefaultValidator(t *testing.T) {
 	n := New(nil)
 	if n == nil {
 		t.Fatal("New returned nil")
+		return
 	}
 	if n.validate == nil {
 		t.Fatal("New did not install a validator")

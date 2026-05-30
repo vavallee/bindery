@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, Author, MediaType, MetadataProfile, RootFolder } from '../api/client'
+import { api, AddAuthorRequest, Author, AuthorMonitorMode, MediaType, MetadataProfile, RootFolder } from '../api/client'
 import { splitAuthorSearchResults } from './addAuthorTitleGuard'
 
 interface Props {
@@ -9,6 +9,12 @@ interface Props {
 }
 
 const AUTO_GRAB_STORAGE_KEY = 'addAuthor.autoGrab'
+const DEFAULT_MONITOR_MODE: AuthorMonitorMode = 'all'
+const DEFAULT_MONITOR_LATEST_COUNT = 1
+
+function isAuthorMonitorMode(value: string): value is AuthorMonitorMode {
+  return value === 'all' || value === 'future' || value === 'latest' || value === 'none'
+}
 
 function loadAutoGrabDefault(): boolean {
   try {
@@ -35,6 +41,9 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
   const [rootFolderId, setRootFolderId] = useState<number | null>(null)
   const [searchOnAdd, setSearchOnAdd] = useState(loadAutoGrabDefault)
   const [mediaType, setMediaType] = useState<MediaType>('ebook')
+  const [monitorMode, setMonitorMode] = useState<AuthorMonitorMode>(DEFAULT_MONITOR_MODE)
+  const [monitorLatestCount, setMonitorLatestCount] = useState(DEFAULT_MONITOR_LATEST_COUNT)
+  const [monitorOptionsChanged, setMonitorOptionsChanged] = useState(false)
 
   useEffect(() => {
     api.listMetadataProfiles().then(ps => {
@@ -57,6 +66,17 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
         }
       })
       .catch(() => { /* 404 = unset; keep ebook default */ })
+    api.getSetting('author.default_monitor_mode')
+      .then(s => {
+        if (isAuthorMonitorMode(s.value)) setMonitorMode(s.value)
+      })
+      .catch(() => { /* unset; keep all-books default */ })
+    api.getSetting('author.default_monitor_latest_count')
+      .then(s => {
+        const n = Number(s.value)
+        if (Number.isInteger(n) && n > 0) setMonitorLatestCount(n)
+      })
+      .catch(() => { /* unset; keep latest count default */ })
   }, [])
 
   const search = async () => {
@@ -85,7 +105,7 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
   const addAuthor = async (author: Author) => {
     setAdding(author.foreignAuthorId)
     try {
-      await api.addAuthor({
+      const request: AddAuthorRequest = {
         foreignAuthorId: author.foreignAuthorId,
         authorName: author.authorName,
         monitored: true,
@@ -93,7 +113,12 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
         metadataProfileId: profileId,
         rootFolderId: rootFolderId,
         mediaType,
-      })
+      }
+      if (monitorOptionsChanged) {
+        request.monitorMode = monitorMode
+        request.monitorLatestCount = monitorLatestCount
+      }
+      await api.addAuthor(request)
       try {
         localStorage.setItem(AUTO_GRAB_STORAGE_KEY, String(searchOnAdd))
       } catch {
@@ -158,6 +183,41 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
               <option value="both">{t('mediaType.both', 'Both')}</option>
             </select>
           </div>
+          <div className="mb-3">
+            <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
+              {t('addAuthorModal.monitorMode', 'Monitor mode')}
+            </label>
+            <select
+              value={monitorMode}
+              onChange={e => {
+                setMonitorMode(e.target.value as AuthorMonitorMode)
+                setMonitorOptionsChanged(true)
+              }}
+              className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+            >
+              <option value="all">{t('monitorMode.all', 'All books')}</option>
+              <option value="future">{t('monitorMode.future', 'Future books only')}</option>
+              <option value="latest">{t('monitorMode.latest', 'Latest only')}</option>
+              <option value="none">{t('monitorMode.none', 'None')}</option>
+            </select>
+          </div>
+          {monitorMode === 'latest' && (
+            <div className="mb-3">
+              <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
+                {t('addAuthorModal.monitorLatestCount', 'Latest book count')}
+              </label>
+              <input
+                type="number"
+                min={1}
+                value={monitorLatestCount}
+                onChange={e => {
+                  setMonitorLatestCount(Math.max(1, Number(e.target.value) || 1))
+                  setMonitorOptionsChanged(true)
+                }}
+                className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+          )}
           <label className="flex items-start gap-2 text-sm mb-3 cursor-pointer select-none">
             <input
               type="checkbox"

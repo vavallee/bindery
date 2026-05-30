@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/useragent"
 )
 
@@ -64,6 +65,23 @@ func NormalizeBaseURL(raw string) (string, error) {
 		u.Path = strings.TrimRight(u.Path, "/")
 	}
 	return u.String(), nil
+}
+
+// ValidateBaseURLSecure layers an SSRF policy check on top of NormalizeBaseURL.
+// Use this at the admin-input boundary (settings save) to refuse base URLs
+// that point at link-local or cloud-metadata endpoints. Loopback and RFC1918
+// are still allowed via PolicyLAN for homelab deployments. NewClient callers
+// should keep using NormalizeBaseURL directly so test fixtures with httptest
+// (loopback) still work.
+func ValidateBaseURLSecure(raw string) (string, error) {
+	u, err := NormalizeBaseURL(raw)
+	if err != nil {
+		return "", err
+	}
+	if err := httpsec.ValidateOutboundURL(u, httpsec.PolicyLAN); err != nil {
+		return "", fmt.Errorf("base_url %q: %w", raw, err)
+	}
+	return u, nil
 }
 
 // NormalizeAPIKey strips whitespace and rejects control characters.
@@ -135,7 +153,13 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader, ou
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	// Grimmory v3.x does not have API keys; the maintainer confirmed this on
+	// grimmory-tools/grimmory#1487 (#818). Send the Authorization header only
+	// when the user actually configured one — sending "Bearer " with an empty
+	// token is a no-op against current Grimmory and just noise on the wire.
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 	req.Header.Set("User-Agent", c.userAgent)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")

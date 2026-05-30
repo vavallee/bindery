@@ -353,6 +353,14 @@ describe('SettingsPage', () => {
       value: { writeText: vi.fn().mockResolvedValue(undefined) },
       configurable: true,
     })
+    Object.defineProperty(window, 'isSecureContext', {
+      value: true,
+      configurable: true,
+    })
+    Object.defineProperty(document, 'execCommand', {
+      value: vi.fn().mockReturnValue(false),
+      configurable: true,
+    })
     seedSettingsMocks()
   })
 
@@ -587,9 +595,18 @@ describe('SettingsPage', () => {
     expect(defaultLocation.getByRole('combobox')).toHaveValue('8')
 
     const authorDefaults = sectionForHeading('Author defaults')
-    fireEvent.change(authorDefaults.getByRole('combobox'), { target: { value: 'audiobook' } })
+    const authorDefaultSelects = authorDefaults.getAllByRole('combobox')
+    fireEvent.change(authorDefaultSelects[0], { target: { value: 'audiobook' } })
     await waitFor(() => {
       expect(api.setSetting).toHaveBeenCalledWith('default.media_type', 'audiobook')
+    })
+    fireEvent.change(authorDefaultSelects[1], { target: { value: 'latest' } })
+    await waitFor(() => {
+      expect(api.setSetting).toHaveBeenCalledWith('author.default_monitor_mode', 'latest')
+    })
+    fireEvent.change(authorDefaults.getByRole('spinbutton'), { target: { value: '3' } })
+    await waitFor(() => {
+      expect(api.setSetting).toHaveBeenCalledWith('author.default_monitor_latest_count', '3')
     })
   })
 
@@ -662,6 +679,28 @@ describe('SettingsPage', () => {
     } finally {
       confirmSpy.mockRestore()
     }
+  })
+
+  it('shows manual copy fallback when security API key clipboard access is blocked', async () => {
+    vi.mocked(api.authConfig).mockResolvedValue({ mode: 'enabled', apiKey: 'api-secret', username: 'admin' })
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
+      configurable: true,
+    })
+
+    renderSettings()
+
+    await screen.findByRole('heading', { name: 'Security' })
+    const security = sectionForHeading('Security')
+    expect(security.queryByDisplayValue('api-secret')).not.toBeInTheDocument()
+
+    fireEvent.click(security.getByRole('button', { name: 'Copy' }))
+    await waitFor(() => {
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith('api-secret')
+    })
+
+    expect(await security.findByRole('status')).toHaveTextContent('Clipboard access is blocked')
+    expect(security.getByLabelText('Text to copy')).toHaveValue('api-secret')
   })
 
   it('validates and submits password changes', async () => {
@@ -974,12 +1013,12 @@ describe('SettingsPage', () => {
     await openIndexersTab()
 
     fireEvent.click(screen.getByRole('button', { name: 'settings.indexers.addButton' }))
-    fireEvent.change(screen.getByPlaceholderText('Name (e.g. NZBGeek)'), { target: { value: 'SceneNZBs' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.namePlaceholderExample'), { target: { value: 'SceneNZBs' } })
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'torznab' } })
-    fireEvent.change(screen.getByPlaceholderText('URL (e.g. https://api.nzbgeek.info or http://prowlarr:9696/1/api)'), { target: { value: 'http://prowlarr:9696/1/api' } })
-    fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'scene-key' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.urlPlaceholderExample'), { target: { value: 'http://prowlarr:9696/1/api' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.apiKey'), { target: { value: 'scene-key' } })
     fireEvent.change(screen.getByDisplayValue('7020'), { target: { value: '7020, 7120, bad, 3030' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
 
     await waitFor(() => {
       expect(api.addIndexer).toHaveBeenCalledWith({
@@ -1001,12 +1040,12 @@ describe('SettingsPage', () => {
     await openIndexersTab()
 
     fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
-    fireEvent.change(screen.getByPlaceholderText('Name'), { target: { value: 'DrunkenSlug' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.namePlaceholder'), { target: { value: 'DrunkenSlug' } })
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'torznab' } })
-    fireEvent.change(screen.getByPlaceholderText('URL'), { target: { value: 'https://slug.example.com/api' } })
-    fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'slug-key' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.urlPlaceholder'), { target: { value: 'https://slug.example.com/api' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.apiKey'), { target: { value: 'slug-key' } })
     fireEvent.change(screen.getByDisplayValue('7020, 3030'), { target: { value: '7020, bad, 3030' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
 
     await waitFor(() => {
       expect(api.updateIndexer).toHaveBeenCalledWith(7, {
@@ -1070,11 +1109,11 @@ describe('SettingsPage', () => {
     renderSettings()
     await openIndexersTab()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Add Prowlarr' }))
-    fireEvent.change(screen.getByPlaceholderText('Prowlarr'), { target: { value: 'Main Prowlarr' } })
-    fireEvent.change(screen.getByPlaceholderText('http://prowlarr:9696'), { target: { value: 'http://prowlarr:9696' } })
-    fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'prowlarr-secret' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save & sync' }))
+    fireEvent.click(screen.getByRole('button', { name: 'settings.prowlarr.addButton' }))
+    fireEvent.change(screen.getByPlaceholderText('settings.prowlarr.namePlaceholder'), { target: { value: 'Main Prowlarr' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.prowlarr.urlPlaceholder'), { target: { value: 'http://prowlarr:9696' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.prowlarr.apiKeyPlaceholder'), { target: { value: 'prowlarr-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: 'settings.prowlarr.saveAndSync' }))
 
     await waitFor(() => {
       expect(api.addProwlarr).toHaveBeenCalledWith({
@@ -1098,15 +1137,15 @@ describe('SettingsPage', () => {
     renderSettings()
     await openIndexersTab()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Add Prowlarr' }))
-    fireEvent.change(screen.getByPlaceholderText('Prowlarr'), { target: { value: 'Fallback Prowlarr' } })
-    fireEvent.change(screen.getByPlaceholderText('http://prowlarr:9696'), { target: { value: 'http://prowlarr:9696' } })
-    fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'prowlarr-secret' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save & sync' }))
+    fireEvent.click(screen.getByRole('button', { name: 'settings.prowlarr.addButton' }))
+    fireEvent.change(screen.getByPlaceholderText('settings.prowlarr.namePlaceholder'), { target: { value: 'Fallback Prowlarr' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.prowlarr.urlPlaceholder'), { target: { value: 'http://prowlarr:9696' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.prowlarr.apiKeyPlaceholder'), { target: { value: 'prowlarr-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: 'settings.prowlarr.saveAndSync' }))
 
     await waitFor(() => expect(api.syncProwlarr).toHaveBeenCalledWith(32))
     expect(await screen.findByText('Fallback Prowlarr')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Save & sync' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'settings.prowlarr.saveAndSync' })).not.toBeInTheDocument()
   })
 
   it('tests, syncs, and deletes an existing Prowlarr instance', async () => {
@@ -1119,19 +1158,19 @@ describe('SettingsPage', () => {
       vi.mocked(api.listProwlarr).mockResolvedValue([{ ...prowlarr, lastSyncAt: '2026-05-06T13:00:00Z' }])
       await openIndexersTab()
 
-      fireEvent.click(screen.getByRole('button', { name: 'Test' }))
+      fireEvent.click(screen.getByRole('button', { name: 'settings.prowlarr.test' }))
       await waitFor(() => expect(api.testProwlarr).toHaveBeenCalledWith(33))
-      expect(await screen.findByText('Connected — Prowlarr 1.0.0')).toBeInTheDocument()
+      expect(await screen.findByText('settings.prowlarr.connectedVersion')).toBeInTheDocument()
 
-      fireEvent.click(screen.getByRole('button', { name: 'Sync now' }))
+      fireEvent.click(screen.getByRole('button', { name: 'settings.prowlarr.syncNow' }))
       await waitFor(() => expect(api.syncProwlarr).toHaveBeenCalledWith(33))
-      expect(await screen.findByText(/Synced.*added 1, updated 2, removed 3/)).toBeInTheDocument()
+      expect(await screen.findByText('settings.prowlarr.synced')).toBeInTheDocument()
       await waitFor(() => expect(api.listIndexers).toHaveBeenCalledTimes(2))
       await waitFor(() => expect(api.listProwlarr).toHaveBeenCalledTimes(2))
 
-      fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+      fireEvent.click(screen.getByRole('button', { name: 'settings.prowlarr.delete' }))
       await waitFor(() => expect(api.deleteProwlarr).toHaveBeenCalledWith(33))
-      expect(confirmSpy).toHaveBeenCalledWith('Delete Prowlarr instance "Library Prowlarr" and all its synced indexers?')
+      expect(confirmSpy).toHaveBeenCalledWith('settings.prowlarr.confirmDelete')
       await waitFor(() => expect(screen.queryByText('Library Prowlarr')).not.toBeInTheDocument())
     } finally {
       confirmSpy.mockRestore()
@@ -1162,6 +1201,7 @@ describe('SettingsPage', () => {
         username: '',
         password: '',
         category: 'ebooks',
+        categoryAudiobook: '',
         pathRemap: '/media:/books',
         type: 'sabnzbd',
         enabled: true,
@@ -1229,6 +1269,7 @@ describe('SettingsPage', () => {
         password,
         apiKey: '',
         category,
+        categoryAudiobook: '',
         pathRemap: '',
         type,
         enabled: true,
@@ -1268,12 +1309,36 @@ describe('SettingsPage', () => {
         password: 'qbit-pass',
         apiKey: '',
         category: 'ebooks',
+        categoryAudiobook: '',
         pathRemap: '/media:/books',
         useSsl: true,
         urlBase: '/qbittorrent',
       })
     })
     expect(await screen.findByText('qBit Books')).toBeInTheDocument()
+  })
+
+  // #700: per-media-type categories. Verifies the audiobook category field
+  // round-trips through the add form. The transmission case is excluded — its
+  // "Category" field is repurposed as a download-directory override; an audiobook
+  // category for it would need a separate path UI (left to a follow-up).
+  it('adds a download client with a separate audiobook category', async () => {
+    renderSettings()
+    await openClientsTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.clients.addButton' }))
+    fireEvent.change(screen.getByPlaceholderText('Host'), { target: { value: 'sabnzbd' } })
+    fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'k' } })
+    fireEvent.change(screen.getByDisplayValue('books'), { target: { value: 'ebooks' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.clients.audiobookCategoryPlaceholder'), { target: { value: ' audiobooks ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(api.addDownloadClient).toHaveBeenCalledWith(expect.objectContaining({
+        category: 'ebooks',
+        categoryAudiobook: 'audiobooks',
+      }))
+    })
   })
 
   it('shows qBittorrent path health errors under the client', async () => {

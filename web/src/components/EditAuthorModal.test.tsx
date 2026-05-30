@@ -13,12 +13,13 @@ vi.mock('../api/client', () => ({
     listQualityProfiles: vi.fn(),
     listMetadataProfiles: vi.fn(),
     listRootFolders: vi.fn(),
+    listAuthorSeries: vi.fn(),
     updateAuthor: vi.fn(),
   },
 }))
 
 import { api } from '../api/client'
-import type { Author, MetadataProfile, QualityProfile, RootFolder } from '../api/client'
+import type { Author, MetadataProfile, QualityProfile, RootFolder, Series } from '../api/client'
 
 const baseAuthor: Author = {
   id: 42,
@@ -60,6 +61,7 @@ describe('EditAuthorModal', () => {
     vi.mocked(api.listQualityProfiles).mockResolvedValue(qualityProfiles)
     vi.mocked(api.listMetadataProfiles).mockResolvedValue(metadataProfiles)
     vi.mocked(api.listRootFolders).mockResolvedValue(rootFolders)
+    vi.mocked(api.listAuthorSeries).mockResolvedValue([])
     vi.mocked(api.updateAuthor).mockImplementation(async (_id, patch) => ({
       ...baseAuthor,
       ...patch,
@@ -67,13 +69,13 @@ describe('EditAuthorModal', () => {
   })
 
   async function getSelects() {
-    // Wait for profiles to load — once they do all four selects render
-    // (quality, metadata, ebook root folder, audiobook root folder).
+    // Wait for profiles to load — once they do all five selects render
+    // (quality, metadata, ebook root folder, audiobook root folder, monitor mode).
     await screen.findByRole('option', { name: 'Any' })
     const selects = screen.getAllByRole('combobox') as HTMLSelectElement[]
-    expect(selects).toHaveLength(4)
-    const [quality, metadata, root, audiobookRoot] = selects
-    return { quality, metadata, root, audiobookRoot }
+    expect(selects).toHaveLength(5)
+    const [quality, metadata, root, audiobookRoot, monitorMode] = selects
+    return { quality, metadata, root, audiobookRoot, monitorMode }
   }
 
   it('opens with the current author values prefilled', async () => {
@@ -101,6 +103,25 @@ describe('EditAuthorModal', () => {
     expect('rootFolderId' in callArg).toBe(false)
     expect('audiobookRootFolderId' in callArg).toBe(false)
     expect('clearAudiobookRootFolder' in callArg).toBe(false)
+    expect('monitorMode' in callArg).toBe(false)
+    expect('applyMonitorModeToExisting' in callArg).toBe(false)
+  })
+
+  it('sends monitor mode fields and the apply flag when selected', async () => {
+    render(<EditAuthorModal author={baseAuthor} onClose={onClose} onSaved={onSaved} />)
+
+    const { monitorMode } = await getSelects()
+    fireEvent.change(monitorMode, { target: { value: 'latest' } })
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: /apply monitor mode to existing books/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => expect(api.updateAuthor).toHaveBeenCalledTimes(1))
+    expect(api.updateAuthor).toHaveBeenCalledWith(42, {
+      monitorMode: 'latest',
+      monitorLatestCount: 3,
+      applyMonitorModeToExisting: true,
+    })
   })
 
   it('prefills the audiobook root folder and sends it when changed', async () => {
@@ -173,6 +194,44 @@ describe('EditAuthorModal', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
     expect(api.updateAuthor).not.toHaveBeenCalled()
     expect(onSaved).not.toHaveBeenCalled()
+  })
+
+  it('lazy-loads the author series picker when monitor mode is set to series', async () => {
+    const series: Series[] = [
+      { id: 1, foreignSeriesId: 'ol-s:1', title: 'Stormlight Archive', description: '', monitored: false, hardcoverLink: { id: 1, seriesId: 1, hardcoverSeriesId: 'hc:1', hardcoverProviderId: 'p', hardcoverTitle: 'Stormlight Archive', hardcoverAuthorName: 'Brandon Sanderson', hardcoverBookCount: 10, confidence: 1, linkedBy: 'user', linkedAt: '', createdAt: '', updatedAt: '' } },
+      { id: 2, foreignSeriesId: 'ol-s:2', title: 'Mistborn', description: '', monitored: false },
+    ]
+    vi.mocked(api.listAuthorSeries).mockResolvedValue(series)
+
+    render(<EditAuthorModal author={baseAuthor} onClose={onClose} onSaved={onSaved} />)
+
+    const { monitorMode } = await getSelects()
+    // Picker should not be fetched until series mode is picked.
+    expect(api.listAuthorSeries).not.toHaveBeenCalled()
+    fireEvent.change(monitorMode, { target: { value: 'series' } })
+
+    await waitFor(() => expect(api.listAuthorSeries).toHaveBeenCalledWith(42))
+    // Both series titles render; the one without a hardcover link is flagged.
+    await screen.findByText('Stormlight Archive')
+    await screen.findByText('Mistborn')
+    expect(screen.getByText(/no Hardcover link/i)).toBeInTheDocument()
+
+    // Pick Mistborn — selecting an unlinked series surfaces the warning chip.
+    const checkboxes = screen.getAllByRole('checkbox') as HTMLInputElement[]
+    // The first checkbox is the "Apply monitor mode to existing books" toggle;
+    // the next two are the series. Click the Mistborn (second series) one.
+    const mistbornCheckbox = checkboxes.find(cb => cb.parentElement?.textContent?.includes('Mistborn'))
+    expect(mistbornCheckbox).toBeTruthy()
+    fireEvent.click(mistbornCheckbox!)
+    expect(screen.getByText(/no Hardcover link.*will not be auto-filled/i)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => expect(api.updateAuthor).toHaveBeenCalledTimes(1))
+    expect(api.updateAuthor).toHaveBeenCalledWith(42, {
+      monitorMode: 'series',
+      monitoredSeriesIds: [2],
+    })
   })
 
   it('shows an error message when save fails', async () => {

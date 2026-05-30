@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/vavallee/bindery/internal/bookhydrate"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/models"
@@ -16,28 +17,68 @@ import (
 
 // ListSyncer syncs enabled Hardcover import lists into Bindery's book catalogue.
 type ListSyncer struct {
-	importLists     *db.ImportListRepo
-	authors         *db.AuthorRepo
-	books           *db.BookRepo
-	tokenSource     func(context.Context) string
-	hardcoverClient func(token string) hardcoverListClient
+	importLists *db.ImportListRepo
+	authors     *db.AuthorRepo
+	books       *db.BookRepo
+	series      seriesLinker
+	editions    *db.EditionRepo
+
+	tokenSource   func(context.Context) string
+	clientFactory hardcoverClientFactory
+	enricher      bookhydrate.AudiobookEnricher
 }
 
-type hardcoverListClient interface {
-	GetUserLists(ctx context.Context) ([]hardcover.HCList, error)
-	GetListBooks(ctx context.Context, listID int) ([]models.Book, error)
+type hardcoverClient interface {
+	GetUserLists(context.Context) ([]hardcover.HCList, error)
+	GetListBooks(context.Context, int) ([]models.Book, error)
+	GetEditions(context.Context, string) ([]models.Edition, error)
 }
+
+// seriesLinker is the slice of *db.SeriesRepo the syncer needs to persist
+// the primary-series association attached to imported books. Declared as an
+// interface so tests can stub it without standing up the full SQL schema.
+type seriesLinker interface {
+	CreateOrGet(ctx context.Context, s *models.Series) error
+	LinkBook(ctx context.Context, seriesID, bookID int64, position string, primary bool) error
+}
+
+type hardcoverClientFactory func(string) hardcoverClient
 
 // New creates a new ListSyncer.
 func New(importLists *db.ImportListRepo, authors *db.AuthorRepo, books *db.BookRepo) *ListSyncer {
 	return &ListSyncer{
-		importLists: importLists,
-		authors:     authors,
-		books:       books,
-		hardcoverClient: func(token string) hardcoverListClient {
-			return hardcover.NewAuthenticated(token)
-		},
+		importLists:   importLists,
+		authors:       authors,
+		books:         books,
+		clientFactory: func(apiKey string) hardcoverClient { return hardcover.NewAuthenticated(apiKey) },
 	}
+}
+
+// WithSeriesRepo wires the series persistence layer so that books imported
+// from Hardcover lists carry forward their primary-series association.
+// Without it, SeriesRefs on imported books are silently dropped.
+func (s *ListSyncer) WithSeriesRepo(repo *db.SeriesRepo) *ListSyncer {
+	if repo == nil {
+		s.series = nil
+		return s
+	}
+	s.series = repo
+	return s
+}
+
+// WithEditionHydration wires edition persistence for Hardcover list imports.
+func (s *ListSyncer) WithEditionHydration(editions *db.EditionRepo, enricher bookhydrate.AudiobookEnricher) *ListSyncer {
+	s.editions = editions
+	s.enricher = enricher
+	return s
+}
+
+// WithClientFactory overrides the Hardcover client factory used by tests.
+func (s *ListSyncer) WithClientFactory(factory hardcoverClientFactory) *ListSyncer {
+	if factory != nil {
+		s.clientFactory = factory
+	}
+	return s
 }
 
 // WithTokenSource configures the fallback Hardcover API token used when an
@@ -114,7 +155,7 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 	if token == "" {
 		return ErrMissingToken
 	}
-	client := s.hardcoverClient(token)
+	client := s.clientFactory(token)
 
 	// Resolve the list by slug
 	userLists, err := client.GetUserLists(ctx)
@@ -174,10 +215,32 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 			slog.Warn("failed to create book", "title", book.Title, "error", err)
 			continue
 		}
+		s.hydrateHardcoverEditions(ctx, &book, client)
 		slog.Info("imported book from hardcover list", "title", book.Title, "author_id", authorID)
+
+		s.linkSeriesRefs(ctx, &book)
 	}
 
 	return nil
+}
+
+// linkSeriesRefs persists each Hardcover SeriesRef into the series table and
+// links it to the freshly imported book. Best-effort: a failed link must not
+// roll back or block the book import — log and move on.
+func (s *ListSyncer) linkSeriesRefs(ctx context.Context, book *models.Book) {
+	if s.series == nil || len(book.SeriesRefs) == 0 || book.ID == 0 {
+		return
+	}
+	for _, ref := range book.SeriesRefs {
+		ser := &models.Series{ForeignID: ref.ForeignID, Title: ref.Title}
+		if err := s.series.CreateOrGet(ctx, ser); err != nil {
+			slog.Warn("hardcover list sync: upsert series failed", "series", ref.Title, "book", book.Title, "error", err)
+			continue
+		}
+		if err := s.series.LinkBook(ctx, ser.ID, book.ID, ref.Position, ref.Primary); err != nil {
+			slog.Warn("hardcover list sync: link book to series failed", "series", ref.Title, "book", book.Title, "error", err)
+		}
+	}
 }
 
 func (s *ListSyncer) tokenForList(ctx context.Context, il models.ImportList) string {
@@ -188,6 +251,20 @@ func (s *ListSyncer) tokenForList(ctx context.Context, il models.ImportList) str
 		return ""
 	}
 	return hardcover.NormalizeAPIToken(s.tokenSource(ctx))
+}
+
+func (s *ListSyncer) hydrateHardcoverEditions(ctx context.Context, book *models.Book, client hardcoverClient) {
+	if book == nil || client == nil || s.editions == nil {
+		return
+	}
+	bookhydrate.HydrateHardcoverEditions(ctx, bookhydrate.Options{
+		Book:          book,
+		Provider:      "hardcover",
+		Editions:      s.editions,
+		Books:         s.books,
+		FetchEditions: client.GetEditions,
+		Enricher:      s.enricher,
+	})
 }
 
 // ensureAuthor looks up the author by foreign ID, creating a minimal record if

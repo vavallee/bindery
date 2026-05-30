@@ -519,6 +519,65 @@ func (r *SeriesRepo) UnlinkBook(ctx context.Context, seriesID, bookID int64) err
 	return nil
 }
 
+// ListByAuthor returns the distinct series that any of the author's books are
+// linked to. Used by the per-author monitor-by-series picker (#810) and the
+// API endpoint that backs it. Returns an empty slice (not nil) when the
+// author has no series-linked books.
+func (r *SeriesRepo) ListByAuthor(ctx context.Context, authorID int64) ([]models.Series, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT DISTINCT s.id, s.foreign_id, s.title, s.description, s.monitored, s.created_at
+		FROM series s
+		JOIN series_books sb ON sb.series_id = s.id
+		JOIN books b ON b.id = sb.book_id
+		WHERE b.author_id = ?
+		ORDER BY s.title`, authorID)
+	if err != nil {
+		return nil, fmt.Errorf("list series by author %d: %w", authorID, err)
+	}
+	defer rows.Close()
+	series := make([]models.Series, 0)
+	for rows.Next() {
+		var s models.Series
+		var monitored int
+		if err := rows.Scan(&s.ID, &s.ForeignID, &s.Title, &s.Description, &monitored, &s.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan series by author: %w", err)
+		}
+		s.Monitored = monitored == 1
+		series = append(series, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := r.hydrateHardcoverLinks(ctx, series); err != nil {
+		return nil, err
+	}
+	return series, nil
+}
+
+// ListBookSeriesByAuthor returns a map of book_id → list of series IDs the
+// book belongs to, scoped to a single author. Used by apply-monitor-mode when
+// mode=series to avoid an N+1 over GetSeriesIDsForBook (one query per book).
+func (r *SeriesRepo) ListBookSeriesByAuthor(ctx context.Context, authorID int64) (map[int64][]int64, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT b.id, sb.series_id
+		FROM books b
+		JOIN series_books sb ON sb.book_id = b.id
+		WHERE b.author_id = ?`, authorID)
+	if err != nil {
+		return nil, fmt.Errorf("list book→series for author %d: %w", authorID, err)
+	}
+	defer rows.Close()
+	out := make(map[int64][]int64)
+	for rows.Next() {
+		var bookID, seriesID int64
+		if err := rows.Scan(&bookID, &seriesID); err != nil {
+			return nil, fmt.Errorf("scan book→series: %w", err)
+		}
+		out[bookID] = append(out[bookID], seriesID)
+	}
+	return out, rows.Err()
+}
+
 // GetSeriesIDsForBook returns the IDs of every series the book currently belongs to.
 func (r *SeriesRepo) GetSeriesIDsForBook(ctx context.Context, bookID int64) ([]int64, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT series_id FROM series_books WHERE book_id = ?`, bookID)
