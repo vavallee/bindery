@@ -6,6 +6,28 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.15.3] — 2026-05-29
+
+Patch release. Three user-facing bug fixes plus a Hardcover edition-hydration feature and the client side of the telemetry redesign.
+
+### Fixed
+
+- **Library scan now reconciles Calibre-imported books with missing file paths** (#875, #878) — Calibre import sets every book to `Status=Imported`, but in container setups where Calibre's library mount differs from Bindery's view, `FilePath` stays empty. The library scan's candidate filter required `Status=Wanted` so all imported epubs found zero reconciliation targets, and users had to refresh metadata per author to nudge the rows back into scope. The candidate filter now includes Imported books whose recorded paths are either empty or point at locations that no longer exist, so the canonical Calibre-import-then-scan flow just works. Also covers the related "user moved their library and re-ran a scan" case where Imported rows used to be orphaned forever. Thanks to @Jashun44 for the precise diagnosis.
+
+- **Single-word hyphenated titles no longer have every release dropped at the relevance filter** (#871, #876) — titles whose entire significant content was one hyphenated token (e.g. **Slaughterhouse-Five**, **Mother-to-Mother**) failed the relevance filter against every indexer result because `SigWords` kept the hyphen in the keyword while `NormalizeRelease` on the release side replaced it with a space. `SigWords` now pre-converts the same separator set as `NormalizeRelease` (`._-()[]|`) so hyphenated titles tokenise the same way multi-word titles already do. Reported with root cause and fix shape by @eliseban.
+
+- **Transmission grabs no longer time out when the daemon is behind a VPN container** (#873, #877) — when Transmission runs inside `haugene/transmission-openvpn` or similar, the daemon's outbound traffic routes through the VPN tunnel. Bindery was passing the indexer URL via Transmission's `filename` arg, which makes the daemon fetch the URL itself; through the VPN that fetch never returns and Bindery's 15s deadline trips even though Test-Connection works fine. The Transmission client now fetches the `.torrent` file through Bindery's own HTTP client and submits the content via `metainfo` (base64), matching the same shape SAB (#864) and NZBGet (#837) ship since v1.15.2. Magnet links still pass through unchanged. Same `httpsec.PolicyLAN` SSRF guard and 50 MB cap as the other clients. Reported by @Bclark117 with the exact fix shape this release implements.
+
+### Changed
+
+- **Hardcover editions hydrate into the local library when a book has a confident Hardcover identity** (#822) — when a book carries an `hc:` foreign ID (created via Hardcover lookup, list sync, rebind, recommendations, or series fill), Bindery now fetches the full Hardcover edition list and persists those rows alongside the book. Edition fields use a COALESCE NULLIF upsert so user-curated and import-time values are never overwritten, and edition rows that already belong to another book are silently skipped (no re-parenting). When the matched audiobook edition carries an ASIN and the book has none yet, the ASIN is promoted onto the book and (if Audnex is configured) the audiobook is enriched automatically. Gated on Enhanced Hardcover being enabled (token configured + admin opt-in + env enabled), so installs without a Hardcover token see no behaviour change. Thanks to @magrhino.
+
+- **Telemetry client sends per-subsystem feature counters** (#872) — the daily anonymous ping now carries an optional `features` block with counts of enabled indexers, download clients, notifications, and users, plus booleans for whether Calibre / Audiobookshelf / Grimmory / Hardcover / OIDC / multi-user is configured. Strictly numeric or boolean, never names or values. Lets the maintainer prioritise feature work against actual adoption rather than Discord vibes. Documented at [getbindery.dev/telemetry-fields](https://api.getbindery.dev/telemetry-fields) and opt-out remains unchanged (`BINDERY_TELEMETRY_DISABLED=true` env var or `telemetry.enabled=false` setting).
+
+### Internal
+
+- Closed #870 with a pointer to the existing `BINDERY_NOTIFICATIONS_ALLOW_PRIVATE=1` env var from v1.15.1 #853; same feature, just hadn't been discovered yet.
+
 ## [v1.15.2] — 2026-05-28
 
 Patch release. Two download-client fixes for users on v1.15.1 with broken SAB/NZBGet submissions, a UI refactor that locks the clipboard-fallback pattern from v1.15.1 into a reusable hook, plus housekeeping (gosec annotation, chi dep bump).
