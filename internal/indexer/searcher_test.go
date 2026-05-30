@@ -219,6 +219,32 @@ func TestFilterRelevantApostrophe(t *testing.T) {
 	}
 }
 
+// TestFilterRelevantHyphenatedTitle is a regression test for #871: titles
+// whose entire significant content is a single hyphenated token (e.g.
+// "Slaughterhouse-Five") were tokenised by SigWords as one literal-hyphen
+// keyword, which never matched the de-hyphenated release-side string. Now
+// that SigWords splits on the same separators as NormalizeRelease, the
+// hyphenated title side and the release side line up.
+func TestFilterRelevantHyphenatedTitle(t *testing.T) {
+	results := toResults(
+		"Slaughterhouse-Five by Kurt Vonnegut EPUB",
+		"Kurt.Vonnegut.Slaughterhouse.Five.RETAIL.epub",
+		"Some.Unrelated.Book.epub",
+	)
+	got := filterRelevant(results, "Slaughterhouse-Five", "Kurt Vonnegut", nil)
+	for _, want := range []string{
+		"Slaughterhouse-Five by Kurt Vonnegut EPUB",
+		"Kurt.Vonnegut.Slaughterhouse.Five.RETAIL.epub",
+	} {
+		if !contains(got, want) {
+			t.Errorf("expected %q in results, got %v", want, resultTitles(got))
+		}
+	}
+	if contains(got, "Some.Unrelated.Book.epub") {
+		t.Error("unrelated release must not pass")
+	}
+}
+
 // TestFilterRelevantEditionQualifier — regression test for issue #283.
 // filterRelevant must accept real NZB releases for a book whose metadata
 // title carries a parenthesised edition qualifier. Before the fix,

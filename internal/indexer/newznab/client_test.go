@@ -812,6 +812,16 @@ func TestSigWords(t *testing.T) {
 		{"Ender's Game", []string{"enders", "game"}},
 		// German umlaut transliteration
 		{"Märchen", []string{"maerchen"}},
+		// Hyphenated titles split into separate keywords so the title
+		// side matches a NormalizeRelease'd release-side string (#871).
+		// "to" is dropped as a stopword; "five"/"mother" survive.
+		{"Slaughterhouse-Five", []string{"slaughterhouse", "five"}},
+		{"Mother-to-Mother", []string{"mother", "mother"}},
+		// Other NormalizeRelease separators (dot, underscore, parens,
+		// brackets) split the same way.
+		{"K.A.M.I", nil}, // single-character remainders dropped by min length
+		{"snake_case_title", []string{"snake", "case", "title"}},
+		{"Title (Subtitle)", []string{"title", "subtitle"}},
 	}
 	for _, c := range cases {
 		got := SigWords(c.in)
