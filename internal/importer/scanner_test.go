@@ -616,7 +616,7 @@ func TestImportSuccess_FiresBookImported(t *testing.T) {
 	spy := &spyNotifier{}
 	s := NewScanner(dlRepo, clientRepo, bookRepo, authorRepo, db.NewHistoryRepo(database), libDir, "", "", "", "").
 		WithNotifier(spy)
-	s.tryImportInternal(ctx, dl, dlDir, "", "", nil)
+	s.tryImportInternal(ctx, dl, dlDir, "", "", "", nil)
 
 	call := spy.lookup(notifierEventBookImported)
 	if call == nil {
