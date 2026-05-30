@@ -55,8 +55,10 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: make smoke
 
-  # PR-only: Go race-detector tests and frontend build run in parallel so
-  # neither blocks the other.
+  # PR-only: Go tests with coverage. Race-detector runs as a separate
+  # parallel job (validate-race-go) so neither stacks the other's overhead.
+  # Combined on one job they were tripping the 10-minute default timeout
+  # in CI when both -race and -covermode=atomic compounded.
   validate-go:
     name: validate (Go)
     runs-on: ubuntu-latest
@@ -69,13 +71,30 @@ jobs:
         with:
           go-version: "1.25.10"
           cache: true
-      - run: go test -race -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/...
+      - run: go test -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/...
       - uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe # v5
         with:
           files: coverage.out
           flags: backend
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  # PR-only race detector. Runs in parallel with validate-go so the two
+  # checks don't serialise. Matches the post-merge race job at line 125
+  # (no coverage flag, just -race).
+  validate-race-go:
+    name: validate (Go race)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.25.10"
+          cache: true
+      - run: go test -race -timeout=15m ./cmd/... ./internal/...
 
   validate-frontend:
     name: validate (frontend)
