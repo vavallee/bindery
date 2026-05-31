@@ -3051,6 +3051,81 @@ func TestAddBook_DoesNotResolveOtherUsersAlternateAuthorIdentifier(t *testing.T)
 	}
 }
 
+func TestAddBook_DirectInsertCoversAlternateAuthorIdentifier(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	ctx := context.Background()
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	existing := &models.Author{
+		ForeignID:        "OL-ALICE",
+		Name:             "Alice Author",
+		SortName:         "Author, Alice",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := authorRepo.Create(ctx, existing); err != nil {
+		t.Fatalf("seed author: %v", err)
+	}
+	if err := authorRepo.UpsertAuthorIdentifier(ctx, existing.ID, "hc:alice-author"); err != nil {
+		t.Fatalf("seed author identifier: %v", err)
+	}
+	primary := &models.Book{
+		ForeignID:        "hc:book-one",
+		Title:            "Book One",
+		SortTitle:        "Book One",
+		Status:           models.BookStatusWanted,
+		Genres:           []string{},
+		MetadataProvider: "hardcover",
+	}
+	provider := &stubMetaProvider{
+		name:  "hardcover",
+		works: nil,
+		getBookByID: map[string]*models.Book{
+			"hc:book-one": primary,
+		},
+	}
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(provider), nil, profileRepo, nil)
+	body, _ := json.Marshal(map[string]any{
+		"foreignBookId":   "hc:book-one",
+		"foreignAuthorId": "hc:alice-author",
+		"authorName":      "Alice Author",
+	})
+	parent, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body)).WithContext(parent)
+	rec := httptest.NewRecorder()
+
+	h.AddBook(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, err := bookRepo.GetByForeignID(ctx, "hc:book-one")
+	if err != nil || got == nil {
+		t.Fatalf("book after AddBook = %+v err=%v, want persisted", got, err)
+	}
+	if got.AuthorID != existing.ID {
+		t.Fatalf("book author_id = %d, want existing author %d", got.AuthorID, existing.ID)
+	}
+	if !got.Monitored {
+		t.Fatalf("book should be monitored after AddBook success")
+	}
+	authors, err := authorRepo.List(ctx)
+	if err != nil {
+		t.Fatalf("List authors: %v", err)
+	}
+	if len(authors) != 1 {
+		t.Fatalf("authors = %d, want existing author reused", len(authors))
+	}
+}
+
 // TestAddBook_OrphanAuthorDeletedOnTimeout is the end-to-end guarantee
 // for issue #667. With a DNB-shaped synthetic author ID, the
 // (legacy-flow) async fetch returns zero books deterministically and the
