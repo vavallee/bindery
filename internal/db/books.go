@@ -83,7 +83,7 @@ func (r *BookRepo) List(ctx context.Context) ([]models.Book, error) {
 }
 
 func (r *BookRepo) ListByUser(ctx context.Context, userID int64) ([]models.Book, error) {
-	where, args := QueryScopeFor("books.owner_user_id","WHERE excluded = 0", userID)
+	where, args := QueryScopeFor("books.owner_user_id", "WHERE excluded = 0", userID)
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY sort_title", args)
 }
 
@@ -97,7 +97,7 @@ func (r *BookRepo) ListByAuthor(ctx context.Context, authorID int64) ([]models.B
 }
 
 func (r *BookRepo) ListByAuthorAndUser(ctx context.Context, authorID, userID int64) ([]models.Book, error) {
-	where, args := QueryScopeFor("books.owner_user_id","WHERE author_id = ? AND excluded = 0", userID, authorID)
+	where, args := QueryScopeFor("books.owner_user_id", "WHERE author_id = ? AND excluded = 0", userID, authorID)
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY release_date", args)
 }
 
@@ -111,7 +111,7 @@ func (r *BookRepo) ListByStatus(ctx context.Context, status string) ([]models.Bo
 }
 
 func (r *BookRepo) ListByStatusAndUser(ctx context.Context, status string, userID int64) ([]models.Book, error) {
-	where, args := QueryScopeFor("books.owner_user_id","WHERE status = ? AND books.monitored = 1 AND excluded = 0", userID, status)
+	where, args := QueryScopeFor("books.owner_user_id", "WHERE status = ? AND books.monitored = 1 AND excluded = 0", userID, status)
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY sort_title", args)
 }
 
