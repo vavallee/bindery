@@ -1822,7 +1822,12 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 
 	// 1. Find or create the author (unmonitored if new so we don't auto-want all books).
 	userID := auth.UserIDFromContext(ctx)
-	author, _ := h.authors.GetByAnyForeignIDForUser(ctx, req.ForeignAuthorID, userID)
+	author, _ := h.authors.GetByForeignIDForUser(ctx, req.ForeignAuthorID, userID)
+	authorMatchedByAlternateID := false
+	if author == nil {
+		author, _ = h.authors.GetByAnyForeignIDForUser(ctx, req.ForeignAuthorID, userID)
+		authorMatchedByAlternateID = author != nil
+	}
 	if author == nil {
 		name := req.AuthorName
 		if name == "" {
@@ -1912,7 +1917,7 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	// cleanup defer sees a non-empty book list (so it keeps the author).
 	// The async sync still runs as a backfill for the rest of the catalogue;
 	// any UNIQUE collision against this row is silently tolerated.
-	directInsertNeeded := authorWasJustCreated || strings.HasPrefix(req.ForeignBookID, "dnb:")
+	directInsertNeeded := authorWasJustCreated || authorMatchedByAlternateID || strings.HasPrefix(req.ForeignBookID, "dnb:")
 	if directInsertNeeded {
 		if existing, _ := h.books.GetByForeignID(ctx, req.ForeignBookID); existing == nil {
 			primary, err := h.meta.GetBook(ctx, req.ForeignBookID)
