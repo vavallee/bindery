@@ -2,6 +2,7 @@ package notifier
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -183,6 +184,71 @@ func TestSend_InvalidHeaders(t *testing.T) {
 	// Should not error — invalid headers are silently ignored.
 	if err := n.send(context.Background(), notif, map[string]interface{}{}); err != nil {
 		t.Fatalf("send with invalid headers JSON: %v", err)
+	}
+}
+
+// TestSend_AppriseFields verifies the payload sent over the wire carries a
+// "body" (and a "title") so Apprise's REST API accepts it, while leaving the
+// caller's original fields untouched for other webhook consumers.
+func TestSend_AppriseFields(t *testing.T) {
+	tests := []struct {
+		name      string
+		payload   map[string]interface{}
+		wantBody  string
+		wantTitle string
+	}{
+		{
+			name:      "title only (grab/import) → body falls back to title",
+			payload:   map[string]interface{}{"title": "Dune", "author": "Herbert"},
+			wantBody:  "Dune",
+			wantTitle: "Dune",
+		},
+		{
+			name:      "message only (test/health) → body from message, default title",
+			payload:   map[string]interface{}{"eventType": "test", "message": "hello"},
+			wantBody:  "hello",
+			wantTitle: "Bindery",
+		},
+		{
+			name:      "explicit body is preserved",
+			payload:   map[string]interface{}{"body": "explicit", "message": "ignored"},
+			wantBody:  "explicit",
+			wantTitle: "Bindery",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotBody []byte
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotBody, _ = io.ReadAll(r.Body)
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer srv.Close()
+
+			n := testNotifier(&http.Client{})
+			notif := &models.Notification{URL: srv.URL, Method: "POST"}
+			if err := n.send(context.Background(), notif, tt.payload); err != nil {
+				t.Fatalf("send: %v", err)
+			}
+
+			var got map[string]interface{}
+			if err := json.Unmarshal(gotBody, &got); err != nil {
+				t.Fatalf("unmarshal sent body: %v (%s)", err, gotBody)
+			}
+			if got["body"] != tt.wantBody {
+				t.Errorf("body = %v, want %q", got["body"], tt.wantBody)
+			}
+			if got["title"] != tt.wantTitle {
+				t.Errorf("title = %v, want %q", got["title"], tt.wantTitle)
+			}
+			// Caller's original keys must survive untouched.
+			for k, v := range tt.payload {
+				if got[k] != v {
+					t.Errorf("original key %q = %v, want %v", k, got[k], v)
+				}
+			}
+		})
 	}
 }
 
