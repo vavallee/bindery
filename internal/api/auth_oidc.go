@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/auth/oidc"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/httpsec"
 )
 
 const (
@@ -459,7 +461,33 @@ func (h *OIDCHandler) TestDiscovery(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "issuer required")
 		return
 	}
-	doc, err := oidc.Discover(r.Context(), issuer)
+	// SSRF guard: block loopback, link-local, and cloud-metadata destinations
+	// so an admin (or anyone whose session leaks once) cannot use this admin
+	// probe to fingerprint internal services or read AWS/Azure/DO metadata. The
+	// default policy is LAN (RFC1918 still reachable for legitimate on-prem
+	// IdPs); operators with stricter needs can keep the default, and operators
+	// who intentionally point Bindery at a LAN IdP get the default behaviour
+	// without further config. BINDERY_ALLOW_LAN_OIDC=true keeps the historical
+	// behaviour where any URL the admin types is fetched verbatim, including
+	// loopback, for users who run an OIDC provider on the Bindery host itself.
+	var discoverOpts []oidc.DiscoverOption
+	if !oidcAllowLAN() {
+		policy := oidcDiscoveryPolicy()
+		if err := httpsec.ValidateOutboundURL(issuer, policy); err != nil {
+			// Mirror the handler's existing "report inline, don't surface as
+			// HTTP error" contract: any failure that has the user-visible
+			// shape of "we did not fetch the IdP" (unreachable, SSRF refusal,
+			// scheme refusal) goes back as ok=false in the body so the Settings
+			// UI can render the message next to the issuer field. The 400
+			// branch is reserved for malformed input (e.g. empty issuer).
+			writeOK(w, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		// Same policy is re-applied to every redirect hop inside Discover so an
+		// attacker can't bounce the request from a public URL into a private one.
+		discoverOpts = append(discoverOpts, oidc.DiscoverPolicy(policy))
+	}
+	doc, err := oidc.Discover(r.Context(), issuer, discoverOpts...)
 	if err != nil {
 		writeOK(w, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -603,4 +631,25 @@ func cookieSecure(r *http.Request) bool {
 func sanitizeLog(s string) string {
 	s = strings.ReplaceAll(s, "\r", " ")
 	return strings.ReplaceAll(s, "\n", " ")
+}
+
+// oidcAllowLAN reports whether the operator has opted out of the SSRF guard
+// on the OIDC discovery probe via BINDERY_ALLOW_LAN_OIDC. Setting this to
+// "1" or "true" (case-insensitive) restores the historical behaviour where
+// any URL the admin types is fetched verbatim, including loopback and other
+// destinations a hardened deploy would normally refuse. The escape hatch
+// exists for users who run an OIDC provider on the Bindery host itself.
+func oidcAllowLAN() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("BINDERY_ALLOW_LAN_OIDC")))
+	return v == "1" || v == "true"
+}
+
+// oidcDiscoveryPolicy returns the SSRF policy applied to the OIDC discovery
+// probe and to redirects followed by the discovery client. PolicyLAN is the
+// default: it blocks loopback, link-local, and cloud-metadata, but allows
+// RFC1918 destinations so an on-prem Keycloak/Authentik on a LAN IP keeps
+// working. Stricter setups can run with the LAN-side IdP unreachable from
+// the Bindery host.
+func oidcDiscoveryPolicy() httpsec.Policy {
+	return httpsec.PolicyLAN
 }

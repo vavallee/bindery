@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/vavallee/bindery/internal/httpsec"
 )
 
 // TestDiscover_Success verifies the happy path returns parsed metadata when
@@ -139,6 +141,72 @@ func TestDiscover_TrimTrailingSlash(t *testing.T) {
 	_, _ = Discover(context.Background(), srv.URL+"/")
 	if seenPath != "/.well-known/openid-configuration" {
 		t.Errorf("path=%q, want exactly /.well-known/openid-configuration (no double slash)", seenPath)
+	}
+}
+
+// TestDiscover_RedirectToInternalIP_IsBlocked verifies the CheckRedirect hook
+// re-validates every hop against the supplied policy. Without it, an attacker
+// who controls a public-looking issuer URL could 302 the discovery probe to
+// http://10.0.0.1/ (or http://169.254.169.254/) and bypass the initial URL
+// guard at the API handler.
+func TestDiscover_RedirectToInternalIP_IsBlocked(t *testing.T) {
+	// httptest.NewServer binds to 127.0.0.1, which the SSRF guard rejects.
+	// Allow loopback so we can run the public-looking origin server; the
+	// redirect destination (10.0.0.1) is the one that has to be refused.
+	defer httpsec.AllowLoopbackForTests()()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Redirect to an RFC1918 address — under PolicyStrict this is the
+		// attack we are testing against. We use PolicyStrict in the call
+		// below so the redirect-validation actually fires on 10.0.0.1.
+		http.Redirect(w, r, "http://10.0.0.1/.well-known/openid-configuration", http.StatusFound)
+	}))
+	defer origin.Close()
+
+	_, err := Discover(context.Background(), origin.URL, DiscoverPolicy(httpsec.PolicyStrict))
+	if err == nil {
+		t.Fatal("expected redirect to internal IP to be refused, got nil")
+	}
+	if !strings.Contains(err.Error(), "redirect refused") {
+		t.Errorf("error=%q, want a redirect-refused message so operators can tell it apart from a transport error", err.Error())
+	}
+}
+
+// TestDiscover_RedirectToCloudMetadata_IsBlocked is the same shape but
+// against the cloud-metadata endpoint, which PolicyLAN already refuses (so
+// callers don't need PolicyStrict to get the protection that matters most).
+func TestDiscover_RedirectToCloudMetadata_IsBlocked(t *testing.T) {
+	defer httpsec.AllowLoopbackForTests()()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://169.254.169.254/latest/meta-data/iam/security-credentials/", http.StatusFound)
+	}))
+	defer origin.Close()
+
+	_, err := Discover(context.Background(), origin.URL, DiscoverPolicy(httpsec.PolicyLAN))
+	if err == nil {
+		t.Fatal("expected redirect to 169.254.169.254 to be refused, got nil")
+	}
+	if !strings.Contains(err.Error(), "redirect refused") {
+		t.Errorf("error=%q, want a redirect-refused message", err.Error())
+	}
+}
+
+// TestDiscover_RedirectCap stops a malicious or misconfigured IdP from
+// chaining endless redirects.
+func TestDiscover_RedirectCap(t *testing.T) {
+	defer httpsec.AllowLoopbackForTests()()
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Each hit redirects back to itself, growing via[] without bound.
+		http.Redirect(w, r, srv.URL+"/.well-known/openid-configuration", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	_, err := Discover(context.Background(), srv.URL, DiscoverMaxRedirects(3))
+	if err == nil {
+		t.Fatal("expected redirect-cap error, got nil")
+	}
+	if !strings.Contains(err.Error(), "stopped after") {
+		t.Errorf("error=%q, want it to mention the redirect cap", err.Error())
 	}
 }
 

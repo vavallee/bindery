@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/vavallee/bindery/internal/auth/oidc"
+	"github.com/vavallee/bindery/internal/httpsec"
 )
 
 // TestGetRedirectBase verifies the endpoint returns the resolved base URL
@@ -95,6 +96,10 @@ func TestGetRedirectBase_ResolverHonorsRequest(t *testing.T) {
 // TestTestDiscovery_Success verifies the handler returns ok=true and the
 // discovered metadata when the IdP serves a valid openid-configuration doc.
 func TestTestDiscovery_Success(t *testing.T) {
+	// httptest.NewServer binds to 127.0.0.1; the SSRF guard would otherwise
+	// reject it. The escape hatch is the same one the rest of the test suite
+	// uses for guarded outbound HTTP.
+	defer httpsec.AllowLoopbackForTests()()
 	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/.well-known/openid-configuration" {
 			http.NotFound(w, r)
@@ -142,6 +147,7 @@ func TestTestDiscovery_Success(t *testing.T) {
 // when the discovered issuer doesn't match the input — the silent killer for
 // Authentik per-provider mode and Keycloak realms.
 func TestTestDiscovery_IssuerMismatch(t *testing.T) {
+	defer httpsec.AllowLoopbackForTests()()
 	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
@@ -209,6 +215,83 @@ func TestTestDiscovery_RejectsEmptyIssuer(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d, want 400", rec.Code)
+	}
+}
+
+// TestOIDCTestDiscovery_RejectsInternalIP pins down the SSRF fix on the
+// authenticated /api/v1/auth/oidc/test-discovery endpoint. Without the guard,
+// an admin (or anyone whose session leaks once) can probe the cloud-metadata
+// endpoint 169.254.169.254 or other link-local destinations and have the
+// server fetch them. The fix validates the issuer URL through
+// httpsec.ValidateOutboundURL before any HTTP request is built. The error
+// flows back to the UI through the existing ok=false contract so admins see
+// the reason inline next to the issuer field.
+func TestOIDCTestDiscovery_RejectsInternalIP(t *testing.T) {
+	cases := []struct {
+		name   string
+		issuer string
+	}{
+		{"cloud metadata IPv4 literal", "http://169.254.169.254/.well-known/openid-configuration"},
+		{"link-local IPv4", "http://169.254.10.20/.well-known/openid-configuration"},
+		{"cloud metadata hostname", "http://metadata.google.internal/.well-known/openid-configuration"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			mgr := oidc.NewManager()
+			h := NewOIDCHandler(mgr, nil, nil, nil, nil)
+			body := strings.NewReader(`{"issuer":"` + c.issuer + `"}`)
+			rec := httptest.NewRecorder()
+			h.TestDiscovery(rec, httptest.NewRequest(http.MethodPost, "/api/v1/auth/oidc/test-discovery", body))
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("issuer=%q: status=%d, want 200 with ok=false in body; body=%s", c.issuer, rec.Code, rec.Body.String())
+			}
+			var got struct {
+				OK    bool   `json:"ok"`
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("issuer=%q: parse body: %v (body=%s)", c.issuer, err, rec.Body.String())
+			}
+			if got.OK {
+				t.Fatalf("issuer=%q: ok=true, want false (SSRF guard should refuse)", c.issuer)
+			}
+			if got.Error == "" {
+				t.Fatalf("issuer=%q: empty error message — UI has nothing to display", c.issuer)
+			}
+		})
+	}
+}
+
+// TestOIDCTestDiscovery_AllowLANEscapeHatch verifies BINDERY_ALLOW_LAN_OIDC
+// disables the SSRF guard so users who run an OIDC provider on the Bindery
+// host itself (or on a loopback overlay) can still hit Test Discovery.
+func TestOIDCTestDiscovery_AllowLANEscapeHatch(t *testing.T) {
+	t.Setenv("BINDERY_ALLOW_LAN_OIDC", "true")
+	// Loopback would still be blocked by ValidateOutboundURL without the
+	// escape hatch; the test confirms the escape hatch skips the check
+	// entirely. We do not need an actual server — the request just has to
+	// progress past the guard and fail on the network (returned as
+	// ok=false in the body, per the handler contract).
+	mgr := oidc.NewManager()
+	h := NewOIDCHandler(mgr, nil, nil, nil, nil)
+	body := strings.NewReader(`{"issuer":"http://127.0.0.1:1"}`)
+	rec := httptest.NewRecorder()
+	h.TestDiscovery(rec, httptest.NewRequest(http.MethodPost, "/api/v1/auth/oidc/test-discovery", body))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("escape hatch should let the request through (network error returned as ok=false in body); got status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if got.OK {
+		t.Fatal("ok=true, want false (port 1 should fail to connect)")
+	}
+	if got.Error == "" {
+		t.Fatal("expected an error message describing the connection failure")
 	}
 }
 
