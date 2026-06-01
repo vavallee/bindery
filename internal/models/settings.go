@@ -42,6 +42,10 @@ type RootFolder struct {
 	Path      string    `json:"path"`
 	FreeSpace int64     `json:"freeSpace"`
 	CreatedAt time.Time `json:"createdAt"`
+	// OwnerUserID is the per-user ownership column added in migration 025.
+	// Zero means "no recorded owner" (legacy pre-backfill rows); auth's
+	// CheckOwnership treats that as visible to every authenticated caller.
+	OwnerUserID int64 `json:"-"`
 }
 
 type QualityProfile struct {
@@ -51,6 +55,9 @@ type QualityProfile struct {
 	Cutoff         string        `json:"cutoff"`
 	Items          []QualityItem `json:"items"`
 	CreatedAt      time.Time     `json:"createdAt"`
+	// OwnerUserID is the per-user ownership column added in migration 025.
+	// See RootFolder for legacy zero-value semantics.
+	OwnerUserID int64 `json:"-"`
 }
 
 type QualityItem struct {

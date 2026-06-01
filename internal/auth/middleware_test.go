@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"net/http"
 	"testing"
 )
@@ -144,5 +145,101 @@ func TestProxyAuthRegularPathUntrustedIPStill401s(t *testing.T) {
 	}
 	if w.status != http.StatusUnauthorized {
 		t.Errorf("status = %d; want 401", w.status)
+	}
+}
+
+// Regression tests for CheckOwnership, the helper that closes Tier-1 per-user
+// IDOR (D1). The contract:
+//
+//   - Gate off (BINDERY_ENFORCE_TENANCY unset/false): always returns true so
+//     existing single-user installs and tests see no behavior change.
+//   - Gate on + admin role: passes regardless of owner.
+//   - Gate on + owner match: passes.
+//   - Gate on + owner mismatch: blocked.
+//   - Gate on + ownerUserID == 0 (legacy / pre-migration-025 row): passes,
+//     to avoid orphaning data when an operator first turns the flag on.
+//
+// Each test uses SetEnforceTenancyForTests with t.Cleanup so order does not
+// matter and the package-level cache is restored after the test exits.
+
+func TestCheckOwnership_GateOffAllowsAll(t *testing.T) {
+	SetEnforceTenancyForTests(t, false)
+
+	ctx := context.WithValue(context.Background(), userIDCtxKey, int64(7))
+	// Caller is user 7 but the resource is owned by user 99; with the gate
+	// off this must still pass so single-user installs keep working.
+	if !CheckOwnership(ctx, 99) {
+		t.Error("CheckOwnership must pass when BINDERY_ENFORCE_TENANCY is off, regardless of owner")
+	}
+}
+
+func TestCheckOwnership_AdminAlwaysPasses(t *testing.T) {
+	SetEnforceTenancyForTests(t, true)
+
+	ctx := context.WithValue(context.Background(), userIDCtxKey, int64(7))
+	ctx = WithUserRole(ctx, "admin")
+	if !CheckOwnership(ctx, 99) {
+		t.Error("admin role must override owner mismatch even when the gate is on")
+	}
+}
+
+func TestCheckOwnership_OwnerMatchesPasses(t *testing.T) {
+	SetEnforceTenancyForTests(t, true)
+
+	ctx := context.WithValue(context.Background(), userIDCtxKey, int64(7))
+	ctx = WithUserRole(ctx, "user")
+	if !CheckOwnership(ctx, 7) {
+		t.Error("CheckOwnership must pass when caller owns the resource")
+	}
+}
+
+func TestCheckOwnership_OwnerMismatchBlocked(t *testing.T) {
+	SetEnforceTenancyForTests(t, true)
+
+	ctx := context.WithValue(context.Background(), userIDCtxKey, int64(7))
+	ctx = WithUserRole(ctx, "user")
+	if CheckOwnership(ctx, 99) {
+		t.Error("CheckOwnership must block when caller is not owner and not admin")
+	}
+}
+
+func TestCheckOwnership_OwnerZeroPassesAsLegacyRow(t *testing.T) {
+	SetEnforceTenancyForTests(t, true)
+
+	ctx := context.WithValue(context.Background(), userIDCtxKey, int64(7))
+	ctx = WithUserRole(ctx, "user")
+	// owner_user_id IS NULL scans as 0 in Go; those rows pre-date migration
+	// 025's backfill and must remain accessible after the flag is flipped on
+	// so the operator does not orphan their library.
+	if !CheckOwnership(ctx, 0) {
+		t.Error("CheckOwnership must pass when ownerUserID is 0 (legacy row)")
+	}
+}
+
+func TestCheckOwnership_UnauthenticatedBlockedOnOwnedRow(t *testing.T) {
+	SetEnforceTenancyForTests(t, true)
+
+	// No user id, no role — a request that somehow reached an authed
+	// handler context without identity must still be blocked from owned
+	// resources. Gate-off path handles the "no auth required" case.
+	ctx := context.Background()
+	if CheckOwnership(ctx, 99) {
+		t.Error("unauthenticated context must not pass ownership for owned rows when the gate is on")
+	}
+}
+
+func TestSetEnforceTenancyForTests_RestoresPreviousValue(t *testing.T) {
+	// Capture the value the package currently sees.
+	pre := enforceTenancyEnabled()
+
+	// Sub-test flips the gate; its t.Cleanup must restore pre.
+	t.Run("flipped", func(t *testing.T) {
+		SetEnforceTenancyForTests(t, !pre)
+		if enforceTenancyEnabled() == pre {
+			t.Fatalf("flip did not stick; got %v, want %v", enforceTenancyEnabled(), !pre)
+		}
+	})
+	if enforceTenancyEnabled() != pre {
+		t.Errorf("cleanup did not restore; got %v, want %v", enforceTenancyEnabled(), pre)
 	}
 }
