@@ -44,6 +44,7 @@ type AuthorHandler struct {
 	searcher                    BookSearcher
 	finder                      LibraryFinder
 	editions                    *db.EditionRepo
+	roots                       *LibraryRoots // optional: library-root containment for delete
 	enhancedHardcoverEnvEnabled bool
 
 	editionFetcher bookhydrate.EditionFetcher
@@ -65,6 +66,14 @@ func (h *AuthorHandler) WithFinder(f LibraryFinder) *AuthorHandler {
 // books created while syncing author catalogues.
 func (h *AuthorHandler) WithEditionHydration(editions *db.EditionRepo) *AuthorHandler {
 	h.editions = editions
+	return h
+}
+
+// WithRoots wires the library-root containment checker used by Delete to
+// refuse on-disk removal of paths outside the configured library. A nil
+// value disables the check.
+func (h *AuthorHandler) WithRoots(r *LibraryRoots) *AuthorHandler {
+	h.roots = r
 	return h
 }
 
@@ -908,6 +917,12 @@ func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// us nothing to walk. Per-path errors are logged but don't abort the
 	// response: the author is already gone, and a partial sweep is better
 	// than rolling the whole thing back.
+	//
+	// Each path is run through the library-root containment check (Wave 1 /
+	// Bundle B): if a `file_path` is outside any configured library root —
+	// whether through a tampered import, a buggy migration, or a hostile
+	// metadata payload — the on-disk delete is skipped with a WARN log
+	// rather than walking outside the library.
 	var pathsToRemove []string
 	if r.URL.Query().Get("deleteFiles") == "true" {
 		books, err := h.books.ListByAuthor(r.Context(), id)
@@ -927,7 +942,7 @@ func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, p := range pathsToRemove {
-		if err := removeBookPath(p); err != nil {
+		if _, err := safeRemoveBookPath(r.Context(), h.roots, p, "", "author_id", id); err != nil {
 			slog.Warn("delete author: failed to remove file", "author_id", id, "path", p, "error", err)
 		}
 	}

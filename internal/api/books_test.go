@@ -705,3 +705,176 @@ func TestBookUpdate_NoSearchWhenAlreadyWanted(t *testing.T) {
 
 	searcher.assertNoCall(t, 50*time.Millisecond)
 }
+
+// staticRootLister is a RootLister stub that returns a fixed set of root
+// folder paths without touching a database. Used by the path-containment
+// tests so they don't have to wire a real RootFolderRepo.
+type staticRootLister struct {
+	paths []string
+}
+
+func (s staticRootLister) List(_ context.Context) ([]models.RootFolder, error) {
+	out := make([]models.RootFolder, 0, len(s.paths))
+	for i, p := range s.paths {
+		out = append(out, models.RootFolder{ID: int64(i + 1), Path: p})
+	}
+	return out, nil
+}
+
+// TestBookDelete_PathContainment_RejectsOutsideRoots is the Wave 1 / Bundle B
+// defence-in-depth guard: even with ?deleteFiles=true, a DB row whose
+// file_path points outside every configured library root must not be
+// followed onto disk. The DB row still goes away (the file is already
+// orphaned from Bindery's perspective; preserving the row would just leave
+// it permanently un-deletable through the UI) but the on-disk file is
+// untouched.
+func TestBookDelete_PathContainment_RejectsOutsideRoots(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	libA := t.TempDir()
+	libB := t.TempDir()
+	// Wire the handler with two library roots that do NOT contain the
+	// book's file_path.
+	h.WithRoots(NewLibraryRoots(staticRootLister{paths: []string{libA, libB}}))
+
+	// Fixture file outside both roots. We use t.TempDir() so the test
+	// cleanup deletes it if the production code regresses and removes it
+	// here — better an orphan in the temp dir than a real /etc/passwd
+	// touch in CI.
+	outsideDir := t.TempDir()
+	outsidePath := filepath.Join(outsideDir, "definitely-not-mine.epub")
+	if err := os.WriteFile(outsidePath, []byte("untouchable"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	book := &models.Book{
+		ForeignID: "B-OUT", AuthorID: author.ID, Title: "Outside", SortTitle: "outside",
+		Status: models.BookStatusImported, Genres: []string{},
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.SetFilePath(ctx, book.ID, outsidePath); err != nil {
+		t.Fatal(err)
+	}
+
+	req := withURLParam(
+		httptest.NewRequest(http.MethodDelete, "/api/v1/book/"+strconv.FormatInt(book.ID, 10)+"?deleteFiles=true", nil),
+		"id", strconv.FormatInt(book.ID, 10))
+	rec := httptest.NewRecorder()
+	h.Delete(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// The on-disk file must survive.
+	if _, err := os.Stat(outsidePath); err != nil {
+		t.Errorf("file outside library roots must NOT be deleted: stat err=%v", err)
+	}
+	// The DB row must be gone.
+	if got, _ := books.GetByID(ctx, book.ID); got != nil {
+		t.Errorf("book row should be deleted even when on-disk delete is refused, got id=%d", got.ID)
+	}
+}
+
+// TestBookDelete_PathContainment_AllowsInsideRoots confirms the positive
+// case: when the file_path IS inside a configured root, the on-disk file
+// is removed and the DB row goes away — the containment check must not
+// regress the existing legitimate-delete path.
+func TestBookDelete_PathContainment_AllowsInsideRoots(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	libA := t.TempDir()
+	libB := t.TempDir()
+	h.WithRoots(NewLibraryRoots(staticRootLister{paths: []string{libA, libB}}))
+
+	// File legitimately under libA, mirroring the importer's
+	// "<root>/<Author>/<Title>.epub" layout.
+	authorDir := filepath.Join(libA, "Test Author")
+	if err := os.MkdirAll(authorDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	insidePath := filepath.Join(authorDir, "book.epub")
+	if err := os.WriteFile(insidePath, []byte("legit"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	book := &models.Book{
+		ForeignID: "B-IN", AuthorID: author.ID, Title: "Inside", SortTitle: "inside",
+		Status: models.BookStatusImported, Genres: []string{},
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.SetFilePath(ctx, book.ID, insidePath); err != nil {
+		t.Fatal(err)
+	}
+
+	req := withURLParam(
+		httptest.NewRequest(http.MethodDelete, "/api/v1/book/"+strconv.FormatInt(book.ID, 10)+"?deleteFiles=true", nil),
+		"id", strconv.FormatInt(book.ID, 10))
+	rec := httptest.NewRecorder()
+	h.Delete(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if _, err := os.Stat(insidePath); !os.IsNotExist(err) {
+		t.Errorf("file inside library root SHOULD be deleted, stat err=%v", err)
+	}
+	if got, _ := books.GetByID(ctx, book.ID); got != nil {
+		t.Errorf("book row should be deleted, got id=%d", got.ID)
+	}
+}
+
+// TestBookDeleteFile_PathContainment_RejectsOutsideRoots covers the
+// "scrub-and-keep" flow (DeleteFile, not Delete): an outside-roots
+// file_path must not get unlinked, but the book row must keep moving
+// through its state transition (book_files row dropped, status flipped
+// back to wanted) so the orphan path doesn't get stuck in the UI.
+func TestBookDeleteFile_PathContainment_RejectsOutsideRoots(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	libA := t.TempDir()
+	h.WithRoots(NewLibraryRoots(staticRootLister{paths: []string{libA}}))
+
+	outsideDir := t.TempDir()
+	outsidePath := filepath.Join(outsideDir, "outside.epub")
+	if err := os.WriteFile(outsidePath, []byte("untouchable"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	book := &models.Book{
+		ForeignID: "B-DF-OUT", AuthorID: author.ID, Title: "DF Outside", SortTitle: "df out",
+		Status: models.BookStatusImported, Genres: []string{},
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.SetFilePath(ctx, book.ID, outsidePath); err != nil {
+		t.Fatal(err)
+	}
+
+	req := withURLParam(
+		httptest.NewRequest(http.MethodDelete, "/api/v1/book/"+strconv.FormatInt(book.ID, 10)+"/file", nil),
+		"id", strconv.FormatInt(book.ID, 10))
+	rec := httptest.NewRecorder()
+	h.DeleteFile(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// File survives.
+	if _, err := os.Stat(outsidePath); err != nil {
+		t.Errorf("file outside library roots must NOT be deleted: stat err=%v", err)
+	}
+	// Status flips, file_path is cleared — the orphan no longer shows up as
+	// an imported file.
+	got, _ := books.GetByID(ctx, book.ID)
+	if got == nil {
+		t.Fatal("book row should remain after DeleteFile")
+	}
+	if got.FilePath != "" {
+		t.Errorf("file_path should be cleared after refused delete, got %q", got.FilePath)
+	}
+}

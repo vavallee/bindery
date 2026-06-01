@@ -472,17 +472,25 @@ func main() {
 	userMgmtHandler := api.NewUserManagementHandler(userRepo).
 		WithLocalAuthEnabled(cfg.LocalAuthEnabled)
 	searchHandler := api.NewSearchHandler(metaAgg)
+	// Library-root containment checker (Wave 1 / Bundle B): used by the book
+	// and author delete handlers to refuse on-disk removal of any path that
+	// isn't inside a configured root. Defaults to the legacy single-root env
+	// vars so installs that never created a root_folders row still get the
+	// check.
+	libraryRoots := api.NewLibraryRoots(rootFolderRepo, cfg.LibraryDir, cfg.AudiobookDir)
 	authorHandler := api.NewAuthorHandler(authorRepo, authorAliasRepo, bookRepo, seriesRepo, metaAgg, settingsRepo, metadataProfileRepo, sched).
 		WithFinder(importScanner).
 		WithHardcoverFeatureSettings(settingsRepo, cfg.EnhancedHardcoverAPI).
-		WithEditionHydration(editionRepo)
+		WithEditionHydration(editionRepo).
+		WithRoots(libraryRoots)
 	authorAliasHandler := api.NewAuthorAliasHandler(authorRepo, authorAliasRepo)
 	bookHandler := api.NewBookHandler(bookRepo, metaAgg, historyRepo, sched).
 		WithSettings(settingsRepo).
 		WithDownloads(downloadRepo).
 		WithAuthors(authorRepo).
 		WithSeries(seriesRepo).
-		WithEditionHydration(editionRepo)
+		WithEditionHydration(editionRepo).
+		WithRoots(libraryRoots)
 	indexerHandler := api.NewIndexerHandler(indexerRepo, bookRepo, authorRepo, metadataProfileRepo, idxSearcher, settingsRepo, blocklistRepo).WithAliases(authorAliasRepo)
 	downloadHealth := downloader.NewHealthStore().WithNotifier(notif)
 	if clients, err := dlClientRepo.List(ctxBoot); err == nil {
