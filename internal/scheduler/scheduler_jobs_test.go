@@ -414,3 +414,46 @@ func TestRefreshMetadata_MonitoredAuthor_MetaSuccess(t *testing.T) {
 	// Loop body executes: GetAuthor → success → Update author fields.
 	s.refreshMetadata()
 }
+
+// TestRefreshMetadata_NilAuthor_DoesNotPanic pins down the regression where
+// Aggregator.GetAuthor returns (nil, nil) — which happens when no configured
+// provider owns the foreignID prefix, e.g. a Hardcover-prefixed author after
+// Hardcover is disabled. The pre-fix code did `author.Description =
+// updated.Description` immediately and panicked, killing the refresh loop
+// and every subsequent author's refresh that cycle.
+func TestRefreshMetadata_NilAuthor_DoesNotPanic(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatalf("OpenMemory: %v", err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	authRepo := db.NewAuthorRepo(database)
+	// Two monitored authors so we can also verify the loop continues past
+	// the nil result instead of aborting after the first one.
+	for _, a := range []*models.Author{
+		{ForeignID: "OL_NIL_1A", Name: "First", SortName: "First", MetadataProvider: "openlibrary", Monitored: true},
+		{ForeignID: "OL_NIL_2A", Name: "Second", SortName: "Second", MetadataProvider: "openlibrary", Monitored: true},
+	} {
+		if err := authRepo.Create(ctx, a); err != nil {
+			t.Fatalf("create author: %v", err)
+		}
+	}
+
+	// author=nil → mockMetaProvider.GetAuthor returns (nil, nil), which the
+	// aggregator passes straight through to the scheduler.
+	mockProvider := &mockMetaProvider{author: nil}
+	s := &Scheduler{
+		authors: authRepo,
+		meta:    metadata.NewAggregator(mockProvider),
+	}
+
+	// Pre-fix: panics on the first author. Post-fix: skips both and returns.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("refreshMetadata panicked on nil author from aggregator: %v", r)
+		}
+	}()
+	s.refreshMetadata()
+}
