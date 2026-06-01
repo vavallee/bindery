@@ -232,6 +232,69 @@ func TestSettings_AuthorMonitorDefaultsValidation(t *testing.T) {
 	}
 }
 
+// TestSettings_SecretLeakRegression pins down the keys that the deep-audit
+// pass discovered were missing from isSecretSetting. Any of them surfacing
+// through the generic settings endpoint leaks credentials to every
+// authenticated user.
+//
+// `auth.oidc.providers` is the worst of these: the value is a JSON blob with
+// one entry per configured IdP, each containing the `client_secret`. Leaking
+// it lets any logged-in user mint tokens against the IdP from outside Bindery.
+func TestSettings_SecretLeakRegression(t *testing.T) {
+	h, repo, ctx := settingsFixture(t)
+	leaky := map[string]string{
+		SettingOIDCProviders:             `[{"id":"okta","clientSecret":"S3CRET"}]`,
+		SettingAuthSessionSecretPrevious: "previous-hmac-key",
+		SettingGrimmoryAPIKey:            "grimmory-api-key",
+		SettingCalibrePluginAPIKey:       "calibre-plugin-key",
+		// Generic pattern coverage: keys that aren't enumerated but follow
+		// the suffix/prefix conventions must still be filtered.
+		"some_new_provider.api_key":   "secret-by-pattern",
+		"some_new_provider.api_token": "secret-by-pattern-token",
+		"some_section.client_secret":  "secret-by-suffix",
+		"foo.bar_secret":              "secret-by-suffix",
+		"db.password":                 "secret-by-password-suffix",
+		"auth.oidc.future_field":      "secret-by-oidc-prefix",
+	}
+	for k, v := range leaky {
+		if err := repo.Set(ctx, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// And a key that LOOKS adjacent but is safe — must still be readable.
+	if err := repo.Set(ctx, "grimmory.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/setting", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("List status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for k, v := range leaky {
+		if bytes.Contains([]byte(body), []byte(v)) {
+			t.Errorf("List leaked secret value for %q: %q present in response", k, v)
+		}
+		if bytes.Contains([]byte(body), []byte(`"key":"`+k+`"`)) {
+			t.Errorf("List leaked secret key %q via key field", k)
+		}
+	}
+	if !bytes.Contains([]byte(body), []byte("grimmory.enabled")) {
+		t.Errorf("non-secret grimmory.enabled missing from List output: %s", body)
+	}
+
+	// Direct GET on each leaky key must 404.
+	for k := range leaky {
+		req := withKey(httptest.NewRequest(http.MethodGet, "/api/v1/setting/"+k, nil), k)
+		rec := httptest.NewRecorder()
+		h.Get(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("Get %q expected 404 (secret), got %d body=%s", k, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestSettings_GetABSSecretReturns404(t *testing.T) {
 	h, repo, ctx := settingsFixture(t)
 	if err := repo.Set(ctx, SettingABSAPIKey, "supersecret"); err != nil {
