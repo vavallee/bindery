@@ -281,9 +281,24 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "hash: "+err.Error())
 		return
 	}
+	// UpdatePassword atomically bumps users.session_epoch, which invalidates
+	// every existing session cookie for this user — including the one the
+	// caller just used to authenticate. Re-issue a fresh cookie carrying the
+	// new epoch so the browser that performed the change is not immediately
+	// bounced to the login screen (Wave 1 / Bundle C audit finding). Other
+	// browsers / devices / stolen cookies still hold the pre-bump epoch and
+	// are correctly evicted.
 	if err := h.users.UpdatePassword(ctx, u.ID, hash); err != nil {
 		writeErr(w, http.StatusInternalServerError, "update: "+err.Error())
 		return
+	}
+	// Re-mint only when the change is happening on behalf of a logged-in
+	// caller. The single-user-fallback path (uid==0) has no cookie to
+	// preserve, so skip cookie issuance there.
+	if uid != 0 {
+		if !h.issueSession(w, r, ctx, u.ID, true) {
+			return
+		}
 	}
 	writeOK(w, map[string]any{"ok": true})
 }
@@ -479,13 +494,28 @@ func (h *AuthHandler) sessionSecrets(ctx context.Context) [][]byte {
 // issueSession signs and sets the session cookie. It returns true on success.
 // On failure it writes a 500 error response and returns false — callers must
 // return immediately without writing any further response.
+//
+// The cookie carries the user's current session_epoch (looked up here). The
+// middleware compares that field against the live column on every request and
+// rejects mismatches, which is how UpdatePassword's epoch bump invalidates
+// every outstanding cookie for that user (Wave 1 / Bundle C audit finding).
+//
+// Order matters at the password-change call site: epoch must be bumped FIRST,
+// the new cookie minted SECOND. issueSession reads the post-bump epoch here,
+// so a caller that mints the cookie before bumping would invalidate it
+// instantly.
 func (h *AuthHandler) issueSession(w http.ResponseWriter, r *http.Request, ctx context.Context, userID int64, rememberMe bool) bool {
 	dur := auth.SessionDurationShort
 	if rememberMe {
 		dur = auth.SessionDuration
 	}
 	exp := time.Now().Add(dur)
-	value, err := auth.SignSession(h.sessionSecret(ctx), userID, exp)
+	epoch, err := h.users.GetSessionEpoch(ctx, userID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "session epoch lookup: "+err.Error())
+		return false
+	}
+	value, err := auth.SignSessionWithEpoch(h.sessionSecret(ctx), userID, epoch, exp)
 	if err != nil {
 		// Secret is absent or too short — fail closed rather than issue a
 		// forgeable token. This should never happen in practice because

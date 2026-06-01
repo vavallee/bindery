@@ -16,6 +16,13 @@ type User struct {
 	Role         string // "admin" or "user"
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	// SessionEpoch is bumped every time the user's credentials change
+	// (password self-change, admin password reset). The signed session cookie
+	// carries the epoch under which it was minted; the auth middleware
+	// compares it against this column on every request and rejects mismatched
+	// cookies. That is how "log everyone out after a password change" is
+	// enforced (Wave 1 / Bundle C audit finding).
+	SessionEpoch int64
 	// OIDC fields — nil for local-password users.
 	OIDCSub     *string
 	OIDCIssuer  *string
@@ -39,13 +46,13 @@ func (r *UserRepo) Count(ctx context.Context) (int, error) {
 }
 
 const userSelectCols = `id, username, password_hash, role, created_at, updated_at,
-	oidc_sub, oidc_issuer, email, display_name`
+	oidc_sub, oidc_issuer, email, display_name, session_epoch`
 
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var u User
 	err := row.Scan(
 		&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt, &u.UpdatedAt,
-		&u.OIDCSub, &u.OIDCIssuer, &u.Email, &u.DisplayName,
+		&u.OIDCSub, &u.OIDCIssuer, &u.Email, &u.DisplayName, &u.SessionEpoch,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -203,7 +210,11 @@ func (r *UserRepo) Create(ctx context.Context, username, passwordHash string) (*
 	if err != nil {
 		return nil, fmt.Errorf("get user id: %w", err)
 	}
-	return &User{ID: id, Username: username, PasswordHash: passwordHash, Role: "user", CreatedAt: now, UpdatedAt: now}, nil
+	// SessionEpoch matches the column default in migration 047. Returning the
+	// concrete value (rather than the Go zero) keeps the in-memory User
+	// consistent with the row that was just written, so callers comparing
+	// against GetSessionEpoch don't see a phantom mismatch.
+	return &User{ID: id, Username: username, PasswordHash: passwordHash, Role: "user", CreatedAt: now, UpdatedAt: now, SessionEpoch: 1}, nil
 }
 
 // List returns all users ordered by id.
@@ -314,10 +325,49 @@ func (r *UserRepo) PromoteFirstUser(ctx context.Context) error {
 	return err
 }
 
+// UpdatePassword writes a new password hash AND atomically increments the
+// user's session_epoch. The epoch bump is what makes a password change
+// invalidate every existing session cookie for that user: the auth middleware
+// compares the cookie's epoch field against this column on each request and
+// rejects mismatches. Doing both writes in one UPDATE keeps the two states
+// in lockstep — there is no window in which the new password is live but
+// the old cookies are still trusted (Wave 1 / Bundle C audit finding).
 func (r *UserRepo) UpdatePassword(ctx context.Context, id int64, passwordHash string) error {
 	_, err := r.db.ExecContext(ctx,
-		"UPDATE users SET password_hash=?, updated_at=? WHERE id=?",
+		"UPDATE users SET password_hash=?, session_epoch=session_epoch+1, updated_at=? WHERE id=?",
 		passwordHash, time.Now().UTC(), id,
+	)
+	return err
+}
+
+// GetSessionEpoch returns the user's current session_epoch, or (0, nil) when
+// the user does not exist. The auth middleware calls this on every
+// session-cookie-authenticated request to compare against the epoch embedded
+// in the cookie payload — a mismatch means the cookie was minted before the
+// most recent password change and must be rejected.
+func (r *UserRepo) GetSessionEpoch(ctx context.Context, id int64) (int64, error) {
+	var epoch int64
+	err := r.db.QueryRowContext(ctx,
+		"SELECT session_epoch FROM users WHERE id=?", id,
+	).Scan(&epoch)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("get session epoch: %w", err)
+	}
+	return epoch, nil
+}
+
+// BumpSessionEpoch increments the user's session_epoch by one. Intended for
+// callers that need to invalidate every outstanding session for a user
+// without changing the password itself (a hook for future "log out all
+// devices" UI). The password-change paths inline the bump into UpdatePassword
+// so the two cannot drift apart.
+func (r *UserRepo) BumpSessionEpoch(ctx context.Context, id int64) error {
+	_, err := r.db.ExecContext(ctx,
+		"UPDATE users SET session_epoch=session_epoch+1, updated_at=? WHERE id=?",
+		time.Now().UTC(), id,
 	)
 	return err
 }

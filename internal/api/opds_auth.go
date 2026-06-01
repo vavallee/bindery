@@ -42,9 +42,23 @@ func OPDSAuth(p auth.Provider, users *db.UserRepo, limiter *auth.LoginLimiter) f
 				return
 			}
 			if c, err := r.Cookie(auth.SessionCookieName); err == nil {
-				if _, err := auth.VerifySessionMulti(p.SessionSecrets(), c.Value); err == nil {
-					next.ServeHTTP(w, r)
-					return
+				if uid, epoch, err := auth.VerifySessionMultiWithEpoch(p.SessionSecrets(), c.Value); err == nil {
+					// Same epoch check the main auth middleware performs: the
+					// cookie's epoch must match the user's current
+					// users.session_epoch, which UpdatePassword bumps. Without
+					// this, an OPDS reader holding a pre-password-change
+					// cookie would keep working after the user rotated
+					// credentials (Wave 1 / Bundle C audit finding). users may
+					// be nil under test harnesses that don't wire it; in that
+					// case fall back to signature/expiry-only verification.
+					if users == nil {
+						next.ServeHTTP(w, r)
+						return
+					}
+					if liveEpoch, err := users.GetSessionEpoch(r.Context(), uid); err == nil && liveEpoch == epoch {
+						next.ServeHTTP(w, r)
+						return
+					}
 				}
 			}
 			if username, password, ok := r.BasicAuth(); ok && users != nil {
