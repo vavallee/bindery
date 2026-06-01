@@ -55,11 +55,45 @@ func NewSettingsHandler(settings *db.SettingsRepo) *SettingsHandler {
 }
 
 // isSecretSetting reports whether a settings key holds sensitive material
-// that must not leak through the generic settings endpoints. The auth.*
-// values are surfaced through the dedicated /auth/* endpoints instead.
+// that must not leak through the generic settings endpoints. Reads on
+// /api/v1/setting and /api/v1/setting/{key} are available to every
+// authenticated user (the dedicated /auth/* endpoints handle admin-only
+// secret config), so any new sensitive key must either be added to the
+// explicit list below or match one of the suffix/prefix patterns.
+//
+// Design choice: hybrid allowlist-by-pattern + explicit denylist for one-offs.
+// A pure enumerated denylist drifts — every new `*.api_key`, `*.api_token`,
+// `auth.session_secret_previous`, `auth.oidc.*` added in a future release
+// would have to remember to update this function or it leaks silently. The
+// pattern check fails closed for the common cases; the explicit list catches
+// the misnamed ones (auth.oidc.providers in particular: the JSON blob
+// embeds client_secret values per provider but the key itself doesn't
+// match a `*_secret` suffix).
 func isSecretSetting(key string) bool {
+	// 1. Explicit one-offs that don't match the patterns below.
 	switch key {
-	case "auth.api_key", "auth.session_secret", "auth.mode", SettingABSAPIKey, SettingHardcoverAPIToken:
+	case SettingAuthAPIKey,
+		SettingAuthSessionSecret,
+		SettingAuthSessionSecretPrevious,
+		SettingAuthMode,
+		SettingOIDCProviders,
+		SettingABSAPIKey,
+		SettingHardcoverAPIToken,
+		SettingCalibrePluginAPIKey,
+		SettingGrimmoryAPIKey:
+		return true
+	}
+	// 2. Defensive suffix/prefix patterns for keys that follow the bindery
+	//    convention. Anything new that follows the convention is denied by
+	//    default; anything that doesn't has to be added to the explicit list.
+	if strings.HasSuffix(key, ".api_key") ||
+		strings.HasSuffix(key, ".api_token") ||
+		strings.HasSuffix(key, "_secret") ||
+		strings.Contains(key, "_secret_") || // covers session_secret_previous-style variants
+		strings.HasSuffix(key, ".password") ||
+		strings.HasSuffix(key, "_password") ||
+		strings.HasSuffix(key, ".client_secret") ||
+		strings.HasPrefix(key, "auth.oidc.") {
 		return true
 	}
 	return false
