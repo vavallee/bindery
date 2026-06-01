@@ -818,40 +818,48 @@ func main() {
 		r.Post("/tag", tagHandler.Create)
 		r.Delete("/tag/{id}", tagHandler.Delete)
 
-		// Import lists
-		r.Get("/importlist", importListHandler.List)
-		r.Post("/importlist", importListHandler.Create)
-		r.Get("/importlist/hardcover/lists", importListHandler.HardcoverLists)
-		r.Get("/importlist/{id}", importListHandler.Get)
-		r.Put("/importlist/{id}", importListHandler.Update)
-		r.Delete("/importlist/{id}", importListHandler.Delete)
-		r.Post("/importlist/{id}/sync", importListHandler.Sync)
+		// Import lists, delay profiles, custom formats: shared deployment
+		// config, not per-user content. Reads and writes are admin-only so
+		// non-admin sessions can't enumerate which import lists feed the
+		// library or which delay profiles gate downloads. Previously every
+		// authenticated user could list/read these, which leaked operational
+		// detail (which TRaSH custom-format rules are active, which
+		// HC-list/RSS feeds are wired up, what the delay-profile policy is).
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireAdmin)
+			r.Get("/importlist", importListHandler.List)
+			r.Post("/importlist", importListHandler.Create)
+			r.Get("/importlist/hardcover/lists", importListHandler.HardcoverLists)
+			r.Get("/importlist/{id}", importListHandler.Get)
+			r.Put("/importlist/{id}", importListHandler.Update)
+			r.Delete("/importlist/{id}", importListHandler.Delete)
+			r.Post("/importlist/{id}/sync", importListHandler.Sync)
 
-		// Import list exclusions
-		r.Get("/importlistexclusion", importListHandler.ListExclusions)
-		r.Post("/importlistexclusion", importListHandler.CreateExclusion)
-		r.Delete("/importlistexclusion/{id}", importListHandler.DeleteExclusion)
+			r.Get("/importlistexclusion", importListHandler.ListExclusions)
+			r.Post("/importlistexclusion", importListHandler.CreateExclusion)
+			r.Delete("/importlistexclusion/{id}", importListHandler.DeleteExclusion)
 
-		// Metadata profiles
+			r.Get("/delayprofile", delayProfileHandler.List)
+			r.Post("/delayprofile", delayProfileHandler.Create)
+			r.Get("/delayprofile/{id}", delayProfileHandler.Get)
+			r.Put("/delayprofile/{id}", delayProfileHandler.Update)
+			r.Delete("/delayprofile/{id}", delayProfileHandler.Delete)
+
+			r.Get("/customformat", customFormatHandler.List)
+			r.Post("/customformat", customFormatHandler.Create)
+			r.Get("/customformat/{id}", customFormatHandler.Get)
+			r.Put("/customformat/{id}", customFormatHandler.Update)
+			r.Delete("/customformat/{id}", customFormatHandler.Delete)
+		})
+
+		// Metadata profiles — per-user (owner_user_id from migration 025).
+		// Reads stay available to all authenticated users; the cross-user
+		// Get/Update/Delete IDOR is closed by D1's env-gated handler check.
 		r.Get("/metadataprofile", metadataProfileHandler.List)
 		r.Post("/metadataprofile", metadataProfileHandler.Create)
 		r.Get("/metadataprofile/{id}", metadataProfileHandler.Get)
 		r.Put("/metadataprofile/{id}", metadataProfileHandler.Update)
 		r.Delete("/metadataprofile/{id}", metadataProfileHandler.Delete)
-
-		// Delay profiles
-		r.Get("/delayprofile", delayProfileHandler.List)
-		r.Post("/delayprofile", delayProfileHandler.Create)
-		r.Get("/delayprofile/{id}", delayProfileHandler.Get)
-		r.Put("/delayprofile/{id}", delayProfileHandler.Update)
-		r.Delete("/delayprofile/{id}", delayProfileHandler.Delete)
-
-		// Custom formats
-		r.Get("/customformat", customFormatHandler.List)
-		r.Post("/customformat", customFormatHandler.Create)
-		r.Get("/customformat/{id}", customFormatHandler.Get)
-		r.Put("/customformat/{id}", customFormatHandler.Update)
-		r.Delete("/customformat/{id}", customFormatHandler.Delete)
 
 		// Backups — Restore overwrites the live database, Delete removes
 		// stored backups, and List leaks filenames containing timestamps that
