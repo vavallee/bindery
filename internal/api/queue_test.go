@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
@@ -1643,5 +1644,118 @@ func TestQueueList_SlowClient_MarksPartial(t *testing.T) {
 	}
 	if fastItem.Percentage != "42" {
 		t.Errorf("fast item percentage = %q, want 42", fastItem.Percentage)
+	}
+}
+
+// --- D3 per-user scoping ----------------------------------------------------
+
+// seedTwoUserDownloads creates two users with one download each (alice's id=1,
+// bob's id=2) and returns the handler plus the download ids so tests can hit
+// them with the wrong caller identity.
+func seedTwoUserDownloads(t *testing.T) (*QueueHandler, *sql.DB, int64, int64, int64, int64) {
+	t.Helper()
+	h, database, downloads, _, _, ctx := queueFixture(t)
+
+	users := db.NewUserRepo(database)
+	uAlice, err := users.Create(ctx, "alice", "h1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	uBob, err := users.Create(ctx, "bob", "h2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dlA := &models.Download{GUID: "guid-alice", Title: "Alice DL", Status: models.StateDownloading, Protocol: "usenet"}
+	if err := downloads.Create(ctx, dlA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("UPDATE downloads SET owner_user_id=? WHERE id=?", uAlice.ID, dlA.ID); err != nil {
+		t.Fatal(err)
+	}
+	dlB := &models.Download{GUID: "guid-bob", Title: "Bob DL", Status: models.StateDownloading, Protocol: "usenet"}
+	if err := downloads.Create(ctx, dlB); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("UPDATE downloads SET owner_user_id=? WHERE id=?", uBob.ID, dlB.ID); err != nil {
+		t.Fatal(err)
+	}
+	return h, database, uAlice.ID, uBob.ID, dlA.ID, dlB.ID
+}
+
+func reqAsUser(method, target string, uid int64) *http.Request {
+	r := httptest.NewRequest(method, target, nil)
+	ctx := auth.WithUserID(r.Context(), uid)
+	ctx = auth.WithUserRole(ctx, "user")
+	return r.WithContext(ctx)
+}
+
+// TestQueueDelete_CrossUserBlockedWhenGateOn verifies user B cannot delete
+// user A's download when BINDERY_ENFORCE_TENANCY=true. Response is 404 not
+// 403 — we don't leak the existence of someone else's row.
+func TestQueueDelete_CrossUserBlockedWhenGateOn(t *testing.T) {
+	t.Setenv("BINDERY_ENFORCE_TENANCY", "true")
+	h, _, uAlice, uBob, dlA, _ := seedTwoUserDownloads(t)
+	_ = uAlice
+
+	rec := httptest.NewRecorder()
+	req := withURLParam(reqAsUser(http.MethodDelete, "/api/v1/queue/"+strconv.FormatInt(dlA, 10), uBob), "id", strconv.FormatInt(dlA, 10))
+	h.Delete(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("bob deleting alice's download: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestQueueRetryImport_CrossUserBlockedWhenGateOn is the same cross-user
+// probe for the import-retry mutation, which also exposes a private download.
+func TestQueueRetryImport_CrossUserBlockedWhenGateOn(t *testing.T) {
+	t.Setenv("BINDERY_ENFORCE_TENANCY", "true")
+	h, _, _, uBob, dlA, _ := seedTwoUserDownloads(t)
+
+	rec := httptest.NewRecorder()
+	req := withURLParam(reqAsUser(http.MethodPost, "/api/v1/queue/"+strconv.FormatInt(dlA, 10)+"/retry-import", uBob), "id", strconv.FormatInt(dlA, 10))
+	h.RetryImport(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("bob retrying alice's import: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestQueueList_FiltersToCallerWhenGateOn verifies the list endpoint returns
+// only the caller's downloads under the gate. The unfiltered call would
+// expose both rows.
+func TestQueueList_FiltersToCallerWhenGateOn(t *testing.T) {
+	t.Setenv("BINDERY_ENFORCE_TENANCY", "true")
+	h, _, _, uBob, _, dlB := seedTwoUserDownloads(t)
+
+	rec := httptest.NewRecorder()
+	req := reqAsUser(http.MethodGet, "/api/v1/queue", uBob)
+	h.List(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	// Wave 3 / I introduced an envelope { items, partial, staleClients };
+	// unwrap items here.
+	var resp queueListResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].ID != dlB {
+		t.Errorf("bob should see only his download; got %+v", resp.Items)
+	}
+}
+
+// TestQueueDelete_GateOffPreservesLegacyBehavior is the canary that backs the
+// env-gate promise: with the gate off, the historic cross-user behaviour
+// (anyone authenticated can hit any download) still works. If this breaks
+// we have silently changed behaviour for installs that haven't opted in.
+func TestQueueDelete_GateOffPreservesLegacyBehavior(t *testing.T) {
+	// Default: gate off. No t.Setenv.
+	h, _, _, uBob, dlA, _ := seedTwoUserDownloads(t)
+
+	rec := httptest.NewRecorder()
+	req := withURLParam(reqAsUser(http.MethodDelete, "/api/v1/queue/"+strconv.FormatInt(dlA, 10), uBob), "id", strconv.FormatInt(dlA, 10))
+	h.Delete(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("legacy: bob should be able to delete alice's download (gate off); status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }

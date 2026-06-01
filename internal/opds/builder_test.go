@@ -22,6 +22,15 @@ func (f *fakeBooks) List(_ context.Context) ([]models.Book, error) {
 	copy(out, f.all)
 	return out, nil
 }
+func (f *fakeBooks) ListByUser(_ context.Context, userID int64) ([]models.Book, error) {
+	var out []models.Book
+	for _, b := range f.all {
+		if b.OwnerUserID == 0 || b.OwnerUserID == userID {
+			out = append(out, b)
+		}
+	}
+	return out, nil
+}
 func (f *fakeBooks) ListByAuthor(_ context.Context, authorID int64) ([]models.Book, error) {
 	var out []models.Book
 	for _, b := range f.all {
@@ -31,12 +40,38 @@ func (f *fakeBooks) ListByAuthor(_ context.Context, authorID int64) ([]models.Bo
 	}
 	return out, nil
 }
+func (f *fakeBooks) ListByAuthorAndUser(_ context.Context, authorID, userID int64) ([]models.Book, error) {
+	var out []models.Book
+	for _, b := range f.all {
+		if b.AuthorID != authorID {
+			continue
+		}
+		if b.OwnerUserID != 0 && b.OwnerUserID != userID {
+			continue
+		}
+		out = append(out, b)
+	}
+	return out, nil
+}
 func (f *fakeBooks) ListByStatus(_ context.Context, status string) ([]models.Book, error) {
 	var out []models.Book
 	for _, b := range f.all {
 		if b.Status == status {
 			out = append(out, b)
 		}
+	}
+	return out, nil
+}
+func (f *fakeBooks) ListByStatusAndUser(_ context.Context, status string, userID int64) ([]models.Book, error) {
+	var out []models.Book
+	for _, b := range f.all {
+		if b.Status != status {
+			continue
+		}
+		if b.OwnerUserID != 0 && b.OwnerUserID != userID {
+			continue
+		}
+		out = append(out, b)
 	}
 	return out, nil
 }
@@ -53,6 +88,11 @@ func (f *fakeBooks) GetByID(_ context.Context, id int64) (*models.Book, error) {
 type fakeAuthors struct{ all []models.Author }
 
 func (f *fakeAuthors) List(_ context.Context) ([]models.Author, error) {
+	out := make([]models.Author, len(f.all))
+	copy(out, f.all)
+	return out, nil
+}
+func (f *fakeAuthors) ListByUser(_ context.Context, _ int64) ([]models.Author, error) {
 	out := make([]models.Author, len(f.all))
 	copy(out, f.all)
 	return out, nil
@@ -166,7 +206,7 @@ func TestBuildAuthors_SkipsEmptyAuthors(t *testing.T) {
 	authors.all = append(authors.all, models.Author{ID: 99, Name: "Empty Zee", SortName: "Zee, Empty"})
 	b := NewBuilder(Config{PageSize: 50}, books, authors, series)
 
-	f, err := b.BuildAuthors(context.Background(), "http://host", 1)
+	f, err := b.BuildAuthors(context.Background(), "http://host", 1, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +241,7 @@ func TestBuildAuthors_Paging(t *testing.T) {
 
 	b := NewBuilder(Config{PageSize: 2}, books, &fakeAuthors{all: bigAuthors}, series)
 
-	page1, _ := b.BuildAuthors(context.Background(), "http://h", 1)
+	page1, _ := b.BuildAuthors(context.Background(), "http://h", 1, 0)
 	if len(page1.Entries) != 2 {
 		t.Errorf("page 1 entries = %d", len(page1.Entries))
 	}
@@ -212,7 +252,7 @@ func TestBuildAuthors_Paging(t *testing.T) {
 		t.Error("page 1 should not have rel=previous")
 	}
 
-	page3, _ := b.BuildAuthors(context.Background(), "http://h", 3)
+	page3, _ := b.BuildAuthors(context.Background(), "http://h", 3, 0)
 	if len(page3.Entries) != 1 {
 		t.Errorf("page 3 entries = %d, want 1", len(page3.Entries))
 	}
@@ -226,7 +266,7 @@ func TestBuildAuthors_Paging(t *testing.T) {
 
 func TestBuildAuthor_NotFound(t *testing.T) {
 	b := newBuilder()
-	_, err := b.BuildAuthor(context.Background(), "http://h", 9999)
+	_, err := b.BuildAuthor(context.Background(), "http://h", 9999, 0)
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
@@ -234,7 +274,7 @@ func TestBuildAuthor_NotFound(t *testing.T) {
 
 func TestBuildAuthor_Acquisition(t *testing.T) {
 	b := newBuilder()
-	f, err := b.BuildAuthor(context.Background(), "http://host:8787", 1)
+	f, err := b.BuildAuthor(context.Background(), "http://host:8787", 1, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +303,7 @@ func TestBuildAuthor_Acquisition(t *testing.T) {
 
 func TestBuildSeriesList_SortedByTitle(t *testing.T) {
 	b := newBuilder()
-	f, err := b.BuildSeriesList(context.Background(), "http://h", 1)
+	f, err := b.BuildSeriesList(context.Background(), "http://h", 1, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +314,7 @@ func TestBuildSeriesList_SortedByTitle(t *testing.T) {
 
 func TestBuildSeries_PrefixesPosition(t *testing.T) {
 	b := newBuilder()
-	f, err := b.BuildSeries(context.Background(), "http://h", 100)
+	f, err := b.BuildSeries(context.Background(), "http://h", 100, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +328,7 @@ func TestBuildSeries_PrefixesPosition(t *testing.T) {
 
 func TestBuildRecent_OrdersByUpdatedDesc(t *testing.T) {
 	b := newBuilder()
-	f, err := b.BuildRecent(context.Background(), "http://h")
+	f, err := b.BuildRecent(context.Background(), "http://h", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +343,7 @@ func TestBuildRecent_OrdersByUpdatedDesc(t *testing.T) {
 
 func TestBuildBook_NotFound(t *testing.T) {
 	b := newBuilder()
-	_, err := b.BuildBook(context.Background(), "http://h", 9999)
+	_, err := b.BuildBook(context.Background(), "http://h", 9999, 0)
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("err = %v", err)
 	}
@@ -311,7 +351,7 @@ func TestBuildBook_NotFound(t *testing.T) {
 
 func TestBuildBook_OneEntry(t *testing.T) {
 	b := newBuilder()
-	f, err := b.BuildBook(context.Background(), "http://h", 11)
+	f, err := b.BuildBook(context.Background(), "http://h", 11, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +371,7 @@ func TestBuildBook_OneEntry(t *testing.T) {
 // (KOReader, Moon+ Reader) require.
 func TestXMLMarshal(t *testing.T) {
 	b := newBuilder()
-	f, err := b.BuildAuthor(context.Background(), "http://host:8787", 1)
+	f, err := b.BuildAuthor(context.Background(), "http://host:8787", 1, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

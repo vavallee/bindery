@@ -8,10 +8,90 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 )
+
+// EnforceTenancyEnv is the environment variable that gates per-user resource
+// scoping on Tier-2 join-scoped resources (queue/history/pending/OPDS). It
+// defaults off so existing single-user installs and tests are unaffected;
+// flipping it on at startup is the deploy-time switch that turns
+// CheckOwnership from a no-op into a real check.
+const EnforceTenancyEnv = "BINDERY_ENFORCE_TENANCY"
+
+// EnforceTenancy reports whether the operator has opted into per-user resource
+// scoping. Implemented as an env-on-call read (no caching) so t.Setenv-driven
+// tests can flip the gate between cases without a separate seam. Values "1",
+// "true", "yes", "on" (case insensitive) flip the gate on; anything else
+// (including empty) leaves it off, matching the single-user default.
+//
+// The per-call os.Getenv cost is negligible compared to the SQL the rest of
+// the handler runs.
+func EnforceTenancy() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(EnforceTenancyEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+// SetEnforceTenancyForTests forces the tenancy gate on or off for the duration
+// of a single test by setting the env var via t.Setenv. The previous value is
+// restored automatically by t.Setenv's cleanup hook so test order does not
+// matter. This is the test seam D1's regression suite uses; D3's tests use
+// t.Setenv directly, which has the same effect.
+func SetEnforceTenancyForTests(t *testing.T, on bool) {
+	t.Helper()
+	if on {
+		t.Setenv(EnforceTenancyEnv, "true")
+	} else {
+		t.Setenv(EnforceTenancyEnv, "")
+	}
+}
+
+// CheckOwnership returns true when the request context's user owns
+// ownerUserID. When EnforceTenancy() is false the check is a no-op (true),
+// which preserves pre-multiuser behaviour for installs that have not opted in.
+//
+// When the gate is on:
+//   - admin users always pass (matches existing RequireAdmin semantics — admins
+//     manage every user's library);
+//   - userID == 0 means there is no authenticated user (API key / disabled /
+//     local-only mode), so the request is treated as admin-equivalent and
+//     allowed through to preserve pre-gate behaviour for those auth modes;
+//   - ownerUserID == 0 means the row has no owner (pre-migration-025 data),
+//     and we also pass to avoid hiding legacy rows from their actual creator.
+//
+// The argument intentionally takes an int64 not a *int64 — callers must
+// decide how a nil owner maps (typically 0). Pass 0 for "unowned".
+func CheckOwnership(ctx context.Context, ownerUserID int64) bool {
+	if !EnforceTenancy() {
+		return true
+	}
+	if UserRoleFromContext(ctx) == "admin" {
+		return true
+	}
+	uid := UserIDFromContext(ctx)
+	if uid == 0 {
+		// API-key / disabled / local-only requests carry no user identity.
+		// Treat them as admin-equivalent so machine-to-machine integrations
+		// (Harpoon, *arr-style callers) keep working post-gate.
+		return true
+	}
+	if ownerUserID == 0 {
+		// Row predates migration 025's backfill or was created without an
+		// owner. Don't block the only auth'd user from seeing it.
+		return true
+	}
+	return uid == ownerUserID
+}
+
+// WithUserID returns a context carrying the given user id. Exported so the
+// OPDS handler can attach the basic-auth user id to ctx after verifying
+// credentials — the standard cookie/proxy paths set this inside Middleware.
+func WithUserID(ctx context.Context, userID int64) context.Context {
+	return context.WithValue(ctx, userIDCtxKey, userID)
+}
 
 // Mode represents the auth posture. Matches Sonarr's "Authentication Required"
 // dropdown semantics.
@@ -78,85 +158,6 @@ func UserRoleFromContext(ctx context.Context) string {
 // WithUserRole returns a context carrying the given role alongside the user id.
 func WithUserRole(ctx context.Context, role string) context.Context {
 	return context.WithValue(ctx, userRoleCtxKey, role)
-}
-
-// WithUserID returns a context carrying the given authenticated user id.
-// Exported so tests (and any future non-middleware code paths) can construct
-// the same authenticated context shape that Middleware attaches at runtime.
-func WithUserID(ctx context.Context, userID int64) context.Context {
-	return context.WithValue(ctx, userIDCtxKey, userID)
-}
-
-// enforceTenancy is the resolved value of BINDERY_ENFORCE_TENANCY, cached so
-// each CheckOwnership call does not hit os.Getenv. 0 = off, 1 = on. Read once
-// at first use (or whenever a test overrides it via SetEnforceTenancyForTests).
-var (
-	enforceTenancy     atomic.Int32
-	enforceTenancyOnce sync.Once
-)
-
-// enforceTenancyEnabled reports whether per-user resource isolation is on.
-// Reads BINDERY_ENFORCE_TENANCY the first time it is called and caches the
-// result. Values "1", "true", "yes", "on" (case insensitive) flip the gate
-// on; everything else (including the empty value) leaves it off, matching
-// the single-user default.
-func enforceTenancyEnabled() bool {
-	enforceTenancyOnce.Do(func() {
-		enforceTenancy.Store(readEnforceTenancyEnv())
-	})
-	return enforceTenancy.Load() == 1
-}
-
-func readEnforceTenancyEnv() int32 {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("BINDERY_ENFORCE_TENANCY"))) {
-	case "1", "true", "yes", "on":
-		return 1
-	default:
-		return 0
-	}
-}
-
-// SetEnforceTenancyForTests forces the tenancy gate on or off for the duration
-// of a single test. The previous value is restored via t.Cleanup so test order
-// does not matter. Bypasses the sync.Once so subsequent CheckOwnership calls
-// observe the override immediately.
-func SetEnforceTenancyForTests(t *testing.T, on bool) {
-	t.Helper()
-	// Force the Once to be considered done so future reads skip the env lookup.
-	enforceTenancyOnce.Do(func() {})
-	prev := enforceTenancy.Load()
-	var next int32
-	if on {
-		next = 1
-	}
-	enforceTenancy.Store(next)
-	t.Cleanup(func() { enforceTenancy.Store(prev) })
-}
-
-// CheckOwnership reports whether the request identified by ctx may act on a
-// resource owned by ownerUserID. The check is permissive by design so the
-// single-user install (no env var set) keeps working unchanged: returns true
-// when the BINDERY_ENFORCE_TENANCY gate is off, when the caller is admin,
-// when the resource has no recorded owner (legacy pre-migration-025 rows
-// scan as 0), or when the caller's user id matches.
-//
-// Handlers should treat a false result as "pretend the resource does not
-// exist" and respond 404, never 403; leaking existence to non-owners is the
-// IDOR this helper is designed to close.
-func CheckOwnership(ctx context.Context, ownerUserID int64) bool {
-	if !enforceTenancyEnabled() {
-		return true
-	}
-	if UserRoleFromContext(ctx) == "admin" {
-		return true
-	}
-	if ownerUserID == 0 {
-		// Legacy / system-owned rows have no recorded user; treat as visible
-		// to every authenticated caller so a pre-migration-025 install can
-		// flip the gate on without orphaning data.
-		return true
-	}
-	return ownerUserID == UserIDFromContext(ctx)
 }
 
 // RequireAdmin is a middleware that rejects non-admin requests with 403.

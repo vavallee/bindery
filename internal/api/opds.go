@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"encoding/xml"
 	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/opds"
 )
@@ -35,7 +37,7 @@ func (h *OPDSHandler) Root(w http.ResponseWriter, r *http.Request) {
 // Authors serves the paginated author navigation feed.
 func (h *OPDSHandler) Authors(w http.ResponseWriter, r *http.Request) {
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	feed, err := h.builder.BuildAuthors(r.Context(), baseURL(r), page)
+	feed, err := h.builder.BuildAuthors(r.Context(), baseURL(r), page, opdsCallerUserID(r.Context()))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -49,7 +51,7 @@ func (h *OPDSHandler) Author(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	feed, err := h.builder.BuildAuthor(r.Context(), baseURL(r), id)
+	feed, err := h.builder.BuildAuthor(r.Context(), baseURL(r), id, opdsCallerUserID(r.Context()))
 	if writeOPDSError(w, err) {
 		return
 	}
@@ -59,7 +61,7 @@ func (h *OPDSHandler) Author(w http.ResponseWriter, r *http.Request) {
 // Series serves the paginated series navigation feed.
 func (h *OPDSHandler) Series(w http.ResponseWriter, r *http.Request) {
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	feed, err := h.builder.BuildSeriesList(r.Context(), baseURL(r), page)
+	feed, err := h.builder.BuildSeriesList(r.Context(), baseURL(r), page, opdsCallerUserID(r.Context()))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -73,7 +75,7 @@ func (h *OPDSHandler) OneSeries(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	feed, err := h.builder.BuildSeries(r.Context(), baseURL(r), id)
+	feed, err := h.builder.BuildSeries(r.Context(), baseURL(r), id, opdsCallerUserID(r.Context()))
 	if writeOPDSError(w, err) {
 		return
 	}
@@ -82,7 +84,7 @@ func (h *OPDSHandler) OneSeries(w http.ResponseWriter, r *http.Request) {
 
 // Recent serves an acquisition feed of the last-50-imported books.
 func (h *OPDSHandler) Recent(w http.ResponseWriter, r *http.Request) {
-	feed, err := h.builder.BuildRecent(r.Context(), baseURL(r))
+	feed, err := h.builder.BuildRecent(r.Context(), baseURL(r), opdsCallerUserID(r.Context()))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -97,17 +99,52 @@ func (h *OPDSHandler) Book(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	feed, err := h.builder.BuildBook(r.Context(), baseURL(r), id)
+	feed, err := h.builder.BuildBook(r.Context(), baseURL(r), id, opdsCallerUserID(r.Context()))
 	if writeOPDSError(w, err) {
 		return
 	}
 	writeOPDS(w, feed)
 }
 
+// opdsCallerUserID returns the user id to scope the OPDS feed to. Returns 0
+// (= unscoped) when the env gate is off, when the caller is an admin, or
+// when there is no authenticated user (API-key / disabled / local-only auth
+// paths). The Build* methods on opds.Builder treat 0 as "no per-user
+// filter", which preserves pre-D3 behaviour for those paths.
+func opdsCallerUserID(ctx context.Context) int64 {
+	if !auth.EnforceTenancy() {
+		return 0
+	}
+	if auth.UserRoleFromContext(ctx) == "admin" {
+		return 0
+	}
+	return auth.UserIDFromContext(ctx)
+}
+
 // DownloadFile serves the book bytes. Delegates to the same FileHandler
 // used by the main API so audiobook directories turn into zips and ebook
 // extensions drive the Content-Disposition filename.
+//
+// Per-user scoping (D3): before handing off, resolve the requested book and
+// 404 if the caller doesn't own it. Without this, a basic-auth user could
+// hit `/opds/book/$OTHERS_BOOK_ID/file` and download another user's library
+// even though /opds and /opds/authors filter them out.
 func (h *OPDSHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
+	if uid := opdsCallerUserID(r.Context()); uid != 0 && h.books != nil {
+		id, ok := parseID(w, r)
+		if !ok {
+			return
+		}
+		bk, err := h.books.GetByID(r.Context(), id)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if bk == nil || (bk.OwnerUserID != 0 && bk.OwnerUserID != uid) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+	}
 	// The file handler pulls the book id out of chi.URLParam("id"), which
 	// matches our route shape (`/opds/book/{id}/file`), so no adaptation
 	// is needed.

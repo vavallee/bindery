@@ -216,30 +216,33 @@ func TestCheckOwnership_OwnerZeroPassesAsLegacyRow(t *testing.T) {
 	}
 }
 
-func TestCheckOwnership_UnauthenticatedBlockedOnOwnedRow(t *testing.T) {
+func TestCheckOwnership_UnauthenticatedPassesAsAdminEquivalent(t *testing.T) {
 	SetEnforceTenancyForTests(t, true)
 
-	// No user id, no role — a request that somehow reached an authed
-	// handler context without identity must still be blocked from owned
-	// resources. Gate-off path handles the "no auth required" case.
+	// No user id, no role: API-key, disabled-auth, and local-only requests
+	// reach handlers without an identity in ctx. Treating them as
+	// admin-equivalent keeps machine-to-machine integrations (the *arr-style
+	// callers, Harpoon, scripted exports) working post-gate. The IDOR
+	// surface is closed by RequireAuth / RequireAdmin upstream; CheckOwnership
+	// is the per-row check, not the auth check.
 	ctx := context.Background()
-	if CheckOwnership(ctx, 99) {
-		t.Error("unauthenticated context must not pass ownership for owned rows when the gate is on")
+	if !CheckOwnership(ctx, 99) {
+		t.Error("unauthenticated context should pass ownership (admin-equivalent for API-key/disabled-auth integrations)")
 	}
 }
 
 func TestSetEnforceTenancyForTests_RestoresPreviousValue(t *testing.T) {
 	// Capture the value the package currently sees.
-	pre := enforceTenancyEnabled()
+	pre := EnforceTenancy()
 
 	// Sub-test flips the gate; its t.Cleanup must restore pre.
 	t.Run("flipped", func(t *testing.T) {
 		SetEnforceTenancyForTests(t, !pre)
-		if enforceTenancyEnabled() == pre {
-			t.Fatalf("flip did not stick; got %v, want %v", enforceTenancyEnabled(), !pre)
+		if EnforceTenancy() == pre {
+			t.Fatalf("flip did not stick; got %v, want %v", EnforceTenancy(), !pre)
 		}
 	})
-	if enforceTenancyEnabled() != pre {
-		t.Errorf("cleanup did not restore; got %v, want %v", enforceTenancyEnabled(), pre)
+	if EnforceTenancy() != pre {
+		t.Errorf("cleanup did not restore; got %v, want %v", EnforceTenancy(), pre)
 	}
 }

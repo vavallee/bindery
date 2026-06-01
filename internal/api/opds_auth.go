@@ -43,19 +43,22 @@ func OPDSAuth(p auth.Provider, users *db.UserRepo, limiter *auth.LoginLimiter) f
 			}
 			if c, err := r.Cookie(auth.SessionCookieName); err == nil {
 				if uid, epoch, err := auth.VerifySessionMultiWithEpoch(p.SessionSecrets(), c.Value); err == nil {
-					// Same epoch check the main auth middleware performs: the
-					// cookie's epoch must match the user's current
-					// users.session_epoch, which UpdatePassword bumps. Without
-					// this, an OPDS reader holding a pre-password-change
-					// cookie would keep working after the user rotated
-					// credentials (Wave 1 / Bundle C audit finding). users may
+					// Session-epoch check (Wave 1 / Bundle C): the cookie's
+					// epoch must match the user's current users.session_epoch
+					// (UpdatePassword bumps it on password change). users may
 					// be nil under test harnesses that don't wire it; in that
 					// case fall back to signature/expiry-only verification.
+					// On every success path, attach the verified user id to
+					// the request context so the OPDS handler can scope the
+					// feed to the caller's library when EnforceTenancy is on
+					// (D3).
 					if users == nil {
+						r = r.WithContext(auth.WithUserID(r.Context(), uid))
 						next.ServeHTTP(w, r)
 						return
 					}
 					if liveEpoch, err := users.GetSessionEpoch(r.Context(), uid); err == nil && liveEpoch == epoch {
+						r = r.WithContext(auth.WithUserID(r.Context(), uid))
 						next.ServeHTTP(w, r)
 						return
 					}
@@ -73,6 +76,12 @@ func OPDSAuth(p auth.Provider, users *db.UserRepo, limiter *auth.LoginLimiter) f
 					if limiter != nil {
 						limiter.Reset(ip)
 					}
+					// Attach the basic-auth user id to ctx so the OPDS
+					// handler can filter the feed to the caller's library
+					// under EnforceTenancy. Without this the basic-auth
+					// path (KOReader, Moon+) would be the one place every
+					// user sees every other user's books.
+					r = r.WithContext(auth.WithUserID(r.Context(), u.ID))
 					next.ServeHTTP(w, r)
 					return
 				}
