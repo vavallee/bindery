@@ -21,4 +21,8 @@ type MetadataProfile struct {
 	AllowedLanguages        string    `json:"allowedLanguages"`
 	UnknownLanguageBehavior string    `json:"unknownLanguageBehavior"`
 	CreatedAt               time.Time `json:"createdAt"`
+	// OwnerUserID is the per-user ownership column added in migration 025.
+	// Zero means "no recorded owner" (legacy pre-backfill rows); auth's
+	// CheckOwnership treats that as visible to every authenticated caller.
+	OwnerUserID int64 `json:"-"`
 }

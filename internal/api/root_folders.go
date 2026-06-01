@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -74,6 +75,18 @@ func (h *RootFolderHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 func (h *RootFolderHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	// Tier-1 cross-user IDOR guard (D1). Pre-fetch so non-owners cannot
+	// delete a root folder belonging to a different user, and cannot
+	// distinguish "exists but not mine" from "does not exist".
+	existing, err := h.folders.GetByID(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if existing == nil || !auth.CheckOwnership(r.Context(), existing.OwnerUserID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "root folder not found"})
+		return
+	}
 	if err := h.folders.Delete(r.Context(), id); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

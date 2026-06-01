@@ -174,6 +174,12 @@ func (h *AuthorHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
 		return
 	}
+	// Tier-1 cross-user IDOR guard (D1). Return 404 (not 403) on mismatch so
+	// non-owners cannot probe for the existence of another user's authors.
+	if !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
+		return
+	}
 
 	// Attach books
 	books, err := h.books.ListByAuthor(r.Context(), id)
@@ -211,6 +217,17 @@ func (h *AuthorHandler) ListSeries(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	// Tier-1 cross-user IDOR guard (D1). Look the author up so the ownership
+	// check runs before we list series belonging to it.
+	author, err := h.authors.GetByID(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if author == nil || !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
 		return
 	}
 	if h.series == nil {
@@ -657,6 +674,11 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
 		return
 	}
+	// Tier-1 cross-user IDOR guard (D1).
+	if !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
+		return
+	}
 
 	var req struct {
 		Monitored             *bool   `json:"monitored"`
@@ -850,6 +872,11 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
 		return
 	}
+	// Tier-1 cross-user IDOR guard (D1).
+	if !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
+		return
+	}
 	if !canRelinkAuthorToUpstream(author) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "author is already linked to upstream metadata"})
 		return
@@ -911,6 +938,19 @@ func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Tier-1 cross-user IDOR guard (D1). Look the author up so the ownership
+	// check can run before any destructive work; return 404 on mismatch or
+	// missing row so non-owners cannot probe for existence by status code.
+	author, err := h.authors.GetByID(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if author == nil || !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
+		return
+	}
+
 	// Opt-in `?deleteFiles=true` sweeps every book's on-disk path after the
 	// DB delete. We must collect the paths *before* deleting the author —
 	// the FK cascade removes the book rows along with it, which would leave
@@ -959,6 +999,11 @@ func (h *AuthorHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 
 	author, err := h.authors.GetByID(r.Context(), id)
 	if err != nil || author == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
+		return
+	}
+	// Tier-1 cross-user IDOR guard (D1).
+	if !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
 		return
 	}
