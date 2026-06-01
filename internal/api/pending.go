@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -22,9 +23,12 @@ func NewPendingHandler(pending *db.PendingReleaseRepo, queue *QueueHandler, down
 	return &PendingHandler{pending: pending, queue: queue, downloads: downloads, books: books}
 }
 
-// List returns all pending releases.
+// List returns all pending releases. With EnforceTenancy on, the list is
+// filtered to releases for books owned by the calling user. pending_releases
+// has no owner column of its own — ownership is derived via JOIN to
+// books.owner_user_id (see PendingReleaseRepo.ListForUser).
 func (h *PendingHandler) List(w http.ResponseWriter, r *http.Request) {
-	items, err := h.pending.List(r.Context())
+	items, err := h.listForCaller(r)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -35,10 +39,35 @@ func (h *PendingHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, items)
 }
 
+func (h *PendingHandler) listForCaller(r *http.Request) ([]models.PendingRelease, error) {
+	ctx := r.Context()
+	if auth.EnforceTenancy() && auth.UserRoleFromContext(ctx) != "admin" {
+		if uid := auth.UserIDFromContext(ctx); uid != 0 {
+			return h.pending.ListForUser(ctx, uid)
+		}
+	}
+	return h.pending.List(ctx)
+}
+
 // Delete dismisses a pending release.
 func (h *PendingHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(w, r)
 	if !ok {
+		return
+	}
+	// Per-user scoping (D3): pending_releases.book_id -> books.owner_user_id
+	// is the only ownership signal. Resolve and gate before deleting.
+	owner, exists, err := h.pending.GetOwnerByID(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if !exists {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "pending release not found"})
+		return
+	}
+	if !auth.CheckOwnership(r.Context(), owner) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "pending release not found"})
 		return
 	}
 	if err := h.pending.DeleteByID(r.Context(), id); err != nil {
@@ -57,6 +86,19 @@ func (h *PendingHandler) Grab(w http.ResponseWriter, r *http.Request) {
 
 	pr, err := h.pending.GetByID(r.Context(), id)
 	if err != nil || pr == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "pending release not found"})
+		return
+	}
+
+	// Per-user scoping (D3): re-resolve owner via JOIN so we honour the same
+	// 404-on-mismatch policy as Delete. pr.BookID is non-null in practice but
+	// GetOwnerByID handles the LEFT JOIN gracefully.
+	owner, _, err := h.pending.GetOwnerByID(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if !auth.CheckOwnership(r.Context(), owner) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "pending release not found"})
 		return
 	}

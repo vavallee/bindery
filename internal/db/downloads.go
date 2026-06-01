@@ -309,6 +309,25 @@ func (r *DownloadRepo) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
+// GetOwnerByID returns the owner_user_id of a download. The second return
+// value reports whether the row exists; the int64 may be 0 even when the row
+// exists if the column is NULL (pre-migration-025 data, or a row inserted by
+// a code path that does not populate the FK yet). Callers in the auth path
+// should map a missing row to 404 and pass the (possibly zero) owner id to
+// auth.CheckOwnership, which has explicit semantics for the 0-owner case.
+func (r *DownloadRepo) GetOwnerByID(ctx context.Context, id int64) (int64, bool, error) {
+	var owner sql.NullInt64
+	err := r.db.QueryRowContext(ctx,
+		"SELECT owner_user_id FROM downloads WHERE id=?", id).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("get download owner: %w", err)
+	}
+	return owner.Int64, true, nil
+}
+
 func (r *DownloadRepo) DeleteByBook(ctx context.Context, bookID int64) error {
 	_, err := r.db.ExecContext(ctx, "DELETE FROM downloads WHERE book_id=?", bookID)
 	return err

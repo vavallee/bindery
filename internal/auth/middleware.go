@@ -6,8 +6,73 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 )
+
+// EnforceTenancyEnv is the environment variable that gates per-user resource
+// scoping on Tier-2 join-scoped resources (queue/history/pending/OPDS). It
+// defaults off so existing single-user installs and tests are unaffected;
+// flipping it on at startup is the deploy-time switch that turns
+// CheckOwnership from a no-op into a real check.
+const EnforceTenancyEnv = "BINDERY_ENFORCE_TENANCY"
+
+// EnforceTenancy reports whether the operator has opted into per-user resource
+// scoping. Implemented as a function (not a captured-at-startup boolean) so
+// tests can flip the env var via t.Setenv between cases without rebuilding the
+// process.
+func EnforceTenancy() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(EnforceTenancyEnv)))
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// CheckOwnership returns true when the request context's user owns
+// ownerUserID. When EnforceTenancy() is false the check is a no-op (true),
+// which preserves pre-multiuser behaviour for installs that have not opted in.
+//
+// When the gate is on:
+//   - admin users always pass (matches existing RequireAdmin semantics — admins
+//     manage every user's library);
+//   - userID == 0 means there is no authenticated user (API key / disabled /
+//     local-only mode), so the request is treated as admin-equivalent and
+//     allowed through to preserve pre-gate behaviour for those auth modes;
+//   - ownerUserID == 0 means the row has no owner (pre-migration-025 data),
+//     and we also pass to avoid hiding legacy rows from their actual creator.
+//
+// The argument intentionally takes an int64 not a *int64 — callers must
+// decide how a nil owner maps (typically 0). Pass 0 for "unowned".
+func CheckOwnership(ctx context.Context, ownerUserID int64) bool {
+	if !EnforceTenancy() {
+		return true
+	}
+	if UserRoleFromContext(ctx) == "admin" {
+		return true
+	}
+	uid := UserIDFromContext(ctx)
+	if uid == 0 {
+		// API-key / disabled / local-only requests carry no user identity.
+		// Treat them as admin-equivalent so machine-to-machine integrations
+		// (Harpoon, *arr-style callers) keep working post-gate.
+		return true
+	}
+	if ownerUserID == 0 {
+		// Row predates migration 025's backfill or was created without an
+		// owner. Don't block the only auth'd user from seeing it.
+		return true
+	}
+	return uid == ownerUserID
+}
+
+// WithUserID returns a context carrying the given user id. Exported so the
+// OPDS handler can attach the basic-auth user id to ctx after verifying
+// credentials — the standard cookie/proxy paths set this inside Middleware.
+func WithUserID(ctx context.Context, userID int64) context.Context {
+	return context.WithValue(ctx, userIDCtxKey, userID)
+}
 
 // Mode represents the auth posture. Matches Sonarr's "Authentication Required"
 // dropdown semantics.

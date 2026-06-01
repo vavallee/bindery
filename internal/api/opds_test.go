@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -304,6 +305,165 @@ func TestOPDS_LocalOnlyMode_BypassesAuth(t *testing.T) {
 	r.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d under local-only; want 200", rec.Code)
+	}
+}
+
+// --- D3 per-user scoping -----------------------------------------------------
+
+// TestOPDS_FeedFiltersToCallerLibraryWhenGateOn verifies the scoped OPDS
+// feed only shows the basic-auth caller's books. Without this, every user
+// with OPDS access could enumerate every other user's library.
+func TestOPDS_FeedFiltersToCallerLibraryWhenGateOn(t *testing.T) {
+	t.Setenv("BINDERY_ENFORCE_TENANCY", "true")
+
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	ctx := context.Background()
+
+	authors := db.NewAuthorRepo(database)
+	books := db.NewBookRepo(database)
+	series := db.NewSeriesRepo(database)
+	users := db.NewUserRepo(database)
+	settings := db.NewSettingsRepo(database)
+
+	tmp := t.TempDir()
+	aliceEpub := filepath.Join(tmp, "alice.epub")
+	bobEpub := filepath.Join(tmp, "bob.epub")
+	if err := os.WriteFile(aliceEpub, []byte("alice"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bobEpub, []byte("bob"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two users, two libraries.
+	hashA, _ := auth.HashPassword("alicepassword12")
+	uA, err := users.Create(ctx, "alice", hashA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hashB, _ := auth.HashPassword("bobpassword12345")
+	uB, err := users.Create(ctx, "bob", hashB)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aA := &models.Author{ForeignID: "OL-A", Name: "Author Alice", SortName: "Alice, Author"}
+	if err := authors.CreateForUser(ctx, aA, uA.ID); err != nil {
+		t.Fatal(err)
+	}
+	aB := &models.Author{ForeignID: "OL-B", Name: "Author Bob", SortName: "Bob, Author"}
+	if err := authors.CreateForUser(ctx, aB, uB.ID); err != nil {
+		t.Fatal(err)
+	}
+	bA := &models.Book{ForeignID: "W-A", AuthorID: aA.ID, Title: "Alice Only Book", SortTitle: "alice only book", Status: models.BookStatusImported, Monitored: true}
+	if err := books.Create(ctx, bA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("UPDATE books SET owner_user_id=? WHERE id=?", uA.ID, bA.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.SetFilePath(ctx, bA.ID, aliceEpub); err != nil {
+		t.Fatal(err)
+	}
+	bB := &models.Book{ForeignID: "W-B", AuthorID: aB.ID, Title: "Bob Only Book", SortTitle: "bob only book", Status: models.BookStatusImported, Monitored: true}
+	if err := books.Create(ctx, bB); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("UPDATE books SET owner_user_id=? WHERE id=?", uB.ID, bB.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.SetFilePath(ctx, bB.ID, bobEpub); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, kv := range [][2]string{
+		{SettingAuthAPIKey, "test-api-key"},
+		{SettingAuthSessionSecret, "abcdefghijklmnopqrstuvwxyz012345"},
+		{SettingAuthMode, string(auth.ModeEnabled)},
+	} {
+		if err := settings.Set(ctx, kv[0], kv[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	builder := opds.NewBuilder(opds.Config{PageSize: 50}, books, authors, series)
+	fh := NewFileHandler(books, tmp)
+	h := NewOPDSHandler(builder, books, fh)
+	p := &testProvider{settings: settings}
+
+	r := chi.NewRouter()
+	r.Route("/opds", func(r chi.Router) {
+		r.Use(OPDSAuth(p, users, auth.NewLoginLimiter(5, 15*time.Minute)))
+		r.Get("/", h.Root)
+		r.Get("/authors", h.Authors)
+		r.Get("/authors/{id}", h.Author)
+		r.Get("/series", h.Series)
+		r.Get("/series/{id}", h.OneSeries)
+		r.Get("/recent", h.Recent)
+		r.Get("/book/{id}", h.Book)
+		r.Get("/book/{id}/file", h.DownloadFile)
+	})
+
+	doAs := func(path, user, pass string) (int, string) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.SetBasicAuth(user, pass)
+		r.ServeHTTP(rec, req)
+		return rec.Code, rec.Body.String()
+	}
+
+	// Bob hits /opds/authors — must only see his own author, not alice's.
+	code, body := doAs("/opds/authors", "bob", "bobpassword12345")
+	if code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", code, body)
+	}
+	if strings.Contains(body, "Author Alice") {
+		t.Errorf("bob's authors feed leaked alice's author:\n%s", body)
+	}
+	if !strings.Contains(body, "Author Bob") {
+		t.Errorf("bob's authors feed missing his own author:\n%s", body)
+	}
+
+	// Bob hits /opds/recent — only bob's book.
+	code, body = doAs("/opds/recent", "bob", "bobpassword12345")
+	if code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", code, body)
+	}
+	if strings.Contains(body, "Alice Only Book") {
+		t.Errorf("bob's recent feed leaked alice's book:\n%s", body)
+	}
+	if !strings.Contains(body, "Bob Only Book") {
+		t.Errorf("bob's recent feed missing his own book:\n%s", body)
+	}
+
+	// Bob requests alice's book by id — must 404 even though the row exists.
+	code, body = doAs("/opds/book/"+strconv.FormatInt(bA.ID, 10), "bob", "bobpassword12345")
+	if code != http.StatusNotFound {
+		t.Errorf("bob fetching alice's book detail: want 404, got %d body=%s", code, body)
+	}
+
+	// Bob downloads alice's book file — must 404, not stream the bytes.
+	code, body = doAs("/opds/book/"+strconv.FormatInt(bA.ID, 10)+"/file", "bob", "bobpassword12345")
+	if code != http.StatusNotFound {
+		t.Errorf("bob downloading alice's book file: want 404, got %d body=%s", code, body)
+	}
+	_ = uB
+}
+
+// TestOPDS_GateOffPreservesLegacyBehavior — the env-gate canary for OPDS:
+// with the gate off, the existing "everyone sees everything" behaviour
+// (pre-D3) still applies. This is intentional for single-user installs that
+// haven't opted in.
+func TestOPDS_GateOffPreservesLegacyBehavior(t *testing.T) {
+	// Default: gate off.
+	r, _, _, key := opdsFixture(t)
+	body := doOK(t, r, "/opds/recent", key)
+	if !strings.Contains(body, "Too Like the Lightning") {
+		t.Errorf("legacy: recent feed should include the seeded book; got:\n%s", body)
 	}
 }
 
