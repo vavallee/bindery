@@ -188,6 +188,45 @@ func TestMigrate033ABSReviewResolutionIdempotent(t *testing.T) {
 	}
 }
 
+// TestMigrate047ListEndpointIndexes confirms the Wave 2 / E migration lands
+// every index the paginated List endpoints depend on. A missing index here
+// silently regresses the sort cost on the 50k-book hot path to a full table
+// scan (the failure mode is "everything works, just slow"), so the only
+// reliable guard is asserting on sqlite_master.
+func TestMigrate047ListEndpointIndexes(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatalf("open memory db: %v", err)
+	}
+	defer database.Close()
+
+	want := []string{
+		"idx_books_sort_title",
+		"idx_books_release_date",
+		"idx_books_status_sort_title",
+		"idx_authors_sort_name",
+		"idx_series_books_book",
+		"idx_history_created_at_desc",
+	}
+	for _, name := range want {
+		var got string
+		err := database.QueryRow(
+			`SELECT name FROM sqlite_master WHERE type='index' AND name=?`,
+			name,
+		).Scan(&got)
+		if err != nil {
+			t.Errorf("index %s missing after migration 047: %v", name, err)
+		}
+	}
+
+	// Re-running migrate must not fail. CREATE INDEX IF NOT EXISTS keeps the
+	// migration idempotent even if its schema_migrations marker is dropped
+	// (e.g. a re-applied row from a backup restore).
+	if err := migrate(database); err != nil {
+		t.Fatalf("rerun migrations should be idempotent: %v", err)
+	}
+}
+
 // TestMigrate042AuthorAudiobookRootFolder verifies migration 042 adds the
 // audiobook_root_folder_id column to the authors table (#579) and that the
 // column round-trips a value through CreateForUser / GetByID.

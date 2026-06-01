@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -51,6 +52,79 @@ func (r *HistoryRepo) ListByBook(ctx context.Context, bookID int64) ([]models.Hi
 
 func (r *HistoryRepo) ListByType(ctx context.Context, eventType string) ([]models.HistoryEvent, error) {
 	return r.query(ctx, "SELECT "+historyColumns+" FROM history WHERE event_type=? ORDER BY created_at DESC", eventType)
+}
+
+// HistoryListOpts is the filter+page argument for ListPage. Empty fields are
+// treated as "no filter": a zero BookID, empty EventType, and zero UserID
+// return every row that survives the other filters. Limit must be positive;
+// Offset is clamped at 0 by ListPage. UserID > 0 restricts to events whose
+// book is owned by that user (NULL book_id events pass through since they
+// predate a book link and have no owner to scope to), matching ListForUser
+// semantics.
+type HistoryListOpts struct {
+	BookID    int64
+	EventType string
+	UserID    int64
+	Limit     int
+	Offset    int
+}
+
+// ListPage returns one page of history events (newest first) plus the total
+// row count that matches the filter. Backed by idx_history_created_at_desc
+// (migration 048) so the newest-first scan does not pay an OrderBy step on
+// top of a forward-only index walk.
+func (r *HistoryRepo) ListPage(ctx context.Context, opts HistoryListOpts) ([]models.HistoryEvent, int, error) {
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	offset := opts.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	clauses := []string{}
+	args := []any{}
+	switch {
+	case opts.BookID != 0:
+		clauses = append(clauses, "book_id = ?")
+		args = append(args, opts.BookID)
+	case opts.EventType != "":
+		clauses = append(clauses, "event_type = ?")
+		args = append(args, opts.EventType)
+	}
+	if opts.UserID > 0 {
+		// Same JOIN-scoped shape as ListForUser: include NULL-book_id rows
+		// regardless (orphan grab/failure records pre-link) and otherwise
+		// restrict by books.owner_user_id.
+		clauses = append(clauses, "(book_id IS NULL OR book_id IN (SELECT id FROM books WHERE owner_user_id = ?))")
+		args = append(args, opts.UserID)
+	}
+	where := ""
+	if len(clauses) > 0 {
+		where = " WHERE " + strings.Join(clauses, " AND ")
+	}
+
+	var total int
+	var countRow *sql.Row
+	if len(args) > 0 {
+		countRow = r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM history"+where, args...)
+	} else {
+		countRow = r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM history"+where)
+	}
+	if err := countRow.Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count history events: %w", err)
+	}
+
+	pageArgs := append([]any{}, args...)
+	pageArgs = append(pageArgs, limit, offset)
+	events, err := r.query(ctx,
+		"SELECT "+historyColumns+" FROM history"+where+" ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+		pageArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	return events, total, nil
 }
 
 func (r *HistoryRepo) GetByID(ctx context.Context, id int64) (*models.HistoryEvent, error) {
