@@ -83,7 +83,7 @@ beforeEach(() => {
 })
 
 describe('App auth routes', () => {
-  it('redirects authenticated users away from the login route', () => {
+  it('redirects authenticated users away from the login route', async () => {
     authState.value = {
       status: { authenticated: true, setupRequired: false, mode: 'enabled' },
       logout: logoutMock,
@@ -94,7 +94,7 @@ describe('App auth routes', () => {
     renderShell()
 
     expect(screen.queryByTestId('page-login')).not.toBeInTheDocument()
-    expect(screen.getByTestId('page-authors')).toBeInTheDocument()
+    expect(await screen.findByTestId('page-authors')).toBeInTheDocument()
     expect(window.location.pathname).toBe('/')
   })
 })
