@@ -242,6 +242,10 @@ type fakeProvider struct {
 	proxyProvision bool
 	proxyCIDRs     []*net.IPNet
 	provisioner    UserProvisioner
+	// wantEpoch is what UserSessionEpoch returns. Defaults to 0, which lets
+	// legacy v1/v2 test cookies (which decode as epoch=0) authenticate
+	// without every test having to mint v3 cookies.
+	wantEpoch int64
 }
 
 func (f *fakeProvider) Mode() Mode            { return f.mode }
@@ -260,6 +264,11 @@ func (f *fakeProvider) ProxyAutoProvision() bool                   { return f.pr
 func (f *fakeProvider) TrustedProxyCIDRs() []*net.IPNet            { return f.proxyCIDRs }
 func (f *fakeProvider) UserRole(_ context.Context, _ int64) string { return "admin" }
 func (f *fakeProvider) UserProvisioner() UserProvisioner           { return f.provisioner }
+
+// UserSessionEpoch defaults to 0 so legacy v1/v2 test cookies (which decode
+// as epoch=0) continue to authenticate. Tests that exercise the password-
+// change epoch-bump path override this via the wantEpoch field below.
+func (f *fakeProvider) UserSessionEpoch(_ context.Context, _ int64) int64 { return f.wantEpoch }
 
 // staticProvisioner always returns the same user ID for any username.
 type staticProvisioner struct{ uid int64 }
@@ -1306,15 +1315,18 @@ func TestIsLocalRequest_DirectLocalPeerNoXFF(t *testing.T) {
 
 // --- Finding 3: session key-id and rotation primitive ------------------------
 
-func TestSession_V2KeyIDRoundTrip(t *testing.T) {
+func TestSession_V3KeyIDRoundTrip(t *testing.T) {
+	// v3 is the current format (key-id + per-user session epoch). The wrapper
+	// SignSession mints epoch=0 by default, which is fine for this round-trip
+	// test — we are checking the framing, not the epoch-bump invariant.
 	secret := testSecret32
 	cookie, err := SignSession(secret, 99, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
 	parts := strings.Split(cookie, ".")
-	if len(parts) != 5 || parts[0] != "v2" {
-		t.Fatalf("cookie = %q; want 5-part v2 format", cookie)
+	if len(parts) != 6 || parts[0] != "v3" {
+		t.Fatalf("cookie = %q; want 6-part v3 format", cookie)
 	}
 	if parts[1] != keyID(secret) {
 		t.Errorf("cookie key-id = %q; want %q", parts[1], keyID(secret))
@@ -1325,6 +1337,29 @@ func TestSession_V2KeyIDRoundTrip(t *testing.T) {
 	}
 	if uid != 99 {
 		t.Errorf("uid = %d; want 99", uid)
+	}
+}
+
+// TestSession_V2LegacyStillVerifies confirms a v2 cookie minted before the
+// epoch field was introduced still decodes — the audit-fix release accepts
+// v2 on the way in (it just decodes as epoch=0, which the middleware's
+// live-epoch comparison then rejects for upgraded installs).
+func TestSession_V2LegacyStillVerifies(t *testing.T) {
+	secret := testSecret32
+	exp := time.Now().Add(time.Hour).Unix()
+	payload := fmt.Sprintf("v2.%s.%d.%d", keyID(secret), int64(77), exp)
+	mac := hmacSum(secret, payload)
+	v2Cookie := payload + "." + base64.RawURLEncoding.EncodeToString(mac)
+
+	uid, epoch, err := VerifySessionWithEpoch(secret, v2Cookie)
+	if err != nil {
+		t.Fatalf("legacy v2 verify: %v", err)
+	}
+	if uid != 77 {
+		t.Errorf("uid = %d; want 77", uid)
+	}
+	if epoch != 0 {
+		t.Errorf("epoch = %d; want 0 for v2 (no epoch field)", epoch)
 	}
 }
 
@@ -1389,8 +1424,8 @@ func TestSession_LegacyV1StillVerifies(t *testing.T) {
 	}
 }
 
-func TestSession_V2WrongKeyIDStillVerifiesWithCorrectSecret(t *testing.T) {
-	// Decode-tolerant: a v2 cookie whose key-id field does not match (e.g.
+func TestSession_V3WrongKeyIDStillVerifiesWithCorrectSecret(t *testing.T) {
+	// Decode-tolerant: a v3 cookie whose key-id field does not match (e.g.
 	// truncated/garbled) must still verify if the signature is genuine — the
 	// HMAC is authoritative, the key-id is only a routing hint.
 	secret := testSecret32
@@ -1401,14 +1436,16 @@ func TestSession_V2WrongKeyIDStillVerifiesWithCorrectSecret(t *testing.T) {
 	parts := strings.Split(cookie, ".")
 	// Re-sign the payload but lie about the key-id field. The HMAC covers the
 	// key-id, so we must recompute it for the doctored payload to be valid.
+	// v3 payload = parts[0..4] (version, key_id, user_id, epoch, exp); the
+	// HMAC sits at parts[5].
 	parts[1] = "deadbeef"
-	doctoredPayload := strings.Join(parts[:4], ".")
-	parts[4] = base64.RawURLEncoding.EncodeToString(hmacSum(secret, doctoredPayload))
+	doctoredPayload := strings.Join(parts[:5], ".")
+	parts[5] = base64.RawURLEncoding.EncodeToString(hmacSum(secret, doctoredPayload))
 	doctored := strings.Join(parts, ".")
 
 	uid, err := VerifySession(secret, doctored)
 	if err != nil {
-		t.Fatalf("v2 with non-matching key-id but valid sig: %v", err)
+		t.Fatalf("v3 with non-matching key-id but valid sig: %v", err)
 	}
 	if uid != 12 {
 		t.Errorf("uid = %d; want 12", uid)

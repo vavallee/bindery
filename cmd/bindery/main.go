@@ -1194,6 +1194,20 @@ func (p *dbAuthProvider) UserRole(ctx context.Context, userID int64) string {
 	}
 	return u.Role
 }
+
+// UserSessionEpoch returns the user's current users.session_epoch, the value
+// the cookie payload must match for the auth middleware to accept it. Bumped
+// inside UpdatePassword so a password change immediately evicts every
+// outstanding cookie for that user (Wave 1 / Bundle C audit finding).
+// Returns 0 on lookup failure or missing user — that fails closed against
+// any cookie minted after the 047 migration (which defaults the column to 1).
+func (p *dbAuthProvider) UserSessionEpoch(ctx context.Context, userID int64) int64 {
+	epoch, err := p.users.GetSessionEpoch(ctx, userID)
+	if err != nil {
+		return 0
+	}
+	return epoch
+}
 func (p *dbAuthProvider) UserProvisioner() auth.UserProvisioner {
 	return &dbUserProvisioner{users: p.users}
 }

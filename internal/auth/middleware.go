@@ -76,6 +76,14 @@ func WithUserRole(ctx context.Context, role string) context.Context {
 	return context.WithValue(ctx, userRoleCtxKey, role)
 }
 
+// WithUserID returns a context carrying the given authenticated user id.
+// Exported so tests can construct the same state Middleware sets after
+// resolving a session cookie, without going through the full middleware
+// chain. Production code paths never call this directly.
+func WithUserID(ctx context.Context, userID int64) context.Context {
+	return context.WithValue(ctx, userIDCtxKey, userID)
+}
+
 // RequireAdmin is a middleware that rejects non-admin requests with 403.
 func RequireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -129,6 +137,13 @@ type Provider interface {
 	// UserRole returns the role string ("admin" or "user") for the given user
 	// id. Returns "" if the user is not found or an error occurs.
 	UserRole(ctx context.Context, userID int64) string
+	// UserSessionEpoch returns the user's current session epoch, the value
+	// the cookie's epoch field must match for the cookie to authenticate.
+	// Bumped on password change so old cookies stop verifying. Returns 0 if
+	// the user does not exist or the lookup fails — the comparison below then
+	// fails closed for any cookie minted after the 047 migration (which sets
+	// session_epoch to >= 1 by default).
+	UserSessionEpoch(ctx context.Context, userID int64) int64
 }
 
 // AllowUnauthPath returns true for routes the middleware must always let
@@ -176,10 +191,22 @@ func Middleware(p Provider) func(http.Handler) http.Handler {
 			ctx := r.Context()
 			cookieValid := false
 			if c, err := r.Cookie(SessionCookieName); err == nil {
-				if uid, err := VerifySessionMulti(p.SessionSecrets(), c.Value); err == nil {
-					ctx = context.WithValue(ctx, userIDCtxKey, uid)
-					ctx = context.WithValue(ctx, userRoleCtxKey, p.UserRole(ctx, uid))
-					cookieValid = true
+				if uid, epoch, err := VerifySessionMultiWithEpoch(p.SessionSecrets(), c.Value); err == nil {
+					// Compare the cookie's epoch field against the user's
+					// current session_epoch (bumped on password change). A
+					// mismatch means the cookie pre-dates the most recent
+					// credential rotation and must be rejected, even though
+					// the signature and expiry are otherwise valid — this is
+					// the "log everyone out after a password change" check
+					// (Wave 1 / Bundle C audit finding). Pre-047-migration
+					// cookies decode as epoch=0; the migration default of 1
+					// makes them all fail here on upgrade, which is the
+					// deliberate forced-logout-on-upgrade behaviour.
+					if p.UserSessionEpoch(ctx, uid) == epoch {
+						ctx = context.WithValue(ctx, userIDCtxKey, uid)
+						ctx = context.WithValue(ctx, userRoleCtxKey, p.UserRole(ctx, uid))
+						cookieValid = true
+					}
 				}
 			}
 

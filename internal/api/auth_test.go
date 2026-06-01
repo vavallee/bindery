@@ -4,14 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/models"
 )
 
 // newAuthFixture spins up an in-memory DB, the auth repos, a seeded session
@@ -603,4 +608,257 @@ func TestStatus_LocalAuthEnabled_False(t *testing.T) {
 	if resp.LocalAuthEnabled {
 		t.Error("expected localAuthEnabled=false after WithLocalAuthEnabled(false)")
 	}
+}
+
+// --- Wave 1 / Bundle C: session invalidation on password change --------------
+//
+// These tests pin the "log everyone out after a password change" contract
+// (audit finding #893 sibling). The mechanism is the per-user session_epoch
+// column: cookies carry the epoch under which they were minted, the
+// middleware compares against the live column on every request, and
+// UpdatePassword bumps the column. Verifying through the real auth.Middleware
+// chain is the only way to assert the audit-blocker is closed end-to-end —
+// poking ChangePassword in isolation would miss the cookie/epoch comparison.
+
+// epochProvider is a real auth.Provider that defers to a UserRepo for the
+// session_epoch (and role) so the middleware behaves exactly as in prod.
+type epochProvider struct {
+	users  *db.UserRepo
+	secret []byte
+}
+
+func (p *epochProvider) Mode() auth.Mode                       { return auth.ModeEnabled }
+func (p *epochProvider) APIKey() string                        { return "" }
+func (p *epochProvider) SessionSecret() []byte                 { return p.secret }
+func (p *epochProvider) SessionSecrets() [][]byte              { return [][]byte{p.secret} }
+func (p *epochProvider) SetupRequired() bool                   { return false }
+func (p *epochProvider) ProxyAuthHeader() string               { return "" }
+func (p *epochProvider) ProxyAutoProvision() bool              { return false }
+func (p *epochProvider) TrustedProxyCIDRs() []*net.IPNet       { return nil }
+func (p *epochProvider) UserProvisioner() auth.UserProvisioner { return nil }
+func (p *epochProvider) UserRole(ctx context.Context, id int64) string {
+	u, _ := p.users.GetByID(ctx, id)
+	if u == nil {
+		return ""
+	}
+	return u.Role
+}
+func (p *epochProvider) UserSessionEpoch(ctx context.Context, id int64) int64 {
+	e, _ := p.users.GetSessionEpoch(ctx, id)
+	return e
+}
+
+// extractSessionCookie returns the session cookie set on the response, or nil
+// if none. The auth handlers always reset the cookie on Login / password
+// change, so a missing cookie there is a test-relevant failure.
+func extractSessionCookie(resp *http.Response) *http.Cookie {
+	for _, c := range resp.Cookies() {
+		if c.Name == auth.SessionCookieName {
+			return c
+		}
+	}
+	return nil
+}
+
+// loginAndGetCookie issues a Login through the handler and returns the
+// session cookie. Fails the test if login does not succeed or no cookie is
+// set. Tightly bound to TestSession_InvalidatedOn* helpers below.
+func loginAndGetCookie(t *testing.T, h *AuthHandler, username, password string) *http.Cookie {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.Login(rec, httptest.NewRequest(http.MethodPost, "/auth/login",
+		jsonBody(t, loginRequest{Username: username, Password: password, RememberMe: true})))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	c := extractSessionCookie(rec.Result())
+	if c == nil || c.Value == "" {
+		t.Fatal("login: no session cookie set")
+	}
+	return c
+}
+
+// TestSession_InvalidatedOnPasswordChange is the headline audit-fix test:
+// a user logs in, captures their cookie, changes their own password, then
+// the OLD cookie must no longer authenticate. Without the per-user epoch
+// bump, a stolen pre-change cookie would keep working for the full 30-day
+// TTL — exactly the failure mode this PR closes.
+func TestSession_InvalidatedOnPasswordChange(t *testing.T) {
+	h, users, settings, ctx := newAuthFixture(t)
+	hash, _ := auth.HashPassword("old-password-1234")
+	u, err := users.Create(ctx, "alice", hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oldCookie := loginAndGetCookie(t, h, "alice", "old-password-1234")
+
+	// Change the password while authenticated as alice. The handler reads
+	// the uid from context, so drive it the same way the middleware would.
+	cpReq := httptest.NewRequest(http.MethodPost, "/auth/password",
+		jsonBody(t, changePasswordRequest{
+			CurrentPassword: "old-password-1234",
+			NewPassword:     "new-password-9876",
+		}))
+	cpReq = cpReq.WithContext(auth.WithUserID(cpReq.Context(), u.ID))
+	cpRec := httptest.NewRecorder()
+	h.ChangePassword(cpRec, cpReq)
+	if cpRec.Code != http.StatusOK {
+		t.Fatalf("change password: status=%d body=%s", cpRec.Code, cpRec.Body.String())
+	}
+
+	// Build the real middleware chain with a provider that reads the live
+	// epoch — this mirrors production exactly. The handler the chain wraps
+	// records whether the cookie authenticated.
+	provider := &epochProvider{users: users, secret: []byte(must(settings.Get(ctx, SettingAuthSessionSecret)).Value)}
+	var reached bool
+	chain := auth.Middleware(provider)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if auth.UserIDFromContext(r.Context()) != 0 {
+			reached = true
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Re-use the OLD cookie on a fresh request — must NOT authenticate.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/author", nil)
+	req.AddCookie(oldCookie)
+	rec := httptest.NewRecorder()
+	chain.ServeHTTP(rec, req)
+	if reached {
+		t.Fatal("pre-password-change cookie still authenticated — the epoch bump did not invalidate it")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status=%d; want 401 for stale cookie", rec.Code)
+	}
+}
+
+// TestSession_InvalidatedOnAdminPasswordReset covers the admin-reset path:
+// userB's own cookie must be rejected after an admin resets B's password.
+// This is the multi-user case the audit specifically flagged — the admin
+// reset is what an operator runs when responding to a suspected compromise.
+func TestSession_InvalidatedOnAdminPasswordReset(t *testing.T) {
+	h, users, settings, ctx := newAuthFixture(t)
+
+	// userA is the admin doing the reset; userB is the target.
+	hashA, _ := auth.HashPassword("admin-password-12")
+	if _, err := users.Create(ctx, "admin", hashA); err != nil {
+		t.Fatal(err)
+	}
+	if err := users.PromoteFirstUser(ctx); err != nil {
+		t.Fatal(err)
+	}
+	hashB, _ := auth.HashPassword("user-b-password-1")
+	userB, err := users.Create(ctx, "bob", hashB)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// userB logs in and captures their cookie.
+	bobCookie := loginAndGetCookie(t, h, "bob", "user-b-password-1")
+
+	// Admin resets userB's password via the user-management handler. That
+	// handler calls users.UpdatePassword, which bumps session_epoch in the
+	// same UPDATE — no separate API call needed.
+	umh := NewUserManagementHandler(users)
+	resetReq := httptest.NewRequest(http.MethodPut,
+		"/api/v1/auth/users/"+strconv.FormatInt(userB.ID, 10)+"/reset-password",
+		jsonBody(t, map[string]string{"password": "reset-by-admin99"}))
+	resetReq = withChiURLParam(resetReq, "id", strconv.FormatInt(userB.ID, 10))
+	resetRec := httptest.NewRecorder()
+	umh.ResetPassword(resetRec, resetReq)
+	if resetRec.Code != http.StatusOK {
+		t.Fatalf("admin reset: status=%d body=%s", resetRec.Code, resetRec.Body.String())
+	}
+
+	// Bob's old cookie must now be rejected by the real middleware chain.
+	provider := &epochProvider{users: users, secret: []byte(must(settings.Get(ctx, SettingAuthSessionSecret)).Value)}
+	var reached bool
+	chain := auth.Middleware(provider)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if auth.UserIDFromContext(r.Context()) != 0 {
+			reached = true
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/author", nil)
+	req.AddCookie(bobCookie)
+	rec := httptest.NewRecorder()
+	chain.ServeHTTP(rec, req)
+	if reached {
+		t.Fatal("bob's pre-reset cookie still authenticated — admin reset must invalidate sessions")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status=%d; want 401", rec.Code)
+	}
+}
+
+// TestSession_NewCookieValidAfterPasswordChange confirms the partner contract:
+// the browser that performed the password change is NOT logged out. The
+// /auth/password response sets a fresh cookie carrying the post-bump epoch,
+// and that cookie must authenticate on the next request. Without this the
+// user who just changed their password would land on the login screen — bad
+// UX and a regression that would silently revert the audit-fix in practice.
+func TestSession_NewCookieValidAfterPasswordChange(t *testing.T) {
+	h, users, settings, ctx := newAuthFixture(t)
+	hash, _ := auth.HashPassword("old-password-1234")
+	u, err := users.Create(ctx, "alice", hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = loginAndGetCookie(t, h, "alice", "old-password-1234")
+
+	// Drive ChangePassword as alice and capture the response's new cookie.
+	cpReq := httptest.NewRequest(http.MethodPost, "/auth/password",
+		jsonBody(t, changePasswordRequest{
+			CurrentPassword: "old-password-1234",
+			NewPassword:     "new-password-9876",
+		}))
+	cpReq = cpReq.WithContext(auth.WithUserID(cpReq.Context(), u.ID))
+	cpRec := httptest.NewRecorder()
+	h.ChangePassword(cpRec, cpReq)
+	if cpRec.Code != http.StatusOK {
+		t.Fatalf("change password: status=%d body=%s", cpRec.Code, cpRec.Body.String())
+	}
+	newCookie := extractSessionCookie(cpRec.Result())
+	if newCookie == nil || newCookie.Value == "" {
+		t.Fatal("password-change response must set a fresh session cookie so the caller stays logged in")
+	}
+
+	// The fresh cookie must authenticate against the real middleware chain.
+	provider := &epochProvider{users: users, secret: []byte(must(settings.Get(ctx, SettingAuthSessionSecret)).Value)}
+	var gotUID int64
+	chain := auth.Middleware(provider)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUID = auth.UserIDFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/author", nil)
+	req.AddCookie(newCookie)
+	rec := httptest.NewRecorder()
+	chain.ServeHTTP(rec, req)
+	if gotUID != u.ID {
+		t.Errorf("freshly-issued cookie failed to authenticate: gotUID=%d, want %d", gotUID, u.ID)
+	}
+	if rec.Code != http.StatusOK {
+		t.Errorf("status=%d; want 200 for valid fresh cookie", rec.Code)
+	}
+}
+
+// must panics if the SettingsRepo lookup returned an error or nil. Keeps the
+// epoch tests above readable without losing the safety net.
+func must(s *models.Setting, err error) *models.Setting {
+	if err != nil {
+		panic(err)
+	}
+	if s == nil {
+		panic("nil setting")
+	}
+	return s
+}
+
+// withChiURLParam attaches a chi URL parameter to the request context. The
+// user-management handlers parse the user id via chi.URLParam, which expects
+// the chi RouteContext to be present even outside a router.
+func withChiURLParam(r *http.Request, key, value string) *http.Request {
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(key, value)
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 }
