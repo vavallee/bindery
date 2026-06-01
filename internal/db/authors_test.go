@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -88,6 +89,163 @@ func TestAuthorRepo_MonitorDefaultsRoundTrip(t *testing.T) {
 	}
 	if got.MonitorMode != models.AuthorMonitorModeLatest || got.MonitorLatestCount != 3 {
 		t.Fatalf("updated monitor defaults did not round trip: %+v", got)
+	}
+}
+
+func TestAuthorRepo_GetByAnyForeignIDMatchesAlternateIdentifier(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	repo := NewAuthorRepo(database)
+	ctx := context.Background()
+	author := &models.Author{
+		ForeignID:        "OL13200512A",
+		Name:             "Emilia Jae",
+		SortName:         "Jae, Emilia",
+		MetadataProvider: "openlibrary",
+	}
+	if err := repo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertAuthorIdentifier(ctx, author.ID, "hc:emilia-jae"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.GetByAnyForeignID(ctx, "hc:emilia-jae")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.ID != author.ID {
+		t.Fatalf("GetByAnyForeignID = %+v, want author %d", got, author.ID)
+	}
+}
+
+func TestAuthorRepo_GetByIDForUserScopesOwner(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	users := NewUserRepo(database)
+	alice, err := users.Create(ctx, "alice", "h1")
+	if err != nil {
+		t.Fatalf("create alice: %v", err)
+	}
+	bob, err := users.Create(ctx, "bob", "h2")
+	if err != nil {
+		t.Fatalf("create bob: %v", err)
+	}
+	repo := NewAuthorRepo(database)
+	aliceAuthor := &models.Author{
+		ForeignID:        "OL-ALICE",
+		Name:             "Alice Author",
+		SortName:         "Author, Alice",
+		MetadataProvider: "openlibrary",
+	}
+	if err := repo.CreateForUser(ctx, aliceAuthor, alice.ID); err != nil {
+		t.Fatalf("seed alice author: %v", err)
+	}
+	unowned := &models.Author{
+		ForeignID:        "OL-UNOWNED",
+		Name:             "Unowned Author",
+		SortName:         "Author, Unowned",
+		MetadataProvider: "openlibrary",
+	}
+	if err := repo.Create(ctx, unowned); err != nil {
+		t.Fatalf("seed unowned author: %v", err)
+	}
+
+	got, err := repo.GetByIDForUser(ctx, aliceAuthor.ID, alice.ID)
+	if err != nil || got == nil {
+		t.Fatalf("alice lookup = %+v err=%v, want owned author", got, err)
+	}
+	got, err = repo.GetByIDForUser(ctx, aliceAuthor.ID, bob.ID)
+	if err != nil {
+		t.Fatalf("bob lookup: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("bob lookup = %+v, want nil for alice-owned author", got)
+	}
+	got, err = repo.GetByIDForUser(ctx, unowned.ID, bob.ID)
+	if err != nil || got == nil {
+		t.Fatalf("bob unowned lookup = %+v err=%v, want visible legacy row", got, err)
+	}
+}
+
+func TestAuthorRepo_UpsertAuthorIdentifierRejectsDifferentOwner(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	repo := NewAuthorRepo(database)
+	ctx := context.Background()
+	first := &models.Author{ForeignID: "OL-FIRST", Name: "First", SortName: "First", MetadataProvider: "openlibrary"}
+	second := &models.Author{ForeignID: "OL-SECOND", Name: "Second", SortName: "Second", MetadataProvider: "openlibrary"}
+	if err := repo.Create(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Create(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertAuthorIdentifier(ctx, first.ID, "hc:shared"); err != nil {
+		t.Fatal(err)
+	}
+
+	err = repo.UpsertAuthorIdentifier(ctx, second.ID, "hc:shared")
+	if err == nil {
+		t.Fatal("expected duplicate identifier owner error")
+	}
+	if !errors.Is(err, ErrAuthorIdentifierConflict) {
+		t.Fatalf("error = %v, want owner collision", err)
+	}
+	var conflict *AuthorIdentifierConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("error = %T, want AuthorIdentifierConflictError", err)
+	}
+	if conflict.ForeignID != "hc:shared" || conflict.AuthorID != first.ID {
+		t.Fatalf("conflict = %+v, want foreign ID owner %d", conflict, first.ID)
+	}
+}
+
+func TestAuthorRepo_DeleteAuthorIdentifierDeletesMatchingOwnerOnly(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	repo := NewAuthorRepo(database)
+	ctx := context.Background()
+	author := &models.Author{ForeignID: "OL-AUTHOR", Name: "Author", SortName: "Author", MetadataProvider: "openlibrary"}
+	other := &models.Author{ForeignID: "OL-OTHER", Name: "Other", SortName: "Other", MetadataProvider: "openlibrary"}
+	if err := repo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Create(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertAuthorIdentifier(ctx, author.ID, "hc:author"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.DeleteAuthorIdentifier(ctx, other.ID, "hc:author"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := repo.GetAuthorIdentifier(ctx, "hc:author"); err != nil || got == nil || got.AuthorID != author.ID {
+		t.Fatalf("identifier after wrong-owner delete = %+v err=%v, want retained for author %d", got, err, author.ID)
+	}
+	if err := repo.DeleteAuthorIdentifier(ctx, author.ID, "hc:author"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := repo.GetAuthorIdentifier(ctx, "hc:author"); err != nil || got != nil {
+		t.Fatalf("identifier after delete = %+v err=%v, want nil", got, err)
 	}
 }
 

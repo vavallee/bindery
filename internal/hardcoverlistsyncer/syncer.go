@@ -274,7 +274,7 @@ func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book) (int64
 		return 0, fmt.Errorf("book %q has no author metadata", book.Title)
 	}
 
-	existing, err := s.authors.GetByForeignID(ctx, book.Author.ForeignID)
+	existing, err := s.authors.GetByAnyForeignID(ctx, book.Author.ForeignID)
 	if err != nil {
 		return 0, err
 	}
@@ -291,9 +291,9 @@ func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book) (int64
 	}
 
 	if err := s.authors.Create(ctx, author); err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") || errors.Is(err, db.ErrAuthorIdentifierConflict) {
 			// Race: author created between our check and insert
-			existing, _ = s.authors.GetByForeignID(ctx, author.ForeignID)
+			existing, _ = s.authors.GetByAnyForeignID(ctx, author.ForeignID)
 			if existing != nil {
 				return existing.ID, nil
 			}

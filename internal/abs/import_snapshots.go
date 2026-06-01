@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -65,6 +66,7 @@ type authorRollbackSnapshot struct {
 	ImageURL              string     `json:"imageUrl"`
 	Disambiguation        string     `json:"disambiguation"`
 	MetadataProvider      string     `json:"metadataProvider"`
+	IdentifierForeignIDs  *[]string  `json:"identifierForeignIds,omitempty"`
 	LastMetadataRefreshAt *time.Time `json:"lastMetadataRefreshAt,omitempty"`
 }
 
@@ -134,6 +136,26 @@ func authorSnapshot(author *models.Author) *authorRollbackSnapshot {
 		MetadataProvider:      author.MetadataProvider,
 		LastMetadataRefreshAt: cloneTimePtr(author.LastMetadataRefreshAt),
 	}
+}
+
+func (i *Importer) authorSnapshot(ctx context.Context, author *models.Author) (*authorRollbackSnapshot, error) {
+	snapshot := authorSnapshot(author)
+	if snapshot == nil || i.authors == nil || author.ID == 0 {
+		return snapshot, nil
+	}
+	identifiers, err := i.authors.ListAuthorIdentifiers(ctx, author.ID)
+	if err != nil {
+		return nil, err
+	}
+	foreignIDs := make([]string, 0, len(identifiers))
+	for _, identifier := range identifiers {
+		if foreignID := strings.TrimSpace(identifier.ForeignID); foreignID != "" {
+			foreignIDs = append(foreignIDs, foreignID)
+		}
+	}
+	sort.Strings(foreignIDs)
+	snapshot.IdentifierForeignIDs = &foreignIDs
+	return snapshot, nil
 }
 
 func authorSnapshotMetadata(data map[string]any, before, after *authorRollbackSnapshot) (runEntityMetadataEnvelope, error) {
@@ -214,7 +236,11 @@ func (i *Importer) recordAuthorBeforeSnapshot(ctx context.Context, runID int64, 
 	if cfg.DryRun || author == nil {
 		return nil
 	}
-	metadata, err := authorSnapshotMetadata(data, authorSnapshot(author), nil)
+	before, err := i.authorSnapshot(ctx, author)
+	if err != nil {
+		return err
+	}
+	metadata, err := authorSnapshotMetadata(data, before, nil)
 	if err != nil {
 		return err
 	}
@@ -229,7 +255,11 @@ func (i *Importer) recordAuthorAfterSnapshot(ctx context.Context, runID int64, c
 	if err != nil || author == nil {
 		return err
 	}
-	metadata, err := authorSnapshotMetadata(data, nil, authorSnapshot(author))
+	after, err := i.authorSnapshot(ctx, author)
+	if err != nil {
+		return err
+	}
+	metadata, err := authorSnapshotMetadata(data, nil, after)
 	if err != nil {
 		return err
 	}

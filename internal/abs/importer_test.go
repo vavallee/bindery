@@ -1475,9 +1475,65 @@ func TestImporter_RelinksInitialedAuthorUsingFallbackSearch(t *testing.T) {
 	if authors[0].ForeignID != "OL26320A" || authors[0].Name != "J.R.R. Tolkien" {
 		t.Fatalf("author = %+v, want upstream Tolkien", authors[0])
 	}
+	identifier, err := authorRepo.GetAuthorIdentifier(context.Background(), absForeignID("author", item.LibraryID, "author-tolkien"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identifier == nil || identifier.AuthorID != authors[0].ID {
+		t.Fatalf("abs identifier = %+v, want linked to relinked Tolkien", identifier)
+	}
 	books, err := bookRepo.ListByAuthor(context.Background(), authors[0].ID)
 	if err != nil || len(books) != 1 {
 		t.Fatalf("books = %d err=%v, want 1", len(books), err)
+	}
+}
+
+func TestImporter_AttachesUpstreamAuthorIdentifierWithoutReplacingRelinkedPrimary(t *testing.T) {
+	t.Parallel()
+
+	importer, authorRepo, _, _, _, _, _, _, _, _ := newABSImporterFixture(t)
+	ctx := context.Background()
+	existing := &models.Author{
+		ForeignID:        "hc:andy-weir",
+		Name:             "Andy Weir",
+		SortName:         "Weir, Andy",
+		MetadataProvider: "hardcover",
+		Monitored:        true,
+	}
+	if err := authorRepo.Create(ctx, existing); err != nil {
+		t.Fatalf("Create author: %v", err)
+	}
+	item := sampleABSItem()
+	if err := authorRepo.UpsertAuthorIdentifier(ctx, existing.ID, absForeignID("author", item.LibraryID, "author-andy-weir")); err != nil {
+		t.Fatal(err)
+	}
+	importer.WithMetadata(metadata.NewAggregator(&stubABSMetadataProvider{
+		searchAuthors: []models.Author{{ForeignID: "OL-ANDY", Name: "Andy Weir"}},
+		authors: map[string]*models.Author{
+			"OL-ANDY": {
+				ForeignID:        "OL-ANDY",
+				Name:             "Andy Weir",
+				SortName:         "Weir, Andy",
+				MetadataProvider: "openlibrary",
+			},
+		},
+	}))
+
+	runSingleABSImport(t, importer, item)
+
+	updated, err := authorRepo.GetByID(ctx, existing.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if updated.ForeignID != "hc:andy-weir" || updated.MetadataProvider != "hardcover" {
+		t.Fatalf("author = %+v, want Hardcover primary identity preserved", updated)
+	}
+	identifier, err := authorRepo.GetAuthorIdentifier(ctx, "OL-ANDY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identifier == nil || identifier.AuthorID != existing.ID {
+		t.Fatalf("upstream identifier = %+v, want linked to existing author", identifier)
 	}
 }
 
@@ -1753,6 +1809,56 @@ func TestImporter_ImportReviewUsesResolvedAuthor(t *testing.T) {
 	}
 	if authors[0].ForeignID != "OL123A" || authors[0].MetadataProvider == providerAudiobookshelf {
 		t.Fatalf("author = %+v, want upstream Brandon Sanderson", authors[0])
+	}
+}
+
+func TestImporter_ImportReviewStoresResolvedAuthorAsAlternateForCanonicalAuthor(t *testing.T) {
+	t.Parallel()
+
+	importer, authorRepo, _, _, _, _, _, _, _, _ := newABSImporterFixture(t)
+	ctx := context.Background()
+	existing := &models.Author{
+		ForeignID:        "hc:brandon-sanderson",
+		Name:             "Brandon Sanderson",
+		SortName:         "Sanderson, Brandon",
+		MetadataProvider: "hardcover",
+		Monitored:        true,
+	}
+	if err := authorRepo.Create(ctx, existing); err != nil {
+		t.Fatalf("Create author: %v", err)
+	}
+
+	item := sampleABSItem()
+	item.ItemID = "li-bands"
+	item.Title = "The Bands of Mourning (2 of 2)"
+	item.Authors = []NormalizedAuthor{{ID: "author-abs-brandon", Name: "Brandon Sanderson"}}
+	item.ResolvedAuthorForeignID = "OL123A"
+	item.ResolvedAuthorName = "Brandon Sanderson"
+
+	if _, err := importer.ImportReview(context.Background(), ImportConfig{
+		SourceID:  DefaultSourceID,
+		BaseURL:   "https://abs.example.com",
+		APIKey:    "secret",
+		LibraryID: item.LibraryID,
+		Label:     "Shelf",
+		Enabled:   true,
+	}, item); err != nil {
+		t.Fatalf("ImportReview: %v", err)
+	}
+
+	updated, err := authorRepo.GetByID(ctx, existing.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if updated.ForeignID != "hc:brandon-sanderson" || updated.MetadataProvider != "hardcover" {
+		t.Fatalf("author = %+v, want Hardcover primary identity preserved", updated)
+	}
+	identifier, err := authorRepo.GetAuthorIdentifier(ctx, "OL123A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identifier == nil || identifier.AuthorID != existing.ID {
+		t.Fatalf("resolved identifier = %+v, want linked to existing author", identifier)
 	}
 }
 
@@ -4273,6 +4379,16 @@ func TestImporter_RollbackRestoresAuthorMetadataAndPreservesAliases(t *testing.T
 	if updated.ForeignID != "OL-ANDY" || updated.Name != "Andy Weir" || updated.Description != "Upstream author description." {
 		t.Fatalf("author after import = %+v, want upstream metadata", updated)
 	}
+	linkedIdentifier, err := authorRepo.GetAuthorIdentifier(ctx, "OL-ANDY")
+	if err != nil {
+		t.Fatalf("GetAuthorIdentifier after import: %v", err)
+	}
+	if linkedIdentifier == nil || linkedIdentifier.AuthorID != existing.ID {
+		t.Fatalf("linked identifier = %+v, want import-added identifier for author %d", linkedIdentifier, existing.ID)
+	}
+	if err := authorRepo.UpsertAuthorIdentifier(ctx, existing.ID, "hc:andy-weir"); err != nil {
+		t.Fatalf("seed unrelated later identifier: %v", err)
+	}
 	entities, err := runEntityRepo.ListByRun(ctx, runID)
 	if err != nil {
 		t.Fatalf("ListByRun: %v", err)
@@ -4322,6 +4438,20 @@ func TestImporter_RollbackRestoresAuthorMetadataAndPreservesAliases(t *testing.T
 	}
 	if !foundAlias {
 		t.Fatalf("aliases = %+v, want rollback to preserve import-created alias", aliases)
+	}
+	rolledBackIdentifier, err := authorRepo.GetAuthorIdentifier(ctx, "OL-ANDY")
+	if err != nil {
+		t.Fatalf("GetAuthorIdentifier rolled back: %v", err)
+	}
+	if rolledBackIdentifier != nil {
+		t.Fatalf("rolled-back identifier = %+v, want removed", rolledBackIdentifier)
+	}
+	preservedIdentifier, err := authorRepo.GetAuthorIdentifier(ctx, "hc:andy-weir")
+	if err != nil {
+		t.Fatalf("GetAuthorIdentifier preserved: %v", err)
+	}
+	if preservedIdentifier == nil || preservedIdentifier.AuthorID != existing.ID {
+		t.Fatalf("preserved identifier = %+v, want unrelated later identifier kept", preservedIdentifier)
 	}
 }
 

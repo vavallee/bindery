@@ -334,7 +334,7 @@ func ensureGoodreadsAuthor(ctx context.Context, authors *db.AuthorRepo, book *mo
 	if book.Author == nil || strings.TrimSpace(book.Author.ForeignID) == "" {
 		return 0, fmt.Errorf("book %q has no resolvable author", book.Title)
 	}
-	existing, err := authors.GetByForeignID(ctx, book.Author.ForeignID)
+	existing, err := authors.GetByAnyForeignID(ctx, book.Author.ForeignID)
 	if err != nil {
 		return 0, err
 	}
@@ -351,8 +351,8 @@ func ensureGoodreadsAuthor(ctx context.Context, authors *db.AuthorRepo, book *mo
 		author.SortName = goodreadsSortName(author.Name)
 	}
 	if err := authors.Create(ctx, author); err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			existing, _ = authors.GetByForeignID(ctx, author.ForeignID)
+		if isAuthorCreateConflict(err) {
+			existing, _ = authors.GetByAnyForeignID(ctx, author.ForeignID)
 			if existing != nil {
 				return existing.ID, nil
 			}

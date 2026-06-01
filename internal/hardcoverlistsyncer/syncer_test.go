@@ -217,6 +217,54 @@ func TestSyncOne_PerListTokenOverridesGlobalToken(t *testing.T) {
 	}
 }
 
+func TestSyncOne_ReusesAuthorByAlternateIdentifier(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	existing := &models.Author{
+		ForeignID:        "OL-AUTHOR-X",
+		Name:             "Author X",
+		SortName:         "X, Author",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := s.authors.Create(ctx, existing); err != nil {
+		t.Fatalf("seed author: %v", err)
+	}
+	if err := s.authors.UpsertAuthorIdentifier(ctx, existing.ID, "hc:author-x"); err != nil {
+		t.Fatalf("seed author identifier: %v", err)
+	}
+	il := testImportList("Alt Author", "hardcover", true)
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed list: %v", err)
+	}
+	book := bookWithSeriesRef("hc:book-x", "Book X", nil)
+	s.WithClientFactory(func(string) hardcoverClient {
+		return &fakeHardcoverClient{
+			lists: []hardcover.HCList{{ID: 12, Slug: il.URL, Name: il.Name}},
+			books: []models.Book{book},
+		}
+	})
+
+	if err := s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatalf("SyncOne: %v", err)
+	}
+	authors, err := s.authors.List(ctx)
+	if err != nil {
+		t.Fatalf("List authors: %v", err)
+	}
+	if len(authors) != 1 {
+		t.Fatalf("authors = %d, want existing author reused", len(authors))
+	}
+	imported, err := s.books.GetByForeignID(ctx, "hc:book-x")
+	if err != nil || imported == nil {
+		t.Fatalf("imported book = %+v err=%v, want persisted", imported, err)
+	}
+	if imported.AuthorID != existing.ID {
+		t.Fatalf("book author_id = %d, want existing author %d", imported.AuthorID, existing.ID)
+	}
+}
+
 func TestSyncOne_ErrMissingToken(t *testing.T) {
 	s, repo := newTestSyncer(t)
 	ctx := context.Background()

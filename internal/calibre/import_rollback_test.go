@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/models"
 )
 
 // newRollbackFixture wires an Importer that has run-tracking repos attached,
@@ -225,6 +226,122 @@ func TestImporter_ExecuteRollback_DeletesEntitiesAndMarksRun(t *testing.T) {
 	// Provenance must be cleared.
 	if got, _ := provRepo.GetByExternal(context.Background(), defaultSourceID, entityTypeBook, "book:20"); got != nil {
 		t.Error("book provenance still present after rollback")
+	}
+}
+
+func TestImporter_RollbackRemovesImportAddedAuthorIdentifier(t *testing.T) {
+	imp, fr, authorRepo, _, _, runsRepo, _, _ := newRollbackFixture(t)
+	ctx := context.Background()
+	existing := &models.Author{
+		ForeignID:        "OL-AUTHOR",
+		Name:             "Alice Author",
+		SortName:         "Author, Alice",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := authorRepo.Create(ctx, existing); err != nil {
+		t.Fatalf("seed author: %v", err)
+	}
+	fr.books = []CalibreBook{sampleCalibreBook(7, "Book One", "Alice Author")}
+
+	if _, err := imp.Run(ctx, "/lib"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	runs, err := runsRepo.ListRecent(ctx, 1)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("ListRecent: %v len=%d", err, len(runs))
+	}
+	identifier, err := authorRepo.GetAuthorIdentifier(ctx, "calibre:author:7")
+	if err != nil {
+		t.Fatalf("GetAuthorIdentifier after import: %v", err)
+	}
+	if identifier == nil || identifier.AuthorID != existing.ID {
+		t.Fatalf("calibre identifier = %+v, want linked to existing author", identifier)
+	}
+	if err := authorRepo.UpsertAuthorIdentifier(ctx, existing.ID, "hc:alice-author"); err != nil {
+		t.Fatalf("seed unrelated later identifier: %v", err)
+	}
+
+	result, err := imp.Rollback(ctx, runs[0].ID)
+	if err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if result.Stats.Failed != 0 {
+		t.Fatalf("rollback result = %+v, want no failures", result)
+	}
+	removed, err := authorRepo.GetAuthorIdentifier(ctx, "calibre:author:7")
+	if err != nil {
+		t.Fatalf("GetAuthorIdentifier after rollback: %v", err)
+	}
+	if removed != nil {
+		t.Fatalf("calibre identifier after rollback = %+v, want removed", removed)
+	}
+	preserved, err := authorRepo.GetAuthorIdentifier(ctx, "hc:alice-author")
+	if err != nil {
+		t.Fatalf("GetAuthorIdentifier preserved: %v", err)
+	}
+	if preserved == nil || preserved.AuthorID != existing.ID {
+		t.Fatalf("preserved identifier = %+v, want unrelated later identifier kept", preserved)
+	}
+	stillThere, err := authorRepo.GetByID(ctx, existing.ID)
+	if err != nil || stillThere == nil {
+		t.Fatalf("existing author after rollback = %+v err=%v, want retained", stillThere, err)
+	}
+}
+
+func TestImporter_RollbackUnlinksIdentifierMatchedAuthorProvenance(t *testing.T) {
+	imp, fr, authorRepo, _, _, runsRepo, _, provRepo := newRollbackFixture(t)
+	ctx := context.Background()
+	existing := &models.Author{
+		ForeignID:        "OL-AUTHOR",
+		Name:             "Alice Author",
+		SortName:         "Author, Alice",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := authorRepo.Create(ctx, existing); err != nil {
+		t.Fatalf("seed author: %v", err)
+	}
+	if err := authorRepo.UpsertAuthorIdentifier(ctx, existing.ID, "calibre:author:7"); err != nil {
+		t.Fatalf("seed calibre identifier: %v", err)
+	}
+	fr.books = []CalibreBook{{
+		CalibreID: 42,
+		Title:     "Book One",
+		SortTitle: "Book One",
+		Authors:   []CalibreAuthor{{CalibreID: 7, Name: "A. Author", Sort: "Author, A."}},
+		Formats: []CalibreFormat{
+			{Format: "EPUB", FileName: "book", AbsolutePath: filepath.Join("/lib", "Book One.epub")},
+		},
+	}}
+
+	if _, err := imp.Run(ctx, "/lib"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	runs, err := runsRepo.ListRecent(ctx, 1)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("ListRecent: %v len=%d", err, len(runs))
+	}
+	if got, err := provRepo.GetByExternal(ctx, defaultSourceID, entityTypeAuthor, "author:7"); err != nil || got == nil {
+		t.Fatalf("author provenance after import = %+v err=%v, want present", got, err)
+	}
+
+	result, err := imp.Rollback(ctx, runs[0].ID)
+	if err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if result.Stats.Failed != 0 {
+		t.Fatalf("rollback result = %+v, want no failures", result)
+	}
+	if got, err := provRepo.GetByExternal(ctx, defaultSourceID, entityTypeAuthor, "author:7"); err != nil || got != nil {
+		t.Fatalf("author provenance after rollback = %+v err=%v, want nil", got, err)
+	}
+	identifier, err := authorRepo.GetAuthorIdentifier(ctx, "calibre:author:7")
+	if err != nil {
+		t.Fatalf("GetAuthorIdentifier after rollback: %v", err)
+	}
+	if identifier == nil || identifier.AuthorID != existing.ID {
+		t.Fatalf("calibre identifier after rollback = %+v, want preserved existing link", identifier)
 	}
 }
 

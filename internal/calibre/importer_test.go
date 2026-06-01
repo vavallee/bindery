@@ -176,6 +176,63 @@ func TestImporter_ReusesExistingAuthor(t *testing.T) {
 	if authors[0].ForeignID != "ol:A1" {
 		t.Errorf("expected to link to existing OL author, got foreign_id=%q", authors[0].ForeignID)
 	}
+	identifier, err := authorRepo.GetAuthorIdentifier(context.Background(), "calibre:author:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identifier == nil || identifier.AuthorID != existing.ID {
+		t.Fatalf("calibre identifier = %+v, want linked to existing author", identifier)
+	}
+}
+
+func TestImporter_ReusesRelinkedAuthorByCalibreIdentifier(t *testing.T) {
+	imp, fr, authorRepo, bookRepo, _, _, _ := newImporterFixture(t)
+	ctx := context.Background()
+
+	existing := &models.Author{
+		ForeignID:        "OL-A1",
+		Name:             "Alice Author",
+		SortName:         "Author, Alice",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := authorRepo.Create(ctx, existing); err != nil {
+		t.Fatalf("seed author: %v", err)
+	}
+	if err := authorRepo.UpsertAuthorIdentifier(ctx, existing.ID, "calibre:author:7"); err != nil {
+		t.Fatal(err)
+	}
+
+	fr.books = []CalibreBook{{
+		CalibreID: 42,
+		Title:     "Book One",
+		SortTitle: "Book One",
+		Authors:   []CalibreAuthor{{CalibreID: 7, Name: "A. Author", Sort: "Author, A."}},
+		Formats: []CalibreFormat{
+			{Format: "EPUB", FileName: "book", AbsolutePath: filepath.Join("/lib", "Book One.epub")},
+		},
+	}}
+	if _, err := imp.Run(ctx, "/lib"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	authors, err := authorRepo.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(authors) != 1 {
+		t.Fatalf("authors = %d, want 1", len(authors))
+	}
+	if authors[0].ID != existing.ID || authors[0].ForeignID != "OL-A1" {
+		t.Fatalf("author = %+v, want existing relinked author", authors[0])
+	}
+	books, err := bookRepo.ListByAuthor(ctx, existing.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("books = %d, want imported book under existing author", len(books))
+	}
 }
 
 // TestImporter_AliasResolvesToCanonical — if Calibre's author name matches

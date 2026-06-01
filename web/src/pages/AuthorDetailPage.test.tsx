@@ -1,6 +1,7 @@
+import { useEffect } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import AuthorDetailPage from './AuthorDetailPage'
 import { api } from '../api/client'
 import type { Author, Book } from '../api/client'
@@ -16,6 +17,8 @@ vi.mock('../api/client', async importOriginal => {
       listBooks: vi.fn(),
       listAuthors: vi.fn(),
       refreshAuthor: vi.fn(),
+      searchAuthorLinkCandidates: vi.fn(),
+      relinkAuthorUpstream: vi.fn(),
       updateAuthor: vi.fn(),
       deleteAuthor: vi.fn(),
       searchAuthorWanted: vi.fn(),
@@ -35,6 +38,7 @@ const author: Author = {
   ratingsCount: 0,
   averageRating: 0,
   monitored: true,
+  metadataProvider: 'openlibrary',
 }
 
 function makeBook(overrides: Partial<Book> & Pick<Book, 'id' | 'title' | 'status'>): Book {
@@ -79,13 +83,22 @@ function installLocalStorageMock() {
   Object.defineProperty(window, 'localStorage', { value: storage, configurable: true })
 }
 
-function renderAuthorDetailPage(books: Book[], view: 'grid' | 'table' = 'grid') {
+function LocationProbe({ onLocation }: { onLocation?: (location: string) => void }) {
+  const location = useLocation()
+  useEffect(() => {
+    onLocation?.(`${location.pathname}${location.search}${location.hash}`)
+  }, [location, onLocation])
+  return null
+}
+
+function renderAuthorDetailPage(books: Book[], view: 'grid' | 'table' = 'grid', authorOverride: Partial<Author> = {}, initialPath = '/author/42', onLocation?: (location: string) => void) {
   localStorage.setItem('bindery.view.author-detail', view)
-  vi.mocked(api.getAuthor).mockResolvedValue(author)
+  vi.mocked(api.getAuthor).mockResolvedValue({ ...author, ...authorOverride })
   vi.mocked(api.listBooks).mockResolvedValue(books)
 
   return render(
-    <MemoryRouter initialEntries={['/author/42']}>
+    <MemoryRouter initialEntries={[initialPath]}>
+      <LocationProbe onLocation={onLocation} />
       <Routes>
         <Route path="/author/:id" element={<AuthorDetailPage />} />
       </Routes>
@@ -106,6 +119,8 @@ describe('AuthorDetailPage', () => {
     vi.mocked(api.searchAuthorWanted).mockResolvedValue({
       results: { '42': { ok: true } },
     })
+    vi.mocked(api.searchAuthorLinkCandidates).mockResolvedValue([])
+    vi.mocked(api.relinkAuthorUpstream).mockResolvedValue(author)
   })
 
   it('searches all wanted books for the current author', async () => {
@@ -134,6 +149,121 @@ describe('AuthorDetailPage', () => {
     fireEvent.click(button)
 
     expect(api.searchAuthorWanted).not.toHaveBeenCalled()
+  })
+
+  it('shows link metadata for unlinked authors', async () => {
+    renderAuthorDetailPage([], 'grid', {
+      foreignAuthorId: 'abs:author:library:emilia-jae',
+      authorName: 'Emilia Jae',
+      sortName: 'Jae, Emilia',
+      metadataProvider: 'audiobookshelf',
+    })
+
+    expect(await screen.findByRole('button', { name: 'Link metadata' })).toBeInTheDocument()
+  })
+
+  it('shows link metadata for calibre-provider authors with legacy IDs', async () => {
+    renderAuthorDetailPage([], 'grid', {
+      foreignAuthorId: 'legacy-calibre-author',
+      authorName: 'Calibre Author',
+      sortName: 'Author, Calibre',
+      metadataProvider: 'calibre',
+      description: 'Imported from Calibre.',
+      imageUrl: 'https://example.com/calibre.jpg',
+      ratingsCount: 12,
+      averageRating: 4.1,
+    })
+
+    expect(await screen.findByRole('button', { name: 'Link metadata' })).toBeInTheDocument()
+  })
+
+  it('shows find-better metadata for linked sparse authors and relinks a selected candidate', async () => {
+    const sparseAuthor = {
+      foreignAuthorId: 'OL13200512A',
+      authorName: 'Emilia Jae',
+      sortName: 'Jae, Emilia',
+      metadataProvider: 'openlibrary',
+      description: '',
+      imageUrl: '',
+      disambiguation: '',
+      ratingsCount: 0,
+      averageRating: 0,
+    }
+    const hardcoverAuthor = {
+      ...author,
+      ...sparseAuthor,
+      foreignAuthorId: 'hc:emilia-jae',
+      metadataProvider: 'hardcover',
+      description: 'Fantasy author.',
+      statistics: { bookCount: 3, availableBookCount: 0, wantedBookCount: 0 },
+    }
+    vi.mocked(api.searchAuthorLinkCandidates).mockResolvedValue([hardcoverAuthor])
+    vi.mocked(api.relinkAuthorUpstream).mockResolvedValue(hardcoverAuthor)
+    vi.mocked(api.getAuthor).mockResolvedValueOnce({ ...author, ...sparseAuthor }).mockResolvedValue(hardcoverAuthor)
+
+    renderAuthorDetailPage([], 'grid', sparseAuthor)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Find better metadata' }))
+
+    await waitFor(() => expect(api.searchAuthorLinkCandidates).toHaveBeenCalledWith(42, 'Emilia Jae'))
+    expect(await screen.findByText('Hardcover')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Link' }))
+
+    await waitFor(() => expect(api.relinkAuthorUpstream).toHaveBeenCalledWith(42, {
+      foreignAuthorId: 'hc:emilia-jae',
+      authorName: 'Emilia Jae',
+    }))
+  })
+
+  it('opens link metadata from the query string once and removes the trigger param', async () => {
+    const locations: string[] = []
+    renderAuthorDetailPage([], 'grid', {
+      foreignAuthorId: 'abs:author:library:emilia-jae',
+      authorName: 'Emilia Jae',
+      sortName: 'Jae, Emilia',
+      metadataProvider: 'audiobookshelf',
+    }, '/author/42?linkMetadata=1&view=detail', location => locations.push(location))
+
+    expect(await screen.findByRole('heading', { name: 'Link metadata' })).toBeInTheDocument()
+    await waitFor(() => expect(api.searchAuthorLinkCandidates).toHaveBeenCalledWith(42, 'Emilia Jae'))
+    await waitFor(() => expect(locations[locations.length - 1]).toBe('/author/42?view=detail'))
+  })
+
+  it('does not reopen a query-opened metadata modal after a relink reloads the author', async () => {
+    const sparseAuthor = {
+      foreignAuthorId: 'OL13200512A',
+      authorName: 'Emilia Jae',
+      sortName: 'Jae, Emilia',
+      metadataProvider: 'openlibrary',
+      description: '',
+      imageUrl: '',
+      disambiguation: '',
+      ratingsCount: 0,
+      averageRating: 0,
+    }
+    const dnbAuthor = {
+      ...author,
+      ...sparseAuthor,
+      foreignAuthorId: 'dnb:123456789',
+      metadataProvider: 'dnb',
+      description: 'DNB author record.',
+    }
+    vi.mocked(api.searchAuthorLinkCandidates).mockResolvedValue([dnbAuthor])
+    vi.mocked(api.relinkAuthorUpstream).mockResolvedValue(dnbAuthor)
+    vi.mocked(api.getAuthor).mockResolvedValueOnce({ ...author, ...sparseAuthor }).mockResolvedValue(dnbAuthor)
+
+    renderAuthorDetailPage([], 'grid', sparseAuthor, '/author/42?linkMetadata=1')
+
+    expect(await screen.findByText('DNB')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Link' }))
+
+    await waitFor(() => expect(api.relinkAuthorUpstream).toHaveBeenCalledWith(42, {
+      foreignAuthorId: 'dnb:123456789',
+      authorName: 'Emilia Jae',
+    }))
+    await waitFor(() => expect(api.getAuthor).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole('heading', { name: 'Link metadata' })).not.toBeInTheDocument()
   })
 
   it('keeps table metadata visible and repeats it in compact title rows', async () => {

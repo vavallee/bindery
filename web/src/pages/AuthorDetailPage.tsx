@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api, Author, Book, BookBulkAction } from '../api/client'
 import ViewToggle from '../components/ViewToggle'
 import MergeAuthorsModal from '../components/MergeAuthorsModal'
 import EditAuthorModal from '../components/EditAuthorModal'
+import AuthorMetadataLinkModal from '../components/AuthorMetadataLinkModal'
 import BulkActionBar from '../components/BulkActionBar'
 import { useView } from '../components/useView'
 
@@ -48,9 +49,20 @@ function mediaLabel(mediaType?: Book['mediaType']): string {
   return '📖 Ebook'
 }
 
+function canLinkAuthorMetadata(author: Author): boolean {
+  const foreignId = (author.foreignAuthorId || '').trim()
+  const provider = (author.metadataProvider || '').trim().toLowerCase()
+  return foreignId === '' || foreignId.startsWith('abs:') || foreignId.startsWith('calibre:') || provider === 'audiobookshelf' || provider === 'calibre'
+}
+
+function hasSparseMetadata(author: Author): boolean {
+  return !author.description && !author.imageUrl && !author.disambiguation && (author.ratingsCount ?? 0) === 0 && (author.averageRating ?? 0) === 0
+}
+
 export default function AuthorDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const { t } = useTranslation()
   const authorId = Number(id)
 
@@ -62,6 +74,7 @@ export default function AuthorDetailPage() {
   const [searchingWanted, setSearchingWanted] = useState(false)
   const [showMerge, setShowMerge] = useState(false)
   const [showEdit, setShowEdit] = useState(false)
+  const [showMetadataLink, setShowMetadataLink] = useState(false)
   const [showExcluded, setShowExcluded] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -142,6 +155,24 @@ export default function AuthorDetailPage() {
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [authorId, showExcluded])
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    if (params.get('linkMetadata') !== '1') {
+      return
+    }
+    setShowMetadataLink(true)
+    params.delete('linkMetadata')
+    const search = params.toString()
+    navigate(
+      {
+        pathname: location.pathname,
+        search: search ? `?${search}` : '',
+        hash: location.hash,
+      },
+      { replace: true },
+    )
+  }, [location.hash, location.pathname, location.search, navigate])
 
   const handleRefresh = async () => {
     if (!author) return
@@ -313,6 +344,10 @@ export default function AuthorDetailPage() {
   if (!author) return <div className="text-slate-600 dark:text-zinc-500">Author not found</div>
 
   const searchableWantedCount = books.filter(b => b.status === 'wanted' && b.monitored && !b.excluded).length
+  const showMetadataLinkAction = canLinkAuthorMetadata(author) || hasSparseMetadata(author)
+  const metadataLinkLabel = canLinkAuthorMetadata(author)
+    ? t('authorMetadataLink.actionLink', 'Link metadata')
+    : t('authorMetadataLink.actionFindBetter', 'Find better metadata')
   const counts = {
     total: books.length,
     imported: books.filter(b => b.status === 'imported').length,
@@ -372,6 +407,14 @@ export default function AuthorDetailPage() {
             >
               {refreshing ? 'Refreshing…' : 'Refresh metadata'}
             </button>
+            {showMetadataLinkAction && (
+              <button
+                onClick={() => setShowMetadataLink(true)}
+                className="px-3 py-1.5 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded text-xs font-medium"
+              >
+                {metadataLinkLabel}
+              </button>
+            )}
             <button
               onClick={handleSearchWanted}
               disabled={searchingWanted || searchableWantedCount === 0}
@@ -428,6 +471,19 @@ export default function AuthorDetailPage() {
           author={author}
           onClose={() => setShowEdit(false)}
           onSaved={updated => setAuthor(updated)}
+        />
+      )}
+
+      {showMetadataLink && (
+        <AuthorMetadataLinkModal
+          author={author}
+          onClose={() => setShowMetadataLink(false)}
+          onLinked={updated => {
+            setAuthor(updated)
+            Promise.all([api.getAuthor(authorId), api.listBooks({ authorId, includeExcluded: showExcluded })])
+              .then(([a, bs]) => { setAuthor(a); setBooks(bs) })
+              .catch(console.error)
+          }}
         />
       )}
 

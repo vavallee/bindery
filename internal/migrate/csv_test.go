@@ -334,6 +334,45 @@ func TestImportCSVAuthors_SkipDuplicate(t *testing.T) {
 	}
 }
 
+func TestImportCSVAuthors_SkipDuplicateAlternateIdentifier(t *testing.T) {
+	database := newTestDB(t)
+	repo := db.NewAuthorRepo(database)
+	ctx := context.Background()
+	existing := &models.Author{
+		ForeignID:        "hc:dup-author",
+		Name:             "Dup Author",
+		SortName:         "Dup Author",
+		MetadataProvider: "hardcover",
+		Monitored:        true,
+	}
+	if err := repo.Create(ctx, existing); err != nil {
+		t.Fatalf("seed author: %v", err)
+	}
+	if err := repo.UpsertAuthorIdentifier(ctx, existing.ID, "OL-Dup Author"); err != nil {
+		t.Fatalf("seed author identifier: %v", err)
+	}
+	agg := metadata.NewAggregator(&stubProvider{
+		searchAuthorsFn: func(_ context.Context, q string) ([]models.Author, error) {
+			return []models.Author{{Name: q, SortName: q, ForeignID: "OL-" + q}}, nil
+		},
+	})
+
+	res, err := ImportCSVAuthors(ctx, strings.NewReader("Dup Author\n"), repo, agg, nil)
+	if err != nil {
+		t.Fatalf("ImportCSVAuthors: %v", err)
+	}
+	if res.Skipped != 1 || res.Added != 0 || res.Errors != 0 {
+		t.Fatalf("result = %+v, want one skipped alternate duplicate", res)
+	}
+	authors, err := repo.List(ctx)
+	if err != nil {
+		t.Fatalf("List authors: %v", err)
+	}
+	if len(authors) != 1 {
+		t.Fatalf("authors = %d, want existing author reused", len(authors))
+	}
+}
+
 func TestImportCSVAuthors_GetAuthorFallback(t *testing.T) {
 	// When GetAuthor errors, the top search match should still be used.
 	database := newTestDB(t)

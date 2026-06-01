@@ -10,6 +10,8 @@ vi.mock('react-i18next', () => ({
         'addAuthorModal.search': 'Search',
         'addAuthorModal.add': 'Add',
         'addAuthorModal.noResults': 'No results found',
+        'addAuthorModal.openExisting': 'Open existing author',
+        'addAuthorModal.findMetadata': 'Find metadata',
       }
       if (key === 'addAuthorModal.searchError') {
         return `Could not reach the metadata provider - ${String(options?.error ?? '')}`
@@ -216,6 +218,53 @@ describe('AddAuthorModal — search error handling', () => {
       foreignAuthorId: 'OL26320A',
       authorName: 'J.R.R. Tolkien',
     }))
+  })
+
+  it('shows duplicate author conflicts inline with existing-author actions', async () => {
+    vi.mocked(api.searchAuthors).mockResolvedValue([
+      author({
+        id: 0,
+        foreignAuthorId: 'OL13200512A',
+        authorName: 'Emilia Jae',
+      }),
+    ])
+    const err = Object.assign(new Error('author already exists'), {
+      status: 409,
+      body: {
+        error: 'author already exists',
+        canonicalAuthorId: 60,
+        canonicalAuthor: author({
+          id: 60,
+          foreignAuthorId: 'legacy-calibre-author',
+          authorName: 'Emilia Jae',
+          metadataProvider: 'calibre',
+          description: 'Imported from Calibre.',
+          imageUrl: 'https://example.com/emilia.jpg',
+          ratingsCount: 12,
+          averageRating: 4.1,
+        }),
+      },
+    })
+    vi.mocked(api.addAuthor).mockRejectedValue(err)
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+
+    render(<AddAuthorModal onClose={onClose} onAdded={onAdded} />)
+
+    fireEvent.change(screen.getByPlaceholderText('Search by author name...'), {
+      target: { value: 'emilia jae' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
+    await waitFor(() => expect(screen.getByText('Emilia Jae')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: /^add$/i }))
+
+    await waitFor(() => expect(screen.getByText('author already exists')).toBeInTheDocument())
+    expect(screen.getByRole('link', { name: 'Open existing author' })).toHaveAttribute('href', '/author/60')
+    expect(screen.getByRole('link', { name: 'Find metadata' })).toHaveAttribute('href', '/author/60?linkMetadata=1')
+    expect(alertSpy).not.toHaveBeenCalled()
+    expect(onAdded).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+    alertSpy.mockRestore()
   })
 
   it('loads global monitor defaults and lets the backend apply them when unchanged', async () => {

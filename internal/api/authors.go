@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -248,9 +249,9 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// author list, which filters by owner_user_id. A global GetByForeignID
 	// would block re-creation of authors orphaned under a different user ID.
 	userID := auth.UserIDFromContext(r.Context())
-	existing, _ := h.authors.GetByForeignIDForUser(r.Context(), req.ForeignID, userID)
+	existing, _ := h.authors.GetByAnyForeignIDForUser(r.Context(), req.ForeignID, userID)
 	if existing != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "author already exists"})
+		h.writeCanonicalAuthorConflict(w, existing, "author already exists")
 		return
 	}
 
@@ -260,7 +261,7 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if author.ForeignID != "" {
-		if existing, _ := h.authors.GetByForeignIDForUser(r.Context(), author.ForeignID, userID); existing != nil {
+		if existing, _ := h.authors.GetByAnyForeignIDForUser(r.Context(), author.ForeignID, userID); existing != nil {
 			h.writeCanonicalAuthorConflict(w, existing, "author already exists")
 			return
 		}
@@ -274,6 +275,10 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 	} else if canonical != nil {
 		if canRelinkAuthorToUpstream(canonical) {
 			if err := h.relinkExistingAuthorToUpstream(r.Context(), canonical, author, req.Name, req.Monitored, monitorMode, monitorLatestCount, req.QualityProfileID, req.MetadataProfileID, req.RootFolderID, req.AudiobookRootFolderID); err != nil {
+				if isAuthorIdentityConflict(err) {
+					writeJSON(w, http.StatusConflict, map[string]string{"error": "upstream author already exists locally"})
+					return
+				}
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
 			}
@@ -293,7 +298,15 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.authors.CreateForUser(r.Context(), author, auth.UserIDFromContext(r.Context())); err != nil {
 		slog.Error("create author failed", "foreign_id", req.ForeignID, "error", err)
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") || errors.Is(err, db.ErrAuthorIdentifierConflict) {
+			if existing, _ := h.authors.GetByAnyForeignIDForUser(r.Context(), req.ForeignID, userID); existing != nil {
+				h.writeCanonicalAuthorConflict(w, existing, "author already exists")
+				return
+			}
+			if existing, _ := h.authors.GetByAnyForeignIDForUser(r.Context(), author.ForeignID, userID); existing != nil {
+				h.writeCanonicalAuthorConflict(w, existing, "author already exists")
+				return
+			}
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "author already exists"})
 			return
 		}
@@ -439,12 +452,11 @@ func (h *AuthorHandler) resolveDefaultAuthorMonitorLatestCount(ctx context.Conte
 }
 
 func canRelinkAuthorToUpstream(author *models.Author) bool {
-	if author == nil {
-		return false
-	}
-	provider := strings.TrimSpace(strings.ToLower(author.MetadataProvider))
-	foreignID := strings.TrimSpace(author.ForeignID)
-	return foreignID == "" || strings.HasPrefix(foreignID, "abs:") || provider == "audiobookshelf"
+	return models.CanReplaceAuthorIdentity(author)
+}
+
+func isAuthorIdentityConflict(err error) bool {
+	return err != nil && (strings.Contains(err.Error(), "UNIQUE constraint failed") || errors.Is(err, db.ErrAuthorIdentifierConflict))
 }
 
 func (h *AuthorHandler) relinkExistingAuthorToUpstream(ctx context.Context, author, upstream *models.Author, requestedName string, monitored bool, monitorMode string, monitorLatestCount int, qualityProfileID, metadataProfileID, rootFolderID, audiobookRootFolderID *int64) error {
@@ -452,6 +464,7 @@ func (h *AuthorHandler) relinkExistingAuthorToUpstream(ctx context.Context, auth
 		return errors.New("author relink requires local and upstream authors")
 	}
 	oldName := author.Name
+	oldForeignID := strings.TrimSpace(author.ForeignID)
 	if foreignID := strings.TrimSpace(upstream.ForeignID); foreignID != "" {
 		author.ForeignID = foreignID
 	}
@@ -484,12 +497,21 @@ func (h *AuthorHandler) relinkExistingAuthorToUpstream(ctx context.Context, auth
 		author.MetadataProvider = "openlibrary"
 	}
 	applyAuthorCreateOptions(author, monitored, monitorMode, monitorLatestCount, qualityProfileID, metadataProfileID, rootFolderID, audiobookRootFolderID)
+	if oldForeignID != "" {
+		if err := h.authors.UpsertAuthorIdentifier(ctx, author.ID, oldForeignID); err != nil {
+			return err
+		}
+	}
 	now := time.Now().UTC()
 	author.LastMetadataRefreshAt = &now
 	if err := h.authors.Update(ctx, author); err != nil {
 		return err
 	}
-	h.recordAuthorCreateAlias(ctx, author, oldName)
+	aliasSource := oldForeignID
+	if aliasSource == "" {
+		aliasSource = strings.TrimSpace(author.ForeignID)
+	}
+	h.recordAuthorRelinkAlias(ctx, author, oldName, aliasSource)
 	h.recordAuthorCreateAlias(ctx, author, requestedName)
 	slog.Info("relinked existing author to upstream metadata", "author", author.Name, "foreignId", author.ForeignID, "previousName", oldName)
 	return nil
@@ -633,6 +655,20 @@ func (h *AuthorHandler) recordAuthorCreateAlias(ctx context.Context, author *mod
 	}
 	if err := h.aliases.Create(ctx, &models.AuthorAlias{AuthorID: author.ID, Name: variant, SourceOLID: author.ForeignID}); err != nil {
 		slog.Debug("author create alias skipped", "author", author.Name, "variant", variant, "error", err)
+	}
+}
+
+func (h *AuthorHandler) recordAuthorRelinkAlias(ctx context.Context, author *models.Author, variant, sourceForeignID string) {
+	if author == nil || h.aliases == nil {
+		return
+	}
+	variant = strings.TrimSpace(variant)
+	if variant == "" || strings.EqualFold(strings.TrimSpace(author.Name), variant) {
+		return
+	}
+	sourceForeignID = strings.TrimSpace(sourceForeignID)
+	if err := h.aliases.Create(ctx, &models.AuthorAlias{AuthorID: author.ID, Name: variant, SourceOLID: sourceForeignID}); err != nil {
+		slog.Debug("author relink alias skipped", "author", author.Name, "variant", variant, "sourceForeignID", sourceForeignID, "error", err)
 	}
 }
 
@@ -831,8 +867,21 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
 		return
 	}
+	var req struct {
+		ForeignID string `json:"foreignAuthorId"`
+		Name      string `json:"authorName"`
+	}
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+			return
+		}
+	}
+	req.ForeignID = strings.TrimSpace(req.ForeignID)
+	req.Name = strings.TrimSpace(req.Name)
 
-	author, err := h.authors.GetByID(r.Context(), id)
+	userID := auth.UserIDFromContext(r.Context())
+	author, err := h.authors.GetByIDForUser(r.Context(), id, userID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -841,12 +890,12 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
 		return
 	}
-	if !canRelinkAuthorToUpstream(author) {
+	if req.ForeignID == "" && !canRelinkAuthorToUpstream(author) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "author is already linked to upstream metadata"})
 		return
 	}
 
-	upstream, err := h.lookupUpstreamAuthorByName(r.Context(), author.Name)
+	upstream, err := h.resolveRelinkUpstreamAuthor(r.Context(), author.Name, req.ForeignID, req.Name)
 	switch {
 	case err == nil:
 	case errors.Is(err, errNoMetadataAggregator):
@@ -877,7 +926,7 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 		h.writeCanonicalAuthorConflict(w, canonical, "author name already resolves to an existing author — confirm merge")
 		return
 	}
-	if existing, err := h.authors.GetByForeignID(r.Context(), upstream.ForeignID); err != nil {
+	if existing, err := h.authors.GetByAnyForeignIDForUser(r.Context(), upstream.ForeignID, userID); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	} else if existing != nil && existing.ID != author.ID {
@@ -886,6 +935,10 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.relinkExistingAuthorToUpstream(r.Context(), author, upstream, author.Name, author.Monitored, author.MonitorMode, author.MonitorLatestCount, author.QualityProfileID, author.MetadataProfileID, author.RootFolderID, author.AudiobookRootFolderID); err != nil {
+		if isAuthorIdentityConflict(err) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "upstream author already exists locally"})
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -893,6 +946,66 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 	proxyAuthorImages(author)
 	cleanAuthorDescription(author)
 	writeJSON(w, http.StatusOK, author)
+}
+
+func (h *AuthorHandler) RelinkCandidates(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	author, err := h.authors.GetByIDForUser(r.Context(), id, auth.UserIDFromContext(r.Context()))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if author == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
+		return
+	}
+	if h.meta == nil {
+		writeJSON(w, http.StatusFailedDependency, map[string]string{"error": errNoMetadataAggregator.Error()})
+		return
+	}
+	term := strings.TrimSpace(r.URL.Query().Get("term"))
+	if term == "" {
+		term = author.Name
+	}
+	candidates, err := h.meta.SearchAuthorCandidates(r.Context(), term)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	if candidates == nil {
+		candidates = []models.Author{}
+	}
+	attachedIDs := map[string]struct{}{}
+	if foreignID := strings.TrimSpace(author.ForeignID); foreignID != "" {
+		attachedIDs[strings.ToLower(foreignID)] = struct{}{}
+	}
+	identifiers, err := h.authors.ListAuthorIdentifiers(r.Context(), author.ID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	for _, identifier := range identifiers {
+		if foreignID := strings.TrimSpace(identifier.ForeignID); foreignID != "" {
+			attachedIDs[strings.ToLower(foreignID)] = struct{}{}
+		}
+	}
+	filtered := candidates[:0]
+	for i := range candidates {
+		foreignID := strings.TrimSpace(candidates[i].ForeignID)
+		if foreignID != "" {
+			if _, ok := attachedIDs[strings.ToLower(foreignID)]; ok {
+				continue
+			}
+		}
+		proxyAuthorImages(&candidates[i])
+		cleanAuthorDescription(&candidates[i])
+		filtered = append(filtered, candidates[i])
+	}
+	writeJSON(w, http.StatusOK, filtered)
 }
 
 func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -1461,6 +1574,51 @@ func dateOnly(t time.Time) time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
 
+func (h *AuthorHandler) resolveRelinkUpstreamAuthor(ctx context.Context, name, foreignID, candidateName string) (*models.Author, error) {
+	if h.meta == nil {
+		return nil, errNoMetadataAggregator
+	}
+	foreignID = strings.TrimSpace(foreignID)
+	if foreignID == "" {
+		return h.lookupUpstreamAuthorByName(ctx, name)
+	}
+	upstream, err := h.meta.GetAuthor(ctx, foreignID)
+	if err == nil && upstream != nil {
+		return upstream, nil
+	}
+	candidate, fallbackErr := h.lookupRelinkCandidateByForeignID(ctx, foreignID, candidateName)
+	if fallbackErr == nil {
+		return candidate, nil
+	}
+	if strings.TrimSpace(candidateName) != "" {
+		return nil, fallbackErr
+	}
+	if err != nil {
+		return nil, err
+	}
+	return nil, errNoMetadataMatch
+}
+
+func (h *AuthorHandler) lookupRelinkCandidateByForeignID(ctx context.Context, foreignID, candidateName string) (*models.Author, error) {
+	foreignID = strings.TrimSpace(foreignID)
+	candidateName = strings.TrimSpace(candidateName)
+	if foreignID == "" || candidateName == "" {
+		return nil, errNoMetadataMatch
+	}
+	results, err := h.meta.SearchAuthorCandidates(ctx, candidateName)
+	if err != nil {
+		return nil, err
+	}
+	for idx := range results {
+		if strings.TrimSpace(results[idx].ForeignID) != foreignID {
+			continue
+		}
+		copy := results[idx]
+		return &copy, nil
+	}
+	return nil, errNoMetadataMatch
+}
+
 func (h *AuthorHandler) lookupUpstreamAuthorByName(ctx context.Context, name string) (*models.Author, error) {
 	if h.meta == nil {
 		return nil, errNoMetadataAggregator
@@ -1667,7 +1825,13 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. Find or create the author (unmonitored if new so we don't auto-want all books).
-	author, _ := h.authors.GetByForeignID(ctx, req.ForeignAuthorID)
+	userID := auth.UserIDFromContext(ctx)
+	author, _ := h.authors.GetByForeignIDForUser(ctx, req.ForeignAuthorID, userID)
+	authorMatchedByAlternateID := false
+	if author == nil {
+		author, _ = h.authors.GetByAnyForeignIDForUser(ctx, req.ForeignAuthorID, userID)
+		authorMatchedByAlternateID = author != nil
+	}
 	if author == nil {
 		name := req.AuthorName
 		if name == "" {
@@ -1694,14 +1858,13 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 		// identity exists, collapse the two onto a single primary key so
 		// the user keeps one author with all their books attached.
 		if !strings.HasPrefix(fetched.ForeignID, "dnb:") {
-			ownerID := auth.UserIDFromContext(ctx)
-			if existing, lookupErr := h.authors.GetByDNBSyntheticName(ctx, fetched.SortName, ownerID); lookupErr == nil && existing != nil {
+			if existing, lookupErr := h.authors.GetByDNBSyntheticName(ctx, fetched.SortName, userID); lookupErr == nil && existing != nil {
 				if err := h.authors.UpgradeSyntheticDNB(ctx, existing.ForeignID, fetched); err != nil {
 					slog.Debug("AddBook: upgrade synthetic DNB author failed", "from", existing.ForeignID, "to", fetched.ForeignID, "error", err)
 				} else {
 					// Re-fetch the row by its new canonical ForeignID so subsequent
 					// steps see the upgraded record (ID preserved).
-					if upgraded, getErr := h.authors.GetByForeignID(ctx, fetched.ForeignID); getErr == nil && upgraded != nil {
+					if upgraded, getErr := h.authors.GetByForeignIDForUser(ctx, fetched.ForeignID, userID); getErr == nil && upgraded != nil {
 						author = upgraded
 					}
 				}
@@ -1714,13 +1877,17 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 		// path so the orphan-cleanup defer never rolls back somebody else's
 		// author row (issue #667).
 		if author == nil {
-			if err := h.authors.CreateForUser(ctx, fetched, auth.UserIDFromContext(ctx)); err != nil {
-				if !strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			if err := h.authors.CreateForUser(ctx, fetched, userID); err != nil {
+				if !strings.Contains(err.Error(), "UNIQUE constraint failed") && !errors.Is(err, db.ErrAuthorIdentifierConflict) {
 					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 					return
 				}
 				// Race: another request created it between our check and insert.
-				author, _ = h.authors.GetByForeignID(ctx, req.ForeignAuthorID)
+				author, _ = h.authors.GetByAnyForeignIDForUser(ctx, req.ForeignAuthorID, userID)
+				if author == nil {
+					writeJSON(w, http.StatusConflict, map[string]string{"error": "author already exists"})
+					return
+				}
 			} else {
 				author = fetched
 				authorWasJustCreated = true
@@ -1754,7 +1921,7 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	// cleanup defer sees a non-empty book list (so it keeps the author).
 	// The async sync still runs as a backfill for the rest of the catalogue;
 	// any UNIQUE collision against this row is silently tolerated.
-	directInsertNeeded := authorWasJustCreated || strings.HasPrefix(req.ForeignBookID, "dnb:")
+	directInsertNeeded := authorWasJustCreated || authorMatchedByAlternateID || strings.HasPrefix(req.ForeignBookID, "dnb:")
 	if directInsertNeeded {
 		if existing, _ := h.books.GetByForeignID(ctx, req.ForeignBookID); existing == nil {
 			primary, err := h.meta.GetBook(ctx, req.ForeignBookID)

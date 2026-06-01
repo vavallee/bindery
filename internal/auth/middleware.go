@@ -71,6 +71,13 @@ func UserRoleFromContext(ctx context.Context) string {
 	return v
 }
 
+// WithUserID returns a context carrying the authenticated user ID. Exported so
+// handler tests can exercise user-scoped repository paths without a full auth
+// middleware stack.
+func WithUserID(ctx context.Context, userID int64) context.Context {
+	return context.WithValue(ctx, userIDCtxKey, userID)
+}
+
 // WithUserRole returns a context carrying the given role alongside the user id.
 func WithUserRole(ctx context.Context, role string) context.Context {
 	return context.WithValue(ctx, userRoleCtxKey, role)

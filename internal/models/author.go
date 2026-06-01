@@ -2,7 +2,10 @@
 // scheduler, and indexer layers.
 package models
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type Author struct {
 	ID                 int64   `json:"id"`
@@ -42,6 +45,42 @@ type Author struct {
 	// Transient: populated from the metadata provider during add/refresh; not stored in DB.
 	// Used to seed author_aliases so non-latin primary names get latin-script alternates.
 	AlternateNames []string `json:"-"`
+}
+
+// AuthorProviderFromForeignID returns the metadata provider implied by a
+// Bindery author foreign ID. IDs without a known prefix are treated as
+// OpenLibrary, matching the long-standing authors.foreign_id convention.
+func AuthorProviderFromForeignID(foreignID string) string {
+	foreignID = strings.TrimSpace(strings.ToLower(foreignID))
+	switch {
+	case strings.HasPrefix(foreignID, "gb:"):
+		return "googlebooks"
+	case strings.HasPrefix(foreignID, "hc:"):
+		return "hardcover"
+	case strings.HasPrefix(foreignID, "dnb:"):
+		return "dnb"
+	case strings.HasPrefix(foreignID, "calibre:"):
+		return "calibre"
+	case strings.HasPrefix(foreignID, "abs:"):
+		return "audiobookshelf"
+	default:
+		return "openlibrary"
+	}
+}
+
+// CanReplaceAuthorIdentity reports whether automated metadata enrichment may
+// promote a different upstream foreign ID into authors.foreign_id.
+func CanReplaceAuthorIdentity(author *Author) bool {
+	if author == nil {
+		return false
+	}
+	provider := strings.TrimSpace(strings.ToLower(author.MetadataProvider))
+	foreignID := strings.TrimSpace(strings.ToLower(author.ForeignID))
+	return foreignID == "" ||
+		strings.HasPrefix(foreignID, "abs:") ||
+		strings.HasPrefix(foreignID, "calibre:") ||
+		provider == "audiobookshelf" ||
+		provider == "calibre"
 }
 
 const (
@@ -91,4 +130,14 @@ type AuthorAlias struct {
 	Name       string    `json:"name"`
 	SourceOLID string    `json:"sourceOlId,omitempty"`
 	CreatedAt  time.Time `json:"createdAt"`
+}
+
+// AuthorIdentifier links any known provider/import author ID to the canonical
+// local author row. authors.foreign_id remains the primary identity.
+type AuthorIdentifier struct {
+	AuthorID  int64     `json:"authorId"`
+	Provider  string    `json:"provider"`
+	ForeignID string    `json:"foreignAuthorId"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }

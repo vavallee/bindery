@@ -97,6 +97,40 @@ func (i *Importer) resolveAuthor(ctx context.Context, cfg ImportConfig, runID in
 		}
 	}
 
+	absAuthorForeignID := absForeignID("author", item.LibraryID, externalID)
+	if existing, err := i.authors.GetByAnyForeignID(ctx, absAuthorForeignID); err != nil {
+		return nil, false, "", metadataMergeResult{}, err
+	} else if existing != nil {
+		if !cfg.DryRun {
+			if err := i.upsertProvenance(ctx, &models.ABSProvenance{
+				SourceID:    cfg.SourceID,
+				LibraryID:   item.LibraryID,
+				EntityType:  entityTypeAuthor,
+				ExternalID:  externalID,
+				LocalID:     existing.ID,
+				ItemID:      item.ItemID,
+				ImportRunID: ptrInt64(runID),
+			}); err != nil {
+				return nil, false, "", metadataMergeResult{}, err
+			}
+			if normalizeAuthorName(name) != normalizeAuthorName(existing.Name) {
+				i.recordAuthorVariantAlias(ctx, existing.ID, name, matcher)
+			}
+		}
+		if cfg.DryRun {
+			_ = i.recordRunEntity(ctx, runID, cfg, item.LibraryID, item.ItemID, entityTypeAuthor, externalID, existing.ID, itemOutcomeLinked, nil)
+			return existing, false, "foreign_id", metadataMergeResult{}, nil
+		}
+		if err := i.recordAuthorBeforeSnapshot(ctx, runID, cfg, item, externalID, existing, itemOutcomeLinked, nil); err != nil {
+			slog.Warn("abs import: persist author rollback snapshot failed", "authorID", existing.ID, "runID", runID, "error", err)
+		}
+		metaResult, err := i.enrichAuthor(ctx, cfg, item, existing, matcher)
+		if perr := i.recordAuthorAfterSnapshot(ctx, runID, cfg, item, externalID, existing.ID, itemOutcomeLinked, nil); perr != nil {
+			slog.Warn("abs import: persist author rollback snapshot failed", "authorID", existing.ID, "runID", runID, "error", perr)
+		}
+		return existing, false, "foreign_id", metaResult, err
+	}
+
 	if existing, matchedBy, ambiguous, err := matcher.findAuthorByName(ctx, name); err != nil {
 		return nil, false, "", metadataMergeResult{}, err
 	} else if existing != nil {
@@ -197,10 +231,13 @@ func (i *Importer) resolveManualAuthor(ctx context.Context, cfg ImportConfig, ru
 		matcher = loaded
 	}
 
-	if existing, err := i.authors.GetByForeignID(ctx, foreignID); err != nil {
+	if existing, err := i.authors.GetByAnyForeignID(ctx, foreignID); err != nil {
 		return nil, false, "", metadataMergeResult{}, err
 	} else if existing != nil {
 		if !cfg.DryRun {
+			if err := i.authors.UpsertAuthorIdentifier(ctx, existing.ID, foreignID); err != nil {
+				return nil, false, "", metadataMergeResult{}, err
+			}
 			if err := i.upsertProvenance(ctx, &models.ABSProvenance{
 				SourceID:    cfg.SourceID,
 				LibraryID:   item.LibraryID,
@@ -233,11 +270,12 @@ func (i *Importer) resolveManualAuthor(ctx context.Context, cfg ImportConfig, ru
 		if err := i.recordAuthorBeforeSnapshot(ctx, runID, cfg, item, absExternalID, existing, itemOutcomeLinked, map[string]any{"matchedBy": "manual_author_name"}); err != nil {
 			slog.Warn("abs import: persist author rollback snapshot failed", "authorID", existing.ID, "runID", runID, "error", err)
 		}
-		if existing.ForeignID == "" || strings.HasPrefix(existing.ForeignID, "abs:") {
+		if err := i.authors.UpsertAuthorIdentifier(ctx, existing.ID, foreignID); err != nil {
+			return nil, false, "", metadataMergeResult{}, err
+		}
+		if models.CanReplaceAuthorIdentity(existing) {
 			existing.ForeignID = foreignID
-			if existing.MetadataProvider == "" || existing.MetadataProvider == providerAudiobookshelf {
-				existing.MetadataProvider = "openlibrary"
-			}
+			existing.MetadataProvider = models.AuthorProviderFromForeignID(foreignID)
 			if err := i.authors.Update(ctx, existing); err != nil {
 				return nil, false, "", metadataMergeResult{}, err
 			}
@@ -352,16 +390,25 @@ func (i *Importer) enrichAuthor(ctx context.Context, cfg ImportConfig, item Norm
 		changed = true
 	}
 	if full.ForeignID != "" && author.ForeignID != full.ForeignID {
-		existing, err := i.authors.GetByForeignID(ctx, full.ForeignID)
+		existing, err := i.authors.GetByAnyForeignID(ctx, full.ForeignID)
 		if err != nil {
 			return metadataMergeResult{}, err
 		}
 		if existing != nil && existing.ID != author.ID {
 			result.Messages = append(result.Messages, "author relink skipped: upstream author already exists locally")
+		} else if !models.CanReplaceAuthorIdentity(author) {
+			if !cfg.DryRun {
+				if err := i.authors.UpsertAuthorIdentifier(ctx, author.ID, full.ForeignID); err != nil {
+					return metadataMergeResult{}, err
+				}
+			}
+			result.Messages = append(result.Messages, "author relink skipped: existing metadata identity is not replaceable")
 		} else {
 			author.ForeignID = full.ForeignID
 			if full.MetadataProvider != "" {
 				author.MetadataProvider = full.MetadataProvider
+			} else {
+				author.MetadataProvider = models.AuthorProviderFromForeignID(full.ForeignID)
 			}
 			result.Relinked++
 			changed = true

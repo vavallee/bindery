@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -53,11 +54,12 @@ type bookRollbackSnapshot struct {
 // importer's author path (resolveAuthor — only sets Name, SortName,
 // ForeignID, MetadataProvider, Monitored when creating fresh).
 type authorRollbackSnapshot struct {
-	ForeignID        string `json:"foreignId"`
-	Name             string `json:"name"`
-	SortName         string `json:"sortName"`
-	MetadataProvider string `json:"metadataProvider"`
-	Monitored        bool   `json:"monitored"`
+	ForeignID            string    `json:"foreignId"`
+	Name                 string    `json:"name"`
+	SortName             string    `json:"sortName"`
+	MetadataProvider     string    `json:"metadataProvider"`
+	Monitored            bool      `json:"monitored"`
+	IdentifierForeignIDs *[]string `json:"identifierForeignIds,omitempty"`
 }
 
 // editionRollbackSnapshot captures the subset of edition fields touched by
@@ -116,6 +118,35 @@ func editionSnapshot(e *models.Edition) *editionRollbackSnapshot {
 	}
 }
 
+func (i *Importer) authorSnapshot(ctx context.Context, author *models.Author) (*authorRollbackSnapshot, error) {
+	if author == nil {
+		return nil, nil
+	}
+	snapshot := &authorRollbackSnapshot{
+		ForeignID:        author.ForeignID,
+		Name:             author.Name,
+		SortName:         author.SortName,
+		MetadataProvider: author.MetadataProvider,
+		Monitored:        author.Monitored,
+	}
+	if i.authors == nil || author.ID == 0 {
+		return snapshot, nil
+	}
+	identifiers, err := i.authors.ListAuthorIdentifiers(ctx, author.ID)
+	if err != nil {
+		return nil, err
+	}
+	foreignIDs := make([]string, 0, len(identifiers))
+	for _, identifier := range identifiers {
+		if foreignID := strings.TrimSpace(identifier.ForeignID); foreignID != "" {
+			foreignIDs = append(foreignIDs, foreignID)
+		}
+	}
+	sort.Strings(foreignIDs)
+	snapshot.IdentifierForeignIDs = &foreignIDs
+	return snapshot, nil
+}
+
 func bookSnapshotMetadata(data map[string]any, before, after *bookRollbackSnapshot) (runEntityMetadataEnvelope, error) {
 	beforePayload, err := marshalSnapshotPayload(before)
 	if err != nil {
@@ -131,6 +162,27 @@ func bookSnapshotMetadata(data map[string]any, before, after *bookRollbackSnapsh
 		Data:    data,
 		Snapshot: &runEntitySnapshotEnvelope{
 			EntityType: entityTypeBook,
+			Before:     beforePayload,
+			After:      afterPayload,
+		},
+	}, nil
+}
+
+func authorSnapshotMetadata(data map[string]any, before, after *authorRollbackSnapshot) (runEntityMetadataEnvelope, error) {
+	beforePayload, err := marshalSnapshotPayload(before)
+	if err != nil {
+		return runEntityMetadataEnvelope{}, err
+	}
+	afterPayload, err := marshalSnapshotPayload(after)
+	if err != nil {
+		return runEntityMetadataEnvelope{}, err
+	}
+	return runEntityMetadataEnvelope{
+		Kind:    runEntityMetadataKind,
+		Version: runEntityMetadataVersion,
+		Data:    data,
+		Snapshot: &runEntitySnapshotEnvelope{
+			EntityType: entityTypeAuthor,
 			Before:     beforePayload,
 			After:      afterPayload,
 		},
@@ -216,6 +268,47 @@ func (i *Importer) recordBookAfterSnapshot(ctx context.Context, runID int64, ext
 		return
 	}
 	i.recordSnapshot(ctx, runID, externalID, entityTypeBook, bookID, outcome, envelope)
+}
+
+func (i *Importer) recordAuthorBeforeSnapshot(ctx context.Context, runID int64, externalID string, author *models.Author, outcome string, data map[string]any) {
+	if runID == 0 || i.snapshots == nil || author == nil {
+		return
+	}
+	before, err := i.authorSnapshot(ctx, author)
+	if err != nil {
+		slog.Warn("calibre import: snapshot author identifiers", "runID", runID, "authorID", author.ID, "error", err)
+		return
+	}
+	envelope, err := authorSnapshotMetadata(data, before, nil)
+	if err != nil {
+		slog.Warn("calibre import: encode author before snapshot", "runID", runID, "authorID", author.ID, "error", err)
+		return
+	}
+	i.recordSnapshot(ctx, runID, externalID, entityTypeAuthor, author.ID, outcome, envelope)
+}
+
+func (i *Importer) recordAuthorAfterSnapshot(ctx context.Context, runID int64, externalID string, authorID int64, outcome string, data map[string]any) {
+	if runID == 0 || i.snapshots == nil || authorID == 0 || i.authors == nil {
+		return
+	}
+	author, err := i.authors.GetByID(ctx, authorID)
+	if err != nil || author == nil {
+		if err != nil {
+			slog.Warn("calibre import: load author after snapshot", "runID", runID, "authorID", authorID, "error", err)
+		}
+		return
+	}
+	after, err := i.authorSnapshot(ctx, author)
+	if err != nil {
+		slog.Warn("calibre import: snapshot author identifiers", "runID", runID, "authorID", author.ID, "error", err)
+		return
+	}
+	envelope, err := authorSnapshotMetadata(data, nil, after)
+	if err != nil {
+		slog.Warn("calibre import: encode author after snapshot", "runID", runID, "authorID", author.ID, "error", err)
+		return
+	}
+	i.recordSnapshot(ctx, runID, externalID, entityTypeAuthor, author.ID, outcome, envelope)
 }
 
 func (i *Importer) recordEditionBeforeSnapshot(ctx context.Context, runID int64, externalID string, e *models.Edition, outcome string, data map[string]any) {

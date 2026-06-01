@@ -12,6 +12,18 @@ const PUBLIC_PATHS = new Set([`${BINDERY_BASE}/login`, `${BINDERY_BASE}/setup`])
 // CSRF double-submit token, fetched once on init and refreshed after login.
 let csrfToken = ''
 
+export class ApiError extends Error {
+  status: number
+  body: unknown
+
+  constructor(message: string, status: number, body: unknown) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.body = body
+  }
+}
+
 // Read from the bindery_csrf cookie (set by GET /auth/csrf).
 function readCSRFCookie(): string {
   const m = document.cookie.match(/(?:^|;\s*)bindery_csrf=([^;]+)/)
@@ -62,7 +74,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error || res.statusText)
+    throw new ApiError(err.error || res.statusText, res.status, err)
   }
   if (res.status === 204) return undefined as unknown as T
   return res.json()
@@ -89,7 +101,7 @@ async function uploadFile<T>(path: string, body: FormData): Promise<T> {
   }
   if (!res.ok) {
     const data = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(data.error || `HTTP ${res.status}`)
+    throw new ApiError(data.error || `HTTP ${res.status}`, res.status, data)
   }
   return res.json() as Promise<T>
 }
@@ -260,7 +272,13 @@ export const api = {
   deleteAuthor: (id: number, deleteFiles = false) =>
     request<void>(`/author/${id}${deleteFiles ? '?deleteFiles=true' : ''}`, { method: 'DELETE' }),
   refreshAuthor: (id: number) => request<void>(`/author/${id}/refresh`, { method: 'POST' }),
-  relinkAuthorUpstream: (id: number) => request<Author>(`/author/${id}/relink-upstream`, { method: 'POST' }),
+  searchAuthorLinkCandidates: (id: number, term: string) =>
+    request<Author[]>(`/author/${id}/relink-upstream/candidates?term=${encodeURIComponent(term)}`),
+  relinkAuthorUpstream: (id: number, candidate?: RelinkAuthorCandidate) =>
+    request<Author>(`/author/${id}/relink-upstream`, {
+      method: 'POST',
+      body: candidate ? JSON.stringify(candidate) : undefined,
+    }),
   listAuthorAliases: (id: number) => request<AuthorAlias[]>(`/author/${id}/aliases`),
   // listAuthorSeries returns the series the author has books in. Backs the
   // per-author monitor-by-series picker in EditAuthorModal (#810).
@@ -560,6 +578,7 @@ export interface Author {
   ratingsCount: number
   averageRating: number
   monitored: boolean
+  metadataProvider?: string
   monitorMode?: AuthorMonitorMode
   monitorLatestCount?: number
   qualityProfileId?: number | null
@@ -580,6 +599,17 @@ export interface AuthorAlias {
   name: string
   sourceOlId?: string
   createdAt: string
+}
+
+export interface AuthorConflictBody {
+  error?: string
+  canonicalAuthorId?: number
+  canonicalAuthor?: Author
+}
+
+export interface RelinkAuthorCandidate {
+  foreignAuthorId: string
+  authorName?: string
 }
 
 export interface MergeAuthorsResult {

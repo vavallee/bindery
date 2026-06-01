@@ -383,6 +383,10 @@ func calibreAuthorExternalID(calibreID int64) string {
 	return fmt.Sprintf("author:%d", calibreID)
 }
 
+func calibreAuthorForeignID(calibreID int64) string {
+	return "calibre:" + calibreAuthorExternalID(calibreID)
+}
+
 func calibreEditionExternalID(calibreID int64, format string) string {
 	return fmt.Sprintf("edition:%d:%s", calibreID, strings.ToUpper(format))
 }
@@ -410,11 +414,26 @@ func (i *Importer) resolveAuthor(ctx context.Context, runID int64, ca CalibreAut
 	}
 
 	externalID := calibreAuthorExternalID(ca.CalibreID)
+	foreignID := calibreAuthorForeignID(ca.CalibreID)
+
+	if existing, err := i.authors.GetByAnyForeignID(ctx, foreignID); err != nil {
+		return nil, false, err
+	} else if existing != nil {
+		i.recordAuthorBeforeSnapshot(ctx, runID, externalID, existing, outcomeLinked, map[string]any{"matchedBy": "identifier"})
+		i.upsertProvenance(ctx, runID, entityTypeAuthor, externalID, existing.ID)
+		i.recordAuthorAfterSnapshot(ctx, runID, externalID, existing.ID, outcomeLinked, map[string]any{"matchedBy": "identifier"})
+		return existing, false, nil
+	}
 
 	if existing, err := i.findAuthorByName(ctx, name); err != nil {
 		return nil, false, err
 	} else if existing != nil {
+		i.recordAuthorBeforeSnapshot(ctx, runID, externalID, existing, outcomeLinked, map[string]any{"matchedBy": "name"})
+		if err := i.authors.UpsertAuthorIdentifier(ctx, existing.ID, foreignID); err != nil {
+			return nil, false, err
+		}
 		i.upsertProvenance(ctx, runID, entityTypeAuthor, externalID, existing.ID)
+		i.recordAuthorAfterSnapshot(ctx, runID, externalID, existing.ID, outcomeLinked, map[string]any{"matchedBy": "name"})
 		return existing, false, nil
 	}
 
@@ -426,13 +445,18 @@ func (i *Importer) resolveAuthor(ctx context.Context, runID int64, ca CalibreAut
 			return nil, false, err
 		}
 		if existing != nil {
+			i.recordAuthorBeforeSnapshot(ctx, runID, externalID, existing, outcomeLinked, map[string]any{"matchedBy": "alias"})
+			if err := i.authors.UpsertAuthorIdentifier(ctx, existing.ID, foreignID); err != nil {
+				return nil, false, err
+			}
 			i.upsertProvenance(ctx, runID, entityTypeAuthor, externalID, existing.ID)
+			i.recordAuthorAfterSnapshot(ctx, runID, externalID, existing.ID, outcomeLinked, map[string]any{"matchedBy": "alias"})
 			return existing, false, nil
 		}
 	}
 
 	author := &models.Author{
-		ForeignID:        "calibre:author:" + strconv.FormatInt(ca.CalibreID, 10),
+		ForeignID:        foreignID,
 		Name:             name,
 		SortName:         firstNonEmpty(ca.Sort, sortNameFromFull(name)),
 		Monitored:        true,

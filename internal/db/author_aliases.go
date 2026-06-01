@@ -181,6 +181,7 @@ type MergeResult struct {
 // Merge collapses sourceID into targetID:
 //   - every book pointing at sourceID is reparented to targetID
 //   - every alias pointing at sourceID is repointed at targetID
+//   - every author identifier pointing at sourceID is repointed at targetID
 //   - source.name (+ source.foreign_id if set) become alias rows on target
 //   - target.monitored / *_profile_id / root_folder_id are copied from source
 //     only where target's value is a default (per MergeOptions)
@@ -274,6 +275,12 @@ func (r *AuthorAliasRepo) Merge(ctx context.Context, sourceID, targetID int64, o
 			return nil, err
 		}
 		result.TargetUpdated = updated
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE author_identifiers SET author_id = ?, updated_at = ? WHERE author_id = ?",
+		targetID, time.Now().UTC(), sourceID); err != nil {
+		return nil, fmt.Errorf("migrate author identifiers: %w", err)
 	}
 
 	// Finally, remove the source author. FK cascade handles any stragglers

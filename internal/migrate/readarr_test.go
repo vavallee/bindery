@@ -262,6 +262,62 @@ func TestImportReadarr_HappyPath(t *testing.T) {
 	}
 }
 
+func TestImportReadarr_SkipsDuplicateAlternateIdentifier(t *testing.T) {
+	path := newReadarrDB(t)
+	src, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := src.Exec(`INSERT INTO AuthorMetadata (Id, Name) VALUES (1, 'Duplicate Author')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := src.Exec(`INSERT INTO Authors (Monitored, AuthorMetadataId) VALUES (1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	src.Close()
+
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	authorRepo := db.NewAuthorRepo(database)
+	ctx := context.Background()
+	existing := &models.Author{
+		ForeignID:        "hc:duplicate-author",
+		Name:             "Duplicate Author",
+		SortName:         "Duplicate Author",
+		MetadataProvider: "hardcover",
+		Monitored:        true,
+	}
+	if err := authorRepo.Create(ctx, existing); err != nil {
+		t.Fatalf("seed author: %v", err)
+	}
+	if err := authorRepo.UpsertAuthorIdentifier(ctx, existing.ID, "OL-Duplicate Author"); err != nil {
+		t.Fatalf("seed author identifier: %v", err)
+	}
+	agg := metadata.NewAggregator(&stubProvider{
+		searchAuthorsFn: func(_ context.Context, q string) ([]models.Author, error) {
+			return []models.Author{{Name: q, SortName: q, ForeignID: "OL-" + q}}, nil
+		},
+	})
+
+	res, err := ImportReadarr(ctx, path, authorRepo, db.NewIndexerRepo(database), db.NewDownloadClientRepo(database), db.NewBlocklistRepo(database), agg, nil)
+	if err != nil {
+		t.Fatalf("ImportReadarr: %v", err)
+	}
+	if res.Authors.Skipped != 1 || res.Authors.Added != 0 || res.Authors.Errors != 0 {
+		t.Fatalf("authors result = %+v, want one skipped alternate duplicate", res.Authors)
+	}
+	authors, err := authorRepo.List(ctx)
+	if err != nil {
+		t.Fatalf("List authors: %v", err)
+	}
+	if len(authors) != 1 {
+		t.Fatalf("authors = %d, want existing author reused", len(authors))
+	}
+}
+
 func TestImportReadarr_BlacklistFallback(t *testing.T) {
 	// Older Readarr installs use table name "Blacklist".
 	dir := t.TempDir()

@@ -305,6 +305,50 @@ func TestCommitGoodreadsImport_AddsBooksAndAuthors(t *testing.T) {
 	}
 }
 
+func TestCommitGoodreadsImport_ReusesAuthorByAlternateIdentifier(t *testing.T) {
+	database := newTestDB(t)
+	authors := db.NewAuthorRepo(database)
+	books := db.NewBookRepo(database)
+	ctx := context.Background()
+	existing := &models.Author{
+		ForeignID:        "hc:author-one",
+		Name:             "Author One",
+		SortName:         "One, Author",
+		MetadataProvider: "hardcover",
+		Monitored:        true,
+	}
+	if err := authors.Create(ctx, existing); err != nil {
+		t.Fatalf("seed author: %v", err)
+	}
+	if err := authors.UpsertAuthorIdentifier(ctx, existing.ID, "OL-A1"); err != nil {
+		t.Fatalf("seed author identifier: %v", err)
+	}
+	resolved := []GoodreadsResolvedRow{{
+		Row:     GoodreadsRow{Title: "Book One"},
+		Outcome: outcomeResolved,
+		book:    bookWithAuthor("OL-W1", "Book One", "OL-A1", "Author One"),
+	}}
+
+	result := CommitGoodreadsImport(ctx, resolved, authors, books)
+	if result.Failed != 0 || result.Added != 1 {
+		t.Fatalf("result = %+v, want imported book under existing alternate author", result)
+	}
+	all, err := authors.List(ctx)
+	if err != nil {
+		t.Fatalf("list authors: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("authors = %d, want existing author reused", len(all))
+	}
+	imported, err := books.GetByForeignID(ctx, "OL-W1")
+	if err != nil || imported == nil {
+		t.Fatalf("book = %+v err=%v, want persisted", imported, err)
+	}
+	if imported.AuthorID != existing.ID {
+		t.Fatalf("book author_id = %d, want existing author %d", imported.AuthorID, existing.ID)
+	}
+}
+
 // TestCommitGoodreadsImport_SkipsExistingAtCommit covers the race where a book
 // resolved during preview is added (manually or by another import) before the
 // commit lands.

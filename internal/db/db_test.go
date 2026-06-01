@@ -58,7 +58,7 @@ func TestOpenMemory(t *testing.T) {
 
 	// Verify tables exist
 	tables := []string{"authors", "books", "series", "editions", "indexers",
-		"download_clients", "downloads", "root_folders", "quality_profiles",
+		"download_clients", "downloads", "root_folders", "quality_profiles", "author_identifiers",
 		"settings", "history", "abs_import_runs", "abs_provenance", "abs_metadata_conflicts", "series_hardcover_links", "schema_migrations"}
 	for _, table := range tables {
 		var name string
@@ -260,6 +260,43 @@ func migrationVersionForTest(t *testing.T, filename string) int {
 		t.Fatalf("migration version for %s: %v", filename, err)
 	}
 	return v
+}
+
+func TestMigrate047AuthorIdentifiersBackfill(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	repo := NewAuthorRepo(database)
+	author := &models.Author{
+		ForeignID:        "hc:emilia-jae",
+		Name:             "Emilia Jae",
+		SortName:         "Jae, Emilia",
+		MetadataProvider: "hardcover",
+	}
+	if err := repo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `DELETE FROM author_identifiers WHERE author_id = ?`, author.ID); err != nil {
+		t.Fatalf("delete seeded identifier: %v", err)
+	}
+	v047 := migrationVersionForTest(t, "047_author_identifiers.sql")
+	if _, err := database.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = ?`, v047); err != nil {
+		t.Fatalf("clear migration 047 marker: %v", err)
+	}
+	if err := migrate(database); err != nil {
+		t.Fatalf("rerun migration 047: %v", err)
+	}
+	identifier, err := repo.GetAuthorIdentifier(ctx, "hc:emilia-jae")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identifier == nil || identifier.AuthorID != author.ID || identifier.Provider != "hardcover" {
+		t.Fatalf("identifier = %+v, want backfilled Hardcover identifier for author %d", identifier, author.ID)
+	}
 }
 
 // TestMigrate008_CalibreOnFreshDB verifies the v0.8.0 Calibre migration

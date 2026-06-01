@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -19,21 +20,46 @@ func NewAuthorRepo(db *sql.DB) *AuthorRepo {
 	return &AuthorRepo{db: db, exec: db}
 }
 
-// WithTx returns a clone of this repo whose tx-aware methods (GetByID,
-// Update, Delete) route through tx instead of the bare *sql.DB. Used by
-// calibre.Rollback to wrap a multi-repo operation in one atomic
-// transaction. Methods that begin their own transaction (e.g.
-// SetMonitoredSeriesIDs) stay on *sql.DB.
+// WithTx returns a clone of this repo whose tx-aware methods route through tx
+// instead of the bare *sql.DB. Used by calibre.Rollback to wrap a multi-repo
+// operation in one atomic transaction. Methods that begin their own transaction
+// (e.g. SetMonitoredSeriesIDs) stay on *sql.DB.
 func (r *AuthorRepo) WithTx(tx *sql.Tx) *AuthorRepo {
 	clone := *r
 	clone.exec = tx
 	return &clone
 }
 
+// ErrAuthorIdentifierConflict indicates an author identifier is already owned
+// by a different author row.
+var ErrAuthorIdentifierConflict = errors.New("author identifier already belongs to another author")
+
+// AuthorIdentifierConflictError reports which existing author owns the
+// requested identifier.
+type AuthorIdentifierConflictError struct {
+	ForeignID string
+	AuthorID  int64
+}
+
+func (e *AuthorIdentifierConflictError) Error() string {
+	if e == nil {
+		return ErrAuthorIdentifierConflict.Error()
+	}
+	return fmt.Sprintf("author identifier %q already belongs to author %d", e.ForeignID, e.AuthorID)
+}
+
+func (e *AuthorIdentifierConflictError) Unwrap() error {
+	return ErrAuthorIdentifierConflict
+}
+
 const authorSelectCols = `id, foreign_id, name, sort_name, description, image_url, disambiguation,
-	       ratings_count, average_rating, monitored, quality_profile_id, metadata_profile_id, root_folder_id,
-	       audiobook_root_folder_id, monitor_mode, monitor_latest_count, metadata_provider, last_metadata_refresh_at,
-	       created_at, updated_at`
+		       ratings_count, average_rating, monitored, quality_profile_id, metadata_profile_id, root_folder_id,
+		       audiobook_root_folder_id, monitor_mode, monitor_latest_count, metadata_provider, last_metadata_refresh_at,
+		       created_at, updated_at`
+const authorSelectColsA = `a.id, a.foreign_id, a.name, a.sort_name, a.description, a.image_url, a.disambiguation,
+		       a.ratings_count, a.average_rating, a.monitored, a.quality_profile_id, a.metadata_profile_id, a.root_folder_id,
+		       a.audiobook_root_folder_id, a.monitor_mode, a.monitor_latest_count, a.metadata_provider, a.last_metadata_refresh_at,
+		       a.created_at, a.updated_at`
 
 func (r *AuthorRepo) List(ctx context.Context) ([]models.Author, error) {
 	return r.ListByUser(ctx, 0)
@@ -88,6 +114,27 @@ func (r *AuthorRepo) GetByID(ctx context.Context, id int64) (*models.Author, err
 	return &a, nil
 }
 
+// GetByIDForUser returns the author with id when it is visible to userID.
+// Unowned rows remain visible so pre-multiuser and import-created authors keep
+// their legacy behavior. userID 0 performs an unscoped lookup.
+func (r *AuthorRepo) GetByIDForUser(ctx context.Context, id, userID int64) (*models.Author, error) {
+	if userID == 0 {
+		return r.GetByID(ctx, id)
+	}
+	row := r.exec.QueryRowContext(ctx, `
+		SELECT `+authorSelectCols+`
+		FROM authors WHERE id = ? AND (owner_user_id = ? OR owner_user_id IS NULL)`, id, userID)
+
+	a, err := scanAuthorRow(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get author %d for user %d: %w", id, userID, err)
+	}
+	return &a, nil
+}
+
 func (r *AuthorRepo) GetByForeignID(ctx context.Context, foreignID string) (*models.Author, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT `+authorSelectCols+`
@@ -124,6 +171,58 @@ func (r *AuthorRepo) GetByForeignIDForUser(ctx context.Context, foreignID string
 	return &a, nil
 }
 
+// GetByAnyForeignID returns the author whose primary foreign_id or alternate
+// identifier matches foreignID.
+func (r *AuthorRepo) GetByAnyForeignID(ctx context.Context, foreignID string) (*models.Author, error) {
+	foreignID = strings.TrimSpace(foreignID)
+	if foreignID == "" {
+		return nil, nil
+	}
+	if author, err := r.GetByForeignID(ctx, foreignID); err != nil || author != nil {
+		return author, err
+	}
+	row := r.db.QueryRowContext(ctx, `
+		SELECT `+authorSelectColsA+`
+		FROM author_identifiers ai
+		JOIN authors a ON a.id = ai.author_id
+		WHERE ai.foreign_id = ?`, foreignID)
+	a, err := scanAuthorRow(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get author by identifier %s: %w", foreignID, err)
+	}
+	return &a, nil
+}
+
+// GetByAnyForeignIDForUser is the user-scoped form of GetByAnyForeignID.
+func (r *AuthorRepo) GetByAnyForeignIDForUser(ctx context.Context, foreignID string, userID int64) (*models.Author, error) {
+	foreignID = strings.TrimSpace(foreignID)
+	if foreignID == "" {
+		return nil, nil
+	}
+	if userID == 0 {
+		return r.GetByAnyForeignID(ctx, foreignID)
+	}
+	if author, err := r.GetByForeignIDForUser(ctx, foreignID, userID); err != nil || author != nil {
+		return author, err
+	}
+	row := r.db.QueryRowContext(ctx, `
+		SELECT `+authorSelectColsA+`
+		FROM author_identifiers ai
+		JOIN authors a ON a.id = ai.author_id
+		WHERE ai.foreign_id = ? AND (a.owner_user_id = ? OR a.owner_user_id IS NULL)`, foreignID, userID)
+	a, err := scanAuthorRow(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get author by identifier %s: %w", foreignID, err)
+	}
+	return &a, nil
+}
+
 func (r *AuthorRepo) Create(ctx context.Context, a *models.Author) error {
 	return r.CreateForUser(ctx, a, 0)
 }
@@ -135,7 +234,13 @@ func (r *AuthorRepo) CreateForUser(ctx context.Context, a *models.Author, ownerU
 	if ownerUserID != 0 {
 		ownerArg = ownerUserID
 	}
-	result, err := r.db.ExecContext(ctx, `
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin create author: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.ExecContext(ctx, `
 		INSERT INTO authors (foreign_id, name, sort_name, description, image_url, disambiguation,
 		                     ratings_count, average_rating, monitored, quality_profile_id, metadata_profile_id, root_folder_id,
 		                     audiobook_root_folder_id, monitor_mode, monitor_latest_count, metadata_provider, owner_user_id,
@@ -155,7 +260,100 @@ func (r *AuthorRepo) CreateForUser(ctx context.Context, a *models.Author, ownerU
 	a.ID = id
 	a.CreatedAt = now
 	a.UpdatedAt = now
+	if err := r.upsertIdentifierTx(ctx, tx, a.ID, a.ForeignID, now); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit create author: %w", err)
+	}
 	return nil
+}
+
+// GetAuthorIdentifier returns the owner row for foreignID, or nil when unknown.
+func (r *AuthorRepo) GetAuthorIdentifier(ctx context.Context, foreignID string) (*models.AuthorIdentifier, error) {
+	foreignID = strings.TrimSpace(foreignID)
+	if foreignID == "" {
+		return nil, nil
+	}
+	row := r.exec.QueryRowContext(ctx, `
+		SELECT author_id, provider, foreign_id, created_at, updated_at
+		FROM author_identifiers WHERE foreign_id = ?`, foreignID)
+	var out models.AuthorIdentifier
+	if err := row.Scan(&out.AuthorID, &out.Provider, &out.ForeignID, &out.CreatedAt, &out.UpdatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get author identifier %q: %w", foreignID, err)
+	}
+	return &out, nil
+}
+
+func (r *AuthorRepo) ListAuthorIdentifiers(ctx context.Context, authorID int64) ([]models.AuthorIdentifier, error) {
+	rows, err := r.exec.QueryContext(ctx, `
+		SELECT author_id, provider, foreign_id, created_at, updated_at
+		FROM author_identifiers WHERE author_id = ? ORDER BY provider, foreign_id`, authorID)
+	if err != nil {
+		return nil, fmt.Errorf("list author identifiers %d: %w", authorID, err)
+	}
+	defer rows.Close()
+	out := []models.AuthorIdentifier{}
+	for rows.Next() {
+		var identifier models.AuthorIdentifier
+		if err := rows.Scan(&identifier.AuthorID, &identifier.Provider, &identifier.ForeignID, &identifier.CreatedAt, &identifier.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan author identifier: %w", err)
+		}
+		out = append(out, identifier)
+	}
+	return out, rows.Err()
+}
+
+func (r *AuthorRepo) UpsertAuthorIdentifier(ctx context.Context, authorID int64, foreignID string) error {
+	return r.upsertIdentifierTx(ctx, r.exec, authorID, foreignID, time.Now().UTC())
+}
+
+func (r *AuthorRepo) DeleteAuthorIdentifier(ctx context.Context, authorID int64, foreignID string) error {
+	foreignID = strings.TrimSpace(foreignID)
+	if authorID == 0 || foreignID == "" {
+		return nil
+	}
+	if _, err := r.exec.ExecContext(ctx, `
+		DELETE FROM author_identifiers
+		WHERE author_id = ? AND foreign_id = ?`, authorID, foreignID); err != nil {
+		return fmt.Errorf("delete author identifier %q for author %d: %w", foreignID, authorID, err)
+	}
+	return nil
+}
+
+func (r *AuthorRepo) upsertIdentifierTx(ctx context.Context, exec dbExecutor, authorID int64, foreignID string, now time.Time) error {
+	foreignID = strings.TrimSpace(foreignID)
+	if authorID == 0 || foreignID == "" {
+		return nil
+	}
+	provider := models.AuthorProviderFromForeignID(foreignID)
+	result, err := exec.ExecContext(ctx, `
+		INSERT INTO author_identifiers (author_id, provider, foreign_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(foreign_id) DO UPDATE SET
+			provider = excluded.provider,
+			updated_at = excluded.updated_at
+		WHERE author_identifiers.author_id = excluded.author_id`,
+		authorID, provider, foreignID, now, now)
+	if err != nil {
+		return fmt.Errorf("upsert author identifier %q: %w", foreignID, err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check author identifier %q: %w", foreignID, err)
+	}
+	if affected > 0 {
+		return nil
+	}
+	var ownerID int64
+	row := exec.QueryRowContext(ctx, "SELECT author_id FROM author_identifiers WHERE foreign_id = ?", foreignID)
+	if err := row.Scan(&ownerID); err != nil {
+		return fmt.Errorf("read author identifier owner %q: %w", foreignID, err)
+	}
+	return &AuthorIdentifierConflictError{ForeignID: foreignID, AuthorID: ownerID}
 }
 
 // GetByDNBSyntheticName returns the synthetic DNB-only author row (one whose
@@ -211,10 +409,16 @@ func (r *AuthorRepo) UpgradeSyntheticDNB(ctx context.Context, currentForeignID s
 		return fmt.Errorf("upgrade synthetic dnb: missing currentForeignID or target")
 	}
 	now := time.Now().UTC()
-	_, err := r.db.ExecContext(ctx, `
-		UPDATE authors
-		SET foreign_id        = ?,
-		    name              = COALESCE(NULLIF(?, ''), name),
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin upgrade synthetic dnb: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.ExecContext(ctx, `
+			UPDATE authors
+			SET foreign_id        = ?,
+			    name              = COALESCE(NULLIF(?, ''), name),
 		    sort_name         = COALESCE(NULLIF(?, ''), sort_name),
 		    description       = CASE WHEN ? != '' THEN ? ELSE description END,
 		    image_url         = CASE WHEN ? != '' THEN ? ELSE image_url END,
@@ -234,13 +438,59 @@ func (r *AuthorRepo) UpgradeSyntheticDNB(ctx context.Context, currentForeignID s
 	if err != nil {
 		return fmt.Errorf("upgrade synthetic dnb author %q -> %q: %w", currentForeignID, target.ForeignID, err)
 	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check upgraded dnb author %q: %w", currentForeignID, err)
+	}
+	if affected == 0 {
+		return nil
+	}
+	var authorID int64
+	if err := tx.QueryRowContext(ctx, "SELECT id FROM authors WHERE foreign_id = ?", target.ForeignID).Scan(&authorID); err != nil {
+		return fmt.Errorf("lookup upgraded dnb author %q: %w", target.ForeignID, err)
+	}
+	if err := r.upsertIdentifierTx(ctx, tx, authorID, target.ForeignID, now); err != nil {
+		return err
+	}
+	if err := r.upsertIdentifierTx(ctx, tx, authorID, currentForeignID, now); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit upgrade synthetic dnb: %w", err)
+	}
 	return nil
 }
 
 func (r *AuthorRepo) Update(ctx context.Context, a *models.Author) error {
 	now := time.Now().UTC()
 	normalizeAuthorMonitorDefaults(a)
-	_, err := r.exec.ExecContext(ctx, `
+
+	if _, ok := r.exec.(*sql.Tx); ok {
+		if err := r.update(ctx, r.exec, a, now); err != nil {
+			return err
+		}
+		a.UpdatedAt = now
+		return nil
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin update author %d: %w", a.ID, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if err := r.update(ctx, tx, a, now); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit update author %d: %w", a.ID, err)
+	}
+	a.UpdatedAt = now
+	return nil
+}
+
+func (r *AuthorRepo) update(ctx context.Context, exec dbExecutor, a *models.Author, now time.Time) error {
+	_, err := exec.ExecContext(ctx, `
 		UPDATE authors SET foreign_id=?, name=?, sort_name=?, description=?, image_url=?, disambiguation=?,
 		                   ratings_count=?, average_rating=?, monitored=?, quality_profile_id=?,
 		                   metadata_profile_id=?, root_folder_id=?, audiobook_root_folder_id=?, monitor_mode=?,
@@ -253,7 +503,9 @@ func (r *AuthorRepo) Update(ctx context.Context, a *models.Author) error {
 	if err != nil {
 		return fmt.Errorf("update author %d: %w", a.ID, err)
 	}
-	a.UpdatedAt = now
+	if err := r.upsertIdentifierTx(ctx, exec, a.ID, a.ForeignID, now); err != nil {
+		return err
+	}
 	return nil
 }
 

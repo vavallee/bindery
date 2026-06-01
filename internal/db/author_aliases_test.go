@@ -287,6 +287,9 @@ func TestMerge_ReparentsBooksAndRecordsAliases(t *testing.T) {
 
 	source := seedAuthor(t, authorRepo, "OL-source", "RR Haywood")
 	target := seedAuthor(t, authorRepo, "OL-target", "R.R. Haywood")
+	if err := authorRepo.UpsertAuthorIdentifier(ctx, source.ID, "hc:rr-haywood"); err != nil {
+		t.Fatal(err)
+	}
 
 	b1 := seedBook(t, bookRepo, source.ID, "W1", "Book One")
 	b2 := seedBook(t, bookRepo, source.ID, "W2", "Book Two")
@@ -351,6 +354,23 @@ func TestMerge_ReparentsBooksAndRecordsAliases(t *testing.T) {
 	}
 	if !haveMigrated {
 		t.Error("expected pre-existing source alias to migrate to target")
+	}
+
+	for _, foreignID := range []string{"OL-source", "hc:rr-haywood", "OL-target"} {
+		identifier, err := authorRepo.GetAuthorIdentifier(ctx, foreignID)
+		if err != nil {
+			t.Fatalf("get identifier %q: %v", foreignID, err)
+		}
+		if identifier == nil || identifier.AuthorID != target.ID {
+			t.Fatalf("identifier %q = %+v, want target author %d", foreignID, identifier, target.ID)
+		}
+		author, err := authorRepo.GetByAnyForeignID(ctx, foreignID)
+		if err != nil {
+			t.Fatalf("get author by identifier %q: %v", foreignID, err)
+		}
+		if author == nil || author.ID != target.ID {
+			t.Fatalf("author for identifier %q = %+v, want target author %d", foreignID, author, target.ID)
+		}
 	}
 }
 

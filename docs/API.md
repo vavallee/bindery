@@ -39,9 +39,21 @@ GET    /api/v1/author/{id}                        author detail
 PUT    /api/v1/author/{id}                        update monitored / metadata profile
 DELETE /api/v1/author/{id}                        remove (with optional file delete)
 POST   /api/v1/author/{id}/refresh                re-pull works from OpenLibrary
+GET    /api/v1/author/{id}/relink-upstream/candidates
+                                                    search metadata candidates for manual relink
 POST   /api/v1/author/{id}/relink-upstream        re-bind to a different foreign ID
 GET    /api/v1/author/{id}/aliases                list merged-in alias rows
 POST   /api/v1/author/{id}/merge                  merge another author into this one
+```
+
+`POST /api/v1/author/{id}/relink-upstream` may be called without a body for
+automatic upstream matching. Manual relink can send:
+
+```json
+{
+  "foreignAuthorId": "hc:example-or-dnb:123",
+  "authorName": "Selected Candidate Name"
+}
 ```
 
 ### Books

@@ -497,6 +497,10 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 						continue
 					}
 				}
+				if err := i.rollbackAuthorIdentifiers(ctx, authors, author, before, after); err != nil {
+					rollbackErr = fmt.Errorf("rollback author %d identifiers: %w", entity.LocalID, err)
+					continue
+				}
 				if ownedByRun {
 					if err := provenance.DeleteByExternal(ctx, entity.SourceID, entity.EntityType, entity.ExternalID); err != nil {
 						rollbackErr = fmt.Errorf("unlink author %s provenance: %w", entity.ExternalID, err)
@@ -661,6 +665,44 @@ func restoreAuthorFromSnapshot(author *models.Author, before, after *authorRollb
 	restoreString(&author.MetadataProvider, before.MetadataProvider, after.MetadataProvider, &changed)
 	restoreBool(&author.Monitored, before.Monitored, after.Monitored, &changed)
 	return changed
+}
+
+func (i *Importer) rollbackAuthorIdentifiers(ctx context.Context, authors *db.AuthorRepo, author *models.Author, before, after *authorRollbackSnapshot) error {
+	if authors == nil || author == nil || before == nil || after == nil ||
+		before.IdentifierForeignIDs == nil || after.IdentifierForeignIDs == nil {
+		return nil
+	}
+	beforeSet := make(map[string]struct{}, len(*before.IdentifierForeignIDs))
+	for _, foreignID := range *before.IdentifierForeignIDs {
+		foreignID = strings.TrimSpace(foreignID)
+		if foreignID != "" {
+			beforeSet[foreignID] = struct{}{}
+		}
+	}
+	currentPrimary := strings.TrimSpace(author.ForeignID)
+	for _, foreignID := range *after.IdentifierForeignIDs {
+		foreignID = strings.TrimSpace(foreignID)
+		if foreignID == "" {
+			continue
+		}
+		if _, existedBefore := beforeSet[foreignID]; existedBefore {
+			continue
+		}
+		if strings.EqualFold(foreignID, currentPrimary) {
+			continue
+		}
+		identifier, err := authors.GetAuthorIdentifier(ctx, foreignID)
+		if err != nil {
+			return err
+		}
+		if identifier == nil || identifier.AuthorID != author.ID {
+			continue
+		}
+		if err := authors.DeleteAuthorIdentifier(ctx, author.ID, foreignID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func restoreString(target *string, before, after string, changed *bool) {

@@ -692,6 +692,7 @@ func main() {
 		r.Put("/author/{id}", authorHandler.Update)
 		r.Delete("/author/{id}", authorHandler.Delete)
 		r.Post("/author/{id}/refresh", authorHandler.Refresh)
+		r.Get("/author/{id}/relink-upstream/candidates", authorHandler.RelinkCandidates)
 		r.Post("/author/{id}/relink-upstream", authorHandler.RelinkUpstream)
 		r.Get("/author/{id}/series", authorHandler.ListSeries)
 		r.Get("/author/{id}/aliases", authorAliasHandler.List)

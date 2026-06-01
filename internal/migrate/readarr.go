@@ -116,7 +116,7 @@ func importReadarrAuthors(ctx context.Context, src *sql.DB, repo *db.AuthorRepo,
 		}
 		top := matches[0]
 
-		if existing, _ := repo.GetByForeignID(ctx, top.ForeignID); existing != nil {
+		if existing, _ := repo.GetByAnyForeignID(ctx, top.ForeignID); existing != nil {
 			res.Skipped++
 			continue
 		}
@@ -129,6 +129,12 @@ func importReadarrAuthors(ctx context.Context, src *sql.DB, repo *db.AuthorRepo,
 		full.MetadataProvider = "openlibrary"
 
 		if cerr := repo.Create(ctx, full); cerr != nil {
+			if isAuthorCreateConflict(cerr) {
+				if existing, _ := repo.GetByAnyForeignID(ctx, full.ForeignID); existing != nil {
+					res.Skipped++
+					continue
+				}
+			}
 			res.fail(name, cerr.Error())
 			continue
 		}
