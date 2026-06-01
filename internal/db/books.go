@@ -87,6 +87,50 @@ func (r *BookRepo) ListByUser(ctx context.Context, userID int64) ([]models.Book,
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY sort_title", args)
 }
 
+// ListPage returns one page of the visible-books list, ordered by sort_title,
+// alongside the total row count that matches the same filter. limit must be
+// positive; offset is clamped at 0. When userID is 0 the query is unscoped
+// (matches List); otherwise it matches ListByUser's scope predicate.
+//
+// The sort_title order is backed by idx_books_sort_title (migration 047) so
+// large libraries no longer pay a full in-memory sort per page request.
+func (r *BookRepo) ListPage(ctx context.Context, userID int64, limit, offset int) ([]models.Book, int, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	where, args := QueryScopeFor("books.owner_user_id", "WHERE excluded = 0", userID)
+	total, err := r.count(ctx, "SELECT COUNT(*) FROM books "+where, args)
+	if err != nil {
+		return nil, 0, err
+	}
+	q := bookCTE + " SELECT " + bookColumns + " FROM books " + bookJoins + " " + where +
+		" ORDER BY sort_title LIMIT ? OFFSET ?"
+	pageArgs := append([]any{}, args...)
+	pageArgs = append(pageArgs, limit, offset)
+	books, err := r.query(ctx, q, pageArgs)
+	if err != nil {
+		return nil, 0, err
+	}
+	return books, total, nil
+}
+
+func (r *BookRepo) count(ctx context.Context, query string, args []any) (int, error) {
+	var total int
+	var row *sql.Row
+	if args != nil {
+		row = r.exec.QueryRowContext(ctx, query, args...)
+	} else {
+		row = r.exec.QueryRowContext(ctx, query)
+	}
+	if err := row.Scan(&total); err != nil {
+		return 0, fmt.Errorf("count books: %w", err)
+	}
+	return total, nil
+}
+
 // ListIncludingExcluded returns all books regardless of their excluded flag.
 func (r *BookRepo) ListIncludingExcluded(ctx context.Context) ([]models.Book, error) {
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" ORDER BY sort_title", nil)

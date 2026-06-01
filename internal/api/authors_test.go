@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -2553,6 +2554,126 @@ func TestCanUpgradeToBoth(t *testing.T) {
 		if got != c.want {
 			t.Errorf("canUpgradeToBoth(%q, %q) = %v, want %v",
 				c.existing, c.incoming, got, c.want)
+		}
+	}
+}
+
+// authorListFixture spins up the minimum wiring required by AuthorHandler.List:
+// a memory DB, AuthorRepo, and a handler that only needs the repo + profile
+// repo to satisfy the constructor.
+func authorListFixture(t *testing.T) (*AuthorHandler, *db.AuthorRepo, context.Context) {
+	t.Helper()
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	authors := db.NewAuthorRepo(database)
+	books := db.NewBookRepo(database)
+	profiles := db.NewMetadataProfileRepo(database)
+	h := NewAuthorHandler(authors, nil, books, nil, nil, nil, profiles, nil)
+	return h, authors, context.Background()
+}
+
+// seedAuthorsForPagination seeds n authors with deterministic sort_names
+// "Sort 001", "Sort 002" so the sort_name ORDER BY in ListPage is
+// predictable.
+func seedAuthorsForPagination(t *testing.T, authors *db.AuthorRepo, ctx context.Context, n int) []string {
+	t.Helper()
+	sorts := make([]string, 0, n)
+	for i := 1; i <= n; i++ {
+		s := fmt.Sprintf("Sort %03d", i)
+		a := &models.Author{
+			ForeignID: fmt.Sprintf("OL-PAGE-%03d", i), Name: s, SortName: s,
+			MetadataProvider: "openlibrary", Monitored: true,
+		}
+		if err := authors.Create(ctx, a); err != nil {
+			t.Fatal(err)
+		}
+		sorts = append(sorts, s)
+	}
+	return sorts
+}
+
+func TestAuthorList_Paginates(t *testing.T) {
+	h, authors, ctx := authorListFixture(t)
+	sorts := seedAuthorsForPagination(t, authors, ctx, 10)
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/author?limit=3&offset=0", nil))
+	var first authorListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
+		t.Fatalf("decode first: %v", err)
+	}
+	if first.Total != 10 || first.Limit != 3 || first.Offset != 0 || len(first.Items) != 3 {
+		t.Errorf("first page = %+v, want total=10 limit=3 offset=0 len=3", first)
+	}
+	for i, a := range first.Items {
+		if a.SortName != sorts[i] {
+			t.Errorf("first page item %d sort_name = %q, want %q", i, a.SortName, sorts[i])
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/author?limit=3&offset=9", nil))
+	var tail authorListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &tail); err != nil {
+		t.Fatalf("decode tail: %v", err)
+	}
+	if tail.Total != 10 || len(tail.Items) != 1 || tail.Items[0].SortName != sorts[9] {
+		t.Errorf("tail page = %+v, want one item %q", tail, sorts[9])
+	}
+}
+
+func TestAuthorList_DefaultsAndCaps(t *testing.T) {
+	h, authors, ctx := authorListFixture(t)
+	seedAuthorsForPagination(t, authors, ctx, 3)
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/author", nil))
+	var defaults authorListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &defaults); err != nil {
+		t.Fatalf("decode defaults: %v", err)
+	}
+	if defaults.Limit != authorListDefaultLimit {
+		t.Errorf("expected default limit %d, got %d", authorListDefaultLimit, defaults.Limit)
+	}
+
+	rec = httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/author?limit=10000", nil))
+	var clamped authorListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &clamped); err != nil {
+		t.Fatalf("decode clamped: %v", err)
+	}
+	if clamped.Limit != authorListMaxLimit {
+		t.Errorf("expected clamped limit %d, got %d", authorListMaxLimit, clamped.Limit)
+	}
+}
+
+func TestAuthorList_OrderStable(t *testing.T) {
+	h, authors, ctx := authorListFixture(t)
+	seedAuthorsForPagination(t, authors, ctx, 5)
+	collect := func() []string {
+		rec := httptest.NewRecorder()
+		h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/author?limit=5&offset=0", nil))
+		var page authorListResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		out := make([]string, len(page.Items))
+		for i, a := range page.Items {
+			out[i] = a.SortName
+		}
+		return out
+	}
+	first := collect()
+	second := collect()
+	if len(first) != 5 || len(second) != 5 {
+		t.Fatalf("expected 5+5 items, got %d/%d", len(first), len(second))
+	}
+	for i := range first {
+		if first[i] != second[i] {
+			t.Errorf("order changed at %d: %q vs %q", i, first[i], second[i])
 		}
 	}
 }

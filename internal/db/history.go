@@ -52,6 +52,63 @@ func (r *HistoryRepo) ListByType(ctx context.Context, eventType string) ([]model
 	return r.query(ctx, "SELECT "+historyColumns+" FROM history WHERE event_type=? ORDER BY created_at DESC", eventType)
 }
 
+// HistoryListOpts is the filter+page argument for ListPage. Empty fields are
+// treated as "no filter": a zero BookID and empty EventType return every
+// row. Limit must be positive; Offset is clamped at 0 by ListPage.
+type HistoryListOpts struct {
+	BookID    int64
+	EventType string
+	Limit     int
+	Offset    int
+}
+
+// ListPage returns one page of history events (newest first) plus the total
+// row count that matches the filter. Backed by idx_history_created_at_desc
+// (migration 047) so the newest-first scan does not pay an OrderBy step on
+// top of a forward-only index walk.
+func (r *HistoryRepo) ListPage(ctx context.Context, opts HistoryListOpts) ([]models.HistoryEvent, int, error) {
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	offset := opts.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	where := ""
+	args := []any{}
+	switch {
+	case opts.BookID != 0:
+		where = " WHERE book_id = ?"
+		args = append(args, opts.BookID)
+	case opts.EventType != "":
+		where = " WHERE event_type = ?"
+		args = append(args, opts.EventType)
+	}
+
+	var total int
+	var countRow *sql.Row
+	if len(args) > 0 {
+		countRow = r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM history"+where, args...)
+	} else {
+		countRow = r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM history"+where)
+	}
+	if err := countRow.Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count history events: %w", err)
+	}
+
+	pageArgs := append([]any{}, args...)
+	pageArgs = append(pageArgs, limit, offset)
+	events, err := r.query(ctx,
+		"SELECT "+historyColumns+" FROM history"+where+" ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+		pageArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	return events, total, nil
+}
+
 func (r *HistoryRepo) GetByID(ctx context.Context, id int64) (*models.HistoryEvent, error) {
 	events, err := r.query(ctx, "SELECT "+historyColumns+" FROM history WHERE id=?", id)
 	if err != nil {

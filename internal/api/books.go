@@ -192,33 +192,70 @@ func (h *BookHandler) tryMapAudiobookMetadataByASIN(ctx context.Context, book *m
 	}
 }
 
-func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
-	var books []models.Book
-	var err error
+// bookListResponse is the paginated wrapper returned by List. Replaces the
+// pre-Wave-2 bare `[]models.Book` shape; clients must unwrap `items` to get
+// the rows. See PR #E for the breaking-change disclosure.
+type bookListResponse struct {
+	Items  []models.Book `json:"items"`
+	Total  int           `json:"total"`
+	Limit  int           `json:"limit"`
+	Offset int           `json:"offset"`
+}
 
+// bookListDefaultLimit is the default page size for an unparameterised List
+// request; bookListMaxLimit is the hard cap so a client cannot ask for
+// limit=10_000_000 and OOM the server building one big JSON blob.
+const (
+	bookListDefaultLimit = 100
+	bookListMaxLimit     = 500
+)
+
+func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
 	authorID := r.URL.Query().Get("authorId")
 	status := r.URL.Query().Get("status")
 	includeExcluded := r.URL.Query().Get("includeExcluded") == "true"
+	limit, offset := parseLimitOffset(r, bookListDefaultLimit, bookListMaxLimit)
+
+	var (
+		books []models.Book
+		total int
+		err   error
+	)
 
 	switch {
 	case authorID != "":
+		// Filtered-by-author lists are bounded (max a few hundred per author)
+		// so we paginate in memory rather than threading LIMIT/OFFSET through
+		// every ListByAuthor* variant. The repo call still pulls one author's
+		// catalogue; the slice is cheap.
 		id, _ := strconv.ParseInt(authorID, 10, 64)
 		if includeExcluded {
 			books, err = h.books.ListByAuthorIncludingExcluded(r.Context(), id)
 		} else {
 			books, err = h.books.ListByAuthor(r.Context(), id)
 		}
+		books, total = pageBooks(books, limit, offset)
 	case status != "":
+		// Status-filtered lists (wanted/imported/etc.) can be large on a 50k
+		// library but they back the dashboard widgets, which always fetch the
+		// whole set today. Keep that behaviour for now and slice for the new
+		// envelope; a follow-up can add a SQL-paginated ListByStatusPage if
+		// the audit shows the wanted/imported pages dominate at scale.
 		if includeExcluded {
 			books, err = h.books.ListByStatusIncludingExcluded(r.Context(), status)
 		} else {
 			books, err = h.books.ListByStatus(r.Context(), status)
 		}
+		books, total = pageBooks(books, limit, offset)
 	default:
 		if includeExcluded {
 			books, err = h.books.ListIncludingExcluded(r.Context())
+			books, total = pageBooks(books, limit, offset)
 		} else {
-			books, err = h.books.List(r.Context())
+			// Default-path SQL pagination: the books list is the hottest
+			// 50k-row scan in the app, so push LIMIT/OFFSET to SQLite where
+			// idx_books_sort_title (migration 047) keeps the sort cheap.
+			books, total, err = h.books.ListPage(r.Context(), 0, limit, offset)
 		}
 	}
 
@@ -233,7 +270,27 @@ func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
 		cleanBookDescription(&books[i])
 		proxyBookImages(&books[i])
 	}
-	writeJSON(w, http.StatusOK, books)
+	writeJSON(w, http.StatusOK, bookListResponse{
+		Items:  books,
+		Total:  total,
+		Limit:  limit,
+		Offset: offset,
+	})
+}
+
+// pageBooks slices a fully-loaded book list by (limit, offset) and returns
+// the page along with the unsliced total. Used for the filtered List paths
+// where the underlying repo method does not yet take a page argument.
+func pageBooks(in []models.Book, limit, offset int) ([]models.Book, int) {
+	total := len(in)
+	if offset >= total {
+		return []models.Book{}, total
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return in[offset:end], total
 }
 
 func (h *BookHandler) Get(w http.ResponseWriter, r *http.Request) {

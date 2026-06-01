@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -90,8 +91,10 @@ func withURLParam(req *http.Request, key, val string) *http.Request {
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 }
 
-// TestBookList_Empty returns [] (not null) so the frontend can render without
-// a null-check. A nil body here would break the books grid on first load.
+// TestBookList_Empty returns a wrapped envelope with items=[] (not null) so
+// the frontend can render without a null-check. A nil body here would break
+// the books grid on first load. As of Wave 2 / Bundle E the shape is
+// {items, total, limit, offset}, not a bare array.
 func TestBookList_Empty(t *testing.T) {
 	h, _, _, _, _ := bookFixture(t)
 	rec := httptest.NewRecorder()
@@ -99,8 +102,15 @@ func TestBookList_Empty(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
-	if bytes.TrimSpace(rec.Body.Bytes())[0] != '[' {
-		t.Errorf("expected JSON array, got %s", rec.Body.String())
+	var got bookListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode envelope: %v (body=%s)", err, rec.Body.String())
+	}
+	if got.Items == nil {
+		t.Errorf("expected items=[] (not null) so the frontend can render, got %s", rec.Body.String())
+	}
+	if got.Total != 0 || got.Offset != 0 || got.Limit != bookListDefaultLimit {
+		t.Errorf("expected zero totals + default limit, got %+v", got)
 	}
 }
 
@@ -124,12 +134,130 @@ func TestBookList_FiltersByAuthor(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book?authorId="+strconv.FormatInt(a1.ID, 10), nil))
-	var got []models.Book
+	var got bookListResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 {
-		t.Errorf("expected 2 books for author %d, got %d", a1.ID, len(got))
+	if got.Total != 2 || len(got.Items) != 2 {
+		t.Errorf("expected 2 books for author %d, got total=%d items=%d", a1.ID, got.Total, len(got.Items))
+	}
+}
+
+// seedBooksForPagination creates n books under the given author with
+// deterministic sort_titles ("Book 001", "Book 002", ...) so the order is
+// stable and the test can assert which slice of titles came back.
+func seedBooksForPagination(t *testing.T, books *db.BookRepo, ctx context.Context, authorID int64, n int) []string {
+	t.Helper()
+	titles := make([]string, 0, n)
+	for i := 1; i <= n; i++ {
+		title := fmt.Sprintf("Book %03d", i)
+		b := &models.Book{
+			ForeignID: fmt.Sprintf("PAGE-%03d", i), AuthorID: authorID, Title: title, SortTitle: title,
+			Status: "wanted", Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+		}
+		if err := books.Create(ctx, b); err != nil {
+			t.Fatal(err)
+		}
+		titles = append(titles, title)
+	}
+	return titles
+}
+
+// TestBookList_Paginates exercises ?limit=N&offset=K with N seeded rows.
+// The first page returns three books and the trailing-edge page returns
+// the leftover one. Total is the unsliced count regardless of page.
+func TestBookList_Paginates(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	titles := seedBooksForPagination(t, books, ctx, author.ID, 10)
+
+	// limit=3 offset=0 — first three by sort_title.
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book?limit=3&offset=0", nil))
+	var first bookListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
+		t.Fatalf("decode first: %v", err)
+	}
+	if first.Total != 10 || first.Limit != 3 || first.Offset != 0 || len(first.Items) != 3 {
+		t.Errorf("first page envelope = %+v, want total=10 limit=3 offset=0 len=3", first)
+	}
+	for i, b := range first.Items {
+		if b.Title != titles[i] {
+			t.Errorf("first page item %d = %q, want %q", i, b.Title, titles[i])
+		}
+	}
+
+	// offset=9 lands on the last book alone.
+	rec = httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book?limit=3&offset=9", nil))
+	var tail bookListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &tail); err != nil {
+		t.Fatalf("decode tail: %v", err)
+	}
+	if tail.Total != 10 || len(tail.Items) != 1 || tail.Items[0].Title != titles[9] {
+		t.Errorf("tail page = %+v, want one item %q", tail, titles[9])
+	}
+}
+
+// TestBookList_DefaultsAndCaps checks the default limit is applied when no
+// query param is set and that an oversized request is clamped at the
+// configured max so a client cannot pull the entire 50k library at once.
+func TestBookList_DefaultsAndCaps(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	seedBooksForPagination(t, books, ctx, author.ID, 3)
+
+	// No params — default limit applies.
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book", nil))
+	var defaults bookListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &defaults); err != nil {
+		t.Fatalf("decode defaults: %v", err)
+	}
+	if defaults.Limit != bookListDefaultLimit {
+		t.Errorf("expected default limit %d, got %d", bookListDefaultLimit, defaults.Limit)
+	}
+
+	// limit=10000 must be clamped to bookListMaxLimit.
+	rec = httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book?limit=10000", nil))
+	var clamped bookListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &clamped); err != nil {
+		t.Fatalf("decode clamped: %v", err)
+	}
+	if clamped.Limit != bookListMaxLimit {
+		t.Errorf("expected clamped limit %d, got %d", bookListMaxLimit, clamped.Limit)
+	}
+}
+
+// TestBookList_OrderStable confirms the same query returns the same order on
+// repeat calls. Stability is what backs the frontend's "load next page"
+// pattern; if rows could shuffle between requests the user would see
+// duplicates or gaps as they scrolled.
+func TestBookList_OrderStable(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	seedBooksForPagination(t, books, ctx, author.ID, 5)
+
+	collect := func() []string {
+		rec := httptest.NewRecorder()
+		h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book?limit=5&offset=0", nil))
+		var page bookListResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		out := make([]string, len(page.Items))
+		for i, b := range page.Items {
+			out[i] = b.Title
+		}
+		return out
+	}
+	first := collect()
+	second := collect()
+	if len(first) != 5 || len(second) != 5 {
+		t.Fatalf("expected 5+5 items, got %d/%d", len(first), len(second))
+	}
+	for i := range first {
+		if first[i] != second[i] {
+			t.Errorf("order changed between calls at %d: %q vs %q", i, first[i], second[i])
+		}
 	}
 }
 

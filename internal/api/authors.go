@@ -131,10 +131,26 @@ func (h *AuthorHandler) hydrateHardcoverEditionsFrom(ctx context.Context, book *
 	})
 }
 
+// authorListResponse is the paginated wrapper returned by List. Replaces the
+// pre-Wave-2 bare `[]models.Author` shape; clients must unwrap `items` to
+// reach the rows. See the Wave 2 / E PR for the breaking-change disclosure.
+type authorListResponse struct {
+	Items  []models.Author `json:"items"`
+	Total  int             `json:"total"`
+	Limit  int             `json:"limit"`
+	Offset int             `json:"offset"`
+}
+
+const (
+	authorListDefaultLimit = 100
+	authorListMaxLimit     = 500
+)
+
 func (h *AuthorHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := auth.UserIDFromContext(ctx)
-	authors, err := h.authors.ListByUser(ctx, userID)
+	limit, offset := parseLimitOffset(r, authorListDefaultLimit, authorListMaxLimit)
+	authors, total, err := h.authors.ListPage(ctx, userID, limit, offset)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -146,7 +162,12 @@ func (h *AuthorHandler) List(w http.ResponseWriter, r *http.Request) {
 		cleanAuthorDescription(&authors[i])
 		proxyAuthorImages(&authors[i])
 	}
-	writeJSON(w, http.StatusOK, authors)
+	writeJSON(w, http.StatusOK, authorListResponse{
+		Items:  authors,
+		Total:  total,
+		Limit:  limit,
+		Offset: offset,
+	})
 }
 
 func (h *AuthorHandler) Get(w http.ResponseWriter, r *http.Request) {

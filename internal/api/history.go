@@ -20,23 +20,38 @@ func NewHistoryHandler(history *db.HistoryRepo, blocklist *db.BlocklistRepo) *Hi
 	return &HistoryHandler{history: history, blocklist: blocklist}
 }
 
-func (h *HistoryHandler) List(w http.ResponseWriter, r *http.Request) {
-	var events []models.HistoryEvent
-	var err error
+// historyListResponse is the paginated wrapper returned by List. Replaces the
+// pre-Wave-2 bare `[]models.HistoryEvent` shape; clients must unwrap `items`
+// to reach the rows. See the Wave 2 / E PR for the breaking-change disclosure.
+type historyListResponse struct {
+	Items  []models.HistoryEvent `json:"items"`
+	Total  int                   `json:"total"`
+	Limit  int                   `json:"limit"`
+	Offset int                   `json:"offset"`
+}
 
+const (
+	historyListDefaultLimit = 100
+	historyListMaxLimit     = 500
+)
+
+func (h *HistoryHandler) List(w http.ResponseWriter, r *http.Request) {
 	bookIDStr := r.URL.Query().Get("bookId")
 	eventType := r.URL.Query().Get("eventType")
+	limit, offset := parseLimitOffset(r, historyListDefaultLimit, historyListMaxLimit)
 
-	switch {
-	case bookIDStr != "":
-		id, _ := strconv.ParseInt(bookIDStr, 10, 64)
-		events, err = h.history.ListByBook(r.Context(), id)
-	case eventType != "":
-		events, err = h.history.ListByType(r.Context(), eventType)
-	default:
-		events, err = h.history.List(r.Context())
+	opts := db.HistoryListOpts{
+		EventType: eventType,
+		Limit:     limit,
+		Offset:    offset,
+	}
+	if bookIDStr != "" {
+		// Tolerate junk in the query string the same way the pre-Wave-2 code
+		// did (strconv error gives id=0, which then matches no rows).
+		opts.BookID, _ = strconv.ParseInt(bookIDStr, 10, 64)
 	}
 
+	events, total, err := h.history.ListPage(r.Context(), opts)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -44,7 +59,12 @@ func (h *HistoryHandler) List(w http.ResponseWriter, r *http.Request) {
 	if events == nil {
 		events = []models.HistoryEvent{}
 	}
-	writeJSON(w, http.StatusOK, events)
+	writeJSON(w, http.StatusOK, historyListResponse{
+		Items:  events,
+		Total:  total,
+		Limit:  limit,
+		Offset: offset,
+	})
 }
 
 func (h *HistoryHandler) Delete(w http.ResponseWriter, r *http.Request) {
