@@ -46,6 +46,14 @@ type Book struct {
 
 	Excluded bool `json:"excluded"`
 
+	// OwnerUserID identifies the user who owns this book row. Populated by
+	// migration 025 (backfilled to user 1 for pre-existing libraries) and
+	// by per-user create paths. May be 0 for legacy/admin-created rows;
+	// callers in scoped paths treat 0 as "any user can see it" so a
+	// half-migrated install still works (matches auth.CheckOwnership
+	// semantics).
+	OwnerUserID int64 `json:"-"`
+
 	// EbookFilePath and AudiobookFilePath are computed views over the book_files
 	// table (first path per format), kept for API backwards compatibility.
 	// Do not write to them directly; use BookRepo.AddBookFile instead.

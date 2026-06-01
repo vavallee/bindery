@@ -42,7 +42,11 @@ func OPDSAuth(p auth.Provider, users *db.UserRepo, limiter *auth.LoginLimiter) f
 				return
 			}
 			if c, err := r.Cookie(auth.SessionCookieName); err == nil {
-				if _, err := auth.VerifySessionMulti(p.SessionSecrets(), c.Value); err == nil {
+				if uid, err := auth.VerifySessionMulti(p.SessionSecrets(), c.Value); err == nil {
+					// Attach the verified session's user id so the OPDS
+					// handler can scope the feed to the caller's library
+					// when EnforceTenancy is on (D3).
+					r = r.WithContext(auth.WithUserID(r.Context(), uid))
 					next.ServeHTTP(w, r)
 					return
 				}
@@ -59,6 +63,12 @@ func OPDSAuth(p auth.Provider, users *db.UserRepo, limiter *auth.LoginLimiter) f
 					if limiter != nil {
 						limiter.Reset(ip)
 					}
+					// Attach the basic-auth user id to ctx so the OPDS
+					// handler can filter the feed to the caller's library
+					// under EnforceTenancy. Without this the basic-auth
+					// path (KOReader, Moon+) would be the one place every
+					// user sees every other user's books.
+					r = r.WithContext(auth.WithUserID(r.Context(), u.ID))
 					next.ServeHTTP(w, r)
 					return
 				}

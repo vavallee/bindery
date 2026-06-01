@@ -69,7 +69,8 @@ const bookColumns = `books.id, books.foreign_id, books.author_id, books.title, b
 	COALESCE(fe.path, COALESCE(books.ebook_file_path, '')),
 	COALESCE(fa.path, COALESCE(books.audiobook_file_path, '')),
 	books.excluded,
-	au.id, au.foreign_id, au.name, au.sort_name`
+	au.id, au.foreign_id, au.name, au.sort_name,
+	COALESCE(books.owner_user_id, 0)`
 
 // bookJoins are the LEFT JOINs that attach the first_ebook and first_audiobook
 // CTE results plus the author row to the books table. Must follow the FROM
@@ -438,6 +439,7 @@ func (r *BookRepo) query(ctx context.Context, q string, args []any) ([]models.Bo
 			&b.EbookFilePath, &b.AudiobookFilePath,
 			&excluded,
 			&authorID, &authorForeignID, &authorName, &authorSortName,
+			&b.OwnerUserID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan book: %w", err)

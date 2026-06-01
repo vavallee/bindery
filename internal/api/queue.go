@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/downloader"
 	"github.com/vavallee/bindery/internal/indexer"
@@ -74,7 +75,23 @@ type liveStatusResult struct {
 }
 
 func (h *QueueHandler) enrichedQueueItems(ctx context.Context) ([]enrichedQueueItem, error) {
-	downloads, err := h.downloads.List(ctx)
+	// Per-user scoping: when EnforceTenancy is on and the request carries a
+	// non-admin user identity, restrict the queue to the caller's downloads.
+	// Admin / API-key / disabled-auth fall through to the unscoped List —
+	// CheckOwnership's semantics mirror that decision in the Get/Delete paths.
+	var (
+		downloads []models.Download
+		err       error
+	)
+	if auth.EnforceTenancy() && auth.UserRoleFromContext(ctx) != "admin" {
+		if uid := auth.UserIDFromContext(ctx); uid != 0 {
+			downloads, err = h.downloads.ListByUser(ctx, uid)
+		} else {
+			downloads, err = h.downloads.List(ctx)
+		}
+	} else {
+		downloads, err = h.downloads.List(ctx)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -461,6 +478,23 @@ func (h *QueueHandler) RetryImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Per-user scoping (D3): refuse to operate on someone else's download.
+	// Return 404 not 403 — leaking "this exists but is not yours" tells an
+	// attacker that the id space is enumerable.
+	owner, exists, err := h.downloads.GetOwnerByID(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if !exists {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download not found"})
+		return
+	}
+	if !auth.CheckOwnership(r.Context(), owner) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download not found"})
+		return
+	}
+
 	accepted, found, err := h.downloads.ResetImportRetry(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -633,6 +667,23 @@ func (h *QueueHandler) recordHistory(ctx context.Context, eventType, sourceTitle
 func (h *QueueHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(w, r)
 	if !ok {
+		return
+	}
+
+	// Per-user scoping (D3): cheaply resolve owner first so we 404 before
+	// loading the full list. The legacy List+linear-scan stays for the
+	// happy path because it sources Download state Delete still needs.
+	owner, exists, err := h.downloads.GetOwnerByID(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if !exists {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download not found"})
+		return
+	}
+	if !auth.CheckOwnership(r.Context(), owner) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download not found"})
 		return
 	}
 
