@@ -19,7 +19,8 @@ func NewMetadataProfileRepo(db *sql.DB) *MetadataProfileRepo {
 func (r *MetadataProfileRepo) List(ctx context.Context) ([]models.MetadataProfile, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, name, min_popularity, min_pages, skip_missing_date, skip_missing_isbn,
-		       skip_part_books, allowed_languages, unknown_language_behavior, created_at
+		       skip_part_books, allowed_languages, unknown_language_behavior, created_at,
+		       COALESCE(owner_user_id, 0)
 		FROM metadata_profiles ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("list metadata profiles: %w", err)
@@ -40,7 +41,8 @@ func (r *MetadataProfileRepo) List(ctx context.Context) ([]models.MetadataProfil
 func (r *MetadataProfileRepo) GetByID(ctx context.Context, id int64) (*models.MetadataProfile, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, name, min_popularity, min_pages, skip_missing_date, skip_missing_isbn,
-		       skip_part_books, allowed_languages, unknown_language_behavior, created_at
+		       skip_part_books, allowed_languages, unknown_language_behavior, created_at,
+		       COALESCE(owner_user_id, 0)
 		FROM metadata_profiles WHERE id=?`, id)
 	if err != nil {
 		return nil, fmt.Errorf("get metadata profile %d: %w", id, err)
@@ -115,7 +117,7 @@ func scanMetadataProfile(rows *sql.Rows) (models.MetadataProfile, error) {
 	err := rows.Scan(
 		&p.ID, &p.Name, &p.MinPopularity, &p.MinPages,
 		&skipDate, &skipISBN, &skipPart, &p.AllowedLanguages,
-		&p.UnknownLanguageBehavior, &p.CreatedAt,
+		&p.UnknownLanguageBehavior, &p.CreatedAt, &p.OwnerUserID,
 	)
 	if err != nil {
 		return p, fmt.Errorf("scan metadata profile: %w", err)
