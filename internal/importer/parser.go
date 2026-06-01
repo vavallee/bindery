@@ -45,6 +45,9 @@ var (
 	seriesParenRe = regexp.MustCompile(`(?i)\(([A-Za-z][^)]*?),?\s*(?:book|vol(?:ume)?|part)?\.?\s*#?(\d+(?:\.\d+)?)\)`)
 	// Leading position number at start of base name: "01 - Title" or "1. Title"
 	leadingNumRe = regexp.MustCompile(`^(\d+(?:\.\d+)?)\s*[-–.]\s+`)
+	// "Series Book N - Title" or "Series Book N: Title" inline pattern (after dot/underscore expansion).
+	// Captures: series name, book number, title (and optional author after another " - ").
+	seriesBookInlineRe = regexp.MustCompile(`(?i)^(.+?)\s+(?:book|vol(?:ume)?|part)\.?\s*(\d+(?:\.\d+)?)\s*[-–:]\s*(.+)$`)
 )
 
 // bookExtensions lists common ebook file extensions.
@@ -124,6 +127,26 @@ func ParseFilename(path string) ParsedFile {
 	cleaned := cleanRe.ReplaceAllString(name, "")
 	cleaned = multiSp.ReplaceAllString(cleaned, " ")
 	cleaned = strings.TrimSpace(cleaned)
+
+	// Try "Series Book N - Title" or "Series Book N - Title - Author" inline pattern.
+	// Must run before titleAuthorRe so "Book 2 -" isn't mis-split as title/author.
+	if m := seriesBookInlineRe.FindStringSubmatch(cleaned); len(m) == 4 {
+		if p.Series == "" {
+			p.Series = strings.TrimSpace(m[1])
+		}
+		if p.SeriesNumber == "" {
+			p.SeriesNumber = strings.TrimSpace(m[2])
+		}
+		rest := strings.TrimSpace(m[3])
+		// The rest may itself be "Title - Author"
+		if m2 := titleAuthorRe.FindStringSubmatch(rest); len(m2) == 3 {
+			p.Title = strings.TrimSpace(m2[1])
+			p.Author = strings.TrimSpace(m2[2])
+		} else {
+			p.Title = rest
+		}
+		return p
+	}
 
 	// Try "Title - Author" pattern
 	if m := titleAuthorRe.FindStringSubmatch(cleaned); len(m) == 3 {
