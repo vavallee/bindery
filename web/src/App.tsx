@@ -1,27 +1,28 @@
 import { BrowserRouter, Routes, Route, NavLink, Link, Navigate } from 'react-router-dom'
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from './api/client'
 import { AuthProvider, useAuth } from './auth/AuthContext'
 import AuthGuard from './auth/AuthGuard'
 import PublicOnlyRoute from './auth/PublicOnlyRoute'
-import LoginPage from './pages/LoginPage'
-import SetupPage from './pages/SetupPage'
-import AuthorsPage from './pages/AuthorsPage'
-import AuthorDetailPage from './pages/AuthorDetailPage'
-import BooksPage from './pages/BooksPage'
-import BookDetailPage from './pages/BookDetailPage'
-import WantedPage from './pages/WantedPage'
-import QueuePage from './pages/QueuePage'
-import SettingsPage from './pages/SettingsPage'
-import UsersPage from './pages/UsersPage'
-import HistoryPage from './pages/HistoryPage'
-import SeriesPage from './pages/SeriesPage'
-import CalendarPage from './pages/CalendarPage'
-import DiscoverPage from './pages/DiscoverPage'
-import SearchPage from './pages/SearchPage'
 import Logo from './components/Logo'
 import { useTheme } from './theme'
+
+const LoginPage = lazy(() => import('./pages/LoginPage'))
+const SetupPage = lazy(() => import('./pages/SetupPage'))
+const AuthorsPage = lazy(() => import('./pages/AuthorsPage'))
+const AuthorDetailPage = lazy(() => import('./pages/AuthorDetailPage'))
+const BooksPage = lazy(() => import('./pages/BooksPage'))
+const BookDetailPage = lazy(() => import('./pages/BookDetailPage'))
+const WantedPage = lazy(() => import('./pages/WantedPage'))
+const QueuePage = lazy(() => import('./pages/QueuePage'))
+const SettingsPage = lazy(() => import('./pages/SettingsPage'))
+const UsersPage = lazy(() => import('./pages/UsersPage'))
+const HistoryPage = lazy(() => import('./pages/HistoryPage'))
+const SeriesPage = lazy(() => import('./pages/SeriesPage'))
+const CalendarPage = lazy(() => import('./pages/CalendarPage'))
+const DiscoverPage = lazy(() => import('./pages/DiscoverPage'))
+const SearchPage = lazy(() => import('./pages/SearchPage'))
 
 const NAV_KEYS = [
   { to: '/', key: 'authors', end: true },
@@ -33,6 +34,16 @@ const NAV_KEYS = [
   { to: '/calendar', key: 'calendar' },
   { to: '/discover', key: 'discover' },
 ]
+
+function PageLoadingFallback() {
+  const { t } = useTranslation()
+
+  return (
+    <div className="py-10 text-center text-sm text-slate-600 dark:text-zinc-500">
+      {t('common.loading')}
+    </div>
+  )
+}
 
 function Shell() {
   useTheme() // ensures dark class is applied on every mount, not only when Settings is visited
@@ -235,22 +246,24 @@ function Shell() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <Routes>
-          <Route path="/" element={<AuthorsPage />} />
-          <Route path="/author/:id" element={<AuthorDetailPage />} />
-          <Route path="/books" element={<BooksPage />} />
-          <Route path="/book/:id" element={<BookDetailPage />} />
-          <Route path="/wanted" element={<WantedPage />} />
-          <Route path="/queue" element={<QueuePage />} />
-          <Route path="/history" element={<HistoryPage />} />
-          <Route path="/series" element={<SeriesPage />} />
-          <Route path="/calendar" element={<CalendarPage />} />
-          <Route path="/discover" element={<DiscoverPage />} />
-          <Route path="/search" element={<SearchPage />} />
-          <Route path="/blocklist" element={<Navigate to="/settings" replace />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          {isAdmin && <Route path="/users" element={<UsersPage />} />}
-        </Routes>
+        <Suspense fallback={<PageLoadingFallback />}>
+          <Routes>
+            <Route path="/" element={<AuthorsPage />} />
+            <Route path="/author/:id" element={<AuthorDetailPage />} />
+            <Route path="/books" element={<BooksPage />} />
+            <Route path="/book/:id" element={<BookDetailPage />} />
+            <Route path="/wanted" element={<WantedPage />} />
+            <Route path="/queue" element={<QueuePage />} />
+            <Route path="/history" element={<HistoryPage />} />
+            <Route path="/series" element={<SeriesPage />} />
+            <Route path="/calendar" element={<CalendarPage />} />
+            <Route path="/discover" element={<DiscoverPage />} />
+            <Route path="/search" element={<SearchPage />} />
+            <Route path="/blocklist" element={<Navigate to="/settings" replace />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            {isAdmin && <Route path="/users" element={<UsersPage />} />}
+          </Routes>
+        </Suspense>
       </main>
 
       <footer className="border-t border-slate-200 dark:border-zinc-800 mt-8">
@@ -281,32 +294,34 @@ function App() {
   return (
     <BrowserRouter basename={binderyBase}>
       <AuthProvider>
-        <Routes>
-          <Route
-            path="/login"
-            element={
-              <PublicOnlyRoute mode="login">
-                <LoginPage />
-              </PublicOnlyRoute>
-            }
-          />
-          <Route
-            path="/setup"
-            element={
-              <PublicOnlyRoute mode="setup">
-                <SetupPage />
-              </PublicOnlyRoute>
-            }
-          />
-          <Route
-            path="/*"
-            element={
-              <AuthGuard>
-                <Shell />
-              </AuthGuard>
-            }
-          />
-        </Routes>
+        <Suspense fallback={<PageLoadingFallback />}>
+          <Routes>
+            <Route
+              path="/login"
+              element={
+                <PublicOnlyRoute mode="login">
+                  <LoginPage />
+                </PublicOnlyRoute>
+              }
+            />
+            <Route
+              path="/setup"
+              element={
+                <PublicOnlyRoute mode="setup">
+                  <SetupPage />
+                </PublicOnlyRoute>
+              }
+            />
+            <Route
+              path="/*"
+              element={
+                <AuthGuard>
+                  <Shell />
+                </AuthGuard>
+              }
+            />
+          </Routes>
+        </Suspense>
       </AuthProvider>
     </BrowserRouter>
   )
