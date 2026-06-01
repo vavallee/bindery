@@ -766,6 +766,16 @@ func (s *Scheduler) refreshMetadata() {
 			slog.Warn("failed to refresh author", "author", author.Name, "error", err)
 			continue
 		}
+		// Aggregator returns (nil, nil) when no configured provider owns this
+		// foreignID prefix (e.g. a Hardcover-prefixed author after Hardcover
+		// was disabled, or any author whose ForeignID prefix no longer maps to
+		// a provider). Without this guard the deref below panics, which exits
+		// the range loop and kills every subsequent author's refresh that
+		// cycle.
+		if updated == nil {
+			slog.Debug("no metadata provider for author, skipping refresh", "author", author.Name, "foreignID", author.ForeignID)
+			continue
+		}
 
 		// Update changed fields
 		author.Description = updated.Description
