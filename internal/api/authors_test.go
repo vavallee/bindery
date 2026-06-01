@@ -2556,3 +2556,80 @@ func TestCanUpgradeToBoth(t *testing.T) {
 		}
 	}
 }
+
+// TestDeleteAuthor_PathContainment_RejectsOutsideRoots is the author-side
+// Wave 1 / Bundle B guard. When the delete-files sweep walks a book whose
+// file_path is outside every configured root, the on-disk file is left
+// alone but the author + book rows are still removed via the FK cascade.
+func TestDeleteAuthor_PathContainment_RejectsOutsideRoots(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+
+	ctx := context.Background()
+	author := &models.Author{
+		ForeignID: "OL920A", Name: "Outside Author", SortName: "Author, Outside",
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	libA := t.TempDir()
+	// Outside-roots file: this must survive the delete.
+	outsideDir := t.TempDir()
+	outsidePath := filepath.Join(outsideDir, "outside.epub")
+	if err := os.WriteFile(outsidePath, []byte("untouchable"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Inside-roots file: this should still be deleted.
+	insidePath := filepath.Join(libA, "inside.epub")
+	if err := os.WriteFile(insidePath, []byte("legit"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, b := range []*models.Book{
+		{ForeignID: "OL920W1", AuthorID: author.ID, Title: "Outside", SortTitle: "outside", FilePath: outsidePath, Status: "imported", Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true},
+		{ForeignID: "OL920W2", AuthorID: author.ID, Title: "Inside", SortTitle: "inside", FilePath: insidePath, Status: "imported", Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true},
+	} {
+		if err := bookRepo.Create(ctx, b); err != nil {
+			t.Fatal(err)
+		}
+		if err := bookRepo.SetFilePath(ctx, b.ID, b.FilePath); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, nil, nil, profileRepo, nil).
+		WithRoots(NewLibraryRoots(staticRootLister{paths: []string{libA}}))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/author/"+strconv.FormatInt(author.ID, 10)+"?deleteFiles=true", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", strconv.FormatInt(author.ID, 10))
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+	h.Delete(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// Outside-roots file: must survive.
+	if _, err := os.Stat(outsidePath); err != nil {
+		t.Errorf("file outside library roots must NOT be deleted: stat err=%v", err)
+	}
+	// Inside-roots file: removed normally.
+	if _, err := os.Stat(insidePath); !os.IsNotExist(err) {
+		t.Errorf("file inside library root SHOULD be deleted, stat err=%v", err)
+	}
+	// Author row gone.
+	if got, _ := authorRepo.GetByID(ctx, author.ID); got != nil {
+		t.Errorf("author row should be deleted, got id=%d", got.ID)
+	}
+}
