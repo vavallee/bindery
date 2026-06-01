@@ -15,8 +15,14 @@ import (
 //  2. X-Forwarded-Proto + X-Forwarded-Host on the request, if the request is
 //     coming from a trusted proxy peer (BINDERY_TRUSTED_PROXY). Honors the
 //     same trust boundary as proxy-auth mode.
-//  3. r.Host with scheme inferred from r.TLS or X-Forwarded-Proto. Used when
-//     Bindery is reached directly without a proxy.
+//  3. r.Host with scheme inferred from r.TLS. Used when Bindery is reached
+//     directly without a proxy.
+//
+// X-Forwarded-Proto is NEVER honoured outside the trusted-proxy branch — when
+// Bindery is reachable directly, an attacker can set the header from a
+// browser fetch and would otherwise be able to influence the redirect_uri
+// scheme (e.g. forcing an https → http downgrade for the OIDC callback).
+// r.TLS is the only safe signal in that case.
 //
 // Returns the empty string only when the request has no Host header at all
 // (which would already have been rejected upstream). Trailing slashes are
@@ -34,8 +40,13 @@ func ResolveOIDCRedirectBase(r *http.Request, configured string, trusted []*net.
 		}
 	}
 
+	// Direct-reach path: only trust r.TLS for scheme. XFP from an untrusted
+	// peer is attacker-controlled (see CVE-style scheme-downgrade scenario in
+	// the function doc). trustedProxyMiddleware also strips XFP from untrusted
+	// peers when wired in cmd/bindery, but this function is callable in
+	// isolation (and tested in isolation) so it must stay safe on its own.
 	scheme := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+	if r.TLS != nil {
 		scheme = "https"
 	}
 	if r.Host == "" {
