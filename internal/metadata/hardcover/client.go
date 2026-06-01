@@ -199,6 +199,7 @@ func (c *Client) GetAuthorWorksByName(ctx context.Context, authorName string) ([
 			audio_seconds
 			default_audio_edition_id
 			default_ebook_edition_id
+			language { language }
 			contributions {
 				author { id name slug }
 			}
@@ -581,6 +582,7 @@ type hcBook struct {
 	AudioSeconds           *int               `json:"audio_seconds"`
 	DefaultAudioEditionID  *int               `json:"default_audio_edition_id"`
 	DefaultEbookEditionID  *int               `json:"default_ebook_edition_id"`
+	Language               *hcLanguage        `json:"language"`
 	Contributions          []hcContribution   `json:"contributions"`
 	AuthorNames            []string           `json:"author_names"`
 	FeaturedSeries         *hcFeaturedSeries  `json:"featured_series"`
@@ -1123,6 +1125,7 @@ func (c *Client) toBook(b hcBook) models.Book {
 		Genres:           []string{},
 		ISBNs:            b.ISBNs,
 		SeriesRefs:       seriesRefs,
+		Language:         hardcoverLanguageName(b.Language),
 	}
 	if len(b.Genres) > 0 {
 		bk.Genres = b.Genres
