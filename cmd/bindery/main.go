@@ -584,6 +584,16 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Compress(5))
 	r.Use(api.SecurityHeaders)
+	// Cap JSON / form request bodies at 1 MiB by default so an authenticated
+	// client cannot pin the process by streaming a multi-gigabyte body into
+	// json.Decode. Routes that legitimately accept larger payloads opt in via
+	// api.WithMaxBody on the chi sub-route (see /migrate/* below).
+	// PreserveRawBody must run first so the per-route override can re-wrap
+	// the raw body with a higher cap; without it the override would chain a
+	// larger MaxBytesReader on top of the smaller default and the inner cap
+	// would silently win.
+	r.Use(api.PreserveRawBody)
+	r.Use(api.MaxRequestBody)
 	r.Use(metrics.HTTPMiddleware(routeTemplate))
 
 	// Prometheus exposition. Mounted at the router root (no auth, no
@@ -912,14 +922,20 @@ func main() {
 		// Migration imports (CSV of author names, or Readarr SQLite DB).
 		// The Readarr import is async — POST returns 202 immediately and the
 		// UI polls GET /migrate/readarr/status to track completion.
-		r.Post("/migrate/csv", migrateHandler.ImportCSV)
-		r.Post("/migrate/readarr", migrateHandler.ImportReadarr)
+		//
+		// Per-route body caps override the 1 MiB default for routes that
+		// accept multipart file uploads. The handler-side acceptUpload still
+		// applies the authoritative per-route cap via http.MaxBytesReader;
+		// these overrides just raise the outer router-level ceiling so the
+		// inner wrap is the one that decides.
+		r.With(api.WithMaxBody(6<<20)).Post("/migrate/csv", migrateHandler.ImportCSV)         // CSV under 5 MiB
+		r.With(api.WithMaxBody(2<<30)).Post("/migrate/readarr", migrateHandler.ImportReadarr) // readarr.db can be hundreds of MiB
 		r.Get("/migrate/readarr/status", migrateHandler.ImportReadarrStatus)
 
 		// Goodreads library CSV import — a two-step migration aid: POST the
 		// export to /goodreads/preview for a dry-run, then POST the returned
 		// token to /goodreads/commit to add the resolved books.
-		r.Post("/migrate/goodreads/preview", migrateHandler.ImportGoodreadsPreview)
+		r.With(api.WithMaxBody(24<<20)).Post("/migrate/goodreads/preview", migrateHandler.ImportGoodreadsPreview) // Goodreads export under 20 MiB
 		r.Post("/migrate/goodreads/commit", migrateHandler.ImportGoodreadsCommit)
 
 		// Image proxy — caches external cover images locally so the browser
