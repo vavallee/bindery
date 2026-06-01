@@ -3,6 +3,8 @@
 package api
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,18 +18,23 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// backupFilenameRe matches files produced by Create — "bindery_YYYYMMDD_HHMMSS.db".
+// backupFilenameRe matches files produced by Create, "bindery_YYYYMMDD_HHMMSS.db".
 // Restore/Delete reject anything else so path-traversal tricks like "..%2Fetc"
 // or unrelated files under the backup dir can't be referenced by untrusted input.
 var backupFilenameRe = regexp.MustCompile(`^bindery_\d{8}_\d{6}\.db$`)
 
 type BackupHandler struct {
+	db      *sql.DB
 	dbPath  string
 	dataDir string
 }
 
-func NewBackupHandler(dbPath, dataDir string) *BackupHandler {
-	return &BackupHandler{dbPath: dbPath, dataDir: dataDir}
+// NewBackupHandler wires the backup endpoints. The *sql.DB is required so
+// Create can take a WAL-consistent snapshot via VACUUM INTO instead of a
+// naive file copy of the main database file (which would miss any writes
+// still resident in the WAL).
+func NewBackupHandler(database *sql.DB, dbPath, dataDir string) *BackupHandler {
+	return &BackupHandler{db: database, dbPath: dbPath, dataDir: dataDir}
 }
 
 func (h *BackupHandler) backupDir() string {
@@ -74,7 +81,24 @@ func (h *BackupHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, files)
 }
 
-// Create copies the current SQLite DB to the backups directory.
+// Create writes a WAL-consistent snapshot of the live SQLite database into
+// the backups directory.
+//
+// The previous implementation copied h.dbPath byte-for-byte. SQLite runs in
+// WAL mode (see internal/db/db.go setPragmas), which means every write goes
+// into <db>-wal first and only migrates into the main file on checkpoint.
+// A file copy of the main file therefore silently omits any write that has
+// not yet been checkpointed: a user restoring such a backup loses recent
+// data with no warning. VACUUM INTO reads the live database through SQLite's
+// query layer (so it sees the WAL pages), and writes a fresh, self-contained
+// database file in a single read transaction. The output is a regular
+// SQLite file with no -wal/-shm sidecar, so the existing Restore path (a
+// file copy back to h.dbPath) keeps working.
+//
+// Cost: VACUUM INTO rebuilds the database into a new file, so it is O(db size)
+// rather than the O(file size) of the old copy. For a multi-gigabyte library
+// this is measured in seconds, not milliseconds. The endpoint is user-initiated
+// (no scheduled job) so the cost lands on the user who pressed the button.
 func (h *BackupHandler) Create(w http.ResponseWriter, r *http.Request) {
 	dir := h.backupDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -85,9 +109,34 @@ func (h *BackupHandler) Create(w http.ResponseWriter, r *http.Request) {
 	timestamp := time.Now().UTC().Format("20060102_150405")
 	destName := fmt.Sprintf("bindery_%s.db", timestamp)
 	destPath := filepath.Join(dir, destName)
+	// Stage the snapshot under a .tmp name and rename on success. SQLite's
+	// VACUUM INTO refuses to overwrite an existing file, and an aborted
+	// vacuum (process crash, disk full) on the final path would leave a
+	// partial file masquerading as a real backup. The rename is atomic on
+	// POSIX so observers either see the old absence or the complete file.
+	tmpPath := destPath + ".tmp"
+	// Defensive: a previous failed Create in the same UTC second would leave
+	// the .tmp lying around and re-fail this call with SQLITE_ERROR.
+	_ = os.Remove(tmpPath)
 
-	if err := copyFile(h.dbPath, destPath); err != nil {
+	if err := h.vacuumInto(r.Context(), tmpPath); err != nil {
+		_ = os.Remove(tmpPath)
 		slog.Error("backup failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "backup failed: " + err.Error()})
+		return
+	}
+	// Match the live DB file's 0600 mode. VACUUM INTO honours umask, which on
+	// many distros leaves the file world-readable, exposing bcrypt hashes,
+	// session secrets, and the API key.
+	if err := os.Chmod(tmpPath, 0o600); err != nil {
+		_ = os.Remove(tmpPath)
+		slog.Error("backup chmod failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "backup failed: " + err.Error()})
+		return
+	}
+	if err := os.Rename(tmpPath, destPath); err != nil {
+		_ = os.Remove(tmpPath)
+		slog.Error("backup rename failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "backup failed: " + err.Error()})
 		return
 	}
@@ -104,6 +153,21 @@ func (h *BackupHandler) Create(w http.ResponseWriter, r *http.Request) {
 		"size":    size,
 		"modTime": time.Now().UTC(),
 	})
+}
+
+// vacuumInto runs `VACUUM INTO 'dst'` against the live database. SQLite does
+// not accept bind parameters in VACUUM INTO, so the destination is embedded
+// in the SQL with single-quotes escaped. dst is a server-generated path
+// rooted at h.backupDir(), never user input, so injection is not possible.
+func (h *BackupHandler) vacuumInto(ctx context.Context, dst string) error {
+	if h.db == nil {
+		return fmt.Errorf("backup handler has no database handle")
+	}
+	stmt := `VACUUM INTO '` + strings.ReplaceAll(dst, `'`, `''`) + `'` //nolint:gosec // G202: dst is server-generated with single quotes escaped
+	if _, err := h.db.ExecContext(ctx, stmt); err != nil {
+		return fmt.Errorf("vacuum into %q: %w", dst, err)
+	}
+	return nil
 }
 
 // Restore copies a backup file back to the DB path. Dangerous — requires confirmation header.
