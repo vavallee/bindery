@@ -228,7 +228,7 @@ func TestDownloadClientHandler_LifetimeCtxFallsBackToBackground(t *testing.T) {
 	if h.bgCtx() != ctx {
 		t.Error("bgCtx with WithLifetimeCtx must return the supplied ctx")
 	}
-	h.WithLifetimeCtx(nil)
+	h.WithLifetimeCtx(nil) //nolint:staticcheck // SA1012 testing nil-tolerance contract
 	if h.bgCtx() != ctx {
 		t.Error("WithLifetimeCtx(nil) must not clobber a previously installed ctx")
 	}

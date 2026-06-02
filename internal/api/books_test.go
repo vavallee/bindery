@@ -1026,7 +1026,7 @@ func TestBookHandler_LifetimeCtxFallsBackToBackground(t *testing.T) {
 		t.Error("bgCtx with WithLifetimeCtx must return the supplied ctx")
 	}
 	// Nil ctx must be tolerated (matches BulkHandler/AuthorHandler).
-	h.WithLifetimeCtx(nil)
+	h.WithLifetimeCtx(nil) //nolint:staticcheck // SA1012 testing nil-tolerance contract
 	if h.bgCtx() != ctx {
 		t.Error("WithLifetimeCtx(nil) must not clobber a previously installed ctx")
 	}
