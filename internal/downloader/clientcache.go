@@ -145,9 +145,16 @@ func configFingerprint(c *models.DownloadClient) string {
 		h.Write([]byte{0})
 	}
 	// Numeric / bool fields appended last; their byte representation is
-	// stable across runs.
+	// stable across runs. Port is a TCP/UDP port in [0, 65535] so the
+	// conversion to uint64 cannot overflow in practice; the explicit guard
+	// is here to make gosec G115 happy and to fail loudly if a caller ever
+	// stuffs an out-of-range int into the field.
 	var buf [9]byte
-	binary.LittleEndian.PutUint64(buf[:8], uint64(c.Port))
+	port := c.Port
+	if port < 0 {
+		port = 0
+	}
+	binary.LittleEndian.PutUint64(buf[:8], uint64(port)) // #nosec G115 -- bounds-checked above
 	if c.UseSSL {
 		buf[8] = 1
 	}
