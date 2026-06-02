@@ -49,10 +49,32 @@ type DownloadClientHandler struct {
 	health               *downloader.HealthStore
 	downloadDir          string
 	audiobookDownloadDir string
+
+	// lifetimeCtx is the process-lifecycle context, cancelled on server
+	// shutdown so the health-probe goroutine fired by Create/Update does
+	// not outlive the process. Falls back to context.Background(); see #846.
+	lifetimeCtx context.Context
 }
 
 func NewDownloadClientHandler(clients *db.DownloadClientRepo) *DownloadClientHandler {
 	return &DownloadClientHandler{clients: clients}
+}
+
+// WithLifetimeCtx attaches the process-lifecycle context so the async
+// health-probe goroutines respect shutdown.
+func (h *DownloadClientHandler) WithLifetimeCtx(ctx context.Context) *DownloadClientHandler {
+	if ctx != nil {
+		h.lifetimeCtx = ctx
+	}
+	return h
+}
+
+// bgCtx returns the lifetime context if set, otherwise context.Background().
+func (h *DownloadClientHandler) bgCtx() context.Context {
+	if h.lifetimeCtx != nil {
+		return h.lifetimeCtx
+	}
+	return context.Background()
 }
 
 func (h *DownloadClientHandler) WithHealth(store *downloader.HealthStore) *DownloadClientHandler {
@@ -221,7 +243,10 @@ func (h *DownloadClientHandler) refreshClientHealthAsync(client models.DownloadC
 	}
 	h.health.Set(client.ID, downloader.CheckingHealth())
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		// Anchor on the lifetime ctx so shutdown cancels in-flight probes
+		// rather than letting them run for the full 15s and then write into
+		// the (still live but no-longer-served) health store.
+		ctx, cancel := context.WithTimeout(h.bgCtx(), 15*time.Second)
 		defer cancel()
 		h.health.Set(client.ID, downloader.CheckDownloadClientHealth(ctx, &client, h.downloadDir, h.audiobookDownloadDir))
 	}()

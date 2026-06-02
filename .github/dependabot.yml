@@ -62,3 +62,13 @@ updates:
     commit-message:
       prefix: "chore(ci)"
       include: scope
+
+  - package-ecosystem: docker
+    directory: /cmd/discord-stats
+    schedule:
+      interval: daily
+
+  - package-ecosystem: docker
+    directory: /cmd/telemetry-server
+    schedule:
+      interval: daily

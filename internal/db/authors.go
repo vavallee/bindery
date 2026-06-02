@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -207,7 +208,7 @@ func (r *AuthorRepo) CreateForUser(ctx context.Context, a *models.Author, ownerU
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ForeignID, a.Name, a.SortName, a.Description, a.ImageURL, a.Disambiguation,
 		a.RatingsCount, a.AverageRating, a.Monitored, a.QualityProfileID, a.MetadataProfileID, a.RootFolderID,
-		a.AudiobookRootFolderID, a.MonitorMode, a.MonitorLatestCount, a.MetadataProvider, ownerArg, now, now)
+		a.AudiobookRootFolderID, a.MonitorMode, a.MonitorLatestCount, a.MetadataProvider, ownerArg, timeValueArg(now), timeValueArg(now))
 	if err != nil {
 		return fmt.Errorf("create author: %w", err)
 	}
@@ -293,7 +294,7 @@ func (r *AuthorRepo) UpgradeSyntheticDNB(ctx context.Context, currentForeignID s
 		target.ImageURL, target.ImageURL, // image_url
 		target.Disambiguation, target.Disambiguation, // disambiguation
 		target.MetadataProvider, // metadata_provider = COALESCE(NULLIF(?,''), metadata_provider)
-		now,                     // updated_at
+		timeValueArg(now),       // updated_at
 		currentForeignID)        // WHERE foreign_id = ?
 	if err != nil {
 		return fmt.Errorf("upgrade synthetic dnb author %q -> %q: %w", currentForeignID, target.ForeignID, err)
@@ -313,7 +314,7 @@ func (r *AuthorRepo) Update(ctx context.Context, a *models.Author) error {
 		a.ForeignID, a.Name, a.SortName, a.Description, a.ImageURL, a.Disambiguation,
 		a.RatingsCount, a.AverageRating, a.Monitored, a.QualityProfileID,
 		a.MetadataProfileID, a.RootFolderID, a.AudiobookRootFolderID, a.MonitorMode,
-		a.MonitorLatestCount, a.MetadataProvider, a.LastMetadataRefreshAt, now, a.ID)
+		a.MonitorLatestCount, a.MetadataProvider, timeArg(a.LastMetadataRefreshAt), timeValueArg(now), a.ID)
 	if err != nil {
 		return fmt.Errorf("update author %d: %w", a.ID, err)
 	}
@@ -381,7 +382,7 @@ func (r *AuthorRepo) SetMonitoredSeriesIDs(ctx context.Context, authorID int64, 
 				continue
 			}
 			seen[id] = struct{}{}
-			if _, err := stmt.ExecContext(ctx, authorID, id, now); err != nil {
+			if _, err := stmt.ExecContext(ctx, authorID, id, timeValueArg(now)); err != nil {
 				return fmt.Errorf("insert monitored series (%d, %d): %w", authorID, id, err)
 			}
 		}
@@ -393,30 +394,44 @@ func (r *AuthorRepo) SetMonitoredSeriesIDs(ctx context.Context, authorID int64, 
 	return nil
 }
 
+// rowScanner is the common subset of *sql.Rows and *sql.Row used by the
+// author scan helpers so a single implementation handles both shapes.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
 func scanAuthor(rows *sql.Rows) (models.Author, error) {
-	var a models.Author
-	var monitored int
-	err := rows.Scan(&a.ID, &a.ForeignID, &a.Name, &a.SortName, &a.Description, &a.ImageURL,
-		&a.Disambiguation, &a.RatingsCount, &a.AverageRating, &monitored,
-		&a.QualityProfileID, &a.MetadataProfileID, &a.RootFolderID, &a.AudiobookRootFolderID,
-		&a.MonitorMode, &a.MonitorLatestCount, &a.MetadataProvider,
-		&a.LastMetadataRefreshAt, &a.CreatedAt, &a.UpdatedAt, &a.OwnerUserID)
-	a.Monitored = monitored == 1
-	normalizeAuthorMonitorDefaults(&a)
-	return a, err
+	return scanAuthorFrom(rows)
 }
 
 func scanAuthorRow(row *sql.Row) (models.Author, error) {
+	return scanAuthorFrom(row)
+}
+
+func scanAuthorFrom(s rowScanner) (models.Author, error) {
 	var a models.Author
 	var monitored int
-	err := row.Scan(&a.ID, &a.ForeignID, &a.Name, &a.SortName, &a.Description, &a.ImageURL,
+	// Time columns scanned as strings + parseFlexibleTime so legacy rows
+	// written by Go's default time.String() shape (#914) still load.
+	var lastMetadataRefreshAtStr, createdAtStr, updatedAtStr sql.NullString
+	err := s.Scan(&a.ID, &a.ForeignID, &a.Name, &a.SortName, &a.Description, &a.ImageURL,
 		&a.Disambiguation, &a.RatingsCount, &a.AverageRating, &monitored,
 		&a.QualityProfileID, &a.MetadataProfileID, &a.RootFolderID, &a.AudiobookRootFolderID,
 		&a.MonitorMode, &a.MonitorLatestCount, &a.MetadataProvider,
-		&a.LastMetadataRefreshAt, &a.CreatedAt, &a.UpdatedAt, &a.OwnerUserID)
+		&lastMetadataRefreshAtStr, &createdAtStr, &updatedAtStr, &a.OwnerUserID)
+	if err != nil {
+		return a, err
+	}
+	if lm, perr := parseFlexibleTime(lastMetadataRefreshAtStr); perr != nil {
+		slog.Warn("unparseable author.last_metadata_refresh_at, leaving nil", "author_id", a.ID, "value", lastMetadataRefreshAtStr.String, "error", perr)
+	} else {
+		a.LastMetadataRefreshAt = lm
+	}
+	a.CreatedAt = parseFlexibleTimeValue(createdAtStr, "authors.created_at")
+	a.UpdatedAt = parseFlexibleTimeValue(updatedAtStr, "authors.updated_at")
 	a.Monitored = monitored == 1
 	normalizeAuthorMonitorDefaults(&a)
-	return a, err
+	return a, nil
 }
 
 func normalizeAuthorMonitorDefaults(a *models.Author) {

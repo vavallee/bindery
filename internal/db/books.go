@@ -6,10 +6,93 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/vavallee/bindery/internal/models"
 )
+
+// timeArg formats a *time.Time argument for SQLite as RFC3339Nano (in UTC).
+// The modernc.org/sqlite driver round-trips that shape cleanly back into
+// time.Time on Scan. Passing the raw *time.Time would make database/sql
+// fall through to time.Time.String(), which produces
+// `2006-01-02 15:04:05 +0000 UTC`; that shape fails to Scan back, which is
+// the root cause of #914 (book list 500s after Calibre imports).
+//
+// Nil and zero values are returned as nil so the column is stored as NULL.
+func timeArg(t *time.Time) any {
+	if t == nil || t.IsZero() {
+		return nil
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+// timeValueArg is the non-pointer sibling of timeArg, used for columns that
+// are always populated (created_at, updated_at).
+func timeValueArg(t time.Time) any {
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+// timeParseLayouts is the ordered set of layouts parseFlexibleTime walks
+// when decoding a time string from SQLite. The list covers every shape
+// Bindery has historically written into time columns plus the formats
+// Calibre's own metadata.db has shipped over the years:
+//
+//   - RFC3339Nano / RFC3339: the canonical shape (what timeArg now writes).
+//   - Go's default time.String() output, with and without sub-second
+//     precision: written by older Bindery versions that handed a raw
+//     time.Time to ExecContext, which is the #914 corruption.
+//   - Calibre's pubdate shape with a `+00:00` offset and no `T` separator.
+//   - SQLite's CURRENT_TIMESTAMP shape (no zone).
+var timeParseLayouts = []string{
+	time.RFC3339Nano,
+	time.RFC3339,
+	"2006-01-02 15:04:05.999999999 -0700 MST",
+	"2006-01-02 15:04:05 -0700 MST",
+	"2006-01-02 15:04:05.999999999-07:00",
+	"2006-01-02 15:04:05-07:00",
+	"2006-01-02 15:04:05+00:00",
+	"2006-01-02 15:04:05",
+	"2006-01-02",
+}
+
+// parseFlexibleTime parses a time string scanned out of SQLite, tolerating
+// every layout Bindery or Calibre has ever written into a time column.
+// Returns (nil, nil) for the empty / NULL case and a UTC-normalised
+// *time.Time on a successful parse.
+//
+// The fallback shields the Books page (#914) from rows whose release_date
+// or last_metadata_refresh_at were written by an older Bindery build that
+// stored `2006-01-02 15:04:05 +0000 UTC` (Go's default time.String shape),
+// which the modernc.org/sqlite driver refuses to Scan back into time.Time.
+func parseFlexibleTime(s sql.NullString) (*time.Time, error) {
+	if !s.Valid || s.String == "" {
+		return nil, nil
+	}
+	for _, layout := range timeParseLayouts {
+		if t, err := time.Parse(layout, s.String); err == nil {
+			u := t.UTC()
+			return &u, nil
+		}
+	}
+	return nil, fmt.Errorf("cannot parse time %q", s.String)
+}
+
+// parseFlexibleTimeValue is the non-pointer flavour, used for columns
+// that are always populated (created_at, updated_at). A failed parse or
+// a NULL row produces the zero time.Time rather than an error so a single
+// corrupt row does not kill the entire list query.
+func parseFlexibleTimeValue(s sql.NullString, columnHint string) time.Time {
+	t, err := parseFlexibleTime(s)
+	if err != nil {
+		slog.Warn("unparseable time value, substituting zero", "column", columnHint, "value", s.String, "error", err)
+		return time.Time{}
+	}
+	if t == nil {
+		return time.Time{}
+	}
+	return *t
+}
 
 type BookRepo struct {
 	db    *sql.DB
@@ -207,10 +290,10 @@ func (r *BookRepo) Create(ctx context.Context, b *models.Book) error {
 		                   metadata_provider, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		b.ForeignID, b.AuthorID, b.Title, b.SortTitle, b.OriginalTitle, b.Description,
-		b.ImageURL, b.ReleaseDate, string(genresJSON), b.AverageRating, b.RatingsCount,
+		b.ImageURL, timeArg(b.ReleaseDate), string(genresJSON), b.AverageRating, b.RatingsCount,
 		b.Monitored, b.Status, b.AnyEditionOK, b.SelectedEditionID,
 		b.Language, mediaType, b.Narrator, b.DurationSeconds, b.ASIN,
-		b.MetadataProvider, now, now)
+		b.MetadataProvider, timeValueArg(now), timeValueArg(now))
 	if err != nil {
 		return fmt.Errorf("create book: %w", err)
 	}
@@ -246,10 +329,10 @@ func (r *BookRepo) Update(ctx context.Context, b *models.Book) error {
 		                 ebook_file_path=?, audiobook_file_path=?
 		WHERE id=?`,
 		b.ForeignID, b.AuthorID, b.Title, b.SortTitle, b.OriginalTitle, b.Description, b.ImageURL,
-		b.ReleaseDate, string(genresJSON), b.AverageRating, b.RatingsCount,
+		timeArg(b.ReleaseDate), string(genresJSON), b.AverageRating, b.RatingsCount,
 		b.Monitored, b.Status, b.AnyEditionOK, b.SelectedEditionID,
 		b.FilePath, b.Language, mediaType, b.Narrator, b.DurationSeconds, b.ASIN,
-		b.MetadataProvider, b.LastMetadataRefreshAt, now,
+		b.MetadataProvider, timeArg(b.LastMetadataRefreshAt), timeValueArg(now),
 		b.EbookFilePath, b.AudiobookFilePath, b.ID)
 	if err != nil {
 		return fmt.Errorf("update book %d: %w", b.ID, err)
@@ -264,7 +347,7 @@ func (r *BookRepo) MarkWantedMonitored(ctx context.Context, id int64) error {
 	now := time.Now().UTC()
 	_, err := r.db.ExecContext(ctx,
 		`UPDATE books SET status = ?, monitored = 1, updated_at = ? WHERE id = ?`,
-		models.BookStatusWanted, now, id)
+		models.BookStatusWanted, timeValueArg(now), id)
 	if err != nil {
 		return fmt.Errorf("mark book %d wanted: %w", id, err)
 	}
@@ -439,7 +522,7 @@ func (r *BookRepo) SetExcluded(ctx context.Context, id int64, excluded bool) err
 	if excluded {
 		v = 1
 	}
-	_, err := r.db.ExecContext(ctx, "UPDATE books SET excluded=?, updated_at=? WHERE id=?", v, time.Now().UTC(), id)
+	_, err := r.db.ExecContext(ctx, "UPDATE books SET excluded=?, updated_at=? WHERE id=?", v, timeValueArg(time.Now().UTC()), id)
 	return err
 }
 
@@ -467,19 +550,24 @@ func (r *BookRepo) query(ctx context.Context, q string, args []any) ([]models.Bo
 		var b models.Book
 		var monitored, anyEditionOK, excluded int
 		var genresStr string
+		// Time columns are scanned as strings and parsed via
+		// parseFlexibleTime so legacy rows written by Go's default
+		// time.String() shape (the #914 corruption) still load.
+		var releaseDateStr, lastMetadataRefreshAtStr sql.NullString
+		var createdAtStr, updatedAtStr sql.NullString
 		// Author columns from the LEFT JOIN. Nullable since the join may not
 		// match when author_id points at a deleted author row.
 		var authorID sql.NullInt64
 		var authorForeignID, authorName, authorSortName sql.NullString
 		err := rows.Scan(
 			&b.ID, &b.ForeignID, &b.AuthorID, &b.Title, &b.SortTitle,
-			&b.OriginalTitle, &b.Description, &b.ImageURL, &b.ReleaseDate,
+			&b.OriginalTitle, &b.Description, &b.ImageURL, &releaseDateStr,
 			&genresStr, &b.AverageRating, &b.RatingsCount,
 			&monitored, &b.Status, &anyEditionOK, &b.SelectedEditionID,
 			&b.FilePath, &b.Language, &b.MediaType,
 			&b.Narrator, &b.DurationSeconds, &b.ASIN,
-			&b.CalibreID, &b.MetadataProvider, &b.LastMetadataRefreshAt,
-			&b.CreatedAt, &b.UpdatedAt,
+			&b.CalibreID, &b.MetadataProvider, &lastMetadataRefreshAtStr,
+			&createdAtStr, &updatedAtStr,
 			&b.EbookFilePath, &b.AudiobookFilePath,
 			&excluded,
 			&authorID, &authorForeignID, &authorName, &authorSortName,
@@ -488,6 +576,22 @@ func (r *BookRepo) query(ctx context.Context, q string, args []any) ([]models.Bo
 		if err != nil {
 			return nil, fmt.Errorf("scan book: %w", err)
 		}
+		// parseFlexibleTime tolerates the Calibre and legacy-Go date
+		// shapes (#914). On a truly garbage value we log and substitute
+		// nil / zero so a single corrupt row does not blank out the
+		// entire Books page.
+		if rd, perr := parseFlexibleTime(releaseDateStr); perr != nil {
+			slog.Warn("unparseable book.release_date, leaving nil", "book_id", b.ID, "value", releaseDateStr.String, "error", perr)
+		} else {
+			b.ReleaseDate = rd
+		}
+		if lm, perr := parseFlexibleTime(lastMetadataRefreshAtStr); perr != nil {
+			slog.Warn("unparseable book.last_metadata_refresh_at, leaving nil", "book_id", b.ID, "value", lastMetadataRefreshAtStr.String, "error", perr)
+		} else {
+			b.LastMetadataRefreshAt = lm
+		}
+		b.CreatedAt = parseFlexibleTimeValue(createdAtStr, "books.created_at")
+		b.UpdatedAt = parseFlexibleTimeValue(updatedAtStr, "books.updated_at")
 		b.Monitored = monitored == 1
 		b.AnyEditionOK = anyEditionOK == 1
 		b.Excluded = excluded == 1

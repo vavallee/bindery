@@ -227,6 +227,52 @@ func TestMigrate047ListEndpointIndexes(t *testing.T) {
 	}
 }
 
+// TestMigrate049DropTags verifies migration 049 removes the dormant tag
+// surface: the tags and author_tags tables are gone, and the unused
+// `tags` columns on indexers and download_clients are dropped.
+//
+// The audit (D4a) confirmed zero application call sites for any of these,
+// so the drop is safe. This test pins the schema shape so a regression
+// that resurrects the tables fails loudly.
+func TestMigrate049DropTags(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatalf("open memory db: %v", err)
+	}
+	defer database.Close()
+
+	// Both tables must be absent post-migration.
+	for _, table := range []string{"tags", "author_tags"} {
+		var name string
+		err := database.QueryRow(
+			`SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
+			table,
+		).Scan(&name)
+		if err == nil {
+			t.Errorf("table %q still exists after migration 049", table)
+		}
+	}
+
+	// The dead `tags` columns on indexers / download_clients must be gone.
+	for _, table := range []string{"indexers", "download_clients"} {
+		var col string
+		err := database.QueryRow(
+			`SELECT name FROM pragma_table_info(?) WHERE name='tags'`,
+			table,
+		).Scan(&col)
+		if err == nil {
+			t.Errorf("%s.tags column still exists after migration 049", table)
+		}
+	}
+
+	// Re-running migrate must be a no-op (the schema_migrations marker
+	// guards the re-run; the migration itself is not idempotent because
+	// ALTER TABLE DROP COLUMN errors when the column is already absent).
+	if err := migrate(database); err != nil {
+		t.Fatalf("rerun migrations should be idempotent: %v", err)
+	}
+}
+
 // TestMigrate042AuthorAudiobookRootFolder verifies migration 042 adds the
 // audiobook_root_folder_id column to the authors table (#579) and that the
 // column round-trips a value through CreateForUser / GetByID.
@@ -1394,6 +1440,115 @@ func TestBlocklistRepoCRUD(t *testing.T) {
 	list, _ = repo.List(ctx)
 	if len(list) != 0 {
 		t.Errorf("expected empty after DeleteByBookID, got %d", len(list))
+	}
+}
+
+// seedUser inserts a row in users and returns its id, so D4b audit tests
+// can pass the FK constraint on created_by_user_id.
+func seedUser(t *testing.T, ctx context.Context, database *sql.DB, username string) int64 {
+	t.Helper()
+	u, err := NewUserRepo(database).Create(ctx, username, "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u.ID
+}
+
+// TestBlocklist_CreateByUser_PopulatesAudit asserts the D4b audit column is
+// set to the caller's user id when a row is written via CreateByUser. This
+// is the user-driven write path (e.g. history -> blocklist promote).
+func TestBlocklist_CreateByUser_PopulatesAudit(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	uid := seedUser(t, ctx, database, "alice")
+	repo := NewBlocklistRepo(database)
+
+	entry := &models.BlocklistEntry{GUID: "g-user", Title: "by-user"}
+	if err := repo.CreateByUser(ctx, entry, uid); err != nil {
+		t.Fatalf("CreateByUser: %v", err)
+	}
+	if entry.CreatedByUserID == nil || *entry.CreatedByUserID != uid {
+		t.Errorf("in-memory entry: expected CreatedByUserID=%d, got %v", uid, entry.CreatedByUserID)
+	}
+	// Round-trip: List must hydrate the audit column too.
+	list, err := repo.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(list))
+	}
+	if list[0].CreatedByUserID == nil || *list[0].CreatedByUserID != uid {
+		t.Errorf("listed entry: expected CreatedByUserID=%d, got %v", uid, list[0].CreatedByUserID)
+	}
+}
+
+// TestBlocklist_Create_LeavesAuditNull asserts the system-write path (used
+// by scheduler stall-detection and the readarr import migration) does not
+// fabricate an owner. NULL is the honest "unknown origin" answer.
+func TestBlocklist_Create_LeavesAuditNull(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewBlocklistRepo(database)
+
+	entry := &models.BlocklistEntry{GUID: "g-system", Title: "system"}
+	if err := repo.Create(ctx, entry); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if entry.CreatedByUserID != nil {
+		t.Errorf("in-memory entry: expected CreatedByUserID=nil, got %v", *entry.CreatedByUserID)
+	}
+	list, err := repo.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(list))
+	}
+	if list[0].CreatedByUserID != nil {
+		t.Errorf("listed entry: expected CreatedByUserID=nil, got %v", *list[0].CreatedByUserID)
+	}
+}
+
+// TestBlocklist_IsBlocked_RemainsGlobal is the regression guard against
+// anyone "fixing" the audit column into per-user scoping. The decision spec
+// (internal/decision/specs.go) matches on GUID alone because a broken
+// release is broken for every user. A row written by user 1 must block
+// user 2's grab too. If this test ever needs to be relaxed, the deep audit
+// rationale in PR D4b should be revisited first.
+func TestBlocklist_IsBlocked_RemainsGlobal(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	uid := seedUser(t, ctx, database, "alice")
+	repo := NewBlocklistRepo(database)
+
+	entry := &models.BlocklistEntry{GUID: "g-shared", Title: "shared"}
+	if err := repo.CreateByUser(ctx, entry, uid); err != nil {
+		t.Fatalf("CreateByUser uid=%d: %v", uid, err)
+	}
+	// IsBlocked accepts only the GUID; it has no user-id parameter. Calling
+	// it after a write by user 1 must return true regardless of who's
+	// asking. The signature itself is the contract; this assertion guards
+	// the underlying COUNT(*) query against being narrowed by a future
+	// edit.
+	blocked, err := repo.IsBlocked(ctx, "g-shared")
+	if err != nil {
+		t.Fatalf("IsBlocked: %v", err)
+	}
+	if !blocked {
+		t.Error("expected IsBlocked(g-shared) to be true regardless of caller; got false")
 	}
 }
 

@@ -44,6 +44,28 @@ type SeriesHandler struct {
 	editions                    *db.EditionRepo
 
 	editionFetcher bookhydrate.EditionFetcher
+
+	// lifetimeCtx is the process-lifecycle context, cancelled on server
+	// shutdown so the Fill/series-search fan-out goroutine does not leak
+	// past Server.Shutdown. Falls back to context.Background(); see #846.
+	lifetimeCtx context.Context
+}
+
+// WithLifetimeCtx attaches the process-lifecycle context so fanOutSeriesSearches
+// honours shutdown rather than running until upstream indexer timeouts fire.
+func (h *SeriesHandler) WithLifetimeCtx(ctx context.Context) *SeriesHandler {
+	if ctx != nil {
+		h.lifetimeCtx = ctx
+	}
+	return h
+}
+
+// bgCtx returns the lifetime context if set, otherwise context.Background().
+func (h *SeriesHandler) bgCtx() context.Context {
+	if h.lifetimeCtx != nil {
+		return h.lifetimeCtx
+	}
+	return context.Background()
 }
 
 const (
@@ -459,11 +481,16 @@ func (h *SeriesHandler) Fill(w http.ResponseWriter, r *http.Request) {
 // ctx (via context.WithoutCancel) so the HTTP response is not held while
 // the searches run, but credentials and per-user metadata on ctx still
 // flow through to the indexer layer.
-func (h *SeriesHandler) fanOutSeriesSearches(ctx context.Context, books []models.Book) {
+func (h *SeriesHandler) fanOutSeriesSearches(_ context.Context, books []models.Book) {
 	if h.searcher == nil || len(books) == 0 {
 		return
 	}
-	bgCtx := context.WithoutCancel(ctx)
+	// Use the process-lifecycle context so the fan-out is cancelled cleanly
+	// on Server.Shutdown. The original request ctx is intentionally dropped
+	// here (it would cancel as soon as the HTTP response is written) and the
+	// per-call indexer credentials are already baked into searcher state, so
+	// there is nothing on the request ctx that the search needs.
+	bgCtx := h.bgCtx()
 	go concurrency.RunBounded(bgCtx, books, seriesFillSearchConcurrency, func(ctx context.Context, b models.Book) {
 		h.searcher.SearchAndGrabBook(ctx, b)
 	})

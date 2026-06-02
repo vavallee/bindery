@@ -56,7 +56,7 @@ func TestTryImportTransmission_Delegates(t *testing.T) {
 		Status:    models.StateCompleted,
 	}
 	// Transmission wrapper passes nil cleanupFunc; empty dir → fails fast.
-	s.tryImportTransmission(ctx, dl, t.TempDir())
+	s.tryImportTransmission(ctx, dl, t.TempDir(), nil)
 }
 
 // TestTryImportNZBGet_CleanupCalledOnSuccess verifies that the cleanup closure

@@ -44,11 +44,18 @@ type delugeServer struct {
 	t        *testing.T
 	password string
 	torrents map[string]deluge.TorrentStatus // keyed by lower-cased hash
+	// files maps torrent hash to the per-file list returned by
+	// core.get_torrent_status with keys=["files"]. Tests that don't care
+	// about Files() can leave this nil.
+	files map[string][]map[string]any
 
 	// optional overrides
 	loginErr     bool
 	addMagnetErr bool
 	removeFail   bool
+	// statusErr forces core.get_torrent_status to return an RPC error,
+	// exercising the Files() error path.
+	statusErr bool
 }
 
 func (s *delugeServer) handler() http.HandlerFunc {
@@ -126,6 +133,22 @@ func (s *delugeServer) handler() http.HandlerFunc {
 		case "core.get_torrents_status":
 			write(s.torrents)
 
+		case "core.get_torrent_status":
+			if s.statusErr {
+				writeErr("status error")
+				return
+			}
+			var hash string
+			json.Unmarshal(req.Params[0], &hash)
+			hash = strings.ToLower(hash)
+			files, ok := s.files[hash]
+			if !ok {
+				// Unknown hash: Deluge surfaces this as a KeyError RPC.
+				writeErr("torrent not found")
+				return
+			}
+			write(map[string]any{"files": files})
+
 		case "core.remove_torrent":
 			var hash string
 			json.Unmarshal(req.Params[0], &hash)
@@ -148,6 +171,7 @@ func newTestServer(t *testing.T, password string) (*httptest.Server, *delugeServ
 		t:        t,
 		password: password,
 		torrents: make(map[string]deluge.TorrentStatus),
+		files:    make(map[string][]map[string]any),
 	}
 	srv := httptest.NewServer(ds.handler())
 	t.Cleanup(srv.Close)
@@ -429,5 +453,80 @@ func TestTest_ServerError_NoHint(t *testing.T) {
 		if strings.Contains(msg, hint) {
 			t.Errorf("server-side error must not produce hint %q; got: %q", hint, msg)
 		}
+	}
+}
+
+// TestClient_Files_ReturnsRelativeNames verifies that Files() decodes the
+// core.get_torrent_status "files" entries into the importer's []File shape
+// with paths left relative to the torrent's save_path. Issue #903 regression
+// guard.
+func TestClient_Files_ReturnsRelativeNames(t *testing.T) {
+	srv, ds := newTestServer(t, "pw")
+	c := clientFromServer(srv, "pw")
+
+	const hash = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+	ds.files[hash] = []map[string]any{
+		{"index": 0, "offset": 0, "path": "MyBook/disc01.m4b", "size": 1024},
+		{"index": 1, "offset": 1024, "path": "MyBook/disc02.m4b", "size": 2048},
+		{"index": 2, "offset": 3072, "path": "MyBook/cover.jpg", "size": 128},
+	}
+
+	files, err := c.Files(context.Background(), hash)
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	if len(files) != 3 {
+		t.Fatalf("want 3 files, got %d", len(files))
+	}
+	if files[0].Name != "MyBook/disc01.m4b" || files[0].Size != 1024 {
+		t.Errorf("file 0 mismatch: %+v", files[0])
+	}
+	if files[2].Name != "MyBook/cover.jpg" {
+		t.Errorf("file 2 mismatch: %+v", files[2])
+	}
+}
+
+// TestClient_Files_SingleFileTorrent — the issue #903 shape: a single
+// loose file at the save root. The path entry is just the basename.
+func TestClient_Files_SingleFileTorrent(t *testing.T) {
+	srv, ds := newTestServer(t, "pw")
+	c := clientFromServer(srv, "pw")
+
+	const hash = "11111111111111111111111111111111aaaabbbb"
+	ds.files[hash] = []map[string]any{
+		{"index": 0, "offset": 0, "path": "standalone-book.m4b", "size": 50000},
+	}
+
+	files, err := c.Files(context.Background(), hash)
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	if len(files) != 1 || files[0].Name != "standalone-book.m4b" {
+		t.Errorf("expected single basename-only file, got %+v", files)
+	}
+}
+
+// TestClient_Files_TorrentMissing — Deluge surfaces an unknown hash as a
+// KeyError RPC fault. Files() returns an error so the importer can fall
+// back to the directory walk with a WARN log.
+func TestClient_Files_TorrentMissing(t *testing.T) {
+	srv, _ := newTestServer(t, "pw")
+	c := clientFromServer(srv, "pw")
+
+	if _, err := c.Files(context.Background(), "nonexistent-hash"); err == nil {
+		t.Fatal("expected error for unknown torrent hash")
+	}
+}
+
+// TestClient_Files_StatusErrorReturnsError — when core.get_torrent_status
+// itself errors (e.g. transient daemon issue) Files() must surface the
+// error rather than silently returning empty.
+func TestClient_Files_StatusErrorReturnsError(t *testing.T) {
+	srv, ds := newTestServer(t, "pw")
+	ds.statusErr = true
+	c := clientFromServer(srv, "pw")
+
+	if _, err := c.Files(context.Background(), "any-hash"); err == nil {
+		t.Fatal("expected error when status RPC fails")
 	}
 }

@@ -122,7 +122,30 @@ func (n *Notifier) send(ctx context.Context, notif *models.Notification, payload
 		}
 	}
 
-	body, err := json.Marshal(payload)
+	// Apprise's REST API (apprise-api) requires a "body" field and rejects any
+	// payload without one ("Payload lacks minimum requirements"). Enrich a copy
+	// of the payload with Apprise-friendly "body"/"title" fields so those
+	// endpoints work out of the box. This is purely additive: the original keys
+	// (title, message, and event-specific fields) are preserved, so existing
+	// ntfy / Home Assistant / Discord-proxy consumers are unaffected. We copy
+	// rather than mutate because Send reuses one payload map across every
+	// configured notification.
+	out := make(map[string]interface{}, len(payload)+2)
+	for k, v := range payload {
+		out[k] = v
+	}
+	if _, ok := out["body"]; !ok {
+		if msg, _ := out["message"].(string); msg != "" {
+			out["body"] = msg
+		} else if title, _ := out["title"].(string); title != "" {
+			out["body"] = title
+		}
+	}
+	if title, _ := out["title"].(string); title == "" {
+		out["title"] = "Bindery"
+	}
+
+	body, err := json.Marshal(out)
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}

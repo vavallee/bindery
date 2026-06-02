@@ -437,11 +437,6 @@ export const api = {
   unlinkSeriesHardcover: (id: number) => request<{ success: boolean }>(`/series/${id}/hardcover-link`, { method: 'DELETE' }),
   getSeriesHardcoverDiff: (id: number) => request<SeriesHardcoverDiff>(`/series/${id}/hardcover-diff`),
 
-  // Tags
-  listTags: () => request<Tag[]>('/tag'),
-  addTag: (name: string) => request<Tag>('/tag', { method: 'POST', body: JSON.stringify({ name }) }),
-  deleteTag: (id: number) => request<void>(`/tag/${id}`, { method: 'DELETE' }),
-
   // Settings
   listSettings: () => request<Array<{ key: string; value: string }>>('/setting'),
   getSetting: (key: string) => request<{ key: string; value: string }>(`/setting/${key}`),
@@ -1245,6 +1240,12 @@ export interface BlocklistEntry {
   indexerId?: number
   reason: string
   createdAt: string
+  // D4b audit. Surfaces who promoted this row into the blocklist. NULL
+  // for system-written rows (scheduler stall-detection, readarr migration)
+  // and for legacy rows that predate migration 049. Audit only; the list
+  // semantics remain global. The admin "blocklisted by X" UI consuming
+  // this field is a future task.
+  createdByUserId?: number | null
 }
 
 export interface NotificationConfig {
@@ -1362,11 +1363,6 @@ export interface Series {
     book?: Book
   }>
   hardcoverLink?: SeriesHardcoverLink
-}
-
-export interface Tag {
-  id: number
-  name: string
 }
 
 export interface MetadataProfile {

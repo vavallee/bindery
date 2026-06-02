@@ -30,10 +30,38 @@ type BulkHandler struct {
 	books     *db.BookRepo
 	blocklist *db.BlocklistRepo
 	searcher  BookSearcher
+
+	// lifetimeCtx is the process-lifecycle context; cancelled on server
+	// shutdown so a bulk-action POST that fans out indexer searches does
+	// not leak goroutines (or worse, grab a torrent mid-shutdown) past
+	// Server.Shutdown. Falls back to context.Background() when not set;
+	// see #846 and the mirroring pattern in recommendations.go.
+	lifetimeCtx context.Context
 }
 
 func NewBulkHandler(authors *db.AuthorRepo, books *db.BookRepo, blocklist *db.BlocklistRepo, searcher BookSearcher) *BulkHandler {
 	return &BulkHandler{authors: authors, books: books, blocklist: blocklist, searcher: searcher}
+}
+
+// WithLifetimeCtx attaches the process-lifecycle context so the bulk-search
+// fan-out goroutine is cancelled on shutdown rather than running against
+// context.Background(). A nil ctx is tolerated and ignored (the handler then
+// falls back to context.Background() at fan-out time). See #846.
+func (h *BulkHandler) WithLifetimeCtx(ctx context.Context) *BulkHandler {
+	if ctx != nil {
+		h.lifetimeCtx = ctx
+	}
+	return h
+}
+
+// bgCtx returns the lifetime context if set, otherwise context.Background().
+// Centralised so every spawn site uses the same fallback rule and tests that
+// construct a handler without WithLifetimeCtx behave as they did before.
+func (h *BulkHandler) bgCtx() context.Context {
+	if h.lifetimeCtx != nil {
+		return h.lifetimeCtx
+	}
+	return context.Background()
 }
 
 // bulkItemResult is the per-ID result entry in a bulk response.
@@ -147,14 +175,16 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 
 // fanOutSearches dispatches per-book indexer searches under a bounded pool
 // so a single bulk action can't spawn one goroutine per book. The pool
-// itself runs on a detached background context so the HTTP response is
-// not blocked on indexer round-trips; the bulk endpoint is fire-and-forget
-// for searches by design (results show up in History).
+// runs on the process-lifecycle context (see WithLifetimeCtx, falling back
+// to context.Background()), so the HTTP response is not blocked on
+// indexer round-trips and a server shutdown cancels in-flight searches
+// rather than letting them grab torrents mid-shutdown. The bulk endpoint
+// is fire-and-forget for searches by design (results show up in History).
 func (h *BulkHandler) fanOutSearches(books []models.Book) {
 	if h.searcher == nil || len(books) == 0 {
 		return
 	}
-	bgCtx := contextBackground()
+	bgCtx := h.bgCtx()
 	go concurrency.RunBounded(bgCtx, books, bulkSearchConcurrency, func(ctx context.Context, b models.Book) {
 		h.searcher.SearchAndGrabBook(ctx, b)
 	})

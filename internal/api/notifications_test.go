@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -183,7 +184,7 @@ func TestNotificationTest_Webhook(t *testing.T) {
 		URL:     srv.URL,
 		Enabled: true,
 	}
-	if err := repo.Create(contextBackground(), n); err != nil {
+	if err := repo.Create(context.Background(), n); err != nil {
 		t.Fatal(err)
 	}
 

@@ -2,7 +2,9 @@ package db
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -311,5 +313,171 @@ func TestBookRepo_ListHandlesOrphanAuthorID(t *testing.T) {
 	}
 	if all[0].AuthorID != 99999 {
 		t.Errorf("AuthorID should be preserved; got %d", all[0].AuthorID)
+	}
+}
+
+// TestBook_ScansLegacyGoStringFormat pins down the #914 regression: rows
+// whose release_date was written as Go's default time.String() shape
+// (`2006-01-02 15:04:05 +0000 UTC`) must still load via the Scan helper.
+// Before the parseFlexibleTime fallback, modernc.org/sqlite returned
+// "unsupported Scan" and the Books page rendered blank.
+func TestBook_ScansLegacyGoStringFormat(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+
+	authorRepo := NewAuthorRepo(database)
+	bookRepo := NewBookRepo(database)
+	a := mkAuthor(t, authorRepo, ctx, "OL-LEGACY-A")
+	b := mkBook(t, bookRepo, ctx, a.ID, "OL-LEGACY-B", "Legacy Book", models.BookStatusWanted)
+
+	// Overwrite release_date with the Go-default shape that modernc rejects.
+	const legacy = "2024-01-15 12:34:56 +0000 UTC"
+	if _, err := database.ExecContext(ctx,
+		"UPDATE books SET release_date = ? WHERE id = ?", legacy, b.ID); err != nil {
+		t.Fatalf("seed legacy date: %v", err)
+	}
+
+	got, err := bookRepo.List(ctx)
+	if err != nil {
+		t.Fatalf("List should tolerate legacy date format, got: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 book, got %d", len(got))
+	}
+	if got[0].ReleaseDate == nil {
+		t.Fatal("expected ReleaseDate populated from legacy format, got nil")
+	}
+	if got[0].ReleaseDate.Year() != 2024 || got[0].ReleaseDate.Month() != time.January || got[0].ReleaseDate.Day() != 15 {
+		t.Errorf("ReleaseDate mis-parsed: got %v", got[0].ReleaseDate)
+	}
+}
+
+// TestBook_ScansCalibrePubdateFormat covers the format Calibre itself
+// emits into metadata.db for pubdate (`+00:00` offset, space separator,
+// no `T`). When that value flows through a Calibre import and gets
+// stored back in books.release_date, the Scan path must still load it.
+func TestBook_ScansCalibrePubdateFormat(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+
+	authorRepo := NewAuthorRepo(database)
+	bookRepo := NewBookRepo(database)
+	a := mkAuthor(t, authorRepo, ctx, "OL-CAL-A")
+	b := mkBook(t, bookRepo, ctx, a.ID, "OL-CAL-B", "Calibre Book", models.BookStatusWanted)
+
+	const calibreShape = "2024-01-15 12:34:56+00:00"
+	if _, err := database.ExecContext(ctx,
+		"UPDATE books SET release_date = ? WHERE id = ?", calibreShape, b.ID); err != nil {
+		t.Fatalf("seed calibre date: %v", err)
+	}
+
+	got, err := bookRepo.List(ctx)
+	if err != nil {
+		t.Fatalf("List should tolerate calibre date format, got: %v", err)
+	}
+	if len(got) != 1 || got[0].ReleaseDate == nil {
+		t.Fatalf("expected book with non-nil ReleaseDate, got %+v", got)
+	}
+	if got[0].ReleaseDate.Year() != 2024 {
+		t.Errorf("ReleaseDate mis-parsed: got %v", got[0].ReleaseDate)
+	}
+}
+
+// TestBook_WriteRoundTripUsesRFC3339Nano guarantees the write side stores
+// release_date in a shape modernc.org/sqlite can Scan back without help.
+// If a future change reintroduces the raw *time.Time argument, the stored
+// string will revert to Go's default shape and this test fails.
+func TestBook_WriteRoundTripUsesRFC3339Nano(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+
+	authorRepo := NewAuthorRepo(database)
+	bookRepo := NewBookRepo(database)
+	a := mkAuthor(t, authorRepo, ctx, "OL-RT-A")
+
+	when := time.Date(2024, 1, 15, 12, 34, 56, 0, time.UTC)
+	b := &models.Book{
+		ForeignID:        "OL-RT-B",
+		AuthorID:         a.ID,
+		Title:            "Round Trip",
+		SortTitle:        "Round Trip",
+		Status:           models.BookStatusWanted,
+		Genres:           []string{},
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+		ReleaseDate:      &when,
+	}
+	if err := bookRepo.Create(ctx, b); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	var stored string
+	if err := database.QueryRowContext(ctx,
+		"SELECT release_date FROM books WHERE id = ?", b.ID).Scan(&stored); err != nil {
+		t.Fatalf("read raw release_date: %v", err)
+	}
+	if strings.Contains(stored, "+0000 UTC") || strings.Contains(stored, " UTC") {
+		t.Errorf("stored release_date used Go default shape %q; want RFC3339Nano", stored)
+	}
+	if _, perr := time.Parse(time.RFC3339Nano, stored); perr != nil {
+		t.Errorf("stored release_date %q does not parse as RFC3339Nano: %v", stored, perr)
+	}
+
+	// Also confirm created_at / updated_at went through the same path.
+	var createdAt, updatedAt string
+	if err := database.QueryRowContext(ctx,
+		"SELECT created_at, updated_at FROM books WHERE id = ?", b.ID).Scan(&createdAt, &updatedAt); err != nil {
+		t.Fatalf("read created_at/updated_at: %v", err)
+	}
+	for name, v := range map[string]string{"created_at": createdAt, "updated_at": updatedAt} {
+		if strings.Contains(v, " UTC") {
+			t.Errorf("%s stored Go default shape %q; want RFC3339Nano", name, v)
+		}
+	}
+}
+
+// TestBook_GarbageInTimeColumnDoesNotKillScan checks the
+// log-and-substitute behaviour: a single unparseable time string must
+// not take out the whole list query. The row still shows up; the bad
+// column resolves to nil (for *time.Time) or zero (for time.Time).
+func TestBook_GarbageInTimeColumnDoesNotKillScan(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+
+	authorRepo := NewAuthorRepo(database)
+	bookRepo := NewBookRepo(database)
+	a := mkAuthor(t, authorRepo, ctx, "OL-GARBAGE-A")
+	b := mkBook(t, bookRepo, ctx, a.ID, "OL-GARBAGE-B", "Garbage Book", models.BookStatusWanted)
+
+	if _, err := database.ExecContext(ctx,
+		"UPDATE books SET release_date = ? WHERE id = ?", "not a date", b.ID); err != nil {
+		t.Fatalf("seed garbage date: %v", err)
+	}
+
+	got, err := bookRepo.List(ctx)
+	if err != nil {
+		t.Fatalf("List should tolerate garbage time, got: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 book despite garbage release_date, got %d", len(got))
+	}
+	if got[0].ReleaseDate != nil {
+		t.Errorf("expected nil ReleaseDate for garbage value, got %v", got[0].ReleaseDate)
 	}
 }

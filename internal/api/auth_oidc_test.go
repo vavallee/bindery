@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -353,4 +354,23 @@ func TestCallback_AutoProvisionDisabled_KnownUser(t *testing.T) {
 // called and the session is issued. Skipped pending RSA key fixture.
 func TestCallback_EmailLink_LinksExistingUser(t *testing.T) {
 	t.Skip("requires full OIDC token signing setup; policy is covered by DB-level LinkOIDCSubject tests")
+}
+
+// TestOIDCHandler_LifetimeCtxFallsBackToBackground is the #846 follow-up
+// guard for the async Manager.Reload goroutine spawned by SetProviders.
+func TestOIDCHandler_LifetimeCtxFallsBackToBackground(t *testing.T) {
+	h := &OIDCHandler{}
+	if h.bgCtx() != context.Background() {
+		t.Error("bgCtx without WithLifetimeCtx must return context.Background()")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.WithLifetimeCtx(ctx)
+	if h.bgCtx() != ctx {
+		t.Error("bgCtx with WithLifetimeCtx must return the supplied ctx")
+	}
+	h.WithLifetimeCtx(nil) //nolint:staticcheck // SA1012 testing nil-tolerance contract
+	if h.bgCtx() != ctx {
+		t.Error("WithLifetimeCtx(nil) must not clobber a previously installed ctx")
+	}
 }

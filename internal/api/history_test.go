@@ -267,6 +267,91 @@ func TestHistoryBlocklist_NotFound(t *testing.T) {
 	}
 }
 
+// TestBlocklistHandler_HistoryBlocklistRecordsCaller covers the D4b audit
+// contract end-to-end: when an authenticated user promotes a history event
+// to the blocklist, the persisted row carries their uid in
+// created_by_user_id. The handler decides this from the request context, so
+// the test drives it with an auth-tagged ctx and asserts the row in the
+// repo.
+func TestBlocklistHandler_HistoryBlocklistRecordsCaller(t *testing.T) {
+	// Use OpenMemory directly so we can seed a real user before the
+	// handler writes the audit row. The blocklist.created_by_user_id FK
+	// to users(id) means a synthetic uid would trip the constraint.
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	ctx := context.Background()
+	users := db.NewUserRepo(database)
+	u, err := users.Create(ctx, "audit-alice", "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	history := db.NewHistoryRepo(database)
+	blocklist := db.NewBlocklistRepo(database)
+	h := NewHistoryHandler(history, blocklist)
+
+	data, _ := json.Marshal(map[string]any{"guid": "nzb-guid-d4b"})
+	e := &models.HistoryEvent{
+		EventType: models.HistoryEventGrabbed, SourceTitle: "Tagged Release",
+		Data: string(data),
+	}
+	if err := history.Create(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	req := withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/history/"+strconv.FormatInt(e.ID, 10)+"/blocklist", nil), "id", strconv.FormatInt(e.ID, 10))
+	// Tag the request ctx with a user id so the handler routes through
+	// CreateByUser. Role is irrelevant here; the audit write happens
+	// regardless of role.
+	reqCtx := auth.WithUserID(req.Context(), u.ID)
+	rec := httptest.NewRecorder()
+	h.Blocklist(rec, req.WithContext(reqCtx))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	entries, err := blocklist.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 blocklist row, got %d", len(entries))
+	}
+	if entries[0].CreatedByUserID == nil || *entries[0].CreatedByUserID != u.ID {
+		t.Errorf("expected CreatedByUserID=%d, got %v", u.ID, entries[0].CreatedByUserID)
+	}
+}
+
+// TestBlocklistHandler_HistoryBlocklistAnonymousFallsBackToSystem asserts
+// the handler does not invent a fake uid when the request context has no
+// authenticated user (UserIDFromContext returns 0). The row is still
+// created (preserving the legacy unauth-friendly behavior), but the audit
+// column stays NULL like a system-write.
+func TestBlocklistHandler_HistoryBlocklistAnonymousFallsBackToSystem(t *testing.T) {
+	h, history, blocklist, ctx := historyFixture(t)
+	data, _ := json.Marshal(map[string]any{"guid": "nzb-guid-anon"})
+	e := &models.HistoryEvent{
+		EventType: models.HistoryEventGrabbed, SourceTitle: "Anon Release",
+		Data: string(data),
+	}
+	if err := history.Create(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	req := withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/history/"+strconv.FormatInt(e.ID, 10)+"/blocklist", nil), "id", strconv.FormatInt(e.ID, 10))
+	rec := httptest.NewRecorder()
+	h.Blocklist(rec, req) // no ctx auth tagging
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	entries, _ := blocklist.List(ctx)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 blocklist row, got %d", len(entries))
+	}
+	if entries[0].CreatedByUserID != nil {
+		t.Errorf("expected CreatedByUserID=nil for anonymous caller, got %v", *entries[0].CreatedByUserID)
+	}
+}
+
 // --- D3 per-user scoping ---------------------------------------------------
 
 // seedTwoUserHistory creates two users, an owned book each, and one history

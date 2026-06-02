@@ -645,7 +645,7 @@ func TestGetAuthorWorksByName_WithToken(t *testing.T) {
 				t.Fatalf("query requested search-only Hardcover field %q: %s", field, req.Query)
 			}
 		}
-		for _, field := range []string{"default_audio_edition_id", "default_ebook_edition_id"} {
+		for _, field := range []string{"default_audio_edition_id", "default_ebook_edition_id", "language"} {
 			if !strings.Contains(req.Query, field) {
 				t.Fatalf("query did not request Hardcover format field %q: %s", field, req.Query)
 			}
@@ -664,6 +664,20 @@ func TestGetAuthorWorksByName_WithToken(t *testing.T) {
 					"rating":        4.5,
 					"users_count":   2000,
 					"audio_seconds": 7200,
+					"language":      map[string]interface{}{"language": "en"},
+					"contributions": []map[string]interface{}{
+						{"author": map[string]interface{}{"id": 1, "name": "Frank Herbert", "slug": "frank-herbert"}},
+					},
+				},
+				{
+					"id":            11,
+					"title":         "Dune (Spanish edition)",
+					"slug":          "dune-es",
+					"release_year":  1965,
+					"ratings_count": 50,
+					"rating":        4.2,
+					"users_count":   100,
+					"language":      map[string]interface{}{"language": "es"},
 					"contributions": []map[string]interface{}{
 						{"author": map[string]interface{}{"id": 1, "name": "Frank Herbert", "slug": "frank-herbert"}},
 					},
@@ -683,8 +697,8 @@ func TestGetAuthorWorksByName_WithToken(t *testing.T) {
 	if gotVars["author"] != "Frank Herbert" {
 		t.Fatalf("author variable = %v", gotVars["author"])
 	}
-	if len(books) != 1 {
-		t.Fatalf("books len = %d, want 1", len(books))
+	if len(books) != 2 {
+		t.Fatalf("books len = %d, want 2", len(books))
 	}
 	book := books[0]
 	if book.ForeignID != "hc:dune" || book.Title != "Dune" || book.ImageURL == "" {
@@ -698,6 +712,16 @@ func TestGetAuthorWorksByName_WithToken(t *testing.T) {
 	}
 	if book.MediaType != "" {
 		t.Fatalf("MediaType = %q, want empty author import default", book.MediaType)
+	}
+	// #889: Language must be propagated so the aggregator can drop foreign
+	// editions via the metadata profile's allowed_languages filter. Before
+	// this fix every Hardcover-sourced supplemental book arrived with
+	// Language="" and slipped past the filter as "unknown language: pass".
+	if book.Language != "eng" {
+		t.Errorf("English book Language = %q, want %q (normalized to ISO 639-2)", book.Language, "eng")
+	}
+	if books[1].Language != "spa" {
+		t.Errorf("Spanish book Language = %q, want %q (normalized to ISO 639-2)", books[1].Language, "spa")
 	}
 }
 

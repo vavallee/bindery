@@ -545,6 +545,39 @@ func (c *Client) GetDefaultSavePath(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
+// Files returns the per-torrent file list for hash. Names are paths
+// relative to the torrent's save path (forward-slash normalised even when
+// qBittorrent runs on Windows); for a single-file torrent dropped directly
+// at the save root the entry's Name is just the file's basename.
+//
+// This is the authoritative list of files that belong to this torrent, used
+// by the importer (issue #903) to avoid walking the shared download root
+// and picking up unrelated siblings.
+//
+// An empty list with a nil error means qBittorrent reported no files for
+// the torrent (typical for a torrent still resolving metadata). An unknown
+// hash returns HTTP 404 from the API, which is surfaced as an error.
+func (c *Client) Files(ctx context.Context, hash string) ([]File, error) {
+	endpoint := "/api/v2/torrents/files?hash=" + url.QueryEscape(hash)
+	data, err := c.get(ctx, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	var files []rpcFile
+	if err := json.Unmarshal(data, &files); err != nil {
+		return nil, fmt.Errorf("decode torrent files: %w", err)
+	}
+	out := make([]File, 0, len(files))
+	for _, f := range files {
+		name := normalizePath(f.Name)
+		if name == "" {
+			continue
+		}
+		out = append(out, File{Name: name, Size: f.Size})
+	}
+	return out, nil
+}
+
 // DeleteTorrent removes a torrent by hash, optionally deleting its files.
 func (c *Client) DeleteTorrent(ctx context.Context, hash string, deleteFiles bool) error {
 	deleteFilesStr := "false"

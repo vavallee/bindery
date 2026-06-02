@@ -33,10 +33,6 @@ type LibraryFinder interface {
 	FindExisting(ctx context.Context, title, authorName, mediaType string) string
 }
 
-func contextBackground() context.Context {
-	return context.Background()
-}
-
 // parseID extracts the `{id}` URL parameter as an int64. If the value is
 // missing or non-numeric it writes HTTP 400 and returns (0, false). Callers
 // should check ok and bail out on false.

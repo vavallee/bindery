@@ -238,6 +238,32 @@ func (c *Client) GetTorrents(ctx context.Context) (map[string]TorrentStatus, err
 	return out, nil
 }
 
+// Files returns the per-torrent file list for hash. Names are paths
+// relative to the torrent's save_path / download_location; for a
+// single-file torrent dropped directly at the save root the entry's Name
+// is just the file's basename.
+//
+// This is the authoritative list of files that belong to this torrent, used
+// by the importer (issue #903) to avoid walking the shared download root
+// and picking up unrelated siblings.
+//
+// A torrent that the Deluge daemon does not know about surfaces as an RPC
+// error from core.get_torrent_status (KeyError on the hash).
+func (c *Client) Files(ctx context.Context, hash string) ([]File, error) {
+	var status torrentFilesStatus
+	if err := c.call(ctx, true, "core.get_torrent_status", []any{hash, []string{"files"}}, &status); err != nil {
+		return nil, fmt.Errorf("get torrent files: %w", err)
+	}
+	out := make([]File, 0, len(status.Files))
+	for _, f := range status.Files {
+		if f.Path == "" {
+			continue
+		}
+		out = append(out, File{Name: f.Path, Size: f.Size})
+	}
+	return out, nil
+}
+
 // RemoveTorrent removes a torrent by hash, optionally deleting its data files.
 func (c *Client) RemoveTorrent(ctx context.Context, hash string, deleteFiles bool) error {
 	if err := c.ensureLoggedIn(ctx); err != nil {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -43,19 +44,13 @@ func (r *EditionRepo) GetByForeignID(ctx context.Context, foreignID string) (*mo
 		       publish_date, format, num_pages, language, image_url, is_ebook,
 		       edition_info, monitored, created_at, updated_at
 		FROM editions WHERE foreign_id = ?`, foreignID)
-	var e models.Edition
-	var isEbook, monitored int
-	err := row.Scan(&e.ID, &e.ForeignID, &e.BookID, &e.Title, &e.ISBN13, &e.ISBN10,
-		&e.ASIN, &e.Publisher, &e.PublishDate, &e.Format, &e.NumPages, &e.Language,
-		&e.ImageURL, &isEbook, &e.EditionInfo, &monitored, &e.CreatedAt, &e.UpdatedAt)
+	e, err := scanEditionFrom(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get edition %s: %w", foreignID, err)
 	}
-	e.IsEbook = isEbook == 1
-	e.Monitored = monitored == 1
 	return &e, nil
 }
 
@@ -73,15 +68,10 @@ func (r *EditionRepo) ListByBook(ctx context.Context, bookID int64) ([]models.Ed
 
 	var out []models.Edition
 	for rows.Next() {
-		var e models.Edition
-		var isEbook, monitored int
-		if err := rows.Scan(&e.ID, &e.ForeignID, &e.BookID, &e.Title, &e.ISBN13, &e.ISBN10,
-			&e.ASIN, &e.Publisher, &e.PublishDate, &e.Format, &e.NumPages, &e.Language,
-			&e.ImageURL, &isEbook, &e.EditionInfo, &monitored, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		e, err := scanEditionFrom(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan edition: %w", err)
 		}
-		e.IsEbook = isEbook == 1
-		e.Monitored = monitored == 1
 		out = append(out, e)
 	}
 	return out, rows.Err()
@@ -124,8 +114,8 @@ func (r *EditionRepo) Upsert(ctx context.Context, e *models.Edition) error {
 		    language    = excluded.language,
 		    updated_at  = excluded.updated_at`,
 		e.ForeignID, e.BookID, e.Title, e.ISBN13, e.ISBN10, e.ASIN,
-		e.Publisher, e.PublishDate, e.Format, e.NumPages, e.Language,
-		e.ImageURL, isEbook, e.EditionInfo, monitored, now, now)
+		e.Publisher, timeArg(e.PublishDate), e.Format, e.NumPages, e.Language,
+		e.ImageURL, isEbook, e.EditionInfo, monitored, timeValueArg(now), timeValueArg(now))
 	if err != nil {
 		return fmt.Errorf("upsert edition %s: %w", e.ForeignID, err)
 	}
@@ -186,8 +176,8 @@ func (r *EditionRepo) UpsertMetadata(ctx context.Context, e *models.Edition) (bo
 		    updated_at  = excluded.updated_at
 		WHERE editions.book_id = excluded.book_id`,
 		e.ForeignID, e.BookID, e.Title, e.ISBN13, e.ISBN10, e.ASIN,
-		e.Publisher, e.PublishDate, e.Format, e.NumPages, e.Language,
-		e.ImageURL, isEbook, e.EditionInfo, monitored, now, now)
+		e.Publisher, timeArg(e.PublishDate), e.Format, e.NumPages, e.Language,
+		e.ImageURL, isEbook, e.EditionInfo, monitored, timeValueArg(now), timeValueArg(now))
 	if err != nil {
 		return false, fmt.Errorf("upsert metadata edition %s: %w", e.ForeignID, err)
 	}
@@ -204,23 +194,41 @@ func (r *EditionRepo) UpsertMetadata(ctx context.Context, e *models.Edition) (bo
 		       publish_date, format, num_pages, language, image_url, is_ebook,
 		       edition_info, monitored, created_at, updated_at
 		FROM editions WHERE foreign_id = ?`, e.ForeignID)
-	var stored models.Edition
-	var isStoredEbook, storedMonitored int
-	if err := row.Scan(&stored.ID, &stored.ForeignID, &stored.BookID, &stored.Title,
-		&stored.ISBN13, &stored.ISBN10, &stored.ASIN, &stored.Publisher,
-		&stored.PublishDate, &stored.Format, &stored.NumPages, &stored.Language,
-		&stored.ImageURL, &isStoredEbook, &stored.EditionInfo, &storedMonitored,
-		&stored.CreatedAt, &stored.UpdatedAt); err != nil {
+	stored, err := scanEditionFrom(row)
+	if err != nil {
 		return false, fmt.Errorf("lookup metadata edition %s: %w", e.ForeignID, err)
 	}
-	stored.IsEbook = isStoredEbook == 1
-	stored.Monitored = storedMonitored == 1
 	if stored.BookID != e.BookID {
 		e.ID = 0
 		return false, nil
 	}
 	*e = stored
 	return true, nil
+}
+
+// scanEditionFrom decodes an editions row using parseFlexibleTime for the
+// three time-typed columns so legacy rows written by Go's default
+// time.String shape, or by Calibre's own pubdate writer, still Scan
+// successfully (#914 root cause).
+func scanEditionFrom(s rowScanner) (models.Edition, error) {
+	var e models.Edition
+	var isEbook, monitored int
+	var publishDateStr, createdAtStr, updatedAtStr sql.NullString
+	if err := s.Scan(&e.ID, &e.ForeignID, &e.BookID, &e.Title, &e.ISBN13, &e.ISBN10,
+		&e.ASIN, &e.Publisher, &publishDateStr, &e.Format, &e.NumPages, &e.Language,
+		&e.ImageURL, &isEbook, &e.EditionInfo, &monitored, &createdAtStr, &updatedAtStr); err != nil {
+		return e, err
+	}
+	if pd, perr := parseFlexibleTime(publishDateStr); perr != nil {
+		slog.Warn("unparseable edition.publish_date, leaving nil", "edition_id", e.ID, "value", publishDateStr.String, "error", perr)
+	} else {
+		e.PublishDate = pd
+	}
+	e.CreatedAt = parseFlexibleTimeValue(createdAtStr, "editions.created_at")
+	e.UpdatedAt = parseFlexibleTimeValue(updatedAtStr, "editions.updated_at")
+	e.IsEbook = isEbook == 1
+	e.Monitored = monitored == 1
+	return e, nil
 }
 
 func (r *EditionRepo) Delete(ctx context.Context, id int64) error {

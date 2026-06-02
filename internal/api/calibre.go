@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -35,17 +36,43 @@ const SettingCWAIngestPath = "cwa.ingest_path"
 // this handler just validates and probes.
 type CalibreHandler struct {
 	settings *db.SettingsRepo
+
+	// lifetimeCtx is the process-lifecycle context. The settings reads in
+	// LoadCalibreConfig/LoadCalibreMode are short-lived but must observe
+	// shutdown when called from scheduler closures so a server-stop does
+	// not block on SQLite. Falls back to context.Background() when not
+	// set; see #846 and recommendations.go.
+	lifetimeCtx context.Context
 }
 
 func NewCalibreHandler(settings *db.SettingsRepo) *CalibreHandler {
 	return &CalibreHandler{settings: settings}
 }
 
+// WithLifetimeCtx attaches the process-lifecycle context. A nil ctx is
+// tolerated and ignored. See #846.
+func (h *CalibreHandler) WithLifetimeCtx(ctx context.Context) *CalibreHandler {
+	if ctx != nil {
+		h.lifetimeCtx = ctx
+	}
+	return h
+}
+
+// bgCtx returns the lifetime context if set, otherwise context.Background().
+func (h *CalibreHandler) bgCtx() context.Context {
+	if h.lifetimeCtx != nil {
+		return h.lifetimeCtx
+	}
+	return context.Background()
+}
+
 // LoadCalibreConfig materialises a calibre.Config from the settings table.
 // Exported so main.go can build the importer's Calibre client at boot and
-// refresh it on each scheduler tick.
-func LoadCalibreConfig(settings *db.SettingsRepo) calibre.Config {
-	ctx := contextBackground()
+// refresh it on each scheduler tick. ctx is the read-lifetime: pass
+// the process-lifecycle context from scheduler closures so a shutdown
+// cancels in-flight reads; pass r.Context() from handlers; pass
+// context.Background() at boot when no other context exists. See #846.
+func LoadCalibreConfig(ctx context.Context, settings *db.SettingsRepo) calibre.Config {
 	get := func(key string) string {
 		s, _ := settings.Get(ctx, key)
 		if s == nil {
@@ -53,7 +80,7 @@ func LoadCalibreConfig(settings *db.SettingsRepo) calibre.Config {
 		}
 		return s.Value
 	}
-	mode := LoadCalibreMode(settings)
+	mode := LoadCalibreMode(ctx, settings)
 	enabled := mode == calibre.ModeCalibredb || mode == calibre.ModePlugin
 	// Back-compat: if the operator still has the v0.8.0 `calibre.enabled`
 	// boolean set to true but the migration hasn't run yet (e.g. someone
@@ -74,9 +101,10 @@ func LoadCalibreConfig(settings *db.SettingsRepo) calibre.Config {
 
 // LoadCalibreMode returns the currently-configured integration mode. The
 // scanner calls this on every import so toggling the radio in Settings
-// takes effect without a restart.
-func LoadCalibreMode(settings *db.SettingsRepo) calibre.Mode {
-	s, _ := settings.Get(contextBackground(), SettingCalibreMode)
+// takes effect without a restart. ctx scopes the underlying settings read;
+// see LoadCalibreConfig for the call-site policy.
+func LoadCalibreMode(ctx context.Context, settings *db.SettingsRepo) calibre.Mode {
+	s, _ := settings.Get(ctx, SettingCalibreMode)
 	if s == nil {
 		return calibre.ModeOff
 	}
@@ -121,14 +149,14 @@ func validateCalibreConfig(cfg calibre.Config) error {
 // success so the UI can display "calibredb v7.3.0 — OK" and confirms the
 // library path at the same time.
 func (h *CalibreHandler) Test(w http.ResponseWriter, r *http.Request) {
-	cfg := LoadCalibreConfig(h.settings)
+	cfg := LoadCalibreConfig(r.Context(), h.settings)
 	// Force-enable for the duration of this probe. The Test button on the
 	// settings page is explicitly "does this work?", and requiring the user
 	// to save calibre.enabled=true before clicking Test would be a
 	// surprising extra step.
 	cfg.Enabled = true
 
-	if LoadCalibreMode(h.settings) == calibre.ModePlugin {
+	if LoadCalibreMode(r.Context(), h.settings) == calibre.ModePlugin {
 		if cfg.PluginURL == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "plugin_url is not configured"})
 			return

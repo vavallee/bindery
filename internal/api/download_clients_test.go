@@ -214,3 +214,22 @@ func TestDownloadClientTest_SuccessMessage(t *testing.T) {
 		t.Errorf("message: want Connection verified, got %q", out.Message)
 	}
 }
+
+// TestDownloadClientHandler_LifetimeCtxFallsBackToBackground is the #846
+// follow-up guard for the async health-probe goroutine spawned by Create/Update.
+func TestDownloadClientHandler_LifetimeCtxFallsBackToBackground(t *testing.T) {
+	h := &DownloadClientHandler{}
+	if h.bgCtx() != context.Background() {
+		t.Error("bgCtx without WithLifetimeCtx must return context.Background()")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.WithLifetimeCtx(ctx)
+	if h.bgCtx() != ctx {
+		t.Error("bgCtx with WithLifetimeCtx must return the supplied ctx")
+	}
+	h.WithLifetimeCtx(nil) //nolint:staticcheck // SA1012 testing nil-tolerance contract
+	if h.bgCtx() != ctx {
+		t.Error("WithLifetimeCtx(nil) must not clobber a previously installed ctx")
+	}
+}

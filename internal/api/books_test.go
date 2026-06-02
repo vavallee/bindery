@@ -1006,3 +1006,28 @@ func TestBookDeleteFile_PathContainment_RejectsOutsideRoots(t *testing.T) {
 		t.Errorf("file_path should be cleared after refused delete, got %q", got.FilePath)
 	}
 }
+
+// TestBookHandler_LifetimeCtxFallsBackToBackground pins the bgCtx contract:
+// when WithLifetimeCtx is not called the auto-grab goroutine spawned on a
+// status flip to wanted runs against context.Background() (preserving legacy
+// behaviour for tests that construct the handler bare). When set, the spawn
+// uses the supplied lifetime ctx so Server.Shutdown can cancel it cleanly.
+// This is the #846 follow-up sweep that closed the four remaining handlers
+// that bypassed contextBackground via context.WithoutCancel.
+func TestBookHandler_LifetimeCtxFallsBackToBackground(t *testing.T) {
+	h := &BookHandler{}
+	if h.bgCtx() != context.Background() {
+		t.Error("bgCtx without WithLifetimeCtx must return context.Background()")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.WithLifetimeCtx(ctx)
+	if h.bgCtx() != ctx {
+		t.Error("bgCtx with WithLifetimeCtx must return the supplied ctx")
+	}
+	// Nil ctx must be tolerated (matches BulkHandler/AuthorHandler).
+	h.WithLifetimeCtx(nil) //nolint:staticcheck // SA1012 testing nil-tolerance contract
+	if h.bgCtx() != ctx {
+		t.Error("WithLifetimeCtx(nil) must not clobber a previously installed ctx")
+	}
+}
