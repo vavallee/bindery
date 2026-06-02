@@ -173,7 +173,7 @@ func (h *BackupHandler) vacuumInto(ctx context.Context, dst string) error {
 	if h.db == nil {
 		return fmt.Errorf("backup handler has no database handle")
 	}
-	stmt := `VACUUM INTO '` + strings.ReplaceAll(dst, `'`, `''`) + `'` //nolint:gosec // G202: dst is server-generated with single quotes escaped
+	stmt := `VACUUM INTO '` + strings.ReplaceAll(dst, `'`, `''`) + `'` // #nosec G202 -- dst is server-generated (backupDir + timestamp), never user input; SQLite refuses bind params in VACUUM INTO so interpolation is required
 	if _, err := h.db.ExecContext(ctx, stmt); err != nil {
 		return fmt.Errorf("vacuum into %q: %w", dst, err)
 	}
