@@ -299,6 +299,123 @@ func TestAggregator_enrichBook_FillsCoverFromCoverProvider(t *testing.T) {
 	}
 }
 
+// TestEnrichBook_CachesAcrossCalls covers finding 12: enrichBook used to
+// make a fresh SearchBooks call per book per refresh, even when the same
+// (provider, foreignID) had just been enriched. With the snapshot cache
+// in place, the second call must reuse the cached fields without
+// re-hitting the enricher.
+func TestEnrichBook_CachesAcrossCalls(t *testing.T) {
+	enricher := &mockProvider{
+		name: "gb",
+		searchBooks: []models.Book{{
+			Title:    "Sapiens",
+			ImageURL: "https://books.google.com/sapiens.jpg",
+		}},
+	}
+	agg := &Aggregator{enrichers: []Provider{enricher}, cache: newTTLCache(time.Minute)}
+
+	first := &models.Book{
+		ForeignID:        "OLW-123",
+		MetadataProvider: "openlibrary",
+		Title:            "Sapiens",
+	}
+	agg.enrichBook(context.Background(), first)
+	if first.ImageURL != "https://books.google.com/sapiens.jpg" {
+		t.Fatalf("first call: cover not enriched, got %q", first.ImageURL)
+	}
+	if len(enricher.searchBookQueries) != 1 {
+		t.Fatalf("first call: SearchBooks called %d times, want 1", len(enricher.searchBookQueries))
+	}
+
+	// Second call: identical foreign ID and provider, fresh book pointer.
+	// Must hit the cache and skip the enricher entirely.
+	second := &models.Book{
+		ForeignID:        "OLW-123",
+		MetadataProvider: "openlibrary",
+		Title:            "Sapiens",
+	}
+	agg.enrichBook(context.Background(), second)
+	if second.ImageURL != "https://books.google.com/sapiens.jpg" {
+		t.Errorf("second call: expected cached cover, got %q", second.ImageURL)
+	}
+	if len(enricher.searchBookQueries) != 1 {
+		t.Errorf("second call: SearchBooks called %d times, want 1 (cache miss)", len(enricher.searchBookQueries))
+	}
+}
+
+// TestEnrichBook_DifferentBooksGetSeparateCacheEntries guards against the
+// keying regression where two distinct books share a cache slot (e.g. a
+// key that only used Title would alias every "Dune" reissue together).
+func TestEnrichBook_DifferentBooksGetSeparateCacheEntries(t *testing.T) {
+	enricher := &mockProvider{
+		name: "gb",
+		searchBooksByQuery: map[string][]models.Book{
+			"Sapiens":   {{Title: "Sapiens", ImageURL: "https://books.google.com/sapiens.jpg"}},
+			"Homo Deus": {{Title: "Homo Deus", ImageURL: "https://books.google.com/homo-deus.jpg"}},
+		},
+	}
+	agg := &Aggregator{enrichers: []Provider{enricher}, cache: newTTLCache(time.Minute)}
+
+	a := &models.Book{ForeignID: "OLW-A", MetadataProvider: "openlibrary", Title: "Sapiens"}
+	b := &models.Book{ForeignID: "OLW-B", MetadataProvider: "openlibrary", Title: "Homo Deus"}
+	agg.enrichBook(context.Background(), a)
+	agg.enrichBook(context.Background(), b)
+
+	if a.ImageURL != "https://books.google.com/sapiens.jpg" {
+		t.Errorf("Sapiens: got %q, want sapiens cover", a.ImageURL)
+	}
+	if b.ImageURL != "https://books.google.com/homo-deus.jpg" {
+		t.Errorf("Homo Deus: got %q, want homo-deus cover", b.ImageURL)
+	}
+	if len(enricher.searchBookQueries) != 2 {
+		t.Errorf("expected 2 distinct SearchBooks calls, got %d (cache aliasing)", len(enricher.searchBookQueries))
+	}
+
+	// Re-enriching either of them must hit the cache, not the network.
+	again := &models.Book{ForeignID: "OLW-A", MetadataProvider: "openlibrary", Title: "Sapiens"}
+	agg.enrichBook(context.Background(), again)
+	if again.ImageURL != "https://books.google.com/sapiens.jpg" {
+		t.Errorf("Sapiens re-enrich: got %q, want cached cover", again.ImageURL)
+	}
+	if len(enricher.searchBookQueries) != 2 {
+		t.Errorf("Sapiens re-enrich went to the network: query count = %d", len(enricher.searchBookQueries))
+	}
+}
+
+// TestEnrichBook_CacheDoesNotAliasBookPointer is the pitfall guard for the
+// snapshot design. If we cached *models.Book by reference, a later
+// mutation by a downstream caller would leak into subsequent cache hits.
+// The snapshot is a value type so mutating the input book after enrichment
+// must not affect the next enrichment of the same key.
+func TestEnrichBook_CacheDoesNotAliasBookPointer(t *testing.T) {
+	enricher := &mockProvider{
+		name:        "gb",
+		searchBooks: []models.Book{{Title: "Dune", ImageURL: "https://books.google.com/dune.jpg"}},
+	}
+	agg := &Aggregator{enrichers: []Provider{enricher}, cache: newTTLCache(time.Minute)}
+
+	first := &models.Book{ForeignID: "OLW-DUNE", MetadataProvider: "openlibrary", Title: "Dune"}
+	agg.enrichBook(context.Background(), first)
+	if first.ImageURL != "https://books.google.com/dune.jpg" {
+		t.Fatalf("first call: cover not enriched, got %q", first.ImageURL)
+	}
+
+	// Mutate the just-enriched book as if a downstream caller did.
+	first.ImageURL = ""
+	first.Description = "downstream-mangled"
+
+	// A new enrichment of the same key must still see the original cover,
+	// not the downstream mutation.
+	second := &models.Book{ForeignID: "OLW-DUNE", MetadataProvider: "openlibrary", Title: "Dune"}
+	agg.enrichBook(context.Background(), second)
+	if second.ImageURL != "https://books.google.com/dune.jpg" {
+		t.Errorf("cache pointer-aliased to the first book: got %q", second.ImageURL)
+	}
+	if second.Description == "downstream-mangled" {
+		t.Errorf("cache leaked downstream mutation into Description: %q", second.Description)
+	}
+}
+
 // TestAggregator_enrichBook_CoverProviderSkippedWhenAlreadyHaveCover
 // guards against the fallback wasting a HEAD request (and overwriting
 // an already-good cover) when an enricher succeeded.

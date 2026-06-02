@@ -33,7 +33,7 @@ func (r *AuthorRepo) WithTx(tx *sql.Tx) *AuthorRepo {
 const authorSelectCols = `id, foreign_id, name, sort_name, description, image_url, disambiguation,
 	       ratings_count, average_rating, monitored, quality_profile_id, metadata_profile_id, root_folder_id,
 	       audiobook_root_folder_id, monitor_mode, monitor_latest_count, metadata_provider, last_metadata_refresh_at,
-	       created_at, updated_at`
+	       created_at, updated_at, COALESCE(owner_user_id, 0)`
 
 func (r *AuthorRepo) List(ctx context.Context) ([]models.Author, error) {
 	return r.ListByUser(ctx, 0)
@@ -71,6 +71,70 @@ func (r *AuthorRepo) ListByUser(ctx context.Context, userID int64) ([]models.Aut
 		authors = append(authors, a)
 	}
 	return authors, rows.Err()
+}
+
+// ListPage returns one page of the authors visible to userID, ordered by
+// sort_name, alongside the total row count that matches the same filter.
+// limit must be positive; offset is clamped at 0. When userID is 0 the query
+// is unscoped (matches List); otherwise it matches ListByUser's predicate
+// (owner_user_id = userID OR owner_user_id IS NULL).
+//
+// The sort_name order is backed by idx_authors_sort_name (migration 047).
+func (r *AuthorRepo) ListPage(ctx context.Context, userID int64, limit, offset int) ([]models.Author, int, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	countQuery := "SELECT COUNT(*) FROM authors"
+	listQuery := "SELECT " + authorSelectCols + " FROM authors"
+	var (
+		args     []any
+		pageArgs []any
+	)
+	if userID != 0 {
+		// Match ListByUser: include NULL-owner rows so pre-multiuser-migration
+		// authors stay visible to every user instead of silently disappearing.
+		countQuery += " WHERE owner_user_id = ? OR owner_user_id IS NULL"
+		listQuery += " WHERE owner_user_id = ? OR owner_user_id IS NULL"
+		args = []any{userID}
+		pageArgs = []any{userID, limit, offset}
+	} else {
+		pageArgs = []any{limit, offset}
+	}
+	listQuery += " ORDER BY sort_name LIMIT ? OFFSET ?"
+
+	var total int
+	var countRow *sql.Row
+	if len(args) > 0 {
+		countRow = r.db.QueryRowContext(ctx, countQuery, args...)
+	} else {
+		countRow = r.db.QueryRowContext(ctx, countQuery)
+	}
+	if err := countRow.Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count authors: %w", err)
+	}
+
+	rows, err := r.db.QueryContext(ctx, listQuery, pageArgs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list authors page: %w", err)
+	}
+	defer rows.Close()
+
+	var authors []models.Author
+	for rows.Next() {
+		a, err := scanAuthor(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		authors = append(authors, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return authors, total, nil
 }
 
 func (r *AuthorRepo) GetByID(ctx context.Context, id int64) (*models.Author, error) {
@@ -336,7 +400,7 @@ func scanAuthor(rows *sql.Rows) (models.Author, error) {
 		&a.Disambiguation, &a.RatingsCount, &a.AverageRating, &monitored,
 		&a.QualityProfileID, &a.MetadataProfileID, &a.RootFolderID, &a.AudiobookRootFolderID,
 		&a.MonitorMode, &a.MonitorLatestCount, &a.MetadataProvider,
-		&a.LastMetadataRefreshAt, &a.CreatedAt, &a.UpdatedAt)
+		&a.LastMetadataRefreshAt, &a.CreatedAt, &a.UpdatedAt, &a.OwnerUserID)
 	a.Monitored = monitored == 1
 	normalizeAuthorMonitorDefaults(&a)
 	return a, err
@@ -349,7 +413,7 @@ func scanAuthorRow(row *sql.Row) (models.Author, error) {
 		&a.Disambiguation, &a.RatingsCount, &a.AverageRating, &monitored,
 		&a.QualityProfileID, &a.MetadataProfileID, &a.RootFolderID, &a.AudiobookRootFolderID,
 		&a.MonitorMode, &a.MonitorLatestCount, &a.MetadataProvider,
-		&a.LastMetadataRefreshAt, &a.CreatedAt, &a.UpdatedAt)
+		&a.LastMetadataRefreshAt, &a.CreatedAt, &a.UpdatedAt, &a.OwnerUserID)
 	a.Monitored = monitored == 1
 	normalizeAuthorMonitorDefaults(&a)
 	return a, err

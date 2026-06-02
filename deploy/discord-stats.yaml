@@ -11,6 +11,7 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 0  # do not retry on failure — next tick handles it
+      ttlSecondsAfterFinished: 120  # GC the Job (and its Pod) 2min after completion so kube-state-metrics stops reporting it as not-ready
       template:
         spec:
           restartPolicy: Never

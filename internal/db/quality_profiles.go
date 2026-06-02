@@ -31,7 +31,7 @@ func NewQualityProfileRepo(db *sql.DB) *QualityProfileRepo {
 
 func (r *QualityProfileRepo) List(ctx context.Context) ([]models.QualityProfile, error) {
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, name, upgrade_allowed, cutoff, items, created_at FROM quality_profiles ORDER BY id")
+		"SELECT id, name, upgrade_allowed, cutoff, items, created_at, COALESCE(owner_user_id, 0) FROM quality_profiles ORDER BY id")
 	if err != nil {
 		return nil, fmt.Errorf("list quality profiles: %w", err)
 	}
@@ -50,7 +50,7 @@ func (r *QualityProfileRepo) List(ctx context.Context) ([]models.QualityProfile,
 
 func (r *QualityProfileRepo) GetByID(ctx context.Context, id int64) (*models.QualityProfile, error) {
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, name, upgrade_allowed, cutoff, items, created_at FROM quality_profiles WHERE id=?", id)
+		"SELECT id, name, upgrade_allowed, cutoff, items, created_at, COALESCE(owner_user_id, 0) FROM quality_profiles WHERE id=?", id)
 	if err != nil {
 		return nil, fmt.Errorf("get quality profile %d: %w", id, err)
 	}
@@ -212,7 +212,7 @@ func scanQualityProfile(rows *sql.Rows) (models.QualityProfile, error) {
 	var p models.QualityProfile
 	var upgradeAllowed int
 	var itemsJSON string
-	if err := rows.Scan(&p.ID, &p.Name, &upgradeAllowed, &p.Cutoff, &itemsJSON, &p.CreatedAt); err != nil {
+	if err := rows.Scan(&p.ID, &p.Name, &upgradeAllowed, &p.Cutoff, &itemsJSON, &p.CreatedAt, &p.OwnerUserID); err != nil {
 		return p, fmt.Errorf("scan quality profile: %w", err)
 	}
 	p.UpgradeAllowed = upgradeAllowed == 1

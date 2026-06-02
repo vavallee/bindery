@@ -165,15 +165,31 @@ func (e *entry) oauth2Config(redirectBase string) oauth2.Config {
 // haven't changed keep their verifier (and therefore JWKS cache). Providers
 // whose discovery fails are recorded in the failed map (instead of silently
 // dropped) so the admin UI can surface them and EnsureLoaded can retry.
+//
+// The discovery roundtrip for each new/changed provider is a network call to
+// the IdP and can take hundreds of milliseconds (more over WAN). To avoid
+// stalling concurrent OIDC operations (login, callback, providers-list) we
+// release the manager lock between snapshotting the current state and doing
+// discovery, and only re-acquire the write lock to install the resolved set.
+// Concurrent Reload calls are last-write-wins; that matches the contract that
+// Reload mirrors the persisted settings, which is itself a serial source.
 func (m *Manager) Reload(ctx context.Context, cfgs []ProviderConfig) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	// Step 1: snapshot the existing loaded providers under RLock so we can
+	// reuse entries whose config is unchanged (preserving the JWKS cache).
+	m.mu.RLock()
+	existing := make(map[string]*entry, len(m.providers))
+	for id, e := range m.providers {
+		existing[id] = e
+	}
+	m.mu.RUnlock()
 
+	// Step 2: resolve the new state without holding the manager lock. This
+	// is the slow path: every cache miss triggers an OIDC discovery HTTP
+	// roundtrip to the IdP.
 	next := make(map[string]*entry, len(cfgs))
 	nextFailed := make(map[string]*failedEntry)
 	for _, cfg := range cfgs {
-		// Re-use the existing entry if config is identical (preserves JWKS cache).
-		if e, ok := m.providers[cfg.ID]; ok && configEqual(e.cfg, cfg) {
+		if e, ok := existing[cfg.ID]; ok && configEqual(e.cfg, cfg) {
 			next[cfg.ID] = e
 			continue
 		}
@@ -185,8 +201,13 @@ func (m *Manager) Reload(ctx context.Context, cfgs []ProviderConfig) {
 		}
 		next[cfg.ID] = e
 	}
+
+	// Step 3: install the resolved state under the write lock. The lock is
+	// only held for the assignment, never across the network roundtrip.
+	m.mu.Lock()
 	m.providers = next
 	m.failed = nextFailed
+	m.mu.Unlock()
 }
 
 func (m *Manager) buildEntry(ctx context.Context, cfg ProviderConfig) (*entry, error) {
@@ -202,6 +223,12 @@ func (m *Manager) buildEntry(ctx context.Context, cfg ProviderConfig) (*entry, e
 // failed map, rate-limited by retryMinInterval to protect the IdP from a
 // hammered login button. No-op if the provider is already loaded or unknown.
 // Errors are recorded on the failed entry; this function never returns one.
+//
+// The pre-check that gates whether we bother taking the write lock reads
+// failedEntry.lastAttempt; that field is mutated under the write lock when an
+// attempt completes, so we snapshot it under the RLock rather than reading it
+// after releasing the lock (which would be a data race the -race detector
+// would flag, and could produce a torn read of time.Time on 32-bit systems).
 func (m *Manager) EnsureLoaded(ctx context.Context, id string) {
 	m.mu.RLock()
 	if _, ok := m.providers[id]; ok {
@@ -209,28 +236,50 @@ func (m *Manager) EnsureLoaded(ctx context.Context, id string) {
 		return
 	}
 	f, isFailed := m.failed[id]
+	var lastAttempt time.Time
+	if isFailed {
+		lastAttempt = f.lastAttempt
+	}
 	m.mu.RUnlock()
 	if !isFailed {
 		return
 	}
-	if time.Since(f.lastAttempt) < retryMinInterval {
+	if time.Since(lastAttempt) < retryMinInterval {
 		return
 	}
 
+	// Claim the retry slot: stamp lastAttempt under the write lock and capture
+	// the cfg to discover. This serialises concurrent retries (only one
+	// goroutine actually fires the network call per interval) without holding
+	// the manager lock across the discovery roundtrip.
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	// Re-check after acquiring the write lock — another goroutine may have
-	// won the race and either loaded the provider or just attempted retry.
 	if _, ok := m.providers[id]; ok {
+		m.mu.Unlock()
 		return
 	}
 	f, isFailed = m.failed[id]
 	if !isFailed || time.Since(f.lastAttempt) < retryMinInterval {
+		m.mu.Unlock()
 		return
 	}
-
 	f.lastAttempt = time.Now()
-	e, err := m.buildEntry(ctx, f.cfg)
+	cfg := f.cfg
+	m.mu.Unlock()
+
+	// Discovery without the lock. Other OIDC operations (login on a healthy
+	// provider, callback, providers-list) are not blocked while we wait on
+	// the IdP roundtrip.
+	e, err := m.buildEntry(ctx, cfg)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// The failed entry may have been displaced by a concurrent Reload while
+	// the lock was released. If it's gone, the new state is authoritative
+	// and we drop our result on the floor.
+	f, stillFailed := m.failed[id]
+	if !stillFailed {
+		return
+	}
 	if err != nil {
 		f.lastErr = err
 		slog.Warn("oidc: on-demand re-discovery failed", "id", id, "error", err)

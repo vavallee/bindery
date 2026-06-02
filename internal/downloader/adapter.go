@@ -9,11 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/vavallee/bindery/internal/downloader/deluge"
 	"github.com/vavallee/bindery/internal/downloader/nzbget"
-	"github.com/vavallee/bindery/internal/downloader/qbittorrent"
-	"github.com/vavallee/bindery/internal/downloader/sabnzbd"
-	"github.com/vavallee/bindery/internal/downloader/transmission"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/pathmap"
 )
@@ -72,16 +68,16 @@ func ProtocolForClient(clientType string) string {
 func TestClient(ctx context.Context, client *models.DownloadClient) error {
 	switch client.Type {
 	case "transmission":
-		trans := transmission.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
+		trans := TransmissionFor(client)
 		return trans.Test(ctx)
 	case "qbittorrent":
-		qb := qbittorrent.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
+		qb := QbittorrentFor(client)
 		return qb.Test(ctx)
 	case "deluge":
-		dl := deluge.New(client.Host, client.Port, client.Password, client.URLBase, client.UseSSL)
+		dl := DelugeFor(client)
 		return dl.Test(ctx)
 	case "nzbget":
-		ng := nzbget.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
+		ng := NzbgetFor(client)
 		if err := ng.Test(ctx); err != nil {
 			return err
 		}
@@ -91,7 +87,7 @@ func TestClient(ctx context.Context, client *models.DownloadClient) error {
 		// config doesn't, that's a real configuration question worth showing.
 		return ng.CheckCategories(ctx, client.Category, client.CategoryAudiobook)
 	default:
-		sab := sabnzbd.New(client.Host, client.Port, client.APIKey, client.URLBase, client.UseSSL)
+		sab := SabnzbdFor(client)
 		return sab.Test(ctx)
 	}
 }
@@ -108,7 +104,7 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 
 	switch client.Type {
 	case "transmission":
-		trans := transmission.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
+		trans := TransmissionFor(client)
 		// Transmission's download-dir must be an absolute path. The Category
 		// field is repurposed as an optional path override for Transmission; if
 		// the user left it as a bare label (e.g. "books") we pass "" so
@@ -127,7 +123,7 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		result.RemoteID = strconv.FormatInt(torrentID, 10)
 		return result, nil
 	case "qbittorrent":
-		qb := qbittorrent.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
+		qb := QbittorrentFor(client)
 		savePath := qbitSavePath(client, opts)
 		hash, err := qb.AddTorrent(ctx, sourceURL, ResolveCategory(client, opts.MediaType), savePath)
 		if err != nil {
@@ -140,7 +136,7 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		result.RemoteID = hash
 		return result, nil
 	case "deluge":
-		dl := deluge.New(client.Host, client.Port, client.Password, client.URLBase, client.UseSSL)
+		dl := DelugeFor(client)
 		hash, err := dl.AddTorrent(ctx, sourceURL, ResolveCategory(client, opts.MediaType))
 		if err != nil {
 			return nil, err
@@ -151,7 +147,7 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		result.RemoteID = hash
 		return result, nil
 	case "nzbget":
-		ng := nzbget.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
+		ng := NzbgetFor(client)
 		nzbID, err := ng.Add(ctx, sourceURL, title, ResolveCategory(client, opts.MediaType), 0)
 		if err != nil {
 			return nil, err
@@ -159,7 +155,7 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		result.RemoteID = strconv.Itoa(nzbID)
 		return result, nil
 	default:
-		sab := sabnzbd.New(client.Host, client.Port, client.APIKey, client.URLBase, client.UseSSL)
+		sab := SabnzbdFor(client)
 		resp, err := sab.AddURL(ctx, sourceURL, title, ResolveCategory(client, opts.MediaType), 0)
 		if err != nil {
 			return nil, err
@@ -190,19 +186,19 @@ func RemoveDownload(ctx context.Context, client *models.DownloadClient, dl *mode
 		if err != nil {
 			return fmt.Errorf("invalid transmission torrent id %q: %w", *dl.TorrentID, err)
 		}
-		trans := transmission.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
+		trans := TransmissionFor(client)
 		return trans.RemoveTorrent(ctx, torrentID, deleteFiles)
 	case "qbittorrent":
 		if dl.TorrentID == nil || *dl.TorrentID == "" {
 			return nil
 		}
-		qb := qbittorrent.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
+		qb := QbittorrentFor(client)
 		return qb.DeleteTorrent(ctx, *dl.TorrentID, deleteFiles)
 	case "deluge":
 		if dl.TorrentID == nil || *dl.TorrentID == "" {
 			return nil
 		}
-		delugeClient := deluge.New(client.Host, client.Port, client.Password, client.URLBase, client.UseSSL)
+		delugeClient := DelugeFor(client)
 		return delugeClient.RemoveTorrent(ctx, *dl.TorrentID, deleteFiles)
 	case "nzbget":
 		if dl.SABnzbdNzoID == nil || *dl.SABnzbdNzoID == "" {
@@ -212,13 +208,13 @@ func RemoveDownload(ctx context.Context, client *models.DownloadClient, dl *mode
 		if err != nil {
 			return err
 		}
-		ng := nzbget.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
+		ng := NzbgetFor(client)
 		return ng.Remove(ctx, nzbID)
 	default:
 		if dl.SABnzbdNzoID == nil || *dl.SABnzbdNzoID == "" {
 			return nil
 		}
-		sab := sabnzbd.New(client.Host, client.Port, client.APIKey, client.URLBase, client.UseSSL)
+		sab := SabnzbdFor(client)
 		return sab.Delete(ctx, *dl.SABnzbdNzoID, deleteFiles)
 	}
 }
@@ -235,7 +231,7 @@ func RemoveDownload(ctx context.Context, client *models.DownloadClient, dl *mode
 func GetStalledIDs(ctx context.Context, client *models.DownloadClient) (map[string]bool, bool, error) {
 	switch client.Type {
 	case "qbittorrent":
-		qb := qbittorrent.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
+		qb := QbittorrentFor(client)
 		// Poll every category this client may have grabbed under; categoriesToPoll
 		// returns both Category and CategoryAudiobook when the latter is set
 		// (closes #700).
@@ -254,7 +250,7 @@ func GetStalledIDs(ctx context.Context, client *models.DownloadClient) (map[stri
 		}
 		return out, true, nil
 	case "transmission":
-		trans := transmission.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
+		trans := TransmissionFor(client)
 		torrents, err := trans.GetTorrents(ctx, client.Category)
 		if err != nil {
 			return nil, true, err
@@ -268,7 +264,7 @@ func GetStalledIDs(ctx context.Context, client *models.DownloadClient) (map[stri
 		}
 		return out, true, nil
 	case "deluge":
-		dl := deluge.New(client.Host, client.Port, client.Password, client.URLBase, client.UseSSL)
+		dl := DelugeFor(client)
 		torrents, err := dl.GetTorrents(ctx)
 		if err != nil {
 			return nil, true, err
@@ -299,7 +295,7 @@ func GetLiveStatuses(ctx context.Context, client *models.DownloadClient) (map[st
 }
 
 func getSABLiveStatuses(ctx context.Context, client *models.DownloadClient) (map[string]LiveStatus, error) {
-	sab := sabnzbd.New(client.Host, client.Port, client.APIKey, client.URLBase, client.UseSSL)
+	sab := SabnzbdFor(client)
 	queue, err := sab.GetQueue(ctx)
 	if err != nil {
 		return nil, err
@@ -320,7 +316,7 @@ func getSABLiveStatuses(ctx context.Context, client *models.DownloadClient) (map
 }
 
 func getNZBGetLiveStatuses(ctx context.Context, client *models.DownloadClient) (map[string]LiveStatus, error) {
-	ng := nzbget.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
+	ng := NzbgetFor(client)
 	groups, err := ng.GetQueue(ctx)
 	if err != nil {
 		return nil, err
@@ -346,7 +342,7 @@ func getNZBGetLiveStatuses(ctx context.Context, client *models.DownloadClient) (
 
 func getTorrentLiveStatuses(ctx context.Context, client *models.DownloadClient) (map[string]LiveStatus, error) {
 	if client.Type == "transmission" {
-		trans := transmission.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
+		trans := TransmissionFor(client)
 		torrents, err := trans.GetTorrents(ctx, client.Category)
 		if err != nil {
 			return nil, err
@@ -372,7 +368,7 @@ func getTorrentLiveStatuses(ctx context.Context, client *models.DownloadClient) 
 	}
 
 	if client.Type == "deluge" {
-		dl := deluge.New(client.Host, client.Port, client.Password, client.URLBase, client.UseSSL)
+		dl := DelugeFor(client)
 		torrents, err := dl.GetTorrents(ctx)
 		if err != nil {
 			return nil, err
@@ -391,7 +387,7 @@ func getTorrentLiveStatuses(ctx context.Context, client *models.DownloadClient) 
 		return out, nil
 	}
 
-	qb := qbittorrent.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
+	qb := QbittorrentFor(client)
 	// Poll every category this client may have grabbed under; categoriesToPoll
 	// returns both Category and CategoryAudiobook when the latter is set
 	// (closes #700).

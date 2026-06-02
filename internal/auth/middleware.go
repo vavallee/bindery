@@ -6,8 +6,92 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
+	"testing"
 )
+
+// EnforceTenancyEnv is the environment variable that gates per-user resource
+// scoping on Tier-2 join-scoped resources (queue/history/pending/OPDS). It
+// defaults off so existing single-user installs and tests are unaffected;
+// flipping it on at startup is the deploy-time switch that turns
+// CheckOwnership from a no-op into a real check.
+const EnforceTenancyEnv = "BINDERY_ENFORCE_TENANCY"
+
+// EnforceTenancy reports whether the operator has opted into per-user resource
+// scoping. Implemented as an env-on-call read (no caching) so t.Setenv-driven
+// tests can flip the gate between cases without a separate seam. Values "1",
+// "true", "yes", "on" (case insensitive) flip the gate on; anything else
+// (including empty) leaves it off, matching the single-user default.
+//
+// The per-call os.Getenv cost is negligible compared to the SQL the rest of
+// the handler runs.
+func EnforceTenancy() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(EnforceTenancyEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+// SetEnforceTenancyForTests forces the tenancy gate on or off for the duration
+// of a single test by setting the env var via t.Setenv. The previous value is
+// restored automatically by t.Setenv's cleanup hook so test order does not
+// matter. This is the test seam D1's regression suite uses; D3's tests use
+// t.Setenv directly, which has the same effect.
+func SetEnforceTenancyForTests(t *testing.T, on bool) {
+	t.Helper()
+	if on {
+		t.Setenv(EnforceTenancyEnv, "true")
+	} else {
+		t.Setenv(EnforceTenancyEnv, "")
+	}
+}
+
+// CheckOwnership returns true when the request context's user owns
+// ownerUserID. When EnforceTenancy() is false the check is a no-op (true),
+// which preserves pre-multiuser behaviour for installs that have not opted in.
+//
+// When the gate is on:
+//   - admin users always pass (matches existing RequireAdmin semantics — admins
+//     manage every user's library);
+//   - userID == 0 means there is no authenticated user (API key / disabled /
+//     local-only mode), so the request is treated as admin-equivalent and
+//     allowed through to preserve pre-gate behaviour for those auth modes;
+//   - ownerUserID == 0 means the row has no owner (pre-migration-025 data),
+//     and we also pass to avoid hiding legacy rows from their actual creator.
+//
+// The argument intentionally takes an int64 not a *int64 — callers must
+// decide how a nil owner maps (typically 0). Pass 0 for "unowned".
+func CheckOwnership(ctx context.Context, ownerUserID int64) bool {
+	if !EnforceTenancy() {
+		return true
+	}
+	if UserRoleFromContext(ctx) == "admin" {
+		return true
+	}
+	uid := UserIDFromContext(ctx)
+	if uid == 0 {
+		// API-key / disabled / local-only requests carry no user identity.
+		// Treat them as admin-equivalent so machine-to-machine integrations
+		// (Harpoon, *arr-style callers) keep working post-gate.
+		return true
+	}
+	if ownerUserID == 0 {
+		// Row predates migration 025's backfill or was created without an
+		// owner. Don't block the only auth'd user from seeing it.
+		return true
+	}
+	return uid == ownerUserID
+}
+
+// WithUserID returns a context carrying the given user id. Exported so the
+// OPDS handler can attach the basic-auth user id to ctx after verifying
+// credentials — the standard cookie/proxy paths set this inside Middleware.
+func WithUserID(ctx context.Context, userID int64) context.Context {
+	return context.WithValue(ctx, userIDCtxKey, userID)
+}
 
 // Mode represents the auth posture. Matches Sonarr's "Authentication Required"
 // dropdown semantics.
@@ -129,6 +213,13 @@ type Provider interface {
 	// UserRole returns the role string ("admin" or "user") for the given user
 	// id. Returns "" if the user is not found or an error occurs.
 	UserRole(ctx context.Context, userID int64) string
+	// UserSessionEpoch returns the user's current session epoch, the value
+	// the cookie's epoch field must match for the cookie to authenticate.
+	// Bumped on password change so old cookies stop verifying. Returns 0 if
+	// the user does not exist or the lookup fails — the comparison below then
+	// fails closed for any cookie minted after the 047 migration (which sets
+	// session_epoch to >= 1 by default).
+	UserSessionEpoch(ctx context.Context, userID int64) int64
 }
 
 // AllowUnauthPath returns true for routes the middleware must always let
@@ -176,10 +267,22 @@ func Middleware(p Provider) func(http.Handler) http.Handler {
 			ctx := r.Context()
 			cookieValid := false
 			if c, err := r.Cookie(SessionCookieName); err == nil {
-				if uid, err := VerifySessionMulti(p.SessionSecrets(), c.Value); err == nil {
-					ctx = context.WithValue(ctx, userIDCtxKey, uid)
-					ctx = context.WithValue(ctx, userRoleCtxKey, p.UserRole(ctx, uid))
-					cookieValid = true
+				if uid, epoch, err := VerifySessionMultiWithEpoch(p.SessionSecrets(), c.Value); err == nil {
+					// Compare the cookie's epoch field against the user's
+					// current session_epoch (bumped on password change). A
+					// mismatch means the cookie pre-dates the most recent
+					// credential rotation and must be rejected, even though
+					// the signature and expiry are otherwise valid — this is
+					// the "log everyone out after a password change" check
+					// (Wave 1 / Bundle C audit finding). Pre-047-migration
+					// cookies decode as epoch=0; the migration default of 1
+					// makes them all fail here on upgrade, which is the
+					// deliberate forced-logout-on-upgrade behaviour.
+					if p.UserSessionEpoch(ctx, uid) == epoch {
+						ctx = context.WithValue(ctx, userIDCtxKey, uid)
+						ctx = context.WithValue(ctx, userRoleCtxKey, p.UserRole(ctx, uid))
+						cookieValid = true
+					}
 				}
 			}
 

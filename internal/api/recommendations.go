@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/bookhydrate"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata"
@@ -142,6 +143,20 @@ func (h *RecommendationHandler) Dismiss(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Tier-1 cross-user IDOR guard (D1). Recommendations carry a UserID
+	// column (see migration 015); fetch the row and verify ownership before
+	// recording the dismissal so a non-owner cannot purge someone else's
+	// feed by ID. 404 (not 403) on mismatch to avoid leaking existence.
+	rec, err := h.recs.GetByID(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if rec == nil || !auth.CheckOwnership(r.Context(), rec.UserID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "recommendation not found"})
+		return
+	}
+
 	if err := h.recs.Dismiss(r.Context(), 1, id); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -163,6 +178,11 @@ func (h *RecommendationHandler) Add(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rec == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "recommendation not found"})
+		return
+	}
+	// Tier-1 cross-user IDOR guard (D1).
+	if !auth.CheckOwnership(r.Context(), rec.UserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "recommendation not found"})
 		return
 	}

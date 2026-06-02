@@ -44,6 +44,7 @@ type AuthorHandler struct {
 	searcher                    BookSearcher
 	finder                      LibraryFinder
 	editions                    *db.EditionRepo
+	roots                       *LibraryRoots // optional: library-root containment for delete
 	enhancedHardcoverEnvEnabled bool
 
 	editionFetcher bookhydrate.EditionFetcher
@@ -65,6 +66,14 @@ func (h *AuthorHandler) WithFinder(f LibraryFinder) *AuthorHandler {
 // books created while syncing author catalogues.
 func (h *AuthorHandler) WithEditionHydration(editions *db.EditionRepo) *AuthorHandler {
 	h.editions = editions
+	return h
+}
+
+// WithRoots wires the library-root containment checker used by Delete to
+// refuse on-disk removal of paths outside the configured library. A nil
+// value disables the check.
+func (h *AuthorHandler) WithRoots(r *LibraryRoots) *AuthorHandler {
+	h.roots = r
 	return h
 }
 
@@ -131,10 +140,26 @@ func (h *AuthorHandler) hydrateHardcoverEditionsFrom(ctx context.Context, book *
 	})
 }
 
+// authorListResponse is the paginated wrapper returned by List. Replaces the
+// pre-Wave-2 bare `[]models.Author` shape; clients must unwrap `items` to
+// reach the rows. See the Wave 2 / E PR for the breaking-change disclosure.
+type authorListResponse struct {
+	Items  []models.Author `json:"items"`
+	Total  int             `json:"total"`
+	Limit  int             `json:"limit"`
+	Offset int             `json:"offset"`
+}
+
+const (
+	authorListDefaultLimit = 100
+	authorListMaxLimit     = 500
+)
+
 func (h *AuthorHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := auth.UserIDFromContext(ctx)
-	authors, err := h.authors.ListByUser(ctx, userID)
+	limit, offset := parseLimitOffset(r, authorListDefaultLimit, authorListMaxLimit)
+	authors, total, err := h.authors.ListPage(ctx, userID, limit, offset)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -146,7 +171,12 @@ func (h *AuthorHandler) List(w http.ResponseWriter, r *http.Request) {
 		cleanAuthorDescription(&authors[i])
 		proxyAuthorImages(&authors[i])
 	}
-	writeJSON(w, http.StatusOK, authors)
+	writeJSON(w, http.StatusOK, authorListResponse{
+		Items:  authors,
+		Total:  total,
+		Limit:  limit,
+		Offset: offset,
+	})
 }
 
 func (h *AuthorHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -162,6 +192,12 @@ func (h *AuthorHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if author == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
+		return
+	}
+	// Tier-1 cross-user IDOR guard (D1). Return 404 (not 403) on mismatch so
+	// non-owners cannot probe for the existence of another user's authors.
+	if !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
 		return
 	}
@@ -202,6 +238,17 @@ func (h *AuthorHandler) ListSeries(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	// Tier-1 cross-user IDOR guard (D1). Look the author up so the ownership
+	// check runs before we list series belonging to it.
+	author, err := h.authors.GetByID(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if author == nil || !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
 		return
 	}
 	if h.series == nil {
@@ -648,6 +695,11 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
 		return
 	}
+	// Tier-1 cross-user IDOR guard (D1).
+	if !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
+		return
+	}
 
 	var req struct {
 		Monitored             *bool   `json:"monitored"`
@@ -841,6 +893,11 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
 		return
 	}
+	// Tier-1 cross-user IDOR guard (D1).
+	if !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
+		return
+	}
 	if !canRelinkAuthorToUpstream(author) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "author is already linked to upstream metadata"})
 		return
@@ -902,12 +959,31 @@ func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Tier-1 cross-user IDOR guard (D1). Look the author up so the ownership
+	// check can run before any destructive work; return 404 on mismatch or
+	// missing row so non-owners cannot probe for existence by status code.
+	author, err := h.authors.GetByID(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if author == nil || !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
+		return
+	}
+
 	// Opt-in `?deleteFiles=true` sweeps every book's on-disk path after the
 	// DB delete. We must collect the paths *before* deleting the author —
 	// the FK cascade removes the book rows along with it, which would leave
 	// us nothing to walk. Per-path errors are logged but don't abort the
 	// response: the author is already gone, and a partial sweep is better
 	// than rolling the whole thing back.
+	//
+	// Each path is run through the library-root containment check (Wave 1 /
+	// Bundle B): if a `file_path` is outside any configured library root —
+	// whether through a tampered import, a buggy migration, or a hostile
+	// metadata payload — the on-disk delete is skipped with a WARN log
+	// rather than walking outside the library.
 	var pathsToRemove []string
 	if r.URL.Query().Get("deleteFiles") == "true" {
 		books, err := h.books.ListByAuthor(r.Context(), id)
@@ -927,7 +1003,7 @@ func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, p := range pathsToRemove {
-		if err := removeBookPath(p); err != nil {
+		if _, err := safeRemoveBookPath(r.Context(), h.roots, p, "", "author_id", id); err != nil {
 			slog.Warn("delete author: failed to remove file", "author_id", id, "path", p, "error", err)
 		}
 	}
@@ -944,6 +1020,11 @@ func (h *AuthorHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 
 	author, err := h.authors.GetByID(r.Context(), id)
 	if err != nil || author == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
+		return
+	}
+	// Tier-1 cross-user IDOR guard (D1).
+	if !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
 		return
 	}

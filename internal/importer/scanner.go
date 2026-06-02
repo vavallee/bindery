@@ -21,6 +21,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/downloader"
 	"github.com/vavallee/bindery/internal/downloader/nzbget"
 	"github.com/vavallee/bindery/internal/downloader/qbittorrent"
 	"github.com/vavallee/bindery/internal/downloader/sabnzbd"
@@ -528,18 +529,48 @@ func (s *Scanner) CheckDownloads(ctx context.Context) {
 	}
 }
 
+// wedgedCompletedReconcileCap caps how many StateCompleted rows the boot
+// reconciliation re-queues per startup. The cap exists so a site that has
+// accumulated many wedged rows (e.g. first boot after the Wave 4 upgrade
+// surfaces a long-standing bug) does not thundering-herd the importer in a
+// single sweep — subsequent restarts pick up the rest a batch at a time.
+// Each sweep is bounded by importRetryLimit per row so a permanently broken
+// row terminates after at most that many cycles.
+const wedgedCompletedReconcileCap = 50
+
 // RecoverInterruptedImports sweeps downloads stuck mid-import back into a
 // retryable state. It must be called once at startup, before the scheduler
 // begins polling.
 //
-// A process crash or the 30-minute per-import timeout can leave a download in
-// StateImporting (or the earlier StateImportPending) — both non-terminal states
-// with no automatic re-entry. CheckDownloads only retries from
-// StateImportFailed, so without this sweep such a download is wedged forever
-// (issue #706 finding 1). Moving it to StateImportFailed lets the existing
-// retry path (CheckDownloads, while the source is still in the client) pick it
-// up; if the source has since vanished, the same path now terminally blocks it
-// (finding 4) rather than leaving it silently stuck.
+// Two distinct wedge shapes are handled:
+//
+//  1. StateImporting / StateImportPending — a process crash or the per-import
+//     timeout can leave the row in one of these non-terminal states with no
+//     automatic re-entry. CheckDownloads only retries from StateImportFailed,
+//     so without this sweep the download is wedged forever (issue #706
+//     finding 1). Moving it to StateImportFailed lets the existing retry path
+//     (CheckDownloads, while the source is still in the client) pick it up; if
+//     the source has since vanished, the same path now terminally blocks it
+//     (finding 4) rather than leaving it silently stuck.
+//
+//  2. StateCompleted with no book_files row — the state machine allows
+//     Completed -> ImportPending, but the transition is driven by the scanner
+//     tick, not the state itself. If the process restarts between Completed
+//     being set and the next tick, the row sits in Completed forever (Wave 4
+//     finding 21). RecoverWedgedCompleted re-queues such rows as
+//     ImportPending, bounded by wedgedCompletedReconcileCap so a database
+//     full of wedged rows does not stampede the importer on first boot.
+//     import_retry_count is bumped on every requeue so a permanently broken
+//     row exhausts the budget after importRetryLimit attempts; rows over the
+//     budget are logged at ERROR on startup but otherwise left alone.
+//
+// Release-notes implication: after upgrading past this version, downloads
+// that were stuck in Completed before the upgrade (some users have reported
+// books quietly sitting there for weeks) will be retried for import on
+// startup. The retry surfaces a file that may already be on disk; the
+// idempotency guard in the importer means a re-imported file that already
+// landed is detected and skipped. This is intended behaviour and resolves
+// the wedge without user action.
 func (s *Scanner) RecoverInterruptedImports(ctx context.Context) {
 	if s.downloads == nil {
 		return
@@ -565,6 +596,52 @@ func (s *Scanner) RecoverInterruptedImports(ctx context.Context) {
 		// startup-recovery transition that re-queues the import for retry, not a
 		// terminal failure. Webhooking every interrupted import on every restart
 		// would be noise for the user (issue #849).
+	}
+
+	s.recoverWedgedCompleted(ctx)
+}
+
+// recoverWedgedCompleted handles the Wave 4 finding 21 case: downloads that
+// finished in StateCompleted but never advanced to import (typically because
+// the process restarted between Completed being set and the scanner tick that
+// would have moved them on). The work is capped per startup so a backlog of
+// thousands does not stampede the importer; over-budget rows are surfaced via
+// an ERROR log so an operator can see what is being skipped on each boot.
+func (s *Scanner) recoverWedgedCompleted(ctx context.Context) {
+	if s.downloads == nil {
+		return
+	}
+	recovered, err := s.downloads.RecoverWedgedCompleted(ctx, importRetryLimit, wedgedCompletedReconcileCap)
+	if err != nil {
+		slog.Warn("failed to sweep wedged completed downloads on startup", "error", err)
+		// Fall through: some rows may have been re-queued before the error.
+	}
+	for _, id := range recovered {
+		slog.Warn("re-queueing wedged Completed download for import (boot reconciliation)",
+			"download_id", id, "cap", wedgedCompletedReconcileCap)
+		dl, getErr := s.downloadByID(ctx, id)
+		if getErr != nil || dl == nil {
+			continue
+		}
+		age := ""
+		if dl.CompletedAt != nil {
+			age = time.Since(*dl.CompletedAt).Truncate(time.Minute).String()
+		}
+		s.createHistoryEvent(ctx, models.HistoryEventImportFailed, dl.Title, dl.BookID, map[string]string{
+			"guid":    dl.GUID,
+			"message": "import never started (process restart before scanner tick) — re-queued for retry",
+			"status":  string(models.StateImportPending),
+			"age":     age,
+		})
+	}
+	overLimit, countErr := s.downloads.CountWedgedCompletedOverRetryLimit(ctx, importRetryLimit)
+	if countErr != nil {
+		slog.Warn("failed to count over-budget wedged Completed downloads", "error", countErr)
+		return
+	}
+	if overLimit > 0 {
+		slog.Error("wedged Completed downloads have exhausted their import retry budget and will not be re-queued — investigate manually",
+			"count", overLimit, "retry_limit", importRetryLimit)
 	}
 }
 
@@ -713,7 +790,7 @@ func (s *Scanner) blockStaleImportFailures(
 
 // checkSABnzbdDownloads polls SABnzbd for status changes.
 func (s *Scanner) checkSABnzbdDownloads(ctx context.Context, client *models.DownloadClient) {
-	sab := sabnzbd.New(client.Host, client.Port, client.APIKey, client.URLBase, client.UseSSL)
+	sab := downloader.SabnzbdFor(client)
 
 	// Check history for completed downloads (no category filter — match by NZO ID)
 	history, err := sab.GetHistory(ctx, "", 50)
@@ -779,7 +856,7 @@ func (s *Scanner) checkSABnzbdDownloads(ctx context.Context, client *models.Down
 
 // checkNZBGetDownloads polls NZBGet for status changes using its JSON-RPC API.
 func (s *Scanner) checkNZBGetDownloads(ctx context.Context, client *models.DownloadClient) {
-	ng := nzbget.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
+	ng := downloader.NzbgetFor(client)
 
 	// Check history for completed/failed downloads (matched by NZBID stored as sabnzbd_nzo_id).
 	history, err := ng.GetHistory(ctx)
@@ -852,7 +929,7 @@ func (s *Scanner) tryImportNZBGet(ctx context.Context, ng *nzbget.Client, dl *mo
 
 // checkTransmissionDownloads polls Transmission for status changes.
 func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models.DownloadClient) {
-	trans := transmission.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
+	trans := downloader.TransmissionFor(client)
 
 	// Get all torrents — Category is used as the download directory filter so
 	// Bindery only sees its own torrents on a shared Transmission instance.
@@ -933,7 +1010,7 @@ func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models
 
 // checkQbittorrentDownloads polls qBittorrent for status changes.
 func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.DownloadClient) {
-	qb := qbittorrent.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
+	qb := downloader.QbittorrentFor(client)
 
 	torrents, err := qb.GetTorrents(ctx, client.Category)
 	if err != nil {
@@ -1485,29 +1562,51 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		mode := importMode
 		slog.Info("importing book", "src", srcFile, "dst", destPath, "mode", mode)
 
-		var fileErr error
-		switch mode {
-		case "hardlink":
-			fileErr = HardlinkFile(srcFile, destPath)
-		case "copy":
-			fileErr = CopyFileCtx(importCtx, srcFile, destPath)
-		default:
-			fileErr = MoveFileCtx(importCtx, srcFile, destPath)
-		}
-		if fileErr != nil {
-			slog.Error("failed to import", "src", srcFile, "mode", mode, "error", fileErr)
+		// Wave 4 / finding 23: stage the file under a sibling temp name,
+		// write the book_files row pointing at destPath, then atomically
+		// promote staged -> destPath. Doing the DB write first means a
+		// transient SQLite error rolls back to "nothing on disk, nothing
+		// in DB" rather than "file at destPath, no book_files row, user
+		// sees not-imported and re-grabs". The os.Rename leans on POSIX
+		// atomic-rename for the durability invariant: either the user
+		// sees the final file with its DB row, or neither.
+		stagedPath, commit, rollback, stageErr := StagedImport(importCtx, mode, srcFile, destPath)
+		if stageErr != nil {
+			slog.Error("failed to stage import", "src", srcFile, "mode", mode, "error", stageErr)
 			failed++
-			lastFileErr = fileErr
+			lastFileErr = stageErr
+			continue
+		}
+		// Record each imported file individually in book_files so multi-file
+		// downloads (epub + mobi + pdf) are all tracked rather than overwriting.
+		// The path is the final destPath, not the staging path — the row
+		// reflects where the file WILL live, and commit makes that true
+		// atomically immediately below.
+		if err := s.books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, destPath); err != nil {
+			slog.Error("failed to record book file — rolling back staged file", "bookID", book.ID, "staged", stagedPath, "error", err)
+			rollback()
+			failed++
+			lastFileErr = fmt.Errorf("record book file: %w", err)
+			continue
+		}
+		if err := commit(); err != nil {
+			// The DB row exists but the rename failed (e.g. a concurrent
+			// reader holds destPath, or the FS went read-only between
+			// AddBookFile and Rename). Best-effort delete the book_files
+			// row so it does not point at a non-existent path. If the
+			// delete itself fails the next ScanLibrary will reconcile the
+			// dangling row away.
+			slog.Error("failed to commit staged file — rolling back book_files row", "bookID", book.ID, "staged", stagedPath, "dst", destPath, "error", err)
+			if _, removeErr := s.books.RemoveBookFile(ctx, destPath); removeErr != nil {
+				slog.Warn("failed to roll back book_files row after staged-commit failure — ScanLibrary will reconcile", "bookID", book.ID, "path", destPath, "error", removeErr)
+			}
+			rollback()
+			failed++
+			lastFileErr = err
 			continue
 		}
 		imported++
 		importedSrcFiles = append(importedSrcFiles, srcFile)
-
-		// Record each imported file individually in book_files so multi-file
-		// downloads (epub + mobi + pdf) are all tracked rather than overwriting.
-		if err := s.books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, destPath); err != nil {
-			slog.Error("failed to record book file", "bookID", book.ID, "error", err)
-		}
 		// NOTE: StateImported is intentionally NOT set here (issue #705 finding 1).
 		// Writing the terminal "imported" state after the first successful file
 		// would mark an incomplete multi-file download as fully imported; a later

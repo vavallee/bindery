@@ -44,6 +44,11 @@ type Book struct {
 	CreatedAt             time.Time  `json:"createdAt"`
 	UpdatedAt             time.Time  `json:"updatedAt"`
 
+	// OwnerUserID is the per-user ownership column added in migration 025.
+	// See models.Author for the legacy zero-value semantics. Not surfaced
+	// in JSON: callers identify books by id, not owner.
+	OwnerUserID int64 `json:"-"`
+
 	Excluded bool `json:"excluded"`
 
 	// EbookFilePath and AudiobookFilePath are computed views over the book_files

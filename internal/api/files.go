@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 )
 
@@ -43,6 +44,13 @@ func (h *FileHandler) Download(w http.ResponseWriter, r *http.Request) {
 
 	book, err := h.books.GetByID(r.Context(), id)
 	if err != nil || book == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
+		return
+	}
+	// Tier-1 cross-user IDOR guard (D1). Hit by OPDS readers too; respond
+	// 404 (not 403) on mismatch so we do not change the response shape and
+	// do not leak existence to non-owners.
+	if !auth.CheckOwnership(r.Context(), book.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
 		return
 	}

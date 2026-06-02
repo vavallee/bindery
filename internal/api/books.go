@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/bookhydrate"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/importer"
@@ -32,6 +33,7 @@ type BookHandler struct {
 	authors   *db.AuthorRepo
 	series    *db.SeriesRepo
 	editions  *db.EditionRepo
+	roots     *LibraryRoots // optional: library-root containment for delete
 
 	editionFetcher bookhydrate.EditionFetcher
 }
@@ -84,6 +86,14 @@ func (h *BookHandler) WithEditionHydration(editions *db.EditionRepo) *BookHandle
 	return h
 }
 
+// WithRoots wires the library-root containment checker used by the delete
+// handlers to refuse on-disk removal of paths outside the configured library.
+// A nil value disables the check (the default; preserves legacy test wiring).
+func (h *BookHandler) WithRoots(r *LibraryRoots) *BookHandler {
+	h.roots = r
+	return h
+}
+
 // WithEditionFetcher overrides the edition fetcher used by tests.
 func (h *BookHandler) WithEditionFetcher(fetcher bookhydrate.EditionFetcher) *BookHandler {
 	h.editionFetcher = fetcher
@@ -124,6 +134,11 @@ func (h *BookHandler) EnrichAudiobook(w http.ResponseWriter, r *http.Request) {
 	}
 	book, err := h.books.GetByID(r.Context(), id)
 	if err != nil || book == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
+		return
+	}
+	// Tier-1 cross-user IDOR guard (D1). 404 (not 403) on mismatch.
+	if !auth.CheckOwnership(r.Context(), book.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
 		return
 	}
@@ -192,33 +207,70 @@ func (h *BookHandler) tryMapAudiobookMetadataByASIN(ctx context.Context, book *m
 	}
 }
 
-func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
-	var books []models.Book
-	var err error
+// bookListResponse is the paginated wrapper returned by List. Replaces the
+// pre-Wave-2 bare `[]models.Book` shape; clients must unwrap `items` to get
+// the rows. See PR #E for the breaking-change disclosure.
+type bookListResponse struct {
+	Items  []models.Book `json:"items"`
+	Total  int           `json:"total"`
+	Limit  int           `json:"limit"`
+	Offset int           `json:"offset"`
+}
 
+// bookListDefaultLimit is the default page size for an unparameterised List
+// request; bookListMaxLimit is the hard cap so a client cannot ask for
+// limit=10_000_000 and OOM the server building one big JSON blob.
+const (
+	bookListDefaultLimit = 100
+	bookListMaxLimit     = 500
+)
+
+func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
 	authorID := r.URL.Query().Get("authorId")
 	status := r.URL.Query().Get("status")
 	includeExcluded := r.URL.Query().Get("includeExcluded") == "true"
+	limit, offset := parseLimitOffset(r, bookListDefaultLimit, bookListMaxLimit)
+
+	var (
+		books []models.Book
+		total int
+		err   error
+	)
 
 	switch {
 	case authorID != "":
+		// Filtered-by-author lists are bounded (max a few hundred per author)
+		// so we paginate in memory rather than threading LIMIT/OFFSET through
+		// every ListByAuthor* variant. The repo call still pulls one author's
+		// catalogue; the slice is cheap.
 		id, _ := strconv.ParseInt(authorID, 10, 64)
 		if includeExcluded {
 			books, err = h.books.ListByAuthorIncludingExcluded(r.Context(), id)
 		} else {
 			books, err = h.books.ListByAuthor(r.Context(), id)
 		}
+		books, total = pageBooks(books, limit, offset)
 	case status != "":
+		// Status-filtered lists (wanted/imported/etc.) can be large on a 50k
+		// library but they back the dashboard widgets, which always fetch the
+		// whole set today. Keep that behaviour for now and slice for the new
+		// envelope; a follow-up can add a SQL-paginated ListByStatusPage if
+		// the audit shows the wanted/imported pages dominate at scale.
 		if includeExcluded {
 			books, err = h.books.ListByStatusIncludingExcluded(r.Context(), status)
 		} else {
 			books, err = h.books.ListByStatus(r.Context(), status)
 		}
+		books, total = pageBooks(books, limit, offset)
 	default:
 		if includeExcluded {
 			books, err = h.books.ListIncludingExcluded(r.Context())
+			books, total = pageBooks(books, limit, offset)
 		} else {
-			books, err = h.books.List(r.Context())
+			// Default-path SQL pagination: the books list is the hottest
+			// 50k-row scan in the app, so push LIMIT/OFFSET to SQLite where
+			// idx_books_sort_title (migration 047) keeps the sort cheap.
+			books, total, err = h.books.ListPage(r.Context(), 0, limit, offset)
 		}
 	}
 
@@ -233,7 +285,27 @@ func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
 		cleanBookDescription(&books[i])
 		proxyBookImages(&books[i])
 	}
-	writeJSON(w, http.StatusOK, books)
+	writeJSON(w, http.StatusOK, bookListResponse{
+		Items:  books,
+		Total:  total,
+		Limit:  limit,
+		Offset: offset,
+	})
+}
+
+// pageBooks slices a fully-loaded book list by (limit, offset) and returns
+// the page along with the unsliced total. Used for the filtered List paths
+// where the underlying repo method does not yet take a page argument.
+func pageBooks(in []models.Book, limit, offset int) ([]models.Book, int) {
+	total := len(in)
+	if offset >= total {
+		return []models.Book{}, total
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return in[offset:end], total
 }
 
 func (h *BookHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -249,6 +321,11 @@ func (h *BookHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if book == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
+		return
+	}
+	// Tier-1 cross-user IDOR guard (D1).
+	if !auth.CheckOwnership(r.Context(), book.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
 		return
 	}
@@ -281,6 +358,11 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	book, err := h.books.GetByID(r.Context(), id)
 	if err != nil || book == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
+		return
+	}
+	// Tier-1 cross-user IDOR guard (D1).
+	if !auth.CheckOwnership(r.Context(), book.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
 		return
 	}
@@ -366,12 +448,29 @@ func (h *BookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
 		return
 	}
+	// Tier-1 cross-user IDOR guard (D1). Pre-fetch the book so the ownership
+	// check can run before any destructive work; 404 on mismatch or missing
+	// row so non-owners cannot probe for existence. The handler's existing
+	// `?deleteFiles=true` branch re-fetches when it needs the legacy file
+	// columns; the extra lookup is cheap and keeps the diff localised.
+	if existing, err := h.books.GetByID(r.Context(), id); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	} else if existing == nil || !auth.CheckOwnership(r.Context(), existing.OwnerUserID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
+		return
+	}
 	// Opt-in `?deleteFiles=true` also removes every on-disk file tracked in
-	// book_files before dropping the record.
+	// book_files before dropping the record. Each path is first run through
+	// the library-root containment check (Wave 1 / Bundle B) so a tampered
+	// or mis-imported `file_path` outside any configured root cannot redirect
+	// the on-disk delete. Skipped paths are WARN-logged; the DB delete below
+	// still proceeds — the row is going away regardless, and a loud refusal
+	// is better than silently walking outside the library.
 	if r.URL.Query().Get("deleteFiles") == "true" {
 		files, _ := h.books.ListFiles(r.Context(), id)
 		for _, f := range files {
-			if err := removeBookPath(f.Path); err != nil {
+			if _, err := safeRemoveBookPath(r.Context(), h.roots, f.Path, "", "id", id); err != nil {
 				slog.Warn("book delete: failed to remove file", "id", id, "path", f.Path, "error", err)
 			}
 		}
@@ -380,7 +479,7 @@ func (h *BookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			if book, _ := h.books.GetByID(r.Context(), id); book != nil {
 				for _, p := range []string{book.EbookFilePath, book.AudiobookFilePath, book.FilePath} {
 					if p != "" {
-						if err := removeBookPath(p); err != nil {
+						if _, err := safeRemoveBookPath(r.Context(), h.roots, p, "", "id", id); err != nil {
 							slog.Warn("book delete: failed to remove legacy file", "id", id, "path", p, "error", err)
 						}
 					}
@@ -412,6 +511,16 @@ func (h *BookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 func (h *BookHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(w, r)
 	if !ok {
+		return
+	}
+
+	// Tier-1 cross-user IDOR guard (D1). Fetch the book up-front so the
+	// ownership check runs before any file enumeration or destructive work.
+	if existing, err := h.books.GetByID(r.Context(), id); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	} else if existing == nil || !auth.CheckOwnership(r.Context(), existing.OwnerUserID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
 		return
 	}
 
@@ -464,14 +573,21 @@ func (h *BookHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	// Remove files from disk and from book_files. When a format filter is
 	// supplied, the stem-sibling sweep is scoped to that format so deleting
 	// the ebook does not also destroy the audiobook sibling (and vice versa).
+	// Paths failing the library-root containment check are skipped (with a
+	// WARN log); the book_files row is still deregistered so the orphaned
+	// path stops surfacing in subsequent reads. Returning 500 instead would
+	// strand the row permanently behind a path the user cannot delete.
 	var deletedPaths []string
 	for _, p := range toDelete {
-		if err := removeBookPathScoped(p, format); err != nil {
+		skipped, err := safeRemoveBookPath(r.Context(), h.roots, p, format, "id", id)
+		if err != nil {
 			slog.Error("failed to remove book file", "id", id, "path", p, "error", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		deletedPaths = append(deletedPaths, p)
+		if !skipped {
+			deletedPaths = append(deletedPaths, p)
+		}
 		if _, err := h.books.RemoveBookFile(r.Context(), p); err != nil {
 			slog.Warn("failed to deregister book file", "id", id, "path", p, "error", err)
 		}
@@ -501,12 +617,6 @@ func (h *BookHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, book)
-}
-
-// removeBookPath deletes a file or directory at p with an unscoped stem
-// sweep — see removeBookPathScoped. Used when no format filter is supplied.
-func removeBookPath(p string) error {
-	return removeBookPathScoped(p, "")
 }
 
 // removeBookPathScoped deletes a file or directory at p. Audiobooks are stored
@@ -642,6 +752,11 @@ func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
 	}
 	book, err := h.books.GetByID(r.Context(), id)
 	if err != nil || book == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
+		return
+	}
+	// Tier-1 cross-user IDOR guard (D1).
+	if !auth.CheckOwnership(r.Context(), book.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
 		return
 	}
@@ -806,6 +921,11 @@ func (h *BookHandler) ToggleExcluded(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
 		return
 	}
+	// Tier-1 cross-user IDOR guard (D1).
+	if !auth.CheckOwnership(r.Context(), book.OwnerUserID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
+		return
+	}
 
 	newVal := !book.Excluded
 	if err := h.books.SetExcluded(r.Context(), id, newVal); err != nil {
@@ -843,6 +963,11 @@ func (h *BookHandler) MapMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 	book, err := h.books.GetByID(r.Context(), id)
 	if err != nil || book == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
+		return
+	}
+	// Tier-1 cross-user IDOR guard (D1).
+	if !auth.CheckOwnership(r.Context(), book.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
 		return
 	}

@@ -472,17 +472,25 @@ func main() {
 	userMgmtHandler := api.NewUserManagementHandler(userRepo).
 		WithLocalAuthEnabled(cfg.LocalAuthEnabled)
 	searchHandler := api.NewSearchHandler(metaAgg)
+	// Library-root containment checker (Wave 1 / Bundle B): used by the book
+	// and author delete handlers to refuse on-disk removal of any path that
+	// isn't inside a configured root. Defaults to the legacy single-root env
+	// vars so installs that never created a root_folders row still get the
+	// check.
+	libraryRoots := api.NewLibraryRoots(rootFolderRepo, cfg.LibraryDir, cfg.AudiobookDir)
 	authorHandler := api.NewAuthorHandler(authorRepo, authorAliasRepo, bookRepo, seriesRepo, metaAgg, settingsRepo, metadataProfileRepo, sched).
 		WithFinder(importScanner).
 		WithHardcoverFeatureSettings(settingsRepo, cfg.EnhancedHardcoverAPI).
-		WithEditionHydration(editionRepo)
+		WithEditionHydration(editionRepo).
+		WithRoots(libraryRoots)
 	authorAliasHandler := api.NewAuthorAliasHandler(authorRepo, authorAliasRepo)
 	bookHandler := api.NewBookHandler(bookRepo, metaAgg, historyRepo, sched).
 		WithSettings(settingsRepo).
 		WithDownloads(downloadRepo).
 		WithAuthors(authorRepo).
 		WithSeries(seriesRepo).
-		WithEditionHydration(editionRepo)
+		WithEditionHydration(editionRepo).
+		WithRoots(libraryRoots)
 	indexerHandler := api.NewIndexerHandler(indexerRepo, bookRepo, authorRepo, metadataProfileRepo, idxSearcher, settingsRepo, blocklistRepo).WithAliases(authorAliasRepo)
 	downloadHealth := downloader.NewHealthStore().WithNotifier(notif)
 	if clients, err := dlClientRepo.List(ctxBoot); err == nil {
@@ -497,8 +505,7 @@ func main() {
 		WithNotifier(notif).
 		WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir)
 	manualImportHandler := api.NewManualImportHandler(importScanner, downloadRepo, bookRepo).
-		WithAllowedRoots(cfg.LibraryDir, cfg.AudiobookDir).
-		WithRootFolderRepo(rootFolderRepo)
+		WithRoots(libraryRoots)
 	pendingHandler := api.NewPendingHandler(pendingReleaseRepo, queueHandler, downloadRepo, bookRepo)
 	importScanner.WithSettings(settingsRepo)
 	importScanner.WithRootFolders(rootFolderRepo)
@@ -538,7 +545,7 @@ func main() {
 	delayProfileHandler := api.NewDelayProfileHandler(delayProfileRepo)
 	customFormatHandler := api.NewCustomFormatHandler(customFormatRepo)
 	bulkHandler := api.NewBulkHandler(authorRepo, bookRepo, blocklistRepo, sched)
-	backupHandler := api.NewBackupHandler(cfg.DBPath, cfg.DataDir)
+	backupHandler := api.NewBackupHandler(database, cfg.DBPath, cfg.DataDir)
 	rootFolderHandler := api.NewRootFolderHandler(rootFolderRepo)
 	logHandler := api.NewLogHandler(ring).WithLogRepo(logRepo).WithDBLogHandler(logDBHandler)
 	prowlarrHandler := api.NewProwlarrHandler(prowlarrRepo, indexerRepo).WithSettings(settingsRepo)
@@ -587,6 +594,16 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Compress(5))
 	r.Use(api.SecurityHeaders)
+	// Cap JSON / form request bodies at 1 MiB by default so an authenticated
+	// client cannot pin the process by streaming a multi-gigabyte body into
+	// json.Decode. Routes that legitimately accept larger payloads opt in via
+	// api.WithMaxBody on the chi sub-route (see /migrate/* below).
+	// PreserveRawBody must run first so the per-route override can re-wrap
+	// the raw body with a higher cap; without it the override would chain a
+	// larger MaxBytesReader on top of the smaller default and the inner cap
+	// would silently win.
+	r.Use(api.PreserveRawBody)
+	r.Use(api.MaxRequestBody)
 	r.Use(metrics.HTTPMiddleware(routeTemplate))
 
 	// Prometheus exposition. Mounted at the router root (no auth, no
@@ -828,40 +845,48 @@ func main() {
 		r.Post("/tag", tagHandler.Create)
 		r.Delete("/tag/{id}", tagHandler.Delete)
 
-		// Import lists
-		r.Get("/importlist", importListHandler.List)
-		r.Post("/importlist", importListHandler.Create)
-		r.Get("/importlist/hardcover/lists", importListHandler.HardcoverLists)
-		r.Get("/importlist/{id}", importListHandler.Get)
-		r.Put("/importlist/{id}", importListHandler.Update)
-		r.Delete("/importlist/{id}", importListHandler.Delete)
-		r.Post("/importlist/{id}/sync", importListHandler.Sync)
+		// Import lists, delay profiles, custom formats: shared deployment
+		// config, not per-user content. Reads and writes are admin-only so
+		// non-admin sessions can't enumerate which import lists feed the
+		// library or which delay profiles gate downloads. Previously every
+		// authenticated user could list/read these, which leaked operational
+		// detail (which TRaSH custom-format rules are active, which
+		// HC-list/RSS feeds are wired up, what the delay-profile policy is).
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireAdmin)
+			r.Get("/importlist", importListHandler.List)
+			r.Post("/importlist", importListHandler.Create)
+			r.Get("/importlist/hardcover/lists", importListHandler.HardcoverLists)
+			r.Get("/importlist/{id}", importListHandler.Get)
+			r.Put("/importlist/{id}", importListHandler.Update)
+			r.Delete("/importlist/{id}", importListHandler.Delete)
+			r.Post("/importlist/{id}/sync", importListHandler.Sync)
 
-		// Import list exclusions
-		r.Get("/importlistexclusion", importListHandler.ListExclusions)
-		r.Post("/importlistexclusion", importListHandler.CreateExclusion)
-		r.Delete("/importlistexclusion/{id}", importListHandler.DeleteExclusion)
+			r.Get("/importlistexclusion", importListHandler.ListExclusions)
+			r.Post("/importlistexclusion", importListHandler.CreateExclusion)
+			r.Delete("/importlistexclusion/{id}", importListHandler.DeleteExclusion)
 
-		// Metadata profiles
+			r.Get("/delayprofile", delayProfileHandler.List)
+			r.Post("/delayprofile", delayProfileHandler.Create)
+			r.Get("/delayprofile/{id}", delayProfileHandler.Get)
+			r.Put("/delayprofile/{id}", delayProfileHandler.Update)
+			r.Delete("/delayprofile/{id}", delayProfileHandler.Delete)
+
+			r.Get("/customformat", customFormatHandler.List)
+			r.Post("/customformat", customFormatHandler.Create)
+			r.Get("/customformat/{id}", customFormatHandler.Get)
+			r.Put("/customformat/{id}", customFormatHandler.Update)
+			r.Delete("/customformat/{id}", customFormatHandler.Delete)
+		})
+
+		// Metadata profiles — per-user (owner_user_id from migration 025).
+		// Reads stay available to all authenticated users; the cross-user
+		// Get/Update/Delete IDOR is closed by D1's env-gated handler check.
 		r.Get("/metadataprofile", metadataProfileHandler.List)
 		r.Post("/metadataprofile", metadataProfileHandler.Create)
 		r.Get("/metadataprofile/{id}", metadataProfileHandler.Get)
 		r.Put("/metadataprofile/{id}", metadataProfileHandler.Update)
 		r.Delete("/metadataprofile/{id}", metadataProfileHandler.Delete)
-
-		// Delay profiles
-		r.Get("/delayprofile", delayProfileHandler.List)
-		r.Post("/delayprofile", delayProfileHandler.Create)
-		r.Get("/delayprofile/{id}", delayProfileHandler.Get)
-		r.Put("/delayprofile/{id}", delayProfileHandler.Update)
-		r.Delete("/delayprofile/{id}", delayProfileHandler.Delete)
-
-		// Custom formats
-		r.Get("/customformat", customFormatHandler.List)
-		r.Post("/customformat", customFormatHandler.Create)
-		r.Get("/customformat/{id}", customFormatHandler.Get)
-		r.Put("/customformat/{id}", customFormatHandler.Update)
-		r.Delete("/customformat/{id}", customFormatHandler.Delete)
 
 		// Backups — Restore overwrites the live database, Delete removes
 		// stored backups, and List leaks filenames containing timestamps that
@@ -922,14 +947,20 @@ func main() {
 		// Migration imports (CSV of author names, or Readarr SQLite DB).
 		// The Readarr import is async — POST returns 202 immediately and the
 		// UI polls GET /migrate/readarr/status to track completion.
-		r.Post("/migrate/csv", migrateHandler.ImportCSV)
-		r.Post("/migrate/readarr", migrateHandler.ImportReadarr)
+		//
+		// Per-route body caps override the 1 MiB default for routes that
+		// accept multipart file uploads. The handler-side acceptUpload still
+		// applies the authoritative per-route cap via http.MaxBytesReader;
+		// these overrides just raise the outer router-level ceiling so the
+		// inner wrap is the one that decides.
+		r.With(api.WithMaxBody(6<<20)).Post("/migrate/csv", migrateHandler.ImportCSV)         // CSV under 5 MiB
+		r.With(api.WithMaxBody(2<<30)).Post("/migrate/readarr", migrateHandler.ImportReadarr) // readarr.db can be hundreds of MiB
 		r.Get("/migrate/readarr/status", migrateHandler.ImportReadarrStatus)
 
 		// Goodreads library CSV import — a two-step migration aid: POST the
 		// export to /goodreads/preview for a dry-run, then POST the returned
 		// token to /goodreads/commit to add the resolved books.
-		r.Post("/migrate/goodreads/preview", migrateHandler.ImportGoodreadsPreview)
+		r.With(api.WithMaxBody(24<<20)).Post("/migrate/goodreads/preview", migrateHandler.ImportGoodreadsPreview) // Goodreads export under 20 MiB
 		r.Post("/migrate/goodreads/commit", migrateHandler.ImportGoodreadsCommit)
 
 		// Image proxy — caches external cover images locally so the browser
@@ -1203,6 +1234,20 @@ func (p *dbAuthProvider) UserRole(ctx context.Context, userID int64) string {
 		return ""
 	}
 	return u.Role
+}
+
+// UserSessionEpoch returns the user's current users.session_epoch, the value
+// the cookie payload must match for the auth middleware to accept it. Bumped
+// inside UpdatePassword so a password change immediately evicts every
+// outstanding cookie for that user (Wave 1 / Bundle C audit finding).
+// Returns 0 on lookup failure or missing user — that fails closed against
+// any cookie minted after the 047 migration (which defaults the column to 1).
+func (p *dbAuthProvider) UserSessionEpoch(ctx context.Context, userID int64) int64 {
+	epoch, err := p.users.GetSessionEpoch(ctx, userID)
+	if err != nil {
+		return 0
+	}
+	return epoch
 }
 func (p *dbAuthProvider) UserProvisioner() auth.UserProvisioner {
 	return &dbUserProvisioner{users: p.users}

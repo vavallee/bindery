@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -43,6 +44,11 @@ func (h *MetadataProfileHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if p == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "metadata profile not found"})
+		return
+	}
+	// Tier-1 cross-user IDOR guard (D1).
+	if !auth.CheckOwnership(r.Context(), p.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "metadata profile not found"})
 		return
 	}
@@ -83,6 +89,11 @@ func (h *MetadataProfileHandler) Update(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "metadata profile not found"})
 		return
 	}
+	// Tier-1 cross-user IDOR guard (D1).
+	if !auth.CheckOwnership(r.Context(), existing.OwnerUserID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "metadata profile not found"})
+		return
+	}
 	var p models.MetadataProfile
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -103,6 +114,17 @@ func (h *MetadataProfileHandler) Delete(w http.ResponseWriter, r *http.Request) 
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	// Tier-1 cross-user IDOR guard (D1). Pre-fetch so non-owners cannot
+	// observe a 200 / 500 vs. 404 difference and probe for existence.
+	existing, err := h.repo.GetByID(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if existing == nil || !auth.CheckOwnership(r.Context(), existing.OwnerUserID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "metadata profile not found"})
 		return
 	}
 	if err := h.repo.Delete(r.Context(), id); err != nil {

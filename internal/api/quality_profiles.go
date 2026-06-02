@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -45,6 +46,13 @@ func (h *QualityProfileHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if p == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "quality profile not found"})
+		return
+	}
+	// Tier-1 cross-user IDOR guard (D1). The Put / Delete routes for this
+	// resource are already RequireAdmin (see cmd/bindery/main.go), so only
+	// the read path needs the per-user gate here.
+	if !auth.CheckOwnership(r.Context(), p.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "quality profile not found"})
 		return
 	}

@@ -149,6 +149,12 @@ func (h *DownloadClientHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	// Evict the pooled downloader client so the next poll picks up the new
+	// credentials immediately. Without this, the scanner would keep using
+	// the cached pre-update client (and its now-stale session cookie) until
+	// the remote service rejected a request, at which point the per-client
+	// re-Login path would burn an extra round-trip. (Wave 3 finding 10.)
+	downloader.Evict(id)
 	h.refreshClientHealthAsync(c)
 	h.attachClientHealth(&c)
 	writeJSON(w, http.StatusOK, c)
@@ -160,6 +166,10 @@ func (h *DownloadClientHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	// Drop the pooled client so its session/cookies and idle connections
+	// are released rather than lingering until http.Transport's
+	// IdleConnTimeout fires. (Wave 3 finding 10.)
+	downloader.Evict(id)
 	if h.health != nil {
 		h.health.Delete(id)
 	}

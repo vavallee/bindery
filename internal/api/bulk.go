@@ -6,9 +6,18 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 )
+
+// bulkSearchConcurrency caps how many indexer searches a single bulk
+// action can fan out at once. Sized to a small fixed number rather than
+// the configured indexer count so a 500-book author "search all" can't
+// drown every indexer in one click; the scheduled wanted-search loop
+// uses the same bound. Tune in code if real-world indexer pools change
+// shape — a setting for one number would be more noise than signal.
+const bulkSearchConcurrency = 8
 
 // BulkHandler handles multi-ID mutation endpoints for authors, books, and
 // wanted books. All three endpoints use a per-ID result map with 200 status
@@ -80,6 +89,13 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 
 	resp := bulkResponse{Results: make(map[string]bulkItemResult, len(req.IDs))}
 
+	// For the "search" action we collect wanted+monitored books across every
+	// requested author and dispatch the indexer fan-out under a single bounded
+	// pool after the handler returns. This caps a 500-book author (or 50
+	// authors with 50 books each) at bulkSearchConcurrency in-flight searches
+	// rather than the prior unbounded `go ... per book`.
+	var searchTargets []models.Book
+
 	for _, id := range req.IDs {
 		key := fmt.Sprintf("%d", id)
 		switch req.Action {
@@ -100,18 +116,16 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 			}
 		case "search":
 			// Fetch wanted books while the request context is still alive,
-			// then detach before launching per-book goroutines.
+			// then collect them for the bounded post-response fan-out.
 			books, err := h.books.ListByAuthor(r.Context(), id)
 			if err != nil {
 				resp.Results[key] = bulkItemResult{Error: err.Error()}
 				continue
 			}
 			if h.searcher != nil {
-				bgCtx := contextBackground()
 				for _, b := range books {
 					if b.Status == models.BookStatusWanted && b.Monitored {
-						b := b
-						go h.searcher.SearchAndGrabBook(bgCtx, b)
+						searchTargets = append(searchTargets, b)
 					}
 				}
 			}
@@ -124,7 +138,26 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 		resp.Results[key] = bulkItemResult{OK: true}
 	}
 
+	if len(searchTargets) > 0 && h.searcher != nil {
+		h.fanOutSearches(searchTargets)
+	}
+
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// fanOutSearches dispatches per-book indexer searches under a bounded pool
+// so a single bulk action can't spawn one goroutine per book. The pool
+// itself runs on a detached background context so the HTTP response is
+// not blocked on indexer round-trips; the bulk endpoint is fire-and-forget
+// for searches by design (results show up in History).
+func (h *BulkHandler) fanOutSearches(books []models.Book) {
+	if h.searcher == nil || len(books) == 0 {
+		return
+	}
+	bgCtx := contextBackground()
+	go concurrency.RunBounded(bgCtx, books, bulkSearchConcurrency, func(ctx context.Context, b models.Book) {
+		h.searcher.SearchAndGrabBook(ctx, b)
+	})
 }
 
 // BooksBulk handles POST /api/v1/book/bulk.
@@ -164,6 +197,8 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 
 	resp := bulkResponse{Results: make(map[string]bulkItemResult, len(req.IDs))}
 
+	var searchTargets []models.Book
+
 	for _, id := range req.IDs {
 		key := fmt.Sprintf("%d", id)
 		var opErr error
@@ -181,8 +216,7 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if h.searcher != nil {
-				b := *book
-				go h.searcher.SearchAndGrabBook(contextBackground(), b)
+				searchTargets = append(searchTargets, *book)
 			}
 		case "set_media_type":
 			opErr = h.setBookMediaType(r.Context(), id, req.MediaType)
@@ -194,6 +228,10 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		resp.Results[key] = bulkItemResult{OK: true}
+	}
+
+	if len(searchTargets) > 0 && h.searcher != nil {
+		h.fanOutSearches(searchTargets)
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -227,6 +265,8 @@ func (h *BulkHandler) WantedBulk(w http.ResponseWriter, r *http.Request) {
 
 	resp := bulkResponse{Results: make(map[string]bulkItemResult, len(req.IDs))}
 
+	var searchTargets []models.Book
+
 	for _, id := range req.IDs {
 		key := fmt.Sprintf("%d", id)
 		var opErr error
@@ -238,8 +278,7 @@ func (h *BulkHandler) WantedBulk(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if h.searcher != nil {
-				b := *book
-				go h.searcher.SearchAndGrabBook(contextBackground(), b)
+				searchTargets = append(searchTargets, *book)
 			}
 		case "unmonitor":
 			opErr = h.setBookMonitored(r.Context(), id, false)
@@ -251,6 +290,10 @@ func (h *BulkHandler) WantedBulk(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		resp.Results[key] = bulkItemResult{OK: true}
+	}
+
+	if len(searchTargets) > 0 && h.searcher != nil {
+		h.fanOutSearches(searchTargets)
 	}
 
 	writeJSON(w, http.StatusOK, resp)

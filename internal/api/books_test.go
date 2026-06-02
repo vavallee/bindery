@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -90,8 +91,10 @@ func withURLParam(req *http.Request, key, val string) *http.Request {
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 }
 
-// TestBookList_Empty returns [] (not null) so the frontend can render without
-// a null-check. A nil body here would break the books grid on first load.
+// TestBookList_Empty returns a wrapped envelope with items=[] (not null) so
+// the frontend can render without a null-check. A nil body here would break
+// the books grid on first load. As of Wave 2 / Bundle E the shape is
+// {items, total, limit, offset}, not a bare array.
 func TestBookList_Empty(t *testing.T) {
 	h, _, _, _, _ := bookFixture(t)
 	rec := httptest.NewRecorder()
@@ -99,8 +102,15 @@ func TestBookList_Empty(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
-	if bytes.TrimSpace(rec.Body.Bytes())[0] != '[' {
-		t.Errorf("expected JSON array, got %s", rec.Body.String())
+	var got bookListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode envelope: %v (body=%s)", err, rec.Body.String())
+	}
+	if got.Items == nil {
+		t.Errorf("expected items=[] (not null) so the frontend can render, got %s", rec.Body.String())
+	}
+	if got.Total != 0 || got.Offset != 0 || got.Limit != bookListDefaultLimit {
+		t.Errorf("expected zero totals + default limit, got %+v", got)
 	}
 }
 
@@ -124,12 +134,130 @@ func TestBookList_FiltersByAuthor(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book?authorId="+strconv.FormatInt(a1.ID, 10), nil))
-	var got []models.Book
+	var got bookListResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 {
-		t.Errorf("expected 2 books for author %d, got %d", a1.ID, len(got))
+	if got.Total != 2 || len(got.Items) != 2 {
+		t.Errorf("expected 2 books for author %d, got total=%d items=%d", a1.ID, got.Total, len(got.Items))
+	}
+}
+
+// seedBooksForPagination creates n books under the given author with
+// deterministic sort_titles ("Book 001", "Book 002", ...) so the order is
+// stable and the test can assert which slice of titles came back.
+func seedBooksForPagination(t *testing.T, books *db.BookRepo, ctx context.Context, authorID int64, n int) []string {
+	t.Helper()
+	titles := make([]string, 0, n)
+	for i := 1; i <= n; i++ {
+		title := fmt.Sprintf("Book %03d", i)
+		b := &models.Book{
+			ForeignID: fmt.Sprintf("PAGE-%03d", i), AuthorID: authorID, Title: title, SortTitle: title,
+			Status: "wanted", Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+		}
+		if err := books.Create(ctx, b); err != nil {
+			t.Fatal(err)
+		}
+		titles = append(titles, title)
+	}
+	return titles
+}
+
+// TestBookList_Paginates exercises ?limit=N&offset=K with N seeded rows.
+// The first page returns three books and the trailing-edge page returns
+// the leftover one. Total is the unsliced count regardless of page.
+func TestBookList_Paginates(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	titles := seedBooksForPagination(t, books, ctx, author.ID, 10)
+
+	// limit=3 offset=0 — first three by sort_title.
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book?limit=3&offset=0", nil))
+	var first bookListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
+		t.Fatalf("decode first: %v", err)
+	}
+	if first.Total != 10 || first.Limit != 3 || first.Offset != 0 || len(first.Items) != 3 {
+		t.Errorf("first page envelope = %+v, want total=10 limit=3 offset=0 len=3", first)
+	}
+	for i, b := range first.Items {
+		if b.Title != titles[i] {
+			t.Errorf("first page item %d = %q, want %q", i, b.Title, titles[i])
+		}
+	}
+
+	// offset=9 lands on the last book alone.
+	rec = httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book?limit=3&offset=9", nil))
+	var tail bookListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &tail); err != nil {
+		t.Fatalf("decode tail: %v", err)
+	}
+	if tail.Total != 10 || len(tail.Items) != 1 || tail.Items[0].Title != titles[9] {
+		t.Errorf("tail page = %+v, want one item %q", tail, titles[9])
+	}
+}
+
+// TestBookList_DefaultsAndCaps checks the default limit is applied when no
+// query param is set and that an oversized request is clamped at the
+// configured max so a client cannot pull the entire 50k library at once.
+func TestBookList_DefaultsAndCaps(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	seedBooksForPagination(t, books, ctx, author.ID, 3)
+
+	// No params — default limit applies.
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book", nil))
+	var defaults bookListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &defaults); err != nil {
+		t.Fatalf("decode defaults: %v", err)
+	}
+	if defaults.Limit != bookListDefaultLimit {
+		t.Errorf("expected default limit %d, got %d", bookListDefaultLimit, defaults.Limit)
+	}
+
+	// limit=10000 must be clamped to bookListMaxLimit.
+	rec = httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book?limit=10000", nil))
+	var clamped bookListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &clamped); err != nil {
+		t.Fatalf("decode clamped: %v", err)
+	}
+	if clamped.Limit != bookListMaxLimit {
+		t.Errorf("expected clamped limit %d, got %d", bookListMaxLimit, clamped.Limit)
+	}
+}
+
+// TestBookList_OrderStable confirms the same query returns the same order on
+// repeat calls. Stability is what backs the frontend's "load next page"
+// pattern; if rows could shuffle between requests the user would see
+// duplicates or gaps as they scrolled.
+func TestBookList_OrderStable(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	seedBooksForPagination(t, books, ctx, author.ID, 5)
+
+	collect := func() []string {
+		rec := httptest.NewRecorder()
+		h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book?limit=5&offset=0", nil))
+		var page bookListResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		out := make([]string, len(page.Items))
+		for i, b := range page.Items {
+			out[i] = b.Title
+		}
+		return out
+	}
+	first := collect()
+	second := collect()
+	if len(first) != 5 || len(second) != 5 {
+		t.Fatalf("expected 5+5 items, got %d/%d", len(first), len(second))
+	}
+	for i := range first {
+		if first[i] != second[i] {
+			t.Errorf("order changed between calls at %d: %q vs %q", i, first[i], second[i])
+		}
 	}
 }
 
@@ -704,4 +832,177 @@ func TestBookUpdate_NoSearchWhenAlreadyWanted(t *testing.T) {
 	}
 
 	searcher.assertNoCall(t, 50*time.Millisecond)
+}
+
+// staticRootLister is a RootLister stub that returns a fixed set of root
+// folder paths without touching a database. Used by the path-containment
+// tests so they don't have to wire a real RootFolderRepo.
+type staticRootLister struct {
+	paths []string
+}
+
+func (s staticRootLister) List(_ context.Context) ([]models.RootFolder, error) {
+	out := make([]models.RootFolder, 0, len(s.paths))
+	for i, p := range s.paths {
+		out = append(out, models.RootFolder{ID: int64(i + 1), Path: p})
+	}
+	return out, nil
+}
+
+// TestBookDelete_PathContainment_RejectsOutsideRoots is the Wave 1 / Bundle B
+// defence-in-depth guard: even with ?deleteFiles=true, a DB row whose
+// file_path points outside every configured library root must not be
+// followed onto disk. The DB row still goes away (the file is already
+// orphaned from Bindery's perspective; preserving the row would just leave
+// it permanently un-deletable through the UI) but the on-disk file is
+// untouched.
+func TestBookDelete_PathContainment_RejectsOutsideRoots(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	libA := t.TempDir()
+	libB := t.TempDir()
+	// Wire the handler with two library roots that do NOT contain the
+	// book's file_path.
+	h.WithRoots(NewLibraryRoots(staticRootLister{paths: []string{libA, libB}}))
+
+	// Fixture file outside both roots. We use t.TempDir() so the test
+	// cleanup deletes it if the production code regresses and removes it
+	// here — better an orphan in the temp dir than a real /etc/passwd
+	// touch in CI.
+	outsideDir := t.TempDir()
+	outsidePath := filepath.Join(outsideDir, "definitely-not-mine.epub")
+	if err := os.WriteFile(outsidePath, []byte("untouchable"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	book := &models.Book{
+		ForeignID: "B-OUT", AuthorID: author.ID, Title: "Outside", SortTitle: "outside",
+		Status: models.BookStatusImported, Genres: []string{},
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.SetFilePath(ctx, book.ID, outsidePath); err != nil {
+		t.Fatal(err)
+	}
+
+	req := withURLParam(
+		httptest.NewRequest(http.MethodDelete, "/api/v1/book/"+strconv.FormatInt(book.ID, 10)+"?deleteFiles=true", nil),
+		"id", strconv.FormatInt(book.ID, 10))
+	rec := httptest.NewRecorder()
+	h.Delete(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// The on-disk file must survive.
+	if _, err := os.Stat(outsidePath); err != nil {
+		t.Errorf("file outside library roots must NOT be deleted: stat err=%v", err)
+	}
+	// The DB row must be gone.
+	if got, _ := books.GetByID(ctx, book.ID); got != nil {
+		t.Errorf("book row should be deleted even when on-disk delete is refused, got id=%d", got.ID)
+	}
+}
+
+// TestBookDelete_PathContainment_AllowsInsideRoots confirms the positive
+// case: when the file_path IS inside a configured root, the on-disk file
+// is removed and the DB row goes away — the containment check must not
+// regress the existing legitimate-delete path.
+func TestBookDelete_PathContainment_AllowsInsideRoots(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	libA := t.TempDir()
+	libB := t.TempDir()
+	h.WithRoots(NewLibraryRoots(staticRootLister{paths: []string{libA, libB}}))
+
+	// File legitimately under libA, mirroring the importer's
+	// "<root>/<Author>/<Title>.epub" layout.
+	authorDir := filepath.Join(libA, "Test Author")
+	if err := os.MkdirAll(authorDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	insidePath := filepath.Join(authorDir, "book.epub")
+	if err := os.WriteFile(insidePath, []byte("legit"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	book := &models.Book{
+		ForeignID: "B-IN", AuthorID: author.ID, Title: "Inside", SortTitle: "inside",
+		Status: models.BookStatusImported, Genres: []string{},
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.SetFilePath(ctx, book.ID, insidePath); err != nil {
+		t.Fatal(err)
+	}
+
+	req := withURLParam(
+		httptest.NewRequest(http.MethodDelete, "/api/v1/book/"+strconv.FormatInt(book.ID, 10)+"?deleteFiles=true", nil),
+		"id", strconv.FormatInt(book.ID, 10))
+	rec := httptest.NewRecorder()
+	h.Delete(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if _, err := os.Stat(insidePath); !os.IsNotExist(err) {
+		t.Errorf("file inside library root SHOULD be deleted, stat err=%v", err)
+	}
+	if got, _ := books.GetByID(ctx, book.ID); got != nil {
+		t.Errorf("book row should be deleted, got id=%d", got.ID)
+	}
+}
+
+// TestBookDeleteFile_PathContainment_RejectsOutsideRoots covers the
+// "scrub-and-keep" flow (DeleteFile, not Delete): an outside-roots
+// file_path must not get unlinked, but the book row must keep moving
+// through its state transition (book_files row dropped, status flipped
+// back to wanted) so the orphan path doesn't get stuck in the UI.
+func TestBookDeleteFile_PathContainment_RejectsOutsideRoots(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	libA := t.TempDir()
+	h.WithRoots(NewLibraryRoots(staticRootLister{paths: []string{libA}}))
+
+	outsideDir := t.TempDir()
+	outsidePath := filepath.Join(outsideDir, "outside.epub")
+	if err := os.WriteFile(outsidePath, []byte("untouchable"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	book := &models.Book{
+		ForeignID: "B-DF-OUT", AuthorID: author.ID, Title: "DF Outside", SortTitle: "df out",
+		Status: models.BookStatusImported, Genres: []string{},
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.SetFilePath(ctx, book.ID, outsidePath); err != nil {
+		t.Fatal(err)
+	}
+
+	req := withURLParam(
+		httptest.NewRequest(http.MethodDelete, "/api/v1/book/"+strconv.FormatInt(book.ID, 10)+"/file", nil),
+		"id", strconv.FormatInt(book.ID, 10))
+	rec := httptest.NewRecorder()
+	h.DeleteFile(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// File survives.
+	if _, err := os.Stat(outsidePath); err != nil {
+		t.Errorf("file outside library roots must NOT be deleted: stat err=%v", err)
+	}
+	// Status flips, file_path is cleared — the orphan no longer shows up as
+	// an imported file.
+	got, _ := books.GetByID(ctx, book.ID)
+	if got == nil {
+		t.Fatal("book row should remain after DeleteFile")
+	}
+	if got.FilePath != "" {
+		t.Errorf("file_path should be cleared after refused delete, got %q", got.FilePath)
+	}
 }

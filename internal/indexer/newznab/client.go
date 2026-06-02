@@ -15,6 +15,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/vavallee/bindery/internal/httpsec"
@@ -62,26 +64,64 @@ func (c *Client) SetHTTPClient(h *http.Client) {
 	c.http = h
 }
 
-// newHTTPClient returns an *http.Client whose transport re-validates the
-// resolved IP address on every new TCP connection. This prevents DNS-rebinding
-// attacks: ValidateOutboundURL runs at indexer create/update time, but an
-// attacker who controls the indexer hostname can flip its DNS record to
-// 169.254.169.254 (cloud metadata) or an RFC1918 address after the initial
-// check passes. The custom DialContext re-runs the IP validation per
-// connection, so a post-TTL rebind is caught before the kernel's connect(2)
-// is invoked. PolicyLAN is used because indexers legitimately run on LAN
-// addresses; loopback, link-local, and cloud-metadata remain blocked under
-// all policies.
-func newHTTPClient() *http.Client {
-	return &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
+// sharedTransport is the single *http.Transport used by every newznab client
+// in the process. Hoisting it to a package-level singleton was finding 9 of
+// the Wave 3 deep audit: previously newHTTPClient was called from New() on
+// every search, so the connection pool, idle-conn cache, and TLS-session
+// cache were thrown away on each call. With one shared transport every
+// indexer search reuses keep-alive TCP connections (and resumed TLS sessions
+// on https indexers), eliminating per-search handshake cost in hot paths
+// like manual search and auto-grab cycles.
+//
+// The DialContext re-validates the resolved IP address on every new TCP
+// connection so DNS-rebinding attacks are still blocked: ValidateOutboundURL
+// runs at indexer create/update time, but an attacker who controls the
+// indexer hostname can flip its DNS record to 169.254.169.254 (cloud
+// metadata) or an RFC1918 address after the initial check passes. The
+// per-connection re-validation catches a post-TTL rebind before connect(2).
+// PolicyLAN is used because indexers legitimately run on LAN addresses;
+// loopback, link-local, and cloud-metadata remain blocked under all
+// policies.
+var (
+	sharedTransportOnce sync.Once
+	sharedTransport     *http.Transport
+	// transportBuildCount counts how many times the shared transport
+	// initialisation has run. Tests assert this stays at 1 across many
+	// New() calls; production code never reads it.
+	transportBuildCount atomic.Int64
+)
+
+func sharedTransportInstance() *http.Transport {
+	sharedTransportOnce.Do(func() {
+		transportBuildCount.Add(1)
+		sharedTransport = &http.Transport{
 			DialContext:           httpsec.NewDialContext(httpsec.PolicyLAN),
 			MaxIdleConns:          100,
+			MaxIdleConnsPerHost:   8,
 			IdleConnTimeout:       90 * time.Second,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
-		},
+		}
+	})
+	return sharedTransport
+}
+
+// TransportBuildCount returns the number of times the shared transport has
+// been constructed. Exposed for tests verifying the pooling invariant
+// (should remain 1 for the life of the process). Production callers should
+// not rely on this value.
+func TransportBuildCount() int64 {
+	return transportBuildCount.Load()
+}
+
+// newHTTPClient returns an *http.Client backed by the package-shared
+// transport. Each client gets its own *http.Client wrapper so per-call
+// timeouts can be tuned independently, but they all funnel into the same
+// connection pool.
+func newHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: sharedTransportInstance(),
 	}
 }
 

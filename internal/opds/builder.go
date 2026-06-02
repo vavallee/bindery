@@ -12,20 +12,33 @@ import (
 // BookStore is the subset of the book repository the builder needs. Kept
 // narrow so the test suite can substitute an in-memory fake without pulling
 // in SQLite.
+//
+// The *AndUser / *ByUser variants are the per-user scoping hooks added for
+// Bundle D3. Builder callers pass a userID (0 = unscoped / admin) into each
+// Build* method and the builder dispatches to the user-scoped store method
+// when uid != 0. Existing call sites that don't care about scoping (legacy
+// single-user installs, internal jobs) pass 0 and see the unscoped path.
 type BookStore interface {
 	List(ctx context.Context) ([]models.Book, error)
+	ListByUser(ctx context.Context, userID int64) ([]models.Book, error)
 	ListByAuthor(ctx context.Context, authorID int64) ([]models.Book, error)
+	ListByAuthorAndUser(ctx context.Context, authorID, userID int64) ([]models.Book, error)
 	ListByStatus(ctx context.Context, status string) ([]models.Book, error)
+	ListByStatusAndUser(ctx context.Context, status string, userID int64) ([]models.Book, error)
 	GetByID(ctx context.Context, id int64) (*models.Book, error)
 }
 
 // AuthorStore is the subset of the author repository the builder needs.
 type AuthorStore interface {
 	List(ctx context.Context) ([]models.Author, error)
+	ListByUser(ctx context.Context, userID int64) ([]models.Author, error)
 	GetByID(ctx context.Context, id int64) (*models.Author, error)
 }
 
 // SeriesStore is the subset of the series repository the builder needs.
+// series has no owner_user_id column of its own (series are shared metadata
+// entities); per-user filtering for series happens by filtering the *books*
+// inside each series, which the builder does in BuildSeries/BuildSeriesList.
 type SeriesStore interface {
 	List(ctx context.Context) ([]models.Series, error)
 	GetByID(ctx context.Context, id int64) (*models.Series, error)
@@ -109,16 +122,19 @@ func (b *Builder) BuildRoot(base string) Feed {
 }
 
 // BuildAuthors returns a paginated navigation feed listing every author with
-// at least one imported book. page is 1-based.
-func (b *Builder) BuildAuthors(ctx context.Context, base string, page int) (Feed, error) {
+// at least one imported book. page is 1-based. userID == 0 returns every
+// author (admin / unscoped); a non-zero userID restricts the feed to the
+// caller's authors and only counts their imported books for the "has-books"
+// filter.
+func (b *Builder) BuildAuthors(ctx context.Context, base string, page int, userID int64) (Feed, error) {
 	base = strings.TrimRight(base, "/")
-	authors, err := b.authors.List(ctx)
+	authors, err := b.listAuthors(ctx, userID)
 	if err != nil {
 		return Feed{}, fmt.Errorf("list authors: %w", err)
 	}
 	// Only surface authors with at least one imported book — an empty
 	// library is pointless for KOReader to browse into.
-	authors = b.filterAuthorsWithImportedBooks(ctx, authors)
+	authors = b.filterAuthorsWithImportedBooks(ctx, authors, userID)
 	sort.Slice(authors, func(i, j int) bool {
 		return strings.ToLower(authors[i].SortName) < strings.ToLower(authors[j].SortName)
 	})
@@ -157,8 +173,10 @@ func (b *Builder) BuildAuthors(ctx context.Context, base string, page int) (Feed
 }
 
 // BuildAuthor returns an acquisition feed of every book by the author that
-// has an imported file on disk.
-func (b *Builder) BuildAuthor(ctx context.Context, base string, authorID int64) (Feed, error) {
+// has an imported file on disk. With userID != 0, only books owned by that
+// user are returned; an author the caller doesn't own surfaces as ErrNotFound
+// rather than leaking an empty feed (cross-user enumeration probe).
+func (b *Builder) BuildAuthor(ctx context.Context, base string, authorID int64, userID int64) (Feed, error) {
 	base = strings.TrimRight(base, "/")
 	a, err := b.authors.GetByID(ctx, authorID)
 	if err != nil {
@@ -167,9 +185,14 @@ func (b *Builder) BuildAuthor(ctx context.Context, base string, authorID int64) 
 	if a == nil {
 		return Feed{}, ErrNotFound
 	}
-	books, err := b.books.ListByAuthor(ctx, authorID)
+	books, err := b.listBooksByAuthor(ctx, authorID, userID)
 	if err != nil {
 		return Feed{}, fmt.Errorf("list books: %w", err)
+	}
+	// If scoping is on and the author has no books for this user, treat as
+	// not-found rather than rendering an empty feed.
+	if userID != 0 && len(books) == 0 {
+		return Feed{}, ErrNotFound
 	}
 	books = filterImported(books)
 
@@ -187,13 +210,17 @@ func (b *Builder) BuildAuthor(ctx context.Context, base string, authorID int64) 
 }
 
 // BuildSeriesList returns a paginated navigation feed of every series that
-// has at least one imported book.
-func (b *Builder) BuildSeriesList(ctx context.Context, base string, page int) (Feed, error) {
+// has at least one imported book. With userID != 0, series are filtered to
+// those containing at least one book owned by the caller. series has no
+// owner_user_id column itself, so the membership filter runs in-process by
+// re-reading each series' books.
+func (b *Builder) BuildSeriesList(ctx context.Context, base string, page int, userID int64) (Feed, error) {
 	base = strings.TrimRight(base, "/")
 	ser, err := b.series.List(ctx)
 	if err != nil {
 		return Feed{}, fmt.Errorf("list series: %w", err)
 	}
+	ser = b.filterSeriesWithUserBooks(ctx, ser, userID)
 	sort.Slice(ser, func(i, j int) bool {
 		return strings.ToLower(ser[i].Title) < strings.ToLower(ser[j].Title)
 	})
@@ -233,7 +260,9 @@ func (b *Builder) BuildSeriesList(ctx context.Context, base string, page int) (F
 
 // BuildSeries returns an acquisition feed of every book in the series that
 // has an imported file on disk, ordered by the stored position-in-series.
-func (b *Builder) BuildSeries(ctx context.Context, base string, seriesID int64) (Feed, error) {
+// With userID != 0, only books owned by the caller are included; series with
+// no caller-owned books surface as ErrNotFound to avoid enumeration probes.
+func (b *Builder) BuildSeries(ctx context.Context, base string, seriesID int64, userID int64) (Feed, error) {
 	base = strings.TrimRight(base, "/")
 	s, err := b.series.GetByID(ctx, seriesID)
 	if err != nil {
@@ -254,9 +283,16 @@ func (b *Builder) BuildSeries(ctx context.Context, base string, seriesID int64) 
 	// SeriesRepo.GetByID only pulls a thin projection of each book (no
 	// file_path, no updated_at, no language). Re-read the full row from
 	// the books repo so we can emit a proper acquisition link.
+	added := 0
 	for _, sb := range s.Books {
 		bk, err := b.books.GetByID(ctx, sb.BookID)
 		if err != nil || bk == nil || bk.Status != models.BookStatusImported || bk.FilePath == "" {
+			continue
+		}
+		// Per-user filter: skip books the caller doesn't own. 0-owner books
+		// (legacy / pre-migration-025) are visible to everyone, matching
+		// auth.CheckOwnership's semantics.
+		if userID != 0 && bk.OwnerUserID != 0 && bk.OwnerUserID != userID {
 			continue
 		}
 		var author *models.Author
@@ -268,15 +304,29 @@ func (b *Builder) BuildSeries(ctx context.Context, base string, seriesID int64) 
 			entry.Title = fmt.Sprintf("%s. %s", sb.PositionInSeries, entry.Title)
 		}
 		f.Entries = append(f.Entries, entry)
+		added++
+	}
+	// If scoping is on and the caller has zero books in this series, treat
+	// as not-found to avoid leaking series existence.
+	if userID != 0 && added == 0 {
+		return Feed{}, ErrNotFound
 	}
 	return f, nil
 }
 
 // BuildRecent returns an acquisition feed of the 50 most recently updated
-// imported books.
-func (b *Builder) BuildRecent(ctx context.Context, base string) (Feed, error) {
+// imported books. With userID != 0, only the caller's books are surfaced.
+func (b *Builder) BuildRecent(ctx context.Context, base string, userID int64) (Feed, error) {
 	base = strings.TrimRight(base, "/")
-	books, err := b.books.ListByStatus(ctx, models.BookStatusImported)
+	var (
+		books []models.Book
+		err   error
+	)
+	if userID != 0 {
+		books, err = b.books.ListByStatusAndUser(ctx, models.BookStatusImported, userID)
+	} else {
+		books, err = b.books.ListByStatus(ctx, models.BookStatusImported)
+	}
 	if err != nil {
 		return Feed{}, fmt.Errorf("list imported: %w", err)
 	}
@@ -312,14 +362,18 @@ func (b *Builder) BuildRecent(ctx context.Context, base string) (Feed, error) {
 
 // BuildBook returns a single-entry acquisition feed for the given book —
 // some OPDS clients (Moon+ Reader) expect a feed rather than a bare entry
-// when drilling into a publication detail link.
-func (b *Builder) BuildBook(ctx context.Context, base string, bookID int64) (Feed, error) {
+// when drilling into a publication detail link. With userID != 0, a book the
+// caller doesn't own surfaces as ErrNotFound rather than leaking metadata.
+func (b *Builder) BuildBook(ctx context.Context, base string, bookID int64, userID int64) (Feed, error) {
 	base = strings.TrimRight(base, "/")
 	bk, err := b.books.GetByID(ctx, bookID)
 	if err != nil {
 		return Feed{}, fmt.Errorf("get book: %w", err)
 	}
 	if bk == nil {
+		return Feed{}, ErrNotFound
+	}
+	if userID != 0 && bk.OwnerUserID != 0 && bk.OwnerUserID != userID {
 		return Feed{}, ErrNotFound
 	}
 	var author *models.Author
@@ -375,11 +429,13 @@ func (b *Builder) bookEntry(base string, bk models.Book, author *models.Author) 
 
 // filterAuthorsWithImportedBooks drops authors whose library is empty.
 // A single extra query per author is fine at the author-count scales
-// Bindery users run at (hundreds, not tens of thousands).
-func (b *Builder) filterAuthorsWithImportedBooks(ctx context.Context, authors []models.Author) []models.Author {
+// Bindery users run at (hundreds, not tens of thousands). When userID != 0
+// the per-user book list is used so authors that only have other users'
+// books are dropped.
+func (b *Builder) filterAuthorsWithImportedBooks(ctx context.Context, authors []models.Author, userID int64) []models.Author {
 	kept := make([]models.Author, 0, len(authors))
 	for _, a := range authors {
-		books, err := b.books.ListByAuthor(ctx, a.ID)
+		books, err := b.listBooksByAuthor(ctx, a.ID, userID)
 		if err != nil {
 			continue
 		}
@@ -387,6 +443,56 @@ func (b *Builder) filterAuthorsWithImportedBooks(ctx context.Context, authors []
 			continue
 		}
 		kept = append(kept, a)
+	}
+	return kept
+}
+
+// listAuthors dispatches between unscoped List and per-user ListByUser.
+func (b *Builder) listAuthors(ctx context.Context, userID int64) ([]models.Author, error) {
+	if userID != 0 {
+		return b.authors.ListByUser(ctx, userID)
+	}
+	return b.authors.List(ctx)
+}
+
+// listBooksByAuthor dispatches between unscoped ListByAuthor and per-user
+// ListByAuthorAndUser.
+func (b *Builder) listBooksByAuthor(ctx context.Context, authorID, userID int64) ([]models.Book, error) {
+	if userID != 0 {
+		return b.books.ListByAuthorAndUser(ctx, authorID, userID)
+	}
+	return b.books.ListByAuthor(ctx, authorID)
+}
+
+// filterSeriesWithUserBooks drops series whose members are all owned by
+// other users. series has no owner_user_id column, so we filter membership
+// in-process by re-reading each series via GetByID and inspecting the books'
+// owners. Bindery series counts run in the hundreds; the N+1 cost matches
+// what filterAuthorsWithImportedBooks already does for authors.
+func (b *Builder) filterSeriesWithUserBooks(ctx context.Context, list []models.Series, userID int64) []models.Series {
+	if userID == 0 {
+		return list
+	}
+	kept := make([]models.Series, 0, len(list))
+	for _, s := range list {
+		full, err := b.series.GetByID(ctx, s.ID)
+		if err != nil || full == nil {
+			continue
+		}
+		hasOwned := false
+		for _, sb := range full.Books {
+			bk, err := b.books.GetByID(ctx, sb.BookID)
+			if err != nil || bk == nil {
+				continue
+			}
+			if bk.OwnerUserID == 0 || bk.OwnerUserID == userID {
+				hasOwned = true
+				break
+			}
+		}
+		if hasOwned {
+			kept = append(kept, s)
+		}
 	}
 	return kept
 }

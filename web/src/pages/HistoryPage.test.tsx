@@ -104,33 +104,38 @@ function rowFor(text: string) {
 beforeEach(() => {
   vi.clearAllMocks()
   document.title = 'Bindery'
-  vi.mocked(api.listHistory).mockResolvedValue([])
+  vi.mocked(api.listHistory).mockResolvedValue({ items: [], total: 0, limit: 100, offset: 0 })
   vi.mocked(api.deleteHistory).mockResolvedValue(undefined)
   vi.mocked(api.blocklistFromHistory).mockResolvedValue(makeBlocklistEntry())
 })
 
 describe('HistoryPage', () => {
   it('renders history rows with parsed details, media type, and size', async () => {
-    vi.mocked(api.listHistory).mockResolvedValue([
-      makeHistory({
-        id: 1,
-        eventType: 'grabbed',
-        sourceTitle: 'Dune EPUB',
-        data: JSON.stringify({ path: '/library/Dune.epub', size: 1048576 }),
-      }),
-      makeHistory({
-        id: 2,
-        eventType: 'downloadFailed',
-        sourceTitle: 'Dune MP3',
-        data: JSON.stringify({ message: 'Download client rejected release', size: 2147483648 }),
-      }),
-      makeHistory({
-        id: 3,
-        eventType: 'bookImported',
-        sourceTitle: '',
-        data: JSON.stringify({ size: 0 }),
-      }),
-    ])
+    vi.mocked(api.listHistory).mockResolvedValue({
+      items: [
+        makeHistory({
+          id: 1,
+          eventType: 'grabbed',
+          sourceTitle: 'Dune EPUB',
+          data: JSON.stringify({ path: '/library/Dune.epub', size: 1048576 }),
+        }),
+        makeHistory({
+          id: 2,
+          eventType: 'downloadFailed',
+          sourceTitle: 'Dune MP3',
+          data: JSON.stringify({ message: 'Download client rejected release', size: 2147483648 }),
+        }),
+        makeHistory({
+          id: 3,
+          eventType: 'bookImported',
+          sourceTitle: '',
+          data: JSON.stringify({ size: 0 }),
+        }),
+      ],
+      total: 3,
+      limit: 100,
+      offset: 0,
+    })
 
     renderHistoryPage()
 
@@ -155,13 +160,23 @@ describe('HistoryPage', () => {
 
   it('filters history by event type', async () => {
     vi.mocked(api.listHistory)
-      .mockResolvedValueOnce([
-        makeHistory({ id: 1, eventType: 'grabbed', sourceTitle: 'Grabbed Release' }),
-        makeHistory({ id: 2, eventType: 'downloadFailed', sourceTitle: 'Failed Release' }),
-      ])
-      .mockResolvedValueOnce([
-        makeHistory({ id: 2, eventType: 'downloadFailed', sourceTitle: 'Failed Release' }),
-      ])
+      .mockResolvedValueOnce({
+        items: [
+          makeHistory({ id: 1, eventType: 'grabbed', sourceTitle: 'Grabbed Release' }),
+          makeHistory({ id: 2, eventType: 'downloadFailed', sourceTitle: 'Failed Release' }),
+        ],
+        total: 2,
+        limit: 100,
+        offset: 0,
+      })
+      .mockResolvedValueOnce({
+        items: [
+          makeHistory({ id: 2, eventType: 'downloadFailed', sourceTitle: 'Failed Release' }),
+        ],
+        total: 1,
+        limit: 100,
+        offset: 0,
+      })
 
     renderHistoryPage()
 
@@ -176,10 +191,15 @@ describe('HistoryPage', () => {
   })
 
   it('blocklists blocklistable events and removes them from local history', async () => {
-    vi.mocked(api.listHistory).mockResolvedValue([
-      makeHistory({ id: 7, eventType: 'importFailed', sourceTitle: 'Blocklist Me' }),
-      makeHistory({ id: 8, eventType: 'bookImported', sourceTitle: 'Keep Me' }),
-    ])
+    vi.mocked(api.listHistory).mockResolvedValue({
+      items: [
+        makeHistory({ id: 7, eventType: 'importFailed', sourceTitle: 'Blocklist Me' }),
+        makeHistory({ id: 8, eventType: 'bookImported', sourceTitle: 'Keep Me' }),
+      ],
+      total: 2,
+      limit: 100,
+      offset: 0,
+    })
 
     renderHistoryPage()
 
@@ -192,10 +212,15 @@ describe('HistoryPage', () => {
   })
 
   it('deletes history events and removes them from local history', async () => {
-    vi.mocked(api.listHistory).mockResolvedValue([
-      makeHistory({ id: 11, eventType: 'grabbed', sourceTitle: 'Delete Me' }),
-      makeHistory({ id: 12, eventType: 'bookImported', sourceTitle: 'Keep Me' }),
-    ])
+    vi.mocked(api.listHistory).mockResolvedValue({
+      items: [
+        makeHistory({ id: 11, eventType: 'grabbed', sourceTitle: 'Delete Me' }),
+        makeHistory({ id: 12, eventType: 'bookImported', sourceTitle: 'Keep Me' }),
+      ],
+      total: 2,
+      limit: 100,
+      offset: 0,
+    })
 
     renderHistoryPage()
 
@@ -208,10 +233,15 @@ describe('HistoryPage', () => {
   })
 
   it('renders only delete actions for non-blocklistable events', async () => {
-    vi.mocked(api.listHistory).mockResolvedValue([
-      makeHistory({ id: 21, eventType: 'bookImported', sourceTitle: 'Imported Release' }),
-      makeHistory({ id: 22, eventType: 'deleted', sourceTitle: 'Deleted Release' }),
-    ])
+    vi.mocked(api.listHistory).mockResolvedValue({
+      items: [
+        makeHistory({ id: 21, eventType: 'bookImported', sourceTitle: 'Imported Release' }),
+        makeHistory({ id: 22, eventType: 'deleted', sourceTitle: 'Deleted Release' }),
+      ],
+      total: 2,
+      limit: 100,
+      offset: 0,
+    })
 
     renderHistoryPage()
 

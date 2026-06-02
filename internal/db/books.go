@@ -52,26 +52,84 @@ first_audiobook AS (
 // (so multi-file books see the first registered path), with the legacy column
 // as a fallback for rows that pre-date the migration and have not yet been
 // re-imported via AddBookFile.
-const bookColumns = `books.id, foreign_id, author_id, title, sort_title, original_title, description,
-	image_url, release_date, genres, average_rating, ratings_count, monitored, status,
-	any_edition_ok, selected_edition_id, file_path, language, media_type, narrator, duration_seconds, asin,
-	calibre_id, metadata_provider, last_metadata_refresh_at, created_at, updated_at,
+//
+// The trailing author columns hydrate book.Author for List/Get responses
+// (#882): the frontend's Books page and Book detail page read
+// book.author.authorName and were rendering empty for every row when the
+// join was missing. LEFT JOIN so an orphan author_id (author row deleted
+// but book still references it) returns NULL columns rather than dropping
+// the book from the result; the scan loop handles the NULLs.
+const bookColumns = `books.id, books.foreign_id, books.author_id, books.title, books.sort_title,
+	books.original_title, books.description, books.image_url, books.release_date,
+	books.genres, books.average_rating, books.ratings_count, books.monitored, books.status,
+	books.any_edition_ok, books.selected_edition_id, books.file_path, books.language,
+	books.media_type, books.narrator, books.duration_seconds, books.asin,
+	books.calibre_id, books.metadata_provider, books.last_metadata_refresh_at,
+	books.created_at, books.updated_at,
 	COALESCE(fe.path, COALESCE(books.ebook_file_path, '')),
 	COALESCE(fa.path, COALESCE(books.audiobook_file_path, '')),
-	excluded`
+	books.excluded,
+	au.id, au.foreign_id, au.name, au.sort_name,
+	COALESCE(books.owner_user_id, 0)`
 
 // bookJoins are the LEFT JOINs that attach the first_ebook and first_audiobook
-// CTE results to the books table. Must follow the FROM books clause.
+// CTE results plus the author row to the books table. Must follow the FROM
+// books clause.
 const bookJoins = `LEFT JOIN first_ebook    fe ON fe.book_id = books.id
-LEFT JOIN first_audiobook fa ON fa.book_id = books.id`
+LEFT JOIN first_audiobook fa ON fa.book_id = books.id
+LEFT JOIN authors         au ON au.id = books.author_id`
 
 func (r *BookRepo) List(ctx context.Context) ([]models.Book, error) {
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE excluded = 0 ORDER BY sort_title", nil)
 }
 
 func (r *BookRepo) ListByUser(ctx context.Context, userID int64) ([]models.Book, error) {
-	where, args := QueryScope("WHERE excluded = 0", userID)
+	where, args := QueryScopeFor("books.owner_user_id", "WHERE excluded = 0", userID)
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY sort_title", args)
+}
+
+// ListPage returns one page of the visible-books list, ordered by sort_title,
+// alongside the total row count that matches the same filter. limit must be
+// positive; offset is clamped at 0. When userID is 0 the query is unscoped
+// (matches List); otherwise it matches ListByUser's scope predicate.
+//
+// The sort_title order is backed by idx_books_sort_title (migration 047) so
+// large libraries no longer pay a full in-memory sort per page request.
+func (r *BookRepo) ListPage(ctx context.Context, userID int64, limit, offset int) ([]models.Book, int, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	where, args := QueryScopeFor("books.owner_user_id", "WHERE excluded = 0", userID)
+	total, err := r.count(ctx, "SELECT COUNT(*) FROM books "+where, args)
+	if err != nil {
+		return nil, 0, err
+	}
+	q := bookCTE + " SELECT " + bookColumns + " FROM books " + bookJoins + " " + where +
+		" ORDER BY sort_title LIMIT ? OFFSET ?"
+	pageArgs := append([]any{}, args...)
+	pageArgs = append(pageArgs, limit, offset)
+	books, err := r.query(ctx, q, pageArgs)
+	if err != nil {
+		return nil, 0, err
+	}
+	return books, total, nil
+}
+
+func (r *BookRepo) count(ctx context.Context, query string, args []any) (int, error) {
+	var total int
+	var row *sql.Row
+	if args != nil {
+		row = r.exec.QueryRowContext(ctx, query, args...)
+	} else {
+		row = r.exec.QueryRowContext(ctx, query)
+	}
+	if err := row.Scan(&total); err != nil {
+		return 0, fmt.Errorf("count books: %w", err)
+	}
+	return total, nil
 }
 
 // ListIncludingExcluded returns all books regardless of their excluded flag.
@@ -84,7 +142,7 @@ func (r *BookRepo) ListByAuthor(ctx context.Context, authorID int64) ([]models.B
 }
 
 func (r *BookRepo) ListByAuthorAndUser(ctx context.Context, authorID, userID int64) ([]models.Book, error) {
-	where, args := QueryScope("WHERE author_id = ? AND excluded = 0", userID, authorID)
+	where, args := QueryScopeFor("books.owner_user_id", "WHERE author_id = ? AND excluded = 0", userID, authorID)
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY release_date", args)
 }
 
@@ -94,17 +152,17 @@ func (r *BookRepo) ListByAuthorIncludingExcluded(ctx context.Context, authorID i
 }
 
 func (r *BookRepo) ListByStatus(ctx context.Context, status string) ([]models.Book, error) {
-	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE status = ? AND monitored = 1 AND excluded = 0 ORDER BY sort_title", []any{status})
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE status = ? AND books.monitored = 1 AND excluded = 0 ORDER BY sort_title", []any{status})
 }
 
 func (r *BookRepo) ListByStatusAndUser(ctx context.Context, status string, userID int64) ([]models.Book, error) {
-	where, args := QueryScope("WHERE status = ? AND monitored = 1 AND excluded = 0", userID, status)
+	where, args := QueryScopeFor("books.owner_user_id", "WHERE status = ? AND books.monitored = 1 AND excluded = 0", userID, status)
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY sort_title", args)
 }
 
 // ListByStatusIncludingExcluded returns books with the given status regardless of excluded flag.
 func (r *BookRepo) ListByStatusIncludingExcluded(ctx context.Context, status string) ([]models.Book, error) {
-	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE status = ? AND monitored = 1 ORDER BY sort_title", []any{status})
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE status = ? AND books.monitored = 1 ORDER BY sort_title", []any{status})
 }
 
 func (r *BookRepo) GetByID(ctx context.Context, id int64) (*models.Book, error) {
@@ -119,7 +177,7 @@ func (r *BookRepo) GetByID(ctx context.Context, id int64) (*models.Book, error) 
 }
 
 func (r *BookRepo) GetByForeignID(ctx context.Context, foreignID string) (*models.Book, error) {
-	books, err := r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE foreign_id = ?", []any{foreignID})
+	books, err := r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE books.foreign_id = ?", []any{foreignID})
 	if err != nil {
 		return nil, err
 	}
@@ -409,6 +467,10 @@ func (r *BookRepo) query(ctx context.Context, q string, args []any) ([]models.Bo
 		var b models.Book
 		var monitored, anyEditionOK, excluded int
 		var genresStr string
+		// Author columns from the LEFT JOIN. Nullable since the join may not
+		// match when author_id points at a deleted author row.
+		var authorID sql.NullInt64
+		var authorForeignID, authorName, authorSortName sql.NullString
 		err := rows.Scan(
 			&b.ID, &b.ForeignID, &b.AuthorID, &b.Title, &b.SortTitle,
 			&b.OriginalTitle, &b.Description, &b.ImageURL, &b.ReleaseDate,
@@ -420,6 +482,8 @@ func (r *BookRepo) query(ctx context.Context, q string, args []any) ([]models.Bo
 			&b.CreatedAt, &b.UpdatedAt,
 			&b.EbookFilePath, &b.AudiobookFilePath,
 			&excluded,
+			&authorID, &authorForeignID, &authorName, &authorSortName,
+			&b.OwnerUserID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan book: %w", err)
@@ -430,6 +494,20 @@ func (r *BookRepo) query(ctx context.Context, q string, args []any) ([]models.Bo
 		_ = json.Unmarshal([]byte(genresStr), &b.Genres)
 		if b.Genres == nil {
 			b.Genres = []string{}
+		}
+		// Populate the joined-author projection (ID + foreign ID + name +
+		// sort name) when the LEFT JOIN found a row. Other Author fields
+		// stay zero; the frontend reads authorName and the URL builder
+		// uses book.authorId, so a minimal projection is enough. Callers
+		// that need the full Author (description, image, ratings, etc.)
+		// should still go through AuthorRepo.GetByID.
+		if authorID.Valid {
+			b.Author = &models.Author{
+				ID:        authorID.Int64,
+				ForeignID: authorForeignID.String,
+				Name:      authorName.String,
+				SortName:  authorSortName.String,
+			}
 		}
 		books = append(books, b)
 	}

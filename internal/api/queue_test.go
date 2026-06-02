@@ -11,7 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
@@ -519,10 +521,11 @@ func TestQueueListLiveOverlaySABnzbd(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 
-	var items []QueueItem
-	if err := json.NewDecoder(rr.Body).Decode(&items); err != nil {
+	var resp queueListResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
+	items := resp.Items
 	if len(items) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(items))
 	}
@@ -604,10 +607,11 @@ func TestQueueListLiveOverlaySABnzbd_WithHigherPriorityTorrentClient(t *testing.
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 
-	var items []QueueItem
-	if err := json.NewDecoder(rr.Body).Decode(&items); err != nil {
+	var resp queueListResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
+	items := resp.Items
 	if len(items) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(items))
 	}
@@ -664,10 +668,11 @@ func TestQueueListLiveOverlayTransmission(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 
-	var items []QueueItem
-	if err := json.NewDecoder(rr.Body).Decode(&items); err != nil {
+	var resp queueListResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
+	items := resp.Items
 	if len(items) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(items))
 	}
@@ -725,10 +730,11 @@ func TestQueueListLiveOverlayQbittorrent(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 
-	var items []QueueItem
-	if err := json.NewDecoder(rr.Body).Decode(&items); err != nil {
+	var resp queueListResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
+	items := resp.Items
 	if len(items) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(items))
 	}
@@ -1446,10 +1452,11 @@ func TestQueueListLiveOverlayTransmission_TorrentIDLowercased(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
-	var items []QueueItem
-	if err := json.NewDecoder(rr.Body).Decode(&items); err != nil {
+	var resp queueListResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
+	items := resp.Items
 	if len(items) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(items))
 	}
@@ -1507,14 +1514,248 @@ func TestQueueListLiveOverlayQbittorrent_MixedCaseHashNormalized(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
-	var items []QueueItem
-	if err := json.NewDecoder(rr.Body).Decode(&items); err != nil {
+	var resp queueListResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
+	items := resp.Items
 	if len(items) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(items))
 	}
 	if items[0].Percentage != "60.0" {
 		t.Fatalf("expected live status overlay to apply with normalised hash; percentage=%s", items[0].Percentage)
+	}
+}
+
+// TestQueueList_SlowClient_MarksPartial is the Wave 3 / I behavioural guard:
+// when one downloader client takes longer than queueClientPollTimeout, the
+// queue page still renders for the working clients and the response carries
+// partial=true plus a staleClients entry naming the laggard. Before the
+// bounded fan-out + per-call timeout, the whole render blocked until the
+// slow client's own TCP timeout fired.
+func TestQueueList_SlowClient_MarksPartial(t *testing.T) {
+	// Shorten the poll deadline so the slow case fires inside a tight test
+	// budget. Restored before return so neighbouring tests are unaffected.
+	prev := queueClientPollTimeout
+	queueClientPollTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { queueClientPollTimeout = prev })
+
+	// Fast SABnzbd: returns immediately with a percentage we can assert on.
+	fastSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"queue": map[string]any{
+				"speed": "1.0 MB/s",
+				"slots": []map[string]any{{
+					"nzo_id":     "nzofast",
+					"percentage": "42",
+					"timeleft":   "0:01:00",
+				}},
+			},
+		})
+	}))
+	defer fastSrv.Close()
+
+	// Slow SABnzbd: blocks far past the poll deadline. The handler should
+	// abandon it and continue rendering with whatever the fast client gave us.
+	slow := make(chan struct{})
+	t.Cleanup(func() { close(slow) })
+	slowSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-slow:
+		}
+	}))
+	defer slowSrv.Close()
+
+	h := newQueueTestHandler(t)
+
+	fastHost, fastPort := testServerHostPort(t, fastSrv.URL)
+	fastClient := createTestDownloadClient(t, h, &models.DownloadClient{
+		Name: "fast-sab", Type: "sabnzbd", Host: fastHost, Port: fastPort,
+		APIKey: "k", Category: "books", Enabled: true,
+	})
+	createTestDownload(t, h, &models.Download{
+		GUID: "guid-fast", DownloadClientID: &fastClient.ID,
+		Title: "Fast Book", NZBURL: "https://example.com/fast.nzb",
+		Status: models.DownloadStatusDownloading, Protocol: "usenet",
+		SABnzbdNzoID: strPtr("nzofast"),
+	})
+
+	slowHost, slowPort := testServerHostPort(t, slowSrv.URL)
+	slowClient := createTestDownloadClient(t, h, &models.DownloadClient{
+		Name: "slow-sab", Type: "sabnzbd", Host: slowHost, Port: slowPort,
+		APIKey: "k", Category: "books", Enabled: true,
+	})
+	createTestDownload(t, h, &models.Download{
+		GUID: "guid-slow", DownloadClientID: &slowClient.ID,
+		Title: "Slow Book", NZBURL: "https://example.com/slow.nzb",
+		Status: models.DownloadStatusDownloading, Protocol: "usenet",
+		SABnzbdNzoID: strPtr("nzoslow"),
+	})
+
+	start := time.Now()
+	req := httptest.NewRequest(http.MethodGet, "/api/queue", nil)
+	rr := httptest.NewRecorder()
+	h.List(rr, req)
+	elapsed := time.Since(start)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	// The render must not block on the slow client's TCP timeout; give a
+	// generous ceiling (10x the poll deadline) to absorb CI jitter.
+	if elapsed > 10*queueClientPollTimeout {
+		t.Fatalf("List took %s, expected to short-circuit slow client near %s",
+			elapsed, queueClientPollTimeout)
+	}
+
+	var resp queueListResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(resp.Items))
+	}
+	if !resp.Partial {
+		t.Fatal("expected Partial=true when a client timed out")
+	}
+	if len(resp.StaleClients) != 1 {
+		t.Fatalf("expected 1 stale client, got %d (%+v)", len(resp.StaleClients), resp.StaleClients)
+	}
+	if resp.StaleClients[0].ClientID != slowClient.ID {
+		t.Errorf("stale client id = %d, want %d", resp.StaleClients[0].ClientID, slowClient.ID)
+	}
+	if resp.StaleClients[0].Name != "slow-sab" {
+		t.Errorf("stale client name = %q, want %q", resp.StaleClients[0].Name, "slow-sab")
+	}
+
+	// The fast client's row should still carry its overlay despite the
+	// slow client failing.
+	var fastItem *QueueItem
+	for i := range resp.Items {
+		if resp.Items[i].Title == "Fast Book" {
+			fastItem = &resp.Items[i]
+			break
+		}
+	}
+	if fastItem == nil {
+		t.Fatal("fast client item missing from response")
+	}
+	if fastItem.Percentage != "42" {
+		t.Errorf("fast item percentage = %q, want 42", fastItem.Percentage)
+	}
+}
+
+// --- D3 per-user scoping ----------------------------------------------------
+
+// seedTwoUserDownloads creates two users with one download each (alice's id=1,
+// bob's id=2) and returns the handler plus the download ids so tests can hit
+// them with the wrong caller identity.
+func seedTwoUserDownloads(t *testing.T) (*QueueHandler, *sql.DB, int64, int64, int64, int64) {
+	t.Helper()
+	h, database, downloads, _, _, ctx := queueFixture(t)
+
+	users := db.NewUserRepo(database)
+	uAlice, err := users.Create(ctx, "alice", "h1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	uBob, err := users.Create(ctx, "bob", "h2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dlA := &models.Download{GUID: "guid-alice", Title: "Alice DL", Status: models.StateDownloading, Protocol: "usenet"}
+	if err := downloads.Create(ctx, dlA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("UPDATE downloads SET owner_user_id=? WHERE id=?", uAlice.ID, dlA.ID); err != nil {
+		t.Fatal(err)
+	}
+	dlB := &models.Download{GUID: "guid-bob", Title: "Bob DL", Status: models.StateDownloading, Protocol: "usenet"}
+	if err := downloads.Create(ctx, dlB); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("UPDATE downloads SET owner_user_id=? WHERE id=?", uBob.ID, dlB.ID); err != nil {
+		t.Fatal(err)
+	}
+	return h, database, uAlice.ID, uBob.ID, dlA.ID, dlB.ID
+}
+
+func reqAsUser(method, target string, uid int64) *http.Request {
+	r := httptest.NewRequest(method, target, nil)
+	ctx := auth.WithUserID(r.Context(), uid)
+	ctx = auth.WithUserRole(ctx, "user")
+	return r.WithContext(ctx)
+}
+
+// TestQueueDelete_CrossUserBlockedWhenGateOn verifies user B cannot delete
+// user A's download when BINDERY_ENFORCE_TENANCY=true. Response is 404 not
+// 403 — we don't leak the existence of someone else's row.
+func TestQueueDelete_CrossUserBlockedWhenGateOn(t *testing.T) {
+	t.Setenv("BINDERY_ENFORCE_TENANCY", "true")
+	h, _, uAlice, uBob, dlA, _ := seedTwoUserDownloads(t)
+	_ = uAlice
+
+	rec := httptest.NewRecorder()
+	req := withURLParam(reqAsUser(http.MethodDelete, "/api/v1/queue/"+strconv.FormatInt(dlA, 10), uBob), "id", strconv.FormatInt(dlA, 10))
+	h.Delete(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("bob deleting alice's download: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestQueueRetryImport_CrossUserBlockedWhenGateOn is the same cross-user
+// probe for the import-retry mutation, which also exposes a private download.
+func TestQueueRetryImport_CrossUserBlockedWhenGateOn(t *testing.T) {
+	t.Setenv("BINDERY_ENFORCE_TENANCY", "true")
+	h, _, _, uBob, dlA, _ := seedTwoUserDownloads(t)
+
+	rec := httptest.NewRecorder()
+	req := withURLParam(reqAsUser(http.MethodPost, "/api/v1/queue/"+strconv.FormatInt(dlA, 10)+"/retry-import", uBob), "id", strconv.FormatInt(dlA, 10))
+	h.RetryImport(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("bob retrying alice's import: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestQueueList_FiltersToCallerWhenGateOn verifies the list endpoint returns
+// only the caller's downloads under the gate. The unfiltered call would
+// expose both rows.
+func TestQueueList_FiltersToCallerWhenGateOn(t *testing.T) {
+	t.Setenv("BINDERY_ENFORCE_TENANCY", "true")
+	h, _, _, uBob, _, dlB := seedTwoUserDownloads(t)
+
+	rec := httptest.NewRecorder()
+	req := reqAsUser(http.MethodGet, "/api/v1/queue", uBob)
+	h.List(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	// Wave 3 / I introduced an envelope { items, partial, staleClients };
+	// unwrap items here.
+	var resp queueListResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].ID != dlB {
+		t.Errorf("bob should see only his download; got %+v", resp.Items)
+	}
+}
+
+// TestQueueDelete_GateOffPreservesLegacyBehavior is the canary that backs the
+// env-gate promise: with the gate off, the historic cross-user behaviour
+// (anyone authenticated can hit any download) still works. If this breaks
+// we have silently changed behaviour for installs that haven't opted in.
+func TestQueueDelete_GateOffPreservesLegacyBehavior(t *testing.T) {
+	// Default: gate off. No t.Setenv.
+	h, _, _, uBob, dlA, _ := seedTwoUserDownloads(t)
+
+	rec := httptest.NewRecorder()
+	req := withURLParam(reqAsUser(http.MethodDelete, "/api/v1/queue/"+strconv.FormatInt(dlA, 10), uBob), "id", strconv.FormatInt(dlA, 10))
+	h.Delete(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("legacy: bob should be able to delete alice's download (gate off); status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }

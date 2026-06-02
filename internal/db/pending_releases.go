@@ -80,6 +80,46 @@ func (r *PendingReleaseRepo) ListByBookAndMediaType(ctx context.Context, bookID 
 	return scanPendingReleases(rows)
 }
 
+// ListForUser returns pending releases whose referenced book is owned by
+// userID. pending_releases has no owner_user_id column of its own — ownership
+// is derived from books.owner_user_id via the book_id FK. When userID == 0
+// this falls back to List, preserving the unscoped admin/disabled-auth path.
+func (r *PendingReleaseRepo) ListForUser(ctx context.Context, userID int64) ([]models.PendingRelease, error) {
+	if userID == 0 {
+		return r.List(ctx)
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, book_id, media_type, title, indexer_id, guid, protocol, size, age_minutes,
+		       quality, custom_score, reason, first_seen, release_json
+		FROM pending_releases
+		WHERE book_id IN (SELECT id FROM books WHERE owner_user_id = ?)
+		ORDER BY first_seen DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPendingReleases(rows)
+}
+
+// GetOwnerByID resolves the owning user for a pending release by joining
+// through its referenced book. See HistoryRepo.GetOwnerByID for the return
+// shape — they're identical.
+func (r *PendingReleaseRepo) GetOwnerByID(ctx context.Context, id int64) (int64, bool, error) {
+	var owner sql.NullInt64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT b.owner_user_id
+		  FROM pending_releases pr
+		  LEFT JOIN books b ON b.id = pr.book_id
+		 WHERE pr.id = ?`, id).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return owner.Int64, true, nil
+}
+
 // GetByID returns a single pending release by its ID.
 func (r *PendingReleaseRepo) GetByID(ctx context.Context, id int64) (*models.PendingRelease, error) {
 	row := r.db.QueryRowContext(ctx, `

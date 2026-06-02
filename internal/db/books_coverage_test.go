@@ -193,3 +193,123 @@ func TestBookRepo_FindByAuthorAndTitleCaseInsensitive(t *testing.T) {
 		t.Error("expected nil for unrelated title")
 	}
 }
+
+// TestBookRepo_ListPopulatesAuthor is the regression test for #882. The
+// Books page and book detail page in the frontend both read
+// book.author.authorName; before the LEFT JOIN to authors was added, that
+// field was nil on every row and the UI rendered empty author columns.
+func TestBookRepo_ListPopulatesAuthor(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	bookRepo := NewBookRepo(database)
+	authorRepo := NewAuthorRepo(database)
+	ctx := context.Background()
+
+	a := mkAuthor(t, authorRepo, ctx, "OL-LIST-AUTHOR")
+	b := mkBook(t, bookRepo, ctx, a.ID, "OL-LIST-BOOK", "The Book", models.BookStatusWanted)
+
+	// List
+	all, err := bookRepo.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("expected 1 book, got %d", len(all))
+	}
+	if all[0].Author == nil {
+		t.Fatal("List: book.Author is nil; expected joined author projection")
+	}
+	if all[0].Author.ID != a.ID {
+		t.Errorf("List: Author.ID = %d, want %d", all[0].Author.ID, a.ID)
+	}
+	if all[0].Author.Name != a.Name {
+		t.Errorf("List: Author.Name = %q, want %q", all[0].Author.Name, a.Name)
+	}
+	if all[0].Author.ForeignID != a.ForeignID {
+		t.Errorf("List: Author.ForeignID = %q, want %q", all[0].Author.ForeignID, a.ForeignID)
+	}
+
+	// GetByID
+	gotByID, err := bookRepo.GetByID(ctx, b.ID)
+	if err != nil || gotByID == nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if gotByID.Author == nil || gotByID.Author.Name != a.Name {
+		t.Errorf("GetByID: expected Author.Name = %q; got %+v", a.Name, gotByID.Author)
+	}
+
+	// GetByForeignID
+	gotByFID, err := bookRepo.GetByForeignID(ctx, b.ForeignID)
+	if err != nil || gotByFID == nil {
+		t.Fatalf("GetByForeignID: %v", err)
+	}
+	if gotByFID.Author == nil || gotByFID.Author.Name != a.Name {
+		t.Errorf("GetByForeignID: expected Author.Name = %q; got %+v", a.Name, gotByFID.Author)
+	}
+
+	// ListByAuthor
+	byAuthor, err := bookRepo.ListByAuthor(ctx, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byAuthor) != 1 || byAuthor[0].Author == nil {
+		t.Errorf("ListByAuthor: expected 1 book with Author populated; got %+v", byAuthor)
+	}
+
+	// ListByStatus
+	byStatus, err := bookRepo.ListByStatus(ctx, models.BookStatusWanted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byStatus) != 1 || byStatus[0].Author == nil {
+		t.Errorf("ListByStatus: expected 1 book with Author populated; got %+v", byStatus)
+	}
+}
+
+// TestBookRepo_ListHandlesOrphanAuthorID pins down the LEFT JOIN choice
+// against an orphan author_id. Production has FOREIGN KEY=ON so this
+// shouldn't happen naturally, but the defensive code path matters if FKs
+// ever get bypassed during migration. We disable the FK constraint for
+// the duration of this test to set up the impossible-in-prod state.
+func TestBookRepo_ListHandlesOrphanAuthorID(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	bookRepo := NewBookRepo(database)
+	authorRepo := NewAuthorRepo(database)
+	ctx := context.Background()
+
+	a := mkAuthor(t, authorRepo, ctx, "OL-ORPHAN-A")
+	b := mkBook(t, bookRepo, ctx, a.ID, "OL-ORPHAN-B", "Orphan Book", models.BookStatusWanted)
+
+	// Bypass the FK constraint just long enough to set up the orphan row.
+	if _, err := database.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "UPDATE books SET author_id = 99999 WHERE id = ?", b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "PRAGMA foreign_keys=ON"); err != nil {
+		t.Fatal(err)
+	}
+	_ = a
+
+	all, err := bookRepo.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("expected book to still appear despite orphan author_id; got %d rows", len(all))
+	}
+	if all[0].Author != nil {
+		t.Errorf("expected Author == nil for orphan author_id; got %+v", all[0].Author)
+	}
+	if all[0].AuthorID != 99999 {
+		t.Errorf("AuthorID should be preserved; got %d", all[0].AuthorID)
+	}
+}

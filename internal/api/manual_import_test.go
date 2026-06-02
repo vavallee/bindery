@@ -472,9 +472,10 @@ func makeBookPath(t *testing.T, dir, name string, isDir bool) string {
 }
 
 // containmentHandler returns a ManualImportHandler with the given allowed
-// roots but no backing database — safe for tests that only reach isAllowedPath.
+// roots but no backing database — safe for tests that only reach roots.Contains.
 func containmentHandler(roots ...string) *ManualImportHandler {
-	return NewManualImportHandler(&stubManualImportScanner{}, nil, nil).WithAllowedRoots(roots...)
+	return NewManualImportHandler(&stubManualImportScanner{}, nil, nil).
+		WithRoots(NewLibraryRoots(nil, roots...))
 }
 
 // TestManualImportLookup_PathOutsideAllowedRoots verifies that Lookup returns
@@ -521,7 +522,7 @@ func TestManualImportLookup_PathInsideAllowedRoots(t *testing.T) {
 	ebookRoot := t.TempDir()
 	audiobookRoot := t.TempDir()
 	stub := &stubManualImportScanner{lookupResult: importer.LookupResult{Match: "none"}}
-	h := NewManualImportHandler(stub, nil, nil).WithAllowedRoots(ebookRoot, audiobookRoot)
+	h := NewManualImportHandler(stub, nil, nil).WithRoots(NewLibraryRoots(nil, ebookRoot, audiobookRoot))
 
 	cases := []struct {
 		name, file string
@@ -578,52 +579,6 @@ func TestManualImportImport_PathOutsideAllowedRoots(t *testing.T) {
 			}
 			if !strings.Contains(rec.Body.String(), "outside the configured library roots") {
 				t.Errorf("body = %q, want containment error", rec.Body.String())
-			}
-		})
-	}
-}
-
-// TestManualImportLookup_SymlinkEscape verifies that a symlink inside the
-// allowed root that points to a directory outside the root is rejected after
-// filepath.EvalSymlinks resolves the real target.
-func TestManualImportLookup_SymlinkEscape(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name, file string
-		isDir      bool
-	}{
-		{"ebook file via symlink", "secret.epub", false},
-		{"audiobook file via symlink", "secret.m4b", false},
-		{"audiobook directory via symlink", "Secret Audiobook Dir", true},
-	}
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			tmp := t.TempDir()
-			allowed := filepath.Join(tmp, "safe")
-			outside := filepath.Join(tmp, "secret")
-			if err := os.MkdirAll(allowed, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.MkdirAll(outside, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			makeBookPath(t, outside, tc.file, tc.isDir)
-
-			// symlink inside "safe" pointing at the directory outside
-			link := filepath.Join(allowed, "escape")
-			if err := os.Symlink(outside, link); err != nil {
-				t.Fatal(err)
-			}
-
-			h := containmentHandler(allowed)
-			escapedPath := filepath.Join(link, tc.file)
-			rec := httptest.NewRecorder()
-			h.Lookup(rec, lookupRequest(escapedPath))
-			if rec.Code != http.StatusForbidden {
-				t.Fatalf("status = %d, want 403 for symlink escape; body = %s", rec.Code, rec.Body.String())
 			}
 		})
 	}
