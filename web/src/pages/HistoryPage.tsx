@@ -56,7 +56,7 @@ export default function HistoryPage() {
 
   const load = useCallback((filter?: string) => {
     api.listHistory(filter ? { eventType: filter } : undefined)
-      .then(setEvents)
+      .then(({ items }) => setEvents(items))
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [])

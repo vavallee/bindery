@@ -23,8 +23,8 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
     Promise.all([api.listBooks(), api.listAuthors()])
       .then(([bookList, authorList]) => {
         if (!active) return
-        setBooks(bookList)
-        setAuthors(authorList)
+        setBooks(bookList.items)
+        setAuthors(authorList.items)
       })
       .catch(err => {
         if (active) setError(err instanceof Error ? err.message : 'Failed to load books')

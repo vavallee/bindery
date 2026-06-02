@@ -253,7 +253,13 @@ export const api = {
     request<Book>('/author/book', { method: 'POST', body: JSON.stringify(data) }),
 
   // Authors
-  listAuthors: () => request<Author[]>('/author'),
+  listAuthors: (params?: { limit?: number; offset?: number }) => {
+    const q = new URLSearchParams()
+    if (params?.limit !== undefined) q.set('limit', String(params.limit))
+    if (params?.offset !== undefined) q.set('offset', String(params.offset))
+    const qs = q.toString()
+    return request<Page<Author>>(`/author${qs ? '?' + qs : ''}`)
+  },
   getAuthor: (id: number) => request<Author>(`/author/${id}`),
   addAuthor: (data: AddAuthorRequest) => request<Author>('/author', { method: 'POST', body: JSON.stringify(data) }),
   updateAuthor: (id: number, data: UpdateAuthorRequest) => request<Author>(`/author/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
@@ -272,13 +278,15 @@ export const api = {
     }),
 
   // Books
-  listBooks: (params?: { authorId?: number; status?: string; includeExcluded?: boolean }) => {
+  listBooks: (params?: { authorId?: number; status?: string; includeExcluded?: boolean; limit?: number; offset?: number }) => {
     const q = new URLSearchParams()
     if (params?.authorId) q.set('authorId', String(params.authorId))
     if (params?.status) q.set('status', params.status)
     if (params?.includeExcluded) q.set('includeExcluded', 'true')
+    if (params?.limit !== undefined) q.set('limit', String(params.limit))
+    if (params?.offset !== undefined) q.set('offset', String(params.offset))
     const qs = q.toString()
-    return request<Book[]>(`/book${qs ? '?' + qs : ''}`)
+    return request<Page<Book>>(`/book${qs ? '?' + qs : ''}`)
   },
   getBook: (id: number) => request<Book>(`/book/${id}`),
   updateBook: (id: number, data: Partial<Book>) => request<Book>(`/book/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
@@ -362,12 +370,14 @@ export const api = {
   grabPending: (id: number) => request<Download>(`/pending/${id}/grab`, { method: 'POST' }),
 
   // History
-  listHistory: (params?: { bookId?: number; eventType?: string }) => {
+  listHistory: (params?: { bookId?: number; eventType?: string; limit?: number; offset?: number }) => {
     const q = new URLSearchParams()
     if (params?.bookId) q.set('bookId', String(params.bookId))
     if (params?.eventType) q.set('eventType', params.eventType)
+    if (params?.limit !== undefined) q.set('limit', String(params.limit))
+    if (params?.offset !== undefined) q.set('offset', String(params.offset))
     const qs = q.toString()
-    return request<HistoryEvent[]>(`/history${qs ? '?' + qs : ''}`)
+    return request<Page<HistoryEvent>>(`/history${qs ? '?' + qs : ''}`)
   },
   deleteHistory: (id: number) => request<void>(`/history/${id}`, { method: 'DELETE' }),
   blocklistFromHistory: (id: number) => request<BlocklistEntry>(`/history/${id}/blocklist`, { method: 'POST' }),
@@ -952,6 +962,17 @@ export interface ABSReviewItem {
 }
 
 export interface PaginatedResponse<T> {
+  items: T[]
+  total: number
+  limit: number
+  offset: number
+}
+
+// Page<T> is the envelope returned by the paginated List endpoints introduced
+// in PR #902 (GET /book, /author, /history). Shape matches PaginatedResponse
+// above and the two will likely be unified later; kept distinct for now so
+// the diff stays scoped to the three new endpoints.
+export interface Page<T> {
   items: T[]
   total: number
   limit: number

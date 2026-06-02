@@ -170,7 +170,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   document.title = 'Bindery'
   vi.mocked(api.getBook).mockResolvedValue(makeBook())
-  vi.mocked(api.listHistory).mockResolvedValue([])
+  vi.mocked(api.listHistory).mockResolvedValue({ items: [], total: 0, limit: 100, offset: 0 })
   vi.mocked(api.searchBook).mockResolvedValue({ results: [], debug: null })
   vi.mocked(api.listIndexers).mockResolvedValue([])
   vi.mocked(api.grab).mockResolvedValue(makeDownload())
@@ -275,7 +275,7 @@ describe('SearchResultsSection — single-format book', () => {
 
 describe('BookDetailPage — header & metadata', () => {
   it('loads book details and history', async () => {
-    vi.mocked(api.listHistory).mockResolvedValue([makeHistory()])
+    vi.mocked(api.listHistory).mockResolvedValue({ items: [makeHistory()], total: 1, limit: 100, offset: 0 })
 
     renderBookDetailPage()
 
@@ -382,8 +382,8 @@ describe('BookDetailPage — search', () => {
       .mockResolvedValueOnce(makeBook())
       .mockResolvedValueOnce(makeBook({ status: 'downloading' }))
     vi.mocked(api.listHistory)
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([makeHistory({ sourceTitle: 'Grab refreshed history' })])
+      .mockResolvedValueOnce({ items: [], total: 0, limit: 100, offset: 0 })
+      .mockResolvedValueOnce({ items: [makeHistory({ sourceTitle: 'Grab refreshed history' })], total: 1, limit: 100, offset: 0 })
     vi.mocked(api.listIndexers).mockResolvedValue([makeIndexer()])
     vi.mocked(api.searchBook).mockResolvedValue({
       results: [
@@ -504,9 +504,12 @@ describe('BookDetailPage — dual-format book', () => {
 
 describe('BookDetailPage — history section', () => {
   it('renders the humanised event label', async () => {
-    vi.mocked(api.listHistory).mockResolvedValue([
-      makeHistory({ eventType: 'bookImported', sourceTitle: 'A.Desolation.Called.Peace' }),
-    ])
+    vi.mocked(api.listHistory).mockResolvedValue({
+      items: [makeHistory({ eventType: 'bookImported', sourceTitle: 'A.Desolation.Called.Peace' })],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    })
     renderBookDetailPage()
     expect(await screen.findByText('Book imported')).toBeInTheDocument()
     expect(screen.getByText('A.Desolation.Called.Peace')).toBeInTheDocument()

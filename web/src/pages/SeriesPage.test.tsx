@@ -46,8 +46,8 @@ describe('SeriesPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(api.status).mockResolvedValue({ version: 'dev', commit: 'unknown', buildDate: '', enhancedHardcoverApi: true, hardcoverTokenConfigured: true })
-    vi.mocked(api.listBooks).mockResolvedValue([])
-    vi.mocked(api.listAuthors).mockResolvedValue([])
+    vi.mocked(api.listBooks).mockResolvedValue({ items: [], total: 0, limit: 100, offset: 0 })
+    vi.mocked(api.listAuthors).mockResolvedValue({ items: [], total: 0, limit: 100, offset: 0 })
     vi.mocked(api.getSeriesHardcoverLink).mockRejectedValue(new Error('not linked'))
     vi.mocked(api.searchHardcoverSeries).mockResolvedValue([])
   })
@@ -487,21 +487,31 @@ describe('SeriesPage', () => {
       ...series,
       books: [...(series.books ?? []), { seriesId: 30, bookId: 102, positionInSeries: '2', primarySeries: true, book: candidate }],
     }
-    vi.mocked(api.listBooks).mockResolvedValue([series.books![0].book!, candidate])
-    vi.mocked(api.listAuthors).mockResolvedValue([
-      {
-        id: 12,
-        foreignAuthorId: 'author-12',
-        authorName: 'Frank Herbert',
-        sortName: 'Herbert, Frank',
-        description: '',
-        imageUrl: '',
-        disambiguation: '',
-        ratingsCount: 0,
-        averageRating: 0,
-        monitored: true,
-      },
-    ])
+    vi.mocked(api.listBooks).mockResolvedValue({
+      items: [series.books![0].book!, candidate],
+      total: 2,
+      limit: 100,
+      offset: 0,
+    })
+    vi.mocked(api.listAuthors).mockResolvedValue({
+      items: [
+        {
+          id: 12,
+          foreignAuthorId: 'author-12',
+          authorName: 'Frank Herbert',
+          sortName: 'Herbert, Frank',
+          description: '',
+          imageUrl: '',
+          disambiguation: '',
+          ratingsCount: 0,
+          averageRating: 0,
+          monitored: true,
+        },
+      ],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    })
     vi.mocked(api.linkBookToSeries).mockResolvedValue(updated)
 
     renderSeriesPage([series])

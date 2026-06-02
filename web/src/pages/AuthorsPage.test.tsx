@@ -65,7 +65,7 @@ vi.mock('../components/Pagination', () => ({ default: () => null }))
 describe('AuthorsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(api.listAuthors).mockResolvedValue([])
+    vi.mocked(api.listAuthors).mockResolvedValue({ items: [], total: 0, limit: 100, offset: 0 })
   })
 
   it('creates a series from the authors toolbar and opens it on the series page', async () => {

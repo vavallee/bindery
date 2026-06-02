@@ -137,7 +137,7 @@ export default function AuthorDetailPage() {
       api.getAuthor(authorId),
       api.listBooks({ authorId, includeExcluded: showExcluded }),
     ])
-      .then(([a, bs]) => { if (!cancelled) { setAuthor(a); setBooks(bs) } })
+      .then(([a, bs]) => { if (!cancelled) { setAuthor(a); setBooks(bs.items) } })
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load'))
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
@@ -150,7 +150,7 @@ export default function AuthorDetailPage() {
       await api.refreshAuthor(author.id)
       const [a, bs] = await Promise.all([api.getAuthor(authorId), api.listBooks({ authorId, includeExcluded: showExcluded })])
       setAuthor(a)
-      setBooks(bs)
+      setBooks(bs.items)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Refresh failed')
     } finally {
@@ -218,8 +218,8 @@ export default function AuthorDetailPage() {
   // unless showExcluded is on; delete removes them outright).
   const reloadBooks = async () => {
     try {
-      const bs = await api.listBooks({ authorId, includeExcluded: showExcluded })
-      setBooks(bs)
+      const { items } = await api.listBooks({ authorId, includeExcluded: showExcluded })
+      setBooks(items)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Reload failed')
     }
@@ -389,7 +389,7 @@ export default function AuthorDetailPage() {
             </button>
             <button
               onClick={() => {
-                if (allAuthors.length === 0) api.listAuthors().then(setAllAuthors).catch(console.error)
+                if (allAuthors.length === 0) api.listAuthors().then(({ items }) => setAllAuthors(items)).catch(console.error)
                 setShowMerge(true)
               }}
               className="px-3 py-1.5 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded text-xs font-medium"
@@ -439,7 +439,7 @@ export default function AuthorDetailPage() {
           onMerged={() => {
             // Reload current author (aliases may have grown) + its books.
             Promise.all([api.getAuthor(authorId), api.listBooks({ authorId })])
-              .then(([a, bs]) => { setAuthor(a); setBooks(bs) })
+              .then(([a, bs]) => { setAuthor(a); setBooks(bs.items) })
               .catch(console.error)
           }}
         />

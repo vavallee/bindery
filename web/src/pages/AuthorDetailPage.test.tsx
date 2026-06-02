@@ -82,7 +82,7 @@ function installLocalStorageMock() {
 function renderAuthorDetailPage(books: Book[], view: 'grid' | 'table' = 'grid') {
   localStorage.setItem('bindery.view.author-detail', view)
   vi.mocked(api.getAuthor).mockResolvedValue(author)
-  vi.mocked(api.listBooks).mockResolvedValue(books)
+  vi.mocked(api.listBooks).mockResolvedValue({ items: books, total: books.length, limit: 100, offset: 0 })
 
   return render(
     <MemoryRouter initialEntries={['/author/42']}>

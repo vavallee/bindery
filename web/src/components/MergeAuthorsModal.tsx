@@ -32,7 +32,7 @@ export default function MergeAuthorsModal({ authors, initialTargetId, onClose, o
     if (!sourceId) { setSourceBookCount(null); return }
     let cancelled = false
     api.listBooks({ authorId: Number(sourceId) })
-      .then(bs => { if (!cancelled) setSourceBookCount(bs.length) })
+      .then(page => { if (!cancelled) setSourceBookCount(page.total) })
       .catch(() => { if (!cancelled) setSourceBookCount(null) })
     return () => { cancelled = true }
   }, [sourceId])

@@ -40,7 +40,7 @@ export default function AuthorsPage() {
 
   const load = () => {
     setLoading(true)
-    api.listAuthors().then(setAuthors).catch(console.error).finally(() => setLoading(false))
+    api.listAuthors().then(({ items }) => setAuthors(items)).catch(console.error).finally(() => setLoading(false))
   }
 
   useEffect(() => { load() }, [])
@@ -53,7 +53,7 @@ export default function AuthorsPage() {
     let withFiles = 0
     let total = 0
     try {
-      const books = await api.listBooks({ authorId: id })
+      const { items: books } = await api.listBooks({ authorId: id })
       total = books.length
       withFiles = books.filter(b => b.filePath).length
     } catch { /* fall through to no-file-sweep default */ }

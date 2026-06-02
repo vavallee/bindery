@@ -186,7 +186,7 @@ export default function BookDetailPage() {
     setLoading(true)
     Promise.all([
       api.getBook(bookId).then(b => { if (!cancelled) { setBook(b); setAsinDraft(b.asin || '') } }),
-      api.listHistory({ bookId }).then(setEvents).catch(() => {}),
+      api.listHistory({ bookId }).then(({ items }) => setEvents(items)).catch(() => {}),
     ])
       .catch(err => setError(err instanceof Error ? err.message : t('bookDetail.loadFailed')))
       .finally(() => { if (!cancelled) setLoading(false) })
@@ -249,7 +249,7 @@ export default function BookDetailPage() {
         api.listHistory({ bookId: book.id }),
       ])
       setBook(b)
-      setEvents(h)
+      setEvents(h.items)
       setResults(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : t('bookDetail.grabFailed'))
@@ -288,7 +288,7 @@ export default function BookDetailPage() {
       const params = format ? `?format=${format}` : ''
       const updated = await api.deleteBookFile(book.id, params)
       setBook(updated)
-      const h = await api.listHistory({ bookId: book.id }).catch(() => events)
+      const h = await api.listHistory({ bookId: book.id }).then(p => p.items).catch(() => events)
       setEvents(h)
     } catch (e) {
       setError(e instanceof Error ? e.message : t('bookDetail.deleteFailed'))

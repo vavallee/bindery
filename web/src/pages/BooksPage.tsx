@@ -41,7 +41,7 @@ export default function BooksPage() {
   const selectAllRef = useRef<HTMLInputElement>(null)
 
   const load = () => {
-    api.listBooks().then(setBooks).catch(console.error).finally(() => setLoading(false))
+    api.listBooks().then(({ items }) => setBooks(items)).catch(console.error).finally(() => setLoading(false))
   }
 
   useEffect(() => {
