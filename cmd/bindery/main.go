@@ -543,7 +543,7 @@ func main() {
 	delayProfileHandler := api.NewDelayProfileHandler(delayProfileRepo)
 	customFormatHandler := api.NewCustomFormatHandler(customFormatRepo)
 	bulkHandler := api.NewBulkHandler(authorRepo, bookRepo, blocklistRepo, sched)
-	backupHandler := api.NewBackupHandler(cfg.DBPath, cfg.DataDir)
+	backupHandler := api.NewBackupHandler(database, cfg.DBPath, cfg.DataDir)
 	rootFolderHandler := api.NewRootFolderHandler(rootFolderRepo)
 	logHandler := api.NewLogHandler(ring).WithLogRepo(logRepo).WithDBLogHandler(logDBHandler)
 	prowlarrHandler := api.NewProwlarrHandler(prowlarrRepo, indexerRepo).WithSettings(settingsRepo)
