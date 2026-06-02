@@ -1225,6 +1225,12 @@ export interface BlocklistEntry {
   indexerId?: number
   reason: string
   createdAt: string
+  // D4b audit. Surfaces who promoted this row into the blocklist. NULL
+  // for system-written rows (scheduler stall-detection, readarr migration)
+  // and for legacy rows that predate migration 049. Audit only; the list
+  // semantics remain global. The admin "blocklisted by X" UI consuming
+  // this field is a future task.
+  createdByUserId?: number | null
 }
 
 export interface NotificationConfig {

@@ -167,7 +167,18 @@ func (h *HistoryHandler) Blocklist(w http.ResponseWriter, r *http.Request) {
 		Title:  event.SourceTitle,
 		Reason: event.EventType,
 	}
-	if err := h.blocklist.Create(r.Context(), entry); err != nil {
+	// D4b audit: this is a user-driven write (someone pressed "Blocklist" in
+	// the history UI), so tag the row with their id. The list/IsBlocked
+	// queries are global and don't read this column; it's surfaced through
+	// the API for admin views only. UserIDFromContext returns 0 for
+	// unauthenticated requests, in which case fall back to the system-write
+	// path so we don't insert a fake user id.
+	if uid := auth.UserIDFromContext(r.Context()); uid != 0 {
+		err = h.blocklist.CreateByUser(r.Context(), entry, uid)
+	} else {
+		err = h.blocklist.Create(r.Context(), entry)
+	}
+	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}

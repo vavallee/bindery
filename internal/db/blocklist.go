@@ -9,6 +9,11 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
+// blocklistColumns is the canonical column list shared between the writer and
+// the reader paths. Keep it aligned with the Scan order in query() and with
+// the INSERT shape in create().
+const blocklistColumns = "id, book_id, guid, title, indexer_id, reason, created_at, created_by_user_id"
+
 type BlocklistRepo struct {
 	db *sql.DB
 }
@@ -17,12 +22,31 @@ func NewBlocklistRepo(db *sql.DB) *BlocklistRepo {
 	return &BlocklistRepo{db: db}
 }
 
+// Create inserts a system-attributed blocklist row. The audit column
+// created_by_user_id is left NULL. Use this path from non-user-driven
+// writers (scheduler stall-detection, readarr import migration) where no
+// caller user identity exists. For user-driven writes (e.g. the history
+// handler's "blocklist this release" action) use CreateByUser so the audit
+// column records who pressed the button.
 func (r *BlocklistRepo) Create(ctx context.Context, e *models.BlocklistEntry) error {
+	return r.create(ctx, e, nil)
+}
+
+// CreateByUser inserts a blocklist row tagged with the supplied user id. The
+// row is otherwise identical to one written by Create: the BlocklistedSpec
+// decision matcher and IsBlocked / List queries are global on purpose, so
+// the audit column is metadata only. See migration 049 for the rationale.
+func (r *BlocklistRepo) CreateByUser(ctx context.Context, e *models.BlocklistEntry, userID int64) error {
+	uid := userID
+	return r.create(ctx, e, &uid)
+}
+
+func (r *BlocklistRepo) create(ctx context.Context, e *models.BlocklistEntry, userID *int64) error {
 	now := time.Now().UTC()
 	result, err := r.db.ExecContext(ctx, `
-		INSERT INTO blocklist (book_id, guid, title, indexer_id, reason, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		e.BookID, e.GUID, e.Title, e.IndexerID, e.Reason, now)
+		INSERT INTO blocklist (book_id, guid, title, indexer_id, reason, created_at, created_by_user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		e.BookID, e.GUID, e.Title, e.IndexerID, e.Reason, now, userID)
 	if err != nil {
 		return fmt.Errorf("create blocklist entry: %w", err)
 	}
@@ -32,11 +56,12 @@ func (r *BlocklistRepo) Create(ctx context.Context, e *models.BlocklistEntry) er
 	}
 	e.ID = id
 	e.CreatedAt = now
+	e.CreatedByUserID = userID
 	return nil
 }
 
 func (r *BlocklistRepo) List(ctx context.Context) ([]models.BlocklistEntry, error) {
-	return r.query(ctx, "SELECT id, book_id, guid, title, indexer_id, reason, created_at FROM blocklist ORDER BY created_at DESC")
+	return r.query(ctx, "SELECT "+blocklistColumns+" FROM blocklist ORDER BY created_at DESC")
 }
 
 func (r *BlocklistRepo) IsBlocked(ctx context.Context, guid string) (bool, error) {
@@ -69,7 +94,7 @@ func (r *BlocklistRepo) query(ctx context.Context, q string, args ...interface{}
 	for rows.Next() {
 		var e models.BlocklistEntry
 		if err := rows.Scan(
-			&e.ID, &e.BookID, &e.GUID, &e.Title, &e.IndexerID, &e.Reason, &e.CreatedAt,
+			&e.ID, &e.BookID, &e.GUID, &e.Title, &e.IndexerID, &e.Reason, &e.CreatedAt, &e.CreatedByUserID,
 		); err != nil {
 			return nil, fmt.Errorf("scan blocklist entry: %w", err)
 		}

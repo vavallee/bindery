@@ -1443,6 +1443,115 @@ func TestBlocklistRepoCRUD(t *testing.T) {
 	}
 }
 
+// seedUser inserts a row in users and returns its id, so D4b audit tests
+// can pass the FK constraint on created_by_user_id.
+func seedUser(t *testing.T, ctx context.Context, database *sql.DB, username string) int64 {
+	t.Helper()
+	u, err := NewUserRepo(database).Create(ctx, username, "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u.ID
+}
+
+// TestBlocklist_CreateByUser_PopulatesAudit asserts the D4b audit column is
+// set to the caller's user id when a row is written via CreateByUser. This
+// is the user-driven write path (e.g. history -> blocklist promote).
+func TestBlocklist_CreateByUser_PopulatesAudit(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	uid := seedUser(t, ctx, database, "alice")
+	repo := NewBlocklistRepo(database)
+
+	entry := &models.BlocklistEntry{GUID: "g-user", Title: "by-user"}
+	if err := repo.CreateByUser(ctx, entry, uid); err != nil {
+		t.Fatalf("CreateByUser: %v", err)
+	}
+	if entry.CreatedByUserID == nil || *entry.CreatedByUserID != uid {
+		t.Errorf("in-memory entry: expected CreatedByUserID=%d, got %v", uid, entry.CreatedByUserID)
+	}
+	// Round-trip: List must hydrate the audit column too.
+	list, err := repo.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(list))
+	}
+	if list[0].CreatedByUserID == nil || *list[0].CreatedByUserID != uid {
+		t.Errorf("listed entry: expected CreatedByUserID=%d, got %v", uid, list[0].CreatedByUserID)
+	}
+}
+
+// TestBlocklist_Create_LeavesAuditNull asserts the system-write path (used
+// by scheduler stall-detection and the readarr import migration) does not
+// fabricate an owner. NULL is the honest "unknown origin" answer.
+func TestBlocklist_Create_LeavesAuditNull(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewBlocklistRepo(database)
+
+	entry := &models.BlocklistEntry{GUID: "g-system", Title: "system"}
+	if err := repo.Create(ctx, entry); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if entry.CreatedByUserID != nil {
+		t.Errorf("in-memory entry: expected CreatedByUserID=nil, got %v", *entry.CreatedByUserID)
+	}
+	list, err := repo.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(list))
+	}
+	if list[0].CreatedByUserID != nil {
+		t.Errorf("listed entry: expected CreatedByUserID=nil, got %v", *list[0].CreatedByUserID)
+	}
+}
+
+// TestBlocklist_IsBlocked_RemainsGlobal is the regression guard against
+// anyone "fixing" the audit column into per-user scoping. The decision spec
+// (internal/decision/specs.go) matches on GUID alone because a broken
+// release is broken for every user. A row written by user 1 must block
+// user 2's grab too. If this test ever needs to be relaxed, the deep audit
+// rationale in PR D4b should be revisited first.
+func TestBlocklist_IsBlocked_RemainsGlobal(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	uid := seedUser(t, ctx, database, "alice")
+	repo := NewBlocklistRepo(database)
+
+	entry := &models.BlocklistEntry{GUID: "g-shared", Title: "shared"}
+	if err := repo.CreateByUser(ctx, entry, uid); err != nil {
+		t.Fatalf("CreateByUser uid=%d: %v", uid, err)
+	}
+	// IsBlocked accepts only the GUID; it has no user-id parameter. Calling
+	// it after a write by user 1 must return true regardless of who's
+	// asking. The signature itself is the contract; this assertion guards
+	// the underlying COUNT(*) query against being narrowed by a future
+	// edit.
+	blocked, err := repo.IsBlocked(ctx, "g-shared")
+	if err != nil {
+		t.Fatalf("IsBlocked: %v", err)
+	}
+	if !blocked {
+		t.Error("expected IsBlocked(g-shared) to be true regardless of caller; got false")
+	}
+}
+
 func TestHistoryRepoCRUD(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {
