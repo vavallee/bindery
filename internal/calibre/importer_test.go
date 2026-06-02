@@ -364,20 +364,22 @@ func TestImporter_ReaderOpenFailureSurfacesInProgress(t *testing.T) {
 // that a Calibre book with a series + position lands a series row, a
 // series_books link, and a parseable position string.
 func TestImporter_PersistsSeries(t *testing.T) {
-	imp, fr, _, bookRepo, _, _, _ := newImporterFixture(t)
+	// Hand-roll the fixture because newImporterFixture doesn't wire a
+	// series repo, and #905 specifically exercises that path. Fresh DB
+	// per-test so the series_books rows can be asserted in isolation.
 	database, err := db.OpenMemory()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	// Rebuild the fixture so series repo is wired against the same DB.
 	authorRepo := db.NewAuthorRepo(database)
-	bookRepo = db.NewBookRepo(database)
+	bookRepo := db.NewBookRepo(database)
 	editionRepo := db.NewEditionRepo(database)
 	aliasRepo := db.NewAuthorAliasRepo(database)
 	settingsRepo := db.NewSettingsRepo(database)
 	seriesRepo := db.NewSeriesRepo(database)
-	imp = NewImporter(authorRepo, aliasRepo, bookRepo, editionRepo, settingsRepo).
+	fr := &fakeReader{}
+	imp := NewImporter(authorRepo, aliasRepo, bookRepo, editionRepo, settingsRepo).
 		WithSeries(seriesRepo)
 	imp.openReader = func(string) (readerIface, error) { return fr, nil }
 
