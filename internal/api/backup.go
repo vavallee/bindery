@@ -100,13 +100,14 @@ func (h *BackupHandler) List(w http.ResponseWriter, r *http.Request) {
 // this is measured in seconds, not milliseconds. The endpoint is user-initiated
 // (no scheduled job) so the cost lands on the user who pressed the button.
 func (h *BackupHandler) Create(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	dir := h.backupDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create backup directory"})
 		return
 	}
 
-	timestamp := time.Now().UTC().Format("20060102_150405")
+	timestamp := start.UTC().Format("20060102_150405")
 	destName := fmt.Sprintf("bindery_%s.db", timestamp)
 	destPath := filepath.Join(dir, destName)
 	// Stage the snapshot under a .tmp name and rename on success. SQLite's
@@ -147,11 +148,20 @@ func (h *BackupHandler) Create(w http.ResponseWriter, r *http.Request) {
 		size = info.Size()
 	}
 
-	slog.Info("backup created", "file", destName, "size", size)
+	// Log duration so an operator can see when backup cost is creeping up.
+	// VACUUM INTO is O(db size) because it rewrites the entire database into
+	// a fresh file (this is the correctness trade vs. the prior plain file
+	// copy that silently omitted WAL pages). On a few-hundred-MB database
+	// this is sub-second; on multi-GB databases it can be tens of seconds.
+	// If anyone later wires the endpoint to a scheduled job, the duration
+	// log is the heads-up to size the schedule appropriately.
+	duration := time.Since(start)
+	slog.Info("backup created", "file", destName, "size", size, "duration_ms", duration.Milliseconds())
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"name":    destName,
-		"size":    size,
-		"modTime": time.Now().UTC(),
+		"name":       destName,
+		"size":       size,
+		"modTime":    time.Now().UTC(),
+		"durationMs": duration.Milliseconds(),
 	})
 }
 
