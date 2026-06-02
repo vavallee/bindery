@@ -3,12 +3,18 @@ name: Notify Discord on external PR
 # Fires a Discord ping whenever a non-owner, non-bot PR is opened or moved
 # from draft to ready-for-review. Triage on contributor PRs in this repo
 # has historically been slow (e.g. #515 sat 5 days while #590 superseded
-# it locally) — this gives a real-time signal so the queue stays legible.
+# it locally), so this gives a real-time signal so the queue stays legible.
 #
 # pull_request_target runs in the BASE repo's context with secret access,
 # which is what we need for the webhook. We deliberately do NOT check out
-# the PR's code — only read metadata fields — so there's no code-execution
+# the PR's code (only read metadata fields), so there's no code-execution
 # risk from forks.
+#
+# Backstop: pull_request_target has documented gaps for fork PRs and for
+# workflow files freshly merged to main (see #626 / #616 for the canonical
+# miss). A scheduled poll in notify-external-pr-backstop.yml catches those
+# gaps; both workflows use the bindery-notified label to dedupe so a
+# successful event-driven post prevents a redundant cron post and vice versa.
 
 on:
   pull_request_target:
@@ -16,6 +22,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write   # required for adding the dedupe label after a successful post
 
 jobs:
   notify:
@@ -34,6 +41,7 @@ jobs:
           egress-policy: audit
 
       - name: Post to Discord
+        id: post
         env:
           WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
           PR_TITLE: ${{ github.event.pull_request.title }}
@@ -44,6 +52,7 @@ jobs:
         run: |
           if [ -z "$WEBHOOK" ]; then
             echo "::warning::DISCORD_RELEASE_WEBHOOK not set; skipping"
+            echo "posted=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           DRAFT_TAG=""
@@ -62,7 +71,23 @@ jobs:
             -d "$PAYLOAD" "$WEBHOOK")
           if [ "$HTTP" = "204" ]; then
             echo "Discord notified for PR #${PR_NUMBER}"
+            echo "posted=true" >> "$GITHUB_OUTPUT"
           else
             echo "::warning::Discord returned HTTP ${HTTP}"
+            echo "posted=false" >> "$GITHUB_OUTPUT"
             exit 1
           fi
+
+      - name: Mark PR as notified
+        # Only label on a successful post so failed runs are retried by the
+        # cron backstop. The label prevents that backstop from re-posting.
+        if: steps.post.outputs.posted == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Best-effort: a missing label permission must not fail the job
+          # (the backstop will see no label and try again, which is fine
+          # because Discord requests at this volume are essentially free).
+          gh pr edit "$PR_NUMBER" --add-label bindery-notified --repo "${{ github.repository }}" || \
+            echo "::warning::failed to add bindery-notified label (the cron backstop will retry)"

@@ -1,0 +1,111 @@
+name: Notify Discord on external PR (backstop)
+
+# Cron-driven backstop for notify-external-pr.yml. The event-driven workflow
+# has documented gaps (pull_request_target propagation lag for newly-merged
+# workflow files, fork-PR delivery inconsistencies, and the original miss in
+# #626/#616). This poll runs every 15 minutes, finds open external-contributor
+# PRs from the last 7 days that lack the bindery-notified label, and posts a
+# Discord message + applies the label so we don't double-notify.
+#
+# Worst case: a real-time event arrives mid-poll. The label is added by
+# whichever workflow finishes first; the other observes the label and exits
+# without re-posting. Discord ratelimits are far above this volume so even a
+# brief race would not produce duplicate visible messages of consequence,
+# but the label ensures deduplication for the catalog of past PRs.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: 'Days of PR history to scan (default 7)'
+        required: false
+        default: '7'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  backstop:
+    name: Catch missed external PRs
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        with:
+          egress-policy: audit
+
+      - name: Notify and label any missed external PRs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          REPO: ${{ github.repository }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days || '7' }}
+        run: |
+          set -euo pipefail
+          if [ -z "$WEBHOOK" ]; then
+            echo "::warning::DISCORD_RELEASE_WEBHOOK not set; nothing to do"
+            exit 0
+          fi
+
+          # PRs opened within LOOKBACK_DAYS; cap at 50 to bound runtime.
+          # gh outputs newest first; we walk all matches.
+          mapfile -t PRS < <(gh pr list \
+            --repo "$REPO" \
+            --state open \
+            --search "is:pr is:open created:>=$(date -u -d "-${LOOKBACK_DAYS} days" +%Y-%m-%d)" \
+            --limit 50 \
+            --json number,title,url,author,isDraft,labels,createdAt \
+            --jq '.[] | @json')
+
+          if [ "${#PRS[@]}" -eq 0 ]; then
+            echo "No open PRs in lookback window"
+            exit 0
+          fi
+
+          POSTED=0
+          for pr_json in "${PRS[@]}"; do
+            num=$(echo "$pr_json" | jq -r '.number')
+            title=$(echo "$pr_json" | jq -r '.title')
+            url=$(echo "$pr_json" | jq -r '.url')
+            author=$(echo "$pr_json" | jq -r '.author.login')
+            draft=$(echo "$pr_json" | jq -r '.isDraft')
+            labels=$(echo "$pr_json" | jq -r '.labels[].name' | tr '\n' ' ')
+
+            # Skip the maintainer's own PRs and bot accounts.
+            if [ "$author" = "$REPO_OWNER" ]; then continue; fi
+            if [[ "$author" == *"[bot]"* ]]; then continue; fi
+            if [[ "$author" == "dependabot" || "$author" == "github-actions" || "$author" == "step-security-bot" ]]; then continue; fi
+
+            # Skip drafts; the event-driven workflow's ready_for_review type
+            # picks them up when the author flips them. We don't want to
+            # silently advertise a draft.
+            if [ "$draft" = "true" ]; then continue; fi
+
+            # Skip if already notified.
+            if [[ "$labels" == *"bindery-notified"* ]]; then continue; fi
+
+            echo "Backstop posting for PR #${num} by ${author}"
+            PAYLOAD=$(jq -nc \
+              --arg title "$title" \
+              --arg url "$url" \
+              --arg author "$author" \
+              --arg num "$num" \
+              '{content: "📥 New PR #\($num) by **\($author)** (cron-caught): \($title)\n\($url)"}')
+            HTTP=$(curl -sS -o /dev/null -w "%{http_code}" \
+              -X POST -H "Content-Type: application/json" \
+              -d "$PAYLOAD" "$WEBHOOK") || HTTP=000
+            if [ "$HTTP" = "204" ]; then
+              gh pr edit "$num" --repo "$REPO" --add-label bindery-notified || \
+                echo "::warning::failed to add label to #${num}; will retry on next tick"
+              POSTED=$((POSTED+1))
+            else
+              echo "::warning::Discord returned HTTP ${HTTP} for PR #${num}; will retry on next tick"
+            fi
+          done
+
+          echo "Posted ${POSTED} backstop notifications"
