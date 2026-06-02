@@ -87,19 +87,24 @@ func TestSmoke(t *testing.T) {
 
 	t.Run("authors list empty on fresh install", func(t *testing.T) {
 		body := getJSON(t, base+"/api/v1/author")
-		var arr []map[string]any
-		if err := json.Unmarshal(body, &arr); err != nil {
+		// List endpoints return a Page envelope after Wave 2 / E.
+		var page struct {
+			Items []map[string]any `json:"items"`
+		}
+		if err := json.Unmarshal(body, &page); err != nil {
 			t.Fatalf("decode: %v (body=%s)", err, body)
 		}
-		if len(arr) != 0 {
-			t.Errorf("expected empty authors, got %d", len(arr))
+		if len(page.Items) != 0 {
+			t.Errorf("expected empty authors, got %d", len(page.Items))
 		}
 	})
 
 	t.Run("books list returns an array", func(t *testing.T) {
 		body := getJSON(t, base+"/api/v1/book")
-		var arr []map[string]any
-		if err := json.Unmarshal(body, &arr); err != nil {
+		var page struct {
+			Items []map[string]any `json:"items"`
+		}
+		if err := json.Unmarshal(body, &page); err != nil {
 			t.Fatalf("decode: %v (body=%s)", err, body)
 		}
 	})
