@@ -170,6 +170,28 @@ func (r *DownloadRepo) ResetImportRetry(ctx context.Context, id int64) (accepted
 	return false, true, nil
 }
 
+// UpdateStatus validates the transition from the current state to next and
+// applies it, also stamping the per-state timestamp column when one is
+// associated with the destination state.
+//
+// Invariant (Wave 4 / finding 22): grabbed_at MUST be populated whenever the
+// download has ever entered StateGrabbed or any later in-flight state. The
+// stall detector and queue UI both filter on grabbed_at being non-NULL, so a
+// row that leaves it NULL is invisible to stall detection and shows a blank
+// "grabbed" timestamp in the queue.
+//
+// Historically StateGrabbed itself was only set by Create (which writes
+// added_at, not grabbed_at) and the StateDownloading branch below was the
+// only path that stamped grabbed_at. A direct StateGrabbed -> StateCompleted
+// hop (#769 duplicate-add fast-path: qBittorrent reports the torrent already
+// at 100 percent and the scanner skips Downloading) therefore left grabbed_at
+// NULL forever. Auto-stamping it here whenever the row transitions out of
+// StateGrabbed without it ever having been set fixes the wedge without
+// requiring every caller to remember.
+//
+// SetGrabbedAt remains available for callers that need to restore a historical
+// value (backup replay, manual fixup). The auto-stamp only fires when
+// grabbed_at IS NULL, so it never clobbers a value SetGrabbedAt has written.
 func (r *DownloadRepo) UpdateStatus(ctx context.Context, id int64, next models.DownloadState) error {
 	// Look up the current state to validate the transition.
 	var current models.DownloadState
@@ -184,14 +206,43 @@ func (r *DownloadRepo) UpdateStatus(ctx context.Context, id int64, next models.D
 	now := time.Now().UTC()
 	switch next {
 	case models.StateDownloading:
-		_, err = r.db.ExecContext(ctx, "UPDATE downloads SET status=?, grabbed_at=? WHERE id=?", next, now, id)
+		// Stamp grabbed_at on the Grabbed -> Downloading transition. The
+		// COALESCE preserves an earlier SetGrabbedAt value (e.g. a replayed
+		// historical timestamp) so an explicit override is never clobbered.
+		_, err = r.db.ExecContext(ctx,
+			"UPDATE downloads SET status=?, grabbed_at=COALESCE(grabbed_at, ?) WHERE id=?",
+			next, now, id)
 	case models.StateCompleted:
-		_, err = r.db.ExecContext(ctx, "UPDATE downloads SET status=?, completed_at=? WHERE id=?", next, now, id)
+		// Backfill grabbed_at on the duplicate-add fast-path (#769 and finding
+		// 22): a torrent that was already at 100 percent jumps straight from
+		// StateGrabbed to StateCompleted without ever passing through
+		// StateDownloading. Without the backfill the row stays invisible to
+		// the stall detector (which filters on grabbed_at IS NOT NULL) and
+		// shows an empty Grabbed column in the queue UI.
+		_, err = r.db.ExecContext(ctx,
+			"UPDATE downloads SET status=?, completed_at=?, grabbed_at=COALESCE(grabbed_at, ?) WHERE id=?",
+			next, now, now, id)
 	case models.StateImported:
 		_, err = r.db.ExecContext(ctx, "UPDATE downloads SET status=?, imported_at=? WHERE id=?", next, now, id)
 	default:
+		// StateGrabbed -> StateFailed (couldn't send to client) deliberately
+		// leaves grabbed_at NULL: nothing was ever grabbed. All other forward
+		// transitions stay in the import lifecycle, which is gated by the
+		// validTransitions table and only reachable after StateCompleted has
+		// already backfilled grabbed_at above.
 		_, err = r.db.ExecContext(ctx, "UPDATE downloads SET status=? WHERE id=?", next, id)
 	}
+	return err
+}
+
+// SetGrabbedAt overrides the grabbed_at timestamp for a download. It exists
+// for callers that need to restore a historical value (backup replay, manual
+// fixup); the normal forward state machine in UpdateStatus auto-stamps the
+// column on the way through StateGrabbed and never overwrites a value already
+// set by SetGrabbedAt.
+func (r *DownloadRepo) SetGrabbedAt(ctx context.Context, id int64, t time.Time) error {
+	_, err := r.db.ExecContext(ctx,
+		"UPDATE downloads SET grabbed_at=? WHERE id=?", t.UTC(), id)
 	return err
 }
 
@@ -302,6 +353,127 @@ func (r *DownloadRepo) interruptedImportIDs(ctx context.Context) ([]int64, error
 		return nil, fmt.Errorf("iterate interrupted imports: %w", err)
 	}
 	return ids, nil
+}
+
+// RecoverWedgedCompleted finds downloads stuck in StateCompleted that never
+// progressed to import and re-queues them as StateImportPending so the normal
+// CheckDownloads tick will pick them up.
+//
+// Background (Wave 4 / finding 21): the state machine allows
+// StateCompleted -> StateImportPending, but the transition is only driven by
+// the scanner's tick after the download client reports the file ready. If the
+// process restarts between StateCompleted being set and the scanner moving
+// the row on, nothing else ever transitions it: the row sits in Completed
+// forever, the file may already be on the seed/download path, and the user
+// sees "not imported" in the queue with no obvious cause.
+//
+// Behaviour:
+//   - Only StateCompleted rows whose import_retry_count is below
+//     importRetryLimit are touched. A row that has already been retried the
+//     full budget is left in Completed and logged at ERROR by the caller, so
+//     we never loop on the same broken row across restart cycles.
+//   - At most cap rows are re-queued per call. Setting cap <= 0 disables the
+//     cap. The caller passes a small number so a database with thousands of
+//     wedged rows does not thundering-herd the importer on first boot after
+//     upgrade.
+//   - The row's import_retry_count is bumped so the cap is enforced even when
+//     the scanner later runs out of attempts; see CheckDownloads for the
+//     consumption side.
+//
+// Returns the IDs of the rows it re-queued so the caller can log them and
+// emit history events.
+func (r *DownloadRepo) RecoverWedgedCompleted(ctx context.Context, retryLimit, cap int) ([]int64, error) {
+	ids, err := r.wedgedCompletedIDs(ctx, retryLimit, cap)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	const msg = "import never started (process restart before scanner tick) — re-queued for retry"
+	recovered := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		// Bump import_retry_count atomically with the state change so a row
+		// that has already burned its budget cannot be re-queued by the next
+		// startup sweep. The guarded WHERE ensures we never accidentally move
+		// a row that has been transitioned out of StateCompleted in the
+		// meantime (e.g. by a concurrent CheckDownloads tick).
+		if _, err := r.db.ExecContext(ctx, `
+			UPDATE downloads
+			SET status=?,
+			    error_message=?,
+			    import_retry_count = import_retry_count + 1
+			WHERE id=? AND status=?`,
+			models.StateImportPending, msg, id, models.StateCompleted); err != nil {
+			return recovered, fmt.Errorf("recover wedged completed %d: %w", id, err)
+		}
+		recovered = append(recovered, id)
+	}
+	return recovered, nil
+}
+
+// wedgedCompletedIDs returns the ids of downloads that look stuck in
+// StateCompleted: status is Completed, the retry budget has room, and no
+// book_files row has been written for the associated book yet. The last
+// condition rules out a row whose import actually landed but whose terminal
+// state-update lost the race (would otherwise re-import a file that is
+// already on disk). The result set is closed via defer before the caller
+// runs UPDATEs against the single-writer connection pool.
+func (r *DownloadRepo) wedgedCompletedIDs(ctx context.Context, retryLimit, cap int) ([]int64, error) {
+	q := `
+		SELECT d.id
+		FROM downloads d
+		WHERE d.status = ?
+		  AND d.import_retry_count < ?
+		  AND (
+		    d.book_id IS NULL OR NOT EXISTS (
+		      SELECT 1 FROM book_files bf WHERE bf.book_id = d.book_id
+		    )
+		  )
+		ORDER BY d.id`
+	args := []interface{}{models.StateCompleted, retryLimit}
+	if cap > 0 {
+		q += " LIMIT ?"
+		args = append(args, cap)
+	}
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list wedged completed: %w", err)
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan wedged completed id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate wedged completed: %w", err)
+	}
+	return ids, nil
+}
+
+// CountWedgedCompletedOverRetryLimit returns the number of StateCompleted
+// rows whose import_retry_count has reached or exceeded retryLimit. The
+// caller uses this to log an ERROR on startup so an operator can see the
+// rows that the boot reconciliation deliberately skipped (Wave 4 / finding 21).
+func (r *DownloadRepo) CountWedgedCompletedOverRetryLimit(ctx context.Context, retryLimit int) (int, error) {
+	var n int
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM downloads d
+		WHERE d.status = ?
+		  AND d.import_retry_count >= ?
+		  AND (
+		    d.book_id IS NULL OR NOT EXISTS (
+		      SELECT 1 FROM book_files bf WHERE bf.book_id = d.book_id
+		    )
+		  )`, models.StateCompleted, retryLimit).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count over-limit wedged completed: %w", err)
+	}
+	return n, nil
 }
 
 func (r *DownloadRepo) Delete(ctx context.Context, id int64) error {

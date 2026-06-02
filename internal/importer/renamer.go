@@ -376,12 +376,29 @@ func copyFileRooted(srcRoot, dstRoot *os.Root, rel string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	// closeOnce: explicit Close in the happy path surfaces deferred write
+	// errors; the defer runs as a no-op safety net on early returns. Without
+	// this, NFS write errors that the kernel does not surface until Close
+	// would be swallowed and the importer would record a corrupt file as
+	// successfully copied (Wave 4 / finding 24).
+	closed := false
+	defer func() {
+		if !closed {
+			_ = out.Close()
+		}
+	}()
 
 	if _, err := io.Copy(out, in); err != nil {
 		return err
 	}
-	return out.Sync()
+	if err := out.Sync(); err != nil {
+		return fmt.Errorf("sync: %w", err)
+	}
+	closed = true
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close: %w", err)
+	}
+	return nil
 }
 
 // copyFileCtx copies src to dst, returning ctx.Err() if the context is
@@ -389,6 +406,14 @@ func copyFileRooted(srcRoot, dstRoot *os.Root, rel string) error {
 // cancellation encourages the blocking io.Copy goroutine to unblock on
 // Linux (including NFS); if it does not, the goroutine exits when the
 // process eventually closes those fds. Any partial dst is removed.
+//
+// out.Close() is invoked explicitly after Sync (Wave 4 / finding 24) so
+// deferred write errors are surfaced. The kernel page cache can hold dirty
+// pages from a successful Write call until close on NFS, where the actual
+// server-side write happens; a swallowed Close error would record a
+// successful copy of a corrupt file. The deferred Close runs only on the
+// cancellation path, where the caller is already returning ctx.Err() and
+// the Close error is meaningless.
 func copyFileCtx(ctx context.Context, src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -400,7 +425,14 @@ func copyFileCtx(ctx context.Context, src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	// closeOnce flag so the cancellation defer and the happy-path Close do
+	// not double-close the same fd.
+	closed := false
+	defer func() {
+		if !closed {
+			_ = out.Close()
+		}
+	}()
 
 	type result struct{ err error }
 	ch := make(chan result, 1)
@@ -416,11 +448,22 @@ func copyFileCtx(ctx context.Context, src, dst string) error {
 	case r := <-ch:
 		if r.err != nil {
 			_ = os.Remove(dst)
+			return r.err
 		}
-		return r.err
+		// Close explicitly so NFS / FUSE filesystems that defer write
+		// errors until Close surface them as a copy failure, not as a
+		// silent partial file (finding 24). If Close fails, treat the
+		// dst as corrupt and remove it so a retry sees a clean slate.
+		closed = true
+		if err := out.Close(); err != nil {
+			_ = os.Remove(dst)
+			return fmt.Errorf("close: %w", err)
+		}
+		return nil
 	case <-ctx.Done():
 		_ = in.Close()
 		_ = out.Close()
+		closed = true
 		_ = os.Remove(dst)
 		return ctx.Err()
 	}
@@ -468,6 +511,173 @@ func CopyFileCtx(ctx context.Context, src, dst string) error {
 		return fmt.Errorf("create dir: %w", err)
 	}
 	return copyFileCtx(ctx, src, dst)
+}
+
+// StagedImport places src at a sibling of dst (the "staging" path) so the
+// caller can write a book_files row pointing at dst before any user-visible
+// file appears at dst, then atomically promote it via the returned commit
+// function. This is the importer-atomicity primitive used by Wave 4 finding
+// 23 to close the move-then-DB-update gap: previously the importer landed
+// the file at its final destination first and wrote the DB row second, which
+// meant a transient SQLite error left the file orphaned on disk with no
+// book_files row — the user saw "not imported" in the queue and re-grabbed,
+// silently duplicating the file under " (2)".
+//
+// The contract:
+//
+//   - On success Stage produces a file at a path inside filepath.Dir(dst)
+//     whose name is dst's basename plus a per-call random suffix. The caller
+//     can now perform any DB work that should be reversible without leaving
+//     a half-imported file in the library.
+//   - commit performs an os.Rename(staged, dst). On POSIX same-filesystem
+//     this is atomic; both sides of StagedImport require the staged path to
+//     be on the same filesystem as dst (which it is by construction since
+//     they share a directory).
+//   - rollback removes the staged file and returns. It is safe to call
+//     after a successful commit (it becomes a no-op because the staged path
+//     no longer exists).
+//
+// Hardlink mode is supported: a hard link is created at the staging path,
+// then renamed onto dst. The inode count of the source ends up at 2 (source
+// + dst), matching the non-staged hardlink mode exactly.
+//
+// Copy mode invokes the existing copyFileCtx, which (Wave 4 / finding 24)
+// surfaces NFS-deferred write errors via an explicit Close.
+//
+// Move mode tries os.Rename(src, staging) first (same-filesystem fast path)
+// and falls back to copy + Remove(src) on cross-filesystem. The source is
+// only removed after the staged copy has been Sync+Close'd successfully, so
+// a failure in the slow-path copy never destroys the still-seeding source.
+//
+// The mode strings match those used by scanner.go: "hardlink", "copy",
+// and the default (anything else) is move.
+func StagedImport(ctx context.Context, mode, src, dst string) (stagedPath string, commit func() error, rollback func(), err error) {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
+		return "", nil, nil, fmt.Errorf("create dir: %w", err)
+	}
+	staged := stagingPath(dst)
+
+	// movedSrcViaRename and movedSrcInPlace control rollback / post-commit
+	// cleanup for move mode:
+	//
+	//   - movedSrcViaRename: the same-fs fast path used os.Rename(src,
+	//     staged). On rollback we reverse it (atomic) so the still-seeding
+	//     source survives a commit failure (Wave 4 / finding 23 regression
+	//     guard against issue #705 finding 1).
+	//
+	//   - movedSrcInPlace: the cross-fs slow path COPIED src to staged and
+	//     left src intact. The source is only removed AFTER commit succeeds;
+	//     this preserves the "never destroy still-seeding source after a
+	//     failed import" invariant in the slow path too.
+	movedSrcViaRename := false
+	movedSrcInPlace := false
+
+	switch mode {
+	case "hardlink":
+		if err := os.Link(src, staged); err != nil {
+			return "", nil, nil, fmt.Errorf("stage hardlink: %w", err)
+		}
+	case "copy":
+		if err := copyFileCtx(ctx, src, staged); err != nil {
+			return "", nil, nil, fmt.Errorf("stage copy: %w", err)
+		}
+	default: // move
+		moved, err := stageMove(ctx, src, staged)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		movedSrcViaRename = moved
+		movedSrcInPlace = !moved
+	}
+
+	committed := false
+	commit = func() error {
+		if err := os.Rename(staged, dst); err != nil {
+			return fmt.Errorf("commit staged file: %w", err)
+		}
+		committed = true
+		// Slow-path move: src was copied + left in place; the post-commit
+		// removal happens here so a commit failure never destroys the
+		// source. A failure to remove src after a successful commit is
+		// non-fatal (move-mode cleanup elsewhere prunes leftover sources);
+		// log + ignore so the imported file is still recorded as success.
+		if movedSrcInPlace {
+			if err := os.Remove(src); err != nil {
+				// Returning nil because the import has succeeded; the
+				// orphan source is a cosmetic leak, not a failure.
+				return nil
+			}
+		}
+		return nil
+	}
+	rollback = func() {
+		if committed {
+			return
+		}
+		if movedSrcViaRename {
+			// Same-fs path: put the source back. Both endpoints are on
+			// the same filesystem (we used os.Rename in stageMove), so
+			// this is atomic on POSIX. If it fails, fall through and
+			// remove the staged file anyway — losing the source is
+			// preferable to leaving an orphan stage that re-runs of the
+			// importer keep tripping over.
+			if err := os.Rename(staged, src); err == nil {
+				return
+			}
+		}
+		// Cross-fs path: src is still in place; just delete the staged
+		// copy. The src survives untouched and a retry can re-import it.
+		_ = os.Remove(staged)
+	}
+	return staged, commit, rollback, nil
+}
+
+// stagingPath returns a sibling of dst with a random suffix appended. The
+// staged file lives in the same directory as dst so the final os.Rename is
+// guaranteed to be on the same filesystem (atomic on POSIX). The "{dst}"
+// basename prefix means a directory listing makes the staged file obviously
+// related to the final import, which helps an operator debugging a crashed
+// import (Wave 4 / finding 23). The ".bindery-stage-" infix is recognisable
+// enough to write a manual cleanup script against if needed.
+func stagingPath(dst string) string {
+	base := filepath.Base(dst)
+	// time.Now().UnixNano() is sufficient uniqueness for a serial importer;
+	// the importer holds a per-download lock so two stage calls for the same
+	// dst cannot race.
+	return filepath.Join(filepath.Dir(dst), fmt.Sprintf(".bindery-stage-%d-%s", time.Now().UnixNano(), base))
+}
+
+// stageMove relocates src to staged. It tries os.Rename first (same-fs fast
+// path: O(1) and src disappears in the same syscall); on cross-fs it falls
+// back to a Sync+Close'd copy and leaves src intact. The caller's commit
+// closure is responsible for removing src after the staged file has been
+// promoted to dst — keeping src around until commit means a failed import
+// can always restore "src still on disk, nothing in library".
+//
+// The returned bool is true when the fast path was used. The caller's
+// rollback logic uses it to decide whether to restore src by reversing the
+// rename (fast path) or to do nothing about src because it was never
+// touched (slow path).
+func stageMove(ctx context.Context, src, staged string) (movedViaRename bool, err error) {
+	if err := os.Rename(src, staged); err == nil {
+		return true, nil
+	}
+	if err := copyFileCtx(ctx, src, staged); err != nil {
+		return false, fmt.Errorf("stage move (slow path): %w", err)
+	}
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return false, fmt.Errorf("stat source: %w", err)
+	}
+	stagedInfo, err := os.Stat(staged)
+	if err != nil {
+		return false, fmt.Errorf("stat staged: %w", err)
+	}
+	if srcInfo.Size() != stagedInfo.Size() {
+		_ = os.Remove(staged)
+		return false, fmt.Errorf("size mismatch: src=%d staged=%d", srcInfo.Size(), stagedInfo.Size())
+	}
+	return false, nil
 }
 
 // MoveDirCtx is like MoveDir but returns ctx.Err() if the context is
