@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/metadata"
@@ -164,7 +165,7 @@ func TestRunBoundedBookTasks_LimitsConcurrency(t *testing.T) {
 
 	var mu sync.Mutex
 	var calls, active, maxActive int
-	runBoundedBookTasks(context.Background(), books, 2, func(_ context.Context, _ models.Book) {
+	concurrency.RunBounded(context.Background(), books, 2, func(_ context.Context, _ models.Book) {
 		mu.Lock()
 		calls++
 		active++

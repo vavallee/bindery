@@ -14,6 +14,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 
+	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/decision"
 	"github.com/vavallee/bindery/internal/downloader"
@@ -708,37 +709,9 @@ func (s *Scheduler) searchWanted() {
 		}
 		searchQueue = append(searchQueue, book)
 	}
-	runBoundedBookTasks(ctx, searchQueue, scheduledWantedSearchConcurrency, func(ctx context.Context, book models.Book) {
+	concurrency.RunBounded(ctx, searchQueue, scheduledWantedSearchConcurrency, func(ctx context.Context, book models.Book) {
 		s.SearchAndGrabBook(ctx, book)
 	})
-}
-
-func runBoundedBookTasks(ctx context.Context, books []models.Book, concurrency int, fn func(context.Context, models.Book)) {
-	if fn == nil || len(books) == 0 {
-		return
-	}
-	if concurrency <= 0 {
-		concurrency = 1
-	}
-
-	sem := make(chan struct{}, concurrency)
-	var wg sync.WaitGroup
-	for _, book := range books {
-		select {
-		case sem <- struct{}{}:
-		case <-ctx.Done():
-			wg.Wait()
-			return
-		}
-		book := book
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer func() { <-sem }()
-			fn(ctx, book)
-		}()
-	}
-	wg.Wait()
 }
 
 func (s *Scheduler) refreshMetadata() {

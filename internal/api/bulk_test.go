@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -754,5 +756,88 @@ func TestWantedBulk_PartialFailure(t *testing.T) {
 	}
 	if okCount != 4 || errCount != 1 {
 		t.Errorf("expected 4 ok + 1 error, got %d ok + %d error", okCount, errCount)
+	}
+}
+
+// boundedMockSearcher tracks the maximum number of concurrent
+// SearchAndGrabBook calls so bulk-fan-out tests can assert the bound is
+// enforced. Each call holds the slot for releaseAfter so the pool fills
+// before any work finishes; without that, fast workers could complete
+// before the next batch is launched and the observed concurrency would
+// always look low regardless of the cap.
+type boundedMockSearcher struct {
+	active       int32
+	maxActive    int32
+	callCount    int32
+	releaseAfter time.Duration
+	done         chan struct{}
+	target       int32
+	once         sync.Once
+}
+
+func newBoundedMockSearcher(expected int) *boundedMockSearcher {
+	return &boundedMockSearcher{
+		releaseAfter: 30 * time.Millisecond,
+		done:         make(chan struct{}),
+		target:       int32(expected),
+	}
+}
+
+func (m *boundedMockSearcher) SearchAndGrabBook(_ context.Context, _ models.Book) {
+	now := atomic.AddInt32(&m.active, 1)
+	for {
+		prev := atomic.LoadInt32(&m.maxActive)
+		if now <= prev || atomic.CompareAndSwapInt32(&m.maxActive, prev, now) {
+			break
+		}
+	}
+	time.Sleep(m.releaseAfter)
+	atomic.AddInt32(&m.active, -1)
+	if atomic.AddInt32(&m.callCount, 1) >= m.target {
+		m.once.Do(func() { close(m.done) })
+	}
+}
+
+// TestAuthorsBulk_Search_BoundsConcurrency is the Wave 3 / I regression
+// guard: a single bulk "search" action over many wanted books must not
+// fan out one indexer goroutine per book. The cap is bulkSearchConcurrency
+// (8); we use 32 books and assert the observed in-flight count never
+// exceeds it.
+func TestAuthorsBulk_Search_BoundsConcurrency(t *testing.T) {
+	const total = 32
+	searcher := newBoundedMockSearcher(total)
+	h, _, books, author, ctx := bulkFixtureWithSearcher(t, searcher)
+
+	for i := 0; i < total; i++ {
+		mustCreateBook(t, books, ctx, &models.Book{
+			ForeignID:        fmt.Sprintf("OL_BULKCONC_%d", i),
+			AuthorID:         author.ID,
+			Title:            fmt.Sprintf("Wanted %d", i),
+			SortTitle:        fmt.Sprintf("wanted %d", i),
+			Status:           models.BookStatusWanted,
+			Monitored:        true,
+			MetadataProvider: "openlibrary",
+			Genres:           []string{},
+		})
+	}
+
+	body := fmt.Sprintf(`{"ids":[%d],"action":"search"}`, author.ID)
+	rec := postBulk(t, h.AuthorsBulk, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	select {
+	case <-searcher.done:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timeout waiting for bounded fan-out; calls=%d max=%d",
+			atomic.LoadInt32(&searcher.callCount), atomic.LoadInt32(&searcher.maxActive))
+	}
+
+	if got := atomic.LoadInt32(&searcher.maxActive); got > bulkSearchConcurrency {
+		t.Fatalf("max concurrent searches = %d, want <= %d", got, bulkSearchConcurrency)
+	}
+	if got := atomic.LoadInt32(&searcher.callCount); got != total {
+		t.Fatalf("call count = %d, want %d", got, total)
 	}
 }

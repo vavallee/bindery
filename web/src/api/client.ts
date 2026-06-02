@@ -343,7 +343,14 @@ export const api = {
   }>('/library/scan/status'),
 
   // Queue
-  listQueue: () => request<QueueItem[]>('/queue'),
+  //
+  // The /queue endpoint returns an envelope `{items, partial, staleClients}`
+  // since Wave 3 / I (Bundle I, bounded fan-out): when a downloader client
+  // fails to answer inside the per-client deadline the items array is
+  // still returned but `partial` is true. The current QueuePage callers
+  // only consume the items array, so we unwrap here to keep the React
+  // code unchanged; surfacing the partial flag is a separate FE task.
+  listQueue: () => request<QueueListResponse>('/queue').then(r => r.items ?? []),
   grab: (data: GrabRequest) => request<Download>('/queue/grab', { method: 'POST', body: JSON.stringify(data) }),
   retryImport: (id: number) => request<{ ok: boolean }>(`/queue/${id}/retry-import`, { method: 'POST' }),
   deleteFromQueue: (id: number, deleteFiles = false) =>
@@ -1063,6 +1070,16 @@ export interface Download {
 export interface QueueItem extends Download {
   percentage?: string
   timeLeft?: string
+}
+
+// QueueListResponse is the envelope returned by GET /queue. Items is the
+// flat array the UI has always rendered; partial/staleClients let a
+// future page iteration warn when a downloader client did not answer
+// inside the per-client deadline (Wave 3 / I).
+export interface QueueListResponse {
+  items: QueueItem[]
+  partial?: boolean
+  staleClients?: Array<{ clientId: number; name?: string; message?: string }>
 }
 
 export interface SearchResult {

@@ -11,13 +11,28 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/downloader"
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/notifier"
 )
+
+// queueClientPollConcurrency caps how many downloader clients are polled
+// in parallel when rendering the queue page. queueClientPollTimeout caps
+// how long any one client gets before its result is dropped from the
+// payload (with the page marked partial so the UI can surface that). The
+// list endpoint is hot — every user with the queue page open hits it
+// every 5 seconds — and one slow qBit shouldn't gate the whole render.
+//
+// queueClientPollTimeout is a var rather than a const so the slow-client
+// integration test can shorten it without sleeping a second per case.
+const queueClientPollConcurrency = 4
+
+var queueClientPollTimeout = 1 * time.Second
 
 var errAlreadyGrabbed = errors.New("already grabbed")
 
@@ -73,10 +88,20 @@ type liveStatusResult struct {
 	pollFailed    bool
 }
 
-func (h *QueueHandler) enrichedQueueItems(ctx context.Context) ([]enrichedQueueItem, error) {
+// queuePollDiagnostic records a downloader client whose live-status poll
+// did not complete inside queueClientPollTimeout. The handler surfaces
+// these on the queue response so users can tell a stale percentage from
+// a fresh one when one of their clients is dragging.
+type queuePollDiagnostic struct {
+	ClientID int64  `json:"clientId"`
+	Name     string `json:"name,omitempty"`
+	Message  string `json:"message,omitempty"`
+}
+
+func (h *QueueHandler) enrichedQueueItems(ctx context.Context) ([]enrichedQueueItem, []queuePollDiagnostic, error) {
 	downloads, err := h.downloads.List(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	items := make([]enrichedQueueItem, len(downloads))
@@ -87,33 +112,101 @@ func (h *QueueHandler) enrichedQueueItems(ctx context.Context) ([]enrichedQueueI
 		}
 	}
 
-	statusByClientID := make(map[int64]liveStatusResult)
+	// Collect every distinct client id referenced by the current downloads,
+	// preserving first-seen order so a flaky client always slots into the
+	// same fan-out bucket from one request to the next.
+	clientIDs := make([]int64, 0)
+	seen := make(map[int64]bool)
+	for _, item := range items {
+		if item.Download.DownloadClientID == nil {
+			continue
+		}
+		cid := *item.Download.DownloadClientID
+		if seen[cid] {
+			continue
+		}
+		seen[cid] = true
+		clientIDs = append(clientIDs, cid)
+	}
+
+	// Resolve each distinct client once. We do this serially (cheap DB
+	// hits) before the parallel poll so the heavy fan-out is purely
+	// network-bound and the slow-path is isolated to GetLiveStatuses.
+	clients := make([]*models.DownloadClient, len(clientIDs))
+	for i, cid := range clientIDs {
+		client, err := h.clients.GetByID(ctx, cid)
+		if err != nil || client == nil {
+			continue
+		}
+		clients[i] = client
+	}
+
+	// Fan out the per-client live-status polls in parallel with a hard
+	// per-client deadline. Without this, a single unreachable qBit dragged
+	// the whole queue render (which every queue-page open hits every 5s)
+	// until the client's own TCP timeout fired.
+	pollResults := concurrency.RunBoundedWithTimeout(
+		ctx,
+		clients,
+		queueClientPollConcurrency,
+		queueClientPollTimeout,
+		func(ctx context.Context, client *models.DownloadClient) (liveStatusResult, error) {
+			res := liveStatusResult{client: client}
+			if client == nil || !client.Enabled {
+				return res, nil
+			}
+			statuses, usesTorrentID, err := downloader.GetLiveStatuses(ctx, client)
+			if err != nil {
+				res.pollFailed = true
+				return res, err
+			}
+			res.statuses = statuses
+			res.usesTorrentID = usesTorrentID
+			return res, nil
+		},
+	)
+
+	statusByClientID := make(map[int64]liveStatusResult, len(clientIDs))
+	var diagnostics []queuePollDiagnostic
+	for i, cid := range clientIDs {
+		r := pollResults[i]
+		client := clients[i]
+		var res liveStatusResult
+		switch {
+		case r.Done:
+			res = r.Value
+		case client != nil && r.Err != nil:
+			// Real upstream error from GetLiveStatuses (not a deadline).
+			res = liveStatusResult{client: client, pollFailed: true}
+			diagnostics = append(diagnostics, queuePollDiagnostic{
+				ClientID: cid,
+				Name:     client.Name,
+				Message:  r.Err.Error(),
+			})
+		case client != nil:
+			// Per-call deadline fired or parent ctx canceled before this
+			// client ran. Treat as a soft failure so the row still renders
+			// with whatever live data we already had (none, in this case)
+			// and the partial flag tells the UI not to trust freshness.
+			res = liveStatusResult{client: client, pollFailed: true}
+			diagnostics = append(diagnostics, queuePollDiagnostic{
+				ClientID: cid,
+				Name:     client.Name,
+				Message:  "live-status poll timed out",
+			})
+		default:
+			// Client could not even be resolved; leave statusByClientID
+			// empty so per-item enrichment falls back to the stored row.
+			res = liveStatusResult{}
+		}
+		statusByClientID[cid] = res
+	}
+
 	for i, item := range items {
 		if item.Download.DownloadClientID == nil {
 			continue
 		}
-
-		clientID := *item.Download.DownloadClientID
-		result, ok := statusByClientID[clientID]
-		if !ok {
-			client, err := h.clients.GetByID(ctx, clientID)
-			if err != nil || client == nil {
-				statusByClientID[clientID] = liveStatusResult{}
-				continue
-			}
-
-			result.client = client
-			if client.Enabled {
-				statuses, usesTorrentID, err := downloader.GetLiveStatuses(ctx, client)
-				if err != nil {
-					result.pollFailed = true
-				} else {
-					result.statuses = statuses
-					result.usesTorrentID = usesTorrentID
-				}
-			}
-			statusByClientID[clientID] = result
-		}
+		result := statusByClientID[*item.Download.DownloadClientID]
 
 		if result.client != nil {
 			items[i].ClientName = result.client.Name
@@ -144,11 +237,23 @@ func (h *QueueHandler) enrichedQueueItems(ctx context.Context) ([]enrichedQueueI
 		}
 	}
 
-	return items, nil
+	return items, diagnostics, nil
+}
+
+// queueListResponse wraps the queue items in an envelope so the handler
+// can surface partial-data warnings when a downloader client failed or
+// timed out during enrichment. Items remains the array clients have
+// always rendered; partial/staleClients lets a future UI iteration show
+// "1 of 3 download clients did not respond" without breaking the older
+// flat-array shape any more than necessary.
+type queueListResponse struct {
+	Items        []QueueItem           `json:"items"`
+	Partial      bool                  `json:"partial,omitempty"`
+	StaleClients []queuePollDiagnostic `json:"staleClients,omitempty"`
 }
 
 func (h *QueueHandler) List(w http.ResponseWriter, r *http.Request) {
-	enriched, err := h.enrichedQueueItems(r.Context())
+	enriched, diagnostics, err := h.enrichedQueueItems(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -164,7 +269,11 @@ func (h *QueueHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, items)
+	writeJSON(w, http.StatusOK, queueListResponse{
+		Items:        items,
+		Partial:      len(diagnostics) > 0,
+		StaleClients: diagnostics,
+	})
 }
 
 type arrQueueResponse struct {
@@ -193,7 +302,7 @@ type arrQueueRecord struct {
 // external tools such as Harpoon. The existing /api/v1/queue UI shape remains
 // unchanged.
 func (h *QueueHandler) ListArrCompatible(w http.ResponseWriter, r *http.Request) {
-	enriched, err := h.enrichedQueueItems(r.Context())
+	enriched, _, err := h.enrichedQueueItems(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

@@ -16,12 +16,21 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/vavallee/bindery/internal/bookhydrate"
+	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/seriesmatch"
 	"github.com/vavallee/bindery/internal/textutil"
 )
+
+// seriesFillSearchConcurrency caps how many indexer searches a single
+// Series.Fill action fans out at once. A 30-book series is a normal
+// shape, so the prior `go SearchAndGrabBook` per book could burst dozens
+// of simultaneous indexer calls. The bound is intentionally tighter than
+// the bulk endpoint's because Fill is more often clicked on multiple
+// series back-to-back.
+const seriesFillSearchConcurrency = 4
 
 type SeriesHandler struct {
 	series                      *db.SeriesRepo
@@ -395,13 +404,14 @@ func (h *SeriesHandler) Fill(w http.ResponseWriter, r *http.Request) {
 
 		queued := 0
 		if book != nil {
-			didQueue, err := h.queueSeriesBook(r.Context(), *book)
+			didQueue, queuedBook, err := h.queueSeriesBook(r.Context(), *book)
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
 			}
 			if didQueue {
 				queued = 1
+				h.fanOutSeriesSearches(r.Context(), []models.Book{queuedBook})
 			}
 		}
 		writeJSON(w, http.StatusOK, map[string]int{"queued": queued})
@@ -425,30 +435,55 @@ func (h *SeriesHandler) Fill(w http.ResponseWriter, r *http.Request) {
 	}
 
 	queued := 0
+	searchTargets := make([]models.Book, 0, len(books))
 	for _, b := range books {
-		didQueue, err := h.queueSeriesBook(r.Context(), b)
+		didQueue, queuedBook, err := h.queueSeriesBook(r.Context(), b)
 		if err != nil {
 			slog.Warn("series fill: failed to update book", "book", b.Title, "error", err)
 			continue
 		}
 		if didQueue {
 			queued++
+			searchTargets = append(searchTargets, queuedBook)
 		}
 	}
+
+	h.fanOutSeriesSearches(r.Context(), searchTargets)
 
 	writeJSON(w, http.StatusOK, map[string]int{"queued": queued})
 }
 
-func (h *SeriesHandler) queueSeriesBook(ctx context.Context, b models.Book) (bool, error) {
+// fanOutSeriesSearches dispatches per-book indexer searches for a Series.Fill
+// under a bounded pool so a 30-book series can't burst one goroutine per
+// book at the indexers. The pool runs on a detached context derived from
+// ctx (via context.WithoutCancel) so the HTTP response is not held while
+// the searches run, but credentials and per-user metadata on ctx still
+// flow through to the indexer layer.
+func (h *SeriesHandler) fanOutSeriesSearches(ctx context.Context, books []models.Book) {
+	if h.searcher == nil || len(books) == 0 {
+		return
+	}
+	bgCtx := context.WithoutCancel(ctx)
+	go concurrency.RunBounded(bgCtx, books, seriesFillSearchConcurrency, func(ctx context.Context, b models.Book) {
+		h.searcher.SearchAndGrabBook(ctx, b)
+	})
+}
+
+// queueSeriesBook marks a series book wanted+monitored and returns the
+// reloaded book (the second return value) so the caller can hand it to a
+// bounded indexer fan-out. The boolean reports whether the book was newly
+// queued (false for already-satisfied / in-flight books, which are
+// skipped without touching the DB and without scheduling a search).
+func (h *SeriesHandler) queueSeriesBook(ctx context.Context, b models.Book) (bool, models.Book, error) {
 	// Only act on books that are not already satisfied or in flight. Re-queuing
 	// a book that is downloading or downloaded would reset it to wanted and fire
 	// a second grab for a download already underway.
 	switch b.Status {
 	case models.BookStatusImported, models.BookStatusDownloading, models.BookStatusDownloaded:
-		return false, nil
+		return false, models.Book{}, nil
 	}
 	if err := h.books.MarkWantedMonitored(ctx, b.ID); err != nil {
-		return false, err
+		return false, models.Book{}, err
 	}
 	if full, err := h.books.GetByID(ctx, b.ID); err != nil {
 		slog.Warn("series fill: failed to reload queued book metadata", "bookID", b.ID, "error", err)
@@ -457,8 +492,7 @@ func (h *SeriesHandler) queueSeriesBook(ctx context.Context, b models.Book) (boo
 	}
 	b.Status = models.BookStatusWanted
 	b.Monitored = true
-	go h.searcher.SearchAndGrabBook(context.WithoutCancel(ctx), b)
-	return true, nil
+	return true, b, nil
 }
 
 type seriesHardcoverSearchResult struct {
