@@ -86,13 +86,6 @@ func CheckOwnership(ctx context.Context, ownerUserID int64) bool {
 	return uid == ownerUserID
 }
 
-// WithUserID returns a context carrying the given user id. Exported so the
-// OPDS handler can attach the basic-auth user id to ctx after verifying
-// credentials — the standard cookie/proxy paths set this inside Middleware.
-func WithUserID(ctx context.Context, userID int64) context.Context {
-	return context.WithValue(ctx, userIDCtxKey, userID)
-}
-
 // Mode represents the auth posture. Matches Sonarr's "Authentication Required"
 // dropdown semantics.
 type Mode string
@@ -156,7 +149,7 @@ func UserRoleFromContext(ctx context.Context) string {
 }
 
 // WithUserID returns a context carrying the authenticated user ID. Exported so
-// handler tests can exercise user-scoped repository paths without a full auth
+// OPDS handlers and tests can attach a verified user without a full auth
 // middleware stack.
 func WithUserID(ctx context.Context, userID int64) context.Context {
 	return context.WithValue(ctx, userIDCtxKey, userID)

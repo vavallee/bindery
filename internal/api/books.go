@@ -295,7 +295,7 @@ func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
 		} else {
 			// Default-path SQL pagination: the books list is the hottest
 			// 50k-row scan in the app, so push LIMIT/OFFSET to SQLite where
-			// idx_books_sort_title (migration 047) keeps the sort cheap.
+			// idx_books_sort_title (migration 048) keeps the sort cheap.
 			books, total, err = h.books.ListPage(r.Context(), 0, limit, offset)
 		}
 	}

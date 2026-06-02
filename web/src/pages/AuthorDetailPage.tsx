@@ -461,7 +461,7 @@ export default function AuthorDetailPage() {
           onLinked={updated => {
             setAuthor(updated)
             Promise.all([api.getAuthor(authorId), api.listBooks({ authorId, includeExcluded: showExcluded })])
-              .then(([a, bs]) => { setAuthor(a); setBooks(bs) })
+              .then(([a, bs]) => { setAuthor(a); setBooks(bs.items) })
               .catch(console.error)
           }}
         />

@@ -188,12 +188,12 @@ func TestMigrate033ABSReviewResolutionIdempotent(t *testing.T) {
 	}
 }
 
-// TestMigrate047ListEndpointIndexes confirms the Wave 2 / E migration lands
+// TestMigrate048ListEndpointIndexes confirms the Wave 2 / E migration lands
 // every index the paginated List endpoints depend on. A missing index here
 // silently regresses the sort cost on the 50k-book hot path to a full table
 // scan (the failure mode is "everything works, just slow"), so the only
 // reliable guard is asserting on sqlite_master.
-func TestMigrate047ListEndpointIndexes(t *testing.T) {
+func TestMigrate048ListEndpointIndexes(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {
 		t.Fatalf("open memory db: %v", err)
@@ -215,7 +215,7 @@ func TestMigrate047ListEndpointIndexes(t *testing.T) {
 			name,
 		).Scan(&got)
 		if err != nil {
-			t.Errorf("index %s missing after migration 047: %v", name, err)
+			t.Errorf("index %s missing after migration 048: %v", name, err)
 		}
 	}
 
@@ -347,7 +347,7 @@ func migrationVersionForTest(t *testing.T, filename string) int {
 	return v
 }
 
-func TestMigrate047AuthorIdentifiersBackfill(t *testing.T) {
+func TestMigrate051AuthorIdentifiersBackfill(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -368,12 +368,12 @@ func TestMigrate047AuthorIdentifiersBackfill(t *testing.T) {
 	if _, err := database.ExecContext(ctx, `DELETE FROM author_identifiers WHERE author_id = ?`, author.ID); err != nil {
 		t.Fatalf("delete seeded identifier: %v", err)
 	}
-	v047 := migrationVersionForTest(t, "047_author_identifiers.sql")
-	if _, err := database.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = ?`, v047); err != nil {
-		t.Fatalf("clear migration 047 marker: %v", err)
+	v051 := migrationVersionForTest(t, "051_author_identifiers.sql")
+	if _, err := database.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = ?`, v051); err != nil {
+		t.Fatalf("clear migration 051 marker: %v", err)
 	}
 	if err := migrate(database); err != nil {
-		t.Fatalf("rerun migration 047: %v", err)
+		t.Fatalf("rerun migration 051: %v", err)
 	}
 	identifier, err := repo.GetAuthorIdentifier(ctx, "hc:emilia-jae")
 	if err != nil {

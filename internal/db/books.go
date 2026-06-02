@@ -178,7 +178,7 @@ func (r *BookRepo) ListByUser(ctx context.Context, userID int64) ([]models.Book,
 // positive; offset is clamped at 0. When userID is 0 the query is unscoped
 // (matches List); otherwise it matches ListByUser's scope predicate.
 //
-// The sort_title order is backed by idx_books_sort_title (migration 047) so
+// The sort_title order is backed by idx_books_sort_title (migration 048) so
 // large libraries no longer pay a full in-memory sort per page request.
 func (r *BookRepo) ListPage(ctx context.Context, userID int64, limit, offset int) ([]models.Book, int, error) {
 	if limit <= 0 {

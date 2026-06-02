@@ -106,7 +106,7 @@ func (r *AuthorRepo) ListByUser(ctx context.Context, userID int64) ([]models.Aut
 // is unscoped (matches List); otherwise it matches ListByUser's predicate
 // (owner_user_id = userID OR owner_user_id IS NULL).
 //
-// The sort_name order is backed by idx_authors_sort_name (migration 047).
+// The sort_name order is backed by idx_authors_sort_name (migration 048).
 func (r *AuthorRepo) ListPage(ctx context.Context, userID int64, limit, offset int) ([]models.Author, int, error) {
 	if limit <= 0 {
 		limit = 50
