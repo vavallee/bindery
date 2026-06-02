@@ -36,6 +36,32 @@ type BookHandler struct {
 	roots     *LibraryRoots // optional: library-root containment for delete
 
 	editionFetcher bookhydrate.EditionFetcher
+
+	// lifetimeCtx is the process-lifecycle context, cancelled on server
+	// shutdown so the auto-grab goroutine spawned by Update (when status
+	// flips to wanted) does not leak past Server.Shutdown. Falls back to
+	// context.Background() when not set; mirrors BulkHandler / AuthorHandler
+	// (see #846).
+	lifetimeCtx context.Context
+}
+
+// WithLifetimeCtx attaches the process-lifecycle context so the status-flip
+// auto-grab goroutine cancels on shutdown. A nil ctx is tolerated and ignored.
+func (h *BookHandler) WithLifetimeCtx(ctx context.Context) *BookHandler {
+	if ctx != nil {
+		h.lifetimeCtx = ctx
+	}
+	return h
+}
+
+// bgCtx returns the lifetime context if set, otherwise context.Background().
+// Centralised so spawn sites can swap out context.WithoutCancel(r.Context())
+// for a shutdown-aware ctx without each site rewriting the fallback rule.
+func (h *BookHandler) bgCtx() context.Context {
+	if h.lifetimeCtx != nil {
+		return h.lifetimeCtx
+	}
+	return context.Background()
 }
 
 func NewBookHandler(books *db.BookRepo, meta *metadata.Aggregator, history *db.HistoryRepo, searcher BookSearcher) *BookHandler {
@@ -426,7 +452,7 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if h.searcher != nil && req.Status != nil &&
 		*req.Status == models.BookStatusWanted && oldStatus != models.BookStatusWanted {
 		b := *book
-		bgCtx := context.WithoutCancel(r.Context())
+		bgCtx := h.bgCtx()
 		// Respect the global auto-grab kill-switch.
 		autoGrabEnabled := true
 		if h.settings != nil {

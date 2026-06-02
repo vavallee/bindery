@@ -475,7 +475,8 @@ func main() {
 		WithLocalAuthEnabled(cfg.LocalAuthEnabled).
 		WithOIDCDefaultRole(cfg.OIDCDefaultRole).
 		WithOIDCAdminGroup(cfg.OIDCAdminGroup).
-		WithOIDCGroupClaim(cfg.OIDCGroupClaim)
+		WithOIDCGroupClaim(cfg.OIDCGroupClaim).
+		WithLifetimeCtx(appCtx)
 	userMgmtHandler := api.NewUserManagementHandler(userRepo).
 		WithLocalAuthEnabled(cfg.LocalAuthEnabled)
 	searchHandler := api.NewSearchHandler(metaAgg)
@@ -498,7 +499,8 @@ func main() {
 		WithAuthors(authorRepo).
 		WithSeries(seriesRepo).
 		WithEditionHydration(editionRepo).
-		WithRoots(libraryRoots)
+		WithRoots(libraryRoots).
+		WithLifetimeCtx(appCtx)
 	indexerHandler := api.NewIndexerHandler(indexerRepo, bookRepo, authorRepo, metadataProfileRepo, idxSearcher, settingsRepo, blocklistRepo).WithAliases(authorAliasRepo)
 	downloadHealth := downloader.NewHealthStore().WithNotifier(notif)
 	if clients, err := dlClientRepo.List(ctxBoot); err == nil {
@@ -508,7 +510,8 @@ func main() {
 	}
 	dlClientHandler := api.NewDownloadClientHandler(dlClientRepo).
 		WithHealth(downloadHealth).
-		WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir)
+		WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir).
+		WithLifetimeCtx(appCtx)
 	queueHandler := api.NewQueueHandler(downloadRepo, dlClientRepo, bookRepo, historyRepo).
 		WithNotifier(notif).
 		WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir)
@@ -544,7 +547,8 @@ func main() {
 	seriesHandler := api.NewSeriesHandler(seriesRepo, bookRepo, authorRepo, metaAgg, sched).
 		WithHardcoverFeatureSettings(settingsRepo, cfg.EnhancedHardcoverAPI).
 		WithFinder(importScanner).
-		WithEditionHydration(editionRepo)
+		WithEditionHydration(editionRepo).
+		WithLifetimeCtx(appCtx)
 	importListHandler := api.NewImportListHandler(importListRepo, settingsRepo, hcSyncer)
 	metadataProfileHandler := api.NewMetadataProfileHandler(metadataProfileRepo)
 	delayProfileHandler := api.NewDelayProfileHandler(delayProfileRepo)

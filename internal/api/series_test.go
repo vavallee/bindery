@@ -1994,3 +1994,22 @@ func stormlightCatalog() *metadata.SeriesCatalog {
 		}},
 	}
 }
+
+// TestSeriesHandler_LifetimeCtxFallsBackToBackground is the #846 follow-up
+// guard for fanOutSeriesSearches. Same contract as BookHandler.bgCtx().
+func TestSeriesHandler_LifetimeCtxFallsBackToBackground(t *testing.T) {
+	h := &SeriesHandler{}
+	if h.bgCtx() != context.Background() {
+		t.Error("bgCtx without WithLifetimeCtx must return context.Background()")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.WithLifetimeCtx(ctx)
+	if h.bgCtx() != ctx {
+		t.Error("bgCtx with WithLifetimeCtx must return the supplied ctx")
+	}
+	h.WithLifetimeCtx(nil)
+	if h.bgCtx() != ctx {
+		t.Error("WithLifetimeCtx(nil) must not clobber a previously installed ctx")
+	}
+}

@@ -54,6 +54,28 @@ type OIDCHandler struct {
 	oidcAdminGroup string
 	// oidcGroupClaim is the ID-token claim path holding the user's groups.
 	oidcGroupClaim string
+
+	// lifetimeCtx is the process-lifecycle context, cancelled on server
+	// shutdown so the async Manager.Reload goroutine spawned by SetProviders
+	// is cancelled cleanly. Falls back to context.Background(); see #846.
+	lifetimeCtx context.Context
+}
+
+// WithLifetimeCtx attaches the process-lifecycle context so the async
+// Manager.Reload goroutine respects shutdown.
+func (h *OIDCHandler) WithLifetimeCtx(ctx context.Context) *OIDCHandler {
+	if ctx != nil {
+		h.lifetimeCtx = ctx
+	}
+	return h
+}
+
+// bgCtx returns the lifetime context if set, otherwise context.Background().
+func (h *OIDCHandler) bgCtx() context.Context {
+	if h.lifetimeCtx != nil {
+		return h.lifetimeCtx
+	}
+	return context.Background()
 }
 
 func NewOIDCHandler(mgr *oidc.Manager, users *db.UserRepo, settings *db.SettingsRepo, auth *AuthHandler, resolveBase func(*http.Request) string) *OIDCHandler {
@@ -600,11 +622,12 @@ func (h *OIDCHandler) SetProviders(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "save: "+err.Error())
 		return
 	}
-	// Reload async so the HTTP response isn't delayed by discovery.
-	// Use WithoutCancel so request-scoped values (logger, trace IDs) are
-	// preserved but the goroutine is not killed when the HTTP handler returns
-	// and cancels r.Context(), which would abort OIDC discovery mid-flight.
-	reloadCtx := context.WithoutCancel(r.Context())
+	// Reload async so the HTTP response isn't delayed by discovery. Anchor
+	// on the lifetime ctx so the goroutine cancels cleanly on shutdown,
+	// rather than letting the discovery roundtrip complete against a process
+	// that's about to exit. The request ctx is intentionally dropped, since
+	// it would cancel as soon as the HTTP response is written.
+	reloadCtx := h.bgCtx()
 	go func() {
 		h.mgr.Reload(reloadCtx, merged)
 	}()
