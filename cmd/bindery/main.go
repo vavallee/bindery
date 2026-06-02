@@ -341,7 +341,8 @@ func main() {
 	// startup-sync branch below — both paths share the "only one import
 	// at a time" guard.
 	calibreImporter := calibre.NewImporter(authorRepo, authorAliasRepo, bookRepo, editionRepo, settingsRepo).
-		WithRunTracking(calibreImportRunRepo, calibreSnapshotRepo, calibreProvenanceRepo)
+		WithRunTracking(calibreImportRunRepo, calibreSnapshotRepo, calibreProvenanceRepo).
+		WithSeries(seriesRepo)
 	absImporter := abs.NewImporter(authorRepo, authorAliasRepo, bookRepo, editionRepo, seriesRepo, settingsRepo, absImportRunRepo, absImportRunEntityRepo, absProvenanceRepo, absReviewRepo, absConflictRepo).
 		WithVersion(version).
 		WithStoragePaths(cfg.LibraryDir, cfg.AudiobookDir, rootFolderRepo).
