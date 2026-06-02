@@ -6,9 +6,21 @@ import (
 	"time"
 )
 
-// ttlCache is a goroutine-safe key/value cache with per-entry expiry. A
-// background janitor sweeps expired items hourly so the map doesn't grow
-// without bound when keys are written but never re-read.
+// ttlCache is a goroutine-safe key/value cache with per-entry expiry and a
+// hard cap on entry count. A background janitor sweeps expired items hourly
+// so the map doesn't grow without bound when keys are written but never
+// re-read; the count cap is the backstop for the in-between window where a
+// hot ingestion path can fill the cache faster than the hourly sweep evicts.
+//
+// Eviction policy: when set() would push the entry count past maxEntries,
+// the cache evicts the entry with the earliest expiresAt. That's the entry
+// that would have been dropped soonest anyway, so it's the cheapest correct
+// policy. It's an O(n) scan on every overflow set, which is fine at the
+// default cap of 10000 entries and the access frequency this cache sees
+// (metadata fan-out, not a request-path cache). Switch to container/list
+// LRU if the cap ever needs to climb past ~100k. We deliberately avoid
+// pulling in a third-party LRU package; this cache is internal and the
+// no-deps policy keeps the package vendorable.
 //
 // The janitor's lifetime is tied to the cache value via runtime.AddCleanup:
 // when the cache becomes unreachable, the cleanup fires and the janitor
@@ -29,8 +41,9 @@ type ttlCache struct {
 }
 
 type ttlState struct {
-	mu    sync.RWMutex
-	items map[string]cacheItem
+	mu         sync.RWMutex
+	items      map[string]cacheItem
+	maxEntries int
 }
 
 type cacheItem struct {
@@ -38,8 +51,27 @@ type cacheItem struct {
 	expiresAt time.Time
 }
 
+// defaultMaxEntries caps every aggregator-scoped ttlCache. 10k entries at
+// the heaviest realistic value size (~50KB per cached []models.Book on a
+// prolific-author fan-out) bounds the cache at roughly 500MB worst-case,
+// which is the rough ceiling we want for a single aggregator instance.
+const defaultMaxEntries = 10000
+
 func newTTLCache(ttl time.Duration) *ttlCache {
-	state := &ttlState{items: make(map[string]cacheItem)}
+	return newTTLCacheWithCap(ttl, defaultMaxEntries)
+}
+
+// newTTLCacheWithCap is the explicit-cap constructor used by tests that need
+// to exercise the eviction policy without filling 10k entries. Production
+// callers go through newTTLCache.
+func newTTLCacheWithCap(ttl time.Duration, maxEntries int) *ttlCache {
+	if maxEntries <= 0 {
+		maxEntries = defaultMaxEntries
+	}
+	state := &ttlState{
+		items:      make(map[string]cacheItem),
+		maxEntries: maxEntries,
+	}
 	done := make(chan struct{})
 
 	go runJanitor(state, done)
@@ -88,6 +120,37 @@ func (c *ttlCache) set(key string, value interface{}) {
 	c.state.items[key] = cacheItem{
 		value:     value,
 		expiresAt: time.Now().Add(c.ttl),
+	}
+	// Evict only when the cap is exceeded. Overwriting an existing key
+	// doesn't grow the map, so this branch is a no-op in the steady state.
+	if c.state.maxEntries > 0 && len(c.state.items) > c.state.maxEntries {
+		c.state.evictEarliestLocked(key)
+	}
+}
+
+// evictEarliestLocked removes the entry with the smallest expiresAt and is
+// invoked with state.mu held in write mode. It refuses to evict the key
+// just inserted by the caller so a single set() can never delete its own
+// write (matters when every existing entry happens to share an expiresAt
+// that compares strictly less than the just-written one only by chance).
+func (s *ttlState) evictEarliestLocked(justInserted string) {
+	var (
+		victim       string
+		victimExpiry time.Time
+		found        bool
+	)
+	for k, v := range s.items {
+		if k == justInserted {
+			continue
+		}
+		if !found || v.expiresAt.Before(victimExpiry) {
+			victim = k
+			victimExpiry = v.expiresAt
+			found = true
+		}
+	}
+	if found {
+		delete(s.items, victim)
 	}
 }
 

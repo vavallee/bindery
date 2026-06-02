@@ -215,14 +215,64 @@ func (a *Aggregator) GetAuthorAudiobooks(ctx context.Context, authorName string)
 	return books, nil
 }
 
+// enrichmentSnapshot captures the subset of fields enrichBook may write
+// into a *models.Book. We cache snapshots, not the *models.Book itself,
+// because callers retain the pointer and can mutate the book after we
+// hand it back; aliasing a *models.Book into the cache would let those
+// mutations leak into the next cache hit (e.g. a downstream call could
+// blank out ImageURL on the cached book and poison every subsequent
+// hit). A value type is impossible to alias.
+type enrichmentSnapshot struct {
+	description   string
+	imageURL      string
+	averageRating float64
+	ratingsCount  int
+}
+
+// enrichBookCacheKey is keyed on (MetadataProvider, ForeignID) because that
+// pair uniquely identifies the book across our provider universe and is
+// what callers route by. When ForeignID is empty (e.g. an audnex-sourced
+// canonical lookup), we fall back to (Title, Author.Name) which is the
+// other natural identity used by pickEnrichmentMatch's match logic. An
+// empty fallback key skips caching entirely; better to refetch than to
+// alias unrelated books under "".
+func enrichBookCacheKey(book *models.Book) string {
+	if book == nil {
+		return ""
+	}
+	fid := strings.TrimSpace(book.ForeignID)
+	if fid != "" {
+		provider := strings.TrimSpace(strings.ToLower(book.MetadataProvider))
+		return "enrich:" + provider + ":" + fid
+	}
+	title := strings.TrimSpace(strings.ToLower(book.Title))
+	author := ""
+	if book.Author != nil {
+		author = strings.TrimSpace(strings.ToLower(book.Author.Name))
+	}
+	if title == "" {
+		return ""
+	}
+	return "enrich-title:" + title + "|" + author
+}
+
 func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
+	cacheKey := enrichBookCacheKey(book)
+	if cacheKey != "" {
+		if cached, ok := a.cache.get(cacheKey); ok {
+			snap := cached.(enrichmentSnapshot)
+			applyEnrichmentSnapshot(book, snap)
+			return
+		}
+	}
+
 	for _, enricher := range a.enrichers {
 		enriched, err := enricher.SearchBooks(ctx, book.Title)
 		if err != nil {
 			slog.Debug("enrichment failed", "provider", enricher.Name(), "error", err)
 			continue
 		}
-		// Pick the first result that plausibly matches our book — same
+		// Pick the first result that plausibly matches our book, same
 		// title AND (if we have one) same author. Without the author
 		// guard a German title like "Die Verwandlung" could pull the
 		// wrong author's record off OL; refusing to enrich is safer
@@ -252,6 +302,35 @@ func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
 	// Skipped entirely when ImageURL is already set.
 	if book.ImageURL == "" {
 		a.fillCoverFromCoverProviders(ctx, book)
+	}
+
+	if cacheKey != "" {
+		a.cache.set(cacheKey, enrichmentSnapshot{
+			description:   book.Description,
+			imageURL:      book.ImageURL,
+			averageRating: book.AverageRating,
+			ratingsCount:  book.RatingsCount,
+		})
+	}
+}
+
+// applyEnrichmentSnapshot mirrors the per-field merge rules used by
+// enrichBook's live path: replace Description only when the cached one is
+// longer, only fill empty cover/rating fields. Same semantics, different
+// source, so a cache hit produces the same book state a cache miss would
+// have produced. Crucially, we copy primitive values out of the snapshot;
+// nothing in the cache is reachable through the input book pointer after
+// this call.
+func applyEnrichmentSnapshot(book *models.Book, snap enrichmentSnapshot) {
+	if len(snap.description) > len(book.Description) {
+		book.Description = snap.description
+	}
+	if book.ImageURL == "" && snap.imageURL != "" {
+		book.ImageURL = snap.imageURL
+	}
+	if book.AverageRating == 0 && snap.averageRating > 0 {
+		book.AverageRating = snap.averageRating
+		book.RatingsCount = snap.ratingsCount
 	}
 }
 
