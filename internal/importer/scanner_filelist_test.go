@@ -296,10 +296,10 @@ func TestResolveTorrentFiles_RejectsMalformedNames(t *testing.T) {
 	s, _, _, _ := scannerFixture(t, t.TempDir())
 	client := &models.DownloadClient{Name: "trans", Type: "transmission"}
 	files := []torrentFile{
-		{Name: "/etc/passwd"},                 // absolute — rejected
-		{Name: "../escape.epub"},              // dotdot — rejected
-		{Name: "MyBook/../outside.epub"},      // hidden dotdot — rejected
-		{Name: "good.epub", Size: 1},          // accepted
+		{Name: "/etc/passwd"},            // absolute — rejected
+		{Name: "../escape.epub"},         // dotdot — rejected
+		{Name: "MyBook/../outside.epub"}, // hidden dotdot — rejected
+		{Name: "good.epub", Size: 1},     // accepted
 	}
 	got := s.resolveTorrentFiles(client, "/downloads", files)
 	if len(got) != 1 {
