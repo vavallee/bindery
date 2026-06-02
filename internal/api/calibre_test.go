@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/vavallee/bindery/internal/db"
 )
@@ -77,7 +78,7 @@ func TestLoadCalibreConfig_ParsesFromSettings(t *testing.T) {
 	if err := repo.Set(ctx, SettingCalibreLibraryPath, tmp); err != nil {
 		t.Fatal(err)
 	}
-	cfg := LoadCalibreConfig(repo)
+	cfg := LoadCalibreConfig(ctx, repo)
 	if !cfg.Enabled {
 		t.Error("Enabled should be true")
 	}
@@ -98,14 +99,14 @@ func TestLoadCalibreConfig_EnabledCaseInsensitive(t *testing.T) {
 		if err := repo.Set(ctx, SettingCalibreEnabled, v); err != nil {
 			t.Fatal(err)
 		}
-		if !LoadCalibreConfig(repo).Enabled {
+		if !LoadCalibreConfig(ctx, repo).Enabled {
 			t.Errorf("Enabled = false for value %q", v)
 		}
 	}
 	if err := repo.Set(ctx, SettingCalibreEnabled, "false"); err != nil {
 		t.Fatal(err)
 	}
-	if LoadCalibreConfig(repo).Enabled {
+	if LoadCalibreConfig(ctx, repo).Enabled {
 		t.Error("Enabled should be false for 'false'")
 	}
 }
@@ -188,8 +189,8 @@ func TestSettings_SetRejectsInvalidCalibrePath(t *testing.T) {
 // report mode=off so the scanner doesn't attempt either integration before
 // the operator opts in.
 func TestLoadCalibreMode_DefaultsToOff(t *testing.T) {
-	_, repo, _ := calibreFixture(t)
-	if got := LoadCalibreMode(repo); got != "off" {
+	_, repo, ctx := calibreFixture(t)
+	if got := LoadCalibreMode(ctx, repo); got != "off" {
 		t.Errorf("LoadCalibreMode default = %q, want off", got)
 	}
 }
@@ -207,7 +208,7 @@ func TestLoadCalibreMode_ParsesKnownValues(t *testing.T) {
 		if err := repo.Set(ctx, SettingCalibreMode, tc.in); err != nil {
 			t.Fatal(err)
 		}
-		if got := string(LoadCalibreMode(repo)); got != tc.want {
+		if got := string(LoadCalibreMode(ctx, repo)); got != tc.want {
 			t.Errorf("LoadCalibreMode for %q = %q, want %q", tc.in, got, tc.want)
 		}
 	}
@@ -228,7 +229,7 @@ func TestLoadCalibreConfig_ModeDrivesEnabled(t *testing.T) {
 		if err := repo.Set(ctx, SettingCalibreMode, tc.mode); err != nil {
 			t.Fatal(err)
 		}
-		if got := LoadCalibreConfig(repo).Enabled; got != tc.want {
+		if got := LoadCalibreConfig(ctx, repo).Enabled; got != tc.want {
 			t.Errorf("mode=%s Enabled=%v, want %v", tc.mode, got, tc.want)
 		}
 	}
@@ -258,7 +259,44 @@ func TestLoadCalibreConfig_LegacyEnabledHonored(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Mode left unset (empty → off).
-	if got := LoadCalibreConfig(repo).Enabled; !got {
+	if got := LoadCalibreConfig(ctx, repo).Enabled; !got {
 		t.Error("legacy calibre.enabled=true must keep Enabled=true")
+	}
+}
+
+// TestCalibreHandler_GoroutineCancelsOnLifetimeCtxCancel is the #846 guard
+// for CalibreHandler: when WithLifetimeCtx is wired, bgCtx must return that
+// ctx (and observe its cancellation from a spawned goroutine). When not
+// wired, bgCtx must fall back to a never-cancelled Background() so the
+// existing tests that build a handler without WithLifetimeCtx keep working.
+func TestCalibreHandler_GoroutineCancelsOnLifetimeCtxCancel(t *testing.T) {
+	// Default fallback: must be Background() and never cancel.
+	h := &CalibreHandler{}
+	bg := h.bgCtx()
+	if bg == nil {
+		t.Fatal("bgCtx returned nil")
+	}
+	select {
+	case <-bg.Done():
+		t.Fatal("default bgCtx must not be cancelled")
+	default:
+	}
+
+	lifetimeCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h = (&CalibreHandler{}).WithLifetimeCtx(lifetimeCtx)
+
+	observed := make(chan struct{})
+	go func() {
+		<-h.bgCtx().Done()
+		close(observed)
+	}()
+
+	cancel()
+	select {
+	case <-observed:
+		// good
+	case <-time.After(2 * time.Second):
+		t.Fatal("goroutine did not observe lifetime ctx cancellation")
 	}
 }

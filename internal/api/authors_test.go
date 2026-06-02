@@ -2754,3 +2754,47 @@ func TestAuthorList_OrderStable(t *testing.T) {
 		}
 	}
 }
+
+// TestAuthorHandler_GoroutineCancelsOnLifetimeCtxCancel is the #846 guard
+// for AuthorHandler: the FetchAuthorBooks / orphan-cleanup / SearchOnAdd
+// goroutines must derive from the process-lifecycle ctx, not
+// context.Background(). The simplest expression of that contract is that
+// bgCtx() returns the configured lifetime ctx and observes its cancellation
+// from a spawned goroutine. AddBook's full plumbing is exercised elsewhere;
+// this test isolates the ctx wiring without dragging in the metadata
+// aggregator. The fallback case (no WithLifetimeCtx) is also asserted so
+// the legacy tests' construction sites keep their previous semantics.
+func TestAuthorHandler_GoroutineCancelsOnLifetimeCtxCancel(t *testing.T) {
+	// Default: no lifetime ctx wired → bgCtx must be Background() and
+	// never cancel.
+	h := &AuthorHandler{}
+	bg := h.bgCtx()
+	if bg == nil {
+		t.Fatal("bgCtx returned nil")
+	}
+	select {
+	case <-bg.Done():
+		t.Fatal("default bgCtx must not be cancelled")
+	default:
+	}
+
+	// With WithLifetimeCtx wired, the goroutine started below must
+	// observe the cancellation.
+	lifetimeCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h = (&AuthorHandler{}).WithLifetimeCtx(lifetimeCtx)
+
+	observed := make(chan struct{})
+	go func() {
+		<-h.bgCtx().Done()
+		close(observed)
+	}()
+
+	cancel()
+	select {
+	case <-observed:
+		// good
+	case <-time.After(2 * time.Second):
+		t.Fatal("goroutine did not observe lifetime ctx cancellation")
+	}
+}

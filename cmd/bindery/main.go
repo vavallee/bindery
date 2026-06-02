@@ -174,6 +174,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Process-lifecycle context. Unlike a per-request context this is not tied
+	// to any single HTTP request; it is cancelled when the process receives
+	// SIGINT/SIGTERM (graceful shutdown). Long-lived background goroutines —
+	// the scheduler's cron jobs, the recommendations refresh, and the bulk
+	// search fan-out — derive from this so they observe shutdown instead of
+	// running against a context that never cancels. See #550 and #846.
+	//
+	// Declared before any scheduler closure that needs to capture it (the
+	// Calibre mode resolver below) and threaded into NewBulkHandler/
+	// NewAuthorHandler/NewCalibreHandler/NewRecommendationHandler via the
+	// WithLifetimeCtx / WithAppContext builders.
+	appCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	// Parse trusted-proxy CIDRs once at startup (shared by trustedProxyMiddleware
 	// and the proxy-auth identity check).
 	trustedCIDRs := parseTrustedProxyCIDRs(os.Getenv("BINDERY_TRUSTED_PROXY"))
@@ -302,9 +316,14 @@ func main() {
 		},
 	)
 
-	modeResolver := func() calibre.Mode { return api.LoadCalibreMode(settingsRepo) }
-	calibreCfg := api.LoadCalibreConfig(settingsRepo)
-	currentMode := api.LoadCalibreMode(settingsRepo)
+	// The mode resolver is called from the importer on every scan; it must
+	// observe shutdown when the scheduler is mid-tick, so it captures appCtx
+	// (declared below) by closure rather than running on context.Background().
+	// The boot-time reads on the next two lines use ctxBoot because appCtx
+	// isn't constructed yet.
+	modeResolver := func() calibre.Mode { return api.LoadCalibreMode(appCtx, settingsRepo) }
+	calibreCfg := api.LoadCalibreConfig(ctxBoot, settingsRepo)
+	currentMode := api.LoadCalibreMode(ctxBoot, settingsRepo)
 	if currentMode == calibre.ModePlugin {
 		pluginClient := calibre.NewPluginClient(calibreCfg.PluginURL, calibreCfg.PluginAPIKey)
 		importScanner.WithCalibre(modeResolver, pluginClient)
@@ -348,11 +367,11 @@ func main() {
 		slog.Info("abs interrupted import resumed from checkpoint")
 	}
 	if syncOnStartup(settingsRepo) {
-		cfg := api.LoadCalibreConfig(settingsRepo)
+		cfg := api.LoadCalibreConfig(ctxBoot, settingsRepo)
 		if cfg.Enabled && cfg.LibraryPath != "" {
 			slog.Info("calibre sync_on_startup enabled — kicking off library import")
 			go func() {
-				if _, err := calibreImporter.Run(context.Background(), cfg.LibraryPath); err != nil {
+				if _, err := calibreImporter.Run(appCtx, cfg.LibraryPath); err != nil {
 					slog.Warn("calibre startup import failed", "error", err)
 				}
 			}()
@@ -380,17 +399,6 @@ func main() {
 			}()
 		}
 	}
-
-	// Process-lifecycle context. Unlike a per-request context this is not tied
-	// to any single HTTP request; it is cancelled when the process receives
-	// SIGINT/SIGTERM (graceful shutdown). Long-lived background goroutines —
-	// the scheduler's cron jobs and the recommendations goroutine — should
-	// derive from this so they observe shutdown instead of running against a
-	// context that never cancels. This commit only threads appCtx into the
-	// scheduler and the recommendation handler; converting the existing
-	// context.Background() call sites to use it is the job of #707 and #550.
-	appCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	// Scheduler
 	sched := scheduler.New(appCtx, importScanner, idxSearcher, metaAgg,
@@ -482,7 +490,8 @@ func main() {
 		WithFinder(importScanner).
 		WithHardcoverFeatureSettings(settingsRepo, cfg.EnhancedHardcoverAPI).
 		WithEditionHydration(editionRepo).
-		WithRoots(libraryRoots)
+		WithRoots(libraryRoots).
+		WithLifetimeCtx(appCtx)
 	authorAliasHandler := api.NewAuthorAliasHandler(authorRepo, authorAliasRepo)
 	bookHandler := api.NewBookHandler(bookRepo, metaAgg, historyRepo, sched).
 		WithSettings(settingsRepo).
@@ -542,12 +551,14 @@ func main() {
 	metadataProfileHandler := api.NewMetadataProfileHandler(metadataProfileRepo)
 	delayProfileHandler := api.NewDelayProfileHandler(delayProfileRepo)
 	customFormatHandler := api.NewCustomFormatHandler(customFormatRepo)
-	bulkHandler := api.NewBulkHandler(authorRepo, bookRepo, blocklistRepo, sched)
+	bulkHandler := api.NewBulkHandler(authorRepo, bookRepo, blocklistRepo, sched).
+		WithLifetimeCtx(appCtx)
 	backupHandler := api.NewBackupHandler(database, cfg.DBPath, cfg.DataDir)
 	rootFolderHandler := api.NewRootFolderHandler(rootFolderRepo)
 	logHandler := api.NewLogHandler(ring).WithLogRepo(logRepo).WithDBLogHandler(logDBHandler)
 	prowlarrHandler := api.NewProwlarrHandler(prowlarrRepo, indexerRepo).WithSettings(settingsRepo)
-	calibreHandler := api.NewCalibreHandler(settingsRepo)
+	calibreHandler := api.NewCalibreHandler(settingsRepo).
+		WithLifetimeCtx(appCtx)
 	grimmoryHandler := api.NewGrimmoryHandler(settingsRepo).WithVersion(version)
 	absHandler := api.NewABSHandler(settingsRepo).WithVersion(version)
 	absConflictHandler := api.NewABSConflictHandler(absConflictRepo, authorRepo, bookRepo)
@@ -558,14 +569,14 @@ func main() {
 		return api.LoadABSConfig(ctx, settingsRepo)
 	})
 	calibreImportHandler := api.NewCalibreImportHandler(calibreImporter, func() calibre.Config {
-		return api.LoadCalibreConfig(settingsRepo)
+		return api.LoadCalibreConfig(appCtx, settingsRepo)
 	})
 	calibreRunsHandler := api.NewCalibreRunsHandler(calibreImporter)
 	calibreSyncer := calibre.NewSyncer(bookRepo).WithMetadata(authorRepo, editionRepo)
 	calibreSyncHandler := api.NewCalibreSyncHandler(
 		calibreSyncer,
-		func() calibre.Config { return api.LoadCalibreConfig(settingsRepo) },
-		func() calibre.Mode { return api.LoadCalibreMode(settingsRepo) },
+		func() calibre.Config { return api.LoadCalibreConfig(appCtx, settingsRepo) },
+		func() calibre.Mode { return api.LoadCalibreMode(appCtx, settingsRepo) },
 	)
 	recHandler := api.NewRecommendationHandler(recRepo, recEngine, authorRepo, bookRepo, sched).
 		WithFinder(seriesRepo, importScanner).

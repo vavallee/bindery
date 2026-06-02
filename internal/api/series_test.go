@@ -171,7 +171,7 @@ func TestSeriesGet_NotFound(t *testing.T) {
 // covered.
 func TestSeriesListAndGet_WithData(t *testing.T) {
 	h, seriesRepo, authorRepo, bookRepo := seriesFixture(t)
-	ctx := contextBackground()
+	ctx := context.Background()
 
 	author := &models.Author{ForeignID: "OL1A", Name: "A", SortName: "A"}
 	if err := authorRepo.Create(ctx, author); err != nil {
@@ -220,7 +220,7 @@ func TestSeriesListAndGet_WithData(t *testing.T) {
 
 func TestSeriesCreateUpdateDeleteAndLink(t *testing.T) {
 	h, seriesRepo, authorRepo, bookRepo := seriesFixture(t)
-	ctx := contextBackground()
+	ctx := context.Background()
 
 	createBody := bytes.NewBufferString(`{"title":"  Dune Chronicles  "}`)
 	rec := httptest.NewRecorder()
@@ -302,7 +302,7 @@ func TestSeriesCreateUpdateDeleteAndLink(t *testing.T) {
 
 func TestSeriesManagementInvalidInput(t *testing.T) {
 	h, seriesRepo, _, _ := seriesFixture(t)
-	ctx := contextBackground()
+	ctx := context.Background()
 	series := &models.Series{ForeignID: "ol-series:dune", Title: "Dune Chronicles"}
 	if err := seriesRepo.Create(ctx, series); err != nil {
 		t.Fatal(err)
@@ -363,7 +363,7 @@ func TestSeriesManagementInvalidInput(t *testing.T) {
 
 func TestSeriesManagementRejectsOverlongTitle(t *testing.T) {
 	h, seriesRepo, _, _ := seriesFixture(t)
-	ctx := contextBackground()
+	ctx := context.Background()
 	tooLongTitle := strings.Repeat("a", seriesTitleMaxLength+1)
 
 	rec := httptest.NewRecorder()
@@ -400,7 +400,7 @@ func TestSeriesManagementRejectsOverlongTitle(t *testing.T) {
 
 func TestSeriesMonitorEndpoint(t *testing.T) {
 	h, seriesRepo, _, _ := seriesFixture(t)
-	ctx := contextBackground()
+	ctx := context.Background()
 	series := &models.Series{ForeignID: "manual:stormlight", Title: "Stormlight Archive"}
 	if err := seriesRepo.Create(ctx, series); err != nil {
 		t.Fatal(err)
@@ -581,7 +581,7 @@ func TestSeriesAutoLinkHardcoverPersistsTopCandidate(t *testing.T) {
 		catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
 	}
 	h, seriesRepo, authorRepo, bookRepo := seriesFixtureWithProvider(t, provider, nil)
-	ctx := contextBackground()
+	ctx := context.Background()
 	series := &models.Series{ForeignID: "ol-series:stormlight", Title: "The Stormlight Archive"}
 	if err := seriesRepo.Create(ctx, series); err != nil {
 		t.Fatal(err)
@@ -650,7 +650,7 @@ func TestSeriesAutoLinkHardcoverRejectsExactTitleWrongAuthorWithoutOverlap(t *te
 		catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
 	}
 	h, seriesRepo, authorRepo, bookRepo := seriesFixtureWithProvider(t, provider, nil)
-	ctx := contextBackground()
+	ctx := context.Background()
 	series := &models.Series{ForeignID: "ol-series:shared", Title: "Shared Series Title"}
 	if err := seriesRepo.Create(ctx, series); err != nil {
 		t.Fatal(err)
@@ -733,7 +733,7 @@ func TestSeriesAutoLinkHardcoverAmbiguousNoop(t *testing.T) {
 	}
 	h, seriesRepo, _, _ := seriesFixtureWithProvider(t, provider, nil)
 	series := &models.Series{ForeignID: "ol-series:rhythm", Title: "Rhythm of War"}
-	if err := seriesRepo.Create(contextBackground(), series); err != nil {
+	if err := seriesRepo.Create(context.Background(), series); err != nil {
 		t.Fatal(err)
 	}
 
@@ -749,7 +749,7 @@ func TestSeriesAutoLinkHardcoverAmbiguousNoop(t *testing.T) {
 	if response.Linked {
 		t.Fatalf("ambiguous result should not persist, got %+v", response)
 	}
-	link, err := seriesRepo.GetHardcoverLink(contextBackground(), series.ID)
+	link, err := seriesRepo.GetHardcoverLink(context.Background(), series.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -764,7 +764,7 @@ func TestSeriesPutHardcoverLinkPersistsManualLink(t *testing.T) {
 		catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
 	}
 	h, seriesRepo, _, _ := seriesFixtureWithProvider(t, provider, nil)
-	ctx := contextBackground()
+	ctx := context.Background()
 	series := &models.Series{ForeignID: "manual:series:stormlight", Title: "Stormlight"}
 	if err := seriesRepo.Create(ctx, series); err != nil {
 		t.Fatal(err)
@@ -800,7 +800,7 @@ func TestSeriesPutHardcoverLinkInvalidRequests(t *testing.T) {
 	h, seriesRepo, _, _ := seriesFixtureWithProvider(t, &stubSeriesProvider{
 		catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
 	}, nil)
-	ctx := contextBackground()
+	ctx := context.Background()
 	series := &models.Series{ForeignID: "manual:series:stormlight", Title: "Stormlight"}
 	if err := seriesRepo.Create(ctx, series); err != nil {
 		t.Fatal(err)
@@ -833,7 +833,7 @@ func TestSeriesPutHardcoverLinkProviderFailure(t *testing.T) {
 		catalogs:   map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
 		catalogErr: errors.New("hardcover unavailable"),
 	}, nil)
-	ctx := contextBackground()
+	ctx := context.Background()
 	series := &models.Series{ForeignID: "manual:series:stormlight", Title: "Stormlight"}
 	if err := seriesRepo.Create(ctx, series); err != nil {
 		t.Fatal(err)
@@ -858,7 +858,7 @@ func TestSeriesGetHardcoverLinkEndpoint(t *testing.T) {
 	h, seriesRepo, _, _ := seriesFixtureWithProvider(t, &stubSeriesProvider{
 		catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
 	}, nil)
-	ctx := contextBackground()
+	ctx := context.Background()
 	linked := &models.Series{ForeignID: "manual:series:linked", Title: "Linked"}
 	if err := seriesRepo.Create(ctx, linked); err != nil {
 		t.Fatal(err)
@@ -928,7 +928,7 @@ func TestSeriesDeleteHardcoverLinkRemovesStoredLink(t *testing.T) {
 	h, seriesRepo, _, _ := seriesFixtureWithProvider(t, &stubSeriesProvider{
 		catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
 	}, nil)
-	ctx := contextBackground()
+	ctx := context.Background()
 	series := &models.Series{ForeignID: "manual:series:stormlight", Title: "Stormlight"}
 	if err := seriesRepo.Create(ctx, series); err != nil {
 		t.Fatal(err)
@@ -990,7 +990,7 @@ func TestSeriesHardcoverDiffEndpoint(t *testing.T) {
 	h, seriesRepo, authorRepo, bookRepo := seriesFixtureWithProvider(t, &stubSeriesProvider{
 		catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
 	}, nil)
-	ctx := contextBackground()
+	ctx := context.Background()
 	series := &models.Series{ForeignID: "manual:series:stormlight", Title: "Stormlight"}
 	if err := seriesRepo.Create(ctx, series); err != nil {
 		t.Fatal(err)
@@ -1066,7 +1066,7 @@ func TestSeriesHardcoverDiffEndpointErrors(t *testing.T) {
 		catalogs:   map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
 		catalogErr: errors.New("hardcover unavailable"),
 	}, nil)
-	ctx := contextBackground()
+	ctx := context.Background()
 	linked := &models.Series{ForeignID: "manual:series:linked", Title: "Linked"}
 	if err := seriesRepo.Create(ctx, linked); err != nil {
 		t.Fatal(err)
@@ -1144,7 +1144,7 @@ func TestSeriesFillEndpointErrors(t *testing.T) {
 		h, seriesRepo, _, _ := seriesFixtureWithProvider(t, &stubSeriesProvider{
 			catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
 		}, nil)
-		ctx := contextBackground()
+		ctx := context.Background()
 		series := &models.Series{ForeignID: "manual:series:stormlight", Title: "Stormlight"}
 		if err := seriesRepo.Create(ctx, series); err != nil {
 			t.Fatal(err)
@@ -1170,7 +1170,7 @@ func TestSeriesFillEndpointErrors(t *testing.T) {
 	t.Run("missing link", func(t *testing.T) {
 		h, seriesRepo, _, _ := seriesFixtureWithProvider(t, &stubSeriesProvider{}, nil)
 		series := &models.Series{ForeignID: "manual:series:unlinked", Title: "Unlinked"}
-		if err := seriesRepo.Create(contextBackground(), series); err != nil {
+		if err := seriesRepo.Create(context.Background(), series); err != nil {
 			t.Fatal(err)
 		}
 		rec := httptest.NewRecorder()
@@ -1186,7 +1186,7 @@ func TestSeriesFillEndpointErrors(t *testing.T) {
 			catalogs:   map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
 			catalogErr: errors.New("hardcover unavailable"),
 		}, nil)
-		ctx := contextBackground()
+		ctx := context.Background()
 		series := &models.Series{ForeignID: "manual:series:stormlight", Title: "Stormlight"}
 		if err := seriesRepo.Create(ctx, series); err != nil {
 			t.Fatal(err)
@@ -1217,7 +1217,7 @@ func TestSeriesFillSkipsHardcoverCatalogWhenFeatureDisabled(t *testing.T) {
 	}
 	searcher := newMockBookSearcher()
 	h, seriesRepo, authorRepo, bookRepo, settingsRepo := seriesFixtureWithProviderAndSettings(t, provider, searcher, false)
-	ctx := contextBackground()
+	ctx := context.Background()
 	series := &models.Series{ForeignID: "ol-series:stormlight", Title: "The Stormlight Archive"}
 	if err := seriesRepo.Create(ctx, series); err != nil {
 		t.Fatal(err)
@@ -1288,7 +1288,7 @@ func TestSeriesFillCreatesMissingHardcoverBook(t *testing.T) {
 		catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
 	}, searcher)
 	series := &models.Series{ForeignID: "ol-series:stormlight", Title: "The Stormlight Archive"}
-	if err := seriesRepo.Create(contextBackground(), series); err != nil {
+	if err := seriesRepo.Create(context.Background(), series); err != nil {
 		t.Fatal(err)
 	}
 	link := &models.SeriesHardcoverLink{
@@ -1301,7 +1301,7 @@ func TestSeriesFillCreatesMissingHardcoverBook(t *testing.T) {
 		Confidence:          1,
 		LinkedBy:            "manual",
 	}
-	if err := seriesRepo.UpsertHardcoverLink(contextBackground(), link); err != nil {
+	if err := seriesRepo.UpsertHardcoverLink(context.Background(), link); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1321,7 +1321,7 @@ func TestSeriesFillCreatesMissingHardcoverBook(t *testing.T) {
 	if queued.Title != "The Way of Kings" {
 		t.Fatalf("unexpected queued book: %+v", queued)
 	}
-	created, err := bookRepo.GetByForeignID(contextBackground(), "hc:the-way-of-kings")
+	created, err := bookRepo.GetByForeignID(context.Background(), "hc:the-way-of-kings")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1335,7 +1335,7 @@ func TestSeriesFillCreatesMissingHardcoverBook(t *testing.T) {
 	if !created.AnyEditionOK {
 		t.Fatal("expected anyEditionOk to be preserved")
 	}
-	books, err := seriesRepo.ListBooksInSeries(contextBackground(), series.ID)
+	books, err := seriesRepo.ListBooksInSeries(context.Background(), series.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1362,10 +1362,10 @@ func TestSeriesFillHydratesHardcoverEditionsBeforeQueue(t *testing.T) {
 		}}, nil
 	})
 	series := &models.Series{ForeignID: "ol-series:stormlight", Title: "The Stormlight Archive"}
-	if err := seriesRepo.Create(contextBackground(), series); err != nil {
+	if err := seriesRepo.Create(context.Background(), series); err != nil {
 		t.Fatal(err)
 	}
-	if err := seriesRepo.UpsertHardcoverLink(contextBackground(), &models.SeriesHardcoverLink{
+	if err := seriesRepo.UpsertHardcoverLink(context.Background(), &models.SeriesHardcoverLink{
 		SeriesID:            series.ID,
 		HardcoverSeriesID:   catalog.ForeignID,
 		HardcoverProviderID: catalog.ProviderID,
@@ -1387,14 +1387,14 @@ func TestSeriesFillHydratesHardcoverEditionsBeforeQueue(t *testing.T) {
 	if queued.ASIN != audioASIN {
 		t.Fatalf("queued book ASIN = %q, want %q", queued.ASIN, audioASIN)
 	}
-	created, err := bookRepo.GetByForeignID(contextBackground(), "hc:the-way-of-kings")
+	created, err := bookRepo.GetByForeignID(context.Background(), "hc:the-way-of-kings")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if created == nil || created.ASIN != audioASIN {
 		t.Fatalf("created book ASIN not persisted: %+v", created)
 	}
-	editions, err := editionRepo.ListByBook(contextBackground(), created.ID)
+	editions, err := editionRepo.ListByBook(context.Background(), created.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1409,7 +1409,7 @@ func TestSeriesFillReusesCrossProviderAuthorAndExistingBook(t *testing.T) {
 	h, seriesRepo, authorRepo, bookRepo := seriesFixtureWithProvider(t, &stubSeriesProvider{
 		catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
 	}, searcher)
-	ctx := contextBackground()
+	ctx := context.Background()
 	series := &models.Series{ForeignID: "ol-series:stormlight", Title: "The Stormlight Archive"}
 	if err := seriesRepo.Create(ctx, series); err != nil {
 		t.Fatal(err)
@@ -1506,7 +1506,7 @@ func TestSeriesFillSkipsExcludedHardcoverForeignIDMatch(t *testing.T) {
 	h, seriesRepo, authorRepo, bookRepo := seriesFixtureWithProvider(t, &stubSeriesProvider{
 		catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
 	}, searcher)
-	ctx := contextBackground()
+	ctx := context.Background()
 	series := &models.Series{ForeignID: "ol-series:stormlight", Title: "The Stormlight Archive"}
 	if err := seriesRepo.Create(ctx, series); err != nil {
 		t.Fatal(err)
@@ -1580,7 +1580,7 @@ func TestSeriesFillSkipsExcludedHardcoverTitleMatch(t *testing.T) {
 	h, seriesRepo, authorRepo, bookRepo := seriesFixtureWithProvider(t, &stubSeriesProvider{
 		catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
 	}, searcher)
-	ctx := contextBackground()
+	ctx := context.Background()
 	series := &models.Series{ForeignID: "ol-series:stormlight", Title: "The Stormlight Archive"}
 	if err := seriesRepo.Create(ctx, series); err != nil {
 		t.Fatal(err)
@@ -1661,7 +1661,7 @@ func TestSeriesFillSkipsExcludedCrossProviderTitleMatch(t *testing.T) {
 	h, seriesRepo, authorRepo, bookRepo := seriesFixtureWithProvider(t, &stubSeriesProvider{
 		catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
 	}, searcher)
-	ctx := contextBackground()
+	ctx := context.Background()
 	series := &models.Series{ForeignID: "ol-series:stormlight", Title: "The Stormlight Archive"}
 	if err := seriesRepo.Create(ctx, series); err != nil {
 		t.Fatal(err)
@@ -1752,7 +1752,7 @@ func TestSeriesFillSkipsAmbiguousCrossProviderAuthorMatch(t *testing.T) {
 	h, seriesRepo, authorRepo, bookRepo := seriesFixtureWithProvider(t, &stubSeriesProvider{
 		catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
 	}, searcher)
-	ctx := contextBackground()
+	ctx := context.Background()
 	series := &models.Series{ForeignID: "ol-series:stormlight", Title: "The Stormlight Archive"}
 	if err := seriesRepo.Create(ctx, series); err != nil {
 		t.Fatal(err)
@@ -1831,7 +1831,7 @@ func TestSeriesFillCreatesOnlyRequestedHardcoverBook(t *testing.T) {
 		catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
 	}, searcher)
 	series := &models.Series{ForeignID: "ol-series:stormlight", Title: "The Stormlight Archive"}
-	if err := seriesRepo.Create(contextBackground(), series); err != nil {
+	if err := seriesRepo.Create(context.Background(), series); err != nil {
 		t.Fatal(err)
 	}
 	link := &models.SeriesHardcoverLink{
@@ -1844,7 +1844,7 @@ func TestSeriesFillCreatesOnlyRequestedHardcoverBook(t *testing.T) {
 		Confidence:          1,
 		LinkedBy:            "manual",
 	}
-	if err := seriesRepo.UpsertHardcoverLink(contextBackground(), link); err != nil {
+	if err := seriesRepo.UpsertHardcoverLink(context.Background(), link); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1866,21 +1866,21 @@ func TestSeriesFillCreatesOnlyRequestedHardcoverBook(t *testing.T) {
 		t.Fatalf("unexpected queued book: %+v", queued)
 	}
 	searcher.assertNoCall(t, 50*time.Millisecond)
-	created, err := bookRepo.GetByForeignID(contextBackground(), "hc:words-of-radiance")
+	created, err := bookRepo.GetByForeignID(context.Background(), "hc:words-of-radiance")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if created == nil {
 		t.Fatal("expected requested Hardcover book to be created")
 	}
-	notCreated, err := bookRepo.GetByForeignID(contextBackground(), "hc:the-way-of-kings")
+	notCreated, err := bookRepo.GetByForeignID(context.Background(), "hc:the-way-of-kings")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if notCreated != nil {
 		t.Fatalf("expected unrequested Hardcover book to remain missing, got %+v", notCreated)
 	}
-	books, err := seriesRepo.ListBooksInSeries(contextBackground(), series.ID)
+	books, err := seriesRepo.ListBooksInSeries(context.Background(), series.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1896,7 +1896,7 @@ func TestSeriesFillQueuesLocalBooksWhenHardcoverCatalogFails(t *testing.T) {
 		catalogs:   map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
 		catalogErr: errors.New("hardcover unavailable"),
 	}, searcher)
-	ctx := contextBackground()
+	ctx := context.Background()
 	series := &models.Series{ForeignID: "ol-series:stormlight", Title: "The Stormlight Archive"}
 	if err := seriesRepo.Create(ctx, series); err != nil {
 		t.Fatal(err)

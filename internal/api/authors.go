@@ -48,6 +48,12 @@ type AuthorHandler struct {
 	enhancedHardcoverEnvEnabled bool
 
 	editionFetcher bookhydrate.EditionFetcher
+
+	// lifetimeCtx is the process-lifecycle context, cancelled on server
+	// shutdown so the FetchAuthorBooks / orphan-cleanup / SearchOnAdd
+	// goroutines do not outlive the process. Falls back to
+	// context.Background() when not set; see #846 and recommendations.go.
+	lifetimeCtx context.Context
 }
 
 func NewAuthorHandler(authors *db.AuthorRepo, aliases *db.AuthorAliasRepo, books *db.BookRepo, series *db.SeriesRepo, meta *metadata.Aggregator, settings *db.SettingsRepo, profiles *db.MetadataProfileRepo, searcher BookSearcher) *AuthorHandler {
@@ -89,6 +95,27 @@ func (h *AuthorHandler) WithHardcoverFeatureSettings(settings *db.SettingsRepo, 
 	h.settings = settings
 	h.enhancedHardcoverEnvEnabled = envEnabled
 	return h
+}
+
+// WithLifetimeCtx attaches the process-lifecycle context so background work
+// started from a request handler (FetchAuthorBooks, AddBook's SearchOnAdd
+// goroutine, orphan-cleanup) is cancelled on shutdown rather than running
+// against context.Background(). A nil ctx is tolerated and ignored. See #846.
+func (h *AuthorHandler) WithLifetimeCtx(ctx context.Context) *AuthorHandler {
+	if ctx != nil {
+		h.lifetimeCtx = ctx
+	}
+	return h
+}
+
+// bgCtx returns the lifetime context if set, otherwise context.Background().
+// Used by every spawn site so tests that construct a handler without
+// WithLifetimeCtx keep their previous semantics.
+func (h *AuthorHandler) bgCtx() context.Context {
+	if h.lifetimeCtx != nil {
+		return h.lifetimeCtx
+	}
+	return context.Background()
 }
 
 func (h *AuthorHandler) enhancedHardcoverEnabled(ctx context.Context) bool {
@@ -1143,7 +1170,7 @@ func (h *AuthorHandler) relinkCalibreAuthor(ctx context.Context, author *models.
 // mediaType is applied to each newly-created book when the provider didn't
 // return one; pass an empty string to accept whatever the provider set.
 func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool, mediaType string) {
-	ctx := contextBackground()
+	ctx := h.bgCtx()
 	slog.Info("fetching books for author", "author", author.Name, "foreignId", author.ForeignID)
 
 	// Calibre-imported authors carry a synthetic "calibre:author:N" foreign ID
@@ -1893,9 +1920,11 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. Optionally trigger an indexer search.
+	// 4. Optionally trigger an indexer search. Use the process-lifecycle
+	// context so the search goroutine is cancelled on shutdown rather than
+	// running against context.Background(). See #846.
 	if req.SearchOnAdd && h.searcher != nil {
-		go h.searcher.SearchAndGrabBook(contextBackground(), *book)
+		go h.searcher.SearchAndGrabBook(h.bgCtx(), *book) // #nosec G118 -- intentional: search must outlive the request
 	}
 
 	writeJSON(w, http.StatusCreated, book)
@@ -1920,7 +1949,7 @@ func (h *AuthorHandler) cleanupOrphanIfNoBooks(author *models.Author, bookCreate
 	if author == nil || author.ID == 0 {
 		return
 	}
-	ctx := contextBackground()
+	ctx := h.bgCtx()
 	books, err := h.books.ListByAuthor(ctx, author.ID)
 	if err != nil {
 		slog.Warn("AddBook: orphan-cleanup ListByAuthor failed",

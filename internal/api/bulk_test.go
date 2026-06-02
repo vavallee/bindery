@@ -841,3 +841,78 @@ func TestAuthorsBulk_Search_BoundsConcurrency(t *testing.T) {
 		t.Fatalf("call count = %d, want %d", got, total)
 	}
 }
+
+// ctxCapturingSearcher records the per-call context the bulk fan-out passes
+// in so #846 regression tests can assert the lifetime ctx is propagated.
+// The first call publishes its ctx and signals seen; later calls overwrite
+// the field but never re-close the channel (close-once via sync.Once).
+type ctxCapturingSearcher struct {
+	mu      sync.Mutex
+	gotCtx  context.Context
+	seen    chan struct{}
+	seenOne sync.Once
+}
+
+func newCtxCapturingSearcher() *ctxCapturingSearcher {
+	return &ctxCapturingSearcher{seen: make(chan struct{})}
+}
+
+func (s *ctxCapturingSearcher) SearchAndGrabBook(ctx context.Context, _ models.Book) {
+	s.mu.Lock()
+	s.gotCtx = ctx
+	s.mu.Unlock()
+	s.seenOne.Do(func() { close(s.seen) })
+	// Block until the test cancels the lifetime ctx so the goroutine is
+	// observably alive when the assertion runs. A bare receive on ctx.Done
+	// is the production contract we are guarding: the searcher must observe
+	// cancellation rather than running on context.Background().
+	<-ctx.Done()
+}
+
+// TestBulkHandler_GoroutineCancelsOnLifetimeCtxCancel is the #846 regression
+// guard for BulkHandler. The bulk-action search fan-out must derive from the
+// process-lifecycle ctx passed via WithLifetimeCtx; cancelling that ctx must
+// be observed inside the spawned goroutine. Without the fix the goroutine
+// would run on context.Background() and never see Done.
+func TestBulkHandler_GoroutineCancelsOnLifetimeCtxCancel(t *testing.T) {
+	searcher := newCtxCapturingSearcher()
+	h, _, books, author, ctx := bulkFixtureWithSearcher(t, searcher)
+
+	lifetimeCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.WithLifetimeCtx(lifetimeCtx)
+
+	book := mustCreateBook(t, books, ctx, &models.Book{
+		ForeignID: "BLK_LIFE", AuthorID: author.ID, Title: "Lifetime Ctx",
+		SortTitle: "lifetime ctx", Status: models.BookStatusWanted,
+		Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	})
+
+	body := fmt.Sprintf(`{"ids":[%d],"action":"search"}`, book.ID)
+	rec := postBulk(t, h.BooksBulk, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	// Wait until the searcher actually starts (so we know fan-out spawned).
+	select {
+	case <-searcher.seen:
+	case <-time.After(2 * time.Second):
+		t.Fatal("searcher was not invoked within 2s")
+	}
+
+	// Cancel the lifetime ctx; the goroutine, parked on ctx.Done, must
+	// unblock. If the bulk handler had used context.Background() the
+	// receive below would never complete.
+	cancel()
+
+	searcher.mu.Lock()
+	gotCtx := searcher.gotCtx
+	searcher.mu.Unlock()
+	select {
+	case <-gotCtx.Done():
+		// good
+	case <-time.After(2 * time.Second):
+		t.Fatal("spawned goroutine did not observe lifetime ctx cancellation")
+	}
+}
