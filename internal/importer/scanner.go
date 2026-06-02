@@ -2785,7 +2785,16 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 		}
 	}
 
-	slog.Info("library scan complete", "path", s.libraryDir, "bookFiles", len(foundFiles),
+	// Surface every walked root in the completion log. The scan can union
+	// the audiobook root with the library root (see ScanLibrary), and the
+	// pre-fix log only showed s.libraryDir, which let users with separate
+	// roots interpret the file count as coming from the wrong directory
+	// (issue #905, second symptom).
+	scanRoots := []string{s.libraryDir}
+	if s.audiobookDir != "" && s.audiobookDir != s.libraryDir {
+		scanRoots = append(scanRoots, s.audiobookDir)
+	}
+	slog.Info("library scan complete", "paths", scanRoots, "bookFiles", len(foundFiles),
 		"reconciled", reconciled, "unmatched", unmatched, "tagReadFailed", tagReadFailed)
 
 	s.writeScanResult(ctx, len(foundFiles), reconciled, unmatched, tagReadFailed, unmatchedFiles)
