@@ -183,6 +183,56 @@ func (c *Client) GetTorrents(ctx context.Context, downloadDir string) ([]Torrent
 	return resp.Arguments.Torrents, nil
 }
 
+// Files returns the per-torrent file list for torrentID. Names are paths
+// relative to the torrent's downloadDir; for a single-file torrent dropped
+// directly at the root the entry's Name is just the file's basename.
+//
+// This is the authoritative list of files that belong to this torrent, used
+// by the importer (issue #903) to avoid walking the shared download root and
+// picking up unrelated siblings.
+//
+// An empty list with a nil error means Transmission reported no files for
+// the torrent (typical for a torrent still resolving metadata at 0%). An
+// unknown torrent ID returns ("", error) so the caller can distinguish
+// "metadata not yet available" from "torrent gone".
+func (c *Client) Files(ctx context.Context, torrentID int64) ([]File, error) {
+	args := map[string]interface{}{
+		"ids":    []int64{torrentID},
+		"fields": []string{"id", "files"},
+	}
+
+	req, err := c.buildRequest(ctx, "torrent-get", args)
+	if err != nil {
+		return nil, err
+	}
+	respBody, err := c.doRequest(req)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp torrentFilesResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("decode torrent-get files response: %w", err)
+	}
+	if resp.Result != "success" {
+		return nil, fmt.Errorf("torrent-get files failed: %s", resp.Result)
+	}
+	if len(resp.Arguments.Torrents) == 0 {
+		// No torrent matched the supplied id. Surface a distinct error so the
+		// importer can decide to retry vs. terminally fail. Empty Files on a
+		// matched torrent (metadata still resolving) is the nil/empty return.
+		return nil, fmt.Errorf("torrent %d not found", torrentID)
+	}
+	out := make([]File, 0, len(resp.Arguments.Torrents[0].Files))
+	for _, f := range resp.Arguments.Torrents[0].Files {
+		if f.Name == "" {
+			continue
+		}
+		out = append(out, File{Name: f.Name, Size: f.Length})
+	}
+	return out, nil
+}
+
 // RemoveTorrent removes a torrent by ID.
 func (c *Client) RemoveTorrent(ctx context.Context, torrentID int64, deleteFiles bool) error {
 	args := map[string]interface{}{

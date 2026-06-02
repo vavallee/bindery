@@ -111,7 +111,7 @@ func TestTryImportInternal_PartialFailureDoesNotDeleteUnlandedSource(t *testing.
 		t.Fatal(err)
 	}
 
-	s.tryImportInternal(ctx, dl, downloadPath, "transmission", "tor-1", nil)
+	s.tryImportInternal(ctx, dl, downloadPath, "transmission", "tor-1", nil, nil)
 
 	// The download must NOT be terminal-imported: one file failed.
 	got, err := dlRepo.GetByGUID(ctx, dl.GUID)

@@ -45,7 +45,7 @@ func TestTryImportInternal_PathNotFound(t *testing.T) {
 	// a temp dir that was never created.
 	nonexistent := filepath.Join(t.TempDir(), "qbit-container-path", "book.epub")
 
-	s.tryImportInternal(ctx, dl, nonexistent, "", "", nil)
+	s.tryImportInternal(ctx, dl, nonexistent, "", "", nil, nil)
 
 	got, err := dlRepo.GetByGUID(ctx, dl.GUID)
 	if err != nil {
@@ -72,7 +72,7 @@ func TestTryImportInternal_PathExistsNoBooks(t *testing.T) {
 	// An existing but empty directory — os.Stat succeeds, IsNotExist is false.
 	emptyDir := t.TempDir()
 
-	s.tryImportInternal(ctx, dl, emptyDir, "", "", nil)
+	s.tryImportInternal(ctx, dl, emptyDir, "", "", nil, nil)
 
 	got, err := dlRepo.GetByGUID(ctx, dl.GUID)
 	if err != nil {

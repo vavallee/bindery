@@ -39,3 +39,34 @@ type TorrentGetResponse struct {
 type SimpleResponse struct {
 	Result string `json:"result"`
 }
+
+// File is a single file belonging to a torrent, as reported by torrent-get
+// with fields=["files"]. Name is the path relative to the torrent's
+// downloadDir; for a single-file torrent it is just the file's basename.
+type File struct {
+	Name string
+	Size int64
+}
+
+// rpcFile mirrors the Transmission RPC shape: each entry under arguments
+// .torrents[].files is {bytesCompleted, length, name}. Bindery only needs
+// name + length to drive the importer; bytesCompleted is intentionally
+// dropped (the per-torrent percentDone already gates whether files are
+// flushed to disk).
+type rpcFile struct {
+	Name           string `json:"name"`
+	Length         int64  `json:"length"`
+	BytesCompleted int64  `json:"bytesCompleted"`
+}
+
+// torrentFilesResponse decodes the torrent-get response when only the
+// files field is requested.
+type torrentFilesResponse struct {
+	Arguments struct {
+		Torrents []struct {
+			ID    int64     `json:"id"`
+			Files []rpcFile `json:"files"`
+		} `json:"torrents"`
+	} `json:"arguments"`
+	Result string `json:"result"`
+}

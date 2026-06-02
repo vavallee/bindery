@@ -497,7 +497,7 @@ func TestTryImportInternal_EmptyPathAlreadyImported(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s.tryImportInternal(ctx, dl, emptyDownloadDir, "", "", nil)
+	s.tryImportInternal(ctx, dl, emptyDownloadDir, "", "", nil, nil)
 
 	got, err := dlRepo.GetByGUID(ctx, dl.GUID)
 	if err != nil {

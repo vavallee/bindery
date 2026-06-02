@@ -69,6 +69,23 @@ func (c *Category) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// File is a single file belonging to a torrent, as returned by
+// /api/v2/torrents/files?hash=<hash>. Name is the path relative to the
+// torrent's save path (forward-slash normalised); for a single-file
+// torrent it is just the file's basename.
+type File struct {
+	Name string
+	Size int64
+}
+
+// rpcFile mirrors the qBittorrent v2 API shape for a torrent file entry.
+// Only name + size are needed by the importer; progress, priority, and the
+// rest are intentionally discarded.
+type rpcFile struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+}
+
 func categoryPathString(raw json.RawMessage) string {
 	if len(raw) == 0 || string(raw) == "null" {
 		return ""

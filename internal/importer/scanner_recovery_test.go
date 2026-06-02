@@ -102,7 +102,7 @@ func TestTryImportInternal_RetryIsIdempotent(t *testing.T) {
 	s, dl, dlRepo, bookRepo, ctx := dataLossFixture(t, libraryDir, "copy")
 
 	// First import: succeeds normally and writes the book_files row.
-	s.tryImportInternal(ctx, dl, downloadPath, "transmission", "tor-1", nil)
+	s.tryImportInternal(ctx, dl, downloadPath, "transmission", "tor-1", nil, nil)
 
 	filesAfterFirst, err := bookRepo.ListFiles(ctx, *dl.BookID)
 	if err != nil {
@@ -134,7 +134,7 @@ func TestTryImportInternal_RetryIsIdempotent(t *testing.T) {
 		t.Fatalf("precondition: imported file should still be on disk: %v", err)
 	}
 
-	s.tryImportInternal(ctx, retryDL, downloadPath, "transmission", "tor-1", nil)
+	s.tryImportInternal(ctx, retryDL, downloadPath, "transmission", "tor-1", nil, nil)
 
 	// The idempotency guard must short-circuit: no second book_files row.
 	filesAfterRetry, err := bookRepo.ListFiles(ctx, *dl.BookID)
@@ -281,7 +281,7 @@ func TestTryImportInternal_ExternalModeParksNonTerminal(t *testing.T) {
 
 	s, dl, dlRepo, bookRepo, ctx := dataLossFixture(t, libraryDir, "external")
 
-	s.tryImportInternal(ctx, dl, downloadPath, "transmission", "tor-1", nil)
+	s.tryImportInternal(ctx, dl, downloadPath, "transmission", "tor-1", nil, nil)
 
 	got, err := dlRepo.GetByGUID(ctx, dl.GUID)
 	if err != nil {

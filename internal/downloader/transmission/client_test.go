@@ -260,6 +260,123 @@ func TestGetTorrents_InvalidJSON(t *testing.T) {
 	}
 }
 
+// TestClient_Files_ReturnsRelativeNames verifies that Files() decodes the
+// torrent-get RPC "files" entries into the importer's []File shape with
+// names left in the form Transmission reported them (relative to the
+// torrent's downloadDir). Issue #903 regression guard: the importer relies
+// on these names being the authoritative file list of the torrent so it
+// can avoid walking the shared download root.
+func TestClient_Files_ReturnsRelativeNames(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"result":"success",
+			"arguments":{
+				"torrents":[{
+					"id":42,
+					"files":[
+						{"name":"MyBook/disc01.m4b","length":1024,"bytesCompleted":1024},
+						{"name":"MyBook/disc02.m4b","length":2048,"bytesCompleted":2048},
+						{"name":"MyBook/cover.jpg","length":128,"bytesCompleted":128}
+					]
+				}]
+			}
+		}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "user", "pass")
+	files, err := c.Files(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	if len(files) != 3 {
+		t.Fatalf("want 3 files, got %d", len(files))
+	}
+	if files[0].Name != "MyBook/disc01.m4b" || files[0].Size != 1024 {
+		t.Errorf("file 0 mismatch: %+v", files[0])
+	}
+	if files[2].Name != "MyBook/cover.jpg" || files[2].Size != 128 {
+		t.Errorf("file 2 mismatch: %+v", files[2])
+	}
+}
+
+// TestClient_Files_SingleFileTorrent — issue #903 specific shape: a torrent
+// containing a single loose file with no subfolder. The Name is just the
+// basename; joining it with downloadDir yields the file's on-disk path.
+func TestClient_Files_SingleFileTorrent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"result":"success",
+			"arguments":{
+				"torrents":[{
+					"id":7,
+					"files":[
+						{"name":"standalone-book.m4b","length":50000,"bytesCompleted":50000}
+					]
+				}]
+			}
+		}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "user", "pass")
+	files, err := c.Files(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("want 1 file, got %d", len(files))
+	}
+	if files[0].Name != "standalone-book.m4b" {
+		t.Errorf("expected basename-only Name, got %q", files[0].Name)
+	}
+}
+
+// TestClient_Files_TorrentMissing — when torrent-get returns an empty torrents
+// array Transmission has no record of the supplied id (already removed, or
+// the supplied id was wrong). The caller needs a distinct signal so the
+// importer can decide whether to retry the next cycle or terminally fail.
+func TestClient_Files_TorrentMissing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"result":"success","arguments":{"torrents":[]}}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "user", "pass")
+	_, err := c.Files(context.Background(), 999)
+	if err == nil {
+		t.Fatal("expected error for unknown torrent id")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected 'not found' in error, got: %v", err)
+	}
+}
+
+// TestClient_Files_NoFilesYet — a torrent that is still resolving metadata
+// (e.g. magnet at 0%) appears in torrent-get but with an empty files array.
+// Files() returns an empty slice with no error so the importer can retry
+// next cycle once the metadata flushes.
+func TestClient_Files_NoFilesYet(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"result":"success",
+			"arguments":{
+				"torrents":[{"id":1,"files":[]}]
+			}
+		}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "user", "pass")
+	files, err := c.Files(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	if len(files) != 0 {
+		t.Errorf("want empty file list, got %d entries", len(files))
+	}
+}
+
 func TestRemoveTorrent_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"result":"success","arguments":{}}`))

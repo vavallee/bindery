@@ -457,7 +457,7 @@ func TestImportInternal_ThreeFileBundle_TracksAllInBookFiles(t *testing.T) {
 	}
 
 	s := NewScanner(dlRepo, clientRepo, bookRepo, authorRepo, db.NewHistoryRepo(database), libDir, "", "", "", "")
-	s.tryImportInternal(ctx, dl, dlDir, "", "", nil)
+	s.tryImportInternal(ctx, dl, dlDir, "", "", nil, nil)
 
 	files, err := bookRepo.ListFiles(ctx, book.ID)
 	if err != nil {
@@ -520,7 +520,7 @@ func TestTryImportInternal_HistoryEventIncludesFormat(t *testing.T) {
 	}
 
 	s := NewScanner(dlRepo, clientRepo, bookRepo, authorRepo, historyRepo, libDir, "", "", "", "")
-	s.tryImportInternal(ctx, dl, dlDir, "", "", nil)
+	s.tryImportInternal(ctx, dl, dlDir, "", "", nil, nil)
 
 	events, err := historyRepo.ListByType(ctx, models.HistoryEventBookImported)
 	if err != nil {
@@ -616,7 +616,7 @@ func TestImportSuccess_FiresBookImported(t *testing.T) {
 	spy := &spyNotifier{}
 	s := NewScanner(dlRepo, clientRepo, bookRepo, authorRepo, db.NewHistoryRepo(database), libDir, "", "", "", "").
 		WithNotifier(spy)
-	s.tryImportInternal(ctx, dl, dlDir, "", "", nil)
+	s.tryImportInternal(ctx, dl, dlDir, "", "", nil, nil)
 
 	call := spy.lookup(notifierEventBookImported)
 	if call == nil {

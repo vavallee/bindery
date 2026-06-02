@@ -920,11 +920,14 @@ func (s *Scanner) checkNZBGetDownloads(ctx context.Context, client *models.Downl
 
 // tryImportNZBGet attempts to import a completed NZBGet download into the library.
 // ng is used to clean up the NZBGet history entry once bindery has taken ownership.
+//
+// NZBGet always lands a job inside a per-job DestDir, so walking that path is
+// safe; the issue #903 file-list API addition does not apply here.
 func (s *Scanner) tryImportNZBGet(ctx context.Context, ng *nzbget.Client, dl *models.Download, nzbID int, downloadPath string) {
 	nzbIDStr := strconv.Itoa(nzbID)
 	s.tryImportInternal(ctx, dl, downloadPath, "nzbget", nzbIDStr, func() error {
 		return ng.RemoveHistory(ctx, nzbID)
-	})
+	}, nil)
 }
 
 // checkTransmissionDownloads polls Transmission for status changes.
@@ -977,18 +980,25 @@ func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models
 		if isComplete && (dl.Status == models.StateDownloading || dl.Status == models.StateGrabbed) {
 			// Download is complete
 			downloadPath := s.remapDownloadClientPath(client, torrent.DownloadDir)
-			slog.Info("download completed", "title", dl.Title, "path", downloadPath)
+			// Issue #903: ask Transmission for the authoritative file list so
+			// the importer only touches files belonging to THIS torrent rather
+			// than walking the shared download root. A nil return signals
+			// transmissionFilesFor to fall back to the legacy dir walk (a WARN
+			// is already emitted inside the helper).
+			bookFiles := s.transmissionFilesFor(ctx, trans, client, torrent)
+			slog.Info("download completed", "title", dl.Title, "path", downloadPath, "files", len(bookFiles))
 			s.updateDownloadStatus(ctx, dl.ID, models.StateCompleted)
-			s.tryImportTransmission(ctx, &dl, downloadPath)
+			s.tryImportTransmission(ctx, &dl, downloadPath, bookFiles)
 		} else if isComplete && dl.Status == models.StateImportFailed && dl.ImportRetryCount < importRetryLimit {
 			// Bug #7: retry a previously failed import.
 			downloadPath := s.remapDownloadClientPath(client, torrent.DownloadDir)
+			bookFiles := s.transmissionFilesFor(ctx, trans, client, torrent)
 			slog.Info("retrying failed import", "title", dl.Title, "path", downloadPath,
-				"attempt", dl.ImportRetryCount+1, "limit", importRetryLimit)
+				"attempt", dl.ImportRetryCount+1, "limit", importRetryLimit, "files", len(bookFiles))
 			if err := s.downloads.IncrementImportRetryCount(ctx, dl.ID); err != nil {
 				slog.Warn("failed to increment import retry count", "download_id", dl.ID, "error", err)
 			}
-			s.tryImportTransmission(ctx, &dl, downloadPath)
+			s.tryImportTransmission(ctx, &dl, downloadPath, bookFiles)
 		} else if isStopped && !isComplete && dl.Status != models.StateFailed {
 			if stopError == "" {
 				// Transmission also reports user-paused torrents as stopped.
@@ -1096,9 +1106,15 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 			}
 			downloadPath := s.remapDownloadClientPath(client, rawPath)
 
-			slog.Info("download completed", "title", dl.Title, "path", downloadPath, "raw_path", rawPath)
+			// Issue #903: ask qBittorrent for the authoritative file list so
+			// the importer only touches files belonging to THIS torrent.
+			// qbittorrentFilesFor returns nil and logs a WARN on RPC error
+			// or empty-file response; tryImportInternal then falls back to
+			// the legacy filepath.Walk(downloadPath).
+			bookFiles := s.qbittorrentFilesFor(ctx, qb, client, torrent)
+			slog.Info("download completed", "title", dl.Title, "path", downloadPath, "raw_path", rawPath, "files", len(bookFiles))
 			s.updateDownloadStatus(ctx, dl.ID, models.StateCompleted)
-			s.tryImportQbittorrent(ctx, &dl, downloadPath)
+			s.tryImportQbittorrent(ctx, &dl, downloadPath, bookFiles)
 		} else if isComplete && dl.Status == models.StateImportFailed && dl.ImportRetryCount < importRetryLimit {
 			// Bug #7: a previous import attempt failed (e.g. transient filesystem
 			// error, path mismatch). The torrent is still seeding so we have the
@@ -1123,12 +1139,13 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 				continue
 			}
 			downloadPath := s.remapDownloadClientPath(client, rawPath)
+			bookFiles := s.qbittorrentFilesFor(ctx, qb, client, torrent)
 			slog.Info("retrying failed import", "title", dl.Title, "path", downloadPath,
-				"attempt", dl.ImportRetryCount+1, "limit", importRetryLimit)
+				"attempt", dl.ImportRetryCount+1, "limit", importRetryLimit, "files", len(bookFiles))
 			if err := s.downloads.IncrementImportRetryCount(ctx, dl.ID); err != nil {
 				slog.Warn("failed to increment import retry count", "download_id", dl.ID, "error", err)
 			}
-			s.tryImportQbittorrent(ctx, &dl, downloadPath)
+			s.tryImportQbittorrent(ctx, &dl, downloadPath, bookFiles)
 		} else if isFailed && dl.Status != models.StateFailed {
 			slog.Warn("download failed", "title", dl.Title, "state", torrent.State)
 			s.markDownloadFailed(ctx, &dl, "Torrent failed in qBittorrent")
@@ -1147,20 +1164,214 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 // tryImportSABnzbd attempts to import a completed SABnzbd download into the library.
 // sab is used to clear the SABnzbd history entry once bindery has taken
 // ownership of the files; nzoID is the history slot's NZO identifier.
+//
+// SAB always lands a job inside a per-job completed-folder (`storage` in the
+// history slot), so walking that path is safe; the issue #903 file-list
+// API addition does not apply here.
 func (s *Scanner) tryImportSABnzbd(ctx context.Context, sab *sabnzbd.Client, dl *models.Download, nzoID, downloadPath string) {
 	s.tryImportInternal(ctx, dl, downloadPath, "sabnzbd", nzoID, func() error {
 		// Clean up SABnzbd history
 		return sab.DeleteHistory(ctx, nzoID, false)
-	})
+	}, nil)
 }
 
 // tryImportTransmission attempts to import a completed Transmission download into the library.
-func (s *Scanner) tryImportTransmission(ctx context.Context, dl *models.Download, downloadPath string) {
-	s.tryImportInternal(ctx, dl, downloadPath, "transmission", safeRemoteID(dl.TorrentID), nil)
+//
+// explicitFiles, when non-nil and non-empty, is the absolute Bindery-side
+// path of every file that belongs to this specific torrent (built from the
+// Transmission torrent-get "files" RPC and run through PathRemap). Passing
+// it avoids the legacy filepath.Walk(downloadPath) and the issue #903 class
+// of bug where a single-file torrent at a shared download root would cause
+// every unrelated sibling to be imported. Pass nil to fall back to the
+// directory walk.
+func (s *Scanner) tryImportTransmission(ctx context.Context, dl *models.Download, downloadPath string, explicitFiles []string) {
+	s.tryImportInternal(ctx, dl, downloadPath, "transmission", safeRemoteID(dl.TorrentID), nil, explicitFiles)
 }
 
-func (s *Scanner) tryImportQbittorrent(ctx context.Context, dl *models.Download, downloadPath string) {
-	s.tryImportInternal(ctx, dl, downloadPath, "qbittorrent", safeRemoteID(dl.TorrentID), nil)
+// tryImportQbittorrent attempts to import a completed qBittorrent download. See
+// tryImportTransmission for the semantics of explicitFiles.
+func (s *Scanner) tryImportQbittorrent(ctx context.Context, dl *models.Download, downloadPath string, explicitFiles []string) {
+	s.tryImportInternal(ctx, dl, downloadPath, "qbittorrent", safeRemoteID(dl.TorrentID), nil, explicitFiles)
+}
+
+// torrentFile is the minimal shape resolveTorrentFiles consumes; it matches
+// transmission.File / qbittorrent.File / deluge.File without taking a
+// dependency on any of them. Each downloader's File type is converted to
+// []torrentFile at the call site.
+type torrentFile struct {
+	Name string
+	Size int64
+}
+
+// resolveTorrentFiles maps a downloader's per-torrent file list onto absolute
+// Bindery-side book-file paths. For each file:
+//
+//  1. Join the client's save path with the file's relative name, producing
+//     the path the download client sees on its filesystem.
+//  2. Apply the download-client's PathRemap (and the global scanner remapper
+//     when no client-level rule matches) so Bindery sees the file at its
+//     local mount point. This is the same helper checkXxxDownloads already
+//     uses for the per-torrent downloadPath, so a single shared rule covers
+//     both the parent dir and the files inside it.
+//  3. Filter to book files via IsBookFile to match what the legacy
+//     filepath.Walk path produced.
+//
+// Files with empty or path-traversing names ("..", absolute paths) are
+// rejected and logged at WARN; they shouldn't reach here from a sane client
+// response and treating them as legitimate could resolve outside the
+// download root.
+//
+// The Bindery-side absolute path is returned with filepath.Clean applied so
+// downstream code (cleanupMovedSources, alreadyImportedPath) compares clean
+// forms consistently.
+func (s *Scanner) resolveTorrentFiles(client *models.DownloadClient, clientSavePath string, files []torrentFile) []string {
+	if len(files) == 0 || strings.TrimSpace(clientSavePath) == "" {
+		return nil
+	}
+	out := make([]string, 0, len(files))
+	for _, f := range files {
+		name := strings.TrimSpace(f.Name)
+		if name == "" {
+			continue
+		}
+		// Reject absolute paths and any ".." path segment: both can resolve
+		// outside the torrent's save path; a sane client never produces them
+		// in the files-list response, so treat them as malformed and skip
+		// rather than silently quoting an attacker-controlled name through
+		// Join. Splitting and matching per-segment avoids false positives on
+		// legitimate names like "My..Book.epub" while still catching
+		// "MyBook/../escape.epub".
+		if filepath.IsAbs(name) || hasDotDotSegment(name) {
+			slog.Warn("import: rejecting malformed file name from download client",
+				"client", client.Name, "name", name)
+			continue
+		}
+		clientPath := filepath.Join(clientSavePath, name)
+		binderyPath := filepath.Clean(s.remapDownloadClientPath(client, clientPath))
+		if !IsBookFile(binderyPath) {
+			continue
+		}
+		out = append(out, binderyPath)
+	}
+	return out
+}
+
+// hasDotDotSegment reports whether p contains a ".." path segment under
+// either forward-slash or platform separators. The downloader Files() APIs
+// normalise to forward slash already, but checking both is defensive — a
+// rogue Windows-format response then can't smuggle a "..\\" past the
+// guard.
+func hasDotDotSegment(p string) bool {
+	for _, seg := range strings.Split(filepath.ToSlash(p), "/") {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveAudiobookSource decides what to move/copy/hardlink for an audiobook
+// import when the caller supplied an explicit per-torrent file list. The
+// audiobook flow normally moves the whole download folder so cover art,
+// cue sheets and other non-book companions land together, which is wrong
+// for a single-file torrent whose downloadPath is a shared download root
+// (issue #903).
+//
+// Returns either (path, false) when a safe source path is found:
+//
+//   - For a single book file the file's path itself (the existing
+//     not-a-directory branch then places it inside destDir).
+//   - For multiple book files sharing a common directory strictly under
+//     downloadPath, that common directory (so companion files within the
+//     torrent's folder ride along).
+//
+// Returns ("", true) when no safe directory exists, signalling the caller
+// to fall back to per-file placement. This covers the shape where bookFiles
+// share no parent below the (shared) downloadPath, i.e. exactly the
+// dangerous case the issue describes.
+func (s *Scanner) resolveAudiobookSource(downloadPath string, bookFiles []string) (string, bool) {
+	if len(bookFiles) == 0 {
+		return downloadPath, false
+	}
+	if len(bookFiles) == 1 {
+		return bookFiles[0], false
+	}
+	common := filepath.Clean(filepath.Dir(bookFiles[0]))
+	for _, f := range bookFiles[1:] {
+		fDir := filepath.Clean(filepath.Dir(f))
+		// Walk common upward until it sits at or above fDir.
+		for common != fDir && !pathUnderDir(fDir, common) {
+			parent := filepath.Dir(common)
+			if parent == common {
+				break
+			}
+			common = parent
+		}
+	}
+	cleanDownload := filepath.Clean(downloadPath)
+	// Only accept a common directory that is strictly under downloadPath.
+	// Equal-to-downloadPath means the bookFiles sit at the shared download
+	// root (the issue #903 shape) and moving downloadPath would catch
+	// unrelated siblings. Outside-downloadPath should never happen if the
+	// remap is consistent; treat the same way.
+	if common == cleanDownload || !pathUnderDir(common, cleanDownload) {
+		return "", true
+	}
+	return common, false
+}
+
+// transmissionFilesFor calls Transmission's torrent-get "files" RPC for the
+// supplied torrent and returns the absolute Bindery-side book-file paths,
+// or nil when the call fails or the torrent reported no files yet. A nil
+// return signals tryImportInternal to fall back to filepath.Walk; the
+// caller is responsible for emitting the WARN log that records the
+// fallback so an operator can spot a misconfigured / unreachable client.
+func (s *Scanner) transmissionFilesFor(ctx context.Context, trans *transmission.Client, client *models.DownloadClient, torrent transmission.Torrent) []string {
+	files, err := trans.Files(ctx, torrent.ID)
+	if err != nil {
+		slog.Warn("import: Transmission Files RPC failed, falling back to directory walk (issue #903 fallback)",
+			"title", torrent.Name, "id", torrent.ID, "error", err)
+		return nil
+	}
+	if len(files) == 0 {
+		slog.Warn("import: Transmission reported no files for torrent yet, falling back to directory walk",
+			"title", torrent.Name, "id", torrent.ID)
+		return nil
+	}
+	conv := make([]torrentFile, 0, len(files))
+	for _, f := range files {
+		conv = append(conv, torrentFile{Name: f.Name, Size: f.Size})
+	}
+	return s.resolveTorrentFiles(client, torrent.DownloadDir, conv)
+}
+
+// qbittorrentFilesFor calls qBittorrent's /torrents/files API for the
+// supplied torrent and returns the absolute Bindery-side book-file paths,
+// or nil when the call fails or qBittorrent reported no files yet.
+//
+// SavePath, not ContentPath, is the join base: qBittorrent's files API
+// returns names that include the torrent's display folder (e.g.
+// "MyBook/file.epub") when the torrent has one, and just the basename for
+// single-file torrents. Joining against SavePath reproduces what's on disk
+// in both cases. ContentPath is the wrong base for multi-file torrents
+// because the file names already include the folder.
+func (s *Scanner) qbittorrentFilesFor(ctx context.Context, qb *qbittorrent.Client, client *models.DownloadClient, torrent qbittorrent.Torrent) []string {
+	files, err := qb.Files(ctx, torrent.Hash)
+	if err != nil {
+		slog.Warn("import: qBittorrent Files API failed, falling back to directory walk (issue #903 fallback)",
+			"title", torrent.Name, "hash", torrent.Hash, "error", err)
+		return nil
+	}
+	if len(files) == 0 {
+		slog.Warn("import: qBittorrent reported no files for torrent yet, falling back to directory walk",
+			"title", torrent.Name, "hash", torrent.Hash)
+		return nil
+	}
+	conv := make([]torrentFile, 0, len(files))
+	for _, f := range files {
+		conv = append(conv, torrentFile{Name: f.Name, Size: f.Size})
+	}
+	return s.resolveTorrentFiles(client, torrent.SavePath, conv)
 }
 
 func (s *Scanner) remapDownloadClientPath(client *models.DownloadClient, rawPath string) string {
@@ -1293,8 +1504,19 @@ func (s *Scanner) alreadyImportedPath(ctx context.Context, book *models.Book, de
 	return false
 }
 
-// tryImportInternal is the common import logic shared by SABnzbd and Transmission.
-func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, downloadPath, cleanupClientType, cleanupRemoteID string, cleanupFunc func() error) {
+// tryImportInternal is the common import logic shared by SABnzbd, NZBGet,
+// Transmission and qBittorrent.
+//
+// explicitFiles, when non-nil and non-empty, is the authoritative list of
+// absolute Bindery-side file paths that belong to the download. Passing it
+// short-circuits the legacy filepath.Walk(downloadPath) discovery and is
+// the issue #903 fix: with a shared download root (Transmission's default)
+// a single-file torrent's downloadPath is the entire shared root and a
+// directory walk would import every unrelated sibling. The list is built
+// from the per-client Files() RPC by the caller; pass nil when no such
+// list is available (older client API, RPC error) and the legacy walk
+// runs as the fallback.
+func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, downloadPath, cleanupClientType, cleanupRemoteID string, cleanupFunc func() error, explicitFiles []string) {
 	if s.libraryDir == "" {
 		slog.Warn("no library directory configured, skipping import")
 		// Not writable/configured — needs user action before import can proceed.
@@ -1331,18 +1553,29 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		return
 	}
 
-	// Find book files in the download path
+	// Find book files. When the caller supplied an explicit per-torrent file
+	// list (issue #903: built from the client's authoritative Files() RPC),
+	// use that directly; it is strictly more precise than filepath.Walk and
+	// avoids importing unrelated siblings when downloadPath is a shared
+	// download root. Falling through to the walk preserves behaviour for
+	// callers that can't (or don't yet) supply a file list (SABnzbd/NZBGet
+	// per-job destDir, plus the RPC-failure fallback path for torrent
+	// clients).
 	var bookFiles []string
-	if err := filepath.Walk(downloadPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+	if len(explicitFiles) > 0 {
+		bookFiles = explicitFiles
+	} else {
+		if err := filepath.Walk(downloadPath, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			if IsBookFile(path) {
+				bookFiles = append(bookFiles, path)
+			}
 			return nil
+		}); err != nil {
+			slog.Warn("failed to walk download path", "path", downloadPath, "error", err)
 		}
-		if IsBookFile(path) {
-			bookFiles = append(bookFiles, path)
-		}
-		return nil
-	}); err != nil {
-		slog.Warn("failed to walk download path", "path", downloadPath, "error", err)
 	}
 
 	if len(bookFiles) == 0 {
@@ -1445,43 +1678,88 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		}
 		destDir := UniqueDir(audiobookDest)
 		mode := importMode
-		slog.Info("importing audiobook folder", "src", downloadPath, "dst", destDir, "mode", mode)
+		// audiobookSource is the path the move/copy/hardlink will operate on.
+		// When the caller supplied an explicit per-torrent file list (issue
+		// #903), prefer that to downloadPath: downloadPath can be a shared
+		// download root for single-file torrents and moving the whole root
+		// would drag in unrelated sibling files. resolveAudiobookSource
+		// inspects bookFiles and returns either the lone file (single-file
+		// torrent), the torrent's strict subdir (multi-file torrent unpacked
+		// into its own folder), or "" with usePerFile=true to fall through to
+		// per-file placement.
+		audiobookSource := downloadPath
+		usePerFile := false
+		if len(explicitFiles) > 0 {
+			src, perFile := s.resolveAudiobookSource(downloadPath, bookFiles)
+			usePerFile = perFile
+			if !perFile {
+				audiobookSource = src
+			}
+		}
+		slog.Info("importing audiobook folder", "src", audiobookSource, "dst", destDir, "mode", mode, "perFile", usePerFile)
 		// Single-file audiobook releases (e.g. a lone .m4b from a torrent) give
 		// us a file path rather than a folder. MoveDir/CopyDir/HardlinkDir all
 		// reject non-directory sources, so place the file inside destDir.
-		srcInfo, statErr := os.Stat(downloadPath)
-		if statErr != nil {
-			slog.Error("failed to stat audiobook source", "src", downloadPath, "error", statErr)
-			s.failImport(ctx, dl, models.StateImportBlocked, fmt.Sprintf("audiobook source unavailable: %v", statErr))
-			return
-		}
 		var dirErr error
-		if srcInfo.IsDir() {
-			switch mode {
-			case "hardlink":
-				dirErr = HardlinkDir(downloadPath, destDir)
-			case "copy":
-				dirErr = CopyDirCtx(importCtx, downloadPath, destDir)
-			default:
-				dirErr = MoveDirCtx(importCtx, downloadPath, destDir)
-			}
-		} else {
+		if usePerFile {
+			// Files don't share a strict subdir under downloadPath; copy each
+			// known file into destDir individually. This loses cover art and
+			// cue sheets that the dir walk would have grabbed, but is safer
+			// than moving the shared download root.
 			if err := os.MkdirAll(destDir, 0o750); err != nil {
 				dirErr = fmt.Errorf("create audiobook dest dir: %w", err)
 			} else {
-				dstFile := filepath.Join(destDir, filepath.Base(downloadPath))
+				for _, srcFile := range bookFiles {
+					dstFile := filepath.Join(destDir, filepath.Base(srcFile))
+					var fileErr error
+					switch mode {
+					case "hardlink":
+						fileErr = HardlinkFile(srcFile, dstFile)
+					case "copy":
+						fileErr = CopyFileCtx(importCtx, srcFile, dstFile)
+					default:
+						fileErr = MoveFileCtx(importCtx, srcFile, dstFile)
+					}
+					if fileErr != nil {
+						dirErr = fileErr
+						break
+					}
+				}
+			}
+		} else {
+			srcInfo, statErr := os.Stat(audiobookSource)
+			if statErr != nil {
+				slog.Error("failed to stat audiobook source", "src", audiobookSource, "error", statErr)
+				s.failImport(ctx, dl, models.StateImportBlocked, fmt.Sprintf("audiobook source unavailable: %v", statErr))
+				return
+			}
+			if srcInfo.IsDir() {
 				switch mode {
 				case "hardlink":
-					dirErr = HardlinkFile(downloadPath, dstFile)
+					dirErr = HardlinkDir(audiobookSource, destDir)
 				case "copy":
-					dirErr = CopyFileCtx(importCtx, downloadPath, dstFile)
+					dirErr = CopyDirCtx(importCtx, audiobookSource, destDir)
 				default:
-					dirErr = MoveFileCtx(importCtx, downloadPath, dstFile)
+					dirErr = MoveDirCtx(importCtx, audiobookSource, destDir)
+				}
+			} else {
+				if err := os.MkdirAll(destDir, 0o750); err != nil {
+					dirErr = fmt.Errorf("create audiobook dest dir: %w", err)
+				} else {
+					dstFile := filepath.Join(destDir, filepath.Base(audiobookSource))
+					switch mode {
+					case "hardlink":
+						dirErr = HardlinkFile(audiobookSource, dstFile)
+					case "copy":
+						dirErr = CopyFileCtx(importCtx, audiobookSource, dstFile)
+					default:
+						dirErr = MoveFileCtx(importCtx, audiobookSource, dstFile)
+					}
 				}
 			}
 		}
 		if dirErr != nil {
-			slog.Error("failed to import audiobook folder", "src", downloadPath, "mode", mode, "error", dirErr)
+			slog.Error("failed to import audiobook folder", "src", audiobookSource, "mode", mode, "error", dirErr)
 			s.failImport(ctx, dl, models.StateImportBlocked, fmt.Sprintf("audiobook %s failed: %v", mode, dirErr))
 			return
 		}

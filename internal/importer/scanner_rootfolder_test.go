@@ -400,7 +400,7 @@ func TestAudiobookImport_UsesPerAuthorAudiobookRootFolder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s.tryImportInternal(ctx, dl, downloadPath, "", "", nil)
+	s.tryImportInternal(ctx, dl, downloadPath, "", "", nil, nil)
 
 	got, err := books.GetByID(ctx, book.ID)
 	if err != nil {
@@ -498,7 +498,7 @@ func TestAudiobookImport_UsesAudiobookDirNotEbookRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s.tryImportInternal(ctx, dl, downloadPath, "", "", nil)
+	s.tryImportInternal(ctx, dl, downloadPath, "", "", nil, nil)
 
 	// The book's audiobook file path must live under audiobookDir, not under
 	// the per-author ebook root (ebookRoot).

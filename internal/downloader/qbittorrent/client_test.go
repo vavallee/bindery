@@ -1776,3 +1776,121 @@ func TestTest_V4AndV5_VersionString(t *testing.T) {
 		})
 	}
 }
+
+// TestClient_Files_ReturnsRelativeNames verifies that Files() decodes the
+// /api/v2/torrents/files response into the importer's []File shape with
+// names left relative to the torrent's save path. Issue #903 regression
+// guard: the importer joins these names with save_path to identify the
+// exact files of THIS torrent, avoiding a walk of the shared download
+// root.
+func TestClient_Files_ReturnsRelativeNames(t *testing.T) {
+	const hash = "deadbeef1234567890deadbeef1234567890dead"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/files":
+			if got := r.URL.Query().Get("hash"); got != hash {
+				t.Errorf("Files: missing or wrong hash query, got %q", got)
+			}
+			_, _ = w.Write([]byte(`[
+				{"name":"MyBook/disc01.m4b","size":1024,"progress":1,"priority":1},
+				{"name":"MyBook/disc02.m4b","size":2048,"progress":1,"priority":1},
+				{"name":"MyBook/cover.jpg","size":128,"progress":1,"priority":1}
+			]`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	files, err := c.Files(context.Background(), hash)
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	if len(files) != 3 {
+		t.Fatalf("want 3 files, got %d", len(files))
+	}
+	if files[0].Name != "MyBook/disc01.m4b" || files[0].Size != 1024 {
+		t.Errorf("file 0 mismatch: %+v", files[0])
+	}
+	if files[2].Name != "MyBook/cover.jpg" {
+		t.Errorf("file 2 mismatch: %+v", files[2])
+	}
+}
+
+// TestClient_Files_SingleFileTorrent — the issue #903 shape: a torrent
+// containing a single loose file at the save root. Name is just the
+// basename so the importer can resolve it directly via SavePath join.
+func TestClient_Files_SingleFileTorrent(t *testing.T) {
+	const hash = "1111111111111111111111111111111111111111"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/files":
+			_, _ = w.Write([]byte(`[{"name":"standalone-book.m4b","size":50000,"progress":1}]`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	files, err := c.Files(context.Background(), hash)
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	if len(files) != 1 || files[0].Name != "standalone-book.m4b" {
+		t.Errorf("expected single basename-only file, got %+v", files)
+	}
+}
+
+// TestClient_Files_TorrentMissing — qBittorrent returns 404 for an unknown
+// hash. Files() surfaces this as an error so the importer can decide to
+// fall back to the directory walk (with a WARN) rather than swallowing the
+// signal.
+func TestClient_Files_TorrentMissing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/files":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	if _, err := c.Files(context.Background(), "nonexistent-hash"); err == nil {
+		t.Fatal("expected error for unknown torrent hash")
+	}
+}
+
+// TestClient_Files_WindowsBackslashesNormalized — a Windows qBittorrent
+// instance reports nested file names with backslashes. The importer
+// downstream uses forward-slash path operations, so Files() must normalize
+// at the API boundary.
+func TestClient_Files_WindowsBackslashesNormalized(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/files":
+			_, _ = w.Write([]byte(`[{"name":"MyBook\\disc01.m4b","size":1024}]`))
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	files, err := c.Files(context.Background(), "h")
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	if len(files) != 1 || files[0].Name != "MyBook/disc01.m4b" {
+		t.Errorf("backslash not normalized: %+v", files)
+	}
+}

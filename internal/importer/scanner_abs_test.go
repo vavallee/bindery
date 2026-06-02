@@ -94,7 +94,7 @@ func TestTryImportInternal_NotifiesABSAfterAudiobookImport(t *testing.T) {
 	const wantLibraryID = "lib-audiobooks-123"
 	s.WithABSNotifier(notifier, func() []string { return []string{wantLibraryID} })
 
-	s.tryImportInternal(ctx, dl, downloadPath, "qbittorrent", "abc123", nil)
+	s.tryImportInternal(ctx, dl, downloadPath, "qbittorrent", "abc123", nil, nil)
 
 	if len(notifier.scanCalls) != 1 {
 		t.Fatalf("expected 1 ScanLibrary call after audiobook import, got %d", len(notifier.scanCalls))
@@ -118,7 +118,7 @@ func TestTryImportInternal_NotifiesAllConfiguredABSLibraries(t *testing.T) {
 	notifier := &fakeABSNotifier{}
 	s.WithABSNotifier(notifier, func() []string { return []string{"lib-books", "lib-audio", "lib-books", ""} })
 
-	s.tryImportInternal(ctx, dl, downloadPath, "qbittorrent", "abc123", nil)
+	s.tryImportInternal(ctx, dl, downloadPath, "qbittorrent", "abc123", nil, nil)
 
 	if got, want := len(notifier.scanCalls), 2; got != want {
 		t.Fatalf("ScanLibrary calls = %d, want %d: %v", got, want, notifier.scanCalls)
@@ -166,7 +166,7 @@ func TestTryImportInternal_DoesNotNotifyABSForEbookImport(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s.tryImportInternal(ctx, dl, downloadPath, "qbittorrent", "abc123", nil)
+	s.tryImportInternal(ctx, dl, downloadPath, "qbittorrent", "abc123", nil, nil)
 
 	if len(notifier.scanCalls) != 0 {
 		t.Fatalf("expected 0 ScanLibrary calls for ebook import, got %d: %v", len(notifier.scanCalls), notifier.scanCalls)
@@ -191,7 +191,7 @@ func TestTryImportInternal_ABSNotifySkippedWhenNoLibraryID(t *testing.T) {
 	// Library ID resolver returns "" — ABS not configured.
 	s.WithABSNotifier(notifier, func() []string { return nil })
 
-	s.tryImportInternal(ctx, dl, downloadPath, "qbittorrent", "abc123", nil)
+	s.tryImportInternal(ctx, dl, downloadPath, "qbittorrent", "abc123", nil, nil)
 
 	if len(notifier.scanCalls) != 0 {
 		t.Fatalf("expected 0 ScanLibrary calls when libraryID is empty, got %d", len(notifier.scanCalls))
