@@ -27,11 +27,19 @@ const searchBookTimeout = 60 * time.Second
 
 // Searcher coordinates searches across multiple Newznab indexers.
 type Searcher struct {
-	// newClient is the factory used to create per-indexer newznab clients.
-	// nil uses newznab.New, which builds a client with the SSRF-hardened
-	// transport. Tests that run against httptest servers can inject a factory
-	// that bypasses the dialer.
+	// newClient is the factory used to create per-indexer newznab clients
+	// on a cache miss. nil uses newznab.New, which builds a client with the
+	// SSRF-hardened transport. Tests that run against httptest servers can
+	// inject a factory that bypasses the dialer.
 	newClient func(baseURL, apiKey string) *newznab.Client
+
+	// cache pools *newznab.Client instances across calls so connection
+	// reuse via the shared transport actually pays off (finding 9, Wave 3
+	// deep audit). Lazily initialised on first SearchBook / SearchQuery so
+	// tests that mutate Searcher.newClient before any call still get a
+	// cache that respects their factory.
+	cacheOnce sync.Once
+	cache     *clientCache
 }
 
 // NewSearcher creates a new multi-indexer searcher.
@@ -59,13 +67,17 @@ type MatchCriteria struct {
 	AuthorAliases    []string // alternate names (e.g. latin-script romanisations for non-latin authors)
 }
 
-// makeClient creates a newznab client using the injected factory, falling
-// back to newznab.New (with its SSRF-hardened transport) when none is set.
+// makeClient returns a (possibly cached) newznab client for the given
+// indexer config. The pool is keyed on (baseURL, apiKey) so successive
+// searches against the same indexer reuse the same *Client (and therefore
+// the same connection-keep-alive state on the shared transport). On a
+// cache miss the injected newClient factory is used, falling back to
+// newznab.New (SSRF-hardened transport) when none is set.
 func (s *Searcher) makeClient(baseURL, apiKey string) *newznab.Client {
-	if s.newClient != nil {
-		return s.newClient(baseURL, apiKey)
-	}
-	return newznab.New(baseURL, apiKey)
+	s.cacheOnce.Do(func() {
+		s.cache = newClientCache(s.newClient)
+	})
+	return s.cache.get(baseURL, apiKey)
 }
 
 // filterCategoriesForMedia returns the subset of configured indexer
