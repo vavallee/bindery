@@ -32,6 +32,7 @@ type BookHandler struct {
 	authors   *db.AuthorRepo
 	series    *db.SeriesRepo
 	editions  *db.EditionRepo
+	roots     *LibraryRoots // optional: library-root containment for delete
 
 	editionFetcher bookhydrate.EditionFetcher
 }
@@ -81,6 +82,14 @@ func (h *BookHandler) WithSeries(s *db.SeriesRepo) *BookHandler {
 // metadata identities.
 func (h *BookHandler) WithEditionHydration(editions *db.EditionRepo) *BookHandler {
 	h.editions = editions
+	return h
+}
+
+// WithRoots wires the library-root containment checker used by the delete
+// handlers to refuse on-disk removal of paths outside the configured library.
+// A nil value disables the check (the default; preserves legacy test wiring).
+func (h *BookHandler) WithRoots(r *LibraryRoots) *BookHandler {
+	h.roots = r
 	return h
 }
 
@@ -367,11 +376,16 @@ func (h *BookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Opt-in `?deleteFiles=true` also removes every on-disk file tracked in
-	// book_files before dropping the record.
+	// book_files before dropping the record. Each path is first run through
+	// the library-root containment check (Wave 1 / Bundle B) so a tampered
+	// or mis-imported `file_path` outside any configured root cannot redirect
+	// the on-disk delete. Skipped paths are WARN-logged; the DB delete below
+	// still proceeds — the row is going away regardless, and a loud refusal
+	// is better than silently walking outside the library.
 	if r.URL.Query().Get("deleteFiles") == "true" {
 		files, _ := h.books.ListFiles(r.Context(), id)
 		for _, f := range files {
-			if err := removeBookPath(f.Path); err != nil {
+			if _, err := safeRemoveBookPath(r.Context(), h.roots, f.Path, "", "id", id); err != nil {
 				slog.Warn("book delete: failed to remove file", "id", id, "path", f.Path, "error", err)
 			}
 		}
@@ -380,7 +394,7 @@ func (h *BookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			if book, _ := h.books.GetByID(r.Context(), id); book != nil {
 				for _, p := range []string{book.EbookFilePath, book.AudiobookFilePath, book.FilePath} {
 					if p != "" {
-						if err := removeBookPath(p); err != nil {
+						if _, err := safeRemoveBookPath(r.Context(), h.roots, p, "", "id", id); err != nil {
 							slog.Warn("book delete: failed to remove legacy file", "id", id, "path", p, "error", err)
 						}
 					}
@@ -464,14 +478,21 @@ func (h *BookHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	// Remove files from disk and from book_files. When a format filter is
 	// supplied, the stem-sibling sweep is scoped to that format so deleting
 	// the ebook does not also destroy the audiobook sibling (and vice versa).
+	// Paths failing the library-root containment check are skipped (with a
+	// WARN log); the book_files row is still deregistered so the orphaned
+	// path stops surfacing in subsequent reads. Returning 500 instead would
+	// strand the row permanently behind a path the user cannot delete.
 	var deletedPaths []string
 	for _, p := range toDelete {
-		if err := removeBookPathScoped(p, format); err != nil {
+		skipped, err := safeRemoveBookPath(r.Context(), h.roots, p, format, "id", id)
+		if err != nil {
 			slog.Error("failed to remove book file", "id", id, "path", p, "error", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		deletedPaths = append(deletedPaths, p)
+		if !skipped {
+			deletedPaths = append(deletedPaths, p)
+		}
 		if _, err := h.books.RemoveBookFile(r.Context(), p); err != nil {
 			slog.Warn("failed to deregister book file", "id", id, "path", p, "error", err)
 		}
@@ -501,12 +522,6 @@ func (h *BookHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, book)
-}
-
-// removeBookPath deletes a file or directory at p with an unscoped stem
-// sweep — see removeBookPathScoped. Used when no format filter is supplied.
-func removeBookPath(p string) error {
-	return removeBookPathScoped(p, "")
 }
 
 // removeBookPathScoped deletes a file or directory at p. Audiobooks are stored
