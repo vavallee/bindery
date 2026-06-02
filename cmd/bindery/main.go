@@ -155,7 +155,6 @@ func main() {
 	notificationRepo := db.NewNotificationRepo(database)
 	qualityProfileRepo := db.NewQualityProfileRepo(database)
 	seriesRepo := db.NewSeriesRepo(database)
-	tagRepo := db.NewTagRepo(database)
 	rootFolderRepo := db.NewRootFolderRepo(database)
 	importListRepo := db.NewImportListRepo(database)
 	prowlarrRepo := db.NewProwlarrRepo(database)
@@ -537,7 +536,6 @@ func main() {
 		WithHardcoverFeatureSettings(settingsRepo, cfg.EnhancedHardcoverAPI).
 		WithFinder(importScanner).
 		WithEditionHydration(editionRepo)
-	tagHandler := api.NewTagHandler(tagRepo)
 	importListHandler := api.NewImportListHandler(importListRepo, settingsRepo, hcSyncer)
 	metadataProfileHandler := api.NewMetadataProfileHandler(metadataProfileRepo)
 	delayProfileHandler := api.NewDelayProfileHandler(delayProfileRepo)
@@ -830,11 +828,6 @@ func main() {
 		r.Get("/recommendations/exclude-author", recHandler.ListAuthorExclusions)
 		r.Post("/recommendations/exclude-author", recHandler.ExcludeAuthor)
 		r.Delete("/recommendations/exclude-author/{name}", recHandler.RemoveAuthorExclusion)
-
-		// Tags
-		r.Get("/tag", tagHandler.List)
-		r.Post("/tag", tagHandler.Create)
-		r.Delete("/tag/{id}", tagHandler.Delete)
 
 		// Import lists, delay profiles, custom formats: shared deployment
 		// config, not per-user content. Reads and writes are admin-only so

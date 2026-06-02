@@ -431,11 +431,6 @@ export const api = {
   unlinkSeriesHardcover: (id: number) => request<{ success: boolean }>(`/series/${id}/hardcover-link`, { method: 'DELETE' }),
   getSeriesHardcoverDiff: (id: number) => request<SeriesHardcoverDiff>(`/series/${id}/hardcover-diff`),
 
-  // Tags
-  listTags: () => request<Tag[]>('/tag'),
-  addTag: (name: string) => request<Tag>('/tag', { method: 'POST', body: JSON.stringify({ name }) }),
-  deleteTag: (id: number) => request<void>(`/tag/${id}`, { method: 'DELETE' }),
-
   // Settings
   listSettings: () => request<Array<{ key: string; value: string }>>('/setting'),
   getSetting: (key: string) => request<{ key: string; value: string }>(`/setting/${key}`),
@@ -1347,11 +1342,6 @@ export interface Series {
     book?: Book
   }>
   hardcoverLink?: SeriesHardcoverLink
-}
-
-export interface Tag {
-  id: number
-  name: string
 }
 
 export interface MetadataProfile {

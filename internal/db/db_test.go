@@ -227,6 +227,52 @@ func TestMigrate047ListEndpointIndexes(t *testing.T) {
 	}
 }
 
+// TestMigrate049DropTags verifies migration 049 removes the dormant tag
+// surface: the tags and author_tags tables are gone, and the unused
+// `tags` columns on indexers and download_clients are dropped.
+//
+// The audit (D4a) confirmed zero application call sites for any of these,
+// so the drop is safe. This test pins the schema shape so a regression
+// that resurrects the tables fails loudly.
+func TestMigrate049DropTags(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatalf("open memory db: %v", err)
+	}
+	defer database.Close()
+
+	// Both tables must be absent post-migration.
+	for _, table := range []string{"tags", "author_tags"} {
+		var name string
+		err := database.QueryRow(
+			`SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
+			table,
+		).Scan(&name)
+		if err == nil {
+			t.Errorf("table %q still exists after migration 049", table)
+		}
+	}
+
+	// The dead `tags` columns on indexers / download_clients must be gone.
+	for _, table := range []string{"indexers", "download_clients"} {
+		var col string
+		err := database.QueryRow(
+			`SELECT name FROM pragma_table_info(?) WHERE name='tags'`,
+			table,
+		).Scan(&col)
+		if err == nil {
+			t.Errorf("%s.tags column still exists after migration 049", table)
+		}
+	}
+
+	// Re-running migrate must be a no-op (the schema_migrations marker
+	// guards the re-run; the migration itself is not idempotent because
+	// ALTER TABLE DROP COLUMN errors when the column is already absent).
+	if err := migrate(database); err != nil {
+		t.Fatalf("rerun migrations should be idempotent: %v", err)
+	}
+}
+
 // TestMigrate042AuthorAudiobookRootFolder verifies migration 042 adds the
 // audiobook_root_folder_id column to the authors table (#579) and that the
 // column round-trips a value through CreateForUser / GetByID.
