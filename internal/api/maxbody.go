@@ -3,8 +3,19 @@ package api
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
+	"sync"
 )
+
+// Wiring contract: when this package's middleware is mounted, PreserveRawBody
+// MUST run before MaxRequestBody at the router root, and both must run before
+// any per-route WithMaxBody override. Skipping PreserveRawBody silently clamps
+// per-route overrides to DefaultMaxRequestBody (because chi runs Use before
+// With and MaxBytesReader cannot be unwrapped). The fallback path in
+// WithMaxBody logs a one-shot warning when this invariant is broken so the
+// misconfiguration shows up in dev / staging logs rather than only as a 400
+// on the first oversized upload.
 
 // DefaultMaxRequestBody is the per-request body cap applied by MaxRequestBody
 // when no per-route override is in effect. It is intentionally small:
@@ -78,12 +89,19 @@ func WithMaxBody(n int64) func(http.Handler) http.Handler {
 			}
 			raw, ok := r.Context().Value(origBodyCtxKey{}).(io.ReadCloser)
 			if !ok {
-				// PreserveRawBody was not in the chain (test fixtures, future
-				// embedders). Fall back to wrapping whatever is on r.Body.
-				// When the chain does not include the default cap this is
-				// the correct outcome; when it does, the smaller inner cap
-				// will still win but the developer is no worse off than
-				// without WithMaxBody.
+				// PreserveRawBody was not in the chain. In test fixtures
+				// constructing handlers directly this is fine. In production
+				// it means a per-route override is being silently clamped to
+				// the default cap (because MaxBytesReader cannot be
+				// unwrapped). Warn once so the misconfiguration is
+				// observable; further requests stay quiet to avoid log
+				// spam.
+				warnMissingPreserveRawBody.Do(func() {
+					slog.Warn("WithMaxBody installed without PreserveRawBody upstream; per-route override may be silently capped at DefaultMaxRequestBody",
+						"defaultLimit", DefaultMaxRequestBody,
+						"overrideLimit", n,
+					)
+				})
 				raw = r.Body
 			}
 			r.Body = http.MaxBytesReader(w, raw, n)
@@ -91,6 +109,12 @@ func WithMaxBody(n int64) func(http.Handler) http.Handler {
 		})
 	}
 }
+
+// warnMissingPreserveRawBody guards the slog.Warn fired the first time
+// WithMaxBody runs without PreserveRawBody upstream. The sync.Once keeps it
+// to one warning per process lifetime; logging on every request would flood
+// at the same rate as the offending route's traffic without adding info.
+var warnMissingPreserveRawBody sync.Once
 
 // hasRequestBody reports whether the HTTP method routinely carries a request
 // body. GET, HEAD, DELETE, and OPTIONS do not in any handler Bindery
