@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -41,6 +42,11 @@ func (h *AuthorAliasHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
 		return
 	}
+	// Tier-1 cross-user IDOR guard (D1).
+	if !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
+		return
+	}
 	aliases, err := h.aliases.ListByAuthor(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -71,6 +77,11 @@ func (h *AuthorAliasHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if author == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
+		return
+	}
+	// Tier-1 cross-user IDOR guard (D1).
+	if !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
 		return
 	}
@@ -121,14 +132,17 @@ func (h *AuthorAliasHandler) Merge(w http.ResponseWriter, r *http.Request) {
 
 	// Validate both exist up-front so the UI gets a 404 instead of a 500.
 	// The transaction inside Merge re-reads them under lock anyway, so this
-	// is only a preflight.
+	// is only a preflight. Both rows must also pass the Tier-1 cross-user
+	// ownership check (D1) so a non-owner cannot merge an unrelated author
+	// (source) into one of their own, or absorb their author into someone
+	// else's row (target).
 	for _, id := range []int64{req.SourceID, targetID} {
 		a, err := h.authors.GetByID(r.Context(), id)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		if a == nil {
+		if a == nil || !auth.CheckOwnership(r.Context(), a.OwnerUserID) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found: " + strconv.FormatInt(id, 10)})
 			return
 		}

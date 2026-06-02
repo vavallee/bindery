@@ -33,7 +33,7 @@ func (r *AuthorRepo) WithTx(tx *sql.Tx) *AuthorRepo {
 const authorSelectCols = `id, foreign_id, name, sort_name, description, image_url, disambiguation,
 	       ratings_count, average_rating, monitored, quality_profile_id, metadata_profile_id, root_folder_id,
 	       audiobook_root_folder_id, monitor_mode, monitor_latest_count, metadata_provider, last_metadata_refresh_at,
-	       created_at, updated_at`
+	       created_at, updated_at, COALESCE(owner_user_id, 0)`
 
 func (r *AuthorRepo) List(ctx context.Context) ([]models.Author, error) {
 	return r.ListByUser(ctx, 0)
@@ -336,7 +336,7 @@ func scanAuthor(rows *sql.Rows) (models.Author, error) {
 		&a.Disambiguation, &a.RatingsCount, &a.AverageRating, &monitored,
 		&a.QualityProfileID, &a.MetadataProfileID, &a.RootFolderID, &a.AudiobookRootFolderID,
 		&a.MonitorMode, &a.MonitorLatestCount, &a.MetadataProvider,
-		&a.LastMetadataRefreshAt, &a.CreatedAt, &a.UpdatedAt)
+		&a.LastMetadataRefreshAt, &a.CreatedAt, &a.UpdatedAt, &a.OwnerUserID)
 	a.Monitored = monitored == 1
 	normalizeAuthorMonitorDefaults(&a)
 	return a, err
@@ -349,7 +349,7 @@ func scanAuthorRow(row *sql.Row) (models.Author, error) {
 		&a.Disambiguation, &a.RatingsCount, &a.AverageRating, &monitored,
 		&a.QualityProfileID, &a.MetadataProfileID, &a.RootFolderID, &a.AudiobookRootFolderID,
 		&a.MonitorMode, &a.MonitorLatestCount, &a.MetadataProvider,
-		&a.LastMetadataRefreshAt, &a.CreatedAt, &a.UpdatedAt)
+		&a.LastMetadataRefreshAt, &a.CreatedAt, &a.UpdatedAt, &a.OwnerUserID)
 	a.Monitored = monitored == 1
 	normalizeAuthorMonitorDefaults(&a)
 	return a, err

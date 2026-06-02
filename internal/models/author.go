@@ -30,6 +30,13 @@ type Author struct {
 	CreatedAt             time.Time  `json:"createdAt"`
 	UpdatedAt             time.Time  `json:"updatedAt"`
 
+	// OwnerUserID is the per-user ownership column added in migration 025.
+	// Zero means "no recorded owner" (legacy pre-backfill rows or rows
+	// imported without a user context); CheckOwnership treats that as
+	// visible to every authenticated caller. The field is not exposed in
+	// JSON: it is an internal scoping hint, not API contract.
+	OwnerUserID int64 `json:"-"`
+
 	// Joined data
 	Books      []Book        `json:"books,omitempty"`
 	Statistics *AuthorStats  `json:"statistics,omitempty"`

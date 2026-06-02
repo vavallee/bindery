@@ -20,7 +20,7 @@ func NewRootFolderRepo(db *sql.DB) *RootFolderRepo {
 
 func (r *RootFolderRepo) List(ctx context.Context) ([]models.RootFolder, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, path, free_space, created_at FROM root_folders ORDER BY id`)
+		`SELECT id, path, free_space, created_at, COALESCE(owner_user_id, 0) FROM root_folders ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -29,7 +29,7 @@ func (r *RootFolderRepo) List(ctx context.Context) ([]models.RootFolder, error) 
 	var folders []models.RootFolder
 	for rows.Next() {
 		var f models.RootFolder
-		if err := rows.Scan(&f.ID, &f.Path, &f.FreeSpace, &f.CreatedAt); err != nil {
+		if err := rows.Scan(&f.ID, &f.Path, &f.FreeSpace, &f.CreatedAt, &f.OwnerUserID); err != nil {
 			return nil, err
 		}
 		folders = append(folders, f)
@@ -40,8 +40,8 @@ func (r *RootFolderRepo) List(ctx context.Context) ([]models.RootFolder, error) 
 func (r *RootFolderRepo) GetByID(ctx context.Context, id int64) (*models.RootFolder, error) {
 	var f models.RootFolder
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, path, free_space, created_at FROM root_folders WHERE id=?`, id).
-		Scan(&f.ID, &f.Path, &f.FreeSpace, &f.CreatedAt)
+		`SELECT id, path, free_space, created_at, COALESCE(owner_user_id, 0) FROM root_folders WHERE id=?`, id).
+		Scan(&f.ID, &f.Path, &f.FreeSpace, &f.CreatedAt, &f.OwnerUserID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
