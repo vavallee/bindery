@@ -6,6 +6,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **First-run onboarding guidance on empty Authors/Books pages** — when a brand-new instance has no authors/books *and* no indexers or download clients configured, the empty state now shows a short "Getting started" block linking to **Settings → Indexers** and **Settings → Download Clients**, explaining they must be configured first (without them, adding an author or searching silently does nothing). The block only appears when both are empty and falls back to the normal empty state if the checks fail. Settings tabs are now deep-linkable via `?tab=indexers` / `?tab=clients`.
+
 ## [v1.16.0] — 2026-06-03
 
 Security and hardening release. The bulk of this version is an audit-driven hardening pass (the **D1–D4** access-control findings and the **Wave 2–5** robustness sweep), opt-in per-user data isolation, a batch of performance work, and a long tail of import/scheduler correctness fixes. No breaking config changes, but two behaviour changes worth noting before upgrading: list endpoints are now paginated and request bodies are capped at 1 MiB by default (see **Changed**).

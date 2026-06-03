@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import ViewToggle from '../components/ViewToggle'
 import { useView } from '../components/useView'
+import GettingStartedGuidance from '../components/GettingStartedGuidance'
+import { useNeedsSetup } from '../components/useNeedsSetup'
 import { api, Book } from '../api/client'
 import BulkActionBar from '../components/BulkActionBar'
 import Pagination from '../components/Pagination'
@@ -36,6 +38,7 @@ export default function BooksPage() {
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<SortMode>('title-az')
   const [view, setView] = useView('books', 'grid')
+  const needsSetup = useNeedsSetup()
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
   const selectAllRef = useRef<HTMLInputElement>(null)
@@ -183,6 +186,7 @@ export default function BooksPage() {
         <div className="text-center py-16 text-slate-600 dark:text-zinc-500">
           {books.length === 0 ? (
             <>
+              {needsSetup && <GettingStartedGuidance reasonKey="gettingStarted.reasonBooks" />}
               <p className="font-medium">{t('books.empty')}</p>
               <p className="text-sm mt-1">{t('books.emptyHint')}</p>
             </>

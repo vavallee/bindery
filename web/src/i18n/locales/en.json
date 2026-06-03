@@ -697,6 +697,13 @@
       "goToSettings": "Go to Settings"
     }
   },
+  "gettingStarted": {
+    "title": "Getting started",
+    "reasonAuthors": "Configure an indexer and a download client before adding authors — without them, added authors won't fetch anything.",
+    "reasonBooks": "Configure an indexer and a download client before searching — without them, searches can't find or grab anything.",
+    "indexers": "Set up Indexers",
+    "downloadClients": "Set up Download Clients"
+  },
   "users": {
     "title": "Users",
     "colUsername": "Username",
