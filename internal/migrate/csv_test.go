@@ -215,7 +215,10 @@ func TestImportCSVAuthors_HappyPath(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var searchCalls int32
-	wg.Add(1) // one row has searchOnAdd=true
+	// The catalogue-fetch callback now fires for EVERY newly-created author,
+	// regardless of the searchOnAdd column (it fetches metadata only, never
+	// auto-grabs). Both rows below are new, so expect two callbacks.
+	wg.Add(2)
 	onSearch := func(_ *models.Author) {
 		atomic.AddInt32(&searchCalls, 1)
 		wg.Done()
@@ -239,16 +242,16 @@ func TestImportCSVAuthors_HappyPath(t *testing.T) {
 		t.Errorf("AddedNames=%v", res.AddedNames)
 	}
 
-	// Wait for the async onSearch callback for Andy Weir.
+	// Wait for the async catalogue-fetch callbacks for both authors.
 	done := make(chan struct{})
 	go func() { wg.Wait(); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("onSearchOnAdd callback never fired")
+		t.Fatal("catalogue-fetch callback never fired for all rows")
 	}
-	if atomic.LoadInt32(&searchCalls) != 1 {
-		t.Errorf("searchOnAdd invoked %d times, want 1", searchCalls)
+	if atomic.LoadInt32(&searchCalls) != 2 {
+		t.Errorf("catalogue-fetch invoked %d times, want 2", searchCalls)
 	}
 
 	// Isaac Asimov was imported with monitored=false.
@@ -261,6 +264,56 @@ func TestImportCSVAuthors_HappyPath(t *testing.T) {
 	}
 	if got.MetadataProvider != "openlibrary" {
 		t.Errorf("MetadataProvider=%q want 'openlibrary'", got.MetadataProvider)
+	}
+}
+
+// TestImportCSVAuthors_PlainNamePopulatesCatalogue is the regression guard for
+// the getting-started friction bug: a plain-name CSV row (no searchOnAdd
+// column) used to create an author with an EMPTY catalogue, so the library scan
+// matched nothing and the library looked empty. The catalogue-fetch callback
+// must now fire for plain-name rows too.
+func TestImportCSVAuthors_PlainNamePopulatesCatalogue(t *testing.T) {
+	database := newTestDB(t)
+	repo := db.NewAuthorRepo(database)
+
+	provider := &stubProvider{
+		searchAuthorsFn: func(_ context.Context, q string) ([]models.Author, error) {
+			return []models.Author{{Name: q, SortName: q, ForeignID: "OL-" + q}}, nil
+		},
+	}
+	agg := metadata.NewAggregator(provider)
+
+	var wg sync.WaitGroup
+	var calls int32
+	var gotName atomic.Value
+	wg.Add(1)
+	onSearch := func(a *models.Author) {
+		atomic.AddInt32(&calls, 1)
+		gotName.Store(a.Name)
+		wg.Done()
+	}
+
+	// Plain-name input (no comma -> plain list path; searchOnAdd is false).
+	res, err := ImportCSVAuthors(context.Background(), strings.NewReader("Andy Weir\n"), repo, agg, onSearch)
+	if err != nil {
+		t.Fatalf("ImportCSVAuthors: %v", err)
+	}
+	if res.Added != 1 {
+		t.Fatalf("Added=%d want 1 (failures: %v)", res.Added, res.Failures)
+	}
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("catalogue-fetch callback never fired for plain-name row")
+	}
+	if atomic.LoadInt32(&calls) != 1 {
+		t.Errorf("catalogue-fetch invoked %d times, want 1", calls)
+	}
+	if name, _ := gotName.Load().(string); name != "Andy Weir" {
+		t.Errorf("callback got author %q, want %q", name, "Andy Weir")
 	}
 }
 

@@ -555,7 +555,13 @@ func main() {
 	delayProfileHandler := api.NewDelayProfileHandler(delayProfileRepo)
 	customFormatHandler := api.NewCustomFormatHandler(customFormatRepo)
 	bulkHandler := api.NewBulkHandler(authorRepo, bookRepo, blocklistRepo, sched).
-		WithLifetimeCtx(appCtx)
+		WithLifetimeCtx(appCtx).
+		// Bulk "refresh" reuses the per-author catalogue fetch (metadata only,
+		// never auto-grabs). Resolve the default media type per call so newly
+		// discovered books inherit the global default, matching AuthorHandler.Refresh.
+		WithRefreshFunc(func(a *models.Author) {
+			authorHandler.FetchAuthorBooks(a, false, authorHandler.ResolveDefaultMediaType(appCtx))
+		})
 	backupHandler := api.NewBackupHandler(database, cfg.DBPath, cfg.DataDir)
 	rootFolderHandler := api.NewRootFolderHandler(rootFolderRepo)
 	logHandler := api.NewLogHandler(ring).WithLogRepo(logRepo).WithDBLogHandler(logDBHandler)

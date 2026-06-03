@@ -11,7 +11,24 @@ service:
 
 ingress:
   enabled: false
+  # Which kind of ingress object to render:
+  #   "traefik"  -> a Traefik IngressRoute CRD (traefik.io/v1alpha1). Requires
+  #                 Traefik with the listed entryPoints/certResolver. This was the
+  #                 only option historically and remains the default so existing
+  #                 installs are unchanged.
+  #   "standard" -> a portable networking.k8s.io/v1 Ingress, for nginx-ingress,
+  #                 GKE/EKS, etc. Use className/annotations/tls below.
+  type: traefik
   host: bindery.example.com
+  # --- standard Ingress options (type: standard) ---
+  className: ""
+  annotations: {}
+  # TLS blocks passed straight through to the Ingress spec, e.g.:
+  # tls:
+  #   - secretName: bindery-tls
+  #     hosts: [bindery.example.com]
+  tls: []
+  # --- Traefik IngressRoute options (type: traefik) ---
   entryPoints:
     - internal-https
   certResolver: internal
@@ -35,14 +52,16 @@ env:
   BINDERY_DATA_DIR: /config
   BINDERY_LOG_LEVEL: info
   BINDERY_DOWNLOAD_DIR: /downloads
-  BINDERY_LIBRARY_DIR: /media/BOOKS/incoming
+  BINDERY_LIBRARY_DIR: /books
   # Separate destination for audiobook imports. Leave unset to fall back
   # to BINDERY_LIBRARY_DIR.
   # BINDERY_AUDIOBOOK_DIR: /audiobooks
   # Comma-separated from:to pairs rewriting paths reported by the download
-  # client into paths bindery can see. Needed when SAB and bindery run in
-  # separate pods with different mount points for the same storage.
-  BINDERY_DOWNLOAD_PATH_REMAP: /downloads:/media
+  # client into paths bindery can see. Only needed when the download client
+  # and bindery run in separate pods with different mount points for the same
+  # storage (e.g. with nfs.enabled). Leave unset for a single-pod install —
+  # a stray remap silently rewrites paths the importer then can't find.
+  # BINDERY_DOWNLOAD_PATH_REMAP: /downloads:/media
   # IP or CIDR of the reverse proxy in front of Bindery. When set, X-Forwarded-For
   # is trusted only from that address. Required for local-only auth mode to be safe.
   # BINDERY_TRUSTED_PROXY: "192.168.1.1"

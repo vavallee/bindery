@@ -125,7 +125,8 @@
     "unmonitored": "Unmonitored",
     "deleteConfirm": "Delete this author and all their books?",
     "deleteWithFilesConfirm": "Delete this author, {{total}} book(s), AND {{withFiles}} file(s)/folder(s) on disk?\n\nThis cannot be undone.",
-    "bulkDeleteConfirm": "Delete {{count}} author(s) and all their books?"
+    "bulkDeleteConfirm": "Delete {{count}} author(s) and all their books?",
+    "bulkRefreshMetadata": "Refresh metadata"
   },
   "authorDetail": {
     "bulk": {
@@ -512,6 +513,9 @@
       "filesFound": "Files found:",
       "reconciled": "Reconciled:",
       "unmatched": "Unmatched:",
+      "scannedPaths": "Scanned:",
+      "scanNoFilesWarning": "No book files found under {{path}} — check BINDERY_LIBRARY_DIR points at your library.",
+      "scanAllUnmatchedHint": "Files were found but none matched a book. Unmatched files need their author's book catalogue populated first — refresh the author (or re-run the import so it fetches books) and scan again.",
       "opds": "OPDS Feed",
       "opdsFeedUrl": "OPDS Feed URL",
       "opdsHint": "Use this URL in KOReader, Moon+ Reader, or any OPDS client. Authenticate with your API key as the password (leave the username blank or use any value).",
@@ -696,6 +700,13 @@
       "coldStart": "Add more books to unlock personalized genre recommendations.",
       "goToSettings": "Go to Settings"
     }
+  },
+  "gettingStarted": {
+    "title": "Getting started",
+    "reasonAuthors": "Configure an indexer and a download client before adding authors — without them, added authors won't fetch anything.",
+    "reasonBooks": "Configure an indexer and a download client before searching — without them, searches can't find or grab anything.",
+    "indexers": "Set up Indexers",
+    "downloadClients": "Set up Download Clients"
   },
   "users": {
     "title": "Users",

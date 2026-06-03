@@ -88,7 +88,11 @@ func TestClient(ctx context.Context, client *models.DownloadClient) error {
 		return ng.CheckCategories(ctx, client.Category, client.CategoryAudiobook)
 	default:
 		sab := SabnzbdFor(client)
-		return sab.Test(ctx)
+		// Pass the configured categories so Test validates them against SAB's
+		// category list at save time. Without this a typo'd category passes the
+		// reachability check, then downloads silently land in SAB's default
+		// category and the poller never finds them. Mirrors the NZBGet path above.
+		return sab.Test(ctx, client.Category, client.CategoryAudiobook)
 	}
 }
 
@@ -236,7 +240,7 @@ func GetStalledIDs(ctx context.Context, client *models.DownloadClient) (map[stri
 		// returns both Category and CategoryAudiobook when the latter is set
 		// (closes #700).
 		out := make(map[string]bool)
-		for _, cat := range categoriesToPoll(client) {
+		for _, cat := range CategoriesToPoll(client) {
 			torrents, err := qb.GetTorrents(ctx, cat)
 			if err != nil {
 				return nil, true, err
@@ -392,7 +396,7 @@ func getTorrentLiveStatuses(ctx context.Context, client *models.DownloadClient) 
 	// returns both Category and CategoryAudiobook when the latter is set
 	// (closes #700).
 	out := make(map[string]LiveStatus)
-	for _, cat := range categoriesToPoll(client) {
+	for _, cat := range CategoriesToPoll(client) {
 		torrents, err := qb.GetTorrents(ctx, cat)
 		if err != nil {
 			return nil, err

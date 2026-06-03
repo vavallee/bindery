@@ -168,10 +168,11 @@ Bindery is configured through the web UI under **Settings** — indexers, downlo
 | `BINDERY_LIBRARY_DIR` | `/books` | Imported ebook destination |
 | `BINDERY_AUDIOBOOK_DIR` | inherits library | Imported audiobook destination |
 | `BINDERY_DOWNLOAD_DIR` | `/downloads` | Where the download client deposits completed jobs |
+| `BINDERY_AUDIOBOOK_DOWNLOAD_DIR` | inherits download dir | Separate watch folder for audiobook downloads |
 | `BINDERY_URL_BASE` | _(empty)_ | Reverse-proxy subpath (e.g. `/bindery`) |
 | `BINDERY_PUID` / `PGID` | _(unset)_ | Sanity-check assertions for the container UID/GID |
 
-The full reference (path remapping, API-key seeding, OIDC, telemetry, rate-limit knobs, cookie-Secure policy) is in **[docs/DEPLOYMENT.md#environment-variables](docs/DEPLOYMENT.md#environment-variables)**.
+The full reference (path remapping, API-key seeding, telemetry, trusted-proxy, rate-limit knobs, cookie-Secure policy) is in **[docs/DEPLOYMENT.md#environment-variables](docs/DEPLOYMENT.md#environment-variables)**. OIDC and forward-auth proxy variables live in **[docs/auth-oidc.md](docs/auth-oidc.md)** and **[docs/auth-proxy.md](docs/auth-proxy.md)**.
 
 ## Supported integrations
 
@@ -228,7 +229,8 @@ The full endpoint catalogue, authentication rules (API key, session cookie, loca
 
 | Topic | Where |
 |-------|-------|
-| **Quickstart** — first author to first grab in 10 minutes | [Wiki](https://github.com/vavallee/bindery/wiki/Quickstart) |
+| **Quickstart** — zero to first download, end to end | [docs/QUICKSTART.md](docs/QUICKSTART.md) |
+| **Quickstart (wiki)** — first author to first grab in 10 minutes | [Wiki](https://github.com/vavallee/bindery/wiki/Quickstart) |
 | **Deployment** — Docker, Compose, k8s/Helm, binary, UID/GID, env vars, upgrades | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
 | **Architecture** — components, data flow, dependencies | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **API** — REST endpoints, auth, integration patterns | [docs/API.md](docs/API.md) |

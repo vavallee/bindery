@@ -48,8 +48,18 @@ func (r *Result) fail(name, reason string) {
 //
 // Each name is resolved via OpenLibrary SearchAuthors; the top match is
 // created. Duplicates (same foreign ID already in DB) are skipped rather
-// than errored. searchOnAdd=true triggers the same async book-fetch as
-// the AddAuthor UI, via onSearchOnAdd.
+// than errored.
+//
+// onSearchOnAdd is invoked for EVERY newly-created author so the catalogue is
+// always populated (mirrors the Readarr migrate path and the AddAuthor UI).
+// The wired callback is FetchAuthorBooks(author, false, "") which fetches the
+// catalogue but never auto-grabs, so populating on every row is safe — an
+// empty catalogue otherwise leaves the library scan with no book rows to match
+// files against, and the user's library looks empty after import.
+//
+// The optional third "searchOnAdd" column is still parsed but no longer gates
+// the catalogue fetch (and never triggered downloads in the first place, since
+// the callback only fetches metadata).
 func ImportCSVAuthors(
 	ctx context.Context,
 	reader io.Reader,
@@ -109,7 +119,11 @@ func ImportCSVAuthors(
 		res.Added++
 		res.AddedNames = append(res.AddedNames, full.Name)
 
-		if row.searchOnAdd && onSearchOnAdd != nil {
+		// Always populate the catalogue for every newly-created author — the
+		// callback fetches metadata but never auto-grabs (see func doc). The
+		// searchOnAdd column no longer gates this; an empty catalogue would
+		// leave the library scan nothing to match against.
+		if onSearchOnAdd != nil {
 			go onSearchOnAdd(full)
 		}
 	}
@@ -178,8 +192,9 @@ func parseCSVRows(reader io.Reader) ([]csvRow, error) {
 }
 
 func rowFromFields(fields []string) csvRow {
-	// Default searchOnAdd to false — bulk imports should be safe by default.
-	// Users can opt in per-row by passing a third column "true".
+	// searchOnAdd is parsed for backwards compatibility but no longer gates
+	// the catalogue fetch (every author's catalogue is now populated on add;
+	// the callback never auto-grabs). Default false.
 	row := csvRow{monitored: true, searchOnAdd: false}
 	if len(fields) >= 1 {
 		row.name = strings.TrimSpace(fields[0])

@@ -67,6 +67,69 @@ func TestQueueGrab_NoDownloadClient(t *testing.T) {
 	}
 }
 
+// TestQueueGrab_ProtocolMismatchNamesUsenet verifies the actionable error when
+// a usenet (NZB) release is grabbed but the user's only enabled client is a
+// torrent client. The message must name the missing protocol (usenet) AND tell
+// the user that a torrent client is what they have, so they don't waste time
+// re-checking the client they already verified.
+func TestQueueGrab_ProtocolMismatchNamesUsenet(t *testing.T) {
+	h, _, _, clients, _, ctx := queueFixture(t)
+	if err := clients.Create(ctx, &models.DownloadClient{
+		Name:     "qb",
+		Type:     "qbittorrent",
+		Host:     "127.0.0.1",
+		Port:     8080,
+		Username: "user",
+		Password: "pass",
+		Enabled:  true,
+	}); err != nil {
+		t.Fatalf("create torrent client: %v", err)
+	}
+
+	body := bytes.NewBufferString(`{"guid":"abc","nzbUrl":"http://example/x.nzb","title":"t","protocol":"usenet"}`)
+	rec := httptest.NewRecorder()
+	h.Grab(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/grab", body))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	msg := resp["error"]
+	for _, want := range []string{"usenet", "torrent", "SABnzbd"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("expected error to mention %q, got: %q", want, msg)
+		}
+	}
+}
+
+// TestQueueGrab_NoClientsAtAllSimpleMessage verifies that when no download
+// clients are enabled at all, the error is the plain "add a download client"
+// form rather than a protocol-mismatch message.
+func TestQueueGrab_NoClientsAtAllSimpleMessage(t *testing.T) {
+	h, _, _, _, _, _ := queueFixture(t)
+	body := bytes.NewBufferString(`{"guid":"abc","nzbUrl":"http://example/x.nzb","title":"t","protocol":"usenet"}`)
+	rec := httptest.NewRecorder()
+	h.Grab(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/grab", body))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	msg := resp["error"]
+	if !strings.Contains(msg, "add a download client") {
+		t.Errorf("expected simple add-a-client message, got: %q", msg)
+	}
+	if strings.Contains(msg, "torrent") || strings.Contains(msg, "this release is") {
+		t.Errorf("did not expect a protocol-mismatch message when no clients exist, got: %q", msg)
+	}
+}
+
 func TestQueueGrab_DuplicateGUID(t *testing.T) {
 	for _, status := range []models.DownloadState{models.StateGrabbed, models.StateDownloading} {
 		t.Run(string(status), func(t *testing.T) {

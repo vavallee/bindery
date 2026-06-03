@@ -25,13 +25,14 @@ vi.mock('../api/client', async importOriginal => {
       ...actual.api,
       listAuthors: vi.fn(),
       createSeries: vi.fn(),
+      bulkActionAuthors: vi.fn(),
     },
   }
 })
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, fallback?: string) => {
+    t: (key: string, fallback?: string | Record<string, unknown>) => {
       const labels: Record<string, string> = {
         'authors.title': 'Authors',
         'authors.merge': 'Merge',
@@ -46,8 +47,18 @@ vi.mock('react-i18next', () => ({
         'authors.filterUnmonitored': 'Unmonitored',
         'authors.empty': 'No authors found',
         'authors.emptyHint': 'Add an author to get started',
+        'authors.bulkRefreshMetadata': 'Refresh metadata',
+        'common.monitor': 'Monitor',
+        'common.unmonitor': 'Unmonitor',
+        'common.search': 'Search',
+        'common.delete': 'Delete',
+        'bulkActionBar.clear': 'Clear',
+        'bulkActionBar.selected': 'Selected',
       }
-      return labels[key] ?? fallback ?? key
+      if (labels[key]) return labels[key]
+      // Ignore interpolation option objects; fall back to a string only.
+      if (typeof fallback === 'string') return fallback
+      return key
     },
   }),
 }))
@@ -93,5 +104,44 @@ describe('AuthorsPage', () => {
     await waitFor(() => expect(api.createSeries).toHaveBeenCalledWith({ title: 'Dune Chronicles' }))
     expect(navigateMock).toHaveBeenCalledWith('/series', { state: { seriesId: created.id } })
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add Series' })).not.toBeInTheDocument())
+  })
+
+  it('runs the bulk "refresh" action when "Refresh metadata" is clicked', async () => {
+    vi.mocked(api.listAuthors).mockResolvedValue({
+      items: [
+        {
+          id: 7,
+          foreignAuthorId: 'OL7',
+          authorName: 'Andy Weir',
+          sortName: 'Weir, Andy',
+          description: '',
+          imageUrl: '',
+          disambiguation: '',
+          ratingsCount: 0,
+          averageRating: 0,
+          monitored: true,
+        },
+      ],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    })
+    vi.mocked(api.bulkActionAuthors).mockResolvedValue({ results: {} })
+
+    render(
+      <MemoryRouter>
+        <AuthorsPage />
+      </MemoryRouter>,
+    )
+
+    // Select the author (grid card checkbox carries a "Select <name>" title).
+    fireEvent.click(await screen.findByTitle('Select Andy Weir'))
+
+    // The bulk bar appears; click the new "Refresh metadata" action.
+    fireEvent.click(await screen.findByRole('button', { name: 'Refresh metadata' }))
+
+    await waitFor(() =>
+      expect(api.bulkActionAuthors).toHaveBeenCalledWith([7], 'refresh'),
+    )
   })
 })

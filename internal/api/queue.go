@@ -570,7 +570,7 @@ func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		status := http.StatusBadGateway
-		if strings.Contains(err.Error(), "no enabled download client") {
+		if strings.Contains(err.Error(), "no enabled") && strings.Contains(err.Error(), "download client configured") {
 			status = http.StatusBadRequest
 		}
 		writeJSON(w, status, map[string]string{"error": err.Error()})
@@ -624,15 +624,70 @@ func (h *QueueHandler) RetryImport(w http.ResponseWriter, r *http.Request) {
 // selectClient picks the best enabled client for the given protocol and media type.
 // It prefers a client whose category hints match the media type when multiple
 // clients of the same protocol type are configured.
+//
+// When no client of the requested protocol is enabled, the returned error names
+// the protocol and — if the user has enabled clients of the *other* protocol —
+// spells out the mismatch so they don't re-check the client they already
+// verified. See noProtocolClientError.
 func (h *QueueHandler) selectClient(ctx context.Context, protocol, mediaType string) (*models.DownloadClient, error) {
 	candidates, err := h.clients.GetEnabledByProtocol(ctx, protocol)
 	if err != nil {
 		return nil, err
 	}
 	if len(candidates) == 0 {
-		return nil, fmt.Errorf("no enabled %s download client configured", protocol)
+		return nil, h.noProtocolClientError(ctx, protocol)
 	}
 	return db.PickClientForMediaType(candidates, mediaType), nil
+}
+
+// noProtocolClientError builds an actionable "no enabled download client" error.
+// If clients of the opposite protocol are enabled, it surfaces the mismatch
+// (e.g. the release is usenet but only torrent clients are enabled) and names
+// the kind of client to add. If no clients are enabled at all, it falls back to
+// a plain "add a download client" message.
+func (h *QueueHandler) noProtocolClientError(ctx context.Context, protocol string) error {
+	other := otherProtocol(protocol)
+	otherEnabled, err := h.clients.GetEnabledByProtocol(ctx, other)
+	if err != nil {
+		// Don't mask the real failure with a guess about other clients.
+		return fmt.Errorf("no enabled %s download client configured", protocolLabel(protocol))
+	}
+	if len(otherEnabled) == 0 {
+		return fmt.Errorf("no enabled download client configured — add a download client")
+	}
+	return fmt.Errorf(
+		"no enabled %s download client configured — this release is %s but your only enabled client(s) are %s; add a %s client (%s)",
+		protocolLabel(protocol), protocol, other, other, protocolClientSuggestions(protocol),
+	)
+}
+
+// otherProtocol returns the protocol opposite to the one given. Anything that
+// isn't "torrent" is treated as usenet (selectClient's callers default to
+// usenet), so the inverse of usenet is torrent.
+func otherProtocol(protocol string) string {
+	if protocol == "torrent" {
+		return "usenet"
+	}
+	return "torrent"
+}
+
+// protocolLabel renders the protocol for the error string. Usenet releases are
+// commonly called "NZB", so we spell both out for the usenet case to remove any
+// doubt about which kind of client is missing.
+func protocolLabel(protocol string) string {
+	if protocol == "usenet" {
+		return "usenet (nzb)"
+	}
+	return protocol
+}
+
+// protocolClientSuggestions names the client software a user could add for the
+// missing protocol.
+func protocolClientSuggestions(protocol string) string {
+	if protocol == "torrent" {
+		return "qBittorrent/Transmission/Deluge"
+	}
+	return "SABnzbd/NZBGet"
 }
 
 // grab executes the core grab logic: creates a download record and sends to the client.
@@ -650,8 +705,14 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	}
 
 	client, err := h.selectClient(ctx, req.Protocol, req.MediaType)
-	if err != nil || client == nil {
-		return nil, fmt.Errorf("no enabled download client configured")
+	if err != nil {
+		// selectClient already produced an actionable, protocol-aware message
+		// (see noProtocolClientError); propagate it rather than flattening it
+		// to the generic "no enabled download client configured".
+		return nil, err
+	}
+	if client == nil {
+		return nil, h.noProtocolClientError(ctx, req.Protocol)
 	}
 
 	protocol := downloader.ProtocolForClient(client.Type)
