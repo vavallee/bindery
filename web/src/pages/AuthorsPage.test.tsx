@@ -144,4 +144,50 @@ describe('AuthorsPage', () => {
       expect(api.bulkActionAuthors).toHaveBeenCalledWith([7], 'refresh'),
     )
   })
+
+  // Regression for the "invisible checkmark in light mode" bug: the grid-card
+  // overlay checkbox uses a translucent white backdrop so the empty box is
+  // visible over cover art. But @tailwindcss/forms paints the *checked* state
+  // with a white checkmark on a `currentColor` (emerald) fill — and under
+  // Tailwind v4's cascade layers the `bg-white/80` utility (utilities layer)
+  // overrides that fill (base layer), leaving a white check on white. So the
+  // opaque backdrop must NOT be present once the box is checked.
+  it('drops the opaque white backdrop on a selected grid card so the checkmark shows', async () => {
+    vi.mocked(api.listAuthors).mockResolvedValue({
+      items: [
+        {
+          id: 7,
+          foreignAuthorId: 'OL7',
+          authorName: 'Andy Weir',
+          sortName: 'Weir, Andy',
+          description: '',
+          imageUrl: '',
+          disambiguation: '',
+          ratingsCount: 0,
+          averageRating: 0,
+          monitored: true,
+        },
+      ],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    })
+
+    render(
+      <MemoryRouter>
+        <AuthorsPage />
+      </MemoryRouter>,
+    )
+
+    const checkbox = await screen.findByTitle('Select Andy Weir')
+    // Unchecked: the translucent backdrop keeps the empty box visible over art.
+    expect(checkbox.className).toContain('bg-white/80')
+
+    fireEvent.click(checkbox)
+
+    // Checked: the white backdrop must be gone so the emerald fill + white
+    // checkmark is visible instead of white-on-white.
+    expect(checkbox).toBeChecked()
+    expect(checkbox.className).not.toContain('bg-white/80')
+  })
 })

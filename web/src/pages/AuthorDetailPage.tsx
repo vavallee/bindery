@@ -606,7 +606,7 @@ export default function AuthorDetailPage() {
                   checked={selected.has(book.id)}
                   onChange={() => toggleSelect(book.id)}
                   onClick={e => e.stopPropagation()}
-                  className="absolute top-2 left-2 z-10 rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 bg-white/80 dark:bg-zinc-900/80"
+                  className={`absolute top-2 left-2 z-10 rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 ${selected.has(book.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}`}
                   aria-label={`Select ${book.title}`}
                 />
                 <Link to={`/book/${book.id}`} className="block">

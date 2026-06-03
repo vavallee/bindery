@@ -285,7 +285,7 @@ export default function BooksPage() {
                   type="checkbox"
                   checked={selectedIds.has(book.id)}
                   onChange={() => toggleSelect(book.id)}
-                  className="absolute top-2 left-2 z-10 rounded-full border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 bg-white/80 dark:bg-zinc-900/80"
+                  className={`absolute top-2 left-2 z-10 rounded-full border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 ${selectedIds.has(book.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}`}
                   title={`Select ${book.title}`}
                   onClick={e => e.stopPropagation()}
                 />
