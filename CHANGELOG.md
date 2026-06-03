@@ -9,6 +9,7 @@ All notable changes to Bindery are documented here. Format loosely follows
 ### Fixed
 
 - **Audiobook downloads could hang in "downloading" forever (qBittorrent)** — the main import poll (`checkQbittorrentDownloads`) queried only the client's ebook `Category`, so torrents grabbed under `CategoryAudiobook` were never returned and their downloads never matched (logged as `download not found in torrent list`), leaving them stuck. The #700 fix that polls both categories had only been applied to the stall/health adapters, not this poll. It now polls every category the client may have grabbed under via `CategoriesToPoll`. Transmission and Deluge are unaffected (Transmission does not split audiobooks by category/dir; Deluge polls all torrents).
+- **Re-bind metadata "Re-bind anyway" override was unreachable** — when re-binding a book to a provider whose record belongs to a different author, the API returns a `409` carrying `force_required` so the UI can offer an override. The web API client discarded the HTTP status and JSON body on error, so `RebindModal` never saw the flag and rendered the raw `author mismatch` text with no way forward. The client now throws a structured `ApiError` (status + body); the amber "Re-bind anyway" confirmation works as intended. Note: forcing past the mismatch re-points the book's metadata to the new record but keeps it filed under its current author.
 
 ## [v1.16.0] — 2026-06-03
 
