@@ -1012,8 +1012,19 @@ func main() {
 	}
 	baseHref := cfg.URLBase + "/"
 	baseJSON, _ := json.Marshal(cfg.URLBase)
-	injection := fmt.Sprintf(`<script>window.__BINDERY_BASE__=%s</script><base href="%s">`, baseJSON, baseHref)
+	// Expose the base via a same-origin EXTERNAL script rather than an inline
+	// <script>. The strict CSP (script-src 'self') blocks inline scripts, which
+	// would silently drop window.__BINDERY_BASE__ — harmless at root (the ""
+	// fallback is correct) but fatal under a path prefix.
+	baseScript := []byte(fmt.Sprintf("window.__BINDERY_BASE__=%s;", baseJSON))
+	injection := fmt.Sprintf(`<script src="%s/__bindery_base.js"></script><base href="%s">`, cfg.URLBase, baseHref)
 	indexHTML := []byte(strings.Replace(string(rawIndex), "</head>", injection+"</head>", 1))
+
+	r.Get("/__bindery_base.js", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		_, _ = w.Write(baseScript)
+	})
 
 	fileServer := http.FileServer(http.FS(distFS))
 	r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
@@ -1043,7 +1054,13 @@ func main() {
 		// Redirect bare prefix (no trailing slash) to prefix/ so the SPA
 		// bootstrap and asset resolution work correctly.
 		outer.Get(cfg.URLBase, http.RedirectHandler(cfg.URLBase+"/", http.StatusMovedPermanently).ServeHTTP)
-		outer.Mount(cfg.URLBase, r)
+		// http.StripPrefix actually rewrites r.URL.Path before dispatch, so the
+		// inner router sees un-prefixed paths. chi.Mount only rewrites the
+		// routing-context path and leaves r.URL.Path prefixed, which breaks the
+		// static file handler and http.FileServer — they read r.URL.Path directly
+		// and would look up "<prefix>/assets/…" in the embedded FS, miss, and fall
+		// back to serving index.html (text/html) for every JS/CSS asset.
+		outer.Handle(cfg.URLBase+"/*", http.StripPrefix(cfg.URLBase, r))
 		handler = outer
 		slog.Info("serving under path prefix", "urlBase", cfg.URLBase)
 	}
