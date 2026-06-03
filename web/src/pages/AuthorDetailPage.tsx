@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { api, Author, Book, BookBulkAction } from '../api/client'
+import { api, BINDERY_BASE, Author, Book, BookBulkAction } from '../api/client'
 import ViewToggle from '../components/ViewToggle'
 import MergeAuthorsModal from '../components/MergeAuthorsModal'
 import EditAuthorModal from '../components/EditAuthorModal'
@@ -535,7 +535,7 @@ export default function AuthorDetailPage() {
                     <tr
                       key={book.id}
                       className={`${selected.has(book.id) ? 'bg-emerald-500/10 dark:bg-emerald-500/10' : 'bg-slate-100/50 dark:bg-zinc-900/50'} hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 cursor-pointer`}
-                      onClick={() => (window.location.href = `/book/${book.id}`)}
+                      onClick={() => (window.location.href = `${BINDERY_BASE}/book/${book.id}`)}
                     >
                       <td className="px-3 py-2 w-10 align-middle" onClick={e => e.stopPropagation()}>
                         <input

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { api, Book, HistoryEvent, MediaType, SearchResult, SearchDebug } from '../api/client'
+import { api, BINDERY_BASE, Book, HistoryEvent, MediaType, SearchResult, SearchDebug } from '../api/client'
 import SearchDebugPanel from '../components/SearchDebugPanel'
 import MediaBadge from '../components/MediaBadge'
 import RebindModal from '../components/RebindModal'
@@ -370,8 +370,8 @@ export default function BookDetailPage() {
         : t('bookDetail.searchEbookIndexers')
 
   const downloadHref = isDual
-    ? `/api/v1/book/${book.id}/file?format=${fmt}`
-    : `/api/v1/book/${book.id}/file`
+    ? `${BINDERY_BASE}/api/v1/book/${book.id}/file?format=${fmt}`
+    : `${BINDERY_BASE}/api/v1/book/${book.id}/file`
 
   const formatButtonCls = (active: boolean) =>
     `px-3 py-1 text-xs font-medium border ${

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Recommendation } from '../api/client'
+import { BINDERY_BASE, Recommendation } from '../api/client'
 
 interface RecommendationCardProps {
   rec: Recommendation
@@ -26,7 +26,7 @@ export default function RecommendationCard({ rec, onDismiss, onAdd, onExcludeAut
   }, [menuOpen])
 
   const imageUrl = rec.imageUrl
-    ? `/api/v1/images?url=${encodeURIComponent(rec.imageUrl)}`
+    ? `${BINDERY_BASE}/api/v1/images?url=${encodeURIComponent(rec.imageUrl)}`
     : ''
 
   const stars = Math.round(rec.rating * 2) / 2

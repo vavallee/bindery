@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, AuthConfig, AuthStatus, AuthorMonitorMode, HardcoverTestResult, RootFolder, SystemStatus } from '../../api/client'
+import { api, BINDERY_BASE, AuthConfig, AuthStatus, AuthorMonitorMode, HardcoverTestResult, RootFolder, SystemStatus } from '../../api/client'
 import AuthSettings from '../../settings/AuthSettings'
 import ThemeToggle from '../../components/ThemeToggle'
 import LanguageSwitcher from '../../components/LanguageSwitcher'
@@ -859,10 +859,10 @@ export default function GeneralTab() {
             <span className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1">{t('settings.general.opdsFeedUrl')}</span>
             <div className="flex items-center gap-2">
               <code className="flex-1 text-xs bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 px-2 py-1.5 rounded font-mono break-all">
-                {window.location.origin}/opds
+                {window.location.origin}{BINDERY_BASE}/opds
               </code>
               <button
-                onClick={() => opdsClipboard.copy(window.location.origin + '/opds')}
+                onClick={() => opdsClipboard.copy(window.location.origin + BINDERY_BASE + '/opds')}
                 className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 rounded text-xs font-medium flex-shrink-0"
               >
                 {opdsClipboard.status === 'copied' ? t('common.copied', 'Copied') : t('settings.general.copy')}

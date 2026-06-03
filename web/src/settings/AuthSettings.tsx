@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, OidcProvider, OidcProviderConfig } from '../api/client'
+import { api, BINDERY_BASE, OidcProvider, OidcProviderConfig } from '../api/client'
 import ClipboardManualFallback from '../components/ClipboardManualFallback'
 import { useClipboardCopy } from '../components/useClipboardCopy'
 
@@ -151,7 +151,7 @@ function AddProviderForm({
   const [redirectBase, setRedirectBase] = useState(() =>
     typeof window !== 'undefined' ? window.location.origin : ''
   )
-  const [callbackTemplate, setCallbackTemplate] = useState('/api/v1/auth/oidc/{id}/callback')
+  const [callbackTemplate, setCallbackTemplate] = useState(`${BINDERY_BASE}/api/v1/auth/oidc/{id}/callback`)
   // undefined = still loading, true = env var set, false = derived from headers
   const [baseConfigured, setBaseConfigured] = useState<boolean | undefined>(undefined)
   const callbackClipboard = useClipboardCopy()

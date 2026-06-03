@@ -5,7 +5,7 @@ import ViewToggle from '../components/ViewToggle'
 import { useView } from '../components/useView'
 import GettingStartedGuidance from '../components/GettingStartedGuidance'
 import { useNeedsSetup } from '../components/useNeedsSetup'
-import { api, Book } from '../api/client'
+import { api, BINDERY_BASE, Book } from '../api/client'
 import BulkActionBar from '../components/BulkActionBar'
 import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
@@ -223,7 +223,7 @@ export default function BooksPage() {
                   <tr
                     key={book.id}
                     className={`hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 cursor-pointer ${selectedIds.has(book.id) ? 'bg-emerald-500/10 dark:bg-emerald-500/10' : 'bg-slate-100/50 dark:bg-zinc-900/50'}`}
-                    onClick={() => (window.location.href = `/book/${book.id}`)}
+                    onClick={() => (window.location.href = `${BINDERY_BASE}/book/${book.id}`)}
                   >
                     <td className="px-3 py-2 w-8" onClick={e => e.stopPropagation()}>
                       <input
@@ -329,7 +329,7 @@ export default function BooksPage() {
                   )}
                   {book.filePath && (
                     <a
-                      href={`/api/v1/book/${book.id}/file`}
+                      href={`${BINDERY_BASE}/api/v1/book/${book.id}/file`}
                       onClick={e => e.stopPropagation()}
                       className="text-[10px] text-emerald-400 hover:text-emerald-300"
                       title={t('books.downloadFile')}

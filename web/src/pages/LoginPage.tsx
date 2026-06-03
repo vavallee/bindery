@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { api, OidcProvider } from '../api/client'
+import { api, BINDERY_BASE, OidcProvider } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import Logo from '../components/Logo'
 
@@ -75,7 +75,7 @@ export default function LoginPage() {
           {oidcProviders.map(p => (
             <a
               key={p.id}
-              href={`/api/v1/auth/oidc/${encodeURIComponent(p.id)}/login`}
+              href={`${BINDERY_BASE}/api/v1/auth/oidc/${encodeURIComponent(p.id)}/login`}
               className="flex items-center justify-center w-full border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-slate-50 dark:hover:bg-zinc-700 rounded-md py-2 text-sm font-medium transition-colors"
             >
               {t('login.signInWith', { name: p.name })}

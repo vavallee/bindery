@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react'
-import { api, AuthStatus, initCSRF } from '../api/client'
+import { api, BINDERY_BASE, AuthStatus, initCSRF } from '../api/client'
 
 interface AuthContextValue {
   status: AuthStatus | null
@@ -43,7 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(async () => {
     try { await api.authLogout() } catch { /* ignore — we're clearing state anyway */ }
     await refresh()
-    window.location.href = '/login'
+    window.location.href = `${BINDERY_BASE}/login`
   }, [refresh])
 
   const isAdmin = status?.role === 'admin'
