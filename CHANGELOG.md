@@ -6,6 +6,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Audiobook downloads could hang in "downloading" forever (qBittorrent)** — the main import poll (`checkQbittorrentDownloads`) queried only the client's ebook `Category`, so torrents grabbed under `CategoryAudiobook` were never returned and their downloads never matched (logged as `download not found in torrent list`), leaving them stuck. The #700 fix that polls both categories had only been applied to the stall/health adapters, not this poll. It now polls every category the client may have grabbed under via `CategoriesToPoll`. Transmission and Deluge are unaffected (Transmission does not split audiobooks by category/dir; Deluge polls all torrents).
+
 ## [v1.16.0] — 2026-06-03
 
 Security and hardening release. The bulk of this version is an audit-driven hardening pass (the **D1–D4** access-control findings and the **Wave 2–5** robustness sweep), opt-in per-user data isolation, a batch of performance work, and a long tail of import/scheduler correctness fixes. No breaking config changes, but two behaviour changes worth noting before upgrading: list endpoints are now paginated and request bodies are capped at 1 MiB by default (see **Changed**).
