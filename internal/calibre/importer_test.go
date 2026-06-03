@@ -357,3 +357,83 @@ func TestImporter_ReaderOpenFailureSurfacesInProgress(t *testing.T) {
 		t.Error("progress.Running should be false after failure")
 	}
 }
+
+// TestImporter_PersistsSeries is the #905 regression guard. The Calibre
+// reader extracts series memberships into CalibreBook.Series, but until
+// this fix the importer ignored the field. The acceptance criterion is
+// that a Calibre book with a series + position lands a series row, a
+// series_books link, and a parseable position string.
+func TestImporter_PersistsSeries(t *testing.T) {
+	// Hand-roll the fixture because newImporterFixture doesn't wire a
+	// series repo, and #905 specifically exercises that path. Fresh DB
+	// per-test so the series_books rows can be asserted in isolation.
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	editionRepo := db.NewEditionRepo(database)
+	aliasRepo := db.NewAuthorAliasRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	seriesRepo := db.NewSeriesRepo(database)
+	fr := &fakeReader{}
+	imp := NewImporter(authorRepo, aliasRepo, bookRepo, editionRepo, settingsRepo).
+		WithSeries(seriesRepo)
+	imp.openReader = func(string) (readerIface, error) { return fr, nil }
+
+	cb := sampleCalibreBook(1, "Weapons and Wielders 1", "Andrew Rowe")
+	cb.Series = &CalibreSeries{Name: "Weapons and Wielders", Position: 1.0}
+	fr.books = []CalibreBook{cb}
+
+	stats, err := imp.Run(context.Background(), "/lib")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if stats.SeriesLinked != 1 || stats.SeriesFailures != 0 {
+		t.Errorf("series stats: linked=%d failures=%d, want 1/0", stats.SeriesLinked, stats.SeriesFailures)
+	}
+
+	all, err := seriesRepo.List(context.Background())
+	if err != nil {
+		t.Fatalf("seriesRepo.List: %v", err)
+	}
+	if len(all) != 1 || all[0].Title != "Weapons and Wielders" {
+		t.Fatalf("expected one series 'Weapons and Wielders', got %+v", all)
+	}
+	if all[0].ForeignID != "calibre:series:weapons and wielders" {
+		t.Errorf("foreign id = %q, want calibre:series:weapons and wielders", all[0].ForeignID)
+	}
+
+	// series_books link present with position "1"
+	book, _ := bookRepo.GetByCalibreID(context.Background(), 1)
+	if book == nil {
+		t.Fatal("book not found post-import")
+	}
+	books, err := seriesRepo.ListBooksInSeries(context.Background(), all[0].ID)
+	if err != nil {
+		t.Fatalf("ListBooksInSeries: %v", err)
+	}
+	if len(books) != 1 || books[0].ID != book.ID {
+		t.Errorf("expected the book in the series, got %+v", books)
+	}
+}
+
+// TestImporter_SkipsSeriesWhenRepoUnset confirms the back-compat: an
+// importer constructed without WithSeries (legacy test fixtures, embedders)
+// keeps working and silently skips series creation.
+func TestImporter_SkipsSeriesWhenRepoUnset(t *testing.T) {
+	imp, fr, _, _, _, _, _ := newImporterFixture(t)
+	cb := sampleCalibreBook(1, "Solo Title", "Solo Author")
+	cb.Series = &CalibreSeries{Name: "Phantom Series", Position: 2.0}
+	fr.books = []CalibreBook{cb}
+
+	stats, err := imp.Run(context.Background(), "/lib")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if stats.SeriesLinked != 0 || stats.SeriesFailures != 0 {
+		t.Errorf("series stats with no repo: linked=%d failures=%d, want 0/0", stats.SeriesLinked, stats.SeriesFailures)
+	}
+}

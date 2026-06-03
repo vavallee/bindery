@@ -1022,23 +1022,31 @@ func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models
 func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.DownloadClient) {
 	qb := downloader.QbittorrentFor(client)
 
-	torrents, err := qb.GetTorrents(ctx, client.Category)
-	if err != nil {
-		slog.Debug("failed to fetch qBittorrent torrents", "error", err)
-		return
-	}
-
 	allDownloads, err := s.downloads.List(ctx)
 	if err != nil {
 		slog.Debug("failed to list downloads", "error", err)
 		return
 	}
+
+	// Poll every category this client may have grabbed under. Audiobook grabs
+	// use CategoryAudiobook (e.g. "audiobooks") while ebook grabs use Category
+	// (e.g. "ebook"); querying only Category leaves audiobook torrents out of
+	// the result, so their downloads never match here and hang in "downloading"
+	// forever. CategoriesToPoll returns both. The stall/health adapters were
+	// already fixed for #700; this is the main import poll that was missed.
 	torrentsMap := make(map[string]qbittorrent.Torrent)
-	for _, t := range torrents {
-		torrentsMap[strings.ToLower(t.Hash)] = t
+	for _, cat := range downloader.CategoriesToPoll(client) {
+		torrents, err := qb.GetTorrents(ctx, cat)
+		if err != nil {
+			slog.Debug("failed to fetch qBittorrent torrents", "category", cat, "error", err)
+			return
+		}
+		for _, t := range torrents {
+			torrentsMap[strings.ToLower(t.Hash)] = t
+		}
 	}
 
-	slog.Debug("qbittorrent poll", "torrents", len(torrents), "downloads", len(allDownloads), "category", client.Category)
+	slog.Debug("qbittorrent poll", "torrents", len(torrentsMap), "downloads", len(allDownloads), "categories", downloader.CategoriesToPoll(client))
 
 	// Track which downloads' sources we observed this cycle (issue #706 finding 4).
 	seenSourceIDs := make(map[int64]bool)
@@ -1646,6 +1654,18 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// Audiobook path: place the entire download directory as a unit so
 	// multi-part m4b/mp3 files, cover art, and cue sheets stay together.
 	if detectedFormat == models.MediaTypeAudiobook {
+		// Unmatched audiobook: with no book row we cannot compute a
+		// destination (AudiobookDestDir -> renamer.apply dereferences
+		// book.ReleaseDate/Title), so this branch would panic the scan
+		// goroutine. The ebook branch below treats book == nil as
+		// "unmatched, fail with an actionable status"; do the same here
+		// rather than crash. book can be nil when the download has no
+		// BookID, the lookup errored, or the book row was deleted between
+		// grab and import.
+		if book == nil {
+			s.failImport(ctx, dl, models.StateImportFailed, "could not match any book to this download — check the release title")
+			return
+		}
 		// Idempotency guard (issue #706 finding 2): if a prior attempt already
 		// placed this audiobook (book_files has an on-disk audiobook entry) but
 		// crashed before writing the terminal status, re-importing here would
@@ -2784,7 +2804,16 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 		}
 	}
 
-	slog.Info("library scan complete", "path", s.libraryDir, "bookFiles", len(foundFiles),
+	// Surface every walked root in the completion log. The scan can union
+	// the audiobook root with the library root (see ScanLibrary), and the
+	// pre-fix log only showed s.libraryDir, which let users with separate
+	// roots interpret the file count as coming from the wrong directory
+	// (issue #905, second symptom).
+	scanRoots := []string{s.libraryDir}
+	if s.audiobookDir != "" && s.audiobookDir != s.libraryDir {
+		scanRoots = append(scanRoots, s.audiobookDir)
+	}
+	slog.Info("library scan complete", "paths", scanRoots, "bookFiles", len(foundFiles),
 		"reconciled", reconciled, "unmatched", unmatched, "tagReadFailed", tagReadFailed)
 
 	s.writeScanResult(ctx, len(foundFiles), reconciled, unmatched, tagReadFailed, unmatchedFiles)

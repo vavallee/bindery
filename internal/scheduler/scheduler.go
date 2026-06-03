@@ -574,6 +574,28 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		slog.Warn("failed to update download status", "download_id", dl.ID, "status", models.StateDownloading, "error", err)
 	}
 	slog.Info("sent to downloader", "client", client.Type, "title", best.Title)
+	// Record history for the auto-grab. Without this the History tab is
+	// empty for every scheduler-initiated grab (manual grabs via the queue
+	// handler already record themselves at queue.go::recordHistory), which
+	// the user-visible audit trail makes very confusing: search-and-grab is
+	// the only path that produces zero history rows. Surfaced via a user
+	// report from ThatGuyHere in Discord, 2026-05-30.
+	if s.history != nil {
+		data, _ := json.Marshal(map[string]any{
+			"guid":      best.GUID,
+			"author":    authorName,
+			"indexer":   best.IndexerName,
+			"protocol":  best.Protocol,
+			"size":      best.Size,
+			"mediaType": mediaType,
+		})
+		_ = s.history.Create(ctx, &models.HistoryEvent{
+			BookID:      &book.ID,
+			EventType:   models.HistoryEventGrabbed,
+			SourceTitle: best.Title,
+			Data:        string(data),
+		})
+	}
 	// Publish EventGrabbed so user-configured notification webhooks fire for
 	// auto-grabs as well as the queue-page manual grabs (issue #849). Payload
 	// shape mirrors the queue.go manual-grab Send so existing webhook

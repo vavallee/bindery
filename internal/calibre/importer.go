@@ -24,6 +24,8 @@ type ImportStats struct {
 	BooksUpdated     int `json:"booksUpdated"`
 	EditionsAdded    int `json:"editionsAdded"`
 	DuplicatesMerged int `json:"duplicatesMerged"`
+	SeriesLinked     int `json:"seriesLinked"`
+	SeriesFailures   int `json:"seriesFailures,omitempty"`
 	Skipped          int `json:"skipped"`
 }
 
@@ -59,6 +61,11 @@ type Importer struct {
 	runs       *db.CalibreImportRunRepo
 	snapshots  *db.CalibreEntitySnapshotRepo
 	provenance *db.CalibreProvenanceRepo
+
+	// Series persistence (issue #905). Optional; nil disables series creation
+	// during import (test wiring that doesn't care about series stays
+	// minimal). Production wires this via WithSeries from cmd/bindery/main.go.
+	series *db.SeriesRepo
 
 	openReader func(libraryPath string) (readerIface, error)
 
@@ -107,6 +114,15 @@ func (i *Importer) WithRunTracking(runs *db.CalibreImportRunRepo, snapshots *db.
 	i.runs = runs
 	i.snapshots = snapshots
 	i.provenance = provenance
+	return i
+}
+
+// WithSeries attaches the series repo so Calibre series memberships
+// (issue #905) get persisted as series + series_books rows. When unset the
+// importer behaves as before and skips series creation; this preserves
+// test wiring that doesn't need series semantics.
+func (i *Importer) WithSeries(series *db.SeriesRepo) *Importer {
+	i.series = series
 	return i
 }
 
@@ -356,6 +372,68 @@ func (i *Importer) importOne(ctx context.Context, runID int64, cb CalibreBook, s
 			}
 		}
 	}
+
+	// Series persistence (#905). Calibre's books_series_link plus series
+	// table is read by the cursor as cb.Series; we propagate the membership
+	// into Bindery's series + series_books shape so the Wanted / detail /
+	// Hardcover-enhanced flows have the data to attach to. Skipped when no
+	// series repo is wired (test fixtures) or no series was on the row.
+	if i.series != nil && cb.Series != nil && cb.Series.Name != "" {
+		i.attachBookToSeries(ctx, runID, book.row, cb.Series, stats)
+	}
+}
+
+// attachBookToSeries upserts the Bindery series row for cb.Series and links
+// the book at the recorded position. The series row uses a synthetic
+// foreign ID of "calibre:series:<name>" so subsequent reruns find and reuse
+// it (CreateOrGet semantics) and any later metadata-provider sync can
+// promote the foreign ID to a real one without losing the link. Errors are
+// logged at WARN and counted as skipped on the series side, but never abort
+// the book import: a series-link failure is strictly less damaging than
+// losing the book itself.
+func (i *Importer) attachBookToSeries(ctx context.Context, runID int64, book *models.Book, cs *CalibreSeries, stats *ImportStats) {
+	series := &models.Series{
+		ForeignID: calibreSeriesForeignID(cs.Name),
+		Title:     cs.Name,
+	}
+	if err := i.series.CreateOrGet(ctx, series); err != nil {
+		slog.Warn("calibre import: series upsert failed", "name", cs.Name, "error", err)
+		stats.SeriesFailures++
+		return
+	}
+	position := ""
+	if cs.Position > 0 {
+		position = strconv.FormatFloat(cs.Position, 'f', -1, 64)
+	}
+	if err := i.series.UpsertBookLink(ctx, series.ID, book.ID, position, true); err != nil {
+		slog.Warn("calibre import: series link failed", "name", cs.Name, "book_id", book.ID, "error", err)
+		stats.SeriesFailures++
+		return
+	}
+	if runID != 0 {
+		// Record provenance so a rollback can unlink the book without
+		// orphaning the series. Series row deletion is best-effort: shared
+		// series should survive a single-book rollback, so we only record
+		// the link, not the series create.
+		i.upsertProvenance(ctx, runID, entityTypeSeriesLink,
+			calibreSeriesLinkExternalID(book.ID, series.ID), book.ID)
+	}
+	stats.SeriesLinked++
+}
+
+// calibreSeriesForeignID synthesises a stable, namespaced foreign id for a
+// Calibre-imported series. Real provider IDs (Hardcover, OpenLibrary) will
+// overwrite this on later sync; until then the namespace prevents
+// collisions with provider-issued IDs.
+func calibreSeriesForeignID(name string) string {
+	return "calibre:series:" + strings.ToLower(strings.TrimSpace(name))
+}
+
+// calibreSeriesLinkExternalID is the provenance key for a book-to-series
+// link recorded during a Calibre import run. Combines both IDs so the
+// rollback layer can unwind the link even after the series ID is recycled.
+func calibreSeriesLinkExternalID(bookID, seriesID int64) string {
+	return "calibre:series-link:" + strconv.FormatInt(bookID, 10) + ":" + strconv.FormatInt(seriesID, 10)
 }
 
 // recordCreateSnapshot records a marker row for an entity that was newly

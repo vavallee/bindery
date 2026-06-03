@@ -11,6 +11,7 @@ const (
 	entityTypeAuthor         = "author"
 	entityTypeBook           = "book"
 	entityTypeEdition        = "edition"
+	entityTypeSeriesLink     = "series_link"
 	runStatusRunning         = "running"
 	runStatusCompleted       = "completed"
 	runStatusFailed          = "failed"

@@ -35,6 +35,23 @@ export async function initCSRF(): Promise<void> {
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
+// Error thrown for any non-OK API response. Carries the HTTP status and the
+// parsed JSON body so callers can branch on structured fields (e.g. a 409
+// rebind conflict exposing `force_required`). Stays an `Error` subclass with a
+// human-readable `.message`, so callers that only read `.message` are
+// unaffected.
+export class ApiError extends Error {
+  status: number
+  body: { error?: string; [key: string]: unknown }
+
+  constructor(status: number, body: { error?: string; [key: string]: unknown }, fallback: string) {
+    super(body.error || fallback)
+    this.name = 'ApiError'
+    this.status = status
+    this.body = body
+  }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   // Merge caller-supplied headers on top of the defaults so we can't lose
   // the CSRF header if a caller passes their own `headers`.
@@ -62,7 +79,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error || res.statusText)
+    throw new ApiError(res.status, err, res.statusText)
   }
   if (res.status === 204) return undefined as unknown as T
   return res.json()
@@ -89,7 +106,7 @@ async function uploadFile<T>(path: string, body: FormData): Promise<T> {
   }
   if (!res.ok) {
     const data = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(data.error || `HTTP ${res.status}`)
+    throw new ApiError(res.status, data, `HTTP ${res.status}`)
   }
   return res.json() as Promise<T>
 }

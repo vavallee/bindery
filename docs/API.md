@@ -2,7 +2,7 @@
 
 Bindery exposes a REST API at `/api/v1/*`. Every Bindery feature is reachable from the API — the React UI uses the same endpoints. There is also a small `/api/queue` surface that mimics the Sonarr/Radarr queue contract for external tooling.
 
-> The handler list below is a representative selection. The router lives in [`cmd/bindery/main.go`](../cmd/bindery/main.go) and registers ~180 endpoints; that file is the source of truth.
+> The handler list below is a representative selection. The router lives in [`cmd/bindery/main.go`](../cmd/bindery/main.go) and registers over 100 endpoints; that file is the source of truth.
 
 ## Authentication
 
@@ -160,12 +160,14 @@ This endpoint sits **outside** `/api/v1/` and matches the queue contract used by
 
 ## OPDS
 
-Bindery serves an OPDS 1.2 catalogue at `/opds/v1.2/`:
+Bindery serves an OPDS 1.2 catalogue at `/opds/`:
 
-- `/opds/v1.2/` — catalog root
-- `/opds/v1.2/recent` — recently imported
-- `/opds/v1.2/authors` and `/opds/v1.2/authors/{id}` — by author
-- `/opds/v1.2/search?q=...` — search
+- `/opds/` — catalog root
+- `/opds/recent` — recently imported
+- `/opds/authors` and `/opds/authors/{id}` — by author
+- `/opds/series` and `/opds/series/{id}` — by series
+- `/opds/book/{id}` — book entry
+- `/opds/book/{id}/file` — download the book file
 
 OPDS authenticates via HTTP Basic — any username, API key as the password. KOReader, Moon+ Reader, Aldiko, and other OPDS-capable apps work out of the box.
 
@@ -209,4 +211,4 @@ curl -X POST -H "X-Api-Key: $KEY" \
 
 ## URL base (reverse-proxy subpath)
 
-When Bindery is mounted under a path prefix (e.g. `https://example.com/bindery`), set `BINDERY_URL_BASE=/bindery`. All route prefixes — including `/api/v1`, `/api/queue`, and `/opds/v1.2` — are served under that base, and the embedded React SPA emits matching URLs. See [DEPLOYMENT.md](DEPLOYMENT.md#environment-variables) for full details.
+When Bindery is mounted under a path prefix (e.g. `https://example.com/bindery`), set `BINDERY_URL_BASE=/bindery`. All route prefixes — including `/api/v1`, `/api/queue`, and `/opds` — are served under that base, and the embedded React SPA emits matching URLs. See [DEPLOYMENT.md](DEPLOYMENT.md#environment-variables) for full details.
