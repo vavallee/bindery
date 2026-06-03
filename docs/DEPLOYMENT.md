@@ -265,6 +265,8 @@ After fixing a path or category mismatch, use **Queue → Retry import** on an `
 | `BINDERY_RATE_LIMIT_MAX_FAILURES` | `5` | Maximum failed login attempts per IP before the account is locked for the rate-limit window. |
 | `BINDERY_RATE_LIMIT_WINDOW_MINUTES` | `15` | Duration in minutes of the per-IP login rate-limit window. After the window expires the failure counter resets. |
 | `BINDERY_SHUTDOWN_GRACE` | `30` | Seconds to drain in-flight HTTP requests after receiving SIGTERM or SIGINT before the process exits. Increase if your load balancer / Kubernetes sends long-lived SSE or WebSocket connections. |
+| `BINDERY_ENFORCE_TENANCY` | _(off)_ | Set to `true`/`1` to enforce per-user data isolation: each user sees only their own authors, books, profiles, and root folders, and the join-scoped queue / history / pending / OPDS feeds are scoped to the requesting user. **Defaults off**, in which case every authenticated user shares one library view (single-user behaviour). Admin-only configuration gating applies regardless of this flag. See [multi-user.md](multi-user.md). |
+| `BINDERY_LOG_RETENTION_DAYS` | `14` | Days to retain persisted log entries in the SQLite log store before they are pruned. |
 
 ## Indexer / Prowlarr URLs
 

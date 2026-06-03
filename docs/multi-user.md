@@ -1,6 +1,14 @@
 # Multi-User
 
-Bindery v1.0 introduces per-user library scoping. Every author, book, download, quality profile, metadata profile, and root folder is owned by a specific user. Users log in with their own credentials and see only their own library.
+Bindery v1.0 introduces per-user library scoping: authors, books, downloads, quality profiles, metadata profiles, and root folders can be owned by a specific user, and users log in with their own credentials.
+
+> **Important — data isolation is opt-in.** Per-user data isolation is gated behind the `BINDERY_ENFORCE_TENANCY` environment variable, which **defaults OFF**. With it unset (the default), any authenticated user can see and manage *all* data — Bindery behaves like a single-user instance regardless of how many accounts exist. To make users see only their own library, set `BINDERY_ENFORCE_TENANCY=true`.
+>
+> When enforcement is on, Bindery scopes:
+> - **Tier-2 join-scoped resources** — download queue, history, pending grabs, and the OPDS catalogue — to the requesting user.
+> - **Per-user resources** — each user's own authors, books, profiles, root folders, API key, password, and notification preferences.
+>
+> Role-based gating of admin-only configuration (indexers, download clients, user management, system settings) applies in **both** modes — that does not depend on `BINDERY_ENFORCE_TENANCY`. The flag only controls whether *library data* is partitioned per user.
 
 For upgrade instructions and migration steps, see [docs/upgrade-v1.md](upgrade-v1.md).
 
@@ -110,12 +118,13 @@ curl -X POST http://bindery:8787/api/v1/author \
 ## See also
 
 - [docs/troubleshooting-auth.md](troubleshooting-auth.md) — consolidated symptom→cause→fix table for all auth phases
+- [docs/DEPLOYMENT.md#environment-variables](DEPLOYMENT.md#environment-variables) — `BINDERY_ENFORCE_TENANCY` and other runtime knobs
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| User B can see User A's authors or books via the API | A repo query is missing the `userID` filter — this is a bug | File a bug report with the exact endpoint URL and response. As a workaround, ensure user B does not have the `admin` role (admins can access all users' data by design). |
+| User B can see User A's authors or books via the API | `BINDERY_ENFORCE_TENANCY` is unset — this is the documented default behaviour, not a bug | This is expected when tenancy enforcement is off: all authenticated users share one library view. To partition library data per user, set `BINDERY_ENFORCE_TENANCY=true` and restart. (Admins can access all users' data regardless of this flag, by design.) |
 | Data remains after a user is deleted | `DELETE /auth/users/{id}` does not cascade to library data | Reassign or delete the user's authors and books before deleting the user account (see "Deleting a user" above). |
 | `403 Forbidden` on an API call that worked before v1.0 | Session-cookie mutations now require `X-CSRF-Token` | Switch callers to `X-Api-Key` auth (CSRF-exempt), or add a `GET /auth/csrf` preflight to your script (see "CSRF tokens" above). |
 | Admin locked out — no admin account exists or all admins deleted | User row has `role='user'` or all admin rows were removed | Recover via direct DB update (no Bindery restart needed if you can write to the DB file): `sqlite3 /config/bindery.db "UPDATE users SET role='admin' WHERE username='<your-username>';"` — or in Kubernetes: `kubectl exec deploy/bindery -- sqlite3 /config/bindery.db "UPDATE users SET role='admin' WHERE id=1;"` |

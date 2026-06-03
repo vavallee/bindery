@@ -114,7 +114,7 @@ Cover images are fetched and cached server-side under `<dataDir>/image-cache/` (
 - Light / dark themes (respecting `prefers-color-scheme` first paint), grid / table view toggles, mobile-friendly responsive layout, hamburger nav, agenda-style mobile Calendar.
 - Full pagination, search, filter, and sort on every list page; preferences persist to `localStorage`.
 - 7 languages — English, French, German, Dutch, Spanish, Filipino (Tagalog), Indonesian — auto-detected from the browser, override in Settings.
-- **OPDS 1.2 catalogue** at `/opds/v1.2/` for KOReader, Moon+ Reader, and other reading apps. HTTP Basic auth with the API key as the password.
+- **OPDS 1.2 catalogue** at `/opds/` for KOReader, Moon+ Reader, and other reading apps. HTTP Basic auth with the API key as the password.
 
 **Packaging** — single Go binary with the React frontend embedded via `go:embed`. Distroless container (non-root, read-only rootfs, all caps dropped, RuntimeDefault seccomp). Helm chart for ArgoCD / Flux. Pure-Go SQLite via `modernc.org/sqlite` — no CGO, no external database.
 
@@ -182,7 +182,7 @@ The full reference (path remapping, API-key seeding, OIDC, telemetry, rate-limit
 | **Indexers** | Newznab (NZBGeek, NZBFinder, NZBPlanet, DrunkenSlug, …), Torznab (Prowlarr, Jackett, direct endpoints), with per-indexer category overrides |
 | **Notifications** | Generic webhooks — pipe to Apprise / ntfy / Home Assistant / Slack / Discord |
 | **Authentication** | Local (argon2id), API key, OIDC (Google, GitHub via Dex, Authelia, Keycloak, …), forward-auth proxy |
-| **Reading apps** | OPDS 1.2 catalogue at `/opds/v1.2/` (KOReader, Moon+ Reader, Aldiko, …) |
+| **Reading apps** | OPDS 1.2 catalogue at `/opds/` (KOReader, Moon+ Reader, Aldiko, …) |
 
 All download clients support **Use SSL** and **URL Base** for connections through a reverse-proxy subpath.
 
@@ -210,7 +210,7 @@ Component breakdown, package layout, concurrency model, and design rationale are
 
 ## API
 
-Every feature is exposed under `/api/v1/*`, with an arr-compatible `/api/queue` for external tools and an OPDS catalogue at `/opds/v1.2/`. Quick taste:
+Every feature is exposed under `/api/v1/*`, with an arr-compatible `/api/queue` for external tools and an OPDS catalogue at `/opds/`. Quick taste:
 
 ```bash
 # Add an author by OpenLibrary ID and start monitoring

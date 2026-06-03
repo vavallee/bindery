@@ -9,7 +9,7 @@ A single-binary book download manager (Readarr replacement) — Go 1.25 backend 
 ## Repo map
 
 ```
-cmd/bindery/         entry point, migrate / proxy / reconcile / healthcheck subcommands
+cmd/bindery/         entry point, healthcheck / migrate / reconcile-series subcommands
 internal/api/        chi HTTP handlers — one file per resource, *_test.go alongside
 internal/auth/       argon2id passwords, HMAC sessions, OIDC, proxy auth
 internal/db/         sqlite repository layer + migrations (use db.OpenMemory in tests)
@@ -68,7 +68,7 @@ Test patterns (`db.OpenMemory`, `httptest`, `vitest` + `@testing-library/react`)
 - **CHANGELOG.md** is authored at release time only — see the **`tag-release`** skill. Don't add `[Unreleased]` entries during feature work; CI only validates that a `## [vX.Y.Z]` section exists at tag time.
 - **Helm `values.yaml`** image digest is auto-bumped by CI with `[skip ci]`. Don't hand-edit the digest.
 - **Secrets in source are blocked** by gitleaks + GitHub Push Protection. Use the SQLite-backed settings store (configured at runtime) for any credential — see `internal/auth` and `internal/config`.
-- **The frontend talks to the backend over `/api/v1` only** (plus the `*arr-compatible `/api/queue` and `/opds/v1.2/`). Auth rules per route live in `internal/api/auth.go`.
+- **The frontend talks to the backend over `/api/v1` only** (plus the `*arr-compatible `/api/queue` and `/opds/`). Auth rules per route live in `internal/api/auth.go`.
 
 ## Working on a feature — lifecycle
 

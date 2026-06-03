@@ -54,12 +54,22 @@ The `internal/` tree is organised by domain, not by layer:
 | `calibre` | `calibredb` CLI integration, plugin-bridge HTTP client, `metadata.db` direct ingest. |
 | `abs` | Audiobookshelf import — runs, provenance, conflicts, review queue. |
 | `prowlarr` | Prowlarr server registration and indexer sync. |
-| `opds` | OPDS 1.2 catalogue feeds (root, recent, by author, search). |
+| `opds` | OPDS 1.2 catalogue feeds (root, recent, by author, by series, book entry/file). |
 | `notifier` | Webhook sender (SSRF-guarded), retry policy, test-fire endpoint. |
 | `httpsec` | Outbound URL guards (SSRF, DNS-rebinding), inbound header hardening (CSP, HSTS, frame-deny). |
 | `telemetry` | Once-daily anonymous version ping (opt-out via setting or env var). |
 | `logbuf` | Persistent log buffer backing the in-app Settings → Logs viewer. |
 | `webui` | The `go:embed` filesystem for the built React SPA, with URL-base rewriting. |
+| `config` | Loads bootstrap runtime configuration from environment variables (paths, ports, retention, feature flags). |
+| `bookhydrate` | Persists metadata-provider edition details for newly created or rebound books. |
+| `concurrency` | Small primitives for bounding goroutine fan-out in handlers and background jobs. |
+| `grimmory` | Client for the Grimmory self-hosted digital-library API; user-facing (Settings exposes config/test routes under `/grimmory/*`). |
+| `hardcoverlistsyncer` | Syncs Hardcover reading lists into the catalogue as "wanted" books. |
+| `isbnutil` | Normalizes ISBN inputs for metadata-provider lookups. |
+| `metrics` | Prometheus exposition-format runtime metrics (registry, instances, HTTP handler). |
+| `pathmap` | Rewrites paths between external-service mount points and Bindery-visible mount points. |
+| `textutil` | Normalization and cleanup helpers (author names, descriptions, Jaro-Winkler fuzzy matching). |
+| `useragent` | Produces the canonical `User-Agent` string sent on every outbound HTTP request. |
 
 ## Storage layout
 
