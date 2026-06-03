@@ -6,6 +6,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Re-bind metadata "Re-bind anyway" override was unreachable** — when re-binding a book to a provider whose record belongs to a different author, the API returns a `409` carrying `force_required` so the UI can offer an override. The web API client discarded the HTTP status and JSON body on error, so `RebindModal` never saw the flag and rendered the raw `author mismatch` text with no way forward. The client now throws a structured `ApiError` (status + body); the amber "Re-bind anyway" confirmation works as intended. Note: forcing past the mismatch re-points the book's metadata to the new record but keeps it filed under its current author.
+
 ## [v1.16.0] — 2026-06-03
 
 Security and hardening release. The bulk of this version is an audit-driven hardening pass (the **D1–D4** access-control findings and the **Wave 2–5** robustness sweep), opt-in per-user data isolation, a batch of performance work, and a long tail of import/scheduler correctness fixes. No breaking config changes, but two behaviour changes worth noting before upgrading: list endpoints are now paginated and request bodies are capped at 1 MiB by default (see **Changed**).
