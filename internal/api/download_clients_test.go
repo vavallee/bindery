@@ -159,6 +159,7 @@ func TestDownloadClientTest_NotFound(t *testing.T) {
 }
 
 func TestDownloadClientTest_SuccessMessage(t *testing.T) {
+	defer httpsec.AllowLoopbackForTests()()
 	qbit := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v2/auth/login":
