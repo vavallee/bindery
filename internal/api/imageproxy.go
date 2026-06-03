@@ -259,14 +259,24 @@ func (h *ImageProxyHandler) CacheSize() (int64, error) {
 	return total, err
 }
 
+// imageProxyBase is the URL path prefix (BINDERY_URL_BASE, e.g. "/bindery")
+// the app is served under. Set once at startup via SetImageProxyBase so proxied
+// cover URLs resolve correctly behind a path-prefix reverse proxy. Empty for
+// root-mounted deploys.
+var imageProxyBase string
+
+// SetImageProxyBase configures the path prefix prepended to proxied image URLs.
+// Call once during startup, before serving requests.
+func SetImageProxyBase(base string) { imageProxyBase = base }
+
 // ProxyImageURL rewrites a raw external image URL into the local proxy path
-// /api/v1/images?url=<encoded>. Returns raw unchanged when it is empty or
+// <base>/api/v1/images?url=<encoded>. Returns raw unchanged when it is empty or
 // already a relative URL (already proxied or intentionally local).
 func ProxyImageURL(raw string) string {
 	if raw == "" || strings.HasPrefix(raw, "/") {
 		return raw
 	}
-	return "/api/v1/images?url=" + url.QueryEscape(raw)
+	return imageProxyBase + "/api/v1/images?url=" + url.QueryEscape(raw)
 }
 
 // proxyAuthorImages rewrites ImageURL on an author and all its embedded books.

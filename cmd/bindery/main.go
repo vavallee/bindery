@@ -593,6 +593,9 @@ func main() {
 		WithAppContext(appCtx)
 	imageProxyHandler := api.NewImageProxyHandler(cfg.DataDir)
 	imageProxyHandler.StartEviction(24 * time.Hour)
+	// Proxied cover URLs must carry the path prefix so they resolve under a
+	// subpath deploy (BINDERY_URL_BASE). No-op when URLBase is empty.
+	api.SetImageProxyBase(cfg.URLBase)
 	migrateHandler := api.NewMigrateHandler(
 		authorRepo, indexerRepo, dlClientRepo, blocklistRepo, bookRepo, metaAgg,
 		// Bulk imports always populate the catalogue but never auto-grab.
