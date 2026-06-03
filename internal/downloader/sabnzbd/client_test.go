@@ -413,8 +413,8 @@ func TestTest_ConnectionRefused(t *testing.T) {
 		return
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "host firewall is rejecting") {
-		t.Errorf("expected port hint, got: %q", msg)
+	if !strings.Contains(msg, "connection refused") {
+		t.Errorf("expected connection-refused hint, got: %q", msg)
 	}
 }
 

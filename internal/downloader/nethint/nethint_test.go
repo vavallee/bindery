@@ -42,7 +42,7 @@ func TestForErr_DNSTemporary(t *testing.T) {
 func TestForErr_ConnectionRefused(t *testing.T) {
 	err := fmt.Errorf("dial tcp: %w", syscall.ECONNREFUSED)
 	got := nethint.ForErr(err)
-	want := " (connection refused — service may not be listening on that port, or a host firewall is rejecting traffic from the Docker subnet)"
+	want := " (connection refused — check the port, and that the service is listening on the interface in the URL (a service bound to 127.0.0.1 will refuse a LAN-IP URL); on a Docker bridge network a host firewall may also be rejecting the traffic)"
 	if got != want {
 		t.Errorf("ForErr(ECONNREFUSED) = %q, want %q", got, want)
 	}

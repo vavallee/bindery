@@ -29,16 +29,22 @@ func ForErr(err error) string {
 		return " (if using a container name, ensure both services are on the same Docker network)"
 	}
 
-	// 2. Connection refused — TCP got rejected. Two common causes:
-	//    a) Service genuinely isn't listening on that port.
-	//    b) Bindery runs in Docker, the target is on the bare-metal host (or
-	//       a different subnet), and a host firewall is REJECTing traffic
-	//       from the Docker bridge subnet (REJECT sends RST → ECONNREFUSED,
-	//       while DROP would surface as a timeout instead).
-	//    Naming both cases stops users from chasing the wrong layer when
-	//    the service is actually running and a firewall is the blocker.
+	// 2. Connection refused — TCP got rejected (RST). Common causes, in
+	//    rough order of how often they bite:
+	//    a) Wrong port, or the service is bound to a different interface than
+	//       the one in the URL — e.g. listening on 127.0.0.1 only while the
+	//       URL points at a LAN IP. Under `network_mode: host` this is the
+	//       usual culprit: another container reaching the same service works
+	//       because it uses localhost, while this URL uses the LAN address.
+	//    b) Service genuinely isn't running / not listening on that port.
+	//    c) Bindery runs on a Docker bridge network (not host), the target is
+	//       on the bare-metal host or another subnet, and a host firewall is
+	//       REJECTing traffic from the bridge subnet (REJECT sends RST →
+	//       ECONNREFUSED; DROP would surface as a timeout instead).
+	//    Note: don't assert a Docker subnet — host-networked deployments have
+	//    none, and blaming a firewall there sends users down the wrong path.
 	if errors.Is(err, syscall.ECONNREFUSED) {
-		return " (connection refused — service may not be listening on that port, or a host firewall is rejecting traffic from the Docker subnet)"
+		return " (connection refused — check the port, and that the service is listening on the interface in the URL (a service bound to 127.0.0.1 will refuse a LAN-IP URL); on a Docker bridge network a host firewall may also be rejecting the traffic)"
 	}
 
 	// 3. Timeout — host is reachable but not responding (firewall, proxy, etc.).
