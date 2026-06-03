@@ -42,7 +42,7 @@ func TestTryImportInternal_UnmatchedAudiobookDoesNotPanic(t *testing.T) {
 
 	// Before the fix this panicked on the nil book deref inside
 	// AudiobookDestDir -> renamer.apply. It must now return cleanly.
-	s.tryImportInternal(ctx, dl, downloadDir, "", "", nil, nil)
+	s.tryImportInternal(ctx, dl, downloadDir, "", "", "", nil, nil)
 
 	got, err := dlRepo.GetByGUID(ctx, dl.GUID)
 	if err != nil {
