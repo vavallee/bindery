@@ -47,12 +47,70 @@ func New(host string, port int, apiKey, urlBase string, useSSL bool) *Client {
 	}
 }
 
-// Test verifies connectivity by fetching categories.
-func (c *Client) Test(ctx context.Context) error {
-	if _, err := c.GetCategories(ctx); err != nil {
+// Test verifies connectivity and, when categories are supplied, that each
+// configured category actually exists in SABnzbd. It fetches the category list
+// once: a failure there is a reachability/auth problem (with a network hint),
+// while a category that's present-but-unknown is a configuration problem that
+// would otherwise only surface as downloads silently landing in SAB's default
+// category. The variadic wanted lets callers (the save-time TestClient path)
+// pass client.Category and client.CategoryAudiobook; an empty Test() call still
+// works as a pure reachability check.
+func (c *Client) Test(ctx context.Context, wanted ...string) error {
+	have, err := c.GetCategories(ctx)
+	if err != nil {
 		return fmt.Errorf("could not reach SABnzbd at %s — %w%s", c.baseURL, err, nethint.ForErr(err))
 	}
-	return nil
+	return checkCategories(have, wanted)
+}
+
+// checkCategories reports an error when any non-empty entry in wanted is not in
+// have. Empty entries are skipped — an empty category means "use SAB's default
+// destination". Mirrors NZBGet's CheckCategories behaviour and message style.
+func checkCategories(have, wanted []string) error {
+	var nonEmpty []string
+	for _, w := range wanted {
+		if strings.TrimSpace(w) != "" {
+			nonEmpty = append(nonEmpty, w)
+		}
+	}
+	if len(nonEmpty) == 0 {
+		return nil
+	}
+	haveSet := make(map[string]struct{}, len(have))
+	for _, h := range have {
+		haveSet[h] = struct{}{}
+	}
+	var missing []string
+	for _, w := range nonEmpty {
+		if _, ok := haveSet[w]; !ok {
+			missing = append(missing, w)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return categoryMismatchError(missing, have)
+}
+
+// categoryMismatchError formats the actionable error returned when one or more
+// Bindery-configured categories aren't defined in SABnzbd. We surface both
+// sides so the user can see what to rename on which side.
+func categoryMismatchError(missing, have []string) error {
+	quote := func(in []string) string {
+		out := make([]string, len(in))
+		for i, s := range in {
+			out[i] = fmt.Sprintf("%q", s)
+		}
+		return strings.Join(out, ", ")
+	}
+	haveStr := "none defined"
+	if len(have) > 0 {
+		haveStr = quote(have)
+	}
+	if len(missing) == 1 {
+		return fmt.Errorf("SABnzbd has no category %q configured (existing categories: %s). Add it in SABnzbd's Config → Categories, or change the category in Bindery's download-client config to match", missing[0], haveStr)
+	}
+	return fmt.Errorf("SABnzbd has no categories %s configured (existing categories: %s). Add them in SABnzbd's Config → Categories, or change the categories in Bindery's download-client config to match", quote(missing), haveStr)
 }
 
 // AddURL fetches the NZB file from nzbURL (using Bindery's own HTTP client,

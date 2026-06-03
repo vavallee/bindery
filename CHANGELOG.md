@@ -6,6 +6,12 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Grab errors name the missing download-client protocol** — grabbing a usenet (NZB) release when only a torrent client is enabled (or vice versa) returned a generic "no enabled download client configured", sending users to re-check the client they had already verified. The error now names the release's protocol and, when a client of the *other* protocol is enabled, spells out the mismatch and which client to add (`internal/api/queue.go`).
+
+- **SABnzbd connection test validates the configured category** — the SABnzbd test only checked reachability and discarded the category list, so a typo'd category passed; downloads then landed silently in SAB's default category and the poller never found them. The test now verifies that each configured category (and audiobook category, if set) exists in SABnzbd, returning an actionable error otherwise — mirroring the existing NZBGet behaviour (`internal/downloader/sabnzbd/client.go`, `internal/downloader/adapter.go`).
+
 ## [v1.16.0] — 2026-06-03
 
 Security and hardening release. The bulk of this version is an audit-driven hardening pass (the **D1–D4** access-control findings and the **Wave 2–5** robustness sweep), opt-in per-user data isolation, a batch of performance work, and a long tail of import/scheduler correctness fixes. No breaking config changes, but two behaviour changes worth noting before upgrading: list endpoints are now paginated and request bodies are capped at 1 MiB by default (see **Changed**).
