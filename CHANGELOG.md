@@ -6,6 +6,12 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Docs
+
+- **Added `docs/QUICKSTART.md`** — an in-repo zero-to-first-download walkthrough (run → first login → indexer → download client → author → grab) with the SSRF `localhost`-rejection gotcha and protocol-matching/category troubleshooting callouts. Linked from the README documentation table.
+
+- **Fixed doc/code drift:** Unraid template Overview now says MIT (was "Apache 2.0"); `BINDERY_AUDIOBOOK_DOWNLOAD_DIR` added to the README env table; `BINDERY_TRUSTED_PROXY` and `BINDERY_TELEMETRY_DISABLED` added to the DEPLOYMENT env-var reference; the broken `#reverse-proxy` anchor in `DEPLOYMENT.md` now points at the Reverse-proxy wiki; README "full reference" wording corrected to point OIDC/forward-auth vars at `docs/auth-oidc.md` / `docs/auth-proxy.md`.
+
 ## [v1.16.0] — 2026-06-03
 
 Security and hardening release. The bulk of this version is an audit-driven hardening pass (the **D1–D4** access-control findings and the **Wave 2–5** robustness sweep), opt-in per-user data isolation, a batch of performance work, and a long tail of import/scheduler correctness fixes. No breaking config changes, but two behaviour changes worth noting before upgrading: list endpoints are now paginated and request bodies are capped at 1 MiB by default (see **Changed**).

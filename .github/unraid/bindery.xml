@@ -7,7 +7,7 @@
   <Privileged>false</Privileged>
   <Support>https://discord.gg/RpuYYRM9cZ</Support>
   <Project>https://github.com/vavallee/bindery</Project>
-  <Overview>Bindery is a self-hosted ebook and audiobook automation server. Search OpenLibrary, Hardcover, and DNB for books and authors; monitor authors and series; hand requests to your *arr-style indexers and download client (NZB or torrent); import completed files into your library with proper metadata; serve an OPDS 1.2 catalogue to e-readers. Distroless image, Apache 2.0.&#xD;
+  <Overview>Bindery is a self-hosted ebook and audiobook automation server. Search OpenLibrary, Hardcover, and DNB for books and authors; monitor authors and series; hand requests to your *arr-style indexers and download client (NZB or torrent); import completed files into your library with proper metadata; serve an OPDS 1.2 catalogue to e-readers. Distroless image, MIT licensed.&#xD;
 &#xD;
 First-run: open the WebUI to create an admin account. No env vars required for auth.&#xD;
 &#xD;
