@@ -454,7 +454,7 @@ func TestTest_ServerError(t *testing.T) {
 		return
 	}
 	msg := err.Error()
-	for _, hint := range []string{"Docker network", "host firewall is rejecting", "firewall or proxy"} {
+	for _, hint := range []string{"Docker network", "check the port", "firewall or proxy"} {
 		if strings.Contains(msg, hint) {
 			t.Errorf("clean server error must not produce hint %q; got: %q", hint, msg)
 		}
