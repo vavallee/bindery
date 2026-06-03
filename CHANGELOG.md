@@ -6,6 +6,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Helm chart shipped unusable defaults** — `values.yaml` defaulted `BINDERY_LIBRARY_DIR` to a maintainer-specific path (`/media/BOOKS/incoming`) and enabled a `/downloads:/media` path remap, so a fresh `helm install` pointed the library at a path that didn't exist in the pod and silently rewrote download paths. Library dir now defaults to `/books` (matching the Docker image) and the remap is commented out by default. The chart's ingress was also Traefik-`IngressRoute`-only; it now supports `ingress.type: standard` to render a portable `networking.k8s.io/v1` Ingress (with `className`/`annotations`/`tls`) for nginx-ingress, GKE, EKS, etc. `type` defaults to `traefik`, so existing installs are unchanged.
+
 ## [v1.16.0] — 2026-06-03
 
 Security and hardening release. The bulk of this version is an audit-driven hardening pass (the **D1–D4** access-control findings and the **Wave 2–5** robustness sweep), opt-in per-user data isolation, a batch of performance work, and a long tail of import/scheduler correctness fixes. No breaking config changes, but two behaviour changes worth noting before upgrading: list endpoints are now paginated and request bodies are capped at 1 MiB by default (see **Changed**).

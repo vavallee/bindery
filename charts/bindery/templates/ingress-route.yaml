@@ -1,4 +1,4 @@
-{{- if .Values.ingress.enabled }}
+{{- if and .Values.ingress.enabled (eq (.Values.ingress.type | default "traefik") "traefik") }}
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
