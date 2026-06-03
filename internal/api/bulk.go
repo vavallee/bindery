@@ -31,6 +31,14 @@ type BulkHandler struct {
 	blocklist *db.BlocklistRepo
 	searcher  BookSearcher
 
+	// refreshAuthor repopulates a single author's catalogue from the metadata
+	// provider (and resolves the default media type for newly-discovered
+	// books). Injected via WithRefreshFunc so the bulk "refresh" action reuses
+	// exactly the same fetch the per-author Refresh handler runs — it fetches
+	// metadata but never auto-grabs. Nil when not wired (e.g. in tests that
+	// don't exercise refresh), in which case "refresh" is rejected.
+	refreshAuthor func(author *models.Author)
+
 	// lifetimeCtx is the process-lifecycle context; cancelled on server
 	// shutdown so a bulk-action POST that fans out indexer searches does
 	// not leak goroutines (or worse, grab a torrent mid-shutdown) past
@@ -41,6 +49,18 @@ type BulkHandler struct {
 
 func NewBulkHandler(authors *db.AuthorRepo, books *db.BookRepo, blocklist *db.BlocklistRepo, searcher BookSearcher) *BulkHandler {
 	return &BulkHandler{authors: authors, books: books, blocklist: blocklist, searcher: searcher}
+}
+
+// WithRefreshFunc attaches the per-author catalogue-refresh callback used by
+// the bulk "refresh" action. The callback must fetch metadata only (never
+// auto-grab) — wire it to AuthorHandler.FetchAuthorBooks(author, false,
+// defaultMediaType), matching the single-author Refresh endpoint. A nil fn is
+// tolerated and ignored; the "refresh" action then reports an error per ID.
+func (h *BulkHandler) WithRefreshFunc(fn func(author *models.Author)) *BulkHandler {
+	if fn != nil {
+		h.refreshAuthor = fn
+	}
+	return h
 }
 
 // WithLifetimeCtx attaches the process-lifecycle context so the bulk-search
@@ -78,10 +98,16 @@ type bulkResponse struct {
 
 // AuthorsBulk handles POST /api/v1/author/bulk.
 //
-// Supported actions: "monitor", "unmonitor", "delete", "search", "set_media_type".
+// Supported actions: "monitor", "unmonitor", "delete", "search", "refresh", "set_media_type".
 // "search" fires an async indexer search for every wanted book belonging
 // to each requested author and always returns ok:true immediately (the search
 // outcome is visible in History).
+// "refresh" repopulates each author's catalogue from the metadata provider
+// (the same fetch the per-author Refresh endpoint runs) — it fetches metadata
+// only and never auto-grabs. Like "search" it dispatches under a bounded pool
+// after the response and returns ok:true immediately. Used to recover authors
+// imported with empty catalogues (e.g. plain-name CSV rows) without clicking
+// per-author Refresh one at a time.
 // "set_media_type" requires a "mediaType" field ("ebook"|"audiobook"|"both")
 // and applies it to every book belonging to each author — the companion
 // mass-migration action for the global default.media_type setting.
@@ -101,9 +127,13 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch req.Action {
-	case "monitor", "unmonitor", "delete", "search", "set_media_type":
+	case "monitor", "unmonitor", "delete", "search", "refresh", "set_media_type":
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
+		return
+	}
+	if req.Action == "refresh" && h.refreshAuthor == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "refresh action not available"})
 		return
 	}
 	if req.Action == "set_media_type" {
@@ -123,6 +153,11 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 	// authors with 50 books each) at bulkSearchConcurrency in-flight searches
 	// rather than the prior unbounded `go ... per book`.
 	var searchTargets []models.Book
+
+	// For the "refresh" action we load each author while the request context
+	// is alive, then dispatch the metadata fetch under the same bounded pool
+	// as "search" after the handler returns.
+	var refreshTargets []*models.Author
 
 	for _, id := range req.IDs {
 		key := fmt.Sprintf("%d", id)
@@ -157,6 +192,19 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
+		case "refresh":
+			// Load the author now (request context alive); collect for the
+			// bounded post-response metadata fetch.
+			author, err := h.authors.GetByID(r.Context(), id)
+			if err != nil {
+				resp.Results[key] = bulkItemResult{Error: err.Error()}
+				continue
+			}
+			if author == nil {
+				resp.Results[key] = bulkItemResult{Error: "author not found"}
+				continue
+			}
+			refreshTargets = append(refreshTargets, author)
 		case "set_media_type":
 			if err := h.setAuthorBooksMediaType(r.Context(), id, req.MediaType); err != nil {
 				resp.Results[key] = bulkItemResult{Error: err.Error()}
@@ -169,8 +217,27 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 	if len(searchTargets) > 0 && h.searcher != nil {
 		h.fanOutSearches(searchTargets)
 	}
+	if len(refreshTargets) > 0 && h.refreshAuthor != nil {
+		h.fanOutRefreshes(refreshTargets)
+	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// fanOutRefreshes dispatches per-author catalogue refreshes under the same
+// bounded pool as fanOutSearches so a bulk refresh of many authors can't spawn
+// one goroutine per author. Each call fetches metadata only (never auto-grabs)
+// via the injected refreshAuthor callback. Runs on the process-lifecycle
+// context so the HTTP response isn't blocked on provider round-trips and a
+// shutdown cancels in-flight fetches. Fire-and-forget by design.
+func (h *BulkHandler) fanOutRefreshes(authors []*models.Author) {
+	if h.refreshAuthor == nil || len(authors) == 0 {
+		return
+	}
+	bgCtx := h.bgCtx()
+	go concurrency.RunBounded(bgCtx, authors, bulkSearchConcurrency, func(_ context.Context, a *models.Author) {
+		h.refreshAuthor(a)
+	})
 }
 
 // fanOutSearches dispatches per-book indexer searches under a bounded pool

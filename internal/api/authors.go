@@ -1064,6 +1064,13 @@ func (h *AuthorHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]string{"message": "refresh started"})
 }
 
+// ResolveDefaultMediaType is the exported wrapper around resolveDefaultMediaType
+// so out-of-package wiring (e.g. the bulk "refresh" callback in main.go) can
+// resolve the same default media type the Refresh endpoint uses.
+func (h *AuthorHandler) ResolveDefaultMediaType(ctx context.Context) string {
+	return h.resolveDefaultMediaType(ctx)
+}
+
 // resolveDefaultMediaType reads the global default.media_type setting and
 // falls back to ebook when unset so fresh installs keep the historical
 // behaviour. An invalid stored value — should never happen because writes

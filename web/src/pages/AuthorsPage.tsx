@@ -378,6 +378,7 @@ export default function AuthorsPage() {
           { label: t('common.monitor'), onClick: () => runBulk('monitor') },
           { label: t('common.unmonitor'), onClick: () => runBulk('unmonitor') },
           { label: t('common.search'), onClick: () => runBulk('search') },
+          { label: t('authors.bulkRefreshMetadata', 'Refresh metadata'), onClick: () => runBulk('refresh') },
           { label: t('authors.bulkSetEbook', 'Set ebook'), onClick: () => runBulkSetMediaType('ebook') },
           { label: t('authors.bulkSetAudiobook', 'Set audiobook'), onClick: () => runBulkSetMediaType('audiobook') },
           { label: t('authors.bulkSetBoth', 'Set both'), onClick: () => runBulkSetMediaType('both') },

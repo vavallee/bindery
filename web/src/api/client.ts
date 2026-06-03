@@ -1496,7 +1496,7 @@ export interface Recommendation {
   createdAt: string
 }
 
-export type AuthorBulkAction = 'monitor' | 'unmonitor' | 'delete' | 'search' | 'set_media_type'
+export type AuthorBulkAction = 'monitor' | 'unmonitor' | 'delete' | 'search' | 'refresh' | 'set_media_type'
 export type BookBulkAction = 'monitor' | 'unmonitor' | 'delete' | 'search' | 'set_media_type' | 'exclude'
 export type WantedBulkAction = 'search' | 'blocklist' | 'unmonitor'
 

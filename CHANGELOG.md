@@ -6,6 +6,20 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- Bulk "Refresh metadata" action on the Authors page: refresh the catalogues of
+  many selected authors at once (metadata fetch only, never an auto-download).
+  Recovers authors imported with empty catalogues without clicking per-author
+  Refresh one at a time (`internal/api/bulk.go`, `web/src/pages/AuthorsPage.tsx`).
+
+### Fixed
+- CSV author import now always populates each newly-created author's book
+  catalogue, instead of only doing so for rows with an explicit
+  `searchOnAdd=true` third column. Plain-name and two-column rows previously
+  created authors with empty catalogues, so the library scan matched no files
+  and the library looked empty after import. The fetch never auto-downloads
+  (`internal/migrate/csv.go`).
+
 ## [v1.16.0] — 2026-06-03
 
 Security and hardening release. The bulk of this version is an audit-driven hardening pass (the **D1–D4** access-control findings and the **Wave 2–5** robustness sweep), opt-in per-user data isolation, a batch of performance work, and a long tail of import/scheduler correctness fixes. No breaking config changes, but two behaviour changes worth noting before upgrading: list endpoints are now paginated and request bodies are capped at 1 MiB by default (see **Changed**).

@@ -309,6 +309,92 @@ func TestAuthorsBulk_Search_FiresSearcherForWantedBooks(t *testing.T) {
 	searcher.assertNoCall(t, 50*time.Millisecond)
 }
 
+// TestAuthorsBulk_Refresh_FiresFetchPerAuthor covers the bulk "refresh" action:
+// for each selected author id it must invoke the injected catalogue-fetch
+// callback exactly once (the same metadata-only fetch the per-author Refresh
+// endpoint runs — never an auto-grab). This is the mass-recovery path for
+// authors imported with empty catalogues.
+func TestAuthorsBulk_Refresh_FiresFetchPerAuthor(t *testing.T) {
+	h, authors, _, author, ctx := bulkFixture(t)
+
+	// Two more authors so we exercise the per-id fan-out.
+	var ids []int64
+	ids = append(ids, author.ID)
+	for i := 0; i < 2; i++ {
+		a := &models.Author{
+			ForeignID:        fmt.Sprintf("OL_REFRESH_%d", i),
+			Name:             fmt.Sprintf("Refresh Author %d", i),
+			SortName:         fmt.Sprintf("Author, Refresh %d", i),
+			MetadataProvider: "openlibrary",
+			Monitored:        true,
+		}
+		if err := authors.Create(ctx, a); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, a.ID)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(len(ids))
+	var mu sync.Mutex
+	seen := map[int64]int{}
+	h.WithRefreshFunc(func(a *models.Author) {
+		mu.Lock()
+		seen[a.ID]++
+		mu.Unlock()
+		wg.Done()
+	})
+
+	idsJSON, _ := json.Marshal(ids)
+	body := fmt.Sprintf(`{"ids":%s,"action":"refresh"}`, idsJSON)
+	rec := postBulk(t, h.AuthorsBulk, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp bulkResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids {
+		key := fmt.Sprintf("%d", id)
+		if r := resp.Results[key]; !r.OK {
+			t.Errorf("expected ok for author %d, got %+v", id, r)
+		}
+	}
+
+	// Fan-out runs in a goroutine; wait for all callbacks.
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("refresh callback never fired for all authors")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != len(ids) {
+		t.Fatalf("refresh fired for %d distinct authors, want %d", len(seen), len(ids))
+	}
+	for _, id := range ids {
+		if seen[id] != 1 {
+			t.Errorf("author %d refreshed %d times, want 1", id, seen[id])
+		}
+	}
+}
+
+// When no refresh callback is wired the action must be rejected rather than
+// silently succeeding (so the UI surfaces a real error instead of a no-op).
+func TestAuthorsBulk_Refresh_RejectedWhenUnwired(t *testing.T) {
+	h, _, _, author, _ := bulkFixture(t)
+	body := fmt.Sprintf(`{"ids":[%d],"action":"refresh"}`, author.ID)
+	rec := postBulk(t, h.AuthorsBulk, body)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 when refresh func unwired, got %d", rec.Code)
+	}
+}
+
 func TestAuthorsBulk_UnknownAction(t *testing.T) {
 	h, _, _, author, _ := bulkFixture(t)
 	body := fmt.Sprintf(`{"ids":[%d],"action":"nuke"}`, author.ID)

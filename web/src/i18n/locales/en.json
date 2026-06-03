@@ -125,7 +125,8 @@
     "unmonitored": "Unmonitored",
     "deleteConfirm": "Delete this author and all their books?",
     "deleteWithFilesConfirm": "Delete this author, {{total}} book(s), AND {{withFiles}} file(s)/folder(s) on disk?\n\nThis cannot be undone.",
-    "bulkDeleteConfirm": "Delete {{count}} author(s) and all their books?"
+    "bulkDeleteConfirm": "Delete {{count}} author(s) and all their books?",
+    "bulkRefreshMetadata": "Refresh metadata"
   },
   "authorDetail": {
     "bulk": {
