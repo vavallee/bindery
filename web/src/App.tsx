@@ -1,12 +1,26 @@
-import { BrowserRouter, Routes, Route, NavLink, Link, Navigate } from 'react-router-dom'
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, useLocation } from 'react-router-dom'
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from './api/client'
 import { AuthProvider, useAuth } from './auth/AuthContext'
 import AuthGuard from './auth/AuthGuard'
 import PublicOnlyRoute from './auth/PublicOnlyRoute'
+import ErrorBoundary from './components/ErrorBoundary'
 import Logo from './components/Logo'
 import { useTheme } from './theme'
+
+// Route-scoped error boundary: a render crash in one page shows an inline error
+// inside the content area (the nav/header stay usable) instead of bubbling to
+// the root boundary, which would blank the whole app. Keyed on the path so
+// navigating to another page clears the error without a reload.
+function RoutedErrorBoundary({ children }: { children: ReactNode }) {
+  const location = useLocation()
+  return (
+    <ErrorBoundary inline resetKey={location.pathname}>
+      {children}
+    </ErrorBoundary>
+  )
+}
 
 const LoginPage = lazy(() => import('./pages/LoginPage'))
 const SetupPage = lazy(() => import('./pages/SetupPage'))
@@ -247,6 +261,7 @@ function Shell() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <Suspense fallback={<PageLoadingFallback />}>
+          <RoutedErrorBoundary>
           <Routes>
             <Route path="/" element={<AuthorsPage />} />
             <Route path="/author/:id" element={<AuthorDetailPage />} />
@@ -263,6 +278,7 @@ function Shell() {
             <Route path="/settings" element={<SettingsPage />} />
             {isAdmin && <Route path="/users" element={<UsersPage />} />}
           </Routes>
+          </RoutedErrorBoundary>
         </Suspense>
       </main>
 
