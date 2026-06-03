@@ -93,7 +93,7 @@ func TestCategoriesToPoll(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := categoriesToPoll(tc.client)
+			got := CategoriesToPoll(tc.client)
 			if len(got) != len(tc.want) {
 				t.Fatalf("len(got)=%d, want %d (got=%v)", len(got), len(tc.want), got)
 			}
