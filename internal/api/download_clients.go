@@ -205,6 +205,10 @@ func (h *DownloadClientHandler) Test(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download client not found"})
 		return
 	}
+	if err := httpsec.ValidateOutboundURL(downloadClientURL(client), httpsec.PolicyLAN); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	if err := downloader.TestClient(r.Context(), client); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return

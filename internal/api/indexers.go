@@ -202,6 +202,12 @@ func (h *IndexerHandler) Test(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "indexer not found"})
 		return
 	}
+	if idx.URL != "" {
+		if err := httpsec.ValidateOutboundURL(idx.URL, httpsec.PolicyLAN); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+	}
 
 	client := newznab.New(idx.URL, idx.APIKey)
 	probe := client.Probe(r.Context())
