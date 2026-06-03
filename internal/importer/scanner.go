@@ -1647,6 +1647,18 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// Audiobook path: place the entire download directory as a unit so
 	// multi-part m4b/mp3 files, cover art, and cue sheets stay together.
 	if detectedFormat == models.MediaTypeAudiobook {
+		// Unmatched audiobook: with no book row we cannot compute a
+		// destination (AudiobookDestDir -> renamer.apply dereferences
+		// book.ReleaseDate/Title), so this branch would panic the scan
+		// goroutine. The ebook branch below treats book == nil as
+		// "unmatched, fail with an actionable status"; do the same here
+		// rather than crash. book can be nil when the download has no
+		// BookID, the lookup errored, or the book row was deleted between
+		// grab and import.
+		if book == nil {
+			s.failImport(ctx, dl, models.StateImportFailed, "could not match any book to this download — check the release title")
+			return
+		}
 		// Idempotency guard (issue #706 finding 2): if a prior attempt already
 		// placed this audiobook (book_files has an on-disk audiobook entry) but
 		// crashed before writing the terminal status, re-importing here would
