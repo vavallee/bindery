@@ -5,6 +5,31 @@ import { inputCls } from './formStyles'
 import { parseCats } from './helpers'
 import Toggle from './Toggle'
 
+// IndexerTestResultBanner renders a probe result with the same ok/warn/fail
+// semantics as the saved-row Test feedback (ok=true + 0 results → amber warn).
+function IndexerTestResultBanner({ r }: { r: IndexerTestResult }) {
+  const { t } = useTranslation()
+  const warn = r.ok && r.searchResults === 0
+  const colorCls = !r.ok
+    ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'
+    : warn
+      ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
+      : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300'
+  const dotCls = !r.ok ? 'bg-red-500' : warn ? 'bg-amber-500' : 'bg-emerald-500'
+  return (
+    <div role="status" className={`px-3 py-2 rounded text-xs flex items-center gap-2 ${colorCls}`}>
+      <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${dotCls}`} />
+      {!r.ok ? (
+        <span>{t('settings.indexers.testFail', { error: r.error ?? 'Unknown error' })}</span>
+      ) : warn ? (
+        <span>{t('settings.indexers.testWarn', { status: r.status, categories: r.categories, latency: r.latencyMs })}{r.searchError ? ` — ${r.searchError}` : ''}</span>
+      ) : (
+        <span>{t('settings.indexers.testOk', { status: r.status, categories: r.categories, latency: r.latencyMs, results: r.searchResults })}</span>
+      )}
+    </div>
+  )
+}
+
 // indexers/prowlarrInstances are owned by SettingsPage so they can be fetched
 // eagerly on page mount (matching the pre-refactor monolith), not on tab open.
 interface Props {
@@ -247,11 +272,26 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
   const [url, setUrl] = useState(indexer.url)
   const [apiKey, setApiKey] = useState(indexer.apiKey)
   const [categories, setCategories] = useState((indexer.categories ?? [7020]).join(', '))
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<IndexerTestResult | null>(null)
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const submit = async () => {
     const updated = await api.updateIndexer(indexer.id, { ...indexer, name, type, url, apiKey, categories: parseCats(categories) })
     onSaved(updated)
+  }
+
+  const handleTest = async () => {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const r = await api.testIndexerConfig({ name, type, url, apiKey, categories: parseCats(categories) })
+      setTestResult(r)
+    } catch (err: unknown) {
+      setTestResult({ ok: false, status: 0, categories: 0, bookSearch: false, latencyMs: 0, searchResults: 0, error: err instanceof Error ? err.message : 'Request failed' })
+    } finally {
+      setTesting(false)
+    }
   }
 
   return (
@@ -283,8 +323,10 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
         <input value={categories} onChange={e => setCategories(e.target.value)} placeholder={t('settings.indexers.form.categoriesPlaceholder')} className={inputCls} />
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.categoriesHint')}</p>
       </div>
+      {testResult && <IndexerTestResultBanner r={testResult} />}
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">{t('common.cancel')}</button>
+        <button onClick={handleTest} disabled={testing || !url} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-50">{testing ? t('common.testing') : t('common.test')}</button>
         <button onClick={submit} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium">{t('common.save')}</button>
       </div>
     </div>
@@ -298,11 +340,26 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
   const [url, setUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [categories, setCategories] = useState('7020')
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<IndexerTestResult | null>(null)
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const submit = async () => {
     const idx = await api.addIndexer({ name, url, apiKey, type, categories: parseCats(categories), enabled: true })
     onAdded(idx)
+  }
+
+  const handleTest = async () => {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const r = await api.testIndexerConfig({ name, type, url, apiKey, categories: parseCats(categories) })
+      setTestResult(r)
+    } catch (err: unknown) {
+      setTestResult({ ok: false, status: 0, categories: 0, bookSearch: false, latencyMs: 0, searchResults: 0, error: err instanceof Error ? err.message : 'Request failed' })
+    } finally {
+      setTesting(false)
+    }
   }
 
   return (
@@ -334,8 +391,10 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
         <input value={categories} onChange={e => setCategories(e.target.value)} placeholder={t('settings.indexers.form.categoriesPlaceholder')} className={inputCls} />
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.categoriesHint')}</p>
       </div>
+      {testResult && <IndexerTestResultBanner r={testResult} />}
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">{t('common.cancel')}</button>
+        <button onClick={handleTest} disabled={testing || !url} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-50">{testing ? t('common.testing') : t('common.test')}</button>
         <button onClick={submit} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium">{t('common.save')}</button>
       </div>
     </div>

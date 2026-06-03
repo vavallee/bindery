@@ -1231,7 +1231,7 @@ describe('SettingsPage', () => {
     fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'sab-secret' } })
     fireEvent.change(screen.getByDisplayValue('books'), { target: { value: 'ebooks' } })
     fireEvent.change(screen.getByLabelText('Download client path remap'), { target: { value: ' /media:/books ' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
 
     await waitFor(() => {
       expect(api.addDownloadClient).toHaveBeenCalledWith({
@@ -1299,7 +1299,7 @@ describe('SettingsPage', () => {
     }
     fireEvent.change(screen.getByPlaceholderText('Password'), { target: { value: password } })
     fireEvent.change(screen.getByDisplayValue('books'), { target: { value: category } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
 
     await waitFor(() => {
       expect(api.addDownloadClient).toHaveBeenCalledWith({
@@ -1337,7 +1337,7 @@ describe('SettingsPage', () => {
     fireEvent.change(screen.getByPlaceholderText('Password'), { target: { value: 'qbit-pass' } })
     fireEvent.change(screen.getByDisplayValue('books'), { target: { value: 'ebooks' } })
     fireEvent.change(screen.getByLabelText('Download client path remap'), { target: { value: ' /media:/books ' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
 
     await waitFor(() => {
       expect(api.updateDownloadClient).toHaveBeenCalledWith(44, {
@@ -1372,7 +1372,7 @@ describe('SettingsPage', () => {
     fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'k' } })
     fireEvent.change(screen.getByDisplayValue('books'), { target: { value: 'ebooks' } })
     fireEvent.change(screen.getByPlaceholderText('settings.clients.audiobookCategoryPlaceholder'), { target: { value: ' audiobooks ' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
 
     await waitFor(() => {
       expect(api.addDownloadClient).toHaveBeenCalledWith(expect.objectContaining({
@@ -1427,7 +1427,7 @@ describe('SettingsPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'settings.clients.addButton' }))
     fireEvent.change(screen.getByPlaceholderText('Host'), { target: { value: 'badhost' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
 
     expect(await screen.findByText('Connection refused')).toBeInTheDocument()
     expect(api.addDownloadClient).toHaveBeenCalledOnce()
@@ -1442,7 +1442,7 @@ describe('SettingsPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
     fireEvent.change(screen.getByPlaceholderText('Host'), { target: { value: 'newhost' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
 
     expect(await screen.findByText('Server error')).toBeInTheDocument()
     expect(api.updateDownloadClient).toHaveBeenCalledOnce()

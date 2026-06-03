@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/models"
@@ -178,6 +179,68 @@ func TestIndexerTest_NotFound(t *testing.T) {
 	h.Test(rec, withURLParam(httptest.NewRequest(http.MethodPost, "/indexer/999/test", nil), "id", "999"))
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestIndexerTestConfig_MissingURL(t *testing.T) {
+	h := indexerFixture(t)
+	rec := httptest.NewRecorder()
+	h.TestConfig(rec, httptest.NewRequest(http.MethodPost, "/indexer/test", bytes.NewBufferString(`{"apiKey":"k"}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing url, got %d", rec.Code)
+	}
+}
+
+func TestIndexerTestConfig_Reachable(t *testing.T) {
+	// httptest binds 127.0.0.1; allow loopback through the SSRF guard.
+	defer httpsec.AllowLoopbackForTests()()
+	// A reachable newznab-style endpoint returning a caps document. The probe
+	// reports ok=true; the unsaved body is never persisted.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<?xml version="1.0"?><caps><categories><category id="7020" name="Ebook"/></categories></caps>`))
+	}))
+	defer srv.Close()
+
+	h := indexerFixture(t)
+	rec := httptest.NewRecorder()
+	body := `{"name":"X","type":"newznab","url":"` + srv.URL + `","apiKey":"k"}`
+	h.TestConfig(rec, httptest.NewRequest(http.MethodPost, "/indexer/test", bytes.NewBufferString(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var out IndexerTestResponse
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.OK {
+		t.Errorf("expected ok=true for reachable indexer, got error %q", out.Error)
+	}
+}
+
+func TestIndexerTestConfig_Unreachable(t *testing.T) {
+	defer httpsec.AllowLoopbackForTests()()
+	// A reachable-but-failing probe returns HTTP 200 with an inline error so
+	// the UI can render the actionable message instead of a generic toast.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("bad api key"))
+	}))
+	defer srv.Close()
+
+	h := indexerFixture(t)
+	rec := httptest.NewRecorder()
+	body := `{"name":"X","type":"newznab","url":"` + srv.URL + `","apiKey":"wrong"}`
+	h.TestConfig(rec, httptest.NewRequest(http.MethodPost, "/indexer/test", bytes.NewBufferString(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var out IndexerTestResponse
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.OK || out.Error == "" {
+		t.Errorf("expected ok=false with an error, got ok=%v error=%q", out.OK, out.Error)
 	}
 }
 

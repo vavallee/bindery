@@ -19,6 +19,7 @@ type indexerRouteHandler interface {
 	Update(http.ResponseWriter, *http.Request)
 	Delete(http.ResponseWriter, *http.Request)
 	Test(http.ResponseWriter, *http.Request)
+	TestConfig(http.ResponseWriter, *http.Request)
 	SearchQuery(http.ResponseWriter, *http.Request)
 	LastSearchDebug(http.ResponseWriter, *http.Request)
 }
@@ -38,6 +39,8 @@ func registerIndexerRoutes(r chi.Router, h indexerRouteHandler) {
 		r.Put("/indexer/{id}", h.Update)
 		r.Delete("/indexer/{id}", h.Delete)
 		r.Post("/indexer/{id}/test", h.Test)
+		// Test an unsaved config posted in the body (inline form Test button).
+		r.Post("/indexer/test", h.TestConfig)
 	})
 }
 
@@ -75,6 +78,7 @@ type downloadClientRouteHandler interface {
 	Update(http.ResponseWriter, *http.Request)
 	Delete(http.ResponseWriter, *http.Request)
 	Test(http.ResponseWriter, *http.Request)
+	TestConfig(http.ResponseWriter, *http.Request)
 }
 
 // registerDownloadClientRoutes mounts /downloadclient/* — entire subtree is
@@ -88,5 +92,7 @@ func registerDownloadClientRoutes(r chi.Router, h downloadClientRouteHandler) {
 		r.Put("/downloadclient/{id}", h.Update)
 		r.Delete("/downloadclient/{id}", h.Delete)
 		r.Post("/downloadclient/{id}/test", h.Test)
+		// Test an unsaved config posted in the body (inline form Test button).
+		r.Post("/downloadclient/test", h.TestConfig)
 	})
 }

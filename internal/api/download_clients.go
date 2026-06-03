@@ -220,6 +220,40 @@ func (h *DownloadClientHandler) Test(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// TestConfig probes a download-client configuration supplied in the request
+// body without persisting it. This backs the inline "Test" button on the
+// Add/Edit forms so a user can verify host/port/credentials before saving.
+// The response shape mirrors Test (test-by-id) so the UI reuses one path.
+func (h *DownloadClientHandler) TestConfig(w http.ResponseWriter, r *http.Request) {
+	var c models.DownloadClient
+	if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if c.Host == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "host required"})
+		return
+	}
+	c.Host = sanitizeHost(c.Host)
+	if c.Type == "" {
+		c.Type = "sabnzbd"
+	}
+	if c.Port == 0 {
+		c.Port = 8080
+	}
+	if err := httpsec.ValidateOutboundURL(downloadClientURL(&c), httpsec.PolicyLAN); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := downloader.TestClient(r.Context(), &c); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Message string `json:"message"`
+	}{Message: "Connection verified"})
+}
+
 func (h *DownloadClientHandler) attachHealth(clients []models.DownloadClient) {
 	for i := range clients {
 		h.attachClientHealth(&clients[i])

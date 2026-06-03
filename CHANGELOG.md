@@ -7,6 +7,8 @@ All notable changes to Bindery are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+
+- **Test a download client / indexer before saving** — the Add and Edit forms for download clients and indexers now have an inline **Test** button that probes the unsaved host/port/URL/credentials, so a wrong value can be caught and fixed in place instead of having to save a broken entry, find Test on the saved row, reopen the editor, fix, and re-save. Backed by two new admin-only test-by-config endpoints (`POST /downloadclient/test` and `POST /indexer/test`) that validate and probe a posted config without persisting it; the response shape mirrors the existing test-by-id endpoints so the UI reuses one rendering path.
 - Bulk "Refresh metadata" action on the Authors page: refresh the catalogues of
   many selected authors at once (metadata fetch only, never an auto-download).
   Recovers authors imported with empty catalogues without clicking per-author
