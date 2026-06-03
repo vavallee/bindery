@@ -55,6 +55,10 @@ export default function GeneralTab() {
     unmatched: number
     tag_read_failed?: number
     unmatched_files?: Array<{ path: string; parsed_title: string; parsed_author: string }>
+    library_dir?: string
+    audiobook_dir?: string
+    scanned_paths?: string[]
+    no_files_found?: boolean
   } | null>(null)
   const [storage, setStorage] = useState<{ downloadDir: string; audiobookDownloadDir: string; libraryDir: string; audiobookDir: string } | null>(null)
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null)
@@ -457,6 +461,34 @@ export default function GeneralTab() {
               <p className="mt-1 text-slate-500 dark:text-zinc-500">
                 {new Date(lastScan.ran_at).toLocaleString()}
               </p>
+              {(() => {
+                const paths = (lastScan.scanned_paths && lastScan.scanned_paths.length > 0)
+                  ? lastScan.scanned_paths
+                  : [lastScan.library_dir, lastScan.audiobook_dir].filter((p): p is string => !!p)
+                if (paths.length === 0) return null
+                return (
+                  <p className="mt-1 text-slate-500 dark:text-zinc-500">
+                    {t('settings.general.scannedPaths')}{' '}
+                    {paths.map((p, i) => (
+                      <span key={i} className="font-mono text-slate-700 dark:text-zinc-300 break-all">
+                        {p}{i < paths.length - 1 ? ', ' : ''}
+                      </span>
+                    ))}
+                  </p>
+                )
+              })()}
+              {(lastScan.no_files_found ?? lastScan.files_found === 0) && (
+                <p className="mt-2 text-amber-600 dark:text-amber-400">
+                  {t('settings.general.scanNoFilesWarning', {
+                    path: lastScan.library_dir || (lastScan.scanned_paths && lastScan.scanned_paths[0]) || '?',
+                  })}
+                </p>
+              )}
+              {lastScan.files_found > 0 && lastScan.unmatched > 0 && lastScan.reconciled === 0 && (
+                <p className="mt-2 text-amber-600 dark:text-amber-400">
+                  {t('settings.general.scanAllUnmatchedHint')}
+                </p>
+              )}
               {lastScan.unmatched_files && lastScan.unmatched_files.length > 0 && (
                 <details className="mt-3">
                   <summary className="cursor-pointer font-medium text-slate-700 dark:text-zinc-300 hover:text-slate-900 dark:hover:text-zinc-100">

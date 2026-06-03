@@ -32,6 +32,20 @@ type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | '
 
 const ADMIN_TABS: Tab[] = ['indexers', 'clients', 'notifications', 'quality', 'metadata', 'import', 'rootfolders', 'logs', 'blocklist', 'calibre', 'abs', 'grimmory']
 
+const ALL_TABS: Tab[] = ['general', ...ADMIN_TABS]
+
+// Allow deep-linking to a specific tab via ?tab=indexers (used by first-run
+// onboarding guidance on the Authors/Books empty states). Read from the URL
+// directly rather than via a router hook so SettingsPage stays renderable
+// without a Router context (its tests render it bare).
+function initialTabFromUrl(): Tab {
+  try {
+    const param = new URLSearchParams(window.location.search).get('tab')
+    if (param && (ALL_TABS as string[]).includes(param)) return param as Tab
+  } catch { /* ignore — fall back to general */ }
+  return 'general'
+}
+
 function SettingsNavLink({ tab, active, onSelect, label }: { tab: Tab; active: Tab; onSelect: (t: Tab) => void; label: string }) {
   return (
     <button
@@ -50,7 +64,7 @@ function SettingsNavLink({ tab, active, onSelect, label }: { tab: Tab; active: T
 export default function SettingsPage() {
   const { t } = useTranslation()
   const { isAdmin } = useAuth()
-  const [tab, setTab] = useState<Tab>('general')
+  const [tab, setTab] = useState<Tab>(initialTabFromUrl)
 
   // Eagerly fetched on page mount (cross-tab — see file header note).
   const [indexers, setIndexers] = useState<Indexer[]>([])

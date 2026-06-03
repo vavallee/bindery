@@ -1022,23 +1022,31 @@ func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models
 func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.DownloadClient) {
 	qb := downloader.QbittorrentFor(client)
 
-	torrents, err := qb.GetTorrents(ctx, client.Category)
-	if err != nil {
-		slog.Debug("failed to fetch qBittorrent torrents", "error", err)
-		return
-	}
-
 	allDownloads, err := s.downloads.List(ctx)
 	if err != nil {
 		slog.Debug("failed to list downloads", "error", err)
 		return
 	}
+
+	// Poll every category this client may have grabbed under. Audiobook grabs
+	// use CategoryAudiobook (e.g. "audiobooks") while ebook grabs use Category
+	// (e.g. "ebook"); querying only Category leaves audiobook torrents out of
+	// the result, so their downloads never match here and hang in "downloading"
+	// forever. CategoriesToPoll returns both. The stall/health adapters were
+	// already fixed for #700; this is the main import poll that was missed.
 	torrentsMap := make(map[string]qbittorrent.Torrent)
-	for _, t := range torrents {
-		torrentsMap[strings.ToLower(t.Hash)] = t
+	for _, cat := range downloader.CategoriesToPoll(client) {
+		torrents, err := qb.GetTorrents(ctx, cat)
+		if err != nil {
+			slog.Debug("failed to fetch qBittorrent torrents", "category", cat, "error", err)
+			return
+		}
+		for _, t := range torrents {
+			torrentsMap[strings.ToLower(t.Hash)] = t
+		}
 	}
 
-	slog.Debug("qbittorrent poll", "torrents", len(torrents), "downloads", len(allDownloads), "category", client.Category)
+	slog.Debug("qbittorrent poll", "torrents", len(torrentsMap), "downloads", len(allDownloads), "categories", downloader.CategoriesToPoll(client))
 
 	// Track which downloads' sources we observed this cycle (issue #706 finding 4).
 	seenSourceIDs := make(map[int64]bool)
@@ -2879,11 +2887,31 @@ func (s *Scanner) writeScanResult(ctx context.Context, filesFound, reconciled, u
 		unmatchedJSON = "[]"
 	}
 
+	// Surface the resolved roots that were actually walked so the UI can tell
+	// the user WHICH paths produced the file count. The scanner unions the
+	// audiobook root with the library root only when it differs (see
+	// ScanLibrary), so mirror that logic here.
+	scannedPaths := []string{s.libraryDir}
+	if s.audiobookDir != "" && s.audiobookDir != s.libraryDir {
+		scannedPaths = append(scannedPaths, s.audiobookDir)
+	}
+	pathsJSON := "[]"
+	if bytes, err := json.Marshal(scannedPaths); err == nil {
+		pathsJSON = string(bytes)
+	}
+
+	// noFilesFound is the explicit zero-files signal: the scan walked the
+	// configured roots and found nothing. This distinguishes "wrong/empty
+	// path" from "all files matched" (both can show files_found semantics the
+	// user misreads) and lets the UI name the offending directory.
+	noFilesFound := filesFound == 0
+
 	payload := fmt.Sprintf(
-		`{"ran_at":%q,"files_found":%d,"reconciled":%d,"unmatched":%d,"tag_read_failed":%d,"unmatched_files":%s}`,
+		`{"ran_at":%q,"files_found":%d,"reconciled":%d,"unmatched":%d,"tag_read_failed":%d,"unmatched_files":%s,"library_dir":%q,"audiobook_dir":%q,"scanned_paths":%s,"no_files_found":%t}`,
 		time.Now().UTC().Format(time.RFC3339),
 		filesFound, reconciled, unmatched, tagReadFailed,
 		unmatchedJSON,
+		s.libraryDir, s.audiobookDir, pathsJSON, noFilesFound,
 	)
 	if err := s.settings.Set(ctx, "library.lastScan", payload); err != nil {
 		slog.Warn("library scan: failed to persist scan result", "error", err)

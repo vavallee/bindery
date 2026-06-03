@@ -11,6 +11,8 @@ import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
 import ViewToggle from '../components/ViewToggle'
 import { useView } from '../components/useView'
+import GettingStartedGuidance from '../components/GettingStartedGuidance'
+import { useNeedsSetup } from '../components/useNeedsSetup'
 
 type SortMode = 'az' | 'za' | 'recent'
 type MonitoredFilter = '' | 'monitored' | 'unmonitored'
@@ -34,6 +36,7 @@ export default function AuthorsPage() {
     return ''
   })
   const [view, setView] = useView('authors', 'grid')
+  const needsSetup = useNeedsSetup()
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
   const selectAllRef = useRef<HTMLInputElement>(null)
@@ -221,6 +224,7 @@ export default function AuthorsPage() {
         <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
       ) : filtered.length === 0 && authors.length === 0 ? (
         <div className="text-center py-16 text-slate-600 dark:text-zinc-500">
+          {needsSetup && <GettingStartedGuidance reasonKey="gettingStarted.reasonAuthors" />}
           <p className="text-lg mb-2">{t('authors.empty')}</p>
           <p className="text-sm">{t('authors.emptyHint')}</p>
         </div>

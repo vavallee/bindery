@@ -246,7 +246,7 @@ After fixing a path or category mismatch, use **Queue → Retry import** on an `
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BINDERY_PORT` | `8787` | HTTP server port |
-| `BINDERY_URL_BASE` | _(empty)_ | URL path prefix when hosting Bindery under a reverse-proxy subpath (e.g. `/bindery`). Accepts a bare path or full URL — only the path component is used. No trailing slash needed. See [Reverse proxy](#reverse-proxy) for Nginx / Caddy / Traefik examples. |
+| `BINDERY_URL_BASE` | _(empty)_ | URL path prefix when hosting Bindery under a reverse-proxy subpath (e.g. `/bindery`). Accepts a bare path or full URL — only the path component is used. No trailing slash needed. See the [Reverse-proxy & SSO wiki](https://github.com/vavallee/bindery/wiki/Reverse-proxy-and-SSO) for Nginx / Caddy / Traefik examples. |
 | `BINDERY_DB_PATH` | `/config/bindery.db` on Linux; `%APPDATA%\Bindery\bindery.db` on Windows; `~/Library/Application Support/Bindery/bindery.db` on macOS | SQLite database path |
 | `BINDERY_DATA_DIR` | `/config` on Linux; `%APPDATA%\Bindery` on Windows; `~/Library/Application Support/Bindery` on macOS | Config directory (backups live here) |
 | `BINDERY_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
@@ -267,6 +267,8 @@ After fixing a path or category mismatch, use **Queue → Retry import** on an `
 | `BINDERY_SHUTDOWN_GRACE` | `30` | Seconds to drain in-flight HTTP requests after receiving SIGTERM or SIGINT before the process exits. Increase if your load balancer / Kubernetes sends long-lived SSE or WebSocket connections. |
 | `BINDERY_ENFORCE_TENANCY` | _(off)_ | Set to `true`/`1` to enforce per-user data isolation: each user sees only their own authors, books, profiles, and root folders, and the join-scoped queue / history / pending / OPDS feeds are scoped to the requesting user. **Defaults off**, in which case every authenticated user shares one library view (single-user behaviour). Admin-only configuration gating applies regardless of this flag. See [multi-user.md](multi-user.md). |
 | `BINDERY_LOG_RETENTION_DAYS` | `14` | Days to retain persisted log entries in the SQLite log store before they are pruned. |
+| `BINDERY_TRUSTED_PROXY` | _(empty)_ | Comma-separated IP/CIDR list of reverse proxies trusted to set `X-Forwarded-*`. Bindery resolves the real client IP (for local-only auth and the per-IP login rate-limiter) by walking the `X-Forwarded-For` chain and only trusting hops in this list; it never trusts a client-supplied leftmost entry. An entry like `0.0.0.0/0` trusts every peer and effectively disables per-IP decisions. **Required** when proxy auth mode is active — Bindery refuses to start without it. |
+| `BINDERY_TELEMETRY_DISABLED` | _(unset)_ | Set to `true` to opt out of the daily anonymous telemetry ping before any DB setting exists (e.g. on first boot). Equivalent to `telemetry.enabled: false` in **Settings → General**, but takes effect before the first ping fires. |
 
 ## Indexer / Prowlarr URLs
 
