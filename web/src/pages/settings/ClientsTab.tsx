@@ -135,6 +135,8 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [pathRemap, setPathRemap] = useState(client.pathRemap || '')
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null)
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const handleTypeChange = (newType: string) => {
@@ -146,10 +148,12 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
   const isPasswordClient = (t: string) => t === 'qbittorrent' || t === 'transmission' || t === 'nzbget' || t === 'deluge'
   const hasUsername = (t: string) => t === 'qbittorrent' || t === 'transmission' || t === 'nzbget'
 
+  const buildData = () => isPasswordClient(type)
+    ? { ...client, name, type, host, port: parseInt(port), username: hasUsername(type) ? username : '', password: credential, apiKey: '', category, categoryAudiobook: categoryAudiobook.trim(), pathRemap: pathRemap.trim(), useSsl: useSSL, urlBase: urlBase.trim() }
+    : { ...client, name, type, host, port: parseInt(port), apiKey: credential, username: '', password: '', category, categoryAudiobook: categoryAudiobook.trim(), pathRemap: pathRemap.trim(), useSsl: useSSL, urlBase: urlBase.trim() }
+
   const submit = async () => {
-    const data = isPasswordClient(type)
-      ? { ...client, name, type, host, port: parseInt(port), username: hasUsername(type) ? username : '', password: credential, apiKey: '', category, categoryAudiobook: categoryAudiobook.trim(), pathRemap: pathRemap.trim(), useSsl: useSSL, urlBase: urlBase.trim() }
-      : { ...client, name, type, host, port: parseInt(port), apiKey: credential, username: '', password: '', category, categoryAudiobook: categoryAudiobook.trim(), pathRemap: pathRemap.trim(), useSsl: useSSL, urlBase: urlBase.trim() }
+    const data = buildData()
     setSaving(true)
     setSaveError(null)
     try {
@@ -159,6 +163,19 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
       setSaveError(err instanceof Error ? err.message : 'Failed to save')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleTest = async () => {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      await api.testDownloadClientConfig(buildData())
+      setTestResult({ ok: true, msg: t('common.connOk') })
+    } catch (err: unknown) {
+      setTestResult({ ok: false, msg: t('common.connFail', { error: err instanceof Error ? err.message : 'Unknown error' }) })
+    } finally {
+      setTesting(false)
     }
   }
 
@@ -235,9 +252,16 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
         help={downloadClientPathRemapHelp(type)}
       />
       {saveError && <p className="text-sm text-red-500">{saveError}</p>}
+      {testResult && (
+        <div role="status" className={`px-3 py-1.5 rounded text-xs flex items-center gap-2 ${testResult.ok ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'}`}>
+          <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${testResult.ok ? 'bg-emerald-500' : 'bg-red-500'}`} />
+          {testResult.msg}
+        </div>
+      )}
       <div className="flex gap-2 justify-end">
-        <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">Cancel</button>
-        <button onClick={submit} disabled={saving} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium disabled:opacity-50">Save</button>
+        <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">{t('common.cancel')}</button>
+        <button onClick={handleTest} disabled={testing || !host} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-50">{testing ? t('common.testing') : t('common.test')}</button>
+        <button onClick={submit} disabled={saving} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium disabled:opacity-50">{t('common.save')}</button>
       </div>
     </div>
   )
@@ -258,6 +282,8 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [pathRemap, setPathRemap] = useState('')
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null)
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const isPasswordClient = (t: string) => t === 'qbittorrent' || t === 'transmission' || t === 'nzbget' || t === 'deluge'
@@ -291,10 +317,12 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
     setPort('8080')
   }
 
+  const buildData = () => isPasswordClient(type)
+    ? { name, host, port: parseInt(port), username: hasUsername(type) ? username : '', password: credential, apiKey: '', category, categoryAudiobook: categoryAudiobook.trim(), pathRemap: pathRemap.trim(), type, enabled: true, useSsl: useSSL, urlBase: urlBase.trim() }
+    : { name, host, port: parseInt(port), apiKey: credential, username: '', password: '', category, categoryAudiobook: categoryAudiobook.trim(), pathRemap: pathRemap.trim(), type, enabled: true, useSsl: useSSL, urlBase: urlBase.trim() }
+
   const submit = async () => {
-    const data = isPasswordClient(type)
-      ? { name, host, port: parseInt(port), username: hasUsername(type) ? username : '', password: credential, apiKey: '', category, categoryAudiobook: categoryAudiobook.trim(), pathRemap: pathRemap.trim(), type, enabled: true, useSsl: useSSL, urlBase: urlBase.trim() }
-      : { name, host, port: parseInt(port), apiKey: credential, username: '', password: '', category, categoryAudiobook: categoryAudiobook.trim(), pathRemap: pathRemap.trim(), type, enabled: true, useSsl: useSSL, urlBase: urlBase.trim() }
+    const data = buildData()
     setSaving(true)
     setSaveError(null)
     try {
@@ -304,6 +332,19 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
       setSaveError(err instanceof Error ? err.message : 'Failed to save')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleTest = async () => {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      await api.testDownloadClientConfig(buildData())
+      setTestResult({ ok: true, msg: t('common.connOk') })
+    } catch (err: unknown) {
+      setTestResult({ ok: false, msg: t('common.connFail', { error: err instanceof Error ? err.message : 'Unknown error' }) })
+    } finally {
+      setTesting(false)
     }
   }
 
@@ -380,9 +421,16 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
         help={downloadClientPathRemapHelp(type)}
       />
       {saveError && <p className="text-sm text-red-500">{saveError}</p>}
+      {testResult && (
+        <div role="status" className={`px-3 py-1.5 rounded text-xs flex items-center gap-2 ${testResult.ok ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'}`}>
+          <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${testResult.ok ? 'bg-emerald-500' : 'bg-red-500'}`} />
+          {testResult.msg}
+        </div>
+      )}
       <div className="flex gap-2 justify-end">
-        <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">Cancel</button>
-        <button onClick={submit} disabled={saving} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium disabled:opacity-50">Save</button>
+        <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">{t('common.cancel')}</button>
+        <button onClick={handleTest} disabled={testing || !host} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-50">{testing ? t('common.testing') : t('common.test')}</button>
+        <button onClick={submit} disabled={saving} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium disabled:opacity-50">{t('common.save')}</button>
       </div>
     </div>
   )

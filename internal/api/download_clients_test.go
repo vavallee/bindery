@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -212,6 +213,87 @@ func TestDownloadClientTest_SuccessMessage(t *testing.T) {
 	}
 	if out.Message != "Connection verified" {
 		t.Errorf("message: want Connection verified, got %q", out.Message)
+	}
+}
+
+func TestDownloadClientTestConfig_MissingHost(t *testing.T) {
+	h, _ := downloadClientFixture(t)
+	rec := httptest.NewRecorder()
+	h.TestConfig(rec, httptest.NewRequest(http.MethodPost, "/downloadclient/test", bytes.NewBufferString(`{"type":"qbittorrent"}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing host, got %d", rec.Code)
+	}
+}
+
+func TestDownloadClientTestConfig_Reachable(t *testing.T) {
+	// httptest binds 127.0.0.1; allow loopback through the SSRF guard.
+	defer httpsec.AllowLoopbackForTests()()
+	// A reachable qBittorrent stub. The posted config is probed but never
+	// persisted — the repo stays empty afterwards.
+	qbit := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/app/version":
+			_, _ = w.Write([]byte("5.1.4"))
+		case "/api/v2/torrents/info":
+			_, _ = w.Write([]byte("[]"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer qbit.Close()
+	u, _ := url.Parse(qbit.URL)
+	host, portStr, _ := net.SplitHostPort(u.Host)
+	port, _ := strconv.Atoi(portStr)
+
+	h, clients := downloadClientFixture(t)
+	rec := httptest.NewRecorder()
+	body := `{"name":"qBit","type":"qbittorrent","host":"` + host + `","port":` + strconv.Itoa(port) + `,"username":"u","password":"p","enabled":true}`
+	h.TestConfig(rec, httptest.NewRequest(http.MethodPost, "/downloadclient/test", bytes.NewBufferString(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Message != "Connection verified" {
+		t.Errorf("message: want Connection verified, got %q", out.Message)
+	}
+	list, _ := clients.List(context.Background())
+	if len(list) != 0 {
+		t.Errorf("test-by-config must not persist; repo has %d clients", len(list))
+	}
+}
+
+func TestDownloadClientTestConfig_Unreachable(t *testing.T) {
+	defer httpsec.AllowLoopbackForTests()()
+	// Start a stub server to grab a real local address, then close it so the
+	// connection is refused immediately (fast + deterministic, no 15s timeout).
+	stub := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	u, _ := url.Parse(stub.URL)
+	host, portStr, _ := net.SplitHostPort(u.Host)
+	port, _ := strconv.Atoi(portStr)
+	stub.Close()
+
+	h, _ := downloadClientFixture(t)
+	rec := httptest.NewRecorder()
+	body := `{"name":"qBit","type":"qbittorrent","host":"` + host + `","port":` + strconv.Itoa(port) + `,"username":"u","password":"p","enabled":true}`
+	h.TestConfig(rec, httptest.NewRequest(http.MethodPost, "/downloadclient/test", bytes.NewBufferString(body)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unreachable client, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Error == "" {
+		t.Error("expected a non-empty error message")
 	}
 }
 

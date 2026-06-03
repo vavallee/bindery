@@ -6,6 +6,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Test a download client / indexer before saving** — the Add and Edit forms for download clients and indexers now have an inline **Test** button that probes the unsaved host/port/URL/credentials, so a wrong value can be caught and fixed in place instead of having to save a broken entry, find Test on the saved row, reopen the editor, fix, and re-save. Backed by two new admin-only test-by-config endpoints (`POST /downloadclient/test` and `POST /indexer/test`) that validate and probe a posted config without persisting it; the response shape mirrors the existing test-by-id endpoints so the UI reuses one rendering path.
+
 ## [v1.16.0] — 2026-06-03
 
 Security and hardening release. The bulk of this version is an audit-driven hardening pass (the **D1–D4** access-control findings and the **Wave 2–5** robustness sweep), opt-in per-user data isolation, a batch of performance work, and a long tail of import/scheduler correctness fixes. No breaking config changes, but two behaviour changes worth noting before upgrading: list endpoints are now paginated and request bodies are capped at 1 MiB by default (see **Changed**).

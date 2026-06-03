@@ -322,6 +322,10 @@ export const api = {
   updateIndexer: (id: number, data: Partial<Indexer>) => request<Indexer>(`/indexer/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteIndexer: (id: number) => request<void>(`/indexer/${id}`, { method: 'DELETE' }),
   testIndexer: (id: number) => request<IndexerTestResult>(`/indexer/${id}/test`, { method: 'POST' }),
+  // Test an unsaved indexer config (Add/Edit form Test button). Same response
+  // shape as testIndexer so the UI reuses one rendering path.
+  testIndexerConfig: (data: Partial<Indexer>) =>
+    request<IndexerTestResult>('/indexer/test', { method: 'POST', body: JSON.stringify(data) }),
 
   // Prowlarr indexer sync
   listProwlarr: () => request<ProwlarrInstance[]>('/prowlarr'),
@@ -338,6 +342,10 @@ export const api = {
   updateDownloadClient: (id: number, data: Partial<DownloadClient>) => request<DownloadClient>(`/downloadclient/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteDownloadClient: (id: number) => request<void>(`/downloadclient/${id}`, { method: 'DELETE' }),
   testDownloadClient: (id: number) => request<{ message: string; health?: DownloadClientHealth }>(`/downloadclient/${id}/test`, { method: 'POST' }),
+  // Test an unsaved download-client config (Add/Edit form Test button). Does
+  // not persist; mirrors testDownloadClient's response (minus async health).
+  testDownloadClientConfig: (data: Partial<DownloadClient>) =>
+    request<{ message: string }>('/downloadclient/test', { method: 'POST', body: JSON.stringify(data) }),
 
   // Library
   triggerLibraryScan: () => request<{ message: string }>('/library/scan', { method: 'POST' }),

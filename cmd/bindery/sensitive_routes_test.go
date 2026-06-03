@@ -41,6 +41,9 @@ func (h *stubSensitiveHandler) Delete(w http.ResponseWriter, _ *http.Request) {
 func (h *stubSensitiveHandler) Test(w http.ResponseWriter, _ *http.Request) {
 	h.record("test", w)
 }
+func (h *stubSensitiveHandler) TestConfig(w http.ResponseWriter, _ *http.Request) {
+	h.record("test-config", w)
+}
 func (h *stubSensitiveHandler) Sync(w http.ResponseWriter, _ *http.Request) {
 	h.record("sync", w)
 }
@@ -72,6 +75,7 @@ func TestSensitiveRoutesRequireAdmin(t *testing.T) {
 		{name: "update indexer", method: http.MethodPut, path: "/indexer/1"},
 		{name: "delete indexer", method: http.MethodDelete, path: "/indexer/1"},
 		{name: "test indexer", method: http.MethodPost, path: "/indexer/1/test"},
+		{name: "test indexer config", method: http.MethodPost, path: "/indexer/test"},
 		// Prowlarr — entire subtree.
 		{name: "list prowlarr", method: http.MethodGet, path: "/prowlarr"},
 		{name: "get prowlarr", method: http.MethodGet, path: "/prowlarr/1"},
@@ -87,6 +91,7 @@ func TestSensitiveRoutesRequireAdmin(t *testing.T) {
 		{name: "update download client", method: http.MethodPut, path: "/downloadclient/1"},
 		{name: "delete download client", method: http.MethodDelete, path: "/downloadclient/1"},
 		{name: "test download client", method: http.MethodPost, path: "/downloadclient/1/test"},
+		{name: "test download client config", method: http.MethodPost, path: "/downloadclient/test"},
 	}
 
 	for _, tt := range tests {
@@ -129,6 +134,7 @@ func TestSensitiveRoutesAllowAdmin(t *testing.T) {
 		{name: "update indexer", method: http.MethodPut, path: "/indexer/1", called: "update"},
 		{name: "delete indexer", method: http.MethodDelete, path: "/indexer/1", called: "delete"},
 		{name: "test indexer", method: http.MethodPost, path: "/indexer/1/test", called: "test"},
+		{name: "test indexer config", method: http.MethodPost, path: "/indexer/test", called: "test-config"},
 		{name: "list prowlarr", method: http.MethodGet, path: "/prowlarr", called: "list"},
 		{name: "get prowlarr", method: http.MethodGet, path: "/prowlarr/1", called: "get"},
 		{name: "create prowlarr", method: http.MethodPost, path: "/prowlarr", called: "create"},
@@ -142,6 +148,7 @@ func TestSensitiveRoutesAllowAdmin(t *testing.T) {
 		{name: "update download client", method: http.MethodPut, path: "/downloadclient/1", called: "update"},
 		{name: "delete download client", method: http.MethodDelete, path: "/downloadclient/1", called: "delete"},
 		{name: "test download client", method: http.MethodPost, path: "/downloadclient/1/test", called: "test"},
+		{name: "test download client config", method: http.MethodPost, path: "/downloadclient/test", called: "test-config"},
 	}
 
 	for _, tt := range tests {

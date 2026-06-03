@@ -223,6 +223,46 @@ func (h *IndexerHandler) Test(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// TestConfig probes an indexer configuration supplied in the request body
+// without persisting it. This backs the inline "Test" button on the Add/Edit
+// forms so a user can verify the URL/API key before saving. The response
+// shape mirrors Test (test-by-id) so the UI reuses one rendering path. Like
+// Test, a reachable-but-failed probe returns HTTP 200 with the error inline.
+func (h *IndexerHandler) TestConfig(w http.ResponseWriter, r *http.Request) {
+	var idx models.Indexer
+	if err := json.NewDecoder(r.Body).Decode(&idx); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if idx.URL == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "url required"})
+		return
+	}
+	if err := httpsec.ValidateOutboundURL(idx.URL, httpsec.PolicyLAN); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	client := newznab.New(idx.URL, idx.APIKey)
+	probe := client.Probe(r.Context())
+	resp := IndexerTestResponse{
+		Status:        probe.Status,
+		Categories:    probe.Categories,
+		BookSearch:    probe.BookSearch,
+		LatencyMs:     probe.LatencyMs,
+		SearchResults: probe.SearchResults,
+		SearchError:   probe.SearchError,
+	}
+	if probe.Error != "" {
+		resp.Error = probe.Error
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	resp.OK = true
+	resp.Message = "ok"
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // SearchBook searches all enabled indexers for a specific book.
 func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 	bookID, ok := parseID(w, r)
