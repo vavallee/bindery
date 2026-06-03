@@ -6,6 +6,76 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.16.0] — 2026-06-03
+
+Security and hardening release. The bulk of this version is an audit-driven hardening pass (the **D1–D4** access-control findings and the **Wave 2–5** robustness sweep), opt-in per-user data isolation, a batch of performance work, and a long tail of import/scheduler correctness fixes. No breaking config changes, but two behaviour changes worth noting before upgrading: list endpoints are now paginated and request bodies are capped at 1 MiB by default (see **Changed**).
+
+### Added
+
+- **Opt-in per-user data isolation via `BINDERY_ENFORCE_TENANCY`** (#898, #899) — a new environment variable (defaults **off**) that turns on real per-user scoping. With it set, each user sees only their own authors, books, profiles, and root folders (Tier-1 resources, #899), and the join-scoped queue, history, pending grabs, and OPDS catalogue are scoped to the requesting user (Tier-2, #898). Left unset, Bindery behaves exactly as before — a single shared library view across all accounts — so existing single-user and trusted-multi-user installs are unaffected. Admins still see all data regardless of the flag. Documented in `docs/multi-user.md`.
+
+- **Blocklist entries record who created them** (#929) — a `created_by_user_id` audit column on the blocklist so manual blocks are attributable in multi-user installs. Part of the D4 audit follow-up.
+
+### Changed
+
+- **List endpoints are now paginated** (#902) — the `List` API surface (books, authors, queue, history, etc.) returns paginated results with new sort/lookup indexes backing them, rather than unbounded full-table responses. This keeps large libraries responsive but is a **response-shape change** for any external script that assumed a single call returned every row; such callers must follow pagination. The React UI already paginates.
+
+- **Request bodies are capped at 1 MiB by default** (#901) — every API handler now rejects bodies larger than 1 MiB to bound memory use from hostile or malformed requests. Normal API and UI traffic is well under this; only unusually large custom payloads are affected.
+
+- **Webhook notifications emit an Apprise-compatible `body`/`title` payload** (#888) — the generic webhook now includes top-level `body` and `title` fields alongside the existing structured payload, so Apprise, ntfy, and similar relays render notifications without a custom template.
+
+- **Database backups now use `VACUUM INTO`** (#900) — backups capture a consistent snapshot that includes outstanding WAL pages, rather than copying the main database file and risking a torn or stale backup under load.
+
+- **Sessions are invalidated on password change** (#896) — changing a user's password now revokes that user's existing sessions, so a rotated credential actually logs out the old session everywhere instead of leaving it valid until expiry.
+
+- **Performance sweep (Wave 3)** — pooled HTTP clients for indexers and downloaders so each request no longer spins up a fresh transport (#917); bounded goroutine fan-out on bulk, queue, and series operations to stop large libraries spawning unbounded concurrency (#918); capped the metadata TTL cache and cached `enrichBook` results (#915); debounced Audiobookshelf enumerator checkpoint writes (#916). Build noise reduced by quieting the Vite build warnings (#913).
+
+- **Removed the dormant tag surface** (#927) — the unused tag UI/columns flagged in the audit (D4a) were removed rather than left as dead, unreachable surface.
+
+### Fixed
+
+- **Unmatched audiobook imports no longer panic the library scan** (#946) — a completed download detected as an audiobook but with no resolved book row (no `BookID`, a lookup error, or a row deleted between grab and import) dereferenced a nil book while computing its destination and crashed the scan goroutine. It now fails that download with an actionable status, matching the ebook path. Found in a code sweep.
+
+- **Connection-refused diagnostics stop blaming a Docker subnet** (#944) — the download-client "connection refused" hint now points at the real common causes (a service bound to `127.0.0.1` refusing a LAN-IP URL, or a host firewall) instead of asserting a Docker subnet that host-networked deployments don't have.
+
+- **History tab is no longer empty for auto-grabs** (#938) — scheduler-initiated grabs now record a `Grabbed` history event like manual grabs always did, so monitored-author auto-search produces a visible audit trail. Reported by ThatGuyHere.
+
+- **Calibre import persists series and series membership** (#936, half of #905) — importing from a Calibre library now writes `series` and `series_books` rows, so series populated in Calibre survive the import instead of being dropped.
+
+- **Torrent imports only take the torrent's own file list** (#933, closes #903) — single-file torrents sharing a download root no longer drag unrelated sibling files into the library; the importer operates on the torrent's file list rather than the whole directory.
+
+- **Legacy date formats are tolerated on read** (#921, closes #914) — `Scan` on book/author rows now parses pre-existing non-RFC3339 date strings instead of erroring, and writes back RFC3339 going forward, so databases carried over from older versions load cleanly.
+
+- **Library-scan completion log names every walked root** (#937) — the log line now lists all scan roots instead of only the primary library directory, so multi-root setups can see what was actually covered.
+
+- **Hardcover author-works filter respects canonical-book language** (#890, #889) — the canonical book's language is propagated so the author-works language filter actually applies.
+
+- **`refreshMetadata` guards against `(nil, nil)` from the aggregator** (#892) — a provider returning no book and no error no longer trips a nil dereference.
+
+- **`book.Author` is populated in `List` and `Get` responses** (#884, closes #882) — responses now carry the author object rather than leaving it nil for clients to resolve separately.
+
+- **App-lifetime context plumbed through background goroutines** (#932, #934, closes #846) — bulk, author, calibre, and the four goroutines #932 missed now observe the application lifetime context and shut down cleanly instead of leaking past process exit.
+
+- **`ttlCache` janitor no longer leaks a goroutine per instance** (#881, root cause of #73) — the metadata cache's cleanup janitor is now stopped with its cache, fixing a per-test (and per-instance) goroutine leak.
+
+- **Download/import state-machine and atomicity hygiene (Wave 4)** (#920) — assorted state-transition and atomicity corrections across the downloader and importer.
+
+- **OIDC discovery releases its lock and reads `failedEntry` race-free (Wave 5)** (#919) — the OIDC provider no longer holds a lock across the network discovery call and the failed-entry read is synchronised.
+
+### Security
+
+- **Closed cross-user IDOR on Tier-1 per-user resources** (#899, D1, env-gated) and **scoped Tier-2 join resources** queue/history/pending + OPDS (#898, D3) — see the tenancy entry under **Added**. Both are gated behind `BINDERY_ENFORCE_TENANCY`.
+- **Shared deployment-config routes are gated behind `RequireAdmin`** (#897, D2) — indexer/download-client/system configuration endpoints that were reachable by non-admin users are now admin-only.
+- **OIDC SSRF, redirect-revalidation, and trusted-proxy scheme guards** (#894) — the OIDC discovery probe and redirect handling reject private/loopback targets (override with `BINDERY_ALLOW_LAN_OIDC`) and re-validate redirect URLs; the trusted-proxy path validates the forwarded scheme.
+- **Plugged a settings-endpoint secret leak** (#893) — `auth.oidc.providers` and other settings no longer return stored secrets in API responses (write-only).
+- **Library-root containment on file deletion** (#895) — book/author file-deletion endpoints reject paths outside the configured library roots, with symlink resolution, so a crafted path can't delete arbitrary files.
+- **StepSecurity best-practices sweep** (#904) — pinned actions, hardened runners, and related CI supply-chain hardening.
+- **Go toolchain bumped to 1.25.11** (#945) — picks up the stdlib fixes for `GO-2026-5037` (crypto/x509) and `GO-2026-5039` (net/textproto). CI-toolchain only; the runtime image was already on a patched Go.
+
+### Docs
+
+- **Documentation currency sweep** (#949) — corrected the OPDS path (`/opds/`, not `/opds/v1.2/`), clarified that per-user isolation is opt-in via `BINDERY_ENFORCE_TENANCY`, refreshed the SECURITY.md supported-version table, marked editable quality profiles as shipped, completed the ARCHITECTURE.md package list, and documented previously-undocumented environment variables. The wiki's auth/OIDC recovery and secret-rotation recipes were also corrected.
+
 ## [v1.15.3] — 2026-05-29
 
 Patch release. Three user-facing bug fixes plus a Hardcover edition-hydration feature and the client side of the telemetry redesign.
