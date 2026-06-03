@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { api, Book } from '../api/client'
+import { api, ApiError, Book } from '../api/client'
 
 interface AuthorMismatch {
   currentAuthor: string
@@ -32,17 +32,17 @@ export default function RebindModal({ book, onClose, onSuccess }: Props) {
       const updated = await api.rebindBook(book.id, provider, trimmed, force)
       onSuccess(updated)
     } catch (err: unknown) {
-      if (err && typeof err === 'object' && 'status' in err && (err as { status: number }).status === 409) {
-        const body = err as { body?: { force_required?: boolean; current_author?: string; upstream_author?: string; error?: string } }
-        if (body.body?.force_required) {
+      if (err instanceof ApiError && err.status === 409) {
+        const body = err.body as { force_required?: boolean; current_author?: string; upstream_author?: string; error?: string }
+        if (body.force_required) {
           setMismatch({
-            currentAuthor: body.body.current_author ?? '',
-            upstreamAuthor: body.body.upstream_author ?? '',
+            currentAuthor: body.current_author ?? '',
+            upstreamAuthor: body.upstream_author ?? '',
           })
           setSubmitting(false)
           return
         }
-        setError(body.body?.error ?? 'Conflict')
+        setError(body.error ?? 'Conflict')
       } else {
         setError(err instanceof Error ? err.message : 'Re-bind failed')
       }

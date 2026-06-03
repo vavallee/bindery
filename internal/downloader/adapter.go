@@ -236,7 +236,7 @@ func GetStalledIDs(ctx context.Context, client *models.DownloadClient) (map[stri
 		// returns both Category and CategoryAudiobook when the latter is set
 		// (closes #700).
 		out := make(map[string]bool)
-		for _, cat := range categoriesToPoll(client) {
+		for _, cat := range CategoriesToPoll(client) {
 			torrents, err := qb.GetTorrents(ctx, cat)
 			if err != nil {
 				return nil, true, err
@@ -392,7 +392,7 @@ func getTorrentLiveStatuses(ctx context.Context, client *models.DownloadClient) 
 	// returns both Category and CategoryAudiobook when the latter is set
 	// (closes #700).
 	out := make(map[string]LiveStatus)
-	for _, cat := range categoriesToPoll(client) {
+	for _, cat := range CategoriesToPoll(client) {
 		torrents, err := qb.GetTorrents(ctx, cat)
 		if err != nil {
 			return nil, err
