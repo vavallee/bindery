@@ -70,4 +70,39 @@ describe('ErrorBoundary', () => {
     fireEvent.click(btn)
     expect(screen.getByRole('button', { name: 'Hide details' })).toBeInTheDocument()
   })
+
+  it('clears the error and re-renders children when resetKey changes', () => {
+    // Mirrors navigation: a page crashes, then resetKey (the route path) changes
+    // and the boundary recovers without a reload.
+    const { rerender } = render(
+      <ErrorBoundary resetKey="/settings">
+        <Boom shouldThrow />
+      </ErrorBoundary>,
+    )
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+
+    rerender(
+      <ErrorBoundary resetKey="/authors">
+        <Boom shouldThrow={false} />
+      </ErrorBoundary>,
+    )
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByTestId('ok')).toBeInTheDocument()
+  })
+
+  it('stays in the error state when resetKey is unchanged', () => {
+    const { rerender } = render(
+      <ErrorBoundary resetKey="/settings">
+        <Boom shouldThrow />
+      </ErrorBoundary>,
+    )
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+    // Same key, child would now render fine — but the boundary must NOT auto-clear.
+    rerender(
+      <ErrorBoundary resetKey="/settings">
+        <Boom shouldThrow={false} />
+      </ErrorBoundary>,
+    )
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+  })
 })

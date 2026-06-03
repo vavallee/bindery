@@ -6,6 +6,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **A page crash no longer blanks the whole app** — page render errors are now caught by a route-scoped error boundary that shows the error inline while keeping the nav/header usable, and clears itself when you navigate to another page (no reload needed). Previously the only boundary was the root one, whose full-screen dark-mode fallback took over the entire viewport and required a manual reload to recover.
+
 ## [v1.16.0] — 2026-06-03
 
 Security and hardening release. The bulk of this version is an audit-driven hardening pass (the **D1–D4** access-control findings and the **Wave 2–5** robustness sweep), opt-in per-user data isolation, a batch of performance work, and a long tail of import/scheduler correctness fixes. No breaking config changes, but two behaviour changes worth noting before upgrading: list endpoints are now paginated and request bodies are capped at 1 MiB by default (see **Changed**).
