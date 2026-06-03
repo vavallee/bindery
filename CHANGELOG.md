@@ -8,6 +8,7 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ### Added
 
+- **Library scan surfaces the paths it walked and explains zero/unmatched results** — the manual library scan now records the resolved library and audiobook roots, plus an explicit zero-files signal, in its persisted result. The Settings → General "Library Scan" section shows which paths were scanned, warns by name when no book files were found under the configured directory (a common `BINDERY_LIBRARY_DIR` misconfiguration), and hints when files were found but none matched a book (the author's book catalogue needs populating first). Additive, backward-compatible result fields (`library_dir`, `audiobook_dir`, `scanned_paths`, `no_files_found`); the matching logic is unchanged.
 - **First-run onboarding guidance on empty Authors/Books pages** — when a brand-new instance has no authors/books *and* no indexers or download clients configured, the empty state now shows a short "Getting started" block linking to **Settings → Indexers** and **Settings → Download Clients**, explaining they must be configured first (without them, adding an author or searching silently does nothing). The block only appears when both are empty and falls back to the normal empty state if the checks fail. Settings tabs are now deep-linkable via `?tab=indexers` / `?tab=clients`.
 ### Docs
 

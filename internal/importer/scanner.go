@@ -2887,11 +2887,31 @@ func (s *Scanner) writeScanResult(ctx context.Context, filesFound, reconciled, u
 		unmatchedJSON = "[]"
 	}
 
+	// Surface the resolved roots that were actually walked so the UI can tell
+	// the user WHICH paths produced the file count. The scanner unions the
+	// audiobook root with the library root only when it differs (see
+	// ScanLibrary), so mirror that logic here.
+	scannedPaths := []string{s.libraryDir}
+	if s.audiobookDir != "" && s.audiobookDir != s.libraryDir {
+		scannedPaths = append(scannedPaths, s.audiobookDir)
+	}
+	pathsJSON := "[]"
+	if bytes, err := json.Marshal(scannedPaths); err == nil {
+		pathsJSON = string(bytes)
+	}
+
+	// noFilesFound is the explicit zero-files signal: the scan walked the
+	// configured roots and found nothing. This distinguishes "wrong/empty
+	// path" from "all files matched" (both can show files_found semantics the
+	// user misreads) and lets the UI name the offending directory.
+	noFilesFound := filesFound == 0
+
 	payload := fmt.Sprintf(
-		`{"ran_at":%q,"files_found":%d,"reconciled":%d,"unmatched":%d,"tag_read_failed":%d,"unmatched_files":%s}`,
+		`{"ran_at":%q,"files_found":%d,"reconciled":%d,"unmatched":%d,"tag_read_failed":%d,"unmatched_files":%s,"library_dir":%q,"audiobook_dir":%q,"scanned_paths":%s,"no_files_found":%t}`,
 		time.Now().UTC().Format(time.RFC3339),
 		filesFound, reconciled, unmatched, tagReadFailed,
 		unmatchedJSON,
+		s.libraryDir, s.audiobookDir, pathsJSON, noFilesFound,
 	)
 	if err := s.settings.Set(ctx, "library.lastScan", payload); err != nil {
 		slog.Warn("library scan: failed to persist scan result", "error", err)

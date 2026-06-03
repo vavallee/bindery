@@ -365,6 +365,13 @@ export const api = {
     unmatched: number
     tag_read_failed?: number
     unmatched_files?: Array<{ path: string; parsed_title: string; parsed_author: string }>
+    // Additive (feat/library-scan-visibility): the resolved roots the scan
+    // walked and an explicit zero-files signal. Optional so older cached scan
+    // results (persisted before these fields existed) still parse.
+    library_dir?: string
+    audiobook_dir?: string
+    scanned_paths?: string[]
+    no_files_found?: boolean
   }>('/library/scan/status'),
 
   // Queue
