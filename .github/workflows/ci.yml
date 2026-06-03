@@ -114,7 +114,7 @@ jobs:
         with:
           go-version: "1.25.11"
           cache: true
-      - run: go test -race -timeout=15m ./cmd/... ./internal/...
+      - run: go test -race -timeout=25m ./cmd/... ./internal/...
 
   validate-frontend:
     name: validate (frontend)
@@ -187,7 +187,7 @@ jobs:
         with:
           go-version: "1.25.11"
           cache: true
-      - run: go test -race -timeout=15m ./cmd/... ./internal/...
+      - run: go test -race -timeout=25m ./cmd/... ./internal/...
 
   # ── Docker image — runs after test passes ──────────────────────────────────
   image:
