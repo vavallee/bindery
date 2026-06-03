@@ -562,6 +562,47 @@ describe('SettingsPage', () => {
     expect(screen.getByText('4')).toBeInTheDocument()
   })
 
+  it('surfaces scanned paths and warns when no files were found', async () => {
+    vi.mocked(api.libraryScanStatus).mockResolvedValue({
+      ran_at: new Date().toISOString(),
+      files_found: 0,
+      reconciled: 0,
+      unmatched: 0,
+      library_dir: '/books',
+      audiobook_dir: '',
+      scanned_paths: ['/books'],
+      no_files_found: true,
+    })
+
+    renderSettings()
+
+    expect(await screen.findByText('settings.general.lastScan')).toBeInTheDocument()
+    // The resolved path label and the path itself must both render.
+    expect(screen.getByText('settings.general.scannedPaths')).toBeInTheDocument()
+    expect(screen.getByText('/books')).toBeInTheDocument()
+    // Zero-files warning is shown, naming the path via the t() key.
+    expect(screen.getByText('settings.general.scanNoFilesWarning')).toBeInTheDocument()
+  })
+
+  it('hints to populate catalogue when files found but none matched', async () => {
+    vi.mocked(api.libraryScanStatus).mockResolvedValue({
+      ran_at: new Date().toISOString(),
+      files_found: 12,
+      reconciled: 0,
+      unmatched: 12,
+      library_dir: '/books',
+      scanned_paths: ['/books'],
+      no_files_found: false,
+    })
+
+    renderSettings()
+
+    expect(await screen.findByText('settings.general.lastScan')).toBeInTheDocument()
+    expect(screen.getByText('settings.general.scanAllUnmatchedHint')).toBeInTheDocument()
+    // The no-files warning must NOT appear when files were found.
+    expect(screen.queryByText('settings.general.scanNoFilesWarning')).not.toBeInTheDocument()
+  })
+
   it('persists default root folder and media type choices', async () => {
     const existing = makeRootFolder({ id: 7, path: '/mnt/books' })
     const added = makeRootFolder({ id: 8, path: '/mnt/audiobooks' })

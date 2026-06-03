@@ -6,6 +6,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Library scan surfaces the paths it walked and explains zero/unmatched results** — the manual library scan now records the resolved library and audiobook roots, plus an explicit zero-files signal, in its persisted result. The Settings → General "Library Scan" section shows which paths were scanned, warns by name when no book files were found under the configured directory (a common `BINDERY_LIBRARY_DIR` misconfiguration), and hints when files were found but none matched a book (the author's book catalogue needs populating first). Additive, backward-compatible result fields (`library_dir`, `audiobook_dir`, `scanned_paths`, `no_files_found`); the matching logic is unchanged.
+
 ## [v1.16.0] — 2026-06-03
 
 Security and hardening release. The bulk of this version is an audit-driven hardening pass (the **D1–D4** access-control findings and the **Wave 2–5** robustness sweep), opt-in per-user data isolation, a batch of performance work, and a long tail of import/scheduler correctness fixes. No breaking config changes, but two behaviour changes worth noting before upgrading: list endpoints are now paginated and request bodies are capped at 1 MiB by default (see **Changed**).
