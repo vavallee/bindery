@@ -3,28 +3,11 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api, BINDERY_BASE, Author, Book, BookBulkAction } from '../api/client'
 import ViewToggle from '../components/ViewToggle'
+import { bookStatusBadge } from '../components/bookStatus'
 import MergeAuthorsModal from '../components/MergeAuthorsModal'
 import EditAuthorModal from '../components/EditAuthorModal'
 import BulkActionBar from '../components/BulkActionBar'
 import { useView } from '../components/useView'
-
-const statusColors: Record<string, string> = {
-  wanted: 'bg-amber-500/20 text-amber-700 dark:text-amber-400',
-  downloading: 'bg-blue-500/20 text-blue-700 dark:text-blue-400',
-  downloaded: 'bg-purple-500/20 text-purple-700 dark:text-purple-400',
-  imported: 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400',
-  skipped: 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400',
-}
-
-const fallbackStatusColor = 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400'
-
-const statusLabel: Record<string, string> = {
-  wanted: 'Wanted',
-  downloading: 'Downloading',
-  downloaded: 'Downloaded',
-  imported: 'In Library',
-  skipped: 'Skipped',
-}
 
 type MediaFilter = '' | 'ebook' | 'audiobook'
 type StatusFilter = '' | 'wanted' | 'downloading' | 'downloaded' | 'imported' | 'skipped'
@@ -38,9 +21,6 @@ function fmtPublishedYear(d?: string): string {
   return d.slice(0, 4)
 }
 
-function statusBadgeClass(status: string, base = 'inline-block px-2 py-0.5 rounded text-[10px] font-medium'): string {
-  return `${base} ${statusColors[status] || fallbackStatusColor}`
-}
 
 function mediaLabel(mediaType?: Book['mediaType']): string {
   if (mediaType === 'audiobook') return '🎧 Audiobook'
@@ -556,9 +536,14 @@ export default function AuthorDetailPage() {
                           <span className="min-w-0 flex-1">
                             <span className="block text-slate-800 dark:text-zinc-200 truncate">{book.title}</span>
                             <span className="mt-1 flex flex-wrap items-center gap-1 sm:hidden">
-                              <span className={statusBadgeClass(book.status, 'inline-block px-1.5 py-0.5 rounded text-[10px] font-medium')}>
-                                {statusLabel[book.status] ?? book.status}
-                              </span>
+                              {(() => {
+                                const badge = bookStatusBadge(book.status, book.monitored, t)
+                                return (
+                                  <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${badge.colorClass}`}>
+                                    {badge.label}
+                                  </span>
+                                )
+                              })()}
                               <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400">
                                 {mediaLabel(book.mediaType)}
                               </span>
@@ -579,9 +564,14 @@ export default function AuthorDetailPage() {
                         {mediaLabel(book.mediaType)}
                       </td>
                       <td className="hidden sm:table-cell px-3 py-2 whitespace-nowrap align-middle">
-                        <span className={statusBadgeClass(book.status)}>
-                          {statusLabel[book.status] ?? book.status}
-                        </span>
+                        {(() => {
+                          const badge = bookStatusBadge(book.status, book.monitored, t)
+                          return (
+                            <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium ${badge.colorClass}`}>
+                              {badge.label}
+                            </span>
+                          )
+                        })()}
                         {book.excluded && (
                           <span className="inline-block ml-1 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">
                             Excluded
@@ -622,9 +612,14 @@ export default function AuthorDetailPage() {
                   <div className="p-2">
                     <h4 className="text-xs font-medium truncate" title={book.title}>{book.title}</h4>
                     <div className="flex items-center gap-1 mt-1 flex-wrap">
-                      <span className={statusBadgeClass(book.status, 'px-1.5 py-0.5 rounded text-[10px] font-medium')}>
-                        {statusLabel[book.status] ?? book.status}
-                      </span>
+                      {(() => {
+                        const badge = bookStatusBadge(book.status, book.monitored, t)
+                        return (
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${badge.colorClass}`}>
+                            {badge.label}
+                          </span>
+                        )
+                      })()}
                       {book.mediaType === 'audiobook' && (
                         <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">🎧 Audio</span>
                       )}

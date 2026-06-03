@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { api, BINDERY_BASE, Book, HistoryEvent, MediaType, SearchResult, SearchDebug } from '../api/client'
 import SearchDebugPanel from '../components/SearchDebugPanel'
 import MediaBadge from '../components/MediaBadge'
+import { bookStatusBadge } from '../components/bookStatus'
 import RebindModal from '../components/RebindModal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import ClipboardManualFallback from '../components/ClipboardManualFallback'
@@ -47,13 +48,6 @@ function languageName(code?: string): string | null {
   return LANGUAGE_NAMES[code.toLowerCase()] ?? code
 }
 
-const statusColors: Record<string, string> = {
-  wanted: 'bg-amber-500/20 text-amber-700 dark:text-amber-400',
-  downloading: 'bg-blue-500/20 text-blue-700 dark:text-blue-400',
-  downloaded: 'bg-purple-500/20 text-purple-700 dark:text-purple-400',
-  imported: 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400',
-  skipped: 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400',
-}
 
 // Small coloured dot for a history row, by event type.
 const eventDotColors: Record<string, string> = {
@@ -414,9 +408,14 @@ export default function BookDetailPage() {
           )}
 
           <div className="flex flex-wrap items-center gap-2 mt-3 text-xs">
-            <span className={`inline-flex items-center px-2 py-0.5 rounded font-medium ${statusColors[book.status] || 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400'}`}>
-              {t(`bookDetail.status.${book.status}`, book.status)}
-            </span>
+            {(() => {
+              const badge = bookStatusBadge(book.status, book.monitored, t)
+              return (
+                <span className={`inline-flex items-center px-2 py-0.5 rounded font-medium ${badge.colorClass}`}>
+                  {badge.label}
+                </span>
+              )
+            })()}
             {book.excluded && (
               <span className="inline-flex items-center px-2 py-0.5 rounded font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">
                 {t('bookDetail.excludedBadge')}

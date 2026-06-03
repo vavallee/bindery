@@ -198,13 +198,13 @@ describe('AuthorDetailPage', () => {
     expect(snapshotCells[4]).toHaveTextContent('Downloaded')
 
     const dualFormatCells = within(rowForTitle('Dual Format')).getAllByRole('cell')
-    expect(dualFormatCells[1]).toHaveTextContent('In Library')
+    expect(dualFormatCells[1]).toHaveTextContent('Imported')
     expect(dualFormatCells[1]).toHaveTextContent('📖🎧 Both')
     expect(dualFormatCells[1]).toHaveTextContent('2022')
     expect(dualFormatCells[1]).toHaveTextContent('Excluded')
     expect(dualFormatCells[2]).toHaveTextContent('2022')
     expect(dualFormatCells[3]).toHaveTextContent('📖🎧 Both')
-    expect(dualFormatCells[4]).toHaveTextContent('In Library')
+    expect(dualFormatCells[4]).toHaveTextContent('Imported')
     expect(dualFormatCells[4]).toHaveTextContent('Excluded')
   })
 

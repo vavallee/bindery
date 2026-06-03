@@ -731,6 +731,14 @@
     "roleFail": "Failed to change role",
     "createFail": "Failed to create user"
   },
+  "bookStatus": {
+    "wanted": "Wanted",
+    "downloading": "Downloading",
+    "downloaded": "Downloaded",
+    "imported": "Imported",
+    "skipped": "Skipped",
+    "notMonitored": "Not monitored"
+  },
   "bookDetail": {
     "back": "← Books",
     "notFound": "Book not found",

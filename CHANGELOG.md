@@ -6,6 +6,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Backlist books no longer show a misleading "Wanted" pill** (#977) — `status` and `monitored` are orthogonal (every book starts `status=wanted`; backlist siblings are added unmonitored), but the status pill rendered `status` alone, so an unmonitored backlist book read "Wanted" while correctly never appearing on the Wanted page (which lists `status=wanted AND monitored`). A shared `bookStatusBadge` helper now makes the pill monitored-aware across the book detail page, book lists, and author rows: `wanted` + monitored → "Wanted"; `wanted` + unmonitored → "Not monitored" (muted). No status/model/DB change.
+
 ## [v1.16.1] — 2026-06-03
 
 A getting-started / onboarding friction pass plus a batch of fixes from user reports. No breaking changes.
