@@ -371,6 +371,76 @@ func TestTest(t *testing.T) {
 	}
 }
 
+// TestTest_CategoryPresent verifies Test passes when every configured category
+// exists in SAB's returned category set.
+func TestTest_CategoryPresent(t *testing.T) {
+	var gotMode string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMode = r.URL.Query().Get("mode")
+		json.NewEncoder(w).Encode(CategoriesResponse{
+			Categories: []string{"*", "books", "audiobooks"},
+		})
+	}))
+	defer srv.Close()
+
+	c := New("127.0.0.1", 0, "testkey", "", false)
+	c.baseURL = srv.URL
+
+	if err := c.Test(context.Background(), "books", "audiobooks"); err != nil {
+		t.Fatalf("test with present categories should pass: %v", err)
+	}
+	if gotMode != "get_cats" {
+		t.Errorf("expected mode=get_cats, got %q", gotMode)
+	}
+}
+
+// TestTest_CategoryAbsent verifies Test fails with an actionable error when a
+// configured category is not defined in SAB — the false-confidence bug. The
+// error must name the missing category and the categories SAB actually has, so
+// the user can fix the typo on the right side.
+func TestTest_CategoryAbsent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(CategoriesResponse{
+			Categories: []string{"*", "books"},
+		})
+	}))
+	defer srv.Close()
+
+	c := New("127.0.0.1", 0, "testkey", "", false)
+	c.baseURL = srv.URL
+
+	err := c.Test(context.Background(), "bookz")
+	if err == nil {
+		t.Fatal("expected error for category absent from SAB")
+		return
+	}
+	msg := err.Error()
+	for _, want := range []string{"bookz", "books", "category"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("expected error to mention %q, got: %q", want, msg)
+		}
+	}
+}
+
+// TestTest_EmptyCategorySkipsValidation verifies that an empty configured
+// category is treated as "use SAB's default destination" and never triggers a
+// mismatch error — only reachability is checked.
+func TestTest_EmptyCategorySkipsValidation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(CategoriesResponse{
+			Categories: []string{"*", "books"},
+		})
+	}))
+	defer srv.Close()
+
+	c := New("127.0.0.1", 0, "testkey", "", false)
+	c.baseURL = srv.URL
+
+	if err := c.Test(context.Background(), "", ""); err != nil {
+		t.Fatalf("empty categories should skip validation: %v", err)
+	}
+}
+
 // roundTripFunc is a test helper that implements http.RoundTripper via a function.
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
