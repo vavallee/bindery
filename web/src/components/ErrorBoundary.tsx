@@ -1,6 +1,16 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 
-type Props = { children: ReactNode }
+type Props = {
+  children: ReactNode
+  // When provided, the boundary clears its error state whenever this value
+  // changes. Wiring it to the current route path means navigating away from a
+  // crashed page recovers without a full reload.
+  resetKey?: string | number
+  // Inline boundaries render within the existing layout (keeping the nav/header)
+  // instead of taking over the whole viewport. The default (false) preserves the
+  // original full-screen fallback used by the root boundary.
+  inline?: boolean
+}
 type State = { hasError: boolean; error: Error | null; errorInfo: ErrorInfo | null; showDetails: boolean }
 
 export default class ErrorBoundary extends Component<Props, State> {
@@ -13,6 +23,14 @@ export default class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('ui crash', error, errorInfo.componentStack)
     this.setState({ errorInfo })
+  }
+
+  componentDidUpdate(prevProps: Props) {
+    // Reset on navigation so a crashed page doesn't stay crashed after the user
+    // clicks elsewhere in the nav.
+    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false, error: null, errorInfo: null, showDetails: false })
+    }
   }
 
   private handleReload = () => {
@@ -30,8 +48,11 @@ export default class ErrorBoundary extends Component<Props, State> {
   render() {
     if (!this.state.hasError) return this.props.children
     const { error, errorInfo, showDetails } = this.state
+    const outerClass = this.props.inline
+      ? 'flex justify-center py-6'
+      : 'min-h-screen bg-slate-50 dark:bg-zinc-950 text-slate-900 dark:text-zinc-100 flex items-center justify-center p-4'
     return (
-      <div className="min-h-screen bg-slate-50 dark:bg-zinc-950 text-slate-900 dark:text-zinc-100 flex items-center justify-center p-4">
+      <div className={outerClass}>
         <div role="alert" className="max-w-xl w-full p-6 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-4">
           <h1 className="text-lg font-bold tracking-tight">Something went wrong</h1>
           <p className="text-sm text-slate-600 dark:text-zinc-400">

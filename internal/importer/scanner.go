@@ -1022,23 +1022,31 @@ func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models
 func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.DownloadClient) {
 	qb := downloader.QbittorrentFor(client)
 
-	torrents, err := qb.GetTorrents(ctx, client.Category)
-	if err != nil {
-		slog.Debug("failed to fetch qBittorrent torrents", "error", err)
-		return
-	}
-
 	allDownloads, err := s.downloads.List(ctx)
 	if err != nil {
 		slog.Debug("failed to list downloads", "error", err)
 		return
 	}
+
+	// Poll every category this client may have grabbed under. Audiobook grabs
+	// use CategoryAudiobook (e.g. "audiobooks") while ebook grabs use Category
+	// (e.g. "ebook"); querying only Category leaves audiobook torrents out of
+	// the result, so their downloads never match here and hang in "downloading"
+	// forever. CategoriesToPoll returns both. The stall/health adapters were
+	// already fixed for #700; this is the main import poll that was missed.
 	torrentsMap := make(map[string]qbittorrent.Torrent)
-	for _, t := range torrents {
-		torrentsMap[strings.ToLower(t.Hash)] = t
+	for _, cat := range downloader.CategoriesToPoll(client) {
+		torrents, err := qb.GetTorrents(ctx, cat)
+		if err != nil {
+			slog.Debug("failed to fetch qBittorrent torrents", "category", cat, "error", err)
+			return
+		}
+		for _, t := range torrents {
+			torrentsMap[strings.ToLower(t.Hash)] = t
+		}
 	}
 
-	slog.Debug("qbittorrent poll", "torrents", len(torrents), "downloads", len(allDownloads), "category", client.Category)
+	slog.Debug("qbittorrent poll", "torrents", len(torrentsMap), "downloads", len(allDownloads), "categories", downloader.CategoriesToPoll(client))
 
 	// Track which downloads' sources we observed this cycle (issue #706 finding 4).
 	seenSourceIDs := make(map[int64]bool)
