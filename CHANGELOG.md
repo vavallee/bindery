@@ -6,6 +6,9 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **A page crash no longer blanks the whole app** — page render errors are now caught by a route-scoped error boundary that shows the error inline while keeping the nav/header usable, and clears itself when you navigate to another page (no reload needed). Previously the only boundary was the root one, whose full-screen dark-mode fallback took over the entire viewport and required a manual reload to recover.
 ### Fixed
 
 - **Helm chart shipped unusable defaults** — `values.yaml` defaulted `BINDERY_LIBRARY_DIR` to a maintainer-specific path (`/media/BOOKS/incoming`) and enabled a `/downloads:/media` path remap, so a fresh `helm install` pointed the library at a path that didn't exist in the pod and silently rewrote download paths. Library dir now defaults to `/books` (matching the Docker image) and the remap is commented out by default. The chart's ingress was also Traefik-`IngressRoute`-only; it now supports `ingress.type: standard` to render a portable `networking.k8s.io/v1` Ingress (with `className`/`annotations`/`tls`) for nginx-ingress, GKE, EKS, etc. `type` defaults to `traefik`, so existing installs are unchanged.
