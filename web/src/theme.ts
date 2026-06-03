@@ -19,8 +19,8 @@ function apply(theme: Theme) {
 /**
  * useTheme — returns the current theme and a setter. Persists to
  * localStorage and toggles the `dark` class on <html>. The initial
- * state is read synchronously so SSR/pre-paint matches the rendered
- * markup (see the bootstrap script in index.html).
+ * state is read synchronously so the app's first render already
+ * reflects the persisted/system theme.
  */
 export function useTheme() {
   const [theme, setThemeState] = useState<Theme>(readInitial)
