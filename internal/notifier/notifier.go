@@ -41,7 +41,7 @@ type Notifier struct {
 func New(repo *db.NotificationRepo) *Notifier {
 	return &Notifier{
 		repo: repo,
-		http: &http.Client{Timeout: 10 * time.Second},
+		http: &http.Client{Timeout: 10 * time.Second, Transport: httpsec.DefaultProxyTransport()},
 		validate: func(u string) error {
 			policy := httpsec.PolicyFromEnv(httpsec.PolicyStrict, "BINDERY_NOTIFICATIONS_ALLOW_PRIVATE")
 			return httpsec.ValidateOutboundURL(u, policy)

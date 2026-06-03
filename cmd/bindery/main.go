@@ -29,6 +29,7 @@ import (
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/downloader"
 	"github.com/vavallee/bindery/internal/hardcoverlistsyncer"
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/logbuf"
@@ -90,6 +91,18 @@ func main() {
 	// Install the canonical User-Agent before any HTTP client constructs
 	// requests. Every external client reads from this singleton.
 	useragent.Set(version)
+
+	// Install the outbound proxy (if configured) before any HTTP client is
+	// constructed, so the remote-facing clients pick up the shared transport.
+	// Log only the scheme and host — never the userinfo, which may carry
+	// credentials.
+	if proxyURL, err := httpsec.ConfigureOutboundProxy(cfg.OutboundProxy, cfg.OutboundProxyNoProxy, cfg.OutboundProxyBypassLocal); err != nil {
+		slog.Warn("outbound proxy disabled — invalid BINDERY_OUTBOUND_PROXY", "error", err)
+	} else if proxyURL != nil {
+		slog.Info("outbound proxy enabled",
+			"scheme", proxyURL.Scheme, "host", proxyURL.Host,
+			"bypassLocal", cfg.OutboundProxyBypassLocal)
+	}
 
 	slog.Info("starting bindery",
 		"version", version,

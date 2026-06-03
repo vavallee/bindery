@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
@@ -71,7 +72,7 @@ func NormalizeAPIToken(value string) string {
 // New creates a new Hardcover client.
 func New() *Client {
 	return &Client{
-		http: &http.Client{Timeout: 15 * time.Second},
+		http: &http.Client{Timeout: 15 * time.Second, Transport: httpsec.DefaultProxyTransport()},
 	}
 }
 

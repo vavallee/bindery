@@ -55,6 +55,23 @@ type Config struct {
 	// BINDERY_URL_BASE. Automatically normalised: leading slash added, trailing
 	// slash removed, full URLs truncated to their path component.
 	URLBase string
+	// OutboundProxy routes Bindery's remote-facing outbound HTTP (indexers,
+	// metadata providers, cover images, webhook notifications, telemetry)
+	// through a proxy. Set via BINDERY_OUTBOUND_PROXY as a single URL, e.g.
+	// "http://user:pass@host:3128" or "socks5://host:1080"; empty disables it.
+	// Named with the OUTBOUND infix to avoid confusion with the inbound
+	// reverse-proxy SSO settings (BINDERY_PROXY_AUTH_HEADER / _AUTO_PROVISION).
+	// Download clients and OIDC discovery deliberately stay direct.
+	OutboundProxy string
+	// OutboundProxyBypassLocal sends LAN / loopback / single-label destinations
+	// (e.g. a Docker-hosted Jackett/Prowlarr at "prowlarr" or "192.168.x.x")
+	// direct instead of through the proxy. Mirrors Sonarr's "bypass proxy for
+	// local addresses". BINDERY_OUTBOUND_PROXY_BYPASS_LOCAL, default true.
+	OutboundProxyBypassLocal bool
+	// OutboundProxyNoProxy is a comma-separated list of additional hosts, domain
+	// suffixes, or CIDRs that always bypass the proxy (e.g. a Prowlarr reached by
+	// a public-looking hostname). BINDERY_OUTBOUND_PROXY_NO_PROXY.
+	OutboundProxyNoProxy string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -71,30 +88,33 @@ type Config struct {
 // takes precedence and the env var becomes a no-op.
 func Load() *Config {
 	return &Config{
-		Port:                   envOr("BINDERY_PORT", "8787"),
-		DBPath:                 envOr("BINDERY_DB_PATH", defaultDBPath(runtime.GOOS, os.UserConfigDir)),
-		DataDir:                envOr("BINDERY_DATA_DIR", defaultDataDir(runtime.GOOS, os.UserConfigDir)),
-		LogLevel:               envOr("BINDERY_LOG_LEVEL", "info"),
-		APIKey:                 envOr("BINDERY_API_KEY", ""),
-		DownloadDir:            envOr("BINDERY_DOWNLOAD_DIR", "/downloads"),
-		AudiobookDownloadDir:   envOr("BINDERY_AUDIOBOOK_DOWNLOAD_DIR", ""),
-		LibraryDir:             envOr("BINDERY_LIBRARY_DIR", "/books"),
-		AudiobookDir:           envOr("BINDERY_AUDIOBOOK_DIR", ""),
-		EnhancedHardcoverAPI:   envBool("BINDERY_ENHANCED_HARDCOVER_API", true),
-		DownloadPathRemap:      envOr("BINDERY_DOWNLOAD_PATH_REMAP", ""),
-		ProxyAuthHeader:        envOr("BINDERY_PROXY_AUTH_HEADER", "X-Forwarded-User"),
-		ProxyAutoProvision:     envBool("BINDERY_PROXY_AUTO_PROVISION", true),
-		OIDCRedirectBaseURL:    envOr("BINDERY_OIDC_REDIRECT_BASE_URL", ""),
-		LocalAuthEnabled:       envBool("BINDERY_LOCAL_AUTH_ENABLED", true),
-		OIDCAutoProvision:      envBool("BINDERY_OIDC_AUTO_PROVISION", true),
-		OIDCEmailLink:          envBool("BINDERY_OIDC_EMAIL_LINK", false),
-		OIDCDefaultRole:        normalizeOIDCRole(envOr("BINDERY_OIDC_DEFAULT_ROLE", "user")),
-		OIDCAdminGroup:         strings.TrimSpace(envOr("BINDERY_OIDC_ADMIN_GROUP", "")),
-		OIDCGroupClaim:         envOr("BINDERY_OIDC_GROUP_CLAIM", "groups"),
-		LogRetentionDays:       envInt("BINDERY_LOG_RETENTION_DAYS", 14),
-		RateLimitMaxFailures:   envInt("BINDERY_RATE_LIMIT_MAX_FAILURES", 5),
-		RateLimitWindowMinutes: envInt("BINDERY_RATE_LIMIT_WINDOW_MINUTES", 15),
-		URLBase:                normalizeURLBase(envOr("BINDERY_URL_BASE", "")),
+		Port:                     envOr("BINDERY_PORT", "8787"),
+		DBPath:                   envOr("BINDERY_DB_PATH", defaultDBPath(runtime.GOOS, os.UserConfigDir)),
+		DataDir:                  envOr("BINDERY_DATA_DIR", defaultDataDir(runtime.GOOS, os.UserConfigDir)),
+		LogLevel:                 envOr("BINDERY_LOG_LEVEL", "info"),
+		APIKey:                   envOr("BINDERY_API_KEY", ""),
+		DownloadDir:              envOr("BINDERY_DOWNLOAD_DIR", "/downloads"),
+		AudiobookDownloadDir:     envOr("BINDERY_AUDIOBOOK_DOWNLOAD_DIR", ""),
+		LibraryDir:               envOr("BINDERY_LIBRARY_DIR", "/books"),
+		AudiobookDir:             envOr("BINDERY_AUDIOBOOK_DIR", ""),
+		EnhancedHardcoverAPI:     envBool("BINDERY_ENHANCED_HARDCOVER_API", true),
+		DownloadPathRemap:        envOr("BINDERY_DOWNLOAD_PATH_REMAP", ""),
+		ProxyAuthHeader:          envOr("BINDERY_PROXY_AUTH_HEADER", "X-Forwarded-User"),
+		ProxyAutoProvision:       envBool("BINDERY_PROXY_AUTO_PROVISION", true),
+		OIDCRedirectBaseURL:      envOr("BINDERY_OIDC_REDIRECT_BASE_URL", ""),
+		LocalAuthEnabled:         envBool("BINDERY_LOCAL_AUTH_ENABLED", true),
+		OIDCAutoProvision:        envBool("BINDERY_OIDC_AUTO_PROVISION", true),
+		OIDCEmailLink:            envBool("BINDERY_OIDC_EMAIL_LINK", false),
+		OIDCDefaultRole:          normalizeOIDCRole(envOr("BINDERY_OIDC_DEFAULT_ROLE", "user")),
+		OIDCAdminGroup:           strings.TrimSpace(envOr("BINDERY_OIDC_ADMIN_GROUP", "")),
+		OIDCGroupClaim:           envOr("BINDERY_OIDC_GROUP_CLAIM", "groups"),
+		LogRetentionDays:         envInt("BINDERY_LOG_RETENTION_DAYS", 14),
+		RateLimitMaxFailures:     envInt("BINDERY_RATE_LIMIT_MAX_FAILURES", 5),
+		RateLimitWindowMinutes:   envInt("BINDERY_RATE_LIMIT_WINDOW_MINUTES", 15),
+		URLBase:                  normalizeURLBase(envOr("BINDERY_URL_BASE", "")),
+		OutboundProxy:            envOr("BINDERY_OUTBOUND_PROXY", ""),
+		OutboundProxyBypassLocal: envBool("BINDERY_OUTBOUND_PROXY_BYPASS_LOCAL", true),
+		OutboundProxyNoProxy:     envOr("BINDERY_OUTBOUND_PROXY_NO_PROXY", ""),
 	}
 }
 

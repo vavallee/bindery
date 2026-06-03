@@ -28,6 +28,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/useragent"
 )
 
@@ -115,6 +116,10 @@ type Client struct {
 
 // New creates a telemetry client. version is the running binary's version string.
 func New(settings *db.SettingsRepo, version string) *Client {
+	// Route telemetry pings through the configured outbound proxy. Set here,
+	// not on the package-level pingClient var, because the proxy is installed
+	// during startup, after this package's vars initialise.
+	pingClient.Transport = httpsec.DefaultProxyTransport()
 	return &Client{settings: settings, version: version}
 }
 

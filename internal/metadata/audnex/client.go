@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/useragent"
 )
 
@@ -34,7 +35,7 @@ func New(region string) *Client {
 	}
 	return &Client{
 		baseURL: defaultBaseURL,
-		http:    &http.Client{Timeout: 15 * time.Second},
+		http:    &http.Client{Timeout: 15 * time.Second, Transport: httpsec.DefaultProxyTransport()},
 		region:  region,
 	}
 }

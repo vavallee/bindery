@@ -42,7 +42,8 @@ func NewImageProxyHandler(dataDir string) *ImageProxyHandler {
 	h := &ImageProxyHandler{
 		cacheDir: filepath.Join(dataDir, "image-cache"),
 		client: &http.Client{
-			Timeout: 15 * time.Second,
+			Timeout:   15 * time.Second,
+			Transport: httpsec.DefaultProxyTransport(),
 			// Re-validate redirect targets — a permissive upstream could otherwise
 			// redirect from a public host into the LAN (cloud metadata, internal
 			// services) and leak the body back through the cache.

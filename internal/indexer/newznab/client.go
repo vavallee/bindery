@@ -95,6 +95,7 @@ func sharedTransportInstance() *http.Transport {
 	sharedTransportOnce.Do(func() {
 		transportBuildCount.Add(1)
 		sharedTransport = &http.Transport{
+			Proxy:                 httpsec.ProxyFunc(),
 			DialContext:           httpsec.NewDialContext(httpsec.PolicyLANLoopback),
 			MaxIdleConns:          100,
 			MaxIdleConnsPerHost:   8,

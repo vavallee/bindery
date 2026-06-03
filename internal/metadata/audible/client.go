@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/useragent"
 )
@@ -56,7 +57,7 @@ type Client struct {
 func New() *Client {
 	return &Client{
 		baseURL: defaultBaseURL,
-		http:    &http.Client{Timeout: 15 * time.Second},
+		http:    &http.Client{Timeout: 15 * time.Second, Transport: httpsec.DefaultProxyTransport()},
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/useragent"
 )
@@ -28,7 +29,7 @@ type Client struct {
 // New creates a Google Books client. apiKey can be empty for basic access.
 func New(apiKey string) *Client {
 	return &Client{
-		http:   &http.Client{Timeout: 10 * time.Second},
+		http:   &http.Client{Timeout: 10 * time.Second, Transport: httpsec.DefaultProxyTransport()},
 		apiKey: apiKey,
 	}
 }
