@@ -6,6 +6,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Loopback URLs are now allowed for admin-configured service endpoints** — download clients, indexers, Prowlarr, the Audiobookshelf base URL, and the Calibre plugin URL now accept `http://127.0.0.1:…` / `localhost` (new `PolicyLANLoopback` SSRF tier). Previously the SSRF guard blocked all loopback with no escape hatch, which made a legitimate, common topology impossible: a companion service bound to `127.0.0.1`, or both containers on `network_mode: host`, could not be reached (e.g. SABnzbd on `127.0.0.1:50155` was rejected with "url not allowed: points to loopback address"). These endpoints are admin-only and CSRF-gated, so the loopback block bought ~no security. **Untrusted paths are unchanged**: proxied cover images and outbound webhooks still block loopback, and link-local + cloud-metadata (e.g. `169.254.169.254`) remain blocked everywhere. The release/torrent download URLs returned by indexers also still block loopback (a malicious indexer must not be able to point Bindery at internal services).
+
 ### Fixed
 
 - **Backlist books no longer show a misleading "Wanted" pill** (#977) — `status` and `monitored` are orthogonal (every book starts `status=wanted`; backlist siblings are added unmonitored), but the status pill rendered `status` alone, so an unmonitored backlist book read "Wanted" while correctly never appearing on the Wanted page (which lists `status=wanted AND monitored`). A shared `bookStatusBadge` helper now makes the pill monitored-aware across the book detail page, book lists, and author rows: `wanted` + monitored → "Wanted"; `wanted` + unmonitored → "Not monitored" (muted). No status/model/DB change.

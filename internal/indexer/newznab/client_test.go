@@ -948,12 +948,15 @@ func TestBookSearch_Tier1FallsBackOnCannedFeed(t *testing.T) {
 	}
 }
 
-// TestNew_HardenedDialerBlocksLoopback verifies that the http.Client returned
-// by New() uses the httpsec-hardened DialContext that blocks loopback addresses,
-// preventing DNS-rebinding attacks where a hostname resolves to 127.0.0.1 after
-// the initial ValidateOutboundURL check passes. This is the Finding 1 fix from
-// issue #711: re-validation happens per connection, not only at config time.
-func TestNew_HardenedDialerBlocksLoopback(t *testing.T) {
+// TestNew_HardenedDialerAllowsLoopback verifies that the http.Client returned by
+// New() uses the httpsec-hardened DialContext under PolicyLANLoopback, which
+// PERMITS loopback. Indexer URLs are admin-typed infrastructure, and running an
+// indexer (Jackett/Prowlarr) on 127.0.0.1 is normal under `network_mode: host`;
+// blocking it was a foot-gun with no real security benefit on an admin-only,
+// CSRF-gated path. The dialer still re-validates per connection (the #711
+// DNS-rebinding fix) and still blocks link-local / cloud-metadata — see the
+// httpsec ssrf tests.
+func TestNew_HardenedDialerAllowsLoopback(t *testing.T) {
 	// Start a local server — its address will be on 127.0.0.1 (loopback).
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -963,12 +966,11 @@ func TestNew_HardenedDialerBlocksLoopback(t *testing.T) {
 	// Use New() (hardened client), NOT testNew() — the dialer must be active.
 	c := New(srv.URL, "testkey")
 	_, err := c.Caps(context.Background())
-	if err == nil {
-		t.Fatal("expected connection to loopback to be rejected by the SSRF dialer, got nil error")
-		return
-	}
-	if !strings.Contains(err.Error(), "loopback") {
-		t.Errorf("expected 'loopback' in SSRF dial error, got: %v", err)
+	// The empty 200 body makes Caps fail to parse, but that proves the
+	// connection went THROUGH the dialer rather than being SSRF-blocked, which
+	// is what we assert: the error must not be a loopback/SSRF rejection.
+	if err != nil && (strings.Contains(err.Error(), "loopback") || strings.Contains(err.Error(), "url not allowed")) {
+		t.Errorf("loopback indexer should be reachable through the hardened dialer, got SSRF rejection: %v", err)
 	}
 }
 

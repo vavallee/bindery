@@ -95,7 +95,7 @@ func sharedTransportInstance() *http.Transport {
 	sharedTransportOnce.Do(func() {
 		transportBuildCount.Add(1)
 		sharedTransport = &http.Transport{
-			DialContext:           httpsec.NewDialContext(httpsec.PolicyLAN),
+			DialContext:           httpsec.NewDialContext(httpsec.PolicyLANLoopback),
 			MaxIdleConns:          100,
 			MaxIdleConnsPerHost:   8,
 			IdleConnTimeout:       90 * time.Second,

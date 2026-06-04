@@ -24,6 +24,18 @@ const (
 	// RFC1918 addresses are allowed so homelabs can target LAN services
 	// (indexers, download clients, ntfy).
 	PolicyLAN
+
+	// PolicyLANLoopback is PolicyLAN plus loopback (127.0.0.0/8, ::1). It is the
+	// least restrictive policy and still blocks link-local and cloud metadata.
+	// Use it ONLY for admin-configured infrastructure URLs the operator types
+	// themselves (download clients, indexers, Prowlarr, the Calibre plugin / ABS
+	// base URLs). Reaching a co-located service over loopback is the normal case
+	// under `network_mode: host` or when the companion binds to 127.0.0.1, and
+	// these endpoints are admin-only + CSRF-gated, so the loopback block bought
+	// ~no security while breaking a legitimate topology. Never use this for URLs
+	// influenced by untrusted input (cover/image proxy, webhooks) — those keep
+	// PolicyStrict / PolicyLAN.
+	PolicyLANLoopback
 )
 
 // Resolver abstracts net.LookupIP so tests can inject a fake resolver without
@@ -137,9 +149,11 @@ func checkIP(ip net.IP, policy Policy) error {
 		ip = v4
 	}
 
-	// Always blocked: loopback (unless explicitly allowed for tests via
-	// AllowLoopbackForTests — never opt in from production code).
-	if ip.IsLoopback() && !testAllowLoopback {
+	// Loopback is blocked except under PolicyLANLoopback (admin-configured
+	// infrastructure URLs, where reaching a co-located service over 127.0.0.1 is
+	// the intended, normal case) or when explicitly allowed for tests via
+	// AllowLoopbackForTests (never opt in from production code).
+	if ip.IsLoopback() && policy != PolicyLANLoopback && !testAllowLoopback {
 		return errors.New("url not allowed: points to loopback address")
 	}
 

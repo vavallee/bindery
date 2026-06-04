@@ -71,6 +71,40 @@ func TestValidateOutboundURL_Loopback(t *testing.T) {
 		if err := validate(u, PolicyLAN, r); err == nil {
 			t.Errorf("expected block for loopback %q (LAN policy)", u)
 		}
+		// PolicyLANLoopback is the admin-infra policy and must ALLOW loopback.
+		if err := validate(u, PolicyLANLoopback, r); err != nil {
+			t.Errorf("LANLoopback: unexpected block for loopback %q: %v", u, err)
+		}
+	}
+}
+
+// TestValidateOutboundURL_LANLoopbackPolicy pins the admin-infra policy: it adds
+// loopback to PolicyLAN (loopback + RFC1918 allowed) but must still block
+// link-local and cloud metadata.
+func TestValidateOutboundURL_LANLoopbackPolicy(t *testing.T) {
+	r := fakeResolver{m: map[string][]net.IP{}}
+
+	allowed := []string{
+		"http://127.0.0.1:50155/api", // SAB on loopback (issue this fixes)
+		"http://[::1]:9117/",
+		"http://192.168.1.10:8080/", // RFC1918 still fine
+		"http://10.0.0.5/",
+	}
+	for _, u := range allowed {
+		if err := validate(u, PolicyLANLoopback, r); err != nil {
+			t.Errorf("LANLoopback: expected allow for %q, got: %v", u, err)
+		}
+	}
+
+	blocked := []string{
+		"http://169.254.0.1/",            // link-local
+		"http://[fe80::1]/",              // link-local v6
+		"http://169.254.169.254/latest/", // cloud metadata
+	}
+	for _, u := range blocked {
+		if err := validate(u, PolicyLANLoopback, r); err == nil {
+			t.Errorf("LANLoopback: expected block for %q", u)
+		}
 	}
 }
 

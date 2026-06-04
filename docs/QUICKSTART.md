@@ -64,21 +64,13 @@ point Bindery at a Prowlarr instance.
 (e.g. `http://prowlarr:9696`) and API key, then **Sync now** to pull its
 configured indexers in.
 
-> **Gotcha — `localhost` / `127.0.0.1` indexer URLs are rejected.**
-> Indexer and Prowlarr URLs are validated against an SSRF policy that **blocks
-> loopback** (`127.0.0.0/8`, `::1`), link-local (`169.254.0.0/16`), and
-> cloud-metadata endpoints. This is intentional: a confused-deputy request to
-> a loopback URL would let any logged-in user probe services running locally
-> on the Bindery host, and there is **no env-var escape hatch**. RFC1918
-> ranges (`10/8`, `172.16/12`, `192.168/16`) are allowed, so use:
->
-> - **Same Docker network** → the service name: `http://prowlarr:9696`.
-> - **Same host, different containers** → the host's LAN IP:
->   `http://192.168.x.y:9696`.
-> - **Bare-metal** → the host's LAN IP, or have the indexer listen on a
->   non-loopback interface.
->
-> Full detail: [DEPLOYMENT.md → Indexer / Prowlarr URLs](DEPLOYMENT.md#indexer--prowlarr-urls).
+> **Same-host indexers:** loopback (`http://127.0.0.1:9696`, `localhost`) and
+> LAN IPs are allowed for indexer / Prowlarr URLs, so a same-host indexer works.
+> The catch is networking-mode, not the SSRF policy: if Bindery runs in its own
+> bridge-network container, `127.0.0.1` resolves to *Bindery's* container, not
+> the host — use the service name (`http://prowlarr:9696`), the host LAN IP, or
+> `network_mode: host`. Link-local and cloud-metadata endpoints stay blocked.
+> Full detail: [DEPLOYMENT.md → Service URLs and the SSRF policy](DEPLOYMENT.md#service-urls-and-the-ssrf-policy).
 
 Use the **Test** button on the saved indexer to confirm it connects and
 returns categories.
@@ -109,10 +101,15 @@ username/password for the others), and the **Category / Label** (default
 
 Use **Test** to confirm the connection.
 
-> **Same-host clients:** the loopback rule in step 3 is an *indexer-URL*
-> validation, not a download-client one. But if Bindery runs in a separate
-> container, a download-client host of `127.0.0.1` still points at Bindery's
-> own container, not the client. Use the service name or LAN IP here too.
+> **Same-host clients:** loopback and LAN hosts are allowed for download-client
+> URLs too, so `http://127.0.0.1:50155` works for a same-host SABnzbd (e.g. under
+> `network_mode: host`, or a client bound only to `127.0.0.1`). The same
+> networking-mode caveat applies: if Bindery is in its own bridge-network
+> container, `127.0.0.1` points at *Bindery's* container, not the client — use
+> the service name or LAN IP there. If a same-host client is refused at the
+> connection (not by validation), the service is bound to an interface your URL
+> doesn't match (e.g. it listens only on `127.0.0.1` but you used the LAN IP);
+> point at the right interface or set the service to listen on `0.0.0.0`.
 > When Bindery and the client mount the same storage at different paths, set a
 > [download-client path remap](DEPLOYMENT.md#path-remapping-multi-container--multi-pod-setups).
 

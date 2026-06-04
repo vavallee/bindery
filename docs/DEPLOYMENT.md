@@ -270,17 +270,15 @@ After fixing a path or category mismatch, use **Queue → Retry import** on an `
 | `BINDERY_TRUSTED_PROXY` | _(empty)_ | Comma-separated IP/CIDR list of reverse proxies trusted to set `X-Forwarded-*`. Bindery resolves the real client IP (for local-only auth and the per-IP login rate-limiter) by walking the `X-Forwarded-For` chain and only trusting hops in this list; it never trusts a client-supplied leftmost entry. An entry like `0.0.0.0/0` trusts every peer and effectively disables per-IP decisions. **Required** when proxy auth mode is active — Bindery refuses to start without it. |
 | `BINDERY_TELEMETRY_DISABLED` | _(unset)_ | Set to `true` to opt out of the daily anonymous telemetry ping before any DB setting exists (e.g. on first boot). Equivalent to `telemetry.enabled: false` in **Settings → General**, but takes effect before the first ping fires. |
 
-## Indexer / Prowlarr URLs
+## Service URLs and the SSRF policy
 
-URLs entered for **Settings → Indexers** and **Settings → Indexers → Add Prowlarr** are validated against an SSRF policy that **blocks loopback** (`127.0.0.0/8`, `::1`), link-local (`169.254/16`, `fe80::/10`), and cloud-metadata endpoints (e.g. `169.254.169.254`). RFC1918 ranges (`10/8`, `172.16/12`, `192.168/16`) are allowed.
+Outbound URLs are validated against an SSRF policy. Two trust levels apply:
 
-This means `http://localhost:9696` and `http://127.0.0.1:9696` are **rejected** even when Prowlarr runs on the same host. Use one of the following instead:
+- **Admin-typed service URLs** — download clients (qBittorrent/Transmission/Deluge/SABnzbd/NZBGet), indexers, Prowlarr, the Audiobookshelf base URL, and the Calibre plugin URL. These **allow loopback** (`127.0.0.1`, `::1`) and RFC1918 LAN ranges (`10/8`, `172.16/12`, `192.168/16`). So `http://127.0.0.1:9696` or `http://localhost:50155` work when the service runs on the same host (including `network_mode: host`, or a companion bound only to loopback). Link-local (`169.254/16`, `fe80::/10`) and cloud-metadata endpoints (e.g. `169.254.169.254`) are always blocked. These endpoints are admin-only and CSRF-gated, so loopback is the operator's call.
 
-- **Same Docker network** — use the service name: `http://prowlarr:9696`.
-- **Same host, different containers** — use the host's LAN IP: `http://192.168.x.y:9696`.
-- **Bare-metal both processes** — use the host's LAN IP, or have Prowlarr listen on a non-loopback interface.
+- **Untrusted / outbound URLs** — proxied cover images (URLs that come from metadata providers and book data) and outbound notification webhooks. These keep blocking loopback, link-local, and cloud-metadata. Webhooks additionally block RFC1918 unless `BINDERY_NOTIFICATIONS_ALLOW_PRIVATE=true`.
 
-The rejection is intentional: a confused-deputy request from Bindery to a loopback URL would let any logged-in user probe services running locally on the Bindery host. There is no env-var escape hatch — if you need it for a controlled test environment, [open an issue](https://github.com/vavallee/bindery/issues/new) describing the use case.
+If a same-host service still isn't reachable, the usual cause is that the service is bound to an interface your URL doesn't match (for example SABnzbd listening only on `127.0.0.1` while you used the LAN IP, or vice versa). Either point Bindery at the interface the service actually listens on, or set the service to listen on `0.0.0.0`.
 
 ## First-run setup
 

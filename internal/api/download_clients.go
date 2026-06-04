@@ -132,7 +132,7 @@ func (h *DownloadClientHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if c.Category == "" {
 		c.Category = "books"
 	}
-	if err := httpsec.ValidateOutboundURL(downloadClientURL(&c), httpsec.PolicyLAN); err != nil {
+	if err := httpsec.ValidateOutboundURL(downloadClientURL(&c), httpsec.PolicyLANLoopback); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -161,7 +161,7 @@ func (h *DownloadClientHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if c.Host != "" {
 		c.Host = sanitizeHost(c.Host)
-		if err := httpsec.ValidateOutboundURL(downloadClientURL(&c), httpsec.PolicyLAN); err != nil {
+		if err := httpsec.ValidateOutboundURL(downloadClientURL(&c), httpsec.PolicyLANLoopback); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
@@ -205,7 +205,7 @@ func (h *DownloadClientHandler) Test(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download client not found"})
 		return
 	}
-	if err := httpsec.ValidateOutboundURL(downloadClientURL(client), httpsec.PolicyLAN); err != nil {
+	if err := httpsec.ValidateOutboundURL(downloadClientURL(client), httpsec.PolicyLANLoopback); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -245,7 +245,7 @@ func (h *DownloadClientHandler) TestConfig(w http.ResponseWriter, r *http.Reques
 	if c.Port == 0 {
 		c.Port = 8080
 	}
-	if err := httpsec.ValidateOutboundURL(downloadClientURL(&c), httpsec.PolicyLAN); err != nil {
+	if err := httpsec.ValidateOutboundURL(downloadClientURL(&c), httpsec.PolicyLANLoopback); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
