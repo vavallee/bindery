@@ -1046,23 +1046,100 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 		}
 	}
 
-	slog.Debug("qbittorrent poll", "torrents", len(torrentsMap), "downloads", len(allDownloads), "categories", downloader.CategoriesToPoll(client))
+	// Build an UNFILTERED index of every torrent qBittorrent holds, keyed by
+	// hash. This is the reconciliation fallback for two stuck-in-"downloading"
+	// bugs whose common root is that the category-filtered poll above can miss a
+	// torrent that genuinely belongs to a tracked download:
+	//
+	//   - #969 (cross-seed / complete-at-grab): when Bindery grabs a release the
+	//     client already holds complete+seeding, AddTorrent recovers the existing
+	//     hash via the 409 path but its setCategory call is best-effort (the
+	//     error is ignored, and some qBittorrent versions refuse to recategorise
+	//     an actively-seeding torrent). The torrent then stays under the
+	//     cross-seed's original category, so CategoriesToPoll never returns it and
+	//     the import never fires — the queue item is wedged at downloading/100%.
+	//
+	//   - #939 (category-filter miss): same mechanism for any torrent qBittorrent
+	//     placed outside Bindery's configured categories.
+	//
+	// GetTorrents("") returns every torrent regardless of category, so a
+	// hash/name match here recovers torrents the category filter dropped.
+	allTorrents, allErr := qb.GetTorrents(ctx, "")
+	if allErr != nil {
+		// Non-fatal: fall back to the category-filtered map only. We still want
+		// to process the torrents we did find rather than abort the whole poll.
+		slog.Debug("qbittorrent: unfiltered torrent listing failed; reconciliation fallback disabled", "error", allErr)
+	}
+	unfilteredByHash := make(map[string]qbittorrent.Torrent, len(allTorrents))
+	for _, t := range allTorrents {
+		unfilteredByHash[strings.ToLower(t.Hash)] = t
+	}
+
+	slog.Debug("qbittorrent poll", "torrents", len(torrentsMap), "all_torrents", len(unfilteredByHash), "downloads", len(allDownloads), "categories", downloader.CategoriesToPoll(client))
 
 	// Track which downloads' sources we observed this cycle (issue #706 finding 4).
 	seenSourceIDs := make(map[int64]bool)
 
 	for _, dl := range allDownloads {
-		if dl.DownloadClientID == nil || *dl.DownloadClientID != client.ID || dl.TorrentID == nil {
+		if dl.DownloadClientID == nil || *dl.DownloadClientID != client.ID {
 			continue
 		}
-		torrent, ok := torrentsMap[strings.ToLower(*dl.TorrentID)]
+
+		var torrent qbittorrent.Torrent
+		var ok bool
+		if dl.TorrentID != nil {
+			torrent, ok = torrentsMap[strings.ToLower(*dl.TorrentID)]
+			if !ok {
+				// Not in the category-filtered map. Fall back to the unfiltered
+				// listing before giving up — this is the #969/#939 category-miss
+				// recovery (a cross-seeded torrent qBittorrent kept under a
+				// different category is still found here by hash).
+				torrent, ok = unfilteredByHash[strings.ToLower(*dl.TorrentID)]
+				if ok {
+					slog.Info("qbittorrent: download found only via unfiltered listing (category mismatch)",
+						"title", dl.Title, "hash", *dl.TorrentID, "category", torrent.Category, "dl_status", dl.Status)
+				}
+			}
+		} else {
+			// #939: a download with the client set but no torrent hash. The hash
+			// is only persisted when SendDownload returned a RemoteID; if that
+			// step failed (or the record predates the fix) the row was skipped
+			// FOREVER, leaving the queue item stuck. Recover by matching the
+			// torrent in the unfiltered listing by name (and save-path/category
+			// when available), then BACKFILL the hash so all subsequent polls,
+			// retries and removals work normally.
+			if dl.Status == models.StateImported || dl.Status == models.StateFailed {
+				continue
+			}
+			match, found := matchTorrentForDownload(client, &dl, allTorrents)
+			if !found {
+				slog.Debug("qbittorrent: download has no torrent hash and no listing match yet",
+					"title", dl.Title, "dl_status", dl.Status)
+				continue
+			}
+			torrent = match
+			ok = true
+			slog.Info("qbittorrent: backfilling missing torrent hash from listing match",
+				"title", dl.Title, "hash", torrent.Hash, "category", torrent.Category)
+			if err := s.downloads.SetTorrentID(ctx, dl.ID, torrent.Hash); err != nil {
+				slog.Warn("qbittorrent: failed to backfill torrent hash", "download_id", dl.ID, "error", err)
+			} else {
+				h := strings.ToLower(torrent.Hash)
+				dl.TorrentID = &h
+			}
+		}
+
 		if !ok {
-			// The torrent is not in qBittorrent's list. Common causes: category
-			// filter mismatch, the torrent was manually removed, or the hash stored
-			// in Bindery doesn't match what qBittorrent returned. This is
-			// blockStaleImportFailures territory; only log at Debug to avoid noise.
+			// The torrent is not in qBittorrent's list at all (not under any
+			// category). Common causes: the torrent was manually removed, or the
+			// hash stored in Bindery doesn't match what qBittorrent returned. This
+			// is blockStaleImportFailures territory; only log at Debug to avoid noise.
+			hash := ""
+			if dl.TorrentID != nil {
+				hash = *dl.TorrentID
+			}
 			slog.Debug("qbittorrent: download not found in torrent list",
-				"title", dl.Title, "hash", *dl.TorrentID, "dl_status", dl.Status)
+				"title", dl.Title, "hash", hash, "dl_status", dl.Status)
 			continue
 		}
 		seenSourceIDs[dl.ID] = true
@@ -1072,7 +1149,16 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 		}
 
 		state := strings.ToLower(torrent.State)
-		isComplete := torrent.Progress >= 1.0 || strings.Contains(state, "upload") || strings.Contains(state, "stalledup") || strings.Contains(state, "checkingup")
+		// #969: qBittorrent reports a fully-downloaded torrent as
+		// {progress:1, amount_left:0, state:"stalledUP"|"uploading"|"pausedUP"|...}.
+		// Treat any of those signals as complete. amount_left==0 (with a known
+		// non-zero size) is the most reliable "all bytes present" indicator and
+		// catches states the substring checks miss (e.g. "queuedUP", "forcedUP").
+		isComplete := torrent.Progress >= 1.0 ||
+			(torrent.Size > 0 && torrent.AmountLeft == 0) ||
+			strings.Contains(state, "upload") ||
+			strings.Contains(state, "stalledup") ||
+			strings.Contains(state, "checkingup")
 		isFailed := strings.Contains(state, "error")
 
 		slog.Debug("qbittorrent: torrent status",
@@ -1082,7 +1168,23 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 			"dl_status", dl.Status,
 			"is_complete", isComplete)
 
-		if isComplete && (dl.Status == models.StateDownloading || dl.Status == models.StateGrabbed) {
+		// #969: import whenever the client reports the torrent complete and the
+		// download has not yet reached a terminal/in-flight import state —
+		// regardless of whether Bindery ever observed a "downloading" phase. The
+		// cross-seed / complete-at-grab case lands the record at StateDownloading
+		// (set right after the grab) or StateGrabbed and the torrent is already
+		// seeding, so the old "must be downloading/grabbed" gate fired but the
+		// torrent was invisible due to the category filter (now fixed above by the
+		// unfiltered fallback). StateCompleted/StateImportPending are included so a
+		// record wedged mid-transition (e.g. a crash between the status write and
+		// the import call, or a stuck StateCompleted row encountered between boot
+		// reconciliation sweeps) is also reconciled rather than stuck forever. The
+		// importer's own idempotency guards (isBookAlreadyImported / alreadyImported*
+		// — issue #706) prevent a double-import.
+		importable := dl.Status == models.StateDownloading ||
+			dl.Status == models.StateGrabbed ||
+			dl.Status == models.StateCompleted
+		if isComplete && importable {
 			rawPath, ok := resolveQbitContentPath(torrent)
 			if !ok {
 				// content_path is absent or points to a path that no longer exists.
@@ -1093,10 +1195,15 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 				if s.isBookAlreadyImported(ctx, &dl) {
 					slog.Info("qbittorrent: content path gone but book already in library — marking as imported",
 						"title", dl.Title)
-					// Walk the state machine: grabbed/downloading → completed →
-					// importPending → importing → imported.
-					s.updateDownloadStatus(ctx, dl.ID, models.StateCompleted)
-					s.updateDownloadStatus(ctx, dl.ID, models.StateImportPending)
+					// Walk the state machine from wherever we are to imported,
+					// skipping any state we have already passed (a self-transition
+					// is rejected by validTransitions).
+					if dl.Status == models.StateDownloading || dl.Status == models.StateGrabbed {
+						s.updateDownloadStatus(ctx, dl.ID, models.StateCompleted)
+					}
+					if dl.Status != models.StateImportPending {
+						s.updateDownloadStatus(ctx, dl.ID, models.StateImportPending)
+					}
 					s.updateDownloadStatus(ctx, dl.ID, models.StateImporting)
 					s.updateDownloadStatus(ctx, dl.ID, models.StateImported)
 					continue
@@ -1120,8 +1227,14 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 			// or empty-file response; tryImportInternal then falls back to
 			// the legacy filepath.Walk(downloadPath).
 			bookFiles := s.qbittorrentFilesFor(ctx, qb, client, torrent)
-			slog.Info("download completed", "title", dl.Title, "path", downloadPath, "raw_path", rawPath, "files", len(bookFiles))
-			s.updateDownloadStatus(ctx, dl.ID, models.StateCompleted)
+			slog.Info("download completed", "title", dl.Title, "path", downloadPath, "raw_path", rawPath, "files", len(bookFiles), "dl_status", dl.Status)
+			// Advance to StateCompleted only from a pre-completion state;
+			// tryImportQbittorrent moves on to importPending → importing →
+			// imported. A record already at StateCompleted/StateImportPending
+			// skips straight to the import (a self-transition would be rejected).
+			if dl.Status == models.StateDownloading || dl.Status == models.StateGrabbed {
+				s.updateDownloadStatus(ctx, dl.ID, models.StateCompleted)
+			}
 			s.tryImportQbittorrent(ctx, &dl, downloadPath, bookFiles)
 		} else if isComplete && dl.Status == models.StateImportFailed && dl.ImportRetryCount < importRetryLimit {
 			// Bug #7: a previous import attempt failed (e.g. transient filesystem
@@ -1412,6 +1525,62 @@ func resolveQbitContentPath(t qbittorrent.Torrent) (string, bool) {
 		return candidate, true
 	}
 	return "", false
+}
+
+// matchTorrentForDownload finds the torrent in candidates that corresponds to a
+// download whose torrent hash was never persisted (#939). The hash is only
+// stored when SendDownload returned a RemoteID; if that step failed, or the row
+// predates the hash-setting fix, dl.TorrentID is nil and the poll loop would
+// otherwise skip the record forever, leaving the queue item stuck.
+//
+// Matching is by torrent name against the download title. qBittorrent reports
+// the torrent's display name, which for a Bindery grab is the release title we
+// stored in dl.Title — so an exact (case-insensitive) name match is the primary
+// signal. When the download client declares a category, a candidate whose
+// category matches is preferred to disambiguate two same-named torrents.
+//
+// The match is intentionally conservative: an exact name match only. A fuzzy
+// match risks backfilling the WRONG hash onto a download, which would then
+// import the wrong torrent's files. When no confident match exists the caller
+// leaves the record untouched (logged at Debug) and tries again next cycle.
+func matchTorrentForDownload(client *models.DownloadClient, dl *models.Download, candidates []qbittorrent.Torrent) (qbittorrent.Torrent, bool) {
+	if dl == nil || strings.TrimSpace(dl.Title) == "" {
+		return qbittorrent.Torrent{}, false
+	}
+	wantName := strings.ToLower(strings.TrimSpace(dl.Title))
+
+	var nameMatches []qbittorrent.Torrent
+	for _, t := range candidates {
+		if strings.ToLower(strings.TrimSpace(t.Name)) == wantName {
+			nameMatches = append(nameMatches, t)
+		}
+	}
+	switch len(nameMatches) {
+	case 0:
+		return qbittorrent.Torrent{}, false
+	case 1:
+		return nameMatches[0], true
+	}
+
+	// Multiple torrents share this name. Prefer one whose category matches a
+	// category this client grabs under; if exactly one qualifies, take it.
+	wantCats := map[string]struct{}{}
+	for _, c := range downloader.CategoriesToPoll(client) {
+		if c != "" {
+			wantCats[strings.ToLower(c)] = struct{}{}
+		}
+	}
+	var catMatches []qbittorrent.Torrent
+	for _, t := range nameMatches {
+		if _, ok := wantCats[strings.ToLower(t.Category)]; ok {
+			catMatches = append(catMatches, t)
+		}
+	}
+	if len(catMatches) == 1 {
+		return catMatches[0], true
+	}
+	// Ambiguous — refuse to guess.
+	return qbittorrent.Torrent{}, false
 }
 
 // alreadyImportedFormat reports whether book already has a tracked, on-disk
