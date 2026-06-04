@@ -85,6 +85,47 @@ func TestNormalizeTitleForDedup(t *testing.T) {
 	}
 }
 
+// TestCanonicalDedupKey covers the single cross-source key (#940): it must
+// strip ABS-style bracketed qualifiers on top of all NormalizeTitleForDedup
+// folding, so titles a Calibre ebook and an ABS audiobook present for the same
+// work collapse to one key.
+func TestCanonicalDedupKey(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"The Eye of the World [Unabridged]", "the eye of the world"},
+		{"The Eye of the World", "the eye of the world"},
+		{"Mistborn: The Final Empire", "mistborn"},
+		{"Mistborn", "mistborn"},
+		{"Dune (Unabridged) [Audiobook]", "dune"},
+		{"Die Straße", "die strasse"},
+		{"Die Strasse", "die strasse"},
+		{"  spaced  out [2021] ", "spaced out"},
+	}
+	for _, tc := range cases {
+		if got := CanonicalDedupKey(tc.in); got != tc.want {
+			t.Errorf("CanonicalDedupKey(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestCanonicalDedupKey_Symmetric is the order-independence invariant: any two
+// titles for the same work, in either order, produce the same key.
+func TestCanonicalDedupKey_Symmetric(t *testing.T) {
+	pairs := [][2]string{
+		{"Mistborn: The Final Empire", "Mistborn"},
+		{"The Eye of the World [Unabridged]", "the eye of the world"},
+		{"Dune (Unabridged)", "Dune [Audiobook]"},
+		{"Die Straße: Ein Roman", "Die Strasse"},
+	}
+	for _, p := range pairs {
+		if a, b := CanonicalDedupKey(p[0]), CanonicalDedupKey(p[1]); a != b {
+			t.Errorf("asymmetric: %q->%q vs %q->%q", p[0], a, p[1], b)
+		}
+	}
+}
+
 func TestNormalizeTitleForDedup_Symmetric(t *testing.T) {
 	// Both the raw provider form and the trailing-stripped form must map to
 	// the same key — this is the core dedup invariant.

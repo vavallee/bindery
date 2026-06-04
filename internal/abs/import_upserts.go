@@ -781,24 +781,29 @@ func (i *Importer) upsertBookProvenance(ctx context.Context, cfg ImportConfig, r
 	})
 }
 
+// findBookByNormalizedTitle binds an incoming ABS item to an existing local
+// book for the same author using the stored canonical dedup_key (#940). Both
+// the Calibre importer and book-create paths persist the same key via
+// indexer.CanonicalDedupKey, so this now binds across sources regardless of
+// import order instead of re-normalizing raw titles in memory with a scheme
+// that disagreed with Calibre's raw LOWER(title) match.
+//
+// Returns (match, ambiguous, err). ambiguous is true when more than one local
+// row shares the key — the caller routes that to review rather than guessing.
 func (i *Importer) findBookByNormalizedTitle(ctx context.Context, authorID int64, title string) (*models.Book, bool, error) {
-	books, err := i.books.ListByAuthorIncludingExcluded(ctx, authorID)
+	books, err := i.books.FindAllByAuthorAndDedupKey(ctx, authorID, title)
 	if err != nil {
 		return nil, false, err
 	}
-	key := normalizeTitle(title)
-	var match *models.Book
-	for idx := range books {
-		if normalizeTitle(books[idx].Title) != key {
-			continue
-		}
-		if match != nil {
-			return nil, true, nil
-		}
-		copy := books[idx]
-		match = &copy
+	switch len(books) {
+	case 0:
+		return nil, false, nil
+	case 1:
+		match := books[0]
+		return &match, false, nil
+	default:
+		return nil, true, nil
 	}
-	return match, false, nil
 }
 
 func (i *Importer) applyBookFields(ctx context.Context, book *models.Book, authorID int64, item NormalizedLibraryItem) error {

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -151,7 +152,7 @@ const bookColumns = `books.id, books.foreign_id, books.author_id, books.title, b
 	books.created_at, books.updated_at,
 	COALESCE(fe.path, COALESCE(books.ebook_file_path, '')),
 	COALESCE(fa.path, COALESCE(books.audiobook_file_path, '')),
-	books.excluded,
+	books.excluded, COALESCE(books.dedup_key, ''),
 	au.id, au.foreign_id, au.name, au.sort_name,
 	COALESCE(books.owner_user_id, 0)`
 
@@ -282,18 +283,24 @@ func (r *BookRepo) Create(ctx context.Context, b *models.Book) error {
 		mediaType = models.MediaTypeEbook
 	}
 
+	// Centralized dedup-key computation (#940): every book-creation path flows
+	// through Create, so deriving dedup_key here from the title with the single
+	// canonical normalizer guarantees Calibre, ABS, CWA and manual creates all
+	// write byte-identical keys for the same work.
+	b.DedupKey = indexer.CanonicalDedupKey(b.Title)
+
 	result, err := r.db.ExecContext(ctx, `
 		INSERT INTO books (foreign_id, author_id, title, sort_title, original_title, description,
 		                   image_url, release_date, genres, average_rating, ratings_count,
 		                   monitored, status, any_edition_ok, selected_edition_id,
 		                   language, media_type, narrator, duration_seconds, asin,
-		                   metadata_provider, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                   metadata_provider, dedup_key, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		b.ForeignID, b.AuthorID, b.Title, b.SortTitle, b.OriginalTitle, b.Description,
 		b.ImageURL, timeArg(b.ReleaseDate), string(genresJSON), b.AverageRating, b.RatingsCount,
 		b.Monitored, b.Status, b.AnyEditionOK, b.SelectedEditionID,
 		b.Language, mediaType, b.Narrator, b.DurationSeconds, b.ASIN,
-		b.MetadataProvider, timeValueArg(now), timeValueArg(now))
+		b.MetadataProvider, b.DedupKey, timeValueArg(now), timeValueArg(now))
 	if err != nil {
 		return fmt.Errorf("create book: %w", err)
 	}
@@ -320,19 +327,24 @@ func (r *BookRepo) Update(ctx context.Context, b *models.Book) error {
 		mediaType = models.MediaTypeEbook
 	}
 
+	// Keep dedup_key in lockstep with the title (#940). applyBookFields in both
+	// importers rewrites Title on every update, so recomputing here prevents a
+	// stale key after a title edit/refresh from silently breaking future binds.
+	b.DedupKey = indexer.CanonicalDedupKey(b.Title)
+
 	_, err = r.exec.ExecContext(ctx, `
 		UPDATE books SET foreign_id=?, author_id=?, title=?, sort_title=?, original_title=?, description=?, image_url=?,
 		                 release_date=?, genres=?, average_rating=?, ratings_count=?,
 		                 monitored=?, status=?, any_edition_ok=?, selected_edition_id=?,
 		                 file_path=?, language=?, media_type=?, narrator=?, duration_seconds=?, asin=?,
-		                 metadata_provider=?, last_metadata_refresh_at=?, updated_at=?,
+		                 metadata_provider=?, dedup_key=?, last_metadata_refresh_at=?, updated_at=?,
 		                 ebook_file_path=?, audiobook_file_path=?
 		WHERE id=?`,
 		b.ForeignID, b.AuthorID, b.Title, b.SortTitle, b.OriginalTitle, b.Description, b.ImageURL,
 		timeArg(b.ReleaseDate), string(genresJSON), b.AverageRating, b.RatingsCount,
 		b.Monitored, b.Status, b.AnyEditionOK, b.SelectedEditionID,
 		b.FilePath, b.Language, mediaType, b.Narrator, b.DurationSeconds, b.ASIN,
-		b.MetadataProvider, timeArg(b.LastMetadataRefreshAt), timeValueArg(now),
+		b.MetadataProvider, b.DedupKey, timeArg(b.LastMetadataRefreshAt), timeValueArg(now),
 		b.EbookFilePath, b.AudiobookFilePath, b.ID)
 	if err != nil {
 		return fmt.Errorf("update book %d: %w", b.ID, err)
@@ -498,11 +510,12 @@ func (r *BookRepo) GetByCalibreID(ctx context.Context, calibreID int64) (*models
 }
 
 // FindByAuthorAndTitle locates a book under authorID whose title matches
-// `title` case-insensitively. Used by the Calibre importer as a secondary
-// dedupe path when the existing row has no calibre_id yet but the user
-// (or a previous Bindery ingest) has already filed a book with the same
-// title — re-matching by title links the two rows instead of creating a
-// duplicate.
+// `title` case-insensitively (raw LOWER(title) = LOWER(?)).
+//
+// Deprecated for cross-source dedup: this exact-match-modulo-case lookup is
+// what caused #940 (it disagreed with the ABS importer's normalized match and
+// produced duplicate rows). Importers now use FindByAuthorAndDedupKey. Retained
+// only for callers that genuinely need a raw-title match.
 func (r *BookRepo) FindByAuthorAndTitle(ctx context.Context, authorID int64, title string) (*models.Book, error) {
 	books, err := r.query(ctx,
 		bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE author_id = ? AND LOWER(title) = LOWER(?)",
@@ -514,6 +527,50 @@ func (r *BookRepo) FindByAuthorAndTitle(ctx context.Context, authorID int64, tit
 		return nil, nil
 	}
 	return &books[0], nil
+}
+
+// FindByAuthorAndDedupKey locates a book under authorID whose stored canonical
+// dedup_key equals the key computed for `title` by indexer.CanonicalDedupKey.
+// This is the cross-source bind used by both the Calibre and ABS importers
+// (#940): because both sides compute the key with the same function and the
+// key is persisted at create time, a book imported from one source binds to
+// the existing row from the other regardless of import order, subtitle, case,
+// bracketed qualifier, or umlaut form.
+//
+// An empty computed key (blank/whitespace title) never matches: the early
+// return avoids a query that would otherwise collapse every untitled row under
+// an author into one. A row whose stored dedup_key is still NULL/empty
+// (pre-backfill) likewise cannot match a non-empty computed key, so it is never
+// falsely merged.
+func (r *BookRepo) FindByAuthorAndDedupKey(ctx context.Context, authorID int64, title string) (*models.Book, error) {
+	key := indexer.CanonicalDedupKey(title)
+	if key == "" {
+		return nil, nil
+	}
+	books, err := r.query(ctx,
+		bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE author_id = ? AND books.dedup_key = ?",
+		[]any{authorID, key})
+	if err != nil {
+		return nil, err
+	}
+	if len(books) == 0 {
+		return nil, nil
+	}
+	return &books[0], nil
+}
+
+// FindAllByAuthorAndDedupKey returns every book under authorID matching the
+// canonical key for `title`. The ABS importer uses it to detect the *ambiguous*
+// case (more than one local row shares the key) and route to review instead of
+// guessing which row to bind.
+func (r *BookRepo) FindAllByAuthorAndDedupKey(ctx context.Context, authorID int64, title string) ([]models.Book, error) {
+	key := indexer.CanonicalDedupKey(title)
+	if key == "" {
+		return nil, nil
+	}
+	return r.query(ctx,
+		bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE author_id = ? AND books.dedup_key = ?",
+		[]any{authorID, key})
 }
 
 // SetExcluded toggles the excluded flag on a book.
@@ -569,7 +626,7 @@ func (r *BookRepo) query(ctx context.Context, q string, args []any) ([]models.Bo
 			&b.CalibreID, &b.MetadataProvider, &lastMetadataRefreshAtStr,
 			&createdAtStr, &updatedAtStr,
 			&b.EbookFilePath, &b.AudiobookFilePath,
-			&excluded,
+			&excluded, &b.DedupKey,
 			&authorID, &authorForeignID, &authorName, &authorSortName,
 			&b.OwnerUserID,
 		)

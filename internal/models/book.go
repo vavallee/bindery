@@ -13,32 +13,38 @@ type SeriesRef struct {
 }
 
 type Book struct {
-	ID                    int64      `json:"id"`
-	ForeignID             string     `json:"foreignBookId"`
-	AuthorID              int64      `json:"authorId"`
-	Title                 string     `json:"title"`
-	SortTitle             string     `json:"sortTitle"`
-	OriginalTitle         string     `json:"originalTitle"`
-	Description           string     `json:"description"`
-	ImageURL              string     `json:"imageUrl"`
-	ReleaseDate           *time.Time `json:"releaseDate"`
-	Genres                []string   `json:"genres"`
-	AverageRating         float64    `json:"averageRating"`
-	RatingsCount          int        `json:"ratingsCount"`
-	EditionCount          int        `json:"-"`
-	ISBNs                 []string   `json:"-"`
-	Monitored             bool       `json:"monitored"`
-	Status                string     `json:"status"`
-	AnyEditionOK          bool       `json:"anyEditionOk"`
-	SelectedEditionID     *int64     `json:"selectedEditionId"`
-	FilePath              string     `json:"filePath"`
-	Language              string     `json:"language"`
-	MediaType             string     `json:"mediaType"`
-	Narrator              string     `json:"narrator"`
-	DurationSeconds       int        `json:"durationSeconds"`
-	ASIN                  string     `json:"asin"`
-	CalibreID             *int64     `json:"calibre_id,omitempty"`
-	MetadataProvider      string     `json:"metadataProvider"`
+	ID                int64      `json:"id"`
+	ForeignID         string     `json:"foreignBookId"`
+	AuthorID          int64      `json:"authorId"`
+	Title             string     `json:"title"`
+	SortTitle         string     `json:"sortTitle"`
+	OriginalTitle     string     `json:"originalTitle"`
+	Description       string     `json:"description"`
+	ImageURL          string     `json:"imageUrl"`
+	ReleaseDate       *time.Time `json:"releaseDate"`
+	Genres            []string   `json:"genres"`
+	AverageRating     float64    `json:"averageRating"`
+	RatingsCount      int        `json:"ratingsCount"`
+	EditionCount      int        `json:"-"`
+	ISBNs             []string   `json:"-"`
+	Monitored         bool       `json:"monitored"`
+	Status            string     `json:"status"`
+	AnyEditionOK      bool       `json:"anyEditionOk"`
+	SelectedEditionID *int64     `json:"selectedEditionId"`
+	FilePath          string     `json:"filePath"`
+	Language          string     `json:"language"`
+	MediaType         string     `json:"mediaType"`
+	Narrator          string     `json:"narrator"`
+	DurationSeconds   int        `json:"durationSeconds"`
+	ASIN              string     `json:"asin"`
+	CalibreID         *int64     `json:"calibre_id,omitempty"`
+	MetadataProvider  string     `json:"metadataProvider"`
+	// DedupKey is the canonical cross-source title key (#940), computed by
+	// indexer.CanonicalDedupKey at every book-create path. It is the only
+	// signal used to bind the same work imported from different sources
+	// (Calibre, Audiobookshelf, CWA, manual). Nullable for rows created before
+	// migration 051 that have not yet been recomputed by the startup backfill.
+	DedupKey              string     `json:"-"`
 	HardcoverForeignID    string     `json:"-"`
 	LastMetadataRefreshAt *time.Time `json:"lastMetadataRefreshAt"`
 	CreatedAt             time.Time  `json:"createdAt"`

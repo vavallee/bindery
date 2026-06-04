@@ -624,8 +624,13 @@ func (i *Importer) upsertBook(ctx context.Context, runID int64, author *models.A
 		return &bookUpsertResult{row: existing, matchedBy: "foreign_id"}, false, nil
 	}
 
-	// Path 3 — same author + title.
-	if existing, err := i.books.FindByAuthorAndTitle(ctx, author.ID, cb.Title); err != nil {
+	// Path 3 — same author + canonical dedup key. Binds to a book the user (or
+	// a previous ABS/Calibre/CWA ingest) already filed for the same work even
+	// when the stored title differs by subtitle, case, bracketed qualifier, or
+	// umlaut form. Previously this matched on raw
+	// LOWER(title) SQL, which disagreed with the ABS importer's normalized
+	// match and produced duplicate rows (#940).
+	if existing, err := i.books.FindByAuthorAndDedupKey(ctx, author.ID, cb.Title); err != nil {
 		return nil, false, err
 	} else if existing != nil {
 		i.recordBookBeforeSnapshot(ctx, runID, externalID, existing, outcomeLinked, map[string]any{"matchedBy": "title"})

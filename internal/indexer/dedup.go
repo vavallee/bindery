@@ -1,6 +1,7 @@
 package indexer
 
 import (
+	"regexp"
 	"strings"
 
 	"golang.org/x/text/unicode/norm"
@@ -35,6 +36,42 @@ func NormalizeTitleForDedup(title string) string {
 	title = strings.ToLower(title)
 	title = transliterateUmlauts(title)
 	return title
+}
+
+// bracketSuffixRe matches one trailing square-bracketed qualifier. Provider
+// titles (Audiobookshelf in particular) routinely append format/edition tags
+// this way ("[Unabridged]", "[Dramatized Adaptation]", "[Audiobook]").
+// NormalizeTitleForDedup only strips a trailing *parenthesised* qualifier, so
+// without this step "The Eye of the World [Unabridged]" and "The Eye of the
+// World" produce different keys.
+var bracketSuffixRe = regexp.MustCompile(`\s*\[[^\[\]]*\]\s*$`)
+
+// StripBracketSuffixes removes any trailing square-bracketed qualifiers,
+// applied repeatedly so "Title [Unabridged] [2021]" is fully cleaned.
+func StripBracketSuffixes(title string) string {
+	for {
+		stripped := bracketSuffixRe.ReplaceAllString(title, "")
+		if stripped == title {
+			return strings.TrimSpace(stripped)
+		}
+		title = stripped
+	}
+}
+
+// CanonicalDedupKey is the single, authoritative dedup key used to decide
+// whether two book rows describe the same work across importers (Calibre,
+// Audiobookshelf, CWA, manual). It MUST be the only function any book-creation
+// path uses to populate books.dedup_key and the only function any lookup uses
+// to key by author+title, so the key is computed identically on every side and
+// the previous asymmetry (#940 — Calibre matched on raw LOWER(title) SQL while
+// ABS matched on a normalized in-memory key) cannot recur.
+//
+// It strips trailing bracketed qualifiers first (ABS-style "[Unabridged]"),
+// then applies NormalizeTitleForDedup (paren-suffix strip, subtitle strip,
+// whitespace/Unicode/umlaut folding, lowercasing). The result is
+// case-insensitive and stable, so it is stored verbatim and compared with =.
+func CanonicalDedupKey(title string) string {
+	return NormalizeTitleForDedup(StripBracketSuffixes(strings.TrimSpace(title)))
 }
 
 // stripSubtitle removes a trailing ": subtitle" segment when the colon is

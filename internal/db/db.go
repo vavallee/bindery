@@ -15,6 +15,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/vavallee/bindery/internal/indexer"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -247,6 +249,82 @@ func migrate(database *sql.DB) error {
 		slog.Info("applied migration", "version", v, "file", entry.Name())
 	}
 
+	// Post-migration Go-side backfill. Migration 051's SQL backfill is a coarse
+	// approximation of indexer.CanonicalDedupKey (SQLite cannot run the Go
+	// normalizer); recompute the exact key for any row whose stored key is
+	// blank or no longer matches the canonical function (#940). Idempotent and
+	// cheap: a no-op once every row already holds the canonical key.
+	if err := backfillBookDedupKeys(database); err != nil {
+		return fmt.Errorf("backfill book dedup keys: %w", err)
+	}
+
+	return nil
+}
+
+// backfillBookDedupKeys recomputes books.dedup_key for every row whose stored
+// value differs from indexer.CanonicalDedupKey(title). It runs on every startup
+// after migrations so that:
+//   - legacy rows created before migration 051 get a correct key (the SQL
+//     backfill only produced a coarse lowercase/subtitle approximation);
+//   - a future change to the canonical normalizer re-canonicalizes existing
+//     rows on the next boot rather than leaving them permanently stale.
+//
+// It deliberately does NOT merge duplicate rows — reconciling existing dupes is
+// risky (file ownership, edition links, provenance) and is left as a follow-up.
+// Writing keys is safe: at worst two pre-existing dupes now share a key, which
+// only makes future imports bind to one of them instead of creating a third.
+func backfillBookDedupKeys(database *sql.DB) error {
+	rows, err := database.Query("SELECT id, title, COALESCE(dedup_key, '') FROM books")
+	if err != nil {
+		return fmt.Errorf("read books for dedup backfill: %w", err)
+	}
+	type pending struct {
+		id  int64
+		key string
+	}
+	var updates []pending
+	for rows.Next() {
+		var id int64
+		var title, stored string
+		if err := rows.Scan(&id, &title, &stored); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan book for dedup backfill: %w", err)
+		}
+		want := indexer.CanonicalDedupKey(title)
+		if want != stored {
+			updates = append(updates, pending{id: id, key: want})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate books for dedup backfill: %w", err)
+	}
+	rows.Close()
+	if len(updates) == 0 {
+		return nil
+	}
+
+	tx, err := database.Begin()
+	if err != nil {
+		return fmt.Errorf("begin dedup backfill tx: %w", err)
+	}
+	stmt, err := tx.Prepare("UPDATE books SET dedup_key = ? WHERE id = ?")
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("prepare dedup backfill: %w", err)
+	}
+	for _, u := range updates {
+		if _, err := stmt.Exec(u.key, u.id); err != nil {
+			_ = stmt.Close()
+			_ = tx.Rollback()
+			return fmt.Errorf("update dedup_key for book %d: %w", u.id, err)
+		}
+	}
+	_ = stmt.Close()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit dedup backfill: %w", err)
+	}
+	slog.Info("backfilled book dedup keys", "rows", len(updates))
 	return nil
 }
 
