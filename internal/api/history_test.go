@@ -24,7 +24,8 @@ func historyFixture(t *testing.T) (*HistoryHandler, *db.HistoryRepo, *db.Blockli
 	t.Cleanup(func() { database.Close() })
 	history := db.NewHistoryRepo(database)
 	blocklist := db.NewBlocklistRepo(database)
-	return NewHistoryHandler(history, blocklist), history, blocklist, context.Background()
+	books := db.NewBookRepo(database)
+	return NewHistoryHandler(history, blocklist, books), history, blocklist, context.Background()
 }
 
 // TestHistoryList_EmptyReturnsArray verifies a fresh history table returns
@@ -290,7 +291,8 @@ func TestBlocklistHandler_HistoryBlocklistRecordsCaller(t *testing.T) {
 	}
 	history := db.NewHistoryRepo(database)
 	blocklist := db.NewBlocklistRepo(database)
-	h := NewHistoryHandler(history, blocklist)
+	books := db.NewBookRepo(database)
+	h := NewHistoryHandler(history, blocklist, books)
 
 	data, _ := json.Marshal(map[string]any{"guid": "nzb-guid-d4b"})
 	e := &models.HistoryEvent{
@@ -410,7 +412,39 @@ func seedTwoUserHistory(t *testing.T) (*HistoryHandler, *sql.DB, int64, int64, i
 	if err := hist.Create(ctx, eB); err != nil {
 		t.Fatal(err)
 	}
-	return NewHistoryHandler(hist, blk), database, uA.ID, uB.ID, eA.ID, eB.ID
+	return NewHistoryHandler(hist, blk, books), database, uA.ID, uB.ID, eA.ID, eB.ID
+}
+
+// TestHistoryList_EnrichesBookAndAuthor verifies the history list attaches a
+// linkable book + author projection to events tied to a book (gate off → all
+// events visible).
+func TestHistoryList_EnrichesBookAndAuthor(t *testing.T) {
+	h, _, _, _, eA, _ := seedTwoUserHistory(t)
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/history", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var got historyListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	var alice *historyItem
+	for i := range got.Items {
+		if got.Items[i].ID == eA {
+			alice = &got.Items[i]
+		}
+	}
+	if alice == nil {
+		t.Fatalf("alice's history event missing: %+v", got.Items)
+	}
+	if alice.Book == nil {
+		t.Fatal("expected history event to carry a book ref, got nil")
+	}
+	if alice.Book.Title != "Alice Book" || alice.Book.AuthorID == 0 || alice.Book.AuthorName != "Aa" {
+		t.Errorf("unexpected book ref: %+v", alice.Book)
+	}
 }
 
 func TestHistoryDelete_CrossUserBlockedWhenGateOn(t *testing.T) {

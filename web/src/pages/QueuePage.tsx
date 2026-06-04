@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, PendingRelease, QueueItem } from '../api/client'
+import BookAuthorLink from '../components/BookAuthorLink'
 
 export default function QueuePage() {
   const { t } = useTranslation()
@@ -187,6 +188,7 @@ export default function QueuePage() {
                 <div key={item.id} className="flex items-center justify-between p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
                   <div className="min-w-0 flex-1">
                     <h3 className="font-medium text-sm truncate">{item.title}</h3>
+                    <BookAuthorLink book={item.book} />
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs">
                       <span className={statusColors[item.status] || 'text-slate-600 dark:text-zinc-400'}>
                         {statusLabels[item.status] ?? item.status}
@@ -280,6 +282,7 @@ export default function QueuePage() {
                   <div key={item.id} className="flex items-center justify-between p-4 border border-amber-200 dark:border-amber-900/40 rounded-lg bg-amber-50 dark:bg-amber-950/20">
                     <div className="min-w-0 flex-1">
                       <h3 className="font-medium text-sm truncate">{item.title}</h3>
+                      <BookAuthorLink book={item.book} />
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs">
                         <span className="text-amber-600 dark:text-amber-400">{item.reason}</span>
                         {item.size > 0 && (

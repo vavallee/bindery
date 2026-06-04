@@ -15,20 +15,29 @@ import (
 type HistoryHandler struct {
 	history   *db.HistoryRepo
 	blocklist *db.BlocklistRepo
+	books     *db.BookRepo
 }
 
-func NewHistoryHandler(history *db.HistoryRepo, blocklist *db.BlocklistRepo) *HistoryHandler {
-	return &HistoryHandler{history: history, blocklist: blocklist}
+func NewHistoryHandler(history *db.HistoryRepo, blocklist *db.BlocklistRepo, books *db.BookRepo) *HistoryHandler {
+	return &HistoryHandler{history: history, blocklist: blocklist, books: books}
+}
+
+// historyItem wraps a history event with a linkable book + author projection so
+// the UI can deep-link each row to /book/:id and /author/:id. The embedded
+// HistoryEvent keeps the row shape unchanged; `book` is added alongside.
+type historyItem struct {
+	models.HistoryEvent
+	Book *bookRef `json:"book,omitempty"`
 }
 
 // historyListResponse is the paginated wrapper returned by List. Replaces the
 // pre-Wave-2 bare `[]models.HistoryEvent` shape; clients must unwrap `items`
 // to reach the rows. See the Wave 2 / E PR for the breaking-change disclosure.
 type historyListResponse struct {
-	Items  []models.HistoryEvent `json:"items"`
-	Total  int                   `json:"total"`
-	Limit  int                   `json:"limit"`
-	Offset int                   `json:"offset"`
+	Items  []historyItem `json:"items"`
+	Total  int           `json:"total"`
+	Limit  int           `json:"limit"`
+	Offset int           `json:"offset"`
 }
 
 const (
@@ -67,11 +76,26 @@ func (h *HistoryHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	if events == nil {
-		events = []models.HistoryEvent{}
+	items := make([]historyItem, len(events))
+	bookIDs := make([]int64, 0, len(events))
+	for i, e := range events {
+		items[i] = historyItem{HistoryEvent: e}
+		if e.BookID != nil {
+			bookIDs = append(bookIDs, *e.BookID)
+		}
+	}
+	// Best-effort enrichment: a book lookup failure still serves the page.
+	if refs, err := loadBookRefs(ctx, h.books, bookIDs); err != nil {
+		slog.Warn("history: failed to load book refs", "error", err)
+	} else {
+		for i := range items {
+			if items[i].BookID != nil {
+				items[i].Book = refs[*items[i].BookID]
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, historyListResponse{
-		Items:  events,
+		Items:  items,
 		Total:  total,
 		Limit:  limit,
 		Offset: offset,

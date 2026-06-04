@@ -463,6 +463,75 @@ func TestQueueDelete_FlipsBookToWanted(t *testing.T) {
 	}
 }
 
+// TestQueueList_EnrichesBookAndAuthor verifies the queue list attaches a
+// linkable book + author projection to downloads tied to a book, and leaves
+// manual (book-less) downloads without one.
+func TestQueueList_EnrichesBookAndAuthor(t *testing.T) {
+	h, database, downloads, _, books, ctx := queueFixture(t)
+	a := &models.Author{
+		ForeignID: "OL-LEGUIN", Name: "Ursula K. Le Guin", SortName: "Le Guin, Ursula",
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := db.NewAuthorRepo(database).Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	b := &models.Book{
+		ForeignID: "OL-EARTHSEA", AuthorID: a.ID, Title: "A Wizard of Earthsea", SortTitle: "wizard of earthsea",
+		Status: models.BookStatusDownloading, Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	if err := downloads.Create(ctx, &models.Download{
+		GUID: "g-linked", BookID: &b.ID, Title: "Ursula K. Le Guin - A Wizard of Earthsea [EPUB]",
+		Status: models.DownloadStatusDownloading, Protocol: "usenet",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := downloads.Create(ctx, &models.Download{
+		GUID: "g-unlinked", Title: "Some Manual Release",
+		Status: models.DownloadStatusDownloading, Protocol: "usenet",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/queue", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp queueListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v (body=%s)", err, rec.Body.String())
+	}
+	byGUID := map[string]QueueItem{}
+	for _, it := range resp.Items {
+		byGUID[it.GUID] = it
+	}
+
+	linked, ok := byGUID["g-linked"]
+	if !ok {
+		t.Fatalf("linked download missing from queue: %+v", resp.Items)
+	}
+	if linked.Book == nil {
+		t.Fatal("expected linked download to carry a book ref, got nil")
+	}
+	if linked.Book.ID != b.ID || linked.Book.Title != "A Wizard of Earthsea" {
+		t.Errorf("unexpected book ref: %+v", linked.Book)
+	}
+	if linked.Book.AuthorID != a.ID || linked.Book.AuthorName != "Ursula K. Le Guin" {
+		t.Errorf("unexpected author on book ref: %+v", linked.Book)
+	}
+
+	unlinked, ok := byGUID["g-unlinked"]
+	if !ok {
+		t.Fatal("unlinked download missing from queue")
+	}
+	if unlinked.Book != nil {
+		t.Errorf("expected no book ref on manual download, got %+v", unlinked.Book)
+	}
+}
+
 // queueDeleteFilesProbe spins up a qBittorrent stub and runs Queue.Delete for
 // a torrent download, returning the deleteFiles form value the client sent.
 func queueDeleteFilesProbe(t *testing.T, urlSuffix string) string {

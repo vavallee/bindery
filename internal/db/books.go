@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -257,6 +258,34 @@ func (r *BookRepo) GetByID(ctx context.Context, id int64) (*models.Book, error) 
 		return nil, nil
 	}
 	return &books[0], nil
+}
+
+// GetByIDs loads multiple books in a single query, each with its minimal
+// Author projection populated the same way GetByID does (id, foreignId, name,
+// sortName — see the scan loop). Returns a map keyed by book id; ids with no
+// matching row are simply absent and order is not significant. Used to enrich
+// queue/pending/history items with linkable book + author info without an
+// N+1 of GetByID.
+func (r *BookRepo) GetByIDs(ctx context.Context, ids []int64) (map[int64]*models.Book, error) {
+	if len(ids) == 0 {
+		return map[int64]*models.Book{}, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	books, err := r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+
+		" WHERE books.id IN ("+strings.Join(placeholders, ",")+")", args)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64]*models.Book, len(books))
+	for i := range books {
+		out[books[i].ID] = &books[i]
+	}
+	return out, nil
 }
 
 func (r *BookRepo) GetByForeignID(ctx context.Context, foreignID string) (*models.Book, error) {

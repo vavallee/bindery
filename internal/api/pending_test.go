@@ -132,6 +132,37 @@ func TestPendingList_FiltersToCallerWhenGateOn(t *testing.T) {
 	}
 }
 
+// TestPendingList_EnrichesBookAndAuthor verifies the pending list attaches a
+// linkable book + author projection to each release (gate off → all releases).
+func TestPendingList_EnrichesBookAndAuthor(t *testing.T) {
+	h, _, _, _, idA, _ := seedTwoUserPending(t)
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/pending", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var got []pendingItem
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	var alice *pendingItem
+	for i := range got {
+		if got[i].ID == idA {
+			alice = &got[i]
+		}
+	}
+	if alice == nil {
+		t.Fatalf("alice's pending release missing: %+v", got)
+	}
+	if alice.Book == nil {
+		t.Fatal("expected pending release to carry a book ref, got nil")
+	}
+	if alice.Book.Title != "Alice Book" || alice.Book.AuthorID == 0 || alice.Book.AuthorName != "Aa" {
+		t.Errorf("unexpected book ref: %+v", alice.Book)
+	}
+}
+
 func TestPendingDelete_GateOffPreservesLegacyBehavior(t *testing.T) {
 	h, _, _, uBob, idA, _ := seedTwoUserPending(t)
 

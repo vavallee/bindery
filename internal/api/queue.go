@@ -68,9 +68,10 @@ func (h *QueueHandler) WithStoragePaths(downloadDir, audiobookDownloadDir string
 // QueueItem combines local download record with live downloader status.
 type QueueItem struct {
 	models.Download
-	Percentage string `json:"percentage,omitempty"`
-	TimeLeft   string `json:"timeLeft,omitempty"`
-	Speed      string `json:"speed,omitempty"`
+	Percentage string   `json:"percentage,omitempty"`
+	TimeLeft   string   `json:"timeLeft,omitempty"`
+	Speed      string   `json:"speed,omitempty"`
+	Book       *bookRef `json:"book,omitempty"`
 }
 
 type enrichedQueueItem struct {
@@ -277,12 +278,29 @@ func (h *QueueHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	items := make([]QueueItem, len(enriched))
+	bookIDs := make([]int64, 0, len(enriched))
 	for i, item := range enriched {
 		items[i] = QueueItem{Download: item.Download}
 		if item.HasLive {
 			items[i].Percentage = item.Live.Percentage
 			items[i].TimeLeft = item.Live.TimeLeft
 			items[i].Speed = item.Live.Speed
+		}
+		if item.Download.BookID != nil {
+			bookIDs = append(bookIDs, *item.Download.BookID)
+		}
+	}
+
+	// Attach a linkable book + author projection so the UI can deep-link each
+	// row to /book/:id and /author/:id. Best-effort: this endpoint is hot
+	// (polled every 5s) and a book lookup failure must not blank the queue.
+	if refs, err := loadBookRefs(r.Context(), h.books, bookIDs); err != nil {
+		slog.Warn("queue: failed to load book refs", "error", err)
+	} else {
+		for i := range items {
+			if items[i].BookID != nil {
+				items[i].Book = refs[*items[i].BookID]
+			}
 		}
 	}
 

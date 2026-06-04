@@ -3,12 +3,22 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 )
+
+// pendingItem wraps a pending release with a linkable book + author projection
+// so the UI can deep-link each row to /book/:id and /author/:id. The embedded
+// PendingRelease keeps the response a flat array (backward compatible); `book`
+// is added alongside.
+type pendingItem struct {
+	models.PendingRelease
+	Book *bookRef `json:"book,omitempty"`
+}
 
 // PendingHandler serves the pending releases API.
 type PendingHandler struct {
@@ -33,10 +43,26 @@ func (h *PendingHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	if items == nil {
-		items = []models.PendingRelease{}
+
+	out := make([]pendingItem, len(items))
+	bookIDs := make([]int64, 0, len(items))
+	for i, it := range items {
+		out[i] = pendingItem{PendingRelease: it}
+		if it.BookID != 0 {
+			bookIDs = append(bookIDs, it.BookID)
+		}
 	}
-	writeJSON(w, http.StatusOK, items)
+	// Best-effort enrichment: a book lookup failure still serves the list.
+	if refs, err := loadBookRefs(r.Context(), h.books, bookIDs); err != nil {
+		slog.Warn("pending: failed to load book refs", "error", err)
+	} else {
+		for i := range out {
+			if out[i].BookID != 0 {
+				out[i].Book = refs[out[i].BookID]
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *PendingHandler) listForCaller(r *http.Request) ([]models.PendingRelease, error) {

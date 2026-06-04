@@ -1049,6 +1049,17 @@ export interface IndexerTestResult {
   error?: string
 }
 
+// BookRef is the minimal book + author projection the backend attaches to
+// queue, pending, and history items so the UI can link the book title and
+// author name to /book/:id and /author/:id. Absent when the row has no
+// associated book (manual downloads, orphan history events).
+export interface BookRef {
+  id: number
+  title: string
+  authorId: number
+  authorName: string
+}
+
 export interface PendingRelease {
   id: number
   bookId: number
@@ -1063,6 +1074,7 @@ export interface PendingRelease {
   reason: string
   firstSeen: string
   releaseJson: string
+  book?: BookRef
 }
 
 export interface ProwlarrInstance {
@@ -1113,6 +1125,7 @@ export interface Download {
   grabbedAt?: string
   completedAt?: string
   importedAt?: string
+  book?: BookRef
 }
 
 export interface QueueItem extends Download {
@@ -1247,6 +1260,7 @@ export interface HistoryEvent {
   sourceTitle: string
   data: string
   createdAt: string
+  book?: BookRef
 }
 
 export interface BlocklistEntry {

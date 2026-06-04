@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, HistoryEvent } from '../api/client'
+import BookAuthorLink from '../components/BookAuthorLink'
 import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
 
@@ -146,6 +147,7 @@ export default function HistoryPage() {
                           <div className="truncate" title={event.sourceTitle}>
                             {event.sourceTitle || <span className="text-slate-500 dark:text-zinc-600">—</span>}
                           </div>
+                          <BookAuthorLink book={event.book} />
                           {detail && (
                             <div className={`mt-1 text-xs break-words ${isError ? 'text-red-400' : 'text-slate-600 dark:text-zinc-500'}`}>
                               {detail}
@@ -222,6 +224,7 @@ export default function HistoryPage() {
                   <p className="text-sm text-slate-800 dark:text-zinc-200 break-words mb-1">
                     {event.sourceTitle || <span className="text-slate-500 dark:text-zinc-600">—</span>}
                   </p>
+                  <BookAuthorLink book={event.book} />
                   {detail && (
                     <p className={`text-xs break-words mb-2 ${isError ? 'text-red-400' : 'text-slate-600 dark:text-zinc-500'}`}>
                       {detail}
