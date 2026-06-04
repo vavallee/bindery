@@ -61,7 +61,10 @@ func ConfigureOutboundProxy(raw, noProxy string, bypassLocal bool) (*url.URL, er
 
 	u, err := url.Parse(raw)
 	if err != nil {
-		return nil, fmt.Errorf("invalid proxy url: %w", err)
+		// Do not wrap err: url.Parse embeds the full raw URL (including any
+		// cleartext password from the userinfo) in its error string, and this
+		// error is logged at startup. Return a constant message instead.
+		return nil, errors.New("invalid proxy url: malformed")
 	}
 	if u.Host == "" {
 		return nil, errors.New("invalid proxy url: missing host")

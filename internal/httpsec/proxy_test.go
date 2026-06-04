@@ -3,6 +3,7 @@ package httpsec
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -99,6 +100,24 @@ func TestConfigureOutboundProxy_Invalid(t *testing.T) {
 				t.Error("DefaultProxyTransport() should remain http.DefaultTransport after a rejected proxy URL")
 			}
 		})
+	}
+}
+
+// TestConfigureOutboundProxy_InvalidDoesNotLeakCredentials ensures the error
+// returned for a malformed proxy URL never echoes back the cleartext password.
+// url.Parse embeds the full raw input in its error string, and this error is
+// logged at startup, so wrapping it with %w would leak the credential.
+func TestConfigureOutboundProxy_InvalidDoesNotLeakCredentials(t *testing.T) {
+	resetProxy(t)
+
+	const secret = "supersecret"
+	// Malformed userinfo URL that url.Parse rejects while carrying a password.
+	_, err := ConfigureOutboundProxy("http://user:"+secret+"@%zz:3128", "", true)
+	if err == nil {
+		t.Fatal("ConfigureOutboundProxy returned nil error for malformed url; want error")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Errorf("error string leaks proxy password: %q", err.Error())
 	}
 }
 
