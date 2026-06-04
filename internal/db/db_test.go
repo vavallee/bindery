@@ -347,7 +347,7 @@ func migrationVersionForTest(t *testing.T, filename string) int {
 	return v
 }
 
-func TestMigrate051AuthorIdentifiersBackfill(t *testing.T) {
+func TestMigrate052AuthorIdentifiersBackfill(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -368,12 +368,12 @@ func TestMigrate051AuthorIdentifiersBackfill(t *testing.T) {
 	if _, err := database.ExecContext(ctx, `DELETE FROM author_identifiers WHERE author_id = ?`, author.ID); err != nil {
 		t.Fatalf("delete seeded identifier: %v", err)
 	}
-	v051 := migrationVersionForTest(t, "051_author_identifiers.sql")
-	if _, err := database.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = ?`, v051); err != nil {
-		t.Fatalf("clear migration 051 marker: %v", err)
+	v052 := migrationVersionForTest(t, "052_author_identifiers.sql")
+	if _, err := database.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = ?`, v052); err != nil {
+		t.Fatalf("clear migration 052 marker: %v", err)
 	}
 	if err := migrate(database); err != nil {
-		t.Fatalf("rerun migration 051: %v", err)
+		t.Fatalf("rerun migration 052: %v", err)
 	}
 	identifier, err := repo.GetAuthorIdentifier(ctx, "hc:emilia-jae")
 	if err != nil {
