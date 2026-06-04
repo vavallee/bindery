@@ -193,3 +193,62 @@ func TestDefaultProxyTransport_RoutesThroughProxy(t *testing.T) {
 		t.Error("request did not reach the configured proxy")
 	}
 }
+
+// TestBypassProxyForHost_Edges covers the host-classification branches the
+// higher-level tests don't reach: empty host, the .lan / .internal suffixes, a
+// public IP, and IPv6 ULA / link-local literals.
+func TestBypassProxyForHost_Edges(t *testing.T) {
+	resetProxy(t)
+	if _, err := ConfigureOutboundProxy("http://proxy.example:3128", "10.0.0.0/8", true); err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+	check := func(host string, wantBypass bool) {
+		t.Helper()
+		if got := bypassProxyForHost(host); got != wantBypass {
+			t.Errorf("bypassProxyForHost(%q) = %v; want %v", host, got, wantBypass)
+		}
+	}
+	check("", false)
+	check("box.lan", true)
+	check("svc.internal", true)
+	check("8.8.8.8", false)
+	check("fd00::1", true)
+	check("fe80::1", true)
+}
+
+// TestMatchNoProxyRule exercises the rule matcher directly, including the
+// malformed-CIDR and CIDR-vs-hostname paths and dot-bounded suffix matching.
+func TestMatchNoProxyRule(t *testing.T) {
+	cases := []struct {
+		rule string
+		host string
+		want bool
+	}{
+		{"10.0.0.0/8", "10.0.0.5", true},
+		{"10.0.0.0/8", "8.8.8.8", false},
+		{"10.0.0.0/999", "10.0.0.5", false},
+		{"10.0.0.0/8", "example.com", false},
+		{"example.com", "example.com", true},
+		{".example.com", "api.example.com", true},
+		{"example.com", "api.example.com", true},
+		{"example.com", "notexample.com", false},
+	}
+	for _, c := range cases {
+		if got := matchNoProxyRule(c.rule, c.host); got != c.want {
+			t.Errorf("matchNoProxyRule(%q, %q) = %v; want %v", c.rule, c.host, got, c.want)
+		}
+	}
+}
+
+// TestProxyResolver_NoProxyConfigured covers the defensive guard in
+// proxyResolver: with no proxy set it returns direct (nil) for any request.
+func TestProxyResolver_NoProxyConfigured(t *testing.T) {
+	resetProxy(t)
+	if _, err := ConfigureOutboundProxy("", "", true); err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+	req, _ := http.NewRequest(http.MethodGet, "http://example.com/", nil)
+	if u, err := proxyResolver(req); u != nil || err != nil {
+		t.Errorf("proxyResolver with no proxy = %v, %v; want nil, nil", u, err)
+	}
+}
