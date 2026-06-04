@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -1000,5 +1002,288 @@ func TestBulkHandler_GoroutineCancelsOnLifetimeCtxCancel(t *testing.T) {
 		// good
 	case <-time.After(2 * time.Second):
 		t.Fatal("spawned goroutine did not observe lifetime ctx cancellation")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Per-user ownership / IDOR regression suite (#947)
+//
+// Bulk endpoints are registered at the authenticated user level (not admin),
+// so a non-admin can legitimately bulk-act on their OWN resources. The bug:
+// the handlers mutated purely by id, so under BINDERY_ENFORCE_TENANCY a
+// non-admin could pass another user's ids and delete/unmonitor/exclude/skip
+// them. These tests assert the durable invariant (the victim row is untouched)
+// rather than just the per-id error string. Mirrors the gate/admin/gate-off
+// matrix in authorization_test.go.
+// ---------------------------------------------------------------------------
+
+type bulkAuthzFixture struct {
+	database *sql.DB
+	h        *BulkHandler
+	authors  *db.AuthorRepo
+	books    *db.BookRepo
+	u1, u2   int64
+	// Alice's (u1) resources.
+	a1 *models.Author
+	b1 *models.Book
+	// Bob's (u2) resources.
+	a2 *models.Author
+	b2 *models.Book
+}
+
+// seedTwoUserBulk builds two users, each owning one author and one book. Book
+// ownership is stamped by hand because BookRepo.Create does not yet write
+// owner_user_id (same approach authorization_test.go's setOwner uses).
+func seedTwoUserBulk(t *testing.T) bulkAuthzFixture {
+	t.Helper()
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	users := db.NewUserRepo(database)
+	authors := db.NewAuthorRepo(database)
+	books := db.NewBookRepo(database)
+	blocklist := db.NewBlocklistRepo(database)
+
+	ctx := context.Background()
+	u1, err := users.Create(ctx, "alice", "hash1")
+	if err != nil {
+		t.Fatalf("create alice: %v", err)
+	}
+	u2, err := users.Create(ctx, "bob", "hash2")
+	if err != nil {
+		t.Fatalf("create bob: %v", err)
+	}
+
+	a1 := &models.Author{ForeignID: "OL-BA1", Name: "Alice Author", SortName: "Author, Alice", MetadataProvider: "openlibrary", Monitored: true}
+	if err := authors.CreateForUser(ctx, a1, u1.ID); err != nil {
+		t.Fatalf("create alice author: %v", err)
+	}
+	a2 := &models.Author{ForeignID: "OL-BA2", Name: "Bob Author", SortName: "Author, Bob", MetadataProvider: "openlibrary", Monitored: true}
+	if err := authors.CreateForUser(ctx, a2, u2.ID); err != nil {
+		t.Fatalf("create bob author: %v", err)
+	}
+
+	b1 := mustCreateBook(t, books, ctx, &models.Book{
+		ForeignID: "OL-BB1", AuthorID: a1.ID, Title: "Alice Book", SortTitle: "alice book",
+		Status: models.BookStatusWanted, MediaType: models.MediaTypeEbook,
+		Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	})
+	b2 := mustCreateBook(t, books, ctx, &models.Book{
+		ForeignID: "OL-BB2", AuthorID: a2.ID, Title: "Bob Book", SortTitle: "bob book",
+		Status: models.BookStatusWanted, MediaType: models.MediaTypeEbook,
+		Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	})
+	setOwner(t, database, "books", b1.ID, u1.ID)
+	setOwner(t, database, "books", b2.ID, u2.ID)
+
+	// Re-read so the owner column lands on the structs the handler reads.
+	a1, _ = authors.GetByID(ctx, a1.ID)
+	a2, _ = authors.GetByID(ctx, a2.ID)
+	b1, _ = books.GetByID(ctx, b1.ID)
+	b2, _ = books.GetByID(ctx, b2.ID)
+
+	h := NewBulkHandler(authors, books, blocklist, nil).WithRefreshFunc(func(*models.Author) {})
+
+	return bulkAuthzFixture{
+		database: database, h: h, authors: authors, books: books,
+		u1: u1.ID, u2: u2.ID, a1: a1, b1: b1, a2: a2, b2: b2,
+	}
+}
+
+// postBulkAs posts a bulk request whose context carries the given identity.
+func postBulkAs(t *testing.T, handler http.HandlerFunc, body string, userID int64, role string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(body))
+	req = req.WithContext(withAuthCtx(req.Context(), userID, role))
+	handler(rec, req)
+	return rec
+}
+
+// resultOK reports the ok flag for a single id in a bulk response.
+func resultOK(t *testing.T, rec *httptest.ResponseRecorder, id int64) bool {
+	t.Helper()
+	var resp bulkResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode bulk response: %v (body=%s)", err, rec.Body.String())
+	}
+	return resp.Results[fmt.Sprintf("%d", id)].OK
+}
+
+// TestBulk_Author_OwnershipMatrix exercises AuthorsBulk delete across the
+// gate-on/non-owner, gate-on/owner, gate-on/admin, and gate-off axes. The
+// durable invariant is whether the targeted author still exists afterwards.
+func TestBulk_Author_OwnershipMatrix(t *testing.T) {
+	cases := []struct {
+		name        string
+		gateOn      bool
+		callerIsBob bool // false => Alice (the owner)
+		admin       bool
+		wantDeleted bool // did the victim author get deleted?
+		wantOK      bool // per-id ok flag
+	}{
+		{"gate on, cross-user blocked", true, true, false, false, false},
+		{"gate on, owner allowed", true, false, false, true, true},
+		{"gate on, admin allowed", true, true, true, true, true},
+		{"gate off, cross-user allowed", false, true, false, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			auth.SetEnforceTenancyForTests(t, tc.gateOn)
+			f := seedTwoUserBulk(t)
+
+			caller := f.u1
+			role := "user"
+			if tc.callerIsBob {
+				caller = f.u2
+			}
+			if tc.admin {
+				caller = 99
+				role = "admin"
+			}
+
+			// Always target Alice's author (a1).
+			body := fmt.Sprintf(`{"ids":[%d],"action":"delete"}`, f.a1.ID)
+			rec := postBulkAs(t, f.h.AuthorsBulk, body, caller, role)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if got := resultOK(t, rec, f.a1.ID); got != tc.wantOK {
+				t.Errorf("per-id ok=%v, want %v", got, tc.wantOK)
+			}
+			got, _ := f.authors.GetByID(context.Background(), f.a1.ID)
+			deleted := got == nil
+			if deleted != tc.wantDeleted {
+				t.Errorf("author deleted=%v, want %v (durable invariant)", deleted, tc.wantDeleted)
+			}
+		})
+	}
+}
+
+// TestBulk_Book_OwnershipMatrix exercises BooksBulk unmonitor across the same
+// axes. The durable invariant is whether Alice's book stays monitored.
+func TestBulk_Book_OwnershipMatrix(t *testing.T) {
+	cases := []struct {
+		name          string
+		gateOn        bool
+		callerIsBob   bool
+		admin         bool
+		wantUnmonitor bool
+		wantOK        bool
+	}{
+		{"gate on, cross-user blocked", true, true, false, false, false},
+		{"gate on, owner allowed", true, false, false, true, true},
+		{"gate on, admin allowed", true, true, true, true, true},
+		{"gate off, cross-user allowed", false, true, false, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			auth.SetEnforceTenancyForTests(t, tc.gateOn)
+			f := seedTwoUserBulk(t)
+
+			caller := f.u1
+			role := "user"
+			if tc.callerIsBob {
+				caller = f.u2
+			}
+			if tc.admin {
+				caller = 99
+				role = "admin"
+			}
+
+			body := fmt.Sprintf(`{"ids":[%d],"action":"unmonitor"}`, f.b1.ID)
+			rec := postBulkAs(t, f.h.BooksBulk, body, caller, role)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if got := resultOK(t, rec, f.b1.ID); got != tc.wantOK {
+				t.Errorf("per-id ok=%v, want %v", got, tc.wantOK)
+			}
+			got, _ := f.books.GetByID(context.Background(), f.b1.ID)
+			unmonitored := !got.Monitored
+			if unmonitored != tc.wantUnmonitor {
+				t.Errorf("book unmonitored=%v, want %v (durable invariant)", unmonitored, tc.wantUnmonitor)
+			}
+		})
+	}
+}
+
+// TestBulk_Wanted_OwnershipMatrix exercises WantedBulk blocklist across the
+// same axes. The durable invariant is whether Alice's book got skipped.
+func TestBulk_Wanted_OwnershipMatrix(t *testing.T) {
+	cases := []struct {
+		name        string
+		gateOn      bool
+		callerIsBob bool
+		admin       bool
+		wantSkipped bool
+		wantOK      bool
+	}{
+		{"gate on, cross-user blocked", true, true, false, false, false},
+		{"gate on, owner allowed", true, false, false, true, true},
+		{"gate on, admin allowed", true, true, true, true, true},
+		{"gate off, cross-user allowed", false, true, false, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			auth.SetEnforceTenancyForTests(t, tc.gateOn)
+			f := seedTwoUserBulk(t)
+
+			caller := f.u1
+			role := "user"
+			if tc.callerIsBob {
+				caller = f.u2
+			}
+			if tc.admin {
+				caller = 99
+				role = "admin"
+			}
+
+			body := fmt.Sprintf(`{"ids":[%d],"action":"blocklist"}`, f.b1.ID)
+			rec := postBulkAs(t, f.h.WantedBulk, body, caller, role)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if got := resultOK(t, rec, f.b1.ID); got != tc.wantOK {
+				t.Errorf("per-id ok=%v, want %v", got, tc.wantOK)
+			}
+			got, _ := f.books.GetByID(context.Background(), f.b1.ID)
+			skipped := got.Status == models.BookStatusSkipped
+			if skipped != tc.wantSkipped {
+				t.Errorf("book skipped=%v, want %v (durable invariant)", skipped, tc.wantSkipped)
+			}
+		})
+	}
+}
+
+// TestBulk_MixedOwnership_PartialEnforcement proves a single bulk call mixing
+// the caller's own id with a victim's id mutates only the owned row: Alice
+// bulk-deletes [a1 (hers), a2 (Bob's)] under the gate; a1 must be deleted, a2
+// must survive, and a2's per-id result must be an error.
+func TestBulk_MixedOwnership_PartialEnforcement(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
+	f := seedTwoUserBulk(t)
+
+	body := fmt.Sprintf(`{"ids":[%d,%d],"action":"delete"}`, f.a1.ID, f.a2.ID)
+	rec := postBulkAs(t, f.h.AuthorsBulk, body, f.u1, "user")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ok := resultOK(t, rec, f.a1.ID); !ok {
+		t.Error("Alice's own author should be deleted (ok:true)")
+	}
+	if ok := resultOK(t, rec, f.a2.ID); ok {
+		t.Error("Bob's author must be rejected (ok:false) for Alice")
+	}
+
+	ctx := context.Background()
+	if got, _ := f.authors.GetByID(ctx, f.a1.ID); got != nil {
+		t.Error("Alice's author should be gone")
+	}
+	if got, _ := f.authors.GetByID(ctx, f.a2.ID); got == nil {
+		t.Error("Bob's author must be untouched (durable invariant)")
 	}
 }

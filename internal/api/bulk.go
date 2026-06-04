@@ -6,9 +6,23 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
+)
+
+// errBulkNotOwned is the sentinel returned by the per-ID bulk helpers when the
+// caller does not own the targeted resource under BINDERY_ENFORCE_TENANCY. It
+// is surfaced in the per-ID result map with the same opaque "not found" message
+// the single-resource handlers use (404 on mismatch), so a non-owner cannot
+// distinguish "exists but yours" from "does not exist" and cannot probe for the
+// existence of another user's authors/books (#947). When tenancy is off
+// auth.CheckOwnership is a no-op, so this is never returned and behaviour is
+// unchanged.
+var (
+	errBulkAuthorNotOwned = fmt.Errorf("author not found")
+	errBulkBookNotOwned   = fmt.Errorf("book not found")
 )
 
 // bulkSearchConcurrency caps how many indexer searches a single bulk
@@ -173,13 +187,34 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		case "delete":
+			// Ownership-gate the delete: load the author first so we can verify
+			// the caller owns it before mutating (the repo deletes purely by id).
+			author, err := h.authors.GetByID(r.Context(), id)
+			if err != nil {
+				resp.Results[key] = bulkItemResult{Error: err.Error()}
+				continue
+			}
+			if author == nil || !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
+				resp.Results[key] = bulkItemResult{Error: errBulkAuthorNotOwned.Error()}
+				continue
+			}
 			if err := h.authors.Delete(r.Context(), id); err != nil {
 				resp.Results[key] = bulkItemResult{Error: err.Error()}
 				continue
 			}
 		case "search":
-			// Fetch wanted books while the request context is still alive,
-			// then collect them for the bounded post-response fan-out.
+			// Verify ownership before fanning out searches for another user's
+			// catalogue. Load the author to read OwnerUserID, then collect its
+			// wanted books while the request context is still alive.
+			author, err := h.authors.GetByID(r.Context(), id)
+			if err != nil {
+				resp.Results[key] = bulkItemResult{Error: err.Error()}
+				continue
+			}
+			if author == nil || !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
+				resp.Results[key] = bulkItemResult{Error: errBulkAuthorNotOwned.Error()}
+				continue
+			}
 			books, err := h.books.ListByAuthor(r.Context(), id)
 			if err != nil {
 				resp.Results[key] = bulkItemResult{Error: err.Error()}
@@ -200,8 +235,8 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 				resp.Results[key] = bulkItemResult{Error: err.Error()}
 				continue
 			}
-			if author == nil {
-				resp.Results[key] = bulkItemResult{Error: "author not found"}
+			if author == nil || !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
+				resp.Results[key] = bulkItemResult{Error: errBulkAuthorNotOwned.Error()}
 				continue
 			}
 			refreshTargets = append(refreshTargets, author)
@@ -308,8 +343,8 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 			opErr = h.books.Delete(r.Context(), id)
 		case "search":
 			book, err := h.books.GetByID(r.Context(), id)
-			if err != nil || book == nil {
-				resp.Results[key] = bulkItemResult{Error: "book not found"}
+			if err != nil || book == nil || !auth.CheckOwnership(r.Context(), book.OwnerUserID) {
+				resp.Results[key] = bulkItemResult{Error: errBulkBookNotOwned.Error()}
 				continue
 			}
 			if h.searcher != nil {
@@ -370,8 +405,8 @@ func (h *BulkHandler) WantedBulk(w http.ResponseWriter, r *http.Request) {
 		switch req.Action {
 		case "search":
 			book, err := h.books.GetByID(r.Context(), id)
-			if err != nil || book == nil {
-				resp.Results[key] = bulkItemResult{Error: "book not found"}
+			if err != nil || book == nil || !auth.CheckOwnership(r.Context(), book.OwnerUserID) {
+				resp.Results[key] = bulkItemResult{Error: errBulkBookNotOwned.Error()}
 				continue
 			}
 			if h.searcher != nil {
@@ -403,8 +438,8 @@ func (h *BulkHandler) setAuthorMonitored(ctx context.Context, id int64, monitore
 	if err != nil {
 		return err
 	}
-	if author == nil {
-		return fmt.Errorf("author not found")
+	if author == nil || !auth.CheckOwnership(ctx, author.OwnerUserID) {
+		return errBulkAuthorNotOwned
 	}
 	author.Monitored = monitored
 	return h.authors.Update(ctx, author)
@@ -415,8 +450,8 @@ func (h *BulkHandler) setBookMonitored(ctx context.Context, id int64, monitored 
 	if err != nil {
 		return err
 	}
-	if book == nil {
-		return fmt.Errorf("book not found")
+	if book == nil || !auth.CheckOwnership(ctx, book.OwnerUserID) {
+		return errBulkBookNotOwned
 	}
 	book.Monitored = monitored
 	return h.books.Update(ctx, book)
@@ -431,8 +466,8 @@ func (h *BulkHandler) setBookExcluded(ctx context.Context, id int64, excluded bo
 	if err != nil {
 		return err
 	}
-	if book == nil {
-		return fmt.Errorf("book not found")
+	if book == nil || !auth.CheckOwnership(ctx, book.OwnerUserID) {
+		return errBulkBookNotOwned
 	}
 	return h.books.SetExcluded(ctx, id, excluded)
 }
@@ -442,8 +477,8 @@ func (h *BulkHandler) setBookMediaType(ctx context.Context, id int64, mediaType 
 	if err != nil {
 		return err
 	}
-	if book == nil {
-		return fmt.Errorf("book not found")
+	if book == nil || !auth.CheckOwnership(ctx, book.OwnerUserID) {
+		return errBulkBookNotOwned
 	}
 	book.MediaType = mediaType
 	reevaluateBookStatus(book)
@@ -484,8 +519,8 @@ func (h *BulkHandler) setAuthorBooksMediaType(ctx context.Context, authorID int6
 	if err != nil {
 		return err
 	}
-	if author == nil {
-		return fmt.Errorf("author not found")
+	if author == nil || !auth.CheckOwnership(ctx, author.OwnerUserID) {
+		return errBulkAuthorNotOwned
 	}
 	books, err := h.books.ListByAuthor(ctx, authorID)
 	if err != nil {
@@ -513,8 +548,8 @@ func (h *BulkHandler) skipBook(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	if book == nil {
-		return fmt.Errorf("book not found")
+	if book == nil || !auth.CheckOwnership(ctx, book.OwnerUserID) {
+		return errBulkBookNotOwned
 	}
 	book.Monitored = false
 	book.Status = models.BookStatusSkipped
