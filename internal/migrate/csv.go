@@ -43,29 +43,29 @@ func (r *Result) fail(name, reason string) {
 // ImportCSVAuthors bulk-adds authors from a CSV or newline-separated list.
 // Input formats accepted, one per row:
 //   - Plain name only:          "Andy Weir"
-//   - Two-column CSV:           "Andy Weir,true"
-//   - Three-column CSV:         "Andy Weir,true,true"   (monitored, searchOnAdd)
+//   - Two-column CSV:           "Andy Weir,true"        (name, monitored)
+//
+// A third column, if present, is ignored for backward compatibility (#966):
+// it was a "searchOnAdd" flag that, after #963, no longer gated anything —
+// every author's catalogue is now fetched on add, and the fetch never
+// auto-grabs. Legacy three-column files therefore still import unchanged.
 //
 // Each name is resolved via OpenLibrary SearchAuthors; the top match is
 // created. Duplicates (same foreign ID already in DB) are skipped rather
 // than errored.
 //
-// onSearchOnAdd is invoked for EVERY newly-created author so the catalogue is
-// always populated (mirrors the Readarr migrate path and the AddAuthor UI).
+// onCatalogueFetch is invoked for EVERY newly-created author so the catalogue
+// is always populated (mirrors the Readarr migrate path and the AddAuthor UI).
 // The wired callback is FetchAuthorBooks(author, false, "") which fetches the
 // catalogue but never auto-grabs, so populating on every row is safe — an
 // empty catalogue otherwise leaves the library scan with no book rows to match
 // files against, and the user's library looks empty after import.
-//
-// The optional third "searchOnAdd" column is still parsed but no longer gates
-// the catalogue fetch (and never triggered downloads in the first place, since
-// the callback only fetches metadata).
 func ImportCSVAuthors(
 	ctx context.Context,
 	reader io.Reader,
 	authors *db.AuthorRepo,
 	agg *metadata.Aggregator,
-	onSearchOnAdd func(author *models.Author),
+	onCatalogueFetch func(author *models.Author),
 ) (*Result, error) {
 	res := newResult()
 	if reader == nil {
@@ -120,11 +120,10 @@ func ImportCSVAuthors(
 		res.AddedNames = append(res.AddedNames, full.Name)
 
 		// Always populate the catalogue for every newly-created author — the
-		// callback fetches metadata but never auto-grabs (see func doc). The
-		// searchOnAdd column no longer gates this; an empty catalogue would
-		// leave the library scan nothing to match against.
-		if onSearchOnAdd != nil {
-			go onSearchOnAdd(full)
+		// callback fetches metadata but never auto-grabs (see func doc). An
+		// empty catalogue would leave the library scan nothing to match against.
+		if onCatalogueFetch != nil {
+			go onCatalogueFetch(full)
 		}
 	}
 
@@ -132,9 +131,8 @@ func ImportCSVAuthors(
 }
 
 type csvRow struct {
-	name        string
-	monitored   bool
-	searchOnAdd bool
+	name      string
+	monitored bool
 }
 
 func parseCSVRows(reader io.Reader) ([]csvRow, error) {
@@ -186,24 +184,22 @@ func parseCSVRows(reader io.Reader) ([]csvRow, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		out = append(out, csvRow{name: line, monitored: true, searchOnAdd: false})
+		out = append(out, csvRow{name: line, monitored: true})
 	}
 	return out, nil
 }
 
 func rowFromFields(fields []string) csvRow {
-	// searchOnAdd is parsed for backwards compatibility but no longer gates
-	// the catalogue fetch (every author's catalogue is now populated on add;
-	// the callback never auto-grabs). Default false.
-	row := csvRow{monitored: true, searchOnAdd: false}
+	// Only the first two columns (name, monitored) carry meaning. A third
+	// column is tolerated but ignored for backward compatibility (#966): it was
+	// a "searchOnAdd" flag that no longer gates anything after #963. Leaving the
+	// parse lenient means existing users' three-column files keep importing.
+	row := csvRow{monitored: true}
 	if len(fields) >= 1 {
 		row.name = strings.TrimSpace(fields[0])
 	}
 	if len(fields) >= 2 {
 		row.monitored = parseBool(fields[1], true)
-	}
-	if len(fields) >= 3 {
-		row.searchOnAdd = parseBool(fields[2], true)
 	}
 	return row
 }

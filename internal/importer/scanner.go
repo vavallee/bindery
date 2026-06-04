@@ -2606,6 +2606,12 @@ func authorTitleFromLayout(path string, roots ...string) (author, title string, 
 // found files with existing "wanted" book records.
 func (s *Scanner) ScanLibrary(ctx context.Context) {
 	if s.libraryDir == "" {
+		// #965: previously this returned without writing any result, so the UI
+		// kept showing a stale prior scan and the #962 "no files found" warning
+		// never fired for a literally-unset library dir. Persist a zero-files
+		// result so the frontend surfaces the misconfiguration (library_dir is
+		// "" → the warning names "?" and no_files_found is true).
+		s.writeScanError(ctx, "library directory not configured")
 		return
 	}
 
@@ -2646,6 +2652,10 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 	allBooks, err := s.books.List(ctx)
 	if err != nil {
 		slog.Error("library scan: failed to list books", "error", err)
+		// #965: write a result on this early return too — otherwise the UI keeps
+		// showing the previous (stale) scan and never reflects that the scan
+		// failed.
+		s.writeScanError(ctx, fmt.Sprintf("scan failed: %v", err))
 		return
 	}
 
@@ -3034,9 +3044,24 @@ type unmatchedFile struct {
 	ParsedAuthor string `json:"parsed_author"`
 }
 
+// writeScanError persists a failed-scan result so the UI reflects the failure
+// instead of a stale prior scan (#965). It reuses the same "library.lastScan"
+// shape as a normal scan — zero counts plus a non-empty scan_error message the
+// frontend renders the same way as the other scan-outcome warnings.
+func (s *Scanner) writeScanError(ctx context.Context, message string) {
+	s.writeScanResultWithError(ctx, 0, 0, 0, 0, nil, message)
+}
+
 // writeScanResult persists the scan summary to the settings table under
 // "library.lastScan" so the UI can surface the result without polling logs.
 func (s *Scanner) writeScanResult(ctx context.Context, filesFound, reconciled, unmatched, tagReadFailed int, unmatchedFiles []unmatchedFile) {
+	s.writeScanResultWithError(ctx, filesFound, reconciled, unmatched, tagReadFailed, unmatchedFiles, "")
+}
+
+// writeScanResultWithError is the shared writer for both successful scans and
+// early-return failures. scanError is empty for a normal scan and a
+// user-facing message when the scan could not complete (#965).
+func (s *Scanner) writeScanResultWithError(ctx context.Context, filesFound, reconciled, unmatched, tagReadFailed int, unmatchedFiles []unmatchedFile, scanError string) {
 	if s.settings == nil {
 		return
 	}
@@ -3074,12 +3099,22 @@ func (s *Scanner) writeScanResult(ctx context.Context, filesFound, reconciled, u
 	// user misreads) and lets the UI name the offending directory.
 	noFilesFound := filesFound == 0
 
+	// scan_error is "" for a successful scan and a user-facing message when the
+	// scan could not complete (#965). Marshalled separately so any quoting in
+	// the message (e.g. an underlying error string) is escaped correctly.
+	scanErrorJSON := "\"\""
+	if scanError != "" {
+		if b, err := json.Marshal(scanError); err == nil {
+			scanErrorJSON = string(b)
+		}
+	}
+
 	payload := fmt.Sprintf(
-		`{"ran_at":%q,"files_found":%d,"reconciled":%d,"unmatched":%d,"tag_read_failed":%d,"unmatched_files":%s,"library_dir":%q,"audiobook_dir":%q,"scanned_paths":%s,"no_files_found":%t}`,
+		`{"ran_at":%q,"files_found":%d,"reconciled":%d,"unmatched":%d,"tag_read_failed":%d,"unmatched_files":%s,"library_dir":%q,"audiobook_dir":%q,"scanned_paths":%s,"no_files_found":%t,"scan_error":%s}`,
 		time.Now().UTC().Format(time.RFC3339),
 		filesFound, reconciled, unmatched, tagReadFailed,
 		unmatchedJSON,
-		s.libraryDir, s.audiobookDir, pathsJSON, noFilesFound,
+		s.libraryDir, s.audiobookDir, pathsJSON, noFilesFound, scanErrorJSON,
 	)
 	if err := s.settings.Set(ctx, "library.lastScan", payload); err != nil {
 		slog.Warn("library scan: failed to persist scan result", "error", err)

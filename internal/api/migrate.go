@@ -94,8 +94,9 @@ func NewMigrateHandler(
 }
 
 // ImportCSV accepts a multipart form with a "file" field containing either
-// a newline-separated list of author names or a CSV (name[,monitored
-// [,searchOnAdd]]). Top OpenLibrary match is chosen for each name.
+// a newline-separated list of author names or a CSV (name[,monitored]). Top
+// OpenLibrary match is chosen for each name. A third column, if present, is
+// ignored for backward compatibility (#966).
 func (h *MigrateHandler) ImportCSV(w http.ResponseWriter, r *http.Request) {
 	file, err := acceptUpload(w, r, 5<<20) // 5 MB cap — CSV of names is tiny
 	if err != nil {

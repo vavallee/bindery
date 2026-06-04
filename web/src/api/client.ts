@@ -380,6 +380,9 @@ export const api = {
     audiobook_dir?: string
     scanned_paths?: string[]
     no_files_found?: boolean
+    // #965: non-empty when the scan could not complete (library dir unset, or
+    // the book listing failed). Optional so older cached results still parse.
+    scan_error?: string
   }>('/library/scan/status'),
 
   // Queue
