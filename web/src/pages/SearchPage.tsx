@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
+import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { api, SearchResult } from '../api/client'
+import { api, isNoDownloadClientError, SearchResult } from '../api/client'
 
 function formatSize(n: number): string {
   if (!n || n <= 0) return ''
@@ -17,6 +18,11 @@ export default function SearchPage() {
   const [grabbing, setGrabbing] = useState<string | null>(null)
   const [grabbed, setGrabbed] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
+  // When a grab fails because no download client of the needed protocol is
+  // enabled (#959 backend error), we swap the raw error for a contextual nudge
+  // linking to the client settings — shown regardless of whether the library is
+  // empty, which the first-run guidance (#960) didn't cover (#968).
+  const [needsClient, setNeedsClient] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const search = async () => {
@@ -24,6 +30,7 @@ export default function SearchPage() {
     if (!q) return
     setSearching(true)
     setError(null)
+    setNeedsClient(false)
     setResults(null)
     try {
       const r = await api.searchIndexers(q)
@@ -38,6 +45,7 @@ export default function SearchPage() {
   const grab = async (r: SearchResult) => {
     setGrabbing(r.guid)
     setError(null)
+    setNeedsClient(false)
     try {
       await api.grab({
         guid: r.guid,
@@ -48,7 +56,11 @@ export default function SearchPage() {
       })
       setGrabbed(prev => new Set(prev).add(r.guid))
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Grab failed')
+      if (isNoDownloadClientError(e)) {
+        setNeedsClient(true)
+      } else {
+        setError(e instanceof Error ? e.message : 'Grab failed')
+      }
     } finally {
       setGrabbing(null)
     }
@@ -82,6 +94,18 @@ export default function SearchPage() {
       {error && (
         <div className="mb-4 px-3 py-2 bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300 rounded text-sm">
           {error}
+        </div>
+      )}
+
+      {needsClient && (
+        <div className="mb-4 px-4 py-3 bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200 border border-amber-200 dark:border-amber-900/50 rounded-lg text-sm">
+          <p className="mb-2">{t('search.noClient.body')}</p>
+          <Link
+            to="/settings?tab=clients"
+            className="inline-block px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md text-sm font-medium transition-colors"
+          >
+            {t('search.noClient.action')}
+          </Link>
         </div>
       )}
 

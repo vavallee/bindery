@@ -68,7 +68,11 @@
     "resultCount": "{{count}} results",
     "grab": "Grab",
     "grabbing": "Grabbing…",
-    "grabbed": "Grabbed"
+    "grabbed": "Grabbed",
+    "noClient": {
+      "body": "Nothing was grabbed — no enabled download client can handle this release. Add or enable a download client to start downloads.",
+      "action": "Set up Download Clients"
+    }
   },
   "login": {
     "title": "Sign in",

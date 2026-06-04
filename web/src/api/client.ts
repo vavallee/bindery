@@ -52,6 +52,18 @@ export class ApiError extends Error {
   }
 }
 
+// True when an error is the backend's "no enabled download client configured"
+// failure from a grab attempt (#959 / internal/api/queue.go). Detected by the
+// same substring pair the backend uses to classify it as a 400, so a missing
+// download client surfaces a contextual setup nudge instead of a raw error —
+// independent of whether the library is empty (#968). Tolerant of the protocol
+// variants noProtocolClientError produces ("no enabled usenet download client
+// configured …", etc).
+export function isNoDownloadClientError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : ''
+  return msg.includes('no enabled') && msg.includes('download client configured')
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   // Merge caller-supplied headers on top of the defaults so we can't lose
   // the CSRF header if a caller passes their own `headers`.
