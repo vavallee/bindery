@@ -274,32 +274,38 @@ func migrate(database *sql.DB) error {
 // Writing keys is safe: at worst two pre-existing dupes now share a key, which
 // only makes future imports bind to one of them instead of creating a third.
 func backfillBookDedupKeys(database *sql.DB) error {
-	rows, err := database.Query("SELECT id, title, COALESCE(dedup_key, '') FROM books")
-	if err != nil {
-		return fmt.Errorf("read books for dedup backfill: %w", err)
-	}
 	type pending struct {
 		id  int64
 		key string
 	}
-	var updates []pending
-	for rows.Next() {
-		var id int64
-		var title, stored string
-		if err := rows.Scan(&id, &title, &stored); err != nil {
-			rows.Close()
-			return fmt.Errorf("scan book for dedup backfill: %w", err)
+	// Read phase in its own scope so rows is closed (via defer) BEFORE we open
+	// the write transaction — holding an open read cursor across Begin() risks
+	// a "database is locked" on SQLite.
+	updates, err := func() ([]pending, error) {
+		rows, err := database.Query("SELECT id, title, COALESCE(dedup_key, '') FROM books")
+		if err != nil {
+			return nil, fmt.Errorf("read books for dedup backfill: %w", err)
 		}
-		want := indexer.CanonicalDedupKey(title)
-		if want != stored {
-			updates = append(updates, pending{id: id, key: want})
+		defer rows.Close()
+		var out []pending
+		for rows.Next() {
+			var id int64
+			var title, stored string
+			if err := rows.Scan(&id, &title, &stored); err != nil {
+				return nil, fmt.Errorf("scan book for dedup backfill: %w", err)
+			}
+			if want := indexer.CanonicalDedupKey(title); want != stored {
+				out = append(out, pending{id: id, key: want})
+			}
 		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate books for dedup backfill: %w", err)
+		}
+		return out, nil
+	}()
+	if err != nil {
+		return err
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return fmt.Errorf("iterate books for dedup backfill: %w", err)
-	}
-	rows.Close()
 	if len(updates) == 0 {
 		return nil
 	}
@@ -313,14 +319,13 @@ func backfillBookDedupKeys(database *sql.DB) error {
 		_ = tx.Rollback()
 		return fmt.Errorf("prepare dedup backfill: %w", err)
 	}
+	defer stmt.Close()
 	for _, u := range updates {
 		if _, err := stmt.Exec(u.key, u.id); err != nil {
-			_ = stmt.Close()
 			_ = tx.Rollback()
 			return fmt.Errorf("update dedup_key for book %d: %w", u.id, err)
 		}
 	}
-	_ = stmt.Close()
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit dedup backfill: %w", err)
 	}
