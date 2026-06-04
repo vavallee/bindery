@@ -6,6 +6,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Outbound proxy support** (#986) — route Bindery's remote-facing outbound HTTP through an `http`/`https`/`socks5` proxy via `BINDERY_OUTBOUND_PROXY` (e.g. a VPN container's Privoxy on `:8118`, or `socks5://gluetun:1080`), the same capability Sonarr/Radarr expose. In scope: indexer searches, metadata/cover providers, webhook notifications, and the telemetry ping; download clients and OIDC discovery stay direct. LAN / loopback / single-label destinations (e.g. a Docker `prowlarr` / `jackett`) are dialled direct by default so a local indexer manager stays reachable — tune with `BINDERY_OUTBOUND_PROXY_BYPASS_LOCAL` (default `true`) and `BINDERY_OUTBOUND_PROXY_NO_PROXY` (comma-separated hosts / domain suffixes / CIDRs). Parsed once at startup into a shared, proxy-aware transport in `internal/httpsec`; credentials travel in the URL userinfo and are never logged. Env-var only — no new dependency (stdlib dials all three schemes).
+
 ### Changed
 
 - **Loopback URLs are now allowed for admin-configured service endpoints** — download clients, indexers, Prowlarr, the Audiobookshelf base URL, and the Calibre plugin URL now accept `http://127.0.0.1:…` / `localhost` (new `PolicyLANLoopback` SSRF tier). Previously the SSRF guard blocked all loopback with no escape hatch, which made a legitimate, common topology impossible: a companion service bound to `127.0.0.1`, or both containers on `network_mode: host`, could not be reached (e.g. SABnzbd on `127.0.0.1:50155` was rejected with "url not allowed: points to loopback address"). These endpoints are admin-only and CSRF-gated, so the loopback block bought ~no security. **Untrusted paths are unchanged**: proxied cover images and outbound webhooks still block loopback, and link-local + cloud-metadata (e.g. `169.254.169.254`) remain blocked everywhere. The release/torrent download URLs returned by indexers also still block loopback (a malicious indexer must not be able to point Bindery at internal services).

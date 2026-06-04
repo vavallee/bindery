@@ -170,6 +170,7 @@ Bindery is configured through the web UI under **Settings** — indexers, downlo
 | `BINDERY_DOWNLOAD_DIR` | `/downloads` | Where the download client deposits completed jobs |
 | `BINDERY_AUDIOBOOK_DOWNLOAD_DIR` | inherits download dir | Separate watch folder for audiobook downloads |
 | `BINDERY_URL_BASE` | _(empty)_ | Reverse-proxy subpath (e.g. `/bindery`) |
+| `BINDERY_OUTBOUND_PROXY` | _(empty)_ | Route outbound HTTP (indexers, metadata, covers, notifications, telemetry) through an `http`/`https`/`socks5` proxy. LAN/loopback destinations bypass it by default — see [DEPLOYMENT.md](docs/DEPLOYMENT.md#environment-variables) |
 | `BINDERY_PUID` / `PGID` | _(unset)_ | Sanity-check assertions for the container UID/GID |
 
 The full reference (path remapping, API-key seeding, telemetry, trusted-proxy, rate-limit knobs, cookie-Secure policy) is in **[docs/DEPLOYMENT.md#environment-variables](docs/DEPLOYMENT.md#environment-variables)**. OIDC and forward-auth proxy variables live in **[docs/auth-oidc.md](docs/auth-oidc.md)** and **[docs/auth-proxy.md](docs/auth-proxy.md)**.
