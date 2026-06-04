@@ -548,6 +548,47 @@ func TestManualImportLookup_PathInsideAllowedRoots(t *testing.T) {
 	}
 }
 
+// TestManualImport_SymlinkEscapeRejected is the regression test for the
+// arbitrary-file-read/move defect: a symlink that physically lives inside the
+// allowed root but points at a file OUTSIDE it must be rejected by both
+// endpoints, not silently followed.
+func TestManualImport_SymlinkEscapeRejected(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.epub")
+	if err := os.WriteFile(secret, []byte("top secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "innocent.epub")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Fatal(err)
+	}
+	h := containmentHandler(root)
+
+	// Lookup must refuse to follow the escaping symlink.
+	rec := httptest.NewRecorder()
+	h.Lookup(rec, lookupRequest(link))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("Lookup status = %d, want 403; body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "outside the configured library roots") {
+		t.Errorf("Lookup body = %q, want containment error", rec.Body.String())
+	}
+
+	// Import must refuse it too (403 fires before any repo call).
+	body, _ := json.Marshal(map[string]any{"path": link, "bookId": 1})
+	rec = httptest.NewRecorder()
+	h.Import(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import", bytes.NewReader(body)))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("Import status = %d, want 403; body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "outside the configured library roots") {
+		t.Errorf("Import body = %q, want containment error", rec.Body.String())
+	}
+}
+
 // TestManualImportImport_PathOutsideAllowedRoots verifies that Import returns
 // 403 for ebook and audiobook paths that fall outside the allowed roots.
 // The 403 fires before any repo call so no database is needed.

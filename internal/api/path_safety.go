@@ -150,6 +150,54 @@ func (r *LibraryRoots) Contains(ctx context.Context, p string) bool {
 	return false
 }
 
+// ResolveContained resolves p by following symlinks and returns the resolved
+// absolute path only if it lies within a configured root. It is the strict
+// counterpart to Contains, intended for the manual-import handlers where the
+// path is read from, copied from, or moved: a symlink that physically sits
+// inside a library root but points outside it must NOT be allowed, or it
+// becomes an arbitrary-file read/move primitive.
+//
+// Unlike Contains there is no lexical fallback — only the symlink-resolved path
+// is checked, and the roots are resolved too so a symlinked root directory
+// still matches. The path must exist (filepath.EvalSymlinks must succeed); a
+// path that cannot be resolved is rejected (fail-closed). Callers must operate
+// on the returned resolved path so the containment check and the subsequent
+// file operation act on the same bytes.
+//
+// A nil receiver opts out (returns the cleaned path, true), mirroring Contains
+// and preserving behaviour for callers/tests that have not wired roots.
+func (r *LibraryRoots) ResolveContained(ctx context.Context, p string) (string, bool) {
+	if r == nil {
+		return filepath.Clean(p), true
+	}
+	p = strings.TrimSpace(p)
+	if p == "" || !filepath.IsAbs(p) {
+		return "", false
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Clean(p))
+	if err != nil {
+		// Broken link, missing file, or permission denied: can't prove
+		// containment, so refuse. (Contains is lenient here for the delete
+		// path, where the input is a trusted DB row rather than a
+		// user-supplied path that might be a symlink out of the library.)
+		return "", false
+	}
+	// Fail closed when no roots are configured: an admin-triggered file
+	// read/move outside any library is too dangerous to allow-all. (Contains
+	// falls open in this case for the delete path's legacy single-tenant
+	// installs; the manual-import path must not.)
+	for _, root := range r.resolveRoots(ctx) {
+		realRoot := root
+		if rr, err := filepath.EvalSymlinks(root); err == nil {
+			realRoot = rr
+		}
+		if containsUnderRoot(resolved, realRoot) {
+			return resolved, true
+		}
+	}
+	return "", false
+}
+
 // containsUnderRoot is the lexical containment primitive shared by Contains.
 // Returns true iff p is the same as root or strictly nested under it.
 func containsUnderRoot(p, root string) bool {

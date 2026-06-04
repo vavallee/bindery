@@ -52,11 +52,16 @@ func (h *ManualImportHandler) Lookup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path must be absolute"})
 		return
 	}
-	if !h.roots.Contains(r.Context(), path) {
+	resolved, ok := h.roots.ResolveContained(r.Context(), path)
+	if !ok {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "path is outside the configured library roots"})
 		return
 	}
-	if _, err := os.Stat(path); err != nil { //nolint:gosec // #nosec G304 -- path is cleaned and validated as absolute; RequireAdmin middleware enforced at route level
+	// Operate on the symlink-resolved path so the containment check and the
+	// catalogue lookup act on the same bytes (a symlink inside a root that
+	// points outside it is rejected by ResolveContained above).
+	path = resolved
+	if _, err := os.Stat(path); err != nil { //nolint:gosec // #nosec G304 -- path is symlink-resolved and confirmed inside a configured library root; RequireAdmin middleware enforced at route level
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("path not accessible: %v", err)})
 		return
 	}
@@ -94,10 +99,15 @@ func (h *ManualImportHandler) Import(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path must be absolute"})
 		return
 	}
-	if !h.roots.Contains(r.Context(), req.Path) {
+	resolved, ok := h.roots.ResolveContained(r.Context(), req.Path)
+	if !ok {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "path is outside the configured library roots"})
 		return
 	}
+	// Use the symlink-resolved path for every subsequent operation (stat,
+	// book-file detection, import) so a symlink inside a root that points
+	// outside it can't redirect the read/move to an arbitrary file.
+	req.Path = resolved
 	if req.BookID <= 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bookId is required"})
 		return
@@ -107,7 +117,7 @@ func (h *ManualImportHandler) Import(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := os.Stat(req.Path) //nolint:gosec // #nosec G304 -- path is cleaned and validated as absolute; RequireAdmin middleware enforced at route level
+	info, err := os.Stat(req.Path) //nolint:gosec // #nosec G304 -- path is symlink-resolved and confirmed inside a configured library root; RequireAdmin middleware enforced at route level
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("path not accessible: %v", err)})
 		return
