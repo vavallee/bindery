@@ -2076,7 +2076,7 @@ func TestGetListBooks_PositiveIDPaginates(t *testing.T) {
 }
 
 // TestGetListBooks_PositiveIDPopulatesSeriesRefs covers issue #805: the
-// list_books GraphQL query now asks for featured_series and the parsed book
+// list_books GraphQL query asks for book_series and the parsed book
 // carries those forward as SeriesRefs so the list syncer can persist them.
 func TestGetListBooks_PositiveIDPopulatesSeriesRefs(t *testing.T) {
 	var gotQuery string
@@ -2085,7 +2085,7 @@ func TestGetListBooks_PositiveIDPopulatesSeriesRefs(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(body, &req)
 		gotQuery = req.Query
-		resp := `{"data":{"list_books":[{"book":{"id":99,"title":"Dune","slug":"dune","featured_series":{"id":17,"name":"Dune Chronicles"},"featured_series_id":17,"featured_series_position":1,"contributions":[{"author":{"id":1,"name":"Frank Herbert","slug":"frank-herbert"}}]}}]}}`
+		resp := `{"data":{"list_books":[{"book":{"id":99,"title":"Dune","slug":"dune","book_series":[{"position":1,"series":{"id":17,"name":"Dune Chronicles"}}],"contributions":[{"author":{"id":1,"name":"Frank Herbert","slug":"frank-herbert"}}]}}]}}`
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(resp)),
@@ -2098,11 +2098,8 @@ func TestGetListBooks_PositiveIDPopulatesSeriesRefs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetListBooks: %v", err)
 	}
-	if !strings.Contains(gotQuery, "featured_series { id name }") {
-		t.Errorf("query missing featured_series selection: %q", gotQuery)
-	}
-	if !strings.Contains(gotQuery, "featured_series_position") {
-		t.Errorf("query missing featured_series_position: %q", gotQuery)
+	if !strings.Contains(gotQuery, "book_series(order_by: { position: asc })") {
+		t.Errorf("query missing book_series selection: %q", gotQuery)
 	}
 	if len(books) != 1 {
 		t.Fatalf("books len = %d, want 1", len(books))
@@ -2125,7 +2122,7 @@ func TestGetListBooks_BuiltinShelfPopulatesSeriesRefs(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(body, &req)
 		gotQuery = req.Query
-		resp := `{"data":{"me":[{"user_books":[{"book":{"id":99,"title":"The Way of Kings","slug":"the-way-of-kings","featured_series":{"id":103,"name":"The Stormlight Archive"},"featured_series_id":103,"featured_series_position":1,"contributions":[{"author":{"id":2,"name":"Brandon Sanderson","slug":"brandon-sanderson"}}]}}]}]}}`
+		resp := `{"data":{"me":[{"user_books":[{"book":{"id":99,"title":"The Way of Kings","slug":"the-way-of-kings","book_series":[{"position":1,"series":{"id":103,"name":"The Stormlight Archive"}}],"contributions":[{"author":{"id":2,"name":"Brandon Sanderson","slug":"brandon-sanderson"}}]}}]}]}}`
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(resp)),
@@ -2138,8 +2135,8 @@ func TestGetListBooks_BuiltinShelfPopulatesSeriesRefs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetListBooks shelf: %v", err)
 	}
-	if !strings.Contains(gotQuery, "featured_series { id name }") {
-		t.Errorf("shelf query missing featured_series selection: %q", gotQuery)
+	if !strings.Contains(gotQuery, "book_series(order_by: { position: asc })") {
+		t.Errorf("shelf query missing book_series selection: %q", gotQuery)
 	}
 	if len(books) != 1 || len(books[0].SeriesRefs) != 1 {
 		t.Fatalf("books = %+v", books)
@@ -2150,27 +2147,52 @@ func TestGetListBooks_BuiltinShelfPopulatesSeriesRefs(t *testing.T) {
 	}
 }
 
-// TestFeaturedSeriesRefs_FallbackAndEdgeCases exercises featuredSeriesRefs
-// directly so the conversion rules don't drift silently.
-func TestFeaturedSeriesRefs_FallbackAndEdgeCases(t *testing.T) {
-	// Title from relation, id falls back to scalar featured_series_id.
-	scalarID := 55
-	refs := featuredSeriesRefs(&hcFeaturedSeries{ID: 0, Name: "Foundation"}, &scalarID, 2)
-	if len(refs) != 1 || refs[0].ForeignID != "hc-series:55" || refs[0].Title != "Foundation" || refs[0].Position != "2" {
-		t.Errorf("scalar id fallback: %+v", refs)
+// TestBookSeriesRefs_EdgeCases exercises bookSeriesRefs directly so the
+// conversion rules don't drift silently.
+func TestBookSeriesRefs_EdgeCases(t *testing.T) {
+	// Valid entry -> a primary SeriesRef with prefixed foreign id.
+	refs := bookSeriesRefs([]hcBookSeries{{Position: 2, Series: struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
+	}{ID: 55, Name: "Foundation"}}})
+	if len(refs) != 1 || refs[0].ForeignID != "hc-series:55" || refs[0].Title != "Foundation" || refs[0].Position != "2" || !refs[0].Primary {
+		t.Errorf("valid entry: %+v", refs)
 	}
 
-	// Missing id everywhere → drop the ref (we cannot link without a stable
-	// foreign id).
-	if got := featuredSeriesRefs(&hcFeaturedSeries{Name: "Anon"}, nil, nil); got != nil {
+	// First valid entry wins (book_series is ordered by position asc).
+	multi := bookSeriesRefs([]hcBookSeries{
+		{Position: 1, Series: struct {
+			ID   int    `json:"id"`
+			Name string `json:"name"`
+		}{ID: 7, Name: "Primary"}},
+		{Position: 3, Series: struct {
+			ID   int    `json:"id"`
+			Name string `json:"name"`
+		}{ID: 9, Name: "Secondary"}},
+	})
+	if len(multi) != 1 || multi[0].ForeignID != "hc-series:7" || !multi[0].Primary {
+		t.Errorf("first entry should win: %+v", multi)
+	}
+
+	// Missing id -> drop (cannot link without a stable foreign id).
+	if got := bookSeriesRefs([]hcBookSeries{{Series: struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
+	}{ID: 0, Name: "Anon"}}}); got != nil {
 		t.Errorf("missing id should drop ref, got %+v", got)
 	}
 
-	// Nil relation, but scalar id alone (no title) → drop: a series with no
-	// name is unusable upstream.
-	zero := 0
-	if got := featuredSeriesRefs(nil, &zero, nil); got != nil {
-		t.Errorf("zero id should drop ref, got %+v", got)
+	// Missing name -> drop (unusable upstream).
+	if got := bookSeriesRefs([]hcBookSeries{{Series: struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
+	}{ID: 12, Name: ""}}}); got != nil {
+		t.Errorf("missing name should drop ref, got %+v", got)
+	}
+
+	// Empty -> nil.
+	if got := bookSeriesRefs(nil); got != nil {
+		t.Errorf("empty should be nil, got %+v", got)
 	}
 }
 

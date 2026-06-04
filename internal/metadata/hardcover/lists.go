@@ -239,9 +239,10 @@ func (c *Client) GetListBooks(ctx context.Context, listID int) ([]models.Book, e
 				rating
 				default_audio_edition_id
 				default_ebook_edition_id
-				featured_series { id name }
-				featured_series_id
-				featured_series_position
+				book_series(order_by: { position: asc }) {
+					position
+					series { id name }
+				}
 				contributions {
 					author { id name slug }
 				}
@@ -295,9 +296,10 @@ func (c *Client) getShelfBooks(ctx context.Context, statusID int) ([]models.Book
 					rating
 					default_audio_edition_id
 					default_ebook_edition_id
-					featured_series { id name }
-					featured_series_id
-					featured_series_position
+					book_series(order_by: { position: asc }) {
+						position
+						series { id name }
+					}
 					contributions {
 						author { id name slug }
 					}
