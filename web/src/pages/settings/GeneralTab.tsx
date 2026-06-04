@@ -59,6 +59,7 @@ export default function GeneralTab() {
     audiobook_dir?: string
     scanned_paths?: string[]
     no_files_found?: boolean
+    scan_error?: string
   } | null>(null)
   const [storage, setStorage] = useState<{ downloadDir: string; audiobookDownloadDir: string; libraryDir: string; audiobookDir: string } | null>(null)
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null)
@@ -477,7 +478,11 @@ export default function GeneralTab() {
                   </p>
                 )
               })()}
-              {(lastScan.no_files_found ?? lastScan.files_found === 0) && (
+              {lastScan.scan_error ? (
+                <p className="mt-2 text-amber-600 dark:text-amber-400">
+                  {lastScan.scan_error}
+                </p>
+              ) : (lastScan.no_files_found ?? lastScan.files_found === 0) && (
                 <p className="mt-2 text-amber-600 dark:text-amber-400">
                   {t('settings.general.scanNoFilesWarning', {
                     path: lastScan.library_dir || (lastScan.scanned_paths && lastScan.scanned_paths[0]) || '?',

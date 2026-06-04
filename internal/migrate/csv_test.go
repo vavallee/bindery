@@ -90,11 +90,14 @@ func TestRowFromFields(t *testing.T) {
 		in   []string
 		want csvRow
 	}{
-		{"empty", []string{}, csvRow{monitored: true, searchOnAdd: false}},
-		{"name only", []string{" Andy Weir "}, csvRow{name: "Andy Weir", monitored: true, searchOnAdd: false}},
-		{"name+monitored false", []string{"A", "false"}, csvRow{name: "A", monitored: false, searchOnAdd: false}},
-		{"name+monitored+search", []string{"A", "true", "true"}, csvRow{name: "A", monitored: true, searchOnAdd: true}},
-		{"unparseable monitored falls back", []string{"A", "gibberish"}, csvRow{name: "A", monitored: true, searchOnAdd: false}},
+		{"empty", []string{}, csvRow{monitored: true}},
+		{"name only", []string{" Andy Weir "}, csvRow{name: "Andy Weir", monitored: true}},
+		{"name+monitored false", []string{"A", "false"}, csvRow{name: "A", monitored: false}},
+		// #966: a third column is tolerated but ignored — the row parses to the
+		// same value as the equivalent two-column row, never an error.
+		{"legacy third column ignored", []string{"A", "true", "true"}, csvRow{name: "A", monitored: true}},
+		{"legacy third column ignored (monitored false)", []string{"A", "false", "true"}, csvRow{name: "A", monitored: false}},
+		{"unparseable monitored falls back", []string{"A", "gibberish"}, csvRow{name: "A", monitored: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -126,31 +129,33 @@ func TestParseCSVRows(t *testing.T) {
 			name: "csv two cols",
 			in:   "Andy Weir,true\nIsaac Asimov,false\n",
 			want: []csvRow{
-				{name: "Andy Weir", monitored: true, searchOnAdd: false},
-				{name: "Isaac Asimov", monitored: false, searchOnAdd: false},
+				{name: "Andy Weir", monitored: true},
+				{name: "Isaac Asimov", monitored: false},
 			},
 		},
 		{
-			name: "csv three cols",
+			// #966: a legacy three-column file still parses; the third column is
+			// ignored so both rows match the equivalent two-column result.
+			name: "csv three cols (legacy, third ignored)",
 			in:   "Andy Weir,true,true\nIsaac Asimov,true,false\n",
 			want: []csvRow{
-				{name: "Andy Weir", monitored: true, searchOnAdd: true},
-				{name: "Isaac Asimov", monitored: true, searchOnAdd: false},
+				{name: "Andy Weir", monitored: true},
+				{name: "Isaac Asimov", monitored: true},
 			},
 		},
 		{
 			name: "csv with header row skipped",
 			in:   "Author Name,Monitored,SearchOnAdd\nAndy Weir,true,false\nIsaac Asimov,false,true\n",
 			want: []csvRow{
-				{name: "Andy Weir", monitored: true, searchOnAdd: false},
-				{name: "Isaac Asimov", monitored: false, searchOnAdd: true},
+				{name: "Andy Weir", monitored: true},
+				{name: "Isaac Asimov", monitored: false},
 			},
 		},
 		{
 			name: "csv with 'name' header skipped",
 			in:   "name,monitored\nN. K. Jemisin,true\n",
 			want: []csvRow{
-				{name: "N. K. Jemisin", monitored: true, searchOnAdd: false},
+				{name: "N. K. Jemisin", monitored: true},
 			},
 		},
 		{
@@ -215,9 +220,10 @@ func TestImportCSVAuthors_HappyPath(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var searchCalls int32
-	// The catalogue-fetch callback now fires for EVERY newly-created author,
-	// regardless of the searchOnAdd column (it fetches metadata only, never
-	// auto-grabs). Both rows below are new, so expect two callbacks.
+	// The catalogue-fetch callback fires for EVERY newly-created author (it
+	// fetches metadata only, never auto-grabs). Both rows below are new, so
+	// expect two callbacks. The input uses the legacy three-column shape to
+	// prove a third column does not break import (#966).
 	wg.Add(2)
 	onSearch := func(_ *models.Author) {
 		atomic.AddInt32(&searchCalls, 1)
@@ -293,7 +299,7 @@ func TestImportCSVAuthors_PlainNamePopulatesCatalogue(t *testing.T) {
 		wg.Done()
 	}
 
-	// Plain-name input (no comma -> plain list path; searchOnAdd is false).
+	// Plain-name input (no comma -> plain list path).
 	res, err := ImportCSVAuthors(context.Background(), strings.NewReader("Andy Weir\n"), repo, agg, onSearch)
 	if err != nil {
 		t.Fatalf("ImportCSVAuthors: %v", err)
@@ -314,6 +320,47 @@ func TestImportCSVAuthors_PlainNamePopulatesCatalogue(t *testing.T) {
 	}
 	if name, _ := gotName.Load().(string); name != "Andy Weir" {
 		t.Errorf("callback got author %q, want %q", name, "Andy Weir")
+	}
+}
+
+// TestImportCSVAuthors_LegacyColumnFormats is the #966 backward-compat guard:
+// a two-column CSV imports, and a legacy three-column CSV (the now-retired
+// searchOnAdd column) still imports with the third column ignored — no error,
+// same row count.
+func TestImportCSVAuthors_LegacyColumnFormats(t *testing.T) {
+	provider := &stubProvider{
+		searchAuthorsFn: func(_ context.Context, q string) ([]models.Author, error) {
+			return []models.Author{{Name: q, SortName: q, ForeignID: "OL-" + q}}, nil
+		},
+	}
+
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"two columns", "Andy Weir,true\nIsaac Asimov,false\n"},
+		{"legacy three columns", "Andy Weir,true,true\nIsaac Asimov,false,false\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			database := newTestDB(t)
+			repo := db.NewAuthorRepo(database)
+			agg := metadata.NewAggregator(provider)
+
+			res, err := ImportCSVAuthors(context.Background(), strings.NewReader(tc.input), repo, agg, nil)
+			if err != nil {
+				t.Fatalf("ImportCSVAuthors: %v", err)
+			}
+			if res.Requested != 2 {
+				t.Errorf("Requested=%d want 2", res.Requested)
+			}
+			if res.Added != 2 {
+				t.Errorf("Added=%d want 2 (failures: %v)", res.Added, res.Failures)
+			}
+			if res.Errors != 0 {
+				t.Errorf("Errors=%d want 0 (%v)", res.Errors, res.Failures)
+			}
+		})
 	}
 }
 

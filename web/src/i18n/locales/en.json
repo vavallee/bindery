@@ -548,7 +548,7 @@
     },
     "import": {
       "csvHeading": "CSV of author names",
-      "csvDescription": "One name per line, or CSV columns name, monitored, searchOnAdd. Each name is resolved against OpenLibrary — the top match is added.",
+      "csvDescription": "One name per line, or CSV columns name, monitored. Each name is resolved against OpenLibrary — the top match is added. A third column, if present, is ignored for backward compatibility.",
       "uploadCsv": "Upload CSV",
       "importingCsv": "Importing…",
       "readarrHeading": "Readarr database",

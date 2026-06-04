@@ -28,6 +28,7 @@ type scanResultPayload struct {
 	AudiobookDir string   `json:"audiobook_dir"`
 	ScannedPaths []string `json:"scanned_paths"`
 	NoFilesFound bool     `json:"no_files_found"`
+	ScanError    string   `json:"scan_error"`
 }
 
 // visibilityFixture wires a Scanner with a SettingsRepo attached so the scan
@@ -167,6 +168,78 @@ func TestScanLibrary_SeparateAudiobookDirInScannedPaths(t *testing.T) {
 	}
 	if p.ScannedPaths[0] != libDir || p.ScannedPaths[1] != abDir {
 		t.Errorf("ScannedPaths = %v, want [%q %q]", p.ScannedPaths, libDir, abDir)
+	}
+}
+
+// TestScanLibrary_UnsetLibraryDirWritesError is the #965 repro for a literally
+// unset library directory. Previously ScanLibrary returned without writing any
+// result, so the UI kept showing a stale prior scan and the #962 "no files
+// found" warning never fired. The scan must now persist a result carrying a
+// scan_error and the zero-files signal.
+func TestScanLibrary_UnsetLibraryDirWritesError(t *testing.T) {
+	s, _, _, settings, ctx := visibilityFixture(t, "", "")
+
+	s.ScanLibrary(ctx)
+
+	p := readScanResult(t, ctx, settings)
+	if p.ScanError == "" {
+		t.Error("ScanError must be set when the library dir is unset")
+	}
+	if !p.NoFilesFound {
+		t.Error("NoFilesFound must be true when the library dir is unset")
+	}
+	if p.FilesFound != 0 {
+		t.Errorf("FilesFound = %d, want 0", p.FilesFound)
+	}
+}
+
+// TestScanLibrary_BookListErrorWritesError is the #965 repro for the second
+// early return: the book listing fails. To exercise it the BookRepo is built on
+// a CLOSED database (so books.List errors) while the SettingsRepo uses a live
+// database (so the failed-scan result can still be persisted and read back).
+func TestScanLibrary_BookListErrorWritesError(t *testing.T) {
+	// Library dir with one book file so the scan gets past the zero-files early
+	// return and reaches the books.List call.
+	libDir := t.TempDir()
+	epub := filepath.Join(libDir, "Some Book.epub")
+	if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Live DB backs everything the scanner needs to actually persist the result.
+	liveDB, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { liveDB.Close() })
+
+	// Separate DB that we close immediately so its BookRepo.List errors.
+	deadDB, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := deadDB.Close(); err != nil {
+		t.Fatalf("close dead db: %v", err)
+	}
+
+	books := db.NewBookRepo(deadDB) // List() will error
+	authors := db.NewAuthorRepo(liveDB)
+	history := db.NewHistoryRepo(liveDB)
+	downloads := db.NewDownloadRepo(liveDB)
+	clients := db.NewDownloadClientRepo(liveDB)
+	settings := db.NewSettingsRepo(liveDB)
+	s := NewScanner(downloads, clients, books, authors, history, libDir, "", "", "", "").
+		WithSettings(settings)
+	ctx := context.Background()
+
+	s.ScanLibrary(ctx)
+
+	p := readScanResult(t, ctx, settings)
+	if p.ScanError == "" {
+		t.Error("ScanError must be set when the book listing fails")
+	}
+	if p.FilesFound != 0 {
+		t.Errorf("FilesFound = %d, want 0 on the failed-scan result", p.FilesFound)
 	}
 }
 
