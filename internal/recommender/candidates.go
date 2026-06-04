@@ -44,7 +44,7 @@ func GenerateSeries(
 		nextPos := state.MaxPosition + 1
 		for _, sb := range full.Books {
 			pos := parsePosition(sb.PositionInSeries)
-			if pos != nextPos || sb.Book == nil {
+			if !floatEqual(pos, nextPos) || sb.Book == nil {
 				continue
 			}
 			if profile.OwnedForeignIDs[sb.Book.ForeignID] {
@@ -64,7 +64,7 @@ func GenerateSeries(
 		for _, missingPos := range state.MissingPositions {
 			for _, sb := range full.Books {
 				pos := parsePosition(sb.PositionInSeries)
-				if pos != missingPos || sb.Book == nil {
+				if !floatEqual(pos, missingPos) || sb.Book == nil {
 					continue
 				}
 				if profile.OwnedForeignIDs[sb.Book.ForeignID] {

@@ -21,6 +21,20 @@ type UserManagementHandler struct {
 	localAuthEnabled bool
 }
 
+// minPasswordLength is the minimum length enforced for locally-managed
+// passwords (admin Create and ResetPassword), matching the login/registration
+// flows in auth.go.
+const minPasswordLength = 8
+
+// validatePassword returns a user-facing error message when pw is too short,
+// or "" when it is acceptable.
+func validatePassword(pw string) string {
+	if len(pw) < minPasswordLength {
+		return "password must be at least 8 characters"
+	}
+	return ""
+}
+
 func NewUserManagementHandler(users *db.UserRepo) *UserManagementHandler {
 	return &UserManagementHandler{users: users, localAuthEnabled: true}
 }
@@ -85,6 +99,10 @@ func (h *UserManagementHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Username == "" || body.Password == "" {
 		writeErr(w, http.StatusBadRequest, "username and password required")
+		return
+	}
+	if msg := validatePassword(body.Password); msg != "" {
+		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
 	hash, err := auth.HashPassword(body.Password)
@@ -160,8 +178,8 @@ func (h *UserManagementHandler) ResetPassword(w http.ResponseWriter, r *http.Req
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if len(body.Password) < 8 {
-		writeErr(w, http.StatusBadRequest, "password must be at least 8 characters")
+	if msg := validatePassword(body.Password); msg != "" {
+		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
 	hash, err := auth.HashPassword(body.Password)

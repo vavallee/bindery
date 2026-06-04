@@ -179,6 +179,37 @@ func TestSeriesScore(t *testing.T) {
 	}
 }
 
+func TestFloatEqual(t *testing.T) {
+	// 0.1+0.2 != 0.3 under exact float64 ==, but should compare equal here.
+	if !floatEqual(0.1+0.2, 0.3) {
+		t.Errorf("floatEqual(0.1+0.2, 0.3) should be true (epsilon compare)")
+	}
+	if floatEqual(2.5, 3.0) {
+		t.Errorf("floatEqual(2.5, 3.0) should be false")
+	}
+	if !floatEqual(4, 4) {
+		t.Errorf("floatEqual(4, 4) should be true")
+	}
+}
+
+func TestSeriesScore_FractionalPositions(t *testing.T) {
+	sid := int64(7)
+	// MaxPosition 2.5 -> next-in-sequence is 3.5; a fractional missing entry at
+	// 1.5 should also be detected. Exact float == on parsed positions is
+	// brittle; the epsilon compare must still match.
+	profile := &UserProfile{
+		SeriesState: map[int64]SeriesState{
+			7: {SeriesID: 7, MaxPosition: 2.5, MissingPositions: []float64{1.5}},
+		},
+	}
+	if got := seriesScore(models.RecommendationCandidate{SeriesID: &sid, SeriesPos: "3.5"}, profile); got != 1.0 {
+		t.Errorf("fractional next-in-sequence: got %v, want 1.0", got)
+	}
+	if got := seriesScore(models.RecommendationCandidate{SeriesID: &sid, SeriesPos: "1.5"}, profile); got != 0.5 {
+		t.Errorf("fractional gap fill: got %v, want 0.5", got)
+	}
+}
+
 func TestCommunityScore(t *testing.T) {
 	// No ratings: should be 0
 	c := models.RecommendationCandidate{Rating: 0, RatingsCount: 0}

@@ -255,11 +255,14 @@ func (s *Syncer) run(ctx context.Context, cfg Config) {
 	s.setProgress(func(p *SyncProgress) {
 		p.Message = "done"
 	})
+	// Snapshot under lock — setProgress writes s.progress concurrently with the
+	// HTTP poller reading it, so read the stats through the locked getter.
+	final := s.Progress()
 	slog.Info("calibre sync complete",
 		"total", len(eligible),
-		"pushed", s.progress.Stats.Pushed,
-		"alreadyInCalibre", s.progress.Stats.AlreadyInCalibre,
-		"failed", s.progress.Stats.Failed)
+		"pushed", final.Stats.Pushed,
+		"alreadyInCalibre", final.Stats.AlreadyInCalibre,
+		"failed", final.Stats.Failed)
 }
 
 // pushPath returns the on-disk path to send to Calibre for the given

@@ -31,6 +31,36 @@ func TestAggregator_GetAuthorWorks_WorksProvider(t *testing.T) {
 	}
 }
 
+// TestAggregator_GetAuthorWorks_CallerCannotPoisonCache verifies that a caller
+// mutating the returned slice cannot corrupt the shared cache: both the cache
+// set and the cache hit must clone, matching rawPrimaryAuthorWorks.
+func TestAggregator_GetAuthorWorks_CallerCannotPoisonCache(t *testing.T) {
+	books := []models.Book{{Title: "Dune"}, {Title: "Dune Messiah"}}
+	primary := &mockWorksProvider{
+		mockProvider: mockProvider{name: "ol", authorWorks: books},
+	}
+	agg := &Aggregator{
+		primary: primary,
+		cache:   newTTLCache(time.Minute),
+	}
+
+	first, err := agg.GetAuthorWorks(context.Background(), "OL777A")
+	if err != nil {
+		t.Fatalf("GetAuthorWorks: %v", err)
+	}
+	// Poison the returned slice — must not bleed into the cached copy.
+	first[0].Title = "POISONED"
+
+	primary.authorWorks = nil // force the next call to come from cache
+	second, err := agg.GetAuthorWorks(context.Background(), "OL777A")
+	if err != nil {
+		t.Fatalf("GetAuthorWorks (cache): %v", err)
+	}
+	if second[0].Title != "Dune" {
+		t.Errorf("cache poisoned by caller mutation: got %q, want %q", second[0].Title, "Dune")
+	}
+}
+
 func TestAggregator_GetAuthorWorks_Fallback(t *testing.T) {
 	// Primary does not implement worksProvider → falls back to SearchBooks.
 	books := []models.Book{{Title: "Foundation"}, {Title: "Foundation and Empire"}}

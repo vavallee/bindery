@@ -26,7 +26,7 @@ type authorWorksByNameProvider interface {
 func (a *Aggregator) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, error) {
 	key := "authorworks:" + authorForeignID
 	if cached, ok := a.cache.get(key); ok {
-		return cached.([]models.Book), nil
+		return cloneBooks(cached.([]models.Book)), nil
 	}
 
 	books, err := a.rawPrimaryAuthorWorks(ctx, authorForeignID)
@@ -34,7 +34,7 @@ func (a *Aggregator) GetAuthorWorks(ctx context.Context, authorForeignID string)
 		return nil, err
 	}
 	a.enrichMissingAuthorWorkCovers(ctx, books)
-	a.cache.set(key, books)
+	a.cache.set(key, cloneBooks(books))
 	return books, nil
 }
 
@@ -44,7 +44,7 @@ func (a *Aggregator) GetAuthorWorks(ctx context.Context, authorForeignID string)
 func (a *Aggregator) GetAuthorWorksForAuthor(ctx context.Context, author models.Author) ([]models.Book, error) {
 	key := "authorworks-author:" + author.ForeignID + ":" + strings.ToLower(strings.TrimSpace(author.Name))
 	if cached, ok := a.cache.get(key); ok {
-		return cached.([]models.Book), nil
+		return cloneBooks(cached.([]models.Book)), nil
 	}
 
 	books, err := a.rawPrimaryAuthorWorks(ctx, author.ForeignID)
@@ -74,7 +74,7 @@ func (a *Aggregator) GetAuthorWorksForAuthor(ctx context.Context, author models.
 
 	a.enrichMissingAuthorWorkCovers(ctx, books)
 	if supplementsComplete {
-		a.cache.set(key, books)
+		a.cache.set(key, cloneBooks(books))
 	}
 	return books, nil
 }

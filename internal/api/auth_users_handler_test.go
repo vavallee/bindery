@@ -162,6 +162,30 @@ func TestUserMgmt_Create_MissingPassword(t *testing.T) {
 	}
 }
 
+// TestUserMgmt_Create_ShortPassword asserts Create enforces the same 8-char
+// minimum as ResetPassword. A 7-char password must be rejected and no row
+// created; an 8-char one must succeed.
+func TestUserMgmt_Create_ShortPassword(t *testing.T) {
+	h, users := newUserMgmtFixture(t)
+
+	rec := httptest.NewRecorder()
+	h.Create(rec, jsonReq(http.MethodPost, "/api/v1/auth/users",
+		`{"username":"shorty","password":"1234567"}`, nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("7-char password status=%d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if u, _ := users.GetByUsername(context.Background(), "shorty"); u != nil {
+		t.Error("user created despite too-short password")
+	}
+
+	rec = httptest.NewRecorder()
+	h.Create(rec, jsonReq(http.MethodPost, "/api/v1/auth/users",
+		`{"username":"justok","password":"12345678"}`, nil))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("8-char password status=%d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestUserMgmt_Create_InvalidJSON(t *testing.T) {
 	h, _ := newUserMgmtFixture(t)
 	rec := httptest.NewRecorder()

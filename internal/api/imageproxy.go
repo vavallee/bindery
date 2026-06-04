@@ -43,7 +43,7 @@ func NewImageProxyHandler(dataDir string) *ImageProxyHandler {
 		cacheDir: filepath.Join(dataDir, "image-cache"),
 		client: &http.Client{
 			Timeout:   15 * time.Second,
-			Transport: httpsec.DefaultProxyTransport(),
+			Transport: imageProxyTransport(),
 			// Re-validate redirect targets — a permissive upstream could otherwise
 			// redirect from a public host into the LAN (cloud metadata, internal
 			// services) and leak the body back through the cache.
@@ -61,6 +61,31 @@ func NewImageProxyHandler(dataDir string) *ImageProxyHandler {
 	}
 	go h.migrateFlatCache()
 	return h
+}
+
+// imageProxyTransport returns the RoundTripper for the image-proxy client with a
+// per-request SSRF-revalidating DialContext installed, closing the DNS-rebind
+// TOCTOU window between the up-front URL validation and the actual dial.
+//
+// It starts from httpsec.DefaultProxyTransport() (preserving outbound-proxy
+// support added in #987) and clones it so installing DialContext does not mutate
+// the shared transport. Caveat: when an outbound proxy IS configured the
+// connection is dialled to the proxy address, so the dial-time re-check sees the
+// proxy rather than the upstream host (the same documented limitation as the
+// newznab client); for the default no-proxy case this fully closes the rebind
+// window. If the underlying transport is not an *http.Transport we fall back to
+// a fresh transport carrying the proxy resolver plus DialContext.
+func imageProxyTransport() http.RoundTripper {
+	base := httpsec.DefaultProxyTransport()
+	if t, ok := base.(*http.Transport); ok {
+		c := t.Clone()
+		c.DialContext = httpsec.NewDialContext(httpsec.PolicyStrict)
+		return c
+	}
+	return &http.Transport{
+		Proxy:       httpsec.ProxyFunc(),
+		DialContext: httpsec.NewDialContext(httpsec.PolicyStrict),
+	}
 }
 
 // Serve handles GET /api/v1/images?url=<encoded-external-url>.

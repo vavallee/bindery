@@ -183,6 +183,16 @@ func medianReleaseYear(books []models.Book) int {
 
 // parsePosition converts a series position string like "1", "2.5" to float64.
 // Returns 0 for empty or unparseable values.
+// positionEpsilon is the tolerance for comparing parsed series positions.
+// Positions are small integers or short decimals (e.g. "2.5"), so any pair
+// closer than this is treated as equal — avoiding exact float64 == pitfalls.
+const positionEpsilon = 1e-9
+
+// floatEqual reports whether a and b are within positionEpsilon of each other.
+func floatEqual(a, b float64) bool {
+	return math.Abs(a-b) < positionEpsilon
+}
+
 func parsePosition(s string) float64 {
 	s = strings.TrimSpace(s)
 	if s == "" {

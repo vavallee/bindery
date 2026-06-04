@@ -122,13 +122,13 @@ func seriesScore(c models.RecommendationCandidate, p *UserProfile) float64 {
 	}
 
 	// Next-in-sequence: one position after the user's max.
-	if pos == state.MaxPosition+1 {
+	if floatEqual(pos, state.MaxPosition+1) {
 		return 1.0
 	}
 
 	// Fills a gap in the user's collection.
 	for _, missing := range state.MissingPositions {
-		if pos == missing {
+		if floatEqual(pos, missing) {
 			return 0.5
 		}
 	}

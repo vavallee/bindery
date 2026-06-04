@@ -7,7 +7,10 @@ func JaroWinkler(s, t string) float64 {
 	if s == t {
 		return 1
 	}
-	sl, tl := len(s), len(t)
+	// Index over runes, not bytes: multibyte UTF-8 (CJK, accented Latin) must
+	// be compared codepoint-by-codepoint or the scores are meaningless.
+	sr, tr := []rune(s), []rune(t)
+	sl, tl := len(sr), len(tr)
 	if sl == 0 || tl == 0 {
 		return 0
 	}
@@ -37,7 +40,7 @@ func JaroWinkler(s, t string) float64 {
 		lo := max(0, i-matchWindow)
 		hi := min(tl, i+matchWindow+1)
 		for j := lo; j < hi; j++ {
-			if tMatch[j] || s[i] != t[j] {
+			if tMatch[j] || sr[i] != tr[j] {
 				continue
 			}
 			sMatch[i] = true
@@ -50,7 +53,7 @@ func JaroWinkler(s, t string) float64 {
 		return 0
 	}
 
-	tr := 0
+	transpositions := 0
 	k := 0
 	for i := 0; i < sl; i++ {
 		if !sMatch[i] {
@@ -59,17 +62,17 @@ func JaroWinkler(s, t string) float64 {
 		for !tMatch[k] {
 			k++
 		}
-		if s[i] != t[k] {
-			tr++
+		if sr[i] != tr[k] {
+			transpositions++
 		}
 		k++
 	}
 
-	jaro := (float64(m)/float64(sl) + float64(m)/float64(tl) + float64(m-tr/2)/float64(m)) / 3
+	jaro := (float64(m)/float64(sl) + float64(m)/float64(tl) + float64(m-transpositions/2)/float64(m)) / 3
 
 	prefix := 0
 	for i := 0; i < 4 && i < sl && i < tl; i++ {
-		if s[i] != t[i] {
+		if sr[i] != tr[i] {
 			break
 		}
 		prefix++
