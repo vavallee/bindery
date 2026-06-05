@@ -241,6 +241,21 @@ For qBittorrent, Bindery also sends a save path when submitting torrent grabs. I
 
 After fixing a path or category mismatch, use **Queue → Retry import** on an `importFailed` item. This is also the right action after manually moving the completed torrent in qBittorrent to a path Bindery can read. Bindery resets the import retry counter and imports from the existing completed download, so the release does not need to be grabbed or downloaded again.
 
+## Handing off to another library tool (CWA, Calibre, Storyteller)
+
+If a separate tool manages your library, there are two distinct topologies. Pick by who owns the library directory.
+
+**1. Bindery owns the library, mirror a copy to CWA.** Bindery places the imported file in its library (`hardlink`/`copy`/`move` mode), *and* additionally copies it into a Calibre-Web-Automated ingest folder. Set **Settings → Integrations → Calibre → CWA ingest path** (`cwa.ingest_path`). Use this when Bindery's library and CWA's library are the same directory and you just want CWA to also see new ebooks.
+
+**2. An external tool owns the library (drop folder).** Bindery does *not* write into the library; instead it renames the finished download into a drop folder and lets the other tool ingest it and produce the managed copy. This is the right setup for "Bindery → `/cwa-book-ingest` → CWA writes `/books`", for Calibre auto-ingest, and for Storyteller's watched folder. Configure under **Settings → General → File Naming** (visible when Import Mode is **External**):
+
+- Set **Import Mode** to `External`.
+- **Drop folder** — the watch folder the other tool ingests from (e.g. `/cwa-book-ingest`). Empty disables the drop and Bindery just hands off in place (the file stays in the download dir).
+- **Layout** — `flat` (a sanely-named file in the folder root, what most watch-folder tools expect) or `templated` (recreate the `{Author}/{Title (Year)}/…` tree inside the drop folder).
+- **Placement** — `copy` (default; safest, since the ingesting tool usually deletes what it consumes) or `hardlink` (disk-free, same filesystem only). The download source is never moved, so torrents keep seeding.
+
+Bindery parks the download as *handed off* and reconciles the managed copy the external tool lands in `BINDERY_LIBRARY_DIR` on the next **library scan** (so the library dir must still point at where the external tool ultimately writes). Single-format Storyteller works today by pointing the drop folder at Storyteller's watch folder; guaranteed ebook+audiobook pair-gating is tracked as a follow-up (#942).
+
 ## Environment variables
 
 | Variable | Default | Description |

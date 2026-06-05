@@ -42,6 +42,7 @@ export default function GeneralTab() {
   const [settings, setSettings] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<string | null>(null)
+  const [dropErr, setDropErr] = useState<string | null>(null)
   const [backups, setBackups] = useState<Array<{ name: string; size: number; modTime: string }>>([])
   const [creatingBackup, setCreatingBackup] = useState(false)
   const [deletingBackup, setDeletingBackup] = useState<string | null>(null)
@@ -100,6 +101,21 @@ export default function GeneralTab() {
       await api.setSetting(key, settings[key] ?? '')
     } catch (err) {
       console.error(err)
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  // saveDropFolder surfaces the server-side path validation error inline (an
+  // unwritable / non-existent drop folder is a common misconfiguration), unlike
+  // saveSetting which only logs.
+  const saveDropFolder = async () => {
+    setSaving('import.drop_folder')
+    setDropErr(null)
+    try {
+      await api.setSetting('import.drop_folder', settings['import.drop_folder'] ?? '')
+    } catch (err) {
+      setDropErr(err instanceof Error ? err.message : 'Save failed')
     } finally {
       setSaving(null)
     }
@@ -307,6 +323,64 @@ export default function GeneralTab() {
               ))}
             </div>
           </div>
+          {(settings['import.mode'] ?? 'move') === 'external' && (
+            <div className="border-t border-slate-200 dark:border-zinc-800 pt-3 space-y-3">
+              <div>
+                <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.general.dropFolder', 'Drop folder')}</label>
+                <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+                  {t('settings.general.dropFolderHint', 'Optional. In External mode, Bindery renames each finished download into this folder for a watch-folder tool (Calibre-Web-Automated, Storyteller) to ingest, instead of leaving it in the download dir. The source is never moved, so torrents keep seeding. Bindery still reconciles the managed copy on the next library scan. Leave empty to hand off in place.')}
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    value={settings['import.drop_folder'] ?? ''}
+                    onChange={e => { setSettings(s => ({ ...s, 'import.drop_folder': e.target.value })); setDropErr(null) }}
+                    placeholder="/cwa-book-ingest"
+                    className={inputCls + ' flex-1'}
+                  />
+                  <button
+                    onClick={saveDropFolder}
+                    disabled={saving === 'import.drop_folder'}
+                    className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium disabled:opacity-50"
+                  >
+                    {saving === 'import.drop_folder' ? t('common.saving') : t('common.save')}
+                  </button>
+                </div>
+                {dropErr && <p className="text-xs text-red-600 dark:text-red-400 mt-1">{dropErr}</p>}
+              </div>
+              <div className="flex gap-6 flex-wrap">
+                <div>
+                  <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.general.dropLayout', 'Layout')}</label>
+                  <select
+                    value={settings['import.drop_layout'] ?? 'flat'}
+                    onChange={async e => {
+                      const v = e.target.value
+                      setSettings(s => ({ ...s, 'import.drop_layout': v }))
+                      await api.setSetting('import.drop_layout', v).catch(console.error)
+                    }}
+                    className={inputCls}
+                  >
+                    <option value="flat">{t('settings.general.dropLayoutFlat', 'Flat (file in folder root)')}</option>
+                    <option value="templated">{t('settings.general.dropLayoutTemplated', 'Templated ({Author}/{Title}…)')}</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.general.dropLinkMode', 'Placement')}</label>
+                  <select
+                    value={settings['import.drop_link_mode'] ?? 'copy'}
+                    onChange={async e => {
+                      const v = e.target.value
+                      setSettings(s => ({ ...s, 'import.drop_link_mode': v }))
+                      await api.setSetting('import.drop_link_mode', v).catch(console.error)
+                    }}
+                    className={inputCls}
+                  >
+                    <option value="copy">{t('settings.general.dropLinkCopy', 'Copy')}</option>
+                    <option value="hardlink">{t('settings.general.dropLinkHardlink', 'Hardlink (same filesystem)')}</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
           <div>
             <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.general.bookTemplate')}</label>
             <div className="flex gap-2">

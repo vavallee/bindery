@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -443,4 +445,64 @@ func TestSettings_MetadataPrimaryProvider(t *testing.T) {
 			t.Errorf("value %q: expected 400, got %d", tc.value, rec.Code)
 		}
 	}
+}
+
+// TestSettings_ImportDropValidation covers the three drop-folder handoff keys
+// (#941): the folder must be an existing directory (empty disables), and the
+// layout / link-mode enums reject typos.
+func TestSettings_ImportDropValidation(t *testing.T) {
+	h, repo, ctx := settingsFixture(t)
+
+	put := func(key, value string) int {
+		body := bytes.NewBufferString(`{"value":` + mustJSON(value) + `}`)
+		req := withKey(httptest.NewRequest(http.MethodPut, "/api/v1/settings/"+key, body), key)
+		rec := httptest.NewRecorder()
+		h.Set(rec, req)
+		return rec.Code
+	}
+
+	dir := t.TempDir()
+	notADir := filepath.Join(dir, "afile")
+	if err := os.WriteFile(notADir, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// drop_folder: empty ok (disabled), existing dir ok, missing/file rejected.
+	if code := put(SettingImportDropFolder, ""); code != http.StatusOK {
+		t.Errorf("empty drop_folder: got %d, want 200", code)
+	}
+	if code := put(SettingImportDropFolder, dir); code != http.StatusOK {
+		t.Errorf("valid drop_folder dir: got %d, want 200", code)
+	}
+	got, _ := repo.Get(ctx, SettingImportDropFolder)
+	if got == nil || got.Value != dir {
+		t.Errorf("drop_folder not persisted: %+v", got)
+	}
+	if code := put(SettingImportDropFolder, filepath.Join(dir, "does-not-exist")); code != http.StatusBadRequest {
+		t.Errorf("missing drop_folder: got %d, want 400", code)
+	}
+	if code := put(SettingImportDropFolder, notADir); code != http.StatusBadRequest {
+		t.Errorf("drop_folder pointing at a file: got %d, want 400", code)
+	}
+
+	// layout enum.
+	if code := put(SettingImportDropLayout, "templated"); code != http.StatusOK {
+		t.Errorf("valid layout: got %d, want 200", code)
+	}
+	if code := put(SettingImportDropLayout, "sideways"); code != http.StatusBadRequest {
+		t.Errorf("bad layout: got %d, want 400", code)
+	}
+
+	// link-mode enum (move is intentionally rejected — source must keep seeding).
+	if code := put(SettingImportDropLinkMode, "hardlink"); code != http.StatusOK {
+		t.Errorf("valid link mode: got %d, want 200", code)
+	}
+	if code := put(SettingImportDropLinkMode, "move"); code != http.StatusBadRequest {
+		t.Errorf("link mode 'move': got %d, want 400", code)
+	}
+}
+
+func mustJSON(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }

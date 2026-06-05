@@ -46,6 +46,29 @@ const SettingDefaultLibraryRootFolderID = "library.defaultRootFolderId"
 // "openlibrary" for backwards compatibility.
 const SettingMetadataPrimaryProvider = "metadata.primary_provider"
 
+// Drop-folder handoff settings (#941). When import.mode is "external" and a
+// drop folder is configured, bindery renames the finished download into that
+// folder (copy/hardlink, never move) instead of leaving it in the download
+// dir, then parks the download in StateImportExternal so the library scan
+// reconciles the managed copy the external tool (CWA, Calibre, Storyteller…)
+// produces. This is the "external tool owns the library" topology, distinct
+// from the cwa.ingest_path mirror (where bindery owns the library and copies
+// an extra file out). The importer reads these keys as string literals to
+// avoid an import cycle; keep the literals in sync with these constants.
+const (
+	// SettingImportDropFolder is the destination directory for external-mode
+	// handoff. Empty/unset disables the feature (external mode behaves as before).
+	SettingImportDropFolder = "import.drop_folder"
+	// SettingImportDropLayout is "flat" (default — sanely-named file in the
+	// folder root, what watch-folder tools expect) or "templated" (recreate the
+	// {Author}/{Title (Year)}/… structure inside the drop folder).
+	SettingImportDropLayout = "import.drop_layout"
+	// SettingImportDropLinkMode is "copy" (default, safest — the external tool
+	// typically deletes what it ingests) or "hardlink" (disk-free same-fs). The
+	// source is never moved, so the download keeps seeding.
+	SettingImportDropLinkMode = "import.drop_link_mode"
+)
+
 type SettingsHandler struct {
 	settings *db.SettingsRepo
 }
@@ -296,6 +319,33 @@ func validateSettingValue(key, value string) error {
 		}
 		if !info.IsDir() {
 			return fmt.Errorf("cwa.ingest_path %q is not a directory", value)
+		}
+	case SettingImportDropFolder:
+		// Empty = feature off. Non-empty must resolve to an existing writable
+		// directory so a typo fails loudly here, not silently at import time.
+		if value == "" {
+			return nil
+		}
+		info, err := os.Stat(value)
+		if err != nil {
+			return fmt.Errorf("import.drop_folder %q: %w (ensure the path is accessible inside the bindery container, check volume mounts)", value, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("import.drop_folder %q is not a directory", value)
+		}
+	case SettingImportDropLayout:
+		if value == "" {
+			return nil
+		}
+		if value != "flat" && value != "templated" {
+			return fmt.Errorf("import.drop_layout %q is not one of: flat, templated", value)
+		}
+	case SettingImportDropLinkMode:
+		if value == "" {
+			return nil
+		}
+		if value != "copy" && value != "hardlink" {
+			return fmt.Errorf("import.drop_link_mode %q is not one of: copy, hardlink", value)
 		}
 	case SettingCalibreMode:
 		// Canonical values only. An empty string falls through to the
