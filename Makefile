@@ -1,4 +1,4 @@
-.PHONY: build dev test lint clean docker-build web-build web-dev help security helm-lint sbom smoke predeploy-smoke abs-contract
+.PHONY: build dev test lint clean docker-build web-build web-dev help security helm-lint sbom smoke predeploy-smoke abs-contract check changelog
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -36,6 +36,19 @@ lint-go: ## Run Go linter only
 
 lint-web: ## Run frontend linter only
 	cd web && npm run lint
+
+check: ## Run everything the gating CI checks run (do this before opening a PR)
+	go build ./...
+	go vet ./...
+	golangci-lint run ./...
+	go test -race ./cmd/... ./internal/...
+	cd web && npm ci && npm run typecheck && npm run lint && npm run build && npm test
+
+changelog: ## Preview the unreleased changelog assembled from changelog.d/*.md
+	@found=0; for f in changelog.d/*.md; do \
+		case "$$f" in changelog.d/README.md) continue ;; esac; \
+		[ -e "$$f" ] || continue; found=1; cat "$$f"; echo; \
+	done; [ "$$found" = 1 ] || echo "(no changelog fragments in changelog.d/)"
 
 docker-build: ## Build Docker image
 	docker build -t ghcr.io/vavallee/bindery:$(VERSION) -t ghcr.io/vavallee/bindery:latest .

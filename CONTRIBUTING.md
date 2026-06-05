@@ -107,7 +107,14 @@ A failing check at any step aborts the release — no artifacts are published fr
 
 ### Running the full local check suite
 
-Mirror the CI matrix locally before opening a PR:
+The fastest path is the one-shot target, which runs the same things the gating
+CI checks run:
+
+```bash
+make check
+```
+
+That is equivalent to the commands below; run them individually while iterating:
 
 ```bash
 # Go: format, vet, lint, vuln scan, test
@@ -134,6 +141,40 @@ docker buildx build --platform linux/amd64,linux/arm64 -t bindery:local .
 # Release rehearsal (no publish, no tag)
 goreleaser release --snapshot --clean
 ```
+
+### Which checks actually block a PR
+
+Bindery runs a deliberately heavy security suite (CodeQL, Semgrep, gosec, Grype,
+Checkov, Hadolint, gitleaks, ZAP DAST, SBOM, Scorecard). **Most of those are
+advisory** — they surface findings in the Security tab but do not block merge,
+and some go red for reasons unrelated to your change (e.g. *Container Scan*
+flagging a CVE in the base image). Only **lint**, **validate (Go)**, and
+**Security Summary** are required to merge. If a non-required scan is red,
+mention it in the PR and a maintainer will tell you whether it's pre-existing.
+
+New/changed lines should be ≥70% covered (enforced on the patch via Codecov);
+doc- and config-only PRs have no measured lines and pass automatically.
+
+## Database migrations — numbering convention
+
+Schema changes are additive SQL files in `internal/db/migrations/`, applied
+idempotently at startup, named `NNN_short_description.sql`.
+
+- **Use the next free number** — look at the highest existing file and add one.
+- **The gap at `010` is intentional**; numbering follows the filename prefix, not
+  slice position. Don't fill the gap.
+- Two files sharing a number are rejected at boot (the duplicate-version guard),
+  so if your branch and `main` both added `0NN`, **renumber yours** to the next
+  free slot when you rebase.
+- Migrations are forward-only and must not destructively rewrite existing rows.
+
+## Changelog — add a fragment, don't edit CHANGELOG.md
+
+Editing the single `CHANGELOG.md` in every PR causes constant merge conflicts.
+Instead, drop a small fragment under [`changelog.d/`](changelog.d/) and leave
+`CHANGELOG.md` alone — a maintainer assembles fragments at release time. One
+fragment per PR; format and examples are in
+[`changelog.d/README.md`](changelog.d/README.md). Preview with `make changelog`.
 
 ## Pull request flow
 
