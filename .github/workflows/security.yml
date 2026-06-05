@@ -36,40 +36,12 @@ concurrency:
 
 jobs:
   # ── Go SAST: gosec only — golangci-lint and govulncheck run in ci.yml lint ──
-  sast-go:
-    name: SAST – Go
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      security-events: write
-    steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
-        with:
-          egress-policy: audit
-
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version: "1.25.11"
-          cache: true
-
-      - name: gosec (SARIF)
-        uses: securego/gosec@5f4eec95fa28ce5dc6cf555de8c242cb57545f01 # master
-        with:
-          # G402 (TLS/cookie insecure) excluded: cookie Secure flag is dynamic (auto-detected
-          # from r.TLS and X-Forwarded-Proto, overridable via BINDERY_COOKIE_SECURE) and gosec
-          # only accepts literal `true`. Safety is enforced by cookie config logic + docs.
-          args: '-no-fail -fmt sarif -out gosec.sarif -exclude=G101,G402 ./...'
-
-      - name: Upload gosec SARIF
-        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4.35.2
-        if: always()
-        with:
-          sarif_file: gosec.sarif
-          category: gosec
+  # gosec runs as part of golangci-lint in ci.yml (blocking, on every push/PR),
+  # so a second standalone gosec here was redundant — and worse, it was
+  # advisory-only (-no-fail) with a *different* exclude set (G101,G402) that
+  # suppressed hardcoded-credential and TLS checks the golangci run enforces.
+  # Removed; golangci's gosec is the single, stricter source of truth. CodeQL
+  # (codeql.yml) still feeds the Security tab and covers Scorecard's SAST signal.
 
   # ── Frontend SAST: Semgrep + npm audit + ESLint security ───────────────────
   sast-frontend:
@@ -230,7 +202,7 @@ jobs:
           sarif_file: checkov.sarif
           category: checkov
 
-  # ── Container scan: Trivy + Grype + Syft SBOM ────────────────────────────
+  # ── Container scan: Grype + Syft SBOM ────────────────────────────────────
   container-scan:
     name: Container Scan
     runs-on: ubuntu-latest
@@ -257,22 +229,10 @@ jobs:
             -t bindery:scan \
             .
 
-      - name: Trivy vulnerability scan (SARIF)
-        uses: aquasecurity/trivy-action@1994662b5555670344cd84d29ed3cad4bd26f31c # master
-        with:
-          image-ref: bindery:scan
-          format: sarif
-          output: trivy.sarif
-          severity: CRITICAL,HIGH
-          exit-code: '1'
-
-      - name: Upload Trivy SARIF
-        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4.35.2
-        if: always()
-        with:
-          sarif_file: trivy.sarif
-          category: trivy
-
+      # Grype is the single image CVE scanner (it pairs with the Syft SBOM
+      # below). Trivy was removed: it overlapped Grype ~90% on image-CVE
+      # coverage, doubling scan time and Security-tab noise for little marginal
+      # signal. Grype's fail-build gate keeps CRITICAL/HIGH CVEs blocking.
       - name: Grype vulnerability scan (SARIF)
         uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
         id: grype
@@ -399,7 +359,6 @@ jobs:
     name: Security Summary
     runs-on: ubuntu-latest
     needs:
-      - sast-go
       - sast-frontend
       - secrets-scan
       - iac-scan
@@ -420,11 +379,10 @@ jobs:
 
           | Job | Status |
           |-----|--------|
-          | SAST – Go (gosec) | ${{ needs.sast-go.result }} |
           | SAST – Frontend (Semgrep, npm audit, ESLint) | ${{ needs.sast-frontend.result }} |
           | Secrets Scan (Gitleaks) | ${{ needs.secrets-scan.result }} |
           | IaC Scan (Hadolint, Helm lint, Checkov) | ${{ needs.iac-scan.result }} |
-          | Container Scan (Trivy, Grype, Syft SBOM) | ${{ needs.container-scan.result }} |
+          | Container Scan (Grype, Syft SBOM) | ${{ needs.container-scan.result }} |
           | DAST – ZAP Baseline | ${{ needs.dast-api.result }} |
           | Helm Policy Tests | ${{ needs.policy-test.result }} |
 

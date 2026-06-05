@@ -2,13 +2,17 @@ coverage:
   status:
     project:
       default:
+        # Block when overall coverage drops more than 1% vs the base — catches
+        # silent erosion. (Was informational, so it never enforced anything.)
         target: auto
         threshold: 1%
-        informational: true
+        informational: false
     patch:
       default:
-        target: auto
-        informational: true
+        # New/changed lines must be >=70% covered. Patch only measures the diff,
+        # so doc-/config-only PRs (no measurable lines) pass automatically.
+        target: 70%
+        informational: false
 
 comment:
   layout: "reach, diff, flags, files"
