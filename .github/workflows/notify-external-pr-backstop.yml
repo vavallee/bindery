@@ -42,6 +42,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          MAINTAINER_ID: ${{ vars.DISCORD_MAINTAINER_ID }}
           REPO: ${{ github.repository }}
           REPO_OWNER: ${{ github.repository_owner }}
           LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days || '7' }}
@@ -90,12 +91,18 @@ jobs:
             if [[ "$labels" == *"bindery-notified"* ]]; then continue; fi
 
             echo "Backstop posting for PR #${num} by ${author}"
+            MENTION=""
+            if [ -n "${MAINTAINER_ID:-}" ]; then
+              MENTION="<@${MAINTAINER_ID}> "
+            fi
             PAYLOAD=$(jq -nc \
               --arg title "$title" \
               --arg url "$url" \
               --arg author "$author" \
               --arg num "$num" \
-              '{content: "📥 New PR #\($num) by **\($author)** (cron-caught): \($title)\n\($url)"}')
+              --arg mention "$MENTION" \
+              '{content: "\($mention)📥 New PR #\($num) by **\($author)** (cron-caught): \($title)\n\($url)",
+                allowed_mentions: {parse: ["users"]}}')
             HTTP=$(curl -sS -o /dev/null -w "%{http_code}" \
               -X POST -H "Content-Type: application/json" \
               -d "$PAYLOAD" "$WEBHOOK") || HTTP=000

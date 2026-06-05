@@ -44,6 +44,11 @@ jobs:
         id: post
         env:
           WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          # Optional: a Discord user ID to @mention so the maintainer gets a real
+          # ping (a plain channel post is easy to miss). Stored as a repo variable
+          # rather than hardcoded so the ID isn't baked into this public file and
+          # is easy to change. Empty → no mention.
+          MAINTAINER_ID: ${{ vars.DISCORD_MAINTAINER_ID }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
@@ -59,13 +64,19 @@ jobs:
           if [ "$PR_DRAFT" = "true" ]; then
             DRAFT_TAG=" (draft)"
           fi
+          MENTION=""
+          if [ -n "$MAINTAINER_ID" ]; then
+            MENTION="<@${MAINTAINER_ID}> "
+          fi
           PAYLOAD=$(jq -nc \
             --arg title "$PR_TITLE" \
             --arg url "$PR_URL" \
             --arg author "$PR_AUTHOR" \
             --arg num "$PR_NUMBER" \
             --arg draft "$DRAFT_TAG" \
-            '{content: "📥 New PR #\($num) by **\($author)**\($draft): \($title)\n\($url)"}')
+            --arg mention "$MENTION" \
+            '{content: "\($mention)📥 New PR #\($num) by **\($author)**\($draft): \($title)\n\($url)",
+              allowed_mentions: {parse: ["users"]}}')
           HTTP=$(curl -sS -o /dev/null -w "%{http_code}" \
             -X POST -H "Content-Type: application/json" \
             -d "$PAYLOAD" "$WEBHOOK")
