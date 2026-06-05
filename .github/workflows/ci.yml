@@ -9,9 +9,19 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded runs on the same ref so rapid pushes to a PR (or a
+# back-to-back merge train) don't pile multiple full 17-job runs onto the
+# runner queue — the cause of the release-tag CI sitting queued for ~20 min
+# after a batch of merges. Scoped to pull_request so a push to main or a tag
+# (the deploy path) is never cancelled mid-flight.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # ── Parallel checks — all events ───────────────────────────────────────────
   lint:
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -44,6 +54,7 @@ jobs:
       - run: npm run typecheck --prefix web
 
   smoke:
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -71,6 +82,7 @@ jobs:
   # in CI when both -race and -covermode=atomic compounded.
   validate-go:
     name: validate (Go)
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
@@ -99,6 +111,7 @@ jobs:
   # (no coverage flag, just -race).
   validate-race-go:
     name: validate (Go race)
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
@@ -118,6 +131,7 @@ jobs:
 
   validate-frontend:
     name: validate (frontend)
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
@@ -139,6 +153,7 @@ jobs:
 
   # ── Gate: fast tests that must pass before image + release ─────────────────
   test:
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/development' || startsWith(github.ref, 'refs/tags/v')
     steps:
@@ -172,6 +187,7 @@ jobs:
   # Race-detector run — parallel with image/goreleaser, not a deploy gate.
   # A failure shows as a non-blocking check; fix before the next release.
   race:
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     steps:
@@ -192,6 +208,7 @@ jobs:
   # ── Docker image — runs after test passes ──────────────────────────────────
   image:
     needs: test
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -271,6 +288,7 @@ jobs:
     name: Deploy to dev
     needs: image
     if: github.ref == 'refs/heads/development'
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -347,6 +365,7 @@ jobs:
   goreleaser:
     needs: test
     if: startsWith(github.ref, 'refs/tags/v')
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -424,6 +443,7 @@ jobs:
   # real pinned ABS instance when the env vars below are provided.
   abs-contract:
     name: ABS contract
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -452,6 +472,7 @@ jobs:
     name: Pre-deploy smoke
     needs: image
     if: startsWith(github.ref, 'refs/tags/v')
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -504,6 +525,7 @@ jobs:
     name: Deploy to prod
     needs: [image, goreleaser, predeploy-smoke]
     if: startsWith(github.ref, 'refs/tags/v') && needs.goreleaser.result == 'success'
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -566,6 +588,7 @@ jobs:
     name: Notify Discord
     needs: [goreleaser, image]
     if: startsWith(github.ref, 'refs/tags/v') && needs.goreleaser.result == 'success'
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     # A broken/expired webhook should never fail the release workflow.
     continue-on-error: true
