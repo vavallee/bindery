@@ -403,6 +403,19 @@ export const api = {
     scan_error?: string
   }>('/library/scan/status'),
 
+  // Refresh metadata for ALL authors (background job, #863). Distinct from the
+  // per-selection bulkActionAuthors('refresh'): this enumerates every author and
+  // refreshes sequentially with progress that survives a page reload.
+  refreshAllAuthors: () => request<{ message: string }>('/authors/refresh-all', { method: 'POST' }),
+  // Returns null when no refresh has ever run (the backend serves 404). A
+  // stored "running" status is reconciled to "failed" server-side after a
+  // restart so the UI banner never hangs.
+  refreshAllAuthorsStatus: () =>
+    request<AuthorRefreshStatus>('/authors/refresh-all/status').catch((err) => {
+      if (err instanceof ApiError && err.status === 404) return null
+      throw err
+    }),
+
   // Queue
   //
   // The /queue endpoint returns an envelope `{items, partial, staleClients}`
@@ -1596,4 +1609,17 @@ export type WantedBulkAction = 'search' | 'blocklist' | 'unmonitor'
 
 export interface BulkResult {
   results: Record<string, { ok: boolean; error?: string }>
+}
+
+// Progress for the "refresh all authors" background job (#863). status is
+// "running" while the job iterates authors, "completed" when done, or "failed"
+// (e.g. the author list could not be loaded, or the server restarted mid-job).
+export interface AuthorRefreshStatus {
+  status: 'running' | 'completed' | 'failed'
+  total: number
+  done: number
+  failed: number
+  started_at: string
+  completed_at?: string
+  message?: string
 }

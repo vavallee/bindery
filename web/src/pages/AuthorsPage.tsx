@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { api, Author, MediaType } from '../api/client'
+import { api, Author, MediaType, AuthorRefreshStatus } from '../api/client'
 import AddAuthorModal from '../components/AddAuthorModal'
 import AddBookModal from '../components/AddBookModal'
 import MergeAuthorsModal from '../components/MergeAuthorsModal'
@@ -40,6 +40,11 @@ export default function AuthorsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
   const selectAllRef = useRef<HTMLInputElement>(null)
+  // "Refresh all metadata" background job (#863). refreshStatus mirrors the
+  // persisted server-side progress; refreshing is the in-flight flag that drives
+  // polling and disables the button.
+  const [refreshStatus, setRefreshStatus] = useState<AuthorRefreshStatus | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
 
   const load = () => {
     setLoading(true)
@@ -47,6 +52,50 @@ export default function AuthorsPage() {
   }
 
   useEffect(() => { load() }, [])
+
+  // Restore the last-known refresh status on mount so the banner survives a
+  // page reload. If a job is still "running", resume polling.
+  useEffect(() => {
+    api.refreshAllAuthorsStatus()
+      .then((st) => {
+        setRefreshStatus(st)
+        if (st?.status === 'running') setRefreshing(true)
+      })
+      .catch(() => {/* never run — ignore */})
+  }, [])
+
+  // Poll progress every 2s while a refresh is running. Stops as soon as the
+  // server reports a terminal state.
+  useEffect(() => {
+    if (!refreshing) return
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const st = await api.refreshAllAuthorsStatus()
+        if (cancelled) return
+        setRefreshStatus(st)
+        if (st && st.status !== 'running') {
+          setRefreshing(false)
+          load() // pick up any newly-populated catalogues
+        }
+      } catch {/* transient — keep polling */}
+    }
+    const id = setInterval(poll, 2000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [refreshing])
+
+  const handleRefreshAll = async () => {
+    if (refreshing) return
+    if (!confirm(t('authors.refreshAllConfirm'))) return
+    setRefreshing(true)
+    setRefreshStatus(null)
+    try {
+      await api.refreshAllAuthors()
+    } catch (err) {
+      setRefreshing(false)
+      alert(err instanceof Error ? err.message : t('authors.refreshAllError'))
+    }
+  }
 
   useEffect(() => {
     try { localStorage.setItem('bindery.filter.authors.monitored', monitoredFilter) } catch { /* ignore */ }
@@ -168,6 +217,14 @@ export default function AuthorsPage() {
         <div className="flex items-center gap-2 flex-wrap justify-end">
           <ViewToggle view={view} onChange={setView} />
           <button
+            onClick={handleRefreshAll}
+            disabled={refreshing || authors.length === 0}
+            className="px-3 py-2 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm font-medium transition-colors"
+            title={t('authors.refreshAllTip')}
+          >
+            {refreshing ? t('authors.refreshAllRunning') : t('authors.refreshAll')}
+          </button>
+          <button
             onClick={() => setShowMerge(true)}
             disabled={authors.length < 2}
             className="px-3 py-2 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm font-medium transition-colors"
@@ -195,6 +252,26 @@ export default function AuthorsPage() {
           </button>
         </div>
       </div>
+
+      {/* Refresh-all metadata progress banner (#863). Amber while running,
+          success/failure summary on completion. Mirrors the Library Scan banner. */}
+      {refreshStatus?.status === 'running' && (
+        <div className="mb-4 px-3 py-2 rounded-md text-sm bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+          {t('authors.refreshAllProgress', { done: refreshStatus.done, total: refreshStatus.total })}
+        </div>
+      )}
+      {refreshStatus?.status === 'completed' && (
+        <div className="mb-4 px-3 py-2 rounded-md text-sm bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+          {refreshStatus.failed > 0
+            ? t('authors.refreshAllDoneWithFailures', { done: refreshStatus.done, failed: refreshStatus.failed })
+            : t('authors.refreshAllDone', { done: refreshStatus.done })}
+        </div>
+      )}
+      {refreshStatus?.status === 'failed' && (
+        <div className="mb-4 px-3 py-2 rounded-md text-sm bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300 border border-red-300 dark:border-red-800">
+          {t('authors.refreshAllFailed', { message: refreshStatus.message || t('authors.refreshAllError') })}
+        </div>
+      )}
 
       {/* Search & Sort controls */}
       <div className="flex flex-col sm:flex-row gap-3 mb-4">

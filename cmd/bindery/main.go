@@ -577,6 +577,13 @@ func main() {
 		WithRefreshFunc(func(a *models.Author) {
 			authorHandler.FetchAuthorBooks(a, false, authorHandler.ResolveDefaultMediaType(appCtx))
 		})
+	// "Refresh all authors" background job (#863, shape 2). Reuses the exact
+	// per-author catalogue fetch the bulk "refresh" action and single-author
+	// Refresh use (metadata only, never auto-grabs), run sequentially over
+	// every author with progress persisted to the settings table.
+	authorRefreshHandler := api.NewAuthorRefreshHandler(authorRepo, func(a *models.Author) {
+		authorHandler.FetchAuthorBooks(a, false, authorHandler.ResolveDefaultMediaType(appCtx))
+	}).WithSettings(settingsRepo)
 	backupHandler := api.NewBackupHandler(database, cfg.DBPath, cfg.DataDir)
 	rootFolderHandler := api.NewRootFolderHandler(rootFolderRepo)
 	logHandler := api.NewLogHandler(ring).WithLogRepo(logRepo).WithDBLogHandler(logDBHandler)
@@ -944,6 +951,12 @@ func main() {
 		// Library
 		r.Post("/library/scan", libraryHandler.Scan)
 		r.Get("/library/scan/status", libraryHandler.ScanStatus)
+
+		// Refresh metadata for ALL authors (background job, #863). Per-selection
+		// bulk refresh lives at /author/bulk; this is the "populate everything"
+		// path with progress that survives a page reload.
+		r.Post("/authors/refresh-all", authorRefreshHandler.RefreshAll)
+		r.Get("/authors/refresh-all/status", authorRefreshHandler.RefreshAllStatus)
 
 		// Grimmory integration.
 		r.Get("/grimmory/config", grimmoryHandler.GetConfig)
