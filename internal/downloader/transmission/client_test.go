@@ -103,6 +103,53 @@ func TestAddTorrent_NewTorrent(t *testing.T) {
 	}
 }
 
+// TestAddTorrent_HTTPRedirectToMagnet covers #1006: an indexer http(s) download
+// link that 30x-redirects to a magnet: URI (common with public trackers like
+// The Pirate Bay / Knaben via Prowlarr/Jackett). Bindery must capture the magnet
+// and hand it to Transmission's filename arg, not let Go's HTTP client try to
+// follow the redirect (which fails with "unsupported protocol scheme magnet").
+func TestAddTorrent_HTTPRedirectToMagnet(t *testing.T) {
+	const magnet = "magnet:?xt=urn:btih:redirected123&dn=Book"
+	indexer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", magnet)
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer indexer.Close()
+
+	var gotFilename string
+	var gotMetainfo bool
+	rpc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Arguments struct {
+				Filename string `json:"filename"`
+				Metainfo string `json:"metainfo"`
+			} `json:"arguments"`
+		}
+		_ = newJSONDecoder(r.Body).Decode(&req)
+		gotFilename = req.Arguments.Filename
+		gotMetainfo = req.Arguments.Metainfo != ""
+		_, _ = w.Write([]byte(`{"result":"success","arguments":{"torrent-added":{"id":99,"name":"Book"}}}`))
+	}))
+	defer rpc.Close()
+
+	c := newTestClient(rpc.URL, "user", "pass")
+	c.validateTorrentURL = func(string) error { return nil } // allow the loopback test server
+
+	id, err := c.AddTorrent(context.Background(), indexer.URL+"/download/123", "")
+	if err != nil {
+		t.Fatalf("AddTorrent: %v", err)
+	}
+	if id != 99 {
+		t.Errorf("id = %d, want 99", id)
+	}
+	if gotFilename != magnet {
+		t.Errorf("filename = %q, want the redirected magnet %q", gotFilename, magnet)
+	}
+	if gotMetainfo {
+		t.Error("metainfo must be empty when the link resolved to a magnet")
+	}
+}
+
 func TestAddTorrent_DuplicateTorrent(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"result":"success","arguments":{"torrent-duplicate":{"id":7,"name":"Existing Book"}}}`))
