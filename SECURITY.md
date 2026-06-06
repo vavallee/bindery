@@ -86,9 +86,9 @@ CSP, cookie Secure auto-detect, container hardening, CI scans).
   base images.
 - **Kubernetes**: dedicated ServiceAccount with token automount disabled,
   API key sourced from a Secret, optional NetworkPolicy.
-- **CI**: gosec, govulncheck, semgrep, gitleaks, ESLint security, Trivy,
-  Grype, Syft SBOM, ZAP baseline, OpenSSF Scorecard, Checkov, helm-unittest
-  — SARIF uploaded to the Security tab; weekly rerun on a cron.
+- **CI**: gosec, govulncheck, CodeQL, semgrep, gitleaks, ESLint security,
+  Hadolint, Grype, Syft SBOM, ZAP baseline, OpenSSF Scorecard, Checkov,
+  helm-unittest — SARIF uploaded to the Security tab; weekly rerun on a cron.
 - **Supply chain**: SLSA build provenance via
   `actions/attest-build-provenance`, verifiable with
   `gh attestation verify`.

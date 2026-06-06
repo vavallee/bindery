@@ -59,7 +59,7 @@ Every push to `main` / `development` and every pull request runs through the ful
 | Check | Tool | Scope |
 |-------|------|-------|
 | Formatting | `gofmt` (enforced via `golangci-lint`) | All `.go` files — no unformatted code reaches `main` |
-| Static analysis / lint | `golangci-lint v2.11.4` (`--timeout=5m`) | Full repo. Enabled analyzers include `govet`, `staticcheck`, `ineffassign`, `errcheck`, `unused`, `gosimple`, `revive` |
+| Static analysis / lint | `golangci-lint v2.11.4` (`--timeout=5m`) | Full repo. Enabled linters (see `.golangci.yml`): `govet`, `staticcheck`, `errcheck`, `unused`, `ineffassign`, `revive`, `gosec`, `errorlint`, `noctx`, `misspell`, plus the resource-leak detectors `bodyclose`, `sqlclosecheck`, `rowserrcheck` |
 | Vet | `go vet` (via `golangci-lint`) | Full repo |
 | Vulnerability scan | `govulncheck ./...` | Resolves every imported symbol against the Go vulnerability database; fails on known CVEs in the transitive module graph |
 | Unit / integration tests | `go test ./cmd/... ./internal/...` | All packages; test DBs use in-memory SQLite (`db.OpenMemory`) so no disk state leaks between runs |

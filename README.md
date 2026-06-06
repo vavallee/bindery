@@ -269,7 +269,7 @@ Please keep security reports out of Discord and public issues — see [SECURITY.
   <a href="SECURITY.md"><img src="https://img.shields.io/badge/security-policy-blue" alt="Security policy" /></a>
 </p>
 
-Bindery holds API keys, reaches LAN services, and writes to disk — we take that seriously. Every push and weekly cron runs gosec, govulncheck, Semgrep, gitleaks, Trivy, Grype, Dockle, Syft, ZAP baseline, and OpenSSF Scorecard, with findings published as SARIF in GitHub's Security tab. Release images ship with SLSA build provenance and Syft SBOMs. In-app: SSRF guards on every outbound URL, hardened response headers (CSP, frame-deny, referrer-policy, auto-HSTS), distroless non-root read-only rootfs container with all caps dropped, and digest-pinned base images.
+Bindery holds API keys, reaches LAN services, and writes to disk — we take that seriously. Every push and weekly cron runs gosec, govulncheck, CodeQL, Semgrep, gitleaks, Hadolint, Checkov, Grype, Syft, ZAP baseline, and OpenSSF Scorecard, with findings published as SARIF in GitHub's Security tab. Release images ship with SLSA build provenance and Syft SBOMs. In-app: SSRF guards on every outbound URL, hardened response headers (CSP, frame-deny, referrer-policy, auto-HSTS), distroless non-root read-only rootfs container with all caps dropped, and digest-pinned base images.
 
 To report a vulnerability, follow the process in **[SECURITY.md](SECURITY.md)**. The full threat model and verification recipes live on the [wiki Security page](https://github.com/vavallee/bindery/wiki/Security).
 
