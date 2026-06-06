@@ -276,28 +276,30 @@ func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
 			books, err = h.books.ListByAuthor(r.Context(), id)
 		}
 		books, total = pageBooks(books, limit, offset)
-	case status != "":
-		// Status-filtered lists (wanted/imported/etc.) can be large on a 50k
-		// library but they back the dashboard widgets, which always fetch the
-		// whole set today. Keep that behaviour for now and slice for the new
-		// envelope; a follow-up can add a SQL-paginated ListByStatusPage if
-		// the audit shows the wanted/imported pages dominate at scale.
-		if includeExcluded {
+	case includeExcluded:
+		// includeExcluded is an admin/maintenance view (Author detail "show
+		// excluded"); keep the whole-set fetch + in-memory slice. Search/sort
+		// filtering is not offered here.
+		if status != "" {
 			books, err = h.books.ListByStatusIncludingExcluded(r.Context(), status)
 		} else {
-			books, err = h.books.ListByStatus(r.Context(), status)
+			books, err = h.books.ListIncludingExcluded(r.Context())
 		}
 		books, total = pageBooks(books, limit, offset)
 	default:
-		if includeExcluded {
-			books, err = h.books.ListIncludingExcluded(r.Context())
-			books, total = pageBooks(books, limit, offset)
-		} else {
-			// Default-path SQL pagination: the books list is the hottest
-			// 50k-row scan in the app, so push LIMIT/OFFSET to SQLite where
-			// idx_books_sort_title (migration 048) keeps the sort cheap.
-			books, total, err = h.books.ListPage(r.Context(), 0, limit, offset)
-		}
+		// Default Books-page path: SQL-paginated with optional search / status
+		// / mediaType / sort applied server-side (issue #1010), so a library
+		// with >100 books is fully reachable instead of capped at the first
+		// page. idx_books_sort_title (migration 048) keeps the sort cheap.
+		// Note: unlike the legacy ListByStatus, status here only forces
+		// monitored=1 for "wanted" — matching what the Books page showed when
+		// it filtered client-side over the full set.
+		books, total, err = h.books.ListPageFiltered(r.Context(), db.BookListFilter{
+			Search:    strings.TrimSpace(r.URL.Query().Get("search")),
+			Status:    status,
+			MediaType: r.URL.Query().Get("mediaType"),
+			Sort:      r.URL.Query().Get("sort"),
+		}, limit, offset)
 	}
 
 	if err != nil {

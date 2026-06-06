@@ -20,11 +20,13 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
 
   useEffect(() => {
     let active = true
-    Promise.all([api.listBooks(), api.listAuthors()])
+    // The picker lets the user attach any book/author to the series, so it
+    // needs the full lists rather than one paginated page (#1010).
+    Promise.all([api.listAllBooks(), api.listAllAuthors()])
       .then(([bookList, authorList]) => {
         if (!active) return
-        setBooks(bookList.items)
-        setAuthors(authorList.items)
+        setBooks(bookList)
+        setAuthors(authorList)
       })
       .catch(err => {
         if (active) setError(err instanceof Error ? err.message : 'Failed to load books')

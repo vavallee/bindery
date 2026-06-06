@@ -40,6 +40,13 @@ vi.mock('../components/usePagination', () => ({
     paginationProps: { page: 1, totalPages: 1, pageSize: 50, totalItems: items.length, onPageChange: vi.fn(), onPageSizeChange: vi.fn() },
     reset: vi.fn(),
   }),
+  useServerPagination: (total: number) => ({
+    page: 1,
+    pageSize: 50,
+    setPage: vi.fn(),
+    reset: vi.fn(),
+    paginationProps: { page: 1, totalPages: 1, pageSize: 50, totalItems: total, onPageChange: vi.fn(), onPageSizeChange: vi.fn() },
+  }),
 }))
 
 vi.mock('../components/Pagination', () => ({ default: () => null }))

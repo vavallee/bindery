@@ -412,7 +412,7 @@ export default function AuthorDetailPage() {
             </button>
             <button
               onClick={() => {
-                if (allAuthors.length === 0) api.listAuthors().then(({ items }) => setAllAuthors(items)).catch(console.error)
+                if (allAuthors.length === 0) api.listAllAuthors().then(setAllAuthors).catch(console.error)
                 setShowMerge(true)
               }}
               className="px-3 py-1.5 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded text-xs font-medium"

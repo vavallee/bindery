@@ -27,7 +27,9 @@ export default function CalendarPage() {
   const [viewMonth, setViewMonth] = useState(today.getMonth())
 
   useEffect(() => {
-    api.listBooks().then(({ items }) => setBooks(items)).catch(console.error).finally(() => setLoading(false))
+    // The calendar plots every upcoming release, so it needs the full set, not
+    // one paginated page (listBooks now caps at 100 by default — #1010).
+    api.listAllBooks().then(setBooks).catch(console.error).finally(() => setLoading(false))
   }, [])
 
   useEffect(() => {

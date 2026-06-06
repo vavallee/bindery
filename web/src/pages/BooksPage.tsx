@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import ViewToggle from '../components/ViewToggle'
@@ -9,7 +9,7 @@ import { useNeedsSetup } from '../components/useNeedsSetup'
 import { api, BINDERY_BASE, Book } from '../api/client'
 import BulkActionBar from '../components/BulkActionBar'
 import Pagination from '../components/Pagination'
-import { usePagination } from '../components/usePagination'
+import { useServerPagination } from '../components/usePagination'
 
 type SortMode = 'title-az' | 'title-za' | 'date-new' | 'date-old'
 
@@ -26,10 +26,12 @@ const statusLabelKeys: Record<string, string> = {
 export default function BooksPage() {
   const { t } = useTranslation()
   const [books, setBooks] = useState<Book[]>([])
+  const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('')
   const [mediaFilter, setMediaFilter] = useState<'' | 'ebook' | 'audiobook'>('')
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [sort, setSort] = useState<SortMode>('title-az')
   const [view, setView] = useView('books', 'grid')
   const needsSetup = useNeedsSetup()
@@ -37,56 +39,40 @@ export default function BooksPage() {
   const [bulkBusy, setBulkBusy] = useState(false)
   const selectAllRef = useRef<HTMLInputElement>(null)
 
-  const load = () => {
-    api.listBooks().then(({ items }) => setBooks(items)).catch(console.error).finally(() => setLoading(false))
-  }
+  const { page, pageSize, paginationProps, reset } = useServerPagination(total, 50, 'books')
 
+  // Server-side list: page, page size, search, status, media type, and sort are
+  // all applied by the API so a library with >100 books is fully reachable
+  // (issue #1010). load() refetches the current page after mutations.
+  const load = useCallback(() => {
+    setLoading(true)
+    api.listBooks({
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      search: debouncedSearch || undefined,
+      status: statusFilter || undefined,
+      mediaType: mediaFilter || undefined,
+      sort,
+    }).then(({ items, total }) => { setBooks(items); setTotal(total) })
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [page, pageSize, debouncedSearch, statusFilter, mediaFilter, sort])
+
+  useEffect(() => { load() }, [load])
+
+  // Debounce the search box so typing does not fire a request per keystroke.
   useEffect(() => {
-    load()
-  }, [])
+    const id = setTimeout(() => setDebouncedSearch(search.trim()), 300)
+    return () => clearTimeout(id)
+  }, [search])
 
-  const filtered = useMemo(() => {
-    let list = books
-    if (statusFilter) list = list.filter(b => b.status === statusFilter && (statusFilter !== 'wanted' || b.monitored))
-    if (mediaFilter) {
-      list = list.filter(b => {
-        const mt = b.mediaType || 'ebook'
-        // 'both' books count as both ebook and audiobook so they show up
-        // under either filter.
-        return mt === mediaFilter || mt === 'both'
-      })
-    }
-    if (search.trim()) {
-      const q = search.trim().toLowerCase()
-      list = list.filter(b =>
-        b.title.toLowerCase().includes(q) ||
-        (b.author?.authorName && b.author.authorName.toLowerCase().includes(q))
-      )
-    }
-    if (sort === 'title-az') list = [...list].sort((a, b) => a.title.localeCompare(b.title))
-    else if (sort === 'title-za') list = [...list].sort((a, b) => b.title.localeCompare(a.title))
-    else if (sort === 'date-new') list = [...list].sort((a, b) => {
-      if (!a.releaseDate && !b.releaseDate) return 0
-      if (!a.releaseDate) return 1
-      if (!b.releaseDate) return -1
-      return new Date(b.releaseDate).getTime() - new Date(a.releaseDate).getTime()
-    })
-    else if (sort === 'date-old') list = [...list].sort((a, b) => {
-      if (!a.releaseDate && !b.releaseDate) return 0
-      if (!a.releaseDate) return 1
-      if (!b.releaseDate) return -1
-      return new Date(a.releaseDate).getTime() - new Date(b.releaseDate).getTime()
-    })
-    return list
-  }, [books, statusFilter, mediaFilter, search, sort])
+  // Jump back to page 1 whenever the query changes.
+  useEffect(() => { reset() }, [debouncedSearch, statusFilter, mediaFilter, sort, pageSize, reset])
 
-  const { pageItems, paginationProps, reset } = usePagination(filtered, 50, 'books')
-
-  useEffect(() => { reset() }, [statusFilter, mediaFilter, search, sort, reset])
-
-  // Keep the select-all checkbox indeterminate state in sync.
-  const allPageSelected = pageItems.length > 0 && pageItems.every(b => selectedIds.has(b.id))
-  const somePageSelected = pageItems.some(b => selectedIds.has(b.id)) && !allPageSelected
+  // Keep the select-all checkbox indeterminate state in sync. "Page" here is
+  // the server-returned page held in `books`.
+  const allPageSelected = books.length > 0 && books.every(b => selectedIds.has(b.id))
+  const somePageSelected = books.some(b => selectedIds.has(b.id)) && !allPageSelected
   useEffect(() => {
     if (selectAllRef.current) selectAllRef.current.indeterminate = somePageSelected
   }, [somePageSelected])
@@ -105,7 +91,7 @@ export default function BooksPage() {
     })
   }
 
-  const selectAllOnPage = () => setSelectedIds(new Set(pageItems.map(b => b.id)))
+  const selectAllOnPage = () => setSelectedIds(new Set(books.map(b => b.id)))
   const clearSelection = () => setSelectedIds(new Set())
 
   const runBulk = async (action: Parameters<typeof api.bulkActionBooks>[1], mediaType?: 'ebook' | 'audiobook') => {
@@ -134,7 +120,7 @@ export default function BooksPage() {
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-2xl font-bold">{t('books.title')}</h2>
         <div className="flex items-center gap-3">
-          <span className="text-sm text-slate-600 dark:text-zinc-500">{filtered.length} of {books.length}</span>
+          <span className="text-sm text-slate-600 dark:text-zinc-500">{t('books.countLabel', { count: total, defaultValue: '{{count}} books' })}</span>
           <ViewToggle view={view} onChange={setView} />
         </div>
       </div>
@@ -176,9 +162,9 @@ export default function BooksPage() {
 
       {loading ? (
         <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
-      ) : filtered.length === 0 ? (
+      ) : total === 0 ? (
         <div className="text-center py-16 text-slate-600 dark:text-zinc-500">
-          {books.length === 0 ? (
+          {!debouncedSearch && !statusFilter && !mediaFilter ? (
             <>
               {needsSetup && <GettingStartedGuidance reasonKey="gettingStarted.reasonBooks" />}
               <p className="font-medium">{t('books.empty')}</p>
@@ -213,7 +199,7 @@ export default function BooksPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-zinc-800">
-                {pageItems.map(book => (
+                {books.map(book => (
                   <tr
                     key={book.id}
                     className={`hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 cursor-pointer ${selectedIds.has(book.id) ? 'bg-emerald-500/10 dark:bg-emerald-500/10' : 'bg-slate-100/50 dark:bg-zinc-900/50'}`}
@@ -274,7 +260,7 @@ export default function BooksPage() {
         </div>
         ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-          {pageItems.map(book => (
+          {books.map(book => (
             <div
               key={book.id}
               className={`border rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden group text-left transition-colors ${selectedIds.has(book.id) ? 'border-emerald-500' : 'border-slate-200 dark:border-zinc-800 hover:border-emerald-500'}`}

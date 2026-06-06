@@ -115,15 +115,34 @@ export const booksApi = {
     request<Book>('/author/book', { method: 'POST', body: JSON.stringify(data) }),
 
   // Books
-  listBooks: (params?: { authorId?: number; status?: string; includeExcluded?: boolean; limit?: number; offset?: number }) => {
+  listBooks: (params?: { authorId?: number; status?: string; includeExcluded?: boolean; limit?: number; offset?: number; search?: string; mediaType?: string; sort?: string }) => {
     const q = new URLSearchParams()
     if (params?.authorId) q.set('authorId', String(params.authorId))
     if (params?.status) q.set('status', params.status)
     if (params?.includeExcluded) q.set('includeExcluded', 'true')
     if (params?.limit !== undefined) q.set('limit', String(params.limit))
     if (params?.offset !== undefined) q.set('offset', String(params.offset))
+    if (params?.search) q.set('search', params.search)
+    if (params?.mediaType) q.set('mediaType', params.mediaType)
+    if (params?.sort) q.set('sort', params.sort)
     const qs = q.toString()
     return request<Page<Book>>(`/book${qs ? '?' + qs : ''}`)
+  },
+  // listAllBooks pages through the server until the full set is collected. For
+  // callers that need every book (calendar, series book picker) rather than one
+  // display page. Heavy on very large libraries by design — prefer paginated
+  // listBooks for browse views.
+  listAllBooks: async (params?: { search?: string; status?: string; mediaType?: string; sort?: string; includeExcluded?: boolean }): Promise<Book[]> => {
+    const pageSize = 500
+    let offset = 0
+    const all: Book[] = []
+    for (;;) {
+      const { items, total } = await booksApi.listBooks({ ...params, limit: pageSize, offset })
+      all.push(...items)
+      offset += items.length
+      if (items.length === 0 || all.length >= total) break
+    }
+    return all
   },
   getBook: (id: number) => request<Book>(`/book/${id}`),
   updateBook: (id: number, data: Partial<Book>) => request<Book>(`/book/${id}`, { method: 'PUT', body: JSON.stringify(data) }),

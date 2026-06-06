@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api, Author, MediaType, AuthorRefreshStatus } from '../api/client'
@@ -8,7 +8,7 @@ import MergeAuthorsModal from '../components/MergeAuthorsModal'
 import SeriesNameModal from '../components/SeriesNameModal'
 import BulkActionBar from '../components/BulkActionBar'
 import Pagination from '../components/Pagination'
-import { usePagination } from '../components/usePagination'
+import { useServerPagination } from '../components/usePagination'
 import ViewToggle from '../components/ViewToggle'
 import { useView } from '../components/useView'
 import GettingStartedGuidance from '../components/GettingStartedGuidance'
@@ -21,12 +21,17 @@ export default function AuthorsPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const [authors, setAuthors] = useState<Author[]>([])
+  const [total, setTotal] = useState(0)
+  // Full author list fetched lazily for the merge picker, which needs every
+  // author, not just the current page.
+  const [mergeAuthors, setMergeAuthors] = useState<Author[]>([])
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
   const [showAddBook, setShowAddBook] = useState(false)
   const [showAddSeries, setShowAddSeries] = useState(false)
   const [showMerge, setShowMerge] = useState(false)
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [sort, setSort] = useState<SortMode>('az')
   const [monitoredFilter, setMonitoredFilter] = useState<MonitoredFilter>(() => {
     try {
@@ -46,12 +51,36 @@ export default function AuthorsPage() {
   const [refreshStatus, setRefreshStatus] = useState<AuthorRefreshStatus | null>(null)
   const [refreshing, setRefreshing] = useState(false)
 
-  const load = () => {
-    setLoading(true)
-    api.listAuthors().then(({ items }) => setAuthors(items)).catch(console.error).finally(() => setLoading(false))
-  }
+  const monitoredParam = monitoredFilter === 'monitored' ? true : monitoredFilter === 'unmonitored' ? false : undefined
+  const { page, pageSize, paginationProps, reset } = useServerPagination(total, 50, 'authors')
 
-  useEffect(() => { load() }, [])
+  // Server-side list: page, page size, search, sort, and the monitored filter
+  // are all applied by the API, so libraries with >100 authors are fully
+  // reachable (issue #1010). load() refetches the current page; the mutation
+  // handlers below call it to refresh.
+  const load = useCallback(() => {
+    setLoading(true)
+    api.listAuthors({
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      search: debouncedSearch || undefined,
+      sort,
+      monitored: monitoredParam,
+    }).then(({ items, total }) => { setAuthors(items); setTotal(total) })
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [page, pageSize, debouncedSearch, sort, monitoredParam])
+
+  useEffect(() => { load() }, [load])
+
+  // Debounce the search box so typing does not fire a request per keystroke.
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedSearch(search.trim()), 300)
+    return () => clearTimeout(id)
+  }, [search])
+
+  // Jump back to page 1 whenever the query changes.
+  useEffect(() => { reset() }, [debouncedSearch, sort, monitoredFilter, pageSize, reset])
 
   // Restore the last-known refresh status on mount so the banner survives a
   // page reload. If a job is still "running", resume polling.
@@ -122,29 +151,10 @@ export default function AuthorsPage() {
     load()
   }
 
-  const filtered = useMemo(() => {
-    let list = authors
-    if (monitoredFilter === 'monitored') list = list.filter(a => a.monitored)
-    else if (monitoredFilter === 'unmonitored') list = list.filter(a => !a.monitored)
-    if (search.trim()) {
-      const q = search.trim().toLowerCase()
-      list = list.filter(a =>
-        a.authorName.toLowerCase().includes(q) ||
-        (a.description && a.description.toLowerCase().includes(q))
-      )
-    }
-    if (sort === 'az') list = [...list].sort((a, b) => a.authorName.localeCompare(b.authorName))
-    else if (sort === 'za') list = [...list].sort((a, b) => b.authorName.localeCompare(a.authorName))
-    return list
-  }, [authors, monitoredFilter, search, sort])
-
-  const { pageItems, paginationProps, reset } = usePagination(filtered, 50, 'authors')
-
-  useEffect(() => { reset() }, [search, sort, monitoredFilter, reset])
-
-  // Keep the select-all checkbox indeterminate state in sync.
-  const allPageSelected = pageItems.length > 0 && pageItems.every(a => selectedIds.has(a.id))
-  const somePageSelected = pageItems.some(a => selectedIds.has(a.id)) && !allPageSelected
+  // Keep the select-all checkbox indeterminate state in sync. "Page" here is
+  // the server-returned page held in `authors`.
+  const allPageSelected = authors.length > 0 && authors.every(a => selectedIds.has(a.id))
+  const somePageSelected = authors.some(a => selectedIds.has(a.id)) && !allPageSelected
   useEffect(() => {
     if (selectAllRef.current) selectAllRef.current.indeterminate = somePageSelected
   }, [somePageSelected])
@@ -163,7 +173,18 @@ export default function AuthorsPage() {
     })
   }
 
-  const selectAllOnPage = () => setSelectedIds(new Set(pageItems.map(a => a.id)))
+  const selectAllOnPage = () => setSelectedIds(new Set(authors.map(a => a.id)))
+
+  // Merge needs the full author list, not just the current page; fetch it
+  // lazily when the modal opens.
+  const openMerge = async () => {
+    try {
+      setMergeAuthors(await api.listAllAuthors())
+    } catch {
+      setMergeAuthors(authors)
+    }
+    setShowMerge(true)
+  }
   const clearSelection = () => setSelectedIds(new Set())
 
   const runBulk = async (action: Parameters<typeof api.bulkActionAuthors>[1]) => {
@@ -218,15 +239,15 @@ export default function AuthorsPage() {
           <ViewToggle view={view} onChange={setView} />
           <button
             onClick={handleRefreshAll}
-            disabled={refreshing || authors.length === 0}
+            disabled={refreshing || total === 0}
             className="px-3 py-2 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm font-medium transition-colors"
             title={t('authors.refreshAllTip')}
           >
             {refreshing ? t('authors.refreshAllRunning') : t('authors.refreshAll')}
           </button>
           <button
-            onClick={() => setShowMerge(true)}
-            disabled={authors.length < 2}
+            onClick={openMerge}
+            disabled={total < 2}
             className="px-3 py-2 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm font-medium transition-colors"
             title={t('authors.mergeTip')}
           >
@@ -299,13 +320,13 @@ export default function AuthorsPage() {
 
       {loading ? (
         <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
-      ) : filtered.length === 0 && authors.length === 0 ? (
+      ) : total === 0 && !debouncedSearch && !monitoredFilter ? (
         <div className="text-center py-16 text-slate-600 dark:text-zinc-500">
           {needsSetup && <GettingStartedGuidance reasonKey="gettingStarted.reasonAuthors" />}
           <p className="text-lg mb-2">{t('authors.empty')}</p>
           <p className="text-sm">{t('authors.emptyHint')}</p>
         </div>
-      ) : filtered.length === 0 ? (
+      ) : total === 0 ? (
         <div className="text-center py-16 text-slate-600 dark:text-zinc-500">
           <p>{t('authors.noMatch', { query: search })}</p>
         </div>
@@ -333,7 +354,7 @@ export default function AuthorsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-zinc-800">
-                {pageItems.map(author => (
+                {authors.map(author => (
                   <tr
                     key={author.id}
                     className={`hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 ${selectedIds.has(author.id) ? 'bg-emerald-500/10 dark:bg-emerald-500/10' : 'bg-slate-100/50 dark:bg-zinc-900/50'}`}
@@ -393,7 +414,7 @@ export default function AuthorsPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {pageItems.map(author => (
+          {authors.map(author => (
             <div
               key={author.id}
               className={`border rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden hover:border-emerald-500 transition-colors ${selectedIds.has(author.id) ? 'border-emerald-500' : 'border-slate-200 dark:border-zinc-800'}`}
@@ -479,7 +500,7 @@ export default function AuthorsPage() {
       )}
       {showMerge && (
         <MergeAuthorsModal
-          authors={authors}
+          authors={mergeAuthors}
           onClose={() => setShowMerge(false)}
           onMerged={load}
         />

@@ -100,14 +100,53 @@ func (r *AuthorRepo) ListByUser(ctx context.Context, userID int64) ([]models.Aut
 	return authors, rows.Err()
 }
 
+// AuthorListFilter narrows ListPageFiltered. The zero value selects every
+// visible author in sort_name order (identical to the old ListPage).
+type AuthorListFilter struct {
+	UserID int64 // 0 = unscoped; otherwise owner_user_id = UserID OR NULL
+	// Search is a case-insensitive substring match on the author name. Empty
+	// disables the filter.
+	Search string
+	// Monitored, when non-nil, restricts to authors with that monitored flag.
+	Monitored *bool
+	// Sort is one of "az" (sort_name asc, default), "za" (sort_name desc), or
+	// "recent" (created_at desc). Unknown values fall back to "az".
+	Sort string
+}
+
+// escapeLike escapes the LIKE metacharacters (%, _, and the \ escape itself)
+// so a user-typed search term matches literally under `LIKE ? ESCAPE '\'`.
+func escapeLike(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
+// authorSortOrder maps a whitelisted sort key to a fixed ORDER BY clause. The
+// value never contains user input, so it is safe to interpolate.
+func authorSortOrder(sort string) string {
+	switch sort {
+	case "za":
+		return "sort_name DESC"
+	case "recent":
+		return "created_at DESC, id DESC"
+	default:
+		return "sort_name ASC"
+	}
+}
+
 // ListPage returns one page of the authors visible to userID, ordered by
-// sort_name, alongside the total row count that matches the same filter.
-// limit must be positive; offset is clamped at 0. When userID is 0 the query
-// is unscoped (matches List); otherwise it matches ListByUser's predicate
-// (owner_user_id = userID OR owner_user_id IS NULL).
+// sort_name, alongside the total row count. Thin wrapper over ListPageFiltered
+// with no search/monitored/sort filtering — kept for existing callers.
+func (r *AuthorRepo) ListPage(ctx context.Context, userID int64, limit, offset int) ([]models.Author, int, error) {
+	return r.ListPageFiltered(ctx, AuthorListFilter{UserID: userID}, limit, offset)
+}
+
+// ListPageFiltered returns one page of authors matching f, ordered per f.Sort,
+// alongside the total row count that matches the same filter (the count ignores
+// limit/offset so the UI can paginate). limit must be positive; offset is
+// clamped at 0.
 //
 // The sort_name order is backed by idx_authors_sort_name (migration 048).
-func (r *AuthorRepo) ListPage(ctx context.Context, userID int64, limit, offset int) ([]models.Author, int, error) {
+func (r *AuthorRepo) ListPageFiltered(ctx context.Context, f AuthorListFilter, limit, offset int) ([]models.Author, int, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -115,34 +154,38 @@ func (r *AuthorRepo) ListPage(ctx context.Context, userID int64, limit, offset i
 		offset = 0
 	}
 
-	countQuery := "SELECT COUNT(*) FROM authors"
-	listQuery := "SELECT " + authorSelectCols + " FROM authors"
 	var (
-		args     []any
-		pageArgs []any
+		conds []string
+		args  []any
 	)
-	if userID != 0 {
+	if f.UserID != 0 {
 		// Match ListByUser: include NULL-owner rows so pre-multiuser-migration
 		// authors stay visible to every user instead of silently disappearing.
-		countQuery += " WHERE owner_user_id = ? OR owner_user_id IS NULL"
-		listQuery += " WHERE owner_user_id = ? OR owner_user_id IS NULL"
-		args = []any{userID}
-		pageArgs = []any{userID, limit, offset}
-	} else {
-		pageArgs = []any{limit, offset}
+		conds = append(conds, "(owner_user_id = ? OR owner_user_id IS NULL)")
+		args = append(args, f.UserID)
 	}
-	listQuery += " ORDER BY sort_name LIMIT ? OFFSET ?"
+	if s := strings.TrimSpace(f.Search); s != "" {
+		conds = append(conds, "name LIKE ? ESCAPE '\\' COLLATE NOCASE")
+		args = append(args, "%"+escapeLike(s)+"%")
+	}
+	if f.Monitored != nil {
+		conds = append(conds, "monitored = ?")
+		args = append(args, boolToInt(*f.Monitored))
+	}
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
 
 	var total int
-	var countRow *sql.Row
-	if len(args) > 0 {
-		countRow = r.db.QueryRowContext(ctx, countQuery, args...)
-	} else {
-		countRow = r.db.QueryRowContext(ctx, countQuery)
-	}
-	if err := countRow.Scan(&total); err != nil {
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM authors"+where, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count authors: %w", err)
 	}
+
+	//nolint:gosec // query is built only from static columns, a parameterised WHERE, and a whitelisted ORDER BY (authorSortOrder); all user values are bound via args
+	listQuery := "SELECT " + authorSelectCols + " FROM authors" + where +
+		" ORDER BY " + authorSortOrder(f.Sort) + " LIMIT ? OFFSET ?"
+	pageArgs := append(append([]any{}, args...), limit, offset)
 
 	rows, err := r.db.QueryContext(ctx, listQuery, pageArgs...)
 	if err != nil {

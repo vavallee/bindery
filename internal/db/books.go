@@ -203,6 +203,87 @@ func (r *BookRepo) ListPage(ctx context.Context, userID int64, limit, offset int
 	return books, total, nil
 }
 
+// BookListFilter narrows ListPageFiltered. The zero value (with UserID 0)
+// selects every non-excluded book in sort_title order — identical to ListPage.
+type BookListFilter struct {
+	UserID int64 // 0 = unscoped; otherwise owner_user_id = UserID
+	// Search is a case-insensitive substring match on the book title OR its
+	// author's name. Empty disables the filter.
+	Search string
+	// Status restricts to books with that status. As a special case, "wanted"
+	// additionally requires monitored = 1 (an unmonitored book is not wanted),
+	// matching the old client-side filter. Empty disables the filter.
+	Status string
+	// MediaType is "ebook" (matches ebook/both/unset, mirroring the UI default)
+	// or "audiobook" (matches audiobook/both). Any other value disables it.
+	MediaType string
+	// Sort is one of "title-az" (default), "title-za", "date-new", "date-old".
+	Sort string
+}
+
+// bookSortOrder maps a whitelisted sort key to a fixed ORDER BY clause. Never
+// contains user input, so safe to interpolate. NULL release dates sort last in
+// both date orders (matching the old client-side comparator).
+func bookSortOrder(sort string) string {
+	switch sort {
+	case "title-za":
+		return "sort_title DESC"
+	case "date-new":
+		return "release_date IS NULL, release_date DESC"
+	case "date-old":
+		return "release_date IS NULL, release_date ASC"
+	default:
+		return "sort_title ASC"
+	}
+}
+
+// ListPageFiltered returns one page of non-excluded books matching f, ordered
+// per f.Sort, alongside the total row count for the same filter (count ignores
+// limit/offset so the UI can paginate). limit must be positive; offset clamped
+// at 0. Replaces the per-filter client-side slicing the Books page used to do,
+// so libraries with >100 books are fully reachable (issue #1010).
+func (r *BookRepo) ListPageFiltered(ctx context.Context, f BookListFilter, limit, offset int) ([]models.Book, int, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	where, args := QueryScopeFor("books.owner_user_id", "WHERE excluded = 0", f.UserID)
+	if s := strings.TrimSpace(f.Search); s != "" {
+		where += " AND (books.title LIKE ? ESCAPE '\\' COLLATE NOCASE OR au.name LIKE ? ESCAPE '\\' COLLATE NOCASE)"
+		like := "%" + escapeLike(s) + "%"
+		args = append(args, like, like)
+	}
+	if f.Status != "" {
+		where += " AND books.status = ?"
+		args = append(args, f.Status)
+		if f.Status == models.BookStatusWanted {
+			where += " AND books.monitored = 1"
+		}
+	}
+	switch f.MediaType {
+	case "ebook":
+		where += " AND (books.media_type IN ('ebook','both') OR books.media_type IS NULL OR books.media_type = '')"
+	case "audiobook":
+		where += " AND books.media_type IN ('audiobook','both')"
+	}
+
+	total, err := r.count(ctx, bookCTE+" SELECT COUNT(*) FROM books "+bookJoins+" "+where, args)
+	if err != nil {
+		return nil, 0, err
+	}
+	q := bookCTE + " SELECT " + bookColumns + " FROM books " + bookJoins + " " + where +
+		" ORDER BY " + bookSortOrder(f.Sort) + " LIMIT ? OFFSET ?"
+	pageArgs := append(append([]any{}, args...), limit, offset)
+	books, err := r.query(ctx, q, pageArgs)
+	if err != nil {
+		return nil, 0, err
+	}
+	return books, total, nil
+}
+
 func (r *BookRepo) count(ctx context.Context, query string, args []any) (int, error) {
 	var total int
 	var row *sql.Row

@@ -187,7 +187,20 @@ func (h *AuthorHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := auth.UserIDFromContext(ctx)
 	limit, offset := parseLimitOffset(r, authorListDefaultLimit, authorListMaxLimit)
-	authors, total, err := h.authors.ListPage(ctx, userID, limit, offset)
+	filter := db.AuthorListFilter{
+		UserID: userID,
+		Search: strings.TrimSpace(r.URL.Query().Get("search")),
+		Sort:   r.URL.Query().Get("sort"),
+	}
+	switch r.URL.Query().Get("monitored") {
+	case "true":
+		v := true
+		filter.Monitored = &v
+	case "false":
+		v := false
+		filter.Monitored = &v
+	}
+	authors, total, err := h.authors.ListPageFiltered(ctx, filter, limit, offset)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

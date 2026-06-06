@@ -69,6 +69,13 @@ vi.mock('../components/usePagination', () => ({
     paginationProps: { page: 1, totalPages: 1, pageSize: 50, totalItems: items.length, onPageChange: vi.fn(), onPageSizeChange: vi.fn() },
     reset: vi.fn(),
   }),
+  useServerPagination: (total: number) => ({
+    page: 1,
+    pageSize: 50,
+    setPage: vi.fn(),
+    reset: vi.fn(),
+    paginationProps: { page: 1, totalPages: 1, pageSize: 50, totalItems: total, onPageChange: vi.fn(), onPageSizeChange: vi.fn() },
+  }),
 }))
 
 vi.mock('../components/Pagination', () => ({ default: () => null }))
@@ -77,6 +84,19 @@ describe('AuthorsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(api.listAuthors).mockResolvedValue({ items: [], total: 0, limit: 100, offset: 0 })
+  })
+
+  it('requests a bounded server page rather than the whole table (issue #1010)', async () => {
+    render(
+      <MemoryRouter>
+        <AuthorsPage />
+      </MemoryRouter>,
+    )
+    // The Authors page must drive server pagination: a finite limit + offset,
+    // not an unbounded fetch that the UI then clamps to the first 100 rows.
+    await waitFor(() => expect(api.listAuthors).toHaveBeenCalled())
+    const arg = vi.mocked(api.listAuthors).mock.calls[0][0]
+    expect(arg).toMatchObject({ limit: 50, offset: 0 })
   })
 
   it('creates a series from the authors toolbar and opens it on the series page', async () => {

@@ -93,12 +93,30 @@ export interface UpdateAuthorRequest {
 
 export const authorsApi = {
   // Authors
-  listAuthors: (params?: { limit?: number; offset?: number }) => {
+  listAuthors: (params?: { limit?: number; offset?: number; search?: string; sort?: string; monitored?: boolean }) => {
     const q = new URLSearchParams()
     if (params?.limit !== undefined) q.set('limit', String(params.limit))
     if (params?.offset !== undefined) q.set('offset', String(params.offset))
+    if (params?.search) q.set('search', params.search)
+    if (params?.sort) q.set('sort', params.sort)
+    if (params?.monitored !== undefined) q.set('monitored', String(params.monitored))
     const qs = q.toString()
     return request<Page<Author>>(`/author${qs ? '?' + qs : ''}`)
+  },
+  // listAllAuthors pages through the server until the full set is collected.
+  // For callers that genuinely need every author (merge picker, series book
+  // picker, relink candidates) rather than one display page.
+  listAllAuthors: async (params?: { search?: string; sort?: string; monitored?: boolean }): Promise<Author[]> => {
+    const pageSize = 500
+    let offset = 0
+    const all: Author[] = []
+    for (;;) {
+      const { items, total } = await authorsApi.listAuthors({ ...params, limit: pageSize, offset })
+      all.push(...items)
+      offset += items.length
+      if (items.length === 0 || all.length >= total) break
+    }
+    return all
   },
   getAuthor: (id: number) => request<Author>(`/author/${id}`),
   addAuthor: (data: AddAuthorRequest) => request<Author>('/author', { method: 'POST', body: JSON.stringify(data) }),

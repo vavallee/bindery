@@ -156,6 +156,7 @@
   },
   "books": {
     "title": "Books",
+    "countLabel": "{{count}} books",
     "searchPlaceholder": "Search books or authors...",
     "sortLabel": "Sort:",
     "typeLabel": "Type:",
