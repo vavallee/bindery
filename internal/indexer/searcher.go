@@ -376,7 +376,16 @@ func titleMatchesResult(normResult string, titleKws []string, authorToks []strin
 				return false
 			}
 		}
-		return true
+		// All title words are present but not contiguous. Weak evidence: a
+		// different work can contain the same words REORDERED ("Keep Your Doors
+		// Locked" vs "Locked Doors"; "Secrets of the Human Body" vs "Body of
+		// Secrets"). Accept only if the author anchors it, or the words appear in
+		// title order (legit stop-word-separated titles like "The Lord of the
+		// Rings").
+		if len(authorToks) > 0 && authorMatchesRelease(normResult, authorToks) {
+			return true
+		}
+		return containsInOrder(normResult, titleKws)
 	}
 }
 
