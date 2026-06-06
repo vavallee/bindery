@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, Indexer, IndexerTestResult, ProwlarrInstance } from '../../api/client'
 import { inputCls } from './formStyles'
-import { parseCats } from './helpers'
+import { parseCats, parsePriority } from './helpers'
 import Toggle from './Toggle'
 
 // IndexerTestResultBanner renders a probe result with the same ok/warn/fail
@@ -272,12 +272,13 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
   const [url, setUrl] = useState(indexer.url)
   const [apiKey, setApiKey] = useState(indexer.apiKey)
   const [categories, setCategories] = useState((indexer.categories ?? [7020]).join(', '))
+  const [priority, setPriority] = useState(String(indexer.priority ?? 0))
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<IndexerTestResult | null>(null)
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const submit = async () => {
-    const updated = await api.updateIndexer(indexer.id, { ...indexer, name, type, url, apiKey, categories: parseCats(categories) })
+    const updated = await api.updateIndexer(indexer.id, { ...indexer, name, type, url, apiKey, categories: parseCats(categories), priority: parsePriority(priority) })
     onSaved(updated)
   }
 
@@ -323,6 +324,11 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
         <input value={categories} onChange={e => setCategories(e.target.value)} placeholder={t('settings.indexers.form.categoriesPlaceholder')} className={inputCls} />
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.categoriesHint')}</p>
       </div>
+      <div>
+        <label className={labelCls}>{t('settings.indexers.form.priority')}</label>
+        <input type="number" value={priority} onChange={e => setPriority(e.target.value)} placeholder="0" className={inputCls} />
+        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.priorityHint')}</p>
+      </div>
       {testResult && <IndexerTestResultBanner r={testResult} />}
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">{t('common.cancel')}</button>
@@ -340,12 +346,13 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
   const [url, setUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [categories, setCategories] = useState('7020')
+  const [priority, setPriority] = useState('0')
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<IndexerTestResult | null>(null)
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const submit = async () => {
-    const idx = await api.addIndexer({ name, url, apiKey, type, categories: parseCats(categories), enabled: true })
+    const idx = await api.addIndexer({ name, url, apiKey, type, categories: parseCats(categories), priority: parsePriority(priority), enabled: true })
     onAdded(idx)
   }
 
@@ -390,6 +397,11 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
         <label className={labelCls}>{t('settings.indexers.form.categories')}</label>
         <input value={categories} onChange={e => setCategories(e.target.value)} placeholder={t('settings.indexers.form.categoriesPlaceholder')} className={inputCls} />
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.categoriesHint')}</p>
+      </div>
+      <div>
+        <label className={labelCls}>{t('settings.indexers.form.priority')}</label>
+        <input type="number" value={priority} onChange={e => setPriority(e.target.value)} placeholder="0" className={inputCls} />
+        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.priorityHint')}</p>
       </div>
       {testResult && <IndexerTestResultBanner r={testResult} />}
       <div className="flex gap-2 justify-end">

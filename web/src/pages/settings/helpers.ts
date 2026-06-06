@@ -6,6 +6,13 @@ export function parseCats(s: string): number[] {
   return s.split(',').map(t => parseInt(t.trim(), 10)).filter(n => !isNaN(n))
 }
 
+// parsePriority parses an indexer priority (any integer; higher wins ties in
+// release ranking). Blank or non-numeric falls back to 0.
+export function parsePriority(s: string): number {
+  const n = parseInt(s.trim(), 10)
+  return isNaN(n) ? 0 : n
+}
+
 // downloadClientPathRemapHelp returns the help text for the path-remap field
 // of a given download-client type.
 export function downloadClientPathRemapHelp(type: string) {
