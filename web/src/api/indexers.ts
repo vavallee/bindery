@@ -8,6 +8,7 @@ export interface Indexer {
   url: string
   apiKey: string
   categories: number[]
+  priority: number
   enabled: boolean
   prowlarrInstanceId?: number
 }

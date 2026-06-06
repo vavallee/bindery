@@ -355,7 +355,9 @@
         "apiKey": "API Key",
         "categories": "Categories",
         "categoriesPlaceholder": "Categories (e.g. 7020, 7120, 3030)",
-        "categoriesHint": "Comma-separated Newznab category IDs. 7020 = eBooks, 3030 = Audiobooks. Add custom IDs for indexers with non-standard categories (e.g. 7120 for German books)."
+        "categoriesHint": "Comma-separated Newznab category IDs. 7020 = eBooks, 3030 = Audiobooks. Add custom IDs for indexers with non-standard categories (e.g. 7120 for German books).",
+        "priority": "Priority",
+        "priorityHint": "Higher wins ties when the same release is found on multiple indexers. Use it to prefer one indexer — e.g. set Usenet indexers above torrent ones. Default 0."
       }
     },
     "prowlarr": {

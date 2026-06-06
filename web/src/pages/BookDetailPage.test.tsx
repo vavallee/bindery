@@ -133,6 +133,7 @@ function makeIndexer(overrides: Partial<Indexer> = {}): Indexer {
     url: 'https://indexer.example.com',
     apiKey: 'test-key',
     categories: [7020],
+    priority: 0,
     enabled: true,
     ...overrides,
   }
