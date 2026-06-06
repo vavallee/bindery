@@ -58,6 +58,22 @@ func (r *Renamer) AudiobookDestDir(rootFolder string, author *models.Author, boo
 	return ensureContained(dest, rootFolder)
 }
 
+// DropEbookName returns the flat leaf filename for an ebook placed directly in
+// a drop folder (import.drop_layout=flat): "{Title} - {Author}.{ext}" with each
+// component sanitized. The result is a bare filename with no path separators,
+// safe to filepath.Join under the drop folder. filepath.Base is defensive
+// insurance against a sanitizer change ever letting a separator through.
+func (r *Renamer) DropEbookName(author *models.Author, book *models.Book, srcPath string) string {
+	ext := strings.TrimPrefix(filepath.Ext(srcPath), ".")
+	return filepath.Base(r.apply("{Title} - {Author}.{ext}", author, book, "", "", ext))
+}
+
+// DropAudiobookName returns the flat leaf directory name for an audiobook
+// placed in a drop folder (import.drop_layout=flat): "{Title} - {Author}".
+func (r *Renamer) DropAudiobookName(author *models.Author, book *models.Book) string {
+	return filepath.Base(r.apply("{Title} - {Author}", author, book, "", "", ""))
+}
+
 // ensureContained returns dest unchanged when it resolves inside baseDir; otherwise
 // it returns an error. This prevents book-derived path components (e.g. author or
 // title strings seeded from remote metadata) from escaping the configured library.
