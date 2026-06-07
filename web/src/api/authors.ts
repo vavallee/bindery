@@ -132,6 +132,8 @@ export const authorsApi = {
       body: candidate ? JSON.stringify(candidate) : undefined,
     }),
   listAuthorAliases: (id: number) => request<AuthorAlias[]>(`/author/${id}/aliases`),
+  deleteAuthorAlias: (authorId: number, aliasId: number) =>
+    request<void>(`/author/${authorId}/aliases/${aliasId}`, { method: 'DELETE' }),
   // listAuthorSeries returns the series the author has books in. Backs the
   // per-author monitor-by-series picker in EditAuthorModal (#810).
   listAuthorSeries: (id: number) => request<Series[]>(`/author/${id}/series`),

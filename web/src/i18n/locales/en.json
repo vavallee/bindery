@@ -142,6 +142,11 @@
     "bulkRefreshMetadata": "Refresh metadata"
   },
   "authorDetail": {
+    "aliases": {
+      "removeConfirm": "Remove alias \"{{name}}\" from {{author}}?",
+      "removeLabel": "Remove alias {{name}}",
+      "removeFailed": "Remove alias failed: {{error}}"
+    },
     "bulk": {
       "monitor": "Monitor",
       "unmonitor": "Unmonitor",
