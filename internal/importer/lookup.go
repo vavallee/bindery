@@ -3,6 +3,7 @@ package importer
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -94,6 +95,119 @@ func (s *Scanner) Lookup(ctx context.Context, path string) (LookupResult, error)
 		result.Candidates = matches
 	}
 	return result, nil
+}
+
+// matchBookForDownload tries to associate an unmatched download (one grabbed
+// without a BookID, e.g. via the free-text Search page) with a catalogue book.
+// It prefers embedded EPUB metadata (dc:title/dc:creator) over the release
+// filename, since filenames encode author/title/series in inconsistent orders
+// and routinely mis-parse (issue #1014). Returns the book and its author only
+// on a single confident match; (nil, nil) when the catalogue has no
+// unambiguous match, so the caller still surfaces the unmatched failure rather
+// than importing against the wrong book.
+func (s *Scanner) matchBookForDownload(ctx context.Context, files []string) (*models.Book, *models.Author) {
+	// Tier 1: embedded EPUB metadata.
+	for _, f := range files {
+		if !IsEpubFile(f) {
+			continue
+		}
+		meta, err := ReadEpubMetadata(f)
+		if err != nil {
+			slog.Debug("epub metadata unreadable; will try filename", "file", f, "error", err)
+			continue
+		}
+		if b, a := s.matchByTitleAuthor(ctx, meta.Title, meta.Author); b != nil {
+			slog.Info("matched download via embedded EPUB metadata",
+				"file", f, "title", meta.Title, "author", meta.Author, "isbn", meta.ISBN, "bookID", b.ID)
+			return b, a
+		}
+	}
+
+	// Tier 2: release filename, via the same catalogue lookup manual import uses.
+	for _, f := range files {
+		res, err := s.Lookup(ctx, f)
+		if err != nil {
+			slog.Debug("filename lookup failed", "file", f, "error", err)
+			continue
+		}
+		if res.Match == "confident" && res.Book != nil {
+			a, err := s.authors.GetByID(ctx, res.Book.AuthorID)
+			if err != nil {
+				slog.Warn("matched book but failed to load author", "bookID", res.Book.ID, "error", err)
+			}
+			slog.Info("matched download via filename lookup",
+				"file", f, "title", res.ParsedTitle, "author", res.ParsedAuthor, "bookID", res.Book.ID)
+			return res.Book, a
+		}
+	}
+	return nil, nil
+}
+
+// matchByTitleAuthor finds the single catalogue book whose title matches and
+// (when an author is supplied) whose author matches. Mirrors Lookup's title
+// tier but takes explicit title/author (e.g. from embedded metadata) instead of
+// parsing a path. Returns (nil, nil) on zero or multiple matches — it never
+// guesses between ambiguous candidates.
+func (s *Scanner) matchByTitleAuthor(ctx context.Context, title, authorName string) (*models.Book, *models.Author) {
+	if strings.TrimSpace(title) == "" {
+		return nil, nil
+	}
+	books, err := s.books.List(ctx)
+	if err != nil {
+		return nil, nil
+	}
+	authors, err := s.authors.List(ctx)
+	if err != nil {
+		return nil, nil
+	}
+	names := make(map[int64]string, len(authors))
+	for _, a := range authors {
+		names[a.ID] = a.Name
+	}
+	var matches []models.Book
+	for _, b := range books {
+		if !titleMatch(b.Title, title) {
+			continue
+		}
+		if authorName != "" && !lookupAuthorMatch(authorName, names[b.AuthorID]) {
+			continue
+		}
+		matches = append(matches, b)
+	}
+	if len(matches) != 1 {
+		return nil, nil
+	}
+	matched := matches[0]
+	a, err := s.authors.GetByID(ctx, matched.AuthorID)
+	if err != nil {
+		slog.Warn("matched book but failed to load author", "bookID", matched.ID, "error", err)
+	}
+	return &matched, a
+}
+
+// unmatchedReason builds an actionable failure message for a download that
+// matched no catalogue book, surfacing what was read from the file (parsed
+// filename + embedded EPUB metadata) so the user can see WHY it didn't match
+// rather than a bare "check the release title" (issue #1014 point 5).
+func unmatchedReason(files []string) string {
+	const base = "could not match this download to any book in your library"
+	if len(files) == 0 {
+		return base + " — no book files were found."
+	}
+	f := files[0]
+	parsed := ParseFilename(f)
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s. Parsed from filename: title=%q author=%q", base, parsed.Title, parsed.Author)
+	if IsEpubFile(f) {
+		if meta, err := ReadEpubMetadata(f); err == nil && (meta.Title != "" || meta.Author != "") {
+			fmt.Fprintf(&b, "; embedded EPUB: title=%q author=%q", meta.Title, meta.Author)
+			if meta.ISBN != "" {
+				fmt.Fprintf(&b, " isbn=%s", meta.ISBN)
+			}
+		}
+	}
+	b.WriteString(". Add the matching book to your library, then retry the import.")
+	return b.String()
 }
 
 // lookupDetectFormat returns "audiobook" for directory paths (multi-file

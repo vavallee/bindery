@@ -61,6 +61,15 @@ func TestParseFilename(t *testing.T) {
 			wantASIN:   "B09H42KSJF",
 			wantFormat: "azw3",
 		},
+		{
+			// issue #1014: "Author - [Series NN] - Title (tags)" must NOT be split
+			// into title="Peter F Hamilton", author="- Pandora's Star". The author
+			// leads, the title trails the series tag.
+			input:      "Peter F Hamilton - [Commonwealth Saga 01] - Pandora's Star (US) (retail) (epub).epub",
+			wantTitle:  "Pandora's Star",
+			wantAuthor: "Peter F Hamilton",
+			wantFormat: "epub",
+		},
 	}
 
 	for _, tt := range tests {
