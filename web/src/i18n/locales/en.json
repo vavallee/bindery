@@ -142,6 +142,10 @@
     "bulkRefreshMetadata": "Refresh metadata"
   },
   "authorDetail": {
+    "description": {
+      "showMore": "Show more",
+      "showLess": "Show less"
+    },
     "aliases": {
       "removeConfirm": "Remove alias \"{{name}}\" from {{author}}?",
       "removeLabel": "Remove alias {{name}}",

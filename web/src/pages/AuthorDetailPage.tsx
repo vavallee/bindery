@@ -9,6 +9,7 @@ import EditAuthorModal from '../components/EditAuthorModal'
 import AuthorMetadataLinkModal from '../components/AuthorMetadataLinkModal'
 import BulkActionBar from '../components/BulkActionBar'
 import { useView } from '../components/useView'
+import MarkdownDescription from '../components/MarkdownDescription'
 
 type MediaFilter = '' | 'ebook' | 'audiobook'
 type StatusFilter = '' | 'wanted' | 'downloading' | 'downloaded' | 'imported' | 'skipped'
@@ -388,7 +389,12 @@ export default function AuthorDetailPage() {
             )}
           </div>
           {author.description && (
-            <p className="mt-3 text-sm text-slate-700 dark:text-zinc-300 leading-relaxed line-clamp-6">{author.description}</p>
+            <MarkdownDescription
+              text={author.description}
+              showMoreLabel={t('authorDetail.description.showMore', 'Show more')}
+              showLessLabel={t('authorDetail.description.showLess', 'Show less')}
+              className="mt-3"
+            />
           )}
           <div className="flex flex-wrap gap-2 mt-4">
             <button

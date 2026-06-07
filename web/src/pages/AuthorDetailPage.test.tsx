@@ -113,6 +113,15 @@ function rowForTitle(title: string): HTMLElement {
   return row
 }
 
+function mockElementOverflow(overflows: boolean): () => void {
+  const scrollHeight = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(overflows ? 120 : 60)
+  const clientHeight = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(60)
+  return () => {
+    scrollHeight.mockRestore()
+    clientHeight.mockRestore()
+  }
+}
+
 describe('AuthorDetailPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -122,6 +131,63 @@ describe('AuthorDetailPage', () => {
     })
     vi.mocked(api.searchAuthorLinkCandidates).mockResolvedValue([])
     vi.mocked(api.relinkAuthorUpstream).mockResolvedValue(author)
+  })
+
+  it('renders author description markdown without citation noise', async () => {
+    renderAuthorDetailPage([], 'grid', {
+      description: [
+        'Known for the *Mistborn* series and [*Mistborn: The Final Empire*][3].',
+        '',
+        'A **prolific** fantasy author.',
+        '',
+        '(Sources: [1][1],[2][2])',
+        '',
+        '[1]: https://example.com/source',
+        '[3]: https://example.com/mistborn',
+      ].join('\n'),
+    })
+
+    expect(await screen.findByText('Mistborn', { selector: 'em' })).toBeInTheDocument()
+    expect(screen.getByText('Mistborn: The Final Empire', { selector: 'em' })).toBeInTheDocument()
+    expect(screen.getByText('prolific', { selector: 'strong' })).toBeInTheDocument()
+    expect(screen.queryByText(/\*Mistborn\*/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/\[3\]/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Sources:/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/https:\/\/example\.com/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Mistborn: The Final Empire/ })).not.toBeInTheDocument()
+  })
+
+  it('toggles long author descriptions', async () => {
+    const restoreOverflow = mockElementOverflow(true)
+    try {
+      renderAuthorDetailPage([], 'grid', {
+        description: 'Line one.\n\nLine two.\n\nLine three.\n\nLine four.\n\nLine five.\n\nLine six.\n\nLine seven.',
+      })
+
+      const showMore = await screen.findByRole('button', { name: 'Show more' })
+      expect(showMore).toHaveAttribute('aria-expanded', 'false')
+
+      fireEvent.click(showMore)
+
+      const showLess = screen.getByRole('button', { name: 'Show less' })
+      expect(showLess).toHaveAttribute('aria-expanded', 'true')
+    } finally {
+      restoreOverflow()
+    }
+  })
+
+  it('does not show a toggle for short author descriptions', async () => {
+    const restoreOverflow = mockElementOverflow(false)
+    try {
+      renderAuthorDetailPage([], 'grid', {
+        description: 'A short description.',
+      })
+
+      await screen.findByText('A short description.')
+      expect(screen.queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument()
+    } finally {
+      restoreOverflow()
+    }
   })
 
   it('searches all wanted books for the current author', async () => {
