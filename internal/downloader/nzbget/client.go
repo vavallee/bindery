@@ -167,9 +167,7 @@ func (c *Client) Add(ctx context.Context, nzbURL, name, category string, priorit
 		}
 	}
 	encoded := base64.StdEncoding.EncodeToString(content)
-	// append params: name, content, category, priority, dupecheck, dupekey, dupescore,
-	//                ppparameters (array), addtoTop, addpaused, urlpassword, postscript
-	params := []any{name, encoded, category, priority, false, "", 0, []any{}, false, false, "", ""}
+	params := appendParams(name, encoded, category, priority)
 	var resp appendResponse
 	if err := c.call(ctx, "append", params, &resp); err != nil {
 		return 0, fmt.Errorf("add nzb: %w", err)
@@ -183,6 +181,25 @@ func (c *Client) Add(ctx context.Context, nzbURL, name, category string, priorit
 		return 0, fmt.Errorf("NZBGet rejected the download (append returned id 0) — check NZBGet's log for the reason. Common causes: disk full, write-permission on the intermediate or destination directory, NZBGet paused with quota reached, or invalid NZB content")
 	}
 	return resp.Result, nil
+}
+
+// appendParams builds the parameter list for NZBGet's append RPC. It sends the
+// nine parameters that NZBGet has required since v13:
+//
+//	name, content, category, priority, addToTop, addPaused, dupeKey, dupeScore, dupeMode
+//
+// The two parameters NZBGet added later — ppParameters (v16) and autoCategory
+// (v25.3) — are deliberately omitted. Both are optional trailing parameters
+// that every NZBGet version parses with unguarded reads (absent ⇒ default), so
+// omitting them is accepted on all versions and behaves identically to sending
+// their defaults (no post-processing params, autoCategory off). This keeps the
+// call version-agnostic and avoids any per-client version state.
+//
+// dupeMode "FORCE" tells NZBGet to add the download unconditionally rather than
+// silently dropping it as a duplicate of a prior history item. Bindery decides
+// what to grab and does its own deduplication, so NZBGet must honour the grab.
+func appendParams(name, encoded, category string, priority int) []any {
+	return []any{name, encoded, category, priority, false, false, "", 0, "FORCE"}
 }
 
 // containsString returns true when needle appears in haystack. Tiny helper
@@ -323,5 +340,26 @@ func (c *Client) call(ctx context.Context, method string, params []any, target a
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
-	return json.NewDecoder(resp.Body).Decode(target)
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	// NZBGet signals a failed call with a JSON-RPC "error" object (and a null
+	// result). Without this check an append fault — "Invalid parameter",
+	// malformed NZB, etc. — silently decodes into result 0 and surfaces as a
+	// useless generic "id 0" message. Surface the real reason instead.
+	var probe struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if json.Unmarshal(raw, &probe) == nil && len(probe.Error) > 0 && string(probe.Error) != "null" {
+		var e struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(probe.Error, &e) == nil && e.Message != "" {
+			return fmt.Errorf("NZBGet %s RPC error %d: %s", method, e.Code, e.Message)
+		}
+		return fmt.Errorf("NZBGet %s RPC error: %s", method, string(probe.Error))
+	}
+	return json.Unmarshal(raw, target)
 }

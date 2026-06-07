@@ -1,10 +1,21 @@
 package nzbget
 
 // rpcRequest is the JSON-RPC request envelope.
+//
+// Field order matters: "params" MUST be marshalled last. NZBGet's JSON
+// param reader (XmlCommand::NextParamAsStr) advances its cursor one byte past
+// each value's trailing delimiter. For the final array element that pushes the
+// cursor past the closing "]" into whatever follows the params array. On the
+// v13 append path NZBGet then reads that trailing text as post-processing
+// "Parameters": if "id" follows params it misreads it and rejects the call with
+// `Invalid parameter (Parameters)`, silently dropping every download. Keeping
+// params last means the overshoot lands on the closing "}", which the parser
+// treats as end-of-params. encoding/json marshals fields in declaration order,
+// so the order below is the wire order.
 type rpcRequest struct {
 	Method string `json:"method"`
-	Params []any  `json:"params"`
 	ID     int    `json:"id"`
+	Params []any  `json:"params"`
 }
 
 // versionResponse is the result of calling the "version" method.

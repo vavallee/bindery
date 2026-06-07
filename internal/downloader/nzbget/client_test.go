@@ -842,3 +842,86 @@ func TestCheckCategories_ListFails(t *testing.T) {
 		t.Errorf("expected wrapped list error, got: %q", err.Error())
 	}
 }
+
+// TestRPCRequest_ParamsMarshalledLast guards the NZBGet JSON-RPC quirk that
+// forced this fix: NZBGet's param reader overshoots one byte past the final
+// array element, so anything after the params array (e.g. an "id" field) gets
+// misread as a post-processing parameter and the append is rejected with
+// "Invalid parameter (Parameters)". The envelope must therefore end with the
+// params array immediately before the closing brace.
+func TestRPCRequest_ParamsMarshalledLast(t *testing.T) {
+	buf, err := json.Marshal(rpcRequest{
+		Method: "append",
+		ID:     1,
+		Params: []any{"name", "content", "books", 0, false, false, "", 0, "FORCE"},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	body := string(buf)
+	if !strings.HasSuffix(body, `]}`) {
+		t.Errorf("request must end with the params array then '}'; got: %s", body)
+	}
+	if strings.Index(body, `"params"`) < strings.Index(body, `"id"`) {
+		t.Errorf(`"params" must be marshalled after "id"; got: %s`, body)
+	}
+}
+
+// TestAppendParams_Shape verifies the append RPC is called with exactly the
+// nine version-agnostic parameters in the order NZBGet expects, with the
+// correct JSON types at each position. This is the regression guard for the
+// original bug, where positions 5–8 carried the wrong types (e.g. addPaused
+// got "" instead of a bool), causing NZBGet to silently reject the download
+// with id 0 on every version.
+func TestAppendParams_Shape(t *testing.T) {
+	indexerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, testNZBContent)
+	}))
+	defer indexerSrv.Close()
+
+	var gotReq rpcRequest
+	nzbgetSrv := nzbgetTestServer(t, []string{"books"}, func(w http.ResponseWriter, r *http.Request) {
+		gotReq = decodeRequest(t, r)
+		json.NewEncoder(w).Encode(appendResponse{Result: 99})
+	})
+	defer nzbgetSrv.Close()
+
+	host, port := serverHostPort(t, nzbgetSrv.URL)
+	c := New(host, port, "user", "pass", "", false)
+	allowNZBFetch(c)
+
+	_, err := c.Add(context.Background(), indexerSrv.URL+"/file.nzb", "Test Book", "books", 7)
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if len(gotReq.Params) != 9 {
+		t.Fatalf("append expects 9 params, got %d: %v", len(gotReq.Params), gotReq.Params)
+	}
+	// Positions and types per NZBGet's append signature:
+	// [name, content, category, priority, addToTop, addPaused, dupeKey, dupeScore, dupeMode].
+	// JSON numbers decode into float64, so check the numeric positions as such.
+	assertString := func(i int, want string) {
+		if got, ok := gotReq.Params[i].(string); !ok || got != want {
+			t.Errorf("param[%d]: want string %q, got %T %v", i, want, gotReq.Params[i], gotReq.Params[i])
+		}
+	}
+	assertBool := func(i int, want bool) {
+		if got, ok := gotReq.Params[i].(bool); !ok || got != want {
+			t.Errorf("param[%d]: want bool %v, got %T %v", i, want, gotReq.Params[i], gotReq.Params[i])
+		}
+	}
+	assertNumber := func(i int, want float64) {
+		if got, ok := gotReq.Params[i].(float64); !ok || got != want {
+			t.Errorf("param[%d]: want number %v, got %T %v", i, want, gotReq.Params[i], gotReq.Params[i])
+		}
+	}
+	assertString(0, "Test Book") // name
+	// param[1] is base64 content — asserted in TestAdd
+	assertString(2, "books") // category
+	assertNumber(3, 7)       // priority
+	assertBool(4, false)     // addToTop
+	assertBool(5, false)     // addPaused
+	assertString(6, "")      // dupeKey
+	assertNumber(7, 0)       // dupeScore
+	assertString(8, "FORCE") // dupeMode
+}
