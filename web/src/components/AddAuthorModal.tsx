@@ -168,7 +168,7 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50" onClick={onClose}>
-      <div className="bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-label={t('addAuthorModal.title')} className="bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="p-4 border-b border-slate-200 dark:border-zinc-800">
           <h3 className="text-lg font-semibold">{t('addAuthorModal.title')}</h3>
         </div>
@@ -276,8 +276,8 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
             />
             <button
               onClick={search}
-              disabled={searching}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded-md text-sm font-medium"
+              disabled={searching || !query.trim()}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm font-medium"
             >
               {searching ? t('addAuthorModal.searching') : t('addAuthorModal.search')}
             </button>

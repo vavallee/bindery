@@ -90,6 +90,15 @@ describe('AddAuthorModal — search error handling', () => {
     vi.mocked(api.addAuthor).mockResolvedValue(author({}))
   })
 
+  it('disables Search until a name is entered and exposes a dialog role', () => {
+    render(<AddAuthorModal onClose={vi.fn()} onAdded={vi.fn()} />)
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    const btn = screen.getByRole('button', { name: 'Search' })
+    expect(btn).toBeDisabled()
+    fireEvent.change(screen.getByPlaceholderText('Search by author name...'), { target: { value: 'Sanderson' } })
+    expect(btn).toBeEnabled()
+  })
+
   it('shows an error banner when the metadata provider is unreachable', async () => {
     vi.mocked(api.searchAuthors).mockRejectedValue(
       new Error('search authors: HTTP 503: Service Unavailable')
