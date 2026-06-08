@@ -157,6 +157,22 @@ describe('AuthorDetailPage', () => {
     expect(screen.queryByRole('link', { name: /Mistborn: The Final Empire/ })).not.toBeInTheDocument()
   })
 
+  it('renders inline [text](url) links as safe anchors', async () => {
+    renderAuthorDetailPage([], 'grid', {
+      description: 'See [Wikipedia (EN)](https://en.wikipedia.org/wiki/Brandon_Sanderson) for more. Also [bad](javascript:alert(1)) here.',
+    })
+
+    const link = await screen.findByRole('link', { name: 'Wikipedia (EN)' })
+    expect(link).toHaveAttribute('href', 'https://en.wikipedia.org/wiki/Brandon_Sanderson')
+    expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'))
+    expect(link).toHaveAttribute('target', '_blank')
+    // The raw markdown syntax must not leak through.
+    expect(screen.queryByText(/\]\(https/)).not.toBeInTheDocument()
+    // A non-http(s) URL must NOT become a link (no javascript: anchor).
+    expect(screen.queryByRole('link', { name: 'bad' })).not.toBeInTheDocument()
+    expect(screen.getByText('bad')).toBeInTheDocument()
+  })
+
   it('toggles long author descriptions', async () => {
     const restoreOverflow = mockElementOverflow(true)
     try {

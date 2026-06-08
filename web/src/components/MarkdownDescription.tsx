@@ -11,7 +11,16 @@ interface MarkdownDescriptionProps {
 
 const referenceDefinitionRE = /^\s*\[[^\]]+\]:\s+\S+/
 const sourcesLineRE = /^\s*\(Sources?:\s*.*\)\s*$/i
-const inlineTokenRE = /\[([^\]]+)\]\[[^\]]+\]|\*\*([^*\n]+?)\*\*|\*([^*\n]+?)\*/g
+// Inline tokens, in priority order: [text](url) inline link, [text][ref]
+// reference link (rendered as plain text — the [ref]: defs are stripped),
+// **bold**, *italic*.
+const inlineTokenRE = /\[([^\]]+)\]\(([^)\s]+)\)|\[([^\]]+)\]\[[^\]]+\]|\*\*([^*\n]+?)\*\*|\*([^*\n]+?)\*/g
+
+// safeHref returns url only when it is an http(s) URL, so a description from an
+// upstream metadata provider can't inject javascript:/data: links.
+function safeHref(url: string): string {
+  return /^https?:\/\//i.test(url) ? url : ''
+}
 
 function cleanMarkdownDescription(text: string): string {
   return text
@@ -43,15 +52,35 @@ function parseInlineMarkdown(text: string, keyPrefix: string): ReactNode[] {
     }
 
     if (match[1] !== undefined) {
+      // [text](url) inline link. Render an anchor only for safe http(s) URLs;
+      // otherwise fall back to the link text so nothing dangerous is emitted.
+      const href = safeHref(match[2])
+      const inner = parseInlineMarkdown(match[1], `${keyPrefix}-link-${index}`)
+      nodes.push(
+        href ? (
+          <a
+            key={`${keyPrefix}-link-${index}`}
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer nofollow"
+            className="text-emerald-600 dark:text-emerald-400 underline hover:no-underline"
+          >
+            {inner}
+          </a>
+        ) : (
+          <span key={`${keyPrefix}-link-${index}`}>{inner}</span>
+        ),
+      )
+    } else if (match[3] !== undefined) {
       nodes.push(
         <span key={`${keyPrefix}-ref-${index}`}>
-          {parseInlineMarkdown(match[1], `${keyPrefix}-ref-${index}`)}
+          {parseInlineMarkdown(match[3], `${keyPrefix}-ref-${index}`)}
         </span>,
       )
-    } else if (match[2] !== undefined) {
-      nodes.push(<strong key={`${keyPrefix}-strong-${index}`}>{match[2]}</strong>)
-    } else if (match[3] !== undefined) {
-      nodes.push(<em key={`${keyPrefix}-em-${index}`}>{match[3]}</em>)
+    } else if (match[4] !== undefined) {
+      nodes.push(<strong key={`${keyPrefix}-strong-${index}`}>{match[4]}</strong>)
+    } else if (match[5] !== undefined) {
+      nodes.push(<em key={`${keyPrefix}-em-${index}`}>{match[5]}</em>)
     }
 
     lastIndex = index + match[0].length
