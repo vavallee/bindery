@@ -115,7 +115,7 @@ export const booksApi = {
     request<Book>('/author/book', { method: 'POST', body: JSON.stringify(data) }),
 
   // Books
-  listBooks: (params?: { authorId?: number; status?: string; includeExcluded?: boolean; limit?: number; offset?: number; search?: string; mediaType?: string; sort?: string }) => {
+  listBooks: (params?: { authorId?: number; status?: string; includeExcluded?: boolean; limit?: number; offset?: number; search?: string; mediaType?: string; sort?: string; releaseFrom?: string; releaseBefore?: string }) => {
     const q = new URLSearchParams()
     if (params?.authorId) q.set('authorId', String(params.authorId))
     if (params?.status) q.set('status', params.status)
@@ -125,6 +125,8 @@ export const booksApi = {
     if (params?.search) q.set('search', params.search)
     if (params?.mediaType) q.set('mediaType', params.mediaType)
     if (params?.sort) q.set('sort', params.sort)
+    if (params?.releaseFrom) q.set('releaseFrom', params.releaseFrom)
+    if (params?.releaseBefore) q.set('releaseBefore', params.releaseBefore)
     const qs = q.toString()
     return request<Page<Book>>(`/book${qs ? '?' + qs : ''}`)
   },

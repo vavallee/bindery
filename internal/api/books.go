@@ -295,10 +295,12 @@ func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
 		// monitored=1 for "wanted" — matching what the Books page showed when
 		// it filtered client-side over the full set.
 		books, total, err = h.books.ListPageFiltered(r.Context(), db.BookListFilter{
-			Search:    strings.TrimSpace(r.URL.Query().Get("search")),
-			Status:    status,
-			MediaType: r.URL.Query().Get("mediaType"),
-			Sort:      r.URL.Query().Get("sort"),
+			Search:        strings.TrimSpace(r.URL.Query().Get("search")),
+			Status:        status,
+			MediaType:     r.URL.Query().Get("mediaType"),
+			Sort:          r.URL.Query().Get("sort"),
+			ReleaseFrom:   strings.TrimSpace(r.URL.Query().Get("releaseFrom")),
+			ReleaseBefore: strings.TrimSpace(r.URL.Query().Get("releaseBefore")),
 		}, limit, offset)
 	}
 

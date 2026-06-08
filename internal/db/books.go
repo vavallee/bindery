@@ -219,6 +219,13 @@ type BookListFilter struct {
 	MediaType string
 	// Sort is one of "title-az" (default), "title-za", "date-new", "date-old".
 	Sort string
+	// ReleaseFrom / ReleaseBefore bound release_date to [ReleaseFrom, ReleaseBefore)
+	// (ISO date strings; lexical compare works for ISO-8601). Used by the
+	// calendar to fetch a single month instead of the whole library. Empty
+	// disables each bound; rows with a NULL release_date are excluded when either
+	// bound is set.
+	ReleaseFrom   string
+	ReleaseBefore string
 }
 
 // bookSortOrder maps a whitelisted sort key to a fixed ORDER BY clause. Never
@@ -268,6 +275,14 @@ func (r *BookRepo) ListPageFiltered(ctx context.Context, f BookListFilter, limit
 		where += " AND (books.media_type IN ('ebook','both') OR books.media_type IS NULL OR books.media_type = '')"
 	case "audiobook":
 		where += " AND books.media_type IN ('audiobook','both')"
+	}
+	if rf := strings.TrimSpace(f.ReleaseFrom); rf != "" {
+		where += " AND books.release_date >= ?"
+		args = append(args, rf)
+	}
+	if rb := strings.TrimSpace(f.ReleaseBefore); rb != "" {
+		where += " AND books.release_date < ?"
+		args = append(args, rb)
 	}
 
 	total, err := r.count(ctx, bookCTE+" SELECT COUNT(*) FROM books "+bookJoins+" "+where, args)

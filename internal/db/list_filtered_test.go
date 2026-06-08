@@ -3,9 +3,60 @@ package db
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/vavallee/bindery/internal/models"
 )
+
+// TestBookRepo_ListPageFiltered_ReleaseRange covers the calendar's date-range
+// query: [ReleaseFrom, ReleaseBefore) on release_date, excluding NULL dates.
+func TestBookRepo_ListPageFiltered_ReleaseRange(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	authorRepo := NewAuthorRepo(database)
+	bookRepo := NewBookRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{ForeignID: "OL-RA", Name: "Range Author", SortName: "Author, Range", Monitored: true}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	mk := func(title, date string) {
+		b := &models.Book{ForeignID: "OL-R" + title, AuthorID: author.ID, Title: title, SortTitle: title, MediaType: models.MediaTypeEbook}
+		if date != "" {
+			d, perr := time.Parse("2006-01-02", date)
+			if perr != nil {
+				t.Fatal(perr)
+			}
+			b.ReleaseDate = &d
+		}
+		if err := bookRepo.Create(ctx, b); err != nil {
+			t.Fatalf("seed %s: %v", title, err)
+		}
+	}
+	mk("May", "2026-05-20")
+	mk("JuneEarly", "2026-06-02")
+	mk("JuneLate", "2026-06-29")
+	mk("July", "2026-07-03")
+	mk("NoDate", "")
+
+	// June only: [2026-06-01, 2026-07-01)
+	got, total, err := bookRepo.ListPageFiltered(ctx, BookListFilter{
+		ReleaseFrom: "2026-06-01", ReleaseBefore: "2026-07-01", Sort: "date-old",
+	}, 50, 0)
+	if err != nil {
+		t.Fatalf("range: %v", err)
+	}
+	if total != 2 || len(got) != 2 {
+		t.Fatalf("June range total=%d len=%d, want 2 (JuneEarly, JuneLate)", total, len(got))
+	}
+	if got[0].Title != "JuneEarly" || got[1].Title != "JuneLate" {
+		t.Errorf("June range = [%s, %s], want [JuneEarly, JuneLate]", got[0].Title, got[1].Title)
+	}
+}
 
 // TestAuthorRepo_ListPageFiltered_Pagination is the direct regression test for
 // issue #1010 bug 1: a library with more authors than one page must be fully

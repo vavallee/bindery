@@ -26,11 +26,22 @@ export default function CalendarPage() {
   const [viewYear, setViewYear] = useState(today.getFullYear())
   const [viewMonth, setViewMonth] = useState(today.getMonth())
 
+  // Fetch only the visible month's releases (a scoped server query) rather than
+  // pulling the whole library and filtering client-side. Re-fetches when the
+  // month changes. releaseFrom is inclusive, releaseBefore exclusive (the 1st of
+  // the next month), so the query is exactly [month-start, next-month-start).
   useEffect(() => {
-    // The calendar plots every upcoming release, so it needs the full set, not
-    // one paginated page (listBooks now caps at 100 by default — #1010).
-    api.listAllBooks().then(setBooks).catch(console.error).finally(() => setLoading(false))
-  }, [])
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const from = `${viewYear}-${pad(viewMonth + 1)}-01`
+    const beforeYear = viewMonth === 11 ? viewYear + 1 : viewYear
+    const beforeMonth = viewMonth === 11 ? 0 : viewMonth + 1
+    const before = `${beforeYear}-${pad(beforeMonth + 1)}-01`
+    setLoading(true)
+    api.listBooks({ releaseFrom: from, releaseBefore: before, limit: 500 })
+      .then(({ items }) => setBooks(items))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [viewYear, viewMonth])
 
   useEffect(() => {
     document.title = 'Calendar · Bindery'
