@@ -147,9 +147,10 @@ export const authorsApi = {
   // per-selection bulkActionAuthors('refresh'): this enumerates every author and
   // refreshes sequentially with progress that survives a page reload.
   refreshAllAuthors: () => request<{ message: string }>('/authors/refresh-all', { method: 'POST' }),
-  // Returns null when no refresh has ever run (the backend serves 404). A
-  // stored "running" status is reconciled to "failed" server-side after a
-  // restart so the UI banner never hangs.
+  // The backend returns a 200 {status:"idle"} when no refresh has ever run. The
+  // 404 fallback is kept for back-compat with older servers that 404'd that
+  // case. A stored "running" status is reconciled to "failed" server-side after
+  // a restart so the UI banner never hangs.
   refreshAllAuthorsStatus: () =>
     request<AuthorRefreshStatus>('/authors/refresh-all/status').catch((err) => {
       if (err instanceof ApiError && err.status === 404) return null
@@ -161,7 +162,7 @@ export const authorsApi = {
 // "running" while the job iterates authors, "completed" when done, or "failed"
 // (e.g. the author list could not be loaded, or the server restarted mid-job).
 export interface AuthorRefreshStatus {
-  status: 'running' | 'completed' | 'failed'
+  status: 'idle' | 'running' | 'completed' | 'failed'
   total: number
   done: number
   failed: number

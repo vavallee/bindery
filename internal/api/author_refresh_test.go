@@ -167,12 +167,21 @@ func TestAuthorRefresh_ConcurrentReturns409(t *testing.T) {
 	close(release)
 }
 
-func TestAuthorRefresh_StatusNotFoundBeforeRun(t *testing.T) {
+func TestAuthorRefresh_StatusIdleBeforeRun(t *testing.T) {
 	h, _ := refreshTestFixture(t, &stubAuthorLister{}, func(_ *models.Author) {})
 	w := httptest.NewRecorder()
 	h.RefreshAllStatus(w, httptest.NewRequest(http.MethodGet, "/authors/refresh-all/status", nil))
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", w.Code)
+	// Before any job has run, status is a 200 idle state (not a 404) so the
+	// Authors page poll doesn't surface a 404 on every load.
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got["status"] != "idle" {
+		t.Fatalf("status field = %q, want %q", got["status"], "idle")
 	}
 }
 

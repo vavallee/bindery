@@ -175,15 +175,17 @@ func (h *AuthorRefreshHandler) persist(ctx context.Context, status authorRefresh
 	}
 }
 
-// RefreshAllStatus serves the last refresh-all progress as JSON, or 404 if no
-// job has ever run. If the stored status says "running" but no job is actually
-// running in this process (e.g. the server restarted mid-job), it is reported
-// as "failed" with an "interrupted by restart" message so the UI banner does
-// not hang forever. The reconciled value is written back once so subsequent
-// reads are consistent.
+// RefreshAllStatus serves the last refresh-all progress as JSON, or a 200
+// {"status":"idle"} when no job has ever run. (It previously 404'd for "no job
+// run", which the Authors page polls on every load — surfacing a 404 per page
+// view and conflating "no job" with a real error; idle is the honest signal.)
+// If the stored status says "running" but no job is actually running in this
+// process (e.g. the server restarted mid-job), it is reported as "failed" with
+// an "interrupted by restart" message so the UI banner does not hang forever.
+// The reconciled value is written back once so subsequent reads are consistent.
 func (h *AuthorRefreshHandler) RefreshAllStatus(w http.ResponseWriter, r *http.Request) {
 	if h.settings == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no refresh result available"})
+		writeJSON(w, http.StatusOK, map[string]string{"status": "idle"})
 		return
 	}
 	setting, err := h.settings.Get(r.Context(), SettingAuthorBulkRefresh)
@@ -192,7 +194,7 @@ func (h *AuthorRefreshHandler) RefreshAllStatus(w http.ResponseWriter, r *http.R
 		return
 	}
 	if setting == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no refresh result available"})
+		writeJSON(w, http.StatusOK, map[string]string{"status": "idle"})
 		return
 	}
 
