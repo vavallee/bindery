@@ -10,6 +10,12 @@ type TorrentStatus struct {
 	DownloadRate int64   `json:"download_payload_rate"` // bytes/s
 	TotalSize    int64   `json:"total_size"`
 	TotalDone    int64   `json:"total_done"`
+	// SavePath / DownloadLocation is the directory the torrent's files live in,
+	// needed so the importer can locate completed files. Deluge 2.x exposes it
+	// as "download_location"; 1.x as "save_path". We request both and prefer
+	// download_location.
+	SavePath         string `json:"save_path"`
+	DownloadLocation string `json:"download_location"`
 }
 
 // File is a single file belonging to a torrent, as returned by

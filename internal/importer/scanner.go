@@ -288,10 +288,20 @@ func (s *Scanner) CheckDownloads(ctx context.Context) {
 		s.checkTransmissionDownloads(ctx, client)
 	case "qbittorrent":
 		s.checkQbittorrentDownloads(ctx, client)
+	case "deluge":
+		s.checkDelugeDownloads(ctx, client)
 	case "nzbget":
 		s.checkNZBGetDownloads(ctx, client)
-	default:
+	case "sabnzbd":
 		s.checkSABnzbdDownloads(ctx, client)
+	default:
+		// An unknown client type must NOT silently fall through to the SABnzbd
+		// poller: it would hit SABnzbd's HTTP endpoints against the wrong host,
+		// error, and (logged at Debug only) leave every download stuck at
+		// "downloading" with no visible failure — exactly the Deluge bug in
+		// #1019. Surface it loudly instead.
+		slog.Warn("check downloads: unsupported download client type — downloads will not be imported",
+			"type", client.Type, "client", client.Name)
 	}
 }
 

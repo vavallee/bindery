@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/vavallee/bindery/internal/downloader"
+	"github.com/vavallee/bindery/internal/downloader/deluge"
 	"github.com/vavallee/bindery/internal/downloader/nzbget"
 	"github.com/vavallee/bindery/internal/downloader/qbittorrent"
 	"github.com/vavallee/bindery/internal/downloader/sabnzbd"
@@ -509,6 +510,124 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 	s.blockStaleImportFailures(ctx, seenSourceIDs, true, func(d models.Download) bool {
 		return d.DownloadClientID != nil && *d.DownloadClientID == client.ID
 	})
+}
+
+// checkDelugeDownloads polls Deluge for status changes. Deluge returns every
+// torrent in a single call keyed by lower-cased hash, so (unlike qBittorrent)
+// there is no per-category filter that could hide a tracked download — it is
+// matched directly by the hash stored in dl.TorrentID. Before this existed a
+// Deluge client fell through CheckDownloads' default branch into the SABnzbd
+// poller, which errored against the Deluge host and left every grab stuck at
+// "downloading" with no visible failure (issue #1019).
+func (s *Scanner) checkDelugeDownloads(ctx context.Context, client *models.DownloadClient) {
+	dlc := downloader.DelugeFor(client)
+	torrents, err := dlc.GetTorrents(ctx)
+	if err != nil {
+		slog.Debug("failed to fetch Deluge torrents", "error", err)
+		return
+	}
+
+	allDownloads, err := s.downloads.List(ctx)
+	if err != nil {
+		slog.Debug("failed to list downloads", "error", err)
+		return
+	}
+
+	seenSourceIDs := make(map[int64]bool)
+	for _, dl := range allDownloads {
+		if dl.DownloadClientID == nil || *dl.DownloadClientID != client.ID || dl.TorrentID == nil {
+			continue
+		}
+		t, ok := torrents[strings.ToLower(*dl.TorrentID)]
+		if !ok {
+			continue
+		}
+		seenSourceIDs[dl.ID] = true
+		if dl.Status == models.StateImported || dl.Status == models.StateFailed {
+			continue
+		}
+
+		// Deluge reports a finished torrent as "Seeding" (or "Paused" when
+		// seeding is disabled / ratio met) with progress 100. Treat any
+		// completion signal as done so the import fires once it finishes.
+		state := strings.ToLower(t.State)
+		isComplete := state == "seeding" || t.Progress >= 100 || (t.TotalSize > 0 && t.TotalDone >= t.TotalSize)
+		isFailed := state == "error"
+
+		switch {
+		case isComplete && (dl.Status == models.StateDownloading || dl.Status == models.StateGrabbed):
+			downloadPath, bookFiles := s.delugeImportSources(ctx, dlc, client, t)
+			slog.Info("download completed", "title", dl.Title, "path", downloadPath, "files", len(bookFiles))
+			s.updateDownloadStatus(ctx, dl.ID, models.StateCompleted)
+			s.tryImportDeluge(ctx, &dl, downloadPath, bookFiles)
+		case isComplete && dl.Status == models.StateImportFailed && dl.ImportRetryCount < importRetryLimit:
+			downloadPath, bookFiles := s.delugeImportSources(ctx, dlc, client, t)
+			slog.Info("retrying failed import", "title", dl.Title, "path", downloadPath,
+				"attempt", dl.ImportRetryCount+1, "limit", importRetryLimit, "files", len(bookFiles))
+			if err := s.downloads.IncrementImportRetryCount(ctx, dl.ID); err != nil {
+				slog.Warn("failed to increment import retry count", "download_id", dl.ID, "error", err)
+			}
+			s.tryImportDeluge(ctx, &dl, downloadPath, bookFiles)
+		case isFailed && dl.Status != models.StateFailed:
+			slog.Warn("download failed", "title", dl.Title, "state", t.State)
+			s.markDownloadFailed(ctx, &dl, "Torrent failed in Deluge")
+		}
+	}
+
+	// GetTorrents returns every torrent, so a missing entry definitively means
+	// the source is gone — terminally block stale import failures (issue #706
+	// finding 4), same as the transmission/qbittorrent pollers.
+	s.blockStaleImportFailures(ctx, seenSourceIDs, true, func(d models.Download) bool {
+		return d.DownloadClientID != nil && *d.DownloadClientID == client.ID
+	})
+}
+
+// delugeImportSources resolves the per-torrent download path and the
+// authoritative book-file list for a completed Deluge torrent. The save path is
+// the join base (Deluge file names are relative to it); the download path is
+// savePath/name — the torrent's own file or folder — mirroring how the
+// qBittorrent poller avoids walking a shared download root (#903).
+func (s *Scanner) delugeImportSources(ctx context.Context, dlc *deluge.Client, client *models.DownloadClient, t deluge.TorrentStatus) (string, []string) {
+	savePath := strings.TrimSpace(t.DownloadLocation)
+	if savePath == "" {
+		savePath = strings.TrimSpace(t.SavePath)
+	}
+	downloadPath := s.remapDownloadClientPath(client, filepath.Join(savePath, t.Name))
+	return downloadPath, s.delugeFilesFor(ctx, dlc, client, t, savePath)
+}
+
+// delugeFilesFor asks Deluge for the torrent's file list and returns the
+// absolute Bindery-side book-file paths, or nil (caller falls back to a
+// directory walk of downloadPath) when the save path is unknown or the RPC
+// fails. See transmissionFilesFor / qbittorrentFilesFor for the same contract.
+func (s *Scanner) delugeFilesFor(ctx context.Context, dlc *deluge.Client, client *models.DownloadClient, t deluge.TorrentStatus, savePath string) []string {
+	if savePath == "" {
+		slog.Warn("import: Deluge returned no save path for torrent, falling back to directory walk",
+			"title", t.Name, "hash", t.Hash)
+		return nil
+	}
+	files, err := dlc.Files(ctx, t.Hash)
+	if err != nil {
+		slog.Warn("import: Deluge Files RPC failed, falling back to directory walk (issue #903 fallback)",
+			"title", t.Name, "hash", t.Hash, "error", err)
+		return nil
+	}
+	if len(files) == 0 {
+		slog.Warn("import: Deluge reported no files for torrent yet, falling back to directory walk",
+			"title", t.Name, "hash", t.Hash)
+		return nil
+	}
+	conv := make([]torrentFile, 0, len(files))
+	for _, f := range files {
+		conv = append(conv, torrentFile{Name: f.Name, Size: f.Size})
+	}
+	return s.resolveTorrentFiles(client, savePath, conv)
+}
+
+// tryImportDeluge attempts to import a completed Deluge download. See
+// tryImportTransmission for the semantics of explicitFiles.
+func (s *Scanner) tryImportDeluge(ctx context.Context, dl *models.Download, downloadPath string, explicitFiles []string) {
+	s.tryImportInternal(ctx, dl, downloadPath, "deluge", safeRemoteID(dl.TorrentID), "", nil, explicitFiles)
 }
 
 // tryImportSABnzbd attempts to import a completed SABnzbd download into the library.
