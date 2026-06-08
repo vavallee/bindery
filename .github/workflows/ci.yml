@@ -558,9 +558,16 @@ jobs:
           FILE_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}?ref=${DEPLOY_BRANCH}" --jq .sha)
           CONTENT=$(gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}?ref=${DEPLOY_BRANCH}" \
             --jq '.content' | base64 -d | sed "s|tag:.*|tag: \"${IMAGE_TAG}\"|" | base64 -w0)
+          # NOTE: the branch commit deliberately does NOT carry [skip ci]. The
+          # required checks (lint, validate, Security Summary) must actually run
+          # on the PR head, otherwise they stay "expected" forever and the merge
+          # below is blocked ("N of N required status checks are expected") — the
+          # default GITHUB_TOKEN is not a repo admin, so --admin can't override
+          # that. The [skip ci] is moved to the SQUASH subject instead, so the
+          # commit that lands on main still skips the pointless image rebuild.
           gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}" \
             -X PUT \
-            -f message="chore(deploy): promote bindery to ${IMAGE_TAG} [skip ci]" \
+            -f message="chore(deploy): promote bindery to ${IMAGE_TAG}" \
             -f content="${CONTENT}" \
             -f sha="${FILE_SHA}" \
             -f branch="${DEPLOY_BRANCH}"
@@ -571,7 +578,27 @@ jobs:
             --base main \
             --title "chore(deploy): promote bindery to ${GITHUB_REF_NAME}" \
             --body "Automated prod deploy: image tag \`${IMAGE_TAG}\`." 2>/dev/null || true
-          gh pr merge "${DEPLOY_BRANCH}" --repo "${GITHUB_REPOSITORY}" --squash --admin --delete-branch
+
+          # Wait for the REQUIRED checks only — advisory scans (e.g. Container
+          # Scan) must not gate this deploy. bucket is one of pass/fail/pending/
+          # skipping/cancel; merge once nothing is pending and nothing failed.
+          echo "Waiting for required checks on ${DEPLOY_BRANCH}..."
+          for i in $(seq 1 40); do
+            BUCKETS=$(gh pr checks "${DEPLOY_BRANCH}" --repo "${GITHUB_REPOSITORY}" --required --json bucket --jq '.[].bucket' 2>/dev/null || true)
+            if echo "${BUCKETS}" | grep -qE 'fail|cancel'; then
+              echo "::error::a required check failed on ${DEPLOY_BRANCH} — not promoting"; exit 1
+            fi
+            if [ -n "${BUCKETS}" ] && ! echo "${BUCKETS}" | grep -q 'pending'; then
+              echo "required checks green"; break
+            fi
+            sleep 15
+          done
+
+          # No --admin: required checks are green, so a normal squash-merge works
+          # with the default token. The [skip ci] subject keeps main from
+          # rebuilding the image for a values-only change.
+          gh pr merge "${DEPLOY_BRANCH}" --repo "${GITHUB_REPOSITORY}" --squash --delete-branch \
+            --subject "chore(deploy): promote bindery to ${IMAGE_TAG} [skip ci]"
           echo "bindery (prod) image tag updated to ${IMAGE_TAG}"
 
       - name: Trigger ArgoCD prod refresh
