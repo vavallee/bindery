@@ -17,6 +17,14 @@ const EVENT_TYPE_COLORS: Record<string, string> = {
   bookFileRenamed: 'bg-purple-500/20 text-purple-400',
 }
 
+// humanizeEventType turns a camelCase event enum into a Title Case fallback
+// ("downloadFailed" -> "Download Failed") for any type without a curated i18n
+// label, so a newly-added event type never renders as a raw identifier.
+function humanizeEventType(type: string): string {
+  const spaced = type.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1)
+}
+
 function formatDate(s: string) {
   return new Date(s).toLocaleString(undefined, {
     year: 'numeric', month: 'short', day: 'numeric',
@@ -54,6 +62,13 @@ export default function HistoryPage() {
   const [events, setEvents] = useState<HistoryEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [typeFilter, setTypeFilter] = useState('')
+
+  // Friendly label for an event-type enum: curated i18n where available, else a
+  // humanized camelCase fallback. Keeps the enum as the filter <option> value.
+  const eventLabel = useCallback(
+    (type: string) => t(`history.events.${type}`, { defaultValue: humanizeEventType(type) }),
+    [t],
+  )
 
   const load = useCallback((filter?: string) => {
     api.listHistory(filter ? { eventType: filter } : undefined)
@@ -101,8 +116,8 @@ export default function HistoryPage() {
           className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-1.5 text-sm text-slate-800 dark:text-zinc-200 focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
         >
           <option value="">{t('history.allEventTypes')}</option>
-          {eventTypes.map(t => (
-            <option key={t} value={t}>{t}</option>
+          {eventTypes.map(et => (
+            <option key={et} value={et}>{eventLabel(et)}</option>
           ))}
         </select>
       </div>
@@ -140,7 +155,7 @@ export default function HistoryPage() {
                       <tr key={event.id} className="bg-slate-100/50 dark:bg-zinc-900/50 hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 transition-colors">
                         <td className="px-4 py-3 align-top">
                           <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${EVENT_TYPE_COLORS[event.eventType] ?? 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400'}`}>
-                            {event.eventType}
+                            {eventLabel(event.eventType)}
                           </span>
                         </td>
                         <td className="px-4 py-3 text-slate-800 dark:text-zinc-200 max-w-md">
@@ -207,7 +222,7 @@ export default function HistoryPage() {
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium flex-shrink-0 ${EVENT_TYPE_COLORS[event.eventType] ?? 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400'}`}>
-                        {event.eventType}
+                        {eventLabel(event.eventType)}
                       </span>
                       {mt === 'audiobook' && (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 text-[10px] font-medium">🎧</span>
