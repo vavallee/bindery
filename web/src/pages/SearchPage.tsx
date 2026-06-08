@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api, isNoDownloadClientError, SearchResult } from '../api/client'
@@ -24,6 +24,11 @@ export default function SearchPage() {
   // empty, which the first-run guidance (#960) didn't cover (#968).
   const [needsClient, setNeedsClient] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    document.title = 'Search · Bindery'
+    return () => { document.title = 'Bindery' }
+  }, [])
 
   const search = async () => {
     const q = query.trim()
