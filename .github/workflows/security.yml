@@ -232,7 +232,10 @@ jobs:
       # Grype is the single image CVE scanner (it pairs with the Syft SBOM
       # below). Trivy was removed: it overlapped Grype ~90% on image-CVE
       # coverage, doubling scan time and Security-tab noise for little marginal
-      # signal. Grype's fail-build gate keeps CRITICAL/HIGH CVEs blocking.
+      # signal. The fail-build gate keeps CRITICAL/HIGH CVEs blocking; medium
+      # and below are still reported to the Security tab via the SARIF upload
+      # but do not fail the run (severity-cutoff defaults to medium, which made
+      # this advisory job go red on routine, often-unfixable base/stdlib CVEs).
       - name: Grype vulnerability scan (SARIF)
         uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
         id: grype
@@ -240,6 +243,7 @@ jobs:
           image: bindery:scan
           output-format: sarif
           output-file: grype.sarif
+          severity-cutoff: high
           fail-build: true
 
       - name: Upload Grype SARIF
