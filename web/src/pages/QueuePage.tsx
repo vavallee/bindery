@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, PendingRelease, QueueItem } from '../api/client'
 import BookAuthorLink from '../components/BookAuthorLink'
+import Pagination from '../components/Pagination'
+import { usePagination } from '../components/usePagination'
+import { summarizeError, ERROR_SUMMARY_LEN } from './queueError'
 
 export default function QueuePage() {
   const { t } = useTranslation()
@@ -35,6 +38,10 @@ export default function QueuePage() {
     document.title = 'Queue · Bindery'
     return () => { document.title = 'Bindery' }
   }, [])
+
+  // Paginate the queue client-side so a large queue (hundreds/thousands of
+  // items) doesn't render every row at once and blow up the DOM.
+  const { pageItems: queuePage, paginationProps: queuePaginationProps } = usePagination(queue, 50, 'queue')
 
   // Open the remove dialog. The file-deletion choice always starts unchecked
   // so the default action keeps downloaded data (and torrent seeds) on disk.
@@ -184,7 +191,7 @@ export default function QueuePage() {
         <div className="space-y-6">
           {queue.length > 0 && (
             <div className="space-y-2">
-              {queue.map(item => (
+              {queuePage.map(item => (
                 <div key={item.id} className="flex items-center justify-between p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
                   <div className="min-w-0 flex-1">
                     <h3 className="font-medium text-sm truncate">{item.title}</h3>
@@ -226,7 +233,17 @@ export default function QueuePage() {
                             ? 'Import blocked: '
                             : 'Error: '}
                         </span>
-                        {item.errorMessage}
+                        {summarizeError(item.errorMessage)}
+                        {item.errorMessage.length > ERROR_SUMMARY_LEN && (
+                          <details className="mt-1">
+                            <summary className="cursor-pointer text-red-300 hover:text-red-200">
+                              {t('queue.errorDetails', 'Show full error')}
+                            </summary>
+                            <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap text-[10px] text-red-300">
+                              {item.errorMessage.slice(0, 4000)}
+                            </pre>
+                          </details>
+                        )}
                       </div>
                     )}
                     {item.status === 'importFailed' && (
@@ -268,6 +285,7 @@ export default function QueuePage() {
                   </div>
                 </div>
               ))}
+              <Pagination {...queuePaginationProps} />
             </div>
           )}
 

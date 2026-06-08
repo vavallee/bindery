@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 import QueuePage from './QueuePage'
+import { summarizeError, ERROR_SUMMARY_LEN } from './queueError'
 import { api } from '../api/client'
 import type { Download, PendingRelease, QueueItem } from '../api/client'
 
@@ -34,6 +35,7 @@ vi.mock('react-i18next', () => ({
         'queue.retryingImport': 'Retrying…',
         'queue.retryImportHint': 'After fixing the path remap or moving the completed files in the download client, retry import to reuse the existing download.',
         'queue.retryImportError': `Retry failed: ${String(options?.error)}`,
+        'queue.errorDetails': 'Show full error',
       }
       return labels[key] ?? key
     },
@@ -119,6 +121,20 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+describe('summarizeError', () => {
+  it('returns short plain messages unchanged', () => {
+    expect(summarizeError('Missing target folder')).toBe('Missing target folder')
+  })
+  it('strips HTML tags and collapses whitespace', () => {
+    expect(summarizeError('HTTP 403: <h1>Forbidden</h1>\n\n  <p>nope</p>')).toBe('HTTP 403: Forbidden nope')
+  })
+  it('truncates over the limit with an ellipsis', () => {
+    const out = summarizeError('x'.repeat(ERROR_SUMMARY_LEN + 50))
+    expect(out.length).toBe(ERROR_SUMMARY_LEN + 1) // limit chars + the ellipsis
+    expect(out.endsWith('…')).toBe(true)
+  })
+})
+
 describe('QueuePage', () => {
   it('renders loading and then the empty queue state', async () => {
     const queueLoad = deferred<QueueItem[]>()
@@ -193,6 +209,19 @@ describe('QueuePage', () => {
     expect(screen.getByText('Client rejected download')).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: 'Retry import' })).toHaveLength(1)
     expect(container.querySelector('[style="width: 45%;"]')).toBeInTheDocument()
+  })
+
+  it('shows a "full error" expander for a long raw-HTML error body', async () => {
+    const htmlBody = 'fetch nzb: indexer returned HTTP 403: <!DOCTYPE html><html><head><title>Forbidden</title></head><body>' +
+      '<h1>403 Forbidden</h1>'.repeat(40) + '</body></html>'
+    vi.mocked(api.listQueue).mockResolvedValue([
+      makeQueueItem({ id: 9, title: 'Huge Error', status: 'failed', errorMessage: htmlBody }),
+    ])
+
+    renderQueuePage()
+    await screen.findByText('Huge Error')
+    // A long error gets a collapsed details expander rather than dumping inline.
+    expect(screen.getByText('Show full error')).toBeInTheDocument()
   })
 
   it('retries an import-failed queue item and reloads the queue', async () => {
