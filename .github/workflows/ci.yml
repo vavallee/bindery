@@ -282,69 +282,49 @@ jobs:
           push-to-registry: true
 
   # ── Deploy to bindery-dev (development branch only) ────────────────────────
-  # Runs after image build on every push to development. Updates
-  # values-dev.yaml with the SHA image tag so ArgoCD picks up the new build.
+  # Runs after the image build on every push to main. Force-updates the
+  # `development` branch to main's tree plus a values-dev.yaml override pinning
+  # the just-built sha image, so the GitOps-managed bindery-dev ArgoCD app
+  # (which tracks `development`) follows main automatically.
+  #
+  # Why this shape: the old job fired on pushes to `development` and bumped the
+  # tag via a PR — but the team went main-only, so `development` stopped moving
+  # and bindery-dev froze ~3 weeks behind. `development` is now a
+  # machine-maintained dev-deploy branch (no human commits; branch protection
+  # removed), so a direct force-push is fine and avoids a per-main-push PR. The
+  # [skip ci] subject stops the development push from re-triggering this
+  # workflow. The prod `bindery` app reads only values.yaml, so it is
+  # unaffected by values-dev.yaml.
   deploy-dev:
     name: Deploy to dev
     needs: image
-    if: github.ref == 'refs/heads/development'
-    timeout-minutes: 45
+    if: github.ref == 'refs/heads/main'
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 
-      - name: Update values-dev.yaml on development branch
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Point development at main + dev image
         run: |
           IMAGE_TAG="sha-${GITHUB_SHA::7}"
-          FILE_PATH="charts/bindery/values-dev.yaml"
-          DEPLOY_BRANCH="auto/dev-deploy-${GITHUB_SHA::7}"
-
-          DEV_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/refs/heads/development" --jq .object.sha)
-          gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
-            -f ref="refs/heads/${DEPLOY_BRANCH}" \
-            -f sha="${DEV_SHA}"
-
-          FILE_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}?ref=${DEPLOY_BRANCH}" --jq .sha 2>/dev/null || echo "")
-          CONTENT=$(printf 'image:\n  tag: "%s"\n' "${IMAGE_TAG}" | base64 -w0)
-          if [ -n "$FILE_SHA" ]; then
-            gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}" \
-              -X PUT \
-              -f message="chore(deploy-dev): update to ${IMAGE_TAG} [skip ci]" \
-              -f content="${CONTENT}" \
-              -f sha="${FILE_SHA}" \
-              -f branch="${DEPLOY_BRANCH}"
-          else
-            gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}" \
-              -X PUT \
-              -f message="chore(deploy-dev): create values-dev.yaml for ${IMAGE_TAG} [skip ci]" \
-              -f content="${CONTENT}" \
-              -f branch="${DEPLOY_BRANCH}"
-          fi
-
-          # --repo is required because this job does not check out the
-          # repository, so gh has no local git context to infer the target
-          # from. Without it, `gh pr create` exits 1 with "not a git
-          # repository: .git" and the 2>/dev/null mask hides that error;
-          # the subsequent `gh pr merge` then fails for the same reason
-          # (and orphans the auto/dev-deploy-<sha> branch with the right
-          # content but no PR). The deploy-prod job below already has the
-          # --repo flag; this brings deploy-dev in line.
-          gh pr create \
-            --repo "${GITHUB_REPOSITORY}" \
-            --head "${DEPLOY_BRANCH}" \
-            --base development \
-            --title "chore(deploy-dev): update to ${IMAGE_TAG}" \
-            --body "Automated dev deploy: image tag \`${IMAGE_TAG}\`." 2>/dev/null || true
-          gh pr merge "${DEPLOY_BRANCH}" --repo "${GITHUB_REPOSITORY}" --squash --admin --delete-branch
-          echo "bindery-dev image tag updated to ${IMAGE_TAG}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # HEAD is the main commit being built; branch development off it,
+          # apply the dev image override, and force-push. development ends up as
+          # main's tree + one override commit, regenerated every main push.
+          git checkout -B development
+          printf 'image:\n  tag: "%s"\n' "${IMAGE_TAG}" > charts/bindery/values-dev.yaml
+          git add charts/bindery/values-dev.yaml
+          git commit -m "chore(deploy-dev): track main @ ${IMAGE_TAG} [skip ci]"
+          git push -f origin development
+          echo "bindery-dev now tracks main @ ${IMAGE_TAG}"
 
       - name: Trigger ArgoCD dev refresh
         env:
