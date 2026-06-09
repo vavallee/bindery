@@ -4,6 +4,7 @@ import { api, Indexer, IndexerTestResult, ProwlarrInstance } from '../../api/cli
 import { inputCls } from './formStyles'
 import { parseCats, parsePriority } from './helpers'
 import Toggle from './Toggle'
+import { dangerLink } from '../../components/buttons'
 
 // IndexerTestResultBanner renders a probe result with the same ok/warn/fail
 // semantics as the saved-row Test feedback (ok=true + 0 results → amber warn).
@@ -105,12 +106,12 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
                           setIndexers(indexers.filter(i => i.id !== idx.id))
                           setConfirmDeleteIndexer(null)
                         }}
-                        className="text-xs text-red-500 font-medium hover:text-red-400"
+                        className={`text-xs font-medium ${dangerLink}`}
                       >{t('common.yes')}</button>
                       <button onClick={() => setConfirmDeleteIndexer(null)} className="text-xs text-slate-500 dark:text-zinc-500 hover:text-slate-700 dark:hover:text-zinc-300">{t('common.no')}</button>
                     </span>
                   ) : (
-                    <button onClick={() => setConfirmDeleteIndexer(idx.id)} className="text-xs text-red-400 hover:text-red-300">
+                    <button onClick={() => setConfirmDeleteIndexer(idx.id)} className={`text-xs ${dangerLink}`}>
                       {t('common.delete')}
                     </button>
                   )}
@@ -230,7 +231,7 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
                       setProwlarrInstances(prev => prev.filter(i => i.id !== p.id))
                       api.listIndexers().then(setIndexers).catch(console.error)
                     }}
-                    className="text-xs text-red-400 hover:text-red-300"
+                    className={`text-xs ${dangerLink}`}
                   >
                     {t('settings.prowlarr.delete')}
                   </button>

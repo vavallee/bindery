@@ -5,6 +5,7 @@ import { inputCls } from './formStyles'
 import Toggle from './Toggle'
 import PathRemapField from './PathRemapField'
 import { downloadClientPathRemapHelp } from './helpers'
+import { dangerLink } from '../../components/buttons'
 
 // clients is owned by SettingsPage so it can be fetched eagerly on page mount
 // (matching the pre-refactor monolith), not on tab open.
@@ -76,12 +77,12 @@ export default function ClientsTab({ clients, setClients }: Props) {
                           setClients(clients.filter(x => x.id !== c.id))
                           setConfirmDeleteClient(null)
                         }}
-                        className="text-xs text-red-500 font-medium hover:text-red-400"
+                        className={`text-xs font-medium ${dangerLink}`}
                       >{t('common.yes')}</button>
                       <button onClick={() => setConfirmDeleteClient(null)} className="text-xs text-slate-500 dark:text-zinc-500 hover:text-slate-700 dark:hover:text-zinc-300">{t('common.no')}</button>
                     </span>
                   ) : (
-                    <button onClick={() => setConfirmDeleteClient(c.id)} className="text-xs text-red-400 hover:text-red-300">
+                    <button onClick={() => setConfirmDeleteClient(c.id)} className={`text-xs ${dangerLink}`}>
                       {t('common.delete')}
                     </button>
                   )}
