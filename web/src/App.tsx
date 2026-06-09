@@ -147,7 +147,7 @@ function Shell() {
                     href={`https://github.com/vavallee/bindery/releases/tag/v${version}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="hidden lg:block text-xs text-slate-500 dark:text-zinc-600 hover:underline whitespace-nowrap"
+                    className="hidden lg:block text-xs text-fg-muted hover:underline whitespace-nowrap"
                   >
                     {`v${version}`}
                   </a>
@@ -156,14 +156,14 @@ function Shell() {
                     href="https://github.com/vavallee/bindery/releases"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="hidden lg:block text-xs text-slate-500 dark:text-zinc-600 hover:underline whitespace-nowrap"
+                    className="hidden lg:block text-xs text-fg-muted hover:underline whitespace-nowrap"
                   >{version}</a>
                 )
               )}
               {status?.authenticated && status.mode !== 'disabled' && (
                 <button
                   onClick={logout}
-                  className="hidden lg:block text-xs text-slate-500 dark:text-zinc-500 hover:text-slate-900 dark:hover:text-white transition-colors"
+                  className="hidden lg:block text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white transition-colors"
                   title={status.username ? `${t('login.signedInAs')} ${status.username}` : t('login.signOut')}
                 >
                   {t('login.signOut')}
@@ -249,7 +249,7 @@ function Shell() {
               {status?.authenticated && status.mode !== 'disabled' && (
                 <button
                   onClick={logout}
-                  className="text-xs text-slate-500 dark:text-zinc-500 hover:text-slate-900 dark:hover:text-white transition-colors"
+                  className="text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white transition-colors"
                 >
                   {t('login.signOut')}
                 </button>
