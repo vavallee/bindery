@@ -1,7 +1,30 @@
 @import "tailwindcss";
 @config "../tailwind.config.js";
 
+/* Semantic text-color tokens (WCAG AA). The app otherwise uses raw slate/zinc
+   utilities; several muted pairings fail contrast (secondary text on zinc-500,
+   the faint version/placeholder zinc-600, and green text links on light). These
+   tokens are CSS vars that flip with the .dark class and are exposed to Tailwind
+   via @theme inline, generating `text-fg-muted` / `text-accent-text` utilities
+   that resolve to an AA-passing shade in each theme. Values verified in
+   src/theme/contrast.test.ts.
+     - fg-muted:    secondary text — slate-600 (light) / zinc-400 (dark)
+     - accent-text: green text/links on a surface — emerald-700 (light) /
+       emerald-400 (dark); the bare emerald-400 was ~1.76:1 on light. */
 @layer base {
+  :root {
+    --fg-muted: #475569;     /* slate-600 */
+    --accent-text: #047857;  /* emerald-700 */
+  }
+  html.dark {
+    --fg-muted: #a1a1aa;     /* zinc-400 */
+    --accent-text: #34d399;  /* emerald-400 */
+  }
   html { background-color: rgb(248 250 252); } /* slate-50 */
   html.dark { background-color: rgb(9 9 11); } /* zinc-950 */
+}
+
+@theme inline {
+  --color-fg-muted: var(--fg-muted);
+  --color-accent-text: var(--accent-text);
 }
