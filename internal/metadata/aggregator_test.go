@@ -93,6 +93,50 @@ func TestAggregator_SearchBooks_DedupesByTitleAuthor(t *testing.T) {
 	}
 }
 
+func TestAggregator_SearchBooks_KeepsDistinctFormats(t *testing.T) {
+	// Same work, two formats from two providers: must NOT collapse to one — the
+	// user needs to see and pick ebook vs audiobook.
+	primary := &mockProvider{name: "ol", searchBooks: []models.Book{
+		{Title: "The Water Knife", ForeignID: "OL1W", Author: &models.Author{Name: "Paolo Bacigalupi"}, MediaType: models.MediaTypeEbook},
+	}}
+	enricher := &mockProvider{name: "hardcover", searchBooks: []models.Book{
+		{Title: "The Water Knife", ForeignID: "hc:wk", Author: &models.Author{Name: "Paolo Bacigalupi"}, MediaType: models.MediaTypeAudiobook},
+	}}
+	agg := newTestAggregator(primary, enricher)
+
+	got, err := agg.SearchBooks(context.Background(), "water knife")
+	if err != nil {
+		t.Fatalf("SearchBooks: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ebook + audiobook of the same work must both survive, got %d: %+v", len(got), got)
+	}
+	formats := map[string]bool{}
+	for _, b := range got {
+		formats[b.MediaType] = true
+	}
+	if !formats[models.MediaTypeEbook] || !formats[models.MediaTypeAudiobook] {
+		t.Errorf("expected both ebook and audiobook formats present, got %+v", formats)
+	}
+}
+
+func TestAggregator_SearchBooks_StillDedupesSameFormat(t *testing.T) {
+	// Same work, same format (one unspecified, treated as ebook) from two
+	// providers: still collapses to the primary copy.
+	primary := &mockProvider{name: "ol", searchBooks: []models.Book{
+		{Title: "Dune", ForeignID: "OL1W", Author: &models.Author{Name: "Frank Herbert"}, MediaType: models.MediaTypeEbook},
+	}}
+	enricher := &mockProvider{name: "googlebooks", searchBooks: []models.Book{
+		{Title: "Dune", ForeignID: "gb:dune", Author: &models.Author{Name: "Frank Herbert"}}, // unspecified == ebook
+	}}
+	agg := newTestAggregator(primary, enricher)
+
+	got, _ := agg.SearchBooks(context.Background(), "dune")
+	if len(got) != 1 || got[0].ForeignID != "OL1W" {
+		t.Errorf("same-format dup should collapse to the primary copy, got %+v", got)
+	}
+}
+
 func TestAggregator_SearchBooks_SkipsErroredProvider(t *testing.T) {
 	primary := &mockProvider{name: "ol", searchBookErr: errors.New("openlibrary down")}
 	enricher := &mockProvider{name: "googlebooks", searchBooks: []models.Book{{Title: "Found Anyway", ForeignID: "gb:x"}}}

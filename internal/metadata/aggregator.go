@@ -468,7 +468,24 @@ func titleAuthorKey(b models.Book) string {
 	if b.Author != nil {
 		author = normalizeForDedup(b.Author.Name)
 	}
-	return title + "|" + author
+	// Include the format so the same work in different formats (an ebook edition
+	// from one provider, an audiobook from another) is NOT collapsed — the user
+	// must be able to see and pick the format.
+	return title + "|" + author + "|" + searchFormatKey(b.MediaType)
+}
+
+// searchFormatKey folds a media type into a dedup bucket. An unspecified type is
+// treated as ebook (the common case for print/ebook-only providers like Google
+// Books), so two ebook editions still collapse while an audiobook stays distinct.
+func searchFormatKey(mediaType string) string {
+	switch strings.ToLower(strings.TrimSpace(mediaType)) {
+	case models.MediaTypeAudiobook:
+		return "audiobook"
+	case models.MediaTypeBoth:
+		return "both"
+	default:
+		return "ebook"
+	}
 }
 
 // normalizeForDedup lowercases s and keeps only letters and digits separated by
