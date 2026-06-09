@@ -1,32 +1,36 @@
-import { useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, DownloadClient, Indexer, ProwlarrInstance } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
-import GeneralTab from './settings/GeneralTab'
-import IndexersTab from './settings/IndexersTab'
-import ClientsTab from './settings/ClientsTab'
-import NotificationsTab from './settings/NotificationsTab'
-import QualityTab from './settings/QualityTab'
-import MetadataTab from './settings/MetadataTab'
-import RootFoldersTab from './settings/RootFoldersTab'
-import CalibreTab from './settings/CalibreTab'
-import ABSTab from './settings/ABSTab'
-import GrimmoryTab from './settings/GrimmoryTab'
-import ImportTab from './settings/ImportTab'
-import BlocklistTab from './settings/BlocklistTab'
-import LogsTab from './settings/LogsTab'
 
 // Decomposed from the former ~5100-line SettingsPage monolith (#547): each tab
-// now lives in its own file under ./settings/. Tabs are eager-imported rather
-// than React.lazy code-split — the existing SettingsPage tests open a tab and
-// query its content synchronously, which a Suspense boundary breaks. Eager
-// imports keep behaviour identical to the pre-refactor monolith.
+// now lives in its own file under ./settings/. Tabs are React.lazy code-split
+// (#773) so each tab's JS only downloads when the tab is first opened, keeping
+// it out of the initial app bundle. The single <Suspense> boundary around the
+// active tab shows a lightweight loading fallback while the chunk fetches.
+// (The SettingsPage tests already await tab content via findBy* queries, so the
+// async resolution is transparent to them.)
 //
 // Cross-tab state: the monolith fetched indexers, download clients, and
 // Prowlarr instances eagerly on page mount (not on tab select). That fetch
 // timing is preserved by owning those three lists here and passing them to the
 // Indexers and Clients tabs. Everything else is genuinely tab-local and lives
 // inside its own tab component.
+
+// Each tab is a default export, so lazy(() => import(...)) resolves directly.
+const GeneralTab = lazy(() => import('./settings/GeneralTab'))
+const IndexersTab = lazy(() => import('./settings/IndexersTab'))
+const ClientsTab = lazy(() => import('./settings/ClientsTab'))
+const NotificationsTab = lazy(() => import('./settings/NotificationsTab'))
+const QualityTab = lazy(() => import('./settings/QualityTab'))
+const MetadataTab = lazy(() => import('./settings/MetadataTab'))
+const RootFoldersTab = lazy(() => import('./settings/RootFoldersTab'))
+const CalibreTab = lazy(() => import('./settings/CalibreTab'))
+const ABSTab = lazy(() => import('./settings/ABSTab'))
+const GrimmoryTab = lazy(() => import('./settings/GrimmoryTab'))
+const ImportTab = lazy(() => import('./settings/ImportTab'))
+const BlocklistTab = lazy(() => import('./settings/BlocklistTab'))
+const LogsTab = lazy(() => import('./settings/LogsTab'))
 
 type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'grimmory'
 
@@ -58,6 +62,21 @@ function SettingsNavLink({ tab, active, onSelect, label }: { tab: Tab; active: T
     >
       {label}
     </button>
+  )
+}
+
+// Suspense fallback shown while a lazily-loaded tab chunk downloads. Mirrors the
+// app's existing inline loading style (animated spinner + muted text in a
+// dark:-aware palette).
+function TabFallback({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 py-8 text-sm text-slate-600 dark:text-zinc-500">
+      <span
+        className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600 dark:border-zinc-700 dark:border-t-zinc-400"
+        aria-hidden="true"
+      />
+      <span>{label}</span>
+    </div>
   )
 }
 
@@ -166,7 +185,9 @@ export default function SettingsPage() {
 
         {/* Tab content */}
         <div className="flex-1 min-w-0">
-          {renderTab()}
+          <Suspense fallback={<TabFallback label={t('settings.loadingTab')} />}>
+            {renderTab()}
+          </Suspense>
         </div>
       </div>
     </div>

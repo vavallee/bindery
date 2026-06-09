@@ -322,14 +322,19 @@ function renderSettings(options?: Parameters<typeof seedSettingsMocks>[0]) {
 
 async function openIndexersTab() {
   fireEvent.click(await screen.findByRole('button', { name: 'settings.tabs.indexers' }))
+  // The tab is React.lazy/Suspense code-split (#773); await its content so the
+  // chunk has resolved before synchronous queries on the tab body run.
+  await screen.findByRole('button', { name: 'settings.indexers.addButton' })
 }
 
 async function openClientsTab() {
   fireEvent.click(await screen.findByRole('button', { name: 'settings.tabs.clients' }))
+  await screen.findByRole('button', { name: 'settings.clients.addButton' })
 }
 
 async function openImportTab() {
   fireEvent.click(await screen.findByRole('button', { name: 'settings.tabs.import' }))
+  await screen.findByText('settings.import.csvHeading')
 }
 
 function sectionForHeading(name: string) {

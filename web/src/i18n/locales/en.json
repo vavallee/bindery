@@ -304,6 +304,7 @@
   },
   "settings": {
     "title": "Settings",
+    "loadingTab": "Loading…",
     "tabs": {
       "indexers": "Indexers",
       "clients": "Download Clients",
