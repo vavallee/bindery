@@ -393,7 +393,7 @@ export default function AuthorDetailPage() {
               text={author.description}
               showMoreLabel={t('authorDetail.description.showMore', 'Show more')}
               showLessLabel={t('authorDetail.description.showLess', 'Show less')}
-              className="mt-3"
+              className="mt-3 max-w-prose"
             />
           )}
           <div className="flex flex-wrap gap-2 mt-4">
