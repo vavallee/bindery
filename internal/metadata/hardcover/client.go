@@ -177,6 +177,12 @@ func (c *Client) GetAuthorWorksByName(ctx context.Context, authorName string) ([
 		return nil, metadata.ErrProviderNotConfigured
 	}
 
+	// NB: do NOT select `language` here. It is an *edition* field; the `books`
+	// type has no `language`, so requesting it makes Hardcover reject the whole
+	// query ("field 'language' not found in type: 'books'", validation-failed)
+	// and the entire author-works supplement fails (#1036-adjacent report). A
+	// book's language can only be derived by traversing to a default edition;
+	// until that's added, supplemental books carry no language.
 	gql := `query GetAuthorWorksByName($author: String!, $limit: Int!, $offset: Int!) {
 		books(
 			where: {
@@ -200,7 +206,6 @@ func (c *Client) GetAuthorWorksByName(ctx context.Context, authorName string) ([
 			audio_seconds
 			default_audio_edition_id
 			default_ebook_edition_id
-			language { language }
 			contributions {
 				author { id name slug }
 			}

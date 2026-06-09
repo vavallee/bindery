@@ -645,10 +645,16 @@ func TestGetAuthorWorksByName_WithToken(t *testing.T) {
 				t.Fatalf("query requested search-only Hardcover field %q: %s", field, req.Query)
 			}
 		}
-		for _, field := range []string{"default_audio_edition_id", "default_ebook_edition_id", "language"} {
+		for _, field := range []string{"default_audio_edition_id", "default_ebook_edition_id"} {
 			if !strings.Contains(req.Query, field) {
 				t.Fatalf("query did not request Hardcover format field %q: %s", field, req.Query)
 			}
+		}
+		// Regression: `language` is an edition field, not a `books` field.
+		// Requesting it makes Hardcover reject the whole query
+		// (validation-failed) and the author-works supplement fails entirely.
+		if strings.Contains(req.Query, "language") {
+			t.Fatalf("author-works query must not request the invalid books.language field: %s", req.Query)
 		}
 		gotVars = req.Variables
 		data := map[string]interface{}{
@@ -664,7 +670,6 @@ func TestGetAuthorWorksByName_WithToken(t *testing.T) {
 					"rating":        4.5,
 					"users_count":   2000,
 					"audio_seconds": 7200,
-					"language":      map[string]interface{}{"language": "en"},
 					"contributions": []map[string]interface{}{
 						{"author": map[string]interface{}{"id": 1, "name": "Frank Herbert", "slug": "frank-herbert"}},
 					},
@@ -677,7 +682,6 @@ func TestGetAuthorWorksByName_WithToken(t *testing.T) {
 					"ratings_count": 50,
 					"rating":        4.2,
 					"users_count":   100,
-					"language":      map[string]interface{}{"language": "es"},
 					"contributions": []map[string]interface{}{
 						{"author": map[string]interface{}{"id": 1, "name": "Frank Herbert", "slug": "frank-herbert"}},
 					},
@@ -713,15 +717,16 @@ func TestGetAuthorWorksByName_WithToken(t *testing.T) {
 	if book.MediaType != "" {
 		t.Fatalf("MediaType = %q, want empty author import default", book.MediaType)
 	}
-	// #889: Language must be propagated so the aggregator can drop foreign
-	// editions via the metadata profile's allowed_languages filter. Before
-	// this fix every Hardcover-sourced supplemental book arrived with
-	// Language="" and slipped past the filter as "unknown language: pass".
-	if book.Language != "eng" {
-		t.Errorf("English book Language = %q, want %q (normalized to ISO 639-2)", book.Language, "eng")
+	// #889 originally selected books.language to drive the allowed_languages
+	// filter, but that field doesn't exist on Hardcover's `books` type and made
+	// the whole query fail. With it removed, supplemental books carry no
+	// language until it's derived from a default edition (follow-up); the filter
+	// treats them as "unknown language: pass", which is the pre-#889 behaviour.
+	if book.Language != "" {
+		t.Errorf("author-works book Language = %q, want empty (not fetched at books level)", book.Language)
 	}
-	if books[1].Language != "spa" {
-		t.Errorf("Spanish book Language = %q, want %q (normalized to ISO 639-2)", books[1].Language, "spa")
+	if books[1].Language != "" {
+		t.Errorf("author-works book[1] Language = %q, want empty", books[1].Language)
 	}
 }
 
