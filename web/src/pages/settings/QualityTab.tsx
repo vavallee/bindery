@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, QualityProfile } from '../../api/client'
 import { inputCls, labelCls } from './formStyles'
+import { dangerLink } from '../../components/buttons'
 
 // EBOOK_FORMATS and AUDIOBOOK_FORMATS are the format keys the rest of the
 // backend (decision.QualityRank, QualityFromFilename) already understands.
@@ -159,7 +160,7 @@ function ProfileRow({
             type="button"
             onClick={handleDelete}
             disabled={deleting}
-            className="text-xs text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 disabled:opacity-50"
+            className={`text-xs disabled:opacity-50 ${dangerLink}`}
           >
             {deleting ? t('common.deleting') : t('common.delete')}
           </button>
@@ -347,7 +348,7 @@ function QualityProfileForm({
                 type="button"
                 onClick={() => removeItem(item.quality)}
                 aria-label={t('common.remove')}
-                className="text-xs px-1.5 py-0.5 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
+                className={`text-xs px-1.5 py-0.5 ${dangerLink}`}
               >
                 {'×'}
               </button>
