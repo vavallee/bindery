@@ -20,9 +20,12 @@ vi.mock('../api/client', async importOriginal => {
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string) => {
+    t: (key: string, opts?: { defaultValue?: string }) => {
       const labels: Record<string, string> = {
         'common.loading': 'Loading...',
+        'history.events.grabbed': 'Grabbed',
+        'history.events.downloadFailed': 'Download Failed',
+        'history.events.importFailed': 'Import Failed',
         'history.title': 'History',
         'history.allEventTypes': 'All event types',
         'history.empty': 'No history events found',
@@ -34,7 +37,7 @@ vi.mock('react-i18next', () => ({
         'history.blocklist': 'Blocklist',
         'history.delete': 'Delete',
       }
-      return labels[key] ?? key
+      return labels[key] ?? opts?.defaultValue ?? key
     },
   }),
 }))
@@ -143,18 +146,18 @@ describe('HistoryPage', () => {
     expect(await within(table).findByText('Dune EPUB')).toBeInTheDocument()
 
     const ebookRow = rowFor('Dune EPUB')
-    expect(within(ebookRow).getByText('grabbed')).toBeInTheDocument()
+    expect(within(ebookRow).getByText('Grabbed')).toBeInTheDocument()
     expect(within(ebookRow).getByText('/library/Dune.epub')).toBeInTheDocument()
     expect(within(ebookRow).getByText('📖 Ebook')).toBeInTheDocument()
     expect(within(ebookRow).getByText('1 MB')).toBeInTheDocument()
 
     const audioRow = rowFor('Dune MP3')
-    expect(within(audioRow).getByText('downloadFailed')).toBeInTheDocument()
+    expect(within(audioRow).getByText('Download Failed')).toBeInTheDocument()
     expect(within(audioRow).getByText('Download client rejected release')).toBeInTheDocument()
     expect(within(audioRow).getByText('🎧 Audiobook')).toBeInTheDocument()
     expect(within(audioRow).getByText('2.0 GB')).toBeInTheDocument()
 
-    const importedRow = rowFor('bookImported')
+    const importedRow = rowFor('Book Imported')
     expect(within(importedRow).getAllByText('—').length).toBeGreaterThan(0)
   })
 

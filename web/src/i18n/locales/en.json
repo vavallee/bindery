@@ -233,6 +233,18 @@
   "history": {
     "title": "History",
     "allEventTypes": "All event types",
+    "events": {
+      "grabbed": "Grabbed",
+      "downloadFailed": "Download Failed",
+      "downloadStalled": "Download Stalled",
+      "downloadRequeued": "Download Requeued",
+      "downloadFolderImported": "Folder Imported",
+      "importFailed": "Import Failed",
+      "bookImported": "Book Imported",
+      "bookFileDeleted": "File Deleted",
+      "bookRenamed": "File Renamed",
+      "bookRebound": "Rebound"
+    },
     "empty": "No history events found",
     "colEvent": "Event",
     "colSourceTitle": "Source Title",
