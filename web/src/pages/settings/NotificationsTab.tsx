@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { api, NotificationConfig } from '../../api/client'
 import { inputCls } from './formStyles'
 import Toggle from './Toggle'
+import { dangerLink } from '../../components/buttons'
 
 export default function NotificationsTab() {
   const { t } = useTranslation()
@@ -77,12 +78,12 @@ export default function NotificationsTab() {
                             setNotifications(notifications.filter(x => x.id !== n.id))
                             setConfirmDeleteNotification(null)
                           }}
-                          className="text-xs text-red-500 font-medium hover:text-red-400"
+                          className={`text-xs font-medium ${dangerLink}`}
                         >{t('common.yes')}</button>
                         <button onClick={() => setConfirmDeleteNotification(null)} className="text-xs text-slate-500 dark:text-zinc-500 hover:text-slate-700 dark:hover:text-zinc-300">{t('common.no')}</button>
                       </span>
                     ) : (
-                      <button onClick={() => setConfirmDeleteNotification(n.id)} className="text-xs text-red-400 hover:text-red-300">
+                      <button onClick={() => setConfirmDeleteNotification(n.id)} className={`text-xs ${dangerLink}`}>
                         {t('common.delete')}
                       </button>
                     )}

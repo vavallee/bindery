@@ -10,6 +10,7 @@ import AuthorMetadataLinkModal from '../components/AuthorMetadataLinkModal'
 import BulkActionBar from '../components/BulkActionBar'
 import { useView } from '../components/useView'
 import MarkdownDescription from '../components/MarkdownDescription'
+import { btn } from '../components/buttons'
 
 type MediaFilter = '' | 'ebook' | 'audiobook'
 type StatusFilter = '' | 'wanted' | 'downloading' | 'downloaded' | 'imported' | 'skipped'
@@ -413,7 +414,7 @@ export default function AuthorDetailPage() {
             {showMetadataLinkAction && (
               <button
                 onClick={() => setShowMetadataLink(true)}
-                className="px-3 py-1.5 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded text-xs font-medium"
+                className={`${btn.secondary} px-3 py-1.5 text-xs`}
               >
                 {metadataLinkLabel}
               </button>
@@ -428,7 +429,7 @@ export default function AuthorDetailPage() {
             </button>
             <button
               onClick={() => setShowEdit(true)}
-              className="px-3 py-1.5 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded text-xs font-medium"
+              className={`${btn.secondary} px-3 py-1.5 text-xs`}
               title="Edit quality, metadata, and root folder"
             >
               Edit
@@ -438,14 +439,14 @@ export default function AuthorDetailPage() {
                 if (allAuthors.length === 0) api.listAllAuthors().then(setAllAuthors).catch(console.error)
                 setShowMerge(true)
               }}
-              className="px-3 py-1.5 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded text-xs font-medium"
+              className={`${btn.secondary} px-3 py-1.5 text-xs`}
               title="Merge another author into this one"
             >
               Merge…
             </button>
             <button
               onClick={handleDelete}
-              className="px-3 py-1.5 text-red-600 dark:text-red-400 hover:text-red-500 text-xs font-medium"
+              className={`${btn.danger} px-3 py-1.5 text-xs`}
             >
               Delete
             </button>
