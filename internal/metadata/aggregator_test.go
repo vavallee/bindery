@@ -216,6 +216,12 @@ func TestBookSearchRelevance_AuthorAware(t *testing.T) {
 	if !(real > wrongAuthor) {
 		t.Errorf("right-author book must outrank same-title wrong-author: real=%.3f wrong=%.3f", real, wrongAuthor)
 	}
+	// A real edition by the queried author, even with a long subtitle (weaker
+	// title match), must still beat a non-matching summary.
+	subtitleEdition := bookSearchRelevance(models.Book{Title: "The Meaning of Your Life: Finding Purpose in an Age of Emptiness", Author: &models.Author{Name: "Arthur C. Brooks"}}, q)
+	if !(subtitleEdition > summary) {
+		t.Errorf("a real Brooks edition (author matches) should outrank the non-matching summary: %.3f vs %.3f", subtitleEdition, summary)
+	}
 }
 
 func TestBookSearchRelevance_NoAuthorRegression(t *testing.T) {

@@ -374,8 +374,15 @@ func bookSearchRelevance(b models.Book, query string) float64 {
 		return searchRelevance(b.Title, q)
 	}
 	reduced := strings.Join(titleToks, " ")
-	return max(searchRelevance(b.Title, reduced), searchRelevance(b.Title, q))
+	score := max(searchRelevance(b.Title, reduced), searchRelevance(b.Title, q))
+	// Small positive signal that the author matched the query, so a book BY the
+	// queried author edges out a comparable-title match by a different author
+	// (e.g. a real edition vs. a "summary of" companion). Too small to override a
+	// clearly stronger title match.
+	return score + authorQueryMatchBonus
 }
+
+const authorQueryMatchBonus = 0.05
 
 // searchRelevance scores how well a book title matches the query (0..1, higher
 // is better). Both are normalized (lowercase, alnum, single spaces). The score
