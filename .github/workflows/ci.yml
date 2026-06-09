@@ -5,6 +5,12 @@ on:
     branches: [main, development]
     tags: ['v*']
   pull_request:
+  # Lets the "Assemble dev preview" workflow rebuild + redeploy bindery-dev by
+  # dispatching this pipeline against the freshly-assembled `development` ref.
+  # A GITHUB_TOKEN push does not trigger CI, but a workflow_dispatch does, so
+  # this is how the assembled dev tree gets an image build and deploy-dev run
+  # without duplicating the build logic. Prod jobs stay gated on `v*` tags.
+  workflow_dispatch:
 
 permissions:
   contents: read

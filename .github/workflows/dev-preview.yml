@@ -1,0 +1,96 @@
+name: Assemble dev preview
+
+# Rebuilds the `development` branch as `main` + every open PR labelled
+# `dev-preview`, then kicks the existing CI pipeline on that ref so the
+# combined tree is built into a dev image and deployed to the bindery-dev
+# ArgoCD app. Prod is never touched: the prod `bindery` app tracks `main` +
+# values.yaml and only moves on `v*` tags, and nothing here writes values.yaml
+# or pushes a tag.
+#
+# Friction to preview a PR: add the `dev-preview` label, then run this workflow
+# (it also runs automatically on every push to main so dev never drifts behind).
+# PRs that don't merge cleanly onto the assembled tree are skipped and listed in
+# the run summary rather than failing the whole assembly.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write       # force-push the development branch
+  pull-requests: read   # list dev-preview PRs
+  actions: write        # dispatch ci.yml against development
+
+# Debounce: during a back-to-back merge train only the latest assembly needs to
+# finish, so cancel superseded runs instead of assembling once per merge.
+concurrency:
+  group: dev-preview
+  cancel-in-progress: true
+
+jobs:
+  assemble:
+    name: Assemble development = main + dev-preview PRs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Assemble and push development
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin main
+          git checkout -B development origin/main
+
+          mapfile -t PRS < <(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
+            --label dev-preview --json number --jq '.[].number' | sort -n)
+
+          MERGED=(); SKIPPED=()
+          for n in "${PRS[@]:-}"; do
+            [ -z "$n" ] && continue
+            git fetch origin "pull/${n}/head:pr-${n}"
+            if git merge --no-edit -m "preview: merge PR #${n}" "pr-${n}"; then
+              MERGED+=("$n")
+            else
+              git merge --abort
+              SKIPPED+=("$n")
+            fi
+          done
+
+          git push --force origin development
+
+          {
+            echo "## Dev preview assembled"
+            echo "Base: \`main\` @ $(git rev-parse --short origin/main)"
+            echo ""
+            echo "**Merged (${#MERGED[@]}):** ${MERGED[*]:-none}"
+            echo ""
+            echo "**Skipped — merge conflict (${#SKIPPED[@]}):** ${SKIPPED[*]:-none}"
+            if [ "${#SKIPPED[@]}" -gt 0 ]; then
+              echo ""
+              echo "> Skipped PRs need a rebase onto the other previewed PRs before they can join the dev build."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build + deploy the assembled tree to bindery-dev
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # workflow_dispatch (unlike a GITHUB_TOKEN push) does trigger a run.
+          # ci.yml on `development` runs the image build + deploy-dev jobs; its
+          # prod/goreleaser jobs stay gated on v* tags, so this is dev-only.
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref development
+          echo "Dispatched CI on development to build + deploy the dev image."
