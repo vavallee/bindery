@@ -6,6 +6,22 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.17.1] — 2026-06-09
+
+A patch release: fixes from user reports plus a security toolchain bump. No breaking changes.
+
+### Fixed
+
+- **Setting the Calibre Bridge plugin API key now works** (#1036) — saving the plugin API key under Settings → Calibre failed with `403 use /auth/* endpoints for auth settings`, and no endpoint would accept it, so the key was impossible to set. It is a write-only secret (like the Hardcover token): the settings endpoint now accepts it while still hiding it from reads. The misleading "/auth/*" wording on the read-only-secret guard was also corrected, since it applies to non-auth secrets (ABS, Grimmory, Calibre) too.
+- **Hardcover author metadata refresh no longer fails on an invalid language field** (#1048) — the author-works query requested `language` on Hardcover's `books` type, which has no such field, so Hardcover rejected the entire query (`field 'language' not found in type: 'books'`, validation-failed) and the author-works supplement failed for every author (seen as repeated "author works supplement failed" warnings). The invalid field is removed; the supplement works again. Per-book language for author works now needs to come from editions (a small follow-up), so the foreign-language filter treats supplemental books as "unknown: pass" in the meantime.
+- **Ebook imports no longer block when the release filename mis-parses** (#1014) — a download grabbed from the free-text Search page carries no book association, so the importer fell back to parsing the release filename. For the common `Author - [Series NN] - Title (tags)` naming it split the name wrong (e.g. title="Peter F Hamilton", author="- Pandora's Star") and, worse, never actually tried to match a catalogue book, so the import retried three times and blocked. The importer now recovers the association by reading the EPUB's embedded metadata (`dc:title` / `dc:creator`) and matching the catalogue book — preferring embedded metadata over the unreliable filename — and only imports on a single confident match. The release-name parser also now understands the `Author - [Series NN] - Title` ordering, and the unmatched-import failure message reports both the parsed-filename and embedded-EPUB title/author so you can see why a match failed.
+- **Deluge downloads now import** (#1019) — a torrent grabbed into Deluge reached seeding but Bindery left it stuck at "downloading" forever and never imported, with no failure log. Deluge had no completion poller: it fell through the download-client dispatch into the SABnzbd path, which errored against the Deluge host and was logged only at debug level. Bindery now polls Deluge for completion (recognising the seeding/finished state), requests the torrent's save path so the importer can find the files, and imports them. As a safety net, an unknown/unsupported download-client type now logs a clear warning instead of silently masquerading as SABnzbd.
+- **Failed actions now show a message instead of a raw key** (#1026) — a missing `common.actionFailed` translation made some failure toasts render the literal i18n key; the key is now defined.
+
+### Security
+
+- **Bump the release image's Go toolchain to 1.26.4** (#1021) — the published Docker image was built with Go 1.26.3, which has known standard-library vulnerabilities (incl. the high-severity CVE-2026-42504) that the container scan flagged. The build now uses the patched Go 1.26.4 release. CI's `go.mod`/test matrix already tracked the patched 1.25.11 line; this aligns the shipped binary.
+
 ## [v1.17.0] — 2026-06-06
 
 ### Added
