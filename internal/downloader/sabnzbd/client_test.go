@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/vavallee/bindery/internal/useragent"
 )
 
 const testNZBContent = `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE nzb PUBLIC "-//newzBin//DTD NZB 1.1//EN" "http://www.newzbin.com/DTD/nzb/nzb-1.1.dtd"><nzb></nzb>`
@@ -113,6 +115,39 @@ func TestAddURL(t *testing.T) {
 	}
 	if string(gotPayload) != testNZBContent {
 		t.Errorf("uploaded payload mismatch:\n want: %q\n got:  %q", testNZBContent, string(gotPayload))
+	}
+}
+
+// TestAddURL_SetsUserAgentOnIndexerFetch guards #1053: the NZB fetch must
+// carry the project User-Agent, not Go's default, or indexers like
+// nzbfinder.ws serve an anti-bot 403.
+func TestAddURL_SetsUserAgentOnIndexerFetch(t *testing.T) {
+	var gotUA string
+	indexerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		w.Header().Set("Content-Type", "application/x-nzb")
+		fmt.Fprint(w, testNZBContent)
+	}))
+	defer indexerSrv.Close()
+
+	sabSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		readMultipartFile(t, r)
+		json.NewEncoder(w).Encode(AddURLResponse{Status: true, NzoIDs: []string{"x"}})
+	}))
+	defer sabSrv.Close()
+
+	c := New("127.0.0.1", 0, "testkey", "", false)
+	c.baseURL = sabSrv.URL
+	allowNZBFetch(c)
+
+	if _, err := c.AddURL(context.Background(), indexerSrv.URL+"/file.nzb", "Test Book", "books", 0); err != nil {
+		t.Fatalf("add url: %v", err)
+	}
+	if want := useragent.Get(); gotUA != want {
+		t.Errorf("indexer fetch User-Agent = %q, want %q", gotUA, want)
+	}
+	if strings.HasPrefix(gotUA, "Go-http-client") {
+		t.Errorf("indexer fetch used Go default User-Agent %q", gotUA)
 	}
 }
 

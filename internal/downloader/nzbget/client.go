@@ -18,6 +18,7 @@ import (
 	"github.com/vavallee/bindery/internal/downloader/nethint"
 	"github.com/vavallee/bindery/internal/downloader/urlbase"
 	"github.com/vavallee/bindery/internal/httpsec"
+	"github.com/vavallee/bindery/internal/useragent"
 )
 
 // categoryNameKey matches the NZBGet config keys that carry a category's
@@ -228,6 +229,10 @@ func (c *Client) fetchNZBContent(ctx context.Context, nzbURL string) ([]byte, er
 	if err != nil {
 		return nil, fmt.Errorf("fetch nzb: %w", err)
 	}
+	// Some indexers (e.g. nzbfinder.ws, #1053) fingerprint the User-Agent and
+	// serve an anti-bot 403 to Go's default UA, so use the project UA the
+	// search path already relies on.
+	req.Header.Set("User-Agent", useragent.Get())
 	resp, err := c.fetchHTTP.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch nzb from indexer: %w", err)

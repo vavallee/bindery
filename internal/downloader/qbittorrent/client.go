@@ -21,6 +21,7 @@ import (
 	"github.com/vavallee/bindery/internal/downloader/nethint"
 	"github.com/vavallee/bindery/internal/downloader/urlbase"
 	"github.com/vavallee/bindery/internal/httpsec"
+	"github.com/vavallee/bindery/internal/useragent"
 )
 
 // AuthError signals that qBittorrent responded but rejected the login.
@@ -426,6 +427,9 @@ func (c *Client) fetchTorrentContent(ctx context.Context, rawURL string) (*fetch
 			return nil, fmt.Errorf("build torrent fetch request: %w", err)
 		}
 		req.Header.Set("Accept", "application/x-bittorrent")
+		// Some indexers fingerprint the User-Agent and serve an anti-bot 403
+		// to Go's default UA (#1053); use the project UA like the search path.
+		req.Header.Set("User-Agent", useragent.Get())
 
 		resp, err := fetchClient.Do(req)
 		if err != nil {
