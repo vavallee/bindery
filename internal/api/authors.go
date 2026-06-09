@@ -1907,6 +1907,28 @@ func dedupeAuthorQueries(values []string) []string {
 // to the resolved provider's IDs so the rest of the existing flow works as
 // before. When it fails, the request is rejected with a friendly hint about
 // adding the author manually first.
+// findLibraryAuthorByName returns an author already in the user's library whose
+// name canonically matches the given name (treating "Last, First" == "First
+// Last"), or nil. Lets a name-only search result (e.g. Google Books, which has
+// no author ID) attach to the user's existing author instead of duplicating it.
+// Identity uses the same key as ResolveCanonicalAuthor so the two agree.
+func (h *AuthorHandler) findLibraryAuthorByName(ctx context.Context, name string) *models.Author {
+	want := metadata.CanonicalAuthorKey(name)
+	if want == "" {
+		return nil
+	}
+	authors, err := h.authors.ListByUser(ctx, auth.UserIDFromContext(ctx))
+	if err != nil {
+		return nil
+	}
+	for i := range authors {
+		if metadata.CanonicalAuthorKey(authors[i].Name) == want {
+			return &authors[i]
+		}
+	}
+	return nil
+}
+
 func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ForeignBookID   string `json:"foreignBookId"`
@@ -1940,26 +1962,48 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	// book to guarantee it exists before the cleanup defer runs (#804).
 	authorWasJustCreated := false
 
+	// resolvedByName is set when the author was resolved from the result's NAME
+	// (not an ISBN/provider ID) — the case for Google Books results, which carry
+	// an author name but no author ID and no ISBN editions. It forces a direct
+	// insert of the chosen edition (the author's catalogue fetch won't contain a
+	// cross-provider book) and suppresses the speculative catalogue fetch.
+	resolvedByName := false
+
 	if req.ForeignAuthorID == "" {
 		resolved, err := h.resolveAuthorForBook(ctx, req.ForeignBookID)
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}
-		if resolved == nil {
+		if resolved != nil {
+			// Rewrite the request so the existing fetch+poll flow targets the
+			// canonical provider's IDs. The user sees the canonical record (e.g.
+			// the OpenLibrary version) in their library; the original DNB record
+			// is dropped because bindery's author/book identity is single-source.
+			req.ForeignBookID = resolved.ForeignID
+			req.ForeignAuthorID = resolved.Author.ForeignID
+			if req.AuthorName == "" {
+				req.AuthorName = resolved.Author.Name
+			}
+		} else if req.AuthorName != "" {
+			// ISBN-based resolution failed (e.g. Google Books: author name, no
+			// author ID, no ISBN). Resolve the author by NAME — prefer one already
+			// in the library so we reuse the user's existing author instead of
+			// duplicating it; otherwise adopt OpenLibrary's canonical record. Keep
+			// the chosen edition (req.ForeignBookID) — the other providers don't
+			// have this book.
+			if existing := h.findLibraryAuthorByName(ctx, req.AuthorName); existing != nil {
+				req.ForeignAuthorID = existing.ForeignID
+			} else if canonical, cErr := h.meta.ResolveCanonicalAuthor(ctx, req.AuthorName); cErr == nil && canonical != nil {
+				req.ForeignAuthorID = canonical.ForeignID
+			}
+			resolvedByName = req.ForeignAuthorID != ""
+		}
+		if req.ForeignAuthorID == "" {
 			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{
 				"error": "Author metadata unavailable for this result. Add the author manually first (Authors → Add Author by name), then try again.",
 			})
 			return
-		}
-		// Rewrite the request so the existing fetch+poll flow targets the
-		// canonical provider's IDs. The user sees the canonical record (e.g.
-		// the OpenLibrary version) in their library; the original DNB record
-		// is dropped because bindery's author/book identity is single-source.
-		req.ForeignBookID = resolved.ForeignID
-		req.ForeignAuthorID = resolved.Author.ForeignID
-		if req.AuthorName == "" {
-			req.AuthorName = resolved.Author.Name
 		}
 	}
 
@@ -2030,7 +2074,14 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 			} else {
 				author = fetched
 				authorWasJustCreated = true
-				h.fetchAuthorBooksAsync(author, false, h.resolveDefaultMediaType(ctx))
+				// A name-resolved add (e.g. a Google Books pick) means the user
+				// chose ONE book; don't speculatively fetch this newly-adopted
+				// author's whole catalogue and flood Wanted. The synchronous
+				// direct-insert below still creates the picked book and keeps the
+				// author non-orphan.
+				if !resolvedByName {
+					h.fetchAuthorBooksAsync(author, false, h.resolveDefaultMediaType(ctx))
+				}
 			}
 		}
 		// Defer the orphan cleanup so cancellation paths inside the poll
@@ -2060,7 +2111,7 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	// cleanup defer sees a non-empty book list (so it keeps the author).
 	// The async sync still runs as a backfill for the rest of the catalogue;
 	// any UNIQUE collision against this row is silently tolerated.
-	directInsertNeeded := authorWasJustCreated || authorMatchedByAlternateID || strings.HasPrefix(req.ForeignBookID, "dnb:")
+	directInsertNeeded := authorWasJustCreated || authorMatchedByAlternateID || strings.HasPrefix(req.ForeignBookID, "dnb:") || resolvedByName
 	if directInsertNeeded {
 		if existing, _ := h.books.GetByForeignID(ctx, req.ForeignBookID); existing == nil {
 			primary, err := h.meta.GetBook(ctx, req.ForeignBookID)
@@ -2072,6 +2123,12 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 				primary.Monitored = author.Monitored
 				if primary.Status == "" {
 					primary.Status = models.BookStatusWanted
+				}
+				// Some providers (notably Google Books) don't set a media type;
+				// fall back to the global default so the row isn't created with an
+				// empty format (which would mis-route its indexer search).
+				if primary.MediaType == "" {
+					primary.MediaType = h.resolveDefaultMediaType(ctx)
 				}
 				if err := h.books.Create(ctx, primary); err != nil {
 					if !strings.Contains(err.Error(), "UNIQUE constraint failed") {

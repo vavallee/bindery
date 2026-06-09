@@ -3528,6 +3528,80 @@ func TestAddBook_DNBDirectInsertSucceeds(t *testing.T) {
 	}
 }
 
+// TestAddBook_NameOnlyResolvesToExistingLibraryAuthor covers the Google-Books
+// add path: a result carrying an author NAME but no author ID and no ISBN (so
+// resolveAuthorForBook returns nil) must still be addable. It resolves by name
+// onto the user's existing author (no duplicate), direct-inserts the chosen
+// edition, and stamps a media type (GB leaves it empty, which would otherwise
+// mis-route the indexer search).
+func TestAddBook_NameOnlyResolvesToExistingLibraryAuthor(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+
+	ctx := context.Background()
+	// Existing library author, stored INVERTED to prove inversion-aware matching.
+	existing := &models.Author{
+		ForeignID: "OL564887A", Name: "Brooks, Arthur C.", SortName: "Brooks, Arthur C.",
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := authorRepo.Create(ctx, existing); err != nil {
+		t.Fatal(err)
+	}
+
+	// A Google Books result: author name, no author ID, no ISBN editions, and no
+	// media type set.
+	gbBook := &models.Book{
+		ForeignID: "gb:cMGGEQAAQBAJ", Title: "The Meaning of Your Life",
+		SortTitle: "meaning of your life", Status: models.BookStatusWanted,
+		Genres: []string{}, MetadataProvider: "googlebooks",
+	}
+	stub := &stubMetaProvider{
+		name:        "googlebooks", // aggregator routes "gb:" to this provider
+		getBookByID: map[string]*models.Book{"gb:cMGGEQAAQBAJ": gbBook},
+	}
+	agg := metadata.NewAggregator(stub)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, nil, profileRepo, nil)
+
+	body, _ := json.Marshal(map[string]any{
+		"foreignBookId": "gb:cMGGEQAAQBAJ",
+		"authorName":    "Arthur C. Brooks", // natural form; matches the inverted record
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	h.AddBook(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	got, err := bookRepo.GetByForeignID(ctx, "gb:cMGGEQAAQBAJ")
+	if err != nil || got == nil {
+		t.Fatalf("book not persisted: err=%v got=%v", err, got)
+	}
+	if got.AuthorID != existing.ID {
+		t.Errorf("book should link to the existing author %d, got %d", existing.ID, got.AuthorID)
+	}
+	if got.MediaType == "" {
+		t.Error("media type should be stamped (not empty) so the indexer search routes correctly")
+	}
+	authors, err := authorRepo.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(authors) != 1 {
+		t.Errorf("expected no duplicate author (1 total), got %d", len(authors))
+	}
+}
+
 // TestAddBook_DirectInsertCoversSlowAsyncSync is the #804 regression test.
 //
 // Scenario from the bug report: a user adds a single book by a prolific

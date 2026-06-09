@@ -81,6 +81,76 @@ func (a *Aggregator) SearchAuthors(ctx context.Context, query string) ([]models.
 	return merged, nil
 }
 
+// ResolveCanonicalAuthor finds the richest OpenLibrary record for an author name
+// — the canonical (inversion-aware) name match with the largest catalogue — and
+// returns its full profile (bio/image from GetAuthor; ratings/disambiguation
+// from the search record). It queries OpenLibrary directly, NOT the merged/
+// deduped author search, so the OL record can't be collapsed away by another
+// provider. Returns nil when no confident OL record (BookCount > 0) exists. Used
+// to resolve the author of a name-only result (e.g. Google Books) when adding it.
+func (a *Aggregator) ResolveCanonicalAuthor(ctx context.Context, name string) (*models.Author, error) {
+	var ol Provider
+	for _, p := range a.providers() {
+		if p != nil && normalizedProviderName(p.Name()) == "openlibrary" {
+			ol = p
+			break
+		}
+	}
+	if ol == nil {
+		return nil, nil
+	}
+	results, err := ol.SearchAuthors(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	want := canonicalAuthorKey(name)
+	var best *models.Author
+	for i := range results {
+		r := &results[i]
+		if canonicalAuthorKey(r.Name) != want || authorBookCount(*r) <= 0 {
+			continue
+		}
+		if best == nil || authorBookCount(*r) > authorBookCount(*best) {
+			best = r
+		}
+	}
+	if best == nil {
+		return nil, nil
+	}
+
+	full, err := a.GetAuthor(ctx, best.ForeignID)
+	if err != nil {
+		return nil, err
+	}
+	// Start from the search record (ratings, work count, disambiguation), then
+	// overlay GetAuthor's richer profile (bio, image). Copy into a fresh value so
+	// we never mutate GetAuthor's cached object.
+	out := *best
+	if full != nil {
+		out.ForeignID = full.ForeignID
+		out.Name = full.Name
+		if full.Description != "" {
+			out.Description = full.Description
+		}
+		if full.ImageURL != "" {
+			out.ImageURL = full.ImageURL
+		}
+		if full.SortName != "" {
+			out.SortName = full.SortName
+		}
+		if full.Disambiguation != "" {
+			out.Disambiguation = full.Disambiguation
+		}
+		if full.RatingsCount > 0 {
+			out.RatingsCount = full.RatingsCount
+		}
+		if full.AverageRating > 0 {
+			out.AverageRating = full.AverageRating
+		}
+	}
+	return &out, nil
+}
+
 // searchFanOut runs fn against the primary and every enricher in parallel (with
 // a per-provider timeout), returning each provider's results in provider order
 // (primary first), whether any provider returned without error, and the first
@@ -128,6 +198,13 @@ func searchFanOut[T any](ctx context.Context, providers []Provider, fn func(cont
 // forms collapse together.
 func canonicalAuthorKey(name string) string {
 	return normalizeForDedup(uninvertAuthorName(name))
+}
+
+// CanonicalAuthorKey is the exported form of canonicalAuthorKey, so callers
+// (e.g. the API layer matching a search result's author name against the
+// library) identify authors the same way ResolveCanonicalAuthor does.
+func CanonicalAuthorKey(name string) string {
+	return canonicalAuthorKey(name)
 }
 
 // uninvertAuthorName converts "Last, First" to "First Last"; other forms are
