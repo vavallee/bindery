@@ -224,6 +224,25 @@ func TestGetBook_Success(t *testing.T) {
 	}
 }
 
+func TestGetBook_StripsGBPrefix(t *testing.T) {
+	// The aggregator stores ForeignIDs as "gb:<id>" and routes them straight to
+	// GetBook, so GetBook must strip its own prefix before building the URL or
+	// it requests /volumes/gb:<id> and 404s.
+	var gotURL string
+	c := &Client{
+		http: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			gotURL = r.URL.String()
+			return mockResponse(t, http.StatusOK, volumeItem{ID: "vol999"}), nil
+		})},
+	}
+	if _, err := c.GetBook(context.Background(), "gb:vol999"); err != nil {
+		t.Fatalf("GetBook: %v", err)
+	}
+	if !strings.Contains(gotURL, "/volumes/vol999") || strings.Contains(gotURL, "gb:") {
+		t.Errorf("GetBook must strip the gb: prefix; got URL %q", gotURL)
+	}
+}
+
 func TestGetBook_WithAPIKey(t *testing.T) {
 	var gotURL string
 	c := &Client{

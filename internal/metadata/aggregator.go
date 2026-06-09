@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
+	"unicode"
 
 	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/metadata/audible"
@@ -54,8 +56,148 @@ func (a *Aggregator) SearchAuthors(ctx context.Context, query string) ([]models.
 	return a.primary.SearchAuthors(ctx, query)
 }
 
+// searchProviderTimeout bounds how long any single provider may take during a
+// merged book search, so one slow source can't stall the whole request.
+const searchProviderTimeout = 8 * time.Second
+
+// SearchBooks queries the primary provider and every configured enricher in
+// parallel, then merges the results: primary hits rank first, followed by
+// enricher hits the primary didn't already return. This surfaces books the
+// primary (OpenLibrary) lacks — e.g. recent titles present in Google Books or
+// Hardcover. Providers that error or time out are skipped rather than failing
+// the search; an error is returned only when every provider fails. Duplicates
+// are collapsed across providers by ISBN, then by normalized title+author.
 func (a *Aggregator) SearchBooks(ctx context.Context, query string) ([]models.Book, error) {
-	return a.primary.SearchBooks(ctx, query)
+	providers := a.providers() // primary first, then enrichers
+	if len(providers) == 0 {
+		return nil, nil
+	}
+
+	type providerResult struct {
+		books []models.Book
+		err   error
+	}
+	results := make([]providerResult, len(providers))
+	var wg sync.WaitGroup
+	for i, p := range providers {
+		if p == nil {
+			continue
+		}
+		wg.Add(1)
+		go func(i int, p Provider) {
+			defer wg.Done()
+			pctx, cancel := context.WithTimeout(ctx, searchProviderTimeout)
+			defer cancel()
+			books, err := p.SearchBooks(pctx, query)
+			results[i] = providerResult{books: books, err: err}
+		}(i, p)
+	}
+	wg.Wait()
+
+	var (
+		merged     []models.Book
+		seenISBN   = map[string]bool{}
+		seenTA     = map[string]bool{}
+		anySuccess bool
+		firstErr   error
+	)
+	for i, p := range providers {
+		if p == nil {
+			continue
+		}
+		res := results[i]
+		if res.err != nil {
+			if !errors.Is(res.err, ErrProviderNotConfigured) {
+				slog.Warn("metadata search: provider failed", "provider", p.Name(), "error", res.err)
+				if firstErr == nil {
+					firstErr = res.err
+				}
+			}
+			continue
+		}
+		anySuccess = true
+		for _, b := range res.books {
+			if searchBookSeen(b, seenISBN, seenTA) {
+				continue
+			}
+			merged = append(merged, b)
+		}
+	}
+
+	// Only surface an error when no provider succeeded; otherwise return what we
+	// found, even if some providers failed.
+	if !anySuccess && firstErr != nil {
+		return nil, firstErr
+	}
+	return merged, nil
+}
+
+// searchBookSeen reports whether book b duplicates one already emitted — by any
+// of its (normalized) ISBNs, or by its normalized title+author — and registers
+// b's keys so later providers' copies are dropped. Because providers are walked
+// primary-first, the primary's copy of a duplicated book is the one kept.
+func searchBookSeen(b models.Book, seenISBN, seenTA map[string]bool) bool {
+	var isbns []string
+	dup := false
+	for _, raw := range b.ISBNs {
+		n := isbnutil.Normalize(raw)
+		if n == "" {
+			continue
+		}
+		isbns = append(isbns, n)
+		if seenISBN[n] {
+			dup = true
+		}
+	}
+	ta := titleAuthorKey(b)
+	if ta != "" && seenTA[ta] {
+		dup = true
+	}
+	if dup {
+		return true
+	}
+	for _, n := range isbns {
+		seenISBN[n] = true
+	}
+	if ta != "" {
+		seenTA[ta] = true
+	}
+	return false
+}
+
+// titleAuthorKey builds a normalized "title|author" dedup key, or "" when the
+// title is empty (in which case the caller falls back to ISBN-only dedup).
+func titleAuthorKey(b models.Book) string {
+	title := normalizeForDedup(b.Title)
+	if title == "" {
+		return ""
+	}
+	author := ""
+	if b.Author != nil {
+		author = normalizeForDedup(b.Author.Name)
+	}
+	return title + "|" + author
+}
+
+// normalizeForDedup lowercases s and keeps only letters and digits separated by
+// single spaces, so trivial punctuation, spacing, and case differences between
+// providers collapse to the same key.
+func normalizeForDedup(s string) string {
+	var b strings.Builder
+	space := false
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			if space && b.Len() > 0 {
+				b.WriteByte(' ')
+			}
+			space = false
+			b.WriteRune(r)
+		default:
+			space = true
+		}
+	}
+	return b.String()
 }
 
 func (a *Aggregator) GetAuthor(ctx context.Context, foreignID string) (*models.Author, error) {

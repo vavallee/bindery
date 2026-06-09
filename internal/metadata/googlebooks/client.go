@@ -80,7 +80,10 @@ func (c *Client) GetAuthor(_ context.Context, _ string) (*models.Author, error) 
 }
 
 func (c *Client) GetBook(ctx context.Context, foreignID string) (*models.Book, error) {
-	u := fmt.Sprintf("%s/volumes/%s", baseURL, foreignID)
+	// SearchBooks/volumeToBook stamp ForeignID as "gb:<volumeID>"; strip the
+	// prefix before building the volumes URL or the request 404s.
+	id := strings.TrimPrefix(foreignID, "gb:")
+	u := fmt.Sprintf("%s/volumes/%s", baseURL, id)
 	if c.apiKey != "" {
 		u += "?key=" + url.QueryEscape(c.apiKey)
 	}

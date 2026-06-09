@@ -47,6 +47,90 @@ func TestAggregator_SearchBooks(t *testing.T) {
 	}
 }
 
+func TestAggregator_SearchBooks_MergesEnrichers(t *testing.T) {
+	primary := &mockProvider{name: "ol", searchBooks: []models.Book{{Title: "Primary Book", ForeignID: "OL1W"}}}
+	enricher := &mockProvider{name: "googlebooks", searchBooks: []models.Book{{Title: "Enricher Book", ForeignID: "gb:abc"}}}
+	agg := newTestAggregator(primary, enricher)
+
+	got, err := agg.SearchBooks(context.Background(), "x")
+	if err != nil {
+		t.Fatalf("SearchBooks: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 merged results, got %d: %+v", len(got), got)
+	}
+	// Primary results must rank first.
+	if got[0].ForeignID != "OL1W" || got[1].ForeignID != "gb:abc" {
+		t.Errorf("expected primary first then enricher, got %+v", got)
+	}
+}
+
+func TestAggregator_SearchBooks_DedupesByISBN(t *testing.T) {
+	primary := &mockProvider{name: "ol", searchBooks: []models.Book{{Title: "Dune", ForeignID: "OL1W", ISBNs: []string{"978-0-441-17271-9"}}}}
+	enricher := &mockProvider{name: "googlebooks", searchBooks: []models.Book{{Title: "Dune (different edition)", ForeignID: "gb:dup", ISBNs: []string{"9780441172719"}}}}
+	agg := newTestAggregator(primary, enricher)
+
+	got, err := agg.SearchBooks(context.Background(), "dune")
+	if err != nil {
+		t.Fatalf("SearchBooks: %v", err)
+	}
+	if len(got) != 1 || got[0].ForeignID != "OL1W" {
+		t.Errorf("ISBN dup should collapse to the primary copy, got %+v", got)
+	}
+}
+
+func TestAggregator_SearchBooks_DedupesByTitleAuthor(t *testing.T) {
+	primary := &mockProvider{name: "ol", searchBooks: []models.Book{{Title: "The Water Knife", ForeignID: "OL1W", Author: &models.Author{Name: "Paolo Bacigalupi"}}}}
+	enricher := &mockProvider{name: "googlebooks", searchBooks: []models.Book{{Title: "the water knife!", ForeignID: "gb:dup", Author: &models.Author{Name: "Paolo  Bacigalupi"}}}}
+	agg := newTestAggregator(primary, enricher)
+
+	got, err := agg.SearchBooks(context.Background(), "water knife")
+	if err != nil {
+		t.Fatalf("SearchBooks: %v", err)
+	}
+	if len(got) != 1 || got[0].ForeignID != "OL1W" {
+		t.Errorf("title+author dup should collapse to primary, got %+v", got)
+	}
+}
+
+func TestAggregator_SearchBooks_SkipsErroredProvider(t *testing.T) {
+	primary := &mockProvider{name: "ol", searchBookErr: errors.New("openlibrary down")}
+	enricher := &mockProvider{name: "googlebooks", searchBooks: []models.Book{{Title: "Found Anyway", ForeignID: "gb:x"}}}
+	agg := newTestAggregator(primary, enricher)
+
+	got, err := agg.SearchBooks(context.Background(), "x")
+	if err != nil {
+		t.Fatalf("a failing provider must not fail the whole search: %v", err)
+	}
+	if len(got) != 1 || got[0].ForeignID != "gb:x" {
+		t.Errorf("expected the enricher result, got %+v", got)
+	}
+}
+
+func TestAggregator_SearchBooks_AllErrorReturnsError(t *testing.T) {
+	primary := &mockProvider{name: "ol", searchBookErr: errors.New("ol down")}
+	enricher := &mockProvider{name: "googlebooks", searchBookErr: errors.New("gb down")}
+	agg := newTestAggregator(primary, enricher)
+
+	if _, err := agg.SearchBooks(context.Background(), "x"); err == nil {
+		t.Error("expected an error when every provider fails")
+	}
+}
+
+func TestAggregator_SearchBooks_NotConfiguredEnricherIsSilentlySkipped(t *testing.T) {
+	primary := &mockProvider{name: "ol", searchBooks: []models.Book{{Title: "Primary", ForeignID: "OL1W"}}}
+	enricher := &mockProvider{name: "hardcover", searchBookErr: ErrProviderNotConfigured}
+	agg := newTestAggregator(primary, enricher)
+
+	got, err := agg.SearchBooks(context.Background(), "x")
+	if err != nil {
+		t.Fatalf("not-configured enricher must not error the search: %v", err)
+	}
+	if len(got) != 1 || got[0].ForeignID != "OL1W" {
+		t.Errorf("expected just the primary result, got %+v", got)
+	}
+}
+
 func TestAggregator_GetAuthor_Success(t *testing.T) {
 	author := &models.Author{Name: "Ursula K. Le Guin", ForeignID: "OL111A"}
 	primary := &mockProvider{name: "ol", getAuthor: author}
