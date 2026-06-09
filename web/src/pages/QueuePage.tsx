@@ -5,6 +5,7 @@ import BookAuthorLink from '../components/BookAuthorLink'
 import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
 import { summarizeError, ERROR_SUMMARY_LEN } from './queueError'
+import { btn, btnSize } from '../components/buttons'
 
 export default function QueuePage() {
   const { t } = useTranslation()
@@ -333,7 +334,7 @@ export default function QueuePage() {
                     )}
                     <button
                       onClick={() => openDeleteDialog(item)}
-                      className="px-3 py-2 text-xs text-red-400 hover:text-red-300 touch-manipulation"
+                      className={`${btn.danger} ${btnSize.lg} touch-manipulation`}
                     >
                       {t('queue.remove')}
                     </button>

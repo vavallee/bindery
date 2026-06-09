@@ -4,6 +4,7 @@ import { api, Series, SeriesFillBookRequest, SeriesHardcoverDiff, SeriesHardcove
 import AddSeriesBookModal from '../components/AddSeriesBookModal'
 import HardcoverSeriesLinkModal from '../components/HardcoverSeriesLinkModal'
 import SeriesNameModal from '../components/SeriesNameModal'
+import { btn, btnSize } from '../components/buttons'
 
 export default function SeriesPage() {
   const location = useLocation()
@@ -301,7 +302,7 @@ export default function SeriesPage() {
                   )}
                   <button
                     onClick={() => deleteSeries(series)}
-                    className="text-xs px-2.5 py-1 rounded font-medium text-red-500 hover:text-red-400 hover:bg-red-500/10"
+                    className={`${btn.danger} ${btnSize.sm}`}
                   >
                     Delete
                   </button>

@@ -13,6 +13,7 @@ import ViewToggle from '../components/ViewToggle'
 import { useView } from '../components/useView'
 import GettingStartedGuidance from '../components/GettingStartedGuidance'
 import { useNeedsSetup } from '../components/useNeedsSetup'
+import { btn, btnSize } from '../components/buttons'
 
 type SortMode = 'az' | 'za' | 'recent'
 type MonitoredFilter = '' | 'monitored' | 'unmonitored'
@@ -395,13 +396,13 @@ export default function AuthorsPage() {
                     <td className="px-3 py-2 text-right whitespace-nowrap">
                       <button
                         onClick={() => api.refreshAuthor(author.id).then(load)}
-                        className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white mr-3"
+                        className={`${btn.ghost} ${btnSize.sm} mr-3`}
                       >
                         {t('common.refresh')}
                       </button>
                       <button
                         onClick={() => handleDelete(author.id)}
-                        className="text-xs text-red-400 hover:text-red-300"
+                        className={`${btn.danger} ${btnSize.sm}`}
                       >
                         {t('common.delete')}
                       </button>
@@ -453,14 +454,14 @@ export default function AuthorsPage() {
                 <div className="flex gap-2">
                   <button
                     onClick={() => api.refreshAuthor(author.id).then(load)}
-                    className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white"
+                    className={`${btn.ghost} ${btnSize.sm}`}
                     title="Refresh metadata"
                   >
                     {t('common.refresh')}
                   </button>
                   <button
                     onClick={() => handleDelete(author.id)}
-                    className="text-xs text-red-400 hover:text-red-300"
+                    className={`${btn.danger} ${btnSize.sm}`}
                   >
                     {t('common.delete')}
                   </button>
