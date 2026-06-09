@@ -204,6 +204,29 @@ func TestSearchRelevance_ShorterTitleWinsWithinTier(t *testing.T) {
 
 // TestAggregator_SearchBooks_RanksRelevanceAcrossProviders is the headline fix:
 // a strong title match from an enricher must outrank a weaker provider's block.
+func TestBookSearchRelevance_AuthorAware(t *testing.T) {
+	q := "the meaning of your life arthur brooks"
+	real := bookSearchRelevance(models.Book{Title: "The Meaning of Your Life", Author: &models.Author{Name: "Arthur C. Brooks"}}, q)
+	summary := bookSearchRelevance(models.Book{Title: "The Meaning of Your Life & Arthur Brooks' Insights", Author: &models.Author{Name: "Colston Silvester"}}, q)
+	wrongAuthor := bookSearchRelevance(models.Book{Title: "The Meaning of Your Life", Author: &models.Author{Name: "Filip Swennen"}}, q)
+
+	if !(real > summary) {
+		t.Errorf("real book (author matches query) must outrank a summary that crams the author into its title: real=%.3f summary=%.3f", real, summary)
+	}
+	if !(real > wrongAuthor) {
+		t.Errorf("right-author book must outrank same-title wrong-author: real=%.3f wrong=%.3f", real, wrongAuthor)
+	}
+}
+
+func TestBookSearchRelevance_NoAuthorRegression(t *testing.T) {
+	// A plain title query (no author tokens) must score exactly as title-only.
+	q := "the meaning of your life"
+	b := models.Book{Title: "The Meaning of Your Life", Author: &models.Author{Name: "Arthur C. Brooks"}}
+	if got, want := bookSearchRelevance(b, q), searchRelevance(b.Title, normalizeForDedup(q)); got != want {
+		t.Errorf("title-only query should equal title relevance: got %.3f want %.3f", got, want)
+	}
+}
+
 func TestAggregator_SearchBooks_RanksRelevanceAcrossProviders(t *testing.T) {
 	primary := &mockProvider{name: "ol", searchBooks: []models.Book{
 		{Title: "Bible", ForeignID: "OLb"},

@@ -313,7 +313,7 @@ func rerankByRelevance(books []models.Book, query string) {
 	}
 	scores := make([]float64, len(books))
 	for i := range books {
-		scores[i] = searchRelevance(books[i].Title, query)
+		scores[i] = bookSearchRelevance(books[i], query)
 	}
 	order := make([]int, len(books))
 	for i := range order {
@@ -341,6 +341,40 @@ func rerankByRelevance(books []models.Book, query string) {
 // query's tokens to a title (the exact/prefix/substring tiers still see them).
 var searchStopwords = map[string]bool{
 	"the": true, "of": true, "a": true, "an": true, "and": true, "to": true, "in": true, "for": true,
+}
+
+// bookSearchRelevance scores a book against the query, accounting for the author.
+// Query tokens satisfied by the book's author are removed from what the TITLE
+// must match — so for a "title author" query the real book (whose author usually
+// isn't in its title) outranks summary/companion books that stuff the author name
+// into their title. Taking the max with the plain title score means author
+// awareness can only help, never hurt.
+func bookSearchRelevance(b models.Book, query string) float64 {
+	q := normalizeForDedup(query)
+	if q == "" {
+		return 0
+	}
+	if b.Author == nil || b.Author.Name == "" {
+		return searchRelevance(b.Title, q)
+	}
+	authorTokens := make(map[string]bool)
+	for _, tok := range strings.Fields(normalizeForDedup(b.Author.Name)) {
+		authorTokens[tok] = true
+	}
+	titleToks := make([]string, 0, len(strings.Fields(q)))
+	authorMatched := false
+	for _, tok := range strings.Fields(q) {
+		if authorTokens[tok] {
+			authorMatched = true
+			continue
+		}
+		titleToks = append(titleToks, tok)
+	}
+	if !authorMatched || len(titleToks) == 0 {
+		return searchRelevance(b.Title, q)
+	}
+	reduced := strings.Join(titleToks, " ")
+	return max(searchRelevance(b.Title, reduced), searchRelevance(b.Title, q))
 }
 
 // searchRelevance scores how well a book title matches the query (0..1, higher
