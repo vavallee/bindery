@@ -1,6 +1,8 @@
 {
   "common": {
     "loading": "Loading...",
+    "gridView": "Grid view",
+    "tableView": "Table view",
     "cancel": "Cancel",
     "delete": "Delete",
     "edit": "Edit",
@@ -137,6 +139,8 @@
     "noDescription": "No description available",
     "monitored": "Monitored",
     "unmonitored": "Unmonitored",
+    "startMonitoring": "Monitor",
+    "stopMonitoring": "Stop monitoring",
     "deleteConfirm": "Delete this author and all their books?",
     "deleteWithFilesConfirm": "Delete this author, {{total}} book(s), AND {{withFiles}} file(s)/folder(s) on disk?\n\nThis cannot be undone.",
     "bulkDeleteConfirm": "Delete {{count}} author(s) and all their books?",
@@ -167,6 +171,7 @@
   "books": {
     "title": "Books",
     "countLabel": "{{count}} books",
+    "legendTitle": "What do the status labels mean?",
     "searchPlaceholder": "Search books or authors...",
     "sortLabel": "Sort:",
     "typeLabel": "Type:",
