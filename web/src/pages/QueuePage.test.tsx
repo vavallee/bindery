@@ -36,6 +36,8 @@ vi.mock('react-i18next', () => ({
         'queue.retryImportHint': 'After fixing the path remap or moving the completed files in the download client, retry import to reuse the existing download.',
         'queue.retryImportError': `Retry failed: ${String(options?.error)}`,
         'queue.errorDetails': 'Show full error',
+        'queue.clearAllFailed': 'Clear all failed',
+        'queue.retryAllFailed': 'Retry all failed',
       }
       return labels[key] ?? key
     },
@@ -222,6 +224,24 @@ describe('QueuePage', () => {
     await screen.findByText('Huge Error')
     // A long error gets a collapsed details expander rather than dumping inline.
     expect(screen.getByText('Show full error')).toBeInTheDocument()
+  })
+
+  it('clears all failed items via the bulk action', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue([
+      makeQueueItem({ id: 1, title: 'OK', status: 'downloading' }),
+      makeQueueItem({ id: 2, title: 'Bad A', status: 'importFailed', errorMessage: 'x' }),
+      makeQueueItem({ id: 3, title: 'Bad B', status: 'failed', errorMessage: 'y' }),
+    ])
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    renderQueuePage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Clear all failed' }))
+
+    await waitFor(() => expect(api.deleteFromQueue).toHaveBeenCalledWith(2, false))
+    expect(api.deleteFromQueue).toHaveBeenCalledWith(3, false)
+    // The healthy downloading item must NOT be cleared.
+    expect(api.deleteFromQueue).not.toHaveBeenCalledWith(1, false)
+    confirmSpy.mockRestore()
   })
 
   it('retries an import-failed queue item and reloads the queue', async () => {
