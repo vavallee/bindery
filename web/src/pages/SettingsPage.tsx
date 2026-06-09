@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, DownloadClient, Indexer, ProwlarrInstance } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
@@ -64,7 +64,21 @@ function SettingsNavLink({ tab, active, onSelect, label }: { tab: Tab; active: T
 export default function SettingsPage() {
   const { t } = useTranslation()
   const { isAdmin } = useAuth()
-  const [tab, setTab] = useState<Tab>(initialTabFromUrl)
+  const [tab, setTabState] = useState<Tab>(initialTabFromUrl)
+
+  // Keep the active tab in the URL (?tab=…) so every Settings sub-tab is
+  // deep-linkable and survives a refresh/back. replaceState (not a router
+  // navigate) avoids piling a history entry per tab click while still letting
+  // initialTabFromUrl pick the tab on a fresh load (e.g. /blocklist redirects
+  // to /settings?tab=blocklist).
+  const setTab = useCallback((next: Tab) => {
+    setTabState(next)
+    try {
+      const url = new URL(window.location.href)
+      url.searchParams.set('tab', next)
+      window.history.replaceState(window.history.state, '', url)
+    } catch { /* ignore — tab state still updates */ }
+  }, [])
 
   // Eagerly fetched on page mount (cross-tab — see file header note).
   const [indexers, setIndexers] = useState<Indexer[]>([])
@@ -106,7 +120,7 @@ export default function SettingsPage() {
     if (!isAdmin && ADMIN_TABS.includes(tab)) {
       setTab('general')
     }
-  }, [isAdmin, tab])
+  }, [isAdmin, tab, setTab])
 
   return (
     <div>

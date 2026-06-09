@@ -274,7 +274,7 @@ function Shell() {
             <Route path="/calendar" element={<CalendarPage />} />
             <Route path="/discover" element={<DiscoverPage />} />
             <Route path="/search" element={<SearchPage />} />
-            <Route path="/blocklist" element={<Navigate to="/settings" replace />} />
+            <Route path="/blocklist" element={<Navigate to="/settings?tab=blocklist" replace />} />
             <Route path="/settings" element={<SettingsPage />} />
             {isAdmin && <Route path="/users" element={<UsersPage />} />}
           </Routes>

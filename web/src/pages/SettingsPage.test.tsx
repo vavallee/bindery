@@ -34,6 +34,7 @@ vi.mock('../api/client', async importOriginal => {
     ...actual,
     api: {
       ...actual.api,
+      listBlocklist: vi.fn(),
       listIndexers: vi.fn(),
       addIndexer: vi.fn(),
       updateIndexer: vi.fn(),
@@ -341,6 +342,11 @@ function sectionForHeading(name: string) {
 describe('SettingsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // SettingsPage syncs the active tab into ?tab= via replaceState; reset it
+    // between tests so a tab selected in one test doesn't leak into the next
+    // test's initial tab (jsdom shares one location across the file).
+    window.history.replaceState(null, '', '/settings')
+    vi.mocked(api.listBlocklist).mockResolvedValue([])
     mockAuthContext.status = {
       authenticated: true,
       setupRequired: false,
@@ -363,6 +369,14 @@ describe('SettingsPage', () => {
       configurable: true,
     })
     seedSettingsMocks()
+  })
+
+  it('deep-links to the blocklist tab via ?tab=blocklist', async () => {
+    window.history.replaceState(null, '', '/settings?tab=blocklist')
+    renderSettings()
+    // BlocklistTab renders its title; the General tab would not. (The t() mock
+    // returns the key, so we assert on the key the blocklist tab emits.)
+    expect(await screen.findByText('blocklist.title')).toBeInTheDocument()
   })
 
   it('adds a write-only Hardcover token field with API link', async () => {
