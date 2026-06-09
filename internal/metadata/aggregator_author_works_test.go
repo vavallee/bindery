@@ -370,3 +370,63 @@ func TestAggregator_GetAuthorWorksForAuthor_CachesSuccessfulSupplement(t *testin
 		t.Fatalf("expected cached supplemental result, got %+v", got)
 	}
 }
+
+// mockLangFillerProvider is a primary provider that can derive work-level
+// languages by edition-sampling (the OpenLibrary capability behind #891).
+type mockLangFillerProvider struct {
+	mockProvider
+	byForeignID map[string]string // foreignID -> derived language
+	fillCalls   int
+}
+
+func (m *mockLangFillerProvider) FillMissingWorkLanguages(_ context.Context, books []models.Book) int {
+	m.fillCalls++
+	filled := 0
+	for i := range books {
+		if books[i].Language != "" {
+			continue
+		}
+		if lang, ok := m.byForeignID[books[i].ForeignID]; ok && lang != "" {
+			books[i].Language = lang
+			filled++
+		}
+	}
+	return filled
+}
+
+func TestAggregator_FillMissingAuthorWorkLanguages_DelegatesToPrimary(t *testing.T) {
+	primary := &mockLangFillerProvider{
+		mockProvider: mockProvider{name: "ol"},
+		byForeignID:  map[string]string{"OLSPAW": "spa"},
+	}
+	agg := newTestAggregator(primary)
+
+	books := []models.Book{
+		{ForeignID: "OLENGW", Language: "eng"},
+		{ForeignID: "OLSPAW"},
+	}
+	filled := agg.FillMissingAuthorWorkLanguages(context.Background(), books)
+	if filled != 1 {
+		t.Fatalf("expected 1 filled, got %d", filled)
+	}
+	if primary.fillCalls != 1 {
+		t.Errorf("expected primary FillMissingWorkLanguages to be called once, got %d", primary.fillCalls)
+	}
+	if books[1].Language != "spa" {
+		t.Errorf("expected OLSPAW language 'spa', got %q", books[1].Language)
+	}
+}
+
+func TestAggregator_FillMissingAuthorWorkLanguages_NoOpWhenUnsupported(t *testing.T) {
+	// A primary that lacks the capability must be a safe no-op.
+	primary := &mockProvider{name: "plain"}
+	agg := newTestAggregator(primary)
+
+	books := []models.Book{{ForeignID: "OLW"}}
+	if filled := agg.FillMissingAuthorWorkLanguages(context.Background(), books); filled != 0 {
+		t.Errorf("expected 0 filled for provider without capability, got %d", filled)
+	}
+	if books[0].Language != "" {
+		t.Errorf("language should be untouched, got %q", books[0].Language)
+	}
+}

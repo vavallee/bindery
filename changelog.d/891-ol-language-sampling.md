@@ -1,0 +1,2 @@
+### Fixed
+- **Foreign-language OpenLibrary works are now caught by the language filter** (#891) — OpenLibrary works carry no work-level language, so translations the search index didn't backfill slipped past a metadata profile's `allowed_languages` as "unknown". When the active profile restricts language, Bindery now edition-samples each such work (bounded to 5 editions) to derive its language before filtering.

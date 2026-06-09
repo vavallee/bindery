@@ -1351,6 +1351,17 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 	// default) and parse its allowed_languages CSV. Nil means "no filter".
 	allowedLangs, unknownFail := h.resolveAllowedLanguages(ctx, author)
 
+	// OpenLibrary works carry no work-level language; the search enricher only
+	// backfills it for indexed works, so a tail of works (often translations)
+	// reach the filter below with Language="" and slip through the unknown
+	// fallback. When the profile actually restricts language, edition-sample
+	// those works so the OL tail is caught (#891). Gated on allowedLangs being
+	// set so we don't spend the round-trips when the filter is "any".
+	var langSampled int
+	if len(allowedLangs) > 0 {
+		langSampled = h.meta.FillMissingAuthorWorkLanguages(ctx, books)
+	}
+
 	// Track titles we've already added (case-insensitive) to avoid OL duplicates.
 	// The value is a pointer to the existing book so we can enrich calibre-imported
 	// stubs with the OL foreign ID and language when they title-match an OL record.
@@ -1425,7 +1436,7 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 		// unknown_language_behavior (pass by default; see #232).
 		if !models.IsLanguageAllowed(b.Language, allowedLangs, unknownFail) {
 			skippedLang++
-			slog.Debug("skipping non-allowed-language book", "title", b.Title, "language", b.Language, "allowed", allowedLangs)
+			slog.Debug("skipping non-allowed-language book", "title", b.Title, "language", b.Language, "allowed", allowedLangs, "edition_sampled", langSampled)
 			continue
 		}
 		b.Monitored = shouldMonitorBookForAuthor(author, b, latestKeys, today)

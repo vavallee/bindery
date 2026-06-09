@@ -32,15 +32,32 @@ const (
 	coverURL = "https://covers.openlibrary.org"
 )
 
+// editionLangSampleCap bounds how many editions we fetch per work when
+// deriving a work-level language from its editions. OpenLibrary works carry no
+// language of their own, so for the foreign-language filter (#891) we sample
+// the editions endpoint. The cap is deliberately small: the first handful of
+// editions is enough to establish the work's dominant language, and the
+// editions endpoint is expensive enough that OL throttles per-UA, so we keep
+// the round-trip cheap (limit=N) rather than paging the full edition list.
+const editionLangSampleCap = 5
+
 // Client implements the metadata.Provider interface for OpenLibrary.
 type Client struct {
 	http *http.Client
+
+	// workLangCache memoizes derived work-level languages keyed on work ID so a
+	// later refresh pass (or a second author sharing the work) doesn't re-hit
+	// the editions endpoint. An entry with value "" records a sample that
+	// yielded no language so we don't retry it within the process lifetime.
+	workLangMu    sync.Mutex
+	workLangCache map[string]string
 }
 
 // New creates a new OpenLibrary client.
 func New() *Client {
 	return &Client{
-		http: &http.Client{Timeout: 15 * time.Second, Transport: httpsec.DefaultProxyTransport()},
+		http:          &http.Client{Timeout: 15 * time.Second, Transport: httpsec.DefaultProxyTransport()},
+		workLangCache: map[string]string{},
 	}
 }
 
@@ -516,6 +533,106 @@ func (c *Client) GetEditions(ctx context.Context, bookForeignID string) ([]model
 		editions = append(editions, ed)
 	}
 	return editions, nil
+}
+
+// FillMissingWorkLanguages derives a language for any book that arrived with an
+// empty Language by sampling its OpenLibrary editions. OL works carry no
+// language at the work level; the /search.json enricher only backfills language
+// for works it indexes, so a tail of works (often translations) reach the
+// allowed_languages filter with Language="" and pass through the
+// unknown-language fallback (#891).
+//
+// For each such book it fetches /works/{id}/editions.json?limit=N (N capped by
+// editionLangSampleCap) and takes the majority edition language. Results are
+// memoized per work ID so refresh passes don't re-fetch. The mutation is done
+// in place. Per-work fetch failures are logged at debug and leave Language=""
+// so the caller's unknown-language behavior still applies.
+//
+// Callers should only invoke this when the active metadata profile actually
+// restricts language (allowed_languages != "any"); there is no point spending
+// the editions round-trips when the filter would pass everything anyway.
+// It returns the number of books whose Language was populated from sampling so
+// callers can surface it in their filter-decision logs.
+func (c *Client) FillMissingWorkLanguages(ctx context.Context, books []models.Book) int {
+	filled := 0
+	for i := range books {
+		if books[i].Language != "" || books[i].ForeignID == "" {
+			continue
+		}
+		if lang := c.sampleWorkLanguage(ctx, books[i].ForeignID); lang != "" {
+			books[i].Language = lang
+			filled++
+		}
+	}
+	return filled
+}
+
+// sampleWorkLanguage returns the dominant edition language for a work, or ""
+// when the editions can't be sampled or carry no language. Results (including
+// the empty result) are cached per work ID.
+func (c *Client) sampleWorkLanguage(ctx context.Context, workID string) string {
+	if lang, ok := c.cachedWorkLang(workID); ok {
+		return lang
+	}
+
+	u := fmt.Sprintf("%s/works/%s/editions.json?limit=%d", baseURL, workID, editionLangSampleCap)
+	var resp editionsResponse
+	if err := c.getJSON(ctx, u, &resp); err != nil {
+		slog.Debug("openlibrary: edition language sampling failed", "work", workID, "error", err)
+		// Cache the miss so we don't retry a flaky/expensive call this run.
+		c.setCachedWorkLang(workID, "")
+		return ""
+	}
+
+	lang := majorityEditionLanguage(resp.Entries)
+	c.setCachedWorkLang(workID, lang)
+	return lang
+}
+
+// majorityEditionLanguage returns the most common language across the sampled
+// editions, preferring "eng" on a tie so an author's English work isn't
+// reclassified by a couple of foreign editions. Empty languages are ignored;
+// "" is returned when no edition carries a language.
+func majorityEditionLanguage(entries []editionEntry) string {
+	counts := map[string]int{}
+	for _, e := range entries {
+		for _, l := range e.Languages {
+			code := strings.TrimPrefix(l.Key, "/languages/")
+			if code != "" {
+				counts[code]++
+			}
+		}
+	}
+	if len(counts) == 0 {
+		return ""
+	}
+	best := ""
+	bestN := 0
+	for code, n := range counts {
+		if n > bestN || (n == bestN && code == "eng") {
+			best, bestN = code, n
+		}
+	}
+	return best
+}
+
+func (c *Client) cachedWorkLang(workID string) (string, bool) {
+	if c.workLangCache == nil {
+		return "", false
+	}
+	c.workLangMu.Lock()
+	defer c.workLangMu.Unlock()
+	lang, ok := c.workLangCache[workID]
+	return lang, ok
+}
+
+func (c *Client) setCachedWorkLang(workID, lang string) {
+	if c.workLangCache == nil {
+		return
+	}
+	c.workLangMu.Lock()
+	defer c.workLangMu.Unlock()
+	c.workLangCache[workID] = lang
 }
 
 // GetSubjectBooks fetches the top books for an OpenLibrary subject.

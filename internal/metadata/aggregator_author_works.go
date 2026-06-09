@@ -14,6 +14,28 @@ type worksProvider interface {
 	GetAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, error)
 }
 
+// workLanguageFiller is the optional capability a provider implements when it
+// can derive a work-level language for books that arrived without one (e.g.
+// OpenLibrary, whose works carry no language and must be edition-sampled; #891).
+type workLanguageFiller interface {
+	FillMissingWorkLanguages(ctx context.Context, books []models.Book) int
+}
+
+// FillMissingAuthorWorkLanguages asks the primary provider to derive a language
+// for any book in books that has Language=="" by edition-sampling, mutating the
+// slice in place. It is a no-op when the primary provider lacks the capability.
+//
+// Callers should gate this on the active metadata profile actually restricting
+// language: the edition sampling is bounded but still costs upstream
+// round-trips, which are wasted when allowed_languages is "any" and every book
+// passes the filter regardless of its language (#891).
+func (a *Aggregator) FillMissingAuthorWorkLanguages(ctx context.Context, books []models.Book) int {
+	if filler, ok := a.primary.(workLanguageFiller); ok {
+		return filler.FillMissingWorkLanguages(ctx, books)
+	}
+	return 0
+}
+
 type authorWorksByNameProvider interface {
 	Name() string
 	GetAuthorWorksByName(ctx context.Context, authorName string) ([]models.Book, error)

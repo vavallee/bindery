@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/vavallee/bindery/internal/models"
 )
 
 // pathTransport routes HTTP calls by URL path to a handler map.
@@ -935,6 +937,140 @@ func TestGetAuthorWorks_HTTP_NoiseFilterSearchEnrichment(t *testing.T) {
 	}
 	if len(books) != 1 || books[0].Title != "Real Book" {
 		t.Fatalf("expected only 'Real Book' to survive, got %+v", books)
+	}
+}
+
+// --- FillMissingWorkLanguages (edition sampling, #891) ---
+
+func langEntries(codes ...string) []editionEntry {
+	entries := make([]editionEntry, 0, len(codes))
+	for _, code := range codes {
+		e := editionEntry{Key: "/books/OLxM"}
+		if code != "" {
+			e.Languages = []struct {
+				Key string `json:"key"`
+			}{{Key: "/languages/" + code}}
+		}
+		entries = append(entries, e)
+	}
+	return entries
+}
+
+// A work that has no work-level language but whose editions are foreign gets
+// the dominant edition language, so the allowed_languages filter can catch it.
+func TestFillMissingWorkLanguages_DerivesFromEditions(t *testing.T) {
+	c := newClientWithPaths(t, map[string]interface{}{
+		"/works/OLSPAW/editions.json": jsonStr(editionsResponse{
+			Entries: langEntries("spa", "spa", "eng"),
+		}),
+	})
+	c.workLangCache = map[string]string{}
+
+	books := []models.Book{{ForeignID: "OLSPAW", Title: "Spanish-only Work"}}
+	filled := c.FillMissingWorkLanguages(context.Background(), books)
+	if filled != 1 {
+		t.Fatalf("expected 1 book filled, got %d", filled)
+	}
+	if books[0].Language != "spa" {
+		t.Errorf("Language: want 'spa' (majority edition language), got %q", books[0].Language)
+	}
+}
+
+// A work with no language anywhere (no work-level, no edition languages) stays
+// empty so the caller's unknown-language behavior still applies (pass).
+func TestFillMissingWorkLanguages_NoLanguageStaysUnknown(t *testing.T) {
+	c := newClientWithPaths(t, map[string]interface{}{
+		"/works/OLNOLANGW/editions.json": jsonStr(editionsResponse{
+			Entries: langEntries("", ""),
+		}),
+	})
+	c.workLangCache = map[string]string{}
+
+	books := []models.Book{{ForeignID: "OLNOLANGW", Title: "No Language Work"}}
+	filled := c.FillMissingWorkLanguages(context.Background(), books)
+	if filled != 0 {
+		t.Fatalf("expected 0 books filled, got %d", filled)
+	}
+	if books[0].Language != "" {
+		t.Errorf("Language: want '' (unknown), got %q", books[0].Language)
+	}
+}
+
+// Books that already have a language are not sampled, and the editions endpoint
+// is only hit once per work (cap respected): the limit query param is bounded
+// and a cached miss is not re-fetched.
+func TestFillMissingWorkLanguages_BoundedAndCached(t *testing.T) {
+	var calls int32
+	var gotURL string
+	c := newClientWithPaths(t, map[string]interface{}{
+		"/works/OLSAMPLEW/editions.json": func(r *http.Request) string {
+			atomic.AddInt32(&calls, 1)
+			gotURL = r.URL.String()
+			return jsonStr(editionsResponse{Entries: langEntries("fre")})
+		},
+		"/works/OLHASLANGW/editions.json": func(r *http.Request) string {
+			t.Error("should not sample a work that already has a language")
+			return "{}"
+		},
+	})
+	c.workLangCache = map[string]string{}
+
+	books := []models.Book{
+		{ForeignID: "OLHASLANGW", Title: "Already English", Language: "eng"},
+		{ForeignID: "OLSAMPLEW", Title: "Needs Sampling"},
+		{ForeignID: "", Title: "No Foreign ID"},
+	}
+
+	// First pass derives the language; second pass must reuse the cache.
+	if filled := c.FillMissingWorkLanguages(context.Background(), books); filled != 1 {
+		t.Fatalf("first pass: expected 1 filled, got %d", filled)
+	}
+	books[1].Language = "" // reset to force a re-derive attempt
+	c.FillMissingWorkLanguages(context.Background(), books)
+
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("editions endpoint should be hit once (cached after), hit %d times", got)
+	}
+	if !strings.Contains(gotURL, "limit=5") {
+		t.Errorf("sampling should bound editions with limit=5, got URL %q", gotURL)
+	}
+	if books[1].Language != "fre" {
+		t.Errorf("Language: want 'fre', got %q", books[1].Language)
+	}
+}
+
+// A failure fetching editions leaves the work unknown (caller's fallback wins)
+// and the miss is cached so a flaky/expensive endpoint isn't retried this run.
+func TestFillMissingWorkLanguages_FetchErrorCachesMiss(t *testing.T) {
+	var calls int32
+	c := newClientWithStatus(t,
+		map[string]interface{}{
+			"/works/OLERRW/editions.json": func(r *http.Request) string {
+				atomic.AddInt32(&calls, 1)
+				return "boom"
+			},
+		},
+		map[string]int{"/works/OLERRW/editions.json": http.StatusInternalServerError},
+	)
+	c.workLangCache = map[string]string{}
+
+	books := []models.Book{{ForeignID: "OLERRW", Title: "Flaky Work"}}
+	c.FillMissingWorkLanguages(context.Background(), books)
+	books[0].Language = ""
+	c.FillMissingWorkLanguages(context.Background(), books)
+
+	if books[0].Language != "" {
+		t.Errorf("Language should stay empty on fetch error, got %q", books[0].Language)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("a failed sample should be cached, not retried; hit %d times", got)
+	}
+}
+
+func TestMajorityEditionLanguage_PrefersEngOnTie(t *testing.T) {
+	got := majorityEditionLanguage(langEntries("eng", "fre"))
+	if got != "eng" {
+		t.Errorf("on a tie 'eng' should win, got %q", got)
 	}
 }
 
