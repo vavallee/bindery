@@ -4,6 +4,7 @@ import { api, HistoryEvent } from '../api/client'
 import BookAuthorLink from '../components/BookAuthorLink'
 import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
+import { dangerLink } from '../components/buttons'
 
 const EVENT_TYPE_COLORS: Record<string, string> = {
   grabbed: 'bg-blue-500/20 text-blue-400',
@@ -196,7 +197,7 @@ export default function HistoryPage() {
                           )}
                           <button
                             onClick={() => handleDelete(event.id)}
-                            className="text-xs text-red-400 hover:text-red-300 transition-colors"
+                            className={`text-xs ${dangerLink}`}
                           >
                             {t('history.delete')}
                           </button>
@@ -256,7 +257,7 @@ export default function HistoryPage() {
                     )}
                     <button
                       onClick={() => handleDelete(event.id)}
-                      className="text-xs text-red-400 hover:text-red-300 transition-colors py-1"
+                      className={`text-xs py-1 ${dangerLink}`}
                     >
                       {t('history.delete')}
                     </button>

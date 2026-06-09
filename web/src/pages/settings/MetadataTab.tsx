@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, MetadataProfile } from '../../api/client'
 import { inputCls } from './formStyles'
+import { dangerLink } from '../../components/buttons'
 
 // KNOWN_LANGUAGES are the ISO 639-2/B codes exposed in the profile editor.
 // We keep the list short rather than dumping the full ISO catalogue because
@@ -94,7 +95,7 @@ export default function MetadataTab() {
                         await api.deleteMetadataProfile(p.id)
                         reload()
                       }}
-                      className="text-xs text-red-400 hover:text-red-300"
+                      className={`text-xs ${dangerLink}`}
                     >
                       {t('common.delete')}
                     </button>
