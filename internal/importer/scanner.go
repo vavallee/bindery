@@ -775,6 +775,24 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		}
 	}
 
+	// Recover an association for downloads grabbed without a BookID (the
+	// free-text Search page does not tie a release to a local book) before
+	// falling through to the "unmatched" failure. Prefer the file's embedded
+	// EPUB metadata (reliable) over the release filename (which encodes
+	// author/title/series in inconsistent orders) — issue #1014.
+	if book == nil {
+		if b, a := s.matchBookForDownload(ctx, bookFiles); b != nil {
+			book = b
+			author = a
+			edition = s.resolveCalibreEdition(ctx, dl, book)
+			dl.BookID = &book.ID // so this run's history events + status carry it
+			if err := s.downloads.SetBookID(ctx, dl.ID, book.ID); err != nil {
+				slog.Warn("failed to persist recovered book association", "downloadID", dl.ID, "bookID", book.ID, "error", err)
+			}
+			slog.Info("recovered book association for unmatched download", "downloadID", dl.ID, "bookID", book.ID, "title", book.Title)
+		}
+	}
+
 	// Detect the format of the downloaded files from their extensions.
 	// This is authoritative for dual-format books (media_type='both') and
 	// also fixes edge-cases where a mislabelled book would be routed to the
@@ -1053,10 +1071,12 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		return
 	}
 
-	// Matched nothing — no book resolved and nothing imported. Surface that
-	// so the user can manually intervene rather than seeing a silent queue.
+	// Matched nothing — no book resolved and nothing imported. Surface what was
+	// read from the file (parsed filename + embedded EPUB metadata) so the user
+	// can see WHY it didn't match rather than getting a bare "check the release
+	// title" (issue #1014 point 5).
 	if imported == 0 && failed == 0 && book == nil {
-		s.failImport(ctx, dl, models.StateImportFailed, "could not match any book to this download — check the release title")
+		s.failImport(ctx, dl, models.StateImportFailed, unmatchedReason(bookFiles))
 		return
 	}
 

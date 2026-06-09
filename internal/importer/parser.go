@@ -31,6 +31,15 @@ var (
 	// Common separator patterns: "Title - Author" (spaces required around dash), "Title by Author"
 	titleAuthorRe = regexp.MustCompile(`(?i)^(.+?)\s+[-–]\s+(.+?)$`)
 	byAuthorRe    = regexp.MustCompile(`(?i)^(.+?)\s+by\s+(.+?)$`)
+	// "Author - [Series #N] - Title (tags)" — the de-facto Calibre/release naming
+	// convention where the AUTHOR leads and the title trails the series tag.
+	// The generic Title-Author splitter below gets this exactly backwards (it
+	// would call the author the title), so detect it first (issue #1014).
+	// Groups: 1=author, 2=series, 3=number, 4=title remainder.
+	authorSeriesTitleRe = regexp.MustCompile(`(?i)^(.+?)\s+[-–]\s+\[([A-Za-z][^\]]*?),?\s*(?:book|vol(?:ume)?|part)?\.?\s*#?(\d+(?:\.\d+)?)\]\s+[-–]\s+(.+)$`)
+	// Collapse runs of " - " separators left behind when an inline tag (e.g. a
+	// stripped series bracket) sat between two dashes: "A -  - B" -> "A - B".
+	dashCollapseRe = regexp.MustCompile(`(?:\s+[-–]\s+){2,}`)
 	// Dot/underscore word-separator pattern (common in release filenames)
 	dotSepRe = regexp.MustCompile(`[._]+`)
 	// Clean up patterns
@@ -75,6 +84,31 @@ func ParseFilename(path string) ParsedFile {
 	if asin := asinRe.FindString(name); asin != "" {
 		p.ASIN = asin
 		name = strings.TrimSpace(asinRe.ReplaceAllString(name, " "))
+	}
+
+	// "Author - [Series #N] - Title" convention (issue #1014): the author leads
+	// and the title trails the series tag. Handle this before the generic
+	// Title-Author split, which would otherwise invert them and glue the stray
+	// post-bracket dash onto the author.
+	if m := authorSeriesTitleRe.FindStringSubmatch(name); len(m) == 5 {
+		p.Author = strings.TrimSpace(m[1])
+		p.Series = strings.TrimSpace(m[2])
+		p.SeriesNumber = strings.TrimSpace(m[3])
+		titlePart := m[4]
+		// Pull ISBN / year out of the title remainder, then strip tag groups.
+		if isbn := isbnRe.FindString(titlePart); isbn != "" {
+			p.ISBN = strings.ReplaceAll(strings.ReplaceAll(isbn, "-", ""), " ", "")
+		} else if isbn := isbn10Re.FindString(titlePart); isbn != "" {
+			p.ISBN = isbn
+		}
+		if y := yearRe.FindString(titlePart); y != "" {
+			p.Year = y
+		}
+		titlePart = dotSepRe.ReplaceAllString(titlePart, " ")
+		titlePart = cleanRe.ReplaceAllString(titlePart, "")
+		titlePart = multiSp.ReplaceAllString(titlePart, " ")
+		p.Title = strings.TrimSpace(titlePart)
+		return p
 	}
 
 	// Extract series info from bracket/paren notation before cleanRe strips them.
@@ -126,6 +160,8 @@ func ParseFilename(path string) ParsedFile {
 	// Clean brackets/parens content
 	cleaned := cleanRe.ReplaceAllString(name, "")
 	cleaned = multiSp.ReplaceAllString(cleaned, " ")
+	// Collapse the empty "A -  - B" gap a stripped inline tag can leave behind.
+	cleaned = dashCollapseRe.ReplaceAllString(cleaned, " - ")
 	cleaned = strings.TrimSpace(cleaned)
 
 	// Try "Series Book N - Title" or "Series Book N - Title - Author" inline pattern.

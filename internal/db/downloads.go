@@ -257,6 +257,14 @@ func (r *DownloadRepo) SetTorrentID(ctx context.Context, id int64, torrentID str
 	return err
 }
 
+// SetBookID associates a download with a catalogue book after the fact. Used by
+// the importer when it recovers the association for a download that was grabbed
+// without one (e.g. a free-text Search grab) — issue #1014.
+func (r *DownloadRepo) SetBookID(ctx context.Context, id, bookID int64) error {
+	_, err := r.db.ExecContext(ctx, "UPDATE downloads SET book_id=? WHERE id=?", bookID, id)
+	return err
+}
+
 func (r *DownloadRepo) SetError(ctx context.Context, id int64, errMsg string) error {
 	_, err := r.db.ExecContext(ctx,
 		"UPDATE downloads SET status=?, error_message=? WHERE id=?",
