@@ -11,6 +11,7 @@ import BulkActionBar from '../components/BulkActionBar'
 import { useView } from '../components/useView'
 import MarkdownDescription from '../components/MarkdownDescription'
 import { btn } from '../components/buttons'
+import Switch from '../components/Switch'
 
 type MediaFilter = '' | 'ebook' | 'audiobook'
 type StatusFilter = '' | 'wanted' | 'downloading' | 'downloaded' | 'imported' | 'skipped'
@@ -398,12 +399,14 @@ export default function AuthorDetailPage() {
             />
           )}
           <div className="flex flex-wrap gap-2 mt-4">
-            <button
-              onClick={handleToggleMonitored}
-              className={`px-3 py-1.5 rounded text-xs font-medium ${author.monitored ? 'bg-emerald-600 text-white hover:bg-emerald-500' : 'bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 hover:bg-slate-300 dark:hover:bg-zinc-700'}`}
+            <Switch
+              checked={author.monitored}
+              onChange={handleToggleMonitored}
+              label={author.monitored ? t('authors.stopMonitoring', 'Stop monitoring') : t('authors.startMonitoring', 'Monitor')}
+              className="px-1"
             >
-              {author.monitored ? 'Monitored' : 'Not monitored'}
-            </button>
+              {author.monitored ? t('authors.monitored') : t('authors.unmonitored')}
+            </Switch>
             <button
               onClick={handleRefresh}
               disabled={refreshing}
