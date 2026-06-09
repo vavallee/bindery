@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import type { View } from './useView'
 
 interface Props {
@@ -6,6 +7,7 @@ interface Props {
 }
 
 export default function ViewToggle({ view, onChange }: Props) {
+  const { t } = useTranslation()
   const btn = (v: View) =>
     `px-2 py-1 rounded text-xs font-medium transition-colors ${
       view === v
@@ -14,8 +16,24 @@ export default function ViewToggle({ view, onChange }: Props) {
     }`
   return (
     <div className="inline-flex gap-1 border border-slate-200 dark:border-zinc-800 rounded p-0.5">
-      <button onClick={() => onChange('grid')} className={btn('grid')} title="Grid view">▦</button>
-      <button onClick={() => onChange('table')} className={btn('table')} title="Table view">☰</button>
+      <button
+        onClick={() => onChange('grid')}
+        className={btn('grid')}
+        title={t('common.gridView')}
+        aria-label={t('common.gridView')}
+        aria-pressed={view === 'grid'}
+      >
+        ▦
+      </button>
+      <button
+        onClick={() => onChange('table')}
+        className={btn('table')}
+        title={t('common.tableView')}
+        aria-label={t('common.tableView')}
+        aria-pressed={view === 'table'}
+      >
+        ☰
+      </button>
     </div>
   )
 }

@@ -5,6 +5,7 @@ import AddSeriesBookModal from '../components/AddSeriesBookModal'
 import HardcoverSeriesLinkModal from '../components/HardcoverSeriesLinkModal'
 import SeriesNameModal from '../components/SeriesNameModal'
 import { btn, btnSize } from '../components/buttons'
+import Switch from '../components/Switch'
 
 export default function SeriesPage() {
   const location = useLocation()
@@ -262,16 +263,13 @@ export default function SeriesPage() {
 
                 {/* Actions row */}
                 <div className="px-4 pb-3 flex items-center gap-3 flex-wrap" onClick={e => e.stopPropagation()}>
-                  <button
-                    onClick={() => toggleMonitor(series)}
-                    className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${series.monitored ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'}`}
-                    title={series.monitored ? 'Stop monitoring' : 'Monitor series'}
+                  <Switch
+                    checked={series.monitored}
+                    onChange={() => toggleMonitor(series)}
+                    label={series.monitored ? 'Stop monitoring' : 'Monitor series'}
                   >
-                    <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${series.monitored ? 'translate-x-4' : ''}`} />
-                  </button>
-                  <span className="text-xs text-slate-600 dark:text-zinc-400">
                     {series.monitored ? 'Monitored' : 'Not monitored'}
-                  </span>
+                  </Switch>
                   {enhancedHardcoverApi && (
                     <button
                       onClick={() => openHardcoverLink(series)}
