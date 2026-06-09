@@ -14,6 +14,7 @@ import { useView } from '../components/useView'
 import GettingStartedGuidance from '../components/GettingStartedGuidance'
 import { useNeedsSetup } from '../components/useNeedsSetup'
 import { btn, btnSize } from '../components/buttons'
+import Switch from '../components/Switch'
 
 type SortMode = 'az' | 'za' | 'recent'
 type MonitoredFilter = '' | 'monitored' | 'unmonitored'
@@ -386,12 +387,11 @@ export default function AuthorsPage() {
                       {author.averageRating > 0 ? `★ ${author.averageRating.toFixed(2)}` : '—'}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">
-                      <button
-                        onClick={() => handleToggleMonitored(author)}
-                        className={`text-xs px-2 py-0.5 rounded ${author.monitored ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400'}`}
-                      >
-                        {author.monitored ? t('common.yes') : t('common.no')}
-                      </button>
+                      <Switch
+                        checked={author.monitored}
+                        onChange={() => handleToggleMonitored(author)}
+                        label={author.monitored ? t('authors.stopMonitoring', 'Stop monitoring') : t('authors.startMonitoring', 'Monitor')}
+                      />
                     </td>
                     <td className="px-3 py-2 text-right whitespace-nowrap">
                       <button
@@ -445,12 +445,13 @@ export default function AuthorsPage() {
                 </Link>
               </div>
               <div className="flex items-center justify-between px-4 py-2 bg-slate-200/50 dark:bg-zinc-800/50 border-t border-slate-200 dark:border-zinc-800">
-                <button
-                  onClick={() => handleToggleMonitored(author)}
-                  className={`text-xs px-2 py-1 rounded ${author.monitored ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400'}`}
+                <Switch
+                  checked={author.monitored}
+                  onChange={() => handleToggleMonitored(author)}
+                  label={author.monitored ? t('authors.stopMonitoring', 'Stop monitoring') : t('authors.startMonitoring', 'Monitor')}
                 >
                   {author.monitored ? t('authors.monitored') : t('authors.unmonitored')}
-                </button>
+                </Switch>
                 <div className="flex gap-2">
                   <button
                     onClick={() => api.refreshAuthor(author.id).then(load)}
