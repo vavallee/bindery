@@ -31,6 +31,61 @@ function IndexerTestResultBanner({ r }: { r: IndexerTestResult }) {
   )
 }
 
+// SeedRatioField renders the per-indexer seed-ratio override (#883) as a
+// numeric input plus an "unlimited" toggle, so users never have to learn the
+// -1 sentinel. It round-trips three shapes:
+//   - null/undefined → no override (input empty, toggle off)
+//   - >= 0           → that ratio (input shows it, toggle off)
+//   - -1             → unlimited (input disabled/blank, toggle on)
+function SeedRatioField({ value, onChange }: { value: number | null | undefined; onChange: (v: number | null) => void }) {
+  const { t } = useTranslation()
+  const unlimited = value === -1
+  // Text mirror of the numeric input so a half-typed "1." doesn't get clobbered.
+  const [text, setText] = useState(value != null && value >= 0 ? String(value) : '')
+
+  const handleText = (raw: string) => {
+    setText(raw)
+    if (raw.trim() === '') {
+      onChange(null)
+      return
+    }
+    const n = Number(raw)
+    if (!Number.isNaN(n) && n >= 0) onChange(n)
+  }
+
+  const toggleUnlimited = () => {
+    if (unlimited) {
+      onChange(null)
+      setText('')
+    } else {
+      onChange(-1)
+    }
+  }
+
+  return (
+    <div>
+      <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.indexers.form.seedRatio')}</label>
+      <div className="flex items-center gap-3">
+        <input
+          type="number"
+          min="0"
+          step="0.1"
+          value={unlimited ? '' : text}
+          disabled={unlimited}
+          onChange={e => handleText(e.target.value)}
+          placeholder={t('settings.indexers.form.seedRatioPlaceholder')}
+          className={`${inputCls} flex-1 disabled:opacity-50`}
+        />
+        <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-zinc-400 whitespace-nowrap">
+          <input type="checkbox" checked={unlimited} onChange={toggleUnlimited} className="accent-emerald-600 dark:accent-emerald-500" />
+          {t('settings.indexers.form.seedRatioUnlimited')}
+        </label>
+      </div>
+      <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.seedRatioHint')}</p>
+    </div>
+  )
+}
+
 // indexers/prowlarrInstances are owned by SettingsPage so they can be fetched
 // eagerly on page mount (matching the pre-refactor monolith), not on tab open.
 interface Props {
@@ -274,12 +329,13 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
   const [apiKey, setApiKey] = useState(indexer.apiKey)
   const [categories, setCategories] = useState((indexer.categories ?? [7020]).join(', '))
   const [priority, setPriority] = useState(String(indexer.priority ?? 0))
+  const [seedRatio, setSeedRatio] = useState<number | null>(indexer.seedRatio ?? null)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<IndexerTestResult | null>(null)
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const submit = async () => {
-    const updated = await api.updateIndexer(indexer.id, { ...indexer, name, type, url, apiKey, categories: parseCats(categories), priority: parsePriority(priority) })
+    const updated = await api.updateIndexer(indexer.id, { ...indexer, name, type, url, apiKey, categories: parseCats(categories), priority: parsePriority(priority), seedRatio })
     onSaved(updated)
   }
 
@@ -330,6 +386,7 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
         <input type="number" value={priority} onChange={e => setPriority(e.target.value)} placeholder="0" className={inputCls} />
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.priorityHint')}</p>
       </div>
+      <SeedRatioField value={seedRatio} onChange={setSeedRatio} />
       {testResult && <IndexerTestResultBanner r={testResult} />}
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">{t('common.cancel')}</button>
@@ -348,12 +405,13 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
   const [apiKey, setApiKey] = useState('')
   const [categories, setCategories] = useState('7020')
   const [priority, setPriority] = useState('0')
+  const [seedRatio, setSeedRatio] = useState<number | null>(null)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<IndexerTestResult | null>(null)
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const submit = async () => {
-    const idx = await api.addIndexer({ name, url, apiKey, type, categories: parseCats(categories), priority: parsePriority(priority), enabled: true })
+    const idx = await api.addIndexer({ name, url, apiKey, type, categories: parseCats(categories), priority: parsePriority(priority), enabled: true, seedRatio })
     onAdded(idx)
   }
 
@@ -404,6 +462,7 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
         <input type="number" value={priority} onChange={e => setPriority(e.target.value)} placeholder="0" className={inputCls} />
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.priorityHint')}</p>
       </div>
+      <SeedRatioField value={seedRatio} onChange={setSeedRatio} />
       {testResult && <IndexerTestResultBanner r={testResult} />}
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">{t('common.cancel')}</button>

@@ -5,6 +5,7 @@ package downloader
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math"
 	"strconv"
 	"strings"
@@ -47,6 +48,11 @@ type SendOptions struct {
 	MediaType            string
 	DownloadDir          string
 	AudiobookDownloadDir string
+	// SeedRatio is the per-indexer seed-ratio override (#883) resolved from the
+	// grabbed release's indexer. nil means "no override" (keep the client's
+	// global rule); -1 is the unlimited sentinel. Only honored by torrent
+	// clients; SAB/NZBGet ignore it (ratio is a torrent concept).
+	SeedRatio *float64
 }
 
 func IsTorrentClient(clientType string) bool {
@@ -117,7 +123,7 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		if !strings.HasPrefix(transDL, "/") {
 			transDL = ""
 		}
-		torrentID, err := trans.AddTorrent(ctx, sourceURL, transDL)
+		torrentID, err := trans.AddTorrent(ctx, sourceURL, transDL, opts.SeedRatio)
 		if err != nil {
 			return nil, err
 		}
@@ -137,11 +143,21 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		if hash == "" {
 			return nil, fmt.Errorf("downloader accepted request but did not return a trackable torrent ID")
 		}
+		// Apply the per-indexer seed-ratio override (#883). qBittorrent has no
+		// ratioLimit param on /torrents/add, so it is a separate setShareLimits
+		// call once the hash is known. nil = no override; -1/-2 are valid
+		// sentinels qBit recognizes. A failure here must not fail the grab — the
+		// torrent is already added — so the error is logged, not returned.
+		if opts.SeedRatio != nil {
+			if err := qb.SetShareLimits(ctx, hash, *opts.SeedRatio); err != nil {
+				slog.Warn("qbittorrent: failed to set seed-ratio limit", "hash", hash, "ratio", *opts.SeedRatio, "error", err)
+			}
+		}
 		result.RemoteID = hash
 		return result, nil
 	case "deluge":
 		dl := DelugeFor(client)
-		hash, err := dl.AddTorrent(ctx, sourceURL, ResolveCategory(client, opts.MediaType))
+		hash, err := dl.AddTorrent(ctx, sourceURL, ResolveCategory(client, opts.MediaType), opts.SeedRatio)
 		if err != nil {
 			return nil, err
 		}

@@ -11,6 +11,9 @@ export interface Indexer {
   priority: number
   enabled: boolean
   prowlarrInstanceId?: number
+  // Per-indexer seed-ratio override (#883). Omitted/null = no override (the
+  // download client keeps its global rule); -1 = unlimited (seed forever).
+  seedRatio?: number | null
 }
 
 export interface IndexerTestResult {

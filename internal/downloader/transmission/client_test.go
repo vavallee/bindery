@@ -94,7 +94,7 @@ func TestAddTorrent_NewTorrent(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestClient(srv.URL, "user", "pass")
-	id, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc123", "")
+	id, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc123", "", nil)
 	if err != nil {
 		t.Fatalf("AddTorrent: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestAddTorrent_HTTPRedirectToMagnet(t *testing.T) {
 	c := newTestClient(rpc.URL, "user", "pass")
 	c.validateTorrentURL = func(string) error { return nil } // allow the loopback test server
 
-	id, err := c.AddTorrent(context.Background(), indexer.URL+"/download/123", "")
+	id, err := c.AddTorrent(context.Background(), indexer.URL+"/download/123", "", nil)
 	if err != nil {
 		t.Fatalf("AddTorrent: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestAddTorrent_DuplicateTorrent(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestClient(srv.URL, "user", "pass")
-	id, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", "")
+	id, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", "", nil)
 	if err != nil {
 		t.Fatalf("AddTorrent: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestAddTorrent_NoID(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestClient(srv.URL, "user", "pass")
-	if _, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", ""); err == nil {
+	if _, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", "", nil); err == nil {
 		t.Fatal("expected error when no torrent ID returned")
 	}
 }
@@ -185,7 +185,7 @@ func TestAddTorrent_FailResult(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestClient(srv.URL, "user", "pass")
-	if _, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", ""); err == nil {
+	if _, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", "", nil); err == nil {
 		t.Fatal("expected error on non-success result")
 	}
 }
@@ -198,7 +198,7 @@ func TestAddTorrent_HTTPError(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestClient(srv.URL, "user", "pass")
-	if _, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", ""); err == nil {
+	if _, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", "", nil); err == nil {
 		t.Fatal("expected error on 403")
 	}
 }
@@ -216,7 +216,7 @@ func TestAddTorrent_WithDownloadDir(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestClient(srv.URL, "user", "pass")
-	id, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", "/custom/dir")
+	id, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", "/custom/dir", nil)
 	if err != nil {
 		t.Fatalf("AddTorrent: %v", err)
 	}
@@ -690,7 +690,7 @@ func TestAddTorrent_HTTPURLFetchesContent(t *testing.T) {
 	c := newTestClient(transSrv.URL, "", "")
 	allowTorrentFetch(c)
 
-	id, err := c.AddTorrent(context.Background(), indexerSrv.URL+"/file.torrent", "")
+	id, err := c.AddTorrent(context.Background(), indexerSrv.URL+"/file.torrent", "", nil)
 	if err != nil {
 		t.Fatalf("AddTorrent: %v", err)
 	}
@@ -734,7 +734,7 @@ func TestAddTorrent_MagnetLinkSkipsFetch(t *testing.T) {
 	allowTorrentFetch(c)
 
 	magnet := "magnet:?xt=urn:btih:abc123&tr=" + url.QueryEscape(indexerSrv.URL)
-	id, err := c.AddTorrent(context.Background(), magnet, "")
+	id, err := c.AddTorrent(context.Background(), magnet, "", nil)
 	if err != nil {
 		t.Fatalf("AddTorrent: %v", err)
 	}
@@ -770,7 +770,7 @@ func TestAddTorrent_HTTPURLFetchFailure(t *testing.T) {
 	c := newTestClient(transSrv.URL, "", "")
 	allowTorrentFetch(c)
 
-	_, err := c.AddTorrent(context.Background(), indexerSrv.URL+"/file.torrent", "")
+	_, err := c.AddTorrent(context.Background(), indexerSrv.URL+"/file.torrent", "", nil)
 	if err == nil {
 		t.Fatal("expected error on indexer 401")
 		return
@@ -792,7 +792,7 @@ func TestAddTorrent_HTTPURLSSRFBlocked(t *testing.T) {
 	c := newTestClient(transSrv.URL, "", "")
 	// Do NOT call allowTorrentFetch; the guard must be active.
 
-	_, err := c.AddTorrent(context.Background(), "http://127.0.0.1:9999/file.torrent", "")
+	_, err := c.AddTorrent(context.Background(), "http://127.0.0.1:9999/file.torrent", "", nil)
 	if err == nil {
 		t.Fatal("expected SSRF guard to block loopback URL")
 		return
@@ -820,5 +820,72 @@ func TestIsMagnetLink(t *testing.T) {
 		if got := isMagnetLink(in); got != want {
 			t.Errorf("isMagnetLink(%q) = %v, want %v", in, got, want)
 		}
+	}
+}
+
+// floatPtr is a test helper for the *float64 seed-ratio override.
+func floatPtr(f float64) *float64 { return &f }
+
+// captureAddArgs spins up an RPC stub that records the torrent-add arguments
+// and returns a captured map plus the client, so each seed-ratio case can
+// assert on the exact seedRatioLimit/seedRatioMode the daemon would receive.
+func captureAddArgs(t *testing.T) (*Client, *map[string]any) {
+	t.Helper()
+	captured := map[string]any{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Arguments map[string]any `json:"arguments"`
+		}
+		_ = newJSONDecoder(r.Body).Decode(&req)
+		captured = req.Arguments
+		_, _ = w.Write([]byte(`{"result":"success","arguments":{"torrent-added":{"id":1,"name":"B"}}}`))
+	}))
+	t.Cleanup(srv.Close)
+	return newTestClient(srv.URL, "u", "p"), &captured
+}
+
+// TestAddTorrent_SeedRatio_Positive: a positive override sets a per-torrent
+// ratio with seedRatioMode=1 (single, ignore the global rule).
+func TestAddTorrent_SeedRatio_Positive(t *testing.T) {
+	c, captured := captureAddArgs(t)
+	if _, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", "", floatPtr(2.5)); err != nil {
+		t.Fatalf("AddTorrent: %v", err)
+	}
+	if got := (*captured)["seedRatioLimit"]; got != 2.5 {
+		t.Errorf("seedRatioLimit = %v, want 2.5", got)
+	}
+	// JSON numbers decode to float64.
+	if got := (*captured)["seedRatioMode"]; got != float64(seedRatioModeSingle) {
+		t.Errorf("seedRatioMode = %v, want %d", got, seedRatioModeSingle)
+	}
+}
+
+// TestAddTorrent_SeedRatio_Unlimited: the -1 sentinel must not be sent as a
+// negative seedRatioLimit (the RPC rejects it); it becomes seedRatioMode=2.
+func TestAddTorrent_SeedRatio_Unlimited(t *testing.T) {
+	c, captured := captureAddArgs(t)
+	if _, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", "", floatPtr(-1)); err != nil {
+		t.Fatalf("AddTorrent: %v", err)
+	}
+	if _, ok := (*captured)["seedRatioLimit"]; ok {
+		t.Errorf("seedRatioLimit must be omitted for the unlimited sentinel, got %v", (*captured)["seedRatioLimit"])
+	}
+	if got := (*captured)["seedRatioMode"]; got != float64(seedRatioModeUnlimited) {
+		t.Errorf("seedRatioMode = %v, want %d", got, seedRatioModeUnlimited)
+	}
+}
+
+// TestAddTorrent_SeedRatio_Unset: a nil override leaves both fields off so the
+// torrent keeps Transmission's global ratio rule.
+func TestAddTorrent_SeedRatio_Unset(t *testing.T) {
+	c, captured := captureAddArgs(t)
+	if _, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", "", nil); err != nil {
+		t.Fatalf("AddTorrent: %v", err)
+	}
+	if _, ok := (*captured)["seedRatioLimit"]; ok {
+		t.Error("seedRatioLimit must be omitted when no override is set")
+	}
+	if _, ok := (*captured)["seedRatioMode"]; ok {
+		t.Error("seedRatioMode must be omitted when no override is set")
 	}
 }

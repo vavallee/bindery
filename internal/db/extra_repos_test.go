@@ -748,6 +748,64 @@ func TestIndexerRepo_Update(t *testing.T) {
 	}
 }
 
+// TestIndexerRepo_SeedRatio round-trips the per-indexer seed-ratio override
+// (#883) through Create/Update/GetByID for the three meaningful shapes: unset
+// (nil = no override), a positive value, and the -1 unlimited sentinel.
+func TestIndexerRepo_SeedRatio(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewIndexerRepo(database)
+
+	idx := &models.Indexer{
+		Name: "Ratio Indexer", Type: "torznab", URL: "https://example.com/api",
+		APIKey: "k", Categories: []int{7020}, Priority: 1, Enabled: true,
+	}
+	if err := repo.Create(ctx, idx); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := repo.GetByID(ctx, idx.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.SeedRatio != nil {
+		t.Errorf("SeedRatio: want nil (no override), got %v", *got.SeedRatio)
+	}
+
+	ratio := 2.5
+	got.SeedRatio = &ratio
+	if err := repo.Update(ctx, got); err != nil {
+		t.Fatalf("Update positive: %v", err)
+	}
+	got, _ = repo.GetByID(ctx, idx.ID)
+	if got.SeedRatio == nil || *got.SeedRatio != 2.5 {
+		t.Errorf("SeedRatio after update: want 2.5, got %v", got.SeedRatio)
+	}
+
+	unlimited := -1.0
+	got.SeedRatio = &unlimited
+	if err := repo.Update(ctx, got); err != nil {
+		t.Fatalf("Update sentinel: %v", err)
+	}
+	got, _ = repo.GetByID(ctx, idx.ID)
+	if got.SeedRatio == nil || *got.SeedRatio != -1 {
+		t.Errorf("SeedRatio sentinel: want -1, got %v", got.SeedRatio)
+	}
+
+	// Clearing the override back to nil must persist as NULL.
+	got.SeedRatio = nil
+	if err := repo.Update(ctx, got); err != nil {
+		t.Fatalf("Update clear: %v", err)
+	}
+	got, _ = repo.GetByID(ctx, idx.ID)
+	if got.SeedRatio != nil {
+		t.Errorf("SeedRatio after clear: want nil, got %v", *got.SeedRatio)
+	}
+}
+
 // TestIndexerRepo_UpdateAPIKeyByProwlarrInstance verifies that rotating the
 // Prowlarr instance's API key via this helper rewrites only the rows belonging
 // to that instance, leaving manual indexers and indexers from a different

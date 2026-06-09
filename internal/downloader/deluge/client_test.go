@@ -56,6 +56,13 @@ type delugeServer struct {
 	// statusErr forces core.get_torrent_status to return an RPC error,
 	// exercising the Files() error path.
 	statusErr bool
+
+	// stopRatio records the ratio passed to core.set_torrent_stop_ratio per
+	// hash; stopAtRatio records whether core.set_torrent_stop_at_ratio(true)
+	// fired. Both stay zero/false when AddTorrent skips the seed-ratio step.
+	stopRatio    map[string]float64
+	stopAtRatio  map[string]bool
+	stopRatioErr bool
 }
 
 func (s *delugeServer) handler() http.HandlerFunc {
@@ -128,6 +135,32 @@ func (s *delugeServer) handler() http.HandlerFunc {
 			write([]bool{true})
 
 		case "label.set_torrent":
+			write(nil)
+
+		case "core.set_torrent_stop_ratio":
+			if s.stopRatioErr {
+				writeErr("set stop ratio error")
+				return
+			}
+			var hash string
+			var ratio float64
+			json.Unmarshal(req.Params[0], &hash)
+			json.Unmarshal(req.Params[1], &ratio)
+			if s.stopRatio == nil {
+				s.stopRatio = make(map[string]float64)
+			}
+			s.stopRatio[strings.ToLower(hash)] = ratio
+			write(nil)
+
+		case "core.set_torrent_stop_at_ratio":
+			var hash string
+			var enabled bool
+			json.Unmarshal(req.Params[0], &hash)
+			json.Unmarshal(req.Params[1], &enabled)
+			if s.stopAtRatio == nil {
+				s.stopAtRatio = make(map[string]bool)
+			}
+			s.stopAtRatio[strings.ToLower(hash)] = enabled
 			write(nil)
 
 		case "core.get_torrents_status":
@@ -223,7 +256,7 @@ func TestAddTorrent_Magnet(t *testing.T) {
 	c := clientFromServer(srv, "pw")
 
 	magnet := "magnet:?xt=urn:btih:aabbccddeeff00112233445566778899aabbccdd&dn=Test+Book"
-	hash, err := c.AddTorrent(context.Background(), magnet, "books")
+	hash, err := c.AddTorrent(context.Background(), magnet, "books", nil)
 	if err != nil {
 		t.Fatalf("AddTorrent magnet: %v", err)
 	}
@@ -235,11 +268,76 @@ func TestAddTorrent_Magnet(t *testing.T) {
 	}
 }
 
+func ratioPtr(f float64) *float64 { return &f }
+
+// TestAddTorrent_SeedRatio_Positive: a non-negative override is applied via
+// core.set_torrent_stop_ratio and ratio-stopping is enabled.
+func TestAddTorrent_SeedRatio_Positive(t *testing.T) {
+	srv, ds := newTestServer(t, "pw")
+	c := clientFromServer(srv, "pw")
+
+	magnet := "magnet:?xt=urn:btih:aabbccddeeff00112233445566778899aabbccdd"
+	hash, err := c.AddTorrent(context.Background(), magnet, "", ratioPtr(2))
+	if err != nil {
+		t.Fatalf("AddTorrent: %v", err)
+	}
+	if got, ok := ds.stopRatio[hash]; !ok || got != 2 {
+		t.Errorf("stopRatio[%s] = %v (set=%v), want 2", hash, got, ok)
+	}
+	if !ds.stopAtRatio[hash] {
+		t.Error("set_torrent_stop_at_ratio(true) should have fired for a positive override")
+	}
+}
+
+// TestAddTorrent_SeedRatio_Unlimited: the -1 sentinel must NOT call
+// set_torrent_stop_ratio (Deluge rejects negatives) — the global default stays.
+func TestAddTorrent_SeedRatio_Unlimited(t *testing.T) {
+	srv, ds := newTestServer(t, "pw")
+	c := clientFromServer(srv, "pw")
+
+	magnet := "magnet:?xt=urn:btih:aabbccddeeff00112233445566778899aabbccdd"
+	hash, err := c.AddTorrent(context.Background(), magnet, "", ratioPtr(-1))
+	if err != nil {
+		t.Fatalf("AddTorrent: %v", err)
+	}
+	if _, ok := ds.stopRatio[hash]; ok {
+		t.Error("stopRatio must not be set for the unlimited sentinel")
+	}
+}
+
+// TestAddTorrent_SeedRatio_Unset: a nil override skips the ratio call entirely.
+func TestAddTorrent_SeedRatio_Unset(t *testing.T) {
+	srv, ds := newTestServer(t, "pw")
+	c := clientFromServer(srv, "pw")
+
+	magnet := "magnet:?xt=urn:btih:aabbccddeeff00112233445566778899aabbccdd"
+	hash, err := c.AddTorrent(context.Background(), magnet, "", nil)
+	if err != nil {
+		t.Fatalf("AddTorrent: %v", err)
+	}
+	if _, ok := ds.stopRatio[hash]; ok {
+		t.Error("stopRatio must not be set when no override is provided")
+	}
+}
+
+// TestAddTorrent_SeedRatio_ErrorNonFatal: a failure setting the ratio must not
+// fail the grab — the torrent is already added.
+func TestAddTorrent_SeedRatio_ErrorNonFatal(t *testing.T) {
+	srv, ds := newTestServer(t, "pw")
+	ds.stopRatioErr = true
+	c := clientFromServer(srv, "pw")
+
+	magnet := "magnet:?xt=urn:btih:aabbccddeeff00112233445566778899aabbccdd"
+	if _, err := c.AddTorrent(context.Background(), magnet, "", ratioPtr(2)); err != nil {
+		t.Fatalf("AddTorrent must succeed despite a ratio-set failure: %v", err)
+	}
+}
+
 func TestAddTorrent_URL(t *testing.T) {
 	srv, _ := newTestServer(t, "pw")
 	c := clientFromServer(srv, "pw")
 
-	hash, err := c.AddTorrent(context.Background(), "http://indexer.example/torrent.torrent", "")
+	hash, err := c.AddTorrent(context.Background(), "http://indexer.example/torrent.torrent", "", nil)
 	if err != nil {
 		t.Fatalf("AddTorrent URL: %v", err)
 	}
@@ -345,7 +443,7 @@ func TestAddTorrent_URL_HashLookupTimeout(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := clientFromServer(srv, "pw")
-	_, err := c.AddTorrent(context.Background(), "http://example.com/book.torrent", "scifi")
+	_, err := c.AddTorrent(context.Background(), "http://example.com/book.torrent", "scifi", nil)
 	if err == nil {
 		t.Fatal("expected error on timeout, got nil")
 		return

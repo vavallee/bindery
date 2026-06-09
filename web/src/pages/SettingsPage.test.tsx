@@ -1085,6 +1085,7 @@ describe('SettingsPage', () => {
         categories: [7020, 7120, 3030],
         priority: 0,
         enabled: true,
+        seedRatio: null,
       })
     })
     expect(await screen.findByText('SceneNZBs')).toBeInTheDocument()
@@ -1112,9 +1113,47 @@ describe('SettingsPage', () => {
         url: 'https://slug.example.com/api',
         apiKey: 'slug-key',
         categories: [7020, 3030],
+        seedRatio: null,
       })
     })
     expect(await screen.findByText('DrunkenSlug')).toBeInTheDocument()
+  })
+
+  it('saves a numeric per-indexer seed ratio', async () => {
+    const indexer = makeIndexer({ id: 11, name: 'RatioIdx' })
+    renderSettings({ indexers: [indexer] })
+    await openIndexersTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
+    fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.seedRatioPlaceholder'), { target: { value: '1.5' } })
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
+
+    await waitFor(() => {
+      expect(api.updateIndexer).toHaveBeenCalledWith(11, expect.objectContaining({ seedRatio: 1.5 }))
+    })
+  })
+
+  it('saves the unlimited seed-ratio sentinel via the toggle', async () => {
+    const indexer = makeIndexer({ id: 12, name: 'UnlimitedIdx' })
+    renderSettings({ indexers: [indexer] })
+    await openIndexersTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
+    fireEvent.click(screen.getByLabelText('settings.indexers.form.seedRatioUnlimited'))
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
+
+    await waitFor(() => {
+      expect(api.updateIndexer).toHaveBeenCalledWith(12, expect.objectContaining({ seedRatio: -1 }))
+    })
+  })
+
+  it('round-trips an existing -1 seed ratio as the unlimited toggle', async () => {
+    const indexer = makeIndexer({ id: 13, name: 'PreUnlimited', seedRatio: -1 })
+    renderSettings({ indexers: [indexer] })
+    await openIndexersTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
+    expect(screen.getByLabelText('settings.indexers.form.seedRatioUnlimited')).toBeChecked()
   })
 
   it('toggles and deletes an indexer', async () => {

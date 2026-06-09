@@ -21,7 +21,7 @@ func NewIndexerRepo(db *sql.DB) *IndexerRepo {
 func (r *IndexerRepo) List(ctx context.Context) ([]models.Indexer, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, name, type, url, api_key, categories, priority, enabled, supports_search,
-		       prowlarr_instance_id, prowlarr_indexer_id, created_at, updated_at
+		       prowlarr_instance_id, prowlarr_indexer_id, seed_ratio, created_at, updated_at
 		FROM indexers ORDER BY priority`)
 	if err != nil {
 		return nil, err
@@ -42,7 +42,7 @@ func (r *IndexerRepo) List(ctx context.Context) ([]models.Indexer, error) {
 func (r *IndexerRepo) GetByID(ctx context.Context, id int64) (*models.Indexer, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, name, type, url, api_key, categories, priority, enabled, supports_search,
-		       prowlarr_instance_id, prowlarr_indexer_id, created_at, updated_at
+		       prowlarr_instance_id, prowlarr_indexer_id, seed_ratio, created_at, updated_at
 		FROM indexers WHERE id=?`, id)
 	if err != nil {
 		return nil, err
@@ -62,7 +62,7 @@ func (r *IndexerRepo) GetByID(ctx context.Context, id int64) (*models.Indexer, e
 func (r *IndexerRepo) ListByProwlarrInstance(ctx context.Context, instanceID int64) ([]models.Indexer, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, name, type, url, api_key, categories, priority, enabled, supports_search,
-		       prowlarr_instance_id, prowlarr_indexer_id, created_at, updated_at
+		       prowlarr_instance_id, prowlarr_indexer_id, seed_ratio, created_at, updated_at
 		FROM indexers WHERE prowlarr_instance_id=?`, instanceID)
 	if err != nil {
 		return nil, err
@@ -87,11 +87,11 @@ func (r *IndexerRepo) Create(ctx context.Context, idx *models.Indexer) error {
 	}
 	result, err := r.db.ExecContext(ctx, `
 		INSERT INTO indexers (name, type, url, api_key, categories, priority, enabled, supports_search,
-		                      prowlarr_instance_id, prowlarr_indexer_id, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                      prowlarr_instance_id, prowlarr_indexer_id, seed_ratio, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		idx.Name, idx.Type, idx.URL, idx.APIKey, string(catsJSON),
 		idx.Priority, idx.Enabled, idx.SupportsSearch,
-		idx.ProwlarrInstanceID, idx.ProwlarrIndexerID, now, now)
+		idx.ProwlarrInstanceID, idx.ProwlarrIndexerID, idx.SeedRatio, now, now)
 	if err != nil {
 		return fmt.Errorf("create indexer: %w", err)
 	}
@@ -113,10 +113,10 @@ func (r *IndexerRepo) Update(ctx context.Context, idx *models.Indexer) error {
 	}
 	_, err = r.db.ExecContext(ctx, `
 		UPDATE indexers SET name=?, type=?, url=?, api_key=?, categories=?, priority=?,
-		                    enabled=?, supports_search=?, updated_at=?
+		                    enabled=?, supports_search=?, seed_ratio=?, updated_at=?
 		WHERE id=?`,
 		idx.Name, idx.Type, idx.URL, idx.APIKey, string(catsJSON),
-		idx.Priority, idx.Enabled, idx.SupportsSearch, now, idx.ID)
+		idx.Priority, idx.Enabled, idx.SupportsSearch, idx.SeedRatio, now, idx.ID)
 	return err
 }
 
@@ -157,7 +157,7 @@ func scanIndexer(s indexerScanner) (models.Indexer, error) {
 	if err := s.Scan(
 		&idx.ID, &idx.Name, &idx.Type, &idx.URL, &idx.APIKey,
 		&catsJSON, &idx.Priority, &enabled, &supportsSearch,
-		&idx.ProwlarrInstanceID, &idx.ProwlarrIndexerID,
+		&idx.ProwlarrInstanceID, &idx.ProwlarrIndexerID, &idx.SeedRatio,
 		&idx.CreatedAt, &idx.UpdatedAt,
 	); err != nil {
 		return idx, err

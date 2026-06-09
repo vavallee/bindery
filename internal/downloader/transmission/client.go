@@ -97,11 +97,18 @@ func (c *Client) Test(ctx context.Context) error {
 // (e.g. transmission behind a VPN container), the daemon can't fetch the
 // URL, so it sits in retry until Bindery's request deadline expires.
 // Reported by @Bclark117 in #873.
-func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, downloadDir string) (int64, error) {
+//
+// seedRatio carries the per-indexer override (#883): a positive value sets a
+// per-torrent ratio with seedRatioMode=1 (single, ignore the global rule); the
+// -1 unlimited sentinel maps to seedRatioMode=2 (no ratio limit) because the
+// Transmission RPC rejects a negative seedRatioLimit float. A nil pointer
+// leaves both fields unset so the torrent keeps Transmission's global rule.
+func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, downloadDir string, seedRatio *float64) (int64, error) {
 	args := map[string]interface{}{}
 	if downloadDir != "" {
 		args["download-dir"] = downloadDir
 	}
+	applySeedRatioArgs(args, seedRatio)
 
 	if isMagnetLink(magnetOrURL) {
 		args["filename"] = magnetOrURL
@@ -150,6 +157,31 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, downloadDir string
 	}
 
 	return 0, fmt.Errorf("no torrent ID returned")
+}
+
+// Transmission seedRatioMode values (RPC spec): 0 = use global limit,
+// 1 = use the per-torrent seedRatioLimit, 2 = no ratio limit (seed forever).
+const (
+	seedRatioModeSingle    = 1
+	seedRatioModeUnlimited = 2
+)
+
+// applySeedRatioArgs writes the seedRatioLimit/seedRatioMode pair into a
+// torrent-add (or torrent-set) argument map for the given override. nil leaves
+// the map untouched (keep the global rule). A non-negative value sets a single
+// per-torrent ratio; the -1 unlimited sentinel becomes seedRatioMode=2 since
+// the RPC rejects a negative seedRatioLimit. Other negatives are treated as
+// unlimited too (defensive: the only negative Bindery stores is -1).
+func applySeedRatioArgs(args map[string]interface{}, seedRatio *float64) {
+	if seedRatio == nil {
+		return
+	}
+	if *seedRatio < 0 {
+		args["seedRatioMode"] = seedRatioModeUnlimited
+		return
+	}
+	args["seedRatioLimit"] = *seedRatio
+	args["seedRatioMode"] = seedRatioModeSingle
 }
 
 // GetTorrents returns torrents in the given download directory (empty = all).
