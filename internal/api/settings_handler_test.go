@@ -334,6 +334,35 @@ func TestSettings_SetHardcoverTokenIsWriteOnly(t *testing.T) {
 	}
 }
 
+// TestSettings_SetCalibrePluginKeyIsWriteOnly is the regression for #1036:
+// the Calibre Bridge plugin API key is a secret, but it's set through the
+// generic settings endpoint (no dedicated handler), so it must be writable
+// there while staying hidden from reads. Before the fix, Set returned 403
+// "use /auth/* endpoints for auth settings" and the key was unsettable.
+func TestSettings_SetCalibrePluginKeyIsWriteOnly(t *testing.T) {
+	h, repo, ctx := settingsFixture(t)
+	req := withKey(httptest.NewRequest(http.MethodPut, "/api/v1/settings/"+SettingCalibrePluginAPIKey, bytes.NewBufferString(`{"value":"plugin-secret"}`)), SettingCalibrePluginAPIKey)
+	rec := httptest.NewRecorder()
+	h.Set(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte("plugin-secret")) {
+		t.Fatalf("plugin key leaked through Set response: %s", rec.Body.String())
+	}
+	got, _ := repo.Get(ctx, SettingCalibrePluginAPIKey)
+	if got == nil || got.Value != "plugin-secret" {
+		t.Fatalf("expected plugin key persisted, got %+v", got)
+	}
+	// Still hidden from reads.
+	getReq := withKey(httptest.NewRequest(http.MethodGet, "/api/v1/settings/"+SettingCalibrePluginAPIKey, nil), SettingCalibrePluginAPIKey)
+	getRec := httptest.NewRecorder()
+	h.Get(getRec, getReq)
+	if getRec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for plugin key Get, got %d", getRec.Code)
+	}
+}
+
 func TestGetHardcoverAPITokenNormalizesLegacyStoredValue(t *testing.T) {
 	_, repo, ctx := settingsFixture(t)
 	if err := repo.Set(ctx, SettingHardcoverAPIToken, "Authorization: Bearer hc-secret"); err != nil {

@@ -122,8 +122,15 @@ func isSecretSetting(key string) bool {
 	return false
 }
 
+// isWritableSecretSetting reports whether a secret key may still be written
+// through the generic settings endpoint (it stays hidden from reads/list — it's
+// write-only, not exposed). These are integration credentials the user sets in
+// the settings UI and that have no dedicated handler of their own. The ABS and
+// Grimmory keys are absent here on purpose: they're persisted by their own
+// connection-test handlers, not the generic PUT.
 func isWritableSecretSetting(key string) bool {
-	return key == SettingHardcoverAPIToken
+	return key == SettingHardcoverAPIToken ||
+		key == SettingCalibrePluginAPIKey
 }
 
 func (h *SettingsHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -162,7 +169,7 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *SettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	key := chi.URLParam(r, "key")
 	if isSecretSetting(key) && !isWritableSecretSetting(key) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "use /auth/* endpoints for auth settings"})
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "this secret setting cannot be set through the generic settings API; use its dedicated settings screen"})
 		return
 	}
 	var req struct {
@@ -450,7 +457,7 @@ func validateSettingValue(key, value string) error {
 func (h *SettingsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	key := chi.URLParam(r, "key")
 	if isSecretSetting(key) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "use /auth/* endpoints for auth settings"})
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "this secret setting cannot be deleted through the generic settings API"})
 		return
 	}
 	if err := h.settings.Delete(r.Context(), key); err != nil {
