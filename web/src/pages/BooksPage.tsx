@@ -278,8 +278,11 @@ export default function BooksPage() {
                   {book.imageUrl ? (
                     <img src={book.imageUrl} alt={book.title} className="w-full h-full object-cover" />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center p-3 text-center">
-                      <span className="text-sm text-slate-500 dark:text-zinc-600">{book.title}</span>
+                    <div className="w-full h-full flex flex-col items-center justify-center gap-2 p-3 text-center">
+                      <svg className="w-8 h-8 text-slate-400 dark:text-zinc-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5} aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+                      </svg>
+                      <span className="text-xs font-medium text-slate-700 dark:text-zinc-300 line-clamp-3">{book.title}</span>
                     </div>
                   )}
                 </Link>
