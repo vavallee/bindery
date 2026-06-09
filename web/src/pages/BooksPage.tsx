@@ -120,7 +120,7 @@ export default function BooksPage() {
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-2xl font-bold">{t('books.title')}</h2>
         <div className="flex items-center gap-3">
-          <span className="text-sm text-slate-600 dark:text-zinc-500">{t('books.countLabel', { count: total, defaultValue: '{{count}} books' })}</span>
+          <span className="text-sm text-fg-muted">{t('books.countLabel', { count: total, defaultValue: '{{count}} books' })}</span>
           <ViewToggle view={view} onChange={setView} />
         </div>
       </div>
@@ -321,7 +321,7 @@ export default function BooksPage() {
                     <a
                       href={`${BINDERY_BASE}/api/v1/book/${book.id}/file`}
                       onClick={e => e.stopPropagation()}
-                      className="text-[10px] text-emerald-400 hover:text-emerald-300"
+                      className="text-[10px] text-accent-text hover:underline"
                       title={t('books.downloadFile')}
                     >
                       {t('books.download')}
