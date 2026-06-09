@@ -9,6 +9,7 @@ import { useClipboardCopy } from '../../components/useClipboardCopy'
 import { useAuth } from '../../auth/AuthContext'
 import { inputCls } from './formStyles'
 import Toggle from './Toggle'
+import NamingTemplateField from './NamingTemplateField'
 
 function formatBackupSize(bytes: number): string {
   if (!bytes || bytes <= 0) return '0 B'
@@ -381,43 +382,25 @@ export default function GeneralTab() {
               </div>
             </div>
           )}
-          <div>
-            <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.general.bookTemplate')}</label>
-            <div className="flex gap-2">
-              <input
-                value={settings['naming.bookTemplate'] ?? ''}
-                onChange={e => setSettings(s => ({ ...s, 'naming.bookTemplate': e.target.value }))}
-                placeholder="{Author}/{Title} ({Year})/{Title} - {Author}.{ext}"
-                className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
-              />
-              <button
-                onClick={() => saveSetting('naming.bookTemplate')}
-                disabled={saving === 'naming.bookTemplate'}
-                className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium disabled:opacity-50"
-              >
-                {saving === 'naming.bookTemplate' ? t('common.saving') : t('common.save')}
-              </button>
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.general.audiobookTemplate')}</label>
-            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">{t('settings.general.audiobookTemplateHint')}</p>
-            <div className="flex gap-2">
-              <input
-                value={settings['naming_template_audiobook'] ?? ''}
-                onChange={e => setSettings(s => ({ ...s, 'naming_template_audiobook': e.target.value }))}
-                placeholder="{Author}/{Title} ({Year})"
-                className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
-              />
-              <button
-                onClick={() => saveSetting('naming_template_audiobook')}
-                disabled={saving === 'naming_template_audiobook'}
-                className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium disabled:opacity-50"
-              >
-                {saving === 'naming_template_audiobook' ? t('common.saving') : t('common.save')}
-              </button>
-            </div>
-          </div>
+          <NamingTemplateField
+            label={t('settings.general.bookTemplate')}
+            kind="book"
+            placeholder="{Author}/{Title} ({Year})/{Title} - {Author}.{ext}"
+            value={settings['naming.bookTemplate'] ?? ''}
+            onChange={v => setSettings(s => ({ ...s, 'naming.bookTemplate': v }))}
+            onSave={() => saveSetting('naming.bookTemplate')}
+            saving={saving === 'naming.bookTemplate'}
+          />
+          <NamingTemplateField
+            label={t('settings.general.audiobookTemplate')}
+            hint={t('settings.general.audiobookTemplateHint')}
+            kind="audiobook"
+            placeholder="{Author}/{Title} ({Year})"
+            value={settings['naming_template_audiobook'] ?? ''}
+            onChange={v => setSettings(s => ({ ...s, 'naming_template_audiobook': v }))}
+            onSave={() => saveSetting('naming_template_audiobook')}
+            saving={saving === 'naming_template_audiobook'}
+          />
         </div>
       </section>
 
