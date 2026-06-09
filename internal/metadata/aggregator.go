@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -129,7 +130,133 @@ func (a *Aggregator) SearchBooks(ctx context.Context, query string) ([]models.Bo
 	if !anySuccess && firstErr != nil {
 		return nil, firstErr
 	}
+
+	rerankByRelevance(merged, query)
 	return merged, nil
+}
+
+// rerankByRelevance reorders merged search results so the best title matches
+// rank first regardless of which provider supplied them — without this, results
+// stay grouped by provider and a strong match from an enricher sits below a
+// weaker provider's whole block. Skipped for ISBN/numeric queries (no title to
+// match). Ties fall back to popularity only when BOTH sides report it (OL and
+// Hardcover populate RatingsCount inconsistently, so 0 means unknown, not
+// unpopular), then to the original provider-first order for stability.
+func rerankByRelevance(books []models.Book, query string) {
+	if len(books) < 2 || !queryHasLetters(query) {
+		return
+	}
+	scores := make([]float64, len(books))
+	for i := range books {
+		scores[i] = searchRelevance(books[i].Title, query)
+	}
+	order := make([]int, len(books))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(x, y int) bool {
+		ix, iy := order[x], order[y]
+		if scores[ix] != scores[iy] {
+			return scores[ix] > scores[iy]
+		}
+		rx, ry := books[ix].RatingsCount, books[iy].RatingsCount
+		if rx > 0 && ry > 0 && rx != ry {
+			return rx > ry
+		}
+		return ix < iy
+	})
+	reordered := make([]models.Book, len(books))
+	for i, j := range order {
+		reordered[i] = books[j]
+	}
+	copy(books, reordered)
+}
+
+// searchStopwords are low-information English words ignored when comparing the
+// query's tokens to a title (the exact/prefix/substring tiers still see them).
+var searchStopwords = map[string]bool{
+	"the": true, "of": true, "a": true, "an": true, "and": true, "to": true, "in": true, "for": true,
+}
+
+// searchRelevance scores how well a book title matches the query (0..1, higher
+// is better). Both are normalized (lowercase, alnum, single spaces). The score
+// is continuous within each tier — a tighter (shorter) title outranks a looser
+// one at the same tier — so title length, not provider order, separates matches.
+func searchRelevance(title, query string) float64 {
+	t := normalizeForDedup(title)
+	q := normalizeForDedup(query)
+	if t == "" || q == "" {
+		return 0
+	}
+	if t == q {
+		return 1.0
+	}
+	// Word-boundary prefix/substring via space padding.
+	pt := " " + t + " "
+	pq := " " + q + " "
+	switch {
+	case strings.HasPrefix(pt, pq):
+		return 0.90 + 0.05*lenRatio(q, t)
+	case strings.Contains(pt, pq):
+		return 0.70 + 0.10*lenRatio(q, t)
+	}
+	qToks := nonStopwordTokens(q)
+	if len(qToks) == 0 {
+		qToks = strings.Fields(q)
+	}
+	if len(qToks) == 0 {
+		return 0
+	}
+	tset := make(map[string]bool)
+	for _, tok := range strings.Fields(t) {
+		tset[tok] = true
+	}
+	matched := 0
+	for _, tok := range qToks {
+		if tset[tok] {
+			matched++
+		}
+	}
+	cov := float64(matched) / float64(len(qToks))
+	if matched == len(qToks) {
+		return 0.45 + 0.15*cov*lenRatio(q, t)
+	}
+	return 0.30 * cov
+}
+
+// lenRatio returns len(short)/len(long) clamped to [0,1]; longer (looser) titles
+// get a smaller ratio, so a tighter match scores higher within its tier.
+func lenRatio(short, long string) float64 {
+	if len(long) == 0 {
+		return 0
+	}
+	r := float64(len(short)) / float64(len(long))
+	if r > 1 {
+		return 1
+	}
+	return r
+}
+
+// nonStopwordTokens splits s into space-separated tokens minus stopwords.
+func nonStopwordTokens(s string) []string {
+	var out []string
+	for _, tok := range strings.Fields(s) {
+		if !searchStopwords[tok] {
+			out = append(out, tok)
+		}
+	}
+	return out
+}
+
+// queryHasLetters reports whether the query contains any letter; a purely
+// numeric query (ISBN) has no title to rank against.
+func queryHasLetters(q string) bool {
+	for _, r := range q {
+		if unicode.IsLetter(r) {
+			return true
+		}
+	}
+	return false
 }
 
 // searchBookSeen reports whether book b duplicates one already emitted — by any

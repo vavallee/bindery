@@ -51,6 +51,7 @@ type searchDoc struct {
 	NumberOfPages    *int     `json:"number_of_pages_median"`
 	Publisher        []string `json:"publisher"`
 	Subject          []string `json:"subject"`
+	RatingsCount     int      `json:"ratings_count"`
 }
 
 type authorSearchResponse struct {

@@ -150,6 +150,7 @@ func TestSearchBooks_HTTP(t *testing.T) {
 				FirstPublishYear: 1965,
 				CoverI:           &coverI,
 				Subject:          []string{"Science Fiction", "Adventure"},
+				RatingsCount:     2500,
 			},
 		},
 	}
@@ -182,6 +183,9 @@ func TestSearchBooks_HTTP(t *testing.T) {
 	}
 	if !strings.Contains(b.ImageURL, "12345") {
 		t.Errorf("ImageURL should contain cover ID 12345, got %q", b.ImageURL)
+	}
+	if b.RatingsCount != 2500 {
+		t.Errorf("RatingsCount: want 2500, got %d", b.RatingsCount)
 	}
 }
 

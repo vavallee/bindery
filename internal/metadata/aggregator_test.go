@@ -131,6 +131,93 @@ func TestAggregator_SearchBooks_NotConfiguredEnricherIsSilentlySkipped(t *testin
 	}
 }
 
+func TestSearchRelevance_TierOrdering(t *testing.T) {
+	q := "the meaning of your life"
+	s := func(title string) float64 { return searchRelevance(title, q) }
+	exact := s("The Meaning of Your Life")
+	prefix := s("The Meaning of Your Life: Finding Purpose in an Age of Emptiness")
+	substr := s("Work: The Meaning of Your Life - A Christian Perspective")
+	tokens := s("Meaning of YOUR Life") // all non-stopword tokens, but not a substring (no leading "the")
+	none := s("King Lear")
+
+	if !(exact > prefix && prefix > substr && substr > tokens && tokens > none) {
+		t.Errorf("tier order violated: exact=%.3f prefix=%.3f substr=%.3f tokens=%.3f none=%.3f",
+			exact, prefix, substr, tokens, none)
+	}
+	if none != 0 {
+		t.Errorf("unrelated title should score 0, got %.3f", none)
+	}
+}
+
+func TestSearchRelevance_ShorterTitleWinsWithinTier(t *testing.T) {
+	q := "the meaning of your life"
+	short := searchRelevance("The Meaning of Your Life: A Guide", q)
+	long := searchRelevance("The Meaning of Your Life: Finding Purpose in an Age of Emptiness", q)
+	if !(short > long) {
+		t.Errorf("tighter title should outrank looser one in the same tier: short=%.3f long=%.3f", short, long)
+	}
+}
+
+// TestAggregator_SearchBooks_RanksRelevanceAcrossProviders is the headline fix:
+// a strong title match from an enricher must outrank a weaker provider's block.
+func TestAggregator_SearchBooks_RanksRelevanceAcrossProviders(t *testing.T) {
+	primary := &mockProvider{name: "ol", searchBooks: []models.Book{
+		{Title: "Bible", ForeignID: "OLb"},
+		{Title: "King Lear", ForeignID: "OLk"},
+		{Title: "Discover the Meaning of Your Life", ForeignID: "OLd"},
+	}}
+	enricher := &mockProvider{name: "hardcover", searchBooks: []models.Book{
+		{Title: "The Meaning of Your Life: Finding Purpose in an Age of Emptiness", ForeignID: "hc:brooks", RatingsCount: 500},
+	}}
+	agg := newTestAggregator(primary, enricher)
+
+	got, err := agg.SearchBooks(context.Background(), "the meaning of your life")
+	if err != nil {
+		t.Fatalf("SearchBooks: %v", err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("want 4 results, got %d", len(got))
+	}
+	if got[0].ForeignID != "hc:brooks" {
+		t.Errorf("prefix match from the enricher must rank first; got %q (%s)", got[0].Title, got[0].ForeignID)
+	}
+	last := got[len(got)-1].Title
+	if last != "Bible" && last != "King Lear" {
+		t.Errorf("unrelated titles should sink to the bottom; last=%q", last)
+	}
+}
+
+func TestAggregator_SearchBooks_RatingsTiebreakOnlyWhenBothPresent(t *testing.T) {
+	// Two equally-good substring matches: one from OL (RatingsCount 0 = unknown),
+	// one from HC with ratings. The HC one must NOT auto-jump the OL one purely
+	// because OL never reports ratings — equal score + one-side-unknown falls back
+	// to original (provider-first) order.
+	primary := &mockProvider{name: "ol", searchBooks: []models.Book{
+		{Title: "The Meaning of Your Life", ForeignID: "OL1"}, // exact, ratings 0
+	}}
+	enricher := &mockProvider{name: "hardcover", searchBooks: []models.Book{
+		{Title: "The Meaning of Your Life", ForeignID: "hc:1", RatingsCount: 9999}, // dup exact, high ratings
+	}}
+	agg := newTestAggregator(primary, enricher)
+	got, _ := agg.SearchBooks(context.Background(), "the meaning of your life")
+	// Deduped to one (same title+author); the primary copy is kept regardless of HC's rating.
+	if len(got) != 1 || got[0].ForeignID != "OL1" {
+		t.Errorf("expected the primary copy kept on dup, got %+v", got)
+	}
+}
+
+func TestAggregator_SearchBooks_NumericQuerySkipsRerank(t *testing.T) {
+	primary := &mockProvider{name: "ol", searchBooks: []models.Book{
+		{Title: "Zeta", ForeignID: "OL1"},
+		{Title: "Alpha", ForeignID: "OL2"},
+	}}
+	agg := newTestAggregator(primary)
+	got, _ := agg.SearchBooks(context.Background(), "9780441172719")
+	if len(got) != 2 || got[0].ForeignID != "OL1" {
+		t.Errorf("numeric/ISBN query should preserve original order, got %+v", got)
+	}
+}
+
 func TestAggregator_GetAuthor_Success(t *testing.T) {
 	author := &models.Author{Name: "Ursula K. Le Guin", ForeignID: "OL111A"}
 	primary := &mockProvider{name: "ol", getAuthor: author}

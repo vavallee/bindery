@@ -78,7 +78,7 @@ func (c *Client) SearchBooks(ctx context.Context, query string) ([]models.Book, 
 	// /search (without .json) is the HTML web-UI path (Solr-backed) and
 	// returns HTTP 500 "DEPRECATED ENDPOINT ACCESSED" for API consumers
 	// since their FastAPI rollout completed (see issue #462, follow-up to #408).
-	u := fmt.Sprintf("%s/search.json?q=%s&fields=key,title,author_name,author_key,first_publish_year,cover_i,isbn,subject&limit=20",
+	u := fmt.Sprintf("%s/search.json?q=%s&fields=key,title,author_name,author_key,first_publish_year,cover_i,isbn,subject,ratings_count&limit=20",
 		baseURL, url.QueryEscape(query))
 	var resp searchResponse
 	if err := c.getJSON(ctx, u, &resp); err != nil {
@@ -93,6 +93,7 @@ func (c *Client) SearchBooks(ctx context.Context, query string) ([]models.Book, 
 			Title:            doc.Title,
 			SortTitle:        doc.Title,
 			Genres:           truncateSlice(doc.Subject, 10),
+			RatingsCount:     doc.RatingsCount,
 			MetadataProvider: "openlibrary",
 			Monitored:        true,
 			Status:           models.BookStatusWanted,
