@@ -116,17 +116,6 @@ export default function QueuePage() {
     }
   }
 
-  const statusColors: Record<string, string> = {
-    grabbed: 'text-slate-600 dark:text-zinc-400',
-    downloading: 'text-blue-400',
-    completed: 'text-sky-400',
-    importPending: 'text-yellow-400',
-    importing: 'text-blue-400',
-    imported: 'text-emerald-400',
-    failed: 'text-red-400',
-    importFailed: 'text-orange-400',
-    importBlocked: 'text-red-500',
-  }
 
   const statusLabels: Record<string, string> = {
     grabbed: 'Grabbed',
@@ -138,6 +127,47 @@ export default function QueuePage() {
     failed: 'Failed',
     importFailed: 'Import Failed',
     importBlocked: 'Import Blocked',
+  }
+
+  // Status pill (chip) styles. Saturated red is reserved for these small chips
+  // — error detail below is rendered muted, not as a full red row.
+  const statusChip: Record<string, string> = {
+    grabbed: 'bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300',
+    downloading: 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300',
+    completed: 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300',
+    importPending: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300',
+    importing: 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300',
+    imported: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
+    failed: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300',
+    importFailed: 'bg-orange-100 text-orange-900 dark:bg-orange-950 dark:text-orange-300',
+    importBlocked: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300',
+  }
+  const FAILED_STATUSES = new Set(['failed', 'importFailed', 'importBlocked'])
+  const failedItems = queue.filter(q => FAILED_STATUSES.has(q.status))
+
+  // Bulk actions over failed/blocked items, done client-side over the existing
+  // per-item endpoints (no new API). Retry only applies to importFailed.
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const clearAllFailed = async () => {
+    if (failedItems.length === 0 || !confirm(t('queue.clearAllConfirm', { count: failedItems.length, defaultValue: 'Remove {{count}} failed item(s) from the queue?' }))) return
+    setBulkBusy(true)
+    try {
+      await Promise.all(failedItems.map(it => api.deleteFromQueue(it.id, false).catch(() => {})))
+      load()
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+  const retryAllFailed = async () => {
+    const retryable = queue.filter(q => q.status === 'importFailed')
+    if (retryable.length === 0) return
+    setBulkBusy(true)
+    try {
+      await Promise.all(retryable.map(it => api.retryImport(it.id).catch(() => {})))
+      load()
+    } finally {
+      setBulkBusy(false)
+    }
   }
 
   const formatSize = (bytes: number) => {
@@ -191,13 +221,38 @@ export default function QueuePage() {
         <div className="space-y-6">
           {queue.length > 0 && (
             <div className="space-y-2">
+              {failedItems.length > 0 && (
+                <div className="flex items-center justify-between gap-2 px-1">
+                  <span className="text-xs text-slate-600 dark:text-zinc-400">
+                    {t('queue.failedCount', { count: failedItems.length, defaultValue: '{{count}} failed' })}
+                  </span>
+                  <div className="flex gap-2">
+                    {queue.some(q => q.status === 'importFailed') && (
+                      <button
+                        onClick={retryAllFailed}
+                        disabled={bulkBusy}
+                        className="px-2.5 py-1 text-xs rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-medium"
+                      >
+                        {t('queue.retryAllFailed', 'Retry all failed')}
+                      </button>
+                    )}
+                    <button
+                      onClick={clearAllFailed}
+                      disabled={bulkBusy}
+                      className="px-2.5 py-1 text-xs rounded border border-red-300 dark:border-red-900 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-50 font-medium"
+                    >
+                      {t('queue.clearAllFailed', 'Clear all failed')}
+                    </button>
+                  </div>
+                </div>
+              )}
               {queuePage.map(item => (
-                <div key={item.id} className="flex items-center justify-between p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+                <div key={item.id} className="flex items-center justify-between p-3 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
                   <div className="min-w-0 flex-1">
                     <h3 className="font-medium text-sm truncate">{item.title}</h3>
                     <BookAuthorLink book={item.book} />
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs">
-                      <span className={statusColors[item.status] || 'text-slate-600 dark:text-zinc-400'}>
+                      <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium ${statusChip[item.status] ?? 'bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300'}`}>
                         {statusLabels[item.status] ?? item.status}
                       </span>
                       <span className="text-slate-600 dark:text-zinc-500">{formatSize(item.size)}</span>
@@ -220,12 +275,12 @@ export default function QueuePage() {
                       })()}
                     </div>
                     {item.status === 'importBlocked' && !item.errorMessage && (
-                      <div className="mt-1 text-xs text-red-500 bg-red-500/10 rounded px-2 py-1">
+                      <div className="mt-1 text-xs text-slate-600 dark:text-zinc-400 bg-slate-200/60 dark:bg-zinc-800/60 rounded px-2 py-1">
                         Import blocked — manual intervention required (check library path permissions)
                       </div>
                     )}
                     {item.errorMessage && (
-                      <div className="mt-1 text-xs text-red-400 bg-red-400/10 rounded px-2 py-1 break-words">
+                      <div className="mt-1 text-xs text-slate-600 dark:text-zinc-400 bg-slate-200/60 dark:bg-zinc-800/60 rounded px-2 py-1 break-words">
                         <span className="font-medium">
                           {item.status === 'importFailed'
                             ? 'Import failed: '
@@ -236,10 +291,10 @@ export default function QueuePage() {
                         {summarizeError(item.errorMessage)}
                         {item.errorMessage.length > ERROR_SUMMARY_LEN && (
                           <details className="mt-1">
-                            <summary className="cursor-pointer text-red-300 hover:text-red-200">
+                            <summary className="cursor-pointer text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">
                               {t('queue.errorDetails', 'Show full error')}
                             </summary>
-                            <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap text-[10px] text-red-300">
+                            <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap text-[10px] text-slate-600 dark:text-zinc-400">
                               {item.errorMessage.slice(0, 4000)}
                             </pre>
                           </details>
