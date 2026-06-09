@@ -218,6 +218,86 @@ func TestAggregator_SearchBooks_NumericQuerySkipsRerank(t *testing.T) {
 	}
 }
 
+func TestCanonicalAuthorKey(t *testing.T) {
+	want := "arthur c brooks"
+	for _, name := range []string{"Arthur C. Brooks", "Arthur C Brooks", "Brooks, Arthur C.", "  brooks ,  arthur c "} {
+		if got := canonicalAuthorKey(name); got != want {
+			t.Errorf("canonicalAuthorKey(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestAuthorRelevance_InversionAware(t *testing.T) {
+	q := "arthur c brooks"
+	if natural := authorRelevance("Arthur C. Brooks", q); natural != 1.0 {
+		t.Errorf("natural exact-match want 1.0, got %.3f", natural)
+	}
+	if inverted := authorRelevance("Brooks, Arthur C.", q); inverted < 0.99 {
+		t.Errorf("comma-inverted form should match as exact, got %.3f", inverted)
+	}
+}
+
+// TestAggregator_SearchAuthors_CollapsesFragments is the headline author fix:
+// OpenLibrary's fragmented same-person records (and a cross-provider dup) collapse
+// to ONE record — the most-complete one (most works) — and rank by name match.
+func TestAggregator_SearchAuthors_CollapsesFragments(t *testing.T) {
+	stats := func(n int) *models.AuthorStats { return &models.AuthorStats{BookCount: n} }
+	primary := &mockProvider{name: "ol", searchAuthors: []models.Author{
+		{Name: "Arthur C. Brooks", ForeignID: "OL1A", Statistics: stats(7)},
+		{Name: "Arthur C Brooks", ForeignID: "OL2A", Statistics: stats(2)},
+		{Name: "Brooks, Arthur C.", ForeignID: "OL3A", Statistics: stats(14)},
+		{Name: "Brooks, Arthur C.", ForeignID: "OL4A", Statistics: stats(9)},
+		{Name: "Some Other Author", ForeignID: "OL9A", Statistics: stats(3)},
+	}}
+	enricher := &mockProvider{name: "hardcover", searchAuthors: []models.Author{
+		{Name: "Arthur C. Brooks", ForeignID: "hc:arthur-c-brooks"}, // BookCount unknown (nil Statistics)
+	}}
+	agg := newTestAggregator(primary, enricher)
+
+	got, err := agg.SearchAuthors(context.Background(), "arthur c brooks")
+	if err != nil {
+		t.Fatalf("SearchAuthors: %v", err)
+	}
+	brooks := 0
+	var kept models.Author
+	for _, a := range got {
+		if canonicalAuthorKey(a.Name) == "arthur c brooks" {
+			brooks++
+			kept = a
+		}
+	}
+	if brooks != 1 {
+		t.Fatalf("Brooks fragments + cross-provider dup should collapse to 1, got %d", brooks)
+	}
+	if kept.ForeignID != "OL3A" {
+		t.Errorf("collapsed record should be the most-complete (OL3A, 14 works), got %s (BookCount %d)", kept.ForeignID, authorBookCount(kept))
+	}
+	if got[0].ForeignID != "OL3A" {
+		t.Errorf("the collapsed Brooks (exact name match) should rank first, got %s", got[0].ForeignID)
+	}
+	if len(got) != 2 {
+		t.Errorf("expected 2 results (collapsed Brooks + Some Other Author), got %d", len(got))
+	}
+}
+
+func TestAggregator_SearchAuthors_RanksRelevanceAcrossProviders(t *testing.T) {
+	primary := &mockProvider{name: "ol", searchAuthors: []models.Author{
+		{Name: "Arthur Conan Doyle", ForeignID: "OLx", Statistics: &models.AuthorStats{BookCount: 50}}, // weak match, popular
+	}}
+	enricher := &mockProvider{name: "hardcover", searchAuthors: []models.Author{
+		{Name: "Arthur C. Brooks", ForeignID: "hc:brooks"}, // exact match
+	}}
+	agg := newTestAggregator(primary, enricher)
+
+	got, err := agg.SearchAuthors(context.Background(), "arthur c brooks")
+	if err != nil {
+		t.Fatalf("SearchAuthors: %v", err)
+	}
+	if len(got) == 0 || got[0].ForeignID != "hc:brooks" {
+		t.Errorf("exact name match from enricher must outrank a popular weak match; got %+v", got)
+	}
+}
+
 func TestAggregator_GetAuthor_Success(t *testing.T) {
 	author := &models.Author{Name: "Ursula K. Le Guin", ForeignID: "OL111A"}
 	primary := &mockProvider{name: "ol", getAuthor: author}

@@ -53,8 +53,210 @@ func (a *Aggregator) WithAudnexClient(client AudnexBookClient) *Aggregator {
 	return a
 }
 
+// SearchAuthors queries the primary provider and every enricher in parallel,
+// then merges: same-person records (by canonical name, treating "Last, First"
+// and "First Last" as equal) collapse to the single most-complete record, and
+// the result is ranked by how well each name matches the query. This both
+// surfaces authors the primary lacks and de-fragments OpenLibrary's habit of
+// returning several partial records for one author. Providers that error or
+// time out are skipped; an error is returned only when every provider fails.
 func (a *Aggregator) SearchAuthors(ctx context.Context, query string) ([]models.Author, error) {
-	return a.primary.SearchAuthors(ctx, query)
+	providers := a.providers()
+	if len(providers) == 0 {
+		return nil, nil
+	}
+	results, anySuccess, firstErr := searchFanOut(ctx, providers, func(c context.Context, p Provider) ([]models.Author, error) {
+		return p.SearchAuthors(c, query)
+	})
+	if !anySuccess && firstErr != nil {
+		return nil, firstErr
+	}
+
+	var all []models.Author
+	for i := range providers {
+		all = append(all, results[i]...)
+	}
+	merged := dedupeAuthorsByName(all)
+	rerankAuthorsByRelevance(merged, query)
+	return merged, nil
+}
+
+// searchFanOut runs fn against the primary and every enricher in parallel (with
+// a per-provider timeout), returning each provider's results in provider order
+// (primary first), whether any provider returned without error, and the first
+// non-"not configured" error seen.
+func searchFanOut[T any](ctx context.Context, providers []Provider, fn func(context.Context, Provider) ([]T, error)) (results [][]T, anySuccess bool, firstErr error) {
+	results = make([][]T, len(providers))
+	errs := make([]error, len(providers))
+	var wg sync.WaitGroup
+	for i, p := range providers {
+		if p == nil {
+			continue
+		}
+		wg.Add(1)
+		go func(i int, p Provider) {
+			defer wg.Done()
+			pctx, cancel := context.WithTimeout(ctx, searchProviderTimeout)
+			defer cancel()
+			r, err := fn(pctx, p)
+			results[i] = r
+			errs[i] = err
+		}(i, p)
+	}
+	wg.Wait()
+	for i, p := range providers {
+		if p == nil {
+			continue
+		}
+		if errs[i] != nil {
+			if !errors.Is(errs[i], ErrProviderNotConfigured) {
+				slog.Warn("metadata search: provider failed", "provider", p.Name(), "error", errs[i])
+				if firstErr == nil {
+					firstErr = errs[i]
+				}
+			}
+			results[i] = nil
+			continue
+		}
+		anySuccess = true
+	}
+	return results, anySuccess, firstErr
+}
+
+// canonicalAuthorKey normalizes an author name to a comparison key, treating
+// "Last, First" the same as "First Last" so a person's inverted and natural
+// forms collapse together.
+func canonicalAuthorKey(name string) string {
+	return normalizeForDedup(uninvertAuthorName(name))
+}
+
+// uninvertAuthorName converts "Last, First" to "First Last"; other forms are
+// returned unchanged (whitespace-trimmed).
+func uninvertAuthorName(name string) string {
+	n := strings.TrimSpace(name)
+	if i := strings.Index(n, ","); i > 0 {
+		last := strings.TrimSpace(n[:i])
+		first := strings.TrimSpace(n[i+1:])
+		if last != "" && first != "" {
+			return first + " " + last
+		}
+	}
+	return n
+}
+
+// authorBookCount returns the author's known work count, or 0 when unknown
+// (providers other than OpenLibrary leave Statistics nil).
+func authorBookCount(a models.Author) int {
+	if a.Statistics == nil {
+		return 0
+	}
+	return a.Statistics.BookCount
+}
+
+// dedupeAuthorsByName collapses records that refer to the same person (canonical
+// name) to the single most-complete one — most works, then most ratings (each
+// compared only when both report it, since only some providers populate them),
+// then the earliest (provider-first) occurrence. Records with an empty name pass
+// through untouched. Output order follows the kept records' positions.
+func dedupeAuthorsByName(authors []models.Author) []models.Author {
+	best := make(map[string]int)
+	for i := range authors {
+		key := canonicalAuthorKey(authors[i].Name)
+		if key == "" {
+			continue
+		}
+		if j, ok := best[key]; !ok || betterAuthorRecord(authors[i], authors[j]) {
+			best[key] = i
+		}
+	}
+	out := make([]models.Author, 0, len(authors))
+	for i := range authors {
+		key := canonicalAuthorKey(authors[i].Name)
+		if key == "" || best[key] == i {
+			out = append(out, authors[i])
+		}
+	}
+	return out
+}
+
+// betterAuthorRecord reports whether record a is a more complete representative
+// of an author than b. A provider that reports a count (>0) is preferred over
+// one that doesn't (0 = unknown), so OpenLibrary's work/ratings-bearing records
+// win over enrichers that omit them; ties keep the earlier (provider-first) one.
+func betterAuthorRecord(a, b models.Author) bool {
+	if c := preferKnownGreater(authorBookCount(a), authorBookCount(b)); c != 0 {
+		return c > 0
+	}
+	if c := preferKnownGreater(a.RatingsCount, b.RatingsCount); c != 0 {
+		return c > 0
+	}
+	return false
+}
+
+// preferKnownGreater compares two counts where 0 means "unknown": a known value
+// beats unknown, and two known values compare by magnitude. Returns +1 if a is
+// preferable, -1 if b is, 0 if indistinguishable.
+func preferKnownGreater(a, b int) int {
+	if (a > 0) != (b > 0) {
+		if a > 0 {
+			return 1
+		}
+		return -1
+	}
+	if a > 0 && b > 0 && a != b {
+		if a > b {
+			return 1
+		}
+		return -1
+	}
+	return 0
+}
+
+// authorRelevance scores how well an author name matches the query, accounting
+// for "Last, First" forms by also scoring the un-inverted name.
+func authorRelevance(name, query string) float64 {
+	r := searchRelevance(name, query)
+	if inv := uninvertAuthorName(name); inv != strings.TrimSpace(name) {
+		if ri := searchRelevance(inv, query); ri > r {
+			r = ri
+		}
+	}
+	return r
+}
+
+// rerankAuthorsByRelevance reorders authors so the best name matches rank first,
+// tiebreaking by work count then ratings (both compared only when present), then
+// original order.
+func rerankAuthorsByRelevance(authors []models.Author, query string) {
+	if len(authors) < 2 || !queryHasLetters(query) {
+		return
+	}
+	scores := make([]float64, len(authors))
+	for i := range authors {
+		scores[i] = authorRelevance(authors[i].Name, query)
+	}
+	order := make([]int, len(authors))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(x, y int) bool {
+		ix, iy := order[x], order[y]
+		if scores[ix] != scores[iy] {
+			return scores[ix] > scores[iy]
+		}
+		if c := preferKnownGreater(authorBookCount(authors[ix]), authorBookCount(authors[iy])); c != 0 {
+			return c > 0
+		}
+		if c := preferKnownGreater(authors[ix].RatingsCount, authors[iy].RatingsCount); c != 0 {
+			return c > 0
+		}
+		return ix < iy
+	})
+	reordered := make([]models.Author, len(authors))
+	for i, j := range order {
+		reordered[i] = authors[j]
+	}
+	copy(authors, reordered)
 }
 
 // searchProviderTimeout bounds how long any single provider may take during a
@@ -73,62 +275,25 @@ func (a *Aggregator) SearchBooks(ctx context.Context, query string) ([]models.Bo
 	if len(providers) == 0 {
 		return nil, nil
 	}
-
-	type providerResult struct {
-		books []models.Book
-		err   error
+	results, anySuccess, firstErr := searchFanOut(ctx, providers, func(c context.Context, p Provider) ([]models.Book, error) {
+		return p.SearchBooks(c, query)
+	})
+	// Only surface an error when no provider succeeded; otherwise return what we
+	// found, even if some providers failed.
+	if !anySuccess && firstErr != nil {
+		return nil, firstErr
 	}
-	results := make([]providerResult, len(providers))
-	var wg sync.WaitGroup
-	for i, p := range providers {
-		if p == nil {
-			continue
-		}
-		wg.Add(1)
-		go func(i int, p Provider) {
-			defer wg.Done()
-			pctx, cancel := context.WithTimeout(ctx, searchProviderTimeout)
-			defer cancel()
-			books, err := p.SearchBooks(pctx, query)
-			results[i] = providerResult{books: books, err: err}
-		}(i, p)
-	}
-	wg.Wait()
 
-	var (
-		merged     []models.Book
-		seenISBN   = map[string]bool{}
-		seenTA     = map[string]bool{}
-		anySuccess bool
-		firstErr   error
-	)
-	for i, p := range providers {
-		if p == nil {
-			continue
-		}
-		res := results[i]
-		if res.err != nil {
-			if !errors.Is(res.err, ErrProviderNotConfigured) {
-				slog.Warn("metadata search: provider failed", "provider", p.Name(), "error", res.err)
-				if firstErr == nil {
-					firstErr = res.err
-				}
-			}
-			continue
-		}
-		anySuccess = true
-		for _, b := range res.books {
+	var merged []models.Book
+	seenISBN := map[string]bool{}
+	seenTA := map[string]bool{}
+	for i := range providers {
+		for _, b := range results[i] {
 			if searchBookSeen(b, seenISBN, seenTA) {
 				continue
 			}
 			merged = append(merged, b)
 		}
-	}
-
-	// Only surface an error when no provider succeeded; otherwise return what we
-	// found, even if some providers failed.
-	if !anySuccess && firstErr != nil {
-		return nil, firstErr
 	}
 
 	rerankByRelevance(merged, query)
