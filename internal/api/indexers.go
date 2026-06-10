@@ -118,6 +118,13 @@ func (h *IndexerHandler) Create(w http.ResponseWriter, r *http.Request) {
 		idx.Categories = []int{7000, 7020, 3030}
 	}
 
+	// A seed-ratio override supplied on a manually-created indexer is a user
+	// choice (#1065). Manual indexers carry no Prowlarr ID so the syncer never
+	// touches them, but recording the provenance keeps the field consistent.
+	if idx.SeedRatio != nil {
+		idx.SeedRatioSource = models.SeedRatioSourceUser
+	}
+
 	// Check for duplicate URL
 	existing, _ := h.indexers.List(r.Context())
 	for _, e := range existing {
@@ -157,6 +164,11 @@ func (h *IndexerHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	idx.ID = id
+	// A user editing the indexer takes ownership of the seed-ratio override, so
+	// the Prowlarr syncer (#1065) will not overwrite it on the next sync. This
+	// holds even when the user clears the value to null ("no override") or sets
+	// the -1 unlimited sentinel — the explicit choice sticks.
+	idx.SeedRatioSource = models.SeedRatioSourceUser
 	if err := h.indexers.Update(r.Context(), &idx); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

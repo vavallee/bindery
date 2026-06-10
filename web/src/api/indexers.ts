@@ -14,6 +14,10 @@ export interface Indexer {
   // Per-indexer seed-ratio override (#883). Omitted/null = no override (the
   // download client keeps its global rule); -1 = unlimited (seed forever).
   seedRatio?: number | null
+  // Provenance of seedRatio (#1065): 'prowlarr' = auto-populated from Prowlarr's
+  // seedCriteria.seedRatio (a later Prowlarr change may refresh it); 'user' = the
+  // user set/cleared it (Prowlarr won't touch it); omitted/'' = unset.
+  seedRatioSource?: string
 }
 
 export interface IndexerTestResult {

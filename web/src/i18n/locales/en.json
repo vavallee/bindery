@@ -395,6 +395,7 @@
         "seedRatio": "Seed ratio",
         "seedRatioPlaceholder": "e.g. 1.0",
         "seedRatioUnlimited": "Unlimited",
+        "seedRatioFromProwlarr": "Auto-filled from Prowlarr. Edit and save to override; Prowlarr won't change it again.",
         "seedRatioHint": "Per-indexer seed-ratio limit applied to torrents grabbed from this indexer (qBittorrent, Transmission, Deluge). Leave blank to use the download client's global rule, or check Unlimited to seed forever. Ignored for Usenet."
       }
     },

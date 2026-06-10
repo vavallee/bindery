@@ -99,12 +99,18 @@ func (s *Syncer) Sync(ctx context.Context, instanceID int64) (SyncResult, error)
 		idxType := indexerTypeForProtocol(ri.Protocol)
 
 		if ex, ok := byProwlarrID[ri.ProwlarrID]; ok {
+			// Auto-populate the seed-ratio override from Prowlarr (#1065), but
+			// only on rows the user has not taken ownership of. An explicit
+			// user value/clear (source="user") always wins and is never touched;
+			// an unset or previously Prowlarr-sourced row tracks Prowlarr's
+			// current ratio so a later Prowlarr change refreshes it.
+			ratioChanged := applyProwlarrSeedRatio(ex, ri.SeedRatio)
 			// Update only if something meaningful changed. Type is included so
 			// rows created by older versions (which hardcoded "torznab" for
 			// every indexer, misrouting usenet grabs to torrent clients) are
 			// corrected on the next sync. Categories are included so that
 			// re-syncing propagates removed parent categories (7000, 3000).
-			if ex.Name != ri.Name || ex.URL != ri.TorznabURL || ex.Type != idxType || !intSliceEqual(ex.Categories, cats) {
+			if ratioChanged || ex.Name != ri.Name || ex.URL != ri.TorznabURL || ex.Type != idxType || !intSliceEqual(ex.Categories, cats) {
 				ex.Name = ri.Name
 				ex.URL = ri.TorznabURL
 				ex.Type = idxType
@@ -133,6 +139,7 @@ func (s *Syncer) Sync(ctx context.Context, instanceID int64) (SyncResult, error)
 			ProwlarrInstanceID: &instID,
 			ProwlarrIndexerID:  &pID,
 		}
+		applyProwlarrSeedRatio(idx, ri.SeedRatio)
 		if err := s.indexers.Create(ctx, idx); err != nil {
 			slog.Warn("prowlarr sync: create indexer failed",
 				"name", ri.Name, "error", err)
@@ -215,6 +222,50 @@ func filterCategoriesForMedia(cats []int) []int {
 		out = append(out, 3030)
 	}
 	return out
+}
+
+// applyProwlarrSeedRatio reconciles an indexer's seed-ratio override with the
+// ratio Prowlarr reports, returning whether the row changed.
+//
+// Precedence (#1065): an explicit user override always wins. A row whose
+// SeedRatioSource is "user" is never touched, so a value the user set, cleared
+// to null, or toggled to the -1 unlimited sentinel sticks across syncs.
+//
+// For an unset row, or one previously auto-populated from Prowlarr, the override
+// tracks Prowlarr's current ratio: a later Prowlarr change refreshes the value,
+// and a ratio removed in Prowlarr clears Bindery's auto-populated value. The
+// nullable + -1-unlimited semantics from #1061 are preserved: Prowlarr only ever
+// reports a positive ratio or none, so auto-population sets a concrete value or
+// nil (download client keeps its global rule) — the -1 sentinel is reserved for
+// the user-driven "unlimited" toggle.
+func applyProwlarrSeedRatio(idx *models.Indexer, prowlarrRatio *float64) bool {
+	if idx.SeedRatioSource == models.SeedRatioSourceUser {
+		return false
+	}
+	if float64PtrEqual(idx.SeedRatio, prowlarrRatio) &&
+		idx.SeedRatioSource == sourceForRatio(prowlarrRatio) {
+		return false
+	}
+	idx.SeedRatio = prowlarrRatio
+	idx.SeedRatioSource = sourceForRatio(prowlarrRatio)
+	return true
+}
+
+// sourceForRatio is the provenance to record when auto-populating from Prowlarr:
+// "prowlarr" when a ratio is present, "unset" when Prowlarr has none (so the row
+// stays eligible for future auto-population).
+func sourceForRatio(ratio *float64) string {
+	if ratio == nil {
+		return models.SeedRatioSourceUnset
+	}
+	return models.SeedRatioSourceProwlarr
+}
+
+func float64PtrEqual(a, b *float64) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 func intSliceEqual(a, b []int) bool {

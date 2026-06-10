@@ -48,6 +48,41 @@ type remoteIndexer struct {
 	Capabilities   struct {
 		Categories []remoteCategory `json:"categories"`
 	} `json:"capabilities"`
+	// Fields carries the indexer's flattened settings. For torrent indexers
+	// Prowlarr exposes the per-indexer seed criteria here under the
+	// "torrentBaseSettings.seedRatio" key (the camelCased property path of
+	// IndexerTorrentBaseSettings.SeedRatio).
+	Fields []remoteField `json:"fields"`
+}
+
+// prowlarrSeedRatioField is the field name Prowlarr serialises for the
+// per-indexer seed-ratio setting on a torrent indexer. It is the camelCased
+// flattening of ITorrentIndexerSettings.TorrentBaseSettings.SeedRatio.
+const prowlarrSeedRatioField = "torrentBaseSettings.seedRatio"
+
+// seedRatio returns the per-indexer seed ratio Prowlarr has configured for this
+// indexer, or nil when none is set. Prowlarr models the value as a nullable
+// double and its own validator rejects anything <= 0, so a present, positive
+// value is the only "configured ratio" shape; null / missing / non-positive all
+// collapse to "no ratio".
+func (ri remoteIndexer) seedRatio() *float64 {
+	for _, f := range ri.Fields {
+		if f.Name != prowlarrSeedRatioField {
+			continue
+		}
+		if len(f.Value) == 0 || string(f.Value) == "null" {
+			return nil
+		}
+		var v float64
+		if err := json.Unmarshal(f.Value, &v); err != nil {
+			return nil
+		}
+		if v <= 0 {
+			return nil
+		}
+		return &v
+	}
+	return nil
 }
 
 type remoteCategory struct {
@@ -84,6 +119,10 @@ type IndexerInfo struct {
 	APIKey         string
 	SupportsSearch bool
 	Categories     []int
+	// SeedRatio is the per-indexer seed ratio Prowlarr has configured, or nil
+	// when Prowlarr has none. Used to auto-populate Bindery's local seed-ratio
+	// override (#1065) for torrent indexers that lack an explicit override.
+	SeedRatio *float64
 }
 
 // FetchIndexers returns all indexers configured in Prowlarr.
@@ -134,6 +173,7 @@ func (c *Client) FetchIndexers(ctx context.Context) ([]IndexerInfo, error) {
 			APIKey:         c.apiKey,
 			SupportsSearch: ri.SupportsSearch,
 			Categories:     cats,
+			SeedRatio:      ri.seedRatio(),
 		})
 	}
 	return infos, nil

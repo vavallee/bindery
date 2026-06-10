@@ -806,6 +806,55 @@ func TestIndexerRepo_SeedRatio(t *testing.T) {
 	}
 }
 
+// TestIndexerRepo_SeedRatioSource round-trips the seed-ratio provenance column
+// (#1065) so the Prowlarr syncer can tell user-owned overrides from
+// auto-populated ones.
+func TestIndexerRepo_SeedRatioSource(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewIndexerRepo(database)
+
+	ratio := 1.5
+	idx := &models.Indexer{
+		Name: "Sourced", Type: "torznab", URL: "https://example.com/api",
+		APIKey: "k", Categories: []int{7020}, Priority: 1, Enabled: true,
+		SeedRatio: &ratio, SeedRatioSource: models.SeedRatioSourceProwlarr,
+	}
+	if err := repo.Create(ctx, idx); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := repo.GetByID(ctx, idx.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.SeedRatioSource != models.SeedRatioSourceProwlarr {
+		t.Errorf("SeedRatioSource after create: want %q, got %q", models.SeedRatioSourceProwlarr, got.SeedRatioSource)
+	}
+
+	got.SeedRatioSource = models.SeedRatioSourceUser
+	if err := repo.Update(ctx, got); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	got, _ = repo.GetByID(ctx, idx.ID)
+	if got.SeedRatioSource != models.SeedRatioSourceUser {
+		t.Errorf("SeedRatioSource after update: want %q, got %q", models.SeedRatioSourceUser, got.SeedRatioSource)
+	}
+
+	// A freshly created indexer with no source defaults to unset.
+	plain := &models.Indexer{Name: "Plain", Type: "torznab", URL: "https://example.com/p", APIKey: "k", Categories: []int{7020}}
+	if err := repo.Create(ctx, plain); err != nil {
+		t.Fatalf("Create plain: %v", err)
+	}
+	got, _ = repo.GetByID(ctx, plain.ID)
+	if got.SeedRatioSource != models.SeedRatioSourceUnset {
+		t.Errorf("SeedRatioSource default: want unset, got %q", got.SeedRatioSource)
+	}
+}
+
 // TestIndexerRepo_UpdateAPIKeyByProwlarrInstance verifies that rotating the
 // Prowlarr instance's API key via this helper rewrites only the rows belonging
 // to that instance, leaving manual indexers and indexers from a different

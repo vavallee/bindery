@@ -37,7 +37,7 @@ function IndexerTestResultBanner({ r }: { r: IndexerTestResult }) {
 //   - null/undefined → no override (input empty, toggle off)
 //   - >= 0           → that ratio (input shows it, toggle off)
 //   - -1             → unlimited (input disabled/blank, toggle on)
-function SeedRatioField({ value, onChange }: { value: number | null | undefined; onChange: (v: number | null) => void }) {
+function SeedRatioField({ value, onChange, source }: { value: number | null | undefined; onChange: (v: number | null) => void; source?: string }) {
   const { t } = useTranslation()
   const unlimited = value === -1
   // Text mirror of the numeric input so a half-typed "1." doesn't get clobbered.
@@ -81,6 +81,9 @@ function SeedRatioField({ value, onChange }: { value: number | null | undefined;
           {t('settings.indexers.form.seedRatioUnlimited')}
         </label>
       </div>
+      {source === 'prowlarr' && (
+        <p className="text-xs text-amber-600 dark:text-amber-500 mt-1">{t('settings.indexers.form.seedRatioFromProwlarr')}</p>
+      )}
       <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.seedRatioHint')}</p>
     </div>
   )
@@ -386,7 +389,7 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
         <input type="number" value={priority} onChange={e => setPriority(e.target.value)} placeholder="0" className={inputCls} />
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.priorityHint')}</p>
       </div>
-      <SeedRatioField value={seedRatio} onChange={setSeedRatio} />
+      <SeedRatioField value={seedRatio} onChange={setSeedRatio} source={indexer.seedRatioSource} />
       {testResult && <IndexerTestResultBanner r={testResult} />}
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">{t('common.cancel')}</button>
