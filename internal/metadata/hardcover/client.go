@@ -203,6 +203,7 @@ func (c *Client) GetAuthorWorksByName(ctx context.Context, authorName string) ([
 			ratings_count
 			rating
 			users_count
+			compilation
 			audio_seconds
 			default_audio_edition_id
 			default_ebook_edition_id
@@ -585,6 +586,7 @@ type hcBook struct {
 	ISBNs                 []string           `json:"isbns"`
 	HasAudiobook          bool               `json:"has_audiobook"`
 	HasEbook              bool               `json:"has_ebook"`
+	Compilation           bool               `json:"compilation"`
 	AudioSeconds          *int               `json:"audio_seconds"`
 	DefaultAudioEditionID *int               `json:"default_audio_edition_id"`
 	DefaultEbookEditionID *int               `json:"default_ebook_edition_id"`
@@ -1125,6 +1127,7 @@ func (c *Client) toBook(b hcBook) models.Book {
 		ISBNs:            b.ISBNs,
 		SeriesRefs:       seriesRefs,
 		Language:         hardcoverLanguageName(b.Language),
+		IsCompilation:    b.Compilation,
 	}
 	if len(b.Genres) > 0 {
 		bk.Genres = b.Genres

@@ -76,6 +76,7 @@ func (a *Aggregator) GetAuthorWorksForAuthor(ctx context.Context, author models.
 
 	authorName := strings.TrimSpace(author.Name)
 	supplementsComplete := true
+	compilationTitles := map[string]struct{}{}
 	if authorName != "" {
 		for _, provider := range a.authorWorksByNameProviders() {
 			supplemental, err := provider.GetAuthorWorksByName(ctx, authorName)
@@ -90,9 +91,26 @@ func (a *Aggregator) GetAuthorWorksForAuthor(ctx context.Context, author models.
 			if len(supplemental) == 0 {
 				continue
 			}
-			books = mergeAuthorWorks(books, supplemental)
+			// Enrichers like Hardcover classify which of an author's works are
+			// compilations / omnibuses / box sets. Record those titles so the
+			// matching primary-provider (e.g. OpenLibrary) works can be pruned
+			// below, and drop the compilation entries themselves instead of
+			// merging them — otherwise the same content surfaces as several
+			// "bundle" rows, the clutter users see on author refresh.
+			kept := supplemental[:0]
+			for _, b := range supplemental {
+				if b.IsCompilation {
+					if k := authorWorkMergeKey(b.Title); k != "" {
+						compilationTitles[k] = struct{}{}
+					}
+					continue
+				}
+				kept = append(kept, b)
+			}
+			books = mergeAuthorWorks(books, kept)
 		}
 	}
+	books = pruneAuthorWorkCompilations(books, compilationTitles)
 
 	a.enrichMissingAuthorWorkCovers(ctx, books)
 	if supplementsComplete {
@@ -140,6 +158,26 @@ func (a *Aggregator) authorWorksByNameProviders() []authorWorksByNameProvider {
 		}
 	}
 	return providers
+}
+
+// pruneAuthorWorkCompilations drops works whose normalized title matches one an
+// enricher flagged as a compilation/omnibus, plus any book still carrying the
+// compilation flag directly. Primary-provider works (OpenLibrary) carry no
+// compilation signal of their own, so the enricher's classification is the only
+// way to know an inflated "bundle" came through the primary list. The filter is
+// in place and order-preserving.
+func pruneAuthorWorkCompilations(books []models.Book, compilationTitles map[string]struct{}) []models.Book {
+	filtered := books[:0]
+	for _, b := range books {
+		if b.IsCompilation {
+			continue
+		}
+		if _, ok := compilationTitles[authorWorkMergeKey(b.Title)]; ok {
+			continue
+		}
+		filtered = append(filtered, b)
+	}
+	return filtered
 }
 
 func cloneBooks(books []models.Book) []models.Book {

@@ -155,6 +155,53 @@ func TestAggregator_GetAuthorWorksForAuthor_MergesSupplementalByTitle(t *testing
 	}
 }
 
+// TestAggregator_GetAuthorWorksForAuthor_PrunesCompilations verifies that works
+// an enricher (Hardcover) flags as compilations are removed: the matching
+// primary (OpenLibrary) "bundle" work is dropped, the compilation entry itself
+// is never added, and genuine books are untouched.
+func TestAggregator_GetAuthorWorksForAuthor_PrunesCompilations(t *testing.T) {
+	primary := &mockWorksProvider{
+		mockProvider: mockProvider{name: "ol", authorWorks: []models.Book{
+			{ForeignID: "OL1W", Title: "Dune", MetadataProvider: "openlibrary"},
+			{ForeignID: "OL2W", Title: "The Ultimate Dune Omnibus", MetadataProvider: "openlibrary"},
+			{ForeignID: "OL3W", Title: "Children of Dune", MetadataProvider: "openlibrary"},
+		}},
+	}
+	hardcover := &mockAuthorWorksByNameProvider{
+		mockProvider: mockProvider{name: "hardcover"},
+		authorWorksByName: []models.Book{
+			{ForeignID: "hc:dune", Title: "Dune", ImageURL: "https://img/dune.jpg", MetadataProvider: "hardcover"},
+			{ForeignID: "hc:ultimate-dune", Title: "The Ultimate Dune Omnibus", MetadataProvider: "hardcover", IsCompilation: true},
+			{ForeignID: "hc:dune-messiah", Title: "Dune Messiah", MetadataProvider: "hardcover"},
+		},
+	}
+	agg := &Aggregator{
+		primary:   primary,
+		enrichers: []Provider{hardcover},
+		cache:     newTTLCache(time.Minute),
+	}
+
+	got, err := agg.GetAuthorWorksForAuthor(context.Background(), models.Author{ForeignID: "OL123A", Name: "Frank Herbert"})
+	if err != nil {
+		t.Fatalf("GetAuthorWorksForAuthor: %v", err)
+	}
+	titles := map[string]bool{}
+	for _, b := range got {
+		titles[b.Title] = true
+	}
+	if titles["The Ultimate Dune Omnibus"] {
+		t.Errorf("compilation should have been pruned, got: %v", got)
+	}
+	for _, want := range []string{"Dune", "Children of Dune", "Dune Messiah"} {
+		if !titles[want] {
+			t.Errorf("expected %q to remain, got: %v", want, titles)
+		}
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 works after pruning the omnibus, got %d: %+v", len(got), got)
+	}
+}
+
 func TestAggregator_GetAuthorWorksForAuthor_MergesSupplementalIntoFirstDuplicateTitle(t *testing.T) {
 	primary := &mockWorksProvider{
 		mockProvider: mockProvider{name: "ol", authorWorks: []models.Book{

@@ -1,0 +1,2 @@
+### Changed
+- **Author refresh no longer clutters the works list with omnibuses/box sets** — when a Hardcover API token is configured, works Hardcover classifies as compilations (omnibuses, box sets, "complete" bundles) are pruned from an author's book list, so the same content stops appearing in several places. OpenLibrary itself carries no such signal, so Hardcover's classification is what drives the cleanup; genuine books, and installs without a Hardcover token, are unaffected.

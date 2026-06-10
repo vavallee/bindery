@@ -44,8 +44,14 @@ type Book struct {
 	// signal used to bind the same work imported from different sources
 	// (Calibre, Audiobookshelf, CWA, manual). Nullable for rows created before
 	// migration 051 that have not yet been recomputed by the startup backfill.
-	DedupKey              string     `json:"-"`
-	HardcoverForeignID    string     `json:"-"`
+	DedupKey           string `json:"-"`
+	HardcoverForeignID string `json:"-"`
+	// IsCompilation marks a book Hardcover classifies as a compilation /
+	// omnibus / box set (`books.compilation`). Transient: never persisted, only
+	// used to prune "bundle" entries from an author's works list so the same
+	// content doesn't appear in many places (the author-refresh fluff). Defaults
+	// false for sources that don't report it.
+	IsCompilation         bool       `json:"-"`
 	LastMetadataRefreshAt *time.Time `json:"lastMetadataRefreshAt"`
 	CreatedAt             time.Time  `json:"createdAt"`
 	UpdatedAt             time.Time  `json:"updatedAt"`

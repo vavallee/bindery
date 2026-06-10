@@ -645,9 +645,9 @@ func TestGetAuthorWorksByName_WithToken(t *testing.T) {
 				t.Fatalf("query requested search-only Hardcover field %q: %s", field, req.Query)
 			}
 		}
-		for _, field := range []string{"default_audio_edition_id", "default_ebook_edition_id"} {
+		for _, field := range []string{"default_audio_edition_id", "default_ebook_edition_id", "compilation"} {
 			if !strings.Contains(req.Query, field) {
-				t.Fatalf("query did not request Hardcover format field %q: %s", field, req.Query)
+				t.Fatalf("query did not request Hardcover field %q: %s", field, req.Query)
 			}
 		}
 		// Regression: `language` is an edition field, not a `books` field.
@@ -676,12 +676,13 @@ func TestGetAuthorWorksByName_WithToken(t *testing.T) {
 				},
 				{
 					"id":            11,
-					"title":         "Dune (Spanish edition)",
-					"slug":          "dune-es",
+					"title":         "The Great Dune Omnibus",
+					"slug":          "dune-omnibus",
 					"release_year":  1965,
 					"ratings_count": 50,
 					"rating":        4.2,
 					"users_count":   100,
+					"compilation":   true,
 					"contributions": []map[string]interface{}{
 						{"author": map[string]interface{}{"id": 1, "name": "Frank Herbert", "slug": "frank-herbert"}},
 					},
@@ -707,6 +708,12 @@ func TestGetAuthorWorksByName_WithToken(t *testing.T) {
 	book := books[0]
 	if book.ForeignID != "hc:dune" || book.Title != "Dune" || book.ImageURL == "" {
 		t.Fatalf("unexpected book: %+v", book)
+	}
+	if book.IsCompilation {
+		t.Errorf("Dune should not be flagged as a compilation: %+v", book)
+	}
+	if !books[1].IsCompilation {
+		t.Errorf("The Great Dune Omnibus should be flagged as a compilation: %+v", books[1])
 	}
 	if book.DurationSeconds != 7200 {
 		t.Fatalf("DurationSeconds = %d, want 7200", book.DurationSeconds)
