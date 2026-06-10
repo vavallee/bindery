@@ -2,6 +2,7 @@
   "name": "bindery-web",
   "private": true,
   "version": "1.17.0",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",

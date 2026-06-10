@@ -27,6 +27,13 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
 
 # Stage 3: Minimal runtime
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:d093aa3e30dbadd3efe1310db061a14da60299baff8450a17fe0ccc514a16639
+# OCI image metadata so registries and `docker inspect` surface the MIT license
+# and source, matching the repo's LICENSE.
+LABEL org.opencontainers.image.title="Bindery" \
+      org.opencontainers.image.description="Automated book download manager for Usenet & Torrents" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.source="https://github.com/vavallee/bindery" \
+      org.opencontainers.image.url="https://github.com/vavallee/bindery"
 COPY --from=builder /bindery /bindery
 USER nonroot
 EXPOSE 8787
