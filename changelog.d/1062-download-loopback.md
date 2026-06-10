@@ -1,0 +1,2 @@
+### Added
+- **`BINDERY_DOWNLOAD_ALLOW_LOOPBACK`** ([#1062](https://github.com/vavallee/bindery/discussions/1062)) — opt-in env var to let Bindery fetch indexer-provided `.torrent` / `.nzb` links that resolve to loopback (`127.0.0.1`, `::1`). Fixes `url not allowed: points to loopback address` when Prowlarr / an indexer is co-located on loopback (e.g. `network_mode: host`). Off by default since the download URL is indexer-chosen data; link-local and cloud-metadata stay blocked regardless.

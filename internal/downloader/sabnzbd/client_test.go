@@ -240,6 +240,24 @@ func TestAddURL_SSRFBlocked(t *testing.T) {
 	}
 }
 
+// TestNewClient_LoopbackOptIn verifies the default NZB-fetch validator honors
+// BINDERY_DOWNLOAD_ALLOW_LOOPBACK: blocked by default, allowed when opted in
+// (co-located Prowlarr on loopback, #1062).
+func TestNewClient_LoopbackOptIn(t *testing.T) {
+	c := New("127.0.0.1", 0, "testkey", "", false)
+	const loopbackNZB = "http://127.0.0.1:9696/dl.nzb"
+
+	t.Setenv("BINDERY_DOWNLOAD_ALLOW_LOOPBACK", "")
+	if err := c.validateNZBURL(loopbackNZB); err == nil {
+		t.Error("default: expected loopback NZB URL to be blocked")
+	}
+
+	t.Setenv("BINDERY_DOWNLOAD_ALLOW_LOOPBACK", "1")
+	if err := c.validateNZBURL(loopbackNZB); err != nil {
+		t.Errorf("opt-in: expected loopback NZB URL allowed, got %v", err)
+	}
+}
+
 // TestNZBFilename verifies the title→filename mapping strips path separators
 // and falls back to "bindery.nzb" on empty.
 func TestNZBFilename(t *testing.T) {

@@ -304,6 +304,29 @@ func TestPolicyFromEnv(t *testing.T) {
 	}
 }
 
+func TestDownloadFetchPolicy(t *testing.T) {
+	// Unset → PolicyLAN (loopback blocked).
+	t.Setenv(DownloadFetchEnvVar, "")
+	if got := DownloadFetchPolicy(); got != PolicyLAN {
+		t.Errorf("unset: want PolicyLAN, got %v", got)
+	}
+	if err := ValidateOutboundURL("http://127.0.0.1:9696/dl.torrent", DownloadFetchPolicy()); err == nil {
+		t.Error("unset: expected loopback to be blocked")
+	}
+
+	// Opt-in → PolicyLANLoopback (loopback allowed, link-local still blocked).
+	t.Setenv(DownloadFetchEnvVar, "1")
+	if got := DownloadFetchPolicy(); got != PolicyLANLoopback {
+		t.Errorf("opt-in: want PolicyLANLoopback, got %v", got)
+	}
+	if err := ValidateOutboundURL("http://127.0.0.1:9696/dl.torrent", DownloadFetchPolicy()); err != nil {
+		t.Errorf("opt-in: expected loopback allowed, got %v", err)
+	}
+	if err := ValidateOutboundURL("http://169.254.169.254/latest/meta-data", DownloadFetchPolicy()); err == nil {
+		t.Error("opt-in: cloud-metadata must stay blocked")
+	}
+}
+
 // TestValidateIP exercises the exported thin wrapper around checkIP.
 func TestValidateIP(t *testing.T) {
 	// Public IP: always allowed.

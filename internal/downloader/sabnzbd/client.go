@@ -43,7 +43,7 @@ func New(host string, port int, apiKey, urlBase string, useSSL bool) *Client {
 		http:      &http.Client{Timeout: 15 * time.Second},
 		fetchHTTP: &http.Client{Timeout: 60 * time.Second},
 		validateNZBURL: func(raw string) error {
-			return httpsec.ValidateOutboundURL(raw, httpsec.PolicyLAN)
+			return httpsec.ValidateOutboundURL(raw, httpsec.DownloadFetchPolicy())
 		},
 	}
 }
@@ -192,7 +192,7 @@ func buildAddFileBody(filename string, content []byte) (*bytes.Buffer, string, e
 
 func (c *Client) validateNZBFetchURL(raw string) error {
 	if c.validateNZBURL == nil {
-		return httpsec.ValidateOutboundURL(raw, httpsec.PolicyLAN)
+		return httpsec.ValidateOutboundURL(raw, httpsec.DownloadFetchPolicy())
 	}
 	return c.validateNZBURL(raw)
 }

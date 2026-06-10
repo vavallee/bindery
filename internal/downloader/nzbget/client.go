@@ -52,7 +52,7 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 		http:      &http.Client{Timeout: 15 * time.Second},
 		fetchHTTP: &http.Client{Timeout: 60 * time.Second},
 		validateNZBURL: func(raw string) error {
-			return httpsec.ValidateOutboundURL(raw, httpsec.PolicyLAN)
+			return httpsec.ValidateOutboundURL(raw, httpsec.DownloadFetchPolicy())
 		},
 	}
 }
@@ -216,7 +216,7 @@ func containsString(haystack []string, needle string) bool {
 
 func (c *Client) validateNZBFetchURL(raw string) error {
 	if c.validateNZBURL == nil {
-		return httpsec.ValidateOutboundURL(raw, httpsec.PolicyLAN)
+		return httpsec.ValidateOutboundURL(raw, httpsec.DownloadFetchPolicy())
 	}
 	return c.validateNZBURL(raw)
 }

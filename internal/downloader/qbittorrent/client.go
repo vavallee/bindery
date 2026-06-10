@@ -93,7 +93,7 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 		password: password,
 		http:     &http.Client{Timeout: 15 * time.Second, Jar: jar},
 		validateTorrentURL: func(raw string) error {
-			return httpsec.ValidateOutboundURL(raw, httpsec.PolicyLAN)
+			return httpsec.ValidateOutboundURL(raw, httpsec.DownloadFetchPolicy())
 		},
 	}
 }
@@ -516,7 +516,7 @@ func (c *Client) fetchTorrentContent(ctx context.Context, rawURL string) (*fetch
 
 func (c *Client) validateTorrentFetchURL(raw string) error {
 	if c.validateTorrentURL == nil {
-		return httpsec.ValidateOutboundURL(raw, httpsec.PolicyLAN)
+		return httpsec.ValidateOutboundURL(raw, httpsec.DownloadFetchPolicy())
 	}
 	return c.validateTorrentURL(raw)
 }

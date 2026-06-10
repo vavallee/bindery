@@ -284,15 +284,41 @@ func NewDialContext(policy Policy) func(ctx context.Context, network, addr strin
 	}
 }
 
-// PolicyFromEnv returns override if the given env variable is set to "1" or
+// envIsTruthy reports whether envVar is set to "1" or "true" (case-insensitive).
+func envIsTruthy(envVar string) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(envVar)))
+	return v == "1" || v == "true"
+}
+
+// PolicyFromEnv returns PolicyLAN if the given env variable is set to "1" or
 // "true" (case-insensitive), otherwise returns def. This lets callers flip
 // the strict default to LAN policy for users with on-LAN services.
 //
 // Example: PolicyFromEnv(PolicyStrict, "BINDERY_NOTIFICATIONS_ALLOW_PRIVATE")
 func PolicyFromEnv(def Policy, envVar string) Policy {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv(envVar)))
-	if v == "1" || v == "true" {
+	if envIsTruthy(envVar) {
 		return PolicyLAN
 	}
 	return def
+}
+
+// DownloadFetchEnvVar is the opt-in that relaxes the SSRF policy used when
+// Bindery fetches an indexer-provided download link (.torrent / .nzb).
+const DownloadFetchEnvVar = "BINDERY_DOWNLOAD_ALLOW_LOOPBACK"
+
+// DownloadFetchPolicy returns the SSRF policy for fetching indexer-provided
+// download URLs. It defaults to PolicyLAN, which blocks loopback: unlike the
+// admin-typed indexer/Prowlarr base URL, the download link is data chosen by
+// the indexer's response, so a malicious indexer could otherwise point it at a
+// service bound to Bindery's own 127.0.0.1.
+//
+// Setting BINDERY_DOWNLOAD_ALLOW_LOOPBACK=1 relaxes it to PolicyLANLoopback for
+// operators who legitimately co-locate Prowlarr/an indexer on loopback (e.g.
+// `network_mode: host` with the companion bound to 127.0.0.1, #1062). Link-local
+// and cloud-metadata stay blocked regardless.
+func DownloadFetchPolicy() Policy {
+	if envIsTruthy(DownloadFetchEnvVar) {
+		return PolicyLANLoopback
+	}
+	return PolicyLAN
 }

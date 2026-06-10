@@ -55,7 +55,7 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 		http:      &http.Client{Timeout: 15 * time.Second},
 		fetchHTTP: &http.Client{Timeout: 60 * time.Second},
 		validateTorrentURL: func(raw string) error {
-			return httpsec.ValidateOutboundURL(raw, httpsec.PolicyLAN)
+			return httpsec.ValidateOutboundURL(raw, httpsec.DownloadFetchPolicy())
 		},
 	}
 
@@ -302,12 +302,13 @@ func isMagnetLink(magnetOrURL string) bool {
 }
 
 // validateTorrentFetchURL applies the same SSRF policy SAB/NZBGet use
-// before reaching out for the .torrent content. Loopback and link-local
-// addresses are blocked; private RFC1918 ranges are permitted under
-// PolicyLAN (typical homelab indexer setup).
+// before reaching out for the .torrent content. Link-local and cloud-metadata
+// are always blocked; private RFC1918 ranges are permitted (typical homelab
+// indexer setup), and loopback is blocked unless BINDERY_DOWNLOAD_ALLOW_LOOPBACK
+// is set (co-located Prowlarr on 127.0.0.1, #1062).
 func (c *Client) validateTorrentFetchURL(raw string) error {
 	if c.validateTorrentURL == nil {
-		return httpsec.ValidateOutboundURL(raw, httpsec.PolicyLAN)
+		return httpsec.ValidateOutboundURL(raw, httpsec.DownloadFetchPolicy())
 	}
 	return c.validateTorrentURL(raw)
 }
