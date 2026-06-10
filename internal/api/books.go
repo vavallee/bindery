@@ -900,7 +900,11 @@ func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
 	if h.series != nil {
 		if existingIDs, serErr := h.series.GetSeriesIDsForBook(r.Context(), book.ID); serErr == nil {
 			for _, sid := range existingIDs {
-				_ = h.series.UnlinkBook(r.Context(), sid, book.ID)
+				if err := h.series.UnlinkBook(r.Context(), sid, book.ID); err != nil {
+					// A failed unlink leaves stale series membership on the
+					// rebound book; the link ops below already Warn, so match.
+					slog.Warn("rebind: failed to unlink series", "book", book.Title, "seriesId", sid, "error", err)
+				}
 			}
 		}
 		for _, ref := range upstream.SeriesRefs {

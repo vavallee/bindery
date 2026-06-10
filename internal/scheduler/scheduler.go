@@ -630,7 +630,12 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	// entries for the book would discard the other format's candidates for a
 	// dual-format ('both') book, forcing an unnecessary re-search (see #707).
 	if s.pending != nil {
-		_ = s.pending.DeleteByBookAndMediaType(ctx, book.ID, mediaType)
+		if err := s.pending.DeleteByBookAndMediaType(ctx, book.ID, mediaType); err != nil {
+			// A surviving pending entry can be re-approved and re-grabbed on a
+			// later cycle, producing duplicate downloads with no visible cause.
+			slog.Warn("failed to clear pending releases after grab",
+				"book_id", book.ID, "media_type", mediaType, "error", err)
+		}
 	}
 }
 
@@ -687,7 +692,12 @@ func (s *Scheduler) checkPendingReleases(ctx context.Context, book models.Book, 
 		rel := decision.ReleaseFromSearchResult(res)
 		decisions := dm.Evaluate([]decision.Release{rel}, book)
 		if len(decisions) > 0 && decisions[0].Approved {
-			_ = s.pending.DeleteByID(ctx, pendingList[i].ID)
+			if err := s.pending.DeleteByID(ctx, pendingList[i].ID); err != nil {
+				// If the entry survives it is re-approved and re-grabbed on the
+				// next cycle — duplicate grabs with no visible cause.
+				slog.Warn("failed to delete pending release after approval",
+					"pending_id", pendingList[i].ID, "book_id", book.ID, "guid", res.GUID, "error", err)
+			}
 			return &res
 		}
 	}
@@ -855,7 +865,10 @@ func (s *Scheduler) checkStalledDownloads(ctx context.Context) {
 
 		stalledIDs, _, err := downloader.GetStalledIDs(ctx, client)
 		if err != nil {
-			slog.Debug("stall check: failed to fetch stalled IDs", "client", client.Name, "error", err)
+			// Warn, not Debug: a persistent failure here silently disables stall
+			// detection for this client (same invisibility class as #1019).
+			slog.Warn("stall check: failed to fetch stalled IDs — stall detection inactive for this client",
+				"client", client.Name, "error", err)
 			continue
 		}
 		if len(stalledIDs) == 0 {

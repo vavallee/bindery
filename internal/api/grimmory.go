@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -94,7 +95,11 @@ func (h *GrimmoryHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	set := func(key, val string) {
-		_ = h.settings.Set(ctx, key, val)
+		if err := h.settings.Set(ctx, key, val); err != nil {
+			// The handler returns the re-read config either way, so a failed
+			// write is otherwise invisible: the user saves and nothing persists.
+			slog.Warn("grimmory: failed to persist setting", "key", key, "error", err)
+		}
 	}
 
 	if req.Enabled != nil {

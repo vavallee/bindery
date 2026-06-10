@@ -331,7 +331,13 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 			return "", fmt.Errorf("add torrent: qBittorrent reports the torrent is already present but its hash could not be determined")
 		}
 		if category != "" {
-			_ = c.setCategory(ctx, hash, category)
+			if err := c.setCategory(ctx, hash, category); err != nil {
+				// Best-effort (the grab still succeeds — the poller's unfiltered
+				// listing recovers category-missed torrents), but this is the root
+				// cause of the #969 cross-seed wedge, so surface it.
+				slog.Warn("add torrent: failed to set category on existing torrent",
+					"hash", hash, "category", category, "error", err)
+			}
 		}
 		slog.Info("add torrent: already present in qBittorrent, reusing existing torrent", "hash", hash)
 		return hash, nil
@@ -394,7 +400,12 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 		if newest != nil {
 			hash := strings.ToLower(newest.Hash)
 			if category != "" {
-				_ = c.setCategory(ctx, hash, category)
+				if err := c.setCategory(ctx, hash, category); err != nil {
+					// Best-effort, but a torrent left outside Bindery's category
+					// is invisible to the category-filtered poll (#969/#939).
+					slog.Warn("add torrent: failed to set category on recovered torrent",
+						"hash", hash, "category", category, "error", err)
+				}
 			}
 			return hash, nil
 		}

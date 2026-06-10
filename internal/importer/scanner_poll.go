@@ -25,7 +25,11 @@ func (s *Scanner) checkSABnzbdDownloads(ctx context.Context, client *models.Down
 	// Check history for completed downloads (no category filter — match by NZO ID)
 	history, err := sab.GetHistory(ctx, "", 50)
 	if err != nil {
-		slog.Debug("failed to fetch SABnzbd history", "error", err)
+		// Warn, not Debug: a persistent fetch failure means the import poller is
+		// dead for this client and every download wedges at "downloading" with
+		// no visible cause (the #1019 failure mode).
+		slog.Warn("download poll: failed to fetch SABnzbd history — downloads will not be imported",
+			"client", client.Name, "error", err)
 		return
 	}
 
@@ -91,7 +95,9 @@ func (s *Scanner) checkNZBGetDownloads(ctx context.Context, client *models.Downl
 	// Check history for completed/failed downloads (matched by NZBID stored as sabnzbd_nzo_id).
 	history, err := ng.GetHistory(ctx)
 	if err != nil {
-		slog.Debug("failed to fetch NZBGet history", "error", err)
+		// Warn, not Debug: see checkSABnzbdDownloads (#1019 failure mode).
+		slog.Warn("download poll: failed to fetch NZBGet history — downloads will not be imported",
+			"client", client.Name, "error", err)
 		return
 	}
 
@@ -168,14 +174,16 @@ func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models
 	// Bindery only sees its own torrents on a shared Transmission instance.
 	torrents, err := trans.GetTorrents(ctx, client.Category)
 	if err != nil {
-		slog.Debug("failed to fetch Transmission torrents", "error", err)
+		// Warn, not Debug: see checkSABnzbdDownloads (#1019 failure mode).
+		slog.Warn("download poll: failed to fetch Transmission torrents — downloads will not be imported",
+			"client", client.Name, "error", err)
 		return
 	}
 
 	// Get all active downloads from DB (not yet completed/imported)
 	allDownloads, err := s.downloads.List(ctx)
 	if err != nil {
-		slog.Debug("failed to list downloads", "error", err)
+		slog.Warn("download poll: failed to list downloads", "client", client.Name, "error", err)
 		return
 	}
 	torrentsMap := make(map[string]transmission.Torrent)
@@ -254,7 +262,7 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 
 	allDownloads, err := s.downloads.List(ctx)
 	if err != nil {
-		slog.Debug("failed to list downloads", "error", err)
+		slog.Warn("download poll: failed to list downloads", "client", client.Name, "error", err)
 		return
 	}
 
@@ -268,7 +276,9 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 	for _, cat := range downloader.CategoriesToPoll(client) {
 		torrents, err := qb.GetTorrents(ctx, cat)
 		if err != nil {
-			slog.Debug("failed to fetch qBittorrent torrents", "category", cat, "error", err)
+			// Warn, not Debug: see checkSABnzbdDownloads (#1019 failure mode).
+			slog.Warn("download poll: failed to fetch qBittorrent torrents — downloads will not be imported",
+				"client", client.Name, "category", cat, "error", err)
 			return
 		}
 		for _, t := range torrents {
@@ -298,7 +308,11 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 	if allErr != nil {
 		// Non-fatal: fall back to the category-filtered map only. We still want
 		// to process the torrents we did find rather than abort the whole poll.
-		slog.Debug("qbittorrent: unfiltered torrent listing failed; reconciliation fallback disabled", "error", allErr)
+		// Warn, not Debug: when this fires the category-filtered fetch above
+		// succeeded, so the divergence is real and the #969/#939 category-miss
+		// recovery is silently disabled while it persists.
+		slog.Warn("qbittorrent: unfiltered torrent listing failed; category-mismatch recovery disabled this cycle",
+			"client", client.Name, "error", allErr)
 	}
 	unfilteredByHash := make(map[string]qbittorrent.Torrent, len(allTorrents))
 	for _, t := range allTorrents {
@@ -523,13 +537,16 @@ func (s *Scanner) checkDelugeDownloads(ctx context.Context, client *models.Downl
 	dlc := downloader.DelugeFor(client)
 	torrents, err := dlc.GetTorrents(ctx)
 	if err != nil {
-		slog.Debug("failed to fetch Deluge torrents", "error", err)
+		// Warn, not Debug: see checkSABnzbdDownloads (#1019 failure mode — this
+		// poller exists because exactly this failure was invisible at Debug).
+		slog.Warn("download poll: failed to fetch Deluge torrents — downloads will not be imported",
+			"client", client.Name, "error", err)
 		return
 	}
 
 	allDownloads, err := s.downloads.List(ctx)
 	if err != nil {
-		slog.Debug("failed to list downloads", "error", err)
+		slog.Warn("download poll: failed to list downloads", "client", client.Name, "error", err)
 		return
 	}
 
