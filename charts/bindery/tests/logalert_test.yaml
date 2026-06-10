@@ -1,0 +1,128 @@
+suite: log alert cronjob
+templates:
+  - log-alert-cronjob.yaml
+
+tests:
+  - it: renders nothing when logAlert is disabled (default)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: fails template rendering when enabled without an apiKeySecret name
+    set:
+      logAlert.enabled: true
+      logAlert.webhookSecret.name: discord-webhook
+    asserts:
+      - failedTemplate:
+          errorPattern: logAlert.apiKeySecret.name is required
+
+  - it: fails template rendering when enabled without a webhookSecret name
+    set:
+      logAlert.enabled: true
+      logAlert.apiKeySecret.name: bindery-auth
+    asserts:
+      - failedTemplate:
+          errorPattern: logAlert.webhookSecret.name is required
+
+  - it: renders a CronJob with the default hourly schedule when enabled
+    set:
+      logAlert.enabled: true
+      logAlert.apiKeySecret.name: bindery-auth
+      logAlert.webhookSecret.name: discord-webhook
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: CronJob
+      - equal:
+          path: spec.schedule
+          value: "0 * * * *"
+      - equal:
+          path: spec.concurrencyPolicy
+          value: Forbid
+
+  - it: honours a custom schedule and thresholds
+    set:
+      logAlert.enabled: true
+      logAlert.schedule: "*/15 * * * *"
+      logAlert.lookbackMinutes: 15
+      logAlert.errorThreshold: 5
+      logAlert.warnThreshold: 0
+      logAlert.apiKeySecret.name: bindery-auth
+      logAlert.webhookSecret.name: discord-webhook
+    asserts:
+      - equal:
+          path: spec.schedule
+          value: "*/15 * * * *"
+      - contains:
+          path: spec.jobTemplate.spec.template.spec.containers[0].env
+          content:
+            name: LOOKBACK_MINUTES
+            value: "15"
+      - contains:
+          path: spec.jobTemplate.spec.template.spec.containers[0].env
+          content:
+            name: ERROR_THRESHOLD
+            value: "5"
+      - contains:
+          path: spec.jobTemplate.spec.template.spec.containers[0].env
+          content:
+            name: WARN_THRESHOLD
+            value: "0"
+
+  - it: sources both credentials from Secrets, never inline values
+    set:
+      logAlert.enabled: true
+      logAlert.apiKeySecret.name: bindery-auth
+      logAlert.apiKeySecret.key: api-key
+      logAlert.webhookSecret.name: discord-webhook
+      logAlert.webhookSecret.key: url
+    asserts:
+      - contains:
+          path: spec.jobTemplate.spec.template.spec.containers[0].env
+          content:
+            name: BINDERY_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: bindery-auth
+                key: api-key
+      - contains:
+          path: spec.jobTemplate.spec.template.spec.containers[0].env
+          content:
+            name: DISCORD_WEBHOOK_URL
+            valueFrom:
+              secretKeyRef:
+                name: discord-webhook
+                key: url
+
+  - it: keeps the hardened security posture and no service account token
+    set:
+      logAlert.enabled: true
+      logAlert.apiKeySecret.name: bindery-auth
+      logAlert.webhookSecret.name: discord-webhook
+    asserts:
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.securityContext.runAsUser
+          value: 65532
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.automountServiceAccountToken
+          value: false
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - contains:
+          path: spec.jobTemplate.spec.template.spec.containers[0].securityContext.capabilities.drop
+          content: ALL
+
+  - it: does not label the pod so the bindery Service would select it
+    set:
+      logAlert.enabled: true
+      logAlert.apiKeySecret.name: bindery-auth
+      logAlert.webhookSecret.name: discord-webhook
+    asserts:
+      - notEqual:
+          path: spec.jobTemplate.spec.template.metadata.labels["app.kubernetes.io/name"]
+          value: bindery

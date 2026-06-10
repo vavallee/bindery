@@ -131,3 +131,35 @@ hooks:
     # Image used by the smoke-test container. Kept intentionally minimal
     # (busybox gives us wget + sh). Pin a digest in strict environments.
     image: busybox:1.37
+
+logAlert:
+  # Opt-in CronJob that polls GET /api/v1/system/logs (X-Api-Key auth) and
+  # posts a short Discord message when the number of WARN/ERROR entries in
+  # the lookback window crosses the thresholds below. Catches persistent
+  # warnings that would otherwise sit unseen in the logs.
+  enabled: false
+  # Kubernetes five-field cron schedule. Default: top of every hour.
+  schedule: "0 * * * *"
+  # How far back to count, in minutes. Keep >= the schedule interval so
+  # consecutive runs don't leave gaps (the API caps a single fetch at 1000
+  # entries, so counts saturate there).
+  lookbackMinutes: 60
+  # Alert when ERROR entries in the window >= this value. 0 disables the
+  # ERROR check.
+  errorThreshold: 1
+  # Alert when WARN entries in the window >= this value. 0 disables the
+  # WARN check.
+  warnThreshold: 20
+  # Secret holding the Bindery API key (sent as the X-Api-Key header).
+  # Point this at the same Secret the auth block uses (auth.existingSecret
+  # or the chart-managed "bindery-auth"); key defaults to match.
+  apiKeySecret:
+    name: ""
+    key: api-key
+  # Secret holding the full Discord webhook URL.
+  webhookSecret:
+    name: ""
+    key: url
+  # Image for the alert script — needs sh + curl + jq. alpine/k8s ships all
+  # three and is actively maintained. Pin a digest in strict environments.
+  image: alpine/k8s:1.33.12

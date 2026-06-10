@@ -1,0 +1,133 @@
+{{- if .Values.logAlert.enabled -}}
+{{- $apiSecret := .Values.logAlert.apiKeySecret -}}
+{{- $webhookSecret := .Values.logAlert.webhookSecret -}}
+{{- $_ := required "logAlert.apiKeySecret.name is required when logAlert.enabled=true" $apiSecret.name -}}
+{{- $_ = required "logAlert.webhookSecret.name is required when logAlert.enabled=true" $webhookSecret.name -}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "bindery.fullname" . }}-log-alert
+  labels:
+    {{- include "bindery.labels" . | nindent 4 }}
+    app.kubernetes.io/component: log-alert
+spec:
+  schedule: {{ .Values.logAlert.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  # If the controller misses a window (cluster down, etc), still start the job
+  # up to 5 minutes late rather than skipping the whole interval.
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            # Deliberately NOT bindery.selectorLabels — the Service selects on
+            # name+instance and must not pick up this pod as an endpoint.
+            app.kubernetes.io/name: {{ include "bindery.name" . }}-log-alert
+            app.kubernetes.io/instance: {{ .Release.Name }}
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: log-alert
+              image: {{ .Values.logAlert.image | quote }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+              env:
+                - name: BINDERY_URL
+                  value: "http://{{ include "bindery.fullname" . }}:{{ .Values.service.port }}"
+                - name: INSTANCE
+                  value: {{ printf "%s/%s" .Release.Namespace (include "bindery.fullname" .) | quote }}
+                - name: LOOKBACK_MINUTES
+                  value: {{ int .Values.logAlert.lookbackMinutes | quote }}
+                - name: ERROR_THRESHOLD
+                  value: {{ int .Values.logAlert.errorThreshold | quote }}
+                - name: WARN_THRESHOLD
+                  value: {{ int .Values.logAlert.warnThreshold | quote }}
+                - name: BINDERY_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $apiSecret.name | quote }}
+                      key: {{ $apiSecret.key | quote }}
+                - name: DISCORD_WEBHOOK_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $webhookSecret.name | quote }}
+                      key: {{ $webhookSecret.key | quote }}
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+              command:
+                - sh
+                - -c
+                # NOTE: secrets (BINDERY_API_KEY, DISCORD_WEBHOOK_URL) are only
+                # ever passed as curl header/target — never echoed or logged.
+                - |
+                  set -eu
+                  FROM=$(jq -rn "now - (${LOOKBACK_MINUTES} * 60) | todate")
+                  RESP=/tmp/logs.json
+                  # level=warn is a minimum-level filter: returns WARN + ERROR.
+                  CODE=$(curl -sS -o "$RESP" -w '%{http_code}' --max-time 30 \
+                    -H "X-Api-Key: ${BINDERY_API_KEY}" \
+                    "${BINDERY_URL}/api/v1/system/logs?level=warn&from=${FROM}&limit=1000")
+                  if [ "$CODE" != "200" ]; then
+                    echo "log fetch failed: HTTP $CODE"
+                    exit 1
+                  fi
+                  ERRORS=$(jq '[.[] | select(.level == "ERROR")] | length' "$RESP")
+                  WARNS=$(jq '[.[] | select(.level == "WARN")] | length' "$RESP")
+                  TOTAL=$(jq 'length' "$RESP")
+                  echo "lookback=${LOOKBACK_MINUTES}m errors=$ERRORS warns=$WARNS (fetched $TOTAL, cap 1000)"
+                  ALERT=0
+                  [ "$ERROR_THRESHOLD" -gt 0 ] && [ "$ERRORS" -ge "$ERROR_THRESHOLD" ] && ALERT=1
+                  [ "$WARN_THRESHOLD" -gt 0 ] && [ "$WARNS" -ge "$WARN_THRESHOLD" ] && ALERT=1
+                  if [ "$ALERT" -ne 1 ]; then
+                    echo "below thresholds, no alert"
+                    exit 0
+                  fi
+                  TOP=$(jq -r 'group_by(.level + "|" + .message)
+                    | sort_by(-length) | .[:3]
+                    | map("- \(length)x [\(.[0].level)] \(.[0].message[0:140])")
+                    | join("\n")' "$RESP")
+                  PAYLOAD=$(jq -n \
+                    --arg instance "$INSTANCE" \
+                    --arg errors "$ERRORS" \
+                    --arg warns "$WARNS" \
+                    --arg lookback "$LOOKBACK_MINUTES" \
+                    --arg top "$TOP" \
+                    '{content: ("**Bindery log alert** (" + $instance + "): "
+                      + $errors + " ERROR / " + $warns + " WARN in the last "
+                      + $lookback + " min\n" + $top)[0:1900]}')
+                  CODE=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 \
+                    -H "Content-Type: application/json" \
+                    -d "$PAYLOAD" "$DISCORD_WEBHOOK_URL")
+                  case "$CODE" in
+                    2*) echo "alert sent (HTTP $CODE)" ;;
+                    *)  echo "discord post failed: HTTP $CODE"; exit 1 ;;
+                  esac
+          volumes:
+            - name: tmp
+              emptyDir: {}
+{{- end }}
