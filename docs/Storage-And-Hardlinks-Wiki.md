@@ -22,6 +22,18 @@ Set the import mode in **Settings → File Naming**.
 | **copy** | doubled | kept | Use when downloads and library are on different filesystems. Copies into the library and leaves the download in place so it can keep seeding. |
 | **move** | none | **broken** | Moves the file out of the download location, so a torrent can no longer seed it. Only suitable for Usenet, or when you do not seed. |
 
+## Multi-disc audiobook flattening
+
+Some audiobook releases arrive as nested disc folders with repeated track names, for example `Disc 1/Track 01.mp3`, `Disc 1/Track 02.mp3`, `Disc 2/Track 01.mp3`. Audiobook players that sort each disc folder independently (or treat repeated `Track 01` names as duplicates) play these in the wrong order.
+
+Enable **Settings → General → File Naming → Flatten multi-disc audiobooks** to import such a download into a single flat folder, renaming tracks to `Part 001.ext`, `Part 002.ext`, … in disc-then-track order. Disc numbers are detected from folder names like `Disc 1`, `Disk 02`, `CD 3`, `Part 4`; track numbers from file names like `Track 01.mp3`, `Chapter 02.mp3`, or a leading `01 - Title.mp3`. Root-level sidecars (cover art, cue sheets) are carried across.
+
+Guarantees:
+
+- **Off by default.** Single-disc audiobooks and downloads with no disc folders are never altered.
+- **Copy/hardlink only.** Flattening is enforced backend-side to run only when the resolved import mode is `copy` or `hardlink`, because it renames files and must never touch a still-seeding torrent source. In `move` and `external` mode the setting is ignored and the existing whole-folder behaviour applies.
+- **Seeding preserved.** The source download is copied or hardlinked, never moved or renamed, so it keeps seeding.
+
 ## Download folders
 
 | Variable | Purpose |

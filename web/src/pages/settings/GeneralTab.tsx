@@ -324,6 +324,30 @@ export default function GeneralTab() {
               ))}
             </div>
           </div>
+          {['copy', 'hardlink'].includes(settings['import.mode'] ?? 'move') && (
+            <div className="border-t border-slate-200 dark:border-zinc-800 pt-3">
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={settings['import.audiobook.flatten_multi_disc'] === 'true'}
+                  onChange={async e => {
+                    const v = e.target.checked ? 'true' : 'false'
+                    setSettings(s => ({ ...s, 'import.audiobook.flatten_multi_disc': v }))
+                    await api.setSetting('import.audiobook.flatten_multi_disc', v).catch(console.error)
+                  }}
+                />
+                <span>
+                  <span className="text-xs font-medium text-slate-700 dark:text-zinc-300">
+                    {t('settings.general.flattenMultiDisc', 'Flatten multi-disc audiobooks')}
+                  </span>
+                  <span className="block text-xs text-slate-600 dark:text-zinc-500">
+                    {t('settings.general.flattenMultiDiscHint', 'When a completed audiobook download has multiple disc folders (Disc 1, CD 2, …), place its tracks into one flat folder named Part 001, Part 002, … so audiobook players sort them correctly. Available only in Copy or Hardlink mode; the source is never moved and torrents keep seeding. Single-disc audiobooks are unaffected.')}
+                  </span>
+                </span>
+              </label>
+            </div>
+          )}
           {(settings['import.mode'] ?? 'move') === 'external' && (
             <div className="border-t border-slate-200 dark:border-zinc-800 pt-3 space-y-3">
               <div>

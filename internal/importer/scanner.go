@@ -915,13 +915,29 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				return
 			}
 			if srcInfo.IsDir() {
-				switch mode {
-				case "hardlink":
-					dirErr = HardlinkDir(audiobookSource, destDir)
-				case "copy":
-					dirErr = CopyDirCtx(importCtx, audiobookSource, destDir)
-				default:
-					dirErr = MoveDirCtx(importCtx, audiobookSource, destDir)
+				// Multi-disc flattening (#886): when enabled AND the resolved
+				// mode is copy/hardlink (NEVER move — the source must keep
+				// seeding and flattening renames files) AND the source is a
+				// multi-disc audiobook, place every track flat into destDir as
+				// "Part 001.ext", … instead of mirroring the disc-folder tree.
+				// The mode restriction is enforced here in the backend even if a
+				// stale UI setting is enabled, because import mode is resolved at
+				// import time. Falls through to the normal dir placement when the
+				// source is single-disc.
+				if (mode == "copy" || mode == "hardlink") &&
+					s.flattenMultiDiscEnabled(ctx) &&
+					isMultiDiscAudiobook(audiobookSource) {
+					slog.Info("flattening multi-disc audiobook", "src", audiobookSource, "dst", destDir, "mode", mode)
+					dirErr = flattenAudiobookDir(importCtx, mode, audiobookSource, destDir)
+				} else {
+					switch mode {
+					case "hardlink":
+						dirErr = HardlinkDir(audiobookSource, destDir)
+					case "copy":
+						dirErr = CopyDirCtx(importCtx, audiobookSource, destDir)
+					default:
+						dirErr = MoveDirCtx(importCtx, audiobookSource, destDir)
+					}
 				}
 			} else {
 				if err := os.MkdirAll(destDir, 0o750); err != nil {

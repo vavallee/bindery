@@ -71,6 +71,23 @@ func (s *Scanner) importMode(ctx context.Context, src, dst string) string {
 	return "copy"
 }
 
+// flattenMultiDiscEnabled reads the "import.audiobook.flatten_multi_disc"
+// setting (#886). It returns true only when the value is explicitly "true";
+// the feature is opt-in and OFF by default so existing audiobook imports keep
+// preserving the download's internal layout. The key is read as a string
+// literal to avoid an import cycle with the api package; keep it in sync with
+// api.SettingImportAudiobookFlattenMultiDisc.
+func (s *Scanner) flattenMultiDiscEnabled(ctx context.Context) bool {
+	if s.settings == nil {
+		return false
+	}
+	setting, err := s.settings.Get(ctx, "import.audiobook.flatten_multi_disc")
+	if err != nil || setting == nil {
+		return false
+	}
+	return setting.Value == "true"
+}
+
 // pushToCWA copies the just-imported file into the directory watched by a
 // sibling Calibre-Web-Automated container, when the cwa.ingest_path setting
 // is configured. CWA's auto-ingest deletes whatever lands in that folder

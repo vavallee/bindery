@@ -69,6 +69,16 @@ const (
 	SettingImportDropLinkMode = "import.drop_link_mode"
 )
 
+// SettingImportAudiobookFlattenMultiDisc (#886) is "true" to flatten multi-disc
+// audiobook downloads into a single "Part 001.ext", … sequence on import, or
+// unset/"false" (default) to preserve the download's disc-folder layout.
+// Flattening only ever runs in copy/hardlink import mode — the backend enforces
+// that restriction at import time regardless of this flag, because flattening
+// renames files and must never touch a still-seeding source in move mode. The
+// importer reads this key as a string literal to avoid an import cycle; keep
+// the literal in sync with this constant.
+const SettingImportAudiobookFlattenMultiDisc = "import.audiobook.flatten_multi_disc"
+
 type SettingsHandler struct {
 	settings *db.SettingsRepo
 }

@@ -544,6 +544,8 @@
       "recommendationsLabel": "Enable book recommendations",
       "recommendationsHint": "Analyse your library to suggest new books on the Discover page. Runs locally every 24 hours — no data leaves your server.",
       "fileNaming": "File Naming",
+      "flattenMultiDisc": "Flatten multi-disc audiobooks",
+      "flattenMultiDiscHint": "When a completed audiobook download has multiple disc folders (Disc 1, CD 2, …), place its tracks into one flat folder named Part 001, Part 002, … so audiobook players sort them correctly. Available only in Copy or Hardlink mode; the source is never moved and torrents keep seeding. Single-disc audiobooks are unaffected.",
       "dropFolder": "Drop folder",
       "dropFolderHint": "Optional. In External mode, Bindery renames each finished download into this folder for a watch-folder tool (Calibre-Web-Automated, Storyteller) to ingest, instead of leaving it in the download dir. The source is never moved, so torrents keep seeding. Bindery still reconciles the managed copy on the next library scan. Leave empty to hand off in place.",
       "dropLayout": "Layout",
