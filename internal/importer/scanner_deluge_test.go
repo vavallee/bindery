@@ -13,12 +13,15 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
-// delugeStub is a minimal Deluge Web JSON-RPC server returning a single
-// seeding torrent and its file list. It mirrors the shape the deluge client
-// expects (result/error/id over POST /json).
-func delugeStub(t *testing.T, hash, savePath string) *httptest.Server {
+// delugeHandler is a minimal Deluge Web JSON-RPC handler returning a single
+// seeding torrent ("testbook", one file "testbook.epub") and its file list.
+// It mirrors the shape the deluge client expects (result/error/id over POST
+// /json), including the auth.login handshake. Split from delugeStub so the
+// dispatch-matrix tests (scanner_dispatch_matrix_test.go) can wrap it with a
+// request recorder.
+func delugeHandler(t *testing.T, hash, savePath string) http.HandlerFunc {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Method string            `json:"method"`
 			Params []json.RawMessage `json:"params"`
@@ -46,7 +49,13 @@ func delugeStub(t *testing.T, hash, savePath string) *httptest.Server {
 		default:
 			write(nil)
 		}
-	}))
+	}
+}
+
+// delugeStub serves delugeHandler from an httptest server.
+func delugeStub(t *testing.T, hash, savePath string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(delugeHandler(t, hash, savePath))
 	t.Cleanup(srv.Close)
 	return srv
 }

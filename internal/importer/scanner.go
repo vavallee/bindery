@@ -78,6 +78,16 @@ type Scanner struct {
 	absLib               absNotifier
 	absLibraryIDsFn      func() []string
 	notif                eventNotifier
+
+	// testImportHook, when non-nil, intercepts tryImportInternal before any
+	// state transition or file operation and replaces the import entirely.
+	// It is a test seam for the per-client dispatch/completion matrix
+	// (scanner_dispatch_matrix_test.go, issue #1019): those tests drive the
+	// real CheckDownloads dispatch against protocol stubs and assert that the
+	// importer boundary was handed the right path by the right typed poller,
+	// without re-exercising the staging machinery the per-client scanner
+	// tests already cover. Never set outside tests.
+	testImportHook func(dl *models.Download, downloadPath, clientType string, explicitFiles []string)
 }
 
 // NewScanner creates an import scanner. downloadPathRemap is an optional
@@ -670,6 +680,10 @@ func (s *Scanner) ImportFromPath(ctx context.Context, dl *models.Download, path,
 }
 
 func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, downloadPath, cleanupClientType, cleanupRemoteID, formatHint string, cleanupFunc func() error, explicitFiles []string) {
+	if s.testImportHook != nil {
+		s.testImportHook(dl, downloadPath, cleanupClientType, explicitFiles)
+		return
+	}
 	if s.libraryDir == "" {
 		slog.Warn("no library directory configured, skipping import")
 		// Not writable/configured — needs user action before import can proceed.
