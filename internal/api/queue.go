@@ -42,6 +42,7 @@ type QueueHandler struct {
 	clients              *db.DownloadClientRepo
 	books                *db.BookRepo
 	history              *db.HistoryRepo
+	indexers             *db.IndexerRepo
 	notif                *notifier.Notifier
 	downloadDir          string
 	audiobookDownloadDir string
@@ -55,6 +56,28 @@ func NewQueueHandler(downloads *db.DownloadRepo, clients *db.DownloadClientRepo,
 func (h *QueueHandler) WithNotifier(n *notifier.Notifier) *QueueHandler {
 	h.notif = n
 	return h
+}
+
+// WithIndexers attaches the indexer repo used to resolve the per-indexer
+// seed-ratio override (#883) when sending a torrent. Optional: when unset the
+// grab proceeds without an override.
+func (h *QueueHandler) WithIndexers(indexers *db.IndexerRepo) *QueueHandler {
+	h.indexers = indexers
+	return h
+}
+
+// resolveSeedRatio returns the seed-ratio override for the given indexer, or
+// nil when there is no indexer repo, no indexer id, the lookup fails, or the
+// indexer has no override. nil keeps the download client's global ratio rule.
+func (h *QueueHandler) resolveSeedRatio(ctx context.Context, indexerID *int64) *float64 {
+	if h.indexers == nil || indexerID == nil || *indexerID == 0 {
+		return nil
+	}
+	idx, err := h.indexers.GetByID(ctx, *indexerID)
+	if err != nil || idx == nil {
+		return nil
+	}
+	return idx.SeedRatio
 }
 
 // WithStoragePaths attaches the process-level download roots used when sending
@@ -788,6 +811,7 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 		MediaType:            req.MediaType,
 		DownloadDir:          h.downloadDir,
 		AudiobookDownloadDir: h.audiobookDownloadDir,
+		SeedRatio:            h.resolveSeedRatio(ctx, indexerID),
 	})
 	if err != nil {
 		slog.Error("failed to send download", "client_type", client.Type, "error", err, "title", req.Title)

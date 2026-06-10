@@ -390,7 +390,11 @@
         "categoriesPlaceholder": "Categories (e.g. 7020, 7120, 3030)",
         "categoriesHint": "Comma-separated Newznab category IDs. 7020 = eBooks, 3030 = Audiobooks. Add custom IDs for indexers with non-standard categories (e.g. 7120 for German books).",
         "priority": "Priority",
-        "priorityHint": "Higher wins ties when the same release is found on multiple indexers. Use it to prefer one indexer — e.g. set Usenet indexers above torrent ones. Default 0."
+        "priorityHint": "Higher wins ties when the same release is found on multiple indexers. Use it to prefer one indexer — e.g. set Usenet indexers above torrent ones. Default 0.",
+        "seedRatio": "Seed ratio",
+        "seedRatioPlaceholder": "e.g. 1.0",
+        "seedRatioUnlimited": "Unlimited",
+        "seedRatioHint": "Per-indexer seed-ratio limit applied to torrents grabbed from this indexer (qBittorrent, Transmission, Deluge). Leave blank to use the download client's global rule, or check Unlimited to seed forever. Ignored for Usenet."
       }
     },
     "prowlarr": {

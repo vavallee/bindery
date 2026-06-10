@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"syscall"
@@ -1892,5 +1893,87 @@ func TestClient_Files_WindowsBackslashesNormalized(t *testing.T) {
 	}
 	if len(files) != 1 || files[0].Name != "MyBook/disc01.m4b" {
 		t.Errorf("backslash not normalized: %+v", files)
+	}
+}
+
+// TestSetShareLimits_Positive asserts a positive override posts the ratioLimit
+// verbatim to /api/v2/torrents/setShareLimits, with seedingTime fields left at
+// -2 (use global) so only the ratio rule is touched.
+func TestSetShareLimits_Positive(t *testing.T) {
+	var gotForm url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/setShareLimits":
+			_ = r.ParseForm()
+			gotForm = r.PostForm
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "u", "p")
+	c.loggedIn = true
+	if err := c.SetShareLimits(context.Background(), "abc", 1.5); err != nil {
+		t.Fatalf("SetShareLimits: %v", err)
+	}
+	if got := gotForm.Get("hashes"); got != "abc" {
+		t.Errorf("hashes = %q, want abc", got)
+	}
+	if got := gotForm.Get("ratioLimit"); got != "1.5" {
+		t.Errorf("ratioLimit = %q, want 1.5", got)
+	}
+	if got := gotForm.Get("seedingTimeLimit"); got != "-2" {
+		t.Errorf("seedingTimeLimit = %q, want -2 (use global)", got)
+	}
+}
+
+// TestSetShareLimits_Unlimited asserts the -1 sentinel passes straight through;
+// qBittorrent recognizes -1 as "no limit".
+func TestSetShareLimits_Unlimited(t *testing.T) {
+	var gotRatio string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/setShareLimits":
+			_ = r.ParseForm()
+			gotRatio = r.PostForm.Get("ratioLimit")
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "u", "p")
+	c.loggedIn = true
+	if err := c.SetShareLimits(context.Background(), "abc", -1); err != nil {
+		t.Fatalf("SetShareLimits: %v", err)
+	}
+	if gotRatio != "-1" {
+		t.Errorf("ratioLimit = %q, want -1", gotRatio)
+	}
+}
+
+// TestSetShareLimits_HTTPError surfaces a non-200 as an error so the caller can
+// log it (the grab itself is not failed by the caller, but the method reports).
+func TestSetShareLimits_HTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v2/auth/login" {
+			_, _ = w.Write([]byte("Ok."))
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "u", "p")
+	c.loggedIn = true
+	if err := c.SetShareLimits(context.Background(), "abc", 2); err == nil {
+		t.Fatal("expected error on HTTP 500")
 	}
 }

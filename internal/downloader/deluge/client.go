@@ -98,7 +98,14 @@ func (c *Client) Test(ctx context.Context) error {
 }
 
 // AddTorrent submits a magnet link or torrent URL and returns the torrent hash.
-func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, label string) (string, error) {
+//
+// seedRatio carries the per-indexer override (#883): a non-negative value is
+// applied via core.set_torrent_stop_ratio after the hash resolves. Deluge's
+// RPC accepts only non-negative floats here, so the -1 unlimited sentinel (and
+// a nil pointer) skips the call entirely, leaving Deluge's global default in
+// place. Ratio-limit errors are non-fatal: the torrent is already added, so a
+// failure to tighten the ratio must not fail the grab.
+func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, label string, seedRatio *float64) (string, error) {
 	if err := c.ensureLoggedIn(ctx); err != nil {
 		return "", err
 	}
@@ -128,7 +135,31 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, label string) (str
 		_ = c.setLabel(ctx, hash, label)
 	}
 
+	// Apply the per-indexer seed-ratio override. Skipped for nil (no override)
+	// and the -1 unlimited sentinel, which Deluge cannot express via
+	// set_torrent_stop_ratio (it rejects negatives) — leave the global default.
+	if seedRatio != nil && *seedRatio >= 0 {
+		if err := c.setStopRatio(ctx, hash, *seedRatio); err != nil {
+			slog.Warn("deluge: failed to set seed-ratio limit", "hash", hash, "ratio", *seedRatio, "error", err)
+		}
+	}
+
 	return hash, nil
+}
+
+// setStopRatio sets the per-torrent stop seed ratio via
+// core.set_torrent_stop_ratio and enables ratio-based stopping via
+// core.set_torrent_stop_at_ratio so the limit is actually honored rather than
+// silently stored. Both accept (hash, value) and only non-negative ratios.
+func (c *Client) setStopRatio(ctx context.Context, hash string, ratio float64) error {
+	var result any
+	if err := c.call(ctx, true, "core.set_torrent_stop_ratio", []any{hash, ratio}, &result); err != nil {
+		return fmt.Errorf("set torrent stop ratio: %w", err)
+	}
+	if err := c.call(ctx, true, "core.set_torrent_stop_at_ratio", []any{hash, true}, &result); err != nil {
+		return fmt.Errorf("set torrent stop at ratio: %w", err)
+	}
+	return nil
 }
 
 // addMagnet calls core.add_torrent_magnet which returns the hash directly.

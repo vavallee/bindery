@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -158,6 +159,43 @@ func (c *Client) Test(ctx context.Context) error {
 			return fmt.Errorf("connected to qBittorrent at %s but %w", c.baseURL, err)
 		}
 		return fmt.Errorf("could not reach qBittorrent at %s — %w%s", c.baseURL, err, nethint.ForErr(err))
+	}
+	return nil
+}
+
+// SetShareLimits applies a per-torrent seed-ratio limit via
+// POST /api/v2/torrents/setShareLimits. ratioLimit follows qBittorrent's own
+// convention: a positive float is the target ratio, -1 means "no limit"
+// (seed forever) and -2 means "use the global limit". seedingTimeLimit and
+// inactiveSeedingTimeLimit are left at -2 (use global) so this call only ever
+// touches the ratio rule. Callers resolve the value from the indexer's
+// SeedRatio override (#883); a nil override skips this call entirely so the
+// torrent keeps the client's global rule.
+func (c *Client) SetShareLimits(ctx context.Context, hash string, ratioLimit float64) error {
+	if err := c.ensureLoggedIn(ctx); err != nil {
+		return err
+	}
+	form := url.Values{
+		"hashes":                   {hash},
+		"ratioLimit":               {strconv.FormatFloat(ratioLimit, 'f', -1, 64)},
+		"seedingTimeLimit":         {"-2"},
+		"inactiveSeedingTimeLimit": {"-2"},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/api/v2/torrents/setShareLimits",
+		strings.NewReader(form.Encode()))
+	if err != nil {
+		return fmt.Errorf("build setShareLimits request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("setShareLimits: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("setShareLimits HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil
 }

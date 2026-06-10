@@ -400,6 +400,21 @@ func (s *Scheduler) SearchAndGrabBook(ctx context.Context, book models.Book) {
 	}
 }
 
+// resolveSeedRatio looks up the per-indexer seed-ratio override (#883) for the
+// indexer a release was grabbed from. Returns nil (no override) when the
+// indexer repo is unset, the id is zero, the lookup fails, or the indexer has
+// no override stored, so the download client keeps its global ratio rule.
+func (s *Scheduler) resolveSeedRatio(ctx context.Context, indexerID int64) *float64 {
+	if s.indexers == nil || indexerID == 0 {
+		return nil
+	}
+	idx, err := s.indexers.GetByID(ctx, indexerID)
+	if err != nil || idx == nil {
+		return nil
+	}
+	return idx.SeedRatio
+}
+
 // searchAndGrabFormat searches for and grabs a specific format of a book.
 // mediaType must be MediaTypeEbook or MediaTypeAudiobook.
 func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, mediaType string) {
@@ -550,6 +565,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		MediaType:            mediaType,
 		DownloadDir:          s.downloadDir,
 		AudiobookDownloadDir: s.audiobookDownloadDir,
+		SeedRatio:            s.resolveSeedRatio(ctx, best.IndexerID),
 	})
 	if err != nil {
 		slog.Error("SearchAndGrabBook: failed to send to downloader", "client", client.Type, "title", best.Title, "error", err)

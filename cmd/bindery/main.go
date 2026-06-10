@@ -528,7 +528,8 @@ func main() {
 		WithLifetimeCtx(appCtx)
 	queueHandler := api.NewQueueHandler(downloadRepo, dlClientRepo, bookRepo, historyRepo).
 		WithNotifier(notif).
-		WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir)
+		WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir).
+		WithIndexers(indexerRepo)
 	manualImportHandler := api.NewManualImportHandler(importScanner, downloadRepo, bookRepo).
 		WithRoots(libraryRoots)
 	pendingHandler := api.NewPendingHandler(pendingReleaseRepo, queueHandler, downloadRepo, bookRepo)
