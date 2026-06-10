@@ -1,0 +1,149 @@
+# Nightly long-budget fuzzing. CI runs the fuzz targets' seed corpora as plain
+# unit tests on every PR; this workflow is the real engine time — each native
+# Go fuzz target gets a multi-minute budget, and the mutated corpus persists
+# across nights via actions/cache on Go's fuzz cache dir, so coverage compounds
+# instead of restarting from the seeds every run.
+#
+# Go allows a single -fuzz pattern per `go test` invocation, so each shard
+# loops its targets sequentially. Two shards keep nightly wall-clock at
+# ~5×8m ≈ 40m each instead of ~80m serial.
+name: Fuzz
+
+on:
+  schedule:
+    # 02:23 UTC nightly — offset from telemetry-backup (03:17) and the weekly
+    # 00:00/06:00/07:00 jobs, off-minute to dodge runner contention.
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: "Per-target fuzz budget (Go duration, e.g. 30s, 8m)"
+        required: false
+        default: "8m"
+
+permissions:
+  contents: read
+
+# Never let two nightly runs overlap (a late manual dispatch + the schedule);
+# queue instead of cancelling so a corpus-saving run always finishes.
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  fuzz:
+    name: fuzz (${{ matrix.shard }})
+    timeout-minutes: 75
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # name:package pairs, one `go test -fuzz` invocation each.
+          - shard: net
+            targets: >-
+              FuzzValidateOutboundURL:./internal/httpsec
+              FuzzValidateTorrentFetchURL:./internal/downloader/qbittorrent
+              FuzzValidateNZBFetchURL:./internal/downloader/nzbget
+              FuzzContainsUnderRoot:./internal/api
+              FuzzParseResults:./internal/indexer/newznab
+          - shard: parse
+            targets: >-
+              FuzzParseFilename:./internal/importer
+              FuzzReadEpubMetadata:./internal/importer
+              FuzzParseRelease:./internal/indexer
+              FuzzParseCSVRows:./internal/migrate
+              FuzzRollbackMetadataDecode:./internal/calibre
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.25.11"
+          cache: true
+
+      - name: Locate Go fuzz corpus cache
+        id: fuzz-cache
+        run: echo "dir=$(go env GOCACHE)/fuzz" >> "$GITHUB_OUTPUT"
+
+      # The key includes run_id so every run saves a fresh (immutable) cache
+      # entry with the night's new corpus; restore-keys falls back to the most
+      # recent previous night's entry for this shard.
+      - name: Restore fuzz corpus
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ steps.fuzz-cache.outputs.dir }}
+          key: go-fuzz-corpus-${{ matrix.shard }}-${{ github.run_id }}
+          restore-keys: |
+            go-fuzz-corpus-${{ matrix.shard }}-
+
+      - name: Fuzz targets sequentially
+        env:
+          # Empty on schedule events; default to the full nightly budget.
+          FUZZTIME: ${{ inputs.fuzztime || '8m' }}
+          TARGETS: ${{ matrix.targets }}
+        run: |
+          set -u
+          fail=0
+          for entry in $TARGETS; do
+            name="${entry%%:*}"
+            pkg="${entry#*:}"
+            echo "::group::${name} (${pkg}, fuzztime ${FUZZTIME})"
+            if ! go test -run='^$' -fuzz="^${name}\$" -fuzztime="${FUZZTIME}" "${pkg}"; then
+              echo "::error::fuzz target ${name} (${pkg}) failed"
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$fail"
+
+      # When a target fails, Go writes the crasher input to the package's
+      # testdata/fuzz/<FuzzName>/ in the source tree. Collect only the
+      # untracked files so checked-in seed corpora don't pollute the artifact.
+      - name: Collect new crasher inputs
+        if: failure()
+        run: |
+          mkdir -p /tmp/fuzz-crashers
+          git ls-files --others --exclude-standard -z -- '*testdata/fuzz*' |
+            while IFS= read -r -d '' f; do
+              mkdir -p "/tmp/fuzz-crashers/$(dirname "$f")"
+              cp "$f" "/tmp/fuzz-crashers/$f"
+            done
+          echo "New crasher inputs:"
+          find /tmp/fuzz-crashers -type f -print || true
+      - name: Upload crasher artifact
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-crashers-${{ matrix.shard }}-${{ github.run_id }}
+          path: /tmp/fuzz-crashers/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Notify Discord
+        if: failure()
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          if [ -z "${DISCORD_WEBHOOK:-}" ]; then
+            echo "DISCORD_RELEASE_WEBHOOK not configured — skipping notification"
+            exit 0
+          fi
+          PAYLOAD=$(printf '{"content":"Nightly fuzz failure (shard `%s`) — crasher inputs attached to the run.\\n<%s>"}' "$SHARD" "$RUN_URL")
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Content-Type: application/json" \
+            --data-binary "$PAYLOAD" \
+            "$DISCORD_WEBHOOK")
+          if [ "$HTTP" = "204" ]; then
+            echo "Discord notified"
+          else
+            echo "::warning::Discord webhook returned HTTP ${HTTP} — check DISCORD_RELEASE_WEBHOOK secret"
+          fi

@@ -1,0 +1,2 @@
+### Fixed
+- **Release-title ISBNs with exotic separators now normalise correctly** — the ISBN extractor in `ParseRelease` accepted any whitespace separator (tab, CR, …) but only stripped hyphens and spaces, so a title like `978<TAB>0449912553` produced an ISBN with an embedded control character that silently failed downstream exact-match comparisons. Found by the new `FuzzParseRelease` target on its first 5-second run.

@@ -133,9 +133,18 @@ func ParseRelease(title string) ParsedRelease {
 		}
 	}
 
-	// ISBN: normalize to digits-only
+	// ISBN: normalize to digits-only. The regex accepts any \s separator
+	// (tab, CR, NBSP, …), so strip every non-digit rather than just "-" and
+	// " " — otherwise an exotic separator survives into p.ISBN and breaks
+	// downstream exact-match comparisons. Found by FuzzParseRelease.
 	if isbn := releaseIsbnRe.FindString(title); isbn != "" {
-		p.ISBN = strings.NewReplacer("-", "", " ", "").Replace(isbn)
+		var b strings.Builder
+		for _, r := range isbn {
+			if r >= '0' && r <= '9' {
+				b.WriteByte(byte(r))
+			}
+		}
+		p.ISBN = b.String()
 	}
 
 	// ASIN (Audible identifier). Uppercase BXXXXXXXXX pattern, 10 chars.
