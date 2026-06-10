@@ -1,0 +1,59 @@
+# Nightly live-provider canaries.
+#
+# Runs the build-tagged tests in tests/canary/ against the REAL OpenLibrary,
+# Hardcover, and Google Books APIs through bindery's actual client code, so
+# upstream API drift (the class of bug behind #1048's Hardcover schema
+# rejection and #1053's indexer UA 403) is caught the night it ships instead
+# of via user reports. On failure it pings Discord with the run URL.
+#
+# Hardcover and Google Books legs skip cleanly when their secrets are absent;
+# the OpenLibrary leg always runs (no auth required).
+name: Provider canaries
+
+on:
+  schedule:
+    # 04:43 UTC: off-peak for the providers and for this repo's runner queue,
+    # off the :00 boundary to dodge the GitHub scheduled-job thundering herd.
+    - cron: '43 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          # Audit, not block: this job's entire purpose is calling third-party APIs.
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.25.11"
+
+      - name: Run live-provider canaries
+        env:
+          HARDCOVER_API_TOKEN: ${{ secrets.HARDCOVER_API_TOKEN }}
+          GOOGLE_BOOKS_API_KEY: ${{ secrets.GOOGLE_BOOKS_API_KEY }}
+        run: go test -tags canary -count=1 -v -timeout=5m ./tests/canary/
+
+      - name: Notify Discord on failure
+        if: failure()
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$DISCORD_WEBHOOK" ]; then
+            echo "DISCORD_RELEASE_WEBHOOK is not set; skipping Discord notification."
+            exit 0
+          fi
+          payload=$(printf '{"content":"**Provider canary failed** — possible third-party API drift (OpenLibrary / Hardcover / Google Books). Run: %s"}' "$RUN_URL")
+          curl -fsS -X POST -H 'Content-Type: application/json' -d "$payload" "$DISCORD_WEBHOOK"
