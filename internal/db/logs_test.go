@@ -199,3 +199,93 @@ func TestLogRepo_Fields(t *testing.T) {
 		t.Errorf("expected Fields[book]=Dune, got %q", entries[0].Fields["book"])
 	}
 }
+
+func TestLogRepo_ErrorSummary(t *testing.T) {
+	repo, cleanup := openLogDB(t)
+	defer cleanup()
+
+	now := time.Now().UTC()
+	since := now.Add(-24 * time.Hour)
+
+	t.Run("empty store", func(t *testing.T) {
+		errs, warns, top, err := repo.ErrorSummary(context.Background(), since, 5)
+		if err != nil {
+			t.Fatalf("ErrorSummary: %v", err)
+		}
+		if errs != 0 || warns != 0 || len(top) != 0 {
+			t.Errorf("expected all-zero summary, got errs=%d warns=%d top=%v", errs, warns, top)
+		}
+	})
+
+	// Inside the window: 3x "indexer search failed", 2x "import failed",
+	// 1x "db locked", plus 2 WARNs and 1 INFO (which must not count).
+	for i := 0; i < 3; i++ {
+		insertEntry(t, repo, now.Add(-time.Duration(i+1)*time.Minute), "ERROR", "indexer", "indexer search failed")
+	}
+	for i := 0; i < 2; i++ {
+		insertEntry(t, repo, now.Add(-time.Duration(i+1)*time.Hour), "ERROR", "importer", "import failed")
+	}
+	insertEntry(t, repo, now.Add(-2*time.Hour), "ERROR", "db", "db locked")
+	insertEntry(t, repo, now.Add(-3*time.Hour), "WARN", "downloader", "retrying download")
+	insertEntry(t, repo, now.Add(-4*time.Hour), "WARN", "downloader", "retrying download")
+	insertEntry(t, repo, now.Add(-5*time.Hour), "INFO", "scheduler", "job started")
+
+	// Outside the window: must be excluded.
+	insertEntry(t, repo, now.Add(-25*time.Hour), "ERROR", "indexer", "indexer search failed")
+	insertEntry(t, repo, now.Add(-48*time.Hour), "WARN", "downloader", "retrying download")
+
+	t.Run("counts and ordering", func(t *testing.T) {
+		errs, warns, top, err := repo.ErrorSummary(context.Background(), since, 5)
+		if err != nil {
+			t.Fatalf("ErrorSummary: %v", err)
+		}
+		if errs != 6 {
+			t.Errorf("error count = %d, want 6", errs)
+		}
+		if warns != 2 {
+			t.Errorf("warn count = %d, want 2", warns)
+		}
+		want := []LogMessageCount{
+			{Message: "indexer search failed", Count: 3},
+			{Message: "import failed", Count: 2},
+			{Message: "db locked", Count: 1},
+		}
+		if len(top) != len(want) {
+			t.Fatalf("top = %v, want %v", top, want)
+		}
+		for i := range want {
+			if top[i] != want[i] {
+				t.Errorf("top[%d] = %v, want %v", i, top[i], want[i])
+			}
+		}
+	})
+
+	t.Run("topN limit", func(t *testing.T) {
+		_, _, top, err := repo.ErrorSummary(context.Background(), since, 2)
+		if err != nil {
+			t.Fatalf("ErrorSummary: %v", err)
+		}
+		if len(top) != 2 {
+			t.Fatalf("expected 2 top entries, got %d", len(top))
+		}
+		if top[0].Message != "indexer search failed" || top[1].Message != "import failed" {
+			t.Errorf("unexpected top-2 ordering: %v", top)
+		}
+	})
+
+	t.Run("deterministic tie-break", func(t *testing.T) {
+		// "db locked" and a new "abs sync failed" both have count 1; the
+		// tie must break alphabetically so repeated pings are stable.
+		insertEntry(t, repo, now.Add(-6*time.Hour), "ERROR", "abs", "abs sync failed")
+		_, _, top, err := repo.ErrorSummary(context.Background(), since, 5)
+		if err != nil {
+			t.Fatalf("ErrorSummary: %v", err)
+		}
+		if len(top) != 4 {
+			t.Fatalf("expected 4 top entries, got %d", len(top))
+		}
+		if top[2].Message != "abs sync failed" || top[3].Message != "db locked" {
+			t.Errorf("tie-break ordering wrong: %v", top)
+		}
+	})
+}

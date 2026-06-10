@@ -447,8 +447,13 @@ func main() {
 	// Anonymous install ping (opt-out via telemetry.enabled=false in settings).
 	// The gatherer captures repo handles by closure and runs at ping time. It
 	// must not block on network IO; all queries are local SQLite reads.
+	// The errors gatherer adds coarse error-class counters from the log store
+	// (ERROR/WARN counts plus the top-5 slog message constants over 24h,
+	// never attrs) so topology-specific breakage — e.g. loopback-Prowlarr
+	// SSRF rejections — shows up in aggregate without waiting on bug reports.
 	telemetryClient := telemetry.New(settingsRepo, version).
-		WithGatherer(buildTelemetryGatherer(indexerRepo, dlClientRepo, notificationRepo, userRepo, settingsRepo))
+		WithGatherer(buildTelemetryGatherer(indexerRepo, dlClientRepo, notificationRepo, userRepo, settingsRepo)).
+		WithErrorsGatherer(telemetry.NewLogErrorsGatherer(logRepo))
 	sched.WithTelemetry(telemetryClient)
 
 	// Recover downloads wedged mid-import by a prior crash or timeout before the

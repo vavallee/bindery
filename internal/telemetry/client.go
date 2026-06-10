@@ -8,6 +8,12 @@
 //   - features: counts and booleans summarising which subsystems are
 //     configured. Strictly numeric/boolean, never names or values. Sent
 //     only when a Gatherer is wired via WithGatherer; absent otherwise.
+//   - errors: coarse error-class counters from the local log store over the
+//     last 24 hours — error/warn counts plus the five most frequent ERROR
+//     message constants. Only the developer-written slog message string is
+//     sent (truncated to 120 chars); slog attrs (which can carry titles,
+//     paths, or other user data) are never read. Sent only when an
+//     ErrorsGatherer is wired via WithErrorsGatherer; absent otherwise.
 //
 // No personal data, no hostnames, no library contents, no titles, no IDs.
 // The setting "telemetry.enabled" (default "true") can be set to "false" to
@@ -25,6 +31,7 @@ import (
 	"regexp"
 	"runtime"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/vavallee/bindery/internal/db"
@@ -33,11 +40,25 @@ import (
 )
 
 const (
-	pingURL          = "https://api.getbindery.dev/api/ping"
 	settingEnabled   = "telemetry.enabled"
 	settingInstallID = "telemetry.install_id"
 	timeout          = 10 * time.Second
+
+	// errorWindow is how far back the errors gatherer looks. Matches the
+	// @every 24h ping cadence; the extra startup ping after a restart can
+	// double-count a window, which is acceptable for coarse counters.
+	errorWindow = 24 * time.Hour
+	// maxTopErrors bounds the top_errors list length on the wire.
+	maxTopErrors = 5
+	// maxErrorMsgLen defensively truncates each top_errors message. slog
+	// messages are developer-written constants, but a few are paragraph-long
+	// warnings; the receiver only needs enough to identify the error class.
+	maxErrorMsgLen = 120
 )
+
+// pingURL is a var (not const) only so tests can point Ping at a local
+// httptest server; production code never mutates it.
+var pingURL = "https://api.getbindery.dev/api/ping"
 
 // pingPayload is the JSON body sent on each ping. Features is a pointer so it
 // is omitted entirely when no Gatherer is configured (the previous payload
@@ -49,6 +70,7 @@ type pingPayload struct {
 	Arch      string    `json:"arch"`
 	Deploy    string    `json:"deploy"`
 	Features  *Features `json:"features,omitempty"`
+	Errors    *Errors   `json:"errors,omitempty"`
 }
 
 // releaseVersionPattern matches semver-shaped release tags ("1.7.0", "v1.7.0").
@@ -98,6 +120,79 @@ type Features struct {
 	MultiUser       bool `json:"multi_user,omitempty"`
 }
 
+// ErrorEntry is one aggregated error row: a slog message constant and how
+// many times it was logged at ERROR level inside the window. Msg is the
+// developer-written constant string only — never attrs, which can carry
+// titles, paths, or other user data.
+type ErrorEntry struct {
+	Msg   string `json:"msg"`
+	Count int    `json:"count"`
+}
+
+// Errors summarises log-store error volume over the last 24 hours. Counts
+// are sent even when zero (an explicit "no errors" is meaningful to the
+// receiver, unlike an absent section which just means an older binary or no
+// gatherer). The section as a whole is omitted when no ErrorsGatherer is
+// wired or the gatherer fails, keeping the payload additive for the
+// telemetry server.
+//
+// Add new fields with care: anything here is documented at
+// getbindery.dev/telemetry-fields and committed to the public schema.
+type Errors struct {
+	ErrorCount int          `json:"error_count"`
+	WarnCount  int          `json:"warn_count"`
+	TopErrors  []ErrorEntry `json:"top_errors,omitempty"`
+}
+
+// ErrorsGatherer returns the current error summary, or nil to skip the
+// errors section for this ping (e.g. the log store query failed). Called
+// inline from Ping; must be cheap and local-only, like Gatherer.
+type ErrorsGatherer func(ctx context.Context) *Errors
+
+// NewLogErrorsGatherer returns an ErrorsGatherer backed by the SQLite log
+// store: ERROR/WARN counts over the last 24 hours plus the five most
+// frequent ERROR message constants. Reads only the logs.message column;
+// the fields (attrs) column is never touched. Failures are swallowed —
+// a missing errors section is preferable to skipping the whole ping.
+func NewLogErrorsGatherer(logs *db.LogRepo) ErrorsGatherer {
+	return func(ctx context.Context) *Errors {
+		errCount, warnCount, top, err := logs.ErrorSummary(ctx, time.Now().Add(-errorWindow), maxTopErrors)
+		if err != nil {
+			slog.Debug("telemetry: error summary failed", "error", err)
+			return nil
+		}
+		e := &Errors{ErrorCount: errCount, WarnCount: warnCount}
+		for _, m := range top {
+			e.TopErrors = append(e.TopErrors, ErrorEntry{Msg: m.Message, Count: m.Count})
+		}
+		return e
+	}
+}
+
+// sanitizeErrors enforces the wire guarantees regardless of which gatherer
+// produced the summary: at most maxTopErrors entries, each message truncated
+// to maxErrorMsgLen. Returns its input (possibly modified in place); nil in,
+// nil out.
+func sanitizeErrors(e *Errors) *Errors {
+	if e == nil {
+		return nil
+	}
+	if len(e.TopErrors) > maxTopErrors {
+		e.TopErrors = e.TopErrors[:maxTopErrors]
+	}
+	for i, t := range e.TopErrors {
+		if len(t.Msg) > maxErrorMsgLen {
+			// Truncate on a rune boundary so we never emit invalid UTF-8.
+			cut := t.Msg[:maxErrorMsgLen]
+			for len(cut) > 0 && !utf8.ValidString(cut) {
+				cut = cut[:len(cut)-1]
+			}
+			e.TopErrors[i].Msg = cut
+		}
+	}
+	return e
+}
+
 // Gatherer returns the current Features snapshot. Called inline from Ping,
 // so it should be cheap (a handful of small SQL reads, no network). Errors
 // from individual subqueries should be swallowed by the implementation; a
@@ -108,10 +203,11 @@ type Gatherer func(ctx context.Context) Features
 
 // Client sends anonymous usage pings and surfaces the latest published version.
 type Client struct {
-	settings      *db.SettingsRepo
-	version       string
-	latestVersion string
-	gatherer      Gatherer
+	settings       *db.SettingsRepo
+	version        string
+	latestVersion  string
+	gatherer       Gatherer
+	errorsGatherer ErrorsGatherer
 }
 
 // New creates a telemetry client. version is the running binary's version string.
@@ -128,6 +224,15 @@ func New(settings *db.SettingsRepo, version string) *Client {
 // to support fluent construction (telemetry.New(...).WithGatherer(...)).
 func (c *Client) WithGatherer(g Gatherer) *Client {
 	c.gatherer = g
+	return c
+}
+
+// WithErrorsGatherer wires in an error-summary gatherer. Calling without
+// this omits the errors section from the payload (backwards-compatible with
+// older telemetry-server versions). Returns the receiver for fluent
+// construction.
+func (c *Client) WithErrorsGatherer(g ErrorsGatherer) *Client {
+	c.errorsGatherer = g
 	return c
 }
 
@@ -179,6 +284,9 @@ func (c *Client) Ping(ctx context.Context) {
 	if c.gatherer != nil {
 		f := c.gatherer(ctx)
 		body.Features = &f
+	}
+	if c.errorsGatherer != nil {
+		body.Errors = sanitizeErrors(c.errorsGatherer(ctx))
 	}
 	payload, _ := json.Marshal(body)
 

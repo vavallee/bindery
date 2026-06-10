@@ -132,6 +132,71 @@ func (r *LogRepo) Query(ctx context.Context, f LogFilter) ([]LogEntry, error) {
 	return out, rows.Err()
 }
 
+// LogMessageCount is one (message, count) aggregation row, used by the
+// telemetry error summary. Message is the raw `message` column value — the
+// developer-written slog message constant — never the `fields` attrs blob.
+type LogMessageCount struct {
+	Message string
+	Count   int
+}
+
+// ErrorSummary returns the number of ERROR and WARN entries recorded since
+// `since`, plus the topN most frequent ERROR messages by occurrence. Only the
+// message column is aggregated; the fields column (slog attrs, which can carry
+// titles/paths/user data) is deliberately never read here. Ties are broken by
+// message string for deterministic ordering.
+func (r *LogRepo) ErrorSummary(ctx context.Context, since time.Time, topN int) (errorCount, warnCount int, top []LogMessageCount, err error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT level, COUNT(*) FROM logs WHERE ts >= ? AND level IN ('ERROR', 'WARN') GROUP BY level`,
+		since.UTC(),
+	)
+	if err != nil {
+		return 0, 0, nil, fmt.Errorf("count error logs: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var level string
+		var n int
+		if err := rows.Scan(&level, &n); err != nil {
+			return 0, 0, nil, fmt.Errorf("scan error count: %w", err)
+		}
+		switch level {
+		case "ERROR":
+			errorCount = n
+		case "WARN":
+			warnCount = n
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, 0, nil, fmt.Errorf("iterate error counts: %w", err)
+	}
+
+	if topN <= 0 || errorCount == 0 {
+		return errorCount, warnCount, nil, nil
+	}
+
+	topRows, err := r.db.QueryContext(ctx,
+		`SELECT message, COUNT(*) AS c FROM logs WHERE ts >= ? AND level = 'ERROR'
+		 GROUP BY message ORDER BY c DESC, message ASC LIMIT ?`,
+		since.UTC(), topN,
+	)
+	if err != nil {
+		return 0, 0, nil, fmt.Errorf("top error messages: %w", err)
+	}
+	defer topRows.Close()
+	for topRows.Next() {
+		var m LogMessageCount
+		if err := topRows.Scan(&m.Message, &m.Count); err != nil {
+			return 0, 0, nil, fmt.Errorf("scan top error message: %w", err)
+		}
+		top = append(top, m)
+	}
+	if err := topRows.Err(); err != nil {
+		return 0, 0, nil, fmt.Errorf("iterate top error messages: %w", err)
+	}
+	return errorCount, warnCount, top, nil
+}
+
 // Trim deletes entries older than cutoff.
 func (r *LogRepo) Trim(ctx context.Context, cutoff time.Time) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM logs WHERE ts < ?`, cutoff.UTC())

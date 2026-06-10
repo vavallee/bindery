@@ -57,7 +57,7 @@ The `internal/` tree is organised by domain, not by layer:
 | `opds` | OPDS 1.2 catalogue feeds (root, recent, by author, by series, book entry/file). |
 | `notifier` | Webhook sender (SSRF-guarded), retry policy, test-fire endpoint. |
 | `httpsec` | Outbound URL guards (SSRF, DNS-rebinding), inbound header hardening (CSP, HSTS, frame-deny). |
-| `telemetry` | Once-daily anonymous version ping (opt-out via setting or env var). |
+| `telemetry` | Once-daily anonymous ping: version, feature counts, coarse error-class counters (opt-out via setting or env var). |
 | `logbuf` | Persistent log buffer backing the in-app Settings → Logs viewer. |
 | `webui` | The `go:embed` filesystem for the built React SPA, with URL-base rewriting. |
 | `config` | Loads bootstrap runtime configuration from environment variables (paths, ports, retention, feature flags). |
