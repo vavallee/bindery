@@ -204,10 +204,12 @@ func mergeAuthorWorkMetadata(dst *models.Book, src models.Book) {
 	if dst.Description == "" {
 		dst.Description = src.Description
 	}
-	if dst.AverageRating == 0 {
+	// #807: keep the (average, count) pair together and prefer the source with
+	// the materially stronger ratings_count rather than filling each field
+	// independently (which could pair an average from one source with a count
+	// from another).
+	if preferStrongerRating(dst.AverageRating, dst.RatingsCount, src.AverageRating, src.RatingsCount) {
 		dst.AverageRating = src.AverageRating
-	}
-	if dst.RatingsCount == 0 {
 		dst.RatingsCount = src.RatingsCount
 	}
 	if dst.ReleaseDate == nil {

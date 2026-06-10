@@ -802,7 +802,7 @@ func (a *Aggregator) cacheISBNBook(ctx context.Context, key string, book *models
 					if book.ImageURL == "" && full.ImageURL != "" {
 						book.ImageURL = full.ImageURL
 					}
-					if book.AverageRating == 0 && full.AverageRating > 0 {
+					if preferStrongerRating(book.AverageRating, book.RatingsCount, full.AverageRating, full.RatingsCount) {
 						book.AverageRating = full.AverageRating
 						book.RatingsCount = full.RatingsCount
 					}

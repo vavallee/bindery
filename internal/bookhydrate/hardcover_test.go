@@ -109,6 +109,156 @@ func TestHydrateHardcoverEditionsAssignsBookAndPromotesAudioASIN(t *testing.T) {
 	}
 }
 
+// TestHydrateHardcoverEditionsDerivesAudiobookMetadataBeforeAudnex covers
+// issue #806: book-level audiobook fields (language, cover) are derived from
+// the chosen Hardcover audio edition first, and Audnex is left to fill only
+// the gap it owns (narrator).
+func TestHydrateHardcoverEditionsDerivesAudiobookMetadataBeforeAudnex(t *testing.T) {
+	books, editions, book, ctx := newHydrateBook(t, "hc:hydrated-book", "hardcover", models.MediaTypeAudiobook)
+	audioASIN := "b222222222"
+	editionLang := "ger"
+	editionCover := "https://img.example/hc-audio.jpg"
+	enricher := &fakeAudiobookEnricher{}
+
+	result := HydrateHardcoverEditions(ctx, Options{
+		Book:     book,
+		Provider: "hardcover",
+		Editions: editions,
+		Books:    books,
+		FetchEditions: func(context.Context, string) ([]models.Edition, error) {
+			return []models.Edition{{
+				ForeignID: "hc:audio",
+				Title:     "Audio",
+				ASIN:      &audioASIN,
+				Format:    "Audiobook",
+				Language:  editionLang,
+				ImageURL:  editionCover,
+				Monitored: true,
+			}}, nil
+		},
+		Enricher: enricher,
+	})
+	if result.Err != nil {
+		t.Fatalf("hydrate err = %v", result.Err)
+	}
+	if !result.MetadataDerived {
+		t.Fatalf("expected MetadataDerived, got result=%+v", result)
+	}
+	if !result.ASINPromoted || !result.AudiobookEnriched || !result.BookUpdated {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	// Hardcover edition supplied language + cover...
+	if book.Language != editionLang {
+		t.Fatalf("language not derived from Hardcover edition: %q", book.Language)
+	}
+	if book.ImageURL != editionCover {
+		t.Fatalf("cover not derived from Hardcover edition: %q", book.ImageURL)
+	}
+	// ...and Audnex filled the gap it owns.
+	if book.Narrator != "Kate Reading" {
+		t.Fatalf("Audnex did not fill narrator gap: %q", book.Narrator)
+	}
+	stored, err := books.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Language != editionLang || stored.ImageURL != editionCover || stored.Narrator != "Kate Reading" {
+		t.Fatalf("derived audiobook metadata not persisted: %+v", stored)
+	}
+}
+
+// TestHydrateHardcoverEditionsDoesNotClobberKnownAudiobookFields guards the
+// "unknown ⇒ don't overwrite known" invariant: Hardcover edition data must not
+// replace language/cover the book already carries.
+func TestHydrateHardcoverEditionsDoesNotClobberKnownAudiobookFields(t *testing.T) {
+	books, editions, book, ctx := newHydrateBook(t, "hc:hydrated-book", "hardcover", models.MediaTypeAudiobook)
+	book.Language = "eng"
+	book.ImageURL = "https://existing.example/cover.jpg"
+	if err := books.Update(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	audioASIN := "b222222222"
+
+	result := HydrateHardcoverEditions(ctx, Options{
+		Book:     book,
+		Provider: "hardcover",
+		Editions: editions,
+		Books:    books,
+		FetchEditions: func(context.Context, string) ([]models.Edition, error) {
+			return []models.Edition{{
+				ForeignID: "hc:audio",
+				Title:     "Audio",
+				ASIN:      &audioASIN,
+				Format:    "Audiobook",
+				Language:  "ger",
+				ImageURL:  "https://img.example/hc-audio.jpg",
+				Monitored: true,
+			}}, nil
+		},
+		Enricher: &fakeAudiobookEnricher{},
+	})
+	if result.Err != nil {
+		t.Fatalf("hydrate err = %v", result.Err)
+	}
+	if book.Language != "eng" {
+		t.Fatalf("known language was clobbered: %q", book.Language)
+	}
+	if book.ImageURL != "https://existing.example/cover.jpg" {
+		t.Fatalf("known cover was clobbered: %q", book.ImageURL)
+	}
+}
+
+// TestHydrateHardcoverEditionsDerivesMetadataWithoutASINPromotion covers the
+// case where the book already has an ASIN (so no promotion happens) but the
+// Hardcover edition still has language/cover to contribute — the derivation
+// must run and persist on its own (#806).
+func TestHydrateHardcoverEditionsDerivesMetadataWithoutASINPromotion(t *testing.T) {
+	books, editions, book, ctx := newHydrateBook(t, "hc:hydrated-book", "hardcover", models.MediaTypeAudiobook)
+	book.ASIN = "B000PREEXIST"
+	if err := books.Update(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	editionASIN := "b222222222"
+
+	result := HydrateHardcoverEditions(ctx, Options{
+		Book:     book,
+		Provider: "hardcover",
+		Editions: editions,
+		Books:    books,
+		FetchEditions: func(context.Context, string) ([]models.Edition, error) {
+			return []models.Edition{{
+				ForeignID: "hc:audio",
+				Title:     "Audio",
+				ASIN:      &editionASIN,
+				Format:    "Audiobook",
+				Language:  "ger",
+				ImageURL:  "https://img.example/hc-audio.jpg",
+				Monitored: true,
+			}}, nil
+		},
+		Enricher: &fakeAudiobookEnricher{},
+	})
+	if result.Err != nil {
+		t.Fatalf("hydrate err = %v", result.Err)
+	}
+	if result.ASINPromoted {
+		t.Fatalf("ASIN should not be promoted over an existing one: %+v", result)
+	}
+	if !result.MetadataDerived || !result.BookUpdated {
+		t.Fatalf("derivation should run and persist without ASIN promotion: %+v", result)
+	}
+	if book.ASIN != "B000PREEXIST" {
+		t.Fatalf("existing ASIN changed: %q", book.ASIN)
+	}
+	stored, err := books.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Language != "ger" || stored.ImageURL != "https://img.example/hc-audio.jpg" {
+		t.Fatalf("derived metadata not persisted without ASIN promotion: %+v", stored)
+	}
+}
+
 func TestHydrateHardcoverEditionsDoesNotPromoteSkippedEditionASIN(t *testing.T) {
 	books, editions, book, ctx := newHydrateBook(t, "hc:hydrated-book", "hardcover", models.MediaTypeAudiobook)
 	other := &models.Book{

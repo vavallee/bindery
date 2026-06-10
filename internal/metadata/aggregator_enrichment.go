@@ -285,7 +285,12 @@ func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
 			book.Description = e.Description
 			slog.Debug("enriched description", "provider", enricher.Name(), "book", book.Title)
 		}
-		if book.AverageRating == 0 && e.AverageRating > 0 {
+		// #807: take the incoming rating when we have none yet, or when the
+		// incoming source carries a materially stronger ratings_count than the
+		// value we're holding (e.g. Hardcover's community signal vs. sparse
+		// OpenLibrary data). preferStrongerRating keeps the "unknown ⇒ don't
+		// overwrite a known value" invariant.
+		if preferStrongerRating(book.AverageRating, book.RatingsCount, e.AverageRating, e.RatingsCount) {
 			book.AverageRating = e.AverageRating
 			book.RatingsCount = e.RatingsCount
 		}
@@ -328,10 +333,42 @@ func applyEnrichmentSnapshot(book *models.Book, snap enrichmentSnapshot) {
 	if book.ImageURL == "" && snap.imageURL != "" {
 		book.ImageURL = snap.imageURL
 	}
-	if book.AverageRating == 0 && snap.averageRating > 0 {
+	if preferStrongerRating(book.AverageRating, book.RatingsCount, snap.averageRating, snap.ratingsCount) {
 		book.AverageRating = snap.averageRating
 		book.RatingsCount = snap.ratingsCount
 	}
+}
+
+// ratingStrengthFactor is how many times larger an incoming ratings_count
+// must be before it displaces a rating we already hold. A 2x threshold means
+// we only swap when the new source is clearly better supported, not when two
+// sources are within noise of each other.
+const ratingStrengthFactor = 2
+
+// ratingStrengthFloor is the minimum ratings_count an incoming rating must
+// carry to ever displace an existing one. It guards against a handful of
+// ratings (statistically meaningless) overwriting an established value just
+// because the existing source happens to report even fewer.
+const ratingStrengthFloor = 10
+
+// preferStrongerRating reports whether an incoming (average, count) rating
+// should replace the current one. Issue #807's rule:
+//   - never overwrite with an empty incoming rating (incoming average <= 0 ⇒
+//     keep current);
+//   - take the incoming rating when we currently hold none (current average
+//     <= 0) — any rating beats no rating, even a count-less one;
+//   - otherwise (both sides have a rating) replace only when the incoming
+//     ratings_count clears the floor AND is at least ratingStrengthFactor× the
+//     current count — a materially stronger community signal — so weaker or
+//     count-less data never clobbers an established value.
+func preferStrongerRating(curAvg float64, curCount int, inAvg float64, inCount int) bool {
+	if inAvg <= 0 {
+		return false
+	}
+	if curAvg <= 0 {
+		return true
+	}
+	return inCount >= ratingStrengthFloor && inCount >= curCount*ratingStrengthFactor
 }
 
 // pickEnrichmentMatch returns the first candidate that plausibly matches

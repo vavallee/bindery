@@ -45,6 +45,7 @@ type Result struct {
 	Fetched           int
 	Upserted          int
 	ASINPromoted      bool
+	MetadataDerived   bool
 	AudiobookEnriched bool
 	BookUpdated       bool
 	Err               error
@@ -117,8 +118,22 @@ func HydrateHardcoverEditions(ctx context.Context, opts Options) Result {
 		}
 	}
 
+	// #806: derive audiobook metadata from the chosen Hardcover edition BEFORE
+	// running Audnex, so Hardcover's deterministic edition data fills the book
+	// and Audnex is left to cover only the gaps (narrator, refined duration,
+	// summary, cover-if-missing). preferredAudioEdition picks the same edition
+	// maybePromoteASIN promotes the ASIN from, keeping the two derivations
+	// consistent.
+	if edition, ok := preferredAudioEdition(acceptedAudioEditions); ok {
+		if deriveAudiobookMetadataFromEdition(book, edition) {
+			result.MetadataDerived = true
+		}
+	}
+
 	if maybePromoteASIN(book, acceptedAudioEditions) {
 		result.ASINPromoted = true
+		// Audnex enrichment runs AFTER Hardcover-edition derivation (above) so
+		// it only fills what Hardcover lacked (#806).
 		if opts.Enricher != nil {
 			if err := opts.Enricher.EnrichAudiobook(ctx, book); err != nil {
 				if result.Err == nil {
@@ -129,19 +144,85 @@ func HydrateHardcoverEditions(ctx context.Context, opts Options) Result {
 				result.AudiobookEnriched = true
 			}
 		}
-		if opts.Books != nil {
-			if err := opts.Books.Update(ctx, book); err != nil {
-				if result.Err == nil {
-					result.Err = err
-				}
-				slog.Warn("hardcover ASIN promotion persist failed", "bookID", book.ID, "asin", book.ASIN, "error", err)
-			} else {
-				result.BookUpdated = true
+	}
+
+	// Persist when Hardcover-edition derivation or ASIN promotion changed the
+	// book. Derivation alone (e.g. ASIN already set) is enough to warrant a
+	// write so the language/cover/duration we pulled isn't lost.
+	if (result.ASINPromoted || result.MetadataDerived) && opts.Books != nil {
+		if err := opts.Books.Update(ctx, book); err != nil {
+			if result.Err == nil {
+				result.Err = err
 			}
+			slog.Warn("hardcover book hydration persist failed", "bookID", book.ID, "asin", book.ASIN, "error", err)
+		} else {
+			result.BookUpdated = true
 		}
 	}
 
 	return result
+}
+
+// preferredAudioEdition returns the audio-looking edition the hydrator should
+// derive book metadata from — the same edition maybePromoteASIN promotes the
+// ASIN from (highest audioEditionScore, first on ties). Returns ok=false when
+// there is no audio edition to derive from.
+func preferredAudioEdition(editions []models.Edition) (models.Edition, bool) {
+	best := -1
+	bestScore := -1
+	for i := range editions {
+		score := audioEditionScore(editions[i])
+		if best == -1 || score > bestScore {
+			best = i
+			bestScore = score
+		}
+	}
+	if best == -1 {
+		return models.Edition{}, false
+	}
+	return editions[best], true
+}
+
+// deriveAudiobookMetadataFromEdition fills book-level audiobook fields from a
+// Hardcover edition, preferring Hardcover's deterministic edition data before
+// Audnex runs (#806). It only ever fills unknown fields — known values are
+// never overwritten ("unknown ⇒ don't clobber known"). It also makes sure an
+// audio-bearing book carries an audiobook MediaType so the Audnex path is
+// eligible. Returns whether it changed anything.
+func deriveAudiobookMetadataFromEdition(book *models.Book, edition models.Edition) bool {
+	if book == nil {
+		return false
+	}
+	changed := false
+
+	if !bookAcceptsAudiobookASIN(book) {
+		// The chosen edition is audio-looking but the book wasn't flagged as
+		// audio yet; promote it so downstream audio enrichment is eligible.
+		switch book.MediaType {
+		case "":
+			book.MediaType = models.MediaTypeAudiobook
+			changed = true
+		case models.MediaTypeEbook:
+			book.MediaType = models.MediaTypeBoth
+			changed = true
+		}
+	}
+
+	if book.Language == "" {
+		if lang := strings.TrimSpace(edition.Language); lang != "" {
+			book.Language = lang
+			changed = true
+		}
+	}
+
+	if book.ImageURL == "" {
+		if cover := strings.TrimSpace(edition.ImageURL); cover != "" {
+			book.ImageURL = cover
+			changed = true
+		}
+	}
+
+	return changed
 }
 
 func maybePromoteASIN(book *models.Book, editions []models.Edition) bool {

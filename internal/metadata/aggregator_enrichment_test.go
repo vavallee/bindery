@@ -441,6 +441,93 @@ func TestAggregator_enrichBook_CoverProviderSkippedWhenAlreadyHaveCover(t *testi
 	}
 }
 
+// TestPreferStrongerRating_Rule exercises issue #807's field-level merge rule
+// directly: empty incoming never wins, an incoming rating always fills an empty
+// current, and between two populated sources only a materially stronger
+// ratings_count (≥ floor AND ≥ 2× current) displaces the existing value.
+func TestPreferStrongerRating_Rule(t *testing.T) {
+	cases := []struct {
+		name     string
+		curAvg   float64
+		curCount int
+		inAvg    float64
+		inCount  int
+		want     bool
+	}{
+		{"empty incoming keeps current", 4.0, 100, 0, 0, false},
+		{"incoming count-less but current empty fills", 0, 0, 4.5, 0, true},
+		{"incoming fills empty current", 0, 0, 4.2, 5, true},
+		{"stronger incoming displaces", 4.0, 50, 3.9, 500, true},
+		{"weaker incoming kept out", 4.0, 500, 4.8, 50, false},
+		{"slightly higher but below 2x kept out", 4.0, 100, 4.1, 150, false},
+		{"above floor and 2x wins", 4.0, 100, 4.1, 200, true},
+		{"meets 2x but below floor kept out", 4.0, 3, 4.9, 6, false},
+		{"equal counts kept out", 4.0, 100, 4.9, 100, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := preferStrongerRating(tc.curAvg, tc.curCount, tc.inAvg, tc.inCount)
+			if got != tc.want {
+				t.Fatalf("preferStrongerRating(%v,%d,%v,%d) = %v, want %v",
+					tc.curAvg, tc.curCount, tc.inAvg, tc.inCount, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAggregator_enrichBook_PrefersStrongerRatingSignal verifies the rule wires
+// through enrichBook: a Hardcover enricher with a materially stronger
+// ratings_count replaces the sparse rating the book already carries (#807).
+func TestAggregator_enrichBook_PrefersStrongerRatingSignal(t *testing.T) {
+	enricher := &mockProvider{
+		name: "hardcover",
+		searchBooks: []models.Book{{
+			Title:         "Dune",
+			Author:        &models.Author{Name: "Frank Herbert"},
+			AverageRating: 4.3,
+			RatingsCount:  9000,
+		}},
+	}
+	agg := &Aggregator{enrichers: []Provider{enricher}, cache: newTTLCache(time.Minute)}
+
+	book := &models.Book{
+		Title:         "Dune",
+		Author:        &models.Author{Name: "Frank Herbert"},
+		AverageRating: 3.9,
+		RatingsCount:  20,
+	}
+	agg.enrichBook(context.Background(), book)
+	if book.AverageRating != 4.3 || book.RatingsCount != 9000 {
+		t.Fatalf("stronger Hardcover rating not adopted: avg=%v count=%d", book.AverageRating, book.RatingsCount)
+	}
+}
+
+// TestAggregator_enrichBook_KeepsStrongerExistingRating is the inverse guard:
+// a weaker incoming rating must not clobber a better-supported existing one.
+func TestAggregator_enrichBook_KeepsStrongerExistingRating(t *testing.T) {
+	enricher := &mockProvider{
+		name: "hardcover",
+		searchBooks: []models.Book{{
+			Title:         "Dune",
+			Author:        &models.Author{Name: "Frank Herbert"},
+			AverageRating: 4.9,
+			RatingsCount:  12,
+		}},
+	}
+	agg := &Aggregator{enrichers: []Provider{enricher}, cache: newTTLCache(time.Minute)}
+
+	book := &models.Book{
+		Title:         "Dune",
+		Author:        &models.Author{Name: "Frank Herbert"},
+		AverageRating: 4.1,
+		RatingsCount:  8000,
+	}
+	agg.enrichBook(context.Background(), book)
+	if book.AverageRating != 4.1 || book.RatingsCount != 8000 {
+		t.Fatalf("weaker incoming rating clobbered stronger existing: avg=%v count=%d", book.AverageRating, book.RatingsCount)
+	}
+}
+
 func TestAggregator_GetBook_NoCover_EnrichedFromProvider(t *testing.T) {
 	// Book has a long description so the old trigger wouldn't fire — but
 	// ImageURL is empty so enrichment must still run.
