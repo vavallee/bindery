@@ -51,6 +51,7 @@ export default function LogsTab() {
 
         {/* Level filter pills */}
         <div className="flex items-center gap-1.5 text-xs">
+          <span className="text-[10px] font-medium uppercase text-slate-400 dark:text-zinc-600 mr-1">View</span>
           {(['all', 'debug', 'info', 'warn', 'error'] as const).map(f => (
             <button
               key={f}
@@ -68,7 +69,7 @@ export default function LogsTab() {
 
         {/* Runtime log level */}
         <div className="flex items-center gap-2 text-xs">
-          <span className="text-slate-500 dark:text-zinc-500">{t('settings.logs.level')}</span>
+          <span className="text-slate-500 dark:text-zinc-500 font-medium">Runtime level</span>
           <select
             value={logLevel}
             onChange={async e => {
@@ -76,6 +77,7 @@ export default function LogsTab() {
               await api.setLogLevel(l).catch(console.error)
               setLogLevel(l)
             }}
+            title="Controls which log levels are written to the database"
             className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 text-xs"
           >
             {['debug', 'info', 'warn', 'error'].map(l => (
