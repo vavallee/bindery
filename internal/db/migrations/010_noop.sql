@@ -1,0 +1,10 @@
+-- This file exists solely to fill the gap at position 010 in the migration
+-- sequence. The original migration set skipped this number, so the legacy
+-- index-based runner (which stored consecutive integers starting at 1) would
+-- write version=10 into schema_migrations when it applied what is now
+-- 011_calibre_mode.sql. Without a file here, version 10 is not a valid
+-- filename-based version number, causing reconcileMigrationVersions to treat
+-- any DB that carries that row as corrupt and refuse to start.
+--
+-- Adding this no-op makes version 10 a valid filename number so the guard
+-- passes whether the row arrived from a legacy run or a fresh install.
