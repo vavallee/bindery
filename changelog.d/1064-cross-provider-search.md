@@ -1,2 +1,0 @@
-### Added
-- **Book and author search now queries every configured metadata provider** (#1064) — searches fan out in parallel to OpenLibrary, Hardcover, Google Books, and DNB (each with its own timeout), then results are de-duplicated and ranked by relevance with primary-provider hits first. Books and authors that OpenLibrary lacks — recent releases, niche or foreign-language titles — now show up in search instead of coming back empty.

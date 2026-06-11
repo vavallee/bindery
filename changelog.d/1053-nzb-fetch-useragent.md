@@ -1,2 +1,0 @@
-### Fixed
-- **Grabbing from indexers that fingerprint the User-Agent now works** (#1053) — fetching the NZB/torrent file from an indexer (e.g. nzbfinder.ws) failed with `indexer returned HTTP 403` and an anti-bot HTML interstitial, even though search worked. The download-client fetch paths sent Go's default `User-Agent` instead of the project UA the search client already uses, so the indexer served a block page. All indexer-fetch paths (SABnzbd, NZBGet, Transmission, qBittorrent) now send `bindery/<version>`. Direct-magnet grabs were never affected.

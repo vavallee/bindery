@@ -1,2 +1,0 @@
-### Changed
-- **UI accessibility and visual polish across the app** (#1037, #1038, #1039, #1040, #1041, #1042) — a coordinated pass on contrast and affordance: WCAG AA-compliant text-color tokens and badge colors in both themes; a redesigned queue with status chips, quieter error rows, and bulk actions; a shared button vocabulary with AA-safe destructive buttons; clickable toggles that no longer look like static badges (plus a status legend); blank book covers replaced by an accessible placeholder with a readable title; and author bios constrained to a readable line length.

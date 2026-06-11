@@ -1,2 +1,0 @@
-### Added
-- **Optional multi-disc audiobook flattening** (#886) — when enabled (Settings → General, copy/hardlink mode only), a completed audiobook download split into `Disc 1`/`CD 2`/… folders is imported into one flat folder as `Part 001.ext`, `Part 002.ext`, … so audiobook players sort it correctly; the source is never moved, so torrents keep seeding. Off by default and single-disc imports are unchanged.

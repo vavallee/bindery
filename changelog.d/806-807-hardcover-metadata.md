@@ -1,3 +1,0 @@
-### Changed
-- **Audiobook metadata is now derived from Hardcover editions before Audnex enrichment** (#806) — when a confident Hardcover match is hydrated, the chosen audio edition's language and cover (and audiobook media type) are filled from Hardcover first, leaving Audnex to supply only what Hardcover lacks (narrator, refined duration, summary). Known fields are never overwritten.
-- **Metadata enrichment now prefers stronger Hardcover rating signals** (#807) — when Hardcover carries a materially better-supported rating (at least 2× the current `ratings_count`, above a small floor), Bindery adopts its `average_rating` and `ratings_count` instead of keeping a sparse first-seen value; weaker or empty incoming ratings still never replace a known one.

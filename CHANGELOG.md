@@ -6,6 +6,43 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.18.0] — 2026-06-11
+
+### Added
+
+- **`BINDERY_DOWNLOAD_ALLOW_LOOPBACK`** ([#1062](https://github.com/vavallee/bindery/discussions/1062)) — opt-in env var to let Bindery fetch indexer-provided `.torrent` / `.nzb` links that resolve to loopback (`127.0.0.1`, `::1`). Fixes `url not allowed: points to loopback address` when Prowlarr / an indexer is co-located on loopback (e.g. `network_mode: host`). Off by default since the download URL is indexer-chosen data; link-local and cloud-metadata stay blocked regardless.
+- **Book and author search now queries every configured metadata provider** (#1064) — searches fan out in parallel to OpenLibrary, Hardcover, Google Books, and DNB (each with its own timeout), then results are de-duplicated and ranked by relevance with primary-provider hits first. Books and authors that OpenLibrary lacks — recent releases, niche or foreign-language titles — now show up in search instead of coming back empty.
+- **Indexers synced from Prowlarr now auto-populate their per-indexer seed-ratio override** (#1065) from Prowlarr's `seedCriteria.seedRatio`, unless you've set the ratio yourself (your value always wins).
+- **Per-indexer seed-ratio override** (#883) — set a seed ratio (or "unlimited") on each indexer and Bindery applies it to torrents grabbed from it on qBittorrent, Transmission, and Deluge; leave it blank to keep the download client's global rule.
+- **Optional multi-disc audiobook flattening** (#886) — when enabled (Settings → General, copy/hardlink mode only), a completed audiobook download split into `Disc 1`/`CD 2`/… folders is imported into one flat folder as `Part 001.ext`, `Part 002.ext`, … so audiobook players sort it correctly; the source is never moved, so torrents keep seeding. Off by default and single-disc imports are unchanged.
+- **File-naming templates now have a live preview, a token picker, and inline validation** (#943) — Settings → General → File Naming shows the rendered sample path as you type, lets you insert any of the 8 supported tokens with one click, and flags unknown/invalid tokens before you save.
+- **Log-rate Discord alerting (Helm)** (#1085) — new opt-in `logAlert` CronJob in the chart polls `/api/v1/system/logs` and pings a Discord webhook when WARN/ERROR counts in the lookback window cross configurable thresholds, so persistent log noise pages someone instead of sitting unseen.
+- **Telemetry: coarse error-class counters** — the once-daily anonymous ping now includes an `errors` section: the number of ERROR and WARN log entries over the last 24 hours, plus up to 5 `{msg, count}` entries for the most frequent errors. `msg` is the fixed, developer-written log message string only (truncated to 120 chars); log details (attrs), which can carry titles, paths, or URLs, are never sent. This surfaces topology-specific breakage in aggregate without waiting on bug reports. Existing opt-outs (`telemetry.enabled: false` or `BINDERY_TELEMETRY_DISABLED=true`) apply unchanged.
+
+### Changed
+
+- **Settings tabs now load on demand** (#773) — each Settings tab is code-split and fetched the first time it's opened, shrinking the initial app bundle.
+- **Audiobook metadata is now derived from Hardcover editions before Audnex enrichment** (#806) — when a confident Hardcover match is hydrated, the chosen audio edition's language and cover (and audiobook media type) are filled from Hardcover first, leaving Audnex to supply only what Hardcover lacks (narrator, refined duration, summary). Known fields are never overwritten.
+- **Metadata enrichment now prefers stronger Hardcover rating signals** (#807) — when Hardcover carries a materially better-supported rating (at least 2× the current `ratings_count`, above a small floor), Bindery adopts its `average_rating` and `ratings_count` instead of keeping a sparse first-seen value; weaker or empty incoming ratings still never replace a known one.
+- **UI accessibility and visual polish across the app** (#1037–#1042) — a coordinated pass on contrast and affordance: WCAG AA-compliant text-color tokens and badge colors in both themes; a redesigned queue with status chips, quieter error rows, and bulk actions; a shared button vocabulary with AA-safe destructive buttons; clickable toggles that no longer look like static badges (plus a status legend); blank book covers replaced by an accessible placeholder with a readable title; and author bios constrained to a readable line length.
+- **Author refresh no longer clutters the works list with omnibuses/box sets** — when a Hardcover API token is configured, works Hardcover classifies as compilations (omnibuses, box sets, "complete" bundles) are pruned from an author's book list, so the same content stops appearing in several places. OpenLibrary itself carries no such signal, so Hardcover's classification is what drives the cleanup; genuine books, and installs without a Hardcover token, are unaffected.
+- **Docker image now carries OCI metadata** — the published image declares its license (`org.opencontainers.image.licenses=MIT`), source, title, and description, so registries and `docker inspect` surface them.
+
+### Fixed
+
+- **Grabbing from indexers that fingerprint the User-Agent now works** (#1053) — all indexer-fetch paths (SABnzbd, NZBGet, Transmission, qBittorrent) now send `bindery/<version>` instead of Go's default User-Agent.
+- **Releases whose title words match out of order are no longer grabbed** (#1063) — the weakest release-matching fallback now requires either the author's name in the release or the title words appearing in order.
+- **Search results without an author ID can now be added** (#1069) — results carrying only an author name (typical for Google Books hits) were findable but rejected on add. Bindery now resolves the author by name before adding.
+- **Foreign-language OpenLibrary works are now caught by the language filter** (#891) — when the active profile restricts language, Bindery now edition-samples each work without a work-level language (bounded to 5 editions) to derive its language before filtering.
+- **Release-title ISBNs with exotic separators now normalise correctly** — the ISBN extractor accepted any whitespace separator but only stripped hyphens and spaces, so a title like `978<TAB>0449912553` produced an ISBN with an embedded control character that silently failed downstream comparisons. Found by the `FuzzParseRelease` target.
+- **All enabled download clients are now polled each import cycle** (#1090) — previously only the highest-priority client was polled; a SABnzbd+qBittorrent user had secondary-client downloads permanently stuck at "downloading".
+- **Transmission Category filter no longer silently drops all torrents on a path mismatch** (#1091) — path comparison is now normalised (trailing slashes stripped), Transmission 3.0+ labels are accepted as an alternative match, and a WARN is emitted when a non-empty Category matches zero torrents on an instance that does hold torrents.
+- **Migration guard no longer crashloops when the legacy-index version 10 row is present** — a no-op `010_noop.sql` fills the sequence gap, so the row legacy runners wrote as version 10 is a valid filename-based version and the guard accepts it.
+
+### Security
+
+- **Hardened parsers against malformed input with Go fuzz tests** (#885) — added bounded native fuzz targets for the Calibre rollback-metadata decoder and the NZB/torrent indexer fetch-URL SSRF guards, asserting they never panic and never let a loopback, link-local, cloud-metadata, or non-http(s) target through.
+
 ## [v1.17.1] — 2026-06-09
 
 A patch release: fixes from user reports plus a security toolchain bump. No breaking changes.

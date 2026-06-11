@@ -1,2 +1,0 @@
-### Fixed
-- **Search results without an author ID can now be added** (#1069) — results carrying only an author *name* (typical for Google Books hits, which have no author ID and no ISBN to resolve one from) were findable in search yet rejected on add. Bindery now resolves the author by name — reusing a matching library author (including inverted "Last, First" forms) before adopting OpenLibrary's canonical record — so the add completes without duplicating authors or flooding Wanted.
