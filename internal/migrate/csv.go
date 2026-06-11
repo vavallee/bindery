@@ -4,7 +4,7 @@
 package migrate
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"encoding/csv"
 	"errors"
@@ -142,29 +142,32 @@ type csvRow struct {
 }
 
 func parseCSVRows(reader io.Reader) ([]csvRow, error) {
-	// Peek the first non-empty line to decide between CSV and plain list.
-	// If it contains a comma, use encoding/csv (handles quoted names with
-	// commas); otherwise treat each line as a bare author name.
-	buf := bufio.NewReader(reader)
-	first, _, err := buf.ReadLine()
-	if errors.Is(err, io.EOF) {
+	// Read everything upfront. bufio.ReadLine returns a slice into its internal
+	// buffer; any subsequent read reuses that buffer and would corrupt the slice
+	// before we copy it (CVE-style bug found by fuzzer: input whose first line
+	// exceeds 4096 bytes triggered exactly this overwrite).
+	all, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("read csv: %w", err)
+	}
+	if len(all) == 0 {
 		return nil, nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	hasComma := strings.Contains(string(first), ",")
 
-	// Push the first line back in front of the rest.
-	remaining, err := io.ReadAll(buf)
-	if err != nil {
-		return nil, fmt.Errorf("read csv remainder: %w", err)
+	// Inspect the first line to decide between CSV and plain list. If it
+	// contains a comma, use encoding/csv (handles quoted names with commas);
+	// otherwise treat each line as a bare author name.
+	firstNewline := bytes.IndexByte(all, '\n')
+	var firstLine []byte
+	if firstNewline == -1 {
+		firstLine = all
+	} else {
+		firstLine = all[:firstNewline]
 	}
-	combined := append(append([]byte{}, first...), '\n')
-	combined = append(combined, remaining...)
+	hasComma := bytes.ContainsRune(firstLine, ',')
 
 	if hasComma {
-		records, err := csv.NewReader(strings.NewReader(string(combined))).ReadAll()
+		records, err := csv.NewReader(bytes.NewReader(all)).ReadAll()
 		if err != nil {
 			return nil, err
 		}
@@ -185,7 +188,7 @@ func parseCSVRows(reader io.Reader) ([]csvRow, error) {
 	}
 
 	var out []csvRow
-	for _, line := range strings.Split(string(combined), "\n") {
+	for _, line := range strings.Split(string(all), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
