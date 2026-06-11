@@ -6,6 +6,10 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- Configurable wanted-search interval (`search.interval` setting, default `12h`). Reduce to ease indexer load for large libraries; increase to stay within daily API caps. Takes effect on restart.
+
 ## [v1.18.0] — 2026-06-11
 
 ### Added

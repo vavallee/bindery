@@ -620,7 +620,11 @@
       "metadataProviderLabel": "Primary metadata provider",
       "metadataProviderHint": "Selects the source used for author and book search. DNB (Deutsche Nationalbibliothek) is recommended for German, Austrian, and Swiss catalogues — it covers German-language publications since 1913 where OpenLibrary coverage is thin. OpenLibrary remains the default for other regions. The non-primary provider is always used as an enricher.",
       "metadataProviderOpenlibrary": "OpenLibrary (default)",
-      "metadataProviderDnb": "DNB — Deutsche Nationalbibliothek (German/DACH)"
+      "metadataProviderDnb": "DNB — Deutsche Nationalbibliothek (German/DACH)",
+      "search": "Search",
+      "searchIntervalLabel": "Wanted search interval",
+      "searchIntervalHint": "How often Bindery searches all wanted books against your indexers. Reduce if you have a large library and are hitting indexer API rate limits.",
+      "searchIntervalRestart": "Takes effect after the next Bindery restart."
     },
     "import": {
       "csvHeading": "CSV of author names",
