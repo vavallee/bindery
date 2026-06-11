@@ -5,12 +5,14 @@ package deluge
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
+	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,11 +20,13 @@ import (
 
 	"github.com/vavallee/bindery/internal/downloader/nethint"
 	"github.com/vavallee/bindery/internal/downloader/urlbase"
+	"github.com/vavallee/bindery/internal/httpsec"
+	"github.com/vavallee/bindery/internal/useragent"
 )
 
-// hashPollTimeout is the maximum time to wait for a newly-added torrent's hash
-// to appear in the torrent list.
-var hashPollTimeout = 30 * time.Second
+// maxTorrentFileBytes caps the torrent payload Bindery will fetch before
+// uploading it to Deluge.
+var maxTorrentFileBytes int64 = 50 << 20
 
 // Client interacts with the Deluge Web UI JSON-RPC API.
 // Authentication is cookie-based: Login() posts auth.login which sets a
@@ -32,13 +36,13 @@ var hashPollTimeout = 30 * time.Second
 //   - Password → password  (Deluge Web UI uses a single password, no username)
 //   - Category  → label    (applied via the label plugin after adding)
 type Client struct {
-	baseURL  string
-	password string
-	http     *http.Client
-	mu       sync.Mutex // guards loggedIn
-	addMu    sync.Mutex // serialises addTorrentURL: keeps before/after hash diff atomic
-	loggedIn bool
-	reqID    atomic.Int64
+	baseURL            string
+	password           string
+	http               *http.Client
+	validateTorrentURL func(string) error
+	mu                 sync.Mutex // guards loggedIn
+	loggedIn           bool
+	reqID              atomic.Int64
 }
 
 type rpcRequest struct {
@@ -118,9 +122,17 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, label string, seed
 		}
 		hash = h
 	} else {
-		h, err := c.addTorrentURL(ctx, magnetOrURL, label)
+		h, mag, err := c.addTorrentFile(ctx, magnetOrURL)
 		if err != nil {
 			return "", err
+		}
+		if mag != "" {
+			// The indexer redirected to a magnet link; hand off to the magnet path.
+			mh, merr := c.addMagnet(ctx, mag)
+			if merr != nil {
+				return "", merr
+			}
+			h = mh
 		}
 		hash = h
 	}
@@ -171,81 +183,128 @@ func (c *Client) addMagnet(ctx context.Context, magnet string) (string, error) {
 	return hash, nil
 }
 
-// addTorrentURL downloads the .torrent file via web.download_torrent_from_url
-// (which saves it to a temp path on the Deluge server), then adds it via
-// web.add_torrents. The hash is resolved by polling the unfiltered torrent
-// list until a new hash (not in beforeSet) appears.
+// addTorrentFile fetches the .torrent bytes inside Bindery (so the request
+// runs in Bindery's DNS namespace, not Deluge's VPN container) and submits
+// the content to Deluge via core.add_torrent_file.  If the URL resolves to a
+// magnet redirect the caller should use addMagnet instead — this function
+// returns a non-nil magnetURL in that case and the caller switches paths.
 //
-// addMu serialises concurrent calls so that each goroutine's before-snapshot →
-// submit → poll sequence is atomic. Without it two concurrent calls both
-// snapshot the same beforeSet, then cross-assign hashes.
-func (c *Client) addTorrentURL(ctx context.Context, torrentURL, label string) (string, error) {
-	c.addMu.Lock()
-	defer c.addMu.Unlock()
+// core.add_torrent_file returns the infohash directly, so no before/after
+// snapshot polling is needed.
+func (c *Client) addTorrentFile(ctx context.Context, torrentURL string) (hash string, magnetURL string, err error) {
+	fetched, err := c.fetchTorrentContent(ctx, torrentURL)
+	if err != nil {
+		return "", "", fmt.Errorf("fetch torrent: %w", err)
+	}
+	if fetched.magnetURL != "" {
+		return "", fetched.magnetURL, nil
+	}
 
-	// Snapshot all existing hashes so we can identify the newly-added torrent.
-	beforeSet := map[string]struct{}{}
-	if before, err := c.GetTorrents(ctx); err == nil {
-		for h := range before {
-			beforeSet[strings.ToLower(h)] = struct{}{}
+	// Derive a filename from the URL path; fall back to a safe default.
+	filename := path.Base(torrentURL)
+	if filename == "" || filename == "." || filename == "/" {
+		filename = "download.torrent"
+	}
+
+	filedump := base64.StdEncoding.EncodeToString(fetched.data)
+	var infohash string
+	if err := c.call(ctx, true, "core.add_torrent_file", []any{filename, filedump, map[string]any{}}, &infohash); err != nil {
+		return "", "", fmt.Errorf("core.add_torrent_file: %w", err)
+	}
+	return strings.ToLower(strings.TrimSpace(infohash)), "", nil
+}
+
+type fetchedTorrentContent struct {
+	data      []byte
+	magnetURL string
+}
+
+// fetchTorrentContent downloads a .torrent file URL and returns its raw bytes.
+// It follows up to 5 redirects, validates each target URL before fetching,
+// and caps the response at maxTorrentFileBytes.  A redirect to a magnet: URI
+// is returned as magnetURL rather than bytes.
+func (c *Client) fetchTorrentContent(ctx context.Context, rawURL string) (*fetchedTorrentContent, error) {
+	current := rawURL
+	fetchClient := &http.Client{
+		Transport: c.http.Transport,
+		Timeout:   c.http.Timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	for redirects := 0; redirects <= 5; redirects++ {
+		if err := c.validateTorrentFetchURL(current); err != nil {
+			return nil, err
 		}
-	}
-
-	// Step 1: ask Deluge to download the .torrent file to a local tmp path.
-	var tmpPath string
-	if err := c.call(ctx, true, "web.download_torrent_from_url", []any{torrentURL, ""}, &tmpPath); err != nil {
-		return "", fmt.Errorf("download torrent from url: %w", err)
-	}
-
-	// Step 2: add the downloaded .torrent file.
-	addEntry := map[string]any{
-		"path":    tmpPath,
-		"options": map[string]any{},
-	}
-	var addResult any
-	if err := c.call(ctx, true, "web.add_torrents", []any{[]any{addEntry}}, &addResult); err != nil {
-		return "", fmt.Errorf("add torrents: %w", err)
-	}
-
-	// Poll the unfiltered torrent list until the new torrent appears — Deluge
-	// processes the file asynchronously and the hash may not be visible immediately.
-	deadline := time.Now().Add(hashPollTimeout)
-	var lastStatuses map[string]TorrentStatus
-	for {
-		statuses, err := c.GetTorrents(ctx)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, current, nil)
 		if err != nil {
-			return "", fmt.Errorf("add torrent accepted but hash lookup failed: %w", err)
+			return nil, fmt.Errorf("build torrent fetch request: %w", err)
 		}
-		lastStatuses = statuses
-		for h := range statuses {
-			lh := strings.ToLower(h)
-			if _, seen := beforeSet[lh]; !seen {
-				return lh, nil
+		req.Header.Set("Accept", "application/x-bittorrent")
+		req.Header.Set("User-Agent", useragent.Get())
+
+		resp, err := fetchClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode >= http.StatusMultipleChoices && resp.StatusCode < http.StatusBadRequest {
+			location := resp.Header.Get("Location")
+			_, _ = io.Copy(io.Discard, resp.Body)
+			if err := resp.Body.Close(); err != nil {
+				return nil, fmt.Errorf("close redirect body: %w", err)
 			}
+			if location == "" {
+				return nil, fmt.Errorf("redirect without location")
+			}
+			if strings.HasPrefix(strings.ToLower(location), "magnet:") {
+				return &fetchedTorrentContent{magnetURL: location}, nil
+			}
+			next, err := req.URL.Parse(location)
+			if err != nil {
+				return nil, fmt.Errorf("invalid redirect location: %w", err)
+			}
+			if next.Scheme != "http" && next.Scheme != "https" {
+				return nil, fmt.Errorf("unsupported redirect scheme %q", next.Scheme)
+			}
+			current = next.String()
+			continue
 		}
-		if time.Now().After(deadline) {
-			break
+
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("indexer returned HTTP %d", resp.StatusCode)
 		}
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(500 * time.Millisecond):
+		data, err := readLimited(resp.Body, maxTorrentFileBytes)
+		if err != nil {
+			return nil, err
 		}
+		if len(data) == 0 {
+			return nil, fmt.Errorf("empty torrent response")
+		}
+		return &fetchedTorrentContent{data: data}, nil
 	}
-	beforeKeys := make([]string, 0, len(beforeSet))
-	for h := range beforeSet {
-		beforeKeys = append(beforeKeys, h)
+
+	return nil, fmt.Errorf("too many redirects")
+}
+
+func (c *Client) validateTorrentFetchURL(raw string) error {
+	if c.validateTorrentURL != nil {
+		return c.validateTorrentURL(raw)
 	}
-	afterKeys := make([]string, 0, len(lastStatuses))
-	for h := range lastStatuses {
-		afterKeys = append(afterKeys, h)
+	return httpsec.ValidateOutboundURL(raw, httpsec.DownloadFetchPolicy())
+}
+
+func readLimited(r io.Reader, maxBytes int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, maxBytes+1))
+	if err != nil {
+		return nil, err
 	}
-	slog.Error("add torrent hash lookup timed out",
-		"label", label,
-		"before_hashes", beforeKeys,
-		"after_hashes", afterKeys,
-	)
-	return "", fmt.Errorf("add torrent accepted but hash could not be determined")
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("torrent response exceeds %d bytes", maxBytes)
+	}
+	return data, nil
 }
 
 // setLabel applies a label to a torrent via the Deluge label plugin.
