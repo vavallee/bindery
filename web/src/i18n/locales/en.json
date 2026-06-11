@@ -635,7 +635,11 @@
       "metadataProviderDnb": "DNB — Deutsche Nationalbibliothek (German/DACH)",
       "defaultLibraryLocation": "Default library location",
       "defaultLibraryLocationHint": "Manage root folders and the default library location in the Root Folders tab.",
-      "defaultLibraryLocationLink": "Manage in Root Folders →"
+      "defaultLibraryLocationLink": "Manage in Root Folders →",
+      "search": "Search",
+      "searchIntervalLabel": "Wanted search interval",
+      "searchIntervalHint": "How often Bindery searches all wanted books against your indexers. Reduce if you have a large library and are hitting indexer API rate limits.",
+      "searchIntervalRestart": "Takes effect after the next Bindery restart."
     },
     "import": {
       "csvHeading": "CSV of author names",

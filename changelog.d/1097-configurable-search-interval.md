@@ -1,0 +1,2 @@
+### Added
+- **Configurable wanted-search interval** ([#1097](https://github.com/vavallee/bindery/issues/1097)) — the automatic wanted-books search interval is now a setting (Settings → General) instead of a fixed schedule. Lengthen it to ease load on your indexers / stay under daily API caps for large libraries, or shorten it to find releases sooner. Defaults to the previous behaviour; takes effect after the next Bindery restart.

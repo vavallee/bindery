@@ -422,7 +422,11 @@
       "defaultLibraryLocationLink": "Pamahalaan sa Mga Root Folder →",
       "naming": {
         "hintEmpty": "Kailangan — maglagay ng kahit isang token o path segment."
-      }
+      },
+      "search": "Search",
+      "searchIntervalLabel": "Wanted search interval",
+      "searchIntervalHint": "How often Bindery searches all wanted books against your indexers. Reduce if you have a large library and are hitting indexer API rate limits.",
+      "searchIntervalRestart": "Takes effect after the next Bindery restart."
     },
     "import": {
       "csvHeading": "CSV ng mga pangalan ng may-akda",
