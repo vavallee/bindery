@@ -123,8 +123,9 @@ func TestSearchBooks_Success(t *testing.T) {
 	if b.ForeignID != "dnb:1234567890" {
 		t.Errorf("ForeignID = %q, want dnb:1234567890", b.ForeignID)
 	}
-	if b.Title != "Der Wüstenplanet: Roman" {
-		t.Errorf("Title = %q, want 'Der Wüstenplanet: Roman'", b.Title)
+	// "Roman" is a genre marker in MARC 245 $b; cleanDNBTitle strips it.
+	if b.Title != "Der Wüstenplanet" {
+		t.Errorf("Title = %q, want 'Der Wüstenplanet'", b.Title)
 	}
 	if b.Language != "ger" {
 		t.Errorf("Language = %q, want ger", b.Language)

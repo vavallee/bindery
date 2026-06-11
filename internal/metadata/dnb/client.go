@@ -237,12 +237,9 @@ func recordToBook(rec marcRecord) *models.Book {
 		return nil
 	}
 
-	title := marcClean(rec.subfield("245", "a"))
+	title := cleanDNBTitle(rec.subfield("245", "a"), rec.subfield("245", "b"))
 	if title == "" {
 		return nil
-	}
-	if sub := marcClean(rec.subfield("245", "b")); sub != "" {
-		title = title + ": " + sub
 	}
 
 	b := &models.Book{
@@ -437,6 +434,131 @@ func recordToAuthor(rec marcRecord) *models.Author {
 }
 
 // --- String helpers ---
+
+// cleanDNBTitle normalises a MARC 245 title for DNB records. DNB embeds
+// promotional blurb chains, author attributions, and genre markers in the
+// 245 $a/$b fields; none of these belong in the stored title. The function:
+//
+//   - Strips ` | ` and everything after (promotional text chains in $a/$b).
+//   - Strips ` / ` and everything after (MARC statement-of-responsibility).
+//   - Skips appending $b when it is a genre marker, edition marker, promotional
+//     phrase, or starts with a known intro phrase ("Ein", "Eine", "Deutsche Ausgabe").
+//   - Strips trailing `: <genre>` suffixes from the assembled title.
+//
+// Parenthesised series identifiers like "(Die Geheimnisse von Engeløya 1)" are
+// left intact — they are legitimate cataloguing data.
+func cleanDNBTitle(rawA, rawB string) string {
+	// Clean $a and strip trailing promotional / responsibility fragments.
+	a := marcClean(rawA)
+	if idx := strings.Index(a, " | "); idx != -1 {
+		a = strings.TrimRight(strings.TrimSpace(a[:idx]), " /,.:;=")
+	}
+	if idx := strings.Index(a, " / "); idx != -1 {
+		a = strings.TrimRight(strings.TrimSpace(a[:idx]), " /,.:;=")
+	}
+	a = strings.TrimSpace(a)
+
+	// Clean $b and decide whether to include it.
+	b := marcClean(rawB)
+	if idx := strings.Index(b, " | "); idx != -1 {
+		b = strings.TrimRight(strings.TrimSpace(b[:idx]), " /,.:;=")
+	}
+	if idx := strings.Index(b, " / "); idx != -1 {
+		b = strings.TrimRight(strings.TrimSpace(b[:idx]), " /,.:;=")
+	}
+	b = strings.TrimSpace(b)
+
+	title := a
+	if b != "" && len(b) < 80 && !isDNBJunkSubtitle(b) {
+		title = title + ": " + b
+	}
+
+	// Strip trailing genre/format suffixes added as the last colon segment.
+	title = stripTrailingGenreSuffix(title)
+
+	return title
+}
+
+// dnbGenreKeywords are single-word or compound genre/edition/promotional terms
+// that, when present in a MARC 245 $b, indicate the subtitle is not a real
+// literary subtitle but a cataloguing artifact.
+var dnbGenreKeywords = []string{
+	"roman",
+	"thriller",
+	"krimi",
+	"lesung",
+	"hörbuch",
+	"hoerbuch",
+	"sachbuch",
+	"biografie",
+	"biographie",
+	"erfolg",
+	"bestseller",
+	"bestsellerautor",
+	"bestsellerautorin",
+	"preisgekrönt",
+	"preisgekront",
+	"gewinner",
+	"ausgabe",   // covers "Jubiläumsausgabe", "Sonderausgabe", "Deutsche Ausgabe"
+	"ungekürzt", // "ungekürzte Lesung"
+	"ungekurzt",
+}
+
+// dnbIntroPhrasePrefixes are lowercased prefixes that indicate $b is an
+// introductory phrase rather than a true subtitle.
+var dnbIntroPhrasePrefixes = []string{
+	"deutsche ausgabe",
+	"ein ",
+	"eine ",
+}
+
+// isDNBJunkSubtitle reports whether a cleaned MARC 245 $b value should be
+// dropped rather than appended to the title. Returns true for genre markers,
+// edition labels, promotional phrases, and intro phrases.
+func isDNBJunkSubtitle(b string) bool {
+	lower := strings.ToLower(b)
+	// Check intro-phrase prefixes.
+	for _, pfx := range dnbIntroPhrasePrefixes {
+		if strings.HasPrefix(lower, pfx) {
+			return true
+		}
+	}
+	// Check genre/promotional keyword containment.
+	for _, kw := range dnbGenreKeywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// dnbTrailingGenreSuffixes are the lowercased genre labels that DNB appends
+// as the final colon-delimited segment of the assembled title. Strip them so
+// stored titles match what indexers index.
+var dnbTrailingGenreSuffixes = []string{
+	": roman",
+	": thriller",
+	": krimi",
+	": lesung",
+	": hörbuch",
+	": hoerbuch",
+	": sachbuch",
+	": biografie",
+	": biographie",
+}
+
+// stripTrailingGenreSuffix removes a terminal `: <genre>` segment from title
+// (case-insensitive). Only the last segment is stripped; the rest is preserved.
+func stripTrailingGenreSuffix(title string) string {
+	lower := strings.ToLower(title)
+	for _, suffix := range dnbTrailingGenreSuffixes {
+		if strings.HasSuffix(lower, suffix) {
+			title = strings.TrimSpace(title[:len(title)-len(suffix)])
+			break
+		}
+	}
+	return title
+}
 
 // marcClean strips MARC non-sorting bracket control characters (U+0098 NSB
 // and U+009C NSE, per LoC https://www.loc.gov/marc/nonsorting.html — DNB
