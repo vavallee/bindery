@@ -10,6 +10,7 @@ import { useAuth } from '../../auth/AuthContext'
 import { inputCls } from './formStyles'
 import Toggle from './Toggle'
 import NamingTemplateField from './NamingTemplateField'
+import { useSaveResult } from './useSaveResult'
 
 function formatBackupSize(bytes: number): string {
   if (!bytes || bytes <= 0) return '0 B'
@@ -67,6 +68,10 @@ export default function GeneralTab() {
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null)
   const [hardcoverToken, setHardcoverToken] = useState('')
   const [hardcoverTestResult, setHardcoverTestResult] = useState<(HardcoverTestResult & { testing?: boolean }) | null>(null)
+  const [langSaveResult, langSave] = useSaveResult()
+  const [logRetentionSaveResult, logRetentionSave] = useSaveResult()
+  const [dropSaveResult, dropSave] = useSaveResult()
+
   useEffect(() => {
     api.listSettings()
       .then(list => {
@@ -110,7 +115,9 @@ export default function GeneralTab() {
     try {
       await api.setSetting('import.drop_folder', settings['import.drop_folder'] ?? '')
     } catch (err) {
-      setDropErr(err instanceof Error ? err.message : 'Save failed')
+      const msg = err instanceof Error ? err.message : 'Save failed'
+      setDropErr(msg)
+      throw err
     } finally {
       setSaving(null)
     }
@@ -357,11 +364,11 @@ export default function GeneralTab() {
                     className={inputCls + ' flex-1'}
                   />
                   <button
-                    onClick={saveDropFolder}
+                    onClick={() => dropSave(saveDropFolder)}
                     disabled={saving === 'import.drop_folder'}
-                    className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium disabled:opacity-50"
+                    className={`px-3 py-2 rounded text-xs font-medium disabled:opacity-50 ${dropSaveResult === 'saved' ? 'bg-emerald-500' : dropSaveResult === 'error' ? 'bg-red-600' : 'bg-emerald-600 hover:bg-emerald-500'}`}
                   >
-                    {saving === 'import.drop_folder' ? t('common.saving') : t('common.save')}
+                    {dropSaveResult === 'saved' ? 'Saved ✓' : dropSaveResult === 'error' ? 'Error' : saving === 'import.drop_folder' ? t('common.saving') : t('common.save')}
                   </button>
                 </div>
                 {dropErr && <p className="text-xs text-red-600 dark:text-red-400 mt-1">{dropErr}</p>}
@@ -439,11 +446,11 @@ export default function GeneralTab() {
                 <option value="en">{t('settings.general.preferredLanguageEn')}</option>
               </select>
               <button
-                onClick={() => saveSetting('search.preferredLanguage')}
+                onClick={() => langSave(() => api.setSetting('search.preferredLanguage', settings['search.preferredLanguage'] ?? ''))}
                 disabled={saving === 'search.preferredLanguage'}
-                className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium disabled:opacity-50"
+                className={`px-3 py-2 rounded text-xs font-medium disabled:opacity-50 ${langSaveResult === 'saved' ? 'bg-emerald-500' : langSaveResult === 'error' ? 'bg-red-600' : 'bg-emerald-600 hover:bg-emerald-500'}`}
               >
-                {saving === 'search.preferredLanguage' ? t('common.saving') : t('common.save')}
+                {langSaveResult === 'saved' ? 'Saved ✓' : langSaveResult === 'error' ? 'Error' : saving === 'search.preferredLanguage' ? t('common.saving') : t('common.save')}
               </button>
             </div>
           </div>
@@ -919,11 +926,11 @@ export default function GeneralTab() {
               />
               <span className="text-sm text-slate-600 dark:text-zinc-400">{t('settings.general.days')}</span>
               <button
-                onClick={() => saveSetting('log.retention_days')}
+                onClick={() => logRetentionSave(() => api.setSetting('log.retention_days', settings['log.retention_days'] ?? ''))}
                 disabled={saving === 'log.retention_days'}
-                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium disabled:opacity-50"
+                className={`px-3 py-1.5 rounded text-sm font-medium disabled:opacity-50 ${logRetentionSaveResult === 'saved' ? 'bg-emerald-500' : logRetentionSaveResult === 'error' ? 'bg-red-600' : 'bg-emerald-600 hover:bg-emerald-500'}`}
               >
-                {saving === 'log.retention_days' ? t('common.saving') : t('common.save')}
+                {logRetentionSaveResult === 'saved' ? 'Saved ✓' : logRetentionSaveResult === 'error' ? 'Error' : saving === 'log.retention_days' ? t('common.saving') : t('common.save')}
               </button>
             </div>
           </div>
