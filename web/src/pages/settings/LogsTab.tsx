@@ -1,6 +1,28 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, LogEntry } from '../../api/client'
+import Toggle from './Toggle'
+
+function formatBackupSize(bytes: number): string {
+  if (!bytes || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)))
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
+}
+
+function formatRelativeTime(iso: string): string {
+  const t = Date.parse(iso)
+  if (isNaN(t)) return ''
+  const diffSec = Math.round((Date.now() - t) / 1000)
+  const abs = Math.abs(diffSec)
+  if (abs < 60) return diffSec >= 0 ? 'just now' : 'in a moment'
+  const mins = Math.round(diffSec / 60)
+  if (Math.abs(mins) < 60) return mins >= 0 ? `${mins}m ago` : `in ${-mins}m`
+  const hrs = Math.round(diffSec / 3600)
+  if (Math.abs(hrs) < 24) return hrs >= 0 ? `${hrs}h ago` : `in ${-hrs}h`
+  const days = Math.round(diffSec / 86400)
+  return days >= 0 ? `${days}d ago` : `in ${-days}d`
+}
 
 export default function LogsTab() {
   const { t, i18n } = useTranslation()
@@ -15,6 +37,11 @@ export default function LogsTab() {
   const [logPage, setLogPage] = useState(0)
   const logPageSize = 200
   const logBottomRef = useRef<HTMLDivElement>(null)
+  const [settings, setSettings] = useState<Record<string, string>>({})
+  const [saving, setSaving] = useState<string | null>(null)
+  const [backups, setBackups] = useState<Array<{ name: string; size: number; modTime: string }>>([])
+  const [creatingBackup, setCreatingBackup] = useState(false)
+  const [deletingBackup, setDeletingBackup] = useState<string | null>(null)
 
   const fetchLogs = (page = 0) => {
     api.getLogs({
@@ -31,9 +58,52 @@ export default function LogsTab() {
     }).catch(console.error)
   }
 
+  const saveSetting = async (key: string) => {
+    setSaving(key)
+    try {
+      await api.setSetting(key, settings[key] ?? '')
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  const handleBackup = async () => {
+    setCreatingBackup(true)
+    try {
+      const result = await api.createBackup()
+      setBackups(prev => [result, ...prev])
+      alert(`Backup created: ${result.name}`)
+    } catch (err) {
+      alert('Backup failed: ' + (err instanceof Error ? err.message : 'Unknown error'))
+    } finally {
+      setCreatingBackup(false)
+    }
+  }
+
+  const handleDeleteBackup = async (filename: string) => {
+    if (!confirm(`Delete backup ${filename}?`)) return
+    setDeletingBackup(filename)
+    try {
+      await api.deleteBackup(filename)
+      setBackups(prev => prev.filter(b => b.name !== filename))
+    } catch (err) {
+      alert('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown error'))
+    } finally {
+      setDeletingBackup(null)
+    }
+  }
+
   useEffect(() => {
     api.getLogLevel().then(r => setLogLevel(r.level.toLowerCase())).catch(console.error)
     fetchLogs()
+    api.listSettings().then(list => {
+      const map: Record<string, string> = {}
+      list.forEach(s => { map[s.key] = s.value })
+      setSettings(map)
+    }).catch(console.error)
+    api.listBackups().then(setBackups).catch(console.error)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-refresh logs every 5 s while the toggle is on.
@@ -231,6 +301,105 @@ export default function LogsTab() {
       <p className="text-xs text-slate-500 dark:text-zinc-600 mt-2">
         {t('settings.logs.persistNote')}
       </p>
+
+      {/* Log retention */}
+      <section className="mt-8">
+        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.logRetention')}</h3>
+        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.logRetentionLabel')}</label>
+              <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">{t('settings.general.logRetentionHint')}</p>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <input
+                type="number"
+                min={1}
+                max={365}
+                value={settings['log.retention_days'] ?? '14'}
+                onChange={e => setSettings(s => ({ ...s, 'log.retention_days': e.target.value }))}
+                className="w-20 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 text-sm text-right"
+              />
+              <span className="text-sm text-slate-600 dark:text-zinc-400">{t('settings.general.days')}</span>
+              <button
+                onClick={() => saveSetting('log.retention_days')}
+                disabled={saving === 'log.retention_days'}
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium disabled:opacity-50"
+              >
+                {saving === 'log.retention_days' ? t('common.saving') : t('common.save')}
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Backup */}
+      <section className="mt-8">
+        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.backup')}</h3>
+        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-slate-700 dark:text-zinc-300">{t('settings.general.backupCreate')}</p>
+              <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">{t('settings.general.backupHint')}</p>
+            </div>
+            <button
+              onClick={handleBackup}
+              disabled={creatingBackup}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
+            >
+              {creatingBackup ? t('settings.general.backupCreating') : t('settings.general.backupButton')}
+            </button>
+          </div>
+          {backups.length > 0 && (
+            <div className="mt-3 border-t border-slate-200 dark:border-zinc-800 pt-3">
+              <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">{t('settings.general.existingBackups')}</p>
+              <ul className="space-y-1">
+                {backups.map(b => (
+                  <li key={b.name} className="flex items-center justify-between text-xs text-slate-600 dark:text-zinc-400">
+                    <span>
+                      <span className="font-mono">{b.name}</span>
+                      <span className="ml-2 text-slate-500 dark:text-zinc-500">{formatBackupSize(b.size)} · {formatRelativeTime(b.modTime)}</span>
+                    </span>
+                    <button
+                      onClick={() => handleDeleteBackup(b.name)}
+                      disabled={deletingBackup === b.name}
+                      className="ml-4 text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
+                    >
+                      {deletingBackup === b.name ? '…' : t('common.delete')}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* Telemetry */}
+      <section className="mt-8">
+        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.telemetry')}</h3>
+        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-3">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.telemetryLabel')}</label>
+              <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">{t('settings.general.telemetryHint')}</p>
+            </div>
+            <Toggle
+              checked={(settings['telemetry.enabled'] ?? 'true') !== 'false'}
+              onChange={async () => {
+                const current = (settings['telemetry.enabled'] ?? 'true').toLowerCase()
+                const next = current !== 'false' ? 'false' : 'true'
+                setSettings(s => ({ ...s, 'telemetry.enabled': next }))
+                await api.setSetting('telemetry.enabled', next).catch(console.error)
+              }}
+              title={(settings['telemetry.enabled'] ?? 'true') !== 'false' ? t('common.disable') : t('common.enable')}
+            />
+          </div>
+          <p className="text-xs text-slate-500 dark:text-zinc-600">
+            {t('settings.general.telemetryDetail')}
+          </p>
+        </div>
+      </section>
     </div>
   )
 }
