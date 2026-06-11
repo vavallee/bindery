@@ -382,7 +382,11 @@
       "logRetention": "Log Retention",
       "logRetentionLabel": "Keep log entries for",
       "logRetentionHint": "Log entries older than this are deleted by the daily trim job.",
-      "days": "days"
+      "days": "days",
+      "search": "Search",
+      "searchIntervalLabel": "Wanted search interval",
+      "searchIntervalHint": "How often Bindery searches all wanted books against your indexers. Reduce if you have a large library and are hitting indexer API rate limits.",
+      "searchIntervalRestart": "Takes effect after the next Bindery restart."
     },
     "import": {
       "csvHeading": "CSV de noms d'auteurs",

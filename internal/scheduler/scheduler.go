@@ -6,6 +6,7 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -71,6 +72,10 @@ type eventNotifier interface {
 const (
 	notifierEventGrabbed = "grabbed"
 )
+
+// defaultSearchInterval is the fallback wanted-book search cadence used when
+// the "search.interval" DB setting is absent or invalid.
+const defaultSearchInterval = "12h"
 
 // Scheduler runs background jobs on configurable intervals.
 type Scheduler struct {
@@ -281,8 +286,20 @@ func (s *Scheduler) Start() {
 		s.checkStalledDownloads(s.ctx())
 	}))
 
-	// Search for wanted books every 12 hours
-	s.cron.AddFunc("@every 12h", runJob("search-wanted", func() {
+	// Search for wanted books on a configurable interval (default 12h).
+	// Read the setting once at Start() — a restart is required to apply changes.
+	searchInterval := defaultSearchInterval
+	if s.settings != nil {
+		if v, _ := s.settings.Get(s.ctx(), "search.interval"); v != nil && v.Value != "" {
+			searchInterval = v.Value
+		}
+	}
+	searchDuration, err := time.ParseDuration(searchInterval)
+	if err != nil || searchDuration < time.Hour {
+		slog.Warn("scheduler: invalid search.interval, falling back to default", "value", searchInterval, "default", defaultSearchInterval)
+		searchDuration = 12 * time.Hour
+	}
+	s.cron.AddFunc(fmt.Sprintf("@every %s", searchDuration), runJob("search-wanted", func() {
 		slog.Info("job: search wanted books")
 		s.searchWanted()
 	}))
