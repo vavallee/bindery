@@ -283,6 +283,60 @@ func TestGetTorrents_WithDir(t *testing.T) {
 	}
 }
 
+// TestGetTorrents_NormalisedTrailingSlash verifies that a trailing slash on
+// either side of the comparison does not cause a miss (#1091).
+func TestGetTorrents_NormalisedTrailingSlash(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"result":"success",
+			"arguments":{
+				"torrents":[
+					{"id":1,"name":"Book A","downloadDir":"/books/"},
+					{"id":2,"name":"Music","downloadDir":"/music/"}
+				]
+			}
+		}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "user", "pass")
+	// User configured Category as "/books" (no trailing slash) but Transmission
+	// reports "/books/" (trailing slash). Both should match.
+	torrents, err := c.GetTorrents(context.Background(), "/books")
+	if err != nil {
+		t.Fatalf("GetTorrents: %v", err)
+	}
+	if len(torrents) != 1 || torrents[0].ID != 1 {
+		t.Fatalf("expected 1 torrent (id=1), got %d: %v", len(torrents), torrents)
+	}
+}
+
+// TestGetTorrents_LabelMatch verifies that a torrent whose label matches the
+// Category string is included even when its downloadDir does not (#1091).
+func TestGetTorrents_LabelMatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"result":"success",
+			"arguments":{
+				"torrents":[
+					{"id":1,"name":"Book A","downloadDir":"/shared","labels":["books"]},
+					{"id":2,"name":"Music","downloadDir":"/shared","labels":["music"]}
+				]
+			}
+		}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "user", "pass")
+	torrents, err := c.GetTorrents(context.Background(), "books")
+	if err != nil {
+		t.Fatalf("GetTorrents: %v", err)
+	}
+	if len(torrents) != 1 || torrents[0].ID != 1 {
+		t.Fatalf("expected 1 torrent (id=1) matched by label, got %d: %v", len(torrents), torrents)
+	}
+}
+
 func TestGetTorrents_FailResult(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"result":"no session","arguments":{}}`))

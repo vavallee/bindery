@@ -1,0 +1,2 @@
+### Fixed
+- **Transmission Category filter no longer silently drops all torrents on a path mismatch** — path comparison is now normalised (trailing slashes are stripped before comparing), and Transmission 3.0+ labels are also accepted as a match so operators can use a label like `"books"` instead of a full directory path. A WARN is emitted when a non-empty Category matches zero torrents on an instance that does hold torrents, surfacing the misconfiguration immediately (#1091).

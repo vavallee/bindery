@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -212,12 +213,26 @@ func (c *Client) GetTorrents(ctx context.Context, downloadDir string) ([]Torrent
 		return nil, fmt.Errorf("get torrents failed: %s", resp.Result)
 	}
 
-	// Filter by download directory if provided
+	// Filter by download directory or label if provided.
+	// Transmission lacks qBittorrent-style categories; Bindery's Category field
+	// doubles as a downloadDir filter on a shared instance. Path comparison is
+	// normalised (filepath.Clean) so a trailing slash mismatch doesn't cause a
+	// silent miss. Transmission 3.0+ labels are also checked: if the torrent
+	// carries a label matching the Category string the torrent is included, which
+	// lets operators use labels instead of (or in addition to) a directory path.
 	if downloadDir != "" {
-		filtered := make([]Torrent, 0)
+		want := filepath.Clean(downloadDir)
+		var filtered []Torrent
 		for _, t := range resp.Arguments.Torrents {
-			if t.DownloadDir == downloadDir {
+			if filepath.Clean(t.DownloadDir) == want {
 				filtered = append(filtered, t)
+				continue
+			}
+			for _, label := range t.Labels {
+				if strings.EqualFold(label, downloadDir) {
+					filtered = append(filtered, t)
+					break
+				}
 			}
 		}
 		return filtered, nil

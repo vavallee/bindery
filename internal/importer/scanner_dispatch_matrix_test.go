@@ -526,6 +526,77 @@ func TestCheckDownloads_DispatchMatrix_Deluge(t *testing.T) {
 	assertOnlyEndpoints(t, rec, "/json")
 }
 
+// --- Multi-client: both polled in a single tick (#1090) ---------------------
+
+// TestCheckDownloads_DispatchMatrix_TwoClients verifies that a single
+// CheckDownloads tick polls EVERY enabled client, not just the first (#1090).
+// Before the fix, GetFirstEnabled meant a SABnzbd + Transmission combo only
+// polled SABnzbd; Transmission downloads sat at "downloading" forever.
+func TestCheckDownloads_DispatchMatrix_TwoClients(t *testing.T) {
+	f := newDispatchFixture(t)
+
+	// SAB: one completed NZB.
+	const (
+		sabNzoID  = "SABnzbd_nzo_multi_1090"
+		sabDLDir  = "/data/usenet/complete/book-a"
+		transDLDir = "/data/torrents/book-b"
+	)
+
+	sabRec := &requestLog{}
+	sabSrv := httptest.NewServer(recording(sabRec, sabHistoryHandler(t, []sabnzbd.HistorySlot{{
+		NzoID:  sabNzoID,
+		Name:   "book-a",
+		Status: "Completed",
+		Path:   sabDLDir,
+	}}, nil)))
+	t.Cleanup(sabSrv.Close)
+
+	// Transmission: one seeding torrent.
+	transRec := &requestLog{}
+	var transConflicts atomic.Int32
+	transSrv := httptest.NewServer(recording(transRec, transmissionMatrixHandler(t, &transConflicts, transDLDir)))
+	t.Cleanup(transSrv.Close)
+
+	// Create both clients. SABnzbd gets priority 1 (polled first), Transmission
+	// priority 2 — both must be polled in a single CheckDownloads call.
+	sabClient := f.createClient(t, &models.DownloadClient{
+		Name: "sab", Type: "sabnzbd", APIKey: "multi-key", Priority: 1,
+	}, sabSrv.URL)
+	transClient := f.createClient(t, &models.DownloadClient{
+		Name: "trans", Type: "transmission", Priority: 2,
+	}, transSrv.URL)
+
+	nzo := sabNzoID
+	f.createDownload(t, &models.Download{
+		GUID: "guid-multi-sab", Title: "book-a", Status: models.StateDownloading,
+		Protocol: "usenet", SABnzbdNzoID: &nzo, DownloadClientID: &sabClient.ID,
+	})
+	torrentID := "42" // transmissionMatrixHandler always returns id=42.
+	f.createDownload(t, &models.Download{
+		GUID: "guid-multi-trans", Title: "the-book", Status: models.StateDownloading,
+		Protocol: "torrent", TorrentID: &torrentID, DownloadClientID: &transClient.ID,
+	})
+
+	f.scanner.CheckDownloads(f.ctx)
+
+	// Both downloads must have been handed off to the importer.
+	handoffs := f.allHandoffs()
+	if len(handoffs) != 2 {
+		t.Fatalf("expected 2 importer boundary calls (one per client), got %d: %+v", len(handoffs), handoffs)
+	}
+
+	// Each typed poller must have been reached.
+	if !sabRec.contains("mode=history") {
+		t.Errorf("SABnzbd was not polled (#1090 regression); requests: %v", sabRec.all())
+	}
+	if !transRec.contains("rpc=torrent-get") {
+		t.Errorf("Transmission was not polled (#1090 regression); requests: %v", transRec.all())
+	}
+
+	f.assertStatus(t, "guid-multi-sab", models.StateCompleted)
+	f.assertStatus(t, "guid-multi-trans", models.StateCompleted)
+}
+
 // --- Unknown client type (the #1019 safety net) ------------------------------
 
 // TestCheckDownloads_DispatchMatrix_UnknownType is the direct regression test

@@ -285,33 +285,36 @@ const importRetryLimit = 3
 
 // CheckDownloads polls all enabled download clients for status changes and
 // updates the local download records. Every enabled client is polled in
-// priority order so that downloads from secondary clients (e.g. a second
-// qBittorrent instance) are never silently ignored (Bug #1).
+// priority order so that downloads from all configured clients (e.g. a
+// SABnzbd + qBittorrent combo) are imported each cycle (issue #1090).
 func (s *Scanner) CheckDownloads(ctx context.Context) {
-	client, err := s.clients.GetFirstEnabled(ctx)
-	if err != nil || client == nil {
+	clients, err := s.clients.ListEnabled(ctx)
+	if err != nil || len(clients) == 0 {
 		return
 	}
 
-	switch client.Type {
-	case "transmission":
-		s.checkTransmissionDownloads(ctx, client)
-	case "qbittorrent":
-		s.checkQbittorrentDownloads(ctx, client)
-	case "deluge":
-		s.checkDelugeDownloads(ctx, client)
-	case "nzbget":
-		s.checkNZBGetDownloads(ctx, client)
-	case "sabnzbd":
-		s.checkSABnzbdDownloads(ctx, client)
-	default:
-		// An unknown client type must NOT silently fall through to the SABnzbd
-		// poller: it would hit SABnzbd's HTTP endpoints against the wrong host,
-		// error, and (logged at Debug only) leave every download stuck at
-		// "downloading" with no visible failure — exactly the Deluge bug in
-		// #1019. Surface it loudly instead.
-		slog.Warn("check downloads: unsupported download client type — downloads will not be imported",
-			"type", client.Type, "client", client.Name)
+	for i := range clients {
+		client := &clients[i]
+		switch client.Type {
+		case "transmission":
+			s.checkTransmissionDownloads(ctx, client)
+		case "qbittorrent":
+			s.checkQbittorrentDownloads(ctx, client)
+		case "deluge":
+			s.checkDelugeDownloads(ctx, client)
+		case "nzbget":
+			s.checkNZBGetDownloads(ctx, client)
+		case "sabnzbd":
+			s.checkSABnzbdDownloads(ctx, client)
+		default:
+			// An unknown client type must NOT silently fall through to the SABnzbd
+			// poller: it would hit SABnzbd's HTTP endpoints against the wrong host,
+			// error, and (logged at Debug only) leave every download stuck at
+			// "downloading" with no visible failure — exactly the Deluge bug in
+			// #1019. Surface it loudly instead.
+			slog.Warn("check downloads: unsupported download client type — downloads will not be imported",
+				"type", client.Type, "client", client.Name)
+		}
 	}
 }
 

@@ -144,6 +144,33 @@ func (r *DownloadClientRepo) GetByID(ctx context.Context, id int64) (*models.Dow
 	return &c, nil
 }
 
+// ListEnabled returns all enabled download clients in priority order.
+func (r *DownloadClientRepo) ListEnabled(ctx context.Context) ([]models.DownloadClient, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT `+downloadClientSelectColumns+`
+		FROM download_clients WHERE enabled=1 ORDER BY priority`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var clients []models.DownloadClient
+	for rows.Next() {
+		var c models.DownloadClient
+		var enabled, useSSL int
+		if err := rows.Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
+			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.CategoryAudiobook, &c.PathRemap, &c.Priority,
+			&enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+		c.Enabled = enabled == 1
+		c.UseSSL = useSSL == 1
+		hydrateClientCredentials(&c)
+		clients = append(clients, c)
+	}
+	return clients, rows.Err()
+}
+
 func (r *DownloadClientRepo) GetFirstEnabled(ctx context.Context) (*models.DownloadClient, error) {
 	var c models.DownloadClient
 	var enabled, useSSL int

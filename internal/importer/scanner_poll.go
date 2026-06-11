@@ -170,14 +170,26 @@ func (s *Scanner) tryImportNZBGet(ctx context.Context, ng *nzbget.Client, dl *mo
 func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models.DownloadClient) {
 	trans := downloader.TransmissionFor(client)
 
-	// Get all torrents — Category is used as the download directory filter so
-	// Bindery only sees its own torrents on a shared Transmission instance.
+	// Get torrents — Category is used as a download-directory / label filter so
+	// Bindery only sees its own torrents on a shared instance. GetTorrents
+	// normalises the path comparison and also accepts Transmission 3.0+ labels,
+	// so "books" matches both a downloadDir of "/data/books/" and a label "books".
 	torrents, err := trans.GetTorrents(ctx, client.Category)
 	if err != nil {
 		// Warn, not Debug: see checkSABnzbdDownloads (#1019 failure mode).
 		slog.Warn("download poll: failed to fetch Transmission torrents — downloads will not be imported",
 			"client", client.Name, "error", err)
 		return
+	}
+
+	// Surface a misconfiguration when the Category filter returns nothing but the
+	// daemon actually holds torrents (#1091). A silent zero-match means every
+	// Bindery grab permanently sits at "downloading" with no indication of why.
+	if client.Category != "" && len(torrents) == 0 {
+		if all, allErr := trans.GetTorrents(ctx, ""); allErr == nil && len(all) > 0 {
+			slog.Warn("transmission: Category filter matched zero torrents — verify Category matches the torrent download directory path or a torrent label",
+				"client", client.Name, "category", client.Category, "total_torrents", len(all))
+		}
 	}
 
 	// Get all active downloads from DB (not yet completed/imported)
