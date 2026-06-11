@@ -537,8 +537,8 @@ func TestCheckDownloads_DispatchMatrix_TwoClients(t *testing.T) {
 
 	// SAB: one completed NZB.
 	const (
-		sabNzoID  = "SABnzbd_nzo_multi_1090"
-		sabDLDir  = "/data/usenet/complete/book-a"
+		sabNzoID   = "SABnzbd_nzo_multi_1090"
+		sabDLDir   = "/data/usenet/complete/book-a"
 		transDLDir = "/data/torrents/book-b"
 	)
 
