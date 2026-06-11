@@ -1071,9 +1071,6 @@ function SecuritySection() {
         {isAdmin && (<>
         <div>
           <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Authentication Mode</label>
-          <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
-            <strong>Enabled</strong>: always require login. <strong>Local only</strong>: skip login for requests from private IPs (home network). <strong>Disabled</strong>: no authentication — only safe behind a trusted reverse proxy.
-          </p>
           <select
             value={cfg.mode}
             onChange={e => setMode(e.target.value as AuthStatus['mode'])}
@@ -1084,6 +1081,9 @@ function SecuritySection() {
             <option value="local-only">Local only (bypass for private IPs)</option>
             <option value="disabled">Disabled (no auth)</option>
           </select>
+          {cfg.mode === 'enabled' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Always requires login, regardless of network origin.</p>}
+          {cfg.mode === 'local-only' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Login is bypassed for requests from private / LAN IP ranges. Still requires login from the internet.</p>}
+          {cfg.mode === 'disabled' && <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">No authentication — only safe when Bindery is behind a trusted reverse proxy that enforces access control.</p>}
         </div>
 
         <div className="border-t border-slate-200 dark:border-zinc-800 pt-4">
@@ -1107,6 +1107,11 @@ function SecuritySection() {
           </div>
           {apiKeyClipboard.status === 'manual' && (
             <ClipboardManualFallback text={apiKeyClipboard.manualText} className="mt-2" />
+          )}
+          {!showKey && (
+            <p className="text-[11px] text-slate-500 dark:text-zinc-500 mt-1">
+              Regenerating invalidates the current key — update all external integrations afterward.
+            </p>
           )}
         </div>
 

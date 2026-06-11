@@ -134,17 +134,20 @@ function ProfileRow({
             )}
           </div>
           {profile.items && profile.items.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mt-2">
-              {profile.items.map((item, i) => (
-                <span
-                  key={`${item.quality}-${i}`}
-                  className={`text-[10px] px-2 py-0.5 rounded ${item.allowed
-                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                    : 'bg-slate-200 dark:bg-zinc-800 text-slate-500 dark:text-zinc-500'}`}
-                >
-                  {item.quality}
-                </span>
-              ))}
+            <div className="mt-2">
+              <p className="text-[10px] text-slate-500 dark:text-zinc-600 mb-1">Worst → best</p>
+              <div className="flex flex-wrap gap-1.5">
+                {profile.items.map((item, i) => (
+                  <span
+                    key={`${item.quality}-${i}`}
+                    className={`text-[10px] px-2 py-0.5 rounded ${item.allowed
+                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                      : 'bg-slate-200 dark:bg-zinc-800 text-slate-500 dark:text-zinc-500'}`}
+                  >
+                    {i + 1}. {item.quality}
+                  </span>
+                ))}
+              </div>
             </div>
           )}
         </div>
