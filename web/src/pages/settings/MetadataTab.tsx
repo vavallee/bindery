@@ -77,8 +77,8 @@ export default function MetadataTab() {
                   <div className="min-w-0">
                     <h4 className="font-medium text-sm">{p.name}</h4>
                     <div className="flex flex-wrap gap-3 mt-2 text-xs text-slate-600 dark:text-zinc-400">
-                      <span>{t('settings.metadata.minPopularity')} <span className="text-slate-800 dark:text-zinc-200">{p.minPopularity}</span></span>
-                      <span>{t('settings.metadata.minPages')} <span className="text-slate-800 dark:text-zinc-200">{p.minPages}</span></span>
+                      <span>{t('settings.metadata.minPopularity')} <span className="text-slate-800 dark:text-zinc-200">{p.minPopularity === 0 ? 'none' : p.minPopularity}</span></span>
+                      <span>{t('settings.metadata.minPages')} <span className="text-slate-800 dark:text-zinc-200">{p.minPages === 0 ? 'none' : p.minPages}</span></span>
                       <span>{t('settings.metadata.languages')} <span className="text-slate-800 dark:text-zinc-200">{formatLanguageList(p.allowedLanguages)}</span></span>
                     </div>
                     <div className="flex flex-wrap gap-1.5 mt-2">
