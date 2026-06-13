@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, BINDERY_BASE, AuthConfig, AuthStatus, AuthorMonitorMode, HardcoverTestResult, RootFolder, SystemStatus } from '../../api/client'
+import { api, BINDERY_BASE, AuthConfig, AuthStatus, AuthorMonitorMode, HardcoverTestResult, SystemStatus } from '../../api/client'
 import AuthSettings from '../../settings/AuthSettings'
 import ThemeToggle from '../../components/ThemeToggle'
 import LanguageSwitcher from '../../components/LanguageSwitcher'
@@ -67,11 +67,6 @@ export default function GeneralTab() {
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null)
   const [hardcoverToken, setHardcoverToken] = useState('')
   const [hardcoverTestResult, setHardcoverTestResult] = useState<(HardcoverTestResult & { testing?: boolean }) | null>(null)
-  const [rootFolders, setRootFolders] = useState<RootFolder[]>([])
-  const [newDefaultFolderPath, setNewDefaultFolderPath] = useState('')
-  const [newDefaultFolderError, setNewDefaultFolderError] = useState('')
-  const [addingDefaultFolder, setAddingDefaultFolder] = useState(false)
-
   useEffect(() => {
     api.listSettings()
       .then(list => {
@@ -85,7 +80,6 @@ export default function GeneralTab() {
     api.libraryScanStatus().then(setLastScan).catch(() => {/* no prior scan — ignore 404 */})
     api.getStorage().then(setStorage).catch(console.error)
     api.status().then(setSystemStatus).catch(console.error)
-    api.listRootFolders().then(setRootFolders).catch(console.error)
   }, [])
 
   const refreshSystemStatus = async () => {
@@ -610,73 +604,16 @@ export default function GeneralTab() {
       {/* Default library location */}
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">Default library location</h3>
-        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-3">
-          <div>
-            <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">Default root folder</label>
-            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
-              When an author has no per-author root folder set, Bindery uses this location. Leave unset to fall back to <code className="font-mono bg-slate-200 dark:bg-zinc-800 px-1 rounded">BINDERY_LIBRARY_DIR</code>.
-            </p>
-            <select
-              value={settings['library.defaultRootFolderId'] ?? ''}
-              onChange={async e => {
-                const next = e.target.value
-                setSettings(s => ({ ...s, 'library.defaultRootFolderId': next }))
-                await api.setSetting('library.defaultRootFolderId', next).catch(console.error)
-              }}
-              className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
-            >
-              <option value="">— Unset (use BINDERY_LIBRARY_DIR) —</option>
-              {rootFolders.map(rf => (
-                <option key={rf.id} value={String(rf.id)}>{rf.path}</option>
-              ))}
-            </select>
-          </div>
-          {!addingDefaultFolder ? (
-            <button
-              onClick={() => { setAddingDefaultFolder(true); setNewDefaultFolderError('') }}
-              className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline"
-            >
-              + Add root folder
-            </button>
-          ) : (
-            <div className="space-y-2">
-              <label className="block text-xs text-slate-600 dark:text-zinc-400">New root folder path</label>
-              <div className="flex gap-2">
-                <input
-                  value={newDefaultFolderPath}
-                  onChange={e => setNewDefaultFolderPath(e.target.value)}
-                  placeholder="/mnt/books"
-                  className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 font-mono"
-                />
-                <button
-                  onClick={async () => {
-                    if (!newDefaultFolderPath.trim()) return
-                    setNewDefaultFolderError('')
-                    try {
-                      const created = await api.addRootFolder(newDefaultFolderPath.trim())
-                      setRootFolders(prev => [...prev, created])
-                      setSettings(s => ({ ...s, 'library.defaultRootFolderId': String(created.id) }))
-                      await api.setSetting('library.defaultRootFolderId', String(created.id)).catch(console.error)
-                      setNewDefaultFolderPath('')
-                      setAddingDefaultFolder(false)
-                    } catch (err) {
-                      setNewDefaultFolderError(err instanceof Error ? err.message : 'Failed to add folder')
-                    }
-                  }}
-                  className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium"
-                >
-                  Add
-                </button>
-                <button
-                  onClick={() => { setAddingDefaultFolder(false); setNewDefaultFolderPath(''); setNewDefaultFolderError('') }}
-                  className="px-3 py-2 bg-slate-300 dark:bg-zinc-700 hover:bg-slate-400 dark:hover:bg-zinc-600 rounded text-xs font-medium"
-                >
-                  Cancel
-                </button>
-              </div>
-              {newDefaultFolderError && <p className="text-xs text-red-500">{newDefaultFolderError}</p>}
-            </div>
-          )}
+        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+          <p className="text-xs text-slate-600 dark:text-zinc-500 mb-3">
+            Manage root folders and the default library location in the Root Folders tab.
+          </p>
+          <button
+            onClick={() => window.location.assign('/settings?tab=rootfolders')}
+            className="text-sm text-emerald-600 dark:text-emerald-400 hover:underline"
+          >
+            Manage in Root Folders →
+          </button>
         </div>
       </section>
 
