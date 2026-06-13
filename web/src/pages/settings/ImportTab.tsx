@@ -553,7 +553,21 @@ function HardcoverListsSection() {
         })}
       </div>
 
-      {error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
+      {error && (
+        <div className="mt-2 text-sm text-rose-600 dark:text-rose-400">
+          {error}
+          {(error.toLowerCase().includes('token') || error.toLowerCase().includes('not configured')) && (
+            <span className="block mt-1 text-xs">
+              <button
+                onClick={() => window.location.assign('/settings?tab=general')}
+                className="text-emerald-600 dark:text-emerald-400 hover:underline"
+              >
+                Configure the Hardcover API token in General settings →
+              </button>
+            </span>
+          )}
+        </div>
+      )}
     </section>
   )
 }
