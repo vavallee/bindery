@@ -572,7 +572,8 @@
         "tokenIgnoredAudiobook": "{{token}} is ignored for the audiobook folder template",
         "errorEmpty": "Template cannot be empty.",
         "errorTraversal": "Template must not contain \".\" or \"..\" path segments.",
-        "errorUnknownTokens": "Unknown token(s): {{tokens}}. These are case-sensitive and will be written literally."
+        "errorUnknownTokens": "Unknown token(s): {{tokens}}. These are case-sensitive and will be written literally.",
+        "hintEmpty": "Required — enter at least one token or path segment."
       },
       "apiKeys": "External API Keys",
       "googleBooksKey": "Google Books API Key",
