@@ -6,6 +6,8 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.19.0] — 2026-06-13
+
 ### Added
 
 - **`{Genre}` file-naming token** — organise your library into top-level genre folders (e.g. `{Genre}/{Author}/{Title}`). Genres are sourced from Hardcover's curated taxonomy when Hardcover is enabled; without it the token falls back to OpenLibrary's noisier subject data. New books pick up genres immediately; **refresh an author** to backfill genres onto books imported before this release.
@@ -14,6 +16,14 @@ All notable changes to Bindery are documented here. Format loosely follows
 ### Changed
 
 - **Genres now prefer Hardcover's taxonomy over OpenLibrary subjects** — when a Hardcover match is available, its curated genres (`Fantasy`, `Science Fiction`) replace OpenLibrary's raw subject bag (`Fiction`, `American literature`, `Large type books`) for display and for the new `{Genre}` token. Non-Hardcover enrichers (e.g. Google Books BISAC categories) no longer overwrite genres.
+- **OpenLibrary search results now carry ISBNs** ([#1121](https://github.com/vavallee/bindery/pull/1121)) — the ISBN data OpenLibrary already returns is no longer discarded, so cross-provider de-duplication can collapse OpenLibrary and Hardcover hits for the same edition.
+
+### Fixed
+
+- **DNB titles no longer carry promotional/genre bloat** ([#1115](https://github.com/vavallee/bindery/pull/1115), [#1114](https://github.com/vavallee/bindery/issues/1114)) — German DNB records often append marketing text and genre markers (e.g. `: Roman | SPIEGEL-Bestsellerautorin … / Author`). These are now stripped, so titles are clean and indexer searches match instead of failing with "title/author keywords did not match release name". (Books added before this release keep their stored title until re-added.)
+- **Deluge grabs no longer fail in VPN/namespaced setups** ([#1116](https://github.com/vavallee/bindery/pull/1116), [#1110](https://github.com/vavallee/bindery/issues/1110)) — Bindery now fetches the `.torrent` itself and submits the bytes to the daemon, instead of having the Deluge daemon fetch the indexer URL (which fails when the daemon can't reach the indexer). The infohash is returned directly, so the add no longer relies on hash polling.
+- **Naming templates drop a dangling separator when a leading token is empty** ([#1128](https://github.com/vavallee/bindery/pull/1128)) — a template like `{SeriesNumber} - {Title}` now yields `Title` rather than ` - Title` for a book with no series number. Interior/trailing separators are unchanged.
+- **CSV author import no longer mis-parses long first lines** ([#1120](https://github.com/vavallee/bindery/pull/1120)) — the parser read past its buffer when a CSV's first line exceeded 4 KB, producing phantom rows; found by the nightly fuzzer.
 
 ### Notes
 
