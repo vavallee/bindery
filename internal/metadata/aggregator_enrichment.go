@@ -227,6 +227,11 @@ type enrichmentSnapshot struct {
 	imageURL      string
 	averageRating float64
 	ratingsCount  int
+	// genres holds the Hardcover genre taxonomy when a Hardcover match
+	// supplied one. We snapshot it so the {Genre} naming token and the genre
+	// display read a curated source instead of OpenLibrary's noisy "subjects"
+	// bag. Empty when no Hardcover match contributed genres.
+	genres []string
 }
 
 // enrichBookCacheKey is keyed on (MetadataProvider, ForeignID) because that
@@ -298,6 +303,17 @@ func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
 			book.ImageURL = e.ImageURL
 			slog.Debug("enriched cover", "provider", enricher.Name(), "book", book.Title)
 		}
+		// Genres: prefer Hardcover's curated taxonomy ("Fantasy", "Science
+		// Fiction") over OpenLibrary's raw subject bag. Gated to Hardcover
+		// specifically — Google Books ships slash-delimited BISAC strings
+		// ("Fiction / Science Fiction / General") that would pollute folder
+		// names. Replace rather than fill-empty, since OL almost always
+		// supplies *some* subject so fill-empty would never fire. Never blank
+		// existing genres with an empty Hardcover result.
+		if enricher.Name() == "hardcover" && len(e.Genres) > 0 {
+			book.Genres = e.Genres
+			slog.Debug("enriched genres", "provider", enricher.Name(), "book", book.Title)
+		}
 	}
 
 	// Cover-only fallback: any provider implementing CoverProvider gets
@@ -315,6 +331,7 @@ func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
 			imageURL:      book.ImageURL,
 			averageRating: book.AverageRating,
 			ratingsCount:  book.RatingsCount,
+			genres:        book.Genres,
 		})
 	}
 }
@@ -336,6 +353,14 @@ func applyEnrichmentSnapshot(book *models.Book, snap enrichmentSnapshot) {
 	if preferStrongerRating(book.AverageRating, book.RatingsCount, snap.averageRating, snap.ratingsCount) {
 		book.AverageRating = snap.averageRating
 		book.RatingsCount = snap.ratingsCount
+	}
+	// Mirror the live genre rule: the snapshot holds the post-enrichment
+	// genres (Hardcover's when a match supplied them). The cache key is
+	// (provider, foreignID), so a hit reuses the same book identity and the
+	// same source genres; replacing is correct and a no-op when no Hardcover
+	// match ever contributed.
+	if len(snap.genres) > 0 {
+		book.Genres = snap.genres
 	}
 }
 

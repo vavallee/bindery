@@ -3,6 +3,7 @@ package metadata
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -498,6 +499,71 @@ func TestAggregator_GetBook_Enrichment_RatingFilled(t *testing.T) {
 	}
 	if got.RatingsCount != 100 {
 		t.Errorf("ratingsCount: want 100, got %d", got.RatingsCount)
+	}
+}
+
+func TestAggregator_GetBook_Enrichment_GenresFromHardcover(t *testing.T) {
+	// Hardcover's curated taxonomy replaces OpenLibrary's noisy subjects.
+	primary := &mockProvider{
+		name:    "ol",
+		getBook: &models.Book{Title: "Mistborn", Description: "x", Genres: []string{"Fiction", "American literature", "Large type books"}},
+	}
+	hc := &mockProvider{
+		name:        "hardcover",
+		searchBooks: []models.Book{{Title: "Mistborn", Description: "Some desc", Genres: []string{"Fantasy", "Epic Fantasy"}}},
+	}
+	agg := &Aggregator{primary: primary, enrichers: []Provider{hc}, cache: newTTLCache(time.Minute)}
+
+	got, err := agg.GetBook(context.Background(), "OL100W")
+	if err != nil {
+		t.Fatalf("GetBook: %v", err)
+	}
+	if want := []string{"Fantasy", "Epic Fantasy"}; !slices.Equal(got.Genres, want) {
+		t.Errorf("genres: want %v, got %v", want, got.Genres)
+	}
+}
+
+func TestAggregator_GetBook_Enrichment_NonHardcoverGenresIgnored(t *testing.T) {
+	// Google Books ships slash-delimited BISAC strings; they must not replace
+	// the existing genres (gated to Hardcover provenance).
+	olGenres := []string{"Fiction"}
+	primary := &mockProvider{
+		name:    "ol",
+		getBook: &models.Book{Title: "Dune", Description: "x", Genres: olGenres},
+	}
+	gb := &mockProvider{
+		name:        "googlebooks",
+		searchBooks: []models.Book{{Title: "Dune", Description: "Some desc", Genres: []string{"Fiction / Science Fiction / General"}}},
+	}
+	agg := &Aggregator{primary: primary, enrichers: []Provider{gb}, cache: newTTLCache(time.Minute)}
+
+	got, err := agg.GetBook(context.Background(), "OL200W")
+	if err != nil {
+		t.Fatalf("GetBook: %v", err)
+	}
+	if !slices.Equal(got.Genres, olGenres) {
+		t.Errorf("genres should be untouched by non-Hardcover enricher: want %v, got %v", olGenres, got.Genres)
+	}
+}
+
+func TestAggregator_GetBook_Enrichment_EmptyHardcoverGenresDoNotBlank(t *testing.T) {
+	olGenres := []string{"Fiction"}
+	primary := &mockProvider{
+		name:    "ol",
+		getBook: &models.Book{Title: "Dune", Description: "x", Genres: olGenres},
+	}
+	hc := &mockProvider{
+		name:        "hardcover",
+		searchBooks: []models.Book{{Title: "Dune", Description: "Some desc"}}, // no genres
+	}
+	agg := &Aggregator{primary: primary, enrichers: []Provider{hc}, cache: newTTLCache(time.Minute)}
+
+	got, err := agg.GetBook(context.Background(), "OL300W")
+	if err != nil {
+		t.Fatalf("GetBook: %v", err)
+	}
+	if !slices.Equal(got.Genres, olGenres) {
+		t.Errorf("existing genres must survive an empty Hardcover result: want %v, got %v", olGenres, got.Genres)
 	}
 }
 
