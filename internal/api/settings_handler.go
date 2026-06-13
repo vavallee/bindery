@@ -233,7 +233,7 @@ func (h *SettingsHandler) TestHardcover(w http.ResponseWriter, r *http.Request) 
 	token := GetHardcoverAPIToken(r.Context(), h.settings)
 	result := HardcoverTestResponse{TokenConfigured: token != ""}
 	if token == "" {
-		result.Error = "hardcover API token is not configured"
+		result.Error = "Hardcover API token is not configured"
 		writeJSON(w, http.StatusOK, result)
 		return
 	}

@@ -133,8 +133,8 @@ export default function NamingTemplateField({
 
       {/* Validation feedback */}
       {validation.empty && (
-        <p className="text-xs text-red-600 dark:text-red-400 mt-1.5" role="alert">
-          {t('settings.general.naming.errorEmpty')}
+        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1.5">
+          {t('settings.general.naming.hintEmpty', 'Required — enter at least one token or path segment.')}
         </p>
       )}
       {validation.traversal && (

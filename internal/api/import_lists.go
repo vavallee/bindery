@@ -151,7 +151,7 @@ func (h *ImportListHandler) HardcoverLists(w http.ResponseWriter, r *http.Reques
 		}
 		token = GetHardcoverAPIToken(r.Context(), h.settings)
 		if token == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "hardcover API token is not configured"})
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Hardcover API token is not configured"})
 			return
 		}
 	}
