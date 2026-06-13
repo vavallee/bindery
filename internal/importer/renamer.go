@@ -6,11 +6,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/vavallee/bindery/internal/models"
 )
+
+// templateTokenRe matches a "{Token}" placeholder in a naming template.
+var templateTokenRe = regexp.MustCompile(`\{(\w+)\}`)
 
 const defaultNamingTemplate = "{Author}/{Title} ({Year})/{Title} - {Author}.{ext}"
 const defaultAudiobookTemplate = "{Author}/{Title} ({Year})"
@@ -95,16 +99,88 @@ func (r *Renamer) apply(template string, author *models.Author, book *models.Boo
 	if author != nil {
 		authorName = author.Name
 	}
-	result := template
-	result = strings.ReplaceAll(result, "{Author}", sanitizePath(authorName))
-	result = strings.ReplaceAll(result, "{SortAuthor}", sanitizePath(authorSortName(authorName)))
-	result = strings.ReplaceAll(result, "{Title}", sanitizePath(book.Title))
-	result = strings.ReplaceAll(result, "{Year}", year)
-	result = strings.ReplaceAll(result, "{ASIN}", sanitizePath(book.ASIN))
-	result = strings.ReplaceAll(result, "{Series}", sanitizePath(series))
-	result = strings.ReplaceAll(result, "{SeriesNumber}", sanitizePath(seriesNumber))
-	result = strings.ReplaceAll(result, "{ext}", ext)
-	return result
+	values := map[string]string{
+		"Author":       sanitizePath(authorName),
+		"SortAuthor":   sanitizePath(authorSortName(authorName)),
+		"Title":        sanitizePath(book.Title),
+		"Year":         year,
+		"ASIN":         sanitizePath(book.ASIN),
+		"Series":       sanitizePath(series),
+		"SeriesNumber": sanitizePath(seriesNumber),
+		"ext":          ext,
+	}
+
+	// Render per path segment. A segment that renders empty (e.g. an empty
+	// "{Series}" component) is dropped so the path doesn't gain an empty
+	// directory level.
+	segments := strings.Split(template, "/")
+	kept := segments[:0]
+	for _, seg := range segments {
+		rendered := renderSegment(seg, values)
+		if rendered != "" {
+			kept = append(kept, rendered)
+		}
+	}
+	return strings.Join(kept, "/")
+}
+
+// renderSegment substitutes "{Token}" placeholders in a single path segment.
+// When the leading token(s) of a segment resolve to empty, the separator glue
+// that would dangle in front of the first real value is dropped, so a template
+// like "{SeriesNumber} - {Title}" with no series number yields "Title" rather
+// than " - Title" (issue: Discord report, Jonathan Stroud "The Hollow Boy").
+//
+// Only leading glue is collapsed. Interior and trailing glue is left intact so
+// the established behaviour of "{Title} ({Year})" → "Title ()" and
+// "{Title}.{ext}" → "Title." (audiobook folders) is preserved — those are
+// pinned by the preview drift guard and mirrored client-side.
+//
+// Unknown tokens are left verbatim (e.g. a "{Titel}" typo stays "{Titel}"),
+// matching the previous literal-passthrough behaviour.
+func renderSegment(seg string, values map[string]string) string {
+	locs := templateTokenRe.FindAllStringSubmatchIndex(seg, -1)
+	if len(locs) == 0 {
+		return strings.TrimSpace(seg)
+	}
+
+	// Split the segment into literals (len n+1) interleaved with token values
+	// (len n): lits[0] vals[0] lits[1] vals[1] ... vals[n-1] lits[n].
+	lits := make([]string, 0, len(locs)+1)
+	vals := make([]string, 0, len(locs))
+	prev := 0
+	for _, m := range locs {
+		start, end := m[0], m[1]
+		name := seg[m[2]:m[3]]
+		lits = append(lits, seg[prev:start])
+		v, ok := values[name]
+		if !ok {
+			v = seg[start:end] // unknown token: keep "{Token}" verbatim
+		}
+		vals = append(vals, v)
+		prev = end
+	}
+	lits = append(lits, seg[prev:])
+
+	// Walk the leading run of empty tokens, dropping the separator that follows
+	// each. Stop at the first non-empty value, or at a leading literal that is
+	// real text rather than just glue (so "Vol {SeriesNumber}" keeps "Vol ").
+	for i := range vals {
+		if vals[i] != "" {
+			break
+		}
+		if strings.TrimSpace(lits[i]) != "" {
+			break
+		}
+		lits[i+1] = ""
+	}
+
+	var b strings.Builder
+	for i, v := range vals {
+		b.WriteString(lits[i])
+		b.WriteString(v)
+	}
+	b.WriteString(lits[len(lits)-1])
+	return strings.TrimSpace(b.String())
 }
 
 // MoveFile atomically copies a file to the destination and then removes the source.

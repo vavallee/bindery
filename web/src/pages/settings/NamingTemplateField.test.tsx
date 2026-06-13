@@ -59,6 +59,22 @@ describe('namingTemplate renderer (renamer.go mirror)', () => {
     // ":" and "/" -> "-", "?<>" stripped; result is one segment
     expect(out).toBe('A- B - C D')
   })
+
+  it('drops dangling leading separators when a leading token is empty', () => {
+    const noSeries = { ...SAMPLE_BOOK, series: '', seriesNumber: '' }
+    // Discord report: "{SeriesNumber} - {Title}" with no number must not yield " - Title".
+    expect(
+      renderTemplate('{Author}/{Series}/{SeriesNumber} - {Title}.{ext}', 'book', noSeries),
+    ).toBe('Jane Doe/Sample Book.epub')
+    // Consecutive empty leading tokens collapse.
+    expect(
+      renderTemplate('{Author}/{Series} - {SeriesNumber} - {Title}.{ext}', 'book', noSeries),
+    ).toBe('Jane Doe/Sample Book.epub')
+    // Interior/trailing glue is preserved (empty {Year} still yields "()").
+    expect(
+      renderTemplate('{Title} ({Year})', 'book', { ...SAMPLE_BOOK, year: '' }),
+    ).toBe('Sample Book ()')
+  })
 })
 
 describe('validateTemplate', () => {

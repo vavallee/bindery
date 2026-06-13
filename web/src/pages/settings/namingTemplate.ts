@@ -97,29 +97,69 @@ export function sanitizePath(s: string): string {
   return kept.join(SEP)
 }
 
-// render mirrors Renamer.apply: substitute each token (sanitized where the Go
-// code sanitizes) for the given sample. For the audiobook kind, {ext} renders
-// empty, matching AudiobookDestDir which passes ext="".
+// render mirrors Renamer.apply: render each "/"-separated path segment with its
+// tokens substituted (sanitized where the Go code sanitizes), dropping empty
+// segments. For the audiobook kind, {ext} renders empty, matching
+// AudiobookDestDir which passes ext="".
 export function renderTemplate(
   template: string,
   kind: TemplateKind,
   sample: SampleBook = SAMPLE_BOOK,
 ): string {
   const ext = kind === 'audiobook' ? '' : sample.ext
-  let result = template
-  result = replaceAll(result, '{Author}', sanitizePath(sample.author))
-  result = replaceAll(result, '{SortAuthor}', sanitizePath(sample.sortAuthor))
-  result = replaceAll(result, '{Title}', sanitizePath(sample.title))
-  result = replaceAll(result, '{Year}', sample.year)
-  result = replaceAll(result, '{ASIN}', sanitizePath(sample.asin))
-  result = replaceAll(result, '{Series}', sanitizePath(sample.series))
-  result = replaceAll(result, '{SeriesNumber}', sanitizePath(sample.seriesNumber))
-  result = replaceAll(result, '{ext}', ext)
-  return result
+  const values: Record<string, string> = {
+    Author: sanitizePath(sample.author),
+    SortAuthor: sanitizePath(sample.sortAuthor),
+    Title: sanitizePath(sample.title),
+    Year: sample.year,
+    ASIN: sanitizePath(sample.asin),
+    Series: sanitizePath(sample.series),
+    SeriesNumber: sanitizePath(sample.seriesNumber),
+    ext,
+  }
+  return template
+    .split(SEP)
+    .map(seg => renderSegment(seg, values))
+    .filter(seg => seg !== '')
+    .join(SEP)
 }
 
-function replaceAll(s: string, from: string, to: string): string {
-  return s.split(from).join(to)
+const SEGMENT_TOKEN_RE = /\{(\w+)\}/g
+
+// renderSegment mirrors renamer.go renderSegment: substitute "{Token}"
+// placeholders in a single path segment and, when the leading token(s) render
+// empty, drop the separator glue that would otherwise dangle before the first
+// real value ("{SeriesNumber} - {Title}" with no series number → "Title", not
+// " - Title"). Only leading glue is collapsed; interior/trailing glue stays so
+// "{Title} ({Year})" → "Title ()" and "{Title}.{ext}" → "Title." are preserved.
+// Unknown tokens are kept verbatim.
+function renderSegment(seg: string, values: Record<string, string>): string {
+  const lits: string[] = []
+  const vals: string[] = []
+  let prev = 0
+  SEGMENT_TOKEN_RE.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = SEGMENT_TOKEN_RE.exec(seg)) !== null) {
+    lits.push(seg.slice(prev, m.index))
+    const v = values[m[1]]
+    vals.push(v !== undefined ? v : m[0]) // unknown token: keep "{Token}" verbatim
+    prev = m.index + m[0].length
+  }
+  if (vals.length === 0) return seg.trim()
+  lits.push(seg.slice(prev))
+
+  // Drop the separator following each leading empty token. Stop at the first
+  // non-empty value, or at a leading literal that is real text, not just glue.
+  for (let i = 0; i < vals.length; i++) {
+    if (vals[i] !== '') break
+    if (lits[i].trim() !== '') break
+    lits[i + 1] = ''
+  }
+
+  let out = ''
+  for (let i = 0; i < vals.length; i++) out += lits[i] + vals[i]
+  out += lits[lits.length - 1]
+  return out.trim()
 }
 
 export interface ValidationResult {
