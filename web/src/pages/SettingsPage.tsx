@@ -28,13 +28,14 @@ const RootFoldersTab = lazy(() => import('./settings/RootFoldersTab'))
 const CalibreTab = lazy(() => import('./settings/CalibreTab'))
 const ABSTab = lazy(() => import('./settings/ABSTab'))
 const GrimmoryTab = lazy(() => import('./settings/GrimmoryTab'))
+const ApiKeysTab = lazy(() => import('./settings/ApiKeysTab'))
 const ImportTab = lazy(() => import('./settings/ImportTab'))
 const BlocklistTab = lazy(() => import('./settings/BlocklistTab'))
 const LogsTab = lazy(() => import('./settings/LogsTab'))
 
-type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'grimmory'
+type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'grimmory' | 'api-keys'
 
-const ADMIN_TABS: Tab[] = ['indexers', 'clients', 'notifications', 'quality', 'metadata', 'import', 'rootfolders', 'logs', 'blocklist', 'calibre', 'abs', 'grimmory']
+const ADMIN_TABS: Tab[] = ['indexers', 'clients', 'notifications', 'quality', 'metadata', 'import', 'rootfolders', 'logs', 'blocklist', 'calibre', 'abs', 'grimmory', 'api-keys']
 
 const ALL_TABS: Tab[] = ['general', ...ADMIN_TABS]
 
@@ -130,6 +131,7 @@ export default function SettingsPage() {
       case 'import': return <ImportTab />
       case 'blocklist': return <BlocklistTab />
       case 'logs': return <LogsTab />
+      case 'api-keys': return <ApiKeysTab />
     }
   }
 
@@ -183,6 +185,7 @@ export default function SettingsPage() {
                     Preview
                   </span>
                 </button>
+                <SettingsNavLink tab="api-keys" active={tab} onSelect={setTab} label={t('settings.tabs.apiKeys')} />
               </div>
 
               <div className="pt-3 pb-0.5">
