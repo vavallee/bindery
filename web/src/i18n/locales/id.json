@@ -238,7 +238,8 @@
       "calibre": "Calibre",
       "abs": "Audiobookshelf",
       "grimmory": "Grimmory",
-      "blocklist": "Daftar blokir"
+      "blocklist": "Daftar blokir",
+      "apiKeys": "API Keys"
     },
     "abs": {
       "review": {
