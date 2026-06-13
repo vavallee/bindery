@@ -9,10 +9,10 @@ import "testing"
 // title fields that should never reach the stored title.
 func TestCleanDNBTitle(t *testing.T) {
 	cases := []struct {
-		name    string
-		rawA    string
-		rawB    string
-		want    string
+		name string
+		rawA string
+		rawB string
+		want string
 	}{
 		{
 			name: "promotional pipe chain in $a stripped",
