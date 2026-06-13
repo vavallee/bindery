@@ -9,6 +9,7 @@ const LANGUAGES = [
   { code: 'nl', label: 'Nederlands' },
   { code: 'tl', label: 'Filipino' },
   { code: 'id', label: 'Bahasa Indonesia' },
+  { code: 'ko', label: '한국어' },
 ]
 
 export default function LanguageSwitcher() {

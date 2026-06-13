@@ -9,6 +9,7 @@ import es from './locales/es.json'
 import nl from './locales/nl.json'
 import tl from './locales/tl.json'
 import id from './locales/id.json'
+import ko from './locales/ko.json'
 
 // Reads from localStorage key 'bindery.lang' first, then falls back to the
 // browser's navigator.language. This mirrors the theme bootstrap so the first
@@ -25,6 +26,7 @@ i18n
       nl: { translation: nl },
       tl: { translation: tl },
       id: { translation: id },
+      ko: { translation: ko },
     },
     fallbackLng: 'en',
     detection: {
