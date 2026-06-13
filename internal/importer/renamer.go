@@ -13,8 +13,13 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
-// templateTokenRe matches a "{Token}" placeholder in a naming template.
-var templateTokenRe = regexp.MustCompile(`\{(\w+)\}`)
+// templateTokenRe matches a "{Token}" placeholder, optionally with a default
+// value after a colon ("{Genre:Unsorted}"). The default is substituted when the
+// token renders empty, mirroring Calibre's ifempty(...) so a top-level taxonomy
+// folder (e.g. genre) can route un-tagged books to a fixed folder instead of
+// collapsing the path segment. Group 1 is the token name; group 2 (optional) is
+// the default text.
+var templateTokenRe = regexp.MustCompile(`\{(\w+)(?::([^}]*))?\}`)
 
 const defaultNamingTemplate = "{Author}/{Title} ({Year})/{Title} - {Author}.{ext}"
 const defaultAudiobookTemplate = "{Author}/{Title} ({Year})"
@@ -107,6 +112,7 @@ func (r *Renamer) apply(template string, author *models.Author, book *models.Boo
 		"ASIN":         sanitizePath(book.ASIN),
 		"Series":       sanitizePath(series),
 		"SeriesNumber": sanitizePath(seriesNumber),
+		"Genre":        sanitizePath(firstGenre(book.Genres)),
 		"ext":          ext,
 	}
 
@@ -153,8 +159,11 @@ func renderSegment(seg string, values map[string]string) string {
 		name := seg[m[2]:m[3]]
 		lits = append(lits, seg[prev:start])
 		v, ok := values[name]
-		if !ok {
-			v = seg[start:end] // unknown token: keep "{Token}" verbatim
+		switch {
+		case !ok:
+			v = seg[start:end] // unknown token: keep "{Token}" (or "{Token:def}") verbatim
+		case v == "" && m[4] >= 0:
+			v = sanitizePath(seg[m[4]:m[5]]) // empty known token with a default
 		}
 		vals = append(vals, v)
 		prev = end
@@ -181,6 +190,19 @@ func renderSegment(seg string, values map[string]string) string {
 	}
 	b.WriteString(lits[len(lits)-1])
 	return strings.TrimSpace(b.String())
+}
+
+// firstGenre returns the primary genre for the {Genre} token: the first entry
+// of the book's genre list, or "" when there are none. The list is populated
+// from Hardcover's curated taxonomy when available (see aggregator enrichment);
+// the choice of index 0 is deterministic for a given fetch, but note that
+// upstream re-categorisation can change it and Bindery does not relocate
+// already-imported files when it does.
+func firstGenre(genres []string) string {
+	if len(genres) == 0 {
+		return ""
+	}
+	return genres[0]
 }
 
 // MoveFile atomically copies a file to the destination and then removes the source.

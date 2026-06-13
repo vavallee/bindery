@@ -6,6 +6,20 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **`{Genre}` file-naming token** — organise your library into top-level genre folders (e.g. `{Genre}/{Author}/{Title}`). Genres are sourced from Hardcover's curated taxonomy when Hardcover is enabled; without it the token falls back to OpenLibrary's noisier subject data. New books pick up genres immediately; **refresh an author** to backfill genres onto books imported before this release.
+- **`{Token:default}` fallback syntax in naming templates** — any token can specify a fallback used when it renders empty, mirroring Calibre's `ifempty(...)`. For example `{Genre:Unsorted}/{Author}/{Title}` routes un-tagged books to an `Unsorted/` folder instead of dropping the folder level.
+
+### Changed
+
+- **Genres now prefer Hardcover's taxonomy over OpenLibrary subjects** — when a Hardcover match is available, its curated genres (`Fantasy`, `Science Fiction`) replace OpenLibrary's raw subject bag (`Fiction`, `American literature`, `Large type books`) for display and for the new `{Genre}` token. Non-Hardcover enrichers (e.g. Google Books BISAC categories) no longer overwrite genres.
+
+### Notes
+
+- `{Genre}` uses the first genre Hardcover lists. If Hardcover later re-categorises a book, new grabs follow the new genre, but already-imported files are not relocated.
+- Per-book genre editing (your own vocabulary, like a Calibre custom column) is not yet supported; this release sources clean genres automatically but does not let you override them per book.
+
 ## [v1.18.0] — 2026-06-11
 
 ### Added

@@ -27,6 +27,7 @@ export const NAMING_TOKENS: readonly NamingToken[] = [
   { token: '{ASIN}', descKey: 'tokenAsin' },
   { token: '{Series}', descKey: 'tokenSeries' },
   { token: '{SeriesNumber}', descKey: 'tokenSeriesNumber' },
+  { token: '{Genre}', descKey: 'tokenGenre' },
   { token: '{ext}', descKey: 'tokenExt', ebookOnly: true },
 ] as const
 
@@ -44,6 +45,7 @@ export interface SampleBook {
   asin: string
   series: string
   seriesNumber: string
+  genre: string
   ext: string
 }
 
@@ -56,6 +58,7 @@ export const SAMPLE_BOOK: SampleBook = {
   asin: 'B01ABCDEFG',
   series: 'Demo Series',
   seriesNumber: '2',
+  genre: 'Fantasy',
   ext: 'epub',
 }
 
@@ -115,6 +118,7 @@ export function renderTemplate(
     ASIN: sanitizePath(sample.asin),
     Series: sanitizePath(sample.series),
     SeriesNumber: sanitizePath(sample.seriesNumber),
+    Genre: sanitizePath(sample.genre),
     ext,
   }
   return template
@@ -124,7 +128,9 @@ export function renderTemplate(
     .join(SEP)
 }
 
-const SEGMENT_TOKEN_RE = /\{(\w+)\}/g
+// Group 1: token name. Group 2 (optional): default after a colon, used when the
+// token renders empty ("{Genre:Unsorted}"). Mirrors templateTokenRe in renamer.go.
+const SEGMENT_TOKEN_RE = /\{(\w+)(?::([^}]*))?\}/g
 
 // renderSegment mirrors renamer.go renderSegment: substitute "{Token}"
 // placeholders in a single path segment and, when the leading token(s) render
@@ -132,7 +138,8 @@ const SEGMENT_TOKEN_RE = /\{(\w+)\}/g
 // real value ("{SeriesNumber} - {Title}" with no series number → "Title", not
 // " - Title"). Only leading glue is collapsed; interior/trailing glue stays so
 // "{Title} ({Year})" → "Title ()" and "{Title}.{ext}" → "Title." are preserved.
-// Unknown tokens are kept verbatim.
+// A "{Token:default}" empty token renders its default instead. Unknown tokens
+// are kept verbatim.
 function renderSegment(seg: string, values: Record<string, string>): string {
   const lits: string[] = []
   const vals: string[] = []
@@ -142,7 +149,13 @@ function renderSegment(seg: string, values: Record<string, string>): string {
   while ((m = SEGMENT_TOKEN_RE.exec(seg)) !== null) {
     lits.push(seg.slice(prev, m.index))
     const v = values[m[1]]
-    vals.push(v !== undefined ? v : m[0]) // unknown token: keep "{Token}" verbatim
+    if (v === undefined) {
+      vals.push(m[0]) // unknown token: keep "{Token}" (or "{Token:def}") verbatim
+    } else if (v === '' && m[2] !== undefined) {
+      vals.push(sanitizePath(m[2])) // empty known token with a default
+    } else {
+      vals.push(v)
+    }
     prev = m.index + m[0].length
   }
   if (vals.length === 0) return seg.trim()
@@ -181,7 +194,10 @@ export function validateTemplate(template: string): ValidationResult {
   const matches = template.match(TOKEN_RE) ?? []
   const unknown: string[] = []
   for (const m of matches) {
-    if (!SUPPORTED.has(m) && !unknown.includes(m)) unknown.push(m)
+    // Strip an optional ":default" ("{Genre:Unsorted}" → "{Genre}") before the
+    // supported-token check; report the original token text if still unknown.
+    const norm = m.replace(/^(\{\w+):[^}]*\}$/, '$1}')
+    if (!SUPPORTED.has(norm) && !unknown.includes(m)) unknown.push(m)
   }
   return {
     unknownTokens: unknown,
