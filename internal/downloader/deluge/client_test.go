@@ -421,7 +421,6 @@ func TestGetTorrents_StalledState(t *testing.T) {
 	}
 }
 
-
 // roundTripFunc is a test helper that implements http.RoundTripper via a function.
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
