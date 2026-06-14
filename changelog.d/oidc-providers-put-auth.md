@@ -1,0 +1,2 @@
+### Fixed
+- **OIDC provider config via API key** — `PUT /api/v1/auth/oidc/providers` returned `403 {"error":"admin role required"}` even with a valid `X-Api-Key` header, because the auth allowlist matched on path only and skipped the key check entirely. `GET` is intentionally public (login page needs the provider list); `PUT` now goes through normal auth so API-key-authenticated requests are correctly granted admin access.

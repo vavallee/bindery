@@ -148,6 +148,62 @@ func TestProxyAuthRegularPathUntrustedIPStill401s(t *testing.T) {
 	}
 }
 
+// TestOIDCProvidersGETIsPublicPUTIsNot confirms that AllowUnauthPath is
+// method-aware for /auth/oidc/providers. GET must pass unauthenticated (login
+// page needs to discover providers), but PUT must go through normal auth so a
+// valid X-Api-Key header is required and grants admin access.
+func TestOIDCProvidersGETIsPublicPUTIsNot(t *testing.T) {
+	const apiKey = "test-api-key-for-oidc-test"
+	p := &fakeProvider{mode: ModeEnabled, apiKey: apiKey}
+	mw := Middleware(p)
+
+	// GET must be let through without any credentials.
+	t.Run("GET_public", func(t *testing.T) {
+		called := false
+		h := mw(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true }))
+		req, _ := http.NewRequest("GET", "/api/v1/auth/oidc/providers", nil)
+		h.ServeHTTP(nopWriter{}, req)
+		if !called {
+			t.Fatal("GET /auth/oidc/providers must be public (login page needs provider list)")
+		}
+	})
+
+	// PUT without credentials must be rejected as 401, not silently let through
+	// with no role (which would cause RequireAdmin to return a confusing 403).
+	t.Run("PUT_requires_auth", func(t *testing.T) {
+		called := false
+		h := mw(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true }))
+		req, _ := http.NewRequest("PUT", "/api/v1/auth/oidc/providers", nil)
+		w := &captureWriter{}
+		h.ServeHTTP(w, req)
+		if called {
+			t.Fatal("PUT /auth/oidc/providers without credentials must not reach handler")
+		}
+		if w.status != http.StatusUnauthorized {
+			t.Errorf("status = %d; want 401", w.status)
+		}
+	})
+
+	// PUT with a valid API key must pass and set admin role.
+	t.Run("PUT_valid_api_key_is_admin", func(t *testing.T) {
+		var gotRole string
+		called := false
+		h := mw(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			called = true
+			gotRole = UserRoleFromContext(r.Context())
+		}))
+		req, _ := http.NewRequest("PUT", "/api/v1/auth/oidc/providers", nil)
+		req.Header.Set("X-Api-Key", apiKey)
+		h.ServeHTTP(nopWriter{}, req)
+		if !called {
+			t.Fatal("PUT with valid API key must reach handler")
+		}
+		if gotRole != "admin" {
+			t.Errorf("role = %q; want \"admin\"", gotRole)
+		}
+	})
+}
+
 // Regression tests for CheckOwnership, the helper that closes Tier-1 per-user
 // IDOR (D1). The contract:
 //
