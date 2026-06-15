@@ -64,7 +64,7 @@ func RequireCSRFToken(secrets func() [][]byte) func(http.Handler) http.Handler {
 			case http.MethodGet, http.MethodHead, http.MethodOptions:
 				// safe methods — no mutation risk
 			default:
-				if !AuthedViaAPIKey(r.Context()) && !AllowUnauthPath(r.URL.Path) {
+				if !AuthedViaAPIKey(r.Context()) && !AllowUnauthPath(r.Method, r.URL.Path) {
 					if c, err := r.Cookie(SessionCookieName); err == nil && c.Value != "" {
 						tok := r.Header.Get("X-CSRF-Token")
 						if !ValidCSRFToken(secrets(), r, tok) {

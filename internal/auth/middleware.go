@@ -222,18 +222,23 @@ type Provider interface {
 	UserSessionEpoch(ctx context.Context, userID int64) int64
 }
 
-// AllowUnauthPath returns true for routes the middleware must always let
-// through, regardless of auth state (health probes, auth endpoints themselves).
-func AllowUnauthPath(path string) bool {
+// AllowUnauthPath reports whether the given method+path combination must always
+// be let through regardless of auth state (health probes, auth endpoints).
+// The method parameter matters: GET /auth/oidc/providers is intentionally
+// public so the login page can discover providers, but PUT on the same path
+// is an admin mutation that must go through normal auth.
+func AllowUnauthPath(method, path string) bool {
 	switch path {
 	case "/api/v1/health",
 		"/api/v1/auth/status",
 		"/api/v1/auth/login",
 		"/api/v1/auth/logout",
 		"/api/v1/auth/setup",
-		"/api/v1/auth/csrf",
-		"/api/v1/auth/oidc/providers":
+		"/api/v1/auth/csrf":
 		return true
+	case "/api/v1/auth/oidc/providers":
+		// Only the read path is public; mutations are admin-only.
+		return method == http.MethodGet || method == http.MethodHead
 	}
 	// OIDC login + callback paths are public — the IdP redirect happens before
 	// the user holds a Bindery session.
@@ -304,7 +309,7 @@ func Middleware(p Provider) func(http.Handler) http.Handler {
 			}
 			r = r.WithContext(ctx)
 
-			if AllowUnauthPath(r.URL.Path) {
+			if AllowUnauthPath(r.Method, r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -448,7 +453,7 @@ func RequireXRequestedWith(next http.Handler) http.Handler {
 			// session cookie to protect against CSRF at those points, so
 			// requiring the header is pure friction for non-browser clients.
 			// This mirrors the identical exemption in RequireCSRFToken.
-			if !AuthedViaAPIKey(r.Context()) && !AllowUnauthPath(r.URL.Path) && r.Header.Get("X-Requested-With") != "bindery-ui" {
+			if !AuthedViaAPIKey(r.Context()) && !AllowUnauthPath(r.Method, r.URL.Path) && r.Header.Get("X-Requested-With") != "bindery-ui" {
 				w.Header().Set("Content-Type", "application/json")
 				http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 				return
