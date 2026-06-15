@@ -272,6 +272,27 @@ describe('SearchResultsSection — single-format book', () => {
     )
     expect(container.querySelectorAll('button').length).toBe(20)
   })
+
+  it('renders an indexer detail link when infoUrl is present', () => {
+    const results = [
+      makeResult({ guid: 'r1', title: 'Linked', infoUrl: 'https://indexer.example/details/1' }),
+    ]
+    render(
+      <SearchResultsSection results={results} bookMediaType="ebook" grabbing={null} onGrab={noop} />,
+    )
+    const link = screen.getByRole('link', { name: /indexer/ })
+    expect(link).toHaveAttribute('href', 'https://indexer.example/details/1')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+  })
+
+  it('renders no detail link when infoUrl is absent', () => {
+    const results = [makeResult({ guid: 'r1', title: 'Unlinked' })]
+    render(
+      <SearchResultsSection results={results} bookMediaType="ebook" grabbing={null} onGrab={noop} />,
+    )
+    expect(screen.queryByRole('link', { name: /indexer/ })).toBeNull()
+  })
 })
 
 describe('BookDetailPage — header & metadata', () => {

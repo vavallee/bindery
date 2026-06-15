@@ -151,6 +151,44 @@ func (c *Client) signDownloadURL(raw string) string {
 	return u.String()
 }
 
+// detailURL extracts the indexer's human-readable detail/release page URL for a
+// feed item, if one is present. It prefers, in order: the <comments> element,
+// then a <guid> carrying isPermaLink="true", then the <link> element — using the
+// first that is an absolute http(s) URL distinct from the enclosure download URL.
+//
+// It deliberately never returns the enclosure/download URL: <link> is also used
+// as a download fallback by some indexers, so any candidate matching the
+// enclosure URL is skipped. The result is a user-facing browser target and is
+// not signed with the apikey.
+func detailURL(item rssItem) string {
+	download := item.Enclosure.URL
+
+	candidates := []string{item.Comments}
+	if strings.EqualFold(strings.TrimSpace(item.GUID.IsPermaLink), "true") {
+		candidates = append(candidates, item.GUID.Value)
+	}
+	candidates = append(candidates, item.Link)
+
+	for _, raw := range candidates {
+		raw = strings.TrimSpace(raw)
+		if raw == "" || raw == download {
+			continue
+		}
+		u, err := url.Parse(raw)
+		if err != nil {
+			continue
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			continue
+		}
+		if u.Host == "" {
+			continue
+		}
+		return raw
+	}
+	return ""
+}
+
 // Caps fetches the indexer capabilities.
 func (c *Client) Caps(ctx context.Context) (*capsResponse, error) {
 	u, err := c.buildURL("caps", map[string]string{})
@@ -507,6 +545,8 @@ func (c *Client) parseResults(items []rssItem) []SearchResult {
 		if r.NZBURL == "" {
 			r.NZBURL = c.signDownloadURL(item.Link)
 		}
+
+		r.InfoURL = detailURL(item)
 
 		results = append(results, r)
 	}

@@ -44,6 +44,7 @@ export interface SearchResult {
   title: string
   size: number
   nzbUrl: string
+  infoUrl?: string // human-readable indexer detail/release page (open in new tab); absent when the indexer provides none
   grabs: number
   pubDate: string
   protocol: string   // "usenet" or "torrent"

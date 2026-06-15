@@ -86,6 +86,7 @@ type rssItem struct {
 	Title     string       `xml:"title"`
 	GUID      rssGUID      `xml:"guid"`
 	Link      string       `xml:"link"`
+	Comments  string       `xml:"comments"`
 	PubDate   string       `xml:"pubDate"`
 	Category  string       `xml:"category"`
 	Enclosure rssEnclosure `xml:"enclosure"`
@@ -143,6 +144,7 @@ type SearchResult struct {
 	Size            int64  `json:"size"`
 	PubDate         string `json:"pubDate"`
 	NZBURL          string `json:"nzbUrl"`
+	InfoURL         string `json:"infoUrl,omitempty"` // human-readable indexer detail/release page (from comments, guid-permalink, or link); never the download URL
 	Category        string `json:"category"`
 	Grabs           int    `json:"grabs"`
 	Author          string `json:"author"`

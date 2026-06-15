@@ -349,6 +349,19 @@ export default function WantedPage() {
                           <span className="truncate block">{r.title}</span>
                           <span className="text-slate-600 dark:text-zinc-500 truncate block">
                             {r.indexerName} &middot; {formatSize(r.size)} &middot; {r.grabs} grabs
+                            {r.infoUrl && (
+                              <>
+                                {' '}&middot;{' '}
+                                <a
+                                  href={r.infoUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-sky-600 dark:text-sky-400 hover:underline"
+                                >
+                                  ↗ indexer
+                                </a>
+                              </>
+                            )}
                             {r.language && (
                               <span className="ml-1.5 inline-block px-1 py-0 rounded bg-slate-300 dark:bg-zinc-700 text-[9px] font-medium uppercase tracking-wide">{r.language}</span>
                             )}

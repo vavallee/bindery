@@ -531,6 +531,134 @@ func TestParseResults_UsesLinkWhenEnclosureMissing(t *testing.T) {
 	}
 }
 
+// TestDetailURL covers the ordered-fallback extraction of the human-readable
+// indexer detail page from a feed item: prefer <comments>, then a
+// <guid isPermaLink="true">, then <link>, accepting only absolute http(s) URLs
+// and never the enclosure download URL.
+func TestDetailURL(t *testing.T) {
+	tests := []struct {
+		name string
+		item rssItem
+		want string
+	}{
+		{
+			name: "comments preferred over guid and link",
+			item: rssItem{
+				Comments:  "https://indexer.example/details/1",
+				GUID:      rssGUID{IsPermaLink: "true", Value: "https://indexer.example/guid/1"},
+				Link:      "https://indexer.example/page/1",
+				Enclosure: rssEnclosure{URL: "https://indexer.example/getnzb/1.nzb"},
+			},
+			want: "https://indexer.example/details/1",
+		},
+		{
+			name: "guid permalink used when no comments",
+			item: rssItem{
+				GUID:      rssGUID{IsPermaLink: "true", Value: "https://indexer.example/guid/2"},
+				Link:      "https://indexer.example/getnzb/2.nzb",
+				Enclosure: rssEnclosure{URL: "https://indexer.example/getnzb/2.nzb"},
+			},
+			want: "https://indexer.example/guid/2",
+		},
+		{
+			name: "guid ignored when not a permalink",
+			item: rssItem{
+				GUID:      rssGUID{IsPermaLink: "false", Value: "opaque-id-3"},
+				Link:      "https://indexer.example/page/3",
+				Enclosure: rssEnclosure{URL: "https://indexer.example/getnzb/3.nzb"},
+			},
+			want: "https://indexer.example/page/3",
+		},
+		{
+			name: "torznab magnet enclosure with comments page (torrent shape)",
+			item: rssItem{
+				Comments:  "https://tracker.example/torrent/4",
+				GUID:      rssGUID{Value: "magnet:?xt=urn:btih:abcd"},
+				Link:      "https://tracker.example/download/4.torrent",
+				Enclosure: rssEnclosure{URL: "magnet:?xt=urn:btih:abcd", Type: "application/x-bittorrent"},
+			},
+			want: "https://tracker.example/torrent/4",
+		},
+		{
+			name: "no detail URL when only a download URL is present",
+			item: rssItem{
+				GUID:      rssGUID{IsPermaLink: "false", Value: "opaque-id-5"},
+				Link:      "https://indexer.example/getnzb/5.nzb",
+				Enclosure: rssEnclosure{URL: "https://indexer.example/getnzb/5.nzb"},
+			},
+			want: "",
+		},
+		{
+			name: "link equal to enclosure is skipped",
+			item: rssItem{
+				Link:      "https://indexer.example/getnzb/6.nzb",
+				Enclosure: rssEnclosure{URL: "https://indexer.example/getnzb/6.nzb"},
+			},
+			want: "",
+		},
+		{
+			name: "non-http guid permalink rejected, falls through to link",
+			item: rssItem{
+				GUID: rssGUID{IsPermaLink: "true", Value: "ftp://indexer.example/x"},
+				Link: "https://indexer.example/page/7",
+			},
+			want: "https://indexer.example/page/7",
+		},
+		{
+			name: "empty item yields no detail URL",
+			item: rssItem{},
+			want: "",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := detailURL(tc.item); got != tc.want {
+				t.Errorf("detailURL() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestParseResults_PopulatesInfoURL verifies that parseResults threads the
+// extracted detail URL onto SearchResult.InfoURL (and leaves it empty when the
+// feed provides only a download URL), end-to-end through a canned feed.
+func TestParseResults_PopulatesInfoURL(t *testing.T) {
+	const feed = `<?xml version="1.0"?>
+<rss><channel>
+  <item>
+    <title>With detail page</title>
+    <guid isPermaLink="false">opaque-1</guid>
+    <comments>https://indexer.example/details/1</comments>
+    <enclosure url="https://indexer.example/getnzb/1.nzb" length="1000"/>
+  </item>
+  <item>
+    <title>Download only</title>
+    <guid isPermaLink="false">opaque-2</guid>
+    <enclosure url="https://indexer.example/getnzb/2.nzb" length="2000"/>
+  </item>
+</channel></rss>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(feed))
+	}))
+	defer srv.Close()
+
+	c := testNew(srv.URL, "testkey")
+	results, err := c.Search(context.Background(), "q", nil)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].InfoURL != "https://indexer.example/details/1" {
+		t.Errorf("expected InfoURL on first result, got %q", results[0].InfoURL)
+	}
+	if results[1].InfoURL != "" {
+		t.Errorf("expected empty InfoURL on download-only result, got %q", results[1].InfoURL)
+	}
+}
+
 // TestGetXML_SurfacesNon200 verifies the low-level getXML helper turns
 // HTTP failures into errors that include the status code, rather than
 // attempting to parse the body.

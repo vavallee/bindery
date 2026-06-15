@@ -89,6 +89,20 @@ export function SearchResultsSection({
         </div>
         <span className="text-slate-500 dark:text-zinc-500 truncate block">
           {r.indexerName} · {formatSize(r.size)} · {r.grabs} grabs
+          {r.infoUrl && (
+            <>
+              {' · '}
+              <a
+                href={r.infoUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={e => e.stopPropagation()}
+                className="text-sky-600 dark:text-sky-400 hover:underline"
+              >
+                ↗ indexer
+              </a>
+            </>
+          )}
           {r.rejection && <span className="ml-2 text-amber-600 dark:text-amber-400">· {r.rejection}</span>}
         </span>
       </div>
