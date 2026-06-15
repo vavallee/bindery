@@ -24,6 +24,7 @@ vi.mock('../api/client', async importOriginal => {
       deleteAuthorAlias: vi.fn(),
       searchAuthorWanted: vi.fn(),
       bulkActionBooks: vi.fn(),
+      listAuthorSeries: vi.fn(),
     },
   }
 })
@@ -131,6 +132,7 @@ describe('AuthorDetailPage', () => {
     })
     vi.mocked(api.searchAuthorLinkCandidates).mockResolvedValue([])
     vi.mocked(api.relinkAuthorUpstream).mockResolvedValue(author)
+    vi.mocked(api.listAuthorSeries).mockResolvedValue([])
   })
 
   it('renders author description markdown without citation noise', async () => {
@@ -506,5 +508,72 @@ describe('AuthorDetailPage', () => {
     await waitFor(() => {
       expect(screen.getByText(/Monitor: 1 of 2 succeeded\. First error: gone/)).toBeInTheDocument()
     })
+  })
+
+  it('groups books by series with a Standalone group when the toggle is on', async () => {
+    vi.mocked(api.listAuthorSeries).mockResolvedValue([
+      {
+        id: 1,
+        foreignSeriesId: 'OL-MB',
+        title: 'Mistborn',
+        description: '',
+        monitored: true,
+        books: [
+          { seriesId: 1, bookId: 11, positionInSeries: '2' },
+          { seriesId: 1, bookId: 10, positionInSeries: '1' },
+        ],
+      },
+      {
+        id: 2,
+        foreignSeriesId: 'OL-SA',
+        title: 'Stormlight Archive',
+        description: '',
+        monitored: false,
+        books: [{ seriesId: 2, bookId: 12, positionInSeries: '1' }],
+      },
+    ])
+
+    renderAuthorDetailPage(
+      [
+        makeBook({ id: 10, title: 'The Final Empire', status: 'imported' }),
+        makeBook({ id: 11, title: 'The Well of Ascension', status: 'imported' }),
+        makeBook({ id: 12, title: 'The Way of Kings', status: 'wanted' }),
+        makeBook({ id: 13, title: 'Elantris', status: 'wanted' }),
+      ],
+      'table',
+    )
+
+    await screen.findByText('The Final Empire')
+
+    // Default flat view: no series-group headings yet.
+    expect(screen.queryByRole('heading', { name: /Mistborn/ })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Group by series' }))
+
+    // Series + Standalone group headings appear.
+    expect(await screen.findByRole('heading', { name: /Mistborn/ })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /Stormlight Archive/ })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /Standalone/ })).toBeInTheDocument()
+
+    await waitFor(() => expect(api.listAuthorSeries).toHaveBeenCalledWith(42))
+
+    // Mistborn books appear in position order (#1 The Final Empire before #2).
+    const tables = screen.getAllByRole('table')
+    const mistbornTable = tables[0]
+    const titles = within(mistbornTable)
+      .getAllByRole('row')
+      .map(r => r.textContent ?? '')
+      .filter(txt => txt.includes('Empire') || txt.includes('Ascension'))
+    expect(titles[0]).toContain('The Final Empire')
+    expect(titles[1]).toContain('The Well of Ascension')
+
+    // Elantris belongs to no series → it lands under Standalone.
+    const standaloneHeading = screen.getByRole('heading', { name: /Standalone/ })
+    const standaloneSection = standaloneHeading.parentElement as HTMLElement
+    expect(within(standaloneSection).getByText('Elantris')).toBeInTheDocument()
+
+    // Toggling back returns to the flat list (headings gone).
+    fireEvent.click(screen.getByRole('switch', { name: 'Show flat list' }))
+    await waitFor(() => expect(screen.queryByRole('heading', { name: /Mistborn/ })).not.toBeInTheDocument())
   })
 })

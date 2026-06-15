@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { api, BINDERY_BASE, Author, AuthorAlias, Book, BookBulkAction } from '../api/client'
+import { api, BINDERY_BASE, Author, AuthorAlias, Book, BookBulkAction, Series } from '../api/client'
 import ViewToggle from '../components/ViewToggle'
 import { bookStatusBadge } from '../components/bookStatus'
 import MergeAuthorsModal from '../components/MergeAuthorsModal'
@@ -69,6 +69,33 @@ export default function AuthorDetailPage() {
   const selectAllRef = useRef<HTMLInputElement>(null)
 
   const [view, setView] = useView('author-detail', 'grid')
+
+  // Opt-in "group by series" view (#1125). Off by default — the flat list
+  // stays the default. Persisted per-page in localStorage alongside the
+  // grid/table preference. When on, books are grouped under the series they
+  // belong to (position-ordered) with a "Standalone" group for the rest.
+  const [groupBySeries, setGroupBySeries] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('bindery.group.author-detail.series') === 'true'
+    } catch { return false }
+  })
+  const [authorSeries, setAuthorSeries] = useState<Series[]>([])
+
+  useEffect(() => {
+    try { localStorage.setItem('bindery.group.author-detail.series', String(groupBySeries)) } catch { /* ignore */ }
+  }, [groupBySeries])
+
+  // Lazily load the author's series the first time grouping is switched on, so
+  // the default flat view never pays for the extra round trip. Failures fall
+  // back to an empty set — every book then lands in the Standalone group.
+  useEffect(() => {
+    if (!groupBySeries || authorSeries.length > 0) return
+    let cancelled = false
+    api.listAuthorSeries(authorId)
+      .then(s => { if (!cancelled) setAuthorSeries(s) })
+      .catch(() => { /* leave empty: books fall into Standalone */ })
+    return () => { cancelled = true }
+  }, [groupBySeries, authorId, authorSeries.length])
 
   // Filter / sort state — persisted to localStorage under page-scoped keys
   const [typeFilter, setTypeFilter] = useState<MediaFilter>(() => {
@@ -317,6 +344,35 @@ export default function AuthorDetailPage() {
     return list
   }, [books, typeFilter, statusFilter, publishedFilter, dateSort])
 
+  // Build the grouped-by-series sections from the author's series membership
+  // joined against the filtered book set (#1125). Each section lists its books
+  // ordered by position-in-series; any filtered book not in a series collects
+  // in a trailing "Standalone" group. A book in multiple series appears under
+  // each — matching how the series page presents membership.
+  const seriesGroups = useMemo(() => {
+    const byId = new Map(filteredBooks.map(b => [b.id, b]))
+    const grouped: { key: string; title: string; books: Book[] }[] = []
+    const placed = new Set<number>()
+    for (const series of authorSeries) {
+      const entries = [...(series.books ?? [])].sort((a, b) => {
+        const posA = parseFloat(a.positionInSeries) || 0
+        const posB = parseFloat(b.positionInSeries) || 0
+        return posA - posB
+      })
+      const books: Book[] = []
+      for (const entry of entries) {
+        const book = byId.get(entry.bookId)
+        if (!book) continue
+        books.push(book)
+        placed.add(book.id)
+      }
+      if (books.length > 0) grouped.push({ key: `series-${series.id}`, title: series.title, books })
+    }
+    const standalone = filteredBooks.filter(b => !placed.has(b.id))
+    if (standalone.length > 0) grouped.push({ key: 'standalone', title: 'Standalone', books: standalone })
+    return grouped
+  }, [authorSeries, filteredBooks])
+
   // Drop any selected IDs that are no longer in the filtered view so the
   // bulk bar count never lies about what's about to be acted on.
   const visibleIds = useMemo(() => new Set(filteredBooks.map(b => b.id)), [filteredBooks])
@@ -362,6 +418,175 @@ export default function AuthorDetailPage() {
     setDateSort(prev => prev === 'none' ? 'asc' : prev === 'asc' ? 'desc' : 'none')
 
   const dateSortIcon = dateSort === 'asc' ? ' ↑' : dateSort === 'desc' ? ' ↓' : ''
+
+  // Render helpers shared by the flat and grouped-by-series (#1125) layouts so
+  // each series section and the standalone group reuse the exact same table
+  // rows / grid cards instead of duplicating the markup.
+  const renderTableRows = (list: Book[]) =>
+    list.map(book => (
+      <tr
+        key={book.id}
+        className={`${selected.has(book.id) ? 'bg-emerald-500/10 dark:bg-emerald-500/10' : 'bg-slate-100/50 dark:bg-zinc-900/50'} hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 cursor-pointer`}
+        onClick={() => (window.location.href = `${BINDERY_BASE}/book/${book.id}`)}
+      >
+        <td className="px-3 py-2 w-10 align-middle" onClick={e => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={selected.has(book.id)}
+            onChange={() => toggleSelect(book.id)}
+            className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+            aria-label={`Select ${book.title}`}
+          />
+        </td>
+        <td className="px-3 py-2 align-middle">
+          <Link to={`/book/${book.id}`} className="flex items-center gap-2 min-w-0" onClick={e => e.stopPropagation()}>
+            {book.imageUrl ? (
+              <img src={book.imageUrl} alt="" className="w-6 h-9 object-cover rounded flex-shrink-0" />
+            ) : (
+              <div className="w-6 h-9 bg-slate-200 dark:bg-zinc-800 rounded flex-shrink-0" />
+            )}
+            <span className="min-w-0 flex-1">
+              <span className="block text-slate-800 dark:text-zinc-200 truncate">{book.title}</span>
+              <span className="mt-1 flex flex-wrap items-center gap-1 sm:hidden">
+                {(() => {
+                  const badge = bookStatusBadge(book.status, book.monitored, t)
+                  return (
+                    <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${badge.colorClass}`}>
+                      {badge.label}
+                    </span>
+                  )
+                })()}
+                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400">
+                  {mediaLabel(book.mediaType)}
+                </span>
+                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400">
+                  {fmtPublishedYear(book.releaseDate)}
+                </span>
+                {book.excluded && (
+                  <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">
+                    Excluded
+                  </span>
+                )}
+              </span>
+            </span>
+          </Link>
+        </td>
+        <td className="hidden sm:table-cell px-3 py-2 text-slate-600 dark:text-zinc-400 whitespace-nowrap align-middle">{fmtPublishedYear(book.releaseDate)}</td>
+        <td className="hidden sm:table-cell px-3 py-2 text-xs whitespace-nowrap align-middle">
+          {mediaLabel(book.mediaType)}
+        </td>
+        <td className="hidden sm:table-cell px-3 py-2 whitespace-nowrap align-middle">
+          {(() => {
+            const badge = bookStatusBadge(book.status, book.monitored, t)
+            return (
+              <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium ${badge.colorClass}`}>
+                {badge.label}
+              </span>
+            )
+          })()}
+          {book.excluded && (
+            <span className="inline-block ml-1 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">
+              Excluded
+            </span>
+          )}
+        </td>
+      </tr>
+    ))
+
+  const renderTable = (list: Book[], withHeaderControls: boolean) => (
+    <div className="border border-slate-200 dark:border-zinc-800 rounded-lg overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full table-fixed text-sm">
+          <thead>
+            <tr className="bg-slate-100 dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800">
+              <th className="w-10 px-3 py-2">
+                {withHeaderControls && (
+                  <input
+                    ref={selectAllRef}
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    onChange={e => e.target.checked ? selectAllVisible() : clearSelection()}
+                    className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                    title={t('common.selectAllPage')}
+                    aria-label={t('common.selectAllPage')}
+                  />
+                )}
+              </th>
+              <th className="w-full sm:w-[46%] text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase">Title</th>
+              <th
+                className="hidden sm:table-cell sm:w-28 text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase cursor-pointer select-none hover:text-slate-900 dark:hover:text-white whitespace-nowrap"
+                onClick={toggleDateSort}
+                title="Sort by publication date"
+              >
+                Published{dateSortIcon}
+              </th>
+              <th className="hidden sm:table-cell sm:w-36 text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase">Type</th>
+              <th className="hidden sm:table-cell sm:w-36 text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase">Status</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-200 dark:divide-zinc-800">
+            {renderTableRows(list)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+
+  const renderGrid = (list: Book[]) => (
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+      {list.map(book => (
+        <div
+          key={book.id}
+          className={`relative border rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden group transition-colors ${selected.has(book.id) ? 'border-emerald-500' : 'border-slate-200 dark:border-zinc-800 hover:border-emerald-500'}`}
+        >
+          <input
+            type="checkbox"
+            checked={selected.has(book.id)}
+            onChange={() => toggleSelect(book.id)}
+            onClick={e => e.stopPropagation()}
+            className={`absolute top-2 left-2 z-10 rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 ${selected.has(book.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}`}
+            aria-label={`Select ${book.title}`}
+          />
+          <Link to={`/book/${book.id}`} className="block">
+            <div className="aspect-[2/3] bg-slate-200 dark:bg-zinc-800 relative">
+              {book.imageUrl ? (
+                <img src={book.imageUrl} alt={book.title} className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center p-3 text-center">
+                  <span className="text-sm text-slate-500 dark:text-zinc-600">{book.title}</span>
+                </div>
+              )}
+            </div>
+            <div className="p-2">
+              <h4 className="text-xs font-medium truncate" title={book.title}>{book.title}</h4>
+              <div className="flex items-center gap-1 mt-1 flex-wrap">
+                {(() => {
+                  const badge = bookStatusBadge(book.status, book.monitored, t)
+                  return (
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${badge.colorClass}`}>
+                      {badge.label}
+                    </span>
+                  )
+                })()}
+                {book.mediaType === 'audiobook' && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">🎧 Audio</span>
+                )}
+                {book.excluded && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">Excluded</span>
+                )}
+              </div>
+              {book.releaseDate && (
+                <p className="text-[10px] text-slate-600 dark:text-zinc-500 mt-0.5">{fmtPublishedYear(book.releaseDate)}</p>
+              )}
+            </div>
+          </Link>
+        </div>
+      ))}
+    </div>
+  )
+
+  const renderBooks = (list: Book[], withHeaderControls = true) =>
+    view === 'table' ? renderTable(list, withHeaderControls) : renderGrid(list)
 
   return (
     <div className={`max-w-5xl${selected.size > 0 ? ' pb-20' : ''}`}>
@@ -544,6 +769,13 @@ export default function AuthorDetailPage() {
               />
               Show excluded
             </label>
+            <Switch
+              checked={groupBySeries}
+              onChange={() => setGroupBySeries(v => !v)}
+              label={groupBySeries ? 'Show flat list' : 'Group by series'}
+            >
+              Group by series
+            </Switch>
             <ViewToggle view={view} onChange={setView} />
           </div>
         </div>
@@ -573,160 +805,22 @@ export default function AuthorDetailPage() {
           <p className="text-sm text-slate-600 dark:text-zinc-500">No books tracked for this author yet.</p>
         ) : filteredBooks.length === 0 ? (
           <p className="text-sm text-slate-600 dark:text-zinc-500">No books match the current filters.</p>
-        ) : view === 'table' ? (
-          <div className="border border-slate-200 dark:border-zinc-800 rounded-lg overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full table-fixed text-sm">
-                <thead>
-                  <tr className="bg-slate-100 dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800">
-                    <th className="w-10 px-3 py-2">
-                      <input
-                        ref={selectAllRef}
-                        type="checkbox"
-                        checked={allVisibleSelected}
-                        onChange={e => e.target.checked ? selectAllVisible() : clearSelection()}
-                        className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
-                        title={t('common.selectAllPage')}
-                        aria-label={t('common.selectAllPage')}
-                      />
-                    </th>
-                    <th className="w-full sm:w-[46%] text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase">Title</th>
-                    <th
-                      className="hidden sm:table-cell sm:w-28 text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase cursor-pointer select-none hover:text-slate-900 dark:hover:text-white whitespace-nowrap"
-                      onClick={toggleDateSort}
-                      title="Sort by publication date"
-                    >
-                      Published{dateSortIcon}
-                    </th>
-                    <th className="hidden sm:table-cell sm:w-36 text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase">Type</th>
-                    <th className="hidden sm:table-cell sm:w-36 text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200 dark:divide-zinc-800">
-                  {filteredBooks.map(book => (
-                    <tr
-                      key={book.id}
-                      className={`${selected.has(book.id) ? 'bg-emerald-500/10 dark:bg-emerald-500/10' : 'bg-slate-100/50 dark:bg-zinc-900/50'} hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 cursor-pointer`}
-                      onClick={() => (window.location.href = `${BINDERY_BASE}/book/${book.id}`)}
-                    >
-                      <td className="px-3 py-2 w-10 align-middle" onClick={e => e.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={selected.has(book.id)}
-                          onChange={() => toggleSelect(book.id)}
-                          className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
-                          aria-label={`Select ${book.title}`}
-                        />
-                      </td>
-                      <td className="px-3 py-2 align-middle">
-                        <Link to={`/book/${book.id}`} className="flex items-center gap-2 min-w-0" onClick={e => e.stopPropagation()}>
-                          {book.imageUrl ? (
-                            <img src={book.imageUrl} alt="" className="w-6 h-9 object-cover rounded flex-shrink-0" />
-                          ) : (
-                            <div className="w-6 h-9 bg-slate-200 dark:bg-zinc-800 rounded flex-shrink-0" />
-                          )}
-                          <span className="min-w-0 flex-1">
-                            <span className="block text-slate-800 dark:text-zinc-200 truncate">{book.title}</span>
-                            <span className="mt-1 flex flex-wrap items-center gap-1 sm:hidden">
-                              {(() => {
-                                const badge = bookStatusBadge(book.status, book.monitored, t)
-                                return (
-                                  <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${badge.colorClass}`}>
-                                    {badge.label}
-                                  </span>
-                                )
-                              })()}
-                              <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400">
-                                {mediaLabel(book.mediaType)}
-                              </span>
-                              <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400">
-                                {fmtPublishedYear(book.releaseDate)}
-                              </span>
-                              {book.excluded && (
-                                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">
-                                  Excluded
-                                </span>
-                              )}
-                            </span>
-                          </span>
-                        </Link>
-                      </td>
-                      <td className="hidden sm:table-cell px-3 py-2 text-slate-600 dark:text-zinc-400 whitespace-nowrap align-middle">{fmtPublishedYear(book.releaseDate)}</td>
-                      <td className="hidden sm:table-cell px-3 py-2 text-xs whitespace-nowrap align-middle">
-                        {mediaLabel(book.mediaType)}
-                      </td>
-                      <td className="hidden sm:table-cell px-3 py-2 whitespace-nowrap align-middle">
-                        {(() => {
-                          const badge = bookStatusBadge(book.status, book.monitored, t)
-                          return (
-                            <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium ${badge.colorClass}`}>
-                              {badge.label}
-                            </span>
-                          )
-                        })()}
-                        {book.excluded && (
-                          <span className="inline-block ml-1 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">
-                            Excluded
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-            {filteredBooks.map(book => (
-              <div
-                key={book.id}
-                className={`relative border rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden group transition-colors ${selected.has(book.id) ? 'border-emerald-500' : 'border-slate-200 dark:border-zinc-800 hover:border-emerald-500'}`}
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.has(book.id)}
-                  onChange={() => toggleSelect(book.id)}
-                  onClick={e => e.stopPropagation()}
-                  className={`absolute top-2 left-2 z-10 rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 ${selected.has(book.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}`}
-                  aria-label={`Select ${book.title}`}
-                />
-                <Link to={`/book/${book.id}`} className="block">
-                  <div className="aspect-[2/3] bg-slate-200 dark:bg-zinc-800 relative">
-                    {book.imageUrl ? (
-                      <img src={book.imageUrl} alt={book.title} className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center p-3 text-center">
-                        <span className="text-sm text-slate-500 dark:text-zinc-600">{book.title}</span>
-                      </div>
-                    )}
-                  </div>
-                  <div className="p-2">
-                    <h4 className="text-xs font-medium truncate" title={book.title}>{book.title}</h4>
-                    <div className="flex items-center gap-1 mt-1 flex-wrap">
-                      {(() => {
-                        const badge = bookStatusBadge(book.status, book.monitored, t)
-                        return (
-                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${badge.colorClass}`}>
-                            {badge.label}
-                          </span>
-                        )
-                      })()}
-                      {book.mediaType === 'audiobook' && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">🎧 Audio</span>
-                      )}
-                      {book.excluded && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">Excluded</span>
-                      )}
-                    </div>
-                    {book.releaseDate && (
-                      <p className="text-[10px] text-slate-600 dark:text-zinc-500 mt-0.5">{fmtPublishedYear(book.releaseDate)}</p>
-                    )}
-                  </div>
-                </Link>
+        ) : groupBySeries ? (
+          <div className="space-y-6">
+            {seriesGroups.map(group => (
+              <div key={group.key}>
+                <h4 className="text-sm font-semibold text-slate-700 dark:text-zinc-300 mb-2 flex items-center gap-2">
+                  <span>{group.title}</span>
+                  <span className="text-xs font-normal text-slate-500 dark:text-zinc-500 bg-slate-200 dark:bg-zinc-800 px-2 py-0.5 rounded-full">
+                    {group.books.length} {group.books.length === 1 ? 'book' : 'books'}
+                  </span>
+                </h4>
+                {renderBooks(group.books, false)}
               </div>
             ))}
           </div>
+        ) : (
+          renderBooks(filteredBooks)
         )}
       </section>
 
