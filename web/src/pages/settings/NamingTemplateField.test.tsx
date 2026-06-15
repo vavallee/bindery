@@ -116,9 +116,12 @@ describe('NamingTemplateField component', () => {
     expect(save.disabled).toBe(true)
   })
 
-  it('blocks save on an empty template', () => {
+  it('blocks save on an empty template and announces it', () => {
     render(<Harness initial="" />)
-    expect(screen.getByText('settings.general.naming.errorEmpty')).toBeTruthy()
+    // The empty-template message is announced (role="alert") while Save stays
+    // blocked, so screen-reader users hear why the button is disabled.
+    const alert = screen.getByRole('alert')
+    expect(alert).toHaveTextContent('settings.general.naming.hintEmpty')
     const save = screen.getByRole('button', { name: 'common.save' }) as HTMLButtonElement
     expect(save.disabled).toBe(true)
   })

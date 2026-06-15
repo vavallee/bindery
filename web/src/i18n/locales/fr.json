@@ -212,7 +212,7 @@
       "notifications": "Notifications",
       "quality": "Profils de qualité",
       "metadata": "Profils de métadonnées",
-      "import": "Import / Migrate",
+      "import": "Importer / Migrer",
       "rootfolders": "Dossiers racines",
       "logs": "Journaux",
       "general": "Général",
@@ -382,7 +382,10 @@
       "logRetention": "Log Retention",
       "logRetentionLabel": "Keep log entries for",
       "logRetentionHint": "Log entries older than this are deleted by the daily trim job.",
-      "days": "days"
+      "days": "days",
+      "naming": {
+        "hintEmpty": "Obligatoire — saisissez au moins un jeton ou segment de chemin."
+      }
     },
     "import": {
       "csvHeading": "CSV de noms d'auteurs",

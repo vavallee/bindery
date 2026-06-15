@@ -231,7 +231,7 @@
       "notifications": "Notifikasi",
       "quality": "Profil Kualitas",
       "metadata": "Profil Metadata",
-      "import": "Import / Migrate",
+      "import": "Impor / Migrasi",
       "rootfolders": "Folder Utama",
       "logs": "Log",
       "general": "Umum",
@@ -411,7 +411,10 @@
       "logRetention": "Log Retention",
       "logRetentionLabel": "Keep log entries for",
       "logRetentionHint": "Log entries older than this are deleted by the daily trim job.",
-      "days": "days"
+      "days": "days",
+      "naming": {
+        "hintEmpty": "Wajib — masukkan setidaknya satu token atau segmen path."
+      }
     },
     "import": {
       "csvHeading": "CSV nama penulis",

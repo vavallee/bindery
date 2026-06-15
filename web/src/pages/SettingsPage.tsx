@@ -99,6 +99,15 @@ export default function SettingsPage() {
     } catch { /* ignore — tab state still updates */ }
   }, [])
 
+  // Soft cross-tab navigation passed to tabs (e.g. General's "Manage in Root
+  // Folders →", Import's "Configure … in General settings →") so those links
+  // switch tabs in place via setTab instead of window.location.assign, which
+  // would full-page-reload the SPA. Validates the incoming tab id against
+  // ALL_TABS so a bad caller can't desync the UI.
+  const navigateToTab = useCallback((next: string) => {
+    if ((ALL_TABS as string[]).includes(next)) setTab(next as Tab)
+  }, [setTab])
+
   // Eagerly fetched on page mount (cross-tab — see file header note).
   const [indexers, setIndexers] = useState<Indexer[]>([])
   const [clients, setClients] = useState<DownloadClient[]>([])
@@ -117,7 +126,7 @@ export default function SettingsPage() {
 
   const renderTab = () => {
     switch (tab) {
-      case 'general': return <GeneralTab />
+      case 'general': return <GeneralTab onNavigate={navigateToTab} />
       case 'indexers': return <IndexersTab indexers={indexers} setIndexers={setIndexers} prowlarrInstances={prowlarrInstances} setProwlarrInstances={setProwlarrInstances} />
       case 'clients': return <ClientsTab clients={clients} setClients={setClients} />
       case 'notifications': return <NotificationsTab />
@@ -127,7 +136,7 @@ export default function SettingsPage() {
       case 'calibre': return <CalibreTab />
       case 'abs': return <ABSTab />
       case 'grimmory': return <GrimmoryTab />
-      case 'import': return <ImportTab />
+      case 'import': return <ImportTab onNavigate={navigateToTab} />
       case 'blocklist': return <BlocklistTab />
       case 'logs': return <LogsTab />
     }

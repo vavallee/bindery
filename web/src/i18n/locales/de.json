@@ -212,7 +212,7 @@
       "notifications": "Benachrichtigungen",
       "quality": "Qualitätsprofile",
       "metadata": "Metadatenprofile",
-      "import": "Import / Migrate",
+      "import": "Import / Migration",
       "rootfolders": "Stammordner",
       "logs": "Protokolle",
       "general": "Allgemein",
@@ -382,7 +382,10 @@
       "logRetention": "Log Retention",
       "logRetentionLabel": "Keep log entries for",
       "logRetentionHint": "Log entries older than this are deleted by the daily trim job.",
-      "days": "days"
+      "days": "days",
+      "naming": {
+        "hintEmpty": "Erforderlich – mindestens ein Token oder Pfadsegment eingeben."
+      }
     },
     "import": {
       "csvHeading": "CSV mit Autorennamen",

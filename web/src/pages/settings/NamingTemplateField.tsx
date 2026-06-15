@@ -133,7 +133,10 @@ export default function NamingTemplateField({
 
       {/* Validation feedback */}
       {validation.empty && (
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1.5">
+        // role="alert" so screen readers announce the still-blocking empty
+        // state (Save stays disabled). Kept visually muted — it's a "required"
+        // prompt, not a hard error like traversal — but still announced.
+        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1.5" role="alert">
           {t('settings.general.naming.hintEmpty', 'Required — enter at least one token or path segment.')}
         </p>
       )}

@@ -623,38 +623,40 @@ describe('SettingsPage', () => {
     expect(screen.queryByText('settings.general.scanNoFilesWarning')).not.toBeInTheDocument()
   })
 
-  it('persists default root folder and media type choices', async () => {
-    const existing = makeRootFolder({ id: 7, path: '/mnt/books' })
-    const added = makeRootFolder({ id: 8, path: '/mnt/audiobooks' })
-
+  it('soft-navigates to Root Folders from the Default library location link', async () => {
+    // #1108 removed the duplicate root-folder selector from General; the
+    // "Default library location" section is now an informational pointer to the
+    // Root Folders tab. The link must switch tabs in place (soft nav) rather
+    // than full-page-reload.
     renderSettings({
-      rootFolders: [existing],
+      rootFolders: [makeRootFolder({ id: 7, path: '/mnt/books' })],
       settings: [
-        { key: 'library.defaultRootFolderId', value: '' },
         { key: 'default.media_type', value: 'ebook' },
         { key: 'hardcover.enhanced_series_enabled', value: 'false' },
       ],
     })
-    vi.mocked(api.addRootFolder).mockResolvedValue(added)
 
     await screen.findByRole('heading', { name: 'Default library location' })
     const defaultLocation = sectionForHeading('Default library location')
+    // No functional root-folder selector lives here anymore.
+    expect(defaultLocation.queryByRole('combobox')).not.toBeInTheDocument()
 
-    fireEvent.change(defaultLocation.getByRole('combobox'), { target: { value: '7' } })
-    await waitFor(() => {
-      expect(api.setSetting).toHaveBeenCalledWith('library.defaultRootFolderId', '7')
+    fireEvent.click(defaultLocation.getByRole('button', { name: 'Manage in Root Folders →' }))
+    // Soft nav: the Root Folders tab content renders without a page reload.
+    expect(await screen.findByRole('heading', { name: 'settings.rootfolders.heading' })).toBeInTheDocument()
+    expect(new URLSearchParams(window.location.search).get('tab')).toBe('rootfolders')
+  })
+
+  it('persists media type and monitor mode author defaults', async () => {
+    renderSettings({
+      rootFolders: [makeRootFolder({ id: 7, path: '/mnt/books' })],
+      settings: [
+        { key: 'default.media_type', value: 'ebook' },
+        { key: 'hardcover.enhanced_series_enabled', value: 'false' },
+      ],
     })
 
-    fireEvent.click(defaultLocation.getByRole('button', { name: '+ Add root folder' }))
-    fireEvent.change(defaultLocation.getByPlaceholderText('/mnt/books'), { target: { value: ' /mnt/audiobooks ' } })
-    fireEvent.click(defaultLocation.getByRole('button', { name: 'Add' }))
-
-    await waitFor(() => expect(api.addRootFolder).toHaveBeenCalledWith('/mnt/audiobooks'))
-    await waitFor(() => {
-      expect(api.setSetting).toHaveBeenCalledWith('library.defaultRootFolderId', '8')
-    })
-    expect(defaultLocation.getByRole('combobox')).toHaveValue('8')
-
+    await screen.findByRole('heading', { name: 'Author defaults' })
     const authorDefaults = sectionForHeading('Author defaults')
     const authorDefaultSelects = authorDefaults.getAllByRole('combobox')
     fireEvent.change(authorDefaultSelects[0], { target: { value: 'audiobook' } })

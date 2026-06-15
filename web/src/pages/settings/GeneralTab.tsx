@@ -37,7 +37,14 @@ function isAuthorMonitorMode(value: string): value is AuthorMonitorMode {
   return value === 'all' || value === 'future' || value === 'latest' || value === 'none'
 }
 
-export default function GeneralTab() {
+// Tab identifiers used by onNavigate for soft (no-reload) cross-tab links.
+// Kept loose (string) so GeneralTab doesn't need to import SettingsPage's Tab
+// union; SettingsPage validates the value.
+export interface GeneralTabProps {
+  onNavigate?: (tab: string) => void
+}
+
+export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   const { t } = useTranslation()
   const { isAdmin } = useAuth()
   const opdsClipboard = useClipboardCopy()
@@ -45,6 +52,8 @@ export default function GeneralTab() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<string | null>(null)
   const [dropErr, setDropErr] = useState<string | null>(null)
+  const [langErr, setLangErr] = useState<string | null>(null)
+  const [logRetentionErr, setLogRetentionErr] = useState<string | null>(null)
   const [backups, setBackups] = useState<Array<{ name: string; size: number; modTime: string }>>([])
   const [creatingBackup, setCreatingBackup] = useState(false)
   const [deletingBackup, setDeletingBackup] = useState<string | null>(null)
@@ -117,6 +126,39 @@ export default function GeneralTab() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Save failed'
       setDropErr(msg)
+      throw err
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  // savePreferredLanguage / saveLogRetention mirror saveDropFolder: they set
+  // and clear `saving` (so the disabled guard fires and "Saving…" shows) and
+  // throw on failure so useSaveResult flips to 'error' AND a visible message is
+  // surfaced inline — instead of routing api.setSetting straight into
+  // useSaveResult, which set neither `saving` nor any error text.
+  const savePreferredLanguage = async () => {
+    setSaving('search.preferredLanguage')
+    setLangErr(null)
+    try {
+      await api.setSetting('search.preferredLanguage', settings['search.preferredLanguage'] ?? '')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Save failed'
+      setLangErr(msg)
+      throw err
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  const saveLogRetention = async () => {
+    setSaving('log.retention_days')
+    setLogRetentionErr(null)
+    try {
+      await api.setSetting('log.retention_days', settings['log.retention_days'] ?? '')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Save failed'
+      setLogRetentionErr(msg)
       throw err
     } finally {
       setSaving(null)
@@ -446,13 +488,14 @@ export default function GeneralTab() {
                 <option value="en">{t('settings.general.preferredLanguageEn')}</option>
               </select>
               <button
-                onClick={() => langSave(() => api.setSetting('search.preferredLanguage', settings['search.preferredLanguage'] ?? ''))}
+                onClick={() => langSave(savePreferredLanguage)}
                 disabled={saving === 'search.preferredLanguage'}
                 className={`px-3 py-2 rounded text-xs font-medium disabled:opacity-50 ${langSaveResult === 'saved' ? 'bg-emerald-500' : langSaveResult === 'error' ? 'bg-red-600' : 'bg-emerald-600 hover:bg-emerald-500'}`}
               >
                 {langSaveResult === 'saved' ? 'Saved ✓' : langSaveResult === 'error' ? 'Error' : saving === 'search.preferredLanguage' ? t('common.saving') : t('common.save')}
               </button>
             </div>
+            {langErr && <p className="text-xs text-red-600 dark:text-red-400 mt-1">{langErr}</p>}
           </div>
         </div>
       </section>
@@ -616,7 +659,7 @@ export default function GeneralTab() {
             Manage root folders and the default library location in the Root Folders tab.
           </p>
           <button
-            onClick={() => window.location.assign('/settings?tab=rootfolders')}
+            onClick={() => onNavigate ? onNavigate('rootfolders') : window.location.assign('/settings?tab=rootfolders')}
             className="text-sm text-emerald-600 dark:text-emerald-400 hover:underline"
           >
             Manage in Root Folders →
@@ -926,7 +969,7 @@ export default function GeneralTab() {
               />
               <span className="text-sm text-slate-600 dark:text-zinc-400">{t('settings.general.days')}</span>
               <button
-                onClick={() => logRetentionSave(() => api.setSetting('log.retention_days', settings['log.retention_days'] ?? ''))}
+                onClick={() => logRetentionSave(saveLogRetention)}
                 disabled={saving === 'log.retention_days'}
                 className={`px-3 py-1.5 rounded text-sm font-medium disabled:opacity-50 ${logRetentionSaveResult === 'saved' ? 'bg-emerald-500' : logRetentionSaveResult === 'error' ? 'bg-red-600' : 'bg-emerald-600 hover:bg-emerald-500'}`}
               >
@@ -934,6 +977,7 @@ export default function GeneralTab() {
               </button>
             </div>
           </div>
+          {logRetentionErr && <p className="text-xs text-red-600 dark:text-red-400 mt-2">{logRetentionErr}</p>}
         </div>
       </section>
 

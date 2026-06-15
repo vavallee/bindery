@@ -231,7 +231,7 @@
       "notifications": "Notificaciones",
       "quality": "Perfiles de calidad",
       "metadata": "Perfiles de metadatos",
-      "import": "Import / Migrate",
+      "import": "Importar / Migrar",
       "rootfolders": "Carpetas raíz",
       "logs": "Registros",
       "general": "General",
@@ -411,7 +411,10 @@
       "logRetention": "Log Retention",
       "logRetentionLabel": "Keep log entries for",
       "logRetentionHint": "Log entries older than this are deleted by the daily trim job.",
-      "days": "days"
+      "days": "days",
+      "naming": {
+        "hintEmpty": "Obligatorio: introduce al menos un token o segmento de ruta."
+      }
     },
     "import": {
       "csvHeading": "CSV de nombres de autores",

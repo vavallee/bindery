@@ -231,7 +231,7 @@
       "notifications": "Mga Notification",
       "quality": "Mga Quality Profile",
       "metadata": "Mga Metadata Profile",
-      "import": "Import / Migrate",
+      "import": "Mag-import / Maglipat",
       "rootfolders": "Mga Root Folder",
       "logs": "Mga Log",
       "general": "Pangkalahatan",
@@ -411,7 +411,10 @@
       "logRetention": "Log Retention",
       "logRetentionLabel": "Keep log entries for",
       "logRetentionHint": "Log entries older than this are deleted by the daily trim job.",
-      "days": "days"
+      "days": "days",
+      "naming": {
+        "hintEmpty": "Kinakailangan — maglagay ng kahit isang token o path segment."
+      }
     },
     "import": {
       "csvHeading": "CSV ng mga pangalan ng may-akda",

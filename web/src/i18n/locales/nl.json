@@ -212,7 +212,7 @@
       "notifications": "Meldingen",
       "quality": "Kwaliteitsprofielen",
       "metadata": "Metadataprofielen",
-      "import": "Import / Migrate",
+      "import": "Importeren / Migreren",
       "rootfolders": "Hoofdmappen",
       "logs": "Logboeken",
       "general": "Algemeen",
@@ -382,7 +382,10 @@
       "logRetention": "Log Retention",
       "logRetentionLabel": "Keep log entries for",
       "logRetentionHint": "Log entries older than this are deleted by the daily trim job.",
-      "days": "days"
+      "days": "days",
+      "naming": {
+        "hintEmpty": "Verplicht — voer minstens één token of padsegment in."
+      }
     },
     "import": {
       "csvHeading": "CSV van auteursnamen",
