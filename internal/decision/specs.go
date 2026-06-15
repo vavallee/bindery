@@ -124,16 +124,33 @@ func (s *BlocklistedSpec) IsSatisfiedBy(r Release, _ models.Book) (bool, string)
 
 // --- AlreadyImported ---
 
-// AlreadyImportedSpec rejects releases for books that have already been
-// imported (file exists on disk). A book with a FilePath set is considered
-// imported.
+// AlreadyImportedSpec rejects releases for books whose corresponding format is
+// already on disk. The check is per-format: for a dual-format book
+// (media_type=both) that has only the audiobook imported, ebook releases must
+// stay grabbable and vice versa. The release's MediaType ("ebook"/"audiobook",
+// populated for dual-format searches) selects which path column to consult.
+// When MediaType is empty — single-format book searches don't tag results — it
+// falls back to the legacy whole-book FilePath check.
 type AlreadyImportedSpec struct{}
 
-func (AlreadyImportedSpec) IsSatisfiedBy(_ Release, book models.Book) (bool, string) {
-	if book.FilePath != "" {
-		return false, "book already imported"
+func (AlreadyImportedSpec) IsSatisfiedBy(r Release, book models.Book) (bool, string) {
+	switch r.MediaType {
+	case models.MediaTypeEbook:
+		if book.EbookFilePath != "" {
+			return false, "ebook already imported"
+		}
+		return true, ""
+	case models.MediaTypeAudiobook:
+		if book.AudiobookFilePath != "" {
+			return false, "audiobook already imported"
+		}
+		return true, ""
+	default:
+		if book.FilePath != "" {
+			return false, "book already imported"
+		}
+		return true, ""
 	}
-	return true, ""
 }
 
 // --- SizeLimit ---

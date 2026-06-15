@@ -397,6 +397,7 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	oldStatus := book.Status
+	oldMediaType := book.MediaType
 
 	// Note: file_path is deliberately NOT accepted here. It's set by the
 	// importer once a grab lands, and letting clients write it arbitrarily
@@ -443,18 +444,27 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 		book.Narrator = *req.Narrator
 	}
 
+	// A media-type change shifts the wanted↔imported boundary: switching an
+	// audiobook-only book to 'both' must flip it back to 'wanted' so the missing
+	// ebook is grabbed (#1148). This mirrors the bulk media-type path
+	// (reevaluateBookStatus in bulk.go). Skip it when the caller set status
+	// explicitly in the same request — their choice wins.
+	if req.MediaType != nil && book.MediaType != oldMediaType && req.Status == nil {
+		reevaluateBookStatus(book)
+	}
+
 	if err := h.books.Update(r.Context(), book); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 
 	// Fire an immediate indexer search when a book transitions into wanted
-	// status (e.g. "Delete file" flips imported → wanted, or a manual status
-	// edit). Gate on searcher to keep tests that don't wire it nil-safe.
-	// Detach the request context so the search outlives the HTTP response
-	// but keeps any request-scoped values.
-	if h.searcher != nil && req.Status != nil &&
-		*req.Status == models.BookStatusWanted && oldStatus != models.BookStatusWanted {
+	// status (e.g. "Delete file" flips imported → wanted, a manual status edit,
+	// or a media-type change that exposes a missing format — #1148). Gate on
+	// searcher to keep tests that don't wire it nil-safe. Detach the request
+	// context so the search outlives the HTTP response but keeps any
+	// request-scoped values.
+	if h.searcher != nil && book.Status == models.BookStatusWanted && oldStatus != models.BookStatusWanted {
 		b := *book
 		bgCtx := h.bgCtx()
 		// Respect the global auto-grab kill-switch.

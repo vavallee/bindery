@@ -834,6 +834,54 @@ func TestBookUpdate_NoSearchWhenAlreadyWanted(t *testing.T) {
 	searcher.assertNoCall(t, 50*time.Millisecond)
 }
 
+// TestBookUpdate_MediaTypeChangeReevaluatesStatus covers #1148: promoting an
+// imported audiobook-only book to media_type=both must flip it back to wanted
+// (the ebook is now monitored but absent) and fire a search for the missing
+// format — matching the bulk media-type path.
+func TestBookUpdate_MediaTypeChangeReevaluatesStatus(t *testing.T) {
+	searcher := newMockBookSearcher()
+	h, books, author, ctx := bookFixtureWithSearcher(t, searcher)
+
+	book := &models.Book{
+		ForeignID: "B1148", AuthorID: author.ID, Title: "Dual", SortTitle: "dual",
+		Status: models.BookStatusWanted, MediaType: models.MediaTypeAudiobook,
+		Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	// Attach the audiobook so the book is fully imported as audiobook-only.
+	if err := books.AddBookFile(ctx, book.ID, models.MediaTypeAudiobook, "/audiobooks/dual.m4b"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := books.GetByID(ctx, book.ID); got == nil || got.Status != models.BookStatusImported {
+		t.Fatalf("precondition: expected imported audiobook, got %+v", got)
+	}
+
+	// Promote to dual-format; status must NOT be sent so the handler re-evaluates.
+	body := bytes.NewBufferString(`{"mediaType":"both"}`)
+	req := withURLParam(httptest.NewRequest(http.MethodPut, "/api/v1/book/"+strconv.FormatInt(book.ID, 10), body), "id", strconv.FormatInt(book.ID, 10))
+	rec := httptest.NewRecorder()
+	h.Update(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	got, err := books.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != models.BookStatusWanted {
+		t.Errorf("status should flip to wanted (ebook missing), got %q", got.Status)
+	}
+	if got.MediaType != models.MediaTypeBoth {
+		t.Errorf("mediaType should be both, got %q", got.MediaType)
+	}
+	if call := searcher.waitForCall(t, time.Second); call.ID != book.ID {
+		t.Errorf("searcher called with wrong book id: got %d, want %d", call.ID, book.ID)
+	}
+}
+
 // staticRootLister is a RootLister stub that returns a fixed set of root
 // folder paths without touching a database. Used by the path-containment
 // tests so they don't have to wire a real RootFolderRepo.

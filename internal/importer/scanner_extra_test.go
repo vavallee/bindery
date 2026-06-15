@@ -264,6 +264,34 @@ func TestIsReconcileCandidate(t *testing.T) {
 			t.Error("Imported with existing FilePath should not be a candidate")
 		}
 	})
+	t.Run("dual-format imported still missing a format is a candidate", func(t *testing.T) {
+		// #1148: a media_type=both book with the audiobook on disk but the ebook
+		// absent must reconcile so the scan can attach the existing ebook, even
+		// though the audiobook path resolves.
+		tmp := t.TempDir()
+		audio := filepath.Join(tmp, "book.m4b")
+		if err := os.WriteFile(audio, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		b := &models.Book{
+			Status:            models.BookStatusImported,
+			MediaType:         models.MediaTypeBoth,
+			AudiobookFilePath: audio,
+			FilePath:          audio,
+		}
+		if !isReconcileCandidate(b) {
+			t.Error("dual-format book missing the ebook should be a candidate")
+		}
+		// Once both formats are present, it is no longer a candidate.
+		ebook := filepath.Join(tmp, "book.epub")
+		if err := os.WriteFile(ebook, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		b.EbookFilePath = ebook
+		if isReconcileCandidate(b) {
+			t.Error("dual-format book with both formats on disk should not be a candidate")
+		}
+	})
 	t.Run("downloading and downloaded are not candidates", func(t *testing.T) {
 		for _, s := range []string{models.BookStatusDownloading, models.BookStatusDownloaded, models.BookStatusSkipped} {
 			if isReconcileCandidate(&models.Book{Status: s}) {
