@@ -6,7 +6,7 @@
 // which mirrors the Go renamer (internal/importer/renamer.go) so the preview
 // matches what the importer actually writes.
 
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { inputCls, labelCls } from './formStyles'
 import {
@@ -39,6 +39,7 @@ export default function NamingTemplateField({
 }: NamingTemplateFieldProps) {
   const { t } = useTranslation()
   const inputRef = useRef<HTMLInputElement>(null)
+  const [touched, setTouched] = useState(false)
 
   const validation = validateTemplate(value)
   const preview = renderTemplate(value, kind)
@@ -78,7 +79,7 @@ export default function NamingTemplateField({
             <button
               key={tok.token}
               type="button"
-              onClick={() => !greyed && insertToken(tok.token)}
+              onClick={() => { if (!greyed) { setTouched(true); insertToken(tok.token) } }}
               disabled={greyed}
               title={
                 greyed
@@ -101,9 +102,10 @@ export default function NamingTemplateField({
         <input
           ref={inputRef}
           value={value}
-          onChange={e => onChange(e.target.value)}
+          onChange={e => { setTouched(true); onChange(e.target.value) }}
+          onBlur={() => setTouched(true)}
           placeholder={placeholder}
-          aria-invalid={hasErrors}
+          aria-invalid={touched && hasErrors}
           className={inputCls + ' flex-1 font-mono'}
         />
         <button
@@ -131,18 +133,18 @@ export default function NamingTemplateField({
         </p>
       )}
 
-      {/* Validation feedback */}
-      {validation.empty && (
+      {/* Validation feedback — only after user interaction */}
+      {touched && validation.empty && (
         <p className="text-xs text-red-600 dark:text-red-400 mt-1.5" role="alert">
           {t('settings.general.naming.errorEmpty')}
         </p>
       )}
-      {validation.traversal && (
+      {touched && validation.traversal && (
         <p className="text-xs text-red-600 dark:text-red-400 mt-1.5" role="alert">
           {t('settings.general.naming.errorTraversal')}
         </p>
       )}
-      {validation.unknownTokens.length > 0 && (
+      {touched && validation.unknownTokens.length > 0 && (
         <p className="text-xs text-amber-600 dark:text-amber-400 mt-1.5" role="alert">
           {t('settings.general.naming.errorUnknownTokens', {
             tokens: validation.unknownTokens.join(', '),
