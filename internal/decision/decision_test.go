@@ -256,6 +256,58 @@ func TestAlreadyImportedSpec_HasFile(t *testing.T) {
 	}
 }
 
+// withMediaType tags a release with the per-format media type the dual-format
+// search assigns to each result.
+func withMediaType(mt string) func(*decision.Release) {
+	return func(r *decision.Release) { r.MediaType = mt }
+}
+
+// TestAlreadyImportedSpec_DualFormat covers #1148: a media_type=both book with
+// only the audiobook on disk must still allow ebook releases. The check is
+// per-format via the release's MediaType, not the legacy whole-book FilePath.
+func TestAlreadyImportedSpec_DualFormat(t *testing.T) {
+	s := decision.AlreadyImportedSpec{}
+	// Audiobook imported, ebook missing. FilePath is the legacy column the old
+	// code rejected on; it points at the audiobook path here.
+	book := models.Book{
+		MediaType:         models.MediaTypeBoth,
+		AudiobookFilePath: "/audiobooks/test",
+		FilePath:          "/audiobooks/test",
+	}
+
+	if ok, reason := s.IsSatisfiedBy(release(withMediaType(models.MediaTypeEbook)), book); !ok {
+		t.Errorf("ebook release must pass when only the audiobook is imported, got reject: %q", reason)
+	}
+	if ok, _ := s.IsSatisfiedBy(release(withMediaType(models.MediaTypeAudiobook)), book); ok {
+		t.Error("audiobook release must be rejected when the audiobook is already imported")
+	}
+
+	// Mirror case: ebook imported, audiobook missing.
+	book = models.Book{
+		MediaType:     models.MediaTypeBoth,
+		EbookFilePath: "/books/test.epub",
+		FilePath:      "/books/test.epub",
+	}
+	if ok, _ := s.IsSatisfiedBy(release(withMediaType(models.MediaTypeEbook)), book); ok {
+		t.Error("ebook release must be rejected when the ebook is already imported")
+	}
+	if ok, reason := s.IsSatisfiedBy(release(withMediaType(models.MediaTypeAudiobook)), book); !ok {
+		t.Errorf("audiobook release must pass when only the ebook is imported, got reject: %q", reason)
+	}
+}
+
+// TestAlreadyImportedSpec_UntaggedFallsBackToFilePath confirms single-format
+// searches (no MediaType on the result) keep the legacy whole-book behavior.
+func TestAlreadyImportedSpec_UntaggedFallsBackToFilePath(t *testing.T) {
+	s := decision.AlreadyImportedSpec{}
+	if ok, _ := s.IsSatisfiedBy(release(), bookWithFile()); ok {
+		t.Error("untagged release on a book with FilePath must still reject")
+	}
+	if ok, _ := s.IsSatisfiedBy(release(), emptyBook()); !ok {
+		t.Error("untagged release on a book with no file must pass")
+	}
+}
+
 // --- SizeLimitSpec ---
 
 func TestSizeLimitSpec_NoLimits(t *testing.T) {

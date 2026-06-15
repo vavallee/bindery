@@ -2049,6 +2049,14 @@ func isReconcileCandidate(b *models.Book) bool {
 	if b.Status != models.BookStatusImported {
 		return false
 	}
+	// A dual-format book still missing a format on disk is a candidate even
+	// though its other format is present, so the scan can attach the missing
+	// edition (#1148). Without this, a 'both' book with the audiobook imported
+	// but the ebook absent would never reconcile the ebook, because the loop
+	// below short-circuits the moment any one path resolves.
+	if b.NeedsEbook() || b.NeedsAudiobook() {
+		return true
+	}
 	// Imported books reconcile only when no path we have on file actually
 	// resolves to a real file. A book row may carry up to three legacy
 	// path columns plus the modern book_files rows; the scanner already

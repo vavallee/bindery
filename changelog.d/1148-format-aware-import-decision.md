@@ -1,0 +1,2 @@
+### Fixed
+- **Dual-format books can grab the missing format** (#1148) — for a book monitored as both ebook and audiobook, having one format on disk no longer blocks the other. Interactive search results for the missing format are no longer rejected with "book already imported", changing a book to "both" re-evaluates it back to wanted, and a library scan now attaches an existing file for the missing format even when the other format is already tracked.
