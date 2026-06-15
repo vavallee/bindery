@@ -212,7 +212,7 @@
       "notifications": "Meldingen",
       "quality": "Kwaliteitsprofielen",
       "metadata": "Metadataprofielen",
-      "import": "Import / Migrate",
+      "import": "Importeren / Migreren",
       "rootfolders": "Hoofdmappen",
       "logs": "Logboeken",
       "general": "Algemeen",
@@ -315,7 +315,11 @@
       "free": "{{size}} vrij",
       "addPlaceholder": "/gegevens/boeken",
       "addButton": "Map toevoegen",
-      "addFail": "Map toevoegen mislukt"
+      "addFail": "Map toevoegen mislukt",
+      "defaultLabel": "Standaard hoofdmap",
+      "defaultHint": "Auteurs zonder expliciete hoofdmap komen hier terecht. Laat leeg om terug te vallen op het opstartpad BINDERY_LIBRARY_DIR.",
+      "defaultUnset": "Opstartstandaard gebruiken (BINDERY_LIBRARY_DIR)",
+      "defaultBadge": "Standaard"
     },
     "logs": {
       "heading": "Logboeken",
@@ -383,7 +387,13 @@
       "logRetention": "Log Retention",
       "logRetentionLabel": "Keep log entries for",
       "logRetentionHint": "Log entries older than this are deleted by the daily trim job.",
-      "days": "days"
+      "days": "days",
+      "defaultLibraryLocation": "Standaard bibliotheeklocatie",
+      "defaultLibraryLocationHint": "Beheer hoofdmappen en de standaard bibliotheeklocatie op het tabblad Hoofdmappen.",
+      "defaultLibraryLocationLink": "Beheren in Hoofdmappen →",
+      "naming": {
+        "hintEmpty": "Vereist — voer minstens één token of padsegment in."
+      }
     },
     "import": {
       "csvHeading": "CSV van auteursnamen",
@@ -398,7 +408,8 @@
       "resultAdded": "toegevoegd",
       "resultSkipped": "overgeslagen (bestaan al)",
       "resultFailed": "mislukt",
-      "showFailures": "{{count}} fout(en) tonen"
+      "showFailures": "{{count}} fout(en) tonen",
+      "configureHardcoverToken": "Configureer het Hardcover API-token in de API-sleutels-instellingen →"
     },
     "oidc": {
       "heading": "SSO / OIDC Providers",

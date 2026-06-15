@@ -231,7 +231,7 @@
       "notifications": "Notificaciones",
       "quality": "Perfiles de calidad",
       "metadata": "Perfiles de metadatos",
-      "import": "Import / Migrate",
+      "import": "Importar / Migrar",
       "rootfolders": "Carpetas raíz",
       "logs": "Registros",
       "general": "General",
@@ -341,7 +341,11 @@
       "free": "{{size}} libre",
       "addPlaceholder": "/data/libros",
       "addButton": "Añadir carpeta",
-      "addFail": "Error al añadir la carpeta"
+      "addFail": "Error al añadir la carpeta",
+      "defaultLabel": "Carpeta raíz predeterminada",
+      "defaultHint": "Los autores sin una carpeta raíz explícita van aquí. Déjalo sin definir para usar la ruta de inicio BINDERY_LIBRARY_DIR.",
+      "defaultUnset": "Usar valor de inicio (BINDERY_LIBRARY_DIR)",
+      "defaultBadge": "Predeterminada"
     },
     "logs": {
       "heading": "Registros",
@@ -412,7 +416,13 @@
       "logRetention": "Log Retention",
       "logRetentionLabel": "Keep log entries for",
       "logRetentionHint": "Log entries older than this are deleted by the daily trim job.",
-      "days": "days"
+      "days": "days",
+      "defaultLibraryLocation": "Ubicación predeterminada de la biblioteca",
+      "defaultLibraryLocationHint": "Gestiona las carpetas raíz y la ubicación predeterminada de la biblioteca en la pestaña Carpetas raíz.",
+      "defaultLibraryLocationLink": "Gestionar en Carpetas raíz →",
+      "naming": {
+        "hintEmpty": "Obligatorio: introduce al menos un token o segmento de ruta."
+      }
     },
     "import": {
       "csvHeading": "CSV de nombres de autores",
@@ -441,7 +451,8 @@
       "hardcoverNoLists": "No se encontraron listas",
       "hardcoverEmpty": "No hay listas de importación de Hardcover configuradas.",
       "hardcoverLastSync": "Última sincronización: {{date}}",
-      "hardcoverNeverSynced": "Nunca sincronizado"
+      "hardcoverNeverSynced": "Nunca sincronizado",
+      "configureHardcoverToken": "Configura el token de la API de Hardcover en los ajustes de Claves de API →"
     },
     "oidc": {
       "heading": "SSO / OIDC Providers",

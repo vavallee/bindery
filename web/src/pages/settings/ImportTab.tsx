@@ -559,10 +559,10 @@ function HardcoverListsSection() {
           {(error.toLowerCase().includes('token') || error.toLowerCase().includes('not configured')) && (
             <span className="block mt-1 text-xs">
               <button
-                onClick={() => window.location.assign('/settings?tab=general')}
+                onClick={() => window.location.assign('/settings?tab=api-keys')}
                 className="text-emerald-600 dark:text-emerald-400 hover:underline"
               >
-                Configure the Hardcover API token in General settings →
+                {t('settings.import.configureHardcoverToken', 'Configure the Hardcover API token in API Keys settings →')}
               </button>
             </span>
           )}

@@ -511,7 +511,11 @@
       "free": "{{size}} free",
       "addPlaceholder": "/data/books",
       "addButton": "Add Folder",
-      "addFail": "Failed to add folder"
+      "addFail": "Failed to add folder",
+      "defaultLabel": "Default root folder",
+      "defaultHint": "Authors without an explicit root folder land here. Leave unset to fall back to the BINDERY_LIBRARY_DIR startup path.",
+      "defaultUnset": "Use startup default (BINDERY_LIBRARY_DIR)",
+      "defaultBadge": "Default"
     },
     "logs": {
       "heading": "Logs",
@@ -571,7 +575,6 @@
         "tokenSeriesNumber": "{SeriesNumber} — position in series",
         "tokenExt": "{ext} — file extension, no leading dot (ebook only)",
         "tokenIgnoredAudiobook": "{{token}} is ignored for the audiobook folder template",
-        "errorEmpty": "Template cannot be empty.",
         "errorTraversal": "Template must not contain \".\" or \"..\" path segments.",
         "errorUnknownTokens": "Unknown token(s): {{tokens}}. These are case-sensitive and will be written literally.",
         "hintEmpty": "Required — enter at least one token or path segment."
@@ -617,12 +620,15 @@
       "telemetryLabel": "Send anonymous usage ping",
       "telemetryHint": "Helps the maintainer count active installs. No personal data or library contents are sent.",
       "telemetryToggle": "Toggle anonymous usage ping",
-      "telemetryDetail": "Sends install_id (random UUID), version, OS, architecture, deploy method, feature-usage counts, and coarse error counters (ERROR/WARN totals over the last 24h plus the 5 most frequent fixed error-message strings \u2014 never log details, titles, paths, or URLs) to getbindery.dev once per day. Disable at any time.",
+      "telemetryDetail": "Sends install_id (random UUID), version, OS, architecture, deploy method, feature-usage counts, and coarse error counters (ERROR/WARN totals over the last 24h plus the 5 most frequent fixed error-message strings — never log details, titles, paths, or URLs) to getbindery.dev once per day. Disable at any time.",
       "metadataProvider": "Metadata Provider",
       "metadataProviderLabel": "Primary metadata provider",
       "metadataProviderHint": "Selects the source used for author and book search. DNB (Deutsche Nationalbibliothek) is recommended for German, Austrian, and Swiss catalogues — it covers German-language publications since 1913 where OpenLibrary coverage is thin. OpenLibrary remains the default for other regions. The non-primary provider is always used as an enricher.",
       "metadataProviderOpenlibrary": "OpenLibrary (default)",
-      "metadataProviderDnb": "DNB — Deutsche Nationalbibliothek (German/DACH)"
+      "metadataProviderDnb": "DNB — Deutsche Nationalbibliothek (German/DACH)",
+      "defaultLibraryLocation": "Default library location",
+      "defaultLibraryLocationHint": "Manage root folders and the default library location in the Root Folders tab.",
+      "defaultLibraryLocationLink": "Manage in Root Folders →"
     },
     "import": {
       "csvHeading": "CSV of author names",
@@ -701,7 +707,8 @@
       "goodreadsDownloadHint": "Fix the ISBN or title in the downloaded file and re-upload it.",
       "goodreadsCommitResult": "{{added}} added · {{skipped}} skipped · {{failed}} failed",
       "goodreadsNoResolved": "No rows could be resolved — nothing to import. Try widening the shelf filter or check the unmatched rows below.",
-      "goodreadsUploadFailed": "Upload failed"
+      "goodreadsUploadFailed": "Upload failed",
+      "configureHardcoverToken": "Configure the Hardcover API token in API Keys settings →"
     },
     "oidc": {
       "heading": "SSO / OIDC Providers",

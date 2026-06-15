@@ -231,7 +231,7 @@
       "notifications": "Mga Notification",
       "quality": "Mga Quality Profile",
       "metadata": "Mga Metadata Profile",
-      "import": "Import / Migrate",
+      "import": "Mag-import / Mag-migrate",
       "rootfolders": "Mga Root Folder",
       "logs": "Mga Log",
       "general": "Pangkalahatan",
@@ -341,7 +341,11 @@
       "free": "{{size}} libre",
       "addPlaceholder": "/data/books",
       "addButton": "Magdagdag ng Folder",
-      "addFail": "Nabigong idagdag ang folder"
+      "addFail": "Nabigong idagdag ang folder",
+      "defaultLabel": "Default na root folder",
+      "defaultHint": "Ang mga may-akda na walang tahasang root folder ay mapupunta rito. Iwanang walang halaga para bumalik sa startup path na BINDERY_LIBRARY_DIR.",
+      "defaultUnset": "Gamitin ang startup default (BINDERY_LIBRARY_DIR)",
+      "defaultBadge": "Default"
     },
     "logs": {
       "heading": "Mga Log",
@@ -412,7 +416,13 @@
       "logRetention": "Log Retention",
       "logRetentionLabel": "Keep log entries for",
       "logRetentionHint": "Log entries older than this are deleted by the daily trim job.",
-      "days": "days"
+      "days": "days",
+      "defaultLibraryLocation": "Default na lokasyon ng library",
+      "defaultLibraryLocationHint": "Pamahalaan ang mga root folder at ang default na lokasyon ng library sa tab na Mga Root Folder.",
+      "defaultLibraryLocationLink": "Pamahalaan sa Mga Root Folder →",
+      "naming": {
+        "hintEmpty": "Kailangan — maglagay ng kahit isang token o path segment."
+      }
     },
     "import": {
       "csvHeading": "CSV ng mga pangalan ng may-akda",
@@ -441,7 +451,8 @@
       "hardcoverNoLists": "Walang nahanap na listahan",
       "hardcoverEmpty": "Walang naka-configure na Hardcover import list.",
       "hardcoverLastSync": "Huling sync: {{date}}",
-      "hardcoverNeverSynced": "Hindi pa kailanman na-sync"
+      "hardcoverNeverSynced": "Hindi pa kailanman na-sync",
+      "configureHardcoverToken": "I-configure ang Hardcover API token sa mga setting ng API Keys →"
     },
     "oidc": {
       "heading": "SSO / OIDC Providers",

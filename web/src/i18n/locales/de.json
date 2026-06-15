@@ -212,7 +212,7 @@
       "notifications": "Benachrichtigungen",
       "quality": "Qualitätsprofile",
       "metadata": "Metadatenprofile",
-      "import": "Import / Migrate",
+      "import": "Import / Migration",
       "rootfolders": "Stammordner",
       "logs": "Protokolle",
       "general": "Allgemein",
@@ -315,7 +315,11 @@
       "free": "{{size}} frei",
       "addPlaceholder": "/daten/bücher",
       "addButton": "Ordner hinzufügen",
-      "addFail": "Ordner konnte nicht hinzugefügt werden"
+      "addFail": "Ordner konnte nicht hinzugefügt werden",
+      "defaultLabel": "Standard-Stammordner",
+      "defaultHint": "Autoren ohne expliziten Stammordner landen hier. Nicht festgelegt lassen, um auf den Startpfad BINDERY_LIBRARY_DIR zurückzufallen.",
+      "defaultUnset": "Start-Standard verwenden (BINDERY_LIBRARY_DIR)",
+      "defaultBadge": "Standard"
     },
     "logs": {
       "heading": "Protokolle",
@@ -383,7 +387,13 @@
       "logRetention": "Log Retention",
       "logRetentionLabel": "Keep log entries for",
       "logRetentionHint": "Log entries older than this are deleted by the daily trim job.",
-      "days": "days"
+      "days": "days",
+      "defaultLibraryLocation": "Standard-Bibliotheksort",
+      "defaultLibraryLocationHint": "Stammordner und den Standard-Bibliotheksort im Tab Stammordner verwalten.",
+      "defaultLibraryLocationLink": "In Stammordner verwalten →",
+      "naming": {
+        "hintEmpty": "Erforderlich – mindestens ein Token oder Pfadsegment eingeben."
+      }
     },
     "import": {
       "csvHeading": "CSV mit Autorennamen",
@@ -398,7 +408,8 @@
       "resultAdded": "hinzugefügt",
       "resultSkipped": "übersprungen (bereits vorhanden)",
       "resultFailed": "fehlgeschlagen",
-      "showFailures": "{{count}} Fehler anzeigen"
+      "showFailures": "{{count}} Fehler anzeigen",
+      "configureHardcoverToken": "Hardcover-API-Token in den API-Schlüssel-Einstellungen konfigurieren →"
     },
     "oidc": {
       "heading": "SSO / OIDC Providers",

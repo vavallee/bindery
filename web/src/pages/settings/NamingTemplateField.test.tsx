@@ -116,9 +116,15 @@ describe('NamingTemplateField component', () => {
     expect(save.disabled).toBe(true)
   })
 
-  it('blocks save on an empty template', () => {
+  it('blocks save on an empty template and announces the blocking hint', () => {
     render(<Harness initial="" />)
-    expect(screen.getByText('settings.general.naming.errorEmpty')).toBeTruthy()
+    // The field passes an English fallback to t(); the test's t() mock echoes the
+    // key (plus interpolated option chars), so match on the key prefix.
+    const hint = screen.getByText(/settings\.general\.naming\.hintEmpty/)
+    expect(hint).toBeTruthy()
+    // The empty-template feedback still gates Save, so it must be announced to
+    // assistive tech even though it is styled as a muted hint, not a hard error.
+    expect(hint).toHaveAttribute('role', 'alert')
     const save = screen.getByRole('button', { name: 'common.save' }) as HTMLButtonElement
     expect(save.disabled).toBe(true)
   })

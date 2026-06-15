@@ -463,16 +463,16 @@ export default function GeneralTab() {
 
       {/* Default library location */}
       <section>
-        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">Default library location</h3>
+        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.defaultLibraryLocation')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
           <p className="text-xs text-slate-600 dark:text-zinc-500 mb-3">
-            Manage root folders and the default library location in the Root Folders tab.
+            {t('settings.general.defaultLibraryLocationHint')}
           </p>
           <button
             onClick={() => window.location.assign('/settings?tab=rootfolders')}
             className="text-sm text-emerald-600 dark:text-emerald-400 hover:underline"
           >
-            Manage in Root Folders →
+            {t('settings.general.defaultLibraryLocationLink')}
           </button>
         </div>
       </section>

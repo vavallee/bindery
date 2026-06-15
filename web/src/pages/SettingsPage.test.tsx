@@ -76,6 +76,8 @@ vi.mock('../api/client', async importOriginal => {
       createBackup: vi.fn(),
       deleteBackup: vi.fn(),
       addRootFolder: vi.fn(),
+      deleteRootFolder: vi.fn(),
+      listMetadataProfiles: vi.fn(),
       authConfig: vi.fn(),
       authSetMode: vi.fn(),
       authRegenerateApiKey: vi.fn(),
@@ -287,6 +289,8 @@ function seedSettingsMocks(options: {
     vi.mocked(api.createBackup).mockResolvedValue({ name: 'bindery-backup.zip', size: 0, modTime: '' })
     vi.mocked(api.deleteBackup).mockResolvedValue(undefined)
     vi.mocked(api.addRootFolder).mockImplementation(async path => makeRootFolder({ id: 99, path }))
+    vi.mocked(api.deleteRootFolder).mockResolvedValue(undefined)
+    vi.mocked(api.listMetadataProfiles).mockResolvedValue([])
     vi.mocked(api.testHardcover).mockResolvedValue({
       ok: true,
       tokenConfigured: true,
@@ -335,6 +339,30 @@ async function openClientsTab() {
 async function openImportTab() {
   fireEvent.click(await screen.findByRole('button', { name: 'settings.tabs.import' }))
   await screen.findByText('settings.import.csvHeading')
+}
+
+// The General tab was de-cluttered (#1106/#1109): API keys, root-folder default,
+// author/metadata defaults, and backups moved to their own domain tabs. These
+// helpers click into the relevant tab and await its lazy chunk before the test
+// queries the moved controls.
+async function openApiKeysTab() {
+  fireEvent.click(await screen.findByRole('button', { name: 'settings.tabs.apiKeys' }))
+  await screen.findByRole('heading', { name: 'settings.general.apiKeys' })
+}
+
+async function openRootFoldersTab() {
+  fireEvent.click(await screen.findByRole('button', { name: 'settings.tabs.rootfolders' }))
+  await screen.findByRole('heading', { name: 'settings.rootfolders.heading' })
+}
+
+async function openMetadataTab() {
+  fireEvent.click(await screen.findByRole('button', { name: 'settings.tabs.metadata' }))
+  await screen.findByRole('heading', { name: 'Library Defaults' })
+}
+
+async function openLogsTab() {
+  fireEvent.click(await screen.findByRole('button', { name: 'settings.tabs.logs' }))
+  await screen.findByRole('heading', { name: 'settings.logs.heading' })
 }
 
 function sectionForHeading(name: string) {
@@ -386,6 +414,7 @@ describe('SettingsPage', () => {
 
   it('adds a write-only Hardcover token field with API link', async () => {
     renderSettings()
+    await openApiKeysTab()
 
     expect(await screen.findByText('Hardcover API Token')).toBeInTheDocument()
     const link = screen.getByRole('link', { name: 'Create or copy a Hardcover API token' })
@@ -401,8 +430,8 @@ describe('SettingsPage', () => {
 
   it('persists the enhanced Hardcover admin toggle separately from effective status', async () => {
     renderSettings()
+    await openApiKeysTab()
 
-    await screen.findByRole('heading', { name: 'settings.general.apiKeys' })
     const apiKeys = sectionForHeading('settings.general.apiKeys')
     fireEvent.click(apiKeys.getByTitle('common.enable'))
 
@@ -421,6 +450,7 @@ describe('SettingsPage', () => {
     })
 
     renderSettings()
+    await openApiKeysTab()
 
     fireEvent.click(await screen.findByRole('button', { name: 'Test Hardcover API' }))
 
@@ -623,7 +653,10 @@ describe('SettingsPage', () => {
     expect(screen.queryByText('settings.general.scanNoFilesWarning')).not.toBeInTheDocument()
   })
 
-  it('persists default root folder and media type choices', async () => {
+  // The default-root-folder selector moved out of the General tab into the Root
+  // Folders tab (#1109): it's the only UI for library.defaultRootFolderId, which
+  // the importer reads to place authors without an explicit root folder.
+  it('persists the default root folder from the Root Folders tab', async () => {
     const existing = makeRootFolder({ id: 7, path: '/mnt/books' })
     const added = makeRootFolder({ id: 8, path: '/mnt/audiobooks' })
 
@@ -631,37 +664,77 @@ describe('SettingsPage', () => {
       rootFolders: [existing],
       settings: [
         { key: 'library.defaultRootFolderId', value: '' },
-        { key: 'default.media_type', value: 'ebook' },
         { key: 'hardcover.enhanced_series_enabled', value: 'false' },
       ],
     })
     vi.mocked(api.addRootFolder).mockResolvedValue(added)
 
-    await screen.findByRole('heading', { name: 'Default library location' })
-    const defaultLocation = sectionForHeading('Default library location')
+    await openRootFoldersTab()
 
-    fireEvent.change(defaultLocation.getByRole('combobox'), { target: { value: '7' } })
+    // Empty/unset by default — falls back to BINDERY_LIBRARY_DIR.
+    const select = await screen.findByLabelText('settings.rootfolders.defaultLabel')
+    expect(select).toHaveValue('')
+
+    fireEvent.change(select, { target: { value: '7' } })
     await waitFor(() => {
       expect(api.setSetting).toHaveBeenCalledWith('library.defaultRootFolderId', '7')
     })
 
-    fireEvent.click(defaultLocation.getByRole('button', { name: '+ Add root folder' }))
-    fireEvent.change(defaultLocation.getByPlaceholderText('/mnt/books'), { target: { value: ' /mnt/audiobooks ' } })
-    fireEvent.click(defaultLocation.getByRole('button', { name: 'Add' }))
-
+    // A newly added folder becomes selectable as the default.
+    fireEvent.change(screen.getByPlaceholderText('settings.rootfolders.addPlaceholder'), { target: { value: ' /mnt/audiobooks ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'settings.rootfolders.addButton' }))
     await waitFor(() => expect(api.addRootFolder).toHaveBeenCalledWith('/mnt/audiobooks'))
+
+    fireEvent.change(screen.getByLabelText('settings.rootfolders.defaultLabel'), { target: { value: '8' } })
     await waitFor(() => {
       expect(api.setSetting).toHaveBeenCalledWith('library.defaultRootFolderId', '8')
     })
-    expect(defaultLocation.getByRole('combobox')).toHaveValue('8')
+    expect(screen.getByLabelText('settings.rootfolders.defaultLabel')).toHaveValue('8')
+  })
 
-    const authorDefaults = sectionForHeading('Author defaults')
-    const authorDefaultSelects = authorDefaults.getAllByRole('combobox')
-    fireEvent.change(authorDefaultSelects[0], { target: { value: 'audiobook' } })
+  it('clears the default root folder when the default folder is deleted', async () => {
+    const a = makeRootFolder({ id: 7, path: '/mnt/books' })
+    const b = makeRootFolder({ id: 8, path: '/mnt/audiobooks' })
+    vi.mocked(api.deleteRootFolder).mockResolvedValue(undefined)
+
+    renderSettings({
+      rootFolders: [a, b],
+      settings: [
+        { key: 'library.defaultRootFolderId', value: '7' },
+        { key: 'hardcover.enhanced_series_enabled', value: 'false' },
+      ],
+    })
+
+    await openRootFoldersTab()
+    await waitFor(() => expect(screen.getByLabelText('settings.rootfolders.defaultLabel')).toHaveValue('7'))
+
+    // Delete the folder that is currently the default — the setting must not be
+    // left pointing at a dead id.
+    fireEvent.click(screen.getAllByRole('button', { name: 'common.remove' })[0])
+    await waitFor(() => expect(api.deleteRootFolder).toHaveBeenCalledWith(7))
+    await waitFor(() => {
+      expect(api.setSetting).toHaveBeenCalledWith('library.defaultRootFolderId', '')
+    })
+  })
+
+  it('persists author/metadata default choices from the Metadata tab', async () => {
+    renderSettings({
+      settings: [
+        { key: 'default.media_type', value: 'ebook' },
+        { key: 'hardcover.enhanced_series_enabled', value: 'false' },
+      ],
+    })
+
+    await openMetadataTab()
+
+    const authorDefaults = sectionForHeading('Library Defaults')
+    const selects = authorDefaults.getAllByRole('combobox')
+    // [0] metadata provider, [1] default media type, [2] default monitor mode.
+    fireEvent.change(selects[1], { target: { value: 'audiobook' } })
     await waitFor(() => {
       expect(api.setSetting).toHaveBeenCalledWith('default.media_type', 'audiobook')
     })
-    fireEvent.change(authorDefaultSelects[1], { target: { value: 'latest' } })
+    fireEvent.change(selects[2], { target: { value: 'latest' } })
     await waitFor(() => {
       expect(api.setSetting).toHaveBeenCalledWith('author.default_monitor_mode', 'latest')
     })
@@ -680,14 +753,22 @@ describe('SettingsPage', () => {
       ],
     })
 
-    await screen.findByRole('heading', { name: 'settings.general.autoGrab' })
+    // Auto-grab + recommendations moved to the Metadata tab's Library Defaults.
+    await openMetadataTab()
+    const libraryDefaults = sectionForHeading('Library Defaults')
 
-    fireEvent.click(sectionForHeading('settings.general.autoGrab').getByTitle('common.disable'))
+    // Two Toggle switches in render order: [0] auto-grab, [1] recommendations.
+    // Capture both up front by role — toggling one flips its title, so a
+    // title-based query would become ambiguous after the first click.
+    const switches = libraryDefaults.getAllByRole('switch')
+    const [autoGrabToggle, recommendationsToggle] = switches
+
+    fireEvent.click(autoGrabToggle)
     await waitFor(() => {
       expect(api.setSetting).toHaveBeenCalledWith('autoGrab.enabled', 'false')
     })
 
-    fireEvent.click(sectionForHeading('settings.general.recommendations').getByTitle('common.enable'))
+    fireEvent.click(recommendationsToggle)
     await waitFor(() => {
       expect(api.setSetting).toHaveBeenCalledWith('recommendations.enabled', 'true')
     })
@@ -863,7 +944,7 @@ describe('SettingsPage', () => {
       ],
     })
 
-    await screen.findByRole('heading', { name: 'settings.general.apiKeys' })
+    await openApiKeysTab()
     const apiKeys = sectionForHeading('settings.general.apiKeys')
 
     fireEvent.change(apiKeys.getByPlaceholderText('AIza...'), { target: { value: 'AIza-test-key' } })
@@ -1514,6 +1595,7 @@ describe('SettingsPage', () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     try {
       renderSettings()
+      await openLogsTab()
 
       expect(await screen.findByText(backup.name)).toBeInTheDocument()
 

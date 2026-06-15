@@ -212,7 +212,7 @@
       "notifications": "Notifications",
       "quality": "Profils de qualité",
       "metadata": "Profils de métadonnées",
-      "import": "Import / Migrate",
+      "import": "Import / Migration",
       "rootfolders": "Dossiers racines",
       "logs": "Journaux",
       "general": "Général",
@@ -315,7 +315,11 @@
       "free": "{{size}} libre",
       "addPlaceholder": "/données/livres",
       "addButton": "Ajouter un dossier",
-      "addFail": "Échec de l'ajout du dossier"
+      "addFail": "Échec de l'ajout du dossier",
+      "defaultLabel": "Dossier racine par défaut",
+      "defaultHint": "Les auteurs sans dossier racine explicite atterrissent ici. Laissez vide pour revenir au chemin de démarrage BINDERY_LIBRARY_DIR.",
+      "defaultUnset": "Utiliser la valeur de démarrage (BINDERY_LIBRARY_DIR)",
+      "defaultBadge": "Par défaut"
     },
     "logs": {
       "heading": "Journaux",
@@ -383,7 +387,13 @@
       "logRetention": "Log Retention",
       "logRetentionLabel": "Keep log entries for",
       "logRetentionHint": "Log entries older than this are deleted by the daily trim job.",
-      "days": "days"
+      "days": "days",
+      "defaultLibraryLocation": "Emplacement par défaut de la bibliothèque",
+      "defaultLibraryLocationHint": "Gérez les dossiers racines et l'emplacement par défaut de la bibliothèque dans l'onglet Dossiers racines.",
+      "defaultLibraryLocationLink": "Gérer dans Dossiers racines →",
+      "naming": {
+        "hintEmpty": "Requis – saisissez au moins un jeton ou segment de chemin."
+      }
     },
     "import": {
       "csvHeading": "CSV de noms d'auteurs",
@@ -398,7 +408,8 @@
       "resultAdded": "ajoutés",
       "resultSkipped": "ignorés (existent déjà)",
       "resultFailed": "échoués",
-      "showFailures": "Afficher {{count}} échec(s)"
+      "showFailures": "Afficher {{count}} échec(s)",
+      "configureHardcoverToken": "Configurez le jeton d'API Hardcover dans les paramètres Clés d'API →"
     },
     "oidc": {
       "heading": "SSO / OIDC Providers",

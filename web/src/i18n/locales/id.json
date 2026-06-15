@@ -231,7 +231,7 @@
       "notifications": "Notifikasi",
       "quality": "Profil Kualitas",
       "metadata": "Profil Metadata",
-      "import": "Import / Migrate",
+      "import": "Impor / Migrasi",
       "rootfolders": "Folder Utama",
       "logs": "Log",
       "general": "Umum",
@@ -341,7 +341,11 @@
       "free": "{{size}} tersisa",
       "addPlaceholder": "/data/books",
       "addButton": "Tambah Folder",
-      "addFail": "Gagal menambah folder"
+      "addFail": "Gagal menambah folder",
+      "defaultLabel": "Folder utama default",
+      "defaultHint": "Penulis tanpa folder utama eksplisit akan masuk ke sini. Biarkan kosong untuk kembali ke jalur awal BINDERY_LIBRARY_DIR.",
+      "defaultUnset": "Gunakan default awal (BINDERY_LIBRARY_DIR)",
+      "defaultBadge": "Default"
     },
     "logs": {
       "heading": "Log",
@@ -412,7 +416,13 @@
       "logRetention": "Log Retention",
       "logRetentionLabel": "Keep log entries for",
       "logRetentionHint": "Log entries older than this are deleted by the daily trim job.",
-      "days": "days"
+      "days": "days",
+      "defaultLibraryLocation": "Lokasi perpustakaan default",
+      "defaultLibraryLocationHint": "Kelola folder utama dan lokasi perpustakaan default di tab Folder Utama.",
+      "defaultLibraryLocationLink": "Kelola di Folder Utama →",
+      "naming": {
+        "hintEmpty": "Wajib — masukkan setidaknya satu token atau segmen jalur."
+      }
     },
     "import": {
       "csvHeading": "CSV nama penulis",
@@ -441,7 +451,8 @@
       "hardcoverNoLists": "Tidak ada daftar ditemukan",
       "hardcoverEmpty": "Tidak ada daftar impor Hardcover terkonfigurasi.",
       "hardcoverLastSync": "Sinkronisasi terakhir: {{date}}",
-      "hardcoverNeverSynced": "Belum pernah disinkronkan"
+      "hardcoverNeverSynced": "Belum pernah disinkronkan",
+      "configureHardcoverToken": "Konfigurasikan token API Hardcover di pengaturan Kunci API →"
     },
     "oidc": {
       "heading": "SSO / OIDC Providers",
