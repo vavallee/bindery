@@ -74,8 +74,42 @@ const (
 )
 
 // defaultSearchInterval is the fallback wanted-book search cadence used when
-// the "search.interval" DB setting is absent or invalid.
-const defaultSearchInterval = "12h"
+// the "search.interval" DB setting is absent or invalid. Typed as a
+// time.Duration (not a string) so the unset-path default and the
+// invalid-value fallback can never diverge — both derive from this constant.
+const defaultSearchInterval = 12 * time.Hour
+
+// minSearchInterval and maxSearchInterval mirror the bounds the API validator
+// enforces for the "search.interval" setting (see
+// internal/api/settings_handler.go::validateSettingValue, SettingSearchInterval
+// case). A value can still reach the DB out-of-band (e.g. direct DB edit) past
+// the API, so the scheduler re-checks the same bounds and falls back to the
+// default rather than honouring an absurd cadence.
+const (
+	minSearchInterval = time.Hour
+	maxSearchInterval = 168 * time.Hour
+)
+
+// resolveSearchInterval reads the "search.interval" DB setting and returns the
+// wanted-book search cadence. It falls back to defaultSearchInterval (logging a
+// WARN) when the setting is unset/empty, unparseable, or outside the
+// [minSearchInterval, maxSearchInterval] bounds enforced by the API validator.
+func (s *Scheduler) resolveSearchInterval() time.Duration {
+	if s.settings == nil {
+		return defaultSearchInterval
+	}
+	v, _ := s.settings.Get(s.ctx(), "search.interval")
+	if v == nil || v.Value == "" {
+		return defaultSearchInterval
+	}
+	d, err := time.ParseDuration(v.Value)
+	if err != nil || d < minSearchInterval || d > maxSearchInterval {
+		slog.Warn("scheduler: invalid search.interval, falling back to default",
+			"value", v.Value, "default", defaultSearchInterval)
+		return defaultSearchInterval
+	}
+	return d
+}
 
 // Scheduler runs background jobs on configurable intervals.
 type Scheduler struct {
@@ -288,17 +322,9 @@ func (s *Scheduler) Start() {
 
 	// Search for wanted books on a configurable interval (default 12h).
 	// Read the setting once at Start() — a restart is required to apply changes.
-	searchInterval := defaultSearchInterval
-	if s.settings != nil {
-		if v, _ := s.settings.Get(s.ctx(), "search.interval"); v != nil && v.Value != "" {
-			searchInterval = v.Value
-		}
-	}
-	searchDuration, err := time.ParseDuration(searchInterval)
-	if err != nil || searchDuration < time.Hour {
-		slog.Warn("scheduler: invalid search.interval, falling back to default", "value", searchInterval, "default", defaultSearchInterval)
-		searchDuration = 12 * time.Hour
-	}
+	// resolveSearchInterval clamps to the same [1h, 168h] bounds the API
+	// validator enforces, falling back to the default for out-of-range values.
+	searchDuration := s.resolveSearchInterval()
 	s.cron.AddFunc(fmt.Sprintf("@every %s", searchDuration), runJob("search-wanted", func() {
 		slog.Info("job: search wanted books")
 		s.searchWanted()
