@@ -143,6 +143,8 @@ describe('NamingTemplateField component', () => {
 
   it('warns on an unknown token and disables save', () => {
     render(<Harness initial="{Bogus}/{Title}" />)
+    const input = screen.getByPlaceholderText('placeholder')
+    fireEvent.blur(input)
     expect(screen.getByText(/errorUnknownTokens.*\{Bogus\}/)).toBeTruthy()
     const save = screen.getByRole('button', { name: 'common.save' }) as HTMLButtonElement
     expect(save.disabled).toBe(true)
@@ -150,7 +152,17 @@ describe('NamingTemplateField component', () => {
 
   it('blocks save on an empty template', () => {
     render(<Harness initial="" />)
+    const input = screen.getByPlaceholderText('placeholder')
+    fireEvent.blur(input)
     expect(screen.getByText('settings.general.naming.errorEmpty')).toBeTruthy()
+    const save = screen.getByRole('button', { name: 'common.save' }) as HTMLButtonElement
+    expect(save.disabled).toBe(true)
+  })
+
+  it('does not show validation errors on initial load with an empty (default) value', () => {
+    render(<Harness initial="" />)
+    expect(screen.queryByText('settings.general.naming.errorEmpty')).toBeNull()
+    // Save is still disabled even without the error message visible.
     const save = screen.getByRole('button', { name: 'common.save' }) as HTMLButtonElement
     expect(save.disabled).toBe(true)
   })
