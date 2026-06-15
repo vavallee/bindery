@@ -531,6 +531,37 @@ func TestSettings_ImportDropValidation(t *testing.T) {
 	}
 }
 
+// TestValidateSettingValue_SearchInterval exercises the search.interval bounds
+// the validator enforces: empty is allowed (scheduler falls back to default),
+// any duration in [1h, 168h] is accepted, and values below 1h, above 168h, or
+// that don't parse as a Go duration are rejected. These bounds are mirrored in
+// the scheduler (resolveSearchInterval) so an out-of-band DB value can't slip
+// through; keep the two in sync.
+func TestValidateSettingValue_SearchInterval(t *testing.T) {
+	// Empty = unset, accepted.
+	if err := validateSettingValue(SettingSearchInterval, ""); err != nil {
+		t.Errorf("empty should be accepted: %v", err)
+	}
+	// Valid in-range values, including the inclusive bounds.
+	for _, v := range []string{"1h", "12h", "24h", "168h"} {
+		if err := validateSettingValue(SettingSearchInterval, v); err != nil {
+			t.Errorf("%q should be accepted: %v", v, err)
+		}
+	}
+	// Below the 1h minimum: rejected.
+	if err := validateSettingValue(SettingSearchInterval, "30m"); err == nil {
+		t.Error("30m should be rejected (below 1h minimum)")
+	}
+	// Above the 168h maximum: rejected.
+	if err := validateSettingValue(SettingSearchInterval, "200h"); err == nil {
+		t.Error("200h should be rejected (above 168h maximum)")
+	}
+	// Unparseable duration string: rejected.
+	if err := validateSettingValue(SettingSearchInterval, "soon"); err == nil {
+		t.Error("'soon' should be rejected (not a valid duration)")
+	}
+}
+
 func mustJSON(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
