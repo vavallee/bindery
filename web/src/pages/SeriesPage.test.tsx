@@ -586,4 +586,110 @@ describe('SeriesPage', () => {
       position: '2',
     }))
   })
+
+  it('links a Hardcover missing row that maps to an existing library book', async () => {
+    const hardcoverLink = {
+      id: 1,
+      seriesId: 41,
+      hardcoverSeriesId: 'hc-series:42',
+      hardcoverProviderId: '42',
+      hardcoverTitle: 'The Stormlight Archive',
+      hardcoverAuthorName: 'Brandon Sanderson',
+      hardcoverBookCount: 2,
+      confidence: 1,
+      linkedBy: 'manual',
+      linkedAt: '2026-01-01T00:00:00Z',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    }
+    const series: Series = {
+      id: 41,
+      foreignSeriesId: 'series-41',
+      title: 'The Stormlight Archive',
+      description: '',
+      monitored: true,
+      books: [],
+      hardcoverLink,
+    }
+    vi.mocked(api.getSeriesHardcoverDiff).mockResolvedValue({
+      seriesId: 41,
+      link: hardcoverLink,
+      present: [],
+      missing: [
+        {
+          foreignBookId: 'hc:words-of-radiance',
+          providerId: '102',
+          title: 'Words of Radiance',
+          position: '2',
+          authorName: 'Brandon Sanderson',
+          localBookId: 555,
+        },
+      ],
+      localOnly: [],
+      uncertain: [],
+      presentCount: 0,
+      missingCount: 1,
+    })
+
+    renderSeriesPage([series])
+
+    fireEvent.click(await screen.findByRole('heading', { name: 'The Stormlight Archive' }))
+
+    const bookLink = await screen.findByRole('link', { name: /Words of Radiance/ })
+    expect(bookLink).toHaveAttribute('href', '/book/555')
+    const row = within(bookLink).queryByRole('button', { name: 'add' })
+    expect(row).not.toBeInTheDocument()
+  })
+
+  it('keeps a Hardcover missing row without a library match non-clickable', async () => {
+    const hardcoverLink = {
+      id: 1,
+      seriesId: 42,
+      hardcoverSeriesId: 'hc-series:42',
+      hardcoverProviderId: '42',
+      hardcoverTitle: 'The Stormlight Archive',
+      hardcoverAuthorName: 'Brandon Sanderson',
+      hardcoverBookCount: 2,
+      confidence: 1,
+      linkedBy: 'manual',
+      linkedAt: '2026-01-01T00:00:00Z',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    }
+    const series: Series = {
+      id: 42,
+      foreignSeriesId: 'series-42',
+      title: 'The Stormlight Archive',
+      description: '',
+      monitored: true,
+      books: [],
+      hardcoverLink,
+    }
+    vi.mocked(api.getSeriesHardcoverDiff).mockResolvedValue({
+      seriesId: 42,
+      link: hardcoverLink,
+      present: [],
+      missing: [
+        {
+          foreignBookId: 'hc:rhythm-of-war',
+          providerId: '103',
+          title: 'Rhythm of War',
+          position: '4',
+          authorName: 'Brandon Sanderson',
+        },
+      ],
+      localOnly: [],
+      uncertain: [],
+      presentCount: 0,
+      missingCount: 1,
+    })
+
+    renderSeriesPage([series])
+
+    fireEvent.click(await screen.findByRole('heading', { name: 'The Stormlight Archive' }))
+
+    expect(await screen.findByText('Rhythm of War')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Rhythm of War/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'add' })).toBeInTheDocument()
+  })
 })

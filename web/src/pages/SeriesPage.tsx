@@ -400,30 +400,51 @@ export default function SeriesPage() {
                     )}
                     {diff && diff.missing.length > 0 && (
                       <div className="px-4 pb-4 space-y-2">
-                        {diff.missing.slice(0, 8).map(book => (
-                          <div key={`${book.foreignBookId}-${book.position}`} className="flex items-center gap-3 p-3 rounded-md bg-slate-200/50 dark:bg-zinc-800/50">
-                            <span className="text-xs text-slate-600 dark:text-zinc-500 w-10 flex-shrink-0 font-mono">
-                              #{book.position || '?'}
-                            </span>
-                            {book.imageUrl ? (
-                              <img src={book.imageUrl} alt={book.title} className="w-8 h-10 object-cover rounded flex-shrink-0" />
-                            ) : (
-                              <div className="w-8 h-10 bg-slate-200 dark:bg-zinc-800 rounded flex-shrink-0" />
-                            )}
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium truncate">{book.title}</p>
-                              {book.authorName && <p className="text-xs text-slate-600 dark:text-zinc-500 truncate">{book.authorName}</p>}
+                        {diff.missing.slice(0, 8).map(book => {
+                          const rowClass = 'flex items-center gap-3 p-3 rounded-md bg-slate-200/50 dark:bg-zinc-800/50'
+                          const rowInner = (
+                            <>
+                              <span className="text-xs text-slate-600 dark:text-zinc-500 w-10 flex-shrink-0 font-mono">
+                                #{book.position || '?'}
+                              </span>
+                              {book.imageUrl ? (
+                                <img src={book.imageUrl} alt={book.title} className="w-8 h-10 object-cover rounded flex-shrink-0" />
+                              ) : (
+                                <div className="w-8 h-10 bg-slate-200 dark:bg-zinc-800 rounded flex-shrink-0" />
+                              )}
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium truncate">{book.title}</p>
+                                {book.authorName && <p className="text-xs text-slate-600 dark:text-zinc-500 truncate">{book.authorName}</p>}
+                              </div>
+                            </>
+                          )
+                          // When the missing catalog book maps to an existing library book,
+                          // link the row to that book page instead of showing the "add" button.
+                          if (book.localBookId != null) {
+                            return (
+                              <Link
+                                key={`${book.foreignBookId}-${book.position}`}
+                                to={`/book/${book.localBookId}`}
+                                className={`${rowClass} hover:bg-slate-300/50 dark:hover:bg-zinc-700/50 transition-colors`}
+                              >
+                                {rowInner}
+                              </Link>
+                            )
+                          }
+                          return (
+                            <div key={`${book.foreignBookId}-${book.position}`} className={rowClass}>
+                              {rowInner}
+                              <button
+                                onClick={() => fillGaps(series, book)}
+                                disabled={filling === series.id}
+                                className="ml-auto text-xs px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded font-medium flex-shrink-0"
+                                title="Add this missing Hardcover book and search indexers"
+                              >
+                                {filling === series.id ? '...' : 'add'}
+                              </button>
                             </div>
-                            <button
-                              onClick={() => fillGaps(series, book)}
-                              disabled={filling === series.id}
-                              className="ml-auto text-xs px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded font-medium flex-shrink-0"
-                              title="Add this missing Hardcover book and search indexers"
-                            >
-                              {filling === series.id ? '...' : 'add'}
-                            </button>
-                          </div>
-                        ))}
+                          )
+                        })}
                         {diff.missing.length > 8 && (
                           <p className="text-xs text-slate-600 dark:text-zinc-500 px-1">{diff.missing.length - 8} more missing books</p>
                         )}
