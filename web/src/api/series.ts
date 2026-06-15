@@ -1,5 +1,6 @@
 import { request } from './core'
 import type { Book } from './books'
+import type { MediaType } from './authors'
 
 export interface SeriesHardcoverLink {
   id: number
@@ -38,6 +39,7 @@ export interface SeriesFillBookRequest {
   foreignBookId?: string
   providerId?: string
   position?: string
+  mediaType?: MediaType
 }
 
 export interface SeriesHardcoverDiffBook {
@@ -97,6 +99,14 @@ export const seriesApi = {
     request<{ queued: number }>(`/series/${id}/fill`, {
       method: 'POST',
       ...(book ? { body: JSON.stringify(book) } : {}),
+    }),
+  // Fill every missing book at once, optionally targeting a media type. Unlike
+  // fillSeries(book), this carries no book selector — the backend expands the
+  // whole Hardcover catalog — so the media type travels in its own body.
+  fillSeriesAll: (id: number, mediaType?: MediaType) =>
+    request<{ queued: number }>(`/series/${id}/fill`, {
+      method: 'POST',
+      ...(mediaType ? { body: JSON.stringify({ mediaType }) } : {}),
     }),
   searchHardcoverSeries: (term: string, limit = 10) =>
     request<SeriesHardcoverSearchResult[]>(`/series/hardcover/search?term=${encodeURIComponent(term)}&limit=${limit}`),

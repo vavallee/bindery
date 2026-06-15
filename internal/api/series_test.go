@@ -1126,6 +1126,15 @@ func TestSeriesFillEndpointErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("invalid media type", func(t *testing.T) {
+		h, _, _, _ := seriesFixture(t)
+		rec := httptest.NewRecorder()
+		h.Fill(rec, withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/series/1/fill", bytes.NewBufferString(`{"mediaType":"hologram"}`)), "id", "1"))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
 	t.Run("selector feature disabled", func(t *testing.T) {
 		provider := &stubSeriesProvider{}
 		h, _, _, _, _ := seriesFixtureWithProviderAndSettings(t, provider, nil, false)
@@ -1341,6 +1350,63 @@ func TestSeriesFillCreatesMissingHardcoverBook(t *testing.T) {
 	}
 	if len(books) != 1 || books[0].ForeignID != "hc:the-way-of-kings" {
 		t.Fatalf("expected created book linked to series, got %+v", books)
+	}
+}
+
+// TestSeriesFillHonoursRequestedMediaType covers #1124: the per-book "add"
+// selector must create the missing Hardcover book with the chosen media type
+// rather than always defaulting to ebook.
+func TestSeriesFillHonoursRequestedMediaType(t *testing.T) {
+	cases := []struct {
+		name      string
+		mediaType string
+	}{
+		{name: "audiobook", mediaType: models.MediaTypeAudiobook},
+		{name: "both", mediaType: models.MediaTypeBoth},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			catalog := stormlightCatalog()
+			searcher := newMockBookSearcher()
+			h, seriesRepo, _, bookRepo := seriesFixtureWithProvider(t, &stubSeriesProvider{
+				catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
+			}, searcher)
+			series := &models.Series{ForeignID: "ol-series:stormlight", Title: "The Stormlight Archive"}
+			if err := seriesRepo.Create(context.Background(), series); err != nil {
+				t.Fatal(err)
+			}
+			if err := seriesRepo.UpsertHardcoverLink(context.Background(), &models.SeriesHardcoverLink{
+				SeriesID:            series.ID,
+				HardcoverSeriesID:   catalog.ForeignID,
+				HardcoverProviderID: catalog.ProviderID,
+				HardcoverTitle:      catalog.Title,
+				HardcoverAuthorName: catalog.AuthorName,
+				HardcoverBookCount:  catalog.BookCount,
+				Confidence:          1,
+				LinkedBy:            "manual",
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			rec := httptest.NewRecorder()
+			body := bytes.NewBufferString(`{"foreignBookId":"hc:the-way-of-kings","mediaType":"` + tc.mediaType + `"}`)
+			h.Fill(rec, withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/series/1/fill", body), "id", strconv.FormatInt(series.ID, 10)))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			searcher.waitForCall(t, time.Second)
+			created, err := bookRepo.GetByForeignID(context.Background(), "hc:the-way-of-kings")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if created == nil {
+				t.Fatal("expected Hardcover book to be created")
+				return
+			}
+			if created.MediaType != tc.mediaType {
+				t.Fatalf("created book mediaType = %q, want %q", created.MediaType, tc.mediaType)
+			}
+		})
 	}
 }
 

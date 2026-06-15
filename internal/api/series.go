@@ -350,12 +350,34 @@ type seriesFillRequest struct {
 	ForeignBookID string `json:"foreignBookId"`
 	ProviderID    string `json:"providerId"`
 	Position      string `json:"position"`
+	MediaType     string `json:"mediaType"`
 }
 
 func (r *seriesFillRequest) normalize() {
 	r.ForeignBookID = strings.TrimSpace(r.ForeignBookID)
 	r.ProviderID = strings.TrimSpace(r.ProviderID)
 	r.Position = strings.TrimSpace(r.Position)
+	r.MediaType = strings.TrimSpace(r.MediaType)
+}
+
+// mediaType resolves the requested media type, defaulting to ebook to preserve
+// the historical behaviour when the caller omits it.
+func (r seriesFillRequest) mediaType() string {
+	if r.MediaType == "" {
+		return models.MediaTypeEbook
+	}
+	return r.MediaType
+}
+
+// validMediaType reports whether the requested media type is one of the
+// accepted values. Mirrors the PUT book handler validation in books.go.
+func (r seriesFillRequest) validMediaType() bool {
+	switch r.mediaType() {
+	case models.MediaTypeEbook, models.MediaTypeAudiobook, models.MediaTypeBoth:
+		return true
+	default:
+		return false
+	}
 }
 
 func (r seriesFillRequest) hasBookSelector() bool {
@@ -402,6 +424,11 @@ func (h *SeriesHandler) Fill(w http.ResponseWriter, r *http.Request) {
 	}
 	body.normalize()
 
+	if !body.validMediaType() {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "mediaType must be 'ebook', 'audiobook', or 'both'"})
+		return
+	}
+
 	if body.hasBookSelector() {
 		if !h.requireEnhancedHardcoverAPI(w, r) {
 			return
@@ -441,7 +468,7 @@ func (h *SeriesHandler) Fill(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.enhancedHardcoverEnabled(r.Context()) {
-		if err := h.createMissingHardcoverBooks(r.Context(), id); err != nil {
+		if err := h.createMissingHardcoverBooks(r.Context(), id, body.mediaType()); err != nil {
 			if !errors.Is(err, errSeriesMetadataProvider) {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
@@ -1135,7 +1162,7 @@ func localDiffBook(local models.SeriesBook) seriesHardcoverDiffBook {
 	return item
 }
 
-func (h *SeriesHandler) createMissingHardcoverBooks(ctx context.Context, seriesID int64) error {
+func (h *SeriesHandler) createMissingHardcoverBooks(ctx context.Context, seriesID int64, mediaType string) error {
 	if !h.enhancedHardcoverEnabled(ctx) {
 		return nil
 	}
@@ -1162,7 +1189,7 @@ func (h *SeriesHandler) createMissingHardcoverBooks(ctx context.Context, seriesI
 		if !ok {
 			continue
 		}
-		if _, err := h.ensureHardcoverCatalogBook(ctx, series, catalog.AuthorName, catalogBook); err != nil {
+		if _, err := h.ensureHardcoverCatalogBook(ctx, series, catalog.AuthorName, catalogBook, mediaType); err != nil {
 			return err
 		}
 	}
@@ -1202,7 +1229,7 @@ func (h *SeriesHandler) createMissingHardcoverBook(ctx context.Context, seriesID
 		if !ok {
 			return nil, errSeriesCatalogBookNotFound
 		}
-		return h.ensureHardcoverCatalogBook(ctx, series, catalog.AuthorName, catalogBook)
+		return h.ensureHardcoverCatalogBook(ctx, series, catalog.AuthorName, catalogBook, selector.mediaType())
 	}
 	return nil, errSeriesCatalogBookNotFound
 }
@@ -1219,7 +1246,7 @@ func findCatalogBook(books []metadata.SeriesCatalogBook, foreignID, position str
 	return metadata.SeriesCatalogBook{}, false
 }
 
-func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *models.Series, fallbackAuthor string, catalogBook metadata.SeriesCatalogBook) (*models.Book, error) {
+func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *models.Series, fallbackAuthor string, catalogBook metadata.SeriesCatalogBook, mediaType string) (*models.Book, error) {
 	if series == nil {
 		return nil, errSeriesNotFound
 	}
@@ -1302,7 +1329,9 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 	book.Status = models.BookStatusWanted
 	book.Monitored = true
 	book.AnyEditionOK = true
-	book.MediaType = firstNonEmpty(book.MediaType, models.MediaTypeEbook)
+	// The caller's requested media type wins over the catalog default; it has
+	// already been validated and defaults to ebook when omitted.
+	book.MediaType = firstNonEmpty(mediaType, models.MediaTypeEbook)
 	book.Language = firstNonEmpty(book.Language, "eng")
 	book.MetadataProvider = firstNonEmpty(book.MetadataProvider, "hardcover")
 	if book.Genres == nil {

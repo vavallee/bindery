@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { api, Series, SeriesFillBookRequest, SeriesHardcoverDiff, SeriesHardcoverDiffBook, SeriesHardcoverLink, SeriesHardcoverSearchResult, SystemStatus } from '../api/client'
+import { api, MediaType, Series, SeriesHardcoverDiff, SeriesHardcoverDiffBook, SeriesHardcoverLink, SeriesHardcoverSearchResult, SystemStatus } from '../api/client'
 import AddSeriesBookModal from '../components/AddSeriesBookModal'
 import HardcoverSeriesLinkModal from '../components/HardcoverSeriesLinkModal'
 import SeriesNameModal from '../components/SeriesNameModal'
@@ -14,6 +14,9 @@ export default function SeriesPage() {
   const [expanded, setExpanded] = useState<number | null>(null)
   const [filling, setFilling] = useState<number | null>(null)
   const [fillResult, setFillResult] = useState<Record<number, string>>({})
+  // Format to target when adding missing Hardcover books, keyed by series id.
+  // Defaults to ebook to preserve the previous add behaviour.
+  const [fillMediaType, setFillMediaType] = useState<Record<number, MediaType>>({})
   const [linking, setLinking] = useState<number | null>(null)
   const [linkResult, setLinkResult] = useState<Record<number, string>>({})
   const [linkModalSeries, setLinkModalSeries] = useState<Series | null>(null)
@@ -122,15 +125,17 @@ export default function SeriesPage() {
     setSeriesList(prev => prev.map(s => s.id === series.id ? { ...s, monitored: next } : s))
   }
 
-  const fillGaps = async (series: Series, book?: SeriesHardcoverDiffBook) => {
+  const fillGaps = async (series: Series, book?: SeriesHardcoverDiffBook, mediaType?: MediaType) => {
     setFilling(series.id)
     try {
-      const request: SeriesFillBookRequest | undefined = book ? {
-        foreignBookId: book.foreignBookId,
-        providerId: book.providerId,
-        position: book.position,
-      } : undefined
-      const r = await api.fillSeries(series.id, request)
+      const r = book
+        ? await api.fillSeries(series.id, {
+            foreignBookId: book.foreignBookId,
+            providerId: book.providerId,
+            position: book.position,
+            ...(mediaType ? { mediaType } : {}),
+          })
+        : await api.fillSeriesAll(series.id, mediaType)
       setFillResult(prev => ({ ...prev, [series.id]: r.queued === 0 ? 'Nothing to fill' : `${r.queued} book${r.queued === 1 ? '' : 's'} queued` }))
       const list = await refreshSeriesList()
       const updated = list.find(s => s.id === series.id)
@@ -383,13 +388,27 @@ export default function SeriesPage() {
                         </p>
                       </div>
                       {(diff?.missingCount ?? 0) > 0 && (
-                        <button
-                          onClick={() => fillGaps(series)}
-                          disabled={filling === series.id}
-                          className="text-xs px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded font-medium flex-shrink-0"
-                        >
-                          {filling === series.id ? 'Queuing...' : 'add all'}
-                        </button>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <select
+                            aria-label="Format to add"
+                            value={fillMediaType[series.id] ?? 'ebook'}
+                            onChange={e => setFillMediaType(prev => ({ ...prev, [series.id]: e.target.value as MediaType }))}
+                            disabled={filling === series.id}
+                            className="text-xs bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600 disabled:opacity-50"
+                            title="Choose which format to add"
+                          >
+                            <option value="ebook">📖 Ebook</option>
+                            <option value="audiobook">🎧 Audiobook</option>
+                            <option value="both">📖🎧 Both</option>
+                          </select>
+                          <button
+                            onClick={() => fillGaps(series, undefined, fillMediaType[series.id] ?? 'ebook')}
+                            disabled={filling === series.id}
+                            className="text-xs px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded font-medium"
+                          >
+                            {filling === series.id ? 'Queuing...' : 'add all'}
+                          </button>
+                        </div>
                       )}
                     </div>
                     {diffLoading[series.id] && (
@@ -435,7 +454,7 @@ export default function SeriesPage() {
                             <div key={`${book.foreignBookId}-${book.position}`} className={rowClass}>
                               {rowInner}
                               <button
-                                onClick={() => fillGaps(series, book)}
+                                onClick={() => fillGaps(series, book, fillMediaType[series.id] ?? 'ebook')}
                                 disabled={filling === series.id}
                                 className="ml-auto text-xs px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded font-medium flex-shrink-0"
                                 title="Add this missing Hardcover book and search indexers"

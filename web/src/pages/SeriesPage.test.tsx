@@ -24,6 +24,7 @@ vi.mock('../api/client', async importOriginal => {
       monitorSeries: vi.fn(),
       linkBookToSeries: vi.fn(),
       fillSeries: vi.fn(),
+      fillSeriesAll: vi.fn(),
       autoLinkSeriesHardcover: vi.fn(),
       getSeriesHardcoverLink: vi.fn(),
       searchHardcoverSeries: vi.fn(),
@@ -584,7 +585,80 @@ describe('SeriesPage', () => {
       foreignBookId: 'hc:words-of-radiance',
       providerId: '102',
       position: '2',
+      mediaType: 'ebook',
     }))
+  })
+
+  it('sends the chosen media type when adding a missing Hardcover book (#1124)', async () => {
+    const hardcoverLink = {
+      id: 1,
+      seriesId: 40,
+      hardcoverSeriesId: 'hc-series:42',
+      hardcoverProviderId: '42',
+      hardcoverTitle: 'The Stormlight Archive',
+      hardcoverAuthorName: 'Brandon Sanderson',
+      hardcoverBookCount: 2,
+      confidence: 1,
+      linkedBy: 'manual',
+      linkedAt: '2026-01-01T00:00:00Z',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    }
+    const series: Series = {
+      id: 40,
+      foreignSeriesId: 'series-40',
+      title: 'The Stormlight Archive',
+      description: '',
+      monitored: true,
+      books: [],
+      hardcoverLink,
+    }
+    vi.mocked(api.getSeriesHardcoverDiff).mockResolvedValue({
+      seriesId: 40,
+      link: hardcoverLink,
+      present: [],
+      missing: [
+        {
+          foreignBookId: 'hc:words-of-radiance',
+          providerId: '102',
+          title: 'Words of Radiance',
+          position: '2',
+          authorName: 'Brandon Sanderson',
+        },
+      ],
+      localOnly: [],
+      uncertain: [],
+      presentCount: 0,
+      missingCount: 1,
+    })
+    vi.mocked(api.fillSeries).mockResolvedValue({ queued: 1 })
+    vi.mocked(api.fillSeriesAll).mockResolvedValue({ queued: 1 })
+
+    renderSeriesPage([series])
+
+    fireEvent.click(await screen.findByRole('heading', { name: 'The Stormlight Archive' }))
+
+    expect(await screen.findByRole('button', { name: 'add all' })).toBeInTheDocument()
+
+    // Pick "audiobook" in the format selector, then add the single missing book.
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Format to add' }), {
+      target: { value: 'audiobook' },
+    })
+    const rowTitle = await screen.findByText('Words of Radiance')
+    const row = rowTitle.parentElement?.parentElement
+    if (!row) throw new Error('expected Hardcover missing book row')
+    fireEvent.click(within(row).getByRole('button', { name: 'add' }))
+
+    await waitFor(() => expect(api.fillSeries).toHaveBeenCalledWith(40, {
+      foreignBookId: 'hc:words-of-radiance',
+      providerId: '102',
+      position: '2',
+      mediaType: 'audiobook',
+    }))
+
+    // "add all" carries the same chosen format through the catalog-expansion path.
+    fireEvent.click(screen.getByRole('button', { name: 'add all' }))
+    await waitFor(() => expect(api.fillSeriesAll).toHaveBeenCalledWith(40, 'audiobook'))
   })
 
   it('links a Hardcover missing row that maps to an existing library book', async () => {
