@@ -6,6 +6,13 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.19.1] — 2026-06-15
+
+### Fixed
+
+- **OIDC provider config via API key** ([#1139](https://github.com/vavallee/bindery/pull/1139)) — `PUT /api/v1/auth/oidc/providers` returned `403 {"error":"admin role required"}` even with a valid `X-Api-Key` header, because the auth allowlist matched on path only and skipped the key check entirely. `GET` is intentionally public (login page needs the provider list); `PUT` now goes through normal auth so API-key-authenticated requests are correctly granted admin access.
+- **Dual-format books can grab the missing format** ([#1150](https://github.com/vavallee/bindery/pull/1150), [#1148](https://github.com/vavallee/bindery/issues/1148)) — for a book monitored as both ebook and audiobook, having one format on disk no longer blocks the other. Interactive search results for the missing format are no longer rejected with "book already imported", changing a book to "both" re-evaluates it back to wanted, and a library scan now attaches an existing file for the missing format even when the other format is already tracked.
+
 ## [v1.19.0] — 2026-06-13
 
 ### Added
