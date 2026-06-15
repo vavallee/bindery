@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -402,6 +403,62 @@ func (f *stubLibraryFinder) FindExisting(_ context.Context, title, _, _ string) 
 // LibraryFinder reports a book is already on disk, FetchAuthorBooks sets the
 // file path on the book row and does NOT call SearchAndGrabBook for it. Books
 // NOT found on disk should still be searched normally.
+// TestFetchAuthorBooks_BackfillsHardcoverGenres verifies that refreshing an
+// author updates an existing book's genres when the incoming work carries
+// Hardcover provenance, so libraries imported before genre sourcing get cleaned.
+func TestFetchAuthorBooks_BackfillsHardcoverGenres(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+
+	ctx := context.Background()
+	author := &models.Author{
+		ForeignID: "OL800A", Name: "Backfill Author", SortName: "Author, Backfill",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-existing row with noisy OpenLibrary subjects and no Hardcover link.
+	existing := &models.Book{
+		ForeignID: "OL801W", AuthorID: author.ID, Title: "Old Book", SortTitle: "old book",
+		Language: "eng", Status: models.BookStatusWanted, MetadataProvider: "openlibrary",
+		Genres: []string{"Fiction", "American literature"},
+	}
+	if err := bookRepo.Create(ctx, existing); err != nil {
+		t.Fatal(err)
+	}
+
+	// Refresh returns the same work, now Hardcover-matched with clean genres.
+	stub := &stubMetaProvider{
+		works: []models.Book{
+			{
+				ForeignID: "OL801W", Title: "Old Book", SortTitle: "old book", Language: "eng",
+				Status: models.BookStatusWanted, MetadataProvider: "openlibrary",
+				HardcoverForeignID: "hc:old-book", Genres: []string{"Fantasy"},
+			},
+		},
+	}
+	agg := metadata.NewAggregator(stub)
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, nil, profileRepo, &searcherSpy{})
+	h.FetchAuthorBooks(author, false, "")
+
+	got, err := bookRepo.GetByForeignID(ctx, "OL801W")
+	if err != nil || got == nil {
+		t.Fatalf("reload book: %v", err)
+	}
+	if want := []string{"Fantasy"}; !slices.Equal(got.Genres, want) {
+		t.Errorf("genres should be backfilled from hardcover: want %v, got %v", want, got.Genres)
+	}
+}
+
 func TestFetchAuthorBooks_SkipsSearchForOwnedBooks(t *testing.T) {
 	database, err := db.OpenMemory()
 	if err != nil {

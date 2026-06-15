@@ -11,13 +11,21 @@ import { inputCls } from './formStyles'
 import NamingTemplateField from './NamingTemplateField'
 import { useSaveResult } from './useSaveResult'
 
-export default function GeneralTab() {
+// Tab identifiers used by onNavigate for soft (no-reload) cross-tab links.
+// Kept loose (string) so GeneralTab doesn't need to import SettingsPage's Tab
+// union; SettingsPage validates the value.
+export interface GeneralTabProps {
+  onNavigate?: (tab: string) => void
+}
+
+export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   const { t } = useTranslation()
   const { isAdmin } = useAuth()
   const [settings, setSettings] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<string | null>(null)
   const [dropErr, setDropErr] = useState<string | null>(null)
+  const [langErr, setLangErr] = useState<string | null>(null)
   const [scanningLibrary, setScanningLibrary] = useState(false)
   const [scanMessage, setScanMessage] = useState<string | null>(null)
   const scanStartedAt = useRef<number>(0)
@@ -73,6 +81,25 @@ export default function GeneralTab() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Save failed'
       setDropErr(msg)
+      throw err
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  // savePreferredLanguage mirrors saveDropFolder: it sets and clears `saving`
+  // (so the disabled guard fires and "Saving…" shows) and throws on failure so
+  // useSaveResult flips to 'error' AND a visible message is surfaced inline —
+  // instead of routing api.setSetting straight into useSaveResult, which set
+  // neither `saving` nor any error text.
+  const savePreferredLanguage = async () => {
+    setSaving('search.preferredLanguage')
+    setLangErr(null)
+    try {
+      await api.setSetting('search.preferredLanguage', settings['search.preferredLanguage'] ?? '')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Save failed'
+      setLangErr(msg)
       throw err
     } finally {
       setSaving(null)
@@ -299,13 +326,14 @@ export default function GeneralTab() {
                 <option value="en">{t('settings.general.preferredLanguageEn')}</option>
               </select>
               <button
-                onClick={() => langSave(() => api.setSetting('search.preferredLanguage', settings['search.preferredLanguage'] ?? ''))}
+                onClick={() => langSave(savePreferredLanguage)}
                 disabled={saving === 'search.preferredLanguage'}
                 className={`px-3 py-2 rounded text-xs font-medium disabled:opacity-50 ${langSaveResult === 'saved' ? 'bg-emerald-500' : langSaveResult === 'error' ? 'bg-red-600' : 'bg-emerald-600 hover:bg-emerald-500'}`}
               >
                 {langSaveResult === 'saved' ? 'Saved ✓' : langSaveResult === 'error' ? 'Error' : saving === 'search.preferredLanguage' ? t('common.saving') : t('common.save')}
               </button>
             </div>
+            {langErr && <p className="text-xs text-red-600 dark:text-red-400 mt-1">{langErr}</p>}
           </div>
         </div>
       </section>
@@ -469,7 +497,7 @@ export default function GeneralTab() {
             {t('settings.general.defaultLibraryLocationHint')}
           </p>
           <button
-            onClick={() => window.location.assign('/settings?tab=rootfolders')}
+            onClick={() => onNavigate ? onNavigate('rootfolders') : window.location.assign('/settings?tab=rootfolders')}
             className="text-sm text-emerald-600 dark:text-emerald-400 hover:underline"
           >
             {t('settings.general.defaultLibraryLocationLink')}

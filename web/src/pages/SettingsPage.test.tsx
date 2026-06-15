@@ -653,21 +653,41 @@ describe('SettingsPage', () => {
     expect(screen.queryByText('settings.general.scanNoFilesWarning')).not.toBeInTheDocument()
   })
 
+  it('soft-navigates to Root Folders from the Default library location link', async () => {
+    // The "Default library location" section is now an informational pointer to
+    // the Root Folders tab. The link must switch tabs in place (soft nav) rather
+    // than full-page-reload.
+    renderSettings({
+      rootFolders: [makeRootFolder({ id: 7, path: '/mnt/books' })],
+      settings: [
+        { key: 'default.media_type', value: 'ebook' },
+        { key: 'hardcover.enhanced_series_enabled', value: 'false' },
+      ],
+    })
+
+    await screen.findByRole('heading', { name: 'settings.general.defaultLibraryLocation' })
+    const defaultLocation = sectionForHeading('settings.general.defaultLibraryLocation')
+    // No functional root-folder selector lives here anymore.
+    expect(defaultLocation.queryByRole('combobox')).not.toBeInTheDocument()
+
+    fireEvent.click(defaultLocation.getByRole('button', { name: 'settings.general.defaultLibraryLocationLink' }))
+    // Soft nav: the Root Folders tab content renders without a page reload.
+    expect(await screen.findByRole('heading', { name: 'settings.rootfolders.heading' })).toBeInTheDocument()
+    expect(new URLSearchParams(window.location.search).get('tab')).toBe('rootfolders')
+  })
+
   // The default-root-folder selector moved out of the General tab into the Root
   // Folders tab (#1109): it's the only UI for library.defaultRootFolderId, which
   // the importer reads to place authors without an explicit root folder.
   it('persists the default root folder from the Root Folders tab', async () => {
-    const existing = makeRootFolder({ id: 7, path: '/mnt/books' })
-    const added = makeRootFolder({ id: 8, path: '/mnt/audiobooks' })
-
     renderSettings({
-      rootFolders: [existing],
+      rootFolders: [makeRootFolder({ id: 7, path: '/mnt/books' })],
       settings: [
         { key: 'library.defaultRootFolderId', value: '' },
         { key: 'hardcover.enhanced_series_enabled', value: 'false' },
       ],
     })
-    vi.mocked(api.addRootFolder).mockResolvedValue(added)
+    vi.mocked(api.addRootFolder).mockResolvedValue(makeRootFolder({ id: 8, path: '/mnt/audiobooks' }))
 
     await openRootFoldersTab()
 

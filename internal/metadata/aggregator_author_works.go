@@ -253,7 +253,13 @@ func mergeAuthorWorkMetadata(dst *models.Book, src models.Book) {
 	if dst.ReleaseDate == nil {
 		dst.ReleaseDate = src.ReleaseDate
 	}
-	if len(dst.Genres) == 0 {
+	// Genres: a Hardcover supplement replaces OpenLibrary's noisy "subjects"
+	// bag with its curated taxonomy. Gated to Hardcover provenance so other
+	// enrichers (e.g. Google Books BISAC categories) don't overwrite with
+	// slash-delimited strings. Non-Hardcover sources keep the fill-empty rule.
+	if src.MetadataProvider == "hardcover" && len(src.Genres) > 0 {
+		dst.Genres = src.Genres
+	} else if len(dst.Genres) == 0 {
 		dst.Genres = src.Genres
 	}
 	if dst.DurationSeconds == 0 {

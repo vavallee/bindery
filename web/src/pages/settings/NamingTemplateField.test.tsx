@@ -43,10 +43,10 @@ describe('namingTemplate renderer (renamer.go mirror)', () => {
   })
 
   it('renders all tokens', () => {
-    const out = renderTemplate('{Author}|{SortAuthor}|{Title}|{Year}|{ASIN}|{Series}|{SeriesNumber}|{ext}', 'book')
+    const out = renderTemplate('{Author}|{SortAuthor}|{Title}|{Year}|{ASIN}|{Series}|{SeriesNumber}|{Genre}|{ext}', 'book')
     // "|" is stripped by sanitize only inside a substituted field, not in the
     // literal template, so the separators survive between tokens.
-    expect(out).toBe('Jane Doe|Doe, Jane|Sample Book|2024|B01ABCDEFG|Demo Series|2|epub')
+    expect(out).toBe('Jane Doe|Doe, Jane|Sample Book|2024|B01ABCDEFG|Demo Series|2|Fantasy|epub')
   })
 
   it('renders {ext} as empty for the audiobook (folder) kind', () => {
@@ -58,6 +58,38 @@ describe('namingTemplate renderer (renamer.go mirror)', () => {
     const out = renderTemplate('{Title}', 'book', { ...SAMPLE_BOOK, title: 'A: B / C? <D>' })
     // ":" and "/" -> "-", "?<>" stripped; result is one segment
     expect(out).toBe('A- B - C D')
+  })
+
+  it('drops dangling leading separators when a leading token is empty', () => {
+    const noSeries = { ...SAMPLE_BOOK, series: '', seriesNumber: '' }
+    // Discord report: "{SeriesNumber} - {Title}" with no number must not yield " - Title".
+    expect(
+      renderTemplate('{Author}/{Series}/{SeriesNumber} - {Title}.{ext}', 'book', noSeries),
+    ).toBe('Jane Doe/Sample Book.epub')
+    // Consecutive empty leading tokens collapse.
+    expect(
+      renderTemplate('{Author}/{Series} - {SeriesNumber} - {Title}.{ext}', 'book', noSeries),
+    ).toBe('Jane Doe/Sample Book.epub')
+    // Interior/trailing glue is preserved (empty {Year} still yields "()").
+    expect(
+      renderTemplate('{Title} ({Year})', 'book', { ...SAMPLE_BOOK, year: '' }),
+    ).toBe('Sample Book ()')
+  })
+
+  it('renders the {Genre} token and {Token:default} fallback', () => {
+    expect(renderTemplate('{Genre}/{Title}.{ext}', 'book')).toBe('Fantasy/Sample Book.epub')
+    const noGenre = { ...SAMPLE_BOOK, genre: '' }
+    // Empty genre drops the segment...
+    expect(renderTemplate('{Genre}/{Title}.{ext}', 'book', noGenre)).toBe('Sample Book.epub')
+    // ...unless a default is given (mirrors Calibre's ifempty(Unsorted)).
+    expect(renderTemplate('{Genre:Unsorted}/{Title}.{ext}', 'book', noGenre)).toBe('Unsorted/Sample Book.epub')
+    // Default is ignored when the token has a value.
+    expect(renderTemplate('{Genre:Unsorted}/{Title}.{ext}', 'book')).toBe('Fantasy/Sample Book.epub')
+  })
+
+  it('treats {Genre:Unsorted} as a known token in validation', () => {
+    expect(validateTemplate('{Genre:Unsorted}/{Author}/{Title}.{ext}').unknownTokens).toEqual([])
+    expect(validateTemplate('{Bogus:x}').unknownTokens).toEqual(['{Bogus:x}'])
   })
 })
 
@@ -118,13 +150,10 @@ describe('NamingTemplateField component', () => {
 
   it('blocks save on an empty template and announces the blocking hint', () => {
     render(<Harness initial="" />)
-    // The field passes an English fallback to t(); the test's t() mock echoes the
-    // key (plus interpolated option chars), so match on the key prefix.
-    const hint = screen.getByText(/settings\.general\.naming\.hintEmpty/)
-    expect(hint).toBeTruthy()
-    // The empty-template feedback still gates Save, so it must be announced to
-    // assistive tech even though it is styled as a muted hint, not a hard error.
-    expect(hint).toHaveAttribute('role', 'alert')
+    // The empty-template message is announced (role="alert") while Save stays
+    // blocked, so screen-reader users hear why the button is disabled.
+    const alert = screen.getByRole('alert')
+    expect(alert).toHaveTextContent('settings.general.naming.hintEmpty')
     const save = screen.getByRole('button', { name: 'common.save' }) as HTMLButtonElement
     expect(save.disabled).toBe(true)
   })

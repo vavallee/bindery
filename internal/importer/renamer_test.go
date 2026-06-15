@@ -128,18 +128,95 @@ func TestRenamerSeriesTokens(t *testing.T) {
 }
 
 func TestRenamerSeriesTokensEmpty(t *testing.T) {
-	// No series — {Series} and {SeriesNumber} produce empty segments, stripped by sanitizePath
-	r := NewRenamer("{Author}/{Series}/{Title}.{ext}")
 	author := &models.Author{Name: "Author"}
 	book := &models.Book{Title: "Standalone"}
 
-	got, err := r.DestPath("/books", author, book, "", "", "book.epub")
-	if err != nil {
-		t.Fatalf("DestPath: %v", err)
+	cases := []struct {
+		name     string
+		template string
+		want     string
+	}{
+		{
+			name:     "series segment dropped",
+			template: "{Author}/{Series}/{Title}.{ext}",
+			want:     filepath.Join("/books", "Author", "Standalone.epub"),
+		},
+		{
+			// Discord report (Jonathan Stroud "The Hollow Boy"): empty
+			// {SeriesNumber} leaves " - " dangling before the title.
+			name:     "leading seriesNumber separator stripped",
+			template: "{Author}/{Series}/{SeriesNumber} - {Title}.{ext}",
+			want:     filepath.Join("/books", "Author", "Standalone.epub"),
+		},
+		{
+			// Both leading series tokens empty: the whole "{Series}" segment
+			// drops and the "{SeriesNumber} - " prefix collapses.
+			name:     "consecutive leading tokens stripped",
+			template: "{Author}/{Series} - {SeriesNumber} - {Title}.{ext}",
+			want:     filepath.Join("/books", "Author", "Standalone.epub"),
+		},
 	}
-	want := filepath.Join("/books", "Author", "Standalone.epub")
-	if got != want {
-		t.Errorf("got  %q\nwant %q", got, want)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewRenamer(tc.template)
+			got, err := r.DestPath("/books", author, book, "", "", "book.epub")
+			if err != nil {
+				t.Fatalf("DestPath: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got  %q\nwant %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRenamerGenreToken(t *testing.T) {
+	author := &models.Author{Name: "Frank Herbert"}
+
+	cases := []struct {
+		name     string
+		template string
+		genres   []string
+		want     string
+	}{
+		{
+			name:     "genre folder from first genre",
+			template: "{Genre}/{Author}/{Title}.{ext}",
+			genres:   []string{"Science Fiction", "Fantasy"},
+			want:     filepath.Join("/books", "Science Fiction", "Frank Herbert", "Dune.epub"),
+		},
+		{
+			name:     "empty genre drops the segment",
+			template: "{Genre}/{Author}/{Title}.{ext}",
+			genres:   nil,
+			want:     filepath.Join("/books", "Frank Herbert", "Dune.epub"),
+		},
+		{
+			// VENGEANCE's Calibre {#genre:ifempty(Unsorted)} workflow.
+			name:     "empty genre uses default",
+			template: "{Genre:Unsorted}/{Author}/{Title}.{ext}",
+			genres:   nil,
+			want:     filepath.Join("/books", "Unsorted", "Frank Herbert", "Dune.epub"),
+		},
+		{
+			name:     "default ignored when genre present",
+			template: "{Genre:Unsorted}/{Author}/{Title}.{ext}",
+			genres:   []string{"Fantasy"},
+			want:     filepath.Join("/books", "Fantasy", "Frank Herbert", "Dune.epub"),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewRenamer(tc.template)
+			book := &models.Book{Title: "Dune", Genres: tc.genres}
+			got, err := r.DestPath("/books", author, book, "", "", "book.epub")
+			if err != nil {
+				t.Fatalf("DestPath: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got  %q\nwant %q", got, tc.want)
+			}
+		})
 	}
 }
 

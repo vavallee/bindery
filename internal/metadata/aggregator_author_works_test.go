@@ -3,6 +3,7 @@ package metadata
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -152,6 +153,32 @@ func TestAggregator_GetAuthorWorksForAuthor_MergesSupplementalByTitle(t *testing
 	}
 	if got[1].HardcoverForeignID != "" {
 		t.Fatalf("unmatched supplemental book should not carry matched hardcover identity: %+v", got[1])
+	}
+}
+
+func TestMergeAuthorWorkMetadata_GenrePreferHardcover(t *testing.T) {
+	// Hardcover supplement replaces OL subjects with its taxonomy.
+	dst := models.Book{Genres: []string{"Fiction", "American literature"}}
+	src := models.Book{MetadataProvider: "hardcover", Genres: []string{"Fantasy"}}
+	mergeAuthorWorkMetadata(&dst, src)
+	if want := []string{"Fantasy"}; !slices.Equal(dst.Genres, want) {
+		t.Errorf("hardcover genres should replace: want %v, got %v", want, dst.Genres)
+	}
+
+	// Non-Hardcover supplement does not overwrite a non-empty genre list.
+	dst2 := models.Book{Genres: []string{"Fiction"}}
+	src2 := models.Book{MetadataProvider: "googlebooks", Genres: []string{"Fiction / Science Fiction / General"}}
+	mergeAuthorWorkMetadata(&dst2, src2)
+	if want := []string{"Fiction"}; !slices.Equal(dst2.Genres, want) {
+		t.Errorf("non-hardcover must not overwrite: want %v, got %v", want, dst2.Genres)
+	}
+
+	// Non-Hardcover still fills an empty genre list (existing behaviour).
+	dst3 := models.Book{}
+	src3 := models.Book{MetadataProvider: "googlebooks", Genres: []string{"Biography"}}
+	mergeAuthorWorkMetadata(&dst3, src3)
+	if want := []string{"Biography"}; !slices.Equal(dst3.Genres, want) {
+		t.Errorf("fill-empty should still apply: want %v, got %v", want, dst3.Genres)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1452,13 +1453,27 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 			}
 		}
 
-		// Update ratings on existing books so the recommender has data to work with,
-		// then skip further processing (we don't want to overwrite user state like status).
+		// Update ratings + genres on existing books, then skip further
+		// processing (we don't want to overwrite user state like status).
 		existing, _ := h.books.GetByForeignID(ctx, b.ForeignID)
 		if existing != nil {
+			changed := false
 			if b.RatingsCount > 0 && (existing.RatingsCount == 0 || b.RatingsCount > existing.RatingsCount) {
 				existing.RatingsCount = b.RatingsCount
 				existing.AverageRating = b.AverageRating
+				changed = true
+			}
+			// Backfill Hardcover genres onto rows imported before genre
+			// sourcing existed. Gated to Hardcover provenance (a HardcoverForeignID
+			// means HC matched this work this fetch) so a refresh while HC is
+			// unavailable never downgrades clean genres back to OL subjects.
+			// NOTE: once a per-book genre override lands (follow-up), this must
+			// be guarded to not clobber a user-edited value.
+			if b.HardcoverForeignID != "" && len(b.Genres) > 0 && !slices.Equal(existing.Genres, b.Genres) {
+				existing.Genres = b.Genres
+				changed = true
+			}
+			if changed {
 				if err := h.books.Update(ctx, existing); err != nil {
 					slog.Warn("authors: update during dedup", "error", err, "book_id", existing.ID)
 				}
