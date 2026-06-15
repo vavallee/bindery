@@ -2,7 +2,7 @@
 # in sync on a weekly cadence (see .github/dependabot.yml).
 
 # Stage 1: Build frontend (runs on the builder's native arch — output is arch-agnostic JS)
-FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:144769ec3f32e8ee36b3cfde91e82bee25d9367b20f31a151f3f7eea3a2a8541 AS frontend
+FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:3ad34ca6292aec4a91d8ddeb9229e29d9c2f689efd0dd242860889ac71842eba AS frontend
 WORKDIR /app/web
 COPY web/package*.json ./
 RUN npm ci
