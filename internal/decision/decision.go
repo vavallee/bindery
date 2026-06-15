@@ -26,6 +26,7 @@ type Release struct {
 	Protocol    string // "usenet" | "torrent"
 	Language    string // ISO 639-1 or empty
 	Format      string // epub, pdf, m4b, … (parsed from title)
+	MediaType   string // "ebook" | "audiobook" | "" — set for dual-format book searches
 	CustomScore int    // cumulative custom-format score
 }
 
@@ -99,6 +100,7 @@ func ReleaseFromSearchResult(sr newznab.SearchResult) Release {
 		Protocol:    sr.Protocol,
 		Language:    sr.Language,
 		Format:      indexer.ParseRelease(sr.Title).Format,
+		MediaType:   sr.MediaType,
 	}
 }
 
