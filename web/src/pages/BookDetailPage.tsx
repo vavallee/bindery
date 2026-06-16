@@ -187,6 +187,28 @@ export default function BookDetailPage() {
     return () => { cancelled = true }
   }, [bookId, t])
 
+  // While a grab is in flight, the download → import pipeline finishes
+  // asynchronously on the backend. Poll the book + history so the file and
+  // status appear without a manual page reload (#1161). Only polls while the
+  // book is actively downloading/importing; the dependency on book?.status
+  // tears the interval down the moment it settles. Mirrors QueuePage's 5s poll.
+  useEffect(() => {
+    const s = book?.status
+    if (s !== 'downloading' && s !== 'downloaded') return
+    let cancelled = false
+    const interval = setInterval(() => {
+      Promise.all([
+        api.getBook(bookId),
+        api.listHistory({ bookId }),
+      ]).then(([b, h]) => {
+        if (cancelled) return
+        setBook(b)
+        setEvents(h.items)
+      }).catch(() => {})
+    }, 5000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [book?.status, bookId])
+
   const saveField = async (patch: Partial<Book>) => {
     if (!book) return
     setSaving(true)

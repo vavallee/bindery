@@ -563,3 +563,48 @@ describe('BookDetailPage — danger zone', () => {
     await waitFor(() => expect(api.deleteBook).toHaveBeenCalledWith(42, true))
   })
 })
+
+describe('BookDetailPage — live import polling (#1161)', () => {
+  it('refreshes the book and surfaces the file when an import completes, without a reload', async () => {
+    vi.useFakeTimers()
+    try {
+      const downloading = makeBook({ status: 'downloading', mediaType: 'audiobook', audiobookFilePath: '' })
+      const imported = makeBook({ status: 'imported', mediaType: 'audiobook', audiobookFilePath: '/lib/leviathan.m4b' })
+      vi.mocked(api.getBook).mockResolvedValueOnce(downloading).mockResolvedValue(imported)
+
+      renderBookDetailPage()
+
+      // Initial load: downloading, no file on disk yet.
+      await vi.advanceTimersByTimeAsync(0)
+      expect(screen.queryByText('/lib/leviathan.m4b')).not.toBeInTheDocument()
+      expect(vi.mocked(api.getBook).mock.calls.length).toBe(1)
+
+      // The background import finishes; the 5s poll picks it up live.
+      await vi.advanceTimersByTimeAsync(5000)
+      await vi.advanceTimersByTimeAsync(0) // flush the setBook re-render
+      expect(vi.mocked(api.getBook).mock.calls.length).toBeGreaterThan(1)
+      expect(screen.getByText('/lib/leviathan.m4b')).toBeInTheDocument()
+
+      // Once the book settles (imported), polling stops — no further fetches.
+      const settledCalls = vi.mocked(api.getBook).mock.calls.length
+      await vi.advanceTimersByTimeAsync(15000)
+      expect(vi.mocked(api.getBook).mock.calls.length).toBe(settledCalls)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not poll a settled (wanted) book', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(api.getBook).mockResolvedValue(makeBook({ status: 'wanted' }))
+      renderBookDetailPage()
+      await vi.advanceTimersByTimeAsync(0)
+      const initial = vi.mocked(api.getBook).mock.calls.length
+      await vi.advanceTimersByTimeAsync(15000)
+      expect(vi.mocked(api.getBook).mock.calls.length).toBe(initial)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
