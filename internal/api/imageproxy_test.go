@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -266,6 +267,47 @@ func TestProxyBookImages(t *testing.T) {
 				t.Errorf("in=%q: want %q, got %q", tc.in, tc.want, b.ImageURL)
 			}
 		}
+	}
+}
+
+// TestImageProxyTransport_NoStrictDialWhenProxied is the regression guard for
+// the cover-proxy 502 bug: when BINDERY_OUTBOUND_PROXY is configured the image
+// transport dials the proxy, not the upstream host, so installing a PolicyStrict
+// per-dial re-check would reject a LAN/loopback proxy and break every fetch.
+// In the proxy case the handler must return the shared proxy transport unchanged.
+func TestImageProxyTransport_NoStrictDialWhenProxied(t *testing.T) {
+	t.Cleanup(func() { _, _ = httpsec.ConfigureOutboundProxy("", "", true) })
+
+	// A loopback proxy is exactly the case PolicyStrict would have rejected.
+	if _, err := httpsec.ConfigureOutboundProxy("http://127.0.0.1:0", "", true); err != nil {
+		t.Fatalf("ConfigureOutboundProxy: %v", err)
+	}
+
+	got := imageProxyTransport()
+	if got != httpsec.DefaultProxyTransport() {
+		t.Errorf("with a proxy configured, imageProxyTransport() must return the shared proxy transport unchanged; got a different transport (%T)", got)
+	}
+}
+
+// TestImageProxyTransport_StrictDialWhenDirect verifies the direct (no-proxy)
+// path still installs the rebind-closing DialContext on a clone of the default
+// transport, so SSRF protection is preserved where a rebind would actually land.
+func TestImageProxyTransport_StrictDialWhenDirect(t *testing.T) {
+	t.Cleanup(func() { _, _ = httpsec.ConfigureOutboundProxy("", "", true) })
+	if _, err := httpsec.ConfigureOutboundProxy("", "", true); err != nil {
+		t.Fatalf("ConfigureOutboundProxy reset: %v", err)
+	}
+
+	got := imageProxyTransport()
+	tr, ok := got.(*http.Transport)
+	if !ok {
+		t.Fatalf("imageProxyTransport() = %T, want *http.Transport on the direct path", got)
+	}
+	if tr.DialContext == nil {
+		t.Error("direct-path transport must install a DialContext (the rebind re-check)")
+	}
+	if got == httpsec.DefaultProxyTransport() {
+		t.Error("direct-path transport must be a clone, not the shared default transport")
 	}
 }
 

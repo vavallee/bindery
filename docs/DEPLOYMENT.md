@@ -301,7 +301,7 @@ Outbound URLs are validated against an SSRF policy. Two trust levels apply:
 
 If a same-host service still isn't reachable, the usual cause is that the service is bound to an interface your URL doesn't match (for example SABnzbd listening only on `127.0.0.1` while you used the LAN IP, or vice versa). Either point Bindery at the interface the service actually listens on, or set the service to listen on `0.0.0.0`.
 
-**Outbound proxy interaction.** When `BINDERY_OUTBOUND_PROXY` is set, in-scope requests are dialled to the proxy and the proxy resolves the destination — so the destination-URL SSRF validation still runs, but the per-connection dial re-check sees the proxy's address rather than the target's. Local destinations skip the proxy entirely per `BINDERY_OUTBOUND_PROXY_BYPASS_LOCAL` (see [Environment variables](#environment-variables)), which is also what keeps a LAN indexer manager (Jackett/Prowlarr) reachable.
+**Outbound proxy interaction.** When `BINDERY_OUTBOUND_PROXY` is set, in-scope requests are dialled to the proxy and the proxy resolves the destination, so the destination-URL SSRF validation still runs up front. The per-connection dial re-check (the DNS-rebind guard) can then only see the proxy's own address, not the target's — so for the strict-policy cover-image proxy that re-check is skipped whenever a proxy is configured; otherwise it would reject a LAN/loopback proxy and block every cover fetch. Local destinations skip the proxy entirely per `BINDERY_OUTBOUND_PROXY_BYPASS_LOCAL` (see [Environment variables](#environment-variables)), which is also what keeps a LAN indexer manager (Jackett/Prowlarr) reachable.
 
 ## First-run setup
 

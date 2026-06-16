@@ -63,27 +63,34 @@ func NewImageProxyHandler(dataDir string) *ImageProxyHandler {
 	return h
 }
 
-// imageProxyTransport returns the RoundTripper for the image-proxy client with a
-// per-request SSRF-revalidating DialContext installed, closing the DNS-rebind
-// TOCTOU window between the up-front URL validation and the actual dial.
+// imageProxyTransport returns the RoundTripper for the image-proxy client.
 //
-// It starts from httpsec.DefaultProxyTransport() (preserving outbound-proxy
-// support added in #987) and clones it so installing DialContext does not mutate
-// the shared transport. Caveat: when an outbound proxy IS configured the
-// connection is dialled to the proxy address, so the dial-time re-check sees the
-// proxy rather than the upstream host (the same documented limitation as the
-// newznab client); for the default no-proxy case this fully closes the rebind
-// window. If the underlying transport is not an *http.Transport we fall back to
-// a fresh transport carrying the proxy resolver plus DialContext.
+// On the direct (no outbound proxy) path it installs a per-request
+// SSRF-revalidating DialContext, closing the DNS-rebind TOCTOU window between
+// the up-front URL validation and the actual dial. It starts from
+// httpsec.DefaultProxyTransport() and clones it so installing DialContext does
+// not mutate the shared transport.
+//
+// When an outbound proxy IS configured (#987) the transport dials the *proxy*,
+// not the upstream host, so a PolicyStrict DialContext would re-validate the
+// proxy's own address and reject a LAN/loopback proxy — breaking every cover
+// fetch. In that case we return the shared proxy transport unchanged and rely on
+// the up-front h.validateURL plus the CheckRedirect hook for upstream SSRF: the
+// proxy is operator-configured and trusted, and the rebind re-check cannot see
+// past it anyway (the dial only reaches the proxy address). The strict per-dial
+// re-check therefore applies only to the direct path, where it is both meaningful
+// and the place a rebind would actually land.
 func imageProxyTransport() http.RoundTripper {
 	base := httpsec.DefaultProxyTransport()
+	if httpsec.ProxyFunc() != nil {
+		return base
+	}
 	if t, ok := base.(*http.Transport); ok {
 		c := t.Clone()
 		c.DialContext = httpsec.NewDialContext(httpsec.PolicyStrict)
 		return c
 	}
 	return &http.Transport{
-		Proxy:       httpsec.ProxyFunc(),
 		DialContext: httpsec.NewDialContext(httpsec.PolicyStrict),
 	}
 }
