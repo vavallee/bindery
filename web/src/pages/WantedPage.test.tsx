@@ -424,3 +424,24 @@ describe('WantedPage', () => {
     expect(screen.queryByRole('link', { name: 'Hyperion' })).not.toBeInTheDocument()
   })
 })
+
+describe('WantedPage — live polling (#1161)', () => {
+  it('polls the wanted list so background changes appear without a reload', async () => {
+    vi.useFakeTimers()
+    vi.mocked(api.listWanted)
+      .mockResolvedValueOnce([makeBook({ id: 1, title: 'Stays Wanted' }), makeBook({ id: 2, title: 'Grabbed Away' })])
+      .mockResolvedValue([makeBook({ id: 1, title: 'Stays Wanted' })])
+
+    renderWantedPage()
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) }) // initial load
+    expect(screen.getByText('Grabbed Away')).toBeInTheDocument()
+    expect(vi.mocked(api.listWanted).mock.calls.length).toBe(1)
+
+    // A background auto-grab removes book 2 from the wanted set; the 5s poll
+    // reflects it without a manual reload.
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    expect(vi.mocked(api.listWanted).mock.calls.length).toBeGreaterThan(1)
+    expect(screen.queryByText('Grabbed Away')).not.toBeInTheDocument()
+    expect(screen.getByText('Stays Wanted')).toBeInTheDocument()
+  })
+})

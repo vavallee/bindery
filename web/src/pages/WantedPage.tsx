@@ -36,6 +36,18 @@ export default function WantedPage() {
     load()
   }, [showExcluded])
 
+  // Poll the wanted list so background auto-grabs (and books leaving as they
+  // import) show up without a manual reload (#1161). Mirrors QueuePage's 5s
+  // poll. Pauses while the user is mid-interaction — a results panel is open or
+  // a grab/search is running — so the list doesn't reshuffle under them.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (showResults !== null || grabbingGuid !== null || searchingId !== null) return
+      api.listWanted({ includeExcluded: showExcluded }).then(setBooks).catch(() => {})
+    }, 5000)
+    return () => clearInterval(interval)
+  }, [showExcluded, showResults, grabbingGuid, searchingId])
+
   useEffect(() => {
     if (!toast) return
     const timer = setTimeout(() => setToast(null), 2500)
