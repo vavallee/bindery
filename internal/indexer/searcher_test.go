@@ -245,6 +245,35 @@ func TestFilterRelevantHyphenatedTitle(t *testing.T) {
 	}
 }
 
+// TestFilterRelevantPunctuationInTitle — regression test for the general
+// punctuation-asymmetry bug. A symbol the metadata title carries but the
+// release name drops (here the trailing "!") used to glue onto a keyword:
+// SigWords("Eat That Frog!") produced "frog!", which can never appear in a
+// release written as "Eat That Frog". Every correctly-named release was dropped
+// at the relevance stage. Now that both SigWords and NormalizeRelease treat any
+// run of non-alphanumeric characters as a word boundary, the title reduces to
+// ["eat", "that", "frog"] and the releases match. The same class previously bit
+// "%", "?", ",", "#", "$", etc.
+func TestFilterRelevantPunctuationInTitle(t *testing.T) {
+	results := toResults(
+		"Brian Tracy - Eat That Frog (Unabridged) (AUDIOBOOK)",
+		"Brian.Tracy.Eat.That.Frog.m4b",
+		"Some.Unrelated.Audiobook.m4b",
+	)
+	got := filterRelevant(results, "Eat That Frog!", "Brian Tracy", nil)
+	for _, want := range []string{
+		"Brian Tracy - Eat That Frog (Unabridged) (AUDIOBOOK)",
+		"Brian.Tracy.Eat.That.Frog.m4b",
+	} {
+		if !contains(got, want) {
+			t.Errorf("expected %q in results, got %v", want, resultTitles(got))
+		}
+	}
+	if contains(got, "Some.Unrelated.Audiobook.m4b") {
+		t.Error("unrelated release must not pass")
+	}
+}
+
 // TestFilterRelevantEditionQualifier — regression test for issue #283.
 // filterRelevant must accept real NZB releases for a book whose metadata
 // title carries a parenthesised edition qualifier. Before the fix,

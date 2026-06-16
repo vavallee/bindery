@@ -21,7 +21,7 @@ type ParsedRelease struct {
 }
 
 var (
-	separatorRe  = regexp.MustCompile(`[._\-()\[\]|]+`)
+	separatorRe  = regexp.MustCompile(`[^\p{L}\p{N}]+`)
 	multiSpaceRe = regexp.MustCompile(`\s{2,}`)
 	articleRe    = regexp.MustCompile(`\b(a|an|the|and|or|of)\b`)
 
@@ -50,15 +50,22 @@ func transliterateUmlauts(s string) string {
 	return s
 }
 
-// NormalizeRelease lowercases s and replaces NZB separators with single spaces.
-// Parentheses, brackets, pipes and repeated separators are all collapsed.
-// Apostrophes are stripped so possessive forms in book titles ("Ender's") match
-// the corresponding release names which typically omit them ("Enders").
-// German umlauts are transliterated to their ASCII equivalents (ä→ae etc.) to
-// match the convention used by German-language NZB indexers like Scenenzbs.
+// NormalizeRelease lowercases s and replaces every run of non-alphanumeric
+// characters with a single space, so all punctuation (dots, dashes, brackets,
+// pipes, and symbols like %, !, ?, #, $) collapses to word boundaries. This
+// keeps the release side symmetric with SigWords (internal/indexer/newznab):
+// whatever punctuation a metadata title carries, both sides reduce it to the
+// same alphanumeric tokens. Unicode letters (\p{L}) and numbers (\p{N}) are
+// preserved so CJK and accented-Latin release names survive.
+// Apostrophes (both ASCII ' and the Unicode ’) are stripped first so possessive
+// forms in book titles ("Ender's") match the corresponding release names which
+// typically omit them ("Enders"). German umlauts are transliterated to their
+// ASCII equivalents (ä→ae etc.) to match the convention used by German-language
+// NZB indexers like Scenenzbs.
 func NormalizeRelease(s string) string {
 	s = strings.ToLower(s)
 	s = strings.ReplaceAll(s, "'", "") // "ender's" → "enders", "hitchhiker's" → "hitchhikers"
+	s = strings.ReplaceAll(s, "’", "") // Unicode right single quote, same intent
 	s = transliterateUmlauts(s)
 	s = separatorRe.ReplaceAllString(s, " ")
 	s = multiSpaceRe.ReplaceAllString(s, " ")

@@ -822,6 +822,19 @@ func TestSigWords(t *testing.T) {
 		{"K.A.M.I", nil}, // single-character remainders dropped by min length
 		{"snake_case_title", []string{"snake", "case", "title"}},
 		{"Title (Subtitle)", []string{"title", "subtitle"}},
+		// Every run of non-alphanumeric characters is a word boundary, so any
+		// punctuation a title carries but a release name omits is stripped
+		// rather than glued to a keyword that no release could match.
+		// Trailing "!" stripped.
+		{"Eat That Frog!", []string{"eat", "that", "frog"}},
+		// "?" stripped; 2-char "my" below min length.
+		{"Who Moved My Cheese?", []string{"who", "moved", "cheese"}},
+		// "," stripped; lone "&" below min length.
+		{"Eats, Shoots & Leaves", []string{"eats", "shoots", "leaves"}},
+		// Leading "#" stripped.
+		{"#Girlboss", []string{"girlboss"}},
+		// Hyphen split; "22" below min length.
+		{"Catch-22", []string{"catch"}},
 	}
 	for _, c := range cases {
 		got := SigWords(c.in)
