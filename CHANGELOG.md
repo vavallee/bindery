@@ -6,6 +6,17 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.20.0] — 2026-06-16
+
+### Added
+
+- **Korean (한국어) translation** ([#1138](https://github.com/vavallee/bindery/pull/1138)) — full Korean locale for the web UI, selectable from the language switcher.
+- **Inline save feedback across Settings** ([#1107](https://github.com/vavallee/bindery/pull/1107)) — settings controls now show saving → saved status inline, plus an experimental Grimmory preview badge and a direct link to the Hardcover token field from the import flow.
+
+### Changed
+
+- **Settings General tab decluttered** ([#1109](https://github.com/vavallee/bindery/pull/1109)) — the overloaded General tab's sections (API keys, metadata, logs) moved into their own domain tabs, and the Root Folders tab gained a default-root-folder selector.
+
 ## [v1.19.1] — 2026-06-15
 
 ### Fixed
