@@ -186,6 +186,52 @@ spec:
 
 `BINDERY_PUID` / `BINDERY_PGID` are **sanity checks, not user switchers.** If you set them but forget the `--user` / `runAsUser` side, Bindery fails fast at startup with a log line that shows exactly what flag was missing — replacing the usual silent `permission denied` on `/config` or the library mount. Leaving both unset skips the check entirely (Bindery runs as the default non-root UID `65532` from the distroless base).
 
+## Storage layout and hardlinks (single mount)
+
+Bindery imports with **`hardlink`** mode by default when the completed download and the library destination are on the **same filesystem**. A hardlink is instant, uses no extra disk, and lets a torrent keep seeding from the original path. This is the recommended layout.
+
+The catch: "same filesystem" is decided by the OS device ID *inside the container*. Two separate bind mounts get different device IDs even when they point at the same host filesystem, so a hardlink across them fails and Bindery falls back to **`copy`** (which doubles disk usage and logs a warning). To get hardlinks, the download directory and the library directory must live under **one mount**, as subpaths of it.
+
+This is the [TRaSH-Guides](https://trash-guides.info/Hardlinks/Hardlinks-and-Instant-Moves/) layout the rest of the \*arr stack uses: mount a single volume (e.g. `/data`) and point everything at subpaths of it. The download client mounts the **same** volume at the **same** path, so no path remap is needed either.
+
+### Docker Compose
+
+```yaml
+services:
+  bindery:
+    image: ghcr.io/vavallee/bindery:latest
+    volumes:
+      - /mnt/storage:/data          # ONE mount for downloads + library
+    environment:
+      - BINDERY_DOWNLOAD_DIR=/data/downloads/complete
+      - BINDERY_LIBRARY_DIR=/data/books
+      - BINDERY_AUDIOBOOK_DIR=/data/audiobooks
+
+  sabnzbd:
+    image: lscr.io/linuxserver/sabnzbd:latest
+    volumes:
+      - /mnt/storage:/data          # SAME volume at the SAME path
+    # SABnzbd's complete dir -> /data/downloads/complete
+```
+
+### Kubernetes (Helm `values.yaml`)
+
+```yaml
+nfs:
+  enabled: true
+  server: 192.168.1.4
+  path: /volume1/MEDIA
+  mountPath: /data
+env:
+  BINDERY_DOWNLOAD_DIR: /data/downloads/complete
+  BINDERY_LIBRARY_DIR: /data/books
+  BINDERY_AUDIOBOOK_DIR: /data/audiobooks
+```
+
+> **Don't point a library/download dir at an unmounted path.** `BINDERY_LIBRARY_DIR` / `BINDERY_DOWNLOAD_DIR` / `BINDERY_AUDIOBOOK_DIR` must resolve *inside* a mounted volume. A dir that isn't backed by a volume writes to ephemeral container storage and is lost on restart. The chart's stock defaults (`/downloads`, `/books`) are placeholders — override them to subpaths of your real mount.
+
+If you genuinely can't use a single mount (the download client mounts the share at a different path than Bindery), keep them separate and use [path remapping](#path-remapping-multi-container--multi-pod-setups) below — but note imports will then **`copy`**, not hardlink.
+
 ## Path remapping (multi-container / multi-pod setups)
 
 When Bindery and your download client run in **separate containers**, they typically mount the same storage volume at different paths. Bindery needs to read the files the download client just completed, but the path the client reports (e.g. `/downloads/complete/My.Book`) doesn't exist inside Bindery's container.

@@ -40,6 +40,13 @@ persistence:
     size: 4Gi
     mountPath: /config
 
+# Optional single NFS mount for media storage. For HARDLINK support (instant
+# imports, no extra disk, torrents keep seeding) the download dir and the
+# library dir must be subpaths of ONE mount on the same filesystem. Separate
+# mounts get different device IDs inside the container, so hardlinks across
+# them fail and Bindery falls back to copy. Recommended: mountPath: /data and
+# point the BINDERY_*_DIR values below at subpaths of it (the TRaSH layout).
+# See docs/DEPLOYMENT.md → "Storage layout and hardlinks (single mount)".
 nfs:
   enabled: false
   server: ""
@@ -51,6 +58,15 @@ env:
   BINDERY_DB_PATH: /config/bindery.db
   BINDERY_DATA_DIR: /config
   BINDERY_LOG_LEVEL: info
+  # IMPORTANT: these defaults are placeholders, NOT a working layout — they are
+  # two different paths and neither is backed by a mounted volume out of the
+  # box. A dir that isn't inside a mounted volume writes to ephemeral container
+  # storage and is lost on restart. Override them to subpaths of your real
+  # mount. For hardlinks, download + library must share one mount, e.g.:
+  #   nfs.mountPath: /data
+  #   BINDERY_DOWNLOAD_DIR: /data/downloads/complete
+  #   BINDERY_LIBRARY_DIR:  /data/books
+  #   BINDERY_AUDIOBOOK_DIR: /data/audiobooks
   BINDERY_DOWNLOAD_DIR: /downloads
   BINDERY_LIBRARY_DIR: /books
   # Separate destination for audiobook imports. Leave unset to fall back
