@@ -328,7 +328,16 @@ export default function AuthorDetailPage() {
   const filteredBooks = useMemo(() => {
     let list = books
     if (typeFilter) list = list.filter(b => (b.mediaType || 'ebook') === typeFilter)
-    if (statusFilter) list = list.filter(b => b.status === statusFilter)
+    if (statusFilter) {
+      // "Wanted" means genuinely wanted: monitored AND status=wanted. An
+      // unmonitored book can carry a stale `wanted` status (#1173) but is not
+      // actually wanted, so it must be excluded — mirroring the backend's
+      // BookListFilter ("wanted" additionally requires monitored=1) and the
+      // monitored-aware status badge.
+      list = statusFilter === 'wanted'
+        ? list.filter(b => b.status === 'wanted' && b.monitored)
+        : list.filter(b => b.status === statusFilter)
+    }
     if (publishedFilter === 'released') {
       list = list.filter(b => !b.releaseDate || b.releaseDate.slice(0, 10) <= TODAY)
     } else if (publishedFilter === 'upcoming') {
@@ -798,6 +807,19 @@ export default function AuthorDetailPage() {
             <button onClick={() => setPublishedFilter('')} className={chipCls(publishedFilter === '')}>All</button>
             <button onClick={() => setPublishedFilter('released')} className={chipCls(publishedFilter === 'released')}>Released</button>
             <button onClick={() => setPublishedFilter('upcoming')} className={chipCls(publishedFilter === 'upcoming')}>Upcoming</button>
+
+            {/* Select/deselect every currently displayed book (#1172). Operates on
+                filteredBooks, so it respects the active filters above and composes
+                with the per-book checkboxes used by the bulk action bar. */}
+            {filteredBooks.length > 0 && (
+              <button
+                onClick={() => allVisibleSelected ? clearSelection() : selectAllVisible()}
+                className={`${chipCls(false)} ml-auto`}
+                aria-pressed={allVisibleSelected}
+              >
+                {allVisibleSelected ? t('authorDetail.bulk.deselectAll') : t('authorDetail.bulk.selectAll')}
+              </button>
+            )}
           </div>
         )}
 

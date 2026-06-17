@@ -510,6 +510,60 @@ describe('AuthorDetailPage', () => {
     })
   })
 
+  it('excludes unmonitored books from the Wanted status filter (#1173)', async () => {
+    renderAuthorDetailPage(
+      [
+        makeBook({ id: 301, title: 'Genuinely Wanted', status: 'wanted', monitored: true }),
+        makeBook({ id: 302, title: 'Stale Wanted Unmonitored', status: 'wanted', monitored: false }),
+        makeBook({ id: 303, title: 'Already Imported', status: 'imported', monitored: true }),
+      ],
+      'table',
+    )
+
+    await screen.findByText('Genuinely Wanted')
+
+    // Apply the Wanted status filter.
+    fireEvent.click(screen.getByRole('button', { name: 'Wanted' }))
+
+    // Monitored wanted book stays; unmonitored "wanted" and imported drop out.
+    expect(screen.getByText('Genuinely Wanted')).toBeInTheDocument()
+    expect(screen.queryByText('Stale Wanted Unmonitored')).not.toBeInTheDocument()
+    expect(screen.queryByText('Already Imported')).not.toBeInTheDocument()
+  })
+
+  it('select-all toggles every displayed book and respects the active filter (#1172)', async () => {
+    vi.mocked(api.bulkActionBooks).mockResolvedValue({
+      results: { '401': { ok: true } },
+    })
+    renderAuthorDetailPage(
+      [
+        makeBook({ id: 401, title: 'Wanted Monitored', status: 'wanted', monitored: true }),
+        makeBook({ id: 402, title: 'Imported Book', status: 'imported', monitored: true }),
+      ],
+      'table',
+    )
+
+    await screen.findByText('Wanted Monitored')
+
+    // With no filter, Select all picks every book on the page.
+    fireEvent.click(screen.getByRole('button', { name: 'Select all' }))
+    expect(await screen.findByText('2 selected')).toBeInTheDocument()
+    // Toggle flips to Deselect all; clicking it clears the whole selection.
+    fireEvent.click(screen.getByRole('button', { name: 'Deselect all' }))
+    await waitFor(() => expect(screen.queryByText('2 selected')).not.toBeInTheDocument())
+
+    // Now narrow to just the wanted book and Select all again: selection must
+    // cover only the filtered (displayed) book, not the hidden imported one.
+    fireEvent.click(screen.getByRole('button', { name: 'Wanted' }))
+    expect(screen.queryByText('Imported Book')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select all' }))
+    expect(await screen.findByText('1 selected')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Monitor' }))
+    await waitFor(() => expect(api.bulkActionBooks).toHaveBeenCalledWith([401], 'monitor'))
+  })
+
   it('groups books by series with a Standalone group when the toggle is on', async () => {
     vi.mocked(api.listAuthorSeries).mockResolvedValue([
       {

@@ -165,7 +165,9 @@
       "deleteConfirm": "Delete {{count}} book(s)? Files on disk are not removed.",
       "success": "{{action}} applied to {{count}} book(s).",
       "partial": "{{action}}: {{ok}} of {{total}} succeeded. First error: {{error}}",
-      "failed": "Bulk {{action}} failed: {{error}}"
+      "failed": "Bulk {{action}} failed: {{error}}",
+      "selectAll": "Select all",
+      "deselectAll": "Deselect all"
     }
   },
   "books": {
