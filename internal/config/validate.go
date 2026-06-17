@@ -115,6 +115,39 @@ func (c *Config) Validate(logger *slog.Logger) error {
 	return nil
 }
 
+// DirHealth describes the existence and writability of a configured
+// directory. It is the reusable result of CheckDir, used both by startup
+// validation logging and the /api/v1/system/storage health endpoint so the
+// UI can surface the same checks Bindery already performs at boot.
+type DirHealth struct {
+	Exists   bool
+	Writable bool
+	// Reason is a short, user-facing explanation when the directory is
+	// missing or not writable; empty when the directory is healthy.
+	Reason string
+}
+
+// CheckDir probes path for existence and writability without logging. It is
+// the public, side-effect-free counterpart to checkDir, intended for the
+// storage-health API handler. An empty path is reported as not existing.
+func CheckDir(path string) DirHealth {
+	if path == "" {
+		return DirHealth{Reason: "path is not configured"}
+	}
+	if err := checkDir(nil, "", path); err != nil {
+		h := DirHealth{Reason: err.Error()}
+		// Distinguish "exists but unwritable" from "missing" so the UI can
+		// show the precise failing reason. A non-existence error means the
+		// path is absent; anything else means it exists but failed a later
+		// probe (writability, not-a-directory).
+		if err.Error() != "directory does not exist" {
+			h.Exists = true
+		}
+		return h
+	}
+	return DirHealth{Exists: true, Writable: true}
+}
+
 // checkDir returns an error if path does not exist or the process cannot
 // write to it. It tries os.MkdirTemp inside the target directory as the
 // most reliable cross-platform writability probe.

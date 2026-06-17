@@ -1,0 +1,2 @@
+### Added
+- **Storage path health in Settings** (#1183) — Settings → General → Storage now shows each configured directory (download, library, audiobook, audiobook-download) as OK / Missing / Not writable with the failing reason, and warns when downloads and the library are on different filesystems ("imports will copy, not hardlink"). Surfaces the existence/writability checks Bindery already ran at startup but previously only logged, via a new admin-only `GET /api/v1/system/storage` health response.

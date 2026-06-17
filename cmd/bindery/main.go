@@ -950,9 +950,14 @@ func main() {
 		r.Get("/system/loglevel", logHandler.GetLevel)
 		r.Put("/system/loglevel", logHandler.SetLevel)
 
-		// Storage paths (read-only view of the env/config-driven dirs)
+		// Storage paths (read-only view of the env/config-driven dirs plus
+		// exists/writable/hardlink-able health, #1183). Admin-only: it reveals
+		// server filesystem layout and writability probes.
 		storageHandler := api.NewStorageHandler(cfg)
-		r.Get("/system/storage", storageHandler.Get)
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireAdmin)
+			r.Get("/system/storage", storageHandler.Get)
+		})
 
 		// Library
 		r.Post("/library/scan", libraryHandler.Scan)
