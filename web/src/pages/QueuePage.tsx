@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, PendingRelease, QueueItem } from '../api/client'
 import BookAuthorLink from '../components/BookAuthorLink'
+import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
 import { summarizeError, ERROR_SUMMARY_LEN } from './queueError'
@@ -217,6 +218,7 @@ export default function QueuePage() {
       ) : queue.length === 0 && pending.length === 0 ? (
         <div className="text-center py-16 text-slate-600 dark:text-zinc-500">
           <p>{t('queue.empty')}</p>
+          <ImportHints />
         </div>
       ) : (
         <div className="space-y-6">

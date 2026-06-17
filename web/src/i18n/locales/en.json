@@ -281,6 +281,12 @@
     "removeConfirm": "Remove",
     "removeCancel": "Cancel"
   },
+  "importHints": {
+    "heading": "Already have files on disk?",
+    "body": "Bindery only auto-imports downloads it grabbed itself. Point it at files you already have, or rescan your library folder.",
+    "manualImport": "Import them",
+    "scanLibrary": "Scan Library"
+  },
   "blocklist": {
     "title": "Blocklist",
     "entries": "{{count}} entries",

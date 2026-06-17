@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api, Book, SearchResult } from '../api/client'
 import BulkActionBar from '../components/BulkActionBar'
+import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
 
@@ -202,6 +203,7 @@ export default function WantedPage() {
       ) : books.length === 0 ? (
         <div className="text-center py-16 text-slate-600 dark:text-zinc-500">
           <p>{t('wanted.empty')}</p>
+          <ImportHints />
         </div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-16 text-slate-600 dark:text-zinc-500">

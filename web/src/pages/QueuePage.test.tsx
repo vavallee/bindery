@@ -38,6 +38,10 @@ vi.mock('react-i18next', () => ({
         'queue.errorDetails': 'Show full error',
         'queue.clearAllFailed': 'Clear all failed',
         'queue.retryAllFailed': 'Retry all failed',
+        'importHints.heading': 'Already have files on disk?',
+        'importHints.body': 'Bindery only auto-imports downloads it grabbed itself.',
+        'importHints.manualImport': 'Import them',
+        'importHints.scanLibrary': 'Scan Library',
       }
       return labels[key] ?? key
     },
@@ -155,6 +159,16 @@ describe('QueuePage', () => {
     })
 
     expect(await screen.findByText('Queue is empty')).toBeInTheDocument()
+  })
+
+  it('surfaces the Manual Import and Scan Library hints in the empty state', async () => {
+    renderQueuePage()
+
+    expect(await screen.findByText('Queue is empty')).toBeInTheDocument()
+    const manualImport = screen.getByRole('link', { name: 'Import them' })
+    expect(manualImport).toHaveAttribute('href', '/settings?tab=import')
+    const scanLibrary = screen.getByRole('link', { name: 'Scan Library' })
+    expect(scanLibrary).toHaveAttribute('href', '/settings?tab=general')
   })
 
   it('renders queue statuses, progress, fallback errors, and error prefixes', async () => {

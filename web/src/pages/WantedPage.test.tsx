@@ -32,6 +32,10 @@ vi.mock('react-i18next', () => ({
         'wanted.title': 'Wanted',
         'wanted.searchPlaceholder': 'Search by title or author...',
         'wanted.empty': 'No wanted books. Add an author to start tracking.',
+        'importHints.heading': 'Already have files on disk?',
+        'importHints.body': 'Bindery only auto-imports downloads it grabbed itself.',
+        'importHints.manualImport': 'Import them',
+        'importHints.scanLibrary': 'Scan Library',
         'wanted.noMatch': 'No books match your search.',
         'wanted.showExcluded': 'Show excluded',
         'wanted.searching': 'Searching...',
@@ -175,6 +179,16 @@ describe('WantedPage', () => {
     expect(await screen.findByText('No wanted books. Add an author to start tracking.')).toBeInTheDocument()
     expect(screen.getByText('0 of 0')).toBeInTheDocument()
     expect(api.listWanted).toHaveBeenCalledWith({ includeExcluded: false })
+  })
+
+  it('surfaces the Manual Import and Scan Library hints in the empty state', async () => {
+    renderWantedPage()
+
+    expect(await screen.findByText('No wanted books. Add an author to start tracking.')).toBeInTheDocument()
+    const manualImport = screen.getByRole('link', { name: 'Import them' })
+    expect(manualImport).toHaveAttribute('href', '/settings?tab=import')
+    const scanLibrary = screen.getByRole('link', { name: 'Scan Library' })
+    expect(scanLibrary).toHaveAttribute('href', '/settings?tab=general')
   })
 
   it('renders a row with the book title and its author', async () => {
