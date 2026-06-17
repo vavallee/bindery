@@ -45,7 +45,7 @@ type storageResponse struct {
 	// are omitted when unset (they fall back to the library / download dir).
 	Dirs []dirStatus `json:"dirs"`
 	// Hardlinkable reports whether the download dir and library dir share a
-	// filesystem, so completed downloads can be hardlinked into the library
+	// filesystem, so completed downloads can be hard-linked into the library
 	// instead of copied. False means imports will copy (slower, double disk).
 	Hardlinkable bool `json:"hardlinkable"`
 }
