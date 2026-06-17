@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/metadata"
@@ -98,6 +99,32 @@ func TestSearchBooks(t *testing.T) {
 	h.SearchBooks(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search/book?term=x", nil))
 	if rec.Code != http.StatusBadGateway {
 		t.Errorf("error: expected 502, got %d", rec.Code)
+	}
+}
+
+// TestSearchBooksEmptyIsArray guards against the nil-slice bug from #1188: a
+// provider that succeeds but returns no rows must serialize as `[]`, not `null`,
+// or the Add Book modal crashes calling `.map()` on a null body.
+func TestSearchBooksEmptyIsArray(t *testing.T) {
+	p := &stubProvider{books: nil} // success, but no results
+	h := NewSearchHandler(metadata.NewAggregator(p))
+
+	rec := httptest.NewRecorder()
+	h.SearchBooks(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search/book?term=zzznomatch", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if body := strings.TrimSpace(rec.Body.String()); body != "[]" {
+		t.Errorf("expected empty body to encode as [], got %q", body)
+	}
+
+	// And the aggregator itself returns a non-nil slice.
+	got, err := metadata.NewAggregator(p).SearchBooks(context.Background(), "zzznomatch")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil {
+		t.Error("SearchBooks returned a nil slice for empty success; want non-nil empty slice")
 	}
 }
 

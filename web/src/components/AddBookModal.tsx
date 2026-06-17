@@ -27,7 +27,9 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
         setResults([book])
       } else {
         const books = await api.searchBooks(q)
-        setResults(books)
+        // Guard against a `null` body (e.g. an empty search the backend
+        // encoded as `null` instead of `[]`) so the render's `.map()` can't crash.
+        setResults(books ?? [])
       }
     } catch (err) {
       setSearchError(err instanceof Error ? err.message : 'Search failed')

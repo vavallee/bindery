@@ -350,7 +350,7 @@ const searchProviderTimeout = 8 * time.Second
 func (a *Aggregator) SearchBooks(ctx context.Context, query string) ([]models.Book, error) {
 	providers := a.providers() // primary first, then enrichers
 	if len(providers) == 0 {
-		return nil, nil
+		return []models.Book{}, nil
 	}
 	results, anySuccess, firstErr := searchFanOut(ctx, providers, func(c context.Context, p Provider) ([]models.Book, error) {
 		return p.SearchBooks(c, query)
@@ -361,7 +361,9 @@ func (a *Aggregator) SearchBooks(ctx context.Context, query string) ([]models.Bo
 		return nil, firstErr
 	}
 
-	var merged []models.Book
+	// Non-nil so an empty result JSON-encodes as `[]`, not `null` — a nil slice
+	// reaches the frontend as `null` and crashes callers that `.map()` over it.
+	merged := []models.Book{}
 	seenISBN := map[string]bool{}
 	seenTA := map[string]bool{}
 	for i := range providers {
