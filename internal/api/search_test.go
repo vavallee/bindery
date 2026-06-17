@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/metadata"
@@ -40,6 +42,39 @@ func (s *stubProvider) GetEditions(context.Context, string) ([]models.Edition, e
 }
 func (s *stubProvider) GetBookByISBN(context.Context, string) (*models.Book, error) {
 	return s.byISBN, s.byISBNErr
+}
+
+// TestWriteUpstreamErrorDoesNotLeakSecrets proves the client-facing body for an
+// upstream/transport failure is the generic message and never contains the
+// underlying error string. A Google Books transport error wraps a *url.Error
+// whose Error() embeds the request URL, which carries the API key (?key=...)
+// and the internal DNS resolver IP. Echoing that back leaked both (#1144).
+func TestWriteUpstreamErrorDoesNotLeakSecrets(t *testing.T) {
+	const (
+		secretKey  = "AIzaSECRET_KEY_VALUE"
+		resolverIP = "10.0.0.53"
+	)
+	leaky := fmt.Errorf(`search books: Get "https://www.googleapis.com/books/v1/volumes?q=dune&key=%s": dial tcp: lookup www.googleapis.com on %s:53: i/o timeout`, secretKey, resolverIP)
+
+	rec := httptest.NewRecorder()
+	writeUpstreamError(rec, leaky)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d", rec.Code)
+	}
+	raw := rec.Body.String()
+	var body map[string]string
+	if err := json.Unmarshal([]byte(raw), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error"] != "metadata provider unavailable" {
+		t.Fatalf("expected generic message, got %q", body["error"])
+	}
+	for _, leak := range []string{secretKey, resolverIP, "googleapis.com", "key=", "dial tcp"} {
+		if strings.Contains(raw, leak) {
+			t.Fatalf("client response leaked %q: %s", leak, raw)
+		}
+	}
 }
 
 func TestSearchAuthors(t *testing.T) {

@@ -719,7 +719,9 @@ func (c *Client) getJSON(ctx context.Context, rawURL string, target interface{})
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		// Redact any secret query-param values a transport error's embedded
+		// request URL might carry before the error propagates (#1144).
+		return errors.New(httpsec.RedactSecrets(err.Error()))
 	}
 	defer resp.Body.Close()
 
@@ -728,7 +730,7 @@ func (c *Client) getJSON(ctx context.Context, rawURL string, target interface{})
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, httpsec.RedactSecrets(string(body)))
 	}
 
 	return json.NewDecoder(resp.Body).Decode(target)

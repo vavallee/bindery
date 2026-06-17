@@ -5,6 +5,7 @@ package googlebooks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -153,13 +154,16 @@ func (c *Client) getJSON(ctx context.Context, rawURL string, target interface{})
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		// A transport error wraps a *url.Error whose Error() embeds the full
+		// request URL, which carries the API key (?key=...). Redact it so the
+		// key cannot leak through any path that stringifies this error (#1144).
+		return errors.New(httpsec.RedactSecrets(err.Error()))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, httpsec.RedactSecrets(string(body)))
 	}
 
 	return json.NewDecoder(resp.Body).Decode(target)

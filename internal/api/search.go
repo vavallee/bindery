@@ -21,9 +21,18 @@ func NewSearchHandler(meta *metadata.Aggregator) *SearchHandler {
 // it obvious the failure is on the metadata provider side (OpenLibrary,
 // Google Books, Hardcover), not inside Bindery. Using 500 for this conflates
 // provider outages with real server bugs and trains users to ignore 500s.
+//
+// The client-facing message is intentionally generic and never includes the
+// underlying err string. Transport errors from the metadata clients wrap a
+// *url.Error whose Error() embeds the full upstream request URL, and the
+// Google Books URL carries the API key (?key=...) in the query string plus the
+// internal DNS resolver IP. Echoing err.Error() back to the caller therefore
+// leaked the API key and internal infra (#1144). The full error is still
+// logged server-side so operators keep the detail for debugging.
 func writeUpstreamError(w http.ResponseWriter, err error) {
+	slog.Warn("metadata provider request failed", "error", err)
 	writeJSON(w, http.StatusBadGateway, map[string]string{
-		"error": "metadata provider unavailable: " + err.Error(),
+		"error": "metadata provider unavailable",
 	})
 }
 

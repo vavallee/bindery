@@ -3,6 +3,7 @@ package googlebooks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -139,6 +140,34 @@ func TestSearchBooks_WithAPIKey(t *testing.T) {
 	_, _ = c.SearchBooks(context.Background(), "test")
 	if !strings.Contains(gotURL, "key=myapikey") {
 		t.Errorf("expected API key in URL, got: %q", gotURL)
+	}
+}
+
+// TestSearchBooks_TransportErrorRedactsAPIKey proves a transport failure does
+// not surface the API key embedded in the request URL. net/http wraps the
+// RoundTripper error in a *url.Error whose Error() includes the full URL, which
+// carries ?key=... — exactly the leak fixed in #1144.
+func TestSearchBooks_TransportErrorRedactsAPIKey(t *testing.T) {
+	const secret = "AIzaSECRET_KEY_VALUE"
+	c := &Client{
+		http: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			// Returning a non-nil error makes net/http wrap it in *url.Error
+			// with the request URL (which includes key=secret) attached.
+			return nil, errors.New("dial tcp 10.0.0.53:443: i/o timeout")
+		})},
+		apiKey: secret,
+	}
+
+	_, err := c.SearchBooks(context.Background(), "dune")
+	if err == nil {
+		t.Fatal("expected transport error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, secret) {
+		t.Fatalf("error leaked API key: %q", msg)
+	}
+	if !strings.Contains(msg, "key=REDACTED") {
+		t.Fatalf("expected redacted key marker in error, got: %q", msg)
 	}
 }
 

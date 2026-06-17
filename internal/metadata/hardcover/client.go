@@ -495,7 +495,7 @@ func (c *Client) query(ctx context.Context, q string, vars map[string]any, out i
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(b))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, httpsec.RedactSecrets(string(b)))
 	}
 
 	b, err := io.ReadAll(io.LimitReader(resp.Body, hardcoverSuccessResponseBodyLimit))
@@ -506,7 +506,7 @@ func (c *Client) query(ctx context.Context, q string, vars map[string]any, out i
 		Errors []gqlError `json:"errors"`
 	}
 	if err := json.Unmarshal(b, &envelope); err == nil && len(envelope.Errors) > 0 {
-		return fmt.Errorf("GraphQL: %s", formatGraphQLErrors(envelope.Errors))
+		return fmt.Errorf("GraphQL: %s", httpsec.RedactSecrets(formatGraphQLErrors(envelope.Errors)))
 	}
 	return json.Unmarshal(b, out)
 }
