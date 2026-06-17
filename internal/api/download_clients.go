@@ -214,14 +214,27 @@ func (h *DownloadClientHandler) Test(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	health := h.refreshClientHealth(r.Context(), client)
+	pathVis := downloader.CheckCompletedPathVisibility(r.Context(), client, h.downloadDir, h.audiobookDownloadDir)
 	resp := struct {
-		Message string                       `json:"message"`
-		Health  *models.DownloadClientHealth `json:"health,omitempty"`
+		Message        string                       `json:"message"`
+		Health         *models.DownloadClientHealth `json:"health,omitempty"`
+		PathVisibility *downloader.PathVisibility   `json:"pathVisibility,omitempty"`
 	}{
-		Message: "Connection verified",
-		Health:  health,
+		Message:        "Connection verified",
+		Health:         health,
+		PathVisibility: pathVisibilityForResponse(pathVis),
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// pathVisibilityForResponse returns the path-visibility result for the Test
+// response, or nil for the PathUnknown case so the field is omitted entirely and
+// the UI shows nothing for client types that can't introspect a completed path.
+func pathVisibilityForResponse(v downloader.PathVisibility) *downloader.PathVisibility {
+	if v.Status == downloader.PathUnknown {
+		return nil
+	}
+	return &v
 }
 
 // TestConfig probes a download-client configuration supplied in the request
@@ -253,9 +266,11 @@ func (h *DownloadClientHandler) TestConfig(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	pathVis := downloader.CheckCompletedPathVisibility(r.Context(), &c, h.downloadDir, h.audiobookDownloadDir)
 	writeJSON(w, http.StatusOK, struct {
-		Message string `json:"message"`
-	}{Message: "Connection verified"})
+		Message        string                     `json:"message"`
+		PathVisibility *downloader.PathVisibility `json:"pathVisibility,omitempty"`
+	}{Message: "Connection verified", PathVisibility: pathVisibilityForResponse(pathVis)})
 }
 
 func (h *DownloadClientHandler) attachHealth(clients []models.DownloadClient) {

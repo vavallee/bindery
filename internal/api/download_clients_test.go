@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/db"
@@ -215,6 +216,115 @@ func TestDownloadClientTest_SuccessMessage(t *testing.T) {
 	if out.Message != "Connection verified" {
 		t.Errorf("message: want Connection verified, got %q", out.Message)
 	}
+}
+
+// TestDownloadClientTest_PathVisibility exercises #1182: after a successful
+// connection, Test resolves the qBittorrent category save path, applies the
+// client's PathRemap, and reports whether Bindery can read it. A reachable
+// remapped path is reported "ok"; a missing one is reported "warning" with an
+// actionable message, without turning the whole Test into a hard failure.
+func TestDownloadClientTest_PathVisibility(t *testing.T) {
+	defer httpsec.AllowLoopbackForTests()()
+	visible := t.TempDir()
+
+	newQbitStub := func(savePath string) (string, int, func()) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/v2/auth/login":
+				_, _ = w.Write([]byte("Ok."))
+			case "/api/v2/app/version":
+				_, _ = w.Write([]byte("5.1.4"))
+			case "/api/v2/torrents/info":
+				_, _ = w.Write([]byte("[]"))
+			case "/api/v2/torrents/categories":
+				_, _ = w.Write([]byte(`{"books":{"name":"books","savePath":"` + savePath + `"}}`))
+			case "/api/v2/app/defaultSavePath":
+				_, _ = w.Write([]byte(""))
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		u, _ := url.Parse(srv.URL)
+		host, portStr, _ := net.SplitHostPort(u.Host)
+		port, _ := strconv.Atoi(portStr)
+		return host, port, srv.Close
+	}
+
+	type pathVis struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+		Path    string `json:"path"`
+	}
+
+	t.Run("visible path reports ok", func(t *testing.T) {
+		host, port, closeFn := newQbitStub("/remote/downloads")
+		defer closeFn()
+		h, clients := downloadClientFixture(t)
+		h.WithStoragePaths(visible, "")
+		client := &models.DownloadClient{
+			Name: "qBit", Type: "qbittorrent", Host: host, Port: port,
+			Username: "u", Password: "p", Category: "books",
+			PathRemap: "/remote/downloads:" + visible, Enabled: true,
+		}
+		if err := clients.Create(context.Background(), client); err != nil {
+			t.Fatal(err)
+		}
+		rec := httptest.NewRecorder()
+		h.Test(rec, withURLParam(httptest.NewRequest(http.MethodPost, "/downloadclient/1/test", nil), "id", "1"))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var out struct {
+			Message        string   `json:"message"`
+			PathVisibility *pathVis `json:"pathVisibility"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		if out.PathVisibility == nil {
+			t.Fatal("expected pathVisibility in response")
+		}
+		if out.PathVisibility.Status != "ok" {
+			t.Fatalf("status: want ok, got %q (%s)", out.PathVisibility.Status, out.PathVisibility.Message)
+		}
+	})
+
+	t.Run("missing path reports warning", func(t *testing.T) {
+		host, port, closeFn := newQbitStub("/remote/downloads")
+		defer closeFn()
+		h, clients := downloadClientFixture(t)
+		h.WithStoragePaths(visible, "")
+		client := &models.DownloadClient{
+			Name: "qBit", Type: "qbittorrent", Host: host, Port: port,
+			Username: "u", Password: "p", Category: "books",
+			PathRemap: "/remote/downloads:/nope/not/here", Enabled: true,
+		}
+		if err := clients.Create(context.Background(), client); err != nil {
+			t.Fatal(err)
+		}
+		rec := httptest.NewRecorder()
+		h.Test(rec, withURLParam(httptest.NewRequest(http.MethodPost, "/downloadclient/1/test", nil), "id", "1"))
+		// Still a 200: the connection succeeded; the warning is in the body.
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var out struct {
+			Message        string   `json:"message"`
+			PathVisibility *pathVis `json:"pathVisibility"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		if out.PathVisibility == nil {
+			t.Fatal("expected pathVisibility in response")
+		}
+		if out.PathVisibility.Status != "warning" {
+			t.Fatalf("status: want warning, got %q (%s)", out.PathVisibility.Status, out.PathVisibility.Message)
+		}
+		if !strings.Contains(out.PathVisibility.Message, "can't read") {
+			t.Errorf("warning message lacks actionable text: %q", out.PathVisibility.Message)
+		}
+	})
 }
 
 func TestDownloadClientTestConfig_MissingHost(t *testing.T) {

@@ -72,6 +72,41 @@ describe('ClientsTab inline Test button', () => {
     // The backend error string is surfaced via common.connFail.
     expect(await screen.findByText('common.connFail error=connection refused')).toBeInTheDocument()
   })
+
+  it('shows the path-visibility warning distinctly from a connection success (#1182)', async () => {
+    // Connection succeeds, but Bindery can't see the completed-downloads path.
+    testClient.mockResolvedValueOnce({
+      message: 'Connection verified',
+      pathVisibility: { status: 'warning', message: "Bindery can't read /downloads", path: '/downloads' },
+    })
+    render(<ClientsTab clients={[]} setClients={vi.fn()} />)
+
+    fireEvent.click(screen.getByText('settings.clients.addButton'))
+    fireEvent.change(screen.getByPlaceholderText('Host'), { target: { value: '10.0.0.5' } })
+    fireEvent.click(screen.getByText('common.test'))
+
+    await waitFor(() => expect(testClient).toHaveBeenCalledTimes(1))
+    // Connection success still shown...
+    expect(await screen.findByText('common.connOk')).toBeInTheDocument()
+    // ...and the warning is surfaced separately (role=alert) with the backend message.
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent("Bindery can't read /downloads")
+  })
+
+  it('does not show a path-visibility warning when the path is visible', async () => {
+    testClient.mockResolvedValueOnce({
+      message: 'Connection verified',
+      pathVisibility: { status: 'ok', message: 'Bindery can read /downloads', path: '/downloads' },
+    })
+    render(<ClientsTab clients={[]} setClients={vi.fn()} />)
+
+    fireEvent.click(screen.getByText('settings.clients.addButton'))
+    fireEvent.change(screen.getByPlaceholderText('Host'), { target: { value: '10.0.0.5' } })
+    fireEvent.click(screen.getByText('common.test'))
+
+    expect(await screen.findByText('common.connOk')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
 })
 
 describe('IndexersTab inline Test button', () => {

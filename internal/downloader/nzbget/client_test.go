@@ -925,3 +925,61 @@ func TestAppendParams_Shape(t *testing.T) {
 	assertNumber(7, 0)       // dupeScore
 	assertString(8, "FORCE") // dupeMode
 }
+
+// TestCompletedDir verifies the completed-directory resolution used by the
+// Test path-visibility probe (#1182): a per-category DestDir wins over the
+// global DestDir, ${MainDir} placeholders are expanded, and an absent
+// destination yields an empty string with no error.
+func TestCompletedDir(t *testing.T) {
+	tests := []struct {
+		name     string
+		category string
+		config   []configEntry
+		want     string
+	}{
+		{
+			name:     "global DestDir with MainDir expansion",
+			category: "books",
+			config: []configEntry{
+				{Name: "MainDir", Value: "/data/nzbget"},
+				{Name: "DestDir", Value: "${MainDir}/completed"},
+			},
+			want: "/data/nzbget/completed",
+		},
+		{
+			name:     "per-category DestDir overrides global",
+			category: "books",
+			config: []configEntry{
+				{Name: "MainDir", Value: "/data/nzbget"},
+				{Name: "DestDir", Value: "${MainDir}/completed"},
+				{Name: "Category1.Name", Value: "books"},
+				{Name: "Category1.DestDir", Value: "/library/books"},
+			},
+			want: "/library/books",
+		},
+		{
+			name:     "no destination configured",
+			category: "books",
+			config:   []configEntry{{Name: "MainDir", Value: "/data/nzbget"}},
+			want:     "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(configResponse{Result: tc.config})
+			}))
+			defer srv.Close()
+			host, port := serverHostPort(t, srv.URL)
+			c := New(host, port, "", "", "", false)
+			got, err := c.CompletedDir(context.Background(), tc.category)
+			if err != nil {
+				t.Fatalf("CompletedDir: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("CompletedDir = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

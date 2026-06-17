@@ -26,6 +26,10 @@ import (
 // CategoryN.DestDir/Unpack/PostScript/Aliases — those are filtered out here.
 var categoryNameKey = regexp.MustCompile(`^Category\d+\.Name$`)
 
+// categoryIndexKey extracts the index N from a CategoryN.<Field> config key so
+// a category's other fields (DestDir) can be located by the same index.
+var categoryIndexKey = regexp.MustCompile(`^Category(\d+)\.`)
+
 // Client interacts with the NZBGet JSON-RPC API.
 type Client struct {
 	baseURL   string
@@ -85,6 +89,80 @@ func (c *Client) ListCategories(ctx context.Context) ([]string, error) {
 		}
 	}
 	return cats, nil
+}
+
+// CompletedDir returns the on-disk directory NZBGet writes completed downloads
+// into for the given category, resolving ${MainDir}/${DestDir} placeholders. It
+// reads NZBGet's config once: when the category defines its own non-empty
+// CategoryN.DestDir that wins, otherwise the global DestDir is used. The
+// returned path is what Bindery would need to be able to read; an empty string
+// (no error) means NZBGet exposed no usable destination and the caller should
+// skip the visibility check. Used by the Test action's path-visibility probe
+// (#1182).
+func (c *Client) CompletedDir(ctx context.Context, category string) (string, error) {
+	var resp configResponse
+	if err := c.call(ctx, "config", nil, &resp); err != nil {
+		return "", fmt.Errorf("read nzbget config: %w", err)
+	}
+	cfg := make(map[string]string, len(resp.Result))
+	categoryDest := make(map[string]string) // category name -> DestDir
+	indexName := make(map[string]string)    // index -> category name
+	indexDest := make(map[string]string)    // index -> DestDir
+	for _, e := range resp.Result {
+		cfg[e.Name] = e.Value
+		if categoryNameKey.MatchString(e.Name) {
+			if m := categoryIndexKey.FindStringSubmatch(e.Name); m != nil {
+				indexName[m[1]] = e.Value
+			}
+		}
+		if strings.HasSuffix(e.Name, ".DestDir") {
+			if m := categoryIndexKey.FindStringSubmatch(e.Name); m != nil {
+				indexDest[m[1]] = e.Value
+			}
+		}
+	}
+	for idx, name := range indexName {
+		if d := strings.TrimSpace(indexDest[idx]); d != "" {
+			categoryDest[name] = d
+		}
+	}
+
+	dest := ""
+	if category != "" {
+		dest = strings.TrimSpace(categoryDest[category])
+	}
+	if dest == "" {
+		dest = strings.TrimSpace(cfg["DestDir"])
+	}
+	if dest == "" {
+		return "", nil
+	}
+	return expandNZBGetDir(dest, cfg), nil
+}
+
+// expandNZBGetDir resolves the ${MainDir}/${DestDir}/${AppDir}/${ConfigDir}
+// placeholders NZBGet allows inside directory options. It expands iteratively
+// (DestDir often references MainDir) with a small bound to avoid cycles.
+func expandNZBGetDir(value string, cfg map[string]string) string {
+	keys := []string{"MainDir", "DestDir", "InterDir", "AppDir", "ConfigDir", "ScriptDir", "QueueDir", "NzbDir"}
+	for i := 0; i < 8 && strings.Contains(value, "${"); i++ {
+		changed := false
+		for _, k := range keys {
+			token := "${" + k + "}"
+			if v, ok := cfg[k]; ok && strings.Contains(value, token) {
+				// Avoid self-reference loops (DestDir referencing DestDir).
+				if strings.Contains(v, token) {
+					continue
+				}
+				value = strings.ReplaceAll(value, token, v)
+				changed = true
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	return value
 }
 
 // CheckCategories reports an error when any of wanted is not present in

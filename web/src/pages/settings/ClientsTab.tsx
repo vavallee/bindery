@@ -18,7 +18,7 @@ export default function ClientsTab({ clients, setClients }: Props) {
   const { t } = useTranslation()
   const [showAddClient, setShowAddClient] = useState(false)
   const [editingClient, setEditingClient] = useState<number | null>(null)
-  const [clientTestResult, setClientTestResult] = useState<Record<number, { ok: boolean; msg: string }>>({})
+  const [clientTestResult, setClientTestResult] = useState<Record<number, { ok: boolean; msg: string; warn?: string }>>({})
   const [confirmDeleteClient, setConfirmDeleteClient] = useState<number | null>(null)
 
   return (
@@ -59,7 +59,10 @@ export default function ClientsTab({ clients, setClients }: Props) {
                         if (result.health) {
                           setClients(prev => prev.map(x => x.id === c.id ? { ...x, health: result.health } : x))
                         }
-                        setClientTestResult(prev => ({ ...prev, [c.id]: { ok: true, msg: t('common.connOk') } }))
+                        const warn = result.pathVisibility?.status === 'warning'
+                          ? (result.pathVisibility.message || t('settings.clients.pathNotVisible'))
+                          : undefined
+                        setClientTestResult(prev => ({ ...prev, [c.id]: { ok: true, msg: t('common.connOk'), warn } }))
                       } catch (err: unknown) {
                         setClientTestResult(prev => ({ ...prev, [c.id]: { ok: false, msg: t('common.connFail', { error: err instanceof Error ? err.message : 'Unknown error' }) } }))
                       }
@@ -106,6 +109,12 @@ export default function ClientsTab({ clients, setClients }: Props) {
                   {clientTestResult[c.id].msg}
                 </div>
               )}
+              {clientTestResult[c.id]?.warn && (
+                <div role="alert" className="mt-1 px-3 py-1.5 rounded text-xs flex items-start gap-2 bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                  <span className="inline-block w-2 h-2 mt-1 rounded-full flex-shrink-0 bg-amber-500" />
+                  {clientTestResult[c.id].warn}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -137,7 +146,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
   const [saveError, setSaveError] = useState<string | null>(null)
   const [pathRemap, setPathRemap] = useState(client.pathRemap || '')
   const [testing, setTesting] = useState(false)
-  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null)
+  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string; warn?: string } | null>(null)
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const handleTypeChange = (newType: string) => {
@@ -171,8 +180,11 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
     setTesting(true)
     setTestResult(null)
     try {
-      await api.testDownloadClientConfig(buildData())
-      setTestResult({ ok: true, msg: t('common.connOk') })
+      const result = await api.testDownloadClientConfig(buildData())
+      const warn = result.pathVisibility?.status === 'warning'
+        ? (result.pathVisibility.message || t('settings.clients.pathNotVisible'))
+        : undefined
+      setTestResult({ ok: true, msg: t('common.connOk'), warn })
     } catch (err: unknown) {
       setTestResult({ ok: false, msg: t('common.connFail', { error: err instanceof Error ? err.message : 'Unknown error' }) })
     } finally {
@@ -259,6 +271,12 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
           {testResult.msg}
         </div>
       )}
+      {testResult?.warn && (
+        <div role="alert" className="px-3 py-1.5 rounded text-xs flex items-start gap-2 bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+          <span className="inline-block w-2 h-2 mt-1 rounded-full flex-shrink-0 bg-amber-500" />
+          {testResult.warn}
+        </div>
+      )}
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">{t('common.cancel')}</button>
         <button onClick={handleTest} disabled={testing || !host} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-50">{testing ? t('common.testing') : t('common.test')}</button>
@@ -284,7 +302,7 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
   const [saveError, setSaveError] = useState<string | null>(null)
   const [pathRemap, setPathRemap] = useState('')
   const [testing, setTesting] = useState(false)
-  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null)
+  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string; warn?: string } | null>(null)
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const isPasswordClient = (t: string) => t === 'qbittorrent' || t === 'transmission' || t === 'nzbget' || t === 'deluge'
@@ -340,8 +358,11 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
     setTesting(true)
     setTestResult(null)
     try {
-      await api.testDownloadClientConfig(buildData())
-      setTestResult({ ok: true, msg: t('common.connOk') })
+      const result = await api.testDownloadClientConfig(buildData())
+      const warn = result.pathVisibility?.status === 'warning'
+        ? (result.pathVisibility.message || t('settings.clients.pathNotVisible'))
+        : undefined
+      setTestResult({ ok: true, msg: t('common.connOk'), warn })
     } catch (err: unknown) {
       setTestResult({ ok: false, msg: t('common.connFail', { error: err instanceof Error ? err.message : 'Unknown error' }) })
     } finally {
@@ -426,6 +447,12 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
         <div role="status" className={`px-3 py-1.5 rounded text-xs flex items-center gap-2 ${testResult.ok ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'}`}>
           <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${testResult.ok ? 'bg-emerald-500' : 'bg-red-500'}`} />
           {testResult.msg}
+        </div>
+      )}
+      {testResult?.warn && (
+        <div role="alert" className="px-3 py-1.5 rounded text-xs flex items-start gap-2 bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+          <span className="inline-block w-2 h-2 mt-1 rounded-full flex-shrink-0 bg-amber-500" />
+          {testResult.warn}
         </div>
       )}
       <div className="flex gap-2 justify-end">

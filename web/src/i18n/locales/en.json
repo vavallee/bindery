@@ -433,7 +433,8 @@
       "empty": "No download clients configured. Add SABnzbd to enable downloads.",
       "audiobookCategoryLabel": "Audiobook Category / Label",
       "audiobookCategoryPlaceholder": "audiobooks",
-      "audiobookCategoryHelp": "Optional. When set, audiobook grabs use this category instead of the one above. Leave blank to use the same category as ebooks."
+      "audiobookCategoryHelp": "Optional. When set, audiobook grabs use this category instead of the one above. Leave blank to use the same category as ebooks.",
+      "pathNotVisible": "Connected, but Bindery can't read the client's completed-downloads folder. Configure a path remap or a shared mount so both point at the same storage, otherwise downloads won't import."
     },
     "notifications": {
       "heading": "Webhook Notifications",
