@@ -79,7 +79,7 @@ func TestCheckCompletedPathVisibility_Qbittorrent(t *testing.T) {
 				Category:  "books",
 				PathRemap: tc.pathRemap,
 			}
-			got := CheckCompletedPathVisibility(context.Background(), client, "/some/download/dir", "")
+			got := CheckCompletedPathVisibility(context.Background(), client, "/some/download/dir", "", "")
 			if got.Status != tc.wantStatus {
 				t.Fatalf("status = %q, want %q; message=%s", got.Status, tc.wantStatus, got.Message)
 			}
@@ -87,6 +87,44 @@ func TestCheckCompletedPathVisibility_Qbittorrent(t *testing.T) {
 				t.Fatalf("message %q does not contain %q", got.Message, tc.wantInMsg)
 			}
 		})
+	}
+}
+
+// TestCheckCompletedPathVisibility_GlobalRemapFallback verifies that when a
+// client has no per-client PathRemap, the global BINDERY_DOWNLOAD_PATH_REMAP is
+// applied as a fallback so the Test verdict matches what the importer resolves
+// (#1182). Without the fallback the path would false-warn.
+func TestCheckCompletedPathVisibility_GlobalRemapFallback(t *testing.T) {
+	visible := t.TempDir()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/categories":
+			_, _ = w.Write([]byte(`{"books":{"name":"books","savePath":"/remote/downloads"}}`))
+		case "/api/v2/app/defaultSavePath":
+			_, _ = w.Write([]byte(""))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	host, port := serverHostPort(t, srv.URL)
+	client := &models.DownloadClient{
+		Type:     "qbittorrent",
+		Host:     host,
+		Port:     port,
+		Username: "u",
+		Password: "p",
+		Category: "books",
+		// No per-client PathRemap on purpose — the global remap must cover it.
+	}
+	globalRemap := "/remote/downloads:" + visible
+	got := CheckCompletedPathVisibility(context.Background(), client, "/some/download/dir", "", globalRemap)
+	if got.Status != PathVisible {
+		t.Fatalf("status = %q, want %q (global remap fallback); message=%s", got.Status, PathVisible, got.Message)
 	}
 }
 
@@ -116,7 +154,7 @@ func TestCheckCompletedPathVisibility_Nzbget(t *testing.T) {
 		defer srv.Close()
 		host, port := serverHostPort(t, srv.URL)
 		client := &models.DownloadClient{Type: "nzbget", Host: host, Port: port, Category: "books"}
-		got := CheckCompletedPathVisibility(context.Background(), client, "", "")
+		got := CheckCompletedPathVisibility(context.Background(), client, "", "", "")
 		if got.Status != PathVisible {
 			t.Fatalf("status = %q, want %q; message=%s", got.Status, PathVisible, got.Message)
 		}
@@ -127,7 +165,7 @@ func TestCheckCompletedPathVisibility_Nzbget(t *testing.T) {
 		defer srv.Close()
 		host, port := serverHostPort(t, srv.URL)
 		client := &models.DownloadClient{Type: "nzbget", Host: host, Port: port, Category: "books"}
-		got := CheckCompletedPathVisibility(context.Background(), client, "", "")
+		got := CheckCompletedPathVisibility(context.Background(), client, "", "", "")
 		if got.Status != PathNotVisible {
 			t.Fatalf("status = %q, want %q; message=%s", got.Status, PathNotVisible, got.Message)
 		}
@@ -139,7 +177,7 @@ func TestCheckCompletedPathVisibility_Nzbget(t *testing.T) {
 func TestCheckCompletedPathVisibility_UnknownTypes(t *testing.T) {
 	for _, typ := range []string{"sabnzbd", "transmission", "deluge", ""} {
 		client := &models.DownloadClient{Type: typ, Host: "10.0.0.1", Port: 8080, Category: "books"}
-		got := CheckCompletedPathVisibility(context.Background(), client, "/x", "")
+		got := CheckCompletedPathVisibility(context.Background(), client, "/x", "", "")
 		if got.Status != PathUnknown {
 			t.Fatalf("type %q: status = %q, want %q", typ, got.Status, PathUnknown)
 		}

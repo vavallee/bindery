@@ -49,6 +49,11 @@ type DownloadClientHandler struct {
 	health               *downloader.HealthStore
 	downloadDir          string
 	audiobookDownloadDir string
+	// downloadPathRemap is the global BINDERY_DOWNLOAD_PATH_REMAP, applied as a
+	// fallback after a client's own PathRemap when checking path visibility so
+	// the Test action doesn't false-warn for installs that rely on the global
+	// remap rather than a per-client one (#1182).
+	downloadPathRemap string
 
 	// lifetimeCtx is the process-lifecycle context, cancelled on server
 	// shutdown so the health-probe goroutine fired by Create/Update does
@@ -85,6 +90,14 @@ func (h *DownloadClientHandler) WithHealth(store *downloader.HealthStore) *Downl
 func (h *DownloadClientHandler) WithStoragePaths(downloadDir, audiobookDownloadDir string) *DownloadClientHandler {
 	h.downloadDir = downloadDir
 	h.audiobookDownloadDir = audiobookDownloadDir
+	return h
+}
+
+// WithDownloadPathRemap attaches the global BINDERY_DOWNLOAD_PATH_REMAP so the
+// path-visibility check mirrors the importer's resolution (per-client remap
+// first, global remap as fallback).
+func (h *DownloadClientHandler) WithDownloadPathRemap(remap string) *DownloadClientHandler {
+	h.downloadPathRemap = remap
 	return h
 }
 
@@ -214,7 +227,7 @@ func (h *DownloadClientHandler) Test(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	health := h.refreshClientHealth(r.Context(), client)
-	pathVis := downloader.CheckCompletedPathVisibility(r.Context(), client, h.downloadDir, h.audiobookDownloadDir)
+	pathVis := downloader.CheckCompletedPathVisibility(r.Context(), client, h.downloadDir, h.audiobookDownloadDir, h.downloadPathRemap)
 	resp := struct {
 		Message        string                       `json:"message"`
 		Health         *models.DownloadClientHealth `json:"health,omitempty"`
@@ -266,7 +279,7 @@ func (h *DownloadClientHandler) TestConfig(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	pathVis := downloader.CheckCompletedPathVisibility(r.Context(), &c, h.downloadDir, h.audiobookDownloadDir)
+	pathVis := downloader.CheckCompletedPathVisibility(r.Context(), &c, h.downloadDir, h.audiobookDownloadDir, h.downloadPathRemap)
 	writeJSON(w, http.StatusOK, struct {
 		Message        string                     `json:"message"`
 		PathVisibility *downloader.PathVisibility `json:"pathVisibility,omitempty"`

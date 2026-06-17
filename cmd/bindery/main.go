@@ -530,6 +530,7 @@ func main() {
 	dlClientHandler := api.NewDownloadClientHandler(dlClientRepo).
 		WithHealth(downloadHealth).
 		WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir).
+		WithDownloadPathRemap(cfg.DownloadPathRemap).
 		WithLifetimeCtx(appCtx)
 	queueHandler := api.NewQueueHandler(downloadRepo, dlClientRepo, bookRepo, historyRepo).
 		WithNotifier(notif).

@@ -52,15 +52,15 @@ type PathVisibility struct {
 // It assumes the connection has already been verified by TestClient; callers
 // should only invoke it after a successful connect so a probe failure here is
 // reported as PathUnknown rather than masking a connection error.
-func CheckCompletedPathVisibility(ctx context.Context, client *models.DownloadClient, downloadDir, audiobookDownloadDir string) PathVisibility {
+func CheckCompletedPathVisibility(ctx context.Context, client *models.DownloadClient, downloadDir, audiobookDownloadDir, globalRemap string) PathVisibility {
 	if client == nil {
 		return PathVisibility{Status: PathUnknown}
 	}
 	switch client.Type {
 	case "qbittorrent":
-		return qbittorrentPathVisibility(ctx, client, downloadDir, audiobookDownloadDir)
+		return qbittorrentPathVisibility(ctx, client, downloadDir, audiobookDownloadDir, globalRemap)
 	case "nzbget":
-		return nzbgetPathVisibility(ctx, client)
+		return nzbgetPathVisibility(ctx, client, globalRemap)
 	default:
 		// SABnzbd's complete dir requires get_config (not introspected here),
 		// and Transmission/Deluge resolve a download dir per-torrent rather than
@@ -69,7 +69,7 @@ func CheckCompletedPathVisibility(ctx context.Context, client *models.DownloadCl
 	}
 }
 
-func qbittorrentPathVisibility(ctx context.Context, client *models.DownloadClient, downloadDir, audiobookDownloadDir string) PathVisibility {
+func qbittorrentPathVisibility(ctx context.Context, client *models.DownloadClient, downloadDir, audiobookDownloadDir, globalRemap string) PathVisibility {
 	category := strings.TrimSpace(client.Category)
 	if category == "" {
 		return PathVisibility{Status: PathUnknown}
@@ -95,23 +95,38 @@ func qbittorrentPathVisibility(ctx context.Context, client *models.DownloadClien
 		return PathVisibility{Status: PathUnknown}
 	}
 	expected := ExpectedDownloadDirForClient(client, models.MediaTypeEbook, downloadDir, audiobookDownloadDir)
-	return statRemappedPath(client, savePath, expected)
+	return statRemappedPath(client, savePath, expected, globalRemap)
 }
 
-func nzbgetPathVisibility(ctx context.Context, client *models.DownloadClient) PathVisibility {
+func nzbgetPathVisibility(ctx context.Context, client *models.DownloadClient, globalRemap string) PathVisibility {
 	ng := NzbgetFor(client)
 	completeDir, err := ng.CompletedDir(ctx, client.Category)
 	if err != nil || strings.TrimSpace(completeDir) == "" {
 		return PathVisibility{Status: PathUnknown}
 	}
-	return statRemappedPath(client, completeDir, "")
+	return statRemappedPath(client, completeDir, "", globalRemap)
 }
 
-// statRemappedPath applies the client's PathRemap to a client-reported path and
-// os.Stats the result. expectedHint, when non-empty, is included in the warning
-// message as the directory Bindery was configured to read from.
-func statRemappedPath(client *models.DownloadClient, clientPath, expectedHint string) PathVisibility {
-	localPath := filepath.Clean(pathmap.Parse(client.PathRemap).Apply(strings.TrimSpace(clientPath)))
+// remapClientPath resolves a client-reported path the same way the importer does
+// (see Scanner.remapDownloadClientPath): apply the client's own PathRemap first,
+// and only if that leaves the path unchanged fall back to the global
+// BINDERY_DOWNLOAD_PATH_REMAP. This keeps the Test action's verdict consistent
+// with what the importer will actually resolve at import time (#1182).
+func remapClientPath(client *models.DownloadClient, rawPath, globalRemap string) string {
+	if client != nil && strings.TrimSpace(client.PathRemap) != "" {
+		if localPath := pathmap.Parse(client.PathRemap).Apply(rawPath); localPath != rawPath {
+			return localPath
+		}
+	}
+	return pathmap.Parse(globalRemap).Apply(rawPath)
+}
+
+// statRemappedPath resolves a client-reported path via remapClientPath (client
+// PathRemap then global remap fallback) and os.Stats the result. expectedHint,
+// when non-empty, is included in the warning message as the directory Bindery
+// was configured to read from.
+func statRemappedPath(client *models.DownloadClient, clientPath, expectedHint, globalRemap string) PathVisibility {
+	localPath := filepath.Clean(remapClientPath(client, strings.TrimSpace(clientPath), globalRemap))
 	if localPath == "." || localPath == "" {
 		return PathVisibility{Status: PathUnknown}
 	}
