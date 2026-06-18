@@ -69,6 +69,11 @@ const (
 	SettingImportDropLinkMode = "import.drop_link_mode"
 )
 
+// SettingSearchInterval is the KV key for the wanted-book search cadence.
+// Value is a Go duration string (e.g. "12h", "24h"). Empty or unset falls
+// back to the scheduler's defaultSearchInterval (12h). Takes effect on restart.
+const SettingSearchInterval = "search.interval"
+
 // SettingImportAudiobookFlattenMultiDisc (#886) is "true" to flatten multi-disc
 // audiobook downloads into a single "Part 001.ext", … sequence on import, or
 // unset/"false" (default) to preserve the download's disc-folder layout.
@@ -459,6 +464,21 @@ func validateSettingValue(key, value string) error {
 		}
 		if !strings.EqualFold(value, "true") && !strings.EqualFold(value, "false") {
 			return fmt.Errorf("abs.enabled %q is not one of: true, false", value)
+		}
+	case SettingSearchInterval:
+		// Empty = unset (scheduler falls back to its built-in default).
+		if value == "" {
+			return nil
+		}
+		d, err := time.ParseDuration(value)
+		if err != nil {
+			return fmt.Errorf("search.interval %q is not a valid duration (e.g. 12h, 24h, 48h)", value)
+		}
+		if d < time.Hour {
+			return fmt.Errorf("search.interval %q is too short — minimum is 1h to avoid hammering indexers", value)
+		}
+		if d > 168*time.Hour {
+			return fmt.Errorf("search.interval %q exceeds the maximum of 168h (7 days)", value)
 		}
 	}
 	return nil

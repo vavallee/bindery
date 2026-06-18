@@ -104,6 +104,114 @@ func TestStart_RegistersBaseJobs(t *testing.T) {
 	}
 }
 
+// hasEntryWithDelay reports whether any cron entry runs on a
+// ConstantDelaySchedule (@every) with exactly the given delay. Used to assert
+// the search-wanted job is registered at the resolved interval.
+func hasEntryWithDelay(entries []cron.Entry, d time.Duration) bool {
+	for _, e := range entries {
+		if cds, ok := e.Schedule.(cron.ConstantDelaySchedule); ok && cds.Delay == d {
+			return true
+		}
+	}
+	return false
+}
+
+// schedulerWithSearchInterval builds a Scheduler backed by an in-memory DB and
+// seeds (or omits) the search.interval setting. value=="" leaves the setting
+// unset. A nil settings repo is requested with seedSettings=false.
+func schedulerWithSearchInterval(t *testing.T, seedSettings bool, value string) *Scheduler {
+	t.Helper()
+	s := &Scheduler{cron: cron.New(cron.WithSeconds())}
+	if seedSettings {
+		database, err := db.OpenMemory()
+		if err != nil {
+			t.Fatalf("OpenMemory: %v", err)
+		}
+		t.Cleanup(func() { database.Close() })
+		repo := db.NewSettingsRepo(database)
+		if value != "" {
+			if err := repo.Set(context.Background(), "search.interval", value); err != nil {
+				t.Fatalf("seed search.interval: %v", err)
+			}
+		}
+		s.settings = repo
+	}
+	return s
+}
+
+// TestStart_SearchWantedUsesConfiguredInterval verifies the search-wanted cron
+// entry honours a valid configured search.interval rather than the default.
+func TestStart_SearchWantedUsesConfiguredInterval(t *testing.T) {
+	s := schedulerWithSearchInterval(t, true, "48h")
+	s.Start()
+	entries := s.cron.Entries()
+	s.Stop()
+
+	if !hasEntryWithDelay(entries, 48*time.Hour) {
+		t.Error("expected a cron entry at the configured 48h interval, found none")
+	}
+}
+
+// TestStart_SearchWantedFallsBackToDefault verifies the search-wanted entry
+// uses defaultSearchInterval when settings is nil and when the setting is unset.
+func TestStart_SearchWantedFallsBackToDefault(t *testing.T) {
+	cases := []struct {
+		name  string
+		seed  bool
+		value string
+	}{
+		{"nil settings repo", false, ""},
+		{"empty/unset setting", true, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := schedulerWithSearchInterval(t, tc.seed, tc.value)
+			s.Start()
+			entries := s.cron.Entries()
+			s.Stop()
+			if !hasEntryWithDelay(entries, defaultSearchInterval) {
+				t.Errorf("expected search-wanted entry at default %s, found none", defaultSearchInterval)
+			}
+		})
+	}
+}
+
+// TestStart_SearchWantedRejectsOutOfBounds verifies garbage and out-of-range
+// search.interval values fall back to the default (mirroring the API bounds).
+func TestStart_SearchWantedRejectsOutOfBounds(t *testing.T) {
+	for _, value := range []string{"not-a-duration", "30m", "200h"} {
+		t.Run(value, func(t *testing.T) {
+			s := schedulerWithSearchInterval(t, true, value)
+			s.Start()
+			entries := s.cron.Entries()
+			s.Stop()
+			if !hasEntryWithDelay(entries, defaultSearchInterval) {
+				t.Errorf("value %q should fall back to default %s", value, defaultSearchInterval)
+			}
+		})
+	}
+}
+
+// TestResolveSearchInterval covers the helper directly: unset/nil falls back,
+// valid in-range values pass through, and out-of-bounds/unparseable values fall
+// back to the default.
+func TestResolveSearchInterval(t *testing.T) {
+	if got := schedulerWithSearchInterval(t, false, "").resolveSearchInterval(); got != defaultSearchInterval {
+		t.Errorf("nil settings: got %s, want %s", got, defaultSearchInterval)
+	}
+	if got := schedulerWithSearchInterval(t, true, "").resolveSearchInterval(); got != defaultSearchInterval {
+		t.Errorf("unset setting: got %s, want %s", got, defaultSearchInterval)
+	}
+	if got := schedulerWithSearchInterval(t, true, "6h").resolveSearchInterval(); got != 6*time.Hour {
+		t.Errorf("valid 6h: got %s, want 6h", got)
+	}
+	for _, bad := range []string{"30m", "200h", "garbage"} {
+		if got := schedulerWithSearchInterval(t, true, bad).resolveSearchInterval(); got != defaultSearchInterval {
+			t.Errorf("invalid %q: got %s, want default %s", bad, got, defaultSearchInterval)
+		}
+	}
+}
+
 // TestStop_IdempotentAfterStart confirms that calling Stop right after Start
 // does not hang or panic.
 func TestStop_IdempotentAfterStart(t *testing.T) {

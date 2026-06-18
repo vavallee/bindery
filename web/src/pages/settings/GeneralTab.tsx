@@ -504,6 +504,40 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
         </div>
       </section>
 
+      {/* Wanted search interval */}
+      <section>
+        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.search')}</h3>
+        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+          <div>
+            <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
+              {t('settings.general.searchIntervalLabel')}
+            </label>
+            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+              {t('settings.general.searchIntervalHint')}
+            </p>
+            <select
+              value={settings['search.interval'] ?? '12h'}
+              onChange={async e => {
+                const next = e.target.value
+                setSettings(s => ({ ...s, 'search.interval': next }))
+                await api.setSetting('search.interval', next).catch(console.error)
+              }}
+              className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+            >
+              <option value="6h">6 hours</option>
+              <option value="12h">12 hours (default)</option>
+              <option value="24h">24 hours</option>
+              <option value="48h">48 hours</option>
+              <option value="72h">72 hours</option>
+              <option value="168h">7 days</option>
+            </select>
+            <p className="text-xs text-slate-500 dark:text-zinc-600 mt-1">
+              {t('settings.general.searchIntervalRestart')}
+            </p>
+          </div>
+        </div>
+      </section>
+
       {/* Default library location */}
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.defaultLibraryLocation')}</h3>
