@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, AuthConfig, AuthStatus } from '../../api/client'
+import { api, AuthConfig, AuthStatus, StorageDirStatus, StorageHealth } from '../../api/client'
 import AuthSettings from '../../settings/AuthSettings'
 import ThemeToggle from '../../components/ThemeToggle'
 import LanguageSwitcher from '../../components/LanguageSwitcher'
@@ -42,7 +42,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
     no_files_found?: boolean
     scan_error?: string
   } | null>(null)
-  const [storage, setStorage] = useState<{ downloadDir: string; audiobookDownloadDir: string; libraryDir: string; audiobookDir: string } | null>(null)
+  const [storage, setStorage] = useState<StorageHealth | null>(null)
   const [langSaveResult, langSave] = useSaveResult()
   const [dropSaveResult, dropSave] = useSaveResult()
 
@@ -346,6 +346,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
           <div>
             <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
               {t('settings.general.downloadDir')} <code className="font-mono bg-slate-200 dark:bg-zinc-800 px-1 rounded">BINDERY_DOWNLOAD_DIR</code>
+              <StorageHealthBadge status={dirStatus(storage, 'download')} loading={!storage} />
             </label>
             <input
               readOnly
@@ -356,6 +357,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
           <div>
             <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
               {t('settings.general.audiobookDownloadDir')} <code className="font-mono bg-slate-200 dark:bg-zinc-800 px-1 rounded">BINDERY_AUDIOBOOK_DOWNLOAD_DIR</code>
+              {storage?.audiobookDownloadDir && <StorageHealthBadge status={dirStatus(storage, 'audiobook-download')} loading={false} />}
             </label>
             <input
               readOnly
@@ -370,6 +372,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
           <div>
             <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
               {t('settings.general.libraryDir')} <code className="font-mono bg-slate-200 dark:bg-zinc-800 px-1 rounded">BINDERY_LIBRARY_DIR</code>
+              <StorageHealthBadge status={dirStatus(storage, 'library')} loading={!storage} />
             </label>
             <input
               readOnly
@@ -380,6 +383,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
           <div>
             <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
               {t('settings.general.audiobookDir')} <code className="font-mono bg-slate-200 dark:bg-zinc-800 px-1 rounded">BINDERY_AUDIOBOOK_DIR</code>
+              {storage?.audiobookDir && <StorageHealthBadge status={dirStatus(storage, 'audiobook')} loading={false} />}
             </label>
             <input
               readOnly
@@ -391,6 +395,17 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.general.audiobookDirFallback')}</p>
             )}
           </div>
+          {storage && (
+            storage.hardlinkable ? (
+              <p className="text-xs text-emerald-700 dark:text-emerald-400 border-t border-slate-200 dark:border-zinc-800 pt-3">
+                {t('settings.general.storageHardlinkOk')}
+              </p>
+            ) : (
+              <p className="text-xs text-amber-600 dark:text-amber-400 border-t border-slate-200 dark:border-zinc-800 pt-3">
+                {t('settings.general.storageHardlinkWarning')}
+              </p>
+            )
+          )}
         </div>
       </section>
 
@@ -507,6 +522,43 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
 
       </>)}
     </div>
+  )
+}
+
+// dirStatus looks up the health entry for a named directory in the storage
+// response. Returns undefined while loading or when the dir is unconfigured.
+function dirStatus(storage: StorageHealth | null, name: string): StorageDirStatus | undefined {
+  return storage?.dirs.find(d => d.name === name)
+}
+
+// StorageHealthBadge renders a green OK / red failing pill next to a configured
+// directory, surfacing the exists+writable health Bindery checks at startup
+// (#1183) instead of only logging it.
+function StorageHealthBadge({ status, loading }: { status: StorageDirStatus | undefined; loading: boolean }) {
+  const { t } = useTranslation()
+  if (loading) {
+    return <span className="ml-2 text-[11px] font-normal text-slate-500 dark:text-zinc-500">{t('settings.general.storageHealthChecking')}</span>
+  }
+  if (!status) return null
+
+  const ok = status.exists && status.writable
+  const label = ok
+    ? t('settings.general.storageHealthOk')
+    : !status.exists
+      ? t('settings.general.storageHealthMissing')
+      : t('settings.general.storageHealthReadOnly')
+  const cls = ok
+    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300'
+    : 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300'
+
+  return (
+    <span
+      title={status.reason || undefined}
+      className={`ml-2 inline-block px-1.5 py-0.5 rounded text-[10px] font-medium align-middle ${cls}`}
+    >
+      {label}
+      {!ok && status.reason ? <span className="font-normal"> — {status.reason}</span> : null}
+    </span>
   )
 }
 

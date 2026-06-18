@@ -24,6 +24,23 @@ export interface LogEntry {
   fields?: Record<string, string>
 }
 
+export interface StorageDirStatus {
+  name: string
+  path: string
+  exists: boolean
+  writable: boolean
+  reason?: string
+}
+
+export interface StorageHealth {
+  downloadDir: string
+  audiobookDownloadDir: string
+  libraryDir: string
+  audiobookDir: string
+  dirs: StorageDirStatus[]
+  hardlinkable: boolean
+}
+
 export const systemApi = {
   // System
   health: () => request<{ status: string; version: string }>('/health'),
@@ -43,6 +60,5 @@ export const systemApi = {
   getLogLevel: () => request<{ level: string }>('/system/loglevel'),
   setLogLevel: (level: string) =>
     request<{ level: string }>('/system/loglevel', { method: 'PUT', body: JSON.stringify({ level }) }),
-  getStorage: () =>
-    request<{ downloadDir: string; audiobookDownloadDir: string; libraryDir: string; audiobookDir: string }>('/system/storage'),
+  getStorage: () => request<StorageHealth>('/system/storage'),
 }
