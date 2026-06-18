@@ -751,7 +751,7 @@ func main() {
 		// Metadata search
 		r.Get("/search/author", searchHandler.SearchAuthors)
 		r.Get("/search/book", searchHandler.SearchBooks)
-		r.Get("/book/lookup", searchHandler.LookupByISBN)
+		r.Get("/book/lookup", searchHandler.Lookup)
 
 		// Authors
 		r.Get("/author", authorHandler.List)

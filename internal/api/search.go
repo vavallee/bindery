@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/vavallee/bindery/internal/metadata"
+	"github.com/vavallee/bindery/internal/models"
 )
 
 type SearchHandler struct {
@@ -68,13 +70,25 @@ func (h *SearchHandler) SearchBooks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, books)
 }
 
-func (h *SearchHandler) LookupByISBN(w http.ResponseWriter, r *http.Request) {
+// Lookup resolves a single book by a stable identifier passed as a query
+// param: either `isbn` (the original behavior) or `asin` (an Audible/audiobook
+// identifier). The route is shared (`/book/lookup`) so existing ISBN callers
+// keep working unchanged.
+func (h *SearchHandler) Lookup(w http.ResponseWriter, r *http.Request) {
+	asin := strings.TrimSpace(r.URL.Query().Get("asin"))
 	isbn := r.URL.Query().Get("isbn")
-	if isbn == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "isbn parameter required"})
-		return
-	}
 
+	switch {
+	case asin != "":
+		h.lookupByASIN(w, r, asin)
+	case isbn != "":
+		h.lookupByISBN(w, r, isbn)
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "isbn or asin parameter required"})
+	}
+}
+
+func (h *SearchHandler) lookupByISBN(w http.ResponseWriter, r *http.Request, isbn string) {
 	book, err := h.meta.GetBookByISBN(r.Context(), isbn)
 	if err != nil {
 		writeUpstreamError(w, err)
@@ -86,6 +100,31 @@ func (h *SearchHandler) LookupByISBN(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+
+	writeJSON(w, http.StatusOK, book)
+}
+
+func (h *SearchHandler) lookupByASIN(w http.ResponseWriter, r *http.Request, asin string) {
+	book, err := h.meta.GetCanonicalBookByASIN(r.Context(), asin)
+	if err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	if book == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": fmt.Sprintf("No book found for ASIN %s. Check the identifier, or try searching by title instead.", asin),
+		})
+		return
+	}
+
+	// The resolver canonicalizes the ASIN against the primary provider, so the
+	// returned book carries the canonical foreignBookId (keep it) but loses the
+	// ASIN-origin shape. Re-stamp the ASIN and audiobook media type so the Add
+	// Book modal renders it as the audiobook edition the user searched for.
+	if book.ASIN == "" {
+		book.ASIN = asin
+	}
+	book.MediaType = models.MediaTypeAudiobook
 
 	writeJSON(w, http.StatusOK, book)
 }

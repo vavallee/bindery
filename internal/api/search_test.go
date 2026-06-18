@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/vavallee/bindery/internal/metadata"
+	"github.com/vavallee/bindery/internal/metadata/audnex"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -162,20 +163,25 @@ func TestSearchBooksEmptyIsArray(t *testing.T) {
 	}
 }
 
-func TestLookupByISBN(t *testing.T) {
+func TestLookup_ISBN(t *testing.T) {
 	p := &stubProvider{byISBN: &models.Book{Title: "Hyperion", Description: "A long-enough description to skip the enrichment branch in the aggregator."}}
 	h := NewSearchHandler(metadata.NewAggregator(p))
 
-	// Missing isbn
+	// Neither isbn nor asin → 400 naming both params.
 	rec := httptest.NewRecorder()
-	h.LookupByISBN(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search/isbn", nil))
+	h.Lookup(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book/lookup", nil))
 	if rec.Code != http.StatusBadRequest {
-		t.Errorf("missing isbn: expected 400, got %d", rec.Code)
+		t.Errorf("missing params: expected 400, got %d", rec.Code)
+	}
+	var errBody map[string]string
+	json.NewDecoder(rec.Body).Decode(&errBody)
+	if msg := errBody["error"]; !strings.Contains(msg, "isbn") || !strings.Contains(msg, "asin") {
+		t.Errorf("400 message should name both params, got %q", msg)
 	}
 
-	// Success
+	// Success — ISBN path unchanged.
 	rec = httptest.NewRecorder()
-	h.LookupByISBN(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search/isbn?isbn=9780553283686", nil))
+	h.Lookup(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book/lookup?isbn=9780553283686", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
@@ -184,7 +190,7 @@ func TestLookupByISBN(t *testing.T) {
 	p2 := &stubProvider{byISBN: nil}
 	h2 := NewSearchHandler(metadata.NewAggregator(p2))
 	rec = httptest.NewRecorder()
-	h2.LookupByISBN(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search/isbn?isbn=0000000000", nil))
+	h2.Lookup(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book/lookup?isbn=0000000000", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("not found: expected 404, got %d", rec.Code)
 	}
@@ -193,8 +199,74 @@ func TestLookupByISBN(t *testing.T) {
 	p3 := &stubProvider{byISBNErr: errors.New("net down")}
 	h3 := NewSearchHandler(metadata.NewAggregator(p3))
 	rec = httptest.NewRecorder()
-	h3.LookupByISBN(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search/isbn?isbn=fail", nil))
+	h3.Lookup(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book/lookup?isbn=fail", nil))
 	if rec.Code != http.StatusBadGateway {
 		t.Errorf("error: expected 502, got %d", rec.Code)
+	}
+}
+
+// stubAudnexClient drives the aggregator's ASIN canonicalization path without a
+// network call: GetBook returns the mapped audnex.Book for an ASIN, or nil.
+type stubAudnexClient struct {
+	books map[string]*audnex.Book
+}
+
+func (s *stubAudnexClient) GetBook(_ context.Context, asin string) (*audnex.Book, error) {
+	if s.books == nil {
+		return nil, nil
+	}
+	return s.books[asin], nil
+}
+
+// TestLookup_ASIN_Success proves the ?asin= path returns 200 with the canonical
+// book re-stamped into the ASIN-origin shape the Add Book modal expects: the
+// canonical foreignBookId is preserved, MediaType is audiobook, and the ASIN is
+// populated (the canonical OpenLibrary record carries neither on its own).
+func TestLookup_ASIN_Success(t *testing.T) {
+	primary := &stubProvider{
+		books:  []models.Book{{ForeignID: "OL-IRON", Title: "Iron Flame", EditionCount: 42, Author: &models.Author{Name: "Rebecca Yarros"}}},
+		byISBN: &models.Book{ForeignID: "OL-IRON", Title: "Iron Flame", Description: "Canonical OpenLibrary description for Iron Flame.", Author: &models.Author{Name: "Rebecca Yarros"}},
+	}
+	audnexClient := &stubAudnexClient{books: map[string]*audnex.Book{
+		"B0DBJBFHGT": {
+			ASIN:     "B0DBJBFHGT",
+			Title:    "Iron Flame",
+			Authors:  []audnex.Person{{Name: "Rebecca Yarros"}},
+			Language: "English",
+		},
+	}}
+	agg := metadata.NewAggregator(primary).WithAudnexClient(audnexClient)
+	h := NewSearchHandler(agg)
+
+	rec := httptest.NewRecorder()
+	h.Lookup(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book/lookup?asin=B0DBJBFHGT", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var got models.Book
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.ForeignID != "OL-IRON" {
+		t.Errorf("expected canonical foreignBookId OL-IRON preserved, got %q", got.ForeignID)
+	}
+	if got.MediaType != models.MediaTypeAudiobook {
+		t.Errorf("expected mediaType %q, got %q", models.MediaTypeAudiobook, got.MediaType)
+	}
+	if got.ASIN != "B0DBJBFHGT" {
+		t.Errorf("expected ASIN populated, got %q", got.ASIN)
+	}
+}
+
+// TestLookup_ASIN_Miss proves a non-resolving ASIN returns 404 (the modal's
+// normal empty/error state), not a 500 or a crash.
+func TestLookup_ASIN_Miss(t *testing.T) {
+	agg := metadata.NewAggregator(&stubProvider{}).WithAudnexClient(&stubAudnexClient{})
+	h := NewSearchHandler(agg)
+
+	rec := httptest.NewRecorder()
+	h.Lookup(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book/lookup?asin=B0NONEXIST", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("ASIN miss: expected 404, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }

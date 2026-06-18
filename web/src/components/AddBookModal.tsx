@@ -25,6 +25,11 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
       if (/^97[89]\d{10}$|^\d{9}[\dX]$/.test(q.replace(/[-\s]/g, ''))) {
         const book = await api.lookupISBN(q.replace(/[-\s]/g, ''))
         setResults([book])
+      } else if (/^B[0-9A-Z]{9}$/i.test(q)) {
+        // ASIN (Audible/Amazon) lookup — a 10-char token starting with B.
+        // Checked after ISBN; the two patterns don't overlap.
+        const book = await api.lookupASIN(q.toUpperCase())
+        setResults([book])
       } else {
         const books = await api.searchBooks(q)
         // Guard against a `null` body (e.g. an empty search the backend
@@ -65,7 +70,7 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
       <div className="bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="p-4 border-b border-slate-200 dark:border-zinc-800">
           <h3 className="text-lg font-semibold">Add Book</h3>
-          <p className="text-xs text-slate-500 dark:text-zinc-500 mt-0.5">Search by title or ISBN to add a specific book to your wanted list.</p>
+          <p className="text-xs text-slate-500 dark:text-zinc-500 mt-0.5">Search by title, ISBN, or ASIN to add a specific book to your wanted list.</p>
         </div>
 
         <div className="p-4 flex-1 overflow-y-auto">
@@ -88,7 +93,7 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
               value={query}
               onChange={e => setQuery(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && search()}
-              placeholder="Title or ISBN (e.g. Dune, 9780441478125)"
+              placeholder="Title, ISBN, or ASIN (e.g. Dune, 9780441478125, B0DBJBFHGT)"
               className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
               autoFocus
             />

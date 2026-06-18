@@ -110,6 +110,7 @@ export const booksApi = {
   searchAuthors: (term: string) => request<Author[]>(`/search/author?term=${encodeURIComponent(term)}`),
   searchBooks: (term: string) => request<Book[]>(`/search/book?term=${encodeURIComponent(term)}`),
   lookupISBN: (isbn: string) => request<Book>(`/book/lookup?isbn=${encodeURIComponent(isbn)}`),
+  lookupASIN: (asin: string) => request<Book>(`/book/lookup?asin=${encodeURIComponent(asin)}`),
 
   // Add a single book to wanted (adds author silently if new)
   addBook: (data: { foreignBookId: string; foreignAuthorId: string; authorName?: string; searchOnAdd?: boolean }) =>
