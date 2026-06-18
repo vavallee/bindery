@@ -41,6 +41,15 @@ const (
 // the round-trip cheap (limit=N) rather than paging the full edition list.
 const editionLangSampleCap = 5
 
+// authorWorksPageSize is the per-request limit for the /authors/{id}/works
+// endpoint, and authorWorksMaxFetch bounds total pagination so an author with
+// an enormous (or maliciously inflated) catalogue can't trigger unbounded
+// requests. 2000 covers even the most prolific real authors at 20 requests.
+const (
+	authorWorksPageSize = 100
+	authorWorksMaxFetch = 2000
+)
+
 // Client implements the metadata.Provider interface for OpenLibrary.
 type Client struct {
 	http *http.Client
@@ -405,13 +414,44 @@ func (c *Client) searchAuthorWorks(ctx context.Context, authorForeignID string) 
 // authorWorksBackfill fetches the author's works list from OpenLibrary's
 // /authors/{id}/works endpoint. The raw entries are returned so the caller
 // can decide how to merge them with the primary search-index results.
+//
+// The endpoint is paginated: it returns at most authorWorksPageSize entries
+// per call and advertises the catalogue total in the response's Size field.
+// Previously only the first page was fetched, so authors with more than one
+// page of works had their catalogue silently truncated (issue: users seeing a
+// hard cap of 100 books on prolific authors). We now page through until the
+// catalogue is exhausted, bounded by authorWorksMaxFetch to keep pathological
+// or maliciously large responses from running away.
 func (c *Client) authorWorksBackfill(ctx context.Context, authorForeignID string) ([]authorWorkEntry, error) {
-	u := fmt.Sprintf("%s/authors/%s/works.json?limit=100", baseURL, authorForeignID)
-	var resp authorWorksResponse
-	if err := c.getJSON(ctx, u, &resp); err != nil {
-		return nil, err
+	var entries []authorWorkEntry
+	for offset := 0; offset < authorWorksMaxFetch; offset += authorWorksPageSize {
+		u := fmt.Sprintf("%s/authors/%s/works.json?limit=%d&offset=%d",
+			baseURL, authorForeignID, authorWorksPageSize, offset)
+		var resp authorWorksResponse
+		if err := c.getJSON(ctx, u, &resp); err != nil {
+			if offset == 0 {
+				return nil, err
+			}
+			// A later page failing shouldn't discard the works already
+			// collected — return what we have and let enrichment fill gaps.
+			slog.Warn("openlibrary: author works pagination stopped early",
+				"author", authorForeignID, "offset", offset, "error", err)
+			break
+		}
+		entries = append(entries, resp.Entries...)
+		// Stop on a short page (end of list) or once we've collected the
+		// advertised total. Size is omitted (0) by older/partial responses,
+		// in which case the short-page check is the authoritative terminator.
+		if len(resp.Entries) < authorWorksPageSize ||
+			(resp.Size > 0 && len(entries) >= resp.Size) {
+			break
+		}
 	}
-	return resp.Entries, nil
+	if len(entries) >= authorWorksMaxFetch {
+		slog.Warn("openlibrary: author works hit pagination cap; catalogue may be truncated",
+			"author", authorForeignID, "cap", authorWorksMaxFetch)
+	}
+	return entries, nil
 }
 
 // pickPreferredLanguage returns "eng" if present in the list, otherwise the
