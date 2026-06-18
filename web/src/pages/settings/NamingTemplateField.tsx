@@ -45,6 +45,14 @@ export default function NamingTemplateField({
   const preview = renderTemplate(value, kind)
   const hasErrors =
     validation.empty || validation.traversal || validation.unknownTokens.length > 0
+  // The "empty" error is a false alarm on initial load: an unset template means
+  // the server falls back to a compiled-in default, so only surface it once the
+  // user has actually interacted. A NON-empty saved template that fails
+  // validation (traversal / unknown tokens) is a real, pre-existing
+  // misconfiguration and must be shown immediately on load, not hidden behind
+  // `touched` — hence those errors gate on a non-empty value instead.
+  const showInteractionErrors = touched
+  const showContentErrors = touched || value.trim() !== ''
 
   // Insert a token at the caret (or replace the current selection). Falls back
   // to appending when the input is not focused.
@@ -105,7 +113,7 @@ export default function NamingTemplateField({
           onChange={e => { setTouched(true); onChange(e.target.value) }}
           onBlur={() => setTouched(true)}
           placeholder={placeholder}
-          aria-invalid={touched && hasErrors}
+          aria-invalid={showContentErrors && hasErrors}
           className={inputCls + ' flex-1 font-mono'}
         />
         <button
@@ -133,18 +141,21 @@ export default function NamingTemplateField({
         </p>
       )}
 
-      {/* Validation feedback — only after user interaction */}
-      {touched && validation.empty && (
+      {/* Validation feedback. The empty-template error is suppressed until the
+          field is touched (an unset template legitimately means "use the server
+          default"); content errors on a non-empty saved template surface
+          immediately so a real misconfiguration isn't hidden on load. */}
+      {showInteractionErrors && validation.empty && (
         <p className="text-xs text-red-600 dark:text-red-400 mt-1.5" role="alert">
           {t('settings.general.naming.errorEmpty')}
         </p>
       )}
-      {touched && validation.traversal && (
+      {showContentErrors && validation.traversal && (
         <p className="text-xs text-red-600 dark:text-red-400 mt-1.5" role="alert">
           {t('settings.general.naming.errorTraversal')}
         </p>
       )}
-      {touched && validation.unknownTokens.length > 0 && (
+      {showContentErrors && validation.unknownTokens.length > 0 && (
         <p className="text-xs text-amber-600 dark:text-amber-400 mt-1.5" role="alert">
           {t('settings.general.naming.errorUnknownTokens', {
             tokens: validation.unknownTokens.join(', '),

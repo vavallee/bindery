@@ -150,6 +150,16 @@ describe('NamingTemplateField component', () => {
     expect(save.disabled).toBe(true)
   })
 
+  it('shows content errors for a non-empty saved template on initial load (no interaction)', () => {
+    // A persisted but invalid template is a real misconfiguration: unlike the
+    // empty-default case, its error must be visible immediately, not gated
+    // behind touch.
+    render(<Harness initial="{Bogus}/{Title}" />)
+    expect(screen.getByText(/errorUnknownTokens.*\{Bogus\}/)).toBeTruthy()
+    const save = screen.getByRole('button', { name: 'common.save' }) as HTMLButtonElement
+    expect(save.disabled).toBe(true)
+  })
+
   it('blocks save on an empty template', () => {
     render(<Harness initial="" />)
     const input = screen.getByPlaceholderText('placeholder')
