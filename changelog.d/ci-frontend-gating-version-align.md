@@ -1,0 +1,3 @@
+### Changed
+- **CI now gates on frontend unit tests** — the `vitest` suite (`npm test`) is wired into the `validate (frontend)` PR check and the `test` release/merge gate, so a failing frontend test now blocks merges and releases. Previously `vitest` only ran locally via `make check`; no workflow invoked it, leaving 352 frontend tests ungated.
+- **CI toolchain aligned with the shipped Docker image** — all GitHub Actions workflows now pin Go `1.26.4` (was `1.25.11`) and Node `26` (was `22`), matching the `golang:1.26.4-alpine` and `node:26-alpine` stages in the Dockerfile. CI was previously testing on older runtimes than production ships.
