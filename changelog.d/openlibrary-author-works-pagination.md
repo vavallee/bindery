@@ -1,0 +1,2 @@
+### Fixed
+- **Prolific authors capped at 100 books** — adding or refreshing an author from OpenLibrary fetched only the first page of the `/authors/{id}/works` endpoint, silently truncating any catalogue larger than 100 works. The works endpoint is now paged through to completion (bounded at 2000 works to keep pathological responses in check), so authors with hundreds of titles import their full catalogue. This is unrelated to the frontend list pagination fixed in #1011.

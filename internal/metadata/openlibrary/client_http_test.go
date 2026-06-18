@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -738,6 +739,37 @@ func TestGetAuthorWorks_HTTP_WorksEndpointFillsMissingSearchEntries(t *testing.T
 	}
 	if got[0] != "Older Book" || got[1] != "Recently Released" {
 		t.Errorf("expected [Older Book, Recently Released] in that order, got %v", got)
+	}
+}
+
+// Authors with more than one page of works must have their full catalogue
+// fetched, not just the first 100. Regression guard for the hard 100-book cap
+// reported on prolific authors (the works endpoint was fetched once, never
+// paged). The mock pages by ?offset= and advertises the total via Size.
+func TestGetAuthorWorks_HTTP_PaginatesPastFirstPage(t *testing.T) {
+	const total = 250
+	worksHandler := func(r *http.Request) string {
+		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+		var entries []authorWorkEntry
+		for i := offset; i < offset+authorWorksPageSize && i < total; i++ {
+			entries = append(entries, authorWorkEntry{
+				Key:   "/works/OL" + strconv.Itoa(i) + "W",
+				Title: "Book " + strconv.Itoa(i),
+			})
+		}
+		return jsonStr(authorWorksResponse{Size: total, Entries: entries})
+	}
+	c := newClientWithPaths(t, map[string]interface{}{
+		"/authors/OL123A/works.json": worksHandler,
+		"/search.json":               jsonStr(searchRespForAuthor{}),
+	})
+
+	books, err := c.GetAuthorWorks(context.Background(), "OL123A")
+	if err != nil {
+		t.Fatalf("GetAuthorWorks: %v", err)
+	}
+	if len(books) != total {
+		t.Fatalf("expected %d books across all pages, got %d (cap regression?)", total, len(books))
 	}
 }
 
