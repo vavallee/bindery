@@ -643,9 +643,8 @@ func (p *epochProvider) UserRole(ctx context.Context, id int64) string {
 	}
 	return u.Role
 }
-func (p *epochProvider) UserSessionEpoch(ctx context.Context, id int64) int64 {
-	e, _ := p.users.GetSessionEpoch(ctx, id)
-	return e
+func (p *epochProvider) UserSessionEpoch(ctx context.Context, id int64) (int64, error) {
+	return p.users.GetSessionEpoch(ctx, id)
 }
 
 // extractSessionCookie returns the session cookie set on the response, or nil

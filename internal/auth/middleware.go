@@ -215,11 +215,18 @@ type Provider interface {
 	UserRole(ctx context.Context, userID int64) string
 	// UserSessionEpoch returns the user's current session epoch, the value
 	// the cookie's epoch field must match for the cookie to authenticate.
-	// Bumped on password change so old cookies stop verifying. Returns 0 if
-	// the user does not exist or the lookup fails — the comparison below then
-	// fails closed for any cookie minted after the 047 migration (which sets
-	// session_epoch to >= 1 by default).
-	UserSessionEpoch(ctx context.Context, userID int64) int64
+	// Bumped on password change so old cookies stop verifying.
+	//
+	// The returned error distinguishes a transient lookup failure (DB blip)
+	// from a genuine "user gone / epoch advanced" rejection. On a non-nil
+	// error the caller MUST NOT treat the cookie as merely invalid and drop to
+	// unauthenticated — that would silently log out a user holding a valid
+	// cookie whenever the DB hiccups. Instead the request is failed with a
+	// server error so the blip surfaces as a 5xx rather than a spurious logout.
+	// When err is nil the int64 is authoritative: a value that differs from the
+	// cookie's epoch is a real mismatch (revoked cookie) and the user is logged
+	// out exactly as before.
+	UserSessionEpoch(ctx context.Context, userID int64) (int64, error)
 }
 
 // AllowUnauthPath reports whether the given method+path combination must always
@@ -271,6 +278,13 @@ func Middleware(p Provider) func(http.Handler) http.Handler {
 			// handlers (like /auth/status) can report "authenticated: true".
 			ctx := r.Context()
 			cookieValid := false
+			// epochLookupFailed records a transient DB failure while looking up
+			// the user's current session epoch. We cannot prove the cookie's
+			// epoch matches, but we also must not treat that as a genuine
+			// mismatch and silently log the user out (a DB blip is not a
+			// credential revocation). When set, an otherwise-unauthenticated
+			// request is answered with 500 instead of 401 below.
+			epochLookupFailed := false
 			if c, err := r.Cookie(SessionCookieName); err == nil {
 				if uid, epoch, err := VerifySessionMultiWithEpoch(p.SessionSecrets(), c.Value); err == nil {
 					// Compare the cookie's epoch field against the user's
@@ -283,7 +297,16 @@ func Middleware(p Provider) func(http.Handler) http.Handler {
 					// cookies decode as epoch=0; the migration default of 1
 					// makes them all fail here on upgrade, which is the
 					// deliberate forced-logout-on-upgrade behaviour.
-					if p.UserSessionEpoch(ctx, uid) == epoch {
+					curEpoch, epochErr := p.UserSessionEpoch(ctx, uid)
+					switch {
+					case epochErr != nil:
+						// Transient lookup failure — do not authenticate, but do
+						// not treat as a revoked cookie either. Flag it so an
+						// otherwise-unauthenticated request fails with 500 rather
+						// than silently logging the user out on a DB blip.
+						slog.Error("session epoch lookup failed", "user_id", uid, "error", epochErr)
+						epochLookupFailed = true
+					case curEpoch == epoch:
 						ctx = context.WithValue(ctx, userIDCtxKey, uid)
 						ctx = context.WithValue(ctx, userRoleCtxKey, p.UserRole(ctx, uid))
 						cookieValid = true
@@ -346,6 +369,21 @@ func Middleware(p Provider) func(http.Handler) http.Handler {
 			}
 			if cookieValid {
 				next.ServeHTTP(w, r)
+				return
+			}
+
+			// A transient DB error prevented us from confirming the cookie's
+			// session epoch. The cookie may well be valid — we just couldn't
+			// check — so the request would otherwise be rejected as
+			// unauthenticated, silently logging the user out on a DB blip. None
+			// of the path-based bypasses above applied (those already returned),
+			// so surface this as a server error instead of a spurious 401.
+			if epochLookupFailed {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				if _, err := w.Write([]byte(`{"error":"internal error"}`)); err != nil {
+					slog.Warn("failed to write internal error response", "error", err)
+				}
 				return
 			}
 

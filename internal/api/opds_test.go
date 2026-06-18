@@ -141,7 +141,7 @@ func (p *testProvider) UserRole(_ context.Context, _ int64) string { return "adm
 // cookies via SignSession (legacy v2/v1 wrapper) which decode as epoch=0, so
 // returning 0 keeps every existing cookie test passing. The dedicated
 // password-change/epoch-bump integration tests live elsewhere.
-func (p *testProvider) UserSessionEpoch(_ context.Context, _ int64) int64 { return 0 }
+func (p *testProvider) UserSessionEpoch(_ context.Context, _ int64) (int64, error) { return 0, nil }
 func (p *testProvider) UserProvisioner() auth.UserProvisioner {
 	return nil // proxy auth not exercised in these tests
 }

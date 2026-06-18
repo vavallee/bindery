@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -246,6 +247,10 @@ type fakeProvider struct {
 	// legacy v1/v2 test cookies (which decode as epoch=0) authenticate
 	// without every test having to mint v3 cookies.
 	wantEpoch int64
+	// epochErr, when non-nil, simulates a transient DB failure on the session
+	// epoch lookup. UserSessionEpoch returns it so the middleware exercises the
+	// "surface server error instead of silent logout" path.
+	epochErr error
 }
 
 func (f *fakeProvider) Mode() Mode            { return f.mode }
@@ -268,7 +273,9 @@ func (f *fakeProvider) UserProvisioner() UserProvisioner           { return f.pr
 // UserSessionEpoch defaults to 0 so legacy v1/v2 test cookies (which decode
 // as epoch=0) continue to authenticate. Tests that exercise the password-
 // change epoch-bump path override this via the wantEpoch field below.
-func (f *fakeProvider) UserSessionEpoch(_ context.Context, _ int64) int64 { return f.wantEpoch }
+func (f *fakeProvider) UserSessionEpoch(_ context.Context, _ int64) (int64, error) {
+	return f.wantEpoch, f.epochErr
+}
 
 // staticProvisioner always returns the same user ID for any username.
 type staticProvisioner struct{ uid int64 }
@@ -367,6 +374,108 @@ func TestMiddlewareAcceptsValidSessionCookie(t *testing.T) {
 	}
 	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: cookie})
 	h.ServeHTTP(nopWriter{}, req)
+	if gotUID != 7 {
+		t.Errorf("uid = %d; want 7", gotUID)
+	}
+}
+
+// TestMiddlewareSessionEpochTransientErrorFailsServerSide proves a transient DB
+// error on the session-epoch lookup is surfaced as a 500 rather than silently
+// dropping a valid cookie to unauthenticated. Without the fix the lookup
+// returned epoch 0, the (0 == 1) comparison failed, and the user was logged out
+// (401) by a mere DB blip.
+func TestMiddlewareSessionEpochTransientErrorFailsServerSide(t *testing.T) {
+	secret := testSecret32
+	p := &fakeProvider{
+		mode:      ModeEnabled,
+		secret:    secret,
+		wantEpoch: 1,
+		epochErr:  errors.New("database is locked"),
+	}
+	mw := Middleware(p)
+	nextCalled := false
+	h := mw(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		nextCalled = true
+	}))
+
+	// A genuinely valid cookie carrying the live epoch (1).
+	cookie, err := SignSessionWithEpoch(secret, 7, 1, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	req, _ := http.NewRequest("GET", "/api/v1/author", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: cookie})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if nextCalled {
+		t.Error("handler should not run when epoch lookup errors")
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d; want %d (transient DB error must surface as 5xx, not a silent logout)",
+			rec.Code, http.StatusInternalServerError)
+	}
+	if rec.Code == http.StatusUnauthorized || rec.Code == http.StatusOK {
+		t.Errorf("status = %d; a DB blip must not log a valid cookie out", rec.Code)
+	}
+}
+
+// TestMiddlewareSessionEpochMismatchLogsOut confirms the genuine-revocation path
+// is unchanged: a cookie whose epoch differs from the user's current epoch (with
+// no lookup error) is rejected with 401, exactly as before.
+func TestMiddlewareSessionEpochMismatchLogsOut(t *testing.T) {
+	secret := testSecret32
+	p := &fakeProvider{
+		mode:      ModeEnabled,
+		secret:    secret,
+		wantEpoch: 2, // current epoch advanced past the cookie's epoch
+	}
+	mw := Middleware(p)
+	nextCalled := false
+	h := mw(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		nextCalled = true
+	}))
+
+	cookie, err := SignSessionWithEpoch(secret, 7, 1, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	req, _ := http.NewRequest("GET", "/api/v1/author", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: cookie})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if nextCalled {
+		t.Error("handler should not run for a revoked (epoch-mismatched) cookie")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d; want %d (genuine epoch mismatch is a logout)", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+// TestMiddlewareSessionEpochMatchAuthenticates confirms the happy path: a cookie
+// whose epoch matches the user's current epoch (no error) authenticates.
+func TestMiddlewareSessionEpochMatchAuthenticates(t *testing.T) {
+	secret := testSecret32
+	p := &fakeProvider{mode: ModeEnabled, secret: secret, wantEpoch: 1}
+	mw := Middleware(p)
+	var gotUID int64
+	h := mw(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		gotUID = UserIDFromContext(r.Context())
+	}))
+
+	cookie, err := SignSessionWithEpoch(secret, 7, 1, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	req, _ := http.NewRequest("GET", "/api/v1/author", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: cookie})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d; want 200 for a matching-epoch cookie", rec.Code)
+	}
 	if gotUID != 7 {
 		t.Errorf("uid = %d; want 7", gotUID)
 	}

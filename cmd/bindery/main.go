@@ -1333,14 +1333,14 @@ func (p *dbAuthProvider) UserRole(ctx context.Context, userID int64) string {
 // the cookie payload must match for the auth middleware to accept it. Bumped
 // inside UpdatePassword so a password change immediately evicts every
 // outstanding cookie for that user (Wave 1 / Bundle C audit finding).
-// Returns 0 on lookup failure or missing user — that fails closed against
-// any cookie minted after the 047 migration (which defaults the column to 1).
-func (p *dbAuthProvider) UserSessionEpoch(ctx context.Context, userID int64) int64 {
-	epoch, err := p.users.GetSessionEpoch(ctx, userID)
-	if err != nil {
-		return 0
-	}
-	return epoch
+//
+// The error is propagated rather than swallowed: a transient DB failure here
+// previously returned epoch 0, which the middleware read as a mismatch and
+// silently logged out users holding a valid cookie (cookies minted after the
+// 047 migration carry epoch >= 1). The middleware now treats a non-nil error
+// as a server-side failure (5xx) instead of a forced logout.
+func (p *dbAuthProvider) UserSessionEpoch(ctx context.Context, userID int64) (int64, error) {
+	return p.users.GetSessionEpoch(ctx, userID)
 }
 func (p *dbAuthProvider) UserProvisioner() auth.UserProvisioner {
 	return &dbUserProvisioner{users: p.users}
