@@ -396,6 +396,31 @@ func (r *BookRepo) GetByForeignID(ctx context.Context, foreignID string) (*model
 	return &books[0], nil
 }
 
+// GetByForeignIDForUser is GetByForeignID constrained to books the given user
+// owns. Unlike GetByForeignID (global, used on the add/write path where the
+// caller already controls ownership), this is the lookup used to enrich a
+// series-diff view with a link to an *existing* library book, so it should not
+// surface another user's book into one tenant's series page (#1210).
+//
+// Scoping is conditional, matching every other ownership-scoped read in this
+// package: when userID > 0 (a per-user cookie identity under EnforceTenancy)
+// the owner_user_id predicate is applied; when userID is 0 — the admin-
+// equivalent modes (auth disabled, local-only, or API-key) — the predicate is
+// omitted via QueryScopeFor and behaviour matches the global GetByForeignID.
+// It is not an absolute cross-tenant guard; it is exactly as strong as the
+// rest of the library reads in those modes.
+func (r *BookRepo) GetByForeignIDForUser(ctx context.Context, foreignID string, userID int64) (*models.Book, error) {
+	where, args := QueryScopeFor("books.owner_user_id", "WHERE books.foreign_id = ?", userID, foreignID)
+	books, err := r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where, args)
+	if err != nil {
+		return nil, err
+	}
+	if len(books) == 0 {
+		return nil, nil
+	}
+	return &books[0], nil
+}
+
 func (r *BookRepo) Create(ctx context.Context, b *models.Book) error {
 	now := time.Now().UTC()
 	genresJSON, err := json.Marshal(b.Genres)

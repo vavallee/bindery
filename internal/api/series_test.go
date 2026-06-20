@@ -1060,6 +1060,132 @@ func TestSeriesHardcoverDiffEndpoint(t *testing.T) {
 	}
 }
 
+// TestBuildHardcoverDiffEnrichesMissingWithOwnedLibraryBook is the regression
+// guard for #1210. A catalog book that is NOT linked to this series (so it
+// lands in Missing) but already exists in the requesting user's library must
+// get LocalBookID populated so the frontend renders a link instead of an "add"
+// button. The companion assertion is the security guard: an identical book
+// owned by a DIFFERENT user must NOT be linked (LocalBookID stays nil), or one
+// tenant's series page would leak a link to another tenant's book.
+func TestBuildHardcoverDiffEnrichesMissingWithOwnedLibraryBook(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	seriesRepo := db.NewSeriesRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	authorRepo := db.NewAuthorRepo(database)
+	userRepo := db.NewUserRepo(database)
+	ctx := context.Background()
+
+	owner, err := userRepo.Create(ctx, "owner", "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := userRepo.Create(ctx, "other", "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerUserID := owner.ID
+	otherUserID := other.ID
+
+	// Catalog: two books. "owned-missing" exists in user 7's library but is not
+	// linked to the series; "other-missing" exists only in user 8's library.
+	catalog := stormlightCatalog()
+	catalog.Books = append(catalog.Books,
+		metadata.SeriesCatalogBook{
+			ForeignID:  "hc:owned-missing",
+			ProviderID: "201",
+			Title:      "Owned But Unlinked",
+			Position:   "2",
+			Book: models.Book{
+				ForeignID: "hc:owned-missing",
+				Title:     "Owned But Unlinked",
+				Author:    catalog.Books[0].Book.Author,
+			},
+		},
+		metadata.SeriesCatalogBook{
+			ForeignID:  "hc:other-missing",
+			ProviderID: "202",
+			Title:      "Owned By Someone Else",
+			Position:   "3",
+			Book: models.Book{
+				ForeignID: "hc:other-missing",
+				Title:     "Owned By Someone Else",
+				Author:    catalog.Books[0].Book.Author,
+			},
+		},
+	)
+	catalog.BookCount = len(catalog.Books)
+
+	series := &models.Series{ForeignID: "manual:series:stormlight", Title: "Stormlight"}
+	if err := seriesRepo.Create(ctx, series); err != nil {
+		t.Fatal(err)
+	}
+	link := &models.SeriesHardcoverLink{
+		SeriesID:          series.ID,
+		HardcoverSeriesID: catalog.ForeignID,
+	}
+
+	author := &models.Author{ForeignID: "hc:brandon-sanderson", Name: "Brandon Sanderson", SortName: "Sanderson, Brandon"}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create the two library books and stamp their owners. BookRepo.Create does
+	// not set owner_user_id, so stamp it directly (mirrors history_test.go).
+	makeBook := func(foreignID, title string, owner int64) int64 {
+		book := &models.Book{
+			ForeignID: foreignID,
+			AuthorID:  author.ID,
+			Title:     title,
+			SortTitle: title,
+			Status:    models.BookStatusDownloaded,
+			Genres:    []string{},
+		}
+		if err := bookRepo.Create(ctx, book); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.Exec("UPDATE books SET owner_user_id=? WHERE id=?", owner, book.ID); err != nil {
+			t.Fatal(err)
+		}
+		return book.ID
+	}
+	ownedID := makeBook("hc:owned-missing", "Owned But Unlinked (local)", ownerUserID)
+	makeBook("hc:other-missing", "Owned By Someone Else (local)", otherUserID)
+
+	// Build the diff as user 7. Neither extra book is linked to the series, so
+	// both land in Missing.
+	diff := buildHardcoverDiff(ctx, bookRepo, ownerUserID, series, link, catalog)
+
+	var ownedRow, otherRow *seriesHardcoverDiffBook
+	for i := range diff.Missing {
+		switch diff.Missing[i].ForeignBookID {
+		case "hc:owned-missing":
+			ownedRow = &diff.Missing[i]
+		case "hc:other-missing":
+			otherRow = &diff.Missing[i]
+		}
+	}
+	if ownedRow == nil || otherRow == nil {
+		t.Fatalf("expected both unlinked catalog books in Missing, got %+v", diff.Missing)
+	}
+
+	// Positive: the user's own unlinked-but-existing book is linked.
+	if ownedRow.LocalBookID == nil || *ownedRow.LocalBookID != ownedID {
+		t.Fatalf("owned Missing row LocalBookID = %v, want %d", ownedRow.LocalBookID, ownedID)
+	}
+	if ownedRow.LocalTitle != "Owned But Unlinked (local)" {
+		t.Fatalf("owned Missing row LocalTitle = %q, want the local title", ownedRow.LocalTitle)
+	}
+
+	// Security guard: a book owned by a different user must NOT be linked.
+	if otherRow.LocalBookID != nil {
+		t.Fatalf("cross-tenant leak: other user's book linked on Missing row, LocalBookID = %v", *otherRow.LocalBookID)
+	}
+}
+
 func TestSeriesHardcoverDiffEndpointErrors(t *testing.T) {
 	catalog := stormlightCatalog()
 	h, seriesRepo, _, _ := seriesFixtureWithProvider(t, &stubSeriesProvider{

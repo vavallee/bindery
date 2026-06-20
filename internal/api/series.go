@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/bookhydrate"
 	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/db"
@@ -811,7 +812,7 @@ func (h *SeriesHandler) HardcoverDiff(w http.ResponseWriter, r *http.Request) {
 		writeUpstreamError(w, err)
 		return
 	}
-	diff := buildHardcoverDiff(series, link, catalog)
+	diff := buildHardcoverDiff(r.Context(), h.books, auth.UserIDFromContext(r.Context()), series, link, catalog)
 	writeJSON(w, http.StatusOK, diff)
 }
 
@@ -1053,7 +1054,18 @@ func (h *SeriesHandler) hardcoverCatalog(ctx context.Context, foreignID string) 
 	return catalog, nil
 }
 
-func buildHardcoverDiff(series *models.Series, link *models.SeriesHardcoverLink, catalog *metadata.SeriesCatalog) seriesHardcoverDiffResponse {
+// buildHardcoverDiff classifies the catalog against the local series. The
+// Missing set is then enriched: a catalog book the user has NOT linked to this
+// series may still already exist in their library (added standalone, or linked
+// to a different series). When books is non-nil we cross-reference each Missing
+// row against the requesting user's library so the frontend can render a link
+// to the existing /book/:id instead of an "add" button (#1210).
+//
+// The cross-reference is ownership-scoped via GetByForeignIDForUser: userID is
+// the requesting user's id, and a match owned by a different user is never
+// surfaced (cross-tenant guard). Callers without a DB/user context (e.g. the
+// create-missing write path) pass a nil books repo to skip enrichment.
+func buildHardcoverDiff(ctx context.Context, books *db.BookRepo, userID int64, series *models.Series, link *models.SeriesHardcoverLink, catalog *metadata.SeriesCatalog) seriesHardcoverDiffResponse {
 	diff := seriesHardcoverDiffResponse{
 		SeriesID:  series.ID,
 		Link:      link,
@@ -1092,7 +1104,9 @@ func buildHardcoverDiff(series *models.Series, link *models.SeriesHardcoverLink,
 		if _, ok := matchedCatalog[i]; ok {
 			continue
 		}
-		diff.Missing = append(diff.Missing, catalogDiffBook(book, catalog.AuthorName))
+		item := catalogDiffBook(book, catalog.AuthorName)
+		enrichMissingDiffBook(ctx, books, userID, book, &item)
+		diff.Missing = append(diff.Missing, item)
 	}
 	diff.PresentCount = len(diff.Present)
 	diff.MissingCount = len(diff.Missing)
@@ -1147,6 +1161,46 @@ func catalogDiffBook(book metadata.SeriesCatalogBook, fallbackAuthor string) ser
 	}
 }
 
+// enrichMissingDiffBook cross-references a Missing catalog row against the
+// requesting user's library and, on a match, sets LocalBookID (plus LocalTitle/
+// LocalStatus for parity with Present rows) so the frontend renders a link to
+// the existing book instead of an "add" button (#1210). The row stays in the
+// Missing set; only the link metadata is added.
+//
+// Matching is foreign-ID-first, mirroring ensureHardcoverCatalogBook's add-path
+// precedent: derive the catalog book's foreign id exactly as the write path
+// does (firstNonEmpty(Book.ForeignID, catalog.ForeignID), then the "hc:"+
+// providerID fallback) and look it up ownership-scoped via
+// GetByForeignIDForUser.
+//
+// We deliberately do NOT fall back to FindByAuthorAndDedupKey here: that lookup
+// needs a *local* author id, but a Missing (unlinked) catalog book carries only
+// a provider author *name*, not a resolved local author row, so there is no
+// reliable authorID to scope the dedup-key query. An unscoped or
+// name-guessed-author dedup match would also be ambiguous (FindAllByAuthorAndDedupKey
+// exists precisely because the key can collide across editions) and could link
+// the wrong edition, so we skip it rather than guess.
+func enrichMissingDiffBook(ctx context.Context, books *db.BookRepo, userID int64, catalogBook metadata.SeriesCatalogBook, item *seriesHardcoverDiffBook) {
+	if books == nil || ctx == nil {
+		return
+	}
+	foreignID := firstNonEmpty(catalogBook.Book.ForeignID, catalogBook.ForeignID)
+	if foreignID == "" && strings.TrimSpace(catalogBook.ProviderID) != "" {
+		foreignID = "hc:" + catalogBook.ProviderID
+	}
+	if foreignID == "" {
+		return
+	}
+	existing, err := books.GetByForeignIDForUser(ctx, foreignID, userID)
+	if err != nil || existing == nil {
+		return
+	}
+	id := existing.ID
+	item.LocalBookID = &id
+	item.LocalTitle = existing.Title
+	item.LocalStatus = existing.Status
+}
+
 func localDiffBook(local models.SeriesBook) seriesHardcoverDiffBook {
 	item := seriesHardcoverDiffBook{Position: local.PositionInSeries}
 	if local.Book == nil {
@@ -1183,7 +1237,9 @@ func (h *SeriesHandler) createMissingHardcoverBooks(ctx context.Context, seriesI
 	if catalog == nil {
 		return nil
 	}
-	diff := buildHardcoverDiff(series, series.HardcoverLink, catalog)
+	// Write path: only ForeignBookID/Position are consumed below, so skip the
+	// per-row library cross-reference by passing a nil books repo.
+	diff := buildHardcoverDiff(ctx, nil, 0, series, series.HardcoverLink, catalog)
 	for _, missing := range diff.Missing {
 		catalogBook, ok := findCatalogBook(catalog.Books, missing.ForeignBookID, missing.Position)
 		if !ok {
@@ -1220,7 +1276,8 @@ func (h *SeriesHandler) createMissingHardcoverBook(ctx context.Context, seriesID
 	if catalog == nil {
 		return nil, errSeriesCatalogBookNotFound
 	}
-	diff := buildHardcoverDiff(series, series.HardcoverLink, catalog)
+	// Write path: enrichment is unused here, so pass a nil books repo.
+	diff := buildHardcoverDiff(ctx, nil, 0, series, series.HardcoverLink, catalog)
 	for _, missing := range diff.Missing {
 		if !selector.matchesDiffBook(missing) {
 			continue
