@@ -1,0 +1,2 @@
+### Fixed
+- **"Group by series" on the author page dumped every book into "Standalone"** (#1209) — the per-author series endpoint returned each series without its book membership (the `books` array was empty, and `omitempty` dropped it from the JSON entirely), so the frontend had nothing to group on and every book fell through to Standalone. `ListByAuthor` now joins through `series_books`/`books` and populates each series' book list (author-scoped, ordered by position-in-series), so books group under their series again.
