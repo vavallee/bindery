@@ -1,12 +1,14 @@
 # Multi-User
 
-Bindery v1.0 introduces per-user library scoping: authors, books, downloads, quality profiles, metadata profiles, and root folders can be owned by a specific user, and users log in with their own credentials.
+Bindery v1.0 introduces per-user library scoping: authors, books, downloads, quality profiles, and metadata profiles can be owned by a specific user, and users log in with their own credentials.
+
+> **Root folders are not per-user.** They are a single shared, admin-managed pool (Settings → Root Folders), and import destinations resolve per-author plus a global default — there is no per-user library directory today. Regular users don't get their own root folders. Per-user root folders are a tracked future enhancement, not current behaviour.
 
 > **Important — data isolation is opt-in.** Per-user data isolation is gated behind the `BINDERY_ENFORCE_TENANCY` environment variable, which **defaults OFF**. With it unset (the default), any authenticated user can see and manage *all* data — Bindery behaves like a single-user instance regardless of how many accounts exist. To make users see only their own library, set `BINDERY_ENFORCE_TENANCY=true`.
 >
 > When enforcement is on, Bindery scopes:
 > - **Tier-2 join-scoped resources** — download queue, history, pending grabs, and the OPDS catalogue — to the requesting user.
-> - **Per-user resources** — each user's own authors, books, profiles, root folders, API key, password, and notification preferences.
+> - **Per-user resources** — each user's own authors, books, profiles, API key, password, and notification preferences. (Root folders are **not** per-user; see the note above.)
 >
 > Role-based gating of admin-only configuration (indexers, download clients, user management, system settings) applies in **both** modes — that does not depend on `BINDERY_ENFORCE_TENANCY`. The flag only controls whether *library data* is partitioned per user.
 
@@ -27,7 +29,7 @@ Two roles exist: `admin` and `user`.
 |--------|:-------:|:------:|
 | View and manage own authors/books/downloads | Yes | Yes |
 | View and manage own quality/metadata profiles | Yes | Yes |
-| View and manage own root folders | Yes | Yes |
+| Manage root folders (single shared/global pool) | Yes | No |
 | Change own password and API key | Yes | Yes |
 | Configure own notification preferences | Yes | Yes |
 | View other users' library data | Yes | No |
