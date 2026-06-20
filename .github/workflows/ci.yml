@@ -435,7 +435,27 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # Best-effort telemetry: advertise the new version to the in-app update
+  # check (bindery-ping). Split out of the goreleaser job: the telemetry
+  # cluster is regularly unreachable from the runner, and having this as a
+  # step inside goreleaser failed that whole job, which cascaded to skip
+  # deploy-prod and notify-discord (both gate on goreleaser success).
+  # It now runs as its own job that nothing depends on, with
+  # continue-on-error so a telemetry outage never reddens the release or
+  # blocks the prod deploy. Do NOT add this job to required status checks.
+  bump-latest-version:
+    name: Bump bindery-ping LATEST_VERSION
+    needs: goreleaser
+    if: startsWith(github.ref, 'refs/tags/v')
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
       - name: Bump bindery-ping LATEST_VERSION
+        continue-on-error: true
         env:
           KUBECONFIG_B64: ${{ secrets.HETZ1_KUBECONFIG }}
           VERSION: ${{ github.ref_name }}
