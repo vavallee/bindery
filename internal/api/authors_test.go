@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1896,7 +1897,7 @@ func TestListAuthorSeries(t *testing.T) {
 	if err := seriesRepo.CreateOrGet(ctx, s); err != nil {
 		t.Fatal(err)
 	}
-	if err := seriesRepo.LinkBook(ctx, s.ID, book.ID, "", true); err != nil {
+	if err := seriesRepo.LinkBook(ctx, s.ID, book.ID, "1", true); err != nil {
 		t.Fatal(err)
 	}
 	// A second unlinked series exists globally — must not appear in the
@@ -1923,6 +1924,16 @@ func TestListAuthorSeries(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].ID != s.ID {
 		t.Fatalf("got %d series, want only the linked one (id %d): %+v", len(got), s.ID, got)
+	}
+	// Regression guard for #1209: the series payload must carry its book
+	// membership. Books has `json:",omitempty"`, so an empty slice is dropped
+	// from JSON entirely; assert against the raw body that the "books" key is
+	// present and that the membership round-trips with the linked book.
+	if got[0].Books == nil || len(got[0].Books) != 1 || got[0].Books[0].BookID != book.ID {
+		t.Fatalf("series books not populated: %+v", got[0].Books)
+	}
+	if !strings.Contains(rec.Body.String(), `"books"`) {
+		t.Fatalf("response JSON missing books array (omitempty drop): %s", rec.Body.String())
 	}
 }
 

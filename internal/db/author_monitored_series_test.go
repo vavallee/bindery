@@ -228,13 +228,15 @@ func TestSeriesListByAuthor(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// a1 has two books in series A1 plus one standalone book that is not
+	// linked to any series (so it must not surface a phantom membership).
 	b1 := &models.Book{ForeignID: "OL-B1", AuthorID: a1.ID, Title: "X", SortTitle: "X", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"}
+	b1b := &models.Book{ForeignID: "OL-B1B", AuthorID: a1.ID, Title: "X2", SortTitle: "X2", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"}
 	b2 := &models.Book{ForeignID: "OL-B2", AuthorID: a2.ID, Title: "Y", SortTitle: "Y", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"}
-	if err := bookRepo.Create(ctx, b1); err != nil {
-		t.Fatal(err)
-	}
-	if err := bookRepo.Create(ctx, b2); err != nil {
-		t.Fatal(err)
+	for _, b := range []*models.Book{b1, b1b, b2} {
+		if err := bookRepo.Create(ctx, b); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	sA := &models.Series{ForeignID: "ol-series:a1", Title: "A1"}
@@ -245,6 +247,9 @@ func TestSeriesListByAuthor(t *testing.T) {
 	if err := seriesRepo.CreateOrGet(ctx, sB); err != nil {
 		t.Fatal(err)
 	}
+	// Link b1b at position 2 and b1 at position 1 so we can prove the result is
+	// ordered by position-in-series, not by insertion order.
+	_ = seriesRepo.LinkBook(ctx, sA.ID, b1b.ID, "2", false)
 	_ = seriesRepo.LinkBook(ctx, sA.ID, b1.ID, "1", true)
 	_ = seriesRepo.LinkBook(ctx, sB.ID, b2.ID, "1", true)
 
@@ -255,6 +260,18 @@ func TestSeriesListByAuthor(t *testing.T) {
 	if len(got) != 1 || got[0].ID != sA.ID {
 		t.Fatalf("a1: want [sA], got %v", got)
 	}
+	// Regression guard for #1209: the series must carry its book membership so
+	// the author-page "Group by series" view can place books under the series.
+	if len(got[0].Books) != 2 {
+		t.Fatalf("a1 series A1: want 2 books populated, got %d (%+v)", len(got[0].Books), got[0].Books)
+	}
+	if got[0].Books[0].BookID != b1.ID || got[0].Books[1].BookID != b1b.ID {
+		t.Fatalf("a1 series A1: books not position-ordered: got [%d,%d] want [%d,%d]",
+			got[0].Books[0].BookID, got[0].Books[1].BookID, b1.ID, b1b.ID)
+	}
+	if got[0].Books[0].PositionInSeries != "1" || !got[0].Books[0].PrimarySeries {
+		t.Fatalf("a1 series A1: first book fields not populated: %+v", got[0].Books[0])
+	}
 
 	got2, err := seriesRepo.ListByAuthor(ctx, a2.ID)
 	if err != nil {
@@ -262,5 +279,9 @@ func TestSeriesListByAuthor(t *testing.T) {
 	}
 	if len(got2) != 1 || got2[0].ID != sB.ID {
 		t.Fatalf("a2: want [sB], got %v", got2)
+	}
+	// Author scope: only a2's book should be under sB, never a1's books.
+	if len(got2[0].Books) != 1 || got2[0].Books[0].BookID != b2.ID {
+		t.Fatalf("a2 series B: want only b2, got %+v", got2[0].Books)
 	}
 }
