@@ -540,3 +540,178 @@ func TestSync_HydratesHardcoverEditions(t *testing.T) {
 		t.Fatalf("expected hydrated edition, got %+v", got)
 	}
 }
+
+// TestNormalizeAuthorName pins the canonicalization rules used by the
+// name-based fallback in ensureAuthor. Pairs of names that should collapse to
+// the same key must collapse, and distinct authors must remain distinct.
+func TestNormalizeAuthorName(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty", "", ""},
+		{"whitespace-only", "   \t\n", ""},
+		{"plain", "George R. R. Martin", "george r r martin"},
+		{"periods-stripped", "George R.R. Martin", "george r r martin"},
+		{"no-periods", "George R R Martin", "george r r martin"},
+		{"collapsed-whitespace", "Stephen   King", "stephen king"},
+		{"trimmed", "  Ursula K. Le Guin  ", "ursula k le guin"},
+		{"lowercased", "STEPHEN KING", "stephen king"},
+		{"commas-stripped", "Doe, John", "doe john"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeAuthorName(tc.in); got != tc.want {
+				t.Errorf("normalizeAuthorName(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestNormalizeAuthorName_DistinctAuthors verifies the helper doesn't
+// over-collapse. Authors that share a surname or a common first-name token
+// must NOT map to the same key — otherwise the fallback in ensureAuthor
+// would incorrectly merge them.
+func TestNormalizeAuthorName_DistinctAuthors(t *testing.T) {
+	pairs := [][2]string{
+		{"Stephen King", "Stephen Hawking"},      // shared first name only
+		{"George R. R. Martin", "George Martin"}, // middle-initials differ
+	}
+	for _, p := range pairs {
+		if normalizeAuthorName(p[0]) == normalizeAuthorName(p[1]) {
+			t.Errorf("expected %q and %q to be distinct, both normalize to %q",
+				p[0], p[1], normalizeAuthorName(p[0]))
+		}
+	}
+}
+
+// TestSyncOne_ReusesAuthorByNormalizedName is the regression test for
+// issue #1223. A library populated by ABS/OpenLibrary has authors with OL
+// foreign_ids; a Hardcover list import brings authors with HC foreign_ids.
+// The two never match by primary foreign_id or alias. Without the fix, each
+// HC book creates a duplicate author row. With the fix, the syncer falls
+// back to a normalized-name match, attaches the HC id as an alias, and
+// reuses the existing author.
+func TestSyncOne_ReusesAuthorByNormalizedName(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	existing := &models.Author{
+		ForeignID:        "OL-AUTHOR-MARTIN",
+		Name:             "George R. R. Martin",
+		SortName:         "Martin, George R. R.",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := s.authors.Create(ctx, existing); err != nil {
+		t.Fatalf("seed author: %v", err)
+	}
+
+	il := testImportList("HC Martin List", "hardcover", true)
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed list: %v", err)
+	}
+
+	// Hardcover hands back the same author under a different surface name
+	// ("George R.R. Martin" without spaces around the periods) and a
+	// brand-new HC foreign_id that nothing in the library knows about.
+	book := bookWithSeriesRef("hc:game-of-thrones", "A Game of Thrones", nil)
+	book.Author.ForeignID = "hc:george-rr-martin"
+	book.Author.Name = "George R.R. Martin"
+	book.Author.SortName = ""
+	book.Author.MetadataProvider = "hardcover"
+	s.WithClientFactory(func(string) hardcoverClient {
+		return &fakeHardcoverClient{
+			lists: []hardcover.HCList{{ID: 12, Slug: il.URL, Name: il.Name}},
+			books: []models.Book{book},
+		}
+	})
+
+	if err := s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatalf("SyncOne: %v", err)
+	}
+
+	// Exactly one author must exist — the existing OL author, reused.
+	authors, err := s.authors.List(ctx)
+	if err != nil {
+		t.Fatalf("List authors: %v", err)
+	}
+	if len(authors) != 1 {
+		names := make([]string, 0, len(authors))
+		for _, a := range authors {
+			names = append(names, a.Name)
+		}
+		t.Fatalf("authors = %d (%v), want 1 (existing author reused; no duplicate)",
+			len(authors), names)
+	}
+	if authors[0].ID != existing.ID {
+		t.Fatalf("reused author id = %d, want existing %d", authors[0].ID, existing.ID)
+	}
+
+	// The book must be linked to the existing author.
+	imported, err := s.books.GetByForeignID(ctx, "hc:game-of-thrones")
+	if err != nil || imported == nil {
+		t.Fatalf("imported book = %+v err=%v, want persisted", imported, err)
+	}
+	if imported.AuthorID != existing.ID {
+		t.Fatalf("book author_id = %d, want existing author %d", imported.AuthorID, existing.ID)
+	}
+
+	// The HC foreign_id must have been attached as an alias so the next
+	// list sync hits the cheap path (GetByAnyForeignID) directly.
+	aliases, err := s.authors.ListAuthorIdentifiers(ctx, existing.ID)
+	if err != nil {
+		t.Fatalf("ListIdentifiers: %v", err)
+	}
+	found := false
+	for _, a := range aliases {
+		if a.ForeignID == "hc:george-rr-martin" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected HC alias %q attached to existing author, got %+v",
+			"hc:george-rr-martin", aliases)
+	}
+}
+
+// TestSyncOne_CreatesNewAuthorWhenNoNameMatch protects the fallback: when
+// neither the foreign_id nor a normalized-name match exists, the syncer
+// must still create the author. This guards against the fallback silently
+// swallowing real new authors.
+func TestSyncOne_CreatesNewAuthorWhenNoNameMatch(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	il := testImportList("HC Fresh List", "hardcover", true)
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed list: %v", err)
+	}
+	book := bookWithSeriesRef("hc:fresh-book", "Fresh Book", nil)
+	s.WithClientFactory(func(string) hardcoverClient {
+		return &fakeHardcoverClient{
+			lists: []hardcover.HCList{{ID: 12, Slug: il.URL, Name: il.Name}},
+			books: []models.Book{book},
+		}
+	})
+
+	if err := s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatalf("SyncOne: %v", err)
+	}
+	authors, err := s.authors.List(ctx)
+	if err != nil {
+		t.Fatalf("List authors: %v", err)
+	}
+	if len(authors) != 1 {
+		t.Fatalf("authors = %d, want 1 new author created", len(authors))
+	}
+	imported, err := s.books.GetByForeignID(ctx, "hc:fresh-book")
+	if err != nil || imported == nil {
+		t.Fatalf("book should be imported: %+v err=%v", imported, err)
+	}
+	if imported.AuthorID != authors[0].ID {
+		t.Fatalf("book author_id = %d, want new author %d", imported.AuthorID, authors[0].ID)
+	}
+}

@@ -269,6 +269,17 @@ func (s *ListSyncer) hydrateHardcoverEditions(ctx context.Context, book *models.
 
 // ensureAuthor looks up the author by foreign ID, creating a minimal record if
 // missing. Returns the author's database ID.
+//
+// Lookup order:
+//  1. Primary foreign_id or alternate identifier match via GetByAnyForeignID.
+//  2. Normalized-name match against existing authors. When a confident hit is
+//     found, the Hardcover foreign_id is attached as an alias via
+//     UpsertAuthorIdentifier so future list syncs hit step 1 directly.
+//     This is the path that prevents the duplicate-author row described in
+//     issue #1223: a library populated by ABS/OpenLibrary has no Hardcover
+//     foreign_id, so step 1 misses even though the author already exists.
+//
+// Returns the author's database ID.
 func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book) (int64, error) {
 	if book.Author == nil {
 		return 0, fmt.Errorf("book %q has no author metadata", book.Title)
@@ -280,6 +291,27 @@ func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book) (int64
 	}
 	if existing != nil {
 		return existing.ID, nil
+	}
+
+	// Fallback: normalize the candidate name and look for an existing author
+	// whose stored name (or sort_name) normalizes to the same value. This
+	// matches "George R. R. Martin" against "George R.R. Martin", and
+	// "Stephen  King" against "Stephen King". On a hit we attach the
+	// Hardcover foreign_id as an alias so the next list sync hits step 1.
+	if matched, matchErr := s.findExistingAuthorByName(ctx, book.Author); matchErr != nil {
+		slog.Warn("hardcover list sync: normalized author lookup failed; creating new author",
+			"name", book.Author.Name, "error", matchErr)
+	} else if matched != nil {
+		if err := s.authors.UpsertAuthorIdentifier(ctx, matched.ID, book.Author.ForeignID); err != nil {
+			// Alias attach is best-effort — if it fails we still want to reuse
+			// the matched author for this sync. Next sync will retry.
+			slog.Warn("hardcover list sync: failed to attach Hardcover alias to existing author",
+				"existingAuthorID", matched.ID, "name", matched.Name, "hcForeignID", book.Author.ForeignID, "error", err)
+		} else {
+			slog.Info("reused existing author for hardcover list import",
+				"existingAuthorID", matched.ID, "name", matched.Name, "hcForeignID", book.Author.ForeignID)
+		}
+		return matched.ID, nil
 	}
 
 	// Create a minimal author record
@@ -302,6 +334,70 @@ func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book) (int64
 	}
 	slog.Info("created author from hardcover list", "name", author.Name, "foreignID", author.ForeignID)
 	return author.ID, nil
+}
+
+// findExistingAuthorByName scans the existing authors and returns the first
+// one whose name or sort_name normalizes to the same value as the candidate's
+// Name. Returns nil with no error when no match is found. The scan is linear
+// over List(); acceptable here because list sync is a scheduled batch job
+// (not request-path) and the author table is bounded by a single user's
+// library.
+func (s *ListSyncer) findExistingAuthorByName(ctx context.Context, candidate *models.Author) (*models.Author, error) {
+	if candidate == nil || strings.TrimSpace(candidate.Name) == "" {
+		return nil, nil
+	}
+	target := normalizeAuthorName(candidate.Name)
+	if target == "" {
+		return nil, nil
+	}
+
+	all, err := s.authors.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list authors for name match: %w", err)
+	}
+	for i := range all {
+		a := &all[i]
+		if normalizeAuthorName(a.Name) == target || normalizeAuthorName(a.SortName) == target {
+			return a, nil
+		}
+	}
+	return nil, nil
+}
+
+// normalizeAuthorName produces a canonical form suitable for author-identity
+// matching: lowercased, with periods and commas stripped, and runs of
+// whitespace condensed to a single space. "George R. R. Martin",
+// "George R.R. Martin", and "george r r martin" all collapse to the same
+// key. Empty and whitespace-only inputs return "" so callers can short-
+// circuit without a separate check.
+func normalizeAuthorName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(name))
+	prevSpace := false
+	for _, r := range name {
+		switch r {
+		case '.', ',', ';', ':', '\t', '\n', '\r':
+			// Skip — treat as separators.
+			if !prevSpace && b.Len() > 0 {
+				b.WriteByte(' ')
+				prevSpace = true
+			}
+		case ' ':
+			if !prevSpace && b.Len() > 0 {
+				b.WriteByte(' ')
+				prevSpace = true
+			}
+		default:
+			b.WriteRune(r)
+			prevSpace = false
+		}
+	}
+	out := strings.ToLower(strings.TrimSpace(b.String()))
+	return out
 }
 
 func sortName(name string) string {
