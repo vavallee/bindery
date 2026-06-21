@@ -34,11 +34,14 @@ const (
 	hardcoverSuccessResponseBodyLimit = 8 << 20
 )
 
-// Client implements metadata.Provider for Hardcover.app using its public GraphQL API.
-// Set an API token via WithToken or NewAuthenticated to enable authenticated queries.
+// Client implements metadata.Provider for Hardcover.app using its GraphQL API.
+// As of 2026 the endpoint rejects unauthenticated requests with
+// {"error":"Unable to verify token"} for every query — including plain
+// search — so a token must be set via WithToken, WithTokenSource, or
+// NewAuthenticated for any call to succeed.
 type Client struct {
 	http        *http.Client
-	token       string // optional API token; required for user-specific queries
+	token       string // API token; required for all queries (search included)
 	tokenSource func(context.Context) string
 }
 
