@@ -1,0 +1,100 @@
+# Scheduled backlog sweep + Discord digest.
+#
+# A stale sweep and a digest have no triggering event — they are inherently
+# batch jobs — so they live here, separate from the event-driven ai-triage.yml.
+# Nightly the bot reads every open issue/PR, surfaces what needs attention
+# (stale, awaiting-reporter, mergeable-but-unmerged, conflicted, long-untriaged)
+# and posts a single digest to Discord pinging the maintainer.
+#
+# Deliberate safety boundary: this scheduled pass does NOT auto-close anything.
+# Autonomous closing on a public repo is the scariest action, and a cron job has
+# no human in the loop. It may apply the `needs-triage` label and report; actual
+# closes happen via ai-triage.yml (tied to a real event) or by a human.
+#
+# REQUIRES secret ANTHROPIC_API_KEY. Posts to Discord only if secret
+# DISCORD_MAINTENANCE_WEBHOOK is set (point it at a maintenance channel — do NOT
+# reuse the release webhook unless you want digests in the release feed).
+name: AI Backlog Sweep
+
+on:
+  schedule:
+    - cron: "0 7 * * *" # 07:00 UTC daily
+  workflow_dispatch: {}
+
+concurrency:
+  group: ai-sweep
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write # only to add the needs-triage label (STEP 3); no closes/comments
+  pull-requests: read # read-only by design — the sweep never writes PRs
+  actions: read
+
+jobs:
+  sweep:
+    name: Nightly backlog sweep
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Sweep with Claude
+        uses: anthropics/claude-code-action@2fee15510437d71399d9139ed60433470484a8fb # v1.0.153
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_MAINTENANCE_WEBHOOK }}
+          MAINTAINER_ID: ${{ vars.DISCORD_MAINTAINER_ID }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: --model ${{ vars.AI_BOT_MODEL || 'claude-sonnet-4-6' }} --max-turns 40 --allowedTools "Bash(gh:*),Bash(curl:*),Read,Grep,Glob"
+          prompt: |
+            You are Bindery's nightly backlog sweeper, running in CI on repo
+            ${{ github.repository }}. You use the `gh` CLI (authenticated). Today
+            is a scheduled run with no triggering issue/PR. Be thorough but
+            terse; this output goes to a human maintainer who values signal.
+
+            STEP 1 — gather (read-only):
+            - Open issues: `gh issue list --state open --limit 200 --json number,title,labels,updatedAt,createdAt,comments`.
+            - Open PRs: `gh pr list --state open --limit 100 --json number,title,isDraft,mergeable,reviewDecision,updatedAt,createdAt,labels`.
+
+            STEP 2 — classify into these buckets (skip empty buckets):
+            - 🔴 Mergeable & unmerged: PR not draft, mergeable=MERGEABLE,
+              reviewDecision=APPROVED. These are ready to land.
+            - 🟠 Conflicted PRs: mergeable=CONFLICTING.
+            - 🟡 PRs awaiting first review > 7 days (updatedAt older than 7d, no
+              reviewDecision).
+            - 🔵 Stale issues: no activity > 30 days, NOT labeled `one-day-maybe`,
+              `help wanted`, or `good first issue` (those are intentionally
+              parked — exclude them).
+            - 🟣 Long-untriaged: issues labeled `needs-triage` older than 3 days,
+              or open issues with NO labels at all.
+
+            STEP 3 — light hygiene (the ONLY writes you may do):
+            - For 🟣 issues that have no labels at all, add `needs-triage` so they
+              stop slipping through. Nothing else. Do NOT close anything. Do NOT
+              comment on issues. Do NOT touch PRs.
+
+            STEP 4 — digest. Build ONE Discord message:
+            - Start with a one-line headline: counts per non-empty bucket.
+            - Then each non-empty bucket as a short section: bucket name, then up
+              to 5 items as `#<num> <title> — <github url>` (oldest first). If a
+              bucket has more than 5, end with `…and N more`.
+            - Keep the whole thing under ~1800 characters (Discord limit is 2000);
+              truncate lower-priority buckets first.
+            - If there is genuinely nothing actionable (all buckets empty), make
+              the message a single line saying the backlog is clean.
+
+            STEP 5 — post. Only if the env var DISCORD_WEBHOOK is non-empty:
+            prepend `<@${MAINTAINER_ID}> ` to the message when MAINTAINER_ID is
+            set, then POST with curl (NOT any other tool):
+              curl -fsS -H "Content-Type: application/json" \
+                -d "$(jq -Rn --arg c "$MSG" '{content:$c}')" "$DISCORD_WEBHOOK"
+            (Build the JSON with jq so newlines/quotes are escaped correctly.)
+            If DISCORD_WEBHOOK is empty, skip posting and just print the digest to
+            the job log instead.
