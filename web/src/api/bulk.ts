@@ -1,13 +1,19 @@
 import { request } from './core'
 import type { Book } from './books'
-import type { MediaType } from './authors'
+import type { AuthorMonitorMode, MediaType } from './authors'
 
 export type AuthorBulkAction = 'monitor' | 'unmonitor' | 'delete' | 'search' | 'refresh' | 'set_media_type'
+export type AuthorBulkMonitorMode = Exclude<AuthorMonitorMode, 'series'>
 export type BookBulkAction = 'monitor' | 'unmonitor' | 'delete' | 'search' | 'set_media_type' | 'exclude'
 export type WantedBulkAction = 'search' | 'blocklist' | 'unmonitor'
 
 export interface BulkResult {
   results: Record<string, { ok: boolean; error?: string }>
+}
+
+export interface BulkSetAuthorMonitorModeOptions {
+  monitorLatestCount?: number
+  applyMonitorModeToExisting?: boolean
 }
 
 export const bulkApi = {
@@ -20,6 +26,17 @@ export const bulkApi = {
   // Bulk actions
   bulkActionAuthors: (ids: number[], action: AuthorBulkAction, mediaType?: MediaType) =>
     request<BulkResult>('/author/bulk', { method: 'POST', body: JSON.stringify({ ids, action, ...(mediaType ? { mediaType } : {}) }) }),
+  bulkSetAuthorMonitorMode: (ids: number[], monitorMode: AuthorBulkMonitorMode, opts: BulkSetAuthorMonitorModeOptions = {}) =>
+    request<BulkResult>('/author/bulk', {
+      method: 'POST',
+      body: JSON.stringify({
+        ids,
+        action: 'set_monitor_mode',
+        monitorMode,
+        ...(opts.monitorLatestCount !== undefined ? { monitorLatestCount: opts.monitorLatestCount } : {}),
+        ...(opts.applyMonitorModeToExisting !== undefined ? { applyMonitorModeToExisting: opts.applyMonitorModeToExisting } : {}),
+      }),
+    }),
   searchAuthorWanted: (id: number) =>
     request<BulkResult>('/author/bulk', { method: 'POST', body: JSON.stringify({ ids: [id], action: 'search' }) }),
   bulkActionBooks: (ids: number[], action: BookBulkAction, mediaType?: MediaType) =>

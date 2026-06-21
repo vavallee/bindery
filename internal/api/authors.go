@@ -876,7 +876,7 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.ApplyMonitorModeToExisting {
-		if err := h.applyMonitorModeToExistingBooks(r.Context(), author); err != nil {
+		if err := applyMonitorModeToExistingBooks(r.Context(), h.books, h.authors, h.series, author); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
@@ -884,8 +884,8 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, author)
 }
 
-func (h *AuthorHandler) applyMonitorModeToExistingBooks(ctx context.Context, author *models.Author) error {
-	books, err := h.books.ListByAuthorIncludingExcluded(ctx, author.ID)
+func applyMonitorModeToExistingBooks(ctx context.Context, booksRepo *db.BookRepo, authorsRepo *db.AuthorRepo, seriesRepo *db.SeriesRepo, author *models.Author) error {
+	books, err := booksRepo.ListByAuthorIncludingExcluded(ctx, author.ID)
 	if err != nil {
 		return fmt.Errorf("list author books: %w", err)
 	}
@@ -900,7 +900,7 @@ func (h *AuthorHandler) applyMonitorModeToExistingBooks(ctx context.Context, aut
 		bookSeries   map[int64][]int64
 	)
 	if author.MonitorMode == models.AuthorMonitorModeSeries {
-		ids, err := h.authors.ListMonitoredSeriesIDs(ctx, author.ID)
+		ids, err := authorsRepo.ListMonitoredSeriesIDs(ctx, author.ID)
 		if err != nil {
 			return fmt.Errorf("list monitored series ids: %w", err)
 		}
@@ -908,8 +908,8 @@ func (h *AuthorHandler) applyMonitorModeToExistingBooks(ctx context.Context, aut
 		for _, id := range ids {
 			monitoredSet[id] = struct{}{}
 		}
-		if h.series != nil {
-			bookSeries, err = h.series.ListBookSeriesByAuthor(ctx, author.ID)
+		if seriesRepo != nil {
+			bookSeries, err = seriesRepo.ListBookSeriesByAuthor(ctx, author.ID)
 			if err != nil {
 				return fmt.Errorf("list book→series for author: %w", err)
 			}
@@ -931,7 +931,7 @@ func (h *AuthorHandler) applyMonitorModeToExistingBooks(ctx context.Context, aut
 			continue
 		}
 		books[i].Monitored = next
-		if err := h.books.Update(ctx, &books[i]); err != nil {
+		if err := booksRepo.Update(ctx, &books[i]); err != nil {
 			return fmt.Errorf("update book %d monitor state: %w", books[i].ID, err)
 		}
 	}

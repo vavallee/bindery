@@ -30,6 +30,7 @@ func bulkFixture(t *testing.T) (*BulkHandler, *db.AuthorRepo, *db.BookRepo, *mod
 
 	authors := db.NewAuthorRepo(database)
 	books := db.NewBookRepo(database)
+	series := db.NewSeriesRepo(database)
 	blocklist := db.NewBlocklistRepo(database)
 
 	ctx := context.Background()
@@ -41,7 +42,7 @@ func bulkFixture(t *testing.T) (*BulkHandler, *db.AuthorRepo, *db.BookRepo, *mod
 		t.Fatal(err)
 	}
 
-	h := NewBulkHandler(authors, books, blocklist, nil)
+	h := NewBulkHandler(authors, books, blocklist, nil).WithSeriesRepo(series)
 	return h, authors, books, author, ctx
 }
 
@@ -271,6 +272,159 @@ func TestAuthorsBulk_SetMediaType_Invalid(t *testing.T) {
 	rec := postBulk(t, h.AuthorsBulk, body)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestAuthorsBulk_SetMonitorMode(t *testing.T) {
+	h, authors, _, author, ctx := bulkFixture(t)
+
+	second := &models.Author{
+		ForeignID:        "OL_BULK_MODE_2",
+		Name:             "Second Author",
+		SortName:         "Author, Second",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := authors.Create(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+
+	body := fmt.Sprintf(`{"ids":[%d,%d],"action":"set_monitor_mode","monitorMode":"none"}`, author.ID, second.ID)
+	rec := postBulk(t, h.AuthorsBulk, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp bulkResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{author.ID, second.ID} {
+		key := fmt.Sprintf("%d", id)
+		if r := resp.Results[key]; !r.OK {
+			t.Errorf("author %d: expected ok, got %+v", id, r)
+		}
+		got, _ := authors.GetByID(ctx, id)
+		if got.MonitorMode != models.AuthorMonitorModeNone {
+			t.Errorf("author %d: monitor mode = %q, want none", id, got.MonitorMode)
+		}
+	}
+}
+
+func TestAuthorsBulk_SetMonitorModeLatest_AppliesToExistingBooks(t *testing.T) {
+	h, authors, books, author, ctx := bulkFixture(t)
+
+	oldDate := time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
+	midDate := time.Date(2022, time.January, 1, 0, 0, 0, 0, time.UTC)
+	newDate := time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)
+	excludedDate := time.Date(2025, time.January, 1, 0, 0, 0, 0, time.UTC)
+
+	old := mustCreateBook(t, books, ctx, &models.Book{
+		ForeignID: "OL_MODE_OLD", AuthorID: author.ID, Title: "Old Book",
+		SortTitle: "old book", ReleaseDate: &oldDate, Status: models.BookStatusWanted,
+		Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	})
+	mid := mustCreateBook(t, books, ctx, &models.Book{
+		ForeignID: "OL_MODE_MID", AuthorID: author.ID, Title: "Middle Book",
+		SortTitle: "middle book", ReleaseDate: &midDate, Status: models.BookStatusWanted,
+		Genres: []string{}, MetadataProvider: "openlibrary", Monitored: false,
+	})
+	newest := mustCreateBook(t, books, ctx, &models.Book{
+		ForeignID: "OL_MODE_NEW", AuthorID: author.ID, Title: "Newest Book",
+		SortTitle: "newest book", ReleaseDate: &newDate, Status: models.BookStatusWanted,
+		Genres: []string{}, MetadataProvider: "openlibrary", Monitored: false,
+	})
+	excluded := mustCreateBook(t, books, ctx, &models.Book{
+		ForeignID: "OL_MODE_EXCLUDED", AuthorID: author.ID, Title: "Excluded Future Book",
+		SortTitle: "excluded future book", ReleaseDate: &excludedDate, Status: models.BookStatusWanted,
+		Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	})
+	if err := books.SetExcluded(ctx, excluded.ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	body := fmt.Sprintf(`{"ids":[%d],"action":"set_monitor_mode","monitorMode":"latest","monitorLatestCount":2,"applyMonitorModeToExisting":true}`, author.ID)
+	rec := postBulk(t, h.AuthorsBulk, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	gotAuthor, _ := authors.GetByID(ctx, author.ID)
+	if gotAuthor.MonitorMode != models.AuthorMonitorModeLatest || gotAuthor.MonitorLatestCount != 2 {
+		t.Fatalf("author monitor options = %q/%d, want latest/2", gotAuthor.MonitorMode, gotAuthor.MonitorLatestCount)
+	}
+	cases := []struct {
+		book *models.Book
+		want bool
+	}{
+		{old, false},
+		{mid, true},
+		{newest, true},
+		{excluded, false},
+	}
+	for _, tc := range cases {
+		got, _ := books.GetByID(ctx, tc.book.ID)
+		if got.Monitored != tc.want {
+			t.Errorf("%s monitored = %v, want %v", got.Title, got.Monitored, tc.want)
+		}
+	}
+}
+
+func TestAuthorsBulk_SetMonitorMode_DoesNotApplyExistingWhenDisabled(t *testing.T) {
+	h, authors, books, author, ctx := bulkFixture(t)
+
+	book := mustCreateBook(t, books, ctx, &models.Book{
+		ForeignID: "OL_MODE_KEEP", AuthorID: author.ID, Title: "Keep Monitored",
+		SortTitle: "keep monitored", Status: models.BookStatusWanted,
+		Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	})
+
+	body := fmt.Sprintf(`{"ids":[%d],"action":"set_monitor_mode","monitorMode":"none","applyMonitorModeToExisting":false}`, author.ID)
+	rec := postBulk(t, h.AuthorsBulk, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	gotAuthor, _ := authors.GetByID(ctx, author.ID)
+	if gotAuthor.MonitorMode != models.AuthorMonitorModeNone {
+		t.Fatalf("author monitor mode = %q, want none", gotAuthor.MonitorMode)
+	}
+	gotBook, _ := books.GetByID(ctx, book.ID)
+	if !gotBook.Monitored {
+		t.Error("book should stay monitored when applyMonitorModeToExisting is false")
+	}
+}
+
+func TestAuthorsBulk_SetMonitorMode_Invalid(t *testing.T) {
+	h, _, _, author, _ := bulkFixture(t)
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "unknown mode",
+			body: fmt.Sprintf(`{"ids":[%d],"action":"set_monitor_mode","monitorMode":"yesterday"}`, author.ID),
+		},
+		{
+			name: "series mode",
+			body: fmt.Sprintf(`{"ids":[%d],"action":"set_monitor_mode","monitorMode":"series"}`, author.ID),
+		},
+		{
+			name: "non-positive latest count",
+			body: fmt.Sprintf(`{"ids":[%d],"action":"set_monitor_mode","monitorMode":"latest","monitorLatestCount":0}`, author.ID),
+		},
+		{
+			name: "missing latest count",
+			body: fmt.Sprintf(`{"ids":[%d],"action":"set_monitor_mode","monitorMode":"latest"}`, author.ID),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := postBulk(t, h.AuthorsBulk, tc.body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -1045,6 +1199,7 @@ func seedTwoUserBulk(t *testing.T) bulkAuthzFixture {
 	users := db.NewUserRepo(database)
 	authors := db.NewAuthorRepo(database)
 	books := db.NewBookRepo(database)
+	series := db.NewSeriesRepo(database)
 	blocklist := db.NewBlocklistRepo(database)
 
 	ctx := context.Background()
@@ -1085,7 +1240,7 @@ func seedTwoUserBulk(t *testing.T) bulkAuthzFixture {
 	b1, _ = books.GetByID(ctx, b1.ID)
 	b2, _ = books.GetByID(ctx, b2.ID)
 
-	h := NewBulkHandler(authors, books, blocklist, nil).WithRefreshFunc(func(*models.Author) {})
+	h := NewBulkHandler(authors, books, blocklist, nil).WithSeriesRepo(series).WithRefreshFunc(func(*models.Author) {})
 
 	return bulkAuthzFixture{
 		database: database, h: h, authors: authors, books: books,
@@ -1160,6 +1315,30 @@ func TestBulk_Author_OwnershipMatrix(t *testing.T) {
 				t.Errorf("author deleted=%v, want %v (durable invariant)", deleted, tc.wantDeleted)
 			}
 		})
+	}
+}
+
+func TestBulk_AuthorSetMonitorMode_RejectsCrossUser(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
+	f := seedTwoUserBulk(t)
+
+	body := fmt.Sprintf(`{"ids":[%d],"action":"set_monitor_mode","monitorMode":"none","applyMonitorModeToExisting":true}`, f.a1.ID)
+	rec := postBulkAs(t, f.h.AuthorsBulk, body, f.u2, "user")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ok := resultOK(t, rec, f.a1.ID); ok {
+		t.Error("cross-user monitor-mode update must be rejected per item")
+	}
+
+	ctx := context.Background()
+	gotAuthor, _ := f.authors.GetByID(ctx, f.a1.ID)
+	if gotAuthor.MonitorMode == models.AuthorMonitorModeNone {
+		t.Error("victim author monitor mode must be unchanged")
+	}
+	gotBook, _ := f.books.GetByID(ctx, f.b1.ID)
+	if !gotBook.Monitored {
+		t.Error("victim author books must be unchanged")
 	}
 }
 

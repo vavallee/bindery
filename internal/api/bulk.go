@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/concurrency"
@@ -42,6 +43,7 @@ const bulkSearchConcurrency = 8
 type BulkHandler struct {
 	authors   *db.AuthorRepo
 	books     *db.BookRepo
+	series    *db.SeriesRepo
 	blocklist *db.BlocklistRepo
 	searcher  BookSearcher
 
@@ -63,6 +65,14 @@ type BulkHandler struct {
 
 func NewBulkHandler(authors *db.AuthorRepo, books *db.BookRepo, blocklist *db.BlocklistRepo, searcher BookSearcher) *BulkHandler {
 	return &BulkHandler{authors: authors, books: books, blocklist: blocklist, searcher: searcher}
+}
+
+// WithSeriesRepo attaches series lookups used by monitor-mode application.
+func (h *BulkHandler) WithSeriesRepo(series *db.SeriesRepo) *BulkHandler {
+	if series != nil {
+		h.series = series
+	}
+	return h
 }
 
 // WithRefreshFunc attaches the per-author catalogue-refresh callback used by
@@ -112,7 +122,7 @@ type bulkResponse struct {
 
 // AuthorsBulk handles POST /api/v1/author/bulk.
 //
-// Supported actions: "monitor", "unmonitor", "delete", "search", "refresh", "set_media_type".
+// Supported actions: "monitor", "unmonitor", "delete", "search", "refresh", "set_media_type", "set_monitor_mode".
 // "search" fires an async indexer search for every wanted book belonging
 // to each requested author and always returns ok:true immediately (the search
 // outcome is visible in History).
@@ -125,11 +135,18 @@ type bulkResponse struct {
 // "set_media_type" requires a "mediaType" field ("ebook"|"audiobook"|"both")
 // and applies it to every book belonging to each author — the companion
 // mass-migration action for the global default.media_type setting.
+// "set_monitor_mode" requires a "monitorMode" field ("all"|"future"|"latest"|"none")
+// and optionally applies that mode to existing books when
+// "applyMonitorModeToExisting" is true. Series mode is intentionally excluded:
+// it needs each author's own selected series list.
 func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		IDs       []int64 `json:"ids"`
-		Action    string  `json:"action"`
-		MediaType string  `json:"mediaType"`
+		IDs                        []int64 `json:"ids"`
+		Action                     string  `json:"action"`
+		MediaType                  string  `json:"mediaType"`
+		MonitorMode                string  `json:"monitorMode"`
+		MonitorLatestCount         *int    `json:"monitorLatestCount"`
+		ApplyMonitorModeToExisting bool    `json:"applyMonitorModeToExisting"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -141,7 +158,7 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch req.Action {
-	case "monitor", "unmonitor", "delete", "search", "refresh", "set_media_type":
+	case "monitor", "unmonitor", "delete", "search", "refresh", "set_media_type", "set_monitor_mode":
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -155,6 +172,26 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 		case models.MediaTypeEbook, models.MediaTypeAudiobook, models.MediaTypeBoth:
 		default:
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "mediaType must be 'ebook', 'audiobook', or 'both'"})
+			return
+		}
+	}
+	if req.Action == "set_monitor_mode" {
+		req.MonitorMode = strings.TrimSpace(req.MonitorMode)
+		switch req.MonitorMode {
+		case models.AuthorMonitorModeAll, models.AuthorMonitorModeFuture, models.AuthorMonitorModeLatest, models.AuthorMonitorModeNone:
+		case models.AuthorMonitorModeSeries:
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "monitorMode 'series' cannot be set in bulk"})
+			return
+		default:
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "monitorMode must be one of: all, future, latest, none"})
+			return
+		}
+		if req.MonitorMode == models.AuthorMonitorModeLatest && req.MonitorLatestCount == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "monitorLatestCount must be a positive integer"})
+			return
+		}
+		if req.MonitorLatestCount != nil && *req.MonitorLatestCount <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "monitorLatestCount must be a positive integer"})
 			return
 		}
 	}
@@ -242,6 +279,11 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 			refreshTargets = append(refreshTargets, author)
 		case "set_media_type":
 			if err := h.setAuthorBooksMediaType(r.Context(), id, req.MediaType); err != nil {
+				resp.Results[key] = bulkItemResult{Error: err.Error()}
+				continue
+			}
+		case "set_monitor_mode":
+			if err := h.setAuthorMonitorMode(r.Context(), id, req.MonitorMode, req.MonitorLatestCount, req.ApplyMonitorModeToExisting); err != nil {
 				resp.Results[key] = bulkItemResult{Error: err.Error()}
 				continue
 			}
@@ -443,6 +485,33 @@ func (h *BulkHandler) setAuthorMonitored(ctx context.Context, id int64, monitore
 	}
 	author.Monitored = monitored
 	return h.authors.Update(ctx, author)
+}
+
+func (h *BulkHandler) setAuthorMonitorMode(ctx context.Context, id int64, mode string, latestCount *int, applyExisting bool) error {
+	author, err := h.authors.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if author == nil || !auth.CheckOwnership(ctx, author.OwnerUserID) {
+		return errBulkAuthorNotOwned
+	}
+
+	author.MonitorMode = mode
+	if mode == models.AuthorMonitorModeLatest {
+		if latestCount == nil || *latestCount <= 0 {
+			return fmt.Errorf("monitorLatestCount must be a positive integer")
+		}
+		author.MonitorLatestCount = *latestCount
+	}
+	if err := h.authors.Update(ctx, author); err != nil {
+		return err
+	}
+	if applyExisting {
+		if err := applyMonitorModeToExistingBooks(ctx, h.books, h.authors, h.series, author); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (h *BulkHandler) setBookMonitored(ctx context.Context, id int64, monitored bool) error {

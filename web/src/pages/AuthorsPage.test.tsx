@@ -26,6 +26,7 @@ vi.mock('../api/client', async importOriginal => {
       listAuthors: vi.fn(),
       createSeries: vi.fn(),
       bulkActionAuthors: vi.fn(),
+      bulkSetAuthorMonitorMode: vi.fn(),
     },
   }
 })
@@ -48,10 +49,24 @@ vi.mock('react-i18next', () => ({
         'authors.empty': 'No authors found',
         'authors.emptyHint': 'Add an author to get started',
         'authors.bulkRefreshMetadata': 'Refresh metadata',
+        'authors.bulkSetMonitorMode': 'Set monitor mode',
+        'authors.bulkSetMonitorModeTitle': 'Set monitor mode',
+        'authors.bulkSetMonitorModeCount': `Selected authors: ${String((fallback as Record<string, unknown> | undefined)?.count ?? '')}`,
+        'authors.bulkApplyMonitorModeToExisting': 'Apply monitor mode to existing books',
+        'authors.bulkApplyMonitorModeToExistingHint': 'Otherwise this only affects books discovered in future refreshes.',
+        'authors.bulkSetMonitorModeApply': 'Apply monitor mode',
+        'authors.bulkSetMonitorModePartial': `Monitor mode was not updated for author ${String((fallback as Record<string, unknown> | undefined)?.id ?? '')}: ${String((fallback as Record<string, unknown> | undefined)?.error ?? '')}`,
+        'editAuthorModal.monitorMode': 'Monitor mode',
+        'editAuthorModal.monitorLatestCount': 'Latest book count',
+        'monitorMode.all': 'All books',
+        'monitorMode.future': 'Future books only',
+        'monitorMode.latest': 'Latest only',
+        'monitorMode.none': 'None',
         'common.monitor': 'Monitor',
         'common.unmonitor': 'Unmonitor',
         'common.search': 'Search',
         'common.delete': 'Delete',
+        'common.cancel': 'Cancel',
         'bulkActionBar.clear': 'Clear',
         'bulkActionBar.selected': 'Selected',
       }
@@ -84,6 +99,7 @@ describe('AuthorsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(api.listAuthors).mockResolvedValue({ items: [], total: 0, limit: 100, offset: 0 })
+    vi.mocked(api.bulkSetAuthorMonitorMode).mockResolvedValue({ results: {} })
   })
 
   it('requests a bounded server page rather than the whole table (issue #1010)', async () => {
@@ -163,6 +179,160 @@ describe('AuthorsPage', () => {
     await waitFor(() =>
       expect(api.bulkActionAuthors).toHaveBeenCalledWith([7], 'refresh'),
     )
+  })
+
+  it('opens the bulk monitor mode modal for selected authors', async () => {
+    vi.mocked(api.listAuthors).mockResolvedValue({
+      items: [
+        {
+          id: 7,
+          foreignAuthorId: 'OL7',
+          authorName: 'Andy Weir',
+          sortName: 'Weir, Andy',
+          description: '',
+          imageUrl: '',
+          disambiguation: '',
+          ratingsCount: 0,
+          averageRating: 0,
+          monitored: true,
+        },
+      ],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    })
+
+    render(
+      <MemoryRouter>
+        <AuthorsPage />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(await screen.findByTitle('Select Andy Weir'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Set monitor mode' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Set monitor mode' })).toBeInTheDocument()
+    expect(screen.getByText('Selected authors: 1')).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: /apply monitor mode to existing books/i })).toBeChecked()
+  })
+
+  it('bulk updates selected authors to latest monitor mode and applies it to existing books', async () => {
+    vi.mocked(api.listAuthors).mockResolvedValue({
+      items: [
+        {
+          id: 7,
+          foreignAuthorId: 'OL7',
+          authorName: 'Andy Weir',
+          sortName: 'Weir, Andy',
+          description: '',
+          imageUrl: '',
+          disambiguation: '',
+          ratingsCount: 0,
+          averageRating: 0,
+          monitored: true,
+        },
+      ],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    })
+    vi.mocked(api.bulkSetAuthorMonitorMode).mockResolvedValue({ results: { '7': { ok: true } } })
+
+    render(
+      <MemoryRouter>
+        <AuthorsPage />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(await screen.findByTitle('Select Andy Weir'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Set monitor mode' }))
+    fireEvent.change(await screen.findByLabelText('Monitor mode'), { target: { value: 'latest' } })
+    fireEvent.change(screen.getByLabelText('Latest book count'), { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply monitor mode' }))
+
+    await waitFor(() =>
+      expect(api.bulkSetAuthorMonitorMode).toHaveBeenCalledWith([7], 'latest', {
+        monitorLatestCount: 3,
+        applyMonitorModeToExisting: true,
+      }),
+    )
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Set monitor mode' })).not.toBeInTheDocument())
+  })
+
+  it('can bulk update monitor mode without applying it to existing books', async () => {
+    vi.mocked(api.listAuthors).mockResolvedValue({
+      items: [
+        {
+          id: 7,
+          foreignAuthorId: 'OL7',
+          authorName: 'Andy Weir',
+          sortName: 'Weir, Andy',
+          description: '',
+          imageUrl: '',
+          disambiguation: '',
+          ratingsCount: 0,
+          averageRating: 0,
+          monitored: true,
+        },
+      ],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    })
+
+    render(
+      <MemoryRouter>
+        <AuthorsPage />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(await screen.findByTitle('Select Andy Weir'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Set monitor mode' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /apply monitor mode to existing books/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply monitor mode' }))
+
+    await waitFor(() =>
+      expect(api.bulkSetAuthorMonitorMode).toHaveBeenCalledWith([7], 'none', {
+        monitorLatestCount: undefined,
+        applyMonitorModeToExisting: false,
+      }),
+    )
+  })
+
+  it('keeps the bulk monitor mode modal open on partial failure', async () => {
+    vi.mocked(api.listAuthors).mockResolvedValue({
+      items: [
+        {
+          id: 7,
+          foreignAuthorId: 'OL7',
+          authorName: 'Andy Weir',
+          sortName: 'Weir, Andy',
+          description: '',
+          imageUrl: '',
+          disambiguation: '',
+          ratingsCount: 0,
+          averageRating: 0,
+          monitored: true,
+        },
+      ],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    })
+    vi.mocked(api.bulkSetAuthorMonitorMode).mockResolvedValue({ results: { '7': { ok: false, error: 'author not found' } } })
+
+    render(
+      <MemoryRouter>
+        <AuthorsPage />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(await screen.findByTitle('Select Andy Weir'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Set monitor mode' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply monitor mode' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('author not found')
+    expect(screen.getByRole('dialog', { name: 'Set monitor mode' })).toBeInTheDocument()
   })
 
   // Regression for the "invisible checkmark in light mode" bug: the grid-card
