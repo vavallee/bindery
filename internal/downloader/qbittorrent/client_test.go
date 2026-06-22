@@ -216,6 +216,7 @@ func newTestClient(serverURL, username, password string) *Client {
 
 func allowTorrentFetch(c *Client) {
 	c.validateTorrentURL = func(string) error { return nil }
+	c.fetchTransport = nil // also drop the dial-time SSRF guard for loopback test servers
 }
 
 func TestNew(t *testing.T) {

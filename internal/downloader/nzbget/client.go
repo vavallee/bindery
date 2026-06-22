@@ -53,8 +53,11 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 		baseURL:   fmt.Sprintf("%s://%s:%d%s/jsonrpc", scheme, host, port, urlbase.Normalize(urlBase)),
 		username:  username,
 		password:  password,
-		http:      &http.Client{Timeout: 15 * time.Second},
-		fetchHTTP: &http.Client{Timeout: 60 * time.Second},
+		http: &http.Client{Timeout: 15 * time.Second},
+		// fetchHTTP pulls indexer-controlled NZB URLs, so guard the dial: it
+		// re-validates the resolved IP on every connect (DNS-rebind) and
+		// rejects a redirect to a forbidden host at dial time.
+		fetchHTTP: &http.Client{Timeout: 60 * time.Second, Transport: httpsec.GuardedTransport(httpsec.DownloadFetchPolicy())},
 		validateNZBURL: func(raw string) error {
 			return httpsec.ValidateOutboundURL(raw, httpsec.DownloadFetchPolicy())
 		},

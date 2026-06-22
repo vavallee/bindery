@@ -19,9 +19,12 @@ import (
 
 const testNZBContent = `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE nzb PUBLIC "-//newzBin//DTD NZB 1.1//EN" "http://www.newzbin.com/DTD/nzb/nzb-1.1.dtd"><nzb></nzb>`
 
-// allowNZBFetch bypasses the SSRF guard for loopback test servers.
+// allowNZBFetch bypasses the SSRF guard for loopback test servers: it disables
+// both the up-front URL validator and the dial-time transport guard (the latter
+// by reverting fetchHTTP to the default transport).
 func allowNZBFetch(c *Client) {
 	c.validateNZBURL = func(string) error { return nil }
+	c.fetchHTTP.Transport = nil
 }
 
 // readMultipartFile decodes a multipart request body and returns the first

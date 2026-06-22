@@ -71,6 +71,7 @@ type Client struct {
 	username           string
 	password           string
 	http               *http.Client
+	fetchTransport     http.RoundTripper // SSRF-guarded transport for indexer torrent fetches
 	validateTorrentURL func(string) error
 	mu                 sync.Mutex // guards loggedIn
 	addMu              sync.Mutex // serialises AddTorrent: keeps before/after hash diff atomic
@@ -91,7 +92,8 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 		baseURL:  fmt.Sprintf("%s://%s:%d%s", scheme, host, port, urlbase.Normalize(urlBase)),
 		username: username,
 		password: password,
-		http:     &http.Client{Timeout: 15 * time.Second, Jar: jar},
+		http:           &http.Client{Timeout: 15 * time.Second, Jar: jar},
+		fetchTransport: httpsec.GuardedTransport(httpsec.DownloadFetchPolicy()),
 		validateTorrentURL: func(raw string) error {
 			return httpsec.ValidateOutboundURL(raw, httpsec.DownloadFetchPolicy())
 		},
@@ -460,7 +462,12 @@ type fetchedTorrentContent struct {
 func (c *Client) fetchTorrentContent(ctx context.Context, rawURL string) (*fetchedTorrentContent, error) {
 	current := rawURL
 	fetchClient := &http.Client{
-		Transport: c.http.Transport,
+		// Guard the dial against the indexer-controlled torrent URL: the loop
+		// re-validates each redirect hop, and this adds a per-dial recheck so a
+		// DNS rebind between validate and connect can't reach a forbidden host.
+		// Uses the download-fetch-policy transport, not the RPC client's (which
+		// targets the admin-configured download client over loopback).
+		Transport: c.fetchTransport,
 		Timeout:   c.http.Timeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
