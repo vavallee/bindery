@@ -171,6 +171,13 @@ func TestSensitiveRoutesAllowAdmin(t *testing.T) {
 		{name: "delete download client", method: http.MethodDelete, path: "/downloadclient/1", called: "delete"},
 		{name: "test download client", method: http.MethodPost, path: "/downloadclient/1/test", called: "test"},
 		{name: "test download client config", method: http.MethodPost, path: "/downloadclient/test", called: "test-config"},
+		// Migrate imports — admin must still reach each handler (guards against
+		// accidentally mounting them outside the group so they 404 instead).
+		{name: "import csv", method: http.MethodPost, path: "/migrate/csv", called: "import-csv"},
+		{name: "import readarr", method: http.MethodPost, path: "/migrate/readarr", called: "import-readarr"},
+		{name: "import readarr status", method: http.MethodGet, path: "/migrate/readarr/status", called: "import-readarr-status"},
+		{name: "import goodreads preview", method: http.MethodPost, path: "/migrate/goodreads/preview", called: "import-goodreads-preview"},
+		{name: "import goodreads commit", method: http.MethodPost, path: "/migrate/goodreads/commit", called: "import-goodreads-commit"},
 	}
 
 	for _, tt := range tests {
@@ -180,6 +187,7 @@ func TestSensitiveRoutesAllowAdmin(t *testing.T) {
 			registerIndexerRoutes(router, h)
 			registerProwlarrRoutes(router, h)
 			registerDownloadClientRoutes(router, h)
+			registerMigrateRoutes(router, h)
 
 			req := httptest.NewRequest(tt.method, tt.path, nil)
 			req = req.WithContext(auth.WithUserRole(req.Context(), "admin"))

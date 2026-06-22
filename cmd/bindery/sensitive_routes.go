@@ -28,12 +28,12 @@ type migrateRouteHandler interface {
 func registerMigrateRoutes(r chi.Router, h migrateRouteHandler) {
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireAdmin)
-		r.With(api.WithMaxBody(6 << 20)).Post("/migrate/csv", h.ImportCSV)         // CSV under 5 MiB
-		r.With(api.WithMaxBody(2 << 30)).Post("/migrate/readarr", h.ImportReadarr) // readarr.db can be hundreds of MiB
+		r.With(api.WithMaxBody(6<<20)).Post("/migrate/csv", h.ImportCSV)         // CSV under 5 MiB
+		r.With(api.WithMaxBody(2<<30)).Post("/migrate/readarr", h.ImportReadarr) // readarr.db can be hundreds of MiB
 		r.Get("/migrate/readarr/status", h.ImportReadarrStatus)
 		// Goodreads library CSV import — POST the export to /goodreads/preview
 		// for a dry-run, then POST the returned token to /goodreads/commit.
-		r.With(api.WithMaxBody(24 << 20)).Post("/migrate/goodreads/preview", h.ImportGoodreadsPreview) // export under 20 MiB
+		r.With(api.WithMaxBody(24<<20)).Post("/migrate/goodreads/preview", h.ImportGoodreadsPreview) // export under 20 MiB
 		r.Post("/migrate/goodreads/commit", h.ImportGoodreadsCommit)
 	})
 }
