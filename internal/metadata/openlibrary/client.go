@@ -759,9 +759,14 @@ func (c *Client) getJSON(ctx context.Context, rawURL string, target interface{})
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		// Redact any secret query-param values a transport error's embedded
-		// request URL might carry before the error propagates (#1144).
-		return errors.New(httpsec.RedactSecrets(err.Error()))
+		// Wrap with %w so the error chain survives: callers (and tests) rely on
+		// errors.Is(err, context.Canceled)/context.DeadlineExceeded to classify
+		// cancellations and timeouts. OpenLibrary is a keyless API — every
+		// request URL is built from public path/query params (no key/token/auth),
+		// so the transport error's embedded URL carries no secret to redact.
+		// (#1144 added RedactSecrets here, but it matched nothing in OL URLs and
+		// only flattened the chain, breaking errors.Is classification.)
+		return fmt.Errorf("openlibrary request: %w", err)
 	}
 	defer resp.Body.Close()
 
