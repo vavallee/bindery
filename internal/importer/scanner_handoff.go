@@ -120,11 +120,20 @@ func (s *Scanner) pushToCWA(ctx context.Context, srcPath string) {
 // and the external-mode drop handoff.
 func discoverBookFiles(downloadPath string, explicitFiles []string) []string {
 	if len(explicitFiles) > 0 {
-		return explicitFiles
+		return filterSymlinks(explicitFiles)
 	}
 	var bookFiles []string
 	if err := filepath.Walk(downloadPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
+			return nil
+		}
+		// Skip symlinks. A malicious release can ship a book-extension symlink
+		// pointing at an arbitrary file (e.g. /config/bindery.db, /etc/passwd);
+		// importing it in copy mode would os.Open-follow the link and copy the
+		// target's bytes into the library where the user can download them.
+		// filepath.Walk Lstats, so a symlink shows ModeSymlink here.
+		if info.Mode()&os.ModeSymlink != 0 {
+			slog.Warn("skipping symlinked file in download path", "path", path)
 			return nil
 		}
 		if IsBookFile(path) {
@@ -135,6 +144,22 @@ func discoverBookFiles(downloadPath string, explicitFiles []string) []string {
 		slog.Warn("failed to walk download path", "path", downloadPath, "error", err)
 	}
 	return bookFiles
+}
+
+// filterSymlinks drops any path that is a symlink (Lstat, so the link itself is
+// inspected, not its target). The download client's authoritative file list
+// (#903) can include a symlink a malicious release planted to point at an
+// arbitrary file; importing it would copy the target's bytes into the library.
+func filterSymlinks(paths []string) []string {
+	out := paths[:0:0]
+	for _, p := range paths {
+		if fi, err := os.Lstat(p); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			slog.Warn("skipping symlinked file in download path", "path", p)
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 // dropSettings reads the external-mode drop-folder configuration (#941).
