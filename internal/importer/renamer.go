@@ -810,6 +810,11 @@ func CopyDirCtx(ctx context.Context, src, dst string) error {
 	return copyDirPublicCtx(ctx, src, dst)
 }
 
+// maxPathComponentLen caps each sanitized path segment. Most filesystems limit
+// a single name to 255 bytes (NAME_MAX); 200 leaves room for the extension and
+// any uniqueness suffix the importer appends.
+const maxPathComponentLen = 200
+
 func sanitizePath(s string) string {
 	// Remove characters that are problematic in file paths
 	replacer := strings.NewReplacer(
@@ -817,6 +822,15 @@ func sanitizePath(s string) string {
 		"\"", "", "<", "", ">", "", "|", "",
 	)
 	cleaned := strings.TrimSpace(replacer.Replace(s))
+	// Drop control characters, including the NUL byte: a NUL makes the os.*
+	// calls fail with EINVAL (a hard import failure driven by attacker-
+	// controlled metadata), and other control bytes are never valid in a name.
+	cleaned = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, cleaned)
 	// Strip traversal components (".", "..", empties) so a single field can't
 	// contribute a segment that walks out of the library root even after
 	// character replacement.
@@ -826,6 +840,11 @@ func sanitizePath(s string) string {
 		p = strings.TrimSpace(p)
 		if p == "" || p == "." || p == ".." {
 			continue
+		}
+		// Cap each component (rune-safe) so an overlong metadata field can't
+		// produce an ENAMETOOLONG that fails the whole import.
+		if r := []rune(p); len(r) > maxPathComponentLen {
+			p = strings.TrimSpace(string(r[:maxPathComponentLen]))
 		}
 		kept = append(kept, p)
 	}
