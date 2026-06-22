@@ -53,6 +53,21 @@ func (h *stubSensitiveHandler) SearchQuery(w http.ResponseWriter, _ *http.Reques
 func (h *stubSensitiveHandler) LastSearchDebug(w http.ResponseWriter, _ *http.Request) {
 	h.record("last-search-debug", w)
 }
+func (h *stubSensitiveHandler) ImportCSV(w http.ResponseWriter, _ *http.Request) {
+	h.record("import-csv", w)
+}
+func (h *stubSensitiveHandler) ImportReadarr(w http.ResponseWriter, _ *http.Request) {
+	h.record("import-readarr", w)
+}
+func (h *stubSensitiveHandler) ImportReadarrStatus(w http.ResponseWriter, _ *http.Request) {
+	h.record("import-readarr-status", w)
+}
+func (h *stubSensitiveHandler) ImportGoodreadsPreview(w http.ResponseWriter, _ *http.Request) {
+	h.record("import-goodreads-preview", w)
+}
+func (h *stubSensitiveHandler) ImportGoodreadsCommit(w http.ResponseWriter, _ *http.Request) {
+	h.record("import-goodreads-commit", w)
+}
 
 // TestSensitiveRoutesRequireAdmin nails down the security finding from the
 // v1.15.0 review: List/Get/Create/Update/Delete on the indexer, prowlarr, and
@@ -92,6 +107,12 @@ func TestSensitiveRoutesRequireAdmin(t *testing.T) {
 		{name: "delete download client", method: http.MethodDelete, path: "/downloadclient/1"},
 		{name: "test download client", method: http.MethodPost, path: "/downloadclient/1/test"},
 		{name: "test download client config", method: http.MethodPost, path: "/downloadclient/test"},
+		// Migrate imports — pull in indexer/client credentials, so admin-only.
+		{name: "import csv", method: http.MethodPost, path: "/migrate/csv"},
+		{name: "import readarr", method: http.MethodPost, path: "/migrate/readarr"},
+		{name: "import readarr status", method: http.MethodGet, path: "/migrate/readarr/status"},
+		{name: "import goodreads preview", method: http.MethodPost, path: "/migrate/goodreads/preview"},
+		{name: "import goodreads commit", method: http.MethodPost, path: "/migrate/goodreads/commit"},
 	}
 
 	for _, tt := range tests {
@@ -101,6 +122,7 @@ func TestSensitiveRoutesRequireAdmin(t *testing.T) {
 			registerIndexerRoutes(router, h)
 			registerProwlarrRoutes(router, h)
 			registerDownloadClientRoutes(router, h)
+			registerMigrateRoutes(router, h)
 
 			req := httptest.NewRequest(tt.method, tt.path, nil)
 			req = req.WithContext(auth.WithUserRole(req.Context(), "user"))
