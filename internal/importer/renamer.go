@@ -587,6 +587,16 @@ func copyFile(src, dst string) error {
 	return copyFileCtx(context.Background(), src, dst)
 }
 
+// moveFileRename and moveFileCopy are indirection seams over os.Rename and
+// copyFileCtx so tests can exercise MoveFileCtx's cross-filesystem fallback
+// without an actual second filesystem (and inject a short copy to verify the
+// size-mismatch data-safety branch). Production always uses the real
+// functions; tests override these in-process and restore them.
+var (
+	moveFileRename = os.Rename
+	moveFileCopy   = copyFileCtx
+)
+
 // MoveFileCtx is like MoveFile but returns ctx.Err() if the context is
 // cancelled during the cross-filesystem copy phase.
 func MoveFileCtx(ctx context.Context, src, dst string) error {
@@ -594,11 +604,11 @@ func MoveFileCtx(ctx context.Context, src, dst string) error {
 		return fmt.Errorf("create dir: %w", err)
 	}
 
-	if err := os.Rename(src, dst); err == nil {
+	if err := moveFileRename(src, dst); err == nil {
 		return nil
 	}
 
-	if err := copyFileCtx(ctx, src, dst); err != nil {
+	if err := moveFileCopy(ctx, src, dst); err != nil {
 		return fmt.Errorf("copy file: %w", err)
 	}
 
