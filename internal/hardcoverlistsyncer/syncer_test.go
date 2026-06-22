@@ -715,3 +715,199 @@ func TestSyncOne_CreatesNewAuthorWhenNoNameMatch(t *testing.T) {
 		t.Fatalf("book author_id = %d, want new author %d", imported.AuthorID, authors[0].ID)
 	}
 }
+
+// TestSyncOne_AmbiguousNameMatch_CreatesNewAuthor pins P1 #1 of the
+// #1224 review. When two distinct existing authors normalize to the same
+// key (e.g. one stored as "Stephen King" and one as "Stephen K"), the
+// syncer must NOT silently merge the incoming Hardcover author into
+// either of them. It should fall through to create-new, leaving the
+// existing authors untouched and importing the new book against a
+// fresh author row.
+func TestSyncOne_AmbiguousNameMatch_CreatesNewAuthor(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	// Two pre-existing authors that both normalize to "stephen k" —
+	// the candidate's normalized name collides with BOTH, so the
+	// match is ambiguous and the syncer must fall through to
+	// create-new instead of silently merging into either.
+	first := &models.Author{
+		ForeignID:        "OL-AUTHOR-SK",
+		Name:             "Stephen. K.", // normalizes to "stephen k"
+		SortName:         "K, Stephen",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := s.authors.Create(ctx, first); err != nil {
+		t.Fatalf("seed first author: %v", err)
+	}
+	second := &models.Author{
+		ForeignID:        "OL-AUTHOR-SK2",
+		Name:             "Stephen K", // normalizes to "stephen k"
+		SortName:         "K, Stephen",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := s.authors.Create(ctx, second); err != nil {
+		t.Fatalf("seed second author: %v", err)
+	}
+
+	il := testImportList("HC Ambiguous", "hardcover", true)
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed list: %v", err)
+	}
+
+	// Incoming Hardcover author whose normalized name collides with both.
+	book := bookWithSeriesRef("hc:ambiguous-book", "Ambiguous Book", nil)
+	book.Author.ForeignID = "hc:ambiguous-stephen"
+	book.Author.Name = "Stephen K"
+	book.Author.SortName = ""
+	book.Author.MetadataProvider = "hardcover"
+	s.WithClientFactory(func(string) hardcoverClient {
+		return &fakeHardcoverClient{
+			lists: []hardcover.HCList{{ID: 12, Slug: il.URL, Name: il.Name}},
+			books: []models.Book{book},
+		}
+	})
+
+	if err := s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatalf("SyncOne: %v", err)
+	}
+
+	// A third author must have been created. The two existing authors
+	// must not be merged into the new row, and the new row must not
+	// share an ID with either of them.
+	authors, err := s.authors.List(ctx)
+	if err != nil {
+		t.Fatalf("List authors: %v", err)
+	}
+	if len(authors) != 3 {
+		names := make([]string, 0, len(authors))
+		for _, a := range authors {
+			names = append(names, a.Name)
+		}
+		t.Fatalf("authors = %d (%v), want 3 (ambiguous match must not merge)", len(authors), names)
+	}
+
+	// The book must be linked to the new author (not to either of the
+	// pre-existing ones).
+	imported, err := s.books.GetByForeignID(ctx, "hc:ambiguous-book")
+	if err != nil || imported == nil {
+		t.Fatalf("imported book = %+v err=%v, want persisted", imported, err)
+	}
+	if imported.AuthorID == first.ID || imported.AuthorID == second.ID {
+		t.Fatalf("book author_id = %d, must not reuse an ambiguous name-match (%d, %d)",
+			imported.AuthorID, first.ID, second.ID)
+	}
+
+	// The pre-existing authors must remain pristine — no alias should
+	// have been attached to either of them from this import.
+	for _, a := range []*models.Author{first, second} {
+		ids, err := s.authors.ListAuthorIdentifiers(ctx, a.ID)
+		if err != nil {
+			t.Fatalf("ListAuthorIdentifiers(%d): %v", a.ID, err)
+		}
+		for _, ident := range ids {
+			if ident.ForeignID == "hc:ambiguous-stephen" {
+				t.Fatalf("pre-existing author %d (%s) was wrongly tagged with HC alias", a.ID, a.Name)
+			}
+		}
+	}
+}
+
+// TestSyncOne_NameMatchLosesIdentifierRace_ReusesIdentifierOwner pins
+// P1 #2 of the #1224 review. When the normalized-name fallback picks an
+// author but the HC foreign_id has already been attached to a DIFFERENT
+// author (concurrent sync), the syncer must NOT pretend the alias
+// attached. It must re-fetch via GetByAnyForeignID and reuse the
+// identifier's true owner.
+func TestSyncOne_NameMatchLosesIdentifierRace_ReusesIdentifierOwner(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	// Pre-existing author whose name matches the incoming book.
+	nameMatch := &models.Author{
+		ForeignID:        "OL-AUTHOR-MARTIN",
+		Name:             "George R. R. Martin",
+		SortName:         "Martin, George R. R.",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := s.authors.Create(ctx, nameMatch); err != nil {
+		t.Fatalf("seed name-match author: %v", err)
+	}
+
+	// Pre-existing author who already owns the HC foreign_id the
+	// incoming book carries. This is the "concurrent sync won the
+	// race" scenario — a different author already claimed the alias.
+	identifierOwner := &models.Author{
+		ForeignID:        "OL-AUTHOR-MARTIN-WEB",
+		Name:             "George R. R. Martin",
+		SortName:         "Martin, George R. R.",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := s.authors.Create(ctx, identifierOwner); err != nil {
+		t.Fatalf("seed identifier-owner author: %v", err)
+	}
+	if err := s.authors.UpsertAuthorIdentifier(ctx, identifierOwner.ID, "hc:george-rr-martin"); err != nil {
+		t.Fatalf("seed HC alias on identifier owner: %v", err)
+	}
+
+	il := testImportList("HC Race", "hardcover", true)
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed list: %v", err)
+	}
+
+	book := bookWithSeriesRef("hc:got-race", "A Game of Thrones", nil)
+	book.Author.ForeignID = "hc:george-rr-martin"
+	book.Author.Name = "George R.R. Martin"
+	book.Author.SortName = ""
+	book.Author.MetadataProvider = "hardcover"
+	s.WithClientFactory(func(string) hardcoverClient {
+		return &fakeHardcoverClient{
+			lists: []hardcover.HCList{{ID: 12, Slug: il.URL, Name: il.Name}},
+			books: []models.Book{book},
+		}
+	})
+
+	if err := s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatalf("SyncOne: %v", err)
+	}
+
+	// Exactly the two pre-existing authors must remain — no third
+	// author should have been created.
+	authors, err := s.authors.List(ctx)
+	if err != nil {
+		t.Fatalf("List authors: %v", err)
+	}
+	if len(authors) != 2 {
+		t.Fatalf("authors = %d, want 2 (no new author created)", len(authors))
+	}
+
+	// The book must be linked to the identifier owner — not to the
+	// author that was matched by name. The previous bug returned
+	// matched.ID and silently attributed the book to the wrong author.
+	imported, err := s.books.GetByForeignID(ctx, "hc:got-race")
+	if err != nil || imported == nil {
+		t.Fatalf("imported book = %+v err=%v, want persisted", imported, err)
+	}
+	if imported.AuthorID != identifierOwner.ID {
+		t.Fatalf("book author_id = %d, want identifier owner %d (name-match %d is wrong)",
+			imported.AuthorID, identifierOwner.ID, nameMatch.ID)
+	}
+
+	// The HC foreign_id must still belong to the identifier owner
+	// only — the name-match author must not have been retroactively
+	// tagged.
+	nameMatchAliases, err := s.authors.ListAuthorIdentifiers(ctx, nameMatch.ID)
+	if err != nil {
+		t.Fatalf("ListAuthorIdentifiers(nameMatch): %v", err)
+	}
+	for _, ident := range nameMatchAliases {
+		if ident.ForeignID == "hc:george-rr-martin" {
+			t.Fatalf("name-match author %d was wrongly tagged with HC alias that belongs to author %d",
+				nameMatch.ID, identifierOwner.ID)
+		}
+	}
+}

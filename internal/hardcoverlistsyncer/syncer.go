@@ -303,8 +303,30 @@ func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book) (int64
 			"name", book.Author.Name, "error", matchErr)
 	} else if matched != nil {
 		if err := s.authors.UpsertAuthorIdentifier(ctx, matched.ID, book.Author.ForeignID); err != nil {
-			// Alias attach is best-effort — if it fails we still want to reuse
-			// the matched author for this sync. Next sync will retry.
+			if errors.Is(err, db.ErrAuthorIdentifierConflict) {
+				// Another author already owns this Hardcover foreign_id —
+				// almost certainly via a concurrent sync. Re-fetch the true
+				// owner via the alias table and reuse that author instead of
+				// the one we matched by name, which may be a homonym
+				// (issue #1224 review).
+				owner, ownerErr := s.authors.GetByAnyForeignID(ctx, book.Author.ForeignID)
+				if ownerErr != nil {
+					return 0, fmt.Errorf("resolve author-identifier conflict for %q: %w", book.Author.ForeignID, ownerErr)
+				}
+				if owner == nil {
+					return 0, fmt.Errorf("author identifier conflict for %q but no current owner found", book.Author.ForeignID)
+				}
+				if owner.ID != matched.ID {
+					slog.Info("hardcover list sync: name match lost identifier race; reusing identifier owner",
+						"matchedAuthorID", matched.ID, "matchedName", matched.Name,
+						"ownerAuthorID", owner.ID, "ownerName", owner.Name,
+						"hcForeignID", book.Author.ForeignID)
+				}
+				return owner.ID, nil
+			}
+			// Any other alias-attach failure is best-effort — log and keep
+			// reusing the name-matched author for this sync. Next sync will
+			// retry.
 			slog.Warn("hardcover list sync: failed to attach Hardcover alias to existing author",
 				"existingAuthorID", matched.ID, "name", matched.Name, "hcForeignID", book.Author.ForeignID, "error", err)
 		} else {
@@ -336,12 +358,16 @@ func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book) (int64
 	return author.ID, nil
 }
 
-// findExistingAuthorByName scans the existing authors and returns the first
-// one whose name or sort_name normalizes to the same value as the candidate's
-// Name. Returns nil with no error when no match is found. The scan is linear
-// over List(); acceptable here because list sync is a scheduled batch job
-// (not request-path) and the author table is bounded by a single user's
-// library.
+// findExistingAuthorByName scans the existing authors and returns the
+// unique author whose name or sort_name normalizes to the same value as the
+// candidate's Name. Returns nil with no error when no match is found OR
+// when the match is ambiguous (two or more distinct authors normalize to
+// the same key) — merging homonyms silently is the failure mode flagged in
+// issue #1224's review, so an ambiguous match falls through to create-new.
+//
+// The scan is linear over List(); acceptable here because list sync is a
+// scheduled batch job (not request-path) and the author table is bounded
+// by a single user's library.
 func (s *ListSyncer) findExistingAuthorByName(ctx context.Context, candidate *models.Author) (*models.Author, error) {
 	if candidate == nil || strings.TrimSpace(candidate.Name) == "" {
 		return nil, nil
@@ -355,13 +381,35 @@ func (s *ListSyncer) findExistingAuthorByName(ctx context.Context, candidate *mo
 	if err != nil {
 		return nil, fmt.Errorf("list authors for name match: %w", err)
 	}
+	var matches []*models.Author
 	for i := range all {
 		a := &all[i]
 		if normalizeAuthorName(a.Name) == target || normalizeAuthorName(a.SortName) == target {
-			return a, nil
+			matches = append(matches, a)
 		}
 	}
-	return nil, nil
+	switch len(matches) {
+	case 0:
+		return nil, nil
+	case 1:
+		return matches[0], nil
+	default:
+		// Ambiguous: multiple distinct authors collapse to the same
+		// normalized key. Refuse to merge them — a real "Stephen King"
+		// and a real "Stephen Hawking" must not be collapsed just because
+		// some future bug drops the surname. Log the candidates and fall
+		// through to create-new.
+		names := make([]string, 0, len(matches))
+		for _, m := range matches {
+			names = append(names, m.Name)
+		}
+		slog.Warn("hardcover list sync: ambiguous normalized-name match; creating new author instead of merging",
+			"candidateName", candidate.Name,
+			"candidateForeignID", candidate.ForeignID,
+			"candidateCount", len(matches),
+			"candidateNames", names)
+		return nil, nil
+	}
 }
 
 // normalizeAuthorName produces a canonical form suitable for author-identity
