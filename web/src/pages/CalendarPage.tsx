@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, Book } from '../api/client'
+import { bucketBooksByDay } from './calendarBuckets'
 
 function getDaysInMonth(year: number, month: number) {
   return new Date(year, month + 1, 0).getDate()
@@ -63,17 +64,9 @@ export default function CalendarPage() {
     setViewMonth(today.getMonth())
   }
 
-  // Index books by day-of-month for the current view
-  const booksByDay: Record<number, Book[]> = {}
-  for (const book of books) {
-    if (!book.releaseDate || !book.monitored) continue
-    const d = new Date(book.releaseDate)
-    if (d.getFullYear() === viewYear && d.getMonth() === viewMonth) {
-      const day = d.getDate()
-      if (!booksByDay[day]) booksByDay[day] = []
-      booksByDay[day].push(book)
-    }
-  }
+  // Index books by day-of-month for the current view (timezone-safe; see
+  // bucketBooksByDay).
+  const booksByDay = bucketBooksByDay(books, viewYear, viewMonth)
 
   const daysInMonth = getDaysInMonth(viewYear, viewMonth)
   const firstDay = getFirstDayOfMonth(viewYear, viewMonth)
