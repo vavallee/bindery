@@ -2047,11 +2047,17 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 // scanner has no reason to re-reconcile a file that's already where it
 // should be, and re-attaching would churn book_files rows for no benefit.
 // chapterTitleRe matches embedded-tag titles that name a track/chapter rather
-// than the book: a leading track number with a separator ("04 - Title", "04.
-// Title", "04_Title") or a Chapter/Track/Part/Disc/CD/Section keyword followed
-// by a number. The {1,3}-digit + required-separator shape deliberately does not
-// match year-like or numeric titles ("1984", "2001: A Space Odyssey").
-var chapterTitleRe = regexp.MustCompile(`(?i)^(\d{1,3}\s*[-._):]\s*\S|(chapter|track|part|disc|cd|section)\b\s*\.?\s*\d)`)
+// than the book: a leading track number followed by a dash/dot/underscore and a
+// NON-digit ("04 - Title", "04. Title", "04_Title"), or a Chapter/Track/Part/
+// Disc/CD keyword followed by a number.
+//
+// The shape is deliberately narrow to avoid discarding real numeric titles:
+//   - the {1,3}-digit cap skips years ("1984", "2001: A Space Odyssey");
+//   - the colon is NOT a separator, so subtitle titles survive ("24: Live
+//     Another Day", "7: Seven");
+//   - requiring a non-digit after the separator skips number-dash/dot-number
+//     titles ("1-800 Where R You", "3.14 …").
+var chapterTitleRe = regexp.MustCompile(`(?i)^(\d{1,3}\s*[-._]\s*\D|(chapter|track|part|disc|cd)\b\s*\.?\s*\d)`)
 
 // looksLikeChapterTitle reports whether an embedded-tag title looks like a
 // per-track chapter name rather than a book title (#1239).

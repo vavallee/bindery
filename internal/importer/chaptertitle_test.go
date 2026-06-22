@@ -31,6 +31,15 @@ func TestLooksLikeChapterTitle(t *testing.T) {
 		"The Temporal Leader",
 		"Catch-22",
 		"Part of the Pattern", // "Part" not followed by a number
+		// Real numeric titles that must NOT be treated as chapters: the colon
+		// is a subtitle separator, not a chapter separator, and a digit after
+		// the separator means a number-dash/dot-number title, not "NN - Title".
+		"24: Live Another Day",
+		"42: The Answer",
+		"7: Seven",
+		"1-800 Where R You",
+		"3.14 Pi Day",
+		"Section 8", // "section" is not a chapter keyword (too title-like)
 	}
 	for _, ti := range titles {
 		if looksLikeChapterTitle(ti) {
