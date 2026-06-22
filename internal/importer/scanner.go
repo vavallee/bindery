@@ -1884,12 +1884,14 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 		// an "Author - Title" / "Title - Author" filename — the scan must not
 		// assume a single filename order (#754).
 		parsed := ParseFilename(path)
+		var layoutTitle string
 		if a, t, ok := authorTitleFromLayout(path, s.libraryDir, s.audiobookDir); ok {
 			if a != "" {
 				parsed.Author = a
 			}
 			if t != "" {
 				parsed.Title = t
+				layoutTitle = t
 			}
 		}
 
@@ -1903,7 +1905,12 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 					"path", path, "error", err)
 				tagReadFailed++
 			} else {
-				if tags.Title != "" {
+				// Multi-part audiobooks tag each track with its chapter name
+				// ("04 - Sinister Grey Mists..."). When the folder hierarchy
+				// already gave a real book title, don't let a per-chapter tag
+				// title clobber it — every track would otherwise parse to a
+				// different "book" and none would reconcile (#1239).
+				if tags.Title != "" && !(layoutTitle != "" && looksLikeChapterTitle(tags.Title)) {
 					parsed.Title = tags.Title
 				}
 				if tags.Author != "" {
@@ -2039,6 +2046,19 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 // Books with a valid on-disk file at any recorded path are skipped — the
 // scanner has no reason to re-reconcile a file that's already where it
 // should be, and re-attaching would churn book_files rows for no benefit.
+// chapterTitleRe matches embedded-tag titles that name a track/chapter rather
+// than the book: a leading track number with a separator ("04 - Title", "04.
+// Title", "04_Title") or a Chapter/Track/Part/Disc/CD/Section keyword followed
+// by a number. The {1,3}-digit + required-separator shape deliberately does not
+// match year-like or numeric titles ("1984", "2001: A Space Odyssey").
+var chapterTitleRe = regexp.MustCompile(`(?i)^(\d{1,3}\s*[-._):]\s*\S|(chapter|track|part|disc|cd|section)\b\s*\.?\s*\d)`)
+
+// looksLikeChapterTitle reports whether an embedded-tag title looks like a
+// per-track chapter name rather than a book title (#1239).
+func looksLikeChapterTitle(title string) bool {
+	return chapterTitleRe.MatchString(strings.TrimSpace(title))
+}
+
 func isReconcileCandidate(b *models.Book) bool {
 	if b == nil {
 		return false

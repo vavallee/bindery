@@ -146,6 +146,37 @@ func TestPickAudioAuthor_Empty(t *testing.T) {
 	}
 }
 
+func TestPickAudioAuthor_SkipsNarratorCredit(t *testing.T) {
+	// Artist holds a narrator credit; the real author is in AlbumArtist.
+	got := pickAudioAuthor(fakeMetadata{artist: "Read by Nigel Planer", albumArtist: "Terry Pratchett"})
+	if got != "Terry Pratchett" {
+		t.Errorf("expected narrator credit to be skipped for AlbumArtist, got %q", got)
+	}
+}
+
+func TestPickAudioAuthor_NarratorOnlyReturnsEmpty(t *testing.T) {
+	// Only a narrator credit is present: return empty so the caller keeps the
+	// folder-resolved author instead of a narrator name.
+	if got := pickAudioAuthor(fakeMetadata{artist: "Narrated by Stephen Fry"}); got != "" {
+		t.Errorf("expected empty when only a narrator credit is present, got %q", got)
+	}
+}
+
+func TestIsNarratorCredit(t *testing.T) {
+	credits := []string{"Read by Nigel Planer", "read by X", "Narrated by Stephen Fry", "Performed by A. B.", "Told by Someone"}
+	for _, c := range credits {
+		if !isNarratorCredit(c) {
+			t.Errorf("expected %q to be a narrator credit", c)
+		}
+	}
+	authors := []string{"Terry Pratchett", "Reade Brothers", "Narrator", "Bradbury, Ray", "Reading Rainbow"}
+	for _, a := range authors {
+		if isNarratorCredit(a) {
+			t.Errorf("expected %q to NOT be a narrator credit", a)
+		}
+	}
+}
+
 // buildID3v23 returns an ID3v2.3 header block containing TIT2 (title), TPE1
 // (artist), and a TXXX ASIN frame. The returned bytes are a valid tag
 // followed by no audio — tag.ReadFrom only parses the tag, so this is
