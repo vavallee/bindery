@@ -2057,6 +2057,13 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 //     Another Day", "7: Seven");
 //   - requiring a non-digit after the separator skips number-dash/dot-number
 //     titles ("1-800 Where R You", "3.14 …").
+//
+// A residual ambiguity remains: a genuinely numbered title ("21 - Jump Street",
+// "8 - Mile") is indistinguishable from "04 - Chapter Name" without sibling or
+// semantic context, so it is treated as a chapter. The blast radius is small —
+// this only suppresses the tag title when the folder hierarchy already resolved
+// a title to fall back to (see the caller), so the worst case is using the
+// folder's title for such a book rather than the tag's.
 var chapterTitleRe = regexp.MustCompile(`(?i)^(\d{1,3}\s*[-._]\s*\D|(chapter|track|part|disc|cd)\b\s*\.?\s*\d)`)
 
 // looksLikeChapterTitle reports whether an embedded-tag title looks like a
