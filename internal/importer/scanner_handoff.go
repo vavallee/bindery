@@ -47,13 +47,11 @@ func uniqueNonEmptyStrings(values []string) []string {
 	return out
 }
 
-// importMode reads the "import.mode" setting and returns one of "move",
-// "copy", "hardlink", or "external". When the setting is absent or
-// unrecognised, it defaults to "hardlink" if src and dst are on the same
-// filesystem (free, preserves seeding) or "copy" when they are on different
-// filesystems. Pass empty strings for src/dst to get the cross-device default
-// ("copy") without performing a stat.
-func (s *Scanner) importMode(ctx context.Context, src, dst string) string {
+// configuredImportMode returns the operator-set "import.mode" ("move", "copy",
+// "hardlink", or "external"), or "" when the setting is absent/unrecognised,
+// meaning "auto" (let resolveImportMode pick hardlink-vs-copy per destination).
+// Read once per download so a mid-run UI toggle can't mix modes (#705).
+func (s *Scanner) configuredImportMode(ctx context.Context) string {
 	if s.settings != nil {
 		setting, err := s.settings.Get(ctx, "import.mode")
 		if err == nil && setting != nil {
@@ -63,12 +61,36 @@ func (s *Scanner) importMode(ctx context.Context, src, dst string) string {
 			}
 		}
 	}
-	// No explicit setting — choose the safest mode that also preserves seeding.
-	if sameDevice(src, dst) {
+	return ""
+}
+
+// resolveImportMode picks the effective placement mode for a destination root.
+// An explicit operator setting (configuredMode) is honoured as-is. For the auto
+// default it returns "hardlink" when src and destRoot are on the same filesystem
+// (free, preserves seeding) or "copy" otherwise. destRoot MUST be the root the
+// files actually land under — per-author RootFolderID and audiobook roots can
+// live on a different mount than s.libraryDir, and choosing the mode against
+// s.libraryDir there picked an always-failing cross-device hardlink. Pass empty
+// strings for src/destRoot to get the cross-device default ("copy") without a
+// stat.
+func (s *Scanner) resolveImportMode(configuredMode, src, destRoot string) string {
+	if configuredMode != "" {
+		return configuredMode
+	}
+	if sameDevice(src, destRoot) {
 		return "hardlink"
 	}
 	slog.Warn("import.mode not set and src/dst are on different filesystems; defaulting to copy — seeding will be preserved but disk usage doubles")
 	return "copy"
+}
+
+// importMode reads the "import.mode" setting and returns one of "move", "copy",
+// "hardlink", or "external", falling back to the same-filesystem auto default
+// for src/dst. Retained for the standalone callers/tests; the import pipeline
+// uses configuredImportMode + resolveImportMode so the auto check runs against
+// the real destination root.
+func (s *Scanner) importMode(ctx context.Context, src, dst string) string {
+	return s.resolveImportMode(s.configuredImportMode(ctx), src, dst)
 }
 
 // flattenMultiDiscEnabled reads the "import.audiobook.flatten_multi_disc"

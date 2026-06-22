@@ -696,13 +696,15 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 
 	s.updateDownloadStatus(ctx, dl.ID, models.StateImportPending)
 
-	// Resolve the import mode ONCE for the whole download (issue #705 finding 2).
-	// Re-reading "import.mode" per file means an operator toggling copy↔move in
-	// the UI mid-run mixes copy and move within a single download; the final
-	// cleanup could then RemoveAll the still-seeding source of a file that was
-	// deliberately copied. The decided mode is threaded through every call site
-	// below — no further DB reads of "import.mode" occur for this import.
-	importMode := s.importMode(ctx, downloadPath, s.libraryDir)
+	// Read the configured import mode ONCE for the whole download (issue #705
+	// finding 2). Re-reading "import.mode" per file means an operator toggling
+	// copy↔move in the UI mid-run mixes copy and move within a single download;
+	// the final cleanup could then RemoveAll the still-seeding source of a file
+	// that was deliberately copied. The auto (unset) hardlink-vs-copy choice is
+	// made per placement below against the file's real destination root, not
+	// s.libraryDir, because per-author / audiobook roots can be on a separate
+	// mount (#1254).
+	configuredMode := s.configuredImportMode(ctx)
 
 	// External mode: skip all file operations and leave the book Wanted so the
 	// library scan can reconcile it after the user's external tool (Calibre,
@@ -716,7 +718,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// sweep, each prior download reading as a success. StateImportExternal lets
 	// searchWanted skip the book while the hand-off is outstanding, and
 	// ScanLibrary still reconciles the file the moment it lands.
-	if importMode == "external" {
+	if configuredMode == "external" {
 		// When a drop folder is configured (#941), external mode renames the
 		// finished file into that folder (copy/hardlink, never move) for a
 		// sibling tool (CWA, Calibre, Storyteller) to ingest, then still parks
@@ -875,7 +877,10 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			return
 		}
 		destDir := UniqueDir(audiobookDest)
-		mode := importMode
+		// Choose hardlink-vs-copy (when auto) against the audiobook root the
+		// files actually land under, not s.libraryDir — they can be on
+		// different mounts and a cross-device hardlink would hard-fail (#1254).
+		mode := s.resolveImportMode(configuredMode, downloadPath, audiobookRoot)
 		// audiobookSource is the path the move/copy/hardlink will operate on.
 		// When the caller supplied an explicit per-torrent file list (issue
 		// #903), prefer that to downloadPath: downloadPath can be a shared
@@ -1009,6 +1014,12 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// library, so move-mode cleanup can delete exactly those files rather than
 	// RemoveAll-ing the whole download path (issue #705 finding 4).
 	var importedSrcFiles []string
+	// Resolve the ebook destination root and (auto) placement mode once: the
+	// root is stable for this author across the loop, and choosing hardlink-vs-
+	// copy against it rather than s.libraryDir avoids a cross-device hardlink
+	// failure when the author's RootFolderID is on a separate mount (#1254).
+	ebookRoot := s.effectiveLibraryDir(ctx, author)
+	ebookMode := s.resolveImportMode(configuredMode, downloadPath, ebookRoot)
 	for _, srcFile := range bookFiles {
 		if book == nil {
 			// Try to match from filename
@@ -1018,7 +1029,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		}
 
 		seriesTitle, seriesNum := s.primarySeriesFor(ctx, book)
-		destPath, destErr := s.renamer.DestPath(s.effectiveLibraryDir(ctx, author), author, book, seriesTitle, seriesNum, srcFile)
+		destPath, destErr := s.renamer.DestPath(ebookRoot, author, book, seriesTitle, seriesNum, srcFile)
 		if destErr != nil {
 			slog.Error("failed to compute book destination", "src", srcFile, "error", destErr)
 			lastFileErr = destErr
@@ -1041,7 +1052,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			continue
 		}
 
-		mode := importMode
+		mode := ebookMode
 		slog.Info("importing book", "src", srcFile, "dst", destPath, "mode", mode)
 
 		// Wave 4 / finding 23: stage the file under a sibling temp name,
@@ -1157,7 +1168,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// files and then prune now-empty parent directories with os.Remove —
 		// which fails on non-empty directories and therefore can never destroy
 		// a shared root or sibling data.
-		if importMode == "move" {
+		if configuredMode == "move" {
 			s.cleanupMovedSources(downloadPath, importedSrcFiles)
 		}
 		if cleanupFunc != nil {
