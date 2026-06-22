@@ -288,18 +288,25 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enforce the provider's AllowedGroups policy. When AllowedGroups is
-	// configured (non-empty), a login is only admitted if the IdP's `groups`
+	// configured (non-empty), a login is only admitted if the IdP's group
 	// claim intersects it; an empty AllowedGroups means "allow all" and the
 	// check is a no-op. This is fail-closed by design: if the IdP is not
-	// sending a `groups` claim, or sends a different group name than what is
+	// sending a group claim, or sends a different group name than what is
 	// configured, every login is rejected — the admin must fix the IdP scope
 	// mapping or the configured group name.
+	//
+	// Read the operator-configured claim (BINDERY_OIDC_GROUP_CLAIM), the same
+	// claim the admin-role sync below uses — not the literal "groups" claim
+	// baked into claims.Groups. Pointing the group claim at a non-default name
+	// otherwise made this policy compare against an always-empty slice, locking
+	// every user out (or, with AllowedGroups unset, silently no-op).
 	if cfg, ok := h.mgr.ProviderConfig(providerID); ok && len(cfg.AllowedGroups) > 0 {
-		if !oidc.GroupsAllowed(cfg.AllowedGroups, claims.Groups) {
+		userGroups := oidc.GroupClaimValues(claims.Raw, h.oidcGroupClaim)
+		if !oidc.GroupsAllowed(cfg.AllowedGroups, userGroups) {
 			slog.Warn("oidc: login rejected by AllowedGroups policy",
 				"provider", providerID, // #nosec -- providerID validated by oidcProviderIDRe at handler entry
 				"sub", sanitizeLog(claims.Sub),
-				"user_groups", len(claims.Groups),
+				"user_groups", len(userGroups),
 				"allowed_groups", strings.Join(cfg.AllowedGroups, ","),
 			)
 			writeErr(w, http.StatusForbidden,
