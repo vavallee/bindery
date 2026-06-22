@@ -590,3 +590,26 @@ type netTimeoutErr struct{}
 func (e *netTimeoutErr) Error() string   { return "i/o timeout" }
 func (e *netTimeoutErr) Timeout() bool   { return true }
 func (e *netTimeoutErr) Temporary() bool { return true }
+
+// sabErrRoundTripper makes http.Client.Do fail so net/http wraps the request
+// URL (incl. apikey) into a *url.Error — exercising the redaction path.
+type sabErrRoundTripper struct{}
+
+func (sabErrRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, io.ErrUnexpectedEOF
+}
+
+// TestAPICall_RedactsAPIKeyOnTransportError guards against the SAB apikey
+// leaking through a %w-wrapped *url.Error into Test/health errors and logs.
+func TestAPICall_RedactsAPIKeyOnTransportError(t *testing.T) {
+	c := New("127.0.0.1", 8080, "supersecretkey", "", false)
+	c.http = &http.Client{Transport: sabErrRoundTripper{}}
+
+	err := c.Test(context.Background())
+	if err == nil {
+		t.Fatal("expected a transport error")
+	}
+	if strings.Contains(err.Error(), "supersecretkey") {
+		t.Fatalf("apikey leaked in error string: %s", err.Error())
+	}
+}
