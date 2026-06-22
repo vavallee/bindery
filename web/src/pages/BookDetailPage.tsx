@@ -9,6 +9,7 @@ import RebindModal from '../components/RebindModal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import ClipboardManualFallback from '../components/ClipboardManualFallback'
 import { useClipboardCopy } from '../components/useClipboardCopy'
+import { safeHref } from '../util/safeHref'
 
 function formatSize(n: number): string {
   if (!n || n <= 0) return ''
@@ -89,11 +90,11 @@ export function SearchResultsSection({
         </div>
         <span className="text-slate-500 dark:text-zinc-500 truncate block">
           {r.indexerName} · {formatSize(r.size)} · {r.grabs} grabs
-          {r.infoUrl && (
+          {safeHref(r.infoUrl) && (
             <>
               {' · '}
               <a
-                href={r.infoUrl}
+                href={safeHref(r.infoUrl)}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={e => e.stopPropagation()}

@@ -6,6 +6,7 @@ import BulkActionBar from '../components/BulkActionBar'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
+import { safeHref } from '../util/safeHref'
 
 // Shared grid template so the header row and every list row line up exactly.
 // columns: checkbox · cover · title+author · format · actions
@@ -363,11 +364,11 @@ export default function WantedPage() {
                           <span className="truncate block">{r.title}</span>
                           <span className="text-slate-600 dark:text-zinc-500 truncate block">
                             {r.indexerName} &middot; {formatSize(r.size)} &middot; {r.grabs} grabs
-                            {r.infoUrl && (
+                            {safeHref(r.infoUrl) && (
                               <>
                                 {' '}&middot;{' '}
                                 <a
-                                  href={r.infoUrl}
+                                  href={safeHref(r.infoUrl)}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="text-sky-600 dark:text-sky-400 hover:underline"
