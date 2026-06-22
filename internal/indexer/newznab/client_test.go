@@ -3,6 +3,7 @@ package newznab
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,37 @@ import (
 	"testing"
 	"time"
 )
+
+// errRoundTripper makes http.Client.Do fail with a transport error; net/http
+// wraps it in a *url.Error whose message embeds the request URL (incl. apikey).
+type errRoundTripper struct{ err error }
+
+func (e errRoundTripper) RoundTrip(*http.Request) (*http.Response, error) { return nil, e.err }
+
+// TestSearch_RedactsAPIKeyInTransportError guards the fix for the indexer apikey
+// leaking through an unredacted *url.Error into WARN logs and the non-admin
+// search-debug response: a transport failure must not expose the key.
+func TestSearch_RedactsAPIKeyInTransportError(t *testing.T) {
+	c := New("http://indexer.invalid", "supersecretkey")
+	c.http = &http.Client{Transport: errRoundTripper{err: errors.New("dial tcp 1.2.3.4:443: connect: connection refused")}}
+
+	_, err := c.Search(context.Background(), "book", []int{7020})
+	if err == nil {
+		t.Fatal("expected a transport error")
+	}
+	if strings.Contains(err.Error(), "supersecretkey") {
+		t.Fatalf("apikey leaked in error string: %s", err.Error())
+	}
+	if !strings.Contains(err.Error(), "REDACTED") {
+		t.Fatalf("expected the apikey to be REDACTED, got: %s", err.Error())
+	}
+
+	// Probe surfaces the same error to the admin Test endpoint — redact there too.
+	res := c.Probe(context.Background())
+	if strings.Contains(res.Error, "supersecretkey") {
+		t.Fatalf("apikey leaked in ProbeResult.Error: %s", res.Error)
+	}
+}
 
 // testNew creates a newznab Client for use with httptest servers. It replaces
 // the hardened http.Client (whose DialContext blocks loopback) with a plain
