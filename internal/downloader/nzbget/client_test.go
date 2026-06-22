@@ -419,6 +419,52 @@ func TestGetQueue(t *testing.T) {
 	}
 }
 
+// TestGetQueue_MalformedBody verifies that a 200 carrying invalid JSON on the
+// listgroups RPC surfaces a decode error rather than panicking or silently
+// returning an empty queue. NZBGet's response is untrusted upstream input.
+func TestGetQueue_MalformedBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Truncated JSON object — the decoder must reject this.
+		_, _ = io.WriteString(w, `{"result": `)
+	}))
+	defer srv.Close()
+
+	host, port := serverHostPort(t, srv.URL)
+	c := New(host, port, "", "", "", false)
+
+	groups, err := c.GetQueue(context.Background())
+	if err == nil {
+		t.Fatal("expected decode error on malformed JSON body, got nil")
+	}
+	if groups != nil {
+		t.Errorf("expected nil groups on decode error, got %v", groups)
+	}
+}
+
+// TestListCategories_MalformedBody verifies the config RPC path also surfaces a
+// decode error on a malformed 200 body rather than returning an empty category
+// set as if the call succeeded — that would let a category-mismatch preflight
+// pass on garbage.
+func TestListCategories_MalformedBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{not json`)
+	}))
+	defer srv.Close()
+
+	host, port := serverHostPort(t, srv.URL)
+	c := New(host, port, "", "", "", false)
+
+	cats, err := c.ListCategories(context.Background())
+	if err == nil {
+		t.Fatal("expected decode error on malformed JSON body, got nil")
+	}
+	if cats != nil {
+		t.Errorf("expected nil categories on decode error, got %v", cats)
+	}
+}
+
 // TestGetHistory verifies that GetHistory returns success and failure items.
 func TestGetHistory(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

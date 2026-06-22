@@ -374,6 +374,47 @@ func TestGetCategories(t *testing.T) {
 	}
 }
 
+// TestGetCategories_MalformedBody verifies that a 200 carrying invalid JSON on
+// the get_cats call surfaces a decode error rather than panicking or silently
+// returning an empty category list. SAB's response is untrusted upstream input.
+func TestGetCategories_MalformedBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Truncated JSON object — the decoder must reject this.
+		_, _ = io.WriteString(w, `{`)
+	}))
+	defer srv.Close()
+
+	c := New("127.0.0.1", 0, "testkey", "", false)
+	c.baseURL = srv.URL
+
+	cats, err := c.GetCategories(context.Background())
+	if err == nil {
+		t.Fatal("expected decode error on malformed JSON body, got nil")
+	}
+	if cats != nil {
+		t.Errorf("expected nil categories on decode error, got %v", cats)
+	}
+}
+
+// TestGetQueue_MalformedBody verifies the queue poll path also surfaces a
+// decode error on a malformed 200 body rather than returning a zero-value
+// QueueData as if the poll succeeded.
+func TestGetQueue_MalformedBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"queue": `) // truncated mid-object
+	}))
+	defer srv.Close()
+
+	c := New("127.0.0.1", 0, "testkey", "", false)
+	c.baseURL = srv.URL
+
+	if _, err := c.GetQueue(context.Background()); err == nil {
+		t.Fatal("expected decode error on malformed queue body, got nil")
+	}
+}
+
 func TestDeleteHistory(t *testing.T) {
 	var gotMode, gotName, gotValue, gotDelFiles string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
