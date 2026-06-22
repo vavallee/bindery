@@ -783,15 +783,54 @@ func TestGetAuthor_Found(t *testing.T) {
 	}
 }
 
-func TestGetAuthor_NumericID(t *testing.T) {
-	var gotVars map[string]any
-	var gotQuery string
+// TestGetAuthor_NumericSlug is the #1256 regression: an author whose slug is
+// itself numeric must be resolved by slug, not misread as a database id.
+func TestGetAuthor_NumericSlug(t *testing.T) {
+	var queries []string
 	c := newMockClient(func(r *http.Request) (*http.Response, error) {
 		body, _ := io.ReadAll(r.Body)
 		var req gqlRequest
 		_ = json.Unmarshal(body, &req)
-		gotQuery = req.Query
-		gotVars = req.Variables
+		queries = append(queries, req.Query)
+		// The slug query matches the author whose slug is "100".
+		data := map[string]interface{}{
+			"authors": []map[string]interface{}{
+				{"id": 7, "name": "Numeric Slug Author", "slug": "100", "bio": "", "image": nil},
+			},
+		}
+		return gqlResponse(t, http.StatusOK, data), nil
+	})
+
+	author, err := c.GetAuthor(context.Background(), "hc:100")
+	if err != nil {
+		t.Fatalf("GetAuthor: %v", err)
+	}
+	if author == nil || author.Name != "Numeric Slug Author" {
+		t.Fatalf("author = %+v, want the slug-100 author", author)
+	}
+	if len(queries) != 1 {
+		t.Fatalf("expected exactly 1 query (slug match, no id fallback), got %d", len(queries))
+	}
+	if !strings.Contains(queries[0], "slug: {_eq: $slug}") {
+		t.Fatalf("first query must be a slug lookup, got: %s", queries[0])
+	}
+}
+
+// TestGetAuthor_NumericID_FallsBackWhenSlugMisses covers the DB-id fallback:
+// when the slug lookup returns nothing, a numeric value is retried as a
+// primary-key lookup.
+func TestGetAuthor_NumericID_FallsBackWhenSlugMisses(t *testing.T) {
+	var queries []string
+	var lastVars map[string]any
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(r.Body)
+		var req gqlRequest
+		_ = json.Unmarshal(body, &req)
+		queries = append(queries, req.Query)
+		lastVars = req.Variables
+		if strings.Contains(req.Query, "slug: {_eq: $slug}") {
+			return gqlResponse(t, http.StatusOK, map[string]interface{}{"authors": []interface{}{}}), nil
+		}
 		data := map[string]interface{}{
 			"authors": []map[string]interface{}{
 				{"id": 5, "name": "Neil Gaiman", "slug": "neil-gaiman", "bio": "Writer", "image": nil},
@@ -807,14 +846,14 @@ func TestGetAuthor_NumericID(t *testing.T) {
 	if author == nil || author.ForeignID != "hc:neil-gaiman" {
 		t.Fatalf("author = %+v, want slug-backed author", author)
 	}
-	if gotVars["id"] != float64(5) && gotVars["id"] != 5 {
-		t.Fatalf("id variable = %#v, want 5", gotVars["id"])
+	if len(queries) != 2 {
+		t.Fatalf("expected slug query then id fallback (2 queries), got %d", len(queries))
 	}
-	if _, ok := gotVars["slug"]; ok {
-		t.Fatalf("slug variable present for numeric lookup: %#v", gotVars["slug"])
+	if !strings.Contains(queries[1], "id: {_eq: $id}") {
+		t.Fatalf("fallback query must use id lookup, got: %s", queries[1])
 	}
-	if !strings.Contains(gotQuery, "id: {_eq: $id}") {
-		t.Fatalf("query did not use id lookup: %s", gotQuery)
+	if lastVars["id"] != float64(5) && lastVars["id"] != 5 {
+		t.Fatalf("id variable = %#v, want 5", lastVars["id"])
 	}
 }
 
@@ -880,25 +919,58 @@ func TestGetBook_Found(t *testing.T) {
 	}
 }
 
-func TestGetBook_NumericID(t *testing.T) {
-	var gotVars map[string]any
-	var gotQuery string
+// TestGetBook_NumericSlug is the #1256 regression: a book whose slug is itself
+// numeric (e.g. Orwell's "1984") must be resolved by slug, not misread as the
+// book with database id 1984.
+func TestGetBook_NumericSlug(t *testing.T) {
+	var queries []string
 	c := newMockClient(func(r *http.Request) (*http.Response, error) {
 		body, _ := io.ReadAll(r.Body)
 		var req gqlRequest
 		_ = json.Unmarshal(body, &req)
-		gotQuery = req.Query
-		gotVars = req.Variables
+		queries = append(queries, req.Query)
+		// The slug query matches the book whose slug is "1984".
 		data := map[string]interface{}{
 			"books": []map[string]interface{}{
-				{
-					"id":            99,
-					"title":         "American Gods",
-					"slug":          "american-gods",
-					"description":   "A novel about gods in America.",
-					"rating":        4.1,
-					"ratings_count": 12000,
-				},
+				{"id": 42, "title": "Nineteen Eighty-Four", "slug": "1984"},
+			},
+		}
+		return gqlResponse(t, http.StatusOK, data), nil
+	})
+
+	book, err := c.GetBook(context.Background(), "hc:1984")
+	if err != nil {
+		t.Fatalf("GetBook: %v", err)
+	}
+	if book == nil || book.Title != "Nineteen Eighty-Four" {
+		t.Fatalf("book = %+v, want the slug-1984 book", book)
+	}
+	if len(queries) != 1 {
+		t.Fatalf("expected exactly 1 query (slug match, no id fallback), got %d", len(queries))
+	}
+	if !strings.Contains(queries[0], "slug: {_eq: $slug}") {
+		t.Fatalf("first query must be a slug lookup, got: %s", queries[0])
+	}
+}
+
+// TestGetBook_NumericID_FallsBackWhenSlugMisses covers the DB-id fallback path:
+// a numeric value is retried as a primary-key lookup only after the slug lookup
+// returns nothing.
+func TestGetBook_NumericID_FallsBackWhenSlugMisses(t *testing.T) {
+	var queries []string
+	var lastVars map[string]any
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(r.Body)
+		var req gqlRequest
+		_ = json.Unmarshal(body, &req)
+		queries = append(queries, req.Query)
+		lastVars = req.Variables
+		if strings.Contains(req.Query, "slug: {_eq: $slug}") {
+			return gqlResponse(t, http.StatusOK, map[string]interface{}{"books": []interface{}{}}), nil
+		}
+		data := map[string]interface{}{
+			"books": []map[string]interface{}{
+				{"id": 99, "title": "American Gods", "slug": "american-gods", "rating": 4.1, "ratings_count": 12000},
 			},
 		}
 		return gqlResponse(t, http.StatusOK, data), nil
@@ -911,14 +983,14 @@ func TestGetBook_NumericID(t *testing.T) {
 	if book == nil || book.ForeignID != "hc:american-gods" {
 		t.Fatalf("book = %+v, want slug-backed book", book)
 	}
-	if gotVars["id"] != float64(99) && gotVars["id"] != 99 {
-		t.Fatalf("id variable = %#v, want 99", gotVars["id"])
+	if len(queries) != 2 {
+		t.Fatalf("expected slug query then id fallback (2 queries), got %d", len(queries))
 	}
-	if _, ok := gotVars["slug"]; ok {
-		t.Fatalf("slug variable present for numeric lookup: %#v", gotVars["slug"])
+	if !strings.Contains(queries[1], "id: {_eq: $id}") {
+		t.Fatalf("fallback query must use id lookup, got: %s", queries[1])
 	}
-	if !strings.Contains(gotQuery, "id: {_eq: $id}") {
-		t.Fatalf("query did not use id lookup: %s", gotQuery)
+	if lastVars["id"] != float64(99) && lastVars["id"] != 99 {
+		t.Fatalf("id variable = %#v, want 99", lastVars["id"])
 	}
 }
 
