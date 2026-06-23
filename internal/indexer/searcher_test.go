@@ -1118,6 +1118,46 @@ func TestSearchBookWithDebug_PerResultLogging(t *testing.T) {
 	}
 }
 
+// TestSearchBookWithDebug_PropagatesIndexerPriority guards the fix for the
+// manual/interactive search path dropping per-indexer priority: scoreResult
+// ranks on IndexerPriority, so SearchBookWithDebug must stamp it on every hit
+// the way the auto-search path (searcher.go) does.
+func TestSearchBookWithDebug_PropagatesIndexerPriority(t *testing.T) {
+	const rssBody = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+  <channel>
+    <newznab:response offset="0" total="1"/>
+    <item>
+      <title>Life Ascending Nick Lane</title>
+      <guid isPermaLink="false">guid-1</guid>
+      <enclosure url="https://fake/dl/1" length="1000" type="application/x-nzb"/>
+      <newznab:attr name="author" value="Nick Lane"/>
+    </item>
+  </channel>
+</rss>`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(rssBody))
+	}))
+	defer srv.Close()
+
+	idxs := []models.Indexer{{ID: 1, Name: "test", URL: srv.URL, Enabled: true, Categories: []int{7020}, Priority: 42}}
+	results, _ := newTestSearcher().SearchBookWithDebug(context.Background(), idxs, MatchCriteria{
+		Title:  "Life Ascending",
+		Author: "Nick Lane",
+	})
+
+	if len(results) == 0 {
+		t.Fatal("expected at least 1 result")
+	}
+	for _, r := range results {
+		if r.IndexerPriority != 42 {
+			t.Errorf("IndexerPriority = %d, want 42 (priority must propagate to debug-search results)", r.IndexerPriority)
+		}
+	}
+}
+
 // TestFilterRelevantDebugEditionQualifierParity verifies that
 // filterRelevantDebug and filterRelevant agree on which results to keep for a
 // title that carries a parenthesised edition qualifier — the bug reported in
