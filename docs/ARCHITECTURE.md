@@ -25,7 +25,7 @@ OpenLibrary    Google Books, Hardcover.app,   Audnex, Audible
 | Layer | Stack | Notes |
 |-------|-------|-------|
 | **HTTP router** | [chi](https://github.com/go-chi/chi) v5 | Sub-routers per resource, middleware-driven auth/CSRF/rate-limit. |
-| **Backend language** | Go 1.25 | Standard library HTTP server, structured logging via `slog`. |
+| **Backend language** | Go 1.26 (built with `golang:1.26.4`) | Standard library HTTP server, structured logging via `slog`. |
 | **Database** | SQLite, WAL mode | [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite) — pure Go, no CGO. Single `bindery.db` file. |
 | **Schema migrations** | Embedded SQL files in `internal/db/migrations/` | Linearly-numbered, additive-only, applied at startup. |
 | **Frontend** | React 19 + TypeScript + Tailwind CSS 4 | Built with [Vite](https://vite.dev), output baked into the binary via `go:embed`. |
