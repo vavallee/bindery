@@ -1910,7 +1910,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 				// already gave a real book title, don't let a per-chapter tag
 				// title clobber it — every track would otherwise parse to a
 				// different "book" and none would reconcile (#1239).
-				if tags.Title != "" && !(layoutTitle != "" && looksLikeChapterTitle(tags.Title)) {
+				if tags.Title != "" && (layoutTitle == "" || !looksLikeChapterTitle(tags.Title)) {
 					parsed.Title = tags.Title
 				}
 				if tags.Author != "" {
