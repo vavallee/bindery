@@ -50,10 +50,10 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 		scheme = "https"
 	}
 	return &Client{
-		baseURL:   fmt.Sprintf("%s://%s:%d%s/jsonrpc", scheme, host, port, urlbase.Normalize(urlBase)),
-		username:  username,
-		password:  password,
-		http: &http.Client{Timeout: 15 * time.Second},
+		baseURL:  fmt.Sprintf("%s://%s:%d%s/jsonrpc", scheme, host, port, urlbase.Normalize(urlBase)),
+		username: username,
+		password: password,
+		http:     &http.Client{Timeout: 15 * time.Second},
 		// fetchHTTP pulls indexer-controlled NZB URLs, so guard the dial: it
 		// re-validates the resolved IP on every connect (DNS-rebind) and
 		// rejects a redirect to a forbidden host at dial time.
