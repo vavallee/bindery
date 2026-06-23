@@ -59,6 +59,22 @@ var (
 	seriesBookInlineRe = regexp.MustCompile(`(?i)^(.+?)\s+(?:book|vol(?:ume)?|part)\.?\s*(\d+(?:\.\d+)?)\s*[-–:]\s*(.+)$`)
 )
 
+// dashNormalizer rewrites the Unicode dash variants a library or OS might use
+// (Unicode/non-breaking hyphen, figure dash, en dash, em dash, horizontal bar,
+// minus sign) to a plain ASCII hyphen, so the "Title - Author" and series
+// separators above match regardless of which dash the path uses. Without it an
+// em-dash folder ("Title — Author", common from macOS/auto-formatting) never
+// splits and the whole name falls through as the title, matching nothing.
+var dashNormalizer = strings.NewReplacer(
+	"‐", "-", // ‐ hyphen
+	"‑", "-", // ‑ non-breaking hyphen
+	"‒", "-", // ‒ figure dash
+	"–", "-", // – en dash
+	"—", "-", // — em dash
+	"―", "-", // ― horizontal bar
+	"−", "-", // − minus sign
+)
+
 // bookExtensions lists common ebook file extensions.
 var bookExtensions = map[string]bool{
 	".epub": true, ".mobi": true, ".azw3": true, ".azw": true,
@@ -79,6 +95,11 @@ func ParseFilename(path string) ParsedFile {
 	// Work with the base name without extension
 	name := filepath.Base(path)
 	name = strings.TrimSuffix(name, filepath.Ext(name))
+
+	// Normalize Unicode dash variants to a plain hyphen up front so every
+	// dash-based separator below (Title - Author, Author - [Series] - Title,
+	// leading position number, ...) matches an em dash the same as a hyphen.
+	name = dashNormalizer.Replace(name)
 
 	// Extract ASIN if present and strip it so it doesn't pollute the title
 	if asin := asinRe.FindString(name); asin != "" {

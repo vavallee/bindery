@@ -70,6 +70,37 @@ func TestParseFilename(t *testing.T) {
 			wantAuthor: "Peter F Hamilton",
 			wantFormat: "epub",
 		},
+		{
+			// em dash (U+2014) separator must split like a hyphen does. Before the
+			// dash normalization this fell through to title="Dark Matter — Author
+			// Name" and matched nothing.
+			input:      "Dark Matter — Author Name.epub",
+			wantTitle:  "Dark Matter",
+			wantAuthor: "Author Name",
+			wantFormat: "epub",
+		},
+		{
+			// en dash (U+2013) separator.
+			input:      "Recursion – Blake Crouch.mobi",
+			wantTitle:  "Recursion",
+			wantAuthor: "Blake Crouch",
+			wantFormat: "mobi",
+		},
+		{
+			// em dash in the Author-leading series convention (issue #1014 shape).
+			input:      "Peter F Hamilton — [Commonwealth Saga 01] — Pandora's Star.epub",
+			wantTitle:  "Pandora's Star",
+			wantAuthor: "Peter F Hamilton",
+			wantFormat: "epub",
+		},
+		{
+			// A hyphenated compound in the title (no surrounding spaces) must NOT
+			// be treated as a Title-Author separator.
+			input:      "Spider-Man.epub",
+			wantTitle:  "Spider-Man",
+			wantAuthor: "",
+			wantFormat: "epub",
+		},
 	}
 
 	for _, tt := range tests {
