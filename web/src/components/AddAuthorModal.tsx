@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, AddAuthorRequest, Author, AuthorConflictBody, AuthorMonitorMode, MediaType, MetadataProfile, RootFolder } from '../api/client'
 import { splitAuthorSearchResults } from './addAuthorTitleGuard'
+import { canLinkAuthorMetadata, hasSparseMetadata } from '../util/authorMetadata'
 
 interface Props {
   onClose: () => void
@@ -38,17 +39,6 @@ function conflictBody(err: unknown): AuthorConflictBody | null {
   return null
 }
 
-function canLinkAuthorMetadata(author?: Author): boolean {
-  if (!author) return true
-  const foreignId = (author.foreignAuthorId || '').trim()
-  const provider = (author.metadataProvider || '').trim().toLowerCase()
-  return foreignId === '' || foreignId.startsWith('abs:') || foreignId.startsWith('calibre:') || provider === 'audiobookshelf' || provider === 'calibre'
-}
-
-function hasSparseMetadata(author?: Author): boolean {
-  if (!author) return true
-  return !author.description && !author.imageUrl && !author.disambiguation && (author.ratingsCount ?? 0) === 0 && (author.averageRating ?? 0) === 0
-}
 
 export default function AddAuthorModal({ onClose, onAdded }: Props) {
   const { t } = useTranslation()
