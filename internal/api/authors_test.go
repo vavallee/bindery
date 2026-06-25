@@ -691,6 +691,100 @@ func TestFetchAuthorBooks_AppliesAuthorMonitorModes(t *testing.T) {
 	}
 }
 
+// TestFetchAuthorBooks_NoneMode_PreservesListedBook_DropsBackCatalogue is the
+// #1290 reconcile guarantee from the API side. A Hardcover-list-created author
+// is monitored but pinned to MonitorMode "none", and the single listed book was
+// already inserted as monitored + wanted. When the scheduler's catalogue
+// discovery (FetchAuthorBooks) then surfaces the author's whole back-catalogue,
+// the listed book must stay monitored (already-tracked rows are left untouched)
+// while every newly-discovered work stays unmonitored — no back-catalogue
+// blowup.
+func TestFetchAuthorBooks_NoneMode_PreservesListedBook_DropsBackCatalogue(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID:          "OL-LIST-AUTHOR",
+		Name:               "List Author",
+		SortName:           "Author, List",
+		MetadataProvider:   "openlibrary",
+		Monitored:          true,
+		MonitorMode:        models.AuthorMonitorModeNone,
+		MonitorLatestCount: 1,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	// The listed book, as the syncer inserts it: monitored + wanted, sharing the
+	// foreign id of one of the catalogue works the provider will surface.
+	listed := &models.Book{
+		ForeignID:        "OL-LISTED",
+		Title:            "The Listed Book",
+		AuthorID:         author.ID,
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+		Status:           models.BookStatusWanted,
+		Genres:           []string{},
+	}
+	if err := bookRepo.Create(ctx, listed); err != nil {
+		t.Fatal(err)
+	}
+
+	stub := &stubMetaProvider{
+		works: []models.Book{
+			// The listed book reappears as part of the discovered catalogue.
+			{ForeignID: "OL-LISTED", Title: "The Listed Book", SortTitle: "the listed book", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+			// Back-catalogue the user never asked for.
+			{ForeignID: "OL-BACK1", Title: "Back Catalogue One", SortTitle: "back catalogue one", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+			{ForeignID: "OL-BACK2", Title: "Back Catalogue Two", SortTitle: "back catalogue two", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+			{ForeignID: "OL-BACK3", Title: "Back Catalogue Three", SortTitle: "back catalogue three", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+		},
+	}
+	spy := &searcherSpy{}
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(stub), nil, profileRepo, spy)
+	h.FetchAuthorBooks(author, true, "")
+
+	books, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantMonitored := map[string]bool{
+		"The Listed Book":      true,  // preserved
+		"Back Catalogue One":   false, // never auto-wanted
+		"Back Catalogue Two":   false,
+		"Back Catalogue Three": false,
+	}
+	if len(books) != len(wantMonitored) {
+		t.Fatalf("books = %d, want %d: %+v", len(books), len(wantMonitored), books)
+	}
+	for _, b := range books {
+		want, ok := wantMonitored[b.Title]
+		if !ok {
+			t.Fatalf("unexpected book %q", b.Title)
+		}
+		if b.Monitored != want {
+			t.Errorf("%s monitored = %v, want %v", b.Title, b.Monitored, want)
+		}
+	}
+
+	// The discovery pass searches only newly-discovered monitored books. Under
+	// "none" nothing new is monitored, and the already-tracked listed book is
+	// skipped (it was searched when the syncer created it). So this pass must
+	// queue zero searches — in particular none for the back-catalogue.
+	if got := spy.titles(); len(got) != 0 {
+		t.Errorf("unexpected searches queued by discovery pass: %v", got)
+	}
+}
+
 func TestFetchAuthorBooksHydratesOnlySupplementalHardcoverBooks(t *testing.T) {
 	database, err := db.OpenMemory()
 	if err != nil {

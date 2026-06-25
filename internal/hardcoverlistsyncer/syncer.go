@@ -352,9 +352,18 @@ func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book, nameIn
 		return matched.ID, nil
 	}
 
-	// Create a minimal author record
+	// Create a minimal author record. List-sync authors are kept monitored so
+	// the scheduler refreshes their metadata, but their MonitorMode is pinned to
+	// "none": only the specific book(s) on the user's Hardcover list should end
+	// up wanted, never the author's entire back-catalogue (#1290). The listed
+	// book is monitored explicitly in syncList (book.Monitored = true), and the
+	// catalogue-discovery pass (FetchAuthorBooks) leaves already-tracked books
+	// untouched while gating newly-discovered works on shouldMonitorBookForAuthor
+	// — which returns false under "none". Leaving MonitorMode == "" would instead
+	// make that predicate treat the author as "all" and auto-want every work.
 	author := book.Author
 	author.Monitored = true
+	author.MonitorMode = models.AuthorMonitorModeNone
 	author.MetadataProvider = "hardcover"
 	if author.SortName == "" {
 		author.SortName = sortName(author.Name)

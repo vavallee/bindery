@@ -192,6 +192,72 @@ func TestSyncOne_ReusesAuthorByNameAndDedupsOwnedBook(t *testing.T) {
 	}
 }
 
+// TestSyncOne_NewAuthorPinnedToMonitorModeNone is the #1290 regression: a list
+// whose book belongs to a brand-new author must create that author with
+// MonitorMode == "none", not the zero value "". An empty MonitorMode is treated
+// as "all" by shouldMonitorBookForAuthor, which makes the scheduler's later
+// catalogue-discovery pass auto-want the author's entire back-catalogue. Only
+// the single listed book may end up monitored + wanted.
+func TestSyncOne_NewAuthorPinnedToMonitorModeNone(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	il := testImportList("HC", "hardcover", true)
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed list: %v", err)
+	}
+
+	newAuthor := func() *models.Author {
+		return &models.Author{ForeignID: "hc:newauthor", Name: "Brand New Author", MetadataProvider: "hardcover"}
+	}
+	s.WithClientFactory(func(string) hardcoverClient {
+		return &fakeHardcoverClient{
+			lists: []hardcover.HCList{{ID: 7, Slug: il.URL, Name: il.Name}},
+			books: []models.Book{
+				{ForeignID: "hc:listed", Title: "The Listed Book", MetadataProvider: "hardcover", Author: newAuthor()},
+			},
+		}
+	})
+
+	if err := s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatalf("SyncOne: %v", err)
+	}
+
+	created, err := s.authors.GetByAnyForeignID(ctx, "hc:newauthor")
+	if err != nil {
+		t.Fatalf("GetByAnyForeignID: %v", err)
+	}
+	if created == nil {
+		t.Fatal("expected the new author to be created")
+	}
+	// Author stays monitored (so metadata refresh keeps running)...
+	if !created.Monitored {
+		t.Errorf("new author Monitored = false, want true")
+	}
+	// ...but MonitorMode must be "none" so the back-catalogue is never auto-wanted.
+	if created.MonitorMode != models.AuthorMonitorModeNone {
+		t.Errorf("new author MonitorMode = %q, want %q (#1290)", created.MonitorMode, models.AuthorMonitorModeNone)
+	}
+
+	// The single listed book is monitored + wanted.
+	books, err := s.books.ListByAuthor(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("ListByAuthor: %v", err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("expected exactly the 1 listed book, got %d: %+v", len(books), books)
+	}
+	if books[0].Title != "The Listed Book" {
+		t.Errorf("listed book title = %q, want %q", books[0].Title, "The Listed Book")
+	}
+	if !books[0].Monitored {
+		t.Errorf("listed book Monitored = false, want true")
+	}
+	if books[0].Status != models.BookStatusWanted {
+		t.Errorf("listed book Status = %q, want %q", books[0].Status, models.BookStatusWanted)
+	}
+}
+
 func TestSortName(t *testing.T) {
 	tests := []struct {
 		in, want string
