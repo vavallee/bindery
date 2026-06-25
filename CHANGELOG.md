@@ -6,6 +6,31 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.22.2] — 2026-06-25
+
+Adds bulk folder import for migrating an existing library, plus a batch of
+import, sync, and download-client fixes. No config or schema changes that
+affect existing installs (the one new column defaults to the previous
+behaviour).
+
+### Added
+- **Bulk folder import: scan a directory and import everything matched in one pass** (#1292, #1293) — manual import was one path at a time, which made migrating a Readarr/Calibre backlog of hundreds of folders impractical. The Import settings tab now has a Folder Scan section that enumerates a directory's book units, pre-checks the confident matches, surfaces a picker for the ambiguous ones, and imports the selected set as a bounded background batch. Backed by new `GET /queue/manual-import/scan` and `POST /queue/manual-import/batch` endpoints.
+- **Settings → About** (#1235, #1297) — the in-app update check and the bug-report template both pointed at a "Settings → About" screen that did not exist. There is now a real About tab showing the running version, commit, and build date (reusing `GET /system/status`), so users can read their version without digging through Docker logs.
+- **The telemetry server advertises the current release automatically** (#1289) — the public version indicator (e.g. the Discord channel name) is now driven by a background poll of the GitHub Releases API every 30 minutes instead of a build-time constant, so it stops lagging behind the latest tag after a release.
+
+### Fixed
+- **qBittorrent grabs land in the category's save path, not the download root** (#1301) — Bindery sent an explicit `savepath` alongside the category with auto-TMM off, so qBittorrent honoured the explicit path and ignored the category's configured save directory. When a category is set, Bindery now enables automatic torrent management and omits the explicit `savepath`, so the category path wins; the same `setAutoManagement` is applied on the recategorise-on-recovery paths. Grabs with no category keep the explicit path as before.
+- **Hardcover list sync no longer auto-wants an author's entire back-catalogue** (#1290, #1300) — a list-created author was left with an empty monitor mode, which the scheduler treats identically to "all", so syncing a 235-book list ballooned the wanted count ~6× by pulling every author's full catalogue. New list-sync authors are now pinned to monitor mode `none`; only the specific books on the list stay monitored and wanted.
+- **"Refresh Metadata" refreshes the author's own profile, not just their books** (#1299) — for an already-linked author the refresh repopulated the catalogue but skipped the author's description and photo, so a linked OpenLibrary author stayed blank even after the data appeared upstream. Refresh now re-fetches and saves the author's bio, image, and disambiguation for non-Calibre authors (Discussion #1226).
+- **Library scan parses Readarr-style series folders** (#1234, #1298) — folders laid out as `{Series} #{N} - {Title}` were parsed with the whole folder string as the title, so most of a series failed to match and the rest collided onto one title. The scanner now strips the `{Series} #{N} - ` prefix, recovers the real title, and surfaces the series and position.
+- **Em-dash and other Unicode dashes in folder names parse correctly** (#1291) — filename and folder parsing normalises Unicode dash variants (em-dash, en-dash, figure dash, minus) to ASCII `-`, so `Author — Title` style folders split on the separator instead of being treated as one token.
+
+### Changed
+- **Bump `undici` to 7.28.0 and `@babel/core` to 7.29.7** (#1286) — frontend dependency updates to pick up upstream fixes.
+
+### Docs
+- **Documented the author "Find better metadata" button** (#1294) — the Troubleshooting wiki now explains when the Link / Find-better-metadata button appears (unlinked or sparse author records) and why well-populated authors do not show it; the duplicate predicates behind it were de-duplicated into a shared util.
+
 ## [v1.22.1] — 2026-06-22
 
 Patch release: security hardening, bug fixes, documentation accuracy, and a
