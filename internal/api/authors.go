@@ -374,8 +374,13 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 			if mediaType == "" {
 				mediaType = h.resolveDefaultMediaType(r.Context())
 			}
-			h.fetchAuthorBooksAsync(canonical, req.SearchOnAdd, mediaType)
+			// Finish mutating `canonical` (description clean-up) BEFORE spawning
+			// the async catalogue+profile refresh. fetchAuthorBooksAsync snapshots
+			// the author at spawn time and the goroutine now reads/writes profile
+			// fields (Description, ImageURL, ...); cleaning afterwards would race
+			// the snapshot read against this write (see fetchAuthorBooksAsync).
 			cleanAuthorDescription(canonical)
+			h.fetchAuthorBooksAsync(canonical, req.SearchOnAdd, mediaType)
 			writeJSON(w, http.StatusOK, canonical)
 			return
 		}
@@ -416,11 +421,16 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		mediaType = h.resolveDefaultMediaType(r.Context())
 	}
 
+	// Clean the description BEFORE spawning the async refresh: the goroutine
+	// snapshots `author` and now reads/writes its profile fields (Description,
+	// ImageURL, ...). Cleaning after the spawn would race the snapshot read
+	// against this write (see fetchAuthorBooksAsync).
+	cleanAuthorDescription(author)
+
 	// Fetch and store books for this author. Always populate the catalogue;
 	// pass searchOnAdd so FetchAuthorBooks knows whether to also queue grabs.
 	h.fetchAuthorBooksAsync(author, req.SearchOnAdd, mediaType)
 
-	cleanAuthorDescription(author)
 	writeJSON(w, http.StatusCreated, author)
 }
 
