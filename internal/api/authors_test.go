@@ -93,6 +93,9 @@ type stubMetaProvider struct {
 	// authorWorksByName lets tests act as an author-scoped supplemental
 	// provider such as Hardcover.
 	authorWorksByName []models.Book
+	// author, when non-nil, is returned by GetAuthor so tests can exercise
+	// the author-profile refresh path (Discussion #1226).
+	author *models.Author
 }
 
 func (p *stubMetaProvider) Name() string {
@@ -108,7 +111,7 @@ func (p *stubMetaProvider) SearchBooks(_ context.Context, _ string) ([]models.Bo
 	return nil, nil
 }
 func (p *stubMetaProvider) GetAuthor(_ context.Context, _ string) (*models.Author, error) {
-	return nil, nil
+	return p.author, nil
 }
 func (p *stubMetaProvider) GetBook(_ context.Context, fid string) (*models.Book, error) {
 	if p.getBookByID != nil {
@@ -332,6 +335,79 @@ func TestFetchAuthorBooks_FiresSearchForMonitoredAuthor(t *testing.T) {
 	titles := spy.titles()
 	if len(titles) != 2 {
 		t.Fatalf("expected 2 searcher calls, got %d: %v", len(titles), titles)
+	}
+}
+
+// TestFetchAuthorBooks_RefreshesAuthorProfile verifies that a metadata refresh
+// repopulates the author's OWN profile fields (description + image) from the
+// linked provider, not just the catalogue. Before the fix the refresh fetched
+// books but left Description/ImageURL empty even when the provider supplied them
+// (Discussion #1226).
+func TestFetchAuthorBooks_RefreshesAuthorProfile(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+
+	ctx := context.Background()
+	// An already-linked OpenLibrary author whose local profile is empty,
+	// mirroring the reporter's "linked but bio/photo blank" state.
+	author := &models.Author{
+		ForeignID: "OL6094856A", Name: "Paul Cornell", SortName: "Cornell, Paul",
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	stub := &stubMetaProvider{
+		works: []models.Book{
+			{ForeignID: "OL700W", Title: "London Falling", SortTitle: "london falling", Language: "eng", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+		},
+		author: &models.Author{
+			ForeignID:        "OL6094856A",
+			Name:             "Paul Cornell",
+			Description:      "British writer of novels, comics and TV.",
+			ImageURL:         "https://covers.openlibrary.org/a/id/14431281-L.jpg",
+			Disambiguation:   "British author",
+			RatingsCount:     42,
+			AverageRating:    4.1,
+			MetadataProvider: "openlibrary",
+		},
+	}
+	agg := metadata.NewAggregator(stub)
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, nil, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, "")
+
+	got, err := authorRepo.GetByID(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Description != "British writer of novels, comics and TV." {
+		t.Errorf("Description not refreshed: got %q", got.Description)
+	}
+	if got.ImageURL != "https://covers.openlibrary.org/a/id/14431281-L.jpg" {
+		t.Errorf("ImageURL not refreshed: got %q", got.ImageURL)
+	}
+	if got.Disambiguation != "British author" {
+		t.Errorf("Disambiguation not refreshed: got %q", got.Disambiguation)
+	}
+	if got.RatingsCount != 42 || got.AverageRating != 4.1 {
+		t.Errorf("ratings not refreshed: count=%d avg=%v", got.RatingsCount, got.AverageRating)
+	}
+	if got.LastMetadataRefreshAt == nil {
+		t.Error("LastMetadataRefreshAt not stamped on profile refresh")
+	}
+	// The catalogue must still be populated by the same refresh.
+	books, _ := bookRepo.ListByAuthor(ctx, author.ID)
+	if len(books) != 1 {
+		t.Errorf("expected 1 book synced, got %d", len(books))
 	}
 }
 
