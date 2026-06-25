@@ -312,6 +312,48 @@ func TestGetAuthor_HTTP_NegativePhoto(t *testing.T) {
 	}
 }
 
+// TestGetAuthor_HTTP_BioShapesAndPhoto pins the author-profile parsing the
+// refresh path depends on (Discussion #1226): the OpenLibrary bio field arrives
+// as either a bare string or a {type,value} object, and the photo arrives as a
+// numeric cover id that must become a covers.openlibrary.org image URL. Both bio
+// shapes must populate Description so a Refresh Metadata can persist them.
+func TestGetAuthor_HTTP_BioShapesAndPhoto(t *testing.T) {
+	cases := []struct {
+		name string
+		bio  interface{}
+	}{
+		{name: "string bio", bio: "British writer of novels, comics and TV."},
+		{name: "object bio", bio: map[string]interface{}{
+			"type":  "/type/text",
+			"value": "British writer of novels, comics and TV.",
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := authorResponse{
+				Key:    "/authors/OL6094856A",
+				Name:   "Paul Cornell",
+				Bio:    tc.bio,
+				Photos: []int{14431281},
+			}
+			c := newClientWithPaths(t, map[string]interface{}{
+				"/authors/OL6094856A.json": jsonStr(resp),
+			})
+
+			author, err := c.GetAuthor(context.Background(), "OL6094856A")
+			if err != nil {
+				t.Fatalf("GetAuthor: %v", err)
+			}
+			if author.Description != "British writer of novels, comics and TV." {
+				t.Errorf("Description: want bio text, got %q", author.Description)
+			}
+			if author.ImageURL != "https://covers.openlibrary.org/a/id/14431281-L.jpg" {
+				t.Errorf("ImageURL: want photo cover URL, got %q", author.ImageURL)
+			}
+		})
+	}
+}
+
 // --- GetEditions ---
 
 func TestGetEditions_HTTP(t *testing.T) {
