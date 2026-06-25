@@ -327,7 +327,16 @@
       "abs": "Audiobookshelf",
       "grimmory": "Grimmory",
       "blocklist": "Blocklist",
-      "apiKeys": "API Keys"
+      "apiKeys": "API Keys",
+      "about": "About"
+    },
+    "about": {
+      "title": "About",
+      "hint": "Build details for this Bindery instance. Include the version and commit when filing a bug report.",
+      "version": "Version",
+      "commit": "Commit",
+      "buildDate": "Build date",
+      "loadError": "Could not load build details."
     },
     "abs": {
       "review": {
