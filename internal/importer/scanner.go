@@ -1607,7 +1607,14 @@ func firstWordRun(tok string) string {
 
 // cleanLayoutTitle strips bracket/paren annotations from a book-folder name —
 // Calibre's " (id)", Readarr's " (year)" — so it matches the stored title.
+// It also strips a leading Readarr "{Series} #{N} - " prefix
+// ("Discworld #8 - Guards! Guards!" → "Guards! Guards!", issue #1234): without
+// this the whole folder name, series tag and all, leaks through as the title
+// and only series openers (where book title == series title) reconcile.
 func cleanLayoutTitle(dir string) string {
+	if _, _, title, ok := parseSeriesFolder(dir); ok {
+		dir = title
+	}
 	s := cleanRe.ReplaceAllString(dir, "")
 	s = multiSp.ReplaceAllString(s, " ")
 	return strings.TrimSpace(s)
