@@ -202,6 +202,52 @@ func (c *Client) SetShareLimits(ctx context.Context, hash string, ratioLimit flo
 	return nil
 }
 
+// addTorrentFields resolves the category / autoTMM / savepath fields for a
+// POST /torrents/add request, gating on whether a category is set.
+//
+// When a category is set it is the source of truth for placement: Bindery's
+// health checks validate that the category's configured save path maps to
+// Bindery's download dir, so we enable qBittorrent's automatic torrent
+// management (autoTMM=true) and DO NOT send an explicit savepath. With
+// auto_tmm off and an explicit savepath, qBittorrent ignores the category's
+// save path and dumps files in the download root (cleb's report: files land
+// in /data/downloads instead of /data/downloads/torrents/audiobooks).
+//
+// When no category is set we keep the legacy behaviour: send the explicit
+// savepath (if any) and leave autoTMM off.
+func addTorrentFields(category, savePath string) map[string]string {
+	if category != "" {
+		return map[string]string{
+			"category": category,
+			"autoTMM":  "true",
+		}
+	}
+	if savePath != "" {
+		return map[string]string{"savepath": savePath}
+	}
+	return nil
+}
+
+// setAddTorrentFields writes the gated add fields onto a url.Values form
+// (magnet / url-encoded add branches).
+func setAddTorrentFields(form url.Values, category, savePath string) {
+	for k, v := range addTorrentFields(category, savePath) {
+		form.Set(k, v)
+	}
+}
+
+// writeAddTorrentFields writes the gated add fields onto a multipart writer
+// (torrent-file upload branch). Mirrors setAddTorrentFields so the three add
+// branches can't drift.
+func writeAddTorrentFields(mw *multipart.Writer, category, savePath string) error {
+	for k, v := range addTorrentFields(category, savePath) {
+		if err := mw.WriteField(k, v); err != nil {
+			return fmt.Errorf("write torrent %s: %w", k, err)
+		}
+	}
+	return nil
+}
+
 // AddTorrent submits a magnet link or torrent URL to qBittorrent for download
 // and returns the torrent hash when it can be determined.
 func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath string) (string, error) {
@@ -249,12 +295,7 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 		if fetched.magnetURL != "" {
 			submitted = fetched.magnetURL
 			form := url.Values{"urls": {fetched.magnetURL}}
-			if category != "" {
-				form.Set("category", category)
-			}
-			if savePath != "" {
-				form.Set("savepath", savePath)
-			}
+			setAddTorrentFields(form, category, savePath)
 			req, err = http.NewRequestWithContext(ctx, http.MethodPost,
 				c.baseURL+"/api/v2/torrents/add",
 				strings.NewReader(form.Encode()))
@@ -273,15 +314,8 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 			if _, err := fw.Write(fetched.data); err != nil {
 				return "", fmt.Errorf("write torrent content: %w", err)
 			}
-			if category != "" {
-				if err := mw.WriteField("category", category); err != nil {
-					return "", fmt.Errorf("write torrent category: %w", err)
-				}
-			}
-			if savePath != "" {
-				if err := mw.WriteField("savepath", savePath); err != nil {
-					return "", fmt.Errorf("write torrent savepath: %w", err)
-				}
+			if err := writeAddTorrentFields(mw, category, savePath); err != nil {
+				return "", err
 			}
 			if err := mw.Close(); err != nil {
 				return "", fmt.Errorf("close multipart: %w", err)
@@ -296,12 +330,7 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 		}
 	} else {
 		form := url.Values{"urls": {magnetOrURL}}
-		if category != "" {
-			form.Set("category", category)
-		}
-		if savePath != "" {
-			form.Set("savepath", savePath)
-		}
+		setAddTorrentFields(form, category, savePath)
 		var err error
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost,
 			c.baseURL+"/api/v2/torrents/add",
@@ -338,6 +367,14 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 				// listing recovers category-missed torrents), but this is the root
 				// cause of the #969 cross-seed wedge, so surface it.
 				slog.Warn("add torrent: failed to set category on existing torrent",
+					"hash", hash, "category", category, "error", err)
+			}
+			// Enable automatic torrent management so the (possibly externally-added)
+			// torrent relocates to the category's configured save path rather than
+			// staying wherever it was manually placed. Best-effort: a failure here
+			// must not fail the grab.
+			if err := c.setAutoManagement(ctx, hash, true); err != nil {
+				slog.Warn("add torrent: failed to enable auto-management on existing torrent",
 					"hash", hash, "category", category, "error", err)
 			}
 		}
@@ -406,6 +443,13 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 					// Best-effort, but a torrent left outside Bindery's category
 					// is invisible to the category-filtered poll (#969/#939).
 					slog.Warn("add torrent: failed to set category on recovered torrent",
+						"hash", hash, "category", category, "error", err)
+				}
+				// Enable automatic torrent management so the torrent relocates to
+				// the category's configured save path. Best-effort: a failure here
+				// must not fail the grab.
+				if err := c.setAutoManagement(ctx, hash, true); err != nil {
+					slog.Warn("add torrent: failed to enable auto-management on recovered torrent",
 						"hash", hash, "category", category, "error", err)
 				}
 			}
@@ -697,6 +741,38 @@ func (c *Client) setCategory(ctx context.Context, hash, category string) error {
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
+// setAutoManagement toggles qBittorrent's automatic torrent management for a
+// torrent by hash via POST /api/v2/torrents/setAutoManagement. With it enabled
+// the torrent is relocated to its category's configured save path, which is the
+// behaviour Bindery relies on when re-categorising an existing/duplicate
+// torrent that may have been added with a manual savepath and auto_tmm off.
+func (c *Client) setAutoManagement(ctx context.Context, hash string, enable bool) error {
+	if err := c.ensureLoggedIn(ctx); err != nil {
+		return err
+	}
+	form := url.Values{
+		"hashes": {hash},
+		"enable": {strconv.FormatBool(enable)},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/api/v2/torrents/setAutoManagement",
+		strings.NewReader(form.Encode()))
+	if err != nil {
+		return fmt.Errorf("build setAutoManagement request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("setAutoManagement: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("setAutoManagement HTTP %d", resp.StatusCode)
+	}
 	return nil
 }
 

@@ -484,8 +484,14 @@ func TestAddTorrent_Success(t *testing.T) {
 	}
 }
 
-func TestAddTorrent_WithCategoryAndSavePath(t *testing.T) {
-	var gotCategory, gotSavePath string
+// TestAddTorrent_WithCategory_EnablesAutoTMMAndOmitsSavePath is the regression
+// test for cleb's bug (qBittorrent 5.2.1): when a category is set, Bindery must
+// enable autoTMM and NOT send an explicit savepath, so qBittorrent places the
+// torrent at the category's configured save path rather than the download root.
+// Bindery passes a computed savePath here, but it must be suppressed.
+func TestAddTorrent_WithCategory_EnablesAutoTMMAndOmitsSavePath(t *testing.T) {
+	var gotCategory, gotAutoTMM string
+	var savePathPresent bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v2/auth/login":
@@ -493,7 +499,8 @@ func TestAddTorrent_WithCategoryAndSavePath(t *testing.T) {
 		case "/api/v2/torrents/add":
 			_ = r.ParseForm()
 			gotCategory = r.FormValue("category")
-			gotSavePath = r.FormValue("savepath")
+			gotAutoTMM = r.FormValue("autoTMM")
+			_, savePathPresent = r.Form["savepath"]
 			_, _ = w.Write([]byte("Ok."))
 		}
 	}))
@@ -506,8 +513,41 @@ func TestAddTorrent_WithCategoryAndSavePath(t *testing.T) {
 	if gotCategory != "books" {
 		t.Errorf("category: want 'books', got %q", gotCategory)
 	}
+	if gotAutoTMM != "true" {
+		t.Errorf("autoTMM: want 'true', got %q", gotAutoTMM)
+	}
+	if savePathPresent {
+		t.Error("savepath must NOT be sent when a category is set (defeats the category save path)")
+	}
+}
+
+// TestAddTorrent_NoCategory_SendsSavePathNoAutoTMM verifies the legacy behaviour
+// is preserved when no category is set: the explicit savepath is sent and
+// autoTMM is not enabled.
+func TestAddTorrent_NoCategory_SendsSavePathNoAutoTMM(t *testing.T) {
+	var gotSavePath, gotAutoTMM string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/add":
+			_ = r.ParseForm()
+			gotSavePath = r.FormValue("savepath")
+			gotAutoTMM = r.FormValue("autoTMM")
+			_, _ = w.Write([]byte("Ok."))
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	if _, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", "", "/downloads"); err != nil {
+		t.Fatalf("AddTorrent: %v", err)
+	}
 	if gotSavePath != "/downloads" {
 		t.Errorf("savepath: want '/downloads', got %q", gotSavePath)
+	}
+	if gotAutoTMM == "true" {
+		t.Errorf("autoTMM must not be 'true' when no category is set, got %q", gotAutoTMM)
 	}
 }
 
@@ -646,10 +686,12 @@ func TestAddTorrent_TorrentURL_SubmitsMultipart(t *testing.T) {
 	}
 }
 
-// TestAddTorrent_TorrentURL_WithCategoryAndSavePath verifies that category and
-// savepath are included in the multipart body when submitting a torrent URL.
-func TestAddTorrent_TorrentURL_WithCategoryAndSavePath(t *testing.T) {
-	var gotCategory, gotSavePath string
+// TestAddTorrent_TorrentURL_WithCategory_EnablesAutoTMMAndOmitsSavePath is the
+// torrent-file (multipart) counterpart to cleb's bug: a category-set add via the
+// multipart upload branch must carry category + autoTMM=true and omit savepath.
+func TestAddTorrent_TorrentURL_WithCategory_EnablesAutoTMMAndOmitsSavePath(t *testing.T) {
+	var gotCategory, gotAutoTMM string
+	var savePathPresent bool
 	var mu sync.Mutex
 	added := false
 
@@ -663,7 +705,8 @@ func TestAddTorrent_TorrentURL_WithCategoryAndSavePath(t *testing.T) {
 		case "/api/v2/torrents/add":
 			if err := r.ParseMultipartForm(1 << 20); err == nil {
 				gotCategory = r.FormValue("category")
-				gotSavePath = r.FormValue("savepath")
+				gotAutoTMM = r.FormValue("autoTMM")
+				_, savePathPresent = r.Form["savepath"]
 			}
 			mu.Lock()
 			added = true
@@ -678,6 +721,8 @@ func TestAddTorrent_TorrentURL_WithCategoryAndSavePath(t *testing.T) {
 			} else {
 				_, _ = w.Write([]byte("[]"))
 			}
+		case "/api/v2/torrents/setCategory", "/api/v2/torrents/setAutoManagement":
+			w.WriteHeader(http.StatusOK)
 		}
 	}))
 	defer srv.Close()
@@ -690,8 +735,107 @@ func TestAddTorrent_TorrentURL_WithCategoryAndSavePath(t *testing.T) {
 	if gotCategory != "books" {
 		t.Errorf("category: want %q, got %q", "books", gotCategory)
 	}
-	if gotSavePath != "/downloads" {
-		t.Errorf("savepath: want %q, got %q", "/downloads", gotSavePath)
+	if gotAutoTMM != "true" {
+		t.Errorf("autoTMM: want 'true', got %q", gotAutoTMM)
+	}
+	if savePathPresent {
+		t.Error("savepath must NOT be sent in the multipart body when a category is set")
+	}
+}
+
+// TestSetAutoManagement verifies the new setAutoManagement helper hits the
+// correct endpoint with the hash and enable=true form fields.
+func TestSetAutoManagement(t *testing.T) {
+	var gotHash, gotEnable string
+	var hit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/setAutoManagement":
+			_ = r.ParseForm()
+			gotHash = r.FormValue("hashes")
+			gotEnable = r.FormValue("enable")
+			hit = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	c.loggedIn = true
+	if err := c.setAutoManagement(context.Background(), "abc123", true); err != nil {
+		t.Fatalf("setAutoManagement: %v", err)
+	}
+	if !hit {
+		t.Fatal("expected setAutoManagement endpoint to be hit")
+	}
+	if gotHash != "abc123" {
+		t.Errorf("hashes: want 'abc123', got %q", gotHash)
+	}
+	if gotEnable != "true" {
+		t.Errorf("enable: want 'true', got %q", gotEnable)
+	}
+}
+
+// TestAddTorrent_DuplicateRecovery_EnablesAutoManagement verifies that the 409
+// duplicate-recovery path re-categorises the existing torrent AND enables
+// automatic torrent management so it relocates to the category's save path.
+func TestAddTorrent_DuplicateRecovery_EnablesAutoManagement(t *testing.T) {
+	const hash = "abcdef123"
+	var setCategoryHash, setCategoryValue, autoMgmtHash, autoMgmtEnable string
+	var mu sync.Mutex
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			_, _ = w.Write([]byte("[]"))
+		case "/api/v2/torrents/add":
+			// qBittorrent already holds the torrent.
+			w.WriteHeader(http.StatusConflict)
+		case "/api/v2/torrents/setCategory":
+			_ = r.ParseForm()
+			mu.Lock()
+			setCategoryHash = r.FormValue("hashes")
+			setCategoryValue = r.FormValue("category")
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+		case "/api/v2/torrents/setAutoManagement":
+			_ = r.ParseForm()
+			mu.Lock()
+			autoMgmtHash = r.FormValue("hashes")
+			autoMgmtEnable = r.FormValue("enable")
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	c.loggedIn = true
+	got, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:"+hash, "books", "/downloads")
+	if err != nil {
+		t.Fatalf("AddTorrent: %v", err)
+	}
+	if got != hash {
+		t.Errorf("hash: want %q, got %q", hash, got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if setCategoryHash != hash || setCategoryValue != "books" {
+		t.Errorf("setCategory: want hash=%q category=books, got hash=%q category=%q", hash, setCategoryHash, setCategoryValue)
+	}
+	if autoMgmtHash != hash {
+		t.Errorf("setAutoManagement hashes: want %q, got %q", hash, autoMgmtHash)
+	}
+	if autoMgmtEnable != "true" {
+		t.Errorf("setAutoManagement enable: want 'true', got %q", autoMgmtEnable)
 	}
 }
 

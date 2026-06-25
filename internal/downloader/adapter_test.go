@@ -661,9 +661,12 @@ func TestSendDownload_QbittorrentAudiobookSavePath(t *testing.T) {
 // TestSendDownload_QbittorrentAudiobookCategory verifies that when a client has
 // CategoryAudiobook set and the send is for an audiobook, the qBittorrent
 // `category` form field reflects the audiobook category — not the ebook one
-// (#700). The savepath is also validated to round-trip the audiobook dir.
+// (#700). Because a category is set, the client must enable autoTMM and omit
+// the explicit savepath so qBittorrent honours the category's save path (cleb's
+// bug); the adapter still computes a savePath but the qBit client suppresses it.
 func TestSendDownload_QbittorrentAudiobookCategory(t *testing.T) {
-	var gotCategory, gotSavePath string
+	var gotCategory, gotAutoTMM string
+	var savePathPresent bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v2/auth/login":
@@ -671,7 +674,8 @@ func TestSendDownload_QbittorrentAudiobookCategory(t *testing.T) {
 		case "/api/v2/torrents/add":
 			_ = r.ParseForm()
 			gotCategory = r.FormValue("category")
-			gotSavePath = r.FormValue("savepath")
+			gotAutoTMM = r.FormValue("autoTMM")
+			_, savePathPresent = r.Form["savepath"]
 			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/info":
 			_, _ = w.Write([]byte("[]"))
@@ -700,8 +704,11 @@ func TestSendDownload_QbittorrentAudiobookCategory(t *testing.T) {
 	if gotCategory != "audiobooks" {
 		t.Errorf("category: want %q, got %q", "audiobooks", gotCategory)
 	}
-	if gotSavePath != "/media/audio-downloads" {
-		t.Errorf("savepath: want %q, got %q", "/media/audio-downloads", gotSavePath)
+	if gotAutoTMM != "true" {
+		t.Errorf("autoTMM: want 'true', got %q", gotAutoTMM)
+	}
+	if savePathPresent {
+		t.Error("savepath must NOT be sent when a category is set")
 	}
 }
 
