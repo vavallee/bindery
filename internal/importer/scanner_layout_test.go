@@ -35,6 +35,21 @@ func TestAuthorTitleFromLayout(t *testing.T) {
 			wantA: "Brandon Sanderson", wantT: "The Final Empire", wantOK: true,
 		},
 		{
+			// issue #1234: Readarr "{Series} #{N} - {Title}" book folder. The
+			// title must be the real book title, not the whole folder string with
+			// the series tag glued on.
+			name:  "readarr series-number book folder strips the series prefix",
+			path:  filepath.Join(root, "Terry Pratchett", "Discworld", "Discworld #8 - Guards! Guards!", "Terry Pratchett - Guards! Guards!.epub"),
+			wantA: "Terry Pratchett", wantT: "Guards! Guards!", wantOK: true,
+		},
+		{
+			// issue #1234 regression guard: a flat non-series book folder that
+			// merely contains a hyphen must NOT be mistaken for a series prefix.
+			name:  "non-series book folder with hyphen is left intact",
+			path:  filepath.Join(root, "Ursula K. Le Guin", "The Dispossessed - An Ambiguous Utopia", "x.epub"),
+			wantA: "Ursula K. Le Guin", wantT: "The Dispossessed - An Ambiguous Utopia", wantOK: true,
+		},
+		{
 			name:  "author folder only",
 			path:  filepath.Join(root, "Isaac Asimov", "foundation.epub"),
 			wantA: "Isaac Asimov", wantT: "", wantOK: true,
@@ -91,5 +106,66 @@ func TestScanLibrary_ReadarrFolderLayoutFixesSwappedFilename(t *testing.T) {
 	}
 	if got.FilePath != epub {
 		t.Errorf("Readarr-layout file must reconcile via the folder names, want FilePath=%q, got %q", epub, got.FilePath)
+	}
+}
+
+// TestScanLibrary_ReadarrSeriesFolderReconcilesNonOpener is the #1234
+// regression test: a Readarr library laid out as
+// {Author}/{Series}/{Series} #{N} - {Title}/{Author} - {Title}.{ext}. Before
+// the fix the book-folder name ("Discworld #8 - Guards! Guards!") leaked through
+// as the parsed title, so only series openers (where book title == series
+// title) reconciled and other books collided on the same title. The scan must
+// strip the "{Series} #{N} - " prefix and reconcile each book to its real title.
+func TestScanLibrary_ReadarrSeriesFolderReconcilesNonOpener(t *testing.T) {
+	libDir := t.TempDir()
+
+	type fixtureBook struct {
+		seriesFolder string // e.g. "Discworld #8 - Guards! Guards!"
+		title        string // stored book title, e.g. "Guards! Guards!"
+	}
+	books := []fixtureBook{
+		{"Discworld #8 - Guards! Guards!", "Guards! Guards!"},
+		{"Discworld #1 - The Colour of Magic", "The Colour of Magic"},
+	}
+
+	paths := make([]string, len(books))
+	for i, b := range books {
+		bookDir := filepath.Join(libDir, "Terry Pratchett", "Discworld", b.seriesFolder)
+		if err := os.MkdirAll(bookDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// Readarr's default "{Author} - {Title}.{ext}" filename.
+		epub := filepath.Join(bookDir, "Terry Pratchett - "+b.title+".epub")
+		if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		paths[i] = epub
+	}
+
+	s, bookRepo, authors, ctx := scannerFixture(t, libDir)
+	author := &models.Author{ForeignID: "OL-tp", Name: "Terry Pratchett", SortName: "Pratchett, Terry"}
+	if err := authors.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]int64, len(books))
+	for i, b := range books {
+		book := &models.Book{ForeignID: "OL-" + b.title, AuthorID: author.ID, Title: b.title, Status: models.BookStatusWanted}
+		if err := bookRepo.Create(ctx, book); err != nil {
+			t.Fatal(err)
+		}
+		ids[i] = book.ID
+	}
+
+	s.ScanLibrary(ctx)
+
+	for i, b := range books {
+		got, err := bookRepo.GetByID(ctx, ids[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.FilePath != paths[i] {
+			t.Errorf("book %q must reconcile to its own file via the stripped title, want FilePath=%q, got %q",
+				b.title, paths[i], got.FilePath)
+		}
 	}
 }

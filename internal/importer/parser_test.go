@@ -218,6 +218,22 @@ func TestParseFilenameSeriesExtraction(t *testing.T) {
 			wantSeriesNum: "1",
 			wantTitle:     "The Final Empire",
 		},
+		{
+			// issue #1234: Readarr "{Series} #{N} - {Title}" book folder.
+			// Series + position come from the parent dir; the title comes from
+			// the "Author - Title" filename so it transposes to the author here —
+			// the library scan corrects the title from the folder layout (#754).
+			name:          "readarr hash series folder surfaces series and position",
+			path:          "/books/Terry Pratchett/Discworld/Discworld #8 - Guards! Guards!/Terry Pratchett - Guards! Guards!.epub",
+			wantSeries:    "Discworld",
+			wantSeriesNum: "8",
+		},
+		{
+			name:          "readarr hash series folder with decimal position",
+			path:          "/books/Terry Pratchett/Discworld/Discworld #16.5 - The Last Hero/Terry Pratchett - The Last Hero.epub",
+			wantSeries:    "Discworld",
+			wantSeriesNum: "16.5",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

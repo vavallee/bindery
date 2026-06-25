@@ -57,7 +57,26 @@ var (
 	// "Series Book N - Title" or "Series Book N: Title" inline pattern (after dot/underscore expansion).
 	// Captures: series name, book number, title (and optional author after another " - ").
 	seriesBookInlineRe = regexp.MustCompile(`(?i)^(.+?)\s+(?:book|vol(?:ume)?|part)\.?\s*(\d+(?:\.\d+)?)\s*[-–:]\s*(.+)$`)
+	// Readarr-style "{Series} #{N} - {Title}" book folder, e.g.
+	// "Discworld #8 - Guards! Guards!" (issue #1234). The hash + number + " - "
+	// separator distinguishes it from an ordinary "Title - Author" name, so the
+	// series prefix can be stripped to recover the real title (and surface the
+	// series + position). Groups: 1=series, 2=number, 3=title.
+	seriesHashTitleRe = regexp.MustCompile(`^(.+?)\s+#(\d+(?:\.\d+)?)\s+[-–]\s+(.+)$`)
 )
+
+// parseSeriesFolder splits a Readarr-style "{Series} #{N} - {Title}" folder or
+// file base name (e.g. "Discworld #8 - Guards! Guards!") into its series,
+// number, and title parts. ok is false when the name does not carry the
+// "#N - " series marker. Unicode dash variants are normalized first so an
+// em-dash separator parses the same as a hyphen (reuses dashNormalizer, #1291).
+func parseSeriesFolder(name string) (series, number, title string, ok bool) {
+	name = dashNormalizer.Replace(name)
+	if m := seriesHashTitleRe.FindStringSubmatch(name); len(m) == 4 {
+		return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), strings.TrimSpace(m[3]), true
+	}
+	return "", "", "", false
+}
 
 // dashNormalizer rewrites the Unicode dash variants a library or OS might use
 // (Unicode/non-breaking hyphen, figure dash, en dash, em dash, horizontal bar,
@@ -152,6 +171,13 @@ func ParseFilename(path string) ParsedFile {
 		} else if m := seriesParenRe.FindStringSubmatch(dir); len(m) == 3 {
 			p.Series = strings.TrimSpace(m[1])
 			p.SeriesNumber = strings.TrimSpace(m[2])
+		} else if s, n, _, ok := parseSeriesFolder(dir); ok {
+			// Readarr layout: the book folder is "{Series} #{N} - {Title}", e.g.
+			// "Discworld #8 - Guards! Guards!" (issue #1234). Surface the series
+			// and position so the series-position reconciliation fallback can
+			// match books whose title differs from the series opener.
+			p.Series = s
+			p.SeriesNumber = n
 		}
 	}
 	// If we have a series but no number yet, check if the base name leads with one:
