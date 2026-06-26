@@ -294,14 +294,20 @@ func CopyFile(src, dst string) error {
 }
 
 // HardlinkFile creates a hard link at dst pointing to the same inode as src.
-// Both paths must be on the same filesystem — if they are not, os.Link returns
-// an error and no fallback is attempted (silently falling back to a move would
-// break seeding, which is the whole point of choosing hardlink mode).
+// When the two paths turn out to be on different mounts (EXDEV — common with
+// separate Docker bind mounts or Unraid /mnt/user shares that share a device id
+// but not a mount), it falls back to a COPY. A copy is seeding-safe: src is
+// left in place, so the download client keeps seeding — unlike a move fallback,
+// which would break seeding. The cost is extra disk for the imported copy.
+// Non-EXDEV errors (permissions, missing source) are returned as-is.
 func HardlinkFile(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
 		return fmt.Errorf("create dir: %w", err)
 	}
-	if err := os.Link(src, dst); err != nil {
+	if err := osLink(src, dst); err != nil {
+		if crossDeviceErr(err) {
+			return copyFile(src, dst)
+		}
 		return fmt.Errorf("hardlink %q → %q: %w (download dir and library must be on the same filesystem)", src, dst, err)
 	}
 	return nil
@@ -403,7 +409,16 @@ func hardlinkDirRooted(srcRoot, dstRoot *os.Root, rel string) error {
 		}
 		srcPath := filepath.Join(srcRoot.Name(), child)
 		dstPath := filepath.Join(dstRoot.Name(), child)
-		if err := os.Link(srcPath, dstPath); err != nil {
+		if err := osLink(srcPath, dstPath); err != nil {
+			// Cross-mount (EXDEV): fall back to a seeding-safe rooted copy for
+			// this entry instead of failing the whole audiobook folder. See
+			// HardlinkFile for the copy-vs-move rationale.
+			if crossDeviceErr(err) {
+				if cerr := copyFileRooted(srcRoot, dstRoot, child); cerr != nil {
+					return fmt.Errorf("hardlink cross-device copy fallback %q → %q: %w", srcPath, dstPath, cerr)
+				}
+				continue
+			}
 			return fmt.Errorf("hardlink %q → %q: %w (download dir and library must be on the same filesystem)", srcPath, dstPath, err)
 		}
 	}
@@ -597,6 +612,11 @@ var (
 	moveFileCopy   = copyFileCtx
 )
 
+// osLink is an indirection seam over os.Link so tests can simulate a
+// cross-device (EXDEV) link failure and exercise the seeding-safe copy
+// fallback without a second real filesystem. Production always uses os.Link.
+var osLink = os.Link
+
 // MoveFileCtx is like MoveFile but returns ctx.Err() if the context is
 // cancelled during the cross-filesystem copy phase.
 func MoveFileCtx(ctx context.Context, src, dst string) error {
@@ -698,8 +718,19 @@ func StagedImport(ctx context.Context, mode, src, dst string) (stagedPath string
 
 	switch mode {
 	case "hardlink":
-		if err := os.Link(src, staged); err != nil {
-			return "", nil, nil, fmt.Errorf("stage hardlink: %w", err)
+		if err := osLink(src, staged); err != nil {
+			// Non-EXDEV errors (permissions, missing source) fail loudly.
+			if !crossDeviceErr(err) {
+				return "", nil, nil, fmt.Errorf("stage hardlink: %w", err)
+			}
+			// src and staged turned out to be on different mounts despite
+			// hardlink mode being selected (e.g. two bind mounts sharing a
+			// device id, or an operator forcing import.mode=hardlink). Fall
+			// back to COPY: unlike a move it preserves seeding (src is left in
+			// place), at the cost of extra disk.
+			if cerr := copyFileCtx(ctx, src, staged); cerr != nil {
+				return "", nil, nil, fmt.Errorf("stage hardlink cross-device copy fallback: %w", cerr)
+			}
 		}
 	case "copy":
 		if err := copyFileCtx(ctx, src, staged); err != nil {

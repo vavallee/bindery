@@ -85,6 +85,6 @@ func (h *StorageHandler) Get(w http.ResponseWriter, _ *http.Request) {
 		LibraryDir:           cfg.LibraryDir,
 		AudiobookDir:         cfg.AudiobookDir,
 		Dirs:                 dirs,
-		Hardlinkable:         sameDevice(cfg.DownloadDir, cfg.LibraryDir),
+		Hardlinkable:         hardlinkable(cfg.DownloadDir, cfg.LibraryDir),
 	})
 }

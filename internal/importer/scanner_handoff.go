@@ -66,18 +66,23 @@ func (s *Scanner) configuredImportMode(ctx context.Context) string {
 
 // resolveImportMode picks the effective placement mode for a destination root.
 // An explicit operator setting (configuredMode) is honoured as-is. For the auto
-// default it returns "hardlink" when src and destRoot are on the same filesystem
-// (free, preserves seeding) or "copy" otherwise. destRoot MUST be the root the
-// files actually land under — per-author RootFolderID and audiobook roots can
-// live on a different mount than s.libraryDir, and choosing the mode against
-// s.libraryDir there picked an always-failing cross-device hardlink. Pass empty
-// strings for src/destRoot to get the cross-device default ("copy") without a
-// stat.
+// default it returns "hardlink" when a file can actually be hard-linked from
+// src into destRoot (free, preserves seeding) or "copy" otherwise. destRoot MUST be
+// the root the files actually land under — per-author RootFolderID and audiobook
+// roots can live on a different mount than s.libraryDir, and choosing the mode
+// against s.libraryDir there picked an always-failing cross-device hardlink.
+// Pass empty strings for src/destRoot to get the cross-device default ("copy")
+// without a probe.
+//
+// hardlinkable (not a bare same-device check) is used deliberately: separate
+// bind mounts and Unraid /mnt/user shares report the same st_dev yet reject
+// cross-mount hardlinks with EXDEV, so a device-ID match alone would auto-select
+// an always-failing hardlink mode.
 func (s *Scanner) resolveImportMode(configuredMode, src, destRoot string) string {
 	if configuredMode != "" {
 		return configuredMode
 	}
-	if sameDevice(src, destRoot) {
+	if hardlinkable(src, destRoot) {
 		return "hardlink"
 	}
 	slog.Warn("import.mode not set and src/dst are on different filesystems; defaulting to copy — seeding will be preserved but disk usage doubles")
