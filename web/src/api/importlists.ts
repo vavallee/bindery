@@ -12,6 +12,9 @@ export interface ImportList {
   monitorNew: boolean
   autoAdd: boolean
   enabled: boolean
+  // Per-list media type override: 'ebook' | 'audiobook' | 'both', or '' (unset
+  // — synced books keep the source-derived media type).
+  mediaType: string
   lastSyncAt?: string | null
   createdAt: string
   updatedAt: string
