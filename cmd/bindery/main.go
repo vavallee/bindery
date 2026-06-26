@@ -561,7 +561,8 @@ func main() {
 	}
 
 	libraryHandler := api.NewLibraryHandler(importScanner).WithSettings(settingsRepo)
-	fileHandler := api.NewFileHandler(bookRepo, cfg.LibraryDir, cfg.AudiobookDir)
+	fileHandler := api.NewFileHandler(bookRepo, cfg.LibraryDir, cfg.AudiobookDir).
+		WithRootFolders(rootFolderRepo)
 	historyHandler := api.NewHistoryHandler(historyRepo, blocklistRepo, bookRepo)
 	blocklistHandler := api.NewBlocklistHandler(blocklistRepo)
 	notificationHandler := api.NewNotificationHandler(notificationRepo, notif)
