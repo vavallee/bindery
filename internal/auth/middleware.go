@@ -86,6 +86,32 @@ func CheckOwnership(ctx context.Context, ownerUserID int64) bool {
 	return uid == ownerUserID
 }
 
+// ListScopeUserID returns the owner_user_id a LIST/browse query should scope
+// to, or 0 for "unscoped / see everything". It mirrors CheckOwnership's
+// bypasses so list views stay consistent with per-item access:
+//
+//   - tenancy disabled  => 0 (no scoping; single-user default);
+//   - admin role        => 0 (admins manage every user's library, matching
+//     CheckOwnership, which already lets an admin open any item by ID);
+//   - otherwise         => the caller's user id, which the DB layer treats as
+//     "owner_user_id = id OR owner_user_id IS NULL". A 0 here (API-key /
+//     disabled / local-only requests, which carry no user identity) already
+//     means unscoped downstream, matching CheckOwnership's admin-equivalent
+//     handling of those auth modes.
+//
+// Use this — not UserIDFromContext — to scope owner-filtered list handlers so
+// admins see the shared library and non-admins stay isolated to their own
+// rows (plus unowned/global rows).
+func ListScopeUserID(ctx context.Context) int64 {
+	if !EnforceTenancy() {
+		return 0
+	}
+	if UserRoleFromContext(ctx) == "admin" {
+		return 0
+	}
+	return UserIDFromContext(ctx)
+}
+
 // Mode represents the auth posture. Matches Sonarr's "Authentication Required"
 // dropdown semantics.
 type Mode string
