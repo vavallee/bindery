@@ -67,11 +67,11 @@ func (r *AuthorRepo) List(ctx context.Context) ([]models.Author, error) {
 }
 
 const (
-	listAuthorsAll = "SELECT " + authorSelectCols + " FROM authors ORDER BY sort_name"
+	listAuthorsAll = "SELECT " + authorSelectCols + " FROM authors ORDER BY sort_name COLLATE NOCASE"
 	// Include rows with NULL owner_user_id — these are authors created before the
 	// multi-user migration ran its backfill (migration 025) or imported without a
 	// user context. Excluding them causes the list to silently drop visible authors.
-	listAuthorsByUser = "SELECT " + authorSelectCols + " FROM authors WHERE owner_user_id = ? OR owner_user_id IS NULL ORDER BY sort_name"
+	listAuthorsByUser = "SELECT " + authorSelectCols + " FROM authors WHERE owner_user_id = ? OR owner_user_id IS NULL ORDER BY sort_name COLLATE NOCASE"
 )
 
 func (r *AuthorRepo) ListByUser(ctx context.Context, userID int64) ([]models.Author, error) {
@@ -122,14 +122,21 @@ func escapeLike(s string) string {
 
 // authorSortOrder maps a whitelisted sort key to a fixed ORDER BY clause. The
 // value never contains user input, so it is safe to interpolate.
+//
+// sort_name is stored case-preserving ("Olsen, Mary-Kate", "de Balzac,
+// Honoré"), so a plain (BINARY-collation) ORDER BY sorts all uppercase letters
+// ahead of all lowercase ones (ASCII 'Z'=90 < 'a'=97) — names beginning with a
+// lowercase article ("de", "von") land after "Z", which users read as a jumble.
+// COLLATE NOCASE folds case so the A-Z / Z-A order matches expectations. The
+// "recent" sort keys on created_at (a timestamp) and is unaffected.
 func authorSortOrder(sort string) string {
 	switch sort {
 	case "za":
-		return "sort_name DESC"
+		return "sort_name COLLATE NOCASE DESC"
 	case "recent":
 		return "created_at DESC, id DESC"
 	default:
-		return "sort_name ASC"
+		return "sort_name COLLATE NOCASE ASC"
 	}
 }
 
