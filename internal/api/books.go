@@ -273,7 +273,10 @@ func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
 		if includeExcluded {
 			books, err = h.books.ListByAuthorIncludingExcluded(r.Context(), id)
 		} else {
-			books, err = h.books.ListByAuthor(r.Context(), id)
+			// Scope to the caller's library: admins / API-key / no-tenancy get
+			// 0 = unscoped (identical to ListByAuthor), non-admins are isolated
+			// to their own + unowned books even when navigating by authorId.
+			books, err = h.books.ListByAuthorAndUser(r.Context(), id, auth.ListScopeUserID(r.Context()))
 		}
 		books, total = pageBooks(books, limit, offset)
 	case includeExcluded:
@@ -295,6 +298,11 @@ func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
 		// monitored=1 for "wanted" — matching what the Books page showed when
 		// it filtered client-side over the full set.
 		books, total, err = h.books.ListPageFiltered(r.Context(), db.BookListFilter{
+			// Scope with ListScopeUserID so admins / API-key / no-tenancy callers
+			// see the shared library (0 = unscoped) while non-admins stay isolated
+			// to their own + unowned books, consistent with the authors list and
+			// CheckOwnership's per-item bypass.
+			UserID:        auth.ListScopeUserID(r.Context()),
 			Search:        strings.TrimSpace(r.URL.Query().Get("search")),
 			Status:        status,
 			MediaType:     r.URL.Query().Get("mediaType"),

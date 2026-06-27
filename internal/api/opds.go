@@ -111,14 +111,12 @@ func (h *OPDSHandler) Book(w http.ResponseWriter, r *http.Request) {
 // when there is no authenticated user (API-key / disabled / local-only auth
 // paths). The Build* methods on opds.Builder treat 0 as "no per-user
 // filter", which preserves pre-D3 behaviour for those paths.
+//
+// This is exactly auth.ListScopeUserID — the shared helper that scopes every
+// owner-filtered list view — so OPDS feeds stay consistent with the JSON
+// authors/books lists.
 func opdsCallerUserID(ctx context.Context) int64 {
-	if !auth.EnforceTenancy() {
-		return 0
-	}
-	if auth.UserRoleFromContext(ctx) == "admin" {
-		return 0
-	}
-	return auth.UserIDFromContext(ctx)
+	return auth.ListScopeUserID(ctx)
 }
 
 // DownloadFile serves the book bytes. Delegates to the same FileHandler

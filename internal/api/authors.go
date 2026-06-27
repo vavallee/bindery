@@ -186,7 +186,12 @@ const (
 
 func (h *AuthorHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	userID := auth.UserIDFromContext(ctx)
+	// Scope the browse list with ListScopeUserID (not UserIDFromContext): admins
+	// and API-key/no-tenancy callers get 0 = unscoped so they see the shared
+	// library, matching CheckOwnership's per-item bypass; non-admins stay scoped
+	// to their own + unowned rows. Fixes admins not seeing another admin's
+	// authors in the list even though they can open them by ID.
+	userID := auth.ListScopeUserID(ctx)
 	limit, offset := parseLimitOffset(r, authorListDefaultLimit, authorListMaxLimit)
 	filter := db.AuthorListFilter{
 		UserID: userID,
