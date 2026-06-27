@@ -330,3 +330,50 @@ func TestBookRepo_ListPageFiltered(t *testing.T) {
 		t.Errorf("title-za first = %v, want [Warbreaker]", za)
 	}
 }
+
+// TestAuthorRepo_ListPageFiltered_SearchMatchesAlias covers #1176: searching a
+// pen name / AKA stored in author_aliases must surface the canonical author
+// that owns the alias, not just exact authors.name matches.
+func TestAuthorRepo_ListPageFiltered_SearchMatchesAlias(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewAuthorRepo(database)
+	aliasRepo := NewAuthorAliasRepo(database)
+
+	holly := &models.Author{ForeignID: "OL-HB", Name: "Holly Black", SortName: "Black, Holly", Monitored: true}
+	if err := repo.Create(ctx, holly); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Create(ctx, &models.Author{ForeignID: "OL-XX", Name: "Someone Else", SortName: "Else, Someone", Monitored: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := aliasRepo.Create(ctx, &models.AuthorAlias{AuthorID: holly.ID, Name: "Cassandra Clare"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Full alias match returns exactly the canonical author.
+	got, total, err := repo.ListPageFiltered(ctx, AuthorListFilter{Search: "cassandra clare"}, 50, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(got) != 1 {
+		t.Fatalf("alias search: want 1 author, got total=%d len=%d", total, len(got))
+	}
+	if got[0].ID != holly.ID {
+		t.Fatalf("alias search returned id=%d name=%q, want Holly Black (id=%d)", got[0].ID, got[0].Name, holly.ID)
+	}
+
+	// Partial alias match also resolves to the owner.
+	if _, total, err := repo.ListPageFiltered(ctx, AuthorListFilter{Search: "Cassandra"}, 50, 0); err != nil || total != 1 {
+		t.Fatalf("partial alias search: want 1 (err nil), got total=%d err=%v", total, err)
+	}
+
+	// Canonical-name search is unaffected.
+	if _, total, err := repo.ListPageFiltered(ctx, AuthorListFilter{Search: "Holly"}, 50, 0); err != nil || total != 1 {
+		t.Fatalf("canonical name search: want 1 (err nil), got total=%d err=%v", total, err)
+	}
+}
