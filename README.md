@@ -84,16 +84,19 @@ Clean-room Go rewrite, modern React UI, MIT-licensed, actively developed.
 |---|---|---|---|---|
 | **Status** | Active (v1.22.x) | Active (community fork) | Alpha (0.1.x) | Archived (June 2025) |
 | **Stack** | Go, single binary | Python | Rust | C# / .NET |
-| **Book metadata** | 6 independent sources, no scraping | Goodreads + fallbacks | 3 sources | Dead backend |
+| **Book metadata** | 6 independent sources, no scraping | Goodreads + fallbacks | 4 sources, no scraping | Dead backend |
 | **Readarr `.db` import** | **Yes** | No | No | — |
-| **Ebooks + audiobooks** | Yes — separate roots, narrator metadata | Yes | Yes | Limited |
-| **ARM / Raspberry Pi** | **Yes, to Pi Zero** | Yes | No | Yes |
+| **Ebooks + audiobooks** | Yes — separate roots, narrator metadata | Yes (+ magazines, comics) | Yes | Limited |
+| **ARM / Raspberry Pi** | **Yes, to Pi Zero** (armv6) | Yes | arm64 only | Yes |
 | **Kubernetes / Helm** | **Yes, distroless** | No | No | Community |
-| **Usenet + torrents** | Both (SAB/NZBGet + qBit/Transmission/Deluge) | Both | Both | Both |
+| **Usenet + torrents** | Both (SAB/NZBGet + qBit/Transmission/Deluge) | Both | Both (SAB + qBit) | Both |
 
 **Pick Bindery** for a modern, low-maintenance manager that survives metadata outages and swallows your old Readarr database whole.
 **Pick LazyLibrarian** if you want a long-established tool with magazine and comic support and don't mind a dated UI.
+**Pick Livrarr** if you want the same single-binary spirit and don't need the maturity, the Readarr import, Pi-class ARM, or a Helm chart yet.
 **Calibre-Web / Audiobookshelf** solve a different problem — *serving* an already-curated library, not automating acquisition — and pair well downstream of Bindery.
+
+<sub>Competitor details verified June 2026 (Readarr archived 2025-06-27; LazyLibrarian active community fork; [Livrarr](https://github.com/kkodecs/livrarr) v0.1.0-alpha5). Spotted something out of date? Open an issue.</sub>
 
 ## Features
 
