@@ -5,8 +5,8 @@
 <h1 align="center">Bindery</h1>
 
 <p align="center">
-  <strong>Automated book download manager for Usenet & Torrents</strong><br>
-  Monitor authors. Search indexers. Download. Organize. Done.
+  <strong>The Readarr replacement built to outlive its metadata sources.</strong><br>
+  Automated ebook &amp; audiobook management for Usenet &amp; torrents — monitor authors, search indexers, download, organize.
 </p>
 
 <p align="center">
@@ -59,9 +59,41 @@
 
 ## Why Bindery?
 
-**Readarr is dead.** The official project was archived in June 2025 and its metadata backend (`api.bookinfo.club`) is permanently offline. Community forks rely on fragile Goodreads scrapers that break regularly. There was no reliable, open-source tool for automated book management on Usenet.
+**You probably got here because Readarr died.** The official project was archived in June 2025 when its metadata backend (`api.bookinfo.club`) went permanently offline — one dead endpoint took the whole app down. The community forks that followed lean on Goodreads scrapers that break whenever the site changes its HTML.
 
-**Bindery is the clean-room replacement.** Built from scratch in Go with a modern React UI, Bindery uses only stable, documented public APIs for book metadata. No scraping. No dead backends. No fragile dependencies.
+Bindery is built so that can't happen to you:
+
+- **No single point of failure for metadata.** OpenLibrary leads, with Google Books, Hardcover, DNB, Audnex, and Audible behind it — all documented public APIs, zero scraping. If one source degrades, the others carry the library.
+- **Bring your dead Readarr install with you.** Import `readarr.db` and your authors, indexers, download clients, and blocklist come across in one step. No re-entry, no CSV gymnastics.
+- **Boring to run, by design.** A single Go binary with the UI embedded, SQLite, no external database, no sidecars, no nginx. Distroless image, Helm chart, and ARM builds down to a Pi Zero.
+
+Clean-room Go rewrite, modern React UI, MIT-licensed, actively developed.
+
+> [!TIP]
+> **Coming from Readarr?** Keep your library — point Bindery at the old database:
+>
+> ```bash
+> bindery migrate readarr /path/to/readarr.db
+> ```
+>
+> Authors are re-resolved against OpenLibrary (Readarr's `bookinfo.club` backend is gone); indexers, download clients, and blocklist port across. Prefer the UI? **Settings → Import**. Full guide: [Migrating from Readarr](docs/Migrating-From-Readarr-Wiki.md).
+
+## How Bindery compares
+
+| | **Bindery** | LazyLibrarian | Livrarr | Readarr |
+|---|---|---|---|---|
+| **Status** | Active (v1.22.x) | Active (community fork) | Alpha (0.1.x) | Archived (June 2025) |
+| **Stack** | Go, single binary | Python | Rust | C# / .NET |
+| **Book metadata** | 6 independent sources, no scraping | Goodreads + fallbacks | 3 sources | Dead backend |
+| **Readarr `.db` import** | **Yes** | No | No | — |
+| **Ebooks + audiobooks** | Yes — separate roots, narrator metadata | Yes | Yes | Limited |
+| **ARM / Raspberry Pi** | **Yes, to Pi Zero** | Yes | No | Yes |
+| **Kubernetes / Helm** | **Yes, distroless** | No | No | Community |
+| **Usenet + torrents** | Both (SAB/NZBGet + qBit/Transmission/Deluge) | Both | Both | Both |
+
+**Pick Bindery** for a modern, low-maintenance manager that survives metadata outages and swallows your old Readarr database whole.
+**Pick LazyLibrarian** if you want a long-established tool with magazine and comic support and don't mind a dated UI.
+**Calibre-Web / Audiobookshelf** solve a different problem — *serving* an already-curated library, not automating acquisition — and pair well downstream of Bindery.
 
 ## Features
 
