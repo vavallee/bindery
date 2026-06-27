@@ -172,8 +172,12 @@ func (r *AuthorRepo) ListPageFiltered(ctx context.Context, f AuthorListFilter, l
 		args = append(args, f.UserID)
 	}
 	if s := strings.TrimSpace(f.Search); s != "" {
-		conds = append(conds, "name LIKE ? ESCAPE '\\' COLLATE NOCASE")
-		args = append(args, "%"+escapeLike(s)+"%")
+		// Match the canonical name OR any of the author's aliases (#1176), so
+		// searching a pen name / AKA (e.g. "Cassandra Clare" stored as an alias
+		// of Holly Black) still surfaces the author that owns it.
+		like := "%" + escapeLike(s) + "%"
+		conds = append(conds, "(name LIKE ? ESCAPE '\\' COLLATE NOCASE OR id IN (SELECT author_id FROM author_aliases WHERE name LIKE ? ESCAPE '\\' COLLATE NOCASE))")
+		args = append(args, like, like)
 	}
 	if f.Monitored != nil {
 		conds = append(conds, "monitored = ?")
