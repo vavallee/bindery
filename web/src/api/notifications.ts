@@ -5,6 +5,9 @@ export interface NotificationConfig {
   name: string
   type: string
   url: string
+  // topic, when set, makes Bindery POST to the URL's server root with a "topic"
+  // field so ntfy renders the JSON natively instead of printing it (#1323).
+  topic: string
   method: string
   headers: string
   onGrab: boolean

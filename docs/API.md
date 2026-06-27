@@ -138,6 +138,26 @@ PUT    /api/v1/system/loglevel                    runtime log-level switch (debu
 GET    /api/v1/images?url=<encoded>               proxied + cached cover image (30-day TTL)
 ```
 
+#### Webhook payload
+
+Every event POSTs a JSON body with a consistent shape so relays render it
+without a custom template:
+
+| Field | Meaning |
+|-------|---------|
+| `eventType` | `grabbed` \| `bookImported` \| `upgrade` \| `downloadFailed` \| `health` \| `test` — present on **every** event |
+| `title` | what happened, e.g. `Release Grabbed`, `Book Imported`, `Download Failed` |
+| `message` | the subject, e.g. `The Way of Kings · Brandon Sanderson` |
+| `body` | alias of `message` (Apprise requires a `body` field) |
+| `item` | the raw release/book name (the title before it was moved into `message`) |
+| event extras | `author`, `format`, `size`, `path`, `status`, `clientId` when relevant |
+
+**ntfy:** set the notification's **topic** field and point the URL at the ntfy
+server root (e.g. `https://ntfy.sh`). Bindery then POSTs the JSON body with a
+`topic` field to the root, which ntfy renders natively. Without a topic it POSTs
+to the URL as-is, so a topic URL would show the raw JSON — use the topic field
+or ntfy message-templating headers (`X-Title`, `X-Message`) instead.
+
 ### Auth and users (admin)
 
 ```

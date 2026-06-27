@@ -20,7 +20,7 @@ func NewNotificationRepo(db *sql.DB) *NotificationRepo {
 
 func (r *NotificationRepo) List(ctx context.Context) ([]models.Notification, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, name, type, url, method, headers,
+		SELECT id, name, type, url, method, headers, topic,
 		       on_grab, on_import, on_upgrade, on_failure, on_health,
 		       enabled, created_at, updated_at
 		FROM notifications ORDER BY id`)
@@ -42,7 +42,7 @@ func (r *NotificationRepo) List(ctx context.Context) ([]models.Notification, err
 
 func (r *NotificationRepo) GetByID(ctx context.Context, id int64) (*models.Notification, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, name, type, url, method, headers,
+		SELECT id, name, type, url, method, headers, topic,
 		       on_grab, on_import, on_upgrade, on_failure, on_health,
 		       enabled, created_at, updated_at
 		FROM notifications WHERE id=?`, id)
@@ -57,11 +57,11 @@ func (r *NotificationRepo) GetByID(ctx context.Context, id int64) (*models.Notif
 func (r *NotificationRepo) Create(ctx context.Context, n *models.Notification) error {
 	now := time.Now().UTC()
 	result, err := r.db.ExecContext(ctx, `
-		INSERT INTO notifications (name, type, url, method, headers,
+		INSERT INTO notifications (name, type, url, method, headers, topic,
 		                           on_grab, on_import, on_upgrade, on_failure, on_health,
 		                           enabled, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		n.Name, n.Type, n.URL, n.Method, n.Headers,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		n.Name, n.Type, n.URL, n.Method, n.Headers, n.Topic,
 		n.OnGrab, n.OnImport, n.OnUpgrade, n.OnFailure, n.OnHealth,
 		n.Enabled, now, now)
 	if err != nil {
@@ -78,11 +78,11 @@ func (r *NotificationRepo) Update(ctx context.Context, n *models.Notification) e
 	now := time.Now().UTC()
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE notifications
-		SET name=?, type=?, url=?, method=?, headers=?,
+		SET name=?, type=?, url=?, method=?, headers=?, topic=?,
 		    on_grab=?, on_import=?, on_upgrade=?, on_failure=?, on_health=?,
 		    enabled=?, updated_at=?
 		WHERE id=?`,
-		n.Name, n.Type, n.URL, n.Method, n.Headers,
+		n.Name, n.Type, n.URL, n.Method, n.Headers, n.Topic,
 		n.OnGrab, n.OnImport, n.OnUpgrade, n.OnFailure, n.OnHealth,
 		n.Enabled, now, n.ID)
 	if err != nil {
@@ -106,7 +106,7 @@ func (r *NotificationRepo) scanRow(s scanner) (*models.Notification, error) {
 	var n models.Notification
 	var onGrab, onImport, onUpgrade, onFailure, onHealth, enabled int
 	if err := s.Scan(
-		&n.ID, &n.Name, &n.Type, &n.URL, &n.Method, &n.Headers,
+		&n.ID, &n.Name, &n.Type, &n.URL, &n.Method, &n.Headers, &n.Topic,
 		&onGrab, &onImport, &onUpgrade, &onFailure, &onHealth,
 		&enabled, &n.CreatedAt, &n.UpdatedAt,
 	); err != nil {

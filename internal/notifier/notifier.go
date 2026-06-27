@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -26,6 +27,90 @@ const (
 	EventHealth         = "health"
 	EventUpgrade        = "upgrade"
 )
+
+// normalizeEventPayload gives every event a consistent, human-readable shape so
+// relays that render without a template (ntfy, Apprise) read well, and so a
+// template can branch on the event (#1323). It sets `title` to *what happened*
+// (the event) and `message` to *the subject*, mirroring the Sonarr/Radarr shape
+// — previously `title` carried the item and `message` was often absent, so the
+// notification showed the same string twice and never said what occurred. The
+// original item name is preserved under `item`, and `eventType` is added to
+// every payload (not just `test`) so templates can key off it. All original
+// fields (size, format, path, status, clientId, …) are kept for templaters.
+func normalizeEventPayload(eventType string, payload map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(payload)+3)
+	for k, v := range payload {
+		out[k] = v
+	}
+	out["eventType"] = eventType
+
+	item, _ := out["title"].(string)
+	if item != "" {
+		out["item"] = item
+	}
+	msg, _ := out["message"].(string)
+	author, _ := out["author"].(string)
+	format, _ := out["format"].(string)
+	status, _ := out["status"].(string)
+
+	var title, body string
+	switch eventType {
+	case EventGrabbed:
+		title, body = "Release Grabbed", item
+		if author != "" {
+			body = item + " · " + author
+		}
+	case EventBookImported:
+		title, body = "Book Imported", item
+		if format != "" {
+			body = item + " (" + format + ")"
+		}
+	case EventUpgrade:
+		title, body = "Book Upgraded", item
+		if format != "" {
+			body = item + " (" + format + ")"
+		}
+	case EventDownloadFailed:
+		title = "Download Failed"
+		switch {
+		case item != "" && msg != "":
+			body = item + ": " + msg
+		case item != "":
+			body = item
+		default:
+			body = msg
+		}
+	case EventHealth:
+		title = "Download Client Unhealthy"
+		if body = msg; body == "" {
+			body = status
+		}
+	case "test":
+		title = "Bindery Test"
+		if body = msg; body == "" {
+			body = "Bindery notification test"
+		}
+	default:
+		title, body = item, msg
+	}
+	out["title"] = title
+	out["message"] = body
+	return out
+}
+
+// ntfyRootURL strips a topic URL (https://ntfy.sh/mytopic) down to the server
+// root (https://ntfy.sh/) so a JSON body with a "topic" field publishes
+// natively. Returns raw unchanged if it can't be parsed.
+func ntfyRootURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	u.Path = "/"
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
+}
 
 // Notifier dispatches webhook notifications for Bindery events.
 type Notifier struct {
@@ -99,6 +184,7 @@ func (n *Notifier) Send(ctx context.Context, eventType string, payload map[strin
 		return
 	}
 
+	out := normalizeEventPayload(eventType, payload)
 	for _, notif := range notifications {
 		if !notif.Enabled {
 			continue
@@ -106,7 +192,7 @@ func (n *Notifier) Send(ctx context.Context, eventType string, payload map[strin
 		if !n.matchesEvent(&notif, eventType) {
 			continue
 		}
-		if err := n.send(ctx, &notif, payload); err != nil {
+		if err := n.send(ctx, &notif, out); err != nil {
 			slog.Error("notifier: failed to send notification",
 				"id", notif.ID,
 				"name", notif.Name,
@@ -118,10 +204,7 @@ func (n *Notifier) Send(ctx context.Context, eventType string, payload map[strin
 
 // Test sends a test payload to a single notification without persisting it.
 func (n *Notifier) Test(ctx context.Context, notification *models.Notification) error {
-	payload := map[string]interface{}{
-		"eventType": "test",
-		"message":   "Bindery notification test",
-	}
+	payload := normalizeEventPayload("test", map[string]interface{}{})
 	return n.send(ctx, notification, payload)
 }
 
@@ -180,6 +263,16 @@ func (n *Notifier) send(ctx context.Context, notif *models.Notification, payload
 		out["title"] = "Bindery"
 	}
 
+	// When a topic is configured, publish to the ntfy server root with the topic
+	// in the JSON body. ntfy only parses a JSON body at the root URL; POSTed to a
+	// topic URL it treats the body as plain text and prints the JSON verbatim
+	// (#1323). The host is unchanged, so the URL already passed validation above.
+	target := notif.URL
+	if topic := strings.TrimSpace(notif.Topic); topic != "" {
+		out["topic"] = topic
+		target = ntfyRootURL(notif.URL)
+	}
+
 	body, err := json.Marshal(out)
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
@@ -190,7 +283,7 @@ func (n *Notifier) send(ctx context.Context, notif *models.Notification, payload
 		method = http.MethodPost
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, notif.URL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
