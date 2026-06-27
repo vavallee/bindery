@@ -22,6 +22,10 @@
 ---
 
 <p align="center">
+  <img src="docs/screenshots/loop.gif" alt="Bindery — a tour through authors, books, the release calendar, and the download queue" width="1200">
+</p>
+
+<p align="center">
   <img src="docs/screenshots/author-detail-desktop-dark.png" alt="Bindery — Author detail page with monitored books" width="1200">
 </p>
 
@@ -31,6 +35,14 @@
 
 <p align="center">
   <img src="docs/screenshots/books-desktop-dark.png" alt="Bindery — Books library grid view" width="1200">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/calendar-desktop-dark.png" alt="Bindery — Release calendar of upcoming books" width="1200">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/queue-desktop-dark.png" alt="Bindery — Download queue with live status" width="1200">
 </p>
 
 <h4 align="center">Mobile-friendly</h4>
