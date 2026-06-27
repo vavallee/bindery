@@ -229,6 +229,41 @@ func TestImportMode_DefaultHardlinkSameDevice_DstNotExist(t *testing.T) {
 	}
 }
 
+// TestResolveImportMode covers the helper the import pipeline uses to choose a
+// placement mode against the real destination root (#1254). An explicit mode is
+// returned verbatim; the auto default keys hardlink-vs-copy off the destRoot
+// argument it is given (which the call sites now set to the per-author /
+// audiobook root rather than s.libraryDir).
+func TestResolveImportMode(t *testing.T) {
+	s := &Scanner{}
+
+	// Explicit configured modes are returned as-is regardless of src/dst.
+	for _, m := range []string{"move", "copy", "hardlink", "external"} {
+		if got := s.resolveImportMode(m, "/any/src", "/any/dst"); got != m {
+			t.Errorf("explicit configuredMode %q: got %q", m, got)
+		}
+	}
+
+	// Auto (empty configuredMode), same-device src/destRoot → hardlink.
+	dir := t.TempDir()
+	src := filepath.Join(dir, "downloads")
+	destRoot := filepath.Join(dir, "library")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(destRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.resolveImportMode("", src, destRoot); got != "hardlink" {
+		t.Errorf("auto same-device: got %q, want hardlink", got)
+	}
+
+	// Auto with empty paths → safe cross-device default copy.
+	if got := s.resolveImportMode("", "", ""); got != "copy" {
+		t.Errorf("auto empty paths: got %q, want copy", got)
+	}
+}
+
 // TestImportMode_Settings exercises all branches of importMode when a real
 // SettingsRepo is attached: "copy", "hardlink", unknown value, and absent key.
 func TestImportMode_Settings(t *testing.T) {

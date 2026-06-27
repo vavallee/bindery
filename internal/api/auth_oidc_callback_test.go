@@ -234,6 +234,56 @@ func TestCallback_AllowedGroups_OutOfGroup(t *testing.T) {
 	}
 }
 
+// TestCallback_AllowedGroups_CustomGroupClaim verifies the AllowedGroups policy
+// is evaluated against the operator-configured BINDERY_OIDC_GROUP_CLAIM, not the
+// literal "groups" claim. Here the IdP sends groups only under "bindery_groups";
+// before the fix this compared against an always-empty slice and locked the
+// in-group user out with a 403.
+func TestCallback_AllowedGroups_CustomGroupClaim(t *testing.T) {
+	idp := newFakeIDP(t)
+	idp.claims = map[string]any{
+		"sub":            "user-custom-claim",
+		"nonce":          "test-nonce",
+		"email":          "custom@example.com",
+		"email_verified": true,
+		"bindery_groups": []string{"staff", "bindery-users"},
+		// deliberately no default "groups" claim
+	}
+	h, _, _ := newCallbackTestHandler(t, idp, []string{"bindery-users"}, false)
+	h.WithOIDCGroupClaim("bindery_groups")
+
+	rec := doCallback(t, h)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status=%d, want 302: AllowedGroups must honor BINDERY_OIDC_GROUP_CLAIM; body=%s", rec.Code, rec.Body.String())
+	}
+	if !hasSessionCookie(rec) {
+		t.Fatal("expected a session cookie for the in-group user under the configured claim")
+	}
+}
+
+// TestCallback_AllowedGroups_CustomGroupClaim_OutOfGroup verifies the negative
+// side of the configured-claim check still fails closed.
+func TestCallback_AllowedGroups_CustomGroupClaim_OutOfGroup(t *testing.T) {
+	idp := newFakeIDP(t)
+	idp.claims = map[string]any{
+		"sub":            "user-custom-claim-out",
+		"nonce":          "test-nonce",
+		"email":          "customout@example.com",
+		"email_verified": true,
+		"bindery_groups": []string{"staff", "contractors"},
+	}
+	h, _, _ := newCallbackTestHandler(t, idp, []string{"bindery-users"}, false)
+	h.WithOIDCGroupClaim("bindery_groups")
+
+	rec := doCallback(t, h)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status=%d, want 403 (out-of-group under configured claim must be rejected); body=%s", rec.Code, rec.Body.String())
+	}
+	if hasSessionCookie(rec) {
+		t.Fatal("a rejected login must not receive a session cookie")
+	}
+}
+
 // TestCallback_AllowedGroups_NoGroupsClaim verifies that when AllowedGroups is
 // configured but the IdP sends no `groups` claim at all, the login is rejected
 // (fail-closed) — the admin must fix the IdP scope mapping.

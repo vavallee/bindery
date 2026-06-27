@@ -83,6 +83,181 @@ func TestSync_IgnoresDisabledHardcoverLists(t *testing.T) {
 	}
 }
 
+func TestUniqueAuthorByName(t *testing.T) {
+	index := map[string][]models.Author{
+		"john smith": {{ID: 1, Name: "John Smith"}, {ID: 2, Name: "John Smith"}}, // ambiguous namesakes
+		"jane doe":   {{ID: 3, Name: "Jane Doe"}},
+	}
+	// Ambiguous → nil (never guess which namesake to merge into).
+	if got := uniqueAuthorByName(index, "John  Smith"); got != nil {
+		t.Errorf("ambiguous match should return nil, got %+v", got)
+	}
+	// Unique → match (normalization collapses spacing/case).
+	if got := uniqueAuthorByName(index, "  jane   DOE "); got == nil || got.ID != 3 {
+		t.Errorf("expected unique match id 3, got %+v", got)
+	}
+	// No match → nil.
+	if got := uniqueAuthorByName(index, "Nobody Here"); got != nil {
+		t.Errorf("no match should return nil, got %+v", got)
+	}
+}
+
+// TestSyncOne_ReusesAuthorByNameAndDedupsOwnedBook is the #1223 regression:
+// a Hardcover list whose author/book already exist in the library under a
+// different provider's foreign id must not spawn a parallel author row or a
+// duplicate "wanted" book. The author is reconciled by normalized name (and
+// gets the Hardcover id attached as an alias), and the already-owned book is
+// bound by canonical dedup key instead of re-created.
+func TestSyncOne_ReusesAuthorByNameAndDedupsOwnedBook(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	// Existing OpenLibrary-backed author + owned book, as an ABS import leaves them.
+	existingAuthor := &models.Author{
+		ForeignID:        "ol:OL123A",
+		Name:             "George R. R. Martin",
+		SortName:         "Martin, George R. R.",
+		MetadataProvider: "openlibrary",
+	}
+	if err := s.authors.Create(ctx, existingAuthor); err != nil {
+		t.Fatalf("seed author: %v", err)
+	}
+	ownedBook := &models.Book{
+		ForeignID:        "ol:OL999W",
+		Title:            "A Game of Thrones",
+		AuthorID:         existingAuthor.ID,
+		MetadataProvider: "openlibrary",
+		Status:           models.BookStatusImported,
+	}
+	if err := s.books.Create(ctx, ownedBook); err != nil {
+		t.Fatalf("seed book: %v", err)
+	}
+
+	il := testImportList("HC", "hardcover", true)
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed list: %v", err)
+	}
+
+	hcAuthor := func() *models.Author {
+		return &models.Author{ForeignID: "hc:grrm", Name: "George R.R. Martin", MetadataProvider: "hardcover"}
+	}
+	s.WithClientFactory(func(string) hardcoverClient {
+		return &fakeHardcoverClient{
+			lists: []hardcover.HCList{{ID: 5, Slug: il.URL, Name: il.Name}},
+			books: []models.Book{
+				// Same book, spacing-variant author name, no Hardcover book id match.
+				{ForeignID: "hc:got", Title: "A Game of Thrones", MetadataProvider: "hardcover", Author: hcAuthor()},
+				// Genuinely new book by the same author.
+				{ForeignID: "hc:clash", Title: "A Clash of Kings", MetadataProvider: "hardcover", Author: hcAuthor()},
+			},
+		}
+	})
+
+	if err := s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatalf("SyncOne: %v", err)
+	}
+
+	// No duplicate author row.
+	authors, err := s.authors.List(ctx)
+	if err != nil {
+		t.Fatalf("List authors: %v", err)
+	}
+	if len(authors) != 1 {
+		t.Fatalf("expected the existing author to be reused (1 author), got %d", len(authors))
+	}
+
+	// Hardcover foreign id attached as an alias on the existing author.
+	byHC, err := s.authors.GetByAnyForeignID(ctx, "hc:grrm")
+	if err != nil {
+		t.Fatalf("GetByAnyForeignID: %v", err)
+	}
+	if byHC == nil || byHC.ID != existingAuthor.ID {
+		t.Fatalf("expected hc:grrm alias to resolve to existing author %d, got %+v", existingAuthor.ID, byHC)
+	}
+
+	// Owned book not duplicated; exactly one new book created under the same author.
+	booksUnder, err := s.books.ListByAuthor(ctx, existingAuthor.ID)
+	if err != nil {
+		t.Fatalf("ListByAuthor: %v", err)
+	}
+	if len(booksUnder) != 2 {
+		t.Fatalf("expected 2 books (owned + 1 new), got %d: %+v", len(booksUnder), booksUnder)
+	}
+	titles := map[string]bool{}
+	for _, b := range booksUnder {
+		titles[b.Title] = true
+	}
+	if !titles["A Game of Thrones"] || !titles["A Clash of Kings"] {
+		t.Fatalf("unexpected book set under author: %v", titles)
+	}
+}
+
+// TestSyncOne_NewAuthorPinnedToMonitorModeNone is the #1290 regression: a list
+// whose book belongs to a brand-new author must create that author with
+// MonitorMode == "none", not the zero value "". An empty MonitorMode is treated
+// as "all" by shouldMonitorBookForAuthor, which makes the scheduler's later
+// catalogue-discovery pass auto-want the author's entire back-catalogue. Only
+// the single listed book may end up monitored + wanted.
+func TestSyncOne_NewAuthorPinnedToMonitorModeNone(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	il := testImportList("HC", "hardcover", true)
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed list: %v", err)
+	}
+
+	newAuthor := func() *models.Author {
+		return &models.Author{ForeignID: "hc:newauthor", Name: "Brand New Author", MetadataProvider: "hardcover"}
+	}
+	s.WithClientFactory(func(string) hardcoverClient {
+		return &fakeHardcoverClient{
+			lists: []hardcover.HCList{{ID: 7, Slug: il.URL, Name: il.Name}},
+			books: []models.Book{
+				{ForeignID: "hc:listed", Title: "The Listed Book", MetadataProvider: "hardcover", Author: newAuthor()},
+			},
+		}
+	})
+
+	if err := s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatalf("SyncOne: %v", err)
+	}
+
+	created, err := s.authors.GetByAnyForeignID(ctx, "hc:newauthor")
+	if err != nil {
+		t.Fatalf("GetByAnyForeignID: %v", err)
+	}
+	if created == nil {
+		t.Fatal("expected the new author to be created")
+	}
+	// Author stays monitored (so metadata refresh keeps running)...
+	if !created.Monitored {
+		t.Errorf("new author Monitored = false, want true")
+	}
+	// ...but MonitorMode must be "none" so the back-catalogue is never auto-wanted.
+	if created.MonitorMode != models.AuthorMonitorModeNone {
+		t.Errorf("new author MonitorMode = %q, want %q (#1290)", created.MonitorMode, models.AuthorMonitorModeNone)
+	}
+
+	// The single listed book is monitored + wanted.
+	books, err := s.books.ListByAuthor(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("ListByAuthor: %v", err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("expected exactly the 1 listed book, got %d: %+v", len(books), books)
+	}
+	if books[0].Title != "The Listed Book" {
+		t.Errorf("listed book title = %q, want %q", books[0].Title, "The Listed Book")
+	}
+	if !books[0].Monitored {
+		t.Errorf("listed book Monitored = false, want true")
+	}
+	if books[0].Status != models.BookStatusWanted {
+		t.Errorf("listed book Status = %q, want %q", books[0].Status, models.BookStatusWanted)
+	}
+}
+
 func TestSortName(t *testing.T) {
 	tests := []struct {
 		in, want string

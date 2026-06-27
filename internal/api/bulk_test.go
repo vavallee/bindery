@@ -1211,6 +1211,55 @@ func TestBulk_Book_OwnershipMatrix(t *testing.T) {
 	}
 }
 
+// TestBulk_Book_Delete_OwnershipMatrix guards the bulk delete path against the
+// cross-tenant IDOR fixed alongside this test: with the gate on, a non-owner
+// must not be able to delete another user's book, and the row must survive.
+func TestBulk_Book_Delete_OwnershipMatrix(t *testing.T) {
+	cases := []struct {
+		name        string
+		gateOn      bool
+		callerIsBob bool
+		admin       bool
+		wantOK      bool
+		wantDeleted bool
+	}{
+		{"gate on, cross-user blocked", true, true, false, false, false},
+		{"gate on, owner allowed", true, false, false, true, true},
+		{"gate on, admin allowed", true, true, true, true, true},
+		{"gate off, cross-user allowed", false, true, false, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			auth.SetEnforceTenancyForTests(t, tc.gateOn)
+			f := seedTwoUserBulk(t)
+
+			caller := f.u1
+			role := "user"
+			if tc.callerIsBob {
+				caller = f.u2
+			}
+			if tc.admin {
+				caller = 99
+				role = "admin"
+			}
+
+			body := fmt.Sprintf(`{"ids":[%d],"action":"delete"}`, f.b1.ID)
+			rec := postBulkAs(t, f.h.BooksBulk, body, caller, role)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if got := resultOK(t, rec, f.b1.ID); got != tc.wantOK {
+				t.Errorf("per-id ok=%v, want %v", got, tc.wantOK)
+			}
+			got, _ := f.books.GetByID(context.Background(), f.b1.ID)
+			deleted := got == nil
+			if deleted != tc.wantDeleted {
+				t.Errorf("book deleted=%v, want %v (durable invariant)", deleted, tc.wantDeleted)
+			}
+		})
+	}
+}
+
 // TestBulk_Wanted_OwnershipMatrix exercises WantedBulk blocklist across the
 // same axes. The durable invariant is whether Alice's book got skipped.
 func TestBulk_Wanted_OwnershipMatrix(t *testing.T) {

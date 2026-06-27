@@ -95,9 +95,12 @@ func TestTest_EmptyVersion(t *testing.T) {
 
 const testNZBContent = `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE nzb PUBLIC "-//newzBin//DTD NZB 1.1//EN" "http://www.newzbin.com/DTD/nzb/nzb-1.1.dtd"><nzb></nzb>`
 
-// allowNZBFetch bypasses the SSRF guard for loopback test servers.
+// allowNZBFetch bypasses the SSRF guard for loopback test servers: it disables
+// both the up-front URL validator and the dial-time transport guard (the latter
+// by reverting fetchHTTP to the default transport).
 func allowNZBFetch(c *Client) {
 	c.validateNZBURL = func(string) error { return nil }
+	c.fetchHTTP.Transport = nil
 }
 
 // configWithCategories returns a configResponse JSON payload exposing the
@@ -416,6 +419,52 @@ func TestGetQueue(t *testing.T) {
 	}
 	if groups[0].ActiveDownloads != 4 {
 		t.Errorf("expected 4 active downloads, got %d", groups[0].ActiveDownloads)
+	}
+}
+
+// TestGetQueue_MalformedBody verifies that a 200 carrying invalid JSON on the
+// listgroups RPC surfaces a decode error rather than panicking or silently
+// returning an empty queue. NZBGet's response is untrusted upstream input.
+func TestGetQueue_MalformedBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Truncated JSON object — the decoder must reject this.
+		_, _ = io.WriteString(w, `{"result": `)
+	}))
+	defer srv.Close()
+
+	host, port := serverHostPort(t, srv.URL)
+	c := New(host, port, "", "", "", false)
+
+	groups, err := c.GetQueue(context.Background())
+	if err == nil {
+		t.Fatal("expected decode error on malformed JSON body, got nil")
+	}
+	if groups != nil {
+		t.Errorf("expected nil groups on decode error, got %v", groups)
+	}
+}
+
+// TestListCategories_MalformedBody verifies the config RPC path also surfaces a
+// decode error on a malformed 200 body rather than returning an empty category
+// set as if the call succeeded — that would let a category-mismatch preflight
+// pass on garbage.
+func TestListCategories_MalformedBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{not json`)
+	}))
+	defer srv.Close()
+
+	host, port := serverHostPort(t, srv.URL)
+	c := New(host, port, "", "", "", false)
+
+	cats, err := c.ListCategories(context.Background())
+	if err == nil {
+		t.Fatal("expected decode error on malformed JSON body, got nil")
+	}
+	if cats != nil {
+		t.Errorf("expected nil categories on decode error, got %v", cats)
 	}
 }
 
@@ -981,5 +1030,27 @@ func TestCompletedDir(t *testing.T) {
 				t.Fatalf("CompletedDir = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestFetchNZB_DialGuardBlocksLoopback proves the dial-time SSRF guard on the
+// fetch transport: even with the up-front URL validator bypassed, a fetch to a
+// loopback address is rejected at connect time. This closes the DNS-rebind /
+// redirect-to-internal window a malicious indexer could otherwise use.
+func TestFetchNZB_DialGuardBlocksLoopback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("<nzb/>"))
+	}))
+	defer srv.Close()
+
+	c := New("127.0.0.1", 6789, "", "", "", false)
+	c.validateNZBURL = func(string) error { return nil } // bypass up-front check; keep the transport dial guard
+
+	_, err := c.fetchNZBContent(context.Background(), srv.URL+"/file.nzb")
+	if err == nil {
+		t.Fatal("expected the dial-time SSRF guard to reject the loopback fetch")
+	}
+	if !strings.Contains(err.Error(), "not allowed") {
+		t.Fatalf("expected a 'not allowed' SSRF rejection, got: %v", err)
 	}
 }

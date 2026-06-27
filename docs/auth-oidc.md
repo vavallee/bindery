@@ -24,7 +24,7 @@ Sessions are issued using the same HMAC-signed cookie as password login. OIDC si
 | `BINDERY_OIDC_EMAIL_LINK` | `false` | Set to `true` to link an unknown OIDC identity to an existing Bindery account if the email address matches. Runs before the auto-provision check. Useful for migrating from local accounts to OIDC without losing history. |
 | `BINDERY_OIDC_DEFAULT_ROLE` | `user` | Role assigned to a freshly auto-provisioned OIDC user. Valid values: `user`, `admin`. Any other value falls back to `user`. Set to `admin` for single-admin homelab deployments to skip the manual promotion step. |
 | `BINDERY_OIDC_ADMIN_GROUP` | _(unset)_ | When set, makes the IdP authoritative for the admin role. On **every** login, the user is promoted to `admin` if this group is present in the group claim and demoted to `user` if absent. See [Group-based role mapping](#group-based-role-mapping). |
-| `BINDERY_OIDC_GROUP_CLAIM` | `groups` | ID-token claim path Bindery reads the user's groups from for `BINDERY_OIDC_ADMIN_GROUP`. Override for IdPs that put groups under a non-standard claim. |
+| `BINDERY_OIDC_GROUP_CLAIM` | `groups` | ID-token claim path Bindery reads the user's groups from — used for both `BINDERY_OIDC_ADMIN_GROUP` role mapping and the per-provider `allowed_groups` login filter. Override for IdPs that put groups under a non-standard claim (e.g. `roles`). |
 | `BINDERY_ALLOW_LAN_OIDC` | _(off)_ | Set to `true`/`1` to disable the SSRF guard on the OIDC discovery probe, allowing LAN / loopback / private-range issuer URLs. Restores the historical behaviour where any issuer URL an admin types is fetched verbatim. Only enable when your OIDC provider runs on the Bindery host or a trusted private network. |
 
 ## Redirect URL construction

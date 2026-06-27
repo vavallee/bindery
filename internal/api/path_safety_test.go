@@ -57,8 +57,12 @@ func TestLibraryRoots_ResolveContained(t *testing.T) {
 	if err := os.WriteFile(inside, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := roots.ResolveContained(ctx, inside); !ok || got != inside {
-		t.Errorf("ResolveContained(inside) = %q, %v; want %q, true", got, ok, inside)
+	expectedInside, err := filepath.EvalSymlinks(inside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := roots.ResolveContained(ctx, inside); !ok || got != expectedInside {
+		t.Errorf("ResolveContained(inside) = %q, %v; want %q, true", got, ok, expectedInside)
 	}
 
 	// A secret outside the root, and a symlink to it placed INSIDE the root.

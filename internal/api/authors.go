@@ -374,8 +374,13 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 			if mediaType == "" {
 				mediaType = h.resolveDefaultMediaType(r.Context())
 			}
-			h.fetchAuthorBooksAsync(canonical, req.SearchOnAdd, mediaType)
+			// Finish mutating `canonical` (description clean-up) BEFORE spawning
+			// the async catalogue+profile refresh. fetchAuthorBooksAsync snapshots
+			// the author at spawn time and the goroutine now reads/writes profile
+			// fields (Description, ImageURL, ...); cleaning afterwards would race
+			// the snapshot read against this write (see fetchAuthorBooksAsync).
 			cleanAuthorDescription(canonical)
+			h.fetchAuthorBooksAsync(canonical, req.SearchOnAdd, mediaType)
 			writeJSON(w, http.StatusOK, canonical)
 			return
 		}
@@ -416,11 +421,16 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		mediaType = h.resolveDefaultMediaType(r.Context())
 	}
 
+	// Clean the description BEFORE spawning the async refresh: the goroutine
+	// snapshots `author` and now reads/writes its profile fields (Description,
+	// ImageURL, ...). Cleaning after the spawn would race the snapshot read
+	// against this write (see fetchAuthorBooksAsync).
+	cleanAuthorDescription(author)
+
 	// Fetch and store books for this author. Always populate the catalogue;
 	// pass searchOnAdd so FetchAuthorBooks knows whether to also queue grabs.
 	h.fetchAuthorBooksAsync(author, req.SearchOnAdd, mediaType)
 
-	cleanAuthorDescription(author)
 	writeJSON(w, http.StatusCreated, author)
 }
 
@@ -1300,6 +1310,77 @@ func (h *AuthorHandler) relinkCalibreAuthor(ctx context.Context, author *models.
 	return nil
 }
 
+// refreshAuthorProfile re-fetches the author's profile fields (bio, photo,
+// disambiguation, ratings) from the linked metadata provider and persists any
+// the provider now supplies. The manual "Refresh Metadata" action previously
+// only repopulated the catalogue, leaving the author's own Description and
+// ImageURL empty even after the user added them upstream (Discussion #1226).
+//
+// Best-effort: a missing aggregator, a provider miss, or a save error is logged
+// and swallowed — the catalogue sync that follows must still run. Identity
+// (ForeignID/Name/MetadataProvider) and user-controlled monitoring fields are
+// never touched here; only the read-only profile fields are merged.
+func (h *AuthorHandler) refreshAuthorProfile(ctx context.Context, author *models.Author) {
+	if h.meta == nil || author == nil {
+		return
+	}
+	upstream, err := h.meta.GetAuthor(ctx, author.ForeignID)
+	if err != nil {
+		slog.Warn("author profile refresh: metadata lookup failed",
+			"author", author.Name, "foreignId", author.ForeignID, "error", err)
+		return
+	}
+	if upstream == nil {
+		return
+	}
+	if !mergeAuthorProfileFields(author, upstream) {
+		return // provider returned nothing new — skip a no-op write
+	}
+	now := time.Now().UTC()
+	author.LastMetadataRefreshAt = &now
+	if err := h.authors.Update(ctx, author); err != nil {
+		slog.Warn("author profile refresh: save failed", "author", author.Name, "error", err)
+		return
+	}
+	slog.Info("refreshed author profile from metadata provider",
+		"author", author.Name, "foreignId", author.ForeignID)
+}
+
+// mergeAuthorProfileFields copies provider-supplied profile fields onto the
+// local author, following the project's established "only overwrite when the
+// provider has a non-empty value" merge policy (mirrors
+// relinkExistingAuthorToUpstream). It reports whether any field actually
+// changed so the caller can skip a redundant DB write. SortName is only filled
+// when missing, since the local sort order may have been curated.
+func mergeAuthorProfileFields(author, upstream *models.Author) bool {
+	changed := false
+	if desc := textutil.CleanDescription(upstream.Description); desc != "" && desc != author.Description {
+		author.Description = desc
+		changed = true
+	}
+	if imageURL := strings.TrimSpace(upstream.ImageURL); imageURL != "" && imageURL != author.ImageURL {
+		author.ImageURL = imageURL
+		changed = true
+	}
+	if disambiguation := strings.TrimSpace(upstream.Disambiguation); disambiguation != "" && disambiguation != author.Disambiguation {
+		author.Disambiguation = disambiguation
+		changed = true
+	}
+	if upstream.RatingsCount > 0 && upstream.RatingsCount != author.RatingsCount {
+		author.RatingsCount = upstream.RatingsCount
+		changed = true
+	}
+	if upstream.AverageRating > 0 && upstream.AverageRating != author.AverageRating {
+		author.AverageRating = upstream.AverageRating
+		changed = true
+	}
+	if sn := strings.TrimSpace(upstream.SortName); sn != "" && strings.TrimSpace(author.SortName) == "" {
+		author.SortName = sn
+		changed = true
+	}
+	return changed
+}
+
 // FetchAuthorBooks populates the author's catalogue from the metadata provider.
 // mediaType is applied to each newly-created book when the provider didn't
 // return one; pass an empty string to accept whatever the provider set.
@@ -1313,11 +1394,23 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 	// provider by name so the first Refresh Metadata click pulls real data.
 	// If the re-link fails (name not found, network error) we fall through and
 	// keep the synthetic ID, matching the prior skip-silently behaviour.
-	if strings.HasPrefix(author.ForeignID, "calibre:") {
+	wasCalibre := strings.HasPrefix(author.ForeignID, "calibre:")
+	if wasCalibre {
 		if err := h.relinkCalibreAuthor(ctx, author); err != nil {
 			slog.Info("calibre author not re-linked to metadata provider", "author", author.Name, "reason", err)
 			return
 		}
+	}
+
+	// Refresh the author's OWN profile (bio, photo, disambiguation, ratings)
+	// from the metadata provider. Everything below only repopulates the
+	// author's BOOKS; without this step an already-linked author's Description
+	// and ImageURL stay stale on a manual "Refresh Metadata" even after they
+	// appear upstream (Discussion #1226). Calibre authors are skipped here
+	// because relinkCalibreAuthor already pulled and persisted their profile
+	// just above, so re-fetching would only spend a redundant round-trip.
+	if !wasCalibre {
+		h.refreshAuthorProfile(ctx, author)
 	}
 
 	// Use the dedicated author works endpoint for accurate results, with

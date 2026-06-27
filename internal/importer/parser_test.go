@@ -70,6 +70,37 @@ func TestParseFilename(t *testing.T) {
 			wantAuthor: "Peter F Hamilton",
 			wantFormat: "epub",
 		},
+		{
+			// em dash (U+2014) separator must split like a hyphen does. Before the
+			// dash normalization this fell through to title="Dark Matter — Author
+			// Name" and matched nothing.
+			input:      "Dark Matter — Author Name.epub",
+			wantTitle:  "Dark Matter",
+			wantAuthor: "Author Name",
+			wantFormat: "epub",
+		},
+		{
+			// en dash (U+2013) separator.
+			input:      "Recursion – Blake Crouch.mobi",
+			wantTitle:  "Recursion",
+			wantAuthor: "Blake Crouch",
+			wantFormat: "mobi",
+		},
+		{
+			// em dash in the Author-leading series convention (issue #1014 shape).
+			input:      "Peter F Hamilton — [Commonwealth Saga 01] — Pandora's Star.epub",
+			wantTitle:  "Pandora's Star",
+			wantAuthor: "Peter F Hamilton",
+			wantFormat: "epub",
+		},
+		{
+			// A hyphenated compound in the title (no surrounding spaces) must NOT
+			// be treated as a Title-Author separator.
+			input:      "Spider-Man.epub",
+			wantTitle:  "Spider-Man",
+			wantAuthor: "",
+			wantFormat: "epub",
+		},
 	}
 
 	for _, tt := range tests {
@@ -186,6 +217,22 @@ func TestParseFilenameSeriesExtraction(t *testing.T) {
 			wantSeries:    "Mistborn",
 			wantSeriesNum: "1",
 			wantTitle:     "The Final Empire",
+		},
+		{
+			// issue #1234: Readarr "{Series} #{N} - {Title}" book folder.
+			// Series + position come from the parent dir; the title comes from
+			// the "Author - Title" filename so it transposes to the author here —
+			// the library scan corrects the title from the folder layout (#754).
+			name:          "readarr hash series folder surfaces series and position",
+			path:          "/books/Terry Pratchett/Discworld/Discworld #8 - Guards! Guards!/Terry Pratchett - Guards! Guards!.epub",
+			wantSeries:    "Discworld",
+			wantSeriesNum: "8",
+		},
+		{
+			name:          "readarr hash series folder with decimal position",
+			path:          "/books/Terry Pratchett/Discworld/Discworld #16.5 - The Last Hero/Terry Pratchett - The Last Hero.epub",
+			wantSeries:    "Discworld",
+			wantSeriesNum: "16.5",
 		},
 	}
 	for _, tc := range cases {

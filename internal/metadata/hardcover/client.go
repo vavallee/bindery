@@ -34,11 +34,14 @@ const (
 	hardcoverSuccessResponseBodyLimit = 8 << 20
 )
 
-// Client implements metadata.Provider for Hardcover.app using its public GraphQL API.
-// Set an API token via WithToken or NewAuthenticated to enable authenticated queries.
+// Client implements metadata.Provider for Hardcover.app using its GraphQL API.
+// As of 2026 the endpoint rejects unauthenticated requests with
+// {"error":"Unable to verify token"} for every query — including plain
+// search — so a token must be set via WithToken, WithTokenSource, or
+// NewAuthenticated for any call to succeed.
 type Client struct {
 	http        *http.Client
-	token       string // optional API token; required for user-specific queries
+	token       string // API token; required for all queries (search included)
 	tokenSource func(context.Context) string
 }
 
@@ -239,7 +242,7 @@ func (c *Client) GetAuthorWorksByName(ctx context.Context, authorName string) ([
 
 func (c *Client) GetAuthor(ctx context.Context, foreignID string) (*models.Author, error) {
 	id := strings.TrimPrefix(foreignID, idPrefix)
-	gql := `query GetAuthor($slug: String!) {
+	const slugGQL = `query GetAuthor($slug: String!) {
 		authors(where: {slug: {_eq: $slug}}, limit: 1) {
 			id
 			name
@@ -248,37 +251,49 @@ func (c *Client) GetAuthor(ctx context.Context, foreignID string) (*models.Autho
 			image { url }
 		}
 	}`
-	vars := map[string]any{"slug": id}
+	const idGQL = `query GetAuthor($id: Int!) {
+		authors(where: {id: {_eq: $id}}, limit: 1) {
+			id
+			name
+			slug
+			bio
+			image { url }
+		}
+	}`
+	fetch := func(gql string, vars map[string]any) (*models.Author, error) {
+		var resp struct {
+			Data struct {
+				Authors []hcAuthor `json:"authors"`
+			} `json:"data"`
+		}
+		if err := c.query(ctx, gql, vars, &resp); err != nil {
+			return nil, fmt.Errorf("hardcover get author: %w", err)
+		}
+		if len(resp.Data.Authors) == 0 {
+			return nil, nil
+		}
+		a := c.toAuthor(resp.Data.Authors[0])
+		return &a, nil
+	}
+
+	// Prefer the slug lookup. A purely numeric value is ambiguous — it may be a
+	// numeric slug or the DB-id fallback toAuthor emits when the slug is empty —
+	// so only fall back to a primary-key lookup when the slug matches nothing
+	// (#1256). The old code always took the id branch for numeric values,
+	// returning the wrong author for any numeric slug.
+	author, err := fetch(slugGQL, map[string]any{"slug": id})
+	if err != nil || author != nil {
+		return author, err
+	}
 	if numericID, ok := hardcoverNumericID(id); ok {
-		gql = `query GetAuthor($id: Int!) {
-			authors(where: {id: {_eq: $id}}, limit: 1) {
-				id
-				name
-				slug
-				bio
-				image { url }
-			}
-		}`
-		vars = map[string]any{"id": numericID}
+		return fetch(idGQL, map[string]any{"id": numericID})
 	}
-	var resp struct {
-		Data struct {
-			Authors []hcAuthor `json:"authors"`
-		} `json:"data"`
-	}
-	if err := c.query(ctx, gql, vars, &resp); err != nil {
-		return nil, fmt.Errorf("hardcover get author: %w", err)
-	}
-	if len(resp.Data.Authors) == 0 {
-		return nil, nil
-	}
-	a := c.toAuthor(resp.Data.Authors[0])
-	return &a, nil
+	return nil, nil
 }
 
 func (c *Client) GetBook(ctx context.Context, foreignID string) (*models.Book, error) {
 	id := strings.TrimPrefix(foreignID, idPrefix)
-	gql := `query GetBook($slug: String!) {
+	const slugGQL = `query GetBook($slug: String!) {
 		books(where: {slug: {_eq: $slug}}, limit: 1) {
 			id
 			title
@@ -295,40 +310,52 @@ func (c *Client) GetBook(ctx context.Context, foreignID string) (*models.Book, e
 			}
 		}
 	}`
-	vars := map[string]any{"slug": id}
-	if numericID, ok := hardcoverNumericID(id); ok {
-		gql = `query GetBook($id: Int!) {
-			books(where: {id: {_eq: $id}}, limit: 1) {
-				id
-				title
-				slug
-				description
-				image { url }
-				release_year
-				ratings_count
-				rating
-				default_audio_edition_id
-				default_ebook_edition_id
-				contributions {
-					author { id name slug }
-				}
+	const idGQL = `query GetBook($id: Int!) {
+		books(where: {id: {_eq: $id}}, limit: 1) {
+			id
+			title
+			slug
+			description
+			image { url }
+			release_year
+			ratings_count
+			rating
+			default_audio_edition_id
+			default_ebook_edition_id
+			contributions {
+				author { id name slug }
 			}
-		}`
-		vars = map[string]any{"id": numericID}
+		}
+	}`
+	fetch := func(gql string, vars map[string]any) (*models.Book, error) {
+		var resp struct {
+			Data struct {
+				Books []hcBook `json:"books"`
+			} `json:"data"`
+		}
+		if err := c.query(ctx, gql, vars, &resp); err != nil {
+			return nil, fmt.Errorf("hardcover get book: %w", err)
+		}
+		if len(resp.Data.Books) == 0 {
+			return nil, nil
+		}
+		b := c.toBook(resp.Data.Books[0])
+		return &b, nil
 	}
-	var resp struct {
-		Data struct {
-			Books []hcBook `json:"books"`
-		} `json:"data"`
+
+	// Prefer the slug lookup. A purely numeric value is ambiguous — it may be a
+	// numeric slug (e.g. "1984", "2001") or the DB-id fallback toBook emits when
+	// the slug is empty — so only fall back to a primary-key lookup when the slug
+	// matches nothing (#1256). The old code always took the id branch for numeric
+	// values, so GetBook("hc:1984") fetched whatever book had database id 1984.
+	book, err := fetch(slugGQL, map[string]any{"slug": id})
+	if err != nil || book != nil {
+		return book, err
 	}
-	if err := c.query(ctx, gql, vars, &resp); err != nil {
-		return nil, fmt.Errorf("hardcover get book: %w", err)
+	if numericID, ok := hardcoverNumericID(id); ok {
+		return fetch(idGQL, map[string]any{"id": numericID})
 	}
-	if len(resp.Data.Books) == 0 {
-		return nil, nil
-	}
-	b := c.toBook(resp.Data.Books[0])
-	return &b, nil
+	return nil, nil
 }
 
 func (c *Client) GetEditions(ctx context.Context, bookForeignID string) ([]models.Edition, error) {
@@ -337,7 +364,7 @@ func (c *Client) GetEditions(ctx context.Context, bookForeignID string) ([]model
 		return nil, nil
 	}
 
-	gql := `query GetEditions($slug: String!, $limit: Int!, $offset: Int!) {
+	const slugGQL = `query GetEditions($slug: String!, $limit: Int!, $offset: Int!) {
 		editions(
 			where: {book: {slug: {_eq: $slug}}},
 			limit: $limit,
@@ -363,9 +390,7 @@ func (c *Client) GetEditions(ctx context.Context, bookForeignID string) ([]model
 			book { title }
 		}
 	}`
-	vars := map[string]any{"slug": id}
-	if numericID, ok := hardcoverNumericID(id); ok {
-		gql = `query GetEditions($bookID: Int!, $limit: Int!, $offset: Int!) {
+	const idGQL = `query GetEditions($bookID: Int!, $limit: Int!, $offset: Int!) {
 		editions(
 			where: {book_id: {_eq: $bookID}},
 			limit: $limit,
@@ -391,27 +416,40 @@ func (c *Client) GetEditions(ctx context.Context, bookForeignID string) ([]model
 			book { title }
 		}
 	}`
-		vars = map[string]any{"bookID": numericID}
+
+	fetchAll := func(gql string, vars map[string]any) ([]models.Edition, error) {
+		editions := make([]models.Edition, 0, editionsPageSize)
+		for offset := 0; offset < editionsMaxCount; offset += editionsPageSize {
+			vars["limit"] = editionsPageSize
+			vars["offset"] = offset
+			var resp struct {
+				Data struct {
+					Editions []hcEdition `json:"editions"`
+				} `json:"data"`
+			}
+			if err := c.query(ctx, gql, vars, &resp); err != nil {
+				return nil, fmt.Errorf("hardcover get editions: %w", err)
+			}
+			for _, e := range resp.Data.Editions {
+				editions = append(editions, hardcoverEditionToModel(e))
+			}
+			if len(resp.Data.Editions) < editionsPageSize {
+				break
+			}
+		}
+		return editions, nil
 	}
 
-	editions := make([]models.Edition, 0, editionsPageSize)
-	for offset := 0; offset < editionsMaxCount; offset += editionsPageSize {
-		vars["limit"] = editionsPageSize
-		vars["offset"] = offset
-		var resp struct {
-			Data struct {
-				Editions []hcEdition `json:"editions"`
-			} `json:"data"`
-		}
-		if err := c.query(ctx, gql, vars, &resp); err != nil {
-			return nil, fmt.Errorf("hardcover get editions: %w", err)
-		}
-		for _, e := range resp.Data.Editions {
-			editions = append(editions, hardcoverEditionToModel(e))
-		}
-		if len(resp.Data.Editions) < editionsPageSize {
-			break
-		}
+	// Prefer the slug lookup; only fall back to a book_id lookup when the slug
+	// matches no editions, since a numeric value is ambiguous between a numeric
+	// slug and the DB-id fallback (#1256). The old code queried book_id directly
+	// for any numeric value, returning the editions of an unrelated book.
+	editions, err := fetchAll(slugGQL, map[string]any{"slug": id})
+	if err != nil || len(editions) > 0 {
+		return editions, err
+	}
+	if numericID, ok := hardcoverNumericID(id); ok {
+		return fetchAll(idGQL, map[string]any{"bookID": numericID})
 	}
 	return editions, nil
 }

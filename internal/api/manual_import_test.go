@@ -624,3 +624,140 @@ func TestManualImportImport_PathOutsideAllowedRoots(t *testing.T) {
 		})
 	}
 }
+
+// ── Scan handler ────────────────────────────────────────────────────────────
+
+func scanRequest(path string) *http.Request {
+	u := "/api/v1/queue/manual-import/scan?" + url.Values{"path": {path}}.Encode()
+	return httptest.NewRequest(http.MethodGet, u, nil)
+}
+
+func writeTestFile(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestManualImportScan_EnumeratesBookUnits(t *testing.T) {
+	t.Parallel()
+	h, stub, _, _, _ := manualImportFixture(t)
+	stub.lookupResult = importer.LookupResult{Match: "none", ParsedTitle: "x"}
+
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "Book One.epub"))            // book file -> unit
+	writeTestFile(t, filepath.Join(root, "Book Two.mobi"))            // book file -> unit
+	writeTestFile(t, filepath.Join(root, "cover.jpg"))                // non-book -> skipped
+	writeTestFile(t, filepath.Join(root, "Author - Title", "ab.m4b")) // subdir w/ book -> unit
+	if err := os.MkdirAll(filepath.Join(root, "empty"), 0o755); err != nil {
+		t.Fatal(err) // subdir w/o book -> skipped
+	}
+
+	rec := httptest.NewRecorder()
+	h.Scan(rec, scanRequest(root))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+	var resp ScanResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Items) != 3 {
+		t.Fatalf("items = %d, want 3 (2 book files + 1 book subdir); got %+v", len(resp.Items), resp.Items)
+	}
+	if resp.Truncated {
+		t.Error("unexpected truncation for a small folder")
+	}
+}
+
+func TestManualImportScan_RejectsSingleFile(t *testing.T) {
+	t.Parallel()
+	h, _, _, _, _ := manualImportFixture(t)
+	root := t.TempDir()
+	f := filepath.Join(root, "book.epub")
+	writeTestFile(t, f)
+	rec := httptest.NewRecorder()
+	h.Scan(rec, scanRequest(f))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (scan needs a folder, not a file)", rec.Code)
+	}
+}
+
+func TestManualImportScan_EmptyPath(t *testing.T) {
+	t.Parallel()
+	h, _, _, _, _ := manualImportFixture(t)
+	rec := httptest.NewRecorder()
+	h.Scan(rec, httptest.NewRequest(http.MethodGet, "/api/v1/queue/manual-import/scan", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+// ── Batch import ────────────────────────────────────────────────────────────
+
+func TestManualImportBatch_MixedValidity(t *testing.T) {
+	t.Parallel()
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	authors := db.NewAuthorRepo(database)
+	downloads := db.NewDownloadRepo(database)
+	books := db.NewBookRepo(database)
+	ctx := context.Background()
+	book := seedBook(t, authors, books, ctx)
+
+	h := NewManualImportHandler(&stubManualImportScanner{}, downloads, books)
+
+	root := t.TempDir()
+	good := filepath.Join(root, "good.epub")
+	writeTestFile(t, good)
+	noBook := filepath.Join(root, "nobook.epub")
+	writeTestFile(t, noBook)
+
+	items := []map[string]any{
+		{"path": good, "bookId": book.ID, "format": models.MediaTypeEbook}, // valid
+		{"path": noBook, "bookId": 0},                                      // missing bookId
+		{"path": filepath.Join(root, "missing.epub"), "bookId": book.ID},   // path not accessible
+	}
+	body, _ := json.Marshal(items)
+	rec := httptest.NewRecorder()
+	h.ImportBatch(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/batch", bytes.NewReader(body)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body = %s", rec.Code, rec.Body.String())
+	}
+	var resp BatchImportResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Accepted != 1 || resp.Failed != 2 {
+		t.Fatalf("accepted=%d failed=%d, want 1/2; results=%+v", resp.Accepted, resp.Failed, resp.Results)
+	}
+	if !resp.Results[0].Accepted || resp.Results[0].DownloadID == 0 {
+		t.Errorf("first item should be accepted with a download id; got %+v", resp.Results[0])
+	}
+	if resp.Results[1].Accepted || resp.Results[2].Accepted {
+		t.Errorf("invalid items should not be accepted; got %+v", resp.Results[1:])
+	}
+	all, err := downloads.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 {
+		t.Errorf("download rows = %d, want 1 (only the valid item created one)", len(all))
+	}
+}
+
+func TestManualImportBatch_Empty(t *testing.T) {
+	t.Parallel()
+	h, _, _, _, _ := manualImportFixture(t)
+	rec := httptest.NewRecorder()
+	h.ImportBatch(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/batch", bytes.NewReader([]byte("[]"))))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for empty batch", rec.Code)
+	}
+}

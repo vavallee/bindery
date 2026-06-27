@@ -39,14 +39,49 @@ type Notifier struct {
 
 // New creates a Notifier backed by the given repo.
 func New(repo *db.NotificationRepo) *Notifier {
+	policy := httpsec.PolicyFromEnv(httpsec.PolicyStrict, "BINDERY_NOTIFICATIONS_ALLOW_PRIVATE")
 	return &Notifier{
 		repo: repo,
-		http: &http.Client{Timeout: 10 * time.Second, Transport: httpsec.DefaultProxyTransport()},
+		http: &http.Client{
+			Timeout:   10 * time.Second,
+			Transport: guardedTransport(policy),
+			// Re-validate every redirect hop. The up-front validate only checks
+			// the configured URL; a webhook host that passes it could otherwise
+			// 302 into loopback / RFC1918 / cloud-metadata and have Bindery
+			// follow it blindly.
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 5 {
+					return fmt.Errorf("too many redirects")
+				}
+				if err := httpsec.ValidateOutboundURL(req.URL.String(), policy); err != nil {
+					return fmt.Errorf("redirect blocked: %w", err)
+				}
+				return nil
+			},
+		},
 		validate: func(u string) error {
-			policy := httpsec.PolicyFromEnv(httpsec.PolicyStrict, "BINDERY_NOTIFICATIONS_ALLOW_PRIVATE")
 			return httpsec.ValidateOutboundURL(u, policy)
 		},
 	}
+}
+
+// guardedTransport mirrors the image-proxy transport. On the direct path it
+// installs a per-dial SSRF-revalidating DialContext, closing the DNS-rebind
+// TOCTOU between the up-front validate and the actual connect. When an outbound
+// proxy is configured the dial targets the operator-trusted proxy (not the
+// webhook host), so the strict per-dial recheck is skipped and the up-front
+// validate + CheckRedirect carry the guard.
+func guardedTransport(policy httpsec.Policy) http.RoundTripper {
+	base := httpsec.DefaultProxyTransport()
+	if httpsec.ProxyFunc() != nil {
+		return base
+	}
+	if t, ok := base.(*http.Transport); ok {
+		c := t.Clone()
+		c.DialContext = httpsec.NewDialContext(policy)
+		return c
+	}
+	return &http.Transport{DialContext: httpsec.NewDialContext(policy)}
 }
 
 // SetValidator overrides the SSRF validator. Intended for tests that need to

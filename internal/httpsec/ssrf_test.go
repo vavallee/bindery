@@ -78,6 +78,25 @@ func TestValidateOutboundURL_Loopback(t *testing.T) {
 	}
 }
 
+// TestValidateOutboundURL_Unspecified pins that the unspecified address
+// (0.0.0.0 / ::) is blocked under every policy — on Linux it routes to loopback,
+// so allowing it would bypass the loopback block.
+func TestValidateOutboundURL_Unspecified(t *testing.T) {
+	r := fakeResolver{m: map[string][]net.IP{}}
+	cases := []string{
+		"http://0.0.0.0/",
+		"http://0.0.0.0:8080/",
+		"http://[::]/",
+	}
+	for _, u := range cases {
+		for _, p := range []Policy{PolicyStrict, PolicyLAN, PolicyLANLoopback} {
+			if err := validate(u, p, r); err == nil {
+				t.Errorf("expected block for unspecified %q under policy %v", u, p)
+			}
+		}
+	}
+}
+
 // TestValidateOutboundURL_LANLoopbackPolicy pins the admin-infra policy: it adds
 // loopback to PolicyLAN (loopback + RFC1918 allowed) but must still block
 // link-local and cloud metadata.

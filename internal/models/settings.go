@@ -13,6 +13,7 @@ var QualityRank = map[string]int{
 	"rtf":     2,
 	"pdf":     3,
 	"mobi":    4,
+	"azw":     4, // older Kindle format (KF7), mobi-equivalent; ParseRelease emits it as a distinct token from azw3
 	"epub":    5,
 	"azw3":    6,
 	"mp3":     7, // audiobook

@@ -312,6 +312,48 @@ func TestGetAuthor_HTTP_NegativePhoto(t *testing.T) {
 	}
 }
 
+// TestGetAuthor_HTTP_BioShapesAndPhoto pins the author-profile parsing the
+// refresh path depends on (Discussion #1226): the OpenLibrary bio field arrives
+// as either a bare string or a {type,value} object, and the photo arrives as a
+// numeric cover id that must become a covers.openlibrary.org image URL. Both bio
+// shapes must populate Description so a Refresh Metadata can persist them.
+func TestGetAuthor_HTTP_BioShapesAndPhoto(t *testing.T) {
+	cases := []struct {
+		name string
+		bio  interface{}
+	}{
+		{name: "string bio", bio: "British writer of novels, comics and TV."},
+		{name: "object bio", bio: map[string]interface{}{
+			"type":  "/type/text",
+			"value": "British writer of novels, comics and TV.",
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := authorResponse{
+				Key:    "/authors/OL6094856A",
+				Name:   "Paul Cornell",
+				Bio:    tc.bio,
+				Photos: []int{14431281},
+			}
+			c := newClientWithPaths(t, map[string]interface{}{
+				"/authors/OL6094856A.json": jsonStr(resp),
+			})
+
+			author, err := c.GetAuthor(context.Background(), "OL6094856A")
+			if err != nil {
+				t.Fatalf("GetAuthor: %v", err)
+			}
+			if author.Description != "British writer of novels, comics and TV." {
+				t.Errorf("Description: want bio text, got %q", author.Description)
+			}
+			if author.ImageURL != "https://covers.openlibrary.org/a/id/14431281-L.jpg" {
+				t.Errorf("ImageURL: want photo cover URL, got %q", author.ImageURL)
+			}
+		})
+	}
+}
+
 // --- GetEditions ---
 
 func TestGetEditions_HTTP(t *testing.T) {
@@ -548,6 +590,59 @@ func TestGetBook_HTTP_Error(t *testing.T) {
 	_, err := c.GetBook(context.Background(), "OL404W")
 	if err == nil {
 		t.Fatal("expected error on 404")
+	}
+}
+
+// ctxAwareTransport is a RoundTripper that honors request-context cancellation
+// the way a real network transport does: if the context is already done it
+// returns its error without "dialing", otherwise it serves a fixed body. Used
+// to exercise the context-cancel path deterministically (the path-routing test
+// transport ignores the context).
+type ctxAwareTransport struct {
+	t       *testing.T
+	dialled *bool
+}
+
+func (tr *ctxAwareTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if err := r.Context().Err(); err != nil {
+		return nil, err
+	}
+	if tr.dialled != nil {
+		*tr.dialled = true
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader("{}")),
+		Header:     make(http.Header),
+	}, nil
+}
+
+// TestGetBook_HTTP_ContextCanceled verifies that an already-cancelled context
+// makes GetBook return promptly with an error instead of hanging or returning
+// a nil error, and that the transport is never reached.
+//
+// Note: getJSON rebuilds transport errors via errors.New(RedactSecrets(...)),
+// which flattens the error chain — so errors.Is(err, context.Canceled) does
+// NOT hold here and we assert on the message instead.
+func TestGetBook_HTTP_ContextCanceled(t *testing.T) {
+	var dialled bool
+	c := &Client{http: &http.Client{Transport: &ctxAwareTransport{t: t, dialled: &dialled}}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before the call
+
+	book, err := c.GetBook(ctx, "OL456W")
+	if err == nil {
+		t.Fatal("expected error from cancelled context, got nil")
+	}
+	if !strings.Contains(err.Error(), "context canceled") {
+		t.Errorf("expected error to mention context cancellation, got %v", err)
+	}
+	if book != nil {
+		t.Errorf("expected nil book on cancellation, got %+v", book)
+	}
+	if dialled {
+		t.Error("transport must not be reached when the context is already cancelled")
 	}
 }
 

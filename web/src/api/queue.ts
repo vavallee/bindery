@@ -31,6 +31,42 @@ export interface ManualImportLookup {
   parsedAuthor: string
 }
 
+// ScanItem is one candidate book unit found under a folder by the bulk scan.
+export interface ScanItem {
+  path: string
+  name: string
+  match: 'confident' | 'ambiguous' | 'none'
+  parsedTitle: string
+  parsedAuthor: string
+  detectedFormat: string
+  book?: Book
+  candidates?: Book[]
+}
+
+export interface FolderScanResponse {
+  items: ScanItem[]
+  truncated: boolean
+}
+
+export interface BatchImportItem {
+  path: string
+  bookId: number
+  format?: string
+}
+
+export interface BatchImportResult {
+  path: string
+  accepted: boolean
+  error?: string
+  downloadId?: number
+}
+
+export interface BatchImportResponse {
+  results: BatchImportResult[]
+  accepted: number
+  failed: number
+}
+
 // QueueListResponse is the envelope returned by GET /queue. Items is the
 // flat array the UI has always rendered; partial/staleClients let a
 // future page iteration warn when a downloader client did not answer
@@ -89,6 +125,11 @@ export const queueApi = {
     request<ManualImportLookup>(`/queue/manual-import/lookup?path=${encodeURIComponent(path)}`),
   manualImport: (data: { path: string; bookId: number; format?: string }) =>
     request<Download>('/queue/manual-import', { method: 'POST', body: JSON.stringify(data) }),
+  // Bulk folder import: scan a folder for book units, then import the selected ones.
+  scanFolder: (path: string) =>
+    request<FolderScanResponse>(`/queue/manual-import/scan?path=${encodeURIComponent(path)}`),
+  batchImport: (items: BatchImportItem[]) =>
+    request<BatchImportResponse>('/queue/manual-import/batch', { method: 'POST', body: JSON.stringify(items) }),
 
   // Pending releases
   listPending: () => request<PendingRelease[]>('/pending'),

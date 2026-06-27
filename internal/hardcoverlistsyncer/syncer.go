@@ -13,6 +13,7 @@ import (
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 // ListSyncer syncs enabled Hardcover import lists into Bindery's book catalogue.
@@ -181,6 +182,11 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 
 	slog.Info("syncing hardcover list", "list", il.Name, "slug", il.URL, "books", len(books))
 
+	// Index existing authors by normalized name so a Hardcover author already in
+	// the library under a different provider's foreign id (e.g. an OpenLibrary
+	// author imported via ABS) is reused instead of duplicated (#1223).
+	nameIndex := s.buildAuthorNameIndex(ctx)
+
 	for _, book := range books {
 		if book.ForeignID == "" {
 			continue
@@ -194,9 +200,21 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		}
 
 		// Look up or create the author
-		authorID, err := s.ensureAuthor(ctx, &book)
+		authorID, err := s.ensureAuthor(ctx, &book, nameIndex)
 		if err != nil {
 			slog.Warn("failed to ensure author for book", "title", book.Title, "error", err)
+			continue
+		}
+
+		// The book may already exist in the library under this author via a
+		// different source (ABS, Calibre, manual) with no Hardcover foreign id.
+		// Bind to that row instead of creating a duplicate "wanted" entry — the
+		// canonical dedup key collapses subtitle/case/foreign-id differences
+		// (#1223), the same cross-source bind the Calibre/ABS importers use.
+		if owned, derr := s.books.FindByAuthorAndDedupKey(ctx, authorID, book.Title); derr != nil {
+			slog.Warn("hardcover list sync: dedup-key lookup failed", "title", book.Title, "error", derr)
+		} else if owned != nil {
+			slog.Debug("book already owned under author, skipping", "title", book.Title, "author_id", authorID, "existing_id", owned.ID)
 			continue
 		}
 
@@ -267,9 +285,49 @@ func (s *ListSyncer) hydrateHardcoverEditions(ctx context.Context, book *models.
 	})
 }
 
-// ensureAuthor looks up the author by foreign ID, creating a minimal record if
-// missing. Returns the author's database ID.
-func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book) (int64, error) {
+// buildAuthorNameIndex maps each existing author's normalized name to the
+// matching rows. Used by ensureAuthor to reconcile a Hardcover author against
+// one already in the library under a different provider's foreign id (#1223).
+// A failed list is non-fatal: the index is empty and ensureAuthor falls back to
+// creating authors as before.
+func (s *ListSyncer) buildAuthorNameIndex(ctx context.Context) map[string][]models.Author {
+	index := make(map[string][]models.Author)
+	authors, err := s.authors.List(ctx)
+	if err != nil {
+		slog.Warn("hardcover list sync: failed to index authors by name; duplicate-author guard disabled", "error", err)
+		return index
+	}
+	for i := range authors {
+		key := textutil.NormalizeAuthorName(authors[i].Name)
+		if key == "" {
+			continue
+		}
+		index[key] = append(index[key], authors[i])
+	}
+	return index
+}
+
+// uniqueAuthorByName returns the single existing author whose normalized name
+// matches, or nil when there is no match or the match is ambiguous (more than
+// one author shares the normalized name — e.g. disambiguated namesakes). The
+// ambiguous case deliberately falls through to creating a new author rather
+// than guessing which namesake to merge into.
+func uniqueAuthorByName(index map[string][]models.Author, name string) *models.Author {
+	key := textutil.NormalizeAuthorName(name)
+	if key == "" {
+		return nil
+	}
+	matches := index[key]
+	if len(matches) != 1 {
+		return nil
+	}
+	return &matches[0]
+}
+
+// ensureAuthor looks up the author by foreign ID, then by normalized name,
+// creating a minimal record only if neither matches. Returns the author's
+// database ID.
+func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book, nameIndex map[string][]models.Author) (int64, error) {
 	if book.Author == nil {
 		return 0, fmt.Errorf("book %q has no author metadata", book.Title)
 	}
@@ -282,9 +340,30 @@ func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book) (int64
 		return existing.ID, nil
 	}
 
-	// Create a minimal author record
+	// Name fallback: reuse an existing author with the same normalized name
+	// instead of spawning a parallel row, and attach the Hardcover foreign id
+	// as an alias so future syncs match by id (#1223).
+	if matched := uniqueAuthorByName(nameIndex, book.Author.Name); matched != nil {
+		if fid := strings.TrimSpace(book.Author.ForeignID); fid != "" {
+			if err := s.authors.UpsertAuthorIdentifier(ctx, matched.ID, fid); err != nil && !errors.Is(err, db.ErrAuthorIdentifierConflict) {
+				slog.Warn("hardcover list sync: failed to attach author alias", "author", matched.Name, "foreignID", fid, "error", err)
+			}
+		}
+		return matched.ID, nil
+	}
+
+	// Create a minimal author record. List-sync authors are kept monitored so
+	// the scheduler refreshes their metadata, but their MonitorMode is pinned to
+	// "none": only the specific book(s) on the user's Hardcover list should end
+	// up wanted, never the author's entire back-catalogue (#1290). The listed
+	// book is monitored explicitly in syncList (book.Monitored = true), and the
+	// catalogue-discovery pass (FetchAuthorBooks) leaves already-tracked books
+	// untouched while gating newly-discovered works on shouldMonitorBookForAuthor
+	// — which returns false under "none". Leaving MonitorMode == "" would instead
+	// make that predicate treat the author as "all" and auto-want every work.
 	author := book.Author
 	author.Monitored = true
+	author.MonitorMode = models.AuthorMonitorModeNone
 	author.MetadataProvider = "hardcover"
 	if author.SortName == "" {
 		author.SortName = sortName(author.Name)

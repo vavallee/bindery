@@ -51,10 +51,14 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 	}
 
 	client := &Client{
-		username:  username,
-		password:  password,
-		http:      &http.Client{Timeout: 15 * time.Second},
-		fetchHTTP: &http.Client{Timeout: 60 * time.Second},
+		username: username,
+		password: password,
+		http:     &http.Client{Timeout: 15 * time.Second},
+		// fetchHTTP pulls indexer-controlled .torrent URLs. The fetch loop
+		// already re-validates each redirect hop; the guarded transport adds a
+		// per-dial recheck so a DNS rebind between validate and connect can't
+		// reach a forbidden host. The per-fetch client inherits this transport.
+		fetchHTTP: &http.Client{Timeout: 60 * time.Second, Transport: httpsec.GuardedTransport(httpsec.DownloadFetchPolicy())},
 		validateTorrentURL: func(raw string) error {
 			return httpsec.ValidateOutboundURL(raw, httpsec.DownloadFetchPolicy())
 		},

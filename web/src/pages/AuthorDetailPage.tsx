@@ -10,6 +10,7 @@ import AuthorMetadataLinkModal from '../components/AuthorMetadataLinkModal'
 import BulkActionBar from '../components/BulkActionBar'
 import { useView } from '../components/useView'
 import MarkdownDescription from '../components/MarkdownDescription'
+import { canLinkAuthorMetadata, hasSparseMetadata } from '../util/authorMetadata'
 import { btn } from '../components/buttons'
 import Switch from '../components/Switch'
 
@@ -30,16 +31,6 @@ function mediaLabel(mediaType?: Book['mediaType']): string {
   if (mediaType === 'audiobook') return '🎧 Audiobook'
   if (mediaType === 'both') return '📖🎧 Both'
   return '📖 Ebook'
-}
-
-function canLinkAuthorMetadata(author: Author): boolean {
-  const foreignId = (author.foreignAuthorId || '').trim()
-  const provider = (author.metadataProvider || '').trim().toLowerCase()
-  return foreignId === '' || foreignId.startsWith('abs:') || foreignId.startsWith('calibre:') || provider === 'audiobookshelf' || provider === 'calibre'
-}
-
-function hasSparseMetadata(author: Author): boolean {
-  return !author.description && !author.imageUrl && !author.disambiguation && (author.ratingsCount ?? 0) === 0 && (author.averageRating ?? 0) === 0
 }
 
 export default function AuthorDetailPage() {

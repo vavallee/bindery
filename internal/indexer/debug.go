@@ -140,6 +140,10 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 				hits[i].IndexerID = idx.ID
 				hits[i].IndexerName = idx.Name
 				hits[i].Protocol = protocol
+				// Mirror searcher.go: scoreResult adds IndexerPriority to the
+				// rank, so omitting it here made per-indexer priority a no-op
+				// for manual/interactive (debug) searches.
+				hits[i].IndexerPriority = idx.Priority
 			}
 			entry.ResultCount = len(hits)
 

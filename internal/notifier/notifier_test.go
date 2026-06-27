@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -302,6 +303,9 @@ func TestNew_DefaultValidator(t *testing.T) {
 }
 
 func TestSetValidator_Override(t *testing.T) {
+	// The production New() now also installs a dial-time SSRF guard, so reaching
+	// an httptest server on loopback requires opting loopback in for the dialer.
+	defer httpsec.AllowLoopbackForTests()()
 	n := New(nil)
 	called := 0
 	n.SetValidator(func(string) error {
@@ -319,6 +323,30 @@ func TestSetValidator_Override(t *testing.T) {
 	}
 	if called != 1 {
 		t.Errorf("overridden validator calls: want 1, got %d", called)
+	}
+}
+
+// TestSend_RedirectToPrivateBlocked verifies the CheckRedirect guard: a webhook
+// that passes the up-front check but 302s to an RFC1918 address must not be
+// followed. Loopback is opted in only so the test server is reachable; the
+// redirect target (10.x) stays blocked under the strict policy.
+func TestSend_RedirectToPrivateBlocked(t *testing.T) {
+	defer httpsec.AllowLoopbackForTests()()
+	n := New(nil)
+	n.SetValidator(func(string) error { return nil }) // allow the loopback test server URL
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://10.0.0.1/internal", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	notif := &models.Notification{URL: srv.URL}
+	err := n.send(context.Background(), notif, map[string]interface{}{})
+	if err == nil {
+		t.Fatal("expected the redirect to a private address to be blocked")
+	}
+	if !strings.Contains(err.Error(), "redirect blocked") && !strings.Contains(err.Error(), "private network") {
+		t.Fatalf("expected a redirect-blocked error, got: %v", err)
 	}
 }
 
