@@ -6,6 +6,30 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.23.0] — 2026-06-27
+
+A feature release: correct a mis-matched file in place, links out to the
+upstream metadata source, bulk monitor-mode changes, alias-aware author search,
+and native ntfy notifications. One additive schema change
+(`notifications.topic`, migration 057) defaults to the previous behaviour. If
+you maintain a custom webhook/ntfy template, read the upgrade note in the ntfy
+entry below — the event payload shape changed.
+
+### Added
+- **Fix Match: reassign a mis-matched file to the correct book** (#1238) — the importer can attach a downloaded file to the wrong book, and correcting it previously meant deleting and re-importing. The book detail page now has a **Fix match** action (next to Exclude) that searches your library, moves the file into the chosen book's folder, detaches it from the wrong book, and removes the stale copy at the old location so a later library scan can't re-attach it. Backed by `POST /api/v1/queue/manual-import/reassign`, which reuses the manual-import move/attach path and only deletes the original after confirming the file landed at a new tracked path, so a failed move never loses data.
+- **Links to the upstream metadata source on detail pages** (#1296) — author and book detail pages now show an *arr-style **View on OpenLibrary / Google Books ↗** link (the equivalent of the *arr stacks' TMDB/IMDB links) when the stored foreign ID maps to a stable public page: bare OpenLibrary `OL…` keys and Google Books `gb:` IDs. Sources without a reliably constructible public URL (Hardcover, DNB, Calibre, ABS) show no link. Frontend-only — the foreign IDs were already in the API.
+- **Bulk author actions can set monitor mode** (#1228, closes #1140) — the author list's bulk action bar can now change monitor mode for the selected authors and optionally apply the mode to their existing books, instead of editing each author one at a time.
+
+### Fixed
+- **Author search matches aliases and pen names** (#1176) — searching a name stored as an author alias (e.g. a pen name) returned nothing. The query now also matches `author_aliases`, so an AKA surfaces the canonical author that owns it.
+- **ntfy notifications render natively instead of as a raw JSON blob** (#1323) — ntfy only parses a JSON body when it is POSTed to the server *root* with a `topic` field; POSTed to a topic URL it treats the body as plain text and prints the JSON verbatim, which is what users saw. Notifications now have an optional **topic** field (migration 057, additive, defaults to empty): set it and point the URL at the ntfy server root, and Bindery publishes a body ntfy formats. Independently, every event payload is now normalized so `title` is *what happened* (`Release Grabbed`, `Book Imported`, …) and `message` is the subject, instead of both repeating the item name, and `eventType` is included on every event (not just `test`) so a single template can branch per event. The payload schema is documented in `docs/API.md`. **Upgrade note:** if you built a custom webhook/ntfy template that read `title` as the item name, that value now lives in `message` (and the raw item name is preserved under `item`).
+
+### Changed
+- **Refreshed Bindery branding** (#1324, #1326) — a new logo in the app navigation and a matching favicon.
+
+### Docs
+- **README refresh: Readarr-migration hook, comparison table, and updated screenshots** (#1321, #1324) — the README now leads with the Readarr-migration story and a feature-comparison table, and the screenshots were regenerated against the current UI with the new branding (plus calendar and queue views and a short demo loop).
+
 ## [v1.22.3] — 2026-06-26
 
 A patch release of import, download, and multi-user fixes, plus a per-list

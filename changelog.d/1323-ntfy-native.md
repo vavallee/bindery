@@ -1,2 +1,0 @@
-### Fixed
-- **ntfy notifications render natively instead of as raw JSON** (#1323). Set a notification's new **topic** field and point the URL at the ntfy server root; Bindery then posts a JSON body ntfy parses. Every event now also sends a meaningful `title` (what happened) and `message` (the subject) rather than repeating the item name twice, and carries `eventType` so one template can branch per event. The webhook payload schema is documented in `docs/API.md`.
