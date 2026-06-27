@@ -816,6 +816,7 @@ func main() {
 			r.Get("/queue/manual-import/scan", manualImportHandler.Scan)
 			r.Post("/queue/manual-import", manualImportHandler.Import)
 			r.Post("/queue/manual-import/batch", manualImportHandler.ImportBatch)
+			r.Post("/queue/manual-import/reassign", manualImportHandler.Reassign)
 		})
 		r.Get("/pending", pendingHandler.List)
 		r.Delete("/pending/{id}", pendingHandler.Delete)

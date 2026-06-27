@@ -116,6 +116,11 @@ export const booksApi = {
   addBook: (data: { foreignBookId: string; foreignAuthorId: string; authorName?: string; searchOnAdd?: boolean }) =>
     request<Book>('/author/book', { method: 'POST', body: JSON.stringify(data) }),
 
+  // Fix Match (#1238): move a mis-matched file to a different book. The file is
+  // detached from its current book and re-imported into the target's folder.
+  reassignFile: (data: { path: string; targetBookId: number; format?: string }) =>
+    request<{ id: number }>('/queue/manual-import/reassign', { method: 'POST', body: JSON.stringify(data) }),
+
   // Books
   listBooks: (params?: { authorId?: number; status?: string; includeExcluded?: boolean; limit?: number; offset?: number; search?: string; mediaType?: string; sort?: string; releaseFrom?: string; releaseBefore?: string }) => {
     const q = new URLSearchParams()

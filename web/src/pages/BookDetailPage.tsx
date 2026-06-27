@@ -11,6 +11,7 @@ import ClipboardManualFallback from '../components/ClipboardManualFallback'
 import { useClipboardCopy } from '../components/useClipboardCopy'
 import { safeHref } from '../util/safeHref'
 import { metadataSourceLink } from '../util/metadataSource'
+import FixMatchModal from '../components/FixMatchModal'
 
 function formatSize(n: number): string {
   if (!n || n <= 0) return ''
@@ -179,6 +180,7 @@ export default function BookDetailPage() {
   const [deletingBook, setDeletingBook] = useState(false)
   const [togglingExclude, setTogglingExclude] = useState(false)
   const [showRebind, setShowRebind] = useState(false)
+  const [showFixMatch, setShowFixMatch] = useState(false)
   const [showDeleteBook, setShowDeleteBook] = useState(false)
   const pathClipboard = useClipboardCopy()
   // For dual-format books, which format the file section is acting on.
@@ -639,6 +641,15 @@ export default function BookDetailPage() {
             </button>
             <button
               type="button"
+              onClick={() => setShowFixMatch(true)}
+              disabled={!hasActiveFile || deletingFile || deletingBook}
+              className={actionBtnCls}
+              title={t('bookDetail.fixMatch.hint', 'Move this file to a different book')}
+            >
+              {t('bookDetail.fixMatch.button', 'Fix match')}
+            </button>
+            <button
+              type="button"
               onClick={() => deleteFile(isDual ? fmt : undefined)}
               disabled={deletingFile || deletingBook || !hasActiveFile}
               className={`ml-auto ${dangerBtnCls}`}
@@ -788,6 +799,19 @@ export default function BookDetailPage() {
           onSuccess={updated => {
             setBook(updated)
             setShowRebind(false)
+          }}
+        />
+      )}
+
+      {showFixMatch && hasActiveFile && (
+        <FixMatchModal
+          sourceBookId={book.id}
+          path={activePath}
+          format={fmt}
+          onClose={() => setShowFixMatch(false)}
+          onReassigned={targetId => {
+            setShowFixMatch(false)
+            navigate(`/book/${targetId}`)
           }}
         />
       )}

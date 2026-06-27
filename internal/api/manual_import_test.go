@@ -761,3 +761,83 @@ func TestManualImportBatch_Empty(t *testing.T) {
 		t.Fatalf("status = %d, want 400 for empty batch", rec.Code)
 	}
 }
+
+func TestManualImportReassign_DetachesSourceAndImportsTarget(t *testing.T) {
+	t.Parallel()
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	authors := db.NewAuthorRepo(database)
+	downloads := db.NewDownloadRepo(database)
+	books := db.NewBookRepo(database)
+	bookFiles := db.NewBookFileRepo(database)
+	ctx := context.Background()
+
+	src := seedBook(t, authors, books, ctx) // file is wrongly attached here
+	target := &models.Book{
+		ForeignID: "mi-book-2", AuthorID: src.AuthorID,
+		Title: "Correct Book", SortTitle: "correct book",
+		Status: "wanted", Genres: []string{},
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, target); err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+
+	tmp := t.TempDir()
+	epub := filepath.Join(tmp, "mismatched.epub")
+	if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.AddBookFile(ctx, src.ID, models.MediaTypeEbook, epub); err != nil {
+		t.Fatalf("attach file to source: %v", err)
+	}
+
+	h := NewManualImportHandler(&stubManualImportScanner{}, downloads, books)
+	body, _ := json.Marshal(map[string]any{"path": epub, "targetBookId": target.ID, "format": models.MediaTypeEbook})
+	rec := httptest.NewRecorder()
+	h.Reassign(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/reassign", bytes.NewReader(body)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body = %s", rec.Code, rec.Body.String())
+	}
+
+	// The stale association is gone from the source book (the actual move to the
+	// target is performed by the stubbed ImportFromPath, exercised live, not here).
+	srcFiles, err := bookFiles.ListByBook(ctx, src.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(srcFiles) != 0 {
+		t.Errorf("source book still has %d file(s); want 0 after reassign", len(srcFiles))
+	}
+}
+
+func TestManualImportReassign_EmptyPath(t *testing.T) {
+	t.Parallel()
+	h, _, _, _, _ := manualImportFixture(t)
+	body, _ := json.Marshal(map[string]any{"path": "  ", "targetBookId": 1})
+	rec := httptest.NewRecorder()
+	h.Reassign(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/reassign", bytes.NewReader(body)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestManualImportReassign_TargetNotFound(t *testing.T) {
+	t.Parallel()
+	h, _, _, _, _ := manualImportFixture(t)
+	tmp := t.TempDir()
+	epub := filepath.Join(tmp, "book.epub")
+	if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{"path": epub, "targetBookId": 9999})
+	rec := httptest.NewRecorder()
+	h.Reassign(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/reassign", bytes.NewReader(body)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (book not found); body = %s", rec.Code, rec.Body.String())
+	}
+}

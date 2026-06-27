@@ -947,6 +947,13 @@
     "unexcludeHint": "Un-exclude this book from searches and the Wanted page",
     "deleteFile": "Delete file",
     "deletingFile": "Deleting…",
+    "fixMatch": {
+      "button": "Fix match",
+      "hint": "Move this file to a different book",
+      "title": "Reassign file to another book",
+      "searchPlaceholder": "Search your library for the correct book…",
+      "noResults": "No matching books in your library"
+    },
     "audiobookHeading": "Audiobook metadata",
     "asinLabel": "ASIN (Audible identifier)",
     "saveAsin": "Save ASIN",

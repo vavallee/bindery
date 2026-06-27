@@ -558,6 +558,11 @@ func (r *BookRepo) ListAllBookFilePaths(ctx context.Context) ([]string, error) {
 	return r.files.ListAllPaths(ctx)
 }
 
+// ListBookFiles returns the book_files rows for a single book.
+func (r *BookRepo) ListBookFiles(ctx context.Context, bookID int64) ([]models.BookFile, error) {
+	return r.files.ListByBook(ctx, bookID)
+}
+
 // refreshBookStatus recomputes the aggregate status for a book from its
 // current book_files rows and updates both the status and legacy columns.
 // It queries book_files directly so the result is always authoritative,

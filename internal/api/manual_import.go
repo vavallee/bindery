@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -151,6 +153,90 @@ func (h *ManualImportHandler) Import(w http.ResponseWriter, r *http.Request) {
 	}
 	go h.scanner.ImportFromPath(context.WithoutCancel(r.Context()), dl, path, req.Format)
 	writeJSON(w, http.StatusAccepted, dl)
+}
+
+// reassignRequest moves a single already-imported file to a different book
+// ("Fix Match", #1238) when the importer attached it to the wrong one.
+type reassignRequest struct {
+	// Path is the current on-disk path of the mis-matched file (book_files.path).
+	Path string `json:"path"`
+	// TargetBookID is the book the file should belong to.
+	TargetBookID int64 `json:"targetBookId"`
+	// Format is optional; auto-detected when empty. "ebook" or "audiobook".
+	Format string `json:"format"`
+}
+
+// Reassign handles POST /api/v1/queue/manual-import/reassign.
+//
+// It detaches the file from whatever book currently owns it and re-imports it
+// against TargetBookID, reusing the manual-import move/attach path so the file
+// is renamed into the correct book's library folder rather than just re-pointed
+// in the database. Returns 202 with the synthetic Download record that drives
+// the async import.
+func (h *ManualImportHandler) Reassign(w http.ResponseWriter, r *http.Request) {
+	var req reassignRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if strings.TrimSpace(req.Path) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path is required"})
+		return
+	}
+	// Validate path containment, confirm the target book exists, and create the
+	// synthetic Download record. Nothing is mutated on failure.
+	dl, path, status, msg := h.prepareImport(r.Context(), req.Path, req.TargetBookID, req.Format)
+	if dl == nil {
+		writeJSON(w, status, map[string]string{"error": msg})
+		return
+	}
+	// Detach the stale association from the book that currently owns this path.
+	// RemoveBookFile is status-aware (flips a now-fileless source book back to
+	// "wanted") and is a no-op when the path isn't tracked. Best-effort: even if
+	// it fails, the re-import below still re-points the file to the target.
+	if _, err := h.books.RemoveBookFile(r.Context(), path); err != nil {
+		slog.Warn("reassign: detach source book file", "path", path, "error", err)
+	}
+	ctx := context.WithoutCancel(r.Context())
+	targetID := req.TargetBookID
+	go func() {
+		h.scanner.ImportFromPath(ctx, dl, path, req.Format)
+		h.removeStaleSource(ctx, path, targetID)
+	}()
+	writeJSON(w, http.StatusAccepted, dl)
+}
+
+// removeStaleSource deletes the original mis-filed copy after a successful
+// reassign. The import places the file under the target book (by hardlink or
+// copy), leaving the original where it was — which a later library scan would
+// re-attach to the wrong book. We remove it, but only once we can confirm the
+// import actually put the file somewhere else: the target must now have a
+// tracked file at a different path that exists on disk. If the import failed
+// (no new file) or resolved to the same path, the source is left untouched so a
+// file is never lost.
+func (h *ManualImportHandler) removeStaleSource(ctx context.Context, src string, targetID int64) {
+	files, err := h.books.ListBookFiles(ctx, targetID)
+	if err != nil {
+		slog.Warn("reassign cleanup: list target files", "error", err)
+		return
+	}
+	moved := false
+	for _, f := range files {
+		if f.Path == src {
+			return // target ended up at the same path; nothing to clean up
+		}
+		if _, statErr := os.Stat(f.Path); statErr == nil {
+			moved = true
+		}
+	}
+	if !moved {
+		return // import did not place a new file; leave the source in place
+	}
+	if err := os.Remove(src); err != nil {
+		slog.Warn("reassign cleanup: remove stale source file", "path", src, "error", err)
+		return
+	}
+	_ = os.Remove(filepath.Dir(src)) // best-effort: prune the now-empty folder
 }
 
 // ScanItem is one candidate book unit discovered under a folder during Scan.
