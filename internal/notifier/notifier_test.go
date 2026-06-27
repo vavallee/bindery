@@ -384,11 +384,11 @@ func TestUserAgentHeader(t *testing.T) {
 
 func TestNormalizeEventPayload(t *testing.T) {
 	cases := []struct {
-		name              string
-		event             string
-		in                map[string]interface{}
-		wantTitle         string
-		wantMessage       string
+		name        string
+		event       string
+		in          map[string]interface{}
+		wantTitle   string
+		wantMessage string
 	}{
 		{"grabbed", EventGrabbed, map[string]interface{}{"title": "Dune", "author": "Frank Herbert"}, "Release Grabbed", "Dune · Frank Herbert"},
 		{"grabbed-no-author", EventGrabbed, map[string]interface{}{"title": "Dune"}, "Release Grabbed", "Dune"},

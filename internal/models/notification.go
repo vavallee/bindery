@@ -3,12 +3,12 @@ package models
 import "time"
 
 type Notification struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	Type      string    `json:"type"`
-	URL       string    `json:"url"`
-	Method    string    `json:"method"`
-	Headers   string    `json:"headers"`
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	Type    string `json:"type"`
+	URL     string `json:"url"`
+	Method  string `json:"method"`
+	Headers string `json:"headers"`
 	// Topic, when set, makes the webhook POST to the server root with a "topic"
 	// field instead of POSTing to URL directly. This is what ntfy needs to render
 	// a JSON payload natively instead of printing it verbatim (#1323).
