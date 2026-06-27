@@ -39,6 +39,60 @@ func TestImportListList_Empty(t *testing.T) {
 	}
 }
 
+func TestImportListMediaType(t *testing.T) {
+	h, repo, _ := importListFixture(t)
+	ctx := context.Background()
+
+	// Create with a valid media type persists and round-trips.
+	rec := httptest.NewRecorder()
+	h.Create(rec, httptest.NewRequest(http.MethodPost, "/api/v1/import-list",
+		bytes.NewBufferString(`{"name":"Audiobooks","type":"hardcover","url":"abs","mediaType":"audiobook"}`)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var created models.ImportList
+	json.NewDecoder(rec.Body).Decode(&created)
+	if created.MediaType != models.MediaTypeAudiobook {
+		t.Fatalf("created mediaType = %q, want audiobook", created.MediaType)
+	}
+	stored, _ := repo.GetByID(ctx, created.ID)
+	if stored == nil || stored.MediaType != models.MediaTypeAudiobook {
+		t.Fatalf("stored mediaType = %+v, want audiobook", stored)
+	}
+
+	// Create with an invalid media type is rejected.
+	rec = httptest.NewRecorder()
+	h.Create(rec, httptest.NewRequest(http.MethodPost, "/api/v1/import-list",
+		bytes.NewBufferString(`{"name":"Bad","type":"hardcover","mediaType":"paperback"}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("create invalid mediaType: expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Patch updates the media type.
+	rec = httptest.NewRecorder()
+	h.Update(rec, withURLParam(
+		httptest.NewRequest(http.MethodPut, "/api/v1/import-list/1",
+			bytes.NewBufferString(`{"mediaType":"both"}`)),
+		"id", "1"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch mediaType: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	stored, _ = repo.GetByID(ctx, created.ID)
+	if stored.MediaType != models.MediaTypeBoth {
+		t.Fatalf("patched mediaType = %q, want both", stored.MediaType)
+	}
+
+	// Patch with an invalid media type is rejected.
+	rec = httptest.NewRecorder()
+	h.Update(rec, withURLParam(
+		httptest.NewRequest(http.MethodPut, "/api/v1/import-list/1",
+			bytes.NewBufferString(`{"mediaType":"nonsense"}`)),
+		"id", "1"))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("patch invalid mediaType: expected 400, got %d", rec.Code)
+	}
+}
+
 func TestImportListCRUD(t *testing.T) {
 	h, _, _ := importListFixture(t)
 

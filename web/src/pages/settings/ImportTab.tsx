@@ -518,6 +518,16 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
     updateLocalList(updated)
   }
 
+  const handleMediaTypeChange = async (il: ImportList, mediaType: string) => {
+    setError(null)
+    try {
+      const updated = await api.updateImportList(il.id, { mediaType })
+      updateLocalList(updated)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update media type')
+    }
+  }
+
   const handleSelectList = async (list: HardcoverList, existing?: ImportList) => {
     setActionSlug(list.slug)
     setError(null)
@@ -703,6 +713,18 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
                 </label>
                 {il && (
                   <div className="flex flex-wrap justify-end gap-2">
+                    <select
+                      value={il.mediaType || ''}
+                      onChange={e => handleMediaTypeChange(il, e.target.value)}
+                      aria-label={t('settings.import.hardcoverMediaType', 'Media type')}
+                      title={t('settings.import.hardcoverMediaTypeHint', 'Format synced books are created as. Auto uses what Hardcover reports.')}
+                      className="text-xs px-2 py-1 rounded bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300"
+                    >
+                      <option value="">{t('settings.import.mediaTypeAuto', 'Auto')}</option>
+                      <option value="ebook">{t('settings.import.mediaTypeEbook', 'Ebook')}</option>
+                      <option value="audiobook">{t('settings.import.mediaTypeAudiobook', 'Audiobook')}</option>
+                      <option value="both">{t('settings.import.mediaTypeBoth', 'Both')}</option>
+                    </select>
                     <button
                       onClick={() => handleSync(il.id)}
                       disabled={syncingId === il.id || !il.enabled}

@@ -192,6 +192,80 @@ func TestSyncOne_ReusesAuthorByNameAndDedupsOwnedBook(t *testing.T) {
 	}
 }
 
+// TestSyncOne_ListMediaTypeOverridesDerived covers the per-list media type
+// feature: a list with MediaType set pins the format of the books it creates,
+// overriding the Hardcover-derived media type (most works report both
+// editions, so without this two single-format lists yield identical types).
+func TestSyncOne_ListMediaTypeOverridesDerived(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	il := testImportList("Audiobooks", "hardcover", true)
+	il.MediaType = models.MediaTypeAudiobook
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed list: %v", err)
+	}
+
+	author := func() *models.Author {
+		return &models.Author{ForeignID: "hc:auth", Name: "Some Author", MetadataProvider: "hardcover"}
+	}
+	s.WithClientFactory(func(string) hardcoverClient {
+		return &fakeHardcoverClient{
+			lists: []hardcover.HCList{{ID: 9, Slug: il.URL, Name: il.Name}},
+			books: []models.Book{
+				// Hardcover says this work has both editions, but the list is an
+				// audiobook list, so it must land as audiobook.
+				{ForeignID: "hc:b1", Title: "Both Editions Book", MetadataProvider: "hardcover", MediaType: models.MediaTypeBoth, Author: author()},
+			},
+		}
+	})
+
+	if err := s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatalf("SyncOne: %v", err)
+	}
+
+	got, err := s.books.GetByForeignID(ctx, "hc:b1")
+	if err != nil || got == nil {
+		t.Fatalf("created book not found: %v", err)
+	}
+	if got.MediaType != models.MediaTypeAudiobook {
+		t.Fatalf("media type = %q, want audiobook (list override of the Hardcover 'both')", got.MediaType)
+	}
+}
+
+// TestSyncOne_ListMediaTypeUnsetKeepsDerived confirms an unset list MediaType
+// leaves the source-derived media type untouched (backwards compatible).
+func TestSyncOne_ListMediaTypeUnsetKeepsDerived(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	il := testImportList("Default", "hardcover", true)
+	// MediaType deliberately left empty.
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed list: %v", err)
+	}
+	s.WithClientFactory(func(string) hardcoverClient {
+		return &fakeHardcoverClient{
+			lists: []hardcover.HCList{{ID: 9, Slug: il.URL, Name: il.Name}},
+			books: []models.Book{
+				{ForeignID: "hc:b2", Title: "Audio Only", MetadataProvider: "hardcover", MediaType: models.MediaTypeAudiobook,
+					Author: &models.Author{ForeignID: "hc:a2", Name: "Author Two", MetadataProvider: "hardcover"}},
+			},
+		}
+	})
+
+	if err := s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatalf("SyncOne: %v", err)
+	}
+	got, err := s.books.GetByForeignID(ctx, "hc:b2")
+	if err != nil || got == nil {
+		t.Fatalf("created book not found: %v", err)
+	}
+	if got.MediaType != models.MediaTypeAudiobook {
+		t.Fatalf("media type = %q, want audiobook (source-derived, unchanged)", got.MediaType)
+	}
+}
+
 // TestSyncOne_NewAuthorPinnedToMonitorModeNone is the #1290 regression: a list
 // whose book belongs to a brand-new author must create that author with
 // MonitorMode == "none", not the zero value "". An empty MonitorMode is treated

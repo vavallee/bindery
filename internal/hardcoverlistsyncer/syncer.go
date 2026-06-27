@@ -221,6 +221,15 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		book.AuthorID = authorID
 		book.Monitored = true
 		book.Status = models.BookStatusWanted
+		// A list can pin the format its books are created as, overriding the
+		// Hardcover-derived media type (most works report both editions, so
+		// without this an "Audiobooks" and an "Ebooks" list yield identical
+		// media types). Applied on create only — books that already exist are
+		// skipped above, so two single-format lists never combine into "both"
+		// and a manually-set media type survives re-sync.
+		if il.MediaType != "" {
+			book.MediaType = il.MediaType
+		}
 		if book.Genres == nil {
 			book.Genres = []string{}
 		}
