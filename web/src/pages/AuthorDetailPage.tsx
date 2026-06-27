@@ -11,6 +11,7 @@ import BulkActionBar from '../components/BulkActionBar'
 import { useView } from '../components/useView'
 import MarkdownDescription from '../components/MarkdownDescription'
 import { canLinkAuthorMetadata, hasSparseMetadata } from '../util/authorMetadata'
+import { metadataSourceLink } from '../util/metadataSource'
 import { btn } from '../components/buttons'
 import Switch from '../components/Switch'
 
@@ -614,6 +615,19 @@ export default function AuthorDetailPage() {
             {author.averageRating > 0 && (
               <span>★ {author.averageRating.toFixed(2)} ({author.ratingsCount.toLocaleString()} ratings)</span>
             )}
+            {(() => {
+              const src = metadataSourceLink(author.foreignAuthorId, 'author')
+              return src ? (
+                <a
+                  href={src.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-emerald-600 dark:text-emerald-400 hover:underline"
+                >
+                  {t('common.viewOnSource', { source: src.label, defaultValue: 'View on {{source}} ↗' })}
+                </a>
+              ) : null
+            })()}
           </div>
           {author.description && (
             <MarkdownDescription

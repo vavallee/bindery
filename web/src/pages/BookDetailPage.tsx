@@ -10,6 +10,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import ClipboardManualFallback from '../components/ClipboardManualFallback'
 import { useClipboardCopy } from '../components/useClipboardCopy'
 import { safeHref } from '../util/safeHref'
+import { metadataSourceLink } from '../util/metadataSource'
 
 function formatSize(n: number): string {
   if (!n || n <= 0) return ''
@@ -491,6 +492,22 @@ export default function BookDetailPage() {
                 <span className="text-slate-600 dark:text-zinc-400">{formatDuration(book.durationSeconds)}</span>
               </>
             ) : null}
+            {(() => {
+              const src = metadataSourceLink(book.foreignBookId, 'book')
+              return src ? (
+                <>
+                  <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
+                  <a
+                    href={src.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-emerald-600 dark:text-emerald-400 hover:underline"
+                  >
+                    {t('common.viewOnSource', { source: src.label, defaultValue: 'View on {{source}} ↗' })}
+                  </a>
+                </>
+              ) : null
+            })()}
           </div>
 
           {book.description && (

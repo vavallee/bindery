@@ -1,6 +1,7 @@
 {
   "common": {
     "loading": "Loading...",
+    "viewOnSource": "View on {{source}} ↗",
     "gridView": "Grid view",
     "tableView": "Table view",
     "cancel": "Cancel",
