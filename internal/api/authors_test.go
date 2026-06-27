@@ -93,6 +93,9 @@ type stubMetaProvider struct {
 	// authorWorksByName lets tests act as an author-scoped supplemental
 	// provider such as Hardcover.
 	authorWorksByName []models.Book
+	// author, when non-nil, is returned by GetAuthor so tests can exercise
+	// the author-profile refresh path (Discussion #1226).
+	author *models.Author
 }
 
 func (p *stubMetaProvider) Name() string {
@@ -108,7 +111,7 @@ func (p *stubMetaProvider) SearchBooks(_ context.Context, _ string) ([]models.Bo
 	return nil, nil
 }
 func (p *stubMetaProvider) GetAuthor(_ context.Context, _ string) (*models.Author, error) {
-	return nil, nil
+	return p.author, nil
 }
 func (p *stubMetaProvider) GetBook(_ context.Context, fid string) (*models.Book, error) {
 	if p.getBookByID != nil {
@@ -332,6 +335,79 @@ func TestFetchAuthorBooks_FiresSearchForMonitoredAuthor(t *testing.T) {
 	titles := spy.titles()
 	if len(titles) != 2 {
 		t.Fatalf("expected 2 searcher calls, got %d: %v", len(titles), titles)
+	}
+}
+
+// TestFetchAuthorBooks_RefreshesAuthorProfile verifies that a metadata refresh
+// repopulates the author's OWN profile fields (description + image) from the
+// linked provider, not just the catalogue. Before the fix the refresh fetched
+// books but left Description/ImageURL empty even when the provider supplied them
+// (Discussion #1226).
+func TestFetchAuthorBooks_RefreshesAuthorProfile(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+
+	ctx := context.Background()
+	// An already-linked OpenLibrary author whose local profile is empty,
+	// mirroring the reporter's "linked but bio/photo blank" state.
+	author := &models.Author{
+		ForeignID: "OL6094856A", Name: "Paul Cornell", SortName: "Cornell, Paul",
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	stub := &stubMetaProvider{
+		works: []models.Book{
+			{ForeignID: "OL700W", Title: "London Falling", SortTitle: "london falling", Language: "eng", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+		},
+		author: &models.Author{
+			ForeignID:        "OL6094856A",
+			Name:             "Paul Cornell",
+			Description:      "British writer of novels, comics and TV.",
+			ImageURL:         "https://covers.openlibrary.org/a/id/14431281-L.jpg",
+			Disambiguation:   "British author",
+			RatingsCount:     42,
+			AverageRating:    4.1,
+			MetadataProvider: "openlibrary",
+		},
+	}
+	agg := metadata.NewAggregator(stub)
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, nil, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, "")
+
+	got, err := authorRepo.GetByID(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Description != "British writer of novels, comics and TV." {
+		t.Errorf("Description not refreshed: got %q", got.Description)
+	}
+	if got.ImageURL != "https://covers.openlibrary.org/a/id/14431281-L.jpg" {
+		t.Errorf("ImageURL not refreshed: got %q", got.ImageURL)
+	}
+	if got.Disambiguation != "British author" {
+		t.Errorf("Disambiguation not refreshed: got %q", got.Disambiguation)
+	}
+	if got.RatingsCount != 42 || got.AverageRating != 4.1 {
+		t.Errorf("ratings not refreshed: count=%d avg=%v", got.RatingsCount, got.AverageRating)
+	}
+	if got.LastMetadataRefreshAt == nil {
+		t.Error("LastMetadataRefreshAt not stamped on profile refresh")
+	}
+	// The catalogue must still be populated by the same refresh.
+	books, _ := bookRepo.ListByAuthor(ctx, author.ID)
+	if len(books) != 1 {
+		t.Errorf("expected 1 book synced, got %d", len(books))
 	}
 }
 
@@ -688,6 +764,100 @@ func TestFetchAuthorBooks_AppliesAuthorMonitorModes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestFetchAuthorBooks_NoneMode_PreservesListedBook_DropsBackCatalogue is the
+// #1290 reconcile guarantee from the API side. A Hardcover-list-created author
+// is monitored but pinned to MonitorMode "none", and the single listed book was
+// already inserted as monitored + wanted. When the scheduler's catalogue
+// discovery (FetchAuthorBooks) then surfaces the author's whole back-catalogue,
+// the listed book must stay monitored (already-tracked rows are left untouched)
+// while every newly-discovered work stays unmonitored — no back-catalogue
+// blowup.
+func TestFetchAuthorBooks_NoneMode_PreservesListedBook_DropsBackCatalogue(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID:          "OL-LIST-AUTHOR",
+		Name:               "List Author",
+		SortName:           "Author, List",
+		MetadataProvider:   "openlibrary",
+		Monitored:          true,
+		MonitorMode:        models.AuthorMonitorModeNone,
+		MonitorLatestCount: 1,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	// The listed book, as the syncer inserts it: monitored + wanted, sharing the
+	// foreign id of one of the catalogue works the provider will surface.
+	listed := &models.Book{
+		ForeignID:        "OL-LISTED",
+		Title:            "The Listed Book",
+		AuthorID:         author.ID,
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+		Status:           models.BookStatusWanted,
+		Genres:           []string{},
+	}
+	if err := bookRepo.Create(ctx, listed); err != nil {
+		t.Fatal(err)
+	}
+
+	stub := &stubMetaProvider{
+		works: []models.Book{
+			// The listed book reappears as part of the discovered catalogue.
+			{ForeignID: "OL-LISTED", Title: "The Listed Book", SortTitle: "the listed book", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+			// Back-catalogue the user never asked for.
+			{ForeignID: "OL-BACK1", Title: "Back Catalogue One", SortTitle: "back catalogue one", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+			{ForeignID: "OL-BACK2", Title: "Back Catalogue Two", SortTitle: "back catalogue two", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+			{ForeignID: "OL-BACK3", Title: "Back Catalogue Three", SortTitle: "back catalogue three", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+		},
+	}
+	spy := &searcherSpy{}
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(stub), nil, profileRepo, spy)
+	h.FetchAuthorBooks(author, true, "")
+
+	books, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantMonitored := map[string]bool{
+		"The Listed Book":      true,  // preserved
+		"Back Catalogue One":   false, // never auto-wanted
+		"Back Catalogue Two":   false,
+		"Back Catalogue Three": false,
+	}
+	if len(books) != len(wantMonitored) {
+		t.Fatalf("books = %d, want %d: %+v", len(books), len(wantMonitored), books)
+	}
+	for _, b := range books {
+		want, ok := wantMonitored[b.Title]
+		if !ok {
+			t.Fatalf("unexpected book %q", b.Title)
+		}
+		if b.Monitored != want {
+			t.Errorf("%s monitored = %v, want %v", b.Title, b.Monitored, want)
+		}
+	}
+
+	// The discovery pass searches only newly-discovered monitored books. Under
+	// "none" nothing new is monitored, and the already-tracked listed book is
+	// skipped (it was searched when the syncer created it). So this pass must
+	// queue zero searches — in particular none for the back-catalogue.
+	if got := spy.titles(); len(got) != 0 {
+		t.Errorf("unexpected searches queued by discovery pass: %v", got)
 	}
 }
 

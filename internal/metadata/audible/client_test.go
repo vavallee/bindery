@@ -2,6 +2,7 @@ package audible
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -136,6 +137,63 @@ func TestSearchBooksByAuthor_HTTPError(t *testing.T) {
 	_, err := c.SearchBooksByAuthor(context.Background(), "Somebody")
 	if err == nil {
 		t.Fatal("expected error on HTTP 503")
+	}
+}
+
+// TestSearchBooksByAuthor_MalformedBody verifies that a 200 carrying invalid
+// JSON surfaces a decode error rather than panicking or silently returning an
+// empty result set. The catalogue response is untrusted upstream input, so a
+// truncated/garbage body must fail loudly.
+func TestSearchBooksByAuthor_MalformedBody(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/1.0/catalog/products", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		// Truncated JSON object — a decoder must reject this.
+		_, _ = w.Write([]byte(`{`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := New()
+	c.baseURL = srv.URL
+
+	books, err := c.SearchBooksByAuthor(context.Background(), "Somebody")
+	if err == nil {
+		t.Fatal("expected decode error on malformed JSON body, got nil")
+	}
+	if books != nil {
+		t.Errorf("expected nil books on decode error, got %v", books)
+	}
+}
+
+// TestSearchBooksByAuthor_ContextCanceled verifies that an already-cancelled
+// context makes the call return promptly with a context error instead of
+// hanging or returning a nil error. No metadata client had a context-cancel
+// test before this.
+func TestSearchBooksByAuthor_ContextCanceled(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/1.0/catalog/products", func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("server must not be reached when the context is already cancelled")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := New()
+	c.baseURL = srv.URL
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before the call
+
+	books, err := c.SearchBooksByAuthor(ctx, "Somebody")
+	if err == nil {
+		t.Fatal("expected error from cancelled context, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got %v", err)
+	}
+	if books != nil {
+		t.Errorf("expected nil books on cancellation, got %v", books)
 	}
 }
 

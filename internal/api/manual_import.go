@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -81,73 +84,277 @@ type manualImportRequest struct {
 	Format string `json:"format"`
 }
 
+// prepareImport validates a single (path, bookId, format) request, resolves the
+// path inside a library root, confirms the book exists, and creates the
+// synthetic Download record. On success it returns the record and the
+// symlink-resolved path. On failure it returns an HTTP status and a message.
+// It is the shared core of Import (one item) and ImportBatch (many).
+func (h *ManualImportHandler) prepareImport(ctx context.Context, rawPath string, bookID int64, format string) (*models.Download, string, int, string) {
+	path := filepath.Clean(rawPath)
+	if path == "" || path == "." {
+		return nil, "", http.StatusBadRequest, "path is required"
+	}
+	if !filepath.IsAbs(path) {
+		return nil, "", http.StatusBadRequest, "path must be absolute"
+	}
+	// Resolve symlinks and confirm containment so a symlink inside a root that
+	// points outside it can't redirect the read/move to an arbitrary file.
+	resolved, ok := h.roots.ResolveContained(ctx, path)
+	if !ok {
+		return nil, "", http.StatusForbidden, "path is outside the configured library roots"
+	}
+	path = resolved
+	if bookID <= 0 {
+		return nil, "", http.StatusBadRequest, "bookId is required"
+	}
+	if format != "" && format != models.MediaTypeEbook && format != models.MediaTypeAudiobook {
+		return nil, "", http.StatusBadRequest, "format must be \"ebook\" or \"audiobook\""
+	}
+	info, err := os.Stat(path) //nolint:gosec // #nosec G304 -- path is symlink-resolved and confirmed inside a configured library root; RequireAdmin middleware enforced at route level
+	if err != nil {
+		return nil, "", http.StatusBadRequest, fmt.Sprintf("path not accessible: %v", err)
+	}
+	if !info.IsDir() && !importer.IsBookFile(path) {
+		return nil, "", http.StatusBadRequest, "path is not a recognised book file"
+	}
+	book, err := h.books.GetByID(ctx, bookID)
+	if err != nil || book == nil {
+		return nil, "", http.StatusBadRequest, "book not found"
+	}
+	now := time.Now().UTC()
+	dl := &models.Download{
+		GUID:   "manual-" + uuid.New().String(),
+		BookID: &bookID,
+		Title:  book.Title,
+		Status: models.StateCompleted,
+	}
+	dl.CompletedAt = &now
+	if err := h.downloads.Create(ctx, dl); err != nil {
+		return nil, "", http.StatusInternalServerError, "failed to create import record"
+	}
+	return dl, path, 0, ""
+}
+
 // Import handles POST /api/v1/queue/manual-import
 // It validates the path and book, creates a synthetic Download record, and
-// kicks off tryImportInternal asynchronously. Returns 202 with the new record.
+// kicks off the import asynchronously. Returns 202 with the new record.
 func (h *ManualImportHandler) Import(w http.ResponseWriter, r *http.Request) {
 	var req manualImportRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
-	req.Path = filepath.Clean(req.Path)
-	if req.Path == "" || req.Path == "." {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path is required"})
+	dl, path, status, msg := h.prepareImport(r.Context(), req.Path, req.BookID, req.Format)
+	if dl == nil {
+		writeJSON(w, status, map[string]string{"error": msg})
 		return
 	}
-	if !filepath.IsAbs(req.Path) {
+	go h.scanner.ImportFromPath(context.WithoutCancel(r.Context()), dl, path, req.Format)
+	writeJSON(w, http.StatusAccepted, dl)
+}
+
+// ScanItem is one candidate book unit discovered under a folder during Scan.
+type ScanItem struct {
+	Path           string        `json:"path"`
+	Name           string        `json:"name"`
+	Match          string        `json:"match"` // "confident" | "ambiguous" | "none"
+	ParsedTitle    string        `json:"parsedTitle"`
+	ParsedAuthor   string        `json:"parsedAuthor"`
+	DetectedFormat string        `json:"detectedFormat"`
+	Book           *models.Book  `json:"book,omitempty"`
+	Candidates     []models.Book `json:"candidates,omitempty"`
+}
+
+// ScanResponse is the result of scanning a folder for importable book units.
+type ScanResponse struct {
+	Items     []ScanItem `json:"items"`
+	Truncated bool       `json:"truncated"`
+}
+
+// maxScanEntries caps how many child units a single Scan returns so pointing at
+// an enormous tree can't produce an unbounded response or stall the request.
+const maxScanEntries = 1000
+
+// Scan handles GET /api/v1/queue/manual-import/scan?path=...
+// It enumerates the immediate children of a folder (each book file, and each
+// subdirectory that contains at least one book file) and runs the same
+// catalogue Lookup on each, returning a per-unit match list to review and
+// bulk-import. No state is modified.
+func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
+	path := filepath.Clean(r.URL.Query().Get("path"))
+	if path == "" || path == "." {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path parameter required"})
+		return
+	}
+	if !filepath.IsAbs(path) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path must be absolute"})
 		return
 	}
-	resolved, ok := h.roots.ResolveContained(r.Context(), req.Path)
+	resolved, ok := h.roots.ResolveContained(r.Context(), path)
 	if !ok {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "path is outside the configured library roots"})
 		return
 	}
-	// Use the symlink-resolved path for every subsequent operation (stat,
-	// book-file detection, import) so a symlink inside a root that points
-	// outside it can't redirect the read/move to an arbitrary file.
-	req.Path = resolved
-	if req.BookID <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bookId is required"})
-		return
-	}
-	if req.Format != "" && req.Format != models.MediaTypeEbook && req.Format != models.MediaTypeAudiobook {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "format must be \"ebook\" or \"audiobook\""})
-		return
-	}
-
-	info, err := os.Stat(req.Path) //nolint:gosec // #nosec G304 -- path is symlink-resolved and confirmed inside a configured library root; RequireAdmin middleware enforced at route level
+	path = resolved
+	info, err := os.Stat(path) //nolint:gosec // #nosec G304 -- symlink-resolved and confirmed inside a configured library root; RequireAdmin enforced at route level
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("path not accessible: %v", err)})
 		return
 	}
-	if !info.IsDir() && !importer.IsBookFile(req.Path) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path is not a recognised book file"})
+	if !info.IsDir() {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path must be a folder; use lookup for a single book"})
+		return
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("read folder: %v", err)})
+		return
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+
+	resp := ScanResponse{Items: []ScanItem{}}
+	for _, e := range entries {
+		if len(resp.Items) >= maxScanEntries {
+			resp.Truncated = true
+			break
+		}
+		child := filepath.Join(path, e.Name())
+		isDir := e.IsDir()
+		if !isDir && !importer.IsBookFile(child) {
+			continue
+		}
+		if isDir && !dirHasBookFile(child) {
+			continue
+		}
+		res, err := h.scanner.Lookup(r.Context(), child)
+		if err != nil {
+			continue
+		}
+		resp.Items = append(resp.Items, ScanItem{
+			Path:           child,
+			Name:           e.Name(),
+			Match:          res.Match,
+			ParsedTitle:    res.ParsedTitle,
+			ParsedAuthor:   res.ParsedAuthor,
+			DetectedFormat: res.DetectedFormat,
+			Book:           res.Book,
+			Candidates:     res.Candidates,
+		})
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// dirHasBookFile reports whether dir contains at least one recognized book
+// file, walking up to a bounded number of entries so a deep or huge tree can't
+// stall the scan.
+func dirHasBookFile(dir string) bool {
+	const limit = 5000
+	count := 0
+	found := false
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // skip unreadable entries rather than abort the walk
+		}
+		count++
+		if count > limit {
+			return fs.SkipAll
+		}
+		if !d.IsDir() && importer.IsBookFile(p) {
+			found = true
+			return fs.SkipAll
+		}
+		return nil
+	})
+	return found
+}
+
+// BatchImportItem is one (path, bookId, format) pair in a batch import.
+type BatchImportItem struct {
+	Path   string `json:"path"`
+	BookID int64  `json:"bookId"`
+	Format string `json:"format"`
+}
+
+// BatchImportResult reports the per-item outcome of validation. The actual
+// import runs asynchronously after a successful validation (Accepted=true).
+type BatchImportResult struct {
+	Path       string `json:"path"`
+	Accepted   bool   `json:"accepted"`
+	Error      string `json:"error,omitempty"`
+	DownloadID int64  `json:"downloadId,omitempty"`
+}
+
+// BatchImportResponse summarizes a batch import submission.
+type BatchImportResponse struct {
+	Results  []BatchImportResult `json:"results"`
+	Accepted int                 `json:"accepted"`
+	Failed   int                 `json:"failed"`
+}
+
+const (
+	// maxBatchItems caps a single batch so one request can't enqueue an
+	// unbounded number of imports.
+	maxBatchItems = 1000
+	// batchImportConcurrency bounds how many imports run at once in the
+	// background, so a 500-item batch doesn't fan out 500 concurrent file moves.
+	batchImportConcurrency = 4
+)
+
+// ImportBatch handles POST /api/v1/queue/manual-import/batch
+// Body: a JSON array of {path, bookId, format}. Each item is validated and gets
+// a Download record synchronously; the file imports then run in the background
+// with bounded concurrency. Returns 202 with the per-item validation results.
+func (h *ManualImportHandler) ImportBatch(w http.ResponseWriter, r *http.Request) {
+	var items []BatchImportItem
+	if err := json.NewDecoder(r.Body).Decode(&items); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if len(items) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no items to import"})
+		return
+	}
+	if len(items) > maxBatchItems {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("too many items (max %d)", maxBatchItems)})
 		return
 	}
 
-	book, err := h.books.GetByID(r.Context(), req.BookID)
-	if err != nil || book == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "book not found"})
-		return
+	type job struct {
+		dl     *models.Download
+		path   string
+		format string
+	}
+	var jobs []job
+	resp := BatchImportResponse{Results: make([]BatchImportResult, 0, len(items))}
+	for _, it := range items {
+		dl, path, _, msg := h.prepareImport(r.Context(), it.Path, it.BookID, it.Format)
+		if dl == nil {
+			resp.Results = append(resp.Results, BatchImportResult{Path: it.Path, Accepted: false, Error: msg})
+			resp.Failed++
+			continue
+		}
+		jobs = append(jobs, job{dl: dl, path: path, format: it.Format})
+		resp.Results = append(resp.Results, BatchImportResult{Path: it.Path, Accepted: true, DownloadID: dl.ID})
+		resp.Accepted++
 	}
 
-	now := time.Now().UTC()
-	dl := &models.Download{
-		GUID:   "manual-" + uuid.New().String(),
-		BookID: &req.BookID,
-		Title:  book.Title,
-		Status: models.StateCompleted,
+	if len(jobs) > 0 {
+		ctx := context.WithoutCancel(r.Context())
+		go func() {
+			sem := make(chan struct{}, batchImportConcurrency)
+			var wg sync.WaitGroup
+			for _, j := range jobs {
+				sem <- struct{}{}
+				wg.Add(1)
+				go func(j job) {
+					defer wg.Done()
+					defer func() { <-sem }()
+					h.scanner.ImportFromPath(ctx, j.dl, j.path, j.format)
+				}(j)
+			}
+			wg.Wait()
+		}()
 	}
-	dl.CompletedAt = &now
 
-	if err := h.downloads.Create(r.Context(), dl); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create import record"})
-		return
-	}
-
-	go h.scanner.ImportFromPath(context.WithoutCancel(r.Context()), dl, req.Path, req.Format)
-
-	writeJSON(w, http.StatusAccepted, dl)
+	writeJSON(w, http.StatusAccepted, resp)
 }

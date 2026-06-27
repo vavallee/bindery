@@ -6,6 +6,87 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.22.3] — 2026-06-26
+
+A patch release of import, download, and multi-user fixes, plus a per-list
+media type for Hardcover import lists. The one schema change
+(`import_lists.media_type`) is additive and defaults to the previous behaviour.
+
+### Added
+- **Per-list media type for Hardcover import lists** (#1296, #1314) — a synced book took its format from Hardcover's edition availability, so separate "Audiobooks" and "Ebooks" lists produced identical media types (most works report both editions). Each import list now has an Auto / Ebook / Audiobook / Both selector that pins the format its books are created as. Applied on create only: the syncer skips books that already exist, so a book on two single-format lists is never auto-promoted to Both and a manually-set media type survives re-sync.
+
+### Fixed
+- **Authors list sorts A–Z / Z–A case-insensitively** (#1312) — `sort_name` is stored case-preserving, so the default BINARY collation sorted all uppercase ahead of all lowercase and pushed lowercase-article names ("de Balzac") past "Z", which read as a jumble. The sort now uses `COLLATE NOCASE`, backed by a matching index (migration 055). Sorting by "recent" was unaffected.
+- **Admins see all libraries in list and browse views** (#1310) — with multi-user / SSO enabled, an admin only saw rows they owned, so authors and books created by another account (or via API key) were invisible even though the global duplicate check still blocked re-creating them. List, browse, and OPDS now show everything to admins (and when tenancy is disabled), matching the existing per-item ownership checks.
+- **Downloads of books stored under configured root folders no longer return "access denied"** (#1308) — the download path allow-list was only the two static library/audiobook directories captured at startup, so a book written under a user-configured root folder 403'd. Root folders are now resolved at request time and included in the allow-list, failing closed on error.
+- **Cross-device imports fall back to copy instead of failing** (#1313) — when downloads and library are on separate mounts (e.g. distinct Docker bind mounts, or Unraid `/mnt/user` shares, which share a device id but reject cross-mount hardlinks), the import failed with "invalid cross-device link" and the storage panel falsely claimed they shared a filesystem. The hardlink-capability check now performs a real link probe (so the message and the auto import-mode are honest), and the hardlink path falls back to a seeding-safe copy on EXDEV.
+
+### Changed
+- **CI and tests run on Node 26** (#1201, #1230, #1315; thanks @magrhino) — the frontend test harness was updated for Node 26 (storage guards, MSW origin normalization, `act`-wrapped fake timers) and the CI/security workflows bumped 22 → 26. As part of this, `usePagination` now tolerates unavailable `localStorage` so a list never breaks on a storage error.
+
+### Internal
+- Path-safety test compares resolved file paths so macOS `/var` temp directories don't fail local runs (#1229; thanks @magrhino).
+
+## [v1.22.2] — 2026-06-25
+
+Adds bulk folder import for migrating an existing library, plus a batch of
+import, sync, and download-client fixes. No config or schema changes that
+affect existing installs (the one new column defaults to the previous
+behaviour).
+
+### Added
+- **Bulk folder import: scan a directory and import everything matched in one pass** (#1292, #1293) — manual import was one path at a time, which made migrating a Readarr/Calibre backlog of hundreds of folders impractical. The Import settings tab now has a Folder Scan section that enumerates a directory's book units, pre-checks the confident matches, surfaces a picker for the ambiguous ones, and imports the selected set as a bounded background batch. Backed by new `GET /queue/manual-import/scan` and `POST /queue/manual-import/batch` endpoints.
+- **Settings → About** (#1235, #1297) — the in-app update check and the bug-report template both pointed at a "Settings → About" screen that did not exist. There is now a real About tab showing the running version, commit, and build date (reusing `GET /system/status`), so users can read their version without digging through Docker logs.
+- **The telemetry server advertises the current release automatically** (#1289) — the public version indicator (e.g. the Discord channel name) is now driven by a background poll of the GitHub Releases API every 30 minutes instead of a build-time constant, so it stops lagging behind the latest tag after a release.
+
+### Fixed
+- **qBittorrent grabs land in the category's save path, not the download root** (#1301) — Bindery sent an explicit `savepath` alongside the category with auto-TMM off, so qBittorrent honoured the explicit path and ignored the category's configured save directory. When a category is set, Bindery now enables automatic torrent management and omits the explicit `savepath`, so the category path wins; the same `setAutoManagement` is applied on the recategorise-on-recovery paths. Grabs with no category keep the explicit path as before.
+- **Hardcover list sync no longer auto-wants an author's entire back-catalogue** (#1290, #1300) — a list-created author was left with an empty monitor mode, which the scheduler treats identically to "all", so syncing a 235-book list ballooned the wanted count ~6× by pulling every author's full catalogue. New list-sync authors are now pinned to monitor mode `none`; only the specific books on the list stay monitored and wanted.
+- **"Refresh Metadata" refreshes the author's own profile, not just their books** (#1299) — for an already-linked author the refresh repopulated the catalogue but skipped the author's description and photo, so a linked OpenLibrary author stayed blank even after the data appeared upstream. Refresh now re-fetches and saves the author's bio, image, and disambiguation for non-Calibre authors (Discussion #1226).
+- **Library scan parses Readarr-style series folders** (#1234, #1298) — folders laid out as `{Series} #{N} - {Title}` were parsed with the whole folder string as the title, so most of a series failed to match and the rest collided onto one title. The scanner now strips the `{Series} #{N} - ` prefix, recovers the real title, and surfaces the series and position.
+- **Em-dash and other Unicode dashes in folder names parse correctly** (#1291) — filename and folder parsing normalises Unicode dash variants (em-dash, en-dash, figure dash, minus) to ASCII `-`, so `Author — Title` style folders split on the separator instead of being treated as one token.
+
+### Changed
+- **Bump `undici` to 7.28.0 and `@babel/core` to 7.29.7** (#1286) — frontend dependency updates to pick up upstream fixes.
+
+### Docs
+- **Documented the author "Find better metadata" button** (#1294) — the Troubleshooting wiki now explains when the Link / Find-better-metadata button appears (unlinked or sparse author records) and why well-populated authors do not show it; the duplicate predicates behind it were de-duplicated into a shared util.
+
+## [v1.22.1] — 2026-06-22
+
+Patch release: security hardening, bug fixes, documentation accuracy, and a
+large test-coverage backfill. No new features, no config or schema changes.
+
+### Security
+- **Outbound NZB/torrent fetches are now SSRF-guarded at dial time** (#1262) — the indexer-supplied `.torrent` / `.nzb` download URL is data chosen by the indexer's response, not an admin-typed value, so the download clients (`deluge`, `nzbget`, `qbittorrent`, `sabnzbd`, `transmission`) now dial through `httpsec`'s guarded transport. A malicious or compromised indexer can no longer point a download link at loopback, link-local, or cloud-metadata. Loopback remains opt-in via `BINDERY_DOWNLOAD_ALLOW_LOOPBACK`.
+- **Webhook notifications re-validate on redirect and guard the dial against DNS rebinding** (#1261) — `notifier` now revalidates the target after each redirect hop and pins the dialed IP, closing a TOCTOU window where a webhook URL that passed the initial SSRF check could be redirected (or re-resolved) to a private address.
+- **The SSRF guard now blocks the unspecified address** `0.0.0.0` / `::` (#1259) — previously these slipped past the loopback/private checks and could reach services bound to all interfaces on the host.
+- **`/migrate/*` import routes now require admin** (#1264) — the CSV / Readarr / Goodreads bulk-import endpoints were registered at the authenticated-route level, so any logged-in user could run them. They are now behind `RequireAdmin`, matching ABS import and Calibre rollback.
+- **Bulk book delete enforces per-row ownership** (#1242, #1243) — the bulk-delete handler now runs the same `auth.CheckOwnership` gate as single delete, so a non-owner can no longer delete another user's books by ID when tenancy is enforced.
+- **OIDC `allowed_groups` is enforced against the configured group claim** (#1244, #1245) — the login filter previously read a claim literally named `groups`, so deployments using `BINDERY_OIDC_GROUP_CLAIM=roles` (or similar) silently rejected every user. It now honors the configured claim, consistent with admin-group mapping.
+- **Indexer infoUrl links are scheme-allowlisted in the UI** (#1267) — provider-supplied `infoUrl` values are now rendered only when they are `http(s)`, blocking `javascript:` / `data:` injection on Book Detail and Wanted pages.
+- **Imported file discovery skips symlinks** (#1263) — the scanner no longer follows symlinked files when collecting books to import, preventing a crafted download payload from redirecting an import outside the intended tree.
+- **`sanitizePath` strips control characters and caps component length** (#1266) — path components built from metadata are hardened against control-byte injection and pathologically long names.
+- **Indexer and SABnzbd API keys are redacted from transport errors** (#1260, #1265) — newznab transport errors and SABnzbd `%w`-wrapped `url.Error`s no longer echo the API key into logs. The SABnzbd fix scrubs the URL in place so the typed-error chain (needed by `nethint`) is preserved.
+
+### Fixed
+- **Audiobook scans no longer misparse narrator / per-chapter tags as book titles** (#1239, #1240) — when the folder hierarchy already yields a real title, a per-track chapter tag (`"04 - Sinister Grey Mists…"`) no longer clobbers it, so multi-part audiobooks reconcile to one book instead of fragmenting.
+- **Hardcover list-sync reconciles against the library instead of duplicating** (#1223, #1241) — authors *and* books already present are matched and updated rather than re-created on each sync.
+- **Manual/interactive search propagates `IndexerPriority`** (#1246, #1247) — priority now affects ranking in interactive search, not just automatic grabs.
+- **History filters AND `BookID` and `EventType`** (#1248, #1249) — supplying both filters now intersects them instead of letting the later one replace the earlier.
+- **Plain `.azw` releases are ranked, not scored 0** (#1250, #1251) — `.azw` is treated as a valid ebook format in quality ranking.
+- **Calendar buckets releases by UTC date** (#1252, #1253) — release days no longer shift across a day boundary for users in non-UTC time zones.
+- **Auto import mode is decided against the real destination root** (#1254, #1255) — the hardlink-vs-copy choice for `AUTO` now evaluates the actual per-author / audiobook destination filesystem rather than the global library dir.
+- **Hardcover numeric slugs resolve by slug** (#1256, #1257) — an all-numeric author/book slug is looked up as a slug instead of being misinterpreted as a database id.
+- **OpenLibrary preserves the error chain** (#1279) — transport errors are wrapped with `%w` instead of flattened, so `errors.Is(context.Canceled)` and friends work again.
+
+### Docs
+- **Hardcover requires an API token for search** (#1258) — README and the Troubleshooting wiki now state that the live Hardcover GraphQL endpoint rejects unauthenticated queries (`Unable to verify token`), including search — not just user-specific queries.
+- **Freshened stale docs for this release** (#1280) — corrected the QUICKSTART "single-administrator" line (multi-user shipped), bumped `Go 1.25 → 1.26` in ARCHITECTURE/AGENTS to match the shipped build, documented `BINDERY_OIDC_GROUP_CLAIM` as feeding both admin mapping and `allowed_groups`, and added the missing `BINDERY_ALLOW_LAN_OIDC` env-var row to DEPLOYMENT.
+
+### Tests
+Coverage backfill with no production behavior change: indexer ranker scoring terms (#1268); importer path-traversal/containment (#1269), `MoveFileCtx` cross-fs copy/verify (#1270), and library-scan series reconcile (#1276); scheduler seed-ratio precedence (#1271); cross-tenant DB isolation (#1272); metadata/download client error paths (#1273); destructive API handlers (#1275); prowlarr + grimmory handlers (#1277); BooksPage states (#1274); and a grab→import→history integration test (#1278).
+
 ## [v1.22.0] — 2026-06-20
 
 ### Added

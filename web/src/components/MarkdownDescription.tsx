@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
+import { safeHref } from '../util/safeHref'
 
 interface MarkdownDescriptionProps {
   text: string
@@ -15,12 +16,6 @@ const sourcesLineRE = /^\s*\(Sources?:\s*.*\)\s*$/i
 // reference link (rendered as plain text — the [ref]: defs are stripped),
 // **bold**, *italic*.
 const inlineTokenRE = /\[([^\]]+)\]\(([^)\s]+)\)|\[([^\]]+)\]\[[^\]]+\]|\*\*([^*\n]+?)\*\*|\*([^*\n]+?)\*/g
-
-// safeHref returns url only when it is an http(s) URL, so a description from an
-// upstream metadata provider can't inject javascript:/data: links.
-function safeHref(url: string): string {
-  return /^https?:\/\//i.test(url) ? url : ''
-}
 
 function cleanMarkdownDescription(text: string): string {
   return text

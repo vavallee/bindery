@@ -87,6 +87,10 @@ func (h *ImportListHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if il.Type == "" {
 		il.Type = "csv"
 	}
+	if !validImportListMediaType(il.MediaType) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "mediaType must be one of: ebook, audiobook, both (or empty)"})
+		return
+	}
 	il.APIKey = hardcover.NormalizeAPIToken(il.APIKey)
 	if err := h.repo.Create(r.Context(), &il); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -258,6 +262,18 @@ func importListResponse(il models.ImportList) models.ImportList {
 	return il
 }
 
+// validImportListMediaType reports whether v is an accepted per-list media
+// type. Empty is valid and means "unset" — synced books keep the media type
+// derived from the source (e.g. Hardcover edition availability).
+func validImportListMediaType(v string) bool {
+	switch v {
+	case "", models.MediaTypeEbook, models.MediaTypeAudiobook, models.MediaTypeBoth:
+		return true
+	default:
+		return false
+	}
+}
+
 func applyImportListPatch(il *models.ImportList, raw map[string]json.RawMessage) error {
 	apply := func(key string, dest any) error {
 		if value, ok := raw[key]; ok {
@@ -288,6 +304,12 @@ func applyImportListPatch(il *models.ImportList, raw map[string]json.RawMessage)
 	}
 	if err := apply("enabled", &il.Enabled); err != nil {
 		return err
+	}
+	if err := apply("mediaType", &il.MediaType); err != nil {
+		return err
+	}
+	if !validImportListMediaType(il.MediaType) {
+		return errors.New("mediaType must be one of: ebook, audiobook, both (or empty)")
 	}
 	clearAPIKey := false
 	if value, ok := raw["clearApiKey"]; ok {

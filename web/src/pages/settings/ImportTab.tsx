@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, Book, HardcoverList, ImportList, ManualImportLookup } from '../../api/client'
+import { api, BatchImportItem, BatchImportResponse, Book, HardcoverList, ImportList, ManualImportLookup, ScanItem } from '../../api/client'
 import { inputCls } from './formStyles'
 import GoodreadsImportSection from './GoodreadsImportSection'
 
@@ -118,6 +118,7 @@ export default function ImportTab({ onNavigate }: ImportTabProps = {}) {
         )}
       </section>
       <ManualImportSection />
+      <FolderScanSection />
       <GoodreadsImportSection />
       <HardcoverListsSection onNavigate={onNavigate} />
 
@@ -262,6 +263,198 @@ function ManualImportSection() {
   )
 }
 
+interface ScanRowState {
+  include: boolean
+  bookId: number | null
+  format: string
+}
+
+// FolderScanSection scans a folder for book units and bulk-imports the selected
+// matches in one shot, so a migration backlog doesn't have to be imported one
+// path at a time. Matches against the existing catalogue (add the authors/books
+// first); unmatched units are listed but cannot be selected. Exported for tests.
+export function FolderScanSection() {
+  const { t } = useTranslation()
+  const [path, setPath] = useState('')
+  const [scanning, setScanning] = useState(false)
+  const [items, setItems] = useState<ScanItem[] | null>(null)
+  const [truncated, setTruncated] = useState(false)
+  const [rows, setRows] = useState<ScanRowState[]>([])
+  const [importing, setImporting] = useState(false)
+  const [summary, setSummary] = useState<BatchImportResponse | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+
+  const handleScan = async () => {
+    if (!path.trim()) return
+    setScanning(true)
+    setErr(null)
+    setItems(null)
+    setSummary(null)
+    try {
+      const r = await api.scanFolder(path.trim())
+      setItems(r.items)
+      setTruncated(r.truncated)
+      setRows(r.items.map(it => ({
+        include: it.match === 'confident',
+        bookId: it.match === 'confident' && it.book ? it.book.id : null,
+        format: it.detectedFormat || '',
+      })))
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Scan failed')
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  const patchRow = (i: number, patch: Partial<ScanRowState>) =>
+    setRows(prev => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
+
+  const selectedCount = rows.filter(r => r.include && r.bookId).length
+
+  const handleImport = async () => {
+    if (!items) return
+    const batch: BatchImportItem[] = []
+    rows.forEach((r, i) => {
+      if (r.include && r.bookId) batch.push({ path: items[i].path, bookId: r.bookId, format: r.format || undefined })
+    })
+    if (batch.length === 0) return
+    setImporting(true)
+    setErr(null)
+    try {
+      const res = await api.batchImport(batch)
+      setSummary(res)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Import failed')
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  const matchBadge = (m: ScanItem['match']) => {
+    const map: Record<ScanItem['match'], string> = {
+      confident: 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400',
+      ambiguous: 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400',
+      none: 'bg-slate-200 dark:bg-zinc-800 text-slate-500 dark:text-zinc-500',
+    }
+    return <span className={`text-[10px] px-1.5 py-0.5 rounded ${map[m]}`}>{t(`settings.import.bulkMatch_${m}`, m)}</span>
+  }
+
+  return (
+    <section>
+      <h3 className="text-base font-semibold mb-2 text-slate-800 dark:text-zinc-200">{t('settings.import.bulkHeading', 'Bulk folder import')}</h3>
+      <p className="text-xs text-slate-600 dark:text-zinc-500 mb-3">
+        {t('settings.import.bulkDescription', 'Scan a folder (e.g. your download directory) and import every book it can match to your library in one go. Matching is against books already in your library, so add the authors first. Unmatched items are listed but skipped.')}
+      </p>
+
+      <div className="flex gap-2 mb-3">
+        <input
+          className={inputCls + ' flex-1'}
+          placeholder={t('settings.import.bulkPathPlaceholder', '/downloads/books')}
+          value={path}
+          onChange={e => { setPath(e.target.value); setItems(null); setSummary(null) }}
+          onKeyDown={e => { if (e.key === 'Enter') handleScan() }}
+        />
+        <button
+          onClick={handleScan}
+          disabled={scanning || !path.trim()}
+          className="px-3 py-2 bg-slate-200 dark:bg-zinc-700 hover:bg-slate-300 dark:hover:bg-zinc-600 disabled:opacity-50 rounded text-sm font-medium"
+        >
+          {scanning ? t('settings.import.bulkScanning', 'Scanning…') : t('settings.import.bulkScan', 'Scan folder')}
+        </button>
+      </div>
+
+      {items && items.length === 0 && (
+        <p className="text-sm text-slate-500 dark:text-zinc-600">{t('settings.import.bulkEmpty', 'No book files or folders found here.')}</p>
+      )}
+
+      {items && items.length > 0 && !summary && (
+        <div className="space-y-2">
+          {truncated && (
+            <p className="text-xs text-amber-700 dark:text-amber-400">{t('settings.import.bulkTruncated', 'Showing the first 1000 items; narrow the folder to see the rest.')}</p>
+          )}
+          <div className="border border-slate-200 dark:border-zinc-800 rounded divide-y divide-slate-200 dark:divide-zinc-800 max-h-96 overflow-auto">
+            {items.map((it, i) => {
+              const row = rows[i]
+              const disabled = it.match === 'none'
+              return (
+                <div key={it.path} className="p-2 flex items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={row.include && !disabled}
+                    disabled={disabled}
+                    onChange={e => patchRow(i, { include: e.target.checked })}
+                    aria-label={t('settings.import.bulkSelect', { name: it.name, defaultValue: `Import ${it.name}` })}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium truncate">{it.name}</span>
+                      {matchBadge(it.match)}
+                      <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">{it.detectedFormat}</span>
+                    </div>
+                    <div className="text-xs text-slate-500 dark:text-zinc-600 truncate">
+                      {t('settings.import.bulkParsed', { title: it.parsedTitle || '?', author: it.parsedAuthor || '?', defaultValue: `parsed: ${it.parsedTitle || '?'} / ${it.parsedAuthor || '?'}` })}
+                    </div>
+                    {it.match === 'confident' && it.book && (
+                      <div className="text-xs text-emerald-700 dark:text-emerald-400 mt-0.5">→ {it.book.title}{it.book.author ? ` (${it.book.author.authorName})` : ''}</div>
+                    )}
+                    {it.match === 'ambiguous' && (
+                      <select
+                        className={inputCls + ' mt-1 text-xs'}
+                        value={row.bookId ?? ''}
+                        onChange={e => {
+                          const id = Number(e.target.value)
+                          patchRow(i, { bookId: id || null, include: Boolean(id) })
+                        }}
+                      >
+                        <option value="">{t('settings.import.bulkPick', '— pick a book —')}</option>
+                        {it.candidates?.map(b => (
+                          <option key={b.id} value={b.id}>{b.title}{b.author ? ` (${b.author.authorName})` : ''}</option>
+                        ))}
+                      </select>
+                    )}
+                    {it.match === 'none' && (
+                      <div className="text-xs text-slate-400 dark:text-zinc-600 mt-0.5">{t('settings.import.bulkNoMatch', 'No catalogue match; add the book first.')}</div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          <button
+            onClick={handleImport}
+            disabled={importing || selectedCount === 0}
+            className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded text-sm font-medium"
+          >
+            {importing
+              ? t('settings.import.bulkImporting', 'Importing…')
+              : t('settings.import.bulkImport', { count: selectedCount, defaultValue: `Import ${selectedCount} selected` })}
+          </button>
+        </div>
+      )}
+
+      {summary && (
+        <div className="p-3 border border-slate-200 dark:border-zinc-800 rounded bg-slate-100 dark:bg-zinc-900 space-y-1">
+          <div className="text-sm font-medium">{t('settings.import.bulkSummary', { accepted: summary.accepted, failed: summary.failed, defaultValue: `${summary.accepted} queued, ${summary.failed} failed` })}</div>
+          {summary.failed > 0 && (
+            <details className="text-xs">
+              <summary className="cursor-pointer text-red-600 dark:text-red-400">{t('settings.import.bulkShowFailures', { count: summary.failed, defaultValue: `Show ${summary.failed} failures` })}</summary>
+              <ul className="mt-2 space-y-0.5 font-mono">
+                {summary.results.filter(r => !r.accepted).map(r => (
+                  <li key={r.path}><span className="text-slate-800 dark:text-zinc-200">{r.path}</span>: <span className="text-slate-500 dark:text-zinc-500">{r.error}</span></li>
+                ))}
+              </ul>
+            </details>
+          )}
+          <p className="text-xs text-slate-500 dark:text-zinc-600">{t('settings.import.bulkSummaryNote', 'Imports run in the background; watch the Queue for progress.')}</p>
+        </div>
+      )}
+
+      {err && <p className="text-sm text-red-600 dark:text-red-400 mt-2">{err}</p>}
+    </section>
+  )
+}
+
 function sortImportLists(items: ImportList[]) {
   return [...items].sort((a, b) => a.name.localeCompare(b.name))
 }
@@ -323,6 +516,16 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
   const handleToggle = async (il: ImportList) => {
     const updated = await api.updateImportList(il.id, { enabled: !il.enabled })
     updateLocalList(updated)
+  }
+
+  const handleMediaTypeChange = async (il: ImportList, mediaType: string) => {
+    setError(null)
+    try {
+      const updated = await api.updateImportList(il.id, { mediaType })
+      updateLocalList(updated)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update media type')
+    }
   }
 
   const handleSelectList = async (list: HardcoverList, existing?: ImportList) => {
@@ -510,6 +713,18 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
                 </label>
                 {il && (
                   <div className="flex flex-wrap justify-end gap-2">
+                    <select
+                      value={il.mediaType || ''}
+                      onChange={e => handleMediaTypeChange(il, e.target.value)}
+                      aria-label={t('settings.import.hardcoverMediaType', 'Media type')}
+                      title={t('settings.import.hardcoverMediaTypeHint', 'Format synced books are created as. Auto uses what Hardcover reports.')}
+                      className="text-xs px-2 py-1 rounded bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300"
+                    >
+                      <option value="">{t('settings.import.mediaTypeAuto', 'Auto')}</option>
+                      <option value="ebook">{t('settings.import.mediaTypeEbook', 'Ebook')}</option>
+                      <option value="audiobook">{t('settings.import.mediaTypeAudiobook', 'Audiobook')}</option>
+                      <option value="both">{t('settings.import.mediaTypeBoth', 'Both')}</option>
+                    </select>
                     <button
                       onClick={() => handleSync(il.id)}
                       disabled={syncingId === il.id || !il.enabled}

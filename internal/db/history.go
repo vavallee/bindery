@@ -85,11 +85,15 @@ func (r *HistoryRepo) ListPage(ctx context.Context, opts HistoryListOpts) ([]mod
 
 	clauses := []string{}
 	args := []any{}
-	switch {
-	case opts.BookID != 0:
+	// Independent AND-combined filters: a request that sets both BookID and
+	// EventType must match both. A switch here previously made them mutually
+	// exclusive, silently dropping the event_type filter whenever a book_id was
+	// also supplied.
+	if opts.BookID != 0 {
 		clauses = append(clauses, "book_id = ?")
 		args = append(args, opts.BookID)
-	case opts.EventType != "":
+	}
+	if opts.EventType != "" {
 		clauses = append(clauses, "event_type = ?")
 		args = append(args, opts.EventType)
 	}

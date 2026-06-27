@@ -4,10 +4,24 @@ import { server } from './test/msw'
 
 const originalFetch = globalThis.fetch
 let mswFetch = originalFetch
+const apiOrigin = 'http://localhost'
+
+function localApiURL(pathname: string, search = '', hash = '') {
+  return new URL(`${pathname}${search}${hash}`, apiOrigin)
+}
 
 function resolveRelativeApiURL(input: RequestInfo | URL): RequestInfo | URL {
   if (typeof input === 'string' && input.startsWith('/api/')) {
-    return new URL(input, 'http://localhost').toString()
+    return new URL(input, apiOrigin).toString()
+  }
+  if (input instanceof URL && input.pathname.startsWith('/api/')) {
+    return localApiURL(input.pathname, input.search, input.hash)
+  }
+  if (typeof Request !== 'undefined' && input instanceof Request) {
+    const url = new URL(input.url)
+    if (url.pathname.startsWith('/api/')) {
+      return new Request(localApiURL(url.pathname, url.search, url.hash), input)
+    }
   }
   return input
 }

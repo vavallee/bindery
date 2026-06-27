@@ -696,13 +696,15 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 
 	s.updateDownloadStatus(ctx, dl.ID, models.StateImportPending)
 
-	// Resolve the import mode ONCE for the whole download (issue #705 finding 2).
-	// Re-reading "import.mode" per file means an operator toggling copy↔move in
-	// the UI mid-run mixes copy and move within a single download; the final
-	// cleanup could then RemoveAll the still-seeding source of a file that was
-	// deliberately copied. The decided mode is threaded through every call site
-	// below — no further DB reads of "import.mode" occur for this import.
-	importMode := s.importMode(ctx, downloadPath, s.libraryDir)
+	// Read the configured import mode ONCE for the whole download (issue #705
+	// finding 2). Re-reading "import.mode" per file means an operator toggling
+	// copy↔move in the UI mid-run mixes copy and move within a single download;
+	// the final cleanup could then RemoveAll the still-seeding source of a file
+	// that was deliberately copied. The auto (unset) hardlink-vs-copy choice is
+	// made per placement below against the file's real destination root, not
+	// s.libraryDir, because per-author / audiobook roots can be on a separate
+	// mount (#1254).
+	configuredMode := s.configuredImportMode(ctx)
 
 	// External mode: skip all file operations and leave the book Wanted so the
 	// library scan can reconcile it after the user's external tool (Calibre,
@@ -716,7 +718,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// sweep, each prior download reading as a success. StateImportExternal lets
 	// searchWanted skip the book while the hand-off is outstanding, and
 	// ScanLibrary still reconciles the file the moment it lands.
-	if importMode == "external" {
+	if configuredMode == "external" {
 		// When a drop folder is configured (#941), external mode renames the
 		// finished file into that folder (copy/hardlink, never move) for a
 		// sibling tool (CWA, Calibre, Storyteller) to ingest, then still parks
@@ -875,7 +877,10 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			return
 		}
 		destDir := UniqueDir(audiobookDest)
-		mode := importMode
+		// Choose hardlink-vs-copy (when auto) against the audiobook root the
+		// files actually land under, not s.libraryDir — they can be on
+		// different mounts and a cross-device hardlink would hard-fail (#1254).
+		mode := s.resolveImportMode(configuredMode, downloadPath, audiobookRoot)
 		// audiobookSource is the path the move/copy/hardlink will operate on.
 		// When the caller supplied an explicit per-torrent file list (issue
 		// #903), prefer that to downloadPath: downloadPath can be a shared
@@ -1009,6 +1014,12 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// library, so move-mode cleanup can delete exactly those files rather than
 	// RemoveAll-ing the whole download path (issue #705 finding 4).
 	var importedSrcFiles []string
+	// Resolve the ebook destination root and (auto) placement mode once: the
+	// root is stable for this author across the loop, and choosing hardlink-vs-
+	// copy against it rather than s.libraryDir avoids a cross-device hardlink
+	// failure when the author's RootFolderID is on a separate mount (#1254).
+	ebookRoot := s.effectiveLibraryDir(ctx, author)
+	ebookMode := s.resolveImportMode(configuredMode, downloadPath, ebookRoot)
 	for _, srcFile := range bookFiles {
 		if book == nil {
 			// Try to match from filename
@@ -1018,7 +1029,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		}
 
 		seriesTitle, seriesNum := s.primarySeriesFor(ctx, book)
-		destPath, destErr := s.renamer.DestPath(s.effectiveLibraryDir(ctx, author), author, book, seriesTitle, seriesNum, srcFile)
+		destPath, destErr := s.renamer.DestPath(ebookRoot, author, book, seriesTitle, seriesNum, srcFile)
 		if destErr != nil {
 			slog.Error("failed to compute book destination", "src", srcFile, "error", destErr)
 			lastFileErr = destErr
@@ -1041,7 +1052,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			continue
 		}
 
-		mode := importMode
+		mode := ebookMode
 		slog.Info("importing book", "src", srcFile, "dst", destPath, "mode", mode)
 
 		// Wave 4 / finding 23: stage the file under a sibling temp name,
@@ -1157,7 +1168,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// files and then prune now-empty parent directories with os.Remove —
 		// which fails on non-empty directories and therefore can never destroy
 		// a shared root or sibling data.
-		if importMode == "move" {
+		if configuredMode == "move" {
 			s.cleanupMovedSources(downloadPath, importedSrcFiles)
 		}
 		if cleanupFunc != nil {
@@ -1596,7 +1607,14 @@ func firstWordRun(tok string) string {
 
 // cleanLayoutTitle strips bracket/paren annotations from a book-folder name —
 // Calibre's " (id)", Readarr's " (year)" — so it matches the stored title.
+// It also strips a leading Readarr "{Series} #{N} - " prefix
+// ("Discworld #8 - Guards! Guards!" → "Guards! Guards!", issue #1234): without
+// this the whole folder name, series tag and all, leaks through as the title
+// and only series openers (where book title == series title) reconcile.
 func cleanLayoutTitle(dir string) string {
+	if _, _, title, ok := parseSeriesFolder(dir); ok {
+		dir = title
+	}
 	s := cleanRe.ReplaceAllString(dir, "")
 	s = multiSp.ReplaceAllString(s, " ")
 	return strings.TrimSpace(s)
@@ -1884,12 +1902,14 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 		// an "Author - Title" / "Title - Author" filename — the scan must not
 		// assume a single filename order (#754).
 		parsed := ParseFilename(path)
+		var layoutTitle string
 		if a, t, ok := authorTitleFromLayout(path, s.libraryDir, s.audiobookDir); ok {
 			if a != "" {
 				parsed.Author = a
 			}
 			if t != "" {
 				parsed.Title = t
+				layoutTitle = t
 			}
 		}
 
@@ -1903,7 +1923,12 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 					"path", path, "error", err)
 				tagReadFailed++
 			} else {
-				if tags.Title != "" {
+				// Multi-part audiobooks tag each track with its chapter name
+				// ("04 - Sinister Grey Mists..."). When the folder hierarchy
+				// already gave a real book title, don't let a per-chapter tag
+				// title clobber it — every track would otherwise parse to a
+				// different "book" and none would reconcile (#1239).
+				if tags.Title != "" && (layoutTitle == "" || !looksLikeChapterTitle(tags.Title)) {
 					parsed.Title = tags.Title
 				}
 				if tags.Author != "" {
@@ -2039,6 +2064,32 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 // Books with a valid on-disk file at any recorded path are skipped — the
 // scanner has no reason to re-reconcile a file that's already where it
 // should be, and re-attaching would churn book_files rows for no benefit.
+// chapterTitleRe matches embedded-tag titles that name a track/chapter rather
+// than the book: a leading track number followed by a dash/dot/underscore and a
+// NON-digit ("04 - Title", "04. Title", "04_Title"), or a Chapter/Track/Part/
+// Disc/CD keyword followed by a number.
+//
+// The shape is deliberately narrow to avoid discarding real numeric titles:
+//   - the {1,3}-digit cap skips years ("1984", "2001: A Space Odyssey");
+//   - the colon is NOT a separator, so subtitle titles survive ("24: Live
+//     Another Day", "7: Seven");
+//   - requiring a non-digit after the separator skips number-dash/dot-number
+//     titles ("1-800 Where R You", "3.14 …").
+//
+// A residual ambiguity remains: a genuinely numbered title ("21 - Jump Street",
+// "8 - Mile") is indistinguishable from "04 - Chapter Name" without sibling or
+// semantic context, so it is treated as a chapter. The blast radius is small —
+// this only suppresses the tag title when the folder hierarchy already resolved
+// a title to fall back to (see the caller), so the worst case is using the
+// folder's title for such a book rather than the tag's.
+var chapterTitleRe = regexp.MustCompile(`(?i)^(\d{1,3}\s*[-._]\s*\D|(chapter|track|part|disc|cd)\b\s*\.?\s*\d)`)
+
+// looksLikeChapterTitle reports whether an embedded-tag title looks like a
+// per-track chapter name rather than a book title (#1239).
+func looksLikeChapterTitle(title string) bool {
+	return chapterTitleRe.MatchString(strings.TrimSpace(title))
+}
+
 func isReconcileCandidate(b *models.Book) bool {
 	if b == nil {
 		return false

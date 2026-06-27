@@ -561,7 +561,8 @@ func main() {
 	}
 
 	libraryHandler := api.NewLibraryHandler(importScanner).WithSettings(settingsRepo)
-	fileHandler := api.NewFileHandler(bookRepo, cfg.LibraryDir, cfg.AudiobookDir)
+	fileHandler := api.NewFileHandler(bookRepo, cfg.LibraryDir, cfg.AudiobookDir).
+		WithRootFolders(rootFolderRepo)
 	historyHandler := api.NewHistoryHandler(historyRepo, blocklistRepo, bookRepo)
 	blocklistHandler := api.NewBlocklistHandler(blocklistRepo)
 	notificationHandler := api.NewNotificationHandler(notificationRepo, notif)
@@ -812,7 +813,9 @@ func main() {
 		r.Group(func(r chi.Router) {
 			r.Use(auth.RequireAdmin)
 			r.Get("/queue/manual-import/lookup", manualImportHandler.Lookup)
+			r.Get("/queue/manual-import/scan", manualImportHandler.Scan)
 			r.Post("/queue/manual-import", manualImportHandler.Import)
+			r.Post("/queue/manual-import/batch", manualImportHandler.ImportBatch)
 		})
 		r.Get("/pending", pendingHandler.List)
 		r.Delete("/pending/{id}", pendingHandler.Delete)
@@ -1002,24 +1005,10 @@ func main() {
 			r.Post("/calibre/runs/{runID}/rollback", calibreRunsHandler.Rollback)
 		})
 
-		// Migration imports (CSV of author names, or Readarr SQLite DB).
-		// The Readarr import is async — POST returns 202 immediately and the
-		// UI polls GET /migrate/readarr/status to track completion.
-		//
-		// Per-route body caps override the 1 MiB default for routes that
-		// accept multipart file uploads. The handler-side acceptUpload still
-		// applies the authoritative per-route cap via http.MaxBytesReader;
-		// these overrides just raise the outer router-level ceiling so the
-		// inner wrap is the one that decides.
-		r.With(api.WithMaxBody(6<<20)).Post("/migrate/csv", migrateHandler.ImportCSV)         // CSV under 5 MiB
-		r.With(api.WithMaxBody(2<<30)).Post("/migrate/readarr", migrateHandler.ImportReadarr) // readarr.db can be hundreds of MiB
-		r.Get("/migrate/readarr/status", migrateHandler.ImportReadarrStatus)
-
-		// Goodreads library CSV import — a two-step migration aid: POST the
-		// export to /goodreads/preview for a dry-run, then POST the returned
-		// token to /goodreads/commit to add the resolved books.
-		r.With(api.WithMaxBody(24<<20)).Post("/migrate/goodreads/preview", migrateHandler.ImportGoodreadsPreview) // Goodreads export under 20 MiB
-		r.Post("/migrate/goodreads/commit", migrateHandler.ImportGoodreadsCommit)
+		// Migration imports (CSV of author names, or Readarr SQLite DB). The
+		// Readarr import is async — POST returns 202 immediately and the UI
+		// polls GET /migrate/readarr/status. Admin-only (see registerMigrateRoutes).
+		registerMigrateRoutes(r, migrateHandler)
 
 		// Image proxy — caches external cover images locally so the browser
 		// never leaks the user's IP to Goodreads / OpenLibrary / etc.

@@ -382,7 +382,7 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 		case "unmonitor":
 			opErr = h.setBookMonitored(r.Context(), id, false)
 		case "delete":
-			opErr = h.books.Delete(r.Context(), id)
+			opErr = h.deleteBook(r.Context(), id)
 		case "search":
 			book, err := h.books.GetByID(r.Context(), id)
 			if err != nil || book == nil || !auth.CheckOwnership(r.Context(), book.OwnerUserID) {
@@ -512,6 +512,22 @@ func (h *BulkHandler) setAuthorMonitorMode(ctx context.Context, id int64, mode s
 		}
 	}
 	return nil
+}
+
+// deleteBook removes a book after a Tier-1 ownership check, mirroring the
+// single-book BookHandler.Delete guard. Without this the bulk delete path
+// deleted purely by id (BookRepo.Delete is `DELETE FROM books WHERE id=?`),
+// letting a non-admin user cascade-delete another tenant's books under
+// BINDERY_ENFORCE_TENANCY.
+func (h *BulkHandler) deleteBook(ctx context.Context, id int64) error {
+	book, err := h.books.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if book == nil || !auth.CheckOwnership(ctx, book.OwnerUserID) {
+		return errBulkBookNotOwned
+	}
+	return h.books.Delete(ctx, id)
 }
 
 func (h *BulkHandler) setBookMonitored(ctx context.Context, id int64, monitored bool) error {

@@ -40,8 +40,10 @@ first run (see [DEPLOYMENT.md → First-run setup](DEPLOYMENT.md#first-run-setup
 
 Open <http://localhost:8787>. The first page load redirects to **`/setup`**.
 Create the administrator account (username + password, **8-character
-minimum**). Bindery is single-administrator: there is no "register" flow once
-this account exists. After setup you are signed in automatically.
+minimum**). There is no public self-registration: the first account is the
+administrator. Additional users are created by an admin (Settings → Users) or
+auto-provisioned via OIDC — see [docs/multi-user.md](multi-user.md). After
+setup you are signed in automatically.
 
 ## 3. Add an indexer
 

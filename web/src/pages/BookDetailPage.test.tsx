@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import BookDetailPage, { SearchResultsSection } from './BookDetailPage'
 import { api } from '../api/client'
@@ -596,19 +596,24 @@ describe('BookDetailPage — live import polling (#1161)', () => {
       renderBookDetailPage()
 
       // Initial load: downloading, no file on disk yet.
-      await vi.advanceTimersByTimeAsync(0)
-      expect(screen.queryByText('/lib/leviathan.m4b')).not.toBeInTheDocument()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
       expect(vi.mocked(api.getBook).mock.calls.length).toBe(1)
+      expect(screen.queryByText('/lib/leviathan.m4b')).not.toBeInTheDocument()
 
       // The background import finishes; the 5s poll picks it up live.
-      await vi.advanceTimersByTimeAsync(5000)
-      await vi.advanceTimersByTimeAsync(0) // flush the setBook re-render
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+      })
       expect(vi.mocked(api.getBook).mock.calls.length).toBeGreaterThan(1)
       expect(screen.getByText('/lib/leviathan.m4b')).toBeInTheDocument()
 
       // Once the book settles (imported), polling stops — no further fetches.
       const settledCalls = vi.mocked(api.getBook).mock.calls.length
-      await vi.advanceTimersByTimeAsync(15000)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15000)
+      })
       expect(vi.mocked(api.getBook).mock.calls.length).toBe(settledCalls)
     } finally {
       vi.useRealTimers()

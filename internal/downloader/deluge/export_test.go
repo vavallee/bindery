@@ -11,6 +11,9 @@ func (c *Client) SetHTTPTransport(rt http.RoundTripper) {
 
 // SetValidateTorrentURL injects a custom URL validator for tests, bypassing
 // the default SSRF check so httptest.Server loopback addresses are accepted.
+// It also drops the dial-time SSRF guard on the fetch transport, which would
+// otherwise reject the loopback test server at connect time.
 func (c *Client) SetValidateTorrentURL(fn func(string) error) {
 	c.validateTorrentURL = fn
+	c.fetchTransport = nil
 }

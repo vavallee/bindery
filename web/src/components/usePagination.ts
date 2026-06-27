@@ -2,21 +2,42 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 const SHARED_PAGE_SIZE_KEY = 'pageSize:shared'
 
+function pageSizeStorage(): Storage | null {
+  if (typeof window === 'undefined') return null
+  try {
+    return window.localStorage
+  } catch {
+    return null
+  }
+}
+
 function readStoredPageSize(storageKey: string | undefined): number | null {
+  const storage = pageSizeStorage()
+  if (!storage) return null
   const keys = storageKey ? [`pageSize:${storageKey}`, SHARED_PAGE_SIZE_KEY] : [SHARED_PAGE_SIZE_KEY]
   for (const key of keys) {
-    const stored = localStorage.getItem(key)
-    if (stored) {
-      const n = parseInt(stored, 10)
-      if (!isNaN(n) && n > 0) return n
+    try {
+      const stored = storage.getItem(key)
+      if (stored) {
+        const n = parseInt(stored, 10)
+        if (!isNaN(n) && n > 0) return n
+      }
+    } catch {
+      return null
     }
   }
   return null
 }
 
 function persistPageSize(storageKey: string | undefined, size: number) {
-  if (storageKey) localStorage.setItem(`pageSize:${storageKey}`, String(size))
-  localStorage.setItem(SHARED_PAGE_SIZE_KEY, String(size))
+  const storage = pageSizeStorage()
+  if (!storage) return
+  try {
+    if (storageKey) storage.setItem(`pageSize:${storageKey}`, String(size))
+    storage.setItem(SHARED_PAGE_SIZE_KEY, String(size))
+  } catch {
+    // Storage is a user preference only; unavailable storage should not break lists.
+  }
 }
 
 /**
@@ -88,10 +109,7 @@ export function usePagination<T>(items: T[], defaultPageSize = 50, storageKey?: 
   const handlePageSizeChange = (size: number) => {
     setPageSize(size)
     setPage(1)
-    if (storageKey) {
-      localStorage.setItem(`pageSize:${storageKey}`, String(size))
-    }
-    localStorage.setItem(SHARED_PAGE_SIZE_KEY, String(size))
+    persistPageSize(storageKey, size)
   }
 
   return {

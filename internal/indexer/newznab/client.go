@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -450,13 +451,13 @@ func (c *Client) Probe(ctx context.Context) ProbeResult {
 	start := time.Now()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return ProbeResult{Error: err.Error()}
+		return ProbeResult{Error: httpsec.RedactSecrets(err.Error())}
 	}
 	req.Header.Set("User-Agent", useragent.Get())
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return ProbeResult{LatencyMs: time.Since(start).Milliseconds(), Error: err.Error()}
+		return ProbeResult{LatencyMs: time.Since(start).Milliseconds(), Error: httpsec.RedactSecrets(err.Error())}
 	}
 	defer resp.Body.Close()
 
@@ -553,16 +554,28 @@ func (c *Client) parseResults(items []rssItem) []SearchResult {
 	return results
 }
 
+// redactedErr flattens err to a string with secrets redacted (the apikey query
+// param in particular). Network errors are *url.Error values whose message
+// embeds the full request URL — including &apikey=<secret> — so returning them
+// raw leaked the indexer key into WARN logs and the (non-admin) search-debug
+// response. Flattening also prevents a downstream %w wrap from re-exposing it.
+func redactedErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	return errors.New(httpsec.RedactSecrets(err.Error()))
+}
+
 func (c *Client) getXML(ctx context.Context, rawURL string, target interface{}) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return err
+		return redactedErr(err)
 	}
 	req.Header.Set("User-Agent", useragent.Get())
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return redactedErr(err)
 	}
 	defer resp.Body.Close()
 

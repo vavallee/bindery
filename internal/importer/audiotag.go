@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/dhowden/tag"
@@ -55,14 +56,31 @@ func readAudioTagsFrom(r io.ReadSeeker) (AudioTags, error) {
 	}, nil
 }
 
+// narratorCreditRe matches the leading "Read by" / "Narrated by" credit that
+// chapter-split audiobook releases frequently store in the Artist tag instead
+// of the author. Such a value is a narrator, not a book author, so treating it
+// as the author poisons library-scan matching (#1239).
+var narratorCreditRe = regexp.MustCompile(`(?i)^(read|narrated|performed|presented|told)\s+by\b`)
+
+// isNarratorCredit reports whether s looks like a narrator credit ("Read by
+// Nigel Planer") rather than an author name.
+func isNarratorCredit(s string) bool {
+	return narratorCreditRe.MatchString(strings.TrimSpace(s))
+}
+
 // pickAudioAuthor prefers the Artist tag (which audiobook tooling
 // conventionally uses for the book's author) and falls back to AlbumArtist
-// or Composer for files that leave Artist empty.
+// or Composer for files that leave Artist empty. Narrator-credit values
+// ("Read by …") are skipped rather than returned as the author (#1239); when
+// every candidate is empty or a narrator credit, the caller keeps whatever the
+// folder hierarchy resolved instead.
 func pickAudioAuthor(m tag.Metadata) string {
 	for _, candidate := range []string{m.Artist(), m.AlbumArtist(), m.Composer()} {
-		if s := strings.TrimSpace(candidate); s != "" {
-			return s
+		s := strings.TrimSpace(candidate)
+		if s == "" || isNarratorCredit(s) {
+			continue
 		}
+		return s
 	}
 	return ""
 }

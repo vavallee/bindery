@@ -169,7 +169,7 @@ func (r *BookRepo) List(ctx context.Context) ([]models.Book, error) {
 }
 
 func (r *BookRepo) ListByUser(ctx context.Context, userID int64) ([]models.Book, error) {
-	where, args := QueryScopeFor("books.owner_user_id", "WHERE excluded = 0", userID)
+	where, args := QueryScopeForIncludingNull("books.owner_user_id", "WHERE excluded = 0", userID)
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY sort_title", args)
 }
 
@@ -187,7 +187,7 @@ func (r *BookRepo) ListPage(ctx context.Context, userID int64, limit, offset int
 	if offset < 0 {
 		offset = 0
 	}
-	where, args := QueryScopeFor("books.owner_user_id", "WHERE excluded = 0", userID)
+	where, args := QueryScopeForIncludingNull("books.owner_user_id", "WHERE excluded = 0", userID)
 	total, err := r.count(ctx, "SELECT COUNT(*) FROM books "+where, args)
 	if err != nil {
 		return nil, 0, err
@@ -206,7 +206,7 @@ func (r *BookRepo) ListPage(ctx context.Context, userID int64, limit, offset int
 // BookListFilter narrows ListPageFiltered. The zero value (with UserID 0)
 // selects every non-excluded book in sort_title order — identical to ListPage.
 type BookListFilter struct {
-	UserID int64 // 0 = unscoped; otherwise owner_user_id = UserID
+	UserID int64 // 0 = unscoped; otherwise owner_user_id = UserID OR owner_user_id IS NULL
 	// Search is a case-insensitive substring match on the book title OR its
 	// author's name. Empty disables the filter.
 	Search string
@@ -257,7 +257,7 @@ func (r *BookRepo) ListPageFiltered(ctx context.Context, f BookListFilter, limit
 		offset = 0
 	}
 
-	where, args := QueryScopeFor("books.owner_user_id", "WHERE excluded = 0", f.UserID)
+	where, args := QueryScopeForIncludingNull("books.owner_user_id", "WHERE excluded = 0", f.UserID)
 	if s := strings.TrimSpace(f.Search); s != "" {
 		where += " AND (books.title LIKE ? ESCAPE '\\' COLLATE NOCASE OR au.name LIKE ? ESCAPE '\\' COLLATE NOCASE)"
 		like := "%" + escapeLike(s) + "%"
@@ -323,7 +323,7 @@ func (r *BookRepo) ListByAuthor(ctx context.Context, authorID int64) ([]models.B
 }
 
 func (r *BookRepo) ListByAuthorAndUser(ctx context.Context, authorID, userID int64) ([]models.Book, error) {
-	where, args := QueryScopeFor("books.owner_user_id", "WHERE author_id = ? AND excluded = 0", userID, authorID)
+	where, args := QueryScopeForIncludingNull("books.owner_user_id", "WHERE author_id = ? AND excluded = 0", userID, authorID)
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY release_date", args)
 }
 
@@ -337,7 +337,7 @@ func (r *BookRepo) ListByStatus(ctx context.Context, status string) ([]models.Bo
 }
 
 func (r *BookRepo) ListByStatusAndUser(ctx context.Context, status string, userID int64) ([]models.Book, error) {
-	where, args := QueryScopeFor("books.owner_user_id", "WHERE status = ? AND books.monitored = 1 AND excluded = 0", userID, status)
+	where, args := QueryScopeForIncludingNull("books.owner_user_id", "WHERE status = ? AND books.monitored = 1 AND excluded = 0", userID, status)
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY sort_title", args)
 }
 

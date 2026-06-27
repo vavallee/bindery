@@ -10,6 +10,8 @@ Bindery v1.0 introduces per-user library scoping: authors, books, downloads, qua
 > - **Tier-2 join-scoped resources** — download queue, history, pending grabs, and the OPDS catalogue — to the requesting user.
 > - **Per-user resources** — each user's own authors, books, profiles, API key, password, and notification preferences. (Root folders are **not** per-user; see the note above.)
 >
+> **Admins see everything in list views.** With enforcement on, an `admin` is never filtered by ownership: the authors and books list endpoints (and the OPDS feed) return *all* users' libraries plus unowned/global rows, the same way an admin can already open any single item by ID. This is a **shared library across admins**, by design — it does not widen access, it makes lists consistent with per-item access. Non-admin (`user`) accounts stay isolated to their own rows plus unowned/global rows. Requests authenticated by API key (or in `disabled` / `local-only` auth modes) carry no user identity and are likewise unscoped.
+>
 > Role-based gating of admin-only configuration (indexers, download clients, user management, system settings) applies in **both** modes — that does not depend on `BINDERY_ENFORCE_TENANCY`. The flag only controls whether *library data* is partitioned per user.
 
 For upgrade instructions and migration steps, see [docs/upgrade-v1.md](upgrade-v1.md).

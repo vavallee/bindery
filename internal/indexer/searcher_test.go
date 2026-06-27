@@ -474,6 +474,122 @@ func TestRankResultsIndexerPriority(t *testing.T) {
 	}
 }
 
+// The following tests pin four scoring terms in scoreResult that were
+// previously exercised by ranker tests but never asserted: the ISBN
+// exact-match bonus (+200), the ASIN bonus (+250), the grab-count term,
+// and the size term. Each compares two results differing in exactly one
+// dimension and asserts the ordering the live code produces, so that
+// deleting, zeroing, or sign-flipping any of these terms breaks a test.
+
+// TestRankResultsISBNBonus: when the criteria carries an ISBN, a release
+// whose parsed ISBN matches it must outrank an otherwise-identical release
+// with no ISBN. Removing the +200 ISBN term would make the two scores equal
+// and the strong assertion below would fail.
+func TestRankResultsISBNBonus(t *testing.T) {
+	const isbn = "9780449912553"
+	match := newznab.SearchResult{Title: "The.Sparrow.Russell." + isbn + ".epub", GUID: "match"}
+	noISBN := newznab.SearchResult{Title: "The.Sparrow.Russell.epub", GUID: "no-isbn"}
+
+	// Sanity: both releases parse to the same format/edition; the ONLY
+	// difference the scorer can see is the ISBN.
+	if got := ParseRelease(match.Title).ISBN; got != isbn {
+		t.Fatalf("test setup: matched release ISBN = %q, want %q", got, isbn)
+	}
+	if got := ParseRelease(noISBN.Title).ISBN; got != "" {
+		t.Fatalf("test setup: no-ISBN release unexpectedly parsed ISBN %q", got)
+	}
+
+	crit := MatchCriteria{Title: "The Sparrow", Author: "Russell", ISBN: isbn}
+
+	// Strong form: matched release must score strictly higher.
+	if ms, ns := scoreResult(match, crit), scoreResult(noISBN, crit); ms <= ns {
+		t.Errorf("ISBN-matching score %.1f should exceed non-matching %.1f", ms, ns)
+	}
+
+	// Ordering, insertion-order independent.
+	results := []newznab.SearchResult{noISBN, match}
+	rankResults(results, crit)
+	if results[0].GUID != "match" {
+		t.Errorf("ISBN-matching release should rank first, got order: %v", resultTitles(results))
+	}
+
+	// Removing the ISBN from the criteria erases the bonus, so the two
+	// releases tie and stable sort keeps insertion order (noISBN first).
+	critNoISBN := crit
+	critNoISBN.ISBN = ""
+	if ms, ns := scoreResult(match, critNoISBN), scoreResult(noISBN, critNoISBN); ms != ns {
+		t.Errorf("with no criteria ISBN the scores should tie, got %.1f vs %.1f", ms, ns)
+	}
+}
+
+// TestRankResultsASINBonus: when the criteria carries an ASIN, a release whose
+// title contains that ASIN must outrank one that does not. Removing the +250
+// term collapses the difference.
+func TestRankResultsASINBonus(t *testing.T) {
+	const asin = "B0036S4B2G"
+	match := newznab.SearchResult{Title: "Dune.Herbert.[" + asin + "].m4b", GUID: "match"}
+	noASIN := newznab.SearchResult{Title: "Dune.Herbert.m4b", GUID: "no-asin"}
+
+	crit := MatchCriteria{Title: "Dune", Author: "Frank Herbert", ASIN: asin}
+
+	if ms, ns := scoreResult(match, crit), scoreResult(noASIN, crit); ms <= ns {
+		t.Errorf("ASIN-matching score %.1f should exceed non-matching %.1f", ms, ns)
+	}
+
+	results := []newznab.SearchResult{noASIN, match}
+	rankResults(results, crit)
+	if results[0].GUID != "match" {
+		t.Errorf("ASIN-matching release should rank first, got order: %v", resultTitles(results))
+	}
+
+	// Without an ASIN in the criteria the bonus disappears and the scores tie.
+	critNoASIN := crit
+	critNoASIN.ASIN = ""
+	if ms, ns := scoreResult(match, critNoASIN), scoreResult(noASIN, critNoASIN); ms != ns {
+		t.Errorf("with no criteria ASIN the scores should tie, got %.1f vs %.1f", ms, ns)
+	}
+}
+
+// TestRankResultsGrabsBonus: two identical releases differing only in Grabs;
+// the higher grab count must rank first. Zeroing or sign-flipping the
+// log10(grabs) term breaks this.
+func TestRankResultsGrabsBonus(t *testing.T) {
+	crit := MatchCriteria{Title: "The Sparrow", Author: "Russell"}
+	low := newznab.SearchResult{Title: "The.Sparrow.Russell.epub", GUID: "low", Grabs: 1}
+	high := newznab.SearchResult{Title: "The.Sparrow.Russell.epub", GUID: "high", Grabs: 1000}
+
+	if ls, hs := scoreResult(low, crit), scoreResult(high, crit); hs <= ls {
+		t.Errorf("higher-grab score %.1f should exceed lower-grab %.1f", hs, ls)
+	}
+
+	results := []newznab.SearchResult{low, high}
+	rankResults(results, crit)
+	if results[0].GUID != "high" {
+		t.Errorf("higher-grab release should rank first, got order: %v", resultTitles(results))
+	}
+}
+
+// TestRankResultsSizeBonus: two identical releases differing only in Size.
+// The live code adds (mb/100), so BIGGER is preferred — this pins that sign.
+// If the size term were flipped to subtract, the larger release would lose
+// and this test would fail.
+func TestRankResultsSizeBonus(t *testing.T) {
+	crit := MatchCriteria{Title: "The Sparrow", Author: "Russell"}
+	const mb = 1024 * 1024
+	small := newznab.SearchResult{Title: "The.Sparrow.Russell.epub", GUID: "small", Size: 5 * mb}
+	large := newznab.SearchResult{Title: "The.Sparrow.Russell.epub", GUID: "large", Size: 500 * mb}
+
+	if ss, ls := scoreResult(small, crit), scoreResult(large, crit); ls <= ss {
+		t.Errorf("larger-size score %.1f should exceed smaller-size %.1f (code prefers bigger)", ls, ss)
+	}
+
+	results := []newznab.SearchResult{small, large}
+	rankResults(results, crit)
+	if results[0].GUID != "large" {
+		t.Errorf("larger release should rank first, got order: %v", resultTitles(results))
+	}
+}
+
 func TestFilterUsenetJunk(t *testing.T) {
 	junk := []string{
 		`NMR: Project Hail Mary - Andy Weir - 2021 [12/22] - "Andy Weir - 2021 - Project Hail Mary.part09.rar" yEnc`,
@@ -1115,6 +1231,46 @@ func TestSearchBookWithDebug_PerResultLogging(t *testing.T) {
 	}
 	if dbg == nil {
 		t.Fatal("expected non-nil debug info")
+	}
+}
+
+// TestSearchBookWithDebug_PropagatesIndexerPriority guards the fix for the
+// manual/interactive search path dropping per-indexer priority: scoreResult
+// ranks on IndexerPriority, so SearchBookWithDebug must stamp it on every hit
+// the way the auto-search path (searcher.go) does.
+func TestSearchBookWithDebug_PropagatesIndexerPriority(t *testing.T) {
+	const rssBody = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+  <channel>
+    <newznab:response offset="0" total="1"/>
+    <item>
+      <title>Life Ascending Nick Lane</title>
+      <guid isPermaLink="false">guid-1</guid>
+      <enclosure url="https://fake/dl/1" length="1000" type="application/x-nzb"/>
+      <newznab:attr name="author" value="Nick Lane"/>
+    </item>
+  </channel>
+</rss>`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(rssBody))
+	}))
+	defer srv.Close()
+
+	idxs := []models.Indexer{{ID: 1, Name: "test", URL: srv.URL, Enabled: true, Categories: []int{7020}, Priority: 42}}
+	results, _ := newTestSearcher().SearchBookWithDebug(context.Background(), idxs, MatchCriteria{
+		Title:  "Life Ascending",
+		Author: "Nick Lane",
+	})
+
+	if len(results) == 0 {
+		t.Fatal("expected at least 1 result")
+	}
+	for _, r := range results {
+		if r.IndexerPriority != 42 {
+			t.Errorf("IndexerPriority = %d, want 42 (priority must propagate to debug-search results)", r.IndexerPriority)
+		}
 	}
 }
 
