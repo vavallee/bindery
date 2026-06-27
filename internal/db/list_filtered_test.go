@@ -164,6 +164,61 @@ func TestAuthorRepo_ListPageFiltered_SearchSortMonitored(t *testing.T) {
 	}
 }
 
+// TestAuthorRepo_ListPageFiltered_SortNameCaseInsensitive is the regression
+// test for the Authors-tab "A-Z is a total jumble" report: sort_name is stored
+// case-preserving, so a BINARY-collation ORDER BY interleaves on case (all
+// uppercase before any lowercase) and pushes lowercase-article names ("de
+// Balzac") past "Z". The sort must be case-insensitive end to end.
+func TestAuthorRepo_ListPageFiltered_SortNameCaseInsensitive(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	repo := NewAuthorRepo(database)
+	ctx := context.Background()
+
+	// Deliberately mixed case, inserted out of order. Under BINARY collation
+	// these would sort as [Adams, Zola, adelson, de Balzac] (uppercase first,
+	// then lowercase) — the jumble users saw.
+	seed := []struct{ name, sortName string }{
+		{"Honoré de Balzac", "de Balzac, Honoré"},
+		{"Émile Zola", "Zola, Émile"},
+		{"Anita Adelson", "adelson, Anita"},
+		{"Douglas Adams", "Adams, Douglas"},
+	}
+	for _, s := range seed {
+		if err := repo.Create(ctx, &models.Author{
+			ForeignID: "OL-C" + s.sortName, Name: s.name, SortName: s.sortName,
+		}); err != nil {
+			t.Fatalf("seed %s: %v", s.sortName, err)
+		}
+	}
+
+	az, _, err := repo.ListPageFiltered(ctx, AuthorListFilter{Sort: "az"}, 50, 0)
+	if err != nil {
+		t.Fatalf("az: %v", err)
+	}
+	gotAZ := make([]string, len(az))
+	for i, a := range az {
+		gotAZ[i] = a.SortName
+	}
+	wantAZ := []string{"Adams, Douglas", "adelson, Anita", "de Balzac, Honoré", "Zola, Émile"}
+	for i := range wantAZ {
+		if gotAZ[i] != wantAZ[i] {
+			t.Fatalf("az order = %v, want %v", gotAZ, wantAZ)
+		}
+	}
+
+	za, _, err := repo.ListPageFiltered(ctx, AuthorListFilter{Sort: "za"}, 50, 0)
+	if err != nil {
+		t.Fatalf("za: %v", err)
+	}
+	if za[0].SortName != "Zola, Émile" || za[len(za)-1].SortName != "Adams, Douglas" {
+		t.Errorf("za ends = [%s ... %s], want [Zola, Émile ... Adams, Douglas]", za[0].SortName, za[len(za)-1].SortName)
+	}
+}
+
 func TestBookRepo_ListPageFiltered(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {
