@@ -700,21 +700,22 @@ func (s *server) handleHome(w http.ResponseWriter, _ *http.Request) {
     border: 1px solid #334155;
   }
   a.secondary:hover { background: #1e293b; color: #e2e8f0; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; background: #1e293b; color: #cbd5e1; padding: .1em .35em; border-radius: 4px; }
 </style>
 </head>
 <body>
 <div class="card">
   <img src="https://raw.githubusercontent.com/vavallee/bindery/main/.github/assets/logo.png" alt="Bindery logo">
   <h1>Bindery</h1>
-  <p>Open-source automated book management for self-hosters. Monitor your
-     favourite authors, discover new books, and have them downloaded and
-     organized automatically — no scraping, no dead backends.</p>
+  <p><strong style="color:#e2e8f0">The Readarr replacement built to outlive its metadata sources.</strong><br>
+     Automated ebook &amp; audiobook management for Usenet &amp; torrents — monitor
+     authors, search indexers, download, and organize.</p>
   <div class="features">
-    <div class="feature"><div class="feature-dot"></div><span>Tracks monitored authors via OpenLibrary and surfaces new releases automatically</span></div>
-    <div class="feature"><div class="feature-dot"></div><span>Integrates with Prowlarr, qBittorrent, SABnzbd, and Transmission</span></div>
-    <div class="feature"><div class="feature-dot"></div><span>Discover page with personalized recommendations based on your library</span></div>
-    <div class="feature"><div class="feature-dot"></div><span>Calibre bridge plugin for automatic library import after download</span></div>
-    <div class="feature"><div class="feature-dot"></div><span>OPDS feed, OIDC auth, Prometheus metrics, and dark mode</span></div>
+    <div class="feature"><div class="feature-dot"></div><span>No single point of failure for metadata — OpenLibrary, Google Books, Hardcover, DNB, Audnex, and Audible. Documented public APIs, zero scraping.</span></div>
+    <div class="feature"><div class="feature-dot"></div><span>Bring your dead Readarr install with you — import <code>readarr.db</code> and your authors, indexers, download clients, and blocklist come across in one step.</span></div>
+    <div class="feature"><div class="feature-dot"></div><span>Ebooks and audiobooks in independent slots — separate roots, narrator metadata, and multi-part audiobook handling.</span></div>
+    <div class="feature"><div class="feature-dot"></div><span>Usenet and torrents — SABnzbd, NZBGet, qBittorrent, Transmission, and Deluge.</span></div>
+    <div class="feature"><div class="feature-dot"></div><span>Boring to run, by design — a single Go binary, SQLite, distroless image, Helm chart, ARM down to a Pi Zero.</span></div>
   </div>
   <div class="links">
     <a class="primary" href="https://github.com/vavallee/bindery">
