@@ -152,15 +152,15 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.appearance')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.theme')}</label>
               <p className="text-xs text-slate-600 dark:text-zinc-500 mt-1">{t('settings.general.themeHint')}</p>
             </div>
             <ThemeToggle />
           </div>
-          <div className="flex items-center justify-between border-t border-slate-200 dark:border-zinc-800 pt-3 mt-3">
-            <div>
+          <div className="flex items-center justify-between gap-3 border-t border-slate-200 dark:border-zinc-800 pt-3 mt-3">
+            <div className="min-w-0">
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.language')}</label>
               <p className="text-xs text-slate-600 dark:text-zinc-500 mt-1">{t('settings.general.languageHint')}</p>
             </div>
@@ -686,8 +686,8 @@ function SecuritySection() {
           <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
             Pass as <code className="font-mono">X-Api-Key</code> header or <code className="font-mono">?apikey=</code> query parameter. Used by external integrations (Tautulli, custom scripts, etc.).
           </p>
-          <div className="flex gap-2">
-            <code className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm font-mono text-slate-700 dark:text-zinc-300 truncate">
+          <div className="flex flex-wrap gap-2">
+            <code className="flex-1 min-w-[12rem] bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm font-mono text-slate-700 dark:text-zinc-300 truncate">
               {showKey ? cfg.apiKey : '••••••••••••••••••••••••••••••••'}
             </code>
             <button onClick={() => setShowKey(s => !s)} className="px-3 py-2 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded text-xs font-medium">

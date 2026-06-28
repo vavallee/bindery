@@ -123,7 +123,7 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
         <div className="space-y-2">
           {indexers.map(idx => (
             <div key={idx.id}>
-              <div className="flex items-center justify-between p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
                 <div className="flex items-center gap-3 min-w-0">
                   <Toggle
                     checked={idx.enabled}
@@ -134,11 +134,11 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
                     title={idx.enabled ? t('common.disable') : t('common.enable')}
                   />
                   <div className="min-w-0">
-                    <h4 className={`font-medium text-sm ${!idx.enabled ? 'text-slate-600 dark:text-zinc-500' : ''}`}>{idx.name}</h4>
+                    <h4 className={`font-medium text-sm truncate ${!idx.enabled ? 'text-slate-600 dark:text-zinc-500' : ''}`}>{idx.name}</h4>
                     <p className="text-xs text-slate-600 dark:text-zinc-500 truncate">{idx.url}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-3 flex-shrink-0">
+                <div className="flex items-center gap-3 flex-shrink-0 flex-wrap">
                   <button onClick={() => setEditingIndexer(editingIndexer === idx.id ? null : idx.id)} className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">{t('common.edit')}</button>
                   <button
                     disabled={indexerTestResults[idx.id]?.testing}
@@ -231,10 +231,10 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
         <div className="space-y-2">
           {prowlarrInstances.map(p => (
             <div key={p.id} className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h5 className="font-medium text-sm">{p.name}</h5>
-                  <p className="text-xs text-slate-500 dark:text-zinc-500">{p.url}</p>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <h5 className="font-medium text-sm truncate">{p.name}</h5>
+                  <p className="text-xs text-slate-500 dark:text-zinc-500 truncate">{p.url}</p>
                   {p.lastSyncAt && (
                     <p className="text-xs text-slate-400 dark:text-zinc-600 mt-0.5">
                       {t('settings.prowlarr.lastSynced', {
@@ -250,7 +250,7 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
                     <p className={`text-xs mt-0.5 ${prowlarrTestResult[p.id].ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{prowlarrTestResult[p.id].msg}</p>
                   )}
                 </div>
-                <div className="flex items-center gap-3 flex-shrink-0">
+                <div className="flex items-center gap-3 flex-shrink-0 flex-wrap">
                   <button onClick={() => setEditingProwlarr(editingProwlarr === p.id ? null : p.id)} className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">
                     {t('settings.prowlarr.edit')}
                   </button>

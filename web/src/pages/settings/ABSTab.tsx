@@ -679,14 +679,14 @@ function AudiobookshelfSection() {
         </div>
 
         <div className="pt-3 border-t border-slate-200 dark:border-zinc-800 space-y-3">
-          <div className="flex items-center justify-between gap-4">
-            <div>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="min-w-0">
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">Catalog import</label>
               <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">
                 Import authors, books, series, and editions from the selected ABS libraries. Shared filesystem paths are reconciled into Bindery ownership automatically; when ABS and Bindery use different mount prefixes, add a path translation above. Non-visible paths stay metadata-only and are counted for manual follow-up.
               </p>
             </div>
-            <div className="flex flex-col items-end gap-2 flex-shrink-0">
+            <div className="flex flex-col items-start sm:items-end gap-2 flex-shrink-0 flex-wrap">
               <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-zinc-400">
                 <input
                   type="checkbox"

@@ -161,9 +161,10 @@ export default function SettingsPage() {
     <div>
       <h2 className="text-2xl font-bold mb-6">{t('settings.title')}</h2>
 
-      <div className="flex gap-8 items-start">
-        {/* Sidebar navigation */}
-        <nav className="w-44 flex-shrink-0 space-y-0.5">
+      <div className="flex flex-col md:flex-row gap-4 md:gap-8 items-stretch md:items-start">
+        {/* Sidebar navigation — stacks above content on mobile so the tab
+            content gets the full viewport width instead of ~180px. */}
+        <nav className="w-full md:w-44 flex-shrink-0 space-y-0.5">
           <SettingsNavLink tab="general" active={tab} onSelect={setTab} label={t('settings.tabs.general')} />
           <SettingsNavLink tab="about" active={tab} onSelect={setTab} label={t('settings.tabs.about', 'About')} />
 

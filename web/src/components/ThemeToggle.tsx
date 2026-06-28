@@ -10,7 +10,7 @@ export default function ThemeToggle() {
       onClick={() => setTheme(isDark ? 'light' : 'dark')}
       aria-label={`Switch to ${isDark ? 'light' : 'dark'} mode`}
       aria-pressed={isDark}
-      className={`relative inline-flex h-7 w-12 items-center rounded-full border transition-colors ${
+      className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition-colors ${
         isDark
           ? 'bg-zinc-700 border-zinc-600'
           : 'bg-slate-200 border-slate-300'

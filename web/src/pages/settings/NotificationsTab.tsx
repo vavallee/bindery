@@ -19,7 +19,7 @@ export default function NotificationsTab() {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-4">
+      <div className="flex flex-wrap gap-2 justify-between items-center mb-4">
         <h3 className="text-lg font-semibold">{t('settings.notifications.heading')}</h3>
         <button onClick={() => setShowAddNotification(true)} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium">
           {t('settings.notifications.addButton')}
