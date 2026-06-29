@@ -6,6 +6,41 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.23.1] — 2026-06-29
+
+A patch release: responsive mobile Settings, correct alphabetical ordering for
+accented author names, and legible Calibre push failures.
+
+### Fixed
+- **Settings is usable on a phone** (#1344) — the Settings page rendered its
+  fixed `w-44` sidebar beside the content at every viewport, crushing the content
+  column to ~180px on a narrow screen, so indexer rows overlapped and the theme
+  toggle and Regenerate button overflowed their cards. The sidebar now stacks
+  above the content below the `md` breakpoint, giving forms the full width. A
+  headless mobile audit caught and fixed horizontal overflow on eight settings
+  tabs, not just the two originally reported; desktop and tablet layout is
+  unchanged.
+- **Authors list sorts accented names in their place** (#1347) — #1312 made the
+  A–Z / Z–A sort case-insensitive with SQLite `COLLATE NOCASE`, but that folds
+  ASCII only, so any author whose `sort_name` began with a diacritic (Ö, Á, Ł,
+  Ø, Æ…) still sorted after "Z". Bindery now stores an accent-folded `sort_key`
+  (migration 058, computed on every author write and backfilled once at startup)
+  and orders by it, so Scandinavian / Polish / Spanish / Turkish names sort by
+  their base letter. Follow-up to #1312.
+- **"Push all to Calibre" reports why each book failed** (#1346) — a bulk push
+  that failed on every book logged only `calibre sync complete failed=N` with no
+  per-book reason, even in DEBUG, so a library path the Calibre container can't
+  resolve (e.g. `/books` vs `/media/books`) was invisible. The sync now logs the
+  first book to hit each distinct failure reason at WARN (deduped, so one
+  library-wide mismatch logs once instead of once per book) and adds
+  `distinctFailureReasons` to the completion summary. The per-book error list
+  returned to the UI is capped at 50 so a fail-on-every-book run no longer bloats
+  the status payload; `failed` still counts every book.
+
+### Dependencies
+- Routine `minor`/`patch` dependency bumps across the Go and npm modules and the
+  Docker base images (Dependabot).
+
 ## [v1.23.0] — 2026-06-27
 
 A feature release: correct a mis-matched file in place, links out to the
