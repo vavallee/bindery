@@ -181,11 +181,18 @@ func TestAuthorRepo_ListPageFiltered_SortNameCaseInsensitive(t *testing.T) {
 	// Deliberately mixed case, inserted out of order. Under BINARY collation
 	// these would sort as [Adams, Zola, adelson, de Balzac] (uppercase first,
 	// then lowercase) — the jumble users saw.
+	// "Östergaard" / "Łukasz" begin with a non-ASCII letter (code point > 'z'):
+	// under COLLATE NOCASE they sorted after "Zola", which #1347 reports as the
+	// remaining jumble. The accent-folded sort_key (migration 058) must place
+	// them by their base letter: Östergaard→o (after "de Balzac", before "Zola"),
+	// Łukasz→l (between "de Balzac" and "Östergaard").
 	seed := []struct{ name, sortName string }{
 		{"Honoré de Balzac", "de Balzac, Honoré"},
 		{"Émile Zola", "Zola, Émile"},
 		{"Anita Adelson", "adelson, Anita"},
 		{"Douglas Adams", "Adams, Douglas"},
+		{"Karl Östergaard", "Östergaard, Karl"},
+		{"Łukasz Nowak", "Nowak, Łukasz"},
 	}
 	for _, s := range seed {
 		if err := repo.Create(ctx, &models.Author{
@@ -203,7 +210,7 @@ func TestAuthorRepo_ListPageFiltered_SortNameCaseInsensitive(t *testing.T) {
 	for i, a := range az {
 		gotAZ[i] = a.SortName
 	}
-	wantAZ := []string{"Adams, Douglas", "adelson, Anita", "de Balzac, Honoré", "Zola, Émile"}
+	wantAZ := []string{"Adams, Douglas", "adelson, Anita", "de Balzac, Honoré", "Nowak, Łukasz", "Östergaard, Karl", "Zola, Émile"}
 	for i := range wantAZ {
 		if gotAZ[i] != wantAZ[i] {
 			t.Fatalf("az order = %v, want %v", gotAZ, wantAZ)
