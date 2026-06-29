@@ -3,6 +3,7 @@ package calibre
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -378,3 +379,40 @@ func TestSyncer_Start_RejectsConcurrentRuns(t *testing.T) {
 }
 
 func int64Ptr(v int64) *int64 { return &v }
+
+// TestSyncer_FailuresCappedButAllCounted covers the #1346 diagnostics: when
+// every book fails (e.g. a library path the Calibre container can't see),
+// Stats.Failed must count all of them, but the SyncErrors list returned to the
+// UI is capped at maxSyncErrors so the status payload stays bounded.
+func TestSyncer_FailuresCappedButAllCounted(t *testing.T) {
+	const n = maxSyncErrors + 25
+	bl := &fakeBookLister{}
+	calls := map[string]func() (int64, error){}
+	for i := 1; i <= n; i++ {
+		path := fmt.Sprintf("/l/book-%d.epub", i)
+		bl.books = append(bl.books, models.Book{ID: int64(i), Title: fmt.Sprintf("Book %d", i), FilePath: path})
+		calls[path] = func() (int64, error) {
+			return 0, errors.New("plugin client: server error 404: path not found in calibre library")
+		}
+	}
+	pusher := &fakePusher{calls: calls}
+
+	s := NewSyncer(bl)
+	s.newClient = func(_ Config) pluginPusher { return pusher }
+
+	if err := s.Start(context.Background(), Config{}, ModePlugin); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	waitUntil(t, 5*time.Second, func() bool { return !s.Running() })
+
+	p := s.Progress()
+	if p.Stats.Failed != n {
+		t.Errorf("Failed: got %d, want %d (all failures counted)", p.Stats.Failed, n)
+	}
+	if p.Stats.Processed != n {
+		t.Errorf("Processed: got %d, want %d", p.Stats.Processed, n)
+	}
+	if len(p.Errors) != maxSyncErrors {
+		t.Errorf("Errors len: got %d, want %d (capped sample)", len(p.Errors), maxSyncErrors)
+	}
+}
