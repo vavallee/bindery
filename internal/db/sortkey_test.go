@@ -82,3 +82,45 @@ func TestBackfillAuthorSortKeys(t *testing.T) {
 		t.Fatalf("backfill (second pass): %v", err)
 	}
 }
+
+// TestBackfillAuthorSortKeys_SurfacesReadError ensures a failure reading the
+// authors table propagates rather than being swallowed — a silent backfill
+// failure at startup would leave sort_key empty and the list mis-ordered.
+func TestBackfillAuthorSortKeys_SurfacesReadError(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	database.Close() // query against a closed handle errors on the read phase
+	if err := backfillAuthorSortKeys(database); err == nil {
+		t.Fatal("expected an error backfilling against a closed database, got nil")
+	}
+}
+
+// TestBackfillAuthorSortKeys_SurfacesWriteError ensures a write failure during
+// the update phase propagates (and rolls back) rather than being ignored.
+func TestBackfillAuthorSortKeys_SurfacesWriteError(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	repo := NewAuthorRepo(database)
+	ctx := context.Background()
+
+	a := &models.Author{ForeignID: "OL-WE", Name: "Anna Straße", SortName: "Straße, Anna"}
+	if err := repo.Create(ctx, a); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := database.Exec("UPDATE authors SET sort_key = '' WHERE id = ?", a.ID); err != nil {
+		t.Fatalf("blank sort_key: %v", err)
+	}
+	// Make the connection reject writes: the read phase still succeeds, so the
+	// failure lands in the UPDATE, exercising the rollback/return path.
+	if _, err := database.Exec("PRAGMA query_only = ON"); err != nil {
+		t.Fatalf("set query_only: %v", err)
+	}
+	if err := backfillAuthorSortKeys(database); err == nil {
+		t.Fatal("expected a write error backfilling under query_only, got nil")
+	}
+}
