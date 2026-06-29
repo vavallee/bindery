@@ -258,6 +258,79 @@ func migrate(database *sql.DB) error {
 		return fmt.Errorf("backfill book dedup keys: %w", err)
 	}
 
+	// Migration 058 adds authors.sort_key but SQLite cannot accent-fold, so the
+	// column ships empty for existing rows. Populate it from sort_name with the
+	// Go folder (#1347). Idempotent: a no-op once every row holds its key, and it
+	// re-folds any row whose stored key drifts from authorSortKey (e.g. after a
+	// future change to the folding rules).
+	if err := backfillAuthorSortKeys(database); err != nil {
+		return fmt.Errorf("backfill author sort keys: %w", err)
+	}
+
+	return nil
+}
+
+// backfillAuthorSortKeys recomputes authors.sort_key for every row whose stored
+// value differs from authorSortKey(sort_name). It runs on every startup after
+// migrations so legacy rows created before migration 058 (which leaves sort_key
+// empty) get a correct accent-folded key, and a future change to the folder
+// re-canonicalizes existing rows on the next boot.
+func backfillAuthorSortKeys(database *sql.DB) error {
+	type pending struct {
+		id  int64
+		key string
+	}
+	// Read phase in its own scope so the cursor closes before the write tx opens
+	// — holding a read cursor across Begin() risks "database is locked" on SQLite.
+	updates, err := func() ([]pending, error) {
+		rows, err := database.Query("SELECT id, sort_name, COALESCE(sort_key, '') FROM authors")
+		if err != nil {
+			return nil, fmt.Errorf("read authors for sort_key backfill: %w", err)
+		}
+		defer rows.Close()
+		var out []pending
+		for rows.Next() {
+			var id int64
+			var sortName, stored string
+			if err := rows.Scan(&id, &sortName, &stored); err != nil {
+				return nil, fmt.Errorf("scan author for sort_key backfill: %w", err)
+			}
+			if want := authorSortKey(sortName); want != stored {
+				out = append(out, pending{id: id, key: want})
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate authors for sort_key backfill: %w", err)
+		}
+		return out, nil
+	}()
+	if err != nil {
+		return err
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+
+	tx, err := database.Begin()
+	if err != nil {
+		return fmt.Errorf("begin sort_key backfill tx: %w", err)
+	}
+	stmt, err := tx.Prepare("UPDATE authors SET sort_key = ? WHERE id = ?")
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("prepare sort_key backfill: %w", err)
+	}
+	defer stmt.Close()
+	for _, u := range updates {
+		if _, err := stmt.Exec(u.key, u.id); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("update sort_key for author %d: %w", u.id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit sort_key backfill: %w", err)
+	}
+	slog.Info("backfilled author sort keys", "rows", len(updates))
 	return nil
 }
 
