@@ -28,8 +28,13 @@ func TestAuthorSortKey(t *testing.T) {
 // Leading-diacritic keys must order by their folded base letter, not after "z".
 func TestAuthorSortKey_Ordering(t *testing.T) {
 	// Östergaard folds to 'o', so it must sort between "nowak" and "zola".
+	nowak := authorSortKey("Nowak, Łukasz")
 	o := authorSortKey("Östergaard, Karl")
-	if !(authorSortKey("Nowak, Łukasz") < o && o < authorSortKey("Zola, Émile")) {
-		t.Errorf("Östergaard key %q not ordered between Nowak and Zola", o)
+	zola := authorSortKey("Zola, Émile")
+	if o <= nowak {
+		t.Errorf("Östergaard key %q should sort after Nowak key %q", o, nowak)
+	}
+	if o >= zola {
+		t.Errorf("Östergaard key %q should sort before Zola key %q", o, zola)
 	}
 }
