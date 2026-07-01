@@ -161,7 +161,7 @@ func validateSeriesTitle(title string) (string, string) {
 func (h *SeriesHandler) List(w http.ResponseWriter, r *http.Request) {
 	series, err := h.series.ListWithBooks(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if series == nil {
@@ -179,7 +179,7 @@ func (h *SeriesHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	s, err := h.series.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if s == nil {
@@ -207,7 +207,7 @@ func (h *SeriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	series, err := h.series.CreateManual(r.Context(), title)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, series)
@@ -232,7 +232,7 @@ func (h *SeriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	existing, err := h.series.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if existing == nil {
@@ -240,12 +240,12 @@ func (h *SeriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.series.UpdateTitle(r.Context(), id, title); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	updated, err := h.series.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, updated)
@@ -258,7 +258,7 @@ func (h *SeriesHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	existing, err := h.series.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if existing == nil {
@@ -266,7 +266,7 @@ func (h *SeriesHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.series.Delete(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -292,7 +292,7 @@ func (h *SeriesHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	}
 	series, err := h.series.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if series == nil {
@@ -301,7 +301,7 @@ func (h *SeriesHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	}
 	book, err := h.books.GetByID(r.Context(), body.BookID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if book == nil || book.Excluded {
@@ -313,12 +313,12 @@ func (h *SeriesHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 		primary = *body.PrimarySeries
 	}
 	if err := h.series.UpsertBookLink(r.Context(), id, body.BookID, body.PositionInSeries, primary); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	updated, err := h.series.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, updated)
@@ -341,7 +341,7 @@ func (h *SeriesHandler) Monitor(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.series.SetMonitored(r.Context(), id, body.Monitored); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"monitored": body.Monitored})
@@ -448,7 +448,7 @@ func (h *SeriesHandler) Fill(w http.ResponseWriter, r *http.Request) {
 				writeUpstreamError(w, err)
 				return
 			}
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeServerError(w, r, err)
 			return
 		}
 
@@ -456,7 +456,7 @@ func (h *SeriesHandler) Fill(w http.ResponseWriter, r *http.Request) {
 		if book != nil {
 			didQueue, queuedBook, err := h.queueSeriesBook(r.Context(), *book)
 			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				writeServerError(w, r, err)
 				return
 			}
 			if didQueue {
@@ -471,7 +471,7 @@ func (h *SeriesHandler) Fill(w http.ResponseWriter, r *http.Request) {
 	if h.enhancedHardcoverEnabled(r.Context()) {
 		if err := h.createMissingHardcoverBooks(r.Context(), id, body.mediaType()); err != nil {
 			if !errors.Is(err, errSeriesMetadataProvider) {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				writeServerError(w, r, err)
 				return
 			}
 			slog.Warn("series fill: failed to expand Hardcover catalog; continuing with local books", "seriesID", id, "error", err)
@@ -480,7 +480,7 @@ func (h *SeriesHandler) Fill(w http.ResponseWriter, r *http.Request) {
 
 	books, err := h.series.ListBooksInSeries(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -650,7 +650,7 @@ func (h *SeriesHandler) GetHardcoverLink(w http.ResponseWriter, r *http.Request)
 	}
 	link, err := h.series.GetHardcoverLink(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if link == nil {
@@ -670,7 +670,7 @@ func (h *SeriesHandler) AutoLinkHardcover(w http.ResponseWriter, r *http.Request
 	}
 	series, err := h.series.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if series == nil {
@@ -714,7 +714,7 @@ func (h *SeriesHandler) AutoLinkHardcover(w http.ResponseWriter, r *http.Request
 		LinkedBy:            "auto",
 	}
 	if err := h.series.UpsertHardcoverLink(r.Context(), link); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, seriesHardcoverAutoResponse{Linked: true, Link: link, Candidates: candidates})
@@ -729,7 +729,7 @@ func (h *SeriesHandler) PutHardcoverLink(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if series, err := h.series.GetByID(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	} else if series == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "series not found"})
@@ -753,11 +753,11 @@ func (h *SeriesHandler) PutHardcoverLink(w http.ResponseWriter, r *http.Request)
 			writeUpstreamError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if err := h.series.UpsertHardcoverLink(r.Context(), link); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, link)
@@ -772,7 +772,7 @@ func (h *SeriesHandler) DeleteHardcoverLink(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := h.series.DeleteHardcoverLink(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
@@ -788,7 +788,7 @@ func (h *SeriesHandler) HardcoverDiff(w http.ResponseWriter, r *http.Request) {
 	}
 	series, err := h.series.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if series == nil {
@@ -799,7 +799,7 @@ func (h *SeriesHandler) HardcoverDiff(w http.ResponseWriter, r *http.Request) {
 	if link == nil {
 		link, err = h.series.GetHardcoverLink(r.Context(), id)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeServerError(w, r, err)
 			return
 		}
 	}

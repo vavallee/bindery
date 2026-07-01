@@ -40,7 +40,7 @@ func NewPendingHandler(pending *db.PendingReleaseRepo, queue *QueueHandler, down
 func (h *PendingHandler) List(w http.ResponseWriter, r *http.Request) {
 	items, err := h.listForCaller(r)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -85,7 +85,7 @@ func (h *PendingHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// is the only ownership signal. Resolve and gate before deleting.
 	owner, exists, err := h.pending.GetOwnerByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if !exists {
@@ -97,7 +97,7 @@ func (h *PendingHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.pending.DeleteByID(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -121,7 +121,7 @@ func (h *PendingHandler) Grab(w http.ResponseWriter, r *http.Request) {
 	// GetOwnerByID handles the LEFT JOIN gracefully.
 	owner, _, err := h.pending.GetOwnerByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if !auth.CheckOwnership(r.Context(), owner) {
@@ -132,7 +132,7 @@ func (h *PendingHandler) Grab(w http.ResponseWriter, r *http.Request) {
 	// Deserialize the stored release JSON to get the full grab details.
 	var stored grabRequest
 	if err := json.Unmarshal([]byte(pr.ReleaseJSON), &stored); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "invalid stored release: " + err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -157,7 +157,7 @@ func (h *PendingHandler) Grab(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "already grabbed"})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 

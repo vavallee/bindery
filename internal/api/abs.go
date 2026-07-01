@@ -179,7 +179,7 @@ func (h *ABSHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 
 	libraryIDsJSON, err := json.Marshal(libraryIDs)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -197,7 +197,7 @@ func (h *ABSHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 		kvs = append(kvs, db.SettingKV{Key: SettingABSAPIKey, Value: apiKey})
 	}
 	if err := h.settings.SetMany(r.Context(), kvs); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 

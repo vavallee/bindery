@@ -41,7 +41,7 @@ func (h *ABSReviewHandler) List(w http.ResponseWriter, r *http.Request) {
 	limit, offset := parseLimitOffset(r, 50, 100)
 	items, total, err := h.reviews.ListByStatusPaginated(r.Context(), "pending", limit, offset)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	cfg := h.loadCfg(r.Context())
@@ -120,7 +120,7 @@ func (h *ABSReviewHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	// status reset) rather than an imported item whose status stays "pending"
 	// and triggers a duplicate import on the next approval attempt.
 	if err := h.reviews.UpdateStatus(r.Context(), item.ID, "approved"); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if _, err := h.importer.ImportReview(r.Context(), runCfg, payload); err != nil {
@@ -130,7 +130,7 @@ func (h *ABSReviewHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, err := h.reviews.GetByID(r.Context(), item.ID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, updated)
@@ -192,7 +192,7 @@ func (h *ABSReviewHandler) ResolveBook(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, err := h.reviews.GetByID(r.Context(), item.ID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, updated)
@@ -209,12 +209,12 @@ func (h *ABSReviewHandler) Dismiss(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.reviews.UpdateStatus(r.Context(), item.ID, "dismissed"); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	updated, err := h.reviews.GetByID(r.Context(), item.ID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, updated)
@@ -234,7 +234,7 @@ func (h *ABSReviewHandler) DismissRun(w http.ResponseWriter, r *http.Request) {
 	if h.runs != nil {
 		run, err := h.runs.GetByID(r.Context(), runID)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeServerError(w, r, err)
 			return
 		}
 		if run == nil {
@@ -244,7 +244,7 @@ func (h *ABSReviewHandler) DismissRun(w http.ResponseWriter, r *http.Request) {
 	}
 	dismissed, err := h.reviews.DismissByRunID(r.Context(), runID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int64{"dismissed": dismissed})

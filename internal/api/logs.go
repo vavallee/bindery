@@ -116,7 +116,7 @@ func (h *LogHandler) List(w http.ResponseWriter, r *http.Request) {
 
 		entries, err := h.logs.Query(r.Context(), f)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeServerError(w, r, err)
 			return
 		}
 		if entries == nil {

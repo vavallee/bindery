@@ -72,7 +72,7 @@ func (h *ManualImportHandler) Lookup(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.scanner.Lookup(r.Context(), path)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -360,7 +360,7 @@ func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
 	}
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("read folder: %v", err)})
+		writeServerError(w, r, err)
 		return
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
