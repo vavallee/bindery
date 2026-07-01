@@ -197,7 +197,11 @@ func searchFanOut[T any](ctx context.Context, providers []Provider, fn func(cont
 // "Last, First" the same as "First Last" so a person's inverted and natural
 // forms collapse together.
 func canonicalAuthorKey(name string) string {
-	return normalizeForDedup(uninvertAuthorName(name))
+	key := normalizeForDedup(uninvertAuthorName(name))
+	if folded, ok := foldDuplicatedAuthorKey(key); ok {
+		return folded
+	}
+	return key
 }
 
 // CanonicalAuthorKey is the exported form of canonicalAuthorKey, so callers
@@ -261,6 +265,9 @@ func dedupeAuthorsByName(authors []models.Author) []models.Author {
 // one that doesn't (0 = unknown), so OpenLibrary's work/ratings-bearing records
 // win over enrichers that omit them; ties keep the earlier (provider-first) one.
 func betterAuthorRecord(a, b models.Author) bool {
+	if c := preferNonDuplicatedAuthorName(a.Name, b.Name); c != 0 {
+		return c > 0
+	}
 	if c := preferKnownGreater(authorBookCount(a), authorBookCount(b)); c != 0 {
 		return c > 0
 	}
@@ -268,6 +275,39 @@ func betterAuthorRecord(a, b models.Author) bool {
 		return c > 0
 	}
 	return false
+}
+
+// preferNonDuplicatedAuthorName prefers a clean author label over provider noise
+// that repeats the same token sequence, e.g. OpenLibrary's occasional
+// "Black, Chuck, Black, Chuck" duplicate for "Chuck Black".
+func preferNonDuplicatedAuthorName(a, b string) int {
+	ad, bd := duplicatedAuthorName(a), duplicatedAuthorName(b)
+	if ad == bd {
+		return 0
+	}
+	if ad {
+		return -1
+	}
+	return 1
+}
+
+func duplicatedAuthorName(name string) bool {
+	_, ok := foldDuplicatedAuthorKey(normalizeForDedup(name))
+	return ok
+}
+
+func foldDuplicatedAuthorKey(key string) (string, bool) {
+	tokens := strings.Fields(key)
+	if len(tokens) < 4 || len(tokens)%2 != 0 {
+		return "", false
+	}
+	half := len(tokens) / 2
+	for i := 0; i < half; i++ {
+		if tokens[i] != tokens[i+half] {
+			return "", false
+		}
+	}
+	return strings.Join(tokens[:half], " "), true
 }
 
 // preferKnownGreater compares two counts where 0 means "unknown": a known value
