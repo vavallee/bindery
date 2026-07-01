@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -123,4 +124,32 @@ func TestBackfillAuthorSortKeys_SurfacesWriteError(t *testing.T) {
 	if err := backfillAuthorSortKeys(database); err == nil {
 		t.Fatal("expected a write error backfilling under query_only, got nil")
 	}
+}
+
+// TestAuthorSortKey_ConcurrentUse guards the #1374 regression: authorSortKey is
+// called from parallel author-write paths (ABS import, author work discovery),
+// and a shared transform.Chain has mutable internal buffers — concurrent use
+// corrupted them into slice-bounds panics inside x/text/transform. Run with
+// -race this also fails on the data race itself, not just the panic.
+func TestAuthorSortKey_ConcurrentUse(t *testing.T) {
+	t.Parallel()
+	inputs := []string{
+		"Östergaard, Karl", "de Balzac, Honoré", "Nowak, Łukasz",
+		"Zola, Émile", "Çelik, Ayşe", "Straße, Anna", "Ángel, José",
+	}
+	var wg sync.WaitGroup
+	for g := 0; g < 16; g++ {
+		wg.Add(1)
+		go func(seed int) {
+			defer wg.Done()
+			for i := 0; i < 200; i++ {
+				in := inputs[(seed+i)%len(inputs)]
+				if got := authorSortKey(in); got == "" {
+					t.Errorf("authorSortKey(%q) = empty under concurrency", in)
+					return
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
 }
