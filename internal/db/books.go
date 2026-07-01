@@ -552,6 +552,12 @@ func (r *BookRepo) RemoveBookFile(ctx context.Context, path string) (*models.Boo
 	return r.GetByID(ctx, bookID)
 }
 
+// PathTracked reports whether an exact on-disk path is still registered in
+// book_files (owned by any book). See BookFileRepo.PathTracked (#1368).
+func (r *BookRepo) PathTracked(ctx context.Context, path string) (bool, error) {
+	return r.files.PathTracked(ctx, path)
+}
+
 // ListAllBookFilePaths returns every path in book_files.
 // Used by ScanLibrary to build the set of already-tracked files efficiently.
 func (r *BookRepo) ListAllBookFilePaths(ctx context.Context) ([]string, error) {
