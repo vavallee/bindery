@@ -104,7 +104,7 @@ func (h *DownloadClientHandler) WithDownloadPathRemap(remap string) *DownloadCli
 func (h *DownloadClientHandler) List(w http.ResponseWriter, r *http.Request) {
 	clients, err := h.clients.List(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if clients == nil {
@@ -151,7 +151,7 @@ func (h *DownloadClientHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.clients.Create(r.Context(), &c); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	h.refreshClientHealthAsync(c)
@@ -181,7 +181,7 @@ func (h *DownloadClientHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	c.ID = id
 	if err := h.clients.Update(r.Context(), &c); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	// Evict the pooled downloader client so the next poll picks up the new
@@ -198,7 +198,7 @@ func (h *DownloadClientHandler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *DownloadClientHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err := h.clients.Delete(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	// Drop the pooled client so its session/cookies and idle connections

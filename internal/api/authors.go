@@ -208,7 +208,7 @@ func (h *AuthorHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	authors, total, err := h.authors.ListPageFiltered(ctx, filter, limit, offset)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if authors == nil {
@@ -235,7 +235,7 @@ func (h *AuthorHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	author, err := h.authors.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if author == nil {
@@ -291,7 +291,7 @@ func (h *AuthorHandler) ListSeries(w http.ResponseWriter, r *http.Request) {
 	// check runs before we list series belonging to it.
 	author, err := h.authors.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if author == nil || !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
@@ -304,7 +304,7 @@ func (h *AuthorHandler) ListSeries(w http.ResponseWriter, r *http.Request) {
 	}
 	series, err := h.series.ListByAuthor(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, series)
@@ -360,7 +360,7 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if canonical, ambiguous, err := h.findCanonicalAuthorMatch(r.Context(), req.Name, author.Name); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	} else if ambiguous {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "author name resolves ambiguously — merge manually"})
@@ -372,7 +372,7 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 					writeJSON(w, http.StatusConflict, map[string]string{"error": "upstream author already exists locally"})
 					return
 				}
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				writeServerError(w, r, err)
 				return
 			}
 			mediaType := req.MediaType
@@ -408,7 +408,7 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "author already exists"})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	h.recordAuthorCreateAlias(r.Context(), author, req.Name)
@@ -851,7 +851,7 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.authors.Update(r.Context(), author); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -863,7 +863,7 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if len(*req.MonitoredSeriesIDs) > 0 {
 			ownSeries, err := h.series.ListByAuthor(r.Context(), author.ID)
 			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				writeServerError(w, r, err)
 				return
 			}
 			owned := make(map[int64]struct{}, len(ownSeries))
@@ -878,7 +878,7 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err := h.authors.SetMonitoredSeriesIDs(r.Context(), author.ID, *req.MonitoredSeriesIDs); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeServerError(w, r, err)
 			return
 		}
 		author.MonitoredSeriesIDs = append([]int64(nil), (*req.MonitoredSeriesIDs)...)
@@ -892,7 +892,7 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	if req.ApplyMonitorModeToExisting {
 		if err := applyMonitorModeToExistingBooks(r.Context(), h.books, h.authors, h.series, author); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeServerError(w, r, err)
 			return
 		}
 	}
@@ -991,7 +991,7 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromContext(r.Context())
 	author, err := h.authors.GetByIDForUser(r.Context(), id, userID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if author == nil {
@@ -1030,7 +1030,7 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if canonical, ambiguous, err := h.findCanonicalAuthorMatchExcluding(r.Context(), author.ID, author.Name, upstream.Name); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	} else if ambiguous {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "author name resolves ambiguously — merge manually"})
@@ -1040,7 +1040,7 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if existing, err := h.authors.GetByAnyForeignIDForUser(r.Context(), upstream.ForeignID, userID); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	} else if existing != nil && existing.ID != author.ID {
 		h.writeCanonicalAuthorConflict(w, existing, "upstream author already exists locally")
@@ -1052,7 +1052,7 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "upstream author already exists locally"})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -1069,7 +1069,7 @@ func (h *AuthorHandler) RelinkCandidates(w http.ResponseWriter, r *http.Request)
 	}
 	author, err := h.authors.GetByIDForUser(r.Context(), id, auth.UserIDFromContext(r.Context()))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if author == nil {
@@ -1098,7 +1098,7 @@ func (h *AuthorHandler) RelinkCandidates(w http.ResponseWriter, r *http.Request)
 	}
 	identifiers, err := h.authors.ListAuthorIdentifiers(r.Context(), author.ID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	for _, identifier := range identifiers {
@@ -1133,7 +1133,7 @@ func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// missing row so non-owners cannot probe for existence by status code.
 	author, err := h.authors.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if author == nil || !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
@@ -1167,7 +1167,7 @@ func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.authors.Delete(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -2179,7 +2179,7 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 		if author == nil {
 			if err := h.authors.CreateForUser(ctx, fetched, userID); err != nil {
 				if !strings.Contains(err.Error(), "UNIQUE constraint failed") && !errors.Is(err, db.ErrAuthorIdentifierConflict) {
-					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+					writeServerError(w, r, err)
 					return
 				}
 				// Race: another request created it between our check and insert.
@@ -2288,7 +2288,7 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	// 3. Mark the book monitored (wanted).
 	book.Monitored = true
 	if err := h.books.Update(ctx, book); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 

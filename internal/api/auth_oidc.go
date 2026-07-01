@@ -169,17 +169,17 @@ func (h *OIDCHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	state, err := oidc.NewState()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "gen state: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	nonce, err := oidc.NewNonce()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "gen nonce: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	verifier, err := oidc.NewVerifier()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "gen verifier: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -197,7 +197,7 @@ func (h *OIDCHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// and we resolve it from the request rather than a static env var.
 	flowVal, err := oidc.EncodeFlowState(state, nonce, verifier, redirectBase)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "encode flow: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
@@ -569,7 +569,7 @@ func (h *OIDCHandler) GetProviders(w http.ResponseWriter, r *http.Request) {
 	}
 	ps, err := oidc.ParseProviders(s.Value)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "parse providers: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	out := make([]providerWithStatus, 0, len(ps))
@@ -622,11 +622,11 @@ func (h *OIDCHandler) SetProviders(w http.ResponseWriter, r *http.Request) {
 
 	raw, err := json.Marshal(merged) // #nosec G117 -- persisted server-side only, never returned via API (see ProviderPublicConfig split)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "encode: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	if err := h.settings.Set(ctx, SettingOIDCProviders, string(raw)); err != nil {
-		writeErr(w, http.StatusInternalServerError, "save: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	// Reload async so the HTTP response isn't delayed by discovery. Anchor

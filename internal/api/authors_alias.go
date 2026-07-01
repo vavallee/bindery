@@ -35,7 +35,7 @@ func (h *AuthorAliasHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	author, err := h.authors.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if author == nil {
@@ -49,7 +49,7 @@ func (h *AuthorAliasHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	aliases, err := h.aliases.ListByAuthor(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if aliases == nil {
@@ -73,7 +73,7 @@ func (h *AuthorAliasHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	author, err := h.authors.GetByID(r.Context(), authorID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if author == nil {
@@ -87,7 +87,7 @@ func (h *AuthorAliasHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	deleted, err := h.aliases.DeleteForAuthor(r.Context(), authorID, aliasID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if !deleted {
@@ -139,7 +139,7 @@ func (h *AuthorAliasHandler) Merge(w http.ResponseWriter, r *http.Request) {
 	for _, id := range []int64{req.SourceID, targetID} {
 		a, err := h.authors.GetByID(r.Context(), id)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeServerError(w, r, err)
 			return
 		}
 		if a == nil || !auth.CheckOwnership(r.Context(), a.OwnerUserID) {
@@ -156,7 +156,7 @@ func (h *AuthorAliasHandler) Merge(w http.ResponseWriter, r *http.Request) {
 	result, err := h.aliases.Merge(r.Context(), req.SourceID, targetID, db.MergeOptions{OverwriteDefaults: overwrite})
 	if err != nil {
 		slog.Warn("merge authors failed", "sourceId", req.SourceID, "targetId", targetID, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	slog.Info("merged authors", "sourceId", req.SourceID, "targetId", targetID,

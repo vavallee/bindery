@@ -296,7 +296,7 @@ type queueListResponse struct {
 func (h *QueueHandler) List(w http.ResponseWriter, r *http.Request) {
 	enriched, diagnostics, err := h.enrichedQueueItems(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -362,7 +362,7 @@ type arrQueueRecord struct {
 func (h *QueueHandler) ListArrCompatible(w http.ResponseWriter, r *http.Request) {
 	enriched, _, err := h.enrichedQueueItems(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -633,7 +633,7 @@ func (h *QueueHandler) RetryImport(w http.ResponseWriter, r *http.Request) {
 	// attacker that the id space is enumerable.
 	owner, exists, err := h.downloads.GetOwnerByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if !exists {
@@ -647,7 +647,7 @@ func (h *QueueHandler) RetryImport(w http.ResponseWriter, r *http.Request) {
 
 	accepted, found, err := h.downloads.ResetImportRetry(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if !found {
@@ -887,7 +887,7 @@ func (h *QueueHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// happy path because it sources Download state Delete still needs.
 	owner, exists, err := h.downloads.GetOwnerByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if !exists {
@@ -901,7 +901,7 @@ func (h *QueueHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	downloads, err := h.downloads.List(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	var target *models.Download
@@ -945,7 +945,7 @@ func (h *QueueHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.downloads.Delete(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

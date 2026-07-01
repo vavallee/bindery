@@ -151,7 +151,7 @@ func isWritableSecretSetting(key string) bool {
 func (h *SettingsHandler) List(w http.ResponseWriter, r *http.Request) {
 	settings, err := h.settings.List(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	filtered := make([]models.Setting, 0, len(settings))
@@ -171,7 +171,7 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	s, err := h.settings.Get(r.Context(), key)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if s == nil {
@@ -200,7 +200,7 @@ func (h *SettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.settings.Set(r.Context(), key, value); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if isSecretSetting(key) {
@@ -491,7 +491,7 @@ func (h *SettingsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.settings.Delete(r.Context(), key); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

@@ -71,7 +71,7 @@ func toUserResponse(u db.User) userResponse {
 func (h *UserManagementHandler) List(w http.ResponseWriter, r *http.Request) {
 	users, err := h.users.List(r.Context())
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "list users: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	out := make([]userResponse, 0, len(users))
@@ -107,17 +107,17 @@ func (h *UserManagementHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	hash, err := auth.HashPassword(body.Password)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "hash password: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	u, err := h.users.Create(r.Context(), body.Username, hash)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "create user: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	if body.Role == "admin" {
 		if err := h.users.SetRole(r.Context(), u.ID, "admin"); err != nil {
-			writeErr(w, http.StatusInternalServerError, "set role: "+err.Error())
+			writeServerError(w, r, err)
 			return
 		}
 		u.Role = "admin"
@@ -184,11 +184,11 @@ func (h *UserManagementHandler) ResetPassword(w http.ResponseWriter, r *http.Req
 	}
 	hash, err := auth.HashPassword(body.Password)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "hash password: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	if err := h.users.UpdatePassword(r.Context(), id, hash); err != nil {
-		writeErr(w, http.StatusInternalServerError, "update password: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	writeOK(w, map[string]any{"ok": true})
