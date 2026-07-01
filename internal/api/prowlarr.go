@@ -69,7 +69,7 @@ func LoadProwlarrTimeout(ctx context.Context, s *db.SettingsRepo) time.Duration 
 func (h *ProwlarrHandler) List(w http.ResponseWriter, r *http.Request) {
 	items, err := h.instances.List(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if items == nil {
@@ -86,7 +86,7 @@ func (h *ProwlarrHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := h.instances.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if p == nil {
@@ -114,7 +114,7 @@ func (h *ProwlarrHandler) Create(w http.ResponseWriter, r *http.Request) {
 		p.Name = "Prowlarr"
 	}
 	if err := h.instances.Create(r.Context(), &p); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, p)
@@ -128,7 +128,7 @@ func (h *ProwlarrHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	existing, err := h.instances.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if existing == nil {
@@ -146,12 +146,12 @@ func (h *ProwlarrHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.instances.Update(r.Context(), existing); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if existing.APIKey != previousKey && h.indexers != nil {
 		if _, err := h.indexers.UpdateAPIKeyByProwlarrInstance(r.Context(), id, existing.APIKey); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeServerError(w, r, err)
 			return
 		}
 	}
@@ -166,11 +166,11 @@ func (h *ProwlarrHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	// Remove synced indexers before deleting the instance (FK constraint).
 	if err := h.indexers.DeleteByProwlarrInstance(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if err := h.instances.Delete(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

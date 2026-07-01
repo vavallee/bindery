@@ -187,7 +187,7 @@ func (h *BookHandler) EnrichAudiobook(w http.ResponseWriter, r *http.Request) {
 	}
 	h.tryMapAudiobookMetadataByASIN(r.Context(), book)
 	if err := h.books.Update(r.Context(), book); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	cleanBookDescription(book)
@@ -313,7 +313,7 @@ func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if books == nil {
@@ -355,7 +355,7 @@ func (h *BookHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	book, err := h.books.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if book == nil {
@@ -462,7 +462,7 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.books.Update(r.Context(), book); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -502,7 +502,7 @@ func (h *BookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// `?deleteFiles=true` branch re-fetches when it needs the legacy file
 	// columns; the extra lookup is cheap and keeps the diff localised.
 	if existing, err := h.books.GetByID(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	} else if existing == nil || !auth.CheckOwnership(r.Context(), existing.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
@@ -548,7 +548,7 @@ func (h *BookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := h.books.Delete(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -570,7 +570,7 @@ func (h *BookHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	// Tier-1 cross-user IDOR guard (D1). Fetch the book up-front so the
 	// ownership check runs before any file enumeration or destructive work.
 	if existing, err := h.books.GetByID(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	} else if existing == nil || !auth.CheckOwnership(r.Context(), existing.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
@@ -582,7 +582,7 @@ func (h *BookHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	// Enumerate files from book_files for this book.
 	allFiles, err := h.books.ListFiles(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -635,7 +635,7 @@ func (h *BookHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 		skipped, err := safeRemoveBookPath(r.Context(), h.roots, h.books, id, p, format, "id", id)
 		if err != nil {
 			slog.Error("failed to remove book file", "id", id, "path", p, "error", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeServerError(w, r, err)
 			return
 		}
 		if !skipped {
@@ -771,7 +771,7 @@ func (h *BookHandler) ListWanted(w http.ResponseWriter, r *http.Request) {
 		books, err = h.books.ListByStatus(r.Context(), models.BookStatusWanted)
 	}
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if books == nil {
@@ -913,7 +913,7 @@ func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "a different book already uses that foreign ID"})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	h.hydrateHardcoverEditions(r.Context(), book, req.Provider)
@@ -986,7 +986,7 @@ func (h *BookHandler) ToggleExcluded(w http.ResponseWriter, r *http.Request) {
 
 	newVal := !book.Excluded
 	if err := h.books.SetExcluded(r.Context(), id, newVal); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	book.Excluded = newVal
@@ -1042,7 +1042,7 @@ func (h *BookHandler) MapMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 	currentAuthor, err := h.authors.GetByID(r.Context(), book.AuthorID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if !bookMapAuthorMatches(currentAuthor, target.Author) {
@@ -1052,13 +1052,13 @@ func (h *BookHandler) MapMetadata(w http.ResponseWriter, r *http.Request) {
 
 	preserveBookStateForMetadataMap(book, target)
 	if err := h.books.Update(r.Context(), book); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	h.hydrateHardcoverEditions(r.Context(), book, book.MetadataProvider)
 	updated, err := h.books.GetByID(r.Context(), book.ID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	h.attachBookFiles(r.Context(), updated)

@@ -22,7 +22,7 @@ func NewDelayProfileHandler(repo *db.DelayProfileRepo) *DelayProfileHandler {
 func (h *DelayProfileHandler) List(w http.ResponseWriter, r *http.Request) {
 	profiles, err := h.repo.List(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if profiles == nil {
@@ -39,7 +39,7 @@ func (h *DelayProfileHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := h.repo.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if p == nil {
@@ -59,7 +59,7 @@ func (h *DelayProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
 		p.PreferredProtocol = "usenet"
 	}
 	if err := h.repo.Create(r.Context(), &p); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, p)
@@ -83,7 +83,7 @@ func (h *DelayProfileHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	p.ID = id
 	if err := h.repo.Update(r.Context(), &p); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, p)
@@ -96,7 +96,7 @@ func (h *DelayProfileHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.repo.Delete(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

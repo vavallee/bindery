@@ -73,7 +73,7 @@ func (h *HistoryHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	events, total, err := h.history.ListPage(ctx, opts)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	items := make([]historyItem, len(events))
@@ -111,7 +111,7 @@ func (h *HistoryHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// Per-user scoping (D3): JOIN through books to find owner before delete.
 	owner, exists, err := h.history.GetOwnerByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if !exists {
@@ -123,7 +123,7 @@ func (h *HistoryHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.history.Delete(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -149,7 +149,7 @@ func (h *HistoryHandler) Blocklist(w http.ResponseWriter, r *http.Request) {
 	// search results.
 	owner, _, err := h.history.GetOwnerByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if !auth.CheckOwnership(r.Context(), owner) {
@@ -176,7 +176,7 @@ func (h *HistoryHandler) Blocklist(w http.ResponseWriter, r *http.Request) {
 	if guid != "" {
 		blocked, err := h.blocklist.IsBlocked(r.Context(), guid)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeServerError(w, r, err)
 			return
 		}
 		if blocked {
@@ -203,7 +203,7 @@ func (h *HistoryHandler) Blocklist(w http.ResponseWriter, r *http.Request) {
 		err = h.blocklist.Create(r.Context(), entry)
 	}
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, entry)

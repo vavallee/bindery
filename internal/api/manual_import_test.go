@@ -141,8 +141,11 @@ func TestManualImportLookup_ScannerError(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "catalogue unavailable") {
-		t.Errorf("body = %q, want scanner error message", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "internal server error") {
+		t.Errorf("body = %q, want generic server error", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "catalogue unavailable") {
+		t.Errorf("body = %q, must not leak the internal error", rec.Body.String())
 	}
 }
 

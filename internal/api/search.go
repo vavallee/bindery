@@ -129,6 +129,14 @@ func (h *SearchHandler) lookupByASIN(w http.ResponseWriter, r *http.Request, asi
 	writeJSON(w, http.StatusOK, book)
 }
 
+// writeServerError logs the underlying error server-side (with request
+// context) and returns a generic 500 body, so internal details like SQL
+// text or filesystem paths never reach the client.
+func writeServerError(w http.ResponseWriter, r *http.Request, err error) {
+	slog.Error("request failed", "method", r.Method, "path", r.URL.Path, "error", err)
+	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+}
+
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
