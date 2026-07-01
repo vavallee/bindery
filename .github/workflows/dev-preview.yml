@@ -54,8 +54,14 @@ jobs:
           git fetch origin main
           git checkout -B development origin/main
 
+          # SECURITY: only merge PRs whose head lives in this same repo. A fork
+          # PR gets merged into `development`, which then dispatches ci.yml with
+          # full repo secrets (kubeconfig, deploy tokens). Labelling a fork PR
+          # `dev-preview` must NOT hand it those secrets, so filter out
+          # cross-repository (fork) PRs here regardless of who labelled them.
           mapfile -t PRS < <(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
-            --label dev-preview --json number --jq '.[].number' | sort -n)
+            --label dev-preview --json number,isCrossRepository \
+            --jq '.[] | select(.isCrossRepository == false) | .number' | sort -n)
 
           MERGED=(); SKIPPED=()
           for n in "${PRS[@]:-}"; do

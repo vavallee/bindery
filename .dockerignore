@@ -1,0 +1,34 @@
+# Keep the Docker build context small and reproducible. The image builds the
+# frontend (web/) and the Go binary itself, so host-side build outputs and
+# scratch files are never needed and only bloat/poison the context.
+#
+# Do NOT exclude web/ source, go.mod/go.sum, or any *.go — the build copies them.
+
+# VCS
+.git
+.gitignore
+
+# Frontend build outputs (the frontend stage runs `npm ci` + `npm run build`)
+web/node_modules
+web/dist
+web/coverage
+web/.vite
+
+# Stray local build binaries (Dockerfile compiles fresh inside the image)
+/bindery
+/telemetry-server
+/cmd/discord-stats/discord-stats
+/discord-stats
+/cmd/telemetry-server/telemetry-server
+
+# Logs and scratch files (never part of the build)
+*.log
+bindery.txt
+reply.txt
+e.log
+
+# Docs / CI / root markdown — not consumed by the build (go:embed only pulls
+# internal/webui/dist and internal/db/migrations)
+.github
+docs
+*.md
