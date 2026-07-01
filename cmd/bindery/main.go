@@ -802,10 +802,9 @@ func main() {
 		registerIndexerRoutes(r, indexerHandler)
 		registerProwlarrRoutes(r, prowlarrHandler)
 
-		// Root folders
-		r.Get("/rootfolder", rootFolderHandler.List)
-		r.Post("/rootfolder", rootFolderHandler.Create)
-		r.Delete("/rootfolder/{id}", rootFolderHandler.Delete)
+		// Root folders — List open, mutations admin-only (they point library
+		// storage at server filesystem paths). See registerRootFolderRoutes.
+		registerRootFolderRoutes(r, rootFolderHandler)
 
 		registerDownloadClientRoutes(r, dlClientHandler)
 
@@ -981,25 +980,13 @@ func main() {
 		r.Post("/authors/refresh-all", authorRefreshHandler.RefreshAll)
 		r.Get("/authors/refresh-all/status", authorRefreshHandler.RefreshAllStatus)
 
-		// Grimmory integration.
-		r.Get("/grimmory/config", grimmoryHandler.GetConfig)
-		r.Put("/grimmory/config", grimmoryHandler.SetConfig)
-		r.Post("/grimmory/test", grimmoryHandler.Test)
+		// Grimmory integration — GetConfig open (redacts the key), writes admin.
+		// See registerGrimmoryRoutes.
+		registerGrimmoryRoutes(r, grimmoryHandler)
 
-		// Calibre integration — settings live under /setting/calibre.*,
-		// this endpoint just validates + probes the configured install.
-		r.Post("/calibre/test", calibreHandler.Test)
-
-		// Calibre library import (read side). Start is fire-and-forget;
-		// the UI polls Status while it runs.
-		r.Post("/calibre/import", calibreImportHandler.Start)
-		r.Get("/calibre/import/status", calibreImportHandler.Status)
-
-		// Calibre bulk push (write side). Iterates every imported book and
-		// POSTs its file to the plugin; 409 Conflict is treated as
-		// idempotent. Single-job policy — second call returns 409.
-		r.Post("/calibre/sync", calibreSyncHandler.Start)
-		r.Get("/calibre/sync/status", calibreSyncHandler.Status)
+		// Calibre integration (probe + library import + bulk push) — all
+		// admin-only. See registerCalibreIntegrationRoutes.
+		registerCalibreIntegrationRoutes(r, calibreHandler, calibreImportHandler, calibreSyncHandler)
 
 		// Calibre import run history + rollback (#643). Admin-only — a bad
 		// rollback can delete authors/books wholesale, so the destructive
