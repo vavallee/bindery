@@ -6,6 +6,39 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.23.3] — 2026-07-01
+
+A second same-day patch: a crash fix for concurrent imports, unblocking bulk
+folder import on the stock Docker layout, and a defence-in-depth guard behind
+the v1.23.2 data-loss fix.
+
+### Fixed
+- **Concurrent imports no longer crash on author writes** (#1374) — the
+  accent-folding sort key added in v1.23.1 shared a single
+  `x/text/transform.Chain` across the process, but that transformer mutates
+  internal buffers and is not safe for concurrent use. Two goroutines writing
+  authors at once (an ABS import, parallel author work discovery, simultaneous
+  API calls) could corrupt its state and panic with slice-bounds errors inside
+  `x/text/transform`, killing the importing goroutine. The transformer is now
+  built per call; a 16-goroutine regression test pins it under `-race`.
+- **Bulk folder import accepts the library root and the download folder**
+  (#1373) — the bulk import shipped in v1.23.0 rejected both of its obvious
+  targets with `path is outside the configured library roots`: the containment
+  check reused the delete path's rule that a root itself is never a valid
+  target, so pasting `/books` failed, and the download dirs
+  (`BINDERY_DOWNLOAD_DIR` / `BINDERY_AUDIOBOOK_DOWNLOAD_DIR`) were never in the
+  allow-list at all — even though a migration backlog in `/downloads` is the
+  exact use case the feature was built for. Scanning a configured root or a
+  download dir now works; the delete handlers keep the stricter library-only
+  containment.
+- **Every book-file delete path now refuses to remove a file another book
+  owns** (#1368 hardening) — v1.23.2 added the ownership check only in the
+  book-delete legacy-column fallback. The invariant now lives in the shared
+  delete chokepoint, so the per-file delete, author delete, and Fix Match
+  cleanup are covered too: if a path is still registered to a different book in
+  `book_files`, the on-disk delete is skipped (and it fails safe when ownership
+  can't be determined).
+
 ## [v1.23.2] — 2026-07-01
 
 A data-loss patch for **Fix Match** (the file-reassign feature, #1238, shipped in
