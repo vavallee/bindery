@@ -212,7 +212,16 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "lookup: "+err.Error())
 		return
 	}
-	if u == nil || !auth.VerifyPassword(req.Password, u.PasswordHash) {
+	// Always run a password verification, even when the username does not
+	// exist, so a missing user and a wrong password take the same time. If we
+	// skipped the KDF for u == nil, the argon2 cost (tens of ms) would only be
+	// paid for real usernames and its presence/absence would leak which
+	// usernames exist. See auth.DummyPasswordHash.
+	hash := auth.DummyPasswordHash()
+	if u != nil {
+		hash = u.PasswordHash
+	}
+	if ok := auth.VerifyPassword(req.Password, hash); u == nil || !ok {
 		h.limiter.Record(ip)
 		writeErr(w, http.StatusUnauthorized, "invalid credentials")
 		return

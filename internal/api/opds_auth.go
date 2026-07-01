@@ -72,7 +72,14 @@ func OPDSAuth(p auth.Provider, users *db.UserRepo, limiter *auth.LoginLimiter) f
 					return
 				}
 				u, err := users.GetByUsername(r.Context(), strings.TrimSpace(username))
-				if err == nil && u != nil && auth.VerifyPassword(password, u.PasswordHash) {
+				// Verify against a dummy hash when the user is missing so the
+				// basic-auth response time does not reveal which usernames exist
+				// (mirrors the main login handler). See auth.DummyPasswordHash.
+				hash := auth.DummyPasswordHash()
+				if err == nil && u != nil {
+					hash = u.PasswordHash
+				}
+				if ok := auth.VerifyPassword(password, hash); err == nil && u != nil && ok {
 					if limiter != nil {
 						limiter.Reset(ip)
 					}
