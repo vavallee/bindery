@@ -30,10 +30,25 @@ export default function QueuePage() {
     }).catch(console.error).finally(() => setLoading(false))
   }
 
+  // Guard against stale responses and set-state-after-unmount: a `cancelled`
+  // flag captured in the effect is checked before every setState and flipped in
+  // cleanup, so a poll that resolves after a newer tick or after unmount is
+  // ignored. Mirrors AuthorsPage's poll guard.
   useEffect(() => {
-    load()
-    const interval = setInterval(load, 5000)
-    return () => clearInterval(interval)
+    let cancelled = false
+    const run = () => {
+      Promise.all([
+        api.listQueue(),
+        api.listPending(),
+      ]).then(([q, p]) => {
+        if (cancelled) return
+        setQueue(q)
+        setPending(p)
+      }).catch(console.error).finally(() => { if (!cancelled) setLoading(false) })
+    }
+    run()
+    const interval = setInterval(run, 5000)
+    return () => { cancelled = true; clearInterval(interval) }
   }, [])
 
   useEffect(() => {
