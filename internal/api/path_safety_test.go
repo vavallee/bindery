@@ -89,6 +89,28 @@ func TestLibraryRoots_ResolveContained(t *testing.T) {
 	}
 }
 
+// TestLibraryRoots_ResolveContained_AllowsRootItself covers #1373: the
+// import/scan path may target a configured root as a whole ("scan everything
+// under /books"), unlike the delete path where a root is never a deletable
+// book. Contains must keep rejecting root-equality; ResolveContained must not.
+func TestLibraryRoots_ResolveContained_AllowsRootItself(t *testing.T) {
+	root := t.TempDir()
+	roots := NewLibraryRoots(staticRootLister{paths: []string{root}})
+	ctx := context.Background()
+
+	expected, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := roots.ResolveContained(ctx, root); !ok || got != expected {
+		t.Errorf("ResolveContained(root itself) = %q, %v; want %q, true", got, ok, expected)
+	}
+	// The delete-path primitive stays strict: a root is not a deletable book.
+	if roots.Contains(ctx, root) {
+		t.Error("Contains(root itself) must remain false for the delete path")
+	}
+}
+
 // TestLibraryRoots_ResolveContained_NilReceiverAllows mirrors the Contains
 // nil-receiver opt-out: a handler not wired with WithRoots keeps legacy
 // behaviour (used by fixtures that don't configure roots).

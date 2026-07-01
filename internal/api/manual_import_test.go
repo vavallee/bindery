@@ -673,6 +673,51 @@ func TestManualImportScan_EnumeratesBookUnits(t *testing.T) {
 	}
 }
 
+// TestManualImportScan_AllowsConfiguredRootItself reproduces #1373: pasting a
+// configured root ("/books") or an allow-listed download dir ("/downloads")
+// into bulk import must scan it, not 403. Before the fix, ResolveContained
+// reused the delete path's strict containment (root != contained), so the two
+// most obvious targets for the feature both failed with "path is outside the
+// configured library roots".
+func TestManualImportScan_AllowsConfiguredRootItself(t *testing.T) {
+	t.Parallel()
+	h, stub, _, _, _ := manualImportFixture(t)
+	stub.lookupResult = importer.LookupResult{Match: "none", ParsedTitle: "x"}
+
+	libraryDir := t.TempDir()
+	downloadDir := t.TempDir()
+	outside := t.TempDir()
+	writeTestFile(t, filepath.Join(libraryDir, "Book One.epub"))
+	writeTestFile(t, filepath.Join(downloadDir, "Backlog Book.epub"))
+	writeTestFile(t, filepath.Join(outside, "secret.epub"))
+	// Mirror the production wiring (#1373): the manual-import allow-list holds
+	// the library root AND the download dir.
+	h.WithRoots(NewLibraryRoots(nil, libraryDir, downloadDir))
+
+	for _, dir := range []string{libraryDir, downloadDir} {
+		rec := httptest.NewRecorder()
+		h.Scan(rec, scanRequest(dir))
+		if rec.Code != http.StatusOK {
+			t.Errorf("Scan(%s) status = %d, want 200; body = %s", dir, rec.Code, rec.Body.String())
+			continue
+		}
+		var resp ScanResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(resp.Items) != 1 {
+			t.Errorf("Scan(%s) items = %d, want 1", dir, len(resp.Items))
+		}
+	}
+
+	// The gate itself still stands: an unconfigured dir is rejected.
+	rec := httptest.NewRecorder()
+	h.Scan(rec, scanRequest(outside))
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Scan(outside) status = %d, want 403", rec.Code)
+	}
+}
+
 func TestManualImportScan_RejectsSingleFile(t *testing.T) {
 	t.Parallel()
 	h, _, _, _, _ := manualImportFixture(t)

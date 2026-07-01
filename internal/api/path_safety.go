@@ -191,11 +191,31 @@ func (r *LibraryRoots) ResolveContained(ctx context.Context, p string) (string, 
 		if rr, err := filepath.EvalSymlinks(root); err == nil {
 			realRoot = rr
 		}
-		if containsUnderRoot(resolved, realRoot) {
+		// Import/scan may legitimately target a configured root itself (e.g.
+		// "scan everything under /books"), unlike the delete path where a root
+		// is never a deletable book. Allow root-equality here (#1373).
+		if containsUnderOrEqualRoot(resolved, realRoot) {
 			return resolved, true
 		}
 	}
 	return "", false
+}
+
+// containsUnderOrEqualRoot is containsUnderRoot but also accepts p == root. Used
+// by the manual-import read/scan path (ResolveContained), where pointing at a
+// configured directory as a whole is a valid operation (#1373).
+func containsUnderOrEqualRoot(p, root string) bool {
+	if root == "" || root == "." {
+		return false
+	}
+	rel, err := filepath.Rel(root, p)
+	if err != nil {
+		return false
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	return true // rel == "." (p == root) is allowed here
 }
 
 // containsUnderRoot is the lexical containment primitive shared by Contains.

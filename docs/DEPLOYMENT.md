@@ -312,7 +312,7 @@ Bindery parks the download as *handed off* and reconciles the managed copy the e
 | `BINDERY_DATA_DIR` | `/config` on Linux; `%APPDATA%\Bindery` on Windows; `~/Library/Application Support/Bindery` on macOS | Config directory (backups live here) |
 | `BINDERY_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `BINDERY_API_KEY` | _(empty)_ | **Seed only.** Bootstraps the initial API key on first launch if set; after that the key lives in the database and can be regenerated from the UI. |
-| `BINDERY_DOWNLOAD_DIR` | `/downloads` | Where the download client places completed downloads |
+| `BINDERY_DOWNLOAD_DIR` | `/downloads` | Where the download client places completed downloads. Manual/bulk import may also read from here (and from `BINDERY_AUDIOBOOK_DOWNLOAD_DIR`), so a migration backlog sitting in the download folder can be scanned and attached in bulk. |
 | `BINDERY_AUDIOBOOK_DOWNLOAD_DIR` | falls back to `BINDERY_DOWNLOAD_DIR` | Separate watch folder for audiobook downloads; set this when your download client routes audiobook grabs to a dedicated category/path |
 | `BINDERY_LIBRARY_DIR` | `/books` | Destination for imported ebook files |
 | `BINDERY_AUDIOBOOK_DIR` | falls back to `BINDERY_LIBRARY_DIR` | Destination for imported audiobook folders |

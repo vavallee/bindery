@@ -536,8 +536,14 @@ func main() {
 		WithNotifier(notif).
 		WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir).
 		WithIndexers(indexerRepo)
+	// Manual/bulk import may read from the download dirs as well as the library
+	// roots — a Readarr/qBittorrent migrant's backlog sits in the download dir,
+	// not the library (#1373). These are trusted, configured source dirs the
+	// automated importer already reads from; the stricter `libraryRoots` (no
+	// download dirs) still gates the delete handlers.
+	importRoots := api.NewLibraryRoots(rootFolderRepo, cfg.LibraryDir, cfg.AudiobookDir, cfg.DownloadDir, cfg.AudiobookDownloadDir)
 	manualImportHandler := api.NewManualImportHandler(importScanner, downloadRepo, bookRepo).
-		WithRoots(libraryRoots)
+		WithRoots(importRoots)
 	pendingHandler := api.NewPendingHandler(pendingReleaseRepo, queueHandler, downloadRepo, bookRepo)
 	importScanner.WithSettings(settingsRepo)
 	importScanner.WithRootFolders(rootFolderRepo)

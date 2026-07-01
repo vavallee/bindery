@@ -117,6 +117,12 @@ DELETE /api/v1/queue/{id}                         remove (also from downloader)
 GET    /api/v1/pending                            grabs awaiting delay-profile clearance
 POST   /api/v1/pending/{id}/grab                  promote pending to queue immediately
 
+GET    /api/v1/queue/manual-import/lookup         parse + catalogue-match one path (admin)
+GET    /api/v1/queue/manual-import/scan           enumerate + match book units under a folder (admin)
+POST   /api/v1/queue/manual-import                import one path against a book (admin)
+POST   /api/v1/queue/manual-import/batch          import selected {path, bookId} pairs (admin)
+POST   /api/v1/queue/manual-import/reassign       move a mis-matched file to another book (admin)
+
 GET    /api/v1/history                            grab / import / failure timeline
 POST   /api/v1/history/{id}/blocklist             add the release to the blocklist
 
