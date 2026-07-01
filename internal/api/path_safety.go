@@ -230,11 +230,39 @@ func containsUnderRoot(p, root string) bool {
 // metadata.opf with `<path>/etc/passwd</path>`) could redirect a delete
 // outside any library. The Calibre integration writes into a configured
 // library dir anyway, so legitimate Calibre books still pass the check.
-func safeRemoveBookPath(ctx context.Context, roots *LibraryRoots, p, format string, logFields ...any) (skipped bool, err error) {
+func safeRemoveBookPath(ctx context.Context, roots *LibraryRoots, owner bookFileOwner, excludeBookID int64, p, format string, logFields ...any) (skipped bool, err error) {
 	if !roots.Contains(ctx, p) {
 		fields := append([]any{"path", p, "operation", "book_file_delete"}, logFields...)
 		slog.Warn("path containment: refusing to delete file outside configured library roots", fields...)
 		return true, nil
 	}
+	// Ownership guard (#1368): never unlink a file that another book still tracks
+	// in book_files. A stale legacy path column, a mis-detached Fix Match, or a
+	// duplicate record must not let deleting one book destroy another book's
+	// file. Fail safe — if ownership can't be determined, skip the disk delete
+	// (the DB row is going away regardless; a stranded path is recoverable, a
+	// deleted file is not).
+	if owner != nil {
+		otherOwns, ownErr := owner.PathOwnedByOtherBook(ctx, p, excludeBookID)
+		if ownErr != nil {
+			fields := append([]any{"path", p, "operation", "book_file_delete", "error", ownErr}, logFields...)
+			slog.Warn("path ownership: could not verify book_files ownership; skipping disk delete", fields...)
+			return true, nil
+		}
+		if otherOwns {
+			fields := append([]any{"path", p, "operation", "book_file_delete"}, logFields...)
+			slog.Warn("path ownership: file still tracked by another book; skipping disk delete", fields...)
+			return true, nil
+		}
+	}
 	return false, removeBookPathScoped(p, format)
+}
+
+// bookFileOwner reports whether an on-disk path is still registered in
+// book_files to a book other than excludeBookID. safeRemoveBookPath consults it
+// so no delete path — book delete, per-file delete, author delete, reassign
+// cleanup — can unlink a file another book still owns (#1368). The book_files
+// path column is globally UNIQUE, so any hit is a single unambiguous owner.
+type bookFileOwner interface {
+	PathOwnedByOtherBook(ctx context.Context, path string, excludeBookID int64) (bool, error)
 }

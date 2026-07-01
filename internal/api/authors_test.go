@@ -239,6 +239,75 @@ func TestDeleteAuthor_WithDeleteFiles(t *testing.T) {
 	}
 }
 
+// TestDeleteAuthor_SkipsFileOwnedByAnotherBook covers the #1368 ownership guard
+// on the author-delete sweep: a book under the deleted author whose STALE legacy
+// file_path points at a file another (surviving) book still tracks in book_files
+// must not be removed from disk.
+func TestDeleteAuthor_SkipsFileOwnedByAnotherBook(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	shared := filepath.Join(t.TempDir(), "shared.m4b")
+	if err := os.WriteFile(shared, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Surviving owner under a different author, tracking the file in book_files.
+	keepAuthor := &models.Author{ForeignID: "OLKEEP", Name: "Keep", SortName: "Keep", MetadataProvider: "openlibrary", Monitored: true}
+	if err := authorRepo.Create(ctx, keepAuthor); err != nil {
+		t.Fatal(err)
+	}
+	owner := &models.Book{ForeignID: "OLOWNER", AuthorID: keepAuthor.ID, Title: "Owner", SortTitle: "owner", Status: "imported", Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true}
+	if err := bookRepo.Create(ctx, owner); err != nil {
+		t.Fatal(err)
+	}
+	if err := bookRepo.AddBookFile(ctx, owner.ID, models.MediaTypeAudiobook, shared); err != nil {
+		t.Fatal(err)
+	}
+
+	// Doomed author with a book whose legacy file_path aliases the same file but
+	// has no book_files row of its own.
+	author := &models.Author{ForeignID: "OLDOOM", Name: "Doom", SortName: "Doom", MetadataProvider: "openlibrary", Monitored: true}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	ghost := &models.Book{ForeignID: "OLGHOST", AuthorID: author.ID, Title: "Ghost", SortTitle: "ghost", Status: "imported", Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true}
+	if err := bookRepo.Create(ctx, ghost); err != nil {
+		t.Fatal(err)
+	}
+	ghost.FilePath = shared
+	if err := bookRepo.Update(ctx, ghost); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, nil, nil, profileRepo, nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/author/"+strconv.FormatInt(author.ID, 10)+"?deleteFiles=true", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", strconv.FormatInt(author.ID, 10))
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+	h.Delete(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if _, err := os.Stat(shared); err != nil {
+		t.Fatalf("shared file deleted by author delete despite another book owning it (#1368): %v", err)
+	}
+	if of, err := bookRepo.ListFiles(ctx, owner.ID); err != nil || len(of) != 1 {
+		t.Errorf("owner should still track the file, got %d rows (err=%v)", len(of), err)
+	}
+}
+
 // TestDeleteAuthor_WithoutDeleteFiles confirms the default path leaves
 // files on disk. Preserves the pre-#15 behaviour for anyone who hits the
 // delete button reflexively without opting into a disk sweep.

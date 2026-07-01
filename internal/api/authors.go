@@ -1171,8 +1171,12 @@ func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The author's books (and their book_files rows) were cascade-deleted above,
+	// so excludeBookID=0 makes the ownership guard skip any path still tracked by
+	// a surviving book of another author — deleting an author must not delete a
+	// file some other book still owns (#1368).
 	for _, p := range pathsToRemove {
-		if _, err := safeRemoveBookPath(r.Context(), h.roots, p, "", "author_id", id); err != nil {
+		if _, err := safeRemoveBookPath(r.Context(), h.roots, h.books, 0, p, "", "author_id", id); err != nil {
 			slog.Warn("delete author: failed to remove file", "author_id", id, "path", p, "error", err)
 		}
 	}

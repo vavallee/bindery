@@ -552,10 +552,11 @@ func (r *BookRepo) RemoveBookFile(ctx context.Context, path string) (*models.Boo
 	return r.GetByID(ctx, bookID)
 }
 
-// PathTracked reports whether an exact on-disk path is still registered in
-// book_files (owned by any book). See BookFileRepo.PathTracked (#1368).
-func (r *BookRepo) PathTracked(ctx context.Context, path string) (bool, error) {
-	return r.files.PathTracked(ctx, path)
+// PathOwnedByOtherBook reports whether an on-disk path is still registered in
+// book_files under a book other than excludeBookID. See
+// BookFileRepo.PathOwnedByOtherBook (#1368).
+func (r *BookRepo) PathOwnedByOtherBook(ctx context.Context, path string, excludeBookID int64) (bool, error) {
+	return r.files.PathOwnedByOtherBook(ctx, path, excludeBookID)
 }
 
 // ListAllBookFilePaths returns every path in book_files.

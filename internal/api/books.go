@@ -518,30 +518,22 @@ func (h *BookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("deleteFiles") == "true" {
 		files, _ := h.books.ListFiles(r.Context(), id)
 		for _, f := range files {
-			if _, err := safeRemoveBookPath(r.Context(), h.roots, f.Path, "", "id", id); err != nil {
+			if _, err := safeRemoveBookPath(r.Context(), h.roots, h.books, id, f.Path, "", "id", id); err != nil {
 				slog.Warn("book delete: failed to remove file", "id", id, "path", f.Path, "error", err)
 			}
 		}
-		// Fallback for books imported before the book_files migration.
+		// Fallback for books imported before the book_files migration. This book
+		// has no book_files rows, so safeRemoveBookPath's ownership guard (exclude
+		// this id) skips any legacy path another book still tracks — a stale
+		// legacy column left by a mis-detached reassign must not take out the file
+		// the target now needs (#1368).
 		if len(files) == 0 {
 			if book, _ := h.books.GetByID(r.Context(), id); book != nil {
 				for _, p := range []string{book.EbookFilePath, book.AudiobookFilePath, book.FilePath} {
 					if p == "" {
 						continue
 					}
-					// This book has no book_files rows, so any book_files entry
-					// matching a legacy path here belongs to a DIFFERENT book (path
-					// is UNIQUE). Never delete a file another book still owns — a
-					// stale legacy column left by a mis-detached reassign must not
-					// take out the file the target now needs (#1368).
-					if tracked, err := h.books.PathTracked(r.Context(), p); err != nil {
-						slog.Warn("book delete: could not verify legacy path ownership; skipping disk delete", "id", id, "path", p, "error", err)
-						continue
-					} else if tracked {
-						slog.Warn("book delete: legacy path still tracked in book_files by another book; skipping disk delete", "id", id, "path", p)
-						continue
-					}
-					if _, err := safeRemoveBookPath(r.Context(), h.roots, p, "", "id", id); err != nil {
+					if _, err := safeRemoveBookPath(r.Context(), h.roots, h.books, id, p, "", "id", id); err != nil {
 						slog.Warn("book delete: failed to remove legacy file", "id", id, "path", p, "error", err)
 					}
 				}
@@ -640,7 +632,7 @@ func (h *BookHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	// strand the row permanently behind a path the user cannot delete.
 	var deletedPaths []string
 	for _, p := range toDelete {
-		skipped, err := safeRemoveBookPath(r.Context(), h.roots, p, format, "id", id)
+		skipped, err := safeRemoveBookPath(r.Context(), h.roots, h.books, id, p, format, "id", id)
 		if err != nil {
 			slog.Error("failed to remove book file", "id", id, "path", p, "error", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
