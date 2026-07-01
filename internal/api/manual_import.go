@@ -192,29 +192,84 @@ func (h *ManualImportHandler) Reassign(w http.ResponseWriter, r *http.Request) {
 	}
 	// Detach the stale association from the book that currently owns this path.
 	// RemoveBookFile is status-aware (flips a now-fileless source book back to
-	// "wanted") and is a no-op when the path isn't tracked. Best-effort: even if
-	// it fails, the re-import below still re-points the file to the target.
-	if _, err := h.books.RemoveBookFile(r.Context(), path); err != nil {
-		slog.Warn("reassign: detach source book file", "path", path, "error", err)
+	// "wanted"). book_files stores the path exactly as recorded at import time,
+	// which differs from prepareImport's EvalSymlinks-resolved `path` when the
+	// library is reached through a symlink (#1368). A silent no-op here leaves
+	// the source book still referencing a file the reassign is about to move
+	// away, so a later delete of the "empty-looking" source removes the target's
+	// file. Detach against the caller's raw path (what the frontend read from the
+	// DB) first, then fall back to the resolved form.
+	if !h.detachSourceFile(r.Context(), req.Path, path) {
+		slog.Warn("reassign: source file not tracked under raw or resolved path; source book may retain a stale reference",
+			"rawPath", req.Path, "resolvedPath", path)
 	}
 	ctx := context.WithoutCancel(r.Context())
 	targetID := req.TargetBookID
+	// Snapshot the target's existing files so removeStaleSource can tell whether
+	// THIS import actually placed a new file for the target, rather than treating
+	// a pre-existing unrelated file as proof of a successful move (#1368).
+	preexisting := h.targetFilePaths(ctx, targetID)
 	go func() {
 		h.scanner.ImportFromPath(ctx, dl, path, req.Format)
-		h.removeStaleSource(ctx, path, targetID)
+		h.removeStaleSource(ctx, path, targetID, preexisting)
 	}()
 	writeJSON(w, http.StatusAccepted, dl)
+}
+
+// detachSourceFile removes the book_files association for the file being
+// reassigned and reports whether a row was actually removed. book_files stores
+// the path exactly as recorded at import time, which for a symlinked library
+// differs from the EvalSymlinks-resolved path prepareImport produces (#1368).
+// Try the caller's raw (un-resolved) path — the string the frontend read back
+// from the DB — then the resolved path, so the source is reliably emptied
+// regardless of which form the row holds.
+func (h *ManualImportHandler) detachSourceFile(ctx context.Context, rawPath, resolvedPath string) bool {
+	raw := filepath.Clean(rawPath)
+	removed, err := h.books.RemoveBookFile(ctx, raw)
+	if err != nil {
+		slog.Warn("reassign: detach source book file", "path", raw, "error", err)
+	}
+	if removed != nil {
+		return true
+	}
+	if resolvedPath == raw {
+		return false
+	}
+	removed, err = h.books.RemoveBookFile(ctx, resolvedPath)
+	if err != nil {
+		slog.Warn("reassign: detach source book file", "path", resolvedPath, "error", err)
+	}
+	return removed != nil
+}
+
+// targetFilePaths returns the set of on-disk paths currently tracked for the
+// target book. Captured before the async import so removeStaleSource can
+// distinguish a file THIS reassign placed from one the target already had (#1368).
+func (h *ManualImportHandler) targetFilePaths(ctx context.Context, bookID int64) map[string]bool {
+	set := map[string]bool{}
+	files, err := h.books.ListBookFiles(ctx, bookID)
+	if err != nil {
+		slog.Warn("reassign: snapshot target files", "bookID", bookID, "error", err)
+		return set
+	}
+	for _, f := range files {
+		set[f.Path] = true
+	}
+	return set
 }
 
 // removeStaleSource deletes the original mis-filed copy after a successful
 // reassign. The import places the file under the target book (by hardlink or
 // copy), leaving the original where it was — which a later library scan would
 // re-attach to the wrong book. We remove it, but only once we can confirm the
-// import actually put the file somewhere else: the target must now have a
-// tracked file at a different path that exists on disk. If the import failed
-// (no new file) or resolved to the same path, the source is left untouched so a
-// file is never lost.
-func (h *ManualImportHandler) removeStaleSource(ctx context.Context, src string, targetID int64) {
+// import actually put the file somewhere else: the target must now have a file
+// that (a) is not the source path, (b) was not already present before this
+// reassign (preexisting), and (c) exists on disk. Counting a pre-existing
+// unrelated file (e.g. an ebook the target already had) as proof of a move
+// would delete the source even when this import placed nothing — data loss
+// (#1368). If the import failed (no new file) or resolved to the same path, the
+// source is left untouched so a file is never lost.
+func (h *ManualImportHandler) removeStaleSource(ctx context.Context, src string, targetID int64, preexisting map[string]bool) {
 	files, err := h.books.ListBookFiles(ctx, targetID)
 	if err != nil {
 		slog.Warn("reassign cleanup: list target files", "error", err)
@@ -224,6 +279,9 @@ func (h *ManualImportHandler) removeStaleSource(ctx context.Context, src string,
 	for _, f := range files {
 		if f.Path == src {
 			return // target ended up at the same path; nothing to clean up
+		}
+		if preexisting[f.Path] {
+			continue // already there before this reassign — not proof of a move
 		}
 		if _, statErr := os.Stat(f.Path); statErr == nil {
 			moved = true

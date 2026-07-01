@@ -80,6 +80,23 @@ func (r *BookFileRepo) DeleteByPath(ctx context.Context, path string) (int64, er
 	return bookID, nil
 }
 
+// PathTracked reports whether the given exact on-disk path is present in
+// book_files. The book-delete legacy-column fallback uses this to avoid
+// os.Remove-ing a file that another book still owns via book_files — the path
+// column is globally UNIQUE, so a hit means exactly one (other) book tracks it
+// (#1368).
+func (r *BookFileRepo) PathTracked(ctx context.Context, path string) (bool, error) {
+	var one int
+	err := r.db.QueryRowContext(ctx, `SELECT 1 FROM book_files WHERE path = ? LIMIT 1`, path).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("book_files path tracked: %w", err)
+	}
+	return true, nil
+}
+
 // ListAllPaths returns every path currently registered in book_files.
 // Used by ScanLibrary to build the set of already-tracked files.
 func (r *BookFileRepo) ListAllPaths(ctx context.Context) ([]string, error) {

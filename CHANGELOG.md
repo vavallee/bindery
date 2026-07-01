@@ -6,6 +6,37 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.23.2] — 2026-07-01
+
+A data-loss patch for **Fix Match** (the file-reassign feature, #1238, shipped in
+v1.23.0). Anyone whose library is reached through a symlink should update.
+
+### Fixed
+- **Fix Match no longer strands (and later deletes) a file on symlinked
+  libraries** (#1368) — reassigning a file resolves the path through
+  `EvalSymlinks` for its containment check, but `book_files` stores the path as
+  it was recorded at import time. On a library mounted through a symlink (common
+  in Docker/NAS setups) the resolved and stored paths differ, so the exact-match
+  detach silently did nothing: the *old* record kept a live reference to the file
+  the reassign had moved to the target. Deleting that "empty-looking" record then
+  removed the file the target now needs. Bindery now detaches against the stored
+  path (falling back to the resolved form), so the source record is reliably
+  emptied. Closes #1368.
+- **Reassign cleanup no longer deletes the source when nothing was imported**
+  (#1368) — the post-reassign cleanup deleted the original file once it saw *any*
+  file on the target book, treating a pre-existing unrelated file (e.g. an ebook
+  the target already had) as proof the move succeeded. If the import placed
+  nothing, the source was deleted anyway. It now snapshots the target's files
+  before importing and only removes the source when a *newly added* file is
+  present on disk.
+- **Deleting a book can't remove a file another book owns** (#1368) — deleting a
+  book with "also delete files" falls back to the legacy single-path columns when
+  a book has no `book_files` rows, and did so without checking whether the path
+  was still in use. A stale legacy column could therefore delete a file a
+  different book actively tracks. The delete now skips any legacy path still
+  present in `book_files` (the `path` column is globally unique, so a match means
+  another book owns it).
+
 ## [v1.23.1] — 2026-06-29
 
 A patch release: responsive mobile Settings, correct alphabetical ordering for

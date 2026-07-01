@@ -451,6 +451,63 @@ func TestBookDelete_WithDeleteFiles(t *testing.T) {
 	}
 }
 
+// TestBookDelete_LegacyFallbackSkipsFileOwnedByAnotherBook covers the #1368
+// amplifier: deleting a book that has NO book_files rows but a STALE legacy
+// path column must not os.Remove a file another book still tracks in
+// book_files. Roots are unset here so containment cannot be what saves the
+// file — the book_files ownership guard must.
+func TestBookDelete_LegacyFallbackSkipsFileOwnedByAnotherBook(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+
+	shared := filepath.Join(t.TempDir(), "book.m4b")
+	if err := os.WriteFile(shared, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Owner legitimately tracks the file via book_files.
+	owner := &models.Book{
+		ForeignID: "OWNER", AuthorID: author.ID, Title: "Owner", SortTitle: "owner",
+		Status: "imported", Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, owner); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.AddBookFile(ctx, owner.ID, models.MediaTypeAudiobook, shared); err != nil {
+		t.Fatal(err)
+	}
+
+	// Ghost has no book_files rows but a stale legacy column pointing at the
+	// same on-disk file (the state a mis-detached reassign leaves behind).
+	ghost := &models.Book{
+		ForeignID: "GHOST", AuthorID: author.ID, Title: "Ghost", SortTitle: "ghost",
+		Status: "imported", Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, ghost); err != nil {
+		t.Fatal(err)
+	}
+	ghost.AudiobookFilePath = shared
+	if err := books.Update(ctx, ghost); err != nil {
+		t.Fatal(err)
+	}
+	if gf, err := books.ListFiles(ctx, ghost.ID); err != nil || len(gf) != 0 {
+		t.Fatalf("ghost should have 0 book_files rows, got %d (err=%v)", len(gf), err)
+	}
+
+	req := withURLParam(httptest.NewRequest(http.MethodDelete, "/api/v1/book/"+strconv.FormatInt(ghost.ID, 10)+"?deleteFiles=true", nil), "id", strconv.FormatInt(ghost.ID, 10))
+	rec := httptest.NewRecorder()
+	h.Delete(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d; body=%s", rec.Code, rec.Body.String())
+	}
+
+	if _, err := os.Stat(shared); err != nil {
+		t.Fatalf("shared file deleted by removing the ghost record — data loss (#1368): %v", err)
+	}
+	if of, err := books.ListFiles(ctx, owner.ID); err != nil || len(of) != 1 {
+		t.Errorf("owner should still track the file, got %d rows (err=%v)", len(of), err)
+	}
+}
+
 // TestBookDelete_WithoutDeleteFiles preserves the file even though the row
 // is gone — matches author-delete behaviour for non-opt-in sweeps.
 func TestBookDelete_WithoutDeleteFiles(t *testing.T) {

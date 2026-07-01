@@ -526,10 +526,23 @@ func (h *BookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		if len(files) == 0 {
 			if book, _ := h.books.GetByID(r.Context(), id); book != nil {
 				for _, p := range []string{book.EbookFilePath, book.AudiobookFilePath, book.FilePath} {
-					if p != "" {
-						if _, err := safeRemoveBookPath(r.Context(), h.roots, p, "", "id", id); err != nil {
-							slog.Warn("book delete: failed to remove legacy file", "id", id, "path", p, "error", err)
-						}
+					if p == "" {
+						continue
+					}
+					// This book has no book_files rows, so any book_files entry
+					// matching a legacy path here belongs to a DIFFERENT book (path
+					// is UNIQUE). Never delete a file another book still owns — a
+					// stale legacy column left by a mis-detached reassign must not
+					// take out the file the target now needs (#1368).
+					if tracked, err := h.books.PathTracked(r.Context(), p); err != nil {
+						slog.Warn("book delete: could not verify legacy path ownership; skipping disk delete", "id", id, "path", p, "error", err)
+						continue
+					} else if tracked {
+						slog.Warn("book delete: legacy path still tracked in book_files by another book; skipping disk delete", "id", id, "path", p)
+						continue
+					}
+					if _, err := safeRemoveBookPath(r.Context(), h.roots, p, "", "id", id); err != nil {
+						slog.Warn("book delete: failed to remove legacy file", "id", id, "path", p, "error", err)
 					}
 				}
 			}
