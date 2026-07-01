@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -69,6 +70,31 @@ func VerifyPassword(password, phc string) bool {
 	got := argon2.IDKey([]byte(password), salt, time, memory, threads, uint32(len(want))) //nolint:gosec // bounded by argonKeyLen
 	return subtle.ConstantTimeCompare(got, want) == 1
 }
+
+// dummyPasswordHash lazily builds a valid argon2id PHC hash (with the current
+// parameters) that no real password matches. It's computed once, on first use,
+// so importing this package costs nothing.
+var dummyPasswordHash = sync.OnceValue(func() string {
+	h, err := HashPassword("not-a-real-credential-only-for-timing")
+	if err != nil {
+		// rand.Read is the only failure path and effectively never fails; fall
+		// back to a structurally valid PHC with the same params so
+		// VerifyPassword still runs the full KDF (equal timing) and returns false.
+		return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
+			argon2.Version, argonMemory, argonTime, argonThreads,
+			base64.RawStdEncoding.EncodeToString(make([]byte, argonSaltLen)),
+			base64.RawStdEncoding.EncodeToString(make([]byte, argonKeyLen)),
+		)
+	}
+	return h
+})
+
+// DummyPasswordHash returns a valid argon2id hash that no password matches, for
+// equalizing login timing when the supplied username does not exist. Verifying
+// any password against it runs the full KDF and fails, so a missing-user login
+// costs the same as a wrong-password login and usernames cannot be enumerated
+// by measuring response time.
+func DummyPasswordHash() string { return dummyPasswordHash() }
 
 // RandomHex returns 2*n hex characters from crypto/rand.
 func RandomHex(n int) (string, error) {
