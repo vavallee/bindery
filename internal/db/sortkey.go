@@ -33,7 +33,7 @@ func authorSortKey(sortName string) string {
 	}
 	s = strings.ToLower(s)
 	s = nonDecomposableFolder.Replace(s)
-	folded, _, err := transform.String(accentStripper, s)
+	folded, _, err := transform.String(newAccentStripper(), s)
 	if err != nil {
 		// transform only errors on malformed input we can't normalize; fall
 		// back to the lowercased+replaced form rather than dropping the row to
@@ -43,13 +43,19 @@ func authorSortKey(sortName string) string {
 	return folded
 }
 
-// accentStripper decomposes runes (NFD) and removes combining marks (Mn), then
-// recomposes (NFC). This folds precomposed accented letters to their base.
-var accentStripper = transform.Chain(
-	norm.NFD,
-	runes.Remove(runes.In(unicode.Mn)),
-	norm.NFC,
-)
+// newAccentStripper builds a transformer that decomposes runes (NFD), removes
+// combining marks (Mn), then recomposes (NFC), folding precomposed accented
+// letters to their base. Constructed PER CALL: transform.Chain returns a
+// stateful transformer whose Transform mutates internal buffers, so a shared
+// package-level instance panics under concurrent author writes (#1374). The
+// three small allocations are noise next to the DB write that follows.
+func newAccentStripper() transform.Transformer {
+	return transform.Chain(
+		norm.NFD,
+		runes.Remove(runes.In(unicode.Mn)),
+		norm.NFC,
+	)
+}
 
 // nonDecomposableFolder handles the Latin letters NFD leaves intact because
 // they are atomic code points, not base+combining-mark compositions. Applied
