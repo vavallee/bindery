@@ -52,6 +52,23 @@ func registerGrimmoryRoutes(r chi.Router, h grimmoryRouteHandler) {
 	})
 }
 
+// grimmorySyncRouteHandler is the /grimmory/sync surface.
+type grimmorySyncRouteHandler interface {
+	Start(http.ResponseWriter, *http.Request)
+	Status(http.ResponseWriter, *http.Request)
+}
+
+// registerGrimmorySyncRoutes mounts the bulk-push job routes. Admin-only for
+// the same reason as the Calibre sync subtree: the job POSTs every imported
+// book out to an external service.
+func registerGrimmorySyncRoutes(r chi.Router, h grimmorySyncRouteHandler) {
+	r.Group(func(r chi.Router) {
+		r.Use(auth.RequireAdmin)
+		r.Post("/grimmory/sync", h.Start)
+		r.Get("/grimmory/sync/status", h.Status)
+	})
+}
+
 // calibreProbeHandler is the /calibre/test surface.
 type calibreProbeHandler interface {
 	Test(http.ResponseWriter, *http.Request)

@@ -63,7 +63,7 @@ The `internal/` tree is organised by domain, not by layer:
 | `config` | Loads bootstrap runtime configuration from environment variables (paths, ports, retention, feature flags). |
 | `bookhydrate` | Persists metadata-provider edition details for newly created or rebound books. |
 | `concurrency` | Small primitives for bounding goroutine fan-out in handlers and background jobs. |
-| `grimmory` | Client for the Grimmory self-hosted digital-library API; user-facing (Settings exposes config/test routes under `/grimmory/*`). |
+| `grimmory` | Grimmory self-hosted digital-library integration: JWT/token client, post-import BookDrop pusher, and bulk sync job (Settings exposes config/test/sync routes under `/grimmory/*`). |
 | `hardcoverlistsyncer` | Syncs Hardcover reading lists into the catalogue as "wanted" books. |
 | `isbnutil` | Normalizes ISBN inputs for metadata-provider lookups. |
 | `metrics` | Prometheus exposition-format runtime metrics (registry, instances, HTTP handler). |
