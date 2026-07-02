@@ -17,12 +17,16 @@ name: Notify Discord on external PR
 # successful event-driven post prevents a redundant cron post and vice versa.
 
 on:
-  pull_request_target:
+  # Reviewed use of pull_request_target: this workflow reads event metadata
+  # only. It never checks out PR code, every event field is routed through
+  # env vars (no inline interpolation into run:), and the token is scoped to
+  # pull-requests: write for the dedupe label. Plain pull_request cannot
+  # replace it: fork PRs get no secrets (the webhook) and a read-only token.
+  pull_request_target: # zizmor: ignore[dangerous-triggers]
     types: [opened, ready_for_review]
 
 permissions:
-  contents: read
-  pull-requests: write   # required for adding the dedupe label after a successful post
+  pull-requests: write   # dedupe label; everything else (incl. contents) defaults to none
 
 jobs:
   notify:
@@ -96,9 +100,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
           # Best-effort: a missing label permission must not fail the job
           # (the backstop will see no label and try again, which is fine
           # because Discord requests at this volume are essentially free).
-          gh pr edit "$PR_NUMBER" --add-label bindery-notified --repo "${{ github.repository }}" || \
+          gh pr edit "$PR_NUMBER" --add-label bindery-notified --repo "$REPO" || \
             echo "::warning::failed to add bindery-notified label (the cron backstop will retry)"
