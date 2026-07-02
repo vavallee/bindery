@@ -43,6 +43,13 @@ behind the v1.23.2 data-loss fix).
   Server errors now return a generic `internal server error` body and log the
   full detail server-side (with the request method and path) instead.
 
+### CI
+- **Docs-only PRs can merge again** (#1380) — `Security Summary` is a required
+  status check, but the security workflow path-ignores docs-only diffs, so a
+  PR touching only Markdown/docs never received the check and sat permanently
+  blocked. A companion workflow now runs on exactly the inverted path set and
+  reports the check green — there is nothing to scan in a docs-only diff.
+
 ### Fixed
 - **Concurrent imports no longer crash on author writes** (#1374) — the
   accent-folding sort key added in v1.23.1 shared a single
