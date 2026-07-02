@@ -229,6 +229,43 @@ func TestAggregator_GetAuthorWorksForAuthor_PrunesCompilations(t *testing.T) {
 	}
 }
 
+func TestAggregator_GetAuthorWorksForAuthor_PrunesTechnicalSameNameCollision(t *testing.T) {
+	primary := &mockWorksProvider{
+		mockProvider: mockProvider{name: "ol", authorWorks: []models.Book{
+			{ForeignID: "OL1W", Title: "Kingdom's Dawn", MetadataProvider: "openlibrary", Genres: []string{"Juvenile Fiction", "Christian life, fiction"}},
+			{ForeignID: "OL2W", Title: "Kingdom's Hope", MetadataProvider: "openlibrary", Genres: []string{"Fiction, fantasy, general"}},
+			{ForeignID: "OL3W", Title: "Rise of the Fallen", MetadataProvider: "openlibrary", Genres: []string{"Adventure and adventurers, fiction", "Christian life, fiction"}},
+			{ForeignID: "OL4W", Title: "Software Defined Networks", MetadataProvider: "openlibrary", Genres: []string{
+				"Computer networks",
+				"Software-defined networking (Computer network technology)",
+				"Professional, career & trade -> computer science -> networking",
+				"Telecommunications",
+			}},
+		}},
+	}
+	agg := &Aggregator{
+		primary: primary,
+		cache:   newTTLCache(time.Minute),
+	}
+
+	got, err := agg.GetAuthorWorksForAuthor(context.Background(), models.Author{ForeignID: "OL1480449A", Name: "Chuck Black"})
+	if err != nil {
+		t.Fatalf("GetAuthorWorksForAuthor: %v", err)
+	}
+	titles := map[string]bool{}
+	for _, b := range got {
+		titles[b.Title] = true
+	}
+	if titles["Software Defined Networks"] {
+		t.Fatalf("technical same-name collision should be pruned, got %+v", got)
+	}
+	for _, want := range []string{"Kingdom's Dawn", "Kingdom's Hope", "Rise of the Fallen"} {
+		if !titles[want] {
+			t.Fatalf("expected %q to remain, got %+v", want, got)
+		}
+	}
+}
+
 func TestAggregator_GetAuthorWorksForAuthor_MergesSupplementalIntoFirstDuplicateTitle(t *testing.T) {
 	primary := &mockWorksProvider{
 		mockProvider: mockProvider{name: "ol", authorWorks: []models.Book{
