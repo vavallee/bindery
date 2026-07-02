@@ -40,7 +40,7 @@ func (h *CalibreRunsHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	runs, err := h.importer.RecentRuns(r.Context(), limit)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if runs == nil {

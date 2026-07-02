@@ -47,7 +47,7 @@ func NewImportListHandler(repo *db.ImportListRepo, settings *db.SettingsRepo, hc
 func (h *ImportListHandler) List(w http.ResponseWriter, r *http.Request) {
 	lists, err := h.repo.List(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if lists == nil {
@@ -64,7 +64,7 @@ func (h *ImportListHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	il, err := h.repo.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if il == nil {
@@ -93,7 +93,7 @@ func (h *ImportListHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	il.APIKey = hardcover.NormalizeAPIToken(il.APIKey)
 	if err := h.repo.Create(r.Context(), &il); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, importListResponse(il))
@@ -122,7 +122,7 @@ func (h *ImportListHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	il.ID = id
 	if err := h.repo.Update(r.Context(), &il); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, importListResponse(il))
@@ -135,7 +135,7 @@ func (h *ImportListHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.repo.Delete(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -173,7 +173,7 @@ func (h *ImportListHandler) HardcoverLists(w http.ResponseWriter, r *http.Reques
 func (h *ImportListHandler) ListExclusions(w http.ResponseWriter, r *http.Request) {
 	exclusions, err := h.repo.ListExclusions(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if exclusions == nil {
@@ -193,7 +193,7 @@ func (h *ImportListHandler) CreateExclusion(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := h.repo.CreateExclusion(r.Context(), &e); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, e)
@@ -206,7 +206,7 @@ func (h *ImportListHandler) DeleteExclusion(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := h.repo.DeleteExclusion(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

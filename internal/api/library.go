@@ -49,7 +49,7 @@ func (h *LibraryHandler) ScanStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	setting, err := h.settings.Get(r.Context(), "library.lastScan")
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if setting == nil {

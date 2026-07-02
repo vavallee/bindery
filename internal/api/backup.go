@@ -50,7 +50,7 @@ func (h *BackupHandler) List(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, []map[string]any{})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -123,7 +123,7 @@ func (h *BackupHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err := h.vacuumInto(r.Context(), tmpPath); err != nil {
 		_ = os.Remove(tmpPath)
 		slog.Error("backup failed", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "backup failed: " + err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	// Match the live DB file's 0600 mode. VACUUM INTO honours umask, which on
@@ -132,13 +132,13 @@ func (h *BackupHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err := os.Chmod(tmpPath, 0o600); err != nil {
 		_ = os.Remove(tmpPath)
 		slog.Error("backup chmod failed", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "backup failed: " + err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if err := os.Rename(tmpPath, destPath); err != nil {
 		_ = os.Remove(tmpPath)
 		slog.Error("backup rename failed", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "backup failed: " + err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -203,7 +203,7 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 
 	if err := copyFile(srcPath, h.dbPath); err != nil {
 		slog.Error("restore failed", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "restore failed: " + err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -225,7 +225,7 @@ func (h *BackupHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "backup file not found"})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

@@ -23,7 +23,7 @@ func NewMetadataProfileHandler(repo *db.MetadataProfileRepo) *MetadataProfileHan
 func (h *MetadataProfileHandler) List(w http.ResponseWriter, r *http.Request) {
 	profiles, err := h.repo.List(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if profiles == nil {
@@ -40,7 +40,7 @@ func (h *MetadataProfileHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := h.repo.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if p == nil {
@@ -72,7 +72,7 @@ func (h *MetadataProfileHandler) Create(w http.ResponseWriter, r *http.Request) 
 		p.UnknownLanguageBehavior = models.UnknownLanguagePass
 	}
 	if err := h.repo.Create(r.Context(), &p); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, p)
@@ -104,7 +104,7 @@ func (h *MetadataProfileHandler) Update(w http.ResponseWriter, r *http.Request) 
 		p.UnknownLanguageBehavior = models.UnknownLanguagePass
 	}
 	if err := h.repo.Update(r.Context(), &p); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, p)
@@ -120,7 +120,7 @@ func (h *MetadataProfileHandler) Delete(w http.ResponseWriter, r *http.Request) 
 	// observe a 200 / 500 vs. 404 difference and probe for existence.
 	existing, err := h.repo.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if existing == nil || !auth.CheckOwnership(r.Context(), existing.OwnerUserID) {
@@ -128,7 +128,7 @@ func (h *MetadataProfileHandler) Delete(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := h.repo.Delete(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

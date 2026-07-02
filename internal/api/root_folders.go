@@ -24,7 +24,7 @@ func NewRootFolderHandler(folders *db.RootFolderRepo) *RootFolderHandler {
 func (h *RootFolderHandler) List(w http.ResponseWriter, r *http.Request) {
 	folders, err := h.folders.List(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if folders == nil {
@@ -61,7 +61,7 @@ func (h *RootFolderHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	folder, err := h.folders.Create(r.Context(), req.Path)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -80,7 +80,7 @@ func (h *RootFolderHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// distinguish "exists but not mine" from "does not exist".
 	existing, err := h.folders.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if existing == nil || !auth.CheckOwnership(r.Context(), existing.OwnerUserID) {
@@ -88,7 +88,7 @@ func (h *RootFolderHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.folders.Delete(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
