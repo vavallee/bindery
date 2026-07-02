@@ -71,24 +71,36 @@ jobs:
       - name: npm audit
         run: npm audit --audit-level=high --prefix web
 
-      - name: Install ESLint security tooling
-        run: |
-          npm install --no-save \
-            eslint-plugin-security \
-            @microsoft/eslint-formatter-sarif \
-            --prefix web
-
+      # eslint-plugin-security and @microsoft/eslint-formatter-sarif are pinned
+      # devDependencies in web/package.json, installed by the npm ci above —
+      # no ad-hoc runtime install outside the lockfile.
       - name: ESLint with security plugin
+        # The config must live inside web/: Node resolves its bare imports
+        # relative to the config file, so a config under /tmp never finds
+        # web/node_modules (the old /tmp variant failed to load and the
+        # `|| true` hid it — no SARIF was ever produced).
         run: |
-          cat > /tmp/eslint-security.config.mjs << 'EOF'
+          cat > web/eslint-security.config.mjs << 'EOF'
           import security from 'eslint-plugin-security';
+          import tseslint from 'typescript-eslint';
+          import reactHooks from 'eslint-plugin-react-hooks';
           export default [
             security.configs.recommended,
-            { files: ['src/**/*.{ts,tsx,js,jsx}'] }
+            {
+              files: ['src/**/*.{ts,tsx}'],
+              languageOptions: { parser: tseslint.parser },
+            },
+            {
+              // Register (not enable) the plugins named by the project's
+              // inline eslint-disable comments so this security-only config
+              // doesn't error on them as unknown rules.
+              plugins: { '@typescript-eslint': tseslint.plugin, 'react-hooks': reactHooks },
+              linterOptions: { reportUnusedDisableDirectives: 'off' },
+            },
           ];
           EOF
           cd web && npx eslint \
-            -c /tmp/eslint-security.config.mjs \
+            -c eslint-security.config.mjs \
             --format @microsoft/eslint-formatter-sarif \
             --output-file eslint-security.sarif \
             src/ || true
