@@ -24,6 +24,12 @@ import (
 	"github.com/vavallee/bindery/internal/textutil"
 )
 
+// grimmoryPusher mirrors a just-imported ebook into Grimmory's BookDrop (#826).
+// Narrow local interface, same pattern as calibreAdder below.
+type grimmoryPusher interface {
+	PushOnImport(ctx context.Context, bookID int64, title, filePath string)
+}
+
 // calibreAdder mirrors a just-imported file into Calibre via calibredb or the
 // Bindery Bridge plugin. The scanner only invokes it when Calibre mode is on.
 type calibreAdder interface {
@@ -69,6 +75,7 @@ type Scanner struct {
 	renamer              *Renamer
 	remapper             *Remapper
 	calibreAdder         calibreAdder
+	grimmory             grimmoryPusher
 	calibreMode          func() calibre.Mode
 	calibreCoverCacheDir string
 	settings             *db.SettingsRepo
@@ -211,6 +218,15 @@ func (s *Scanner) effectiveAudiobookDir(ctx context.Context, author *models.Auth
 func (s *Scanner) WithCalibre(mode func() calibre.Mode, adder calibreAdder) *Scanner {
 	s.calibreMode = mode
 	s.calibreAdder = adder
+	return s
+}
+
+// WithGrimmory attaches the Grimmory push integration (#826). The pusher reads
+// its config live on every import, so enabling/disabling in the UI takes
+// effect without restarting. Pushes are best-effort by contract: a Grimmory
+// failure never blocks or fails the underlying import.
+func (s *Scanner) WithGrimmory(p grimmoryPusher) *Scanner {
+	s.grimmory = p
 	return s
 }
 
@@ -1110,6 +1126,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 
 		s.pushToCalibre(ctx, book, author, edition, seriesTitle, seriesNum, destPath)
 		s.pushToCWA(ctx, destPath)
+		s.pushToGrimmory(ctx, book, destPath)
 
 		s.createHistoryEvent(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, map[string]string{"path": destPath, "format": models.MediaTypeEbook})
 	}

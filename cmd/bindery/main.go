@@ -28,6 +28,7 @@ import (
 	"github.com/vavallee/bindery/internal/config"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/downloader"
+	"github.com/vavallee/bindery/internal/grimmory"
 	"github.com/vavallee/bindery/internal/hardcoverlistsyncer"
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/importer"
@@ -309,6 +310,15 @@ func main() {
 		cfg.DownloadPathRemap,
 	)
 	importScanner.WithNotifier(notif)
+
+	// Grimmory push pipeline (#826). Config is loaded live per push, so the
+	// Settings toggle takes effect without a restart.
+	grimmoryPushRepo := db.NewGrimmoryPushRepo(database)
+	grimmoryLoadPushCfg := func() grimmory.PushConfig {
+		return api.LoadGrimmoryConfig(settingsRepo).PushConfig()
+	}
+	grimmoryPusher := grimmory.NewPusher(grimmoryLoadPushCfg, grimmoryPushRepo)
+	importScanner.WithGrimmory(grimmoryPusher)
 	if cfg.AudiobookDownloadDir != "" {
 		importScanner.WithAudiobookDownloadDir(cfg.AudiobookDownloadDir)
 		slog.Info("audiobook download dir configured", "path", cfg.AudiobookDownloadDir)
@@ -606,6 +616,9 @@ func main() {
 	calibreHandler := api.NewCalibreHandler(settingsRepo).
 		WithLifetimeCtx(appCtx)
 	grimmoryHandler := api.NewGrimmoryHandler(settingsRepo).WithVersion(version)
+	grimmorySyncer := grimmory.NewSyncer(bookRepo, grimmoryPusher)
+	grimmorySyncHandler := api.NewGrimmorySyncHandler(grimmorySyncer, grimmoryLoadPushCfg).
+		WithLastPush(grimmoryPushRepo.LastPush)
 	absHandler := api.NewABSHandler(settingsRepo).WithVersion(version)
 	absConflictHandler := api.NewABSConflictHandler(absConflictRepo, authorRepo, bookRepo)
 	absImportHandler := api.NewABSImportHandler(absImporter, func(ctx context.Context) api.ABSStoredConfig {
@@ -983,6 +996,7 @@ func main() {
 		// Grimmory integration — GetConfig open (redacts the key), writes admin.
 		// See registerGrimmoryRoutes.
 		registerGrimmoryRoutes(r, grimmoryHandler)
+		registerGrimmorySyncRoutes(r, grimmorySyncHandler)
 
 		// Calibre integration (probe + library import + bulk push) — all
 		// admin-only. See registerCalibreIntegrationRoutes.

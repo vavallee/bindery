@@ -537,3 +537,13 @@ func editionHasCalibreMetadata(e models.Edition) bool {
 		strings.TrimSpace(e.Language) != "" ||
 		strings.TrimSpace(e.ImageURL) != ""
 }
+
+// pushToGrimmory mirrors a just-imported ebook into Grimmory's BookDrop.
+// All policy (enabled check, idempotency, logging) lives in the pusher;
+// this is only the nil-safe call site.
+func (s *Scanner) pushToGrimmory(ctx context.Context, book *models.Book, path string) {
+	if s.grimmory == nil || book == nil || path == "" {
+		return
+	}
+	s.grimmory.PushOnImport(ctx, book.ID, book.Title, path)
+}
