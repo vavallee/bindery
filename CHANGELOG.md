@@ -6,11 +6,42 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
-## [v1.23.3] — 2026-07-01
+## [v1.23.3] — 2026-07-02
 
-A second same-day patch: a crash fix for concurrent imports, unblocking bulk
-folder import on the stock Docker layout, and a defence-in-depth guard behind
-the v1.23.2 data-loss fix.
+What began as a second same-day patch grew into a fuller batch: a
+security-hardening sweep of the API surface, two author-metadata cleanups from
+a first-time contributor, the naming-template fix behind several import
+complaints, and the original cut's fixes (a concurrent-import crash, bulk
+folder import rejecting its obvious targets, and a defence-in-depth guard
+behind the v1.23.2 data-loss fix).
+
+### Security
+- **Recommendations are scoped to the signed-in user** (#1384) — every
+  recommendation handler (list, dismiss, refresh, clear dismissals, author
+  exclusions) hardcoded user id `1`, so on a multi-user install all users
+  shared the admin's Discover feed and could read or mutate each other's
+  dismissals and exclusions. It was the only handler family that ignored the
+  session identity; all eight call sites now thread
+  `auth.UserIDFromContext`, matching how authors and history scope their data.
+- **Root-folder, Grimmory, and Calibre integration routes are admin-only**
+  (#1387) — `POST/DELETE /rootfolder`, the Grimmory config/test endpoints, and
+  the Calibre test/import/sync endpoints sat outside `RequireAdmin`, letting
+  any authenticated non-admin register or delete server storage roots, rewrite
+  an integration URL + credential, or trigger credentialed probes and bulk
+  pushes. They now sit behind the same admin boundary the rest of the
+  infrastructure routes (indexers, download clients, notifications, backups)
+  already enforce.
+- **Login timing no longer reveals which usernames exist** (#1386) — a login
+  attempt against a non-existent username skipped the argon2id hash entirely
+  and returned in microseconds, while a real username paid the full hash cost —
+  a timing side-channel measurable over the network, on both the main login
+  and the OPDS basic-auth path. A missing user now verifies against a dummy
+  hash so every attempt costs the same.
+- **500 responses no longer echo internal error detail** (#1385) — roughly 230
+  handlers returned `err.Error()` straight to the client on internal failures,
+  leaking SQLite table/column/constraint text and absolute filesystem paths.
+  Server errors now return a generic `internal server error` body and log the
+  full detail server-side (with the request method and path) instead.
 
 ### Fixed
 - **Concurrent imports no longer crash on author writes** (#1374) — the
@@ -38,6 +69,32 @@ the v1.23.2 data-loss fix.
   cleanup are covered too: if a path is still registered to a different book in
   `book_files`, the on-disk delete is skipped (and it fails safe when ownership
   can't be determined).
+
+- **Wanted and Queue pages no longer race their own polling** (#1382) — both
+  pages poll every 5 seconds and wrote fetch results straight into state, so a
+  slow response landing after unmount (or after a newer poll already resolved)
+  could clobber fresher rows or set state on a dead component. Both effects now
+  carry the same `cancelled` cleanup flag AuthorsPage already uses.
+- **Author search collapses duplicated provider-noise names** (#1359, thanks
+  @pcamp96) — OpenLibrary occasionally carries junk author records whose name
+  repeats the whole token sequence (`Black, Chuck, Black, Chuck`). These now
+  dedup into the clean author record instead of appearing as a second result,
+  and the clean label wins when the two records merge.
+- **Author refresh prunes same-name technical collisions** (#1360, thanks
+  @pcamp96) — when OpenLibrary groups an unrelated same-name person's works
+  under an author (a fiction catalogue suddenly containing a computer-networking
+  textbook), the refresh now drops the obvious subject outlier instead of
+  auto-creating it as a wanted book. Conservatively gated: only fires on
+  fiction-heavy catalogues, and any fiction signal on the work exempts it.
+- **The ebook naming template configured in Settings is honoured** (#1391,
+  closes #1356) — the Settings UI has saved the ebook naming template under
+  `naming.bookTemplate` since v0.2.0, but the importer read `naming_template` —
+  a key nothing writes. Every ebook import (including Fix Match, where #1356
+  caught it moving a correctly-placed file *out* of the configured series
+  layout) silently used the built-in default layout, while the client-side
+  preview showed the configured template applying. The importer now reads the
+  key the UI writes (keeping the old key as a legacy fallback); as before, a
+  template change applies from the next restart.
 
 ## [v1.23.2] — 2026-07-01
 
