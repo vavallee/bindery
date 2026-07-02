@@ -1172,7 +1172,15 @@ func googleBooksAPIKey(ctx context.Context, settings *db.SettingsRepo) string {
 	return ""
 }
 
+// defaultNamingTemplate returns the operator's ebook naming template.
+// "naming.bookTemplate" is the key the Settings UI writes; "naming_template"
+// is the original backend-only key kept as a fallback for hand-seeded values
+// (#1356 — the two sides used different keys, so UI-configured templates were
+// silently ignored and every import fell back to the built-in default).
 func defaultNamingTemplate(settings *db.SettingsRepo) string {
+	if s, _ := settings.Get(context.Background(), "naming.bookTemplate"); s != nil && s.Value != "" {
+		return s.Value
+	}
 	if s, _ := settings.Get(context.Background(), "naming_template"); s != nil && s.Value != "" {
 		return s.Value
 	}
