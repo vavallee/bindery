@@ -81,6 +81,10 @@ env:
   # IP or CIDR of the reverse proxy in front of Bindery. When set, X-Forwarded-For
   # is trusted only from that address. Required for local-only auth mode to be safe.
   # BINDERY_TRUSTED_PROXY: "192.168.1.1"
+  # Allow the UI to be embedded in an <iframe> by a trusted dashboard (Organizr,
+  # etc.). Empty (default) blocks all framing. Set to a CSP frame-ancestors
+  # source list: 'self' for same-origin, or a specific origin. See #1367.
+  # BINDERY_FRAME_ANCESTORS: "https://organizr.example.com"
 
 resources:
   requests:

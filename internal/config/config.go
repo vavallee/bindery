@@ -55,6 +55,14 @@ type Config struct {
 	// BINDERY_URL_BASE. Automatically normalised: leading slash added, trailing
 	// slash removed, full URLs truncated to their path component.
 	URLBase string
+	// FrameAncestors opts the UI out of the default clickjacking lockdown so it
+	// can be embedded in an <iframe> by a dashboard such as Organizr (issue
+	// #1367). Empty (the default) keeps embedding fully blocked
+	// (`frame-ancestors 'none'` + `X-Frame-Options: DENY`). A non-empty value is
+	// used verbatim as the CSP `frame-ancestors` source list, e.g. "'self'" for
+	// same-origin framing or "https://organizr.example.com" for a specific host.
+	// Set via BINDERY_FRAME_ANCESTORS.
+	FrameAncestors string
 	// OutboundProxy routes Bindery's remote-facing outbound HTTP (indexers,
 	// metadata providers, cover images, webhook notifications, telemetry)
 	// through a proxy. Set via BINDERY_OUTBOUND_PROXY as a single URL, e.g.
@@ -112,6 +120,7 @@ func Load() *Config {
 		RateLimitMaxFailures:     envInt("BINDERY_RATE_LIMIT_MAX_FAILURES", 5),
 		RateLimitWindowMinutes:   envInt("BINDERY_RATE_LIMIT_WINDOW_MINUTES", 15),
 		URLBase:                  normalizeURLBase(envOr("BINDERY_URL_BASE", "")),
+		FrameAncestors:           strings.TrimSpace(envOr("BINDERY_FRAME_ANCESTORS", "")),
 		OutboundProxy:            envOr("BINDERY_OUTBOUND_PROXY", ""),
 		OutboundProxyBypassLocal: envBool("BINDERY_OUTBOUND_PROXY_BYPASS_LOCAL", true),
 		OutboundProxyNoProxy:     envOr("BINDERY_OUTBOUND_PROXY_NO_PROXY", ""),
