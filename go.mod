@@ -2,6 +2,8 @@ module github.com/vavallee/bindery
 
 go 1.25.11
 
+toolchain go1.26.4
+
 require (
 	github.com/coreos/go-oidc/v3 v3.19.0
 	github.com/creditx/go-fuzzywuzzy v0.0.0-20190710081230-e795b6c0d97a
