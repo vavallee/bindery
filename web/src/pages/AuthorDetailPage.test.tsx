@@ -531,6 +531,63 @@ describe('AuthorDetailPage', () => {
     expect(screen.queryByText('Already Imported')).not.toBeInTheDocument()
   })
 
+  it('scopes the status filter to the selected media type for dual-format books (#1406)', async () => {
+    renderAuthorDetailPage(
+      [
+        // The #1406 repro: ebook side imported, audiobook still wanted, so the
+        // aggregate status is 'wanted' even though the ebook is on disk.
+        makeBook({
+          id: 601, title: 'Dual Ebook Done', status: 'wanted', monitored: true,
+          mediaType: 'both', ebookFilePath: '/books/dual.epub', audiobookFilePath: '',
+        }),
+        makeBook({ id: 602, title: 'Plain Ebook Imported', status: 'imported', mediaType: 'ebook', ebookFilePath: '/books/plain.epub' }),
+        makeBook({ id: 603, title: 'Plain Ebook Wanted', status: 'wanted', mediaType: 'ebook' }),
+      ],
+      'table',
+    )
+    await screen.findByText('Dual Ebook Done')
+
+    // Type: Ebook + Status: Imported must include the dual-format book whose
+    // ebook is on disk — the aggregate 'wanted' used to hide it.
+    fireEvent.click(screen.getByRole('button', { name: '📖 Ebook' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Imported' }))
+    expect(screen.getByText('Dual Ebook Done')).toBeInTheDocument()
+    expect(screen.getByText('Plain Ebook Imported')).toBeInTheDocument()
+    expect(screen.queryByText('Plain Ebook Wanted')).not.toBeInTheDocument()
+
+    // And its ebook is NOT wanted anymore, so the Wanted chip must drop it.
+    fireEvent.click(screen.getByRole('button', { name: 'Wanted' }))
+    expect(screen.queryByText('Dual Ebook Done')).not.toBeInTheDocument()
+    expect(screen.getByText('Plain Ebook Wanted')).toBeInTheDocument()
+
+    // The reverse direction: the audiobook side of the same book IS wanted.
+    fireEvent.click(screen.getByRole('button', { name: '🎧 Audiobook' }))
+    expect(screen.getByText('Dual Ebook Done')).toBeInTheDocument()
+    expect(screen.queryByText('Plain Ebook Wanted')).not.toBeInTheDocument()
+  })
+
+  it("includes 'both' books under either media-type chip (#1406)", async () => {
+    renderAuthorDetailPage(
+      [
+        makeBook({ id: 611, title: 'Both Formats', status: 'wanted', mediaType: 'both' }),
+        makeBook({ id: 612, title: 'Ebook Only', status: 'wanted', mediaType: 'ebook' }),
+        makeBook({ id: 613, title: 'Audio Only', status: 'wanted', mediaType: 'audiobook' }),
+      ],
+      'table',
+    )
+    await screen.findByText('Both Formats')
+
+    fireEvent.click(screen.getByRole('button', { name: '📖 Ebook' }))
+    expect(screen.getByText('Both Formats')).toBeInTheDocument()
+    expect(screen.getByText('Ebook Only')).toBeInTheDocument()
+    expect(screen.queryByText('Audio Only')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '🎧 Audiobook' }))
+    expect(screen.getByText('Both Formats')).toBeInTheDocument()
+    expect(screen.queryByText('Ebook Only')).not.toBeInTheDocument()
+    expect(screen.getByText('Audio Only')).toBeInTheDocument()
+  })
+
   it('select-all toggles every displayed book and respects the active filter (#1172)', async () => {
     vi.mocked(api.bulkActionBooks).mockResolvedValue({
       results: { '401': { ok: true } },
