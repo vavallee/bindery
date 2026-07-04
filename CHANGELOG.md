@@ -6,6 +6,54 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.24.0] — 2026-07-04
+
+The Grimmory integration goes from a settings tab nothing read to a working
+push pipeline, and the UI can now be embedded in a dashboard iframe when an
+operator explicitly opts in. Repo-side, the CI pipeline gains AI triage/review
+bots and a hardening pass on the fork-facing workflows.
+
+### Added
+- **Grimmory push pipeline — BookDrop upload on import plus bulk sync**
+  (#1392, closes #826) — the Grimmory integration was configuration-only: a
+  `Ping()` client and a Settings toggle no code ever read. It now works end to
+  end. A new `internal/grimmory` client does JWT auth against Grimmory's API
+  (login → access/refresh pair, rotation, one 401 retry after re-auth; a set
+  `api_key` is honoured as a static Bearer token and bypasses login), and
+  streams a multipart upload to `POST /api/v1/files/upload/bookdrop` on a
+  dedicated 5-minute timeout. A `Pusher` is hooked into the importer alongside
+  the Calibre/CWA handoffs — settings are read live per push (no restart) and
+  pushes are best-effort by contract, so a Grimmory failure never fails the
+  import. BookDrop has no server-side dedup, so idempotency is Bindery's:
+  migration 059 adds a `grimmory_pushes` table keyed by file path, consulted
+  on every push. Bulk sync (`grimmory.Syncer`, admin-only
+  `POST /grimmory/sync` + `GET /grimmory/sync/status`) mirrors the Calibre
+  single-job pattern (409 on concurrent start, polled progress, capped error
+  list). Settings → Grimmory gains username/password fields, a real
+  Test Connection login check, a "Push all to Grimmory" button with live
+  progress, and the experimental banner is gone. Ebook files only for now —
+  BookDrop takes one file per upload, which multi-part audiobook folders don't
+  reduce to.
+- **Opt-in iframe embedding via `BINDERY_FRAME_ANCESTORS`** (#1367) — the UI
+  could not be embedded in an `<iframe>` because `SecurityHeaders` hard-coded
+  `X-Frame-Options: DENY` and CSP `frame-ancestors 'none'`, blocking use inside
+  dashboards like Organizr. That clickjacking lockdown stays the default; an
+  operator can now set `BINDERY_FRAME_ANCESTORS` to a CSP `frame-ancestors`
+  source list (`'self'` for same-origin, or a specific origin such as
+  `https://organizr.example.com`) to allow framing per trusted origin. When
+  set, `X-Frame-Options` is dropped, since it can't express an origin allowlist
+  and `DENY`/`SAMEORIGIN` would override the more expressive CSP directive.
+  Documented in `docs/DEPLOYMENT.md` and `charts/bindery/values.yaml`.
+
+### CI
+- **AI triage, PR review, and nightly backlog-sweep bots** (#1222) — new
+  `ai-triage`, PR-review, and `ai-sweep` workflows automate issue triage and
+  first-pass PR review. The same change hardens the fork-facing notify
+  workflows: the `pull_request_target` path no longer interpolates
+  `github.event.*` inline (script-injection vector), permissions are cut to
+  the minimum each job needs, and the ESLint security scan is pinned in the
+  lockfile so the SARIF step actually runs instead of silently no-opping.
+
 ## [v1.23.3] — 2026-07-02
 
 What began as a second same-day patch grew into a fuller batch: a
