@@ -115,7 +115,7 @@ func (h *AuthHandler) Status(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	count, err := h.users.Count(ctx)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "status: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	mode := h.mode(ctx)
@@ -147,7 +147,7 @@ func (h *AuthHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	count, err := h.users.Count(ctx)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "setup: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	if count > 0 {
@@ -166,19 +166,19 @@ func (h *AuthHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	}
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "hash: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	u, err := h.users.Create(ctx, req.Username, hash)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "create user: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	// The first user is the admin. Create defaults role to "user"; without this
 	// promotion the freshly-set-up operator is locked out of every admin-gated
 	// page (Calibre plugin, user management, etc).
 	if err := h.users.PromoteFirstUser(ctx); err != nil {
-		writeErr(w, http.StatusInternalServerError, "promote admin: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	u.Role = "admin"
@@ -209,10 +209,19 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	u, err := h.users.GetByUsername(ctx, strings.TrimSpace(req.Username))
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "lookup: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
-	if u == nil || !auth.VerifyPassword(req.Password, u.PasswordHash) {
+	// Always run a password verification, even when the username does not
+	// exist, so a missing user and a wrong password take the same time. If we
+	// skipped the KDF for u == nil, the argon2 cost (tens of ms) would only be
+	// paid for real usernames and its presence/absence would leak which
+	// usernames exist. See auth.DummyPasswordHash.
+	hash := auth.DummyPasswordHash()
+	if u != nil {
+		hash = u.PasswordHash
+	}
+	if ok := auth.VerifyPassword(req.Password, hash); u == nil || !ok {
 		h.limiter.Record(ip)
 		writeErr(w, http.StatusUnauthorized, "invalid credentials")
 		return
@@ -278,7 +287,7 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	hash, err := auth.HashPassword(req.NewPassword)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "hash: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	// UpdatePassword atomically bumps users.session_epoch, which invalidates
@@ -289,7 +298,7 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	// browsers / devices / stolen cookies still hold the pre-bump epoch and
 	// are correctly evicted.
 	if err := h.users.UpdatePassword(ctx, u.ID, hash); err != nil {
-		writeErr(w, http.StatusInternalServerError, "update: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	// Re-mint only when the change is happening on behalf of a logged-in
@@ -329,11 +338,11 @@ func (h *AuthHandler) RegenerateAPIKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	key, err := auth.RandomHex(32)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "gen: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	if err := h.settings.Set(ctx, SettingAuthAPIKey, key); err != nil {
-		writeErr(w, http.StatusInternalServerError, "save: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	slog.Info("api key regenerated")
@@ -360,7 +369,7 @@ func (h *AuthHandler) RotateSessionSecret(w http.ResponseWriter, r *http.Request
 	// text, comfortably clearing the minSecretLen fail-closed guard.
 	newSecret, err := auth.RandomBase64(32)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "gen: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -373,7 +382,7 @@ func (h *AuthHandler) RotateSessionSecret(w http.ResponseWriter, r *http.Request
 		{Key: SettingAuthSessionSecretPrevious, Value: string(cur)},
 		{Key: SettingAuthSessionSecret, Value: newSecret},
 	}); err != nil {
-		writeErr(w, http.StatusInternalServerError, "save: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	slog.Info("session signing secret rotated")
@@ -427,7 +436,7 @@ func (h *AuthHandler) SetMode(w http.ResponseWriter, r *http.Request) {
 	}
 	mode := auth.ParseMode(req.Mode)
 	if err := h.settings.Set(ctx, SettingAuthMode, string(mode)); err != nil {
-		writeErr(w, http.StatusInternalServerError, "save: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	slog.Info("auth mode changed", "mode", mode)
@@ -512,7 +521,7 @@ func (h *AuthHandler) issueSession(w http.ResponseWriter, r *http.Request, ctx c
 	exp := time.Now().Add(dur)
 	epoch, err := h.users.GetSessionEpoch(ctx, userID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "session epoch lookup: "+err.Error())
+		writeServerError(w, r, err)
 		return false
 	}
 	value, err := auth.SignSessionWithEpoch(h.sessionSecret(ctx), userID, epoch, exp)

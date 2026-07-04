@@ -9,6 +9,9 @@ import RebindModal from '../components/RebindModal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import ClipboardManualFallback from '../components/ClipboardManualFallback'
 import { useClipboardCopy } from '../components/useClipboardCopy'
+import { safeHref } from '../util/safeHref'
+import { metadataSourceLink } from '../util/metadataSource'
+import FixMatchModal from '../components/FixMatchModal'
 
 function formatSize(n: number): string {
   if (!n || n <= 0) return ''
@@ -89,11 +92,11 @@ export function SearchResultsSection({
         </div>
         <span className="text-slate-500 dark:text-zinc-500 truncate block">
           {r.indexerName} · {formatSize(r.size)} · {r.grabs} grabs
-          {r.infoUrl && (
+          {safeHref(r.infoUrl) && (
             <>
               {' · '}
               <a
-                href={r.infoUrl}
+                href={safeHref(r.infoUrl)}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={e => e.stopPropagation()}
@@ -177,6 +180,7 @@ export default function BookDetailPage() {
   const [deletingBook, setDeletingBook] = useState(false)
   const [togglingExclude, setTogglingExclude] = useState(false)
   const [showRebind, setShowRebind] = useState(false)
+  const [showFixMatch, setShowFixMatch] = useState(false)
   const [showDeleteBook, setShowDeleteBook] = useState(false)
   const pathClipboard = useClipboardCopy()
   // For dual-format books, which format the file section is acting on.
@@ -490,6 +494,22 @@ export default function BookDetailPage() {
                 <span className="text-slate-600 dark:text-zinc-400">{formatDuration(book.durationSeconds)}</span>
               </>
             ) : null}
+            {(() => {
+              const src = metadataSourceLink(book.foreignBookId, 'book')
+              return src ? (
+                <>
+                  <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
+                  <a
+                    href={src.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-emerald-600 dark:text-emerald-400 hover:underline"
+                  >
+                    {t('common.viewOnSource', { source: src.label, defaultValue: 'View on {{source}} ↗' })}
+                  </a>
+                </>
+              ) : null
+            })()}
           </div>
 
           {book.description && (
@@ -618,6 +638,15 @@ export default function BookDetailPage() {
               title={book.excluded ? t('bookDetail.unexcludeHint') : t('bookDetail.excludeHint')}
             >
               {togglingExclude ? '…' : book.excluded ? t('bookDetail.unexclude') : t('bookDetail.exclude')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowFixMatch(true)}
+              disabled={!hasActiveFile || deletingFile || deletingBook}
+              className={actionBtnCls}
+              title={t('bookDetail.fixMatch.hint', 'Move this file to a different book')}
+            >
+              {t('bookDetail.fixMatch.button', 'Fix match')}
             </button>
             <button
               type="button"
@@ -770,6 +799,19 @@ export default function BookDetailPage() {
           onSuccess={updated => {
             setBook(updated)
             setShowRebind(false)
+          }}
+        />
+      )}
+
+      {showFixMatch && hasActiveFile && (
+        <FixMatchModal
+          sourceBookId={book.id}
+          path={activePath}
+          format={fmt}
+          onClose={() => setShowFixMatch(false)}
+          onReassigned={targetId => {
+            setShowFixMatch(false)
+            navigate(`/book/${targetId}`)
           }}
         />
       )}

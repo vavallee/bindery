@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -302,6 +303,9 @@ func TestNew_DefaultValidator(t *testing.T) {
 }
 
 func TestSetValidator_Override(t *testing.T) {
+	// The production New() now also installs a dial-time SSRF guard, so reaching
+	// an httptest server on loopback requires opting loopback in for the dialer.
+	defer httpsec.AllowLoopbackForTests()()
 	n := New(nil)
 	called := 0
 	n.SetValidator(func(string) error {
@@ -319,6 +323,30 @@ func TestSetValidator_Override(t *testing.T) {
 	}
 	if called != 1 {
 		t.Errorf("overridden validator calls: want 1, got %d", called)
+	}
+}
+
+// TestSend_RedirectToPrivateBlocked verifies the CheckRedirect guard: a webhook
+// that passes the up-front check but 302s to an RFC1918 address must not be
+// followed. Loopback is opted in only so the test server is reachable; the
+// redirect target (10.x) stays blocked under the strict policy.
+func TestSend_RedirectToPrivateBlocked(t *testing.T) {
+	defer httpsec.AllowLoopbackForTests()()
+	n := New(nil)
+	n.SetValidator(func(string) error { return nil }) // allow the loopback test server URL
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://10.0.0.1/internal", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	notif := &models.Notification{URL: srv.URL}
+	err := n.send(context.Background(), notif, map[string]interface{}{})
+	if err == nil {
+		t.Fatal("expected the redirect to a private address to be blocked")
+	}
+	if !strings.Contains(err.Error(), "redirect blocked") && !strings.Contains(err.Error(), "private network") {
+		t.Fatalf("expected a redirect-blocked error, got: %v", err)
 	}
 }
 
@@ -351,5 +379,88 @@ func TestUserAgentHeader(t *testing.T) {
 	}
 	if strings.Contains(gotUA, "Bindery") {
 		t.Errorf("User-Agent must be lowercase to clear nzbfinder.ws WAF; got %q", gotUA)
+	}
+}
+
+func TestNormalizeEventPayload(t *testing.T) {
+	cases := []struct {
+		name        string
+		event       string
+		in          map[string]interface{}
+		wantTitle   string
+		wantMessage string
+	}{
+		{"grabbed", EventGrabbed, map[string]interface{}{"title": "Dune", "author": "Frank Herbert"}, "Release Grabbed", "Dune · Frank Herbert"},
+		{"grabbed-no-author", EventGrabbed, map[string]interface{}{"title": "Dune"}, "Release Grabbed", "Dune"},
+		{"imported", EventBookImported, map[string]interface{}{"title": "Dune", "format": "ebook"}, "Book Imported", "Dune (ebook)"},
+		{"failed", EventDownloadFailed, map[string]interface{}{"title": "Dune", "message": "no files"}, "Download Failed", "Dune: no files"},
+		{"health", EventHealth, map[string]interface{}{"status": "error", "message": "client offline"}, "Download Client Unhealthy", "client offline"},
+		{"test", "test", map[string]interface{}{}, "Bindery Test", "Bindery notification test"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out := normalizeEventPayload(c.event, c.in)
+			if out["eventType"] != c.event {
+				t.Errorf("eventType = %v, want %q", out["eventType"], c.event)
+			}
+			if got, _ := out["title"].(string); got != c.wantTitle {
+				t.Errorf("title = %q, want %q", got, c.wantTitle)
+			}
+			if got, _ := out["message"].(string); got != c.wantMessage {
+				t.Errorf("message = %q, want %q", got, c.wantMessage)
+			}
+			// The original item name is preserved when present.
+			if item, _ := c.in["title"].(string); item != "" && out["item"] != item {
+				t.Errorf("item = %v, want %q", out["item"], item)
+			}
+		})
+	}
+}
+
+func TestSend_TopicPostsToRoot(t *testing.T) {
+	var gotPath string
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	n := testNotifier(&http.Client{})
+	notif := &models.Notification{URL: srv.URL + "/mytopic", Method: "POST", Topic: "mytopic"}
+	if err := n.send(context.Background(), notif, normalizeEventPayload(EventGrabbed, map[string]interface{}{"title": "Dune"})); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if gotPath != "/" {
+		t.Errorf("topic publish must POST to root, got path %q", gotPath)
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(gotBody, &body); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	if body["topic"] != "mytopic" {
+		t.Errorf("body topic = %v, want \"mytopic\"", body["topic"])
+	}
+	if body["message"] != "Dune" || body["title"] != "Release Grabbed" {
+		t.Errorf("body title/message = %v/%v, want Release Grabbed/Dune", body["title"], body["message"])
+	}
+}
+
+func TestSend_NoTopicKeepsURLPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	n := testNotifier(&http.Client{})
+	notif := &models.Notification{URL: srv.URL + "/hooks/abc", Method: "POST"}
+	if err := n.send(context.Background(), notif, map[string]interface{}{}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if gotPath != "/hooks/abc" {
+		t.Errorf("without topic the configured path must be used, got %q", gotPath)
 	}
 }

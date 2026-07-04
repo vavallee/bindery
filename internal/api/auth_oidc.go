@@ -169,17 +169,17 @@ func (h *OIDCHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	state, err := oidc.NewState()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "gen state: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	nonce, err := oidc.NewNonce()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "gen nonce: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	verifier, err := oidc.NewVerifier()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "gen verifier: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -197,7 +197,7 @@ func (h *OIDCHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// and we resolve it from the request rather than a static env var.
 	flowVal, err := oidc.EncodeFlowState(state, nonce, verifier, redirectBase)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "encode flow: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
@@ -288,18 +288,25 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enforce the provider's AllowedGroups policy. When AllowedGroups is
-	// configured (non-empty), a login is only admitted if the IdP's `groups`
+	// configured (non-empty), a login is only admitted if the IdP's group
 	// claim intersects it; an empty AllowedGroups means "allow all" and the
 	// check is a no-op. This is fail-closed by design: if the IdP is not
-	// sending a `groups` claim, or sends a different group name than what is
+	// sending a group claim, or sends a different group name than what is
 	// configured, every login is rejected — the admin must fix the IdP scope
 	// mapping or the configured group name.
+	//
+	// Read the operator-configured claim (BINDERY_OIDC_GROUP_CLAIM), the same
+	// claim the admin-role sync below uses — not the literal "groups" claim
+	// baked into claims.Groups. Pointing the group claim at a non-default name
+	// otherwise made this policy compare against an always-empty slice, locking
+	// every user out (or, with AllowedGroups unset, silently no-op).
 	if cfg, ok := h.mgr.ProviderConfig(providerID); ok && len(cfg.AllowedGroups) > 0 {
-		if !oidc.GroupsAllowed(cfg.AllowedGroups, claims.Groups) {
+		userGroups := oidc.GroupClaimValues(claims.Raw, h.oidcGroupClaim)
+		if !oidc.GroupsAllowed(cfg.AllowedGroups, userGroups) {
 			slog.Warn("oidc: login rejected by AllowedGroups policy",
 				"provider", providerID, // #nosec -- providerID validated by oidcProviderIDRe at handler entry
 				"sub", sanitizeLog(claims.Sub),
-				"user_groups", len(claims.Groups),
+				"user_groups", len(userGroups),
 				"allowed_groups", strings.Join(cfg.AllowedGroups, ","),
 			)
 			writeErr(w, http.StatusForbidden,
@@ -562,7 +569,7 @@ func (h *OIDCHandler) GetProviders(w http.ResponseWriter, r *http.Request) {
 	}
 	ps, err := oidc.ParseProviders(s.Value)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "parse providers: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	out := make([]providerWithStatus, 0, len(ps))
@@ -615,11 +622,11 @@ func (h *OIDCHandler) SetProviders(w http.ResponseWriter, r *http.Request) {
 
 	raw, err := json.Marshal(merged) // #nosec G117 -- persisted server-side only, never returned via API (see ProviderPublicConfig split)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "encode: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	if err := h.settings.Set(ctx, SettingOIDCProviders, string(raw)); err != nil {
-		writeErr(w, http.StatusInternalServerError, "save: "+err.Error())
+		writeServerError(w, r, err)
 		return
 	}
 	// Reload async so the HTTP response isn't delayed by discovery. Anchor

@@ -26,3 +26,24 @@ func QueryScopeFor(column, where string, userID int64, args ...any) (string, []a
 	}
 	return where + " AND " + column + " = ?", append(args, userID)
 }
+
+// QueryScopeForIncludingNull is QueryScopeFor but the owner predicate also
+// matches rows whose owner column is NULL: "(column = ? OR column IS NULL)".
+// This mirrors the authors list predicate and auth.CheckOwnership, which treat
+// an unowned (NULL) row as visible to every user — so a logged-in user is not
+// shown an empty library just because some rows pre-date the multi-user
+// migration (or were imported without an owner). userID 0 still means unscoped
+// (no predicate added), so admins / API-key / no-tenancy callers see all rows.
+//
+// Use this for owner-scoped library LIST/browse queries. Per-item ownership
+// reads that must enforce strict equality should keep using QueryScopeFor.
+func QueryScopeForIncludingNull(column, where string, userID int64, args ...any) (string, []any) {
+	if userID == 0 {
+		return where, args
+	}
+	pred := "(" + column + " = ? OR " + column + " IS NULL)"
+	if where == "" {
+		return "WHERE " + pred, append([]any{userID}, args...)
+	}
+	return where + " AND " + pred, append(args, userID)
+}

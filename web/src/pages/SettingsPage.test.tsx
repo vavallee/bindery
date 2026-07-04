@@ -218,6 +218,7 @@ function makeImportList(overrides: Partial<ImportList> = {}): ImportList {
     monitorNew: true,
     autoAdd: true,
     enabled: false,
+    mediaType: '',
     lastSyncAt: null,
     createdAt: '2026-05-06T12:00:00Z',
     updatedAt: '2026-05-06T12:00:00Z',

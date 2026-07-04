@@ -2,7 +2,9 @@ package api
 
 import (
 	"archive/zip"
+	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,6 +21,14 @@ import (
 type FileHandler struct {
 	books        *db.BookRepo
 	allowedRoots []string
+	// rootFolders, when set, is consulted at REQUEST TIME so the download
+	// allow-list also covers user-configured root folders (rows in the
+	// root_folders table). The importer writes book files under these roots
+	// — which can live on a different mount than the static LibraryDir /
+	// AudiobookDir — so a startup-captured static list would wrongly deny
+	// downloads for the standard root-folder setup, and would miss folders
+	// created after boot. nil disables the dynamic check (static roots only).
+	rootFolders *db.RootFolderRepo
 }
 
 func NewFileHandler(books *db.BookRepo, allowedRoots ...string) *FileHandler {
@@ -29,6 +39,16 @@ func NewFileHandler(books *db.BookRepo, allowedRoots ...string) *FileHandler {
 		}
 	}
 	return &FileHandler{books: books, allowedRoots: roots}
+}
+
+// WithRootFolders attaches the root folder repo so the download allow-list can
+// include user-configured root folder paths resolved at request time. Mirrors
+// the scanner's WithRootFolders wiring (internal/importer/scanner.go) for
+// consistency. Returns the handler for chaining. Safe to omit: when unset only
+// the static roots (LibraryDir / AudiobookDir) are allowed.
+func (h *FileHandler) WithRootFolders(rf *db.RootFolderRepo) *FileHandler {
+	h.rootFolders = rf
+	return h
 }
 
 // Download serves the book's content for browser download.
@@ -72,7 +92,7 @@ func (h *FileHandler) Download(w http.ResponseWriter, r *http.Request) {
 	// Defence-in-depth: refuse to serve paths that aren't under a configured
 	// library root, even if a tampered DB row or importer bug set a path
 	// to something outside the library (e.g. /etc/passwd, /config/*).
-	if !h.isAllowedPath(filePath) {
+	if !h.isAllowedPath(r.Context(), filePath) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})
 		return
 	}
@@ -128,20 +148,62 @@ func asciiFallback(name string) string {
 // configured — a production install missing BINDERY_LIBRARY_DIR should not
 // silently degrade to "serve any path on disk". Tests that need an unscoped
 // handler must seed allowedRoots explicitly (e.g. t.TempDir()).
-func (h *FileHandler) isAllowedPath(p string) bool {
-	if len(h.allowedRoots) == 0 {
-		return false
-	}
+//
+// Two sources of roots are consulted:
+//
+//   - The static roots (LibraryDir / AudiobookDir) captured at construction.
+//   - When a root folder repo is wired, the user-configured root folders
+//     (rows in the root_folders table), resolved at REQUEST TIME so folders
+//     added/removed after boot are honoured. The importer writes book files
+//     under these roots, so a book's file_path can legitimately live under any
+//     of them.
+//
+// FAIL CLOSED: if listing root folders errors, it is logged and treated as
+// "no additional roots" — a transient DB hiccup never widens the allow-list.
+func (h *FileHandler) isAllowedPath(ctx context.Context, p string) bool {
 	p = filepath.Clean(p)
-	for _, root := range h.allowedRoots {
-		if root == "" || root == "." {
-			continue
+
+	// Static roots first — the common case and the only path that works
+	// without the repo wired.
+	if containedUnder(p, h.allowedRoots) {
+		return true
+	}
+
+	// Dynamic root folders, resolved per request.
+	if h.rootFolders != nil {
+		folders, err := h.rootFolders.List(ctx)
+		if err != nil {
+			slog.Error("file download: failed to list root folders for allow-list, denying", "error", err)
+			return false
 		}
-		if p == root || strings.HasPrefix(p, root+string(filepath.Separator)) {
+		for _, f := range folders {
+			if pathContains(filepath.Clean(f.Path), p) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// containedUnder reports whether p (already cleaned) sits under any of roots.
+func containedUnder(p string, roots []string) bool {
+	for _, root := range roots {
+		if pathContains(filepath.Clean(root), p) {
 			return true
 		}
 	}
 	return false
+}
+
+// pathContains reports whether p is root itself or strictly nested under it.
+// root and p must already be filepath.Cleaned. The separator boundary check
+// ensures /lib/books does NOT match /lib/books-secret/x.
+func pathContains(root, p string) bool {
+	if root == "" || root == "." {
+		return false
+	}
+	return p == root || strings.HasPrefix(p, root+string(filepath.Separator))
 }
 
 // streamZip writes a zip archive of every regular file under srcDir to the

@@ -8,3 +8,10 @@ package api
 func sameDevice(_, _ string) bool {
 	return false
 }
+
+// hardlinkable mirrors sameDevice on Windows — device comparison is
+// unavailable, so the storage health endpoint reports downloads/library as not
+// hardlink-able.
+func hardlinkable(_, _ string) bool {
+	return false
+}

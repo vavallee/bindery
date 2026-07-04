@@ -32,12 +32,16 @@ const ApiKeysTab = lazy(() => import('./settings/ApiKeysTab'))
 const ImportTab = lazy(() => import('./settings/ImportTab'))
 const BlocklistTab = lazy(() => import('./settings/BlocklistTab'))
 const LogsTab = lazy(() => import('./settings/LogsTab'))
+const AboutTab = lazy(() => import('./settings/AboutTab'))
 
-type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'grimmory' | 'api-keys'
+type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'grimmory' | 'api-keys' | 'about'
 
 const ADMIN_TABS: Tab[] = ['indexers', 'clients', 'notifications', 'quality', 'metadata', 'import', 'rootfolders', 'logs', 'blocklist', 'calibre', 'abs', 'grimmory', 'api-keys']
 
-const ALL_TABS: Tab[] = ['general', ...ADMIN_TABS]
+// 'general' and 'about' are visible to every authenticated user — About is where
+// the in-app update message and bug_report.yml ("check Settings → About") point
+// users to read their exact version/commit.
+const ALL_TABS: Tab[] = ['general', 'about', ...ADMIN_TABS]
 
 // Allow deep-linking to a specific tab via ?tab=indexers (used by first-run
 // onboarding guidance on the Authors/Books empty states). Read from the URL
@@ -141,6 +145,7 @@ export default function SettingsPage() {
       case 'blocklist': return <BlocklistTab />
       case 'logs': return <LogsTab />
       case 'api-keys': return <ApiKeysTab />
+      case 'about': return <AboutTab />
     }
   }
 
@@ -156,10 +161,12 @@ export default function SettingsPage() {
     <div>
       <h2 className="text-2xl font-bold mb-6">{t('settings.title')}</h2>
 
-      <div className="flex gap-8 items-start">
-        {/* Sidebar navigation */}
-        <nav className="w-44 flex-shrink-0 space-y-0.5">
+      <div className="flex flex-col md:flex-row gap-4 md:gap-8 items-stretch md:items-start">
+        {/* Sidebar navigation — stacks above content on mobile so the tab
+            content gets the full viewport width instead of ~180px. */}
+        <nav className="w-full md:w-44 flex-shrink-0 space-y-0.5">
           <SettingsNavLink tab="general" active={tab} onSelect={setTab} label={t('settings.tabs.general')} />
+          <SettingsNavLink tab="about" active={tab} onSelect={setTab} label={t('settings.tabs.about', 'About')} />
 
           {isAdmin && (
             <>

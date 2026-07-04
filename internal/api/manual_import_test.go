@@ -141,8 +141,11 @@ func TestManualImportLookup_ScannerError(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "catalogue unavailable") {
-		t.Errorf("body = %q, want scanner error message", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "internal server error") {
+		t.Errorf("body = %q, want generic server error", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "catalogue unavailable") {
+		t.Errorf("body = %q, must not leak the internal error", rec.Body.String())
 	}
 }
 
@@ -622,5 +625,403 @@ func TestManualImportImport_PathOutsideAllowedRoots(t *testing.T) {
 				t.Errorf("body = %q, want containment error", rec.Body.String())
 			}
 		})
+	}
+}
+
+// ── Scan handler ────────────────────────────────────────────────────────────
+
+func scanRequest(path string) *http.Request {
+	u := "/api/v1/queue/manual-import/scan?" + url.Values{"path": {path}}.Encode()
+	return httptest.NewRequest(http.MethodGet, u, nil)
+}
+
+func writeTestFile(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestManualImportScan_EnumeratesBookUnits(t *testing.T) {
+	t.Parallel()
+	h, stub, _, _, _ := manualImportFixture(t)
+	stub.lookupResult = importer.LookupResult{Match: "none", ParsedTitle: "x"}
+
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "Book One.epub"))            // book file -> unit
+	writeTestFile(t, filepath.Join(root, "Book Two.mobi"))            // book file -> unit
+	writeTestFile(t, filepath.Join(root, "cover.jpg"))                // non-book -> skipped
+	writeTestFile(t, filepath.Join(root, "Author - Title", "ab.m4b")) // subdir w/ book -> unit
+	if err := os.MkdirAll(filepath.Join(root, "empty"), 0o755); err != nil {
+		t.Fatal(err) // subdir w/o book -> skipped
+	}
+
+	rec := httptest.NewRecorder()
+	h.Scan(rec, scanRequest(root))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+	var resp ScanResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Items) != 3 {
+		t.Fatalf("items = %d, want 3 (2 book files + 1 book subdir); got %+v", len(resp.Items), resp.Items)
+	}
+	if resp.Truncated {
+		t.Error("unexpected truncation for a small folder")
+	}
+}
+
+// TestManualImportScan_AllowsConfiguredRootItself reproduces #1373: pasting a
+// configured root ("/books") or an allow-listed download dir ("/downloads")
+// into bulk import must scan it, not 403. Before the fix, ResolveContained
+// reused the delete path's strict containment (root != contained), so the two
+// most obvious targets for the feature both failed with "path is outside the
+// configured library roots".
+func TestManualImportScan_AllowsConfiguredRootItself(t *testing.T) {
+	t.Parallel()
+	h, stub, _, _, _ := manualImportFixture(t)
+	stub.lookupResult = importer.LookupResult{Match: "none", ParsedTitle: "x"}
+
+	libraryDir := t.TempDir()
+	downloadDir := t.TempDir()
+	outside := t.TempDir()
+	writeTestFile(t, filepath.Join(libraryDir, "Book One.epub"))
+	writeTestFile(t, filepath.Join(downloadDir, "Backlog Book.epub"))
+	writeTestFile(t, filepath.Join(outside, "secret.epub"))
+	// Mirror the production wiring (#1373): the manual-import allow-list holds
+	// the library root AND the download dir.
+	h.WithRoots(NewLibraryRoots(nil, libraryDir, downloadDir))
+
+	for _, dir := range []string{libraryDir, downloadDir} {
+		rec := httptest.NewRecorder()
+		h.Scan(rec, scanRequest(dir))
+		if rec.Code != http.StatusOK {
+			t.Errorf("Scan(%s) status = %d, want 200; body = %s", dir, rec.Code, rec.Body.String())
+			continue
+		}
+		var resp ScanResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(resp.Items) != 1 {
+			t.Errorf("Scan(%s) items = %d, want 1", dir, len(resp.Items))
+		}
+	}
+
+	// The gate itself still stands: an unconfigured dir is rejected.
+	rec := httptest.NewRecorder()
+	h.Scan(rec, scanRequest(outside))
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Scan(outside) status = %d, want 403", rec.Code)
+	}
+}
+
+func TestManualImportScan_RejectsSingleFile(t *testing.T) {
+	t.Parallel()
+	h, _, _, _, _ := manualImportFixture(t)
+	root := t.TempDir()
+	f := filepath.Join(root, "book.epub")
+	writeTestFile(t, f)
+	rec := httptest.NewRecorder()
+	h.Scan(rec, scanRequest(f))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (scan needs a folder, not a file)", rec.Code)
+	}
+}
+
+func TestManualImportScan_EmptyPath(t *testing.T) {
+	t.Parallel()
+	h, _, _, _, _ := manualImportFixture(t)
+	rec := httptest.NewRecorder()
+	h.Scan(rec, httptest.NewRequest(http.MethodGet, "/api/v1/queue/manual-import/scan", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+// ── Batch import ────────────────────────────────────────────────────────────
+
+func TestManualImportBatch_MixedValidity(t *testing.T) {
+	t.Parallel()
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	authors := db.NewAuthorRepo(database)
+	downloads := db.NewDownloadRepo(database)
+	books := db.NewBookRepo(database)
+	ctx := context.Background()
+	book := seedBook(t, authors, books, ctx)
+
+	h := NewManualImportHandler(&stubManualImportScanner{}, downloads, books)
+
+	root := t.TempDir()
+	good := filepath.Join(root, "good.epub")
+	writeTestFile(t, good)
+	noBook := filepath.Join(root, "nobook.epub")
+	writeTestFile(t, noBook)
+
+	items := []map[string]any{
+		{"path": good, "bookId": book.ID, "format": models.MediaTypeEbook}, // valid
+		{"path": noBook, "bookId": 0},                                      // missing bookId
+		{"path": filepath.Join(root, "missing.epub"), "bookId": book.ID},   // path not accessible
+	}
+	body, _ := json.Marshal(items)
+	rec := httptest.NewRecorder()
+	h.ImportBatch(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/batch", bytes.NewReader(body)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body = %s", rec.Code, rec.Body.String())
+	}
+	var resp BatchImportResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Accepted != 1 || resp.Failed != 2 {
+		t.Fatalf("accepted=%d failed=%d, want 1/2; results=%+v", resp.Accepted, resp.Failed, resp.Results)
+	}
+	if !resp.Results[0].Accepted || resp.Results[0].DownloadID == 0 {
+		t.Errorf("first item should be accepted with a download id; got %+v", resp.Results[0])
+	}
+	if resp.Results[1].Accepted || resp.Results[2].Accepted {
+		t.Errorf("invalid items should not be accepted; got %+v", resp.Results[1:])
+	}
+	all, err := downloads.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 {
+		t.Errorf("download rows = %d, want 1 (only the valid item created one)", len(all))
+	}
+}
+
+func TestManualImportBatch_Empty(t *testing.T) {
+	t.Parallel()
+	h, _, _, _, _ := manualImportFixture(t)
+	rec := httptest.NewRecorder()
+	h.ImportBatch(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/batch", bytes.NewReader([]byte("[]"))))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for empty batch", rec.Code)
+	}
+}
+
+func TestManualImportReassign_DetachesSourceAndImportsTarget(t *testing.T) {
+	t.Parallel()
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	authors := db.NewAuthorRepo(database)
+	downloads := db.NewDownloadRepo(database)
+	books := db.NewBookRepo(database)
+	bookFiles := db.NewBookFileRepo(database)
+	ctx := context.Background()
+
+	src := seedBook(t, authors, books, ctx) // file is wrongly attached here
+	target := &models.Book{
+		ForeignID: "mi-book-2", AuthorID: src.AuthorID,
+		Title: "Correct Book", SortTitle: "correct book",
+		Status: "wanted", Genres: []string{},
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, target); err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+
+	tmp := t.TempDir()
+	epub := filepath.Join(tmp, "mismatched.epub")
+	if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.AddBookFile(ctx, src.ID, models.MediaTypeEbook, epub); err != nil {
+		t.Fatalf("attach file to source: %v", err)
+	}
+
+	h := NewManualImportHandler(&stubManualImportScanner{}, downloads, books)
+	body, _ := json.Marshal(map[string]any{"path": epub, "targetBookId": target.ID, "format": models.MediaTypeEbook})
+	rec := httptest.NewRecorder()
+	h.Reassign(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/reassign", bytes.NewReader(body)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body = %s", rec.Code, rec.Body.String())
+	}
+
+	// The stale association is gone from the source book (the actual move to the
+	// target is performed by the stubbed ImportFromPath, exercised live, not here).
+	srcFiles, err := bookFiles.ListByBook(ctx, src.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(srcFiles) != 0 {
+		t.Errorf("source book still has %d file(s); want 0 after reassign", len(srcFiles))
+	}
+}
+
+// TestManualImportReassign_SymlinkedLibrary_DetachesSource reproduces #1368
+// Bug A: when the file being reassigned is stored in book_files under an
+// unresolved (symlinked) path, prepareImport resolves it via EvalSymlinks and
+// the detach must STILL empty the source book. Before the fix the detach ran
+// against the resolved path only, missed the exact-match book_files row, and
+// left the source book holding a live reference — so a later delete removed the
+// target's file.
+func TestManualImportReassign_SymlinkedLibrary_DetachesSource(t *testing.T) {
+	realDir := t.TempDir()
+	linkParent := t.TempDir()
+	link := filepath.Join(linkParent, "lib")
+	if err := os.Symlink(realDir, link); err != nil {
+		t.Skipf("symlinks unsupported on this platform: %v", err)
+	}
+
+	// Physical file lives under the real directory.
+	authorDir := filepath.Join(realDir, "Author")
+	if err := os.MkdirAll(authorDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(authorDir, "book.m4b"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The path AS STORED in book_files goes through the symlink.
+	storedPath := filepath.Join(link, "Author", "book.m4b")
+
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	authors := db.NewAuthorRepo(database)
+	downloads := db.NewDownloadRepo(database)
+	books := db.NewBookRepo(database)
+	ctx := context.Background()
+
+	src := seedBook(t, authors, books, ctx)
+	if err := books.AddBookFile(ctx, src.ID, models.MediaTypeAudiobook, storedPath); err != nil {
+		t.Fatalf("attach audiobook to source: %v", err)
+	}
+	target := &models.Book{
+		ForeignID: "mi-target", AuthorID: src.AuthorID,
+		Title: "Correct Book", SortTitle: "correct book",
+		Status: "wanted", Genres: []string{},
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, target); err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+
+	h := NewManualImportHandler(&stubManualImportScanner{}, downloads, books).
+		WithRoots(NewLibraryRoots(staticRootLister{paths: []string{link}}))
+	body, _ := json.Marshal(map[string]any{"path": storedPath, "targetBookId": target.ID, "format": models.MediaTypeAudiobook})
+	rec := httptest.NewRecorder()
+	h.Reassign(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/reassign", bytes.NewReader(body)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body = %s", rec.Code, rec.Body.String())
+	}
+
+	// The source must be fully detached despite the symlink path mismatch.
+	srcFiles, err := books.ListFiles(ctx, src.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(srcFiles) != 0 {
+		t.Errorf("source still has %d book_files row(s) after reassign; want 0 (detach must match the symlinked stored path)", len(srcFiles))
+	}
+	after, err := books.GetByID(ctx, src.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.AudiobookFilePath != "" || after.FilePath != "" {
+		t.Errorf("source legacy paths not cleared: audiobook=%q file=%q", after.AudiobookFilePath, after.FilePath)
+	}
+	if after.Status != models.BookStatusWanted {
+		t.Errorf("source status = %q, want wanted after losing its only file", after.Status)
+	}
+}
+
+// TestRemoveStaleSource_KeepsSourceWhenImportPlacedNothing reproduces #1368
+// Bug B: removeStaleSource must not delete the source file just because the
+// target already owns an unrelated file (e.g. an ebook). Only a file absent
+// from the pre-import snapshot proves this reassign actually moved something.
+func TestRemoveStaleSource_KeepsSourceWhenImportPlacedNothing(t *testing.T) {
+	t.Parallel()
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	authors := db.NewAuthorRepo(database)
+	downloads := db.NewDownloadRepo(database)
+	books := db.NewBookRepo(database)
+	ctx := context.Background()
+	h := NewManualImportHandler(&stubManualImportScanner{}, downloads, books)
+
+	target := seedBook(t, authors, books, ctx)
+	tmp := t.TempDir()
+
+	// Target already owns an unrelated ebook that exists on disk.
+	existing := filepath.Join(tmp, "existing.epub")
+	if err := os.WriteFile(existing, []byte("e"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.AddBookFile(ctx, target.ID, models.MediaTypeEbook, existing); err != nil {
+		t.Fatal(err)
+	}
+	// Snapshot taken before the (failed / no-op) import: it already contains the
+	// pre-existing ebook.
+	preexisting := h.targetFilePaths(ctx, target.ID)
+
+	src := filepath.Join(tmp, "source.m4b")
+	if err := os.WriteFile(src, []byte("s"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The import placed nothing new for the target, so the source must survive.
+	h.removeStaleSource(ctx, src, target.ID, preexisting)
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("source file deleted despite no new import (data loss): %v", err)
+	}
+
+	// Positive control: once the import DOES add a new file the source is cleaned.
+	moved := filepath.Join(tmp, "moved.m4b")
+	if err := os.WriteFile(moved, []byte("m"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.AddBookFile(ctx, target.ID, models.MediaTypeAudiobook, moved); err != nil {
+		t.Fatal(err)
+	}
+	h.removeStaleSource(ctx, src, target.ID, preexisting)
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Errorf("source should be removed once a new file is placed at the target; stat err=%v", err)
+	}
+}
+
+func TestManualImportReassign_EmptyPath(t *testing.T) {
+	t.Parallel()
+	h, _, _, _, _ := manualImportFixture(t)
+	body, _ := json.Marshal(map[string]any{"path": "  ", "targetBookId": 1})
+	rec := httptest.NewRecorder()
+	h.Reassign(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/reassign", bytes.NewReader(body)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestManualImportReassign_TargetNotFound(t *testing.T) {
+	t.Parallel()
+	h, _, _, _, _ := manualImportFixture(t)
+	tmp := t.TempDir()
+	epub := filepath.Join(tmp, "book.epub")
+	if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{"path": epub, "targetBookId": 9999})
+	rec := httptest.NewRecorder()
+	h.Reassign(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/reassign", bytes.NewReader(body)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (book not found); body = %s", rec.Code, rec.Body.String())
 	}
 }

@@ -1,6 +1,12 @@
 # Binaries
 /bindery
 *.exe
+# Scratch / working files (must never be committed)
+/bindery.txt
+/reply.txt
+/e.log
+# Personal, gitignored ops notes
+CLAUDE.local.md
 *.dll
 *.so
 *.dylib

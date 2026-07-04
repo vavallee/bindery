@@ -39,7 +39,7 @@ func (h *OPDSHandler) Authors(w http.ResponseWriter, r *http.Request) {
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	feed, err := h.builder.BuildAuthors(r.Context(), baseURL(r), page, opdsCallerUserID(r.Context()))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeOPDS(w, feed)
@@ -52,7 +52,7 @@ func (h *OPDSHandler) Author(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	feed, err := h.builder.BuildAuthor(r.Context(), baseURL(r), id, opdsCallerUserID(r.Context()))
-	if writeOPDSError(w, err) {
+	if writeOPDSError(w, r, err) {
 		return
 	}
 	writeOPDS(w, feed)
@@ -63,7 +63,7 @@ func (h *OPDSHandler) Series(w http.ResponseWriter, r *http.Request) {
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	feed, err := h.builder.BuildSeriesList(r.Context(), baseURL(r), page, opdsCallerUserID(r.Context()))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeOPDS(w, feed)
@@ -76,7 +76,7 @@ func (h *OPDSHandler) OneSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	feed, err := h.builder.BuildSeries(r.Context(), baseURL(r), id, opdsCallerUserID(r.Context()))
-	if writeOPDSError(w, err) {
+	if writeOPDSError(w, r, err) {
 		return
 	}
 	writeOPDS(w, feed)
@@ -86,7 +86,7 @@ func (h *OPDSHandler) OneSeries(w http.ResponseWriter, r *http.Request) {
 func (h *OPDSHandler) Recent(w http.ResponseWriter, r *http.Request) {
 	feed, err := h.builder.BuildRecent(r.Context(), baseURL(r), opdsCallerUserID(r.Context()))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeOPDS(w, feed)
@@ -100,7 +100,7 @@ func (h *OPDSHandler) Book(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	feed, err := h.builder.BuildBook(r.Context(), baseURL(r), id, opdsCallerUserID(r.Context()))
-	if writeOPDSError(w, err) {
+	if writeOPDSError(w, r, err) {
 		return
 	}
 	writeOPDS(w, feed)
@@ -111,14 +111,12 @@ func (h *OPDSHandler) Book(w http.ResponseWriter, r *http.Request) {
 // when there is no authenticated user (API-key / disabled / local-only auth
 // paths). The Build* methods on opds.Builder treat 0 as "no per-user
 // filter", which preserves pre-D3 behaviour for those paths.
+//
+// This is exactly auth.ListScopeUserID — the shared helper that scopes every
+// owner-filtered list view — so OPDS feeds stay consistent with the JSON
+// authors/books lists.
 func opdsCallerUserID(ctx context.Context) int64 {
-	if !auth.EnforceTenancy() {
-		return 0
-	}
-	if auth.UserRoleFromContext(ctx) == "admin" {
-		return 0
-	}
-	return auth.UserIDFromContext(ctx)
+	return auth.ListScopeUserID(ctx)
 }
 
 // DownloadFile serves the book bytes. Delegates to the same FileHandler
@@ -137,7 +135,7 @@ func (h *OPDSHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 		}
 		bk, err := h.books.GetByID(r.Context(), id)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeServerError(w, r, err)
 			return
 		}
 		if bk == nil || (bk.OwnerUserID != 0 && bk.OwnerUserID != uid) {
@@ -189,7 +187,7 @@ func writeOPDS(w http.ResponseWriter, feed opds.Feed) {
 
 // writeOPDSError handles known builder errors (currently just ErrNotFound).
 // Returns true when it wrote a response so the caller can bail out.
-func writeOPDSError(w http.ResponseWriter, err error) bool {
+func writeOPDSError(w http.ResponseWriter, r *http.Request, err error) bool {
 	if err == nil {
 		return false
 	}
@@ -197,6 +195,6 @@ func writeOPDSError(w http.ResponseWriter, err error) bool {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return true
 	}
-	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	writeServerError(w, r, err)
 	return true
 }

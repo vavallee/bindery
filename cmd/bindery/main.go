@@ -28,6 +28,7 @@ import (
 	"github.com/vavallee/bindery/internal/config"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/downloader"
+	"github.com/vavallee/bindery/internal/grimmory"
 	"github.com/vavallee/bindery/internal/hardcoverlistsyncer"
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/importer"
@@ -309,6 +310,15 @@ func main() {
 		cfg.DownloadPathRemap,
 	)
 	importScanner.WithNotifier(notif)
+
+	// Grimmory push pipeline (#826). Config is loaded live per push, so the
+	// Settings toggle takes effect without a restart.
+	grimmoryPushRepo := db.NewGrimmoryPushRepo(database)
+	grimmoryLoadPushCfg := func() grimmory.PushConfig {
+		return api.LoadGrimmoryConfig(settingsRepo).PushConfig()
+	}
+	grimmoryPusher := grimmory.NewPusher(grimmoryLoadPushCfg, grimmoryPushRepo)
+	importScanner.WithGrimmory(grimmoryPusher)
 	if cfg.AudiobookDownloadDir != "" {
 		importScanner.WithAudiobookDownloadDir(cfg.AudiobookDownloadDir)
 		slog.Info("audiobook download dir configured", "path", cfg.AudiobookDownloadDir)
@@ -536,8 +546,14 @@ func main() {
 		WithNotifier(notif).
 		WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir).
 		WithIndexers(indexerRepo)
+	// Manual/bulk import may read from the download dirs as well as the library
+	// roots — a Readarr/qBittorrent migrant's backlog sits in the download dir,
+	// not the library (#1373). These are trusted, configured source dirs the
+	// automated importer already reads from; the stricter `libraryRoots` (no
+	// download dirs) still gates the delete handlers.
+	importRoots := api.NewLibraryRoots(rootFolderRepo, cfg.LibraryDir, cfg.AudiobookDir, cfg.DownloadDir, cfg.AudiobookDownloadDir)
 	manualImportHandler := api.NewManualImportHandler(importScanner, downloadRepo, bookRepo).
-		WithRoots(libraryRoots)
+		WithRoots(importRoots)
 	pendingHandler := api.NewPendingHandler(pendingReleaseRepo, queueHandler, downloadRepo, bookRepo)
 	importScanner.WithSettings(settingsRepo)
 	importScanner.WithRootFolders(rootFolderRepo)
@@ -561,7 +577,8 @@ func main() {
 	}
 
 	libraryHandler := api.NewLibraryHandler(importScanner).WithSettings(settingsRepo)
-	fileHandler := api.NewFileHandler(bookRepo, cfg.LibraryDir, cfg.AudiobookDir)
+	fileHandler := api.NewFileHandler(bookRepo, cfg.LibraryDir, cfg.AudiobookDir).
+		WithRootFolders(rootFolderRepo)
 	historyHandler := api.NewHistoryHandler(historyRepo, blocklistRepo, bookRepo)
 	blocklistHandler := api.NewBlocklistHandler(blocklistRepo)
 	notificationHandler := api.NewNotificationHandler(notificationRepo, notif)
@@ -577,6 +594,7 @@ func main() {
 	delayProfileHandler := api.NewDelayProfileHandler(delayProfileRepo)
 	customFormatHandler := api.NewCustomFormatHandler(customFormatRepo)
 	bulkHandler := api.NewBulkHandler(authorRepo, bookRepo, blocklistRepo, sched).
+		WithSeriesRepo(seriesRepo).
 		WithLifetimeCtx(appCtx).
 		// Bulk "refresh" reuses the per-author catalogue fetch (metadata only,
 		// never auto-grabs). Resolve the default media type per call so newly
@@ -598,6 +616,9 @@ func main() {
 	calibreHandler := api.NewCalibreHandler(settingsRepo).
 		WithLifetimeCtx(appCtx)
 	grimmoryHandler := api.NewGrimmoryHandler(settingsRepo).WithVersion(version)
+	grimmorySyncer := grimmory.NewSyncer(bookRepo, grimmoryPusher)
+	grimmorySyncHandler := api.NewGrimmorySyncHandler(grimmorySyncer, grimmoryLoadPushCfg).
+		WithLastPush(grimmoryPushRepo.LastPush)
 	absHandler := api.NewABSHandler(settingsRepo).WithVersion(version)
 	absConflictHandler := api.NewABSConflictHandler(absConflictRepo, authorRepo, bookRepo)
 	absImportHandler := api.NewABSImportHandler(absImporter, func(ctx context.Context) api.ABSStoredConfig {
@@ -794,10 +815,9 @@ func main() {
 		registerIndexerRoutes(r, indexerHandler)
 		registerProwlarrRoutes(r, prowlarrHandler)
 
-		// Root folders
-		r.Get("/rootfolder", rootFolderHandler.List)
-		r.Post("/rootfolder", rootFolderHandler.Create)
-		r.Delete("/rootfolder/{id}", rootFolderHandler.Delete)
+		// Root folders — List open, mutations admin-only (they point library
+		// storage at server filesystem paths). See registerRootFolderRoutes.
+		registerRootFolderRoutes(r, rootFolderHandler)
 
 		registerDownloadClientRoutes(r, dlClientHandler)
 
@@ -811,7 +831,10 @@ func main() {
 		r.Group(func(r chi.Router) {
 			r.Use(auth.RequireAdmin)
 			r.Get("/queue/manual-import/lookup", manualImportHandler.Lookup)
+			r.Get("/queue/manual-import/scan", manualImportHandler.Scan)
 			r.Post("/queue/manual-import", manualImportHandler.Import)
+			r.Post("/queue/manual-import/batch", manualImportHandler.ImportBatch)
+			r.Post("/queue/manual-import/reassign", manualImportHandler.Reassign)
 		})
 		r.Get("/pending", pendingHandler.List)
 		r.Delete("/pending/{id}", pendingHandler.Delete)
@@ -970,25 +993,14 @@ func main() {
 		r.Post("/authors/refresh-all", authorRefreshHandler.RefreshAll)
 		r.Get("/authors/refresh-all/status", authorRefreshHandler.RefreshAllStatus)
 
-		// Grimmory integration.
-		r.Get("/grimmory/config", grimmoryHandler.GetConfig)
-		r.Put("/grimmory/config", grimmoryHandler.SetConfig)
-		r.Post("/grimmory/test", grimmoryHandler.Test)
+		// Grimmory integration — GetConfig open (redacts the key), writes admin.
+		// See registerGrimmoryRoutes.
+		registerGrimmoryRoutes(r, grimmoryHandler)
+		registerGrimmorySyncRoutes(r, grimmorySyncHandler)
 
-		// Calibre integration — settings live under /setting/calibre.*,
-		// this endpoint just validates + probes the configured install.
-		r.Post("/calibre/test", calibreHandler.Test)
-
-		// Calibre library import (read side). Start is fire-and-forget;
-		// the UI polls Status while it runs.
-		r.Post("/calibre/import", calibreImportHandler.Start)
-		r.Get("/calibre/import/status", calibreImportHandler.Status)
-
-		// Calibre bulk push (write side). Iterates every imported book and
-		// POSTs its file to the plugin; 409 Conflict is treated as
-		// idempotent. Single-job policy — second call returns 409.
-		r.Post("/calibre/sync", calibreSyncHandler.Start)
-		r.Get("/calibre/sync/status", calibreSyncHandler.Status)
+		// Calibre integration (probe + library import + bulk push) — all
+		// admin-only. See registerCalibreIntegrationRoutes.
+		registerCalibreIntegrationRoutes(r, calibreHandler, calibreImportHandler, calibreSyncHandler)
 
 		// Calibre import run history + rollback (#643). Admin-only — a bad
 		// rollback can delete authors/books wholesale, so the destructive
@@ -1001,24 +1013,10 @@ func main() {
 			r.Post("/calibre/runs/{runID}/rollback", calibreRunsHandler.Rollback)
 		})
 
-		// Migration imports (CSV of author names, or Readarr SQLite DB).
-		// The Readarr import is async — POST returns 202 immediately and the
-		// UI polls GET /migrate/readarr/status to track completion.
-		//
-		// Per-route body caps override the 1 MiB default for routes that
-		// accept multipart file uploads. The handler-side acceptUpload still
-		// applies the authoritative per-route cap via http.MaxBytesReader;
-		// these overrides just raise the outer router-level ceiling so the
-		// inner wrap is the one that decides.
-		r.With(api.WithMaxBody(6<<20)).Post("/migrate/csv", migrateHandler.ImportCSV)         // CSV under 5 MiB
-		r.With(api.WithMaxBody(2<<30)).Post("/migrate/readarr", migrateHandler.ImportReadarr) // readarr.db can be hundreds of MiB
-		r.Get("/migrate/readarr/status", migrateHandler.ImportReadarrStatus)
-
-		// Goodreads library CSV import — a two-step migration aid: POST the
-		// export to /goodreads/preview for a dry-run, then POST the returned
-		// token to /goodreads/commit to add the resolved books.
-		r.With(api.WithMaxBody(24<<20)).Post("/migrate/goodreads/preview", migrateHandler.ImportGoodreadsPreview) // Goodreads export under 20 MiB
-		r.Post("/migrate/goodreads/commit", migrateHandler.ImportGoodreadsCommit)
+		// Migration imports (CSV of author names, or Readarr SQLite DB). The
+		// Readarr import is async — POST returns 202 immediately and the UI
+		// polls GET /migrate/readarr/status. Admin-only (see registerMigrateRoutes).
+		registerMigrateRoutes(r, migrateHandler)
 
 		// Image proxy — caches external cover images locally so the browser
 		// never leaks the user's IP to Goodreads / OpenLibrary / etc.
@@ -1188,7 +1186,15 @@ func googleBooksAPIKey(ctx context.Context, settings *db.SettingsRepo) string {
 	return ""
 }
 
+// defaultNamingTemplate returns the operator's ebook naming template.
+// "naming.bookTemplate" is the key the Settings UI writes; "naming_template"
+// is the original backend-only key kept as a fallback for hand-seeded values
+// (#1356 — the two sides used different keys, so UI-configured templates were
+// silently ignored and every import fell back to the built-in default).
 func defaultNamingTemplate(settings *db.SettingsRepo) string {
+	if s, _ := settings.Get(context.Background(), "naming.bookTemplate"); s != nil && s.Value != "" {
+		return s.Value
+	}
 	if s, _ := settings.Get(context.Background(), "naming_template"); s != nil && s.Value != "" {
 		return s.Value
 	}

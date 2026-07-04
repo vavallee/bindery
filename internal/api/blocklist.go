@@ -21,7 +21,7 @@ func NewBlocklistHandler(blocklist *db.BlocklistRepo) *BlocklistHandler {
 func (h *BlocklistHandler) List(w http.ResponseWriter, r *http.Request) {
 	entries, err := h.blocklist.List(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if entries == nil {
@@ -37,7 +37,7 @@ func (h *BlocklistHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.blocklist.DeleteByID(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -53,7 +53,7 @@ func (h *BlocklistHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, id := range req.IDs {
 		if err := h.blocklist.DeleteByID(r.Context(), id); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeServerError(w, r, err)
 			return
 		}
 	}

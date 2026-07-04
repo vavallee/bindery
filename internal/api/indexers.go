@@ -73,7 +73,7 @@ func (h *IndexerHandler) WithAliases(aliases *db.AuthorAliasRepo) *IndexerHandle
 func (h *IndexerHandler) List(w http.ResponseWriter, r *http.Request) {
 	idxs, err := h.indexers.List(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if idxs == nil {
@@ -135,7 +135,7 @@ func (h *IndexerHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.indexers.Create(r.Context(), &idx); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, idx)
@@ -170,7 +170,7 @@ func (h *IndexerHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// the -1 unlimited sentinel — the explicit choice sticks.
 	idx.SeedRatioSource = models.SeedRatioSourceUser
 	if err := h.indexers.Update(r.Context(), &idx); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, idx)
@@ -182,7 +182,7 @@ func (h *IndexerHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.indexers.Delete(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -300,7 +300,7 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 
 	idxs, err := h.indexers.List(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -511,7 +511,7 @@ func (h *IndexerHandler) SearchQuery(w http.ResponseWriter, r *http.Request) {
 
 	idxs, err := h.indexers.List(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 

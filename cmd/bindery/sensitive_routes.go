@@ -5,8 +5,38 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/vavallee/bindery/internal/api"
 	"github.com/vavallee/bindery/internal/auth"
 )
+
+// migrateRouteHandler is the surface registerMigrateRoutes needs.
+type migrateRouteHandler interface {
+	ImportCSV(http.ResponseWriter, *http.Request)
+	ImportReadarr(http.ResponseWriter, *http.Request)
+	ImportReadarrStatus(http.ResponseWriter, *http.Request)
+	ImportGoodreadsPreview(http.ResponseWriter, *http.Request)
+	ImportGoodreadsCommit(http.ResponseWriter, *http.Request)
+}
+
+// registerMigrateRoutes mounts the /migrate/* import routes. The whole subtree
+// is admin-only: these import authors, indexers, and download-client
+// credentials and parse uploaded files server-side, the same config-mutating
+// privilege level as the other admin routes. A non-admin must not be able to
+// import a Readarr DB full of indexer keys / client passwords. The per-route
+// WithMaxBody overrides raise the outer router ceiling; the handler-side
+// acceptUpload still applies the authoritative cap.
+func registerMigrateRoutes(r chi.Router, h migrateRouteHandler) {
+	r.Group(func(r chi.Router) {
+		r.Use(auth.RequireAdmin)
+		r.With(api.WithMaxBody(6<<20)).Post("/migrate/csv", h.ImportCSV)         // CSV under 5 MiB
+		r.With(api.WithMaxBody(2<<30)).Post("/migrate/readarr", h.ImportReadarr) // readarr.db can be hundreds of MiB
+		r.Get("/migrate/readarr/status", h.ImportReadarrStatus)
+		// Goodreads library CSV import — POST the export to /goodreads/preview
+		// for a dry-run, then POST the returned token to /goodreads/commit.
+		r.With(api.WithMaxBody(24<<20)).Post("/migrate/goodreads/preview", h.ImportGoodreadsPreview) // export under 20 MiB
+		r.Post("/migrate/goodreads/commit", h.ImportGoodreadsCommit)
+	})
+}
 
 // indexerRouteHandler is the surface registerIndexerRoutes needs. The full
 // IndexerHandler exposes more methods (SearchBook, LastSearchDebug,

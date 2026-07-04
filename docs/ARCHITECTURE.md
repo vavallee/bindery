@@ -25,7 +25,7 @@ OpenLibrary    Google Books, Hardcover.app,   Audnex, Audible
 | Layer | Stack | Notes |
 |-------|-------|-------|
 | **HTTP router** | [chi](https://github.com/go-chi/chi) v5 | Sub-routers per resource, middleware-driven auth/CSRF/rate-limit. |
-| **Backend language** | Go 1.25 | Standard library HTTP server, structured logging via `slog`. |
+| **Backend language** | Go 1.26 (built with `golang:1.26.4`) | Standard library HTTP server, structured logging via `slog`. |
 | **Database** | SQLite, WAL mode | [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite) — pure Go, no CGO. Single `bindery.db` file. |
 | **Schema migrations** | Embedded SQL files in `internal/db/migrations/` | Linearly-numbered, additive-only, applied at startup. |
 | **Frontend** | React 19 + TypeScript + Tailwind CSS 4 | Built with [Vite](https://vite.dev), output baked into the binary via `go:embed`. |
@@ -63,7 +63,7 @@ The `internal/` tree is organised by domain, not by layer:
 | `config` | Loads bootstrap runtime configuration from environment variables (paths, ports, retention, feature flags). |
 | `bookhydrate` | Persists metadata-provider edition details for newly created or rebound books. |
 | `concurrency` | Small primitives for bounding goroutine fan-out in handlers and background jobs. |
-| `grimmory` | Client for the Grimmory self-hosted digital-library API; user-facing (Settings exposes config/test routes under `/grimmory/*`). |
+| `grimmory` | Grimmory self-hosted digital-library integration: JWT/token client, post-import BookDrop pusher, and bulk sync job (Settings exposes config/test/sync routes under `/grimmory/*`). |
 | `hardcoverlistsyncer` | Syncs Hardcover reading lists into the catalogue as "wanted" books. |
 | `isbnutil` | Normalizes ISBN inputs for metadata-provider lookups. |
 | `metrics` | Prometheus exposition-format runtime metrics (registry, instances, HTTP handler). |

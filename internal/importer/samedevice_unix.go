@@ -3,6 +3,7 @@
 package importer
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -51,4 +52,62 @@ func sameDevice(a, b string) bool {
 		return false
 	}
 	return aStat.Dev == bStat.Dev
+}
+
+// nearestExistingDir returns p if it is an existing directory, otherwise the
+// nearest ancestor directory that exists. Returns "" if none is found. A file
+// path resolves to its containing directory (the file itself is not a dir).
+func nearestExistingDir(p string) string {
+	for p != "" {
+		fi, err := os.Stat(p)
+		if err == nil && fi.IsDir() {
+			return p
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return ""
+		}
+		p = parent
+	}
+	return ""
+}
+
+// hardlinkable reports whether a hardlink import from src into dst would
+// actually succeed. Matching device IDs (sameDevice) are necessary but NOT
+// sufficient: two separate bind mounts — or Unraid /mnt/user shares — report
+// the same st_dev yet os.Link across them fails with EXDEV ("invalid
+// cross-device link"). So after the cheap same-device gate it confirms with a
+// real link probe between the nearest existing directories of src and dst,
+// cleaning up the probe artifacts. If a probe file cannot be created (e.g. a
+// read-only download dir), it trusts the same-device result rather than
+// reporting a false negative.
+func hardlinkable(src, dst string) bool {
+	if !sameDevice(src, dst) {
+		return false
+	}
+	srcDir := nearestExistingDir(src)
+	dstDir := nearestExistingDir(dst)
+	if srcDir == "" || dstDir == "" {
+		return true
+	}
+	probe, err := os.CreateTemp(srcDir, ".bindery-hlprobe-*")
+	if err != nil {
+		return true
+	}
+	name := probe.Name()
+	_ = probe.Close()
+	defer func() { _ = os.Remove(name) }()
+	link := filepath.Join(dstDir, filepath.Base(name)+".lnk")
+	if err := os.Link(name, link); err != nil {
+		return false
+	}
+	_ = os.Remove(link)
+	return true
+}
+
+// crossDeviceErr reports whether err is an EXDEV ("invalid cross-device link")
+// failure — os.Link's signal that src and dst are on different mounts even when
+// they share a device id. Used to trigger the seeding-safe copy fallback.
+func crossDeviceErr(err error) bool {
+	return errors.Is(err, syscall.EXDEV)
 }

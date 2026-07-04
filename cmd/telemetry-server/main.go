@@ -29,6 +29,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -51,9 +52,99 @@ func isReleaseVersion(v string) bool {
 type server struct {
 	db            *sql.DB
 	dbDir         string // directory holding the DB, the writable data volume
-	latestVersion string
+	latestVersion atomic.Pointer[string]
 	statsToken    string
 	limiter       *rateLimiter
+}
+
+// latest returns the most recent published version the server advertises.
+// Backed by an atomic so the background poller (runLatestVersionLoop) can
+// update it while request handlers read it concurrently.
+func (s *server) latest() string {
+	if p := s.latestVersion.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
+
+// setLatest atomically replaces the advertised latest version.
+func (s *server) setLatest(v string) { s.latestVersion.Store(&v) }
+
+// latestVersionInterval is how often runLatestVersionLoop re-checks GitHub for
+// a newer release. A var so tests can shorten it. The unauthenticated GitHub
+// API allows 60 requests/hour per IP; 30 min (2/h) leaves ample headroom.
+var latestVersionInterval = 30 * time.Minute
+
+// githubAPIBase is the GitHub REST base URL; a var so tests can point it at a
+// local stub server.
+var githubAPIBase = "https://api.github.com"
+
+var latestVersionClient = &http.Client{Timeout: 15 * time.Second}
+
+// fetchLatestRelease returns the tag_name of the newest published (non-draft,
+// non-prerelease) release for repo ("owner/name"), e.g. "v1.22.1".
+func fetchLatestRelease(ctx context.Context, repo string) (string, error) {
+	url := githubAPIBase + "/repos/" + repo + "/releases/latest"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "bindery-telemetry-server (+https://github.com/vavallee/bindery)")
+	resp, err := latestVersionClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("github releases/latest: status %d", resp.StatusCode)
+	}
+	var body struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err != nil {
+		return "", err
+	}
+	return body.TagName, nil
+}
+
+// runLatestVersionLoop keeps s.latest() in sync with the newest GitHub release
+// so a new release advertises itself without anyone pushing LATEST_VERSION into
+// this cluster. The previous mechanism (`kubectl set env` from the release CI
+// job) silently no-opped every release because the GitHub runner cannot reach
+// this cluster's API server. The LATEST_VERSION env now serves only as the
+// seed/fallback: used until the first successful poll and whenever GitHub is
+// unreachable. Best-effort — a failed poll keeps the last known value.
+func (s *server) runLatestVersionLoop(ctx context.Context, repo string) {
+	if repo == "" {
+		return
+	}
+	check := func() {
+		v, err := fetchLatestRelease(ctx, repo)
+		if err != nil {
+			slog.Warn("latest-version poll failed", "error", err)
+			return
+		}
+		if !isReleaseVersion(v) {
+			slog.Warn("latest-version poll: unexpected tag", "tag", v)
+			return
+		}
+		if v != s.latest() {
+			slog.Info("latest version updated", "from", s.latest(), "to", v)
+			s.setLatest(v)
+		}
+	}
+	check()
+	t := time.NewTicker(latestVersionInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			check()
+		}
+	}
 }
 
 // retentionWindow is the cutoff after which an install row that has stopped
@@ -371,6 +462,7 @@ func main() {
 	canonicalHost := env("CANONICAL_HOST", "")
 	latestVersion := env("LATEST_VERSION", "v1.4.3")
 	statsToken := env("STATS_TOKEN", "")
+	releaseRepo := env("GITHUB_REPO", "vavallee/bindery")
 
 	db, err := sql.Open("sqlite", dbPath+"?_journal=WAL&_timeout=5000")
 	if err != nil {
@@ -464,13 +556,15 @@ func main() {
 	}
 
 	s := &server{
-		db:            db,
-		dbDir:         filepath.Dir(dbPath),
-		latestVersion: latestVersion,
-		statsToken:    statsToken,
+		db:         db,
+		dbDir:      filepath.Dir(dbPath),
+		statsToken: statsToken,
 		// Each IP may ping at most once per hour.
 		limiter: newRateLimiter(1*time.Hour, 5*time.Minute),
 	}
+	// Seed the advertised version from the env; the poller below overrides it
+	// with the newest GitHub release once it can reach the API.
+	s.setLatest(latestVersion)
 
 	// Nightly retention job: drop rows whose last_seen is older than 60 days
 	// (dormant installs that won't return) and any dev/test rows that older
@@ -495,6 +589,11 @@ func main() {
 	// snapshots the current state into today's row (UPSERT), so a process
 	// restart can recover today's partial counts without manual intervention.
 	go s.runAggregateLoop(context.Background())
+
+	// Self-update the advertised "latest" version from the GitHub Releases API
+	// so a new release propagates without a runner→cluster push (which times
+	// out — the cluster API isn't reachable from GitHub Actions).
+	go s.runLatestVersionLoop(context.Background(), releaseRepo)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.handleHome)
@@ -601,21 +700,22 @@ func (s *server) handleHome(w http.ResponseWriter, _ *http.Request) {
     border: 1px solid #334155;
   }
   a.secondary:hover { background: #1e293b; color: #e2e8f0; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; background: #1e293b; color: #cbd5e1; padding: .1em .35em; border-radius: 4px; }
 </style>
 </head>
 <body>
 <div class="card">
   <img src="https://raw.githubusercontent.com/vavallee/bindery/main/.github/assets/logo.png" alt="Bindery logo">
   <h1>Bindery</h1>
-  <p>Open-source automated book management for self-hosters. Monitor your
-     favourite authors, discover new books, and have them downloaded and
-     organized automatically — no scraping, no dead backends.</p>
+  <p><strong style="color:#e2e8f0">The Readarr replacement built to outlive its metadata sources.</strong><br>
+     Automated ebook &amp; audiobook management for Usenet &amp; torrents — monitor
+     authors, search indexers, download, and organize.</p>
   <div class="features">
-    <div class="feature"><div class="feature-dot"></div><span>Tracks monitored authors via OpenLibrary and surfaces new releases automatically</span></div>
-    <div class="feature"><div class="feature-dot"></div><span>Integrates with Prowlarr, qBittorrent, SABnzbd, and Transmission</span></div>
-    <div class="feature"><div class="feature-dot"></div><span>Discover page with personalized recommendations based on your library</span></div>
-    <div class="feature"><div class="feature-dot"></div><span>Calibre bridge plugin for automatic library import after download</span></div>
-    <div class="feature"><div class="feature-dot"></div><span>OPDS feed, OIDC auth, Prometheus metrics, and dark mode</span></div>
+    <div class="feature"><div class="feature-dot"></div><span>No single point of failure for metadata — OpenLibrary, Google Books, Hardcover, DNB, Audnex, and Audible. Documented public APIs, zero scraping.</span></div>
+    <div class="feature"><div class="feature-dot"></div><span>Bring your dead Readarr install with you — import <code>readarr.db</code> and your authors, indexers, download clients, and blocklist come across in one step.</span></div>
+    <div class="feature"><div class="feature-dot"></div><span>Ebooks and audiobooks in independent slots — separate roots, narrator metadata, and multi-part audiobook handling.</span></div>
+    <div class="feature"><div class="feature-dot"></div><span>Usenet and torrents — SABnzbd, NZBGet, qBittorrent, Transmission, and Deluge.</span></div>
+    <div class="feature"><div class="feature-dot"></div><span>Boring to run, by design — a single Go binary, SQLite, distroless image, Helm chart, ARM down to a Pi Zero.</span></div>
   </div>
   <div class="links">
     <a class="primary" href="https://github.com/vavallee/bindery">
@@ -805,7 +905,7 @@ func (s *server) handlePing(w http.ResponseWriter, r *http.Request) {
 	// Newer clients skip these client-side; older clients land here.
 	if !isReleaseVersion(req.Version) {
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(pingResponse{LatestVersion: s.latestVersion})
+		_ = json.NewEncoder(w).Encode(pingResponse{LatestVersion: s.latest()})
 		return
 	}
 	if !validDeploys[req.Deploy] {
@@ -847,7 +947,7 @@ func (s *server) handlePing(w http.ResponseWriter, r *http.Request) {
 	slog.Info("ping", "id", req.InstallID[:min(8, len(req.InstallID))], "version", req.Version, "os", req.OS, "arch", req.Arch, "features", featuresJSON.Valid)
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(pingResponse{LatestVersion: s.latestVersion})
+	_ = json.NewEncoder(w).Encode(pingResponse{LatestVersion: s.latest()})
 }
 
 // statsBucket pairs a label (version / OS / arch) with its install count.
@@ -1278,7 +1378,7 @@ func (s *server) handleStatsJSON(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	resp.Latest = s.latestVersion
+	resp.Latest = s.latest()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "public, max-age=60")
@@ -1875,7 +1975,7 @@ func (s *server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
 </body>
 </html>`,
 		d.Active7d, d.Active30d, d.Total,
-		renderVersionsTable(d.Versions, d.VersionsRecent, 8, normalizeVersion(s.latestVersion)),
+		renderVersionsTable(d.Versions, d.VersionsRecent, 8, normalizeVersion(s.latest())),
 		renderBarChart(d.OS, 0, ""),
 		renderBarChart(d.Arch, 0, ""),
 		renderBarChart(d.Deploy, 0, ""),

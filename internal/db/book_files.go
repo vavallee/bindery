@@ -80,6 +80,24 @@ func (r *BookFileRepo) DeleteByPath(ctx context.Context, path string) (int64, er
 	return bookID, nil
 }
 
+// PathOwnedByOtherBook reports whether the given on-disk path is present in
+// book_files under a book other than excludeBookID. The path column is globally
+// UNIQUE, so there is at most one owner. Pass excludeBookID=0 to treat ANY
+// registered owner as "another book" (e.g. when the current book's rows have
+// already been cascade-deleted). The delete and reassign-cleanup paths use this
+// to avoid os.Remove-ing a file another book still owns (#1368).
+func (r *BookFileRepo) PathOwnedByOtherBook(ctx context.Context, path string, excludeBookID int64) (bool, error) {
+	var owner int64
+	err := r.db.QueryRowContext(ctx, `SELECT book_id FROM book_files WHERE path = ? LIMIT 1`, path).Scan(&owner)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("book_files owner lookup: %w", err)
+	}
+	return owner != excludeBookID, nil
+}
+
 // ListAllPaths returns every path currently registered in book_files.
 // Used by ScanLibrary to build the set of already-tracked files.
 func (r *BookFileRepo) ListAllPaths(ctx context.Context) ([]string, error) {

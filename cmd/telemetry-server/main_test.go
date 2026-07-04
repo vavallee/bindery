@@ -158,7 +158,84 @@ func newTestServer(t *testing.T, latest string) *server {
 			t.Fatalf("create table: %v", err)
 		}
 	}
-	return &server{db: db, latestVersion: latest}
+	s := &server{db: db}
+	s.setLatest(latest)
+	return s
+}
+
+// stubGitHubLatest points githubAPIBase at a test server that serves
+// releases/latest with the given tag (or a status code when tag is "").
+func stubGitHubLatest(t *testing.T, repo, tag string, status int) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/"+repo+"/releases/latest" {
+			http.Error(w, "unexpected path: "+r.URL.Path, http.StatusNotFound)
+			return
+		}
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"tag_name": tag})
+	}))
+	t.Cleanup(srv.Close)
+	prev := githubAPIBase
+	githubAPIBase = srv.URL
+	t.Cleanup(func() { githubAPIBase = prev })
+}
+
+func TestFetchLatestRelease(t *testing.T) {
+	stubGitHubLatest(t, "vavallee/bindery", "v1.22.1", http.StatusOK)
+	got, err := fetchLatestRelease(context.Background(), "vavallee/bindery")
+	if err != nil {
+		t.Fatalf("fetchLatestRelease: %v", err)
+	}
+	if got != "v1.22.1" {
+		t.Errorf("tag = %q, want v1.22.1", got)
+	}
+}
+
+func TestFetchLatestRelease_Non200(t *testing.T) {
+	stubGitHubLatest(t, "vavallee/bindery", "", http.StatusForbidden)
+	if _, err := fetchLatestRelease(context.Background(), "vavallee/bindery"); err == nil {
+		t.Fatal("expected error on non-200 status, got nil")
+	}
+}
+
+func TestRunLatestVersionLoop_UpdatesFromGitHub(t *testing.T) {
+	stubGitHubLatest(t, "vavallee/bindery", "v1.22.1", http.StatusOK)
+	s := newTestServer(t, "v1.0.0") // seeded from "env"
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.runLatestVersionLoop(ctx, "vavallee/bindery")
+	waitFor(t, 2*time.Second, func() bool { return s.latest() == "v1.22.1" })
+	if s.latest() != "v1.22.1" {
+		t.Fatalf("latest = %q, want v1.22.1 (poller should override the seed)", s.latest())
+	}
+}
+
+func TestRunLatestVersionLoop_KeepsSeedOnBadTag(t *testing.T) {
+	stubGitHubLatest(t, "vavallee/bindery", "nightly", http.StatusOK) // not a release tag
+	s := newTestServer(t, "v1.0.0")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.runLatestVersionLoop(ctx, "vavallee/bindery")
+	// Give the immediate check time to run and (correctly) reject the tag.
+	time.Sleep(200 * time.Millisecond)
+	if s.latest() != "v1.0.0" {
+		t.Fatalf("latest = %q, want the seed v1.0.0 to be kept for a non-release tag", s.latest())
+	}
+}
+
+func waitFor(t *testing.T, d time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func TestHandleStatsJSON(t *testing.T) {

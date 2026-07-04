@@ -22,7 +22,7 @@ func NewCustomFormatHandler(repo *db.CustomFormatRepo) *CustomFormatHandler {
 func (h *CustomFormatHandler) List(w http.ResponseWriter, r *http.Request) {
 	formats, err := h.repo.List(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if formats == nil {
@@ -39,7 +39,7 @@ func (h *CustomFormatHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	cf, err := h.repo.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if cf == nil {
@@ -63,7 +63,7 @@ func (h *CustomFormatHandler) Create(w http.ResponseWriter, r *http.Request) {
 		cf.Conditions = []models.CustomCondition{}
 	}
 	if err := h.repo.Create(r.Context(), &cf); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, cf)
@@ -90,7 +90,7 @@ func (h *CustomFormatHandler) Update(w http.ResponseWriter, r *http.Request) {
 		cf.Conditions = []models.CustomCondition{}
 	}
 	if err := h.repo.Update(r.Context(), &cf); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, cf)
@@ -103,7 +103,7 @@ func (h *CustomFormatHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.repo.Delete(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

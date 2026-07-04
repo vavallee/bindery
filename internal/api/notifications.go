@@ -39,7 +39,7 @@ func NewNotificationHandler(notifications *db.NotificationRepo, notif *notifier.
 func (h *NotificationHandler) List(w http.ResponseWriter, r *http.Request) {
 	notifications, err := h.notifications.List(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if notifications == nil {
@@ -56,7 +56,7 @@ func (h *NotificationHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	n, err := h.notifications.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if n == nil {
@@ -82,7 +82,7 @@ func (h *NotificationHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.notifications.Create(r.Context(), &n); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, n)
@@ -114,7 +114,7 @@ func (h *NotificationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	n.ID = id
 	if err := h.notifications.Update(r.Context(), &n); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, n)
@@ -127,7 +127,7 @@ func (h *NotificationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.notifications.Delete(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

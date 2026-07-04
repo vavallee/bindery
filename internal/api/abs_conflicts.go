@@ -64,14 +64,14 @@ func (h *ABSConflictHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	conflicts, total, err := h.conflicts.ListPaginated(r.Context(), limit, offset)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	out := make([]absConflictResponse, 0, len(conflicts))
 	for _, conflict := range conflicts {
 		item, err := h.decorateConflict(r, &conflict)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeServerError(w, r, err)
 			return
 		}
 		out = append(out, item)
@@ -96,7 +96,7 @@ func (h *ABSConflictHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 	}
 	conflict, err := h.conflicts.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if conflict == nil {
@@ -124,7 +124,7 @@ func (h *ABSConflictHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 	// disagreeing on which source won.
 	claimed, err := h.conflicts.Claim(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if !claimed {
@@ -132,7 +132,7 @@ func (h *ABSConflictHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 		// winning resolution without treating it as an error.
 		current, err := h.conflicts.GetByID(r.Context(), id)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeServerError(w, r, err)
 			return
 		}
 		if current == nil {
@@ -141,7 +141,7 @@ func (h *ABSConflictHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 		}
 		item, err := h.decorateConflict(r, current)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeServerError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, item)
@@ -149,19 +149,19 @@ func (h *ABSConflictHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.applyConflictChoice(r, conflict, source); err != nil {
 		_ = h.conflicts.Unclaim(r.Context(), id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	conflict.AppliedSource = source
 	conflict.PreferredSource = source
 	conflict.ResolutionStatus = "resolved"
 	if err := h.conflicts.Upsert(r.Context(), conflict); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	item, err := h.decorateConflict(r, conflict)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, item)

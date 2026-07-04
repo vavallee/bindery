@@ -164,6 +164,68 @@ func TestAuthorRepo_ListPageFiltered_SearchSortMonitored(t *testing.T) {
 	}
 }
 
+// TestAuthorRepo_ListPageFiltered_SortNameCaseInsensitive is the regression
+// test for the Authors-tab "A-Z is a total jumble" report: sort_name is stored
+// case-preserving, so a BINARY-collation ORDER BY interleaves on case (all
+// uppercase before any lowercase) and pushes lowercase-article names ("de
+// Balzac") past "Z". The sort must be case-insensitive end to end.
+func TestAuthorRepo_ListPageFiltered_SortNameCaseInsensitive(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	repo := NewAuthorRepo(database)
+	ctx := context.Background()
+
+	// Deliberately mixed case, inserted out of order. Under BINARY collation
+	// these would sort as [Adams, Zola, adelson, de Balzac] (uppercase first,
+	// then lowercase) — the jumble users saw.
+	// "Östergaard" / "Łukasz" begin with a non-ASCII letter (code point > 'z'):
+	// under COLLATE NOCASE they sorted after "Zola", which #1347 reports as the
+	// remaining jumble. The accent-folded sort_key (migration 058) must place
+	// them by their base letter: Östergaard→o (after "de Balzac", before "Zola"),
+	// Łukasz→l (between "de Balzac" and "Östergaard").
+	seed := []struct{ name, sortName string }{
+		{"Honoré de Balzac", "de Balzac, Honoré"},
+		{"Émile Zola", "Zola, Émile"},
+		{"Anita Adelson", "adelson, Anita"},
+		{"Douglas Adams", "Adams, Douglas"},
+		{"Karl Östergaard", "Östergaard, Karl"},
+		{"Łukasz Nowak", "Nowak, Łukasz"},
+	}
+	for _, s := range seed {
+		if err := repo.Create(ctx, &models.Author{
+			ForeignID: "OL-C" + s.sortName, Name: s.name, SortName: s.sortName,
+		}); err != nil {
+			t.Fatalf("seed %s: %v", s.sortName, err)
+		}
+	}
+
+	az, _, err := repo.ListPageFiltered(ctx, AuthorListFilter{Sort: "az"}, 50, 0)
+	if err != nil {
+		t.Fatalf("az: %v", err)
+	}
+	gotAZ := make([]string, len(az))
+	for i, a := range az {
+		gotAZ[i] = a.SortName
+	}
+	wantAZ := []string{"Adams, Douglas", "adelson, Anita", "de Balzac, Honoré", "Nowak, Łukasz", "Östergaard, Karl", "Zola, Émile"}
+	for i := range wantAZ {
+		if gotAZ[i] != wantAZ[i] {
+			t.Fatalf("az order = %v, want %v", gotAZ, wantAZ)
+		}
+	}
+
+	za, _, err := repo.ListPageFiltered(ctx, AuthorListFilter{Sort: "za"}, 50, 0)
+	if err != nil {
+		t.Fatalf("za: %v", err)
+	}
+	if za[0].SortName != "Zola, Émile" || za[len(za)-1].SortName != "Adams, Douglas" {
+		t.Errorf("za ends = [%s ... %s], want [Zola, Émile ... Adams, Douglas]", za[0].SortName, za[len(za)-1].SortName)
+	}
+}
+
 func TestBookRepo_ListPageFiltered(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {
@@ -273,5 +335,52 @@ func TestBookRepo_ListPageFiltered(t *testing.T) {
 	}
 	if len(za) != 1 || za[0].Title != "Warbreaker" {
 		t.Errorf("title-za first = %v, want [Warbreaker]", za)
+	}
+}
+
+// TestAuthorRepo_ListPageFiltered_SearchMatchesAlias covers #1176: searching a
+// pen name / AKA stored in author_aliases must surface the canonical author
+// that owns the alias, not just exact authors.name matches.
+func TestAuthorRepo_ListPageFiltered_SearchMatchesAlias(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewAuthorRepo(database)
+	aliasRepo := NewAuthorAliasRepo(database)
+
+	holly := &models.Author{ForeignID: "OL-HB", Name: "Holly Black", SortName: "Black, Holly", Monitored: true}
+	if err := repo.Create(ctx, holly); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Create(ctx, &models.Author{ForeignID: "OL-XX", Name: "Someone Else", SortName: "Else, Someone", Monitored: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := aliasRepo.Create(ctx, &models.AuthorAlias{AuthorID: holly.ID, Name: "Cassandra Clare"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Full alias match returns exactly the canonical author.
+	got, total, err := repo.ListPageFiltered(ctx, AuthorListFilter{Search: "cassandra clare"}, 50, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(got) != 1 {
+		t.Fatalf("alias search: want 1 author, got total=%d len=%d", total, len(got))
+	}
+	if got[0].ID != holly.ID {
+		t.Fatalf("alias search returned id=%d name=%q, want Holly Black (id=%d)", got[0].ID, got[0].Name, holly.ID)
+	}
+
+	// Partial alias match also resolves to the owner.
+	if _, total, err := repo.ListPageFiltered(ctx, AuthorListFilter{Search: "Cassandra"}, 50, 0); err != nil || total != 1 {
+		t.Fatalf("partial alias search: want 1 (err nil), got total=%d err=%v", total, err)
+	}
+
+	// Canonical-name search is unaffected.
+	if _, total, err := repo.ListPageFiltered(ctx, AuthorListFilter{Search: "Holly"}, 50, 0); err != nil || total != 1 {
+		t.Fatalf("canonical name search: want 1 (err nil), got total=%d err=%v", total, err)
 	}
 }

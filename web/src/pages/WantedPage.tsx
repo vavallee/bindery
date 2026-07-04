@@ -6,6 +6,7 @@ import BulkActionBar from '../components/BulkActionBar'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
+import { safeHref } from '../util/safeHref'
 
 // Shared grid template so the header row and every list row line up exactly.
 // columns: checkbox · cover · title+author · format · actions
@@ -33,8 +34,17 @@ export default function WantedPage() {
     api.listWanted({ includeExcluded: showExcluded }).then(setBooks).catch(console.error).finally(() => setLoading(false))
   }
 
+  // Guard against stale responses and set-state-after-unmount: a `cancelled`
+  // flag captured in the effect is checked before every setState and flipped in
+  // cleanup, so a request that resolves after a newer refetch or after unmount
+  // is ignored. Mirrors AuthorsPage's poll guard.
   useEffect(() => {
-    load()
+    let cancelled = false
+    api.listWanted({ includeExcluded: showExcluded })
+      .then(b => { if (!cancelled) setBooks(b) })
+      .catch(console.error)
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
   }, [showExcluded])
 
   // Poll the wanted list so background auto-grabs (and books leaving as they
@@ -42,11 +52,12 @@ export default function WantedPage() {
   // poll. Pauses while the user is mid-interaction — a results panel is open or
   // a grab/search is running — so the list doesn't reshuffle under them.
   useEffect(() => {
+    let cancelled = false
     const interval = setInterval(() => {
       if (showResults !== null || grabbingGuid !== null || searchingId !== null) return
-      api.listWanted({ includeExcluded: showExcluded }).then(setBooks).catch(() => {})
+      api.listWanted({ includeExcluded: showExcluded }).then(b => { if (!cancelled) setBooks(b) }).catch(() => {})
     }, 5000)
-    return () => clearInterval(interval)
+    return () => { cancelled = true; clearInterval(interval) }
   }, [showExcluded, showResults, grabbingGuid, searchingId])
 
   useEffect(() => {
@@ -363,11 +374,11 @@ export default function WantedPage() {
                           <span className="truncate block">{r.title}</span>
                           <span className="text-slate-600 dark:text-zinc-500 truncate block">
                             {r.indexerName} &middot; {formatSize(r.size)} &middot; {r.grabs} grabs
-                            {r.infoUrl && (
+                            {safeHref(r.infoUrl) && (
                               <>
                                 {' '}&middot;{' '}
                                 <a
-                                  href={r.infoUrl}
+                                  href={safeHref(r.infoUrl)}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="text-sky-600 dark:text-sky-400 hover:underline"

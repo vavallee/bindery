@@ -134,7 +134,7 @@ func (h *MigrateHandler) ImportReadarr(w http.ResponseWriter, r *http.Request) {
 	tmp, err := os.CreateTemp(uploadTempDir(), "readarr-*.db")
 	if err != nil {
 		slog.Error("readarr import: create temp file failed", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create temp: " + err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	tmpPath := tmp.Name()
@@ -143,13 +143,13 @@ func (h *MigrateHandler) ImportReadarr(w http.ResponseWriter, r *http.Request) {
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)
 		slog.Error("readarr import: spool upload failed", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write temp: " + err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if err := tmp.Close(); err != nil {
 		slog.Error("readarr import: close temp file failed", "path", tmpPath, "error", err)
 		_ = os.Remove(tmpPath)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "close temp: " + err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -165,7 +165,7 @@ func (h *MigrateHandler) ImportReadarr(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		_ = os.Remove(tmpPath)
 		slog.Error("readarr import: failed to start", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -249,7 +249,7 @@ func (h *MigrateHandler) ImportGoodreadsPreview(w http.ResponseWriter, r *http.R
 			return
 		}
 		slog.Error("goodreads import: preview failed", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, preview)
@@ -279,7 +279,7 @@ func (h *MigrateHandler) ImportGoodreadsCommit(w http.ResponseWriter, r *http.Re
 			return
 		}
 		slog.Error("goodreads import: commit failed", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)

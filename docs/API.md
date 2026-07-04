@@ -117,6 +117,12 @@ DELETE /api/v1/queue/{id}                         remove (also from downloader)
 GET    /api/v1/pending                            grabs awaiting delay-profile clearance
 POST   /api/v1/pending/{id}/grab                  promote pending to queue immediately
 
+GET    /api/v1/queue/manual-import/lookup         parse + catalogue-match one path (admin)
+GET    /api/v1/queue/manual-import/scan           enumerate + match book units under a folder (admin)
+POST   /api/v1/queue/manual-import                import one path against a book (admin)
+POST   /api/v1/queue/manual-import/batch          import selected {path, bookId} pairs (admin)
+POST   /api/v1/queue/manual-import/reassign       move a mis-matched file to another book (admin)
+
 GET    /api/v1/history                            grab / import / failure timeline
 POST   /api/v1/history/{id}/blocklist             add the release to the blocklist
 
@@ -137,6 +143,26 @@ GET    /api/v1/system/status                      version, uptime, build info
 PUT    /api/v1/system/loglevel                    runtime log-level switch (debug/info/warn/error)
 GET    /api/v1/images?url=<encoded>               proxied + cached cover image (30-day TTL)
 ```
+
+#### Webhook payload
+
+Every event POSTs a JSON body with a consistent shape so relays render it
+without a custom template:
+
+| Field | Meaning |
+|-------|---------|
+| `eventType` | `grabbed` \| `bookImported` \| `upgrade` \| `downloadFailed` \| `health` \| `test` — present on **every** event |
+| `title` | what happened, e.g. `Release Grabbed`, `Book Imported`, `Download Failed` |
+| `message` | the subject, e.g. `The Way of Kings · Brandon Sanderson` |
+| `body` | alias of `message` (Apprise requires a `body` field) |
+| `item` | the raw release/book name (the title before it was moved into `message`) |
+| event extras | `author`, `format`, `size`, `path`, `status`, `clientId` when relevant |
+
+**ntfy:** set the notification's **topic** field and point the URL at the ntfy
+server root (e.g. `https://ntfy.sh`). Bindery then POSTs the JSON body with a
+`topic` field to the root, which ntfy renders natively. Without a topic it POSTs
+to the URL as-is, so a topic URL would show the raw JSON — use the topic field
+or ntfy message-templating headers (`X-Title`, `X-Message`) instead.
 
 ### Auth and users (admin)
 

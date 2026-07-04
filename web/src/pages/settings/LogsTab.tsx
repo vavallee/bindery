@@ -306,8 +306,8 @@ export default function LogsTab() {
       <section className="mt-8">
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.logRetention')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-          <div className="flex items-center justify-between gap-4">
-            <div>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="min-w-0">
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.logRetentionLabel')}</label>
               <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">{t('settings.general.logRetentionHint')}</p>
             </div>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { api, Author, MediaType, AuthorRefreshStatus } from '../api/client'
+import { api, Author, AuthorBulkMonitorMode, MediaType, AuthorRefreshStatus } from '../api/client'
 import AddAuthorModal from '../components/AddAuthorModal'
 import AddBookModal from '../components/AddBookModal'
 import MergeAuthorsModal from '../components/MergeAuthorsModal'
@@ -32,6 +32,11 @@ export default function AuthorsPage() {
   const [showAddBook, setShowAddBook] = useState(false)
   const [showAddSeries, setShowAddSeries] = useState(false)
   const [showMerge, setShowMerge] = useState(false)
+  const [showMonitorModeBulk, setShowMonitorModeBulk] = useState(false)
+  const [bulkMonitorMode, setBulkMonitorMode] = useState<AuthorBulkMonitorMode>('none')
+  const [bulkMonitorLatestCount, setBulkMonitorLatestCount] = useState(1)
+  const [bulkApplyMonitorModeToExisting, setBulkApplyMonitorModeToExisting] = useState(true)
+  const [bulkMonitorModeError, setBulkMonitorModeError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [sort, setSort] = useState<SortMode>('az')
@@ -219,6 +224,49 @@ export default function AuthorsPage() {
       load()
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Bulk action failed')
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
+  const openBulkMonitorMode = () => {
+    setBulkMonitorMode('none')
+    setBulkMonitorLatestCount(1)
+    setBulkApplyMonitorModeToExisting(true)
+    setBulkMonitorModeError(null)
+    setShowMonitorModeBulk(true)
+  }
+
+  const closeBulkMonitorMode = () => {
+    if (bulkBusy) return
+    setShowMonitorModeBulk(false)
+    setBulkMonitorModeError(null)
+  }
+
+  const runBulkSetMonitorMode = async () => {
+    if (selectedIds.size === 0) return
+    setBulkBusy(true)
+    setBulkMonitorModeError(null)
+    try {
+      const result = await api.bulkSetAuthorMonitorMode([...selectedIds], bulkMonitorMode, {
+        monitorLatestCount: bulkMonitorMode === 'latest' ? bulkMonitorLatestCount : undefined,
+        applyMonitorModeToExisting: bulkApplyMonitorModeToExisting,
+      })
+      const failed = Object.entries(result.results).find(([, item]) => !item.ok)
+      if (failed) {
+        const [id, item] = failed
+        setBulkMonitorModeError(t('authors.bulkSetMonitorModePartial', {
+          id,
+          error: item.error || t('common.unknownError', 'Unknown error'),
+          defaultValue: 'Monitor mode was not updated for author {{id}}: {{error}}',
+        }))
+        return
+      }
+      setShowMonitorModeBulk(false)
+      clearSelection()
+      load()
+    } catch (err) {
+      setBulkMonitorModeError(err instanceof Error ? err.message : t('authors.bulkSetMonitorModeFailed', 'Bulk monitor mode update failed'))
     } finally {
       setBulkBusy(false)
     }
@@ -483,12 +531,102 @@ export default function AuthorsPage() {
           { label: t('common.unmonitor'), onClick: () => runBulk('unmonitor') },
           { label: t('common.search'), onClick: () => runBulk('search') },
           { label: t('authors.bulkRefreshMetadata', 'Refresh metadata'), onClick: () => runBulk('refresh') },
+          { label: t('authors.bulkSetMonitorMode', 'Set monitor mode'), onClick: openBulkMonitorMode },
           { label: t('authors.bulkSetEbook', 'Set ebook'), onClick: () => runBulkSetMediaType('ebook') },
           { label: t('authors.bulkSetAudiobook', 'Set audiobook'), onClick: () => runBulkSetMediaType('audiobook') },
           { label: t('authors.bulkSetBoth', 'Set both'), onClick: () => runBulkSetMediaType('both') },
           { label: t('common.delete'), onClick: () => runBulk('delete'), variant: 'danger' },
         ]}
       />
+
+      {showMonitorModeBulk && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50" onClick={closeBulkMonitorMode}>
+          <div className="bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg w-full max-w-md shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="bulk-monitor-mode-title" onClick={e => e.stopPropagation()}>
+            <div className="p-4 border-b border-slate-200 dark:border-zinc-800">
+              <h3 id="bulk-monitor-mode-title" className="text-lg font-semibold">{t('authors.bulkSetMonitorModeTitle', 'Set monitor mode')}</h3>
+              <p className="text-xs text-slate-600 dark:text-zinc-400 mt-1">
+                {t('authors.bulkSetMonitorModeCount', {
+                  count: selectedIds.size,
+                  defaultValue: 'Selected authors: {{count}}',
+                })}
+              </p>
+            </div>
+            <div className="p-4 space-y-4">
+              <div>
+                <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1" htmlFor="bulk-monitor-mode">
+                  {t('editAuthorModal.monitorMode', 'Monitor mode')}
+                </label>
+                <select
+                  id="bulk-monitor-mode"
+                  value={bulkMonitorMode}
+                  onChange={e => setBulkMonitorMode(e.target.value as AuthorBulkMonitorMode)}
+                  disabled={bulkBusy}
+                  className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 disabled:opacity-50"
+                >
+                  <option value="all">{t('monitorMode.all', 'All books')}</option>
+                  <option value="future">{t('monitorMode.future', 'Future books only')}</option>
+                  <option value="latest">{t('monitorMode.latest', 'Latest only')}</option>
+                  <option value="none">{t('monitorMode.none', 'None')}</option>
+                </select>
+              </div>
+              {bulkMonitorMode === 'latest' && (
+                <div>
+                  <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1" htmlFor="bulk-monitor-latest-count">
+                    {t('editAuthorModal.monitorLatestCount', 'Latest book count')}
+                  </label>
+                  <input
+                    id="bulk-monitor-latest-count"
+                    type="number"
+                    min={1}
+                    value={bulkMonitorLatestCount}
+                    onChange={e => {
+                      const value = Number(e.target.value)
+                      const safe = Number.isFinite(value) && value > 0 ? value : 1
+                      setBulkMonitorLatestCount(safe)
+                    }}
+                    disabled={bulkBusy}
+                    className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 disabled:opacity-50"
+                  />
+                </div>
+              )}
+              <label className="flex items-start gap-2 text-sm cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={bulkApplyMonitorModeToExisting}
+                  onChange={e => setBulkApplyMonitorModeToExisting(e.target.checked)}
+                  disabled={bulkBusy}
+                  className="accent-emerald-500 mt-0.5 flex-shrink-0 disabled:opacity-50"
+                />
+                <span>
+                  <span className="font-medium">{t('authors.bulkApplyMonitorModeToExisting', 'Apply monitor mode to existing books')}</span>
+                  <span className="block text-xs text-slate-600 dark:text-zinc-400 mt-0.5">{t('authors.bulkApplyMonitorModeToExistingHint', 'Otherwise this only affects books discovered in future refreshes.')}</span>
+                </span>
+              </label>
+              {bulkMonitorModeError && (
+                <p role="alert" className="text-sm text-red-700 dark:text-red-300 bg-red-100 dark:bg-red-950/40 border border-red-300 dark:border-red-900 rounded-md px-3 py-2">
+                  {bulkMonitorModeError}
+                </p>
+              )}
+            </div>
+            <div className="p-4 border-t border-slate-200 dark:border-zinc-800 flex justify-end gap-2">
+              <button
+                onClick={closeBulkMonitorMode}
+                disabled={bulkBusy}
+                className="px-4 py-2 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-50"
+              >
+                {t('common.cancel', 'Cancel')}
+              </button>
+              <button
+                onClick={runBulkSetMonitorMode}
+                disabled={bulkBusy}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm font-medium text-white transition-colors"
+              >
+                {bulkBusy ? t('common.saving', 'Saving...') : t('authors.bulkSetMonitorModeApply', 'Apply monitor mode')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showAdd && <AddAuthorModal onClose={() => setShowAdd(false)} onAdded={load} />}
       {showAddBook && <AddBookModal onClose={() => setShowAddBook(false)} onAdded={() => setShowAddBook(false)} />}

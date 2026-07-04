@@ -67,11 +67,13 @@ func (r *AuthorRepo) List(ctx context.Context) ([]models.Author, error) {
 }
 
 const (
-	listAuthorsAll = "SELECT " + authorSelectCols + " FROM authors ORDER BY sort_name"
+	// sort_key is the accent-folded ordering key (migration 058, #1347); the
+	// sort_name tiebreaker keeps order deterministic when two folded keys collide.
+	listAuthorsAll = "SELECT " + authorSelectCols + " FROM authors ORDER BY sort_key, sort_name COLLATE NOCASE"
 	// Include rows with NULL owner_user_id — these are authors created before the
 	// multi-user migration ran its backfill (migration 025) or imported without a
 	// user context. Excluding them causes the list to silently drop visible authors.
-	listAuthorsByUser = "SELECT " + authorSelectCols + " FROM authors WHERE owner_user_id = ? OR owner_user_id IS NULL ORDER BY sort_name"
+	listAuthorsByUser = "SELECT " + authorSelectCols + " FROM authors WHERE owner_user_id = ? OR owner_user_id IS NULL ORDER BY sort_key, sort_name COLLATE NOCASE"
 )
 
 func (r *AuthorRepo) ListByUser(ctx context.Context, userID int64) ([]models.Author, error) {
@@ -122,14 +124,21 @@ func escapeLike(s string) string {
 
 // authorSortOrder maps a whitelisted sort key to a fixed ORDER BY clause. The
 // value never contains user input, so it is safe to interpolate.
+//
+// Ordering is on sort_key — the accent-folded, lowercased key (migration 058,
+// authorSortKey) — so case AND diacritics fold uniformly. #1312 used COLLATE
+// NOCASE, which only folds ASCII A-Z, leaving accented leading letters (Ö, Ł,
+// Ø…) sorting after "Z" (#1347). sort_name is the tiebreaker for a stable order
+// when two folded keys collide. The "recent" sort keys on created_at (a
+// timestamp) and is unaffected.
 func authorSortOrder(sort string) string {
 	switch sort {
 	case "za":
-		return "sort_name DESC"
+		return "sort_key DESC, sort_name COLLATE NOCASE DESC"
 	case "recent":
 		return "created_at DESC, id DESC"
 	default:
-		return "sort_name ASC"
+		return "sort_key ASC, sort_name COLLATE NOCASE ASC"
 	}
 }
 
@@ -145,7 +154,7 @@ func (r *AuthorRepo) ListPage(ctx context.Context, userID int64, limit, offset i
 // limit/offset so the UI can paginate). limit must be positive; offset is
 // clamped at 0.
 //
-// The sort_name order is backed by idx_authors_sort_name (migration 048).
+// The sort_key order is backed by idx_authors_sort_key (migration 058).
 func (r *AuthorRepo) ListPageFiltered(ctx context.Context, f AuthorListFilter, limit, offset int) ([]models.Author, int, error) {
 	if limit <= 0 {
 		limit = 50
@@ -165,8 +174,12 @@ func (r *AuthorRepo) ListPageFiltered(ctx context.Context, f AuthorListFilter, l
 		args = append(args, f.UserID)
 	}
 	if s := strings.TrimSpace(f.Search); s != "" {
-		conds = append(conds, "name LIKE ? ESCAPE '\\' COLLATE NOCASE")
-		args = append(args, "%"+escapeLike(s)+"%")
+		// Match the canonical name OR any of the author's aliases (#1176), so
+		// searching a pen name / AKA (e.g. "Cassandra Clare" stored as an alias
+		// of Holly Black) still surfaces the author that owns it.
+		like := "%" + escapeLike(s) + "%"
+		conds = append(conds, "(name LIKE ? ESCAPE '\\' COLLATE NOCASE OR id IN (SELECT author_id FROM author_aliases WHERE name LIKE ? ESCAPE '\\' COLLATE NOCASE))")
+		args = append(args, like, like)
 	}
 	if f.Monitored != nil {
 		conds = append(conds, "monitored = ?")
@@ -349,12 +362,12 @@ func (r *AuthorRepo) CreateForUser(ctx context.Context, a *models.Author, ownerU
 	defer func() { _ = tx.Rollback() }()
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO authors (foreign_id, name, sort_name, description, image_url, disambiguation,
+		INSERT INTO authors (foreign_id, name, sort_name, sort_key, description, image_url, disambiguation,
 		                     ratings_count, average_rating, monitored, quality_profile_id, metadata_profile_id, root_folder_id,
 		                     audiobook_root_folder_id, monitor_mode, monitor_latest_count, metadata_provider, owner_user_id,
 		                     created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.ForeignID, a.Name, a.SortName, a.Description, a.ImageURL, a.Disambiguation,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ForeignID, a.Name, a.SortName, authorSortKey(a.SortName), a.Description, a.ImageURL, a.Disambiguation,
 		a.RatingsCount, a.AverageRating, a.Monitored, a.QualityProfileID, a.MetadataProfileID, a.RootFolderID,
 		a.AudiobookRootFolderID, a.MonitorMode, a.MonitorLatestCount, a.MetadataProvider, ownerArg, timeValueArg(now), timeValueArg(now))
 	if err != nil {
@@ -528,15 +541,17 @@ func (r *AuthorRepo) UpgradeSyntheticDNB(ctx context.Context, currentForeignID s
 			SET foreign_id        = ?,
 			    name              = COALESCE(NULLIF(?, ''), name),
 		    sort_name         = COALESCE(NULLIF(?, ''), sort_name),
+		    sort_key          = CASE WHEN ? != '' THEN ? ELSE sort_key END,
 		    description       = CASE WHEN ? != '' THEN ? ELSE description END,
 		    image_url         = CASE WHEN ? != '' THEN ? ELSE image_url END,
 		    disambiguation    = CASE WHEN ? != '' THEN ? ELSE disambiguation END,
 		    metadata_provider = COALESCE(NULLIF(?, ''), metadata_provider),
 		    updated_at        = ?
 		WHERE foreign_id = ?`,
-		target.ForeignID,                       // foreign_id =
-		target.Name,                            // name = COALESCE(NULLIF(?,''), name)
-		target.SortName,                        // sort_name = COALESCE(NULLIF(?,''), sort_name)
+		target.ForeignID,                                // foreign_id =
+		target.Name,                                     // name = COALESCE(NULLIF(?,''), name)
+		target.SortName,                                 // sort_name = COALESCE(NULLIF(?,''), sort_name)
+		target.SortName, authorSortKey(target.SortName), // sort_key CASE WHEN ?!='' THEN ? ELSE sort_key
 		target.Description, target.Description, // description CASE WHEN ? != '' THEN ?
 		target.ImageURL, target.ImageURL, // image_url
 		target.Disambiguation, target.Disambiguation, // disambiguation
@@ -599,12 +614,12 @@ func (r *AuthorRepo) Update(ctx context.Context, a *models.Author) error {
 
 func (r *AuthorRepo) update(ctx context.Context, exec dbExecutor, a *models.Author, now time.Time) error {
 	_, err := exec.ExecContext(ctx, `
-		UPDATE authors SET foreign_id=?, name=?, sort_name=?, description=?, image_url=?, disambiguation=?,
+		UPDATE authors SET foreign_id=?, name=?, sort_name=?, sort_key=?, description=?, image_url=?, disambiguation=?,
 		                   ratings_count=?, average_rating=?, monitored=?, quality_profile_id=?,
 		                   metadata_profile_id=?, root_folder_id=?, audiobook_root_folder_id=?, monitor_mode=?,
 		                   monitor_latest_count=?, metadata_provider=?, last_metadata_refresh_at=?, updated_at=?
 		WHERE id=?`,
-		a.ForeignID, a.Name, a.SortName, a.Description, a.ImageURL, a.Disambiguation,
+		a.ForeignID, a.Name, a.SortName, authorSortKey(a.SortName), a.Description, a.ImageURL, a.Disambiguation,
 		a.RatingsCount, a.AverageRating, a.Monitored, a.QualityProfileID,
 		a.MetadataProfileID, a.RootFolderID, a.AudiobookRootFolderID, a.MonitorMode,
 		a.MonitorLatestCount, a.MetadataProvider, timeArg(a.LastMetadataRefreshAt), timeValueArg(now), a.ID)

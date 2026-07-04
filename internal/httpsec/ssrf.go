@@ -149,6 +149,14 @@ func checkIP(ip net.IP, policy Policy) error {
 		ip = v4
 	}
 
+	// Always blocked: the unspecified address (0.0.0.0, ::). It is never a
+	// valid destination, and on Linux a connect to 0.0.0.0 targets loopback —
+	// so without this it bypasses the loopback block under every policy,
+	// including PolicyStrict (image proxy / notifier) and PolicyLANLoopback.
+	if ip.IsUnspecified() {
+		return errors.New("url not allowed: points to unspecified address")
+	}
+
 	// Loopback is blocked except under PolicyLANLoopback (admin-configured
 	// infrastructure URLs, where reaching a co-located service over 127.0.0.1 is
 	// the intended, normal case) or when explicitly allowed for tests via

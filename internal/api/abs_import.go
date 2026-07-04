@@ -81,7 +81,7 @@ func (h *ABSImportHandler) Status(w http.ResponseWriter, _ *http.Request) {
 func (h *ABSImportHandler) Runs(w http.ResponseWriter, r *http.Request) {
 	runs, err := h.importer.RecentRuns(r.Context(), 10)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	resp := make([]abs.PersistedImportRun, 0, len(runs))

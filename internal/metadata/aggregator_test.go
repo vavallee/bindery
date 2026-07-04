@@ -301,6 +301,29 @@ func TestCanonicalAuthorKey(t *testing.T) {
 	}
 }
 
+func TestCanonicalAuthorKey_FoldsDuplicatedProviderNoise(t *testing.T) {
+	if got, want := canonicalAuthorKey("Black, Chuck, Black, Chuck"), canonicalAuthorKey("Chuck Black"); got != want {
+		t.Fatalf("canonicalAuthorKey duplicated provider noise = %q, want %q", got, want)
+	}
+}
+
+func TestDuplicatedAuthorName(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{name: "Black, Chuck, Black, Chuck", want: true},
+		{name: "Chuck Black", want: false},
+		{name: "Black, Chuck, Jr.", want: false},
+		{name: "", want: false},
+	}
+	for _, tt := range tests {
+		if got := duplicatedAuthorName(tt.name); got != tt.want {
+			t.Errorf("duplicatedAuthorName(%q) = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
 func TestAuthorRelevance_InversionAware(t *testing.T) {
 	q := "arthur c brooks"
 	if natural := authorRelevance("Arthur C. Brooks", q); natural != 1.0 {
@@ -351,6 +374,26 @@ func TestAggregator_SearchAuthors_CollapsesFragments(t *testing.T) {
 	}
 	if len(got) != 2 {
 		t.Errorf("expected 2 results (collapsed Brooks + Some Other Author), got %d", len(got))
+	}
+}
+
+func TestAggregator_SearchAuthors_PrefersCleanNameOverDuplicatedProviderNoise(t *testing.T) {
+	stats := func(n int) *models.AuthorStats { return &models.AuthorStats{BookCount: n} }
+	primary := &mockProvider{name: "ol", searchAuthors: []models.Author{
+		{Name: "Chuck Black", ForeignID: "OL1480449A", Statistics: stats(47), RatingsCount: 14},
+		{Name: "Black, Chuck, Black, Chuck", ForeignID: "OL11441410A", Statistics: stats(1)},
+	}}
+	agg := newTestAggregator(primary)
+
+	got, err := agg.SearchAuthors(context.Background(), "Chuck Black")
+	if err != nil {
+		t.Fatalf("SearchAuthors: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("duplicated provider-noise row should collapse into the clean author, got %d: %+v", len(got), got)
+	}
+	if got[0].ForeignID != "OL1480449A" || got[0].Name != "Chuck Black" {
+		t.Fatalf("kept author = %+v, want clean Chuck Black record", got[0])
 	}
 }
 

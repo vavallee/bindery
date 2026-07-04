@@ -4,7 +4,7 @@ Operational guide for AI coding agents (Claude Code, Codex, Cursor, etc.) workin
 
 ## What Bindery is
 
-A single-binary book download manager (Readarr replacement) — Go 1.25 backend with an embedded React 19 SPA, SQLite via `modernc.org/sqlite` (no CGO), distroless container image. Architecture, feature surface, and deployment are documented in [README.md](README.md) and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+A single-binary book download manager (Readarr replacement) — Go 1.26 backend with an embedded React 19 SPA, SQLite via `modernc.org/sqlite` (no CGO), distroless container image. Architecture, feature surface, and deployment are documented in [README.md](README.md) and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Repo map
 

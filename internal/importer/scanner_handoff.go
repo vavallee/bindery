@@ -47,13 +47,11 @@ func uniqueNonEmptyStrings(values []string) []string {
 	return out
 }
 
-// importMode reads the "import.mode" setting and returns one of "move",
-// "copy", "hardlink", or "external". When the setting is absent or
-// unrecognised, it defaults to "hardlink" if src and dst are on the same
-// filesystem (free, preserves seeding) or "copy" when they are on different
-// filesystems. Pass empty strings for src/dst to get the cross-device default
-// ("copy") without performing a stat.
-func (s *Scanner) importMode(ctx context.Context, src, dst string) string {
+// configuredImportMode returns the operator-set "import.mode" ("move", "copy",
+// "hardlink", or "external"), or "" when the setting is absent/unrecognised,
+// meaning "auto" (let resolveImportMode pick hardlink-vs-copy per destination).
+// Read once per download so a mid-run UI toggle can't mix modes (#705).
+func (s *Scanner) configuredImportMode(ctx context.Context) string {
 	if s.settings != nil {
 		setting, err := s.settings.Get(ctx, "import.mode")
 		if err == nil && setting != nil {
@@ -63,12 +61,41 @@ func (s *Scanner) importMode(ctx context.Context, src, dst string) string {
 			}
 		}
 	}
-	// No explicit setting — choose the safest mode that also preserves seeding.
-	if sameDevice(src, dst) {
+	return ""
+}
+
+// resolveImportMode picks the effective placement mode for a destination root.
+// An explicit operator setting (configuredMode) is honoured as-is. For the auto
+// default it returns "hardlink" when a file can actually be hard-linked from
+// src into destRoot (free, preserves seeding) or "copy" otherwise. destRoot MUST be
+// the root the files actually land under — per-author RootFolderID and audiobook
+// roots can live on a different mount than s.libraryDir, and choosing the mode
+// against s.libraryDir there picked an always-failing cross-device hardlink.
+// Pass empty strings for src/destRoot to get the cross-device default ("copy")
+// without a probe.
+//
+// hardlinkable (not a bare same-device check) is used deliberately: separate
+// bind mounts and Unraid /mnt/user shares report the same st_dev yet reject
+// cross-mount hardlinks with EXDEV, so a device-ID match alone would auto-select
+// an always-failing hardlink mode.
+func (s *Scanner) resolveImportMode(configuredMode, src, destRoot string) string {
+	if configuredMode != "" {
+		return configuredMode
+	}
+	if hardlinkable(src, destRoot) {
 		return "hardlink"
 	}
 	slog.Warn("import.mode not set and src/dst are on different filesystems; defaulting to copy — seeding will be preserved but disk usage doubles")
 	return "copy"
+}
+
+// importMode reads the "import.mode" setting and returns one of "move", "copy",
+// "hardlink", or "external", falling back to the same-filesystem auto default
+// for src/dst. Retained for the standalone callers/tests; the import pipeline
+// uses configuredImportMode + resolveImportMode so the auto check runs against
+// the real destination root.
+func (s *Scanner) importMode(ctx context.Context, src, dst string) string {
+	return s.resolveImportMode(s.configuredImportMode(ctx), src, dst)
 }
 
 // flattenMultiDiscEnabled reads the "import.audiobook.flatten_multi_disc"
@@ -120,11 +147,20 @@ func (s *Scanner) pushToCWA(ctx context.Context, srcPath string) {
 // and the external-mode drop handoff.
 func discoverBookFiles(downloadPath string, explicitFiles []string) []string {
 	if len(explicitFiles) > 0 {
-		return explicitFiles
+		return filterSymlinks(explicitFiles)
 	}
 	var bookFiles []string
 	if err := filepath.Walk(downloadPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
+			return nil
+		}
+		// Skip symlinks. A malicious release can ship a book-extension symlink
+		// pointing at an arbitrary file (e.g. /config/bindery.db, /etc/passwd);
+		// importing it in copy mode would os.Open-follow the link and copy the
+		// target's bytes into the library where the user can download them.
+		// filepath.Walk Lstats, so a symlink shows ModeSymlink here.
+		if info.Mode()&os.ModeSymlink != 0 {
+			slog.Warn("skipping symlinked file in download path", "path", path)
 			return nil
 		}
 		if IsBookFile(path) {
@@ -135,6 +171,22 @@ func discoverBookFiles(downloadPath string, explicitFiles []string) []string {
 		slog.Warn("failed to walk download path", "path", downloadPath, "error", err)
 	}
 	return bookFiles
+}
+
+// filterSymlinks drops any path that is a symlink (Lstat, so the link itself is
+// inspected, not its target). The download client's authoritative file list
+// (#903) can include a symlink a malicious release planted to point at an
+// arbitrary file; importing it would copy the target's bytes into the library.
+func filterSymlinks(paths []string) []string {
+	out := paths[:0:0]
+	for _, p := range paths {
+		if fi, err := os.Lstat(p); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			slog.Warn("skipping symlinked file in download path", "path", p)
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 // dropSettings reads the external-mode drop-folder configuration (#941).
@@ -484,4 +536,14 @@ func editionHasCalibreMetadata(e models.Edition) bool {
 		e.PublishDate != nil ||
 		strings.TrimSpace(e.Language) != "" ||
 		strings.TrimSpace(e.ImageURL) != ""
+}
+
+// pushToGrimmory mirrors a just-imported ebook into Grimmory's BookDrop.
+// All policy (enabled check, idempotency, logging) lives in the pusher;
+// this is only the nil-safe call site.
+func (s *Scanner) pushToGrimmory(ctx context.Context, book *models.Book, path string) {
+	if s.grimmory == nil || book == nil || path == "" {
+		return
+	}
+	s.grimmory.PushOnImport(ctx, book.ID, book.Title, path)
 }

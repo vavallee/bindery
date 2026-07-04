@@ -20,6 +20,14 @@ type SyncError struct {
 	Reason string `json:"reason"`
 }
 
+// maxSyncErrors caps the per-book error list kept in SyncProgress.Errors (and
+// thus returned on every status poll). A run that fails on every book — e.g. a
+// library path the Calibre container can't see (#1346) — would otherwise grow a
+// SyncError per book and re-serialize thousands of near-identical entries to the
+// UI on each poll. The full failure count is always in Stats.Failed; the list is
+// a sample for display.
+const maxSyncErrors = 50
+
 // SyncStats summarises one bulk-push run. Totals are cumulative across
 // every imported book with a file path; `Pushed` counts newly-added,
 // `AlreadyInCalibre` counts 409 Conflict responses (treated as success
@@ -199,6 +207,33 @@ func (s *Syncer) run(ctx context.Context, cfg Config) {
 	client := s.newClient(cfg)
 	sameLibrary := sameCalibreLibrary(ctx, cfg, client)
 
+	// Log the first book to hit each distinct failure reason at WARN. The
+	// summary line below only reports failed=N, and the per-book SyncErrors live
+	// in the polled progress (not the log), so a user staring at the log had no
+	// way to see *why* every push failed (#1346 — a path the Calibre container
+	// can't resolve). Dedupe by reason so a library-wide path mismatch logs once,
+	// not once per book.
+	loggedReasons := make(map[string]bool)
+	recordFailure := func(b *models.Book, path, reason string) {
+		s.setProgress(func(p *SyncProgress) {
+			p.Stats.Failed++
+			p.Stats.Processed++
+			if len(p.Errors) < maxSyncErrors {
+				p.Errors = append(p.Errors, SyncError{
+					BookID: b.ID,
+					Title:  b.Title,
+					Path:   path,
+					Reason: reason,
+				})
+			}
+		})
+		if !loggedReasons[reason] {
+			loggedReasons[reason] = true
+			slog.Warn("calibre sync: book push failed",
+				"bookId", b.ID, "title", b.Title, "path", path, "reason", reason)
+		}
+	}
+
 	for i := range eligible {
 		if err := ctx.Err(); err != nil {
 			s.fail("cancelled: " + err.Error())
@@ -208,16 +243,7 @@ func (s *Syncer) run(ctx context.Context, cfg Config) {
 		path := pushPath(b)
 		meta, err := s.metadataForBook(ctx, b, path, sameLibrary)
 		if err != nil {
-			s.setProgress(func(p *SyncProgress) {
-				p.Stats.Failed++
-				p.Stats.Processed++
-				p.Errors = append(p.Errors, SyncError{
-					BookID: b.ID,
-					Title:  b.Title,
-					Path:   path,
-					Reason: err.Error(),
-				})
-			})
+			recordFailure(b, path, err.Error())
 			continue
 		}
 		id, addErr := client.Add(ctx, path, meta)
@@ -239,16 +265,7 @@ func (s *Syncer) run(ctx context.Context, cfg Config) {
 				p.Stats.Processed++
 			})
 		default:
-			s.setProgress(func(p *SyncProgress) {
-				p.Stats.Failed++
-				p.Stats.Processed++
-				p.Errors = append(p.Errors, SyncError{
-					BookID: b.ID,
-					Title:  b.Title,
-					Path:   path,
-					Reason: addErr.Error(),
-				})
-			})
+			recordFailure(b, path, addErr.Error())
 		}
 	}
 
@@ -262,7 +279,8 @@ func (s *Syncer) run(ctx context.Context, cfg Config) {
 		"total", len(eligible),
 		"pushed", final.Stats.Pushed,
 		"alreadyInCalibre", final.Stats.AlreadyInCalibre,
-		"failed", final.Stats.Failed)
+		"failed", final.Stats.Failed,
+		"distinctFailureReasons", len(loggedReasons))
 }
 
 // pushPath returns the on-disk path to send to Calibre for the given

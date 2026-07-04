@@ -121,6 +121,30 @@ func DefaultProxyTransport() http.RoundTripper {
 	return outboundProxyTransport
 }
 
+// GuardedTransport returns a RoundTripper that re-validates the resolved IP on
+// every dial against policy, closing the DNS-rebind TOCTOU window between an
+// up-front ValidateOutboundURL check and the actual connect. For clients that
+// follow redirects it also catches a redirect to a forbidden host at dial time.
+//
+// When an outbound proxy is configured the dial targets the operator-trusted
+// proxy (not the destination host), so a per-dial recheck would re-validate the
+// proxy's own address and break a LAN/loopback proxy; in that case the shared
+// proxy transport is returned unchanged and callers rely on the up-front
+// validation (the rebind recheck cannot see past the proxy anyway). It clones
+// DefaultProxyTransport so installing DialContext never mutates the shared pool.
+func GuardedTransport(policy Policy) http.RoundTripper {
+	base := DefaultProxyTransport()
+	if ProxyFunc() != nil {
+		return base
+	}
+	if t, ok := base.(*http.Transport); ok {
+		c := t.Clone()
+		c.DialContext = NewDialContext(policy)
+		return c
+	}
+	return &http.Transport{DialContext: NewDialContext(policy)}
+}
+
 // bypassProxyForHost reports whether requests to host should skip the proxy and
 // be dialled directly. The no-proxy list is always honoured; the LAN/loopback
 // heuristics apply only when bypassLocal is enabled.

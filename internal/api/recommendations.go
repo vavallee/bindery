@@ -125,9 +125,9 @@ func (h *RecommendationHandler) List(w http.ResponseWriter, r *http.Request) {
 		offset = o
 	}
 
-	recs, err := h.recs.List(r.Context(), 1, recType, limit, offset)
+	recs, err := h.recs.List(r.Context(), auth.UserIDFromContext(r.Context()), recType, limit, offset)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if recs == nil {
@@ -149,7 +149,7 @@ func (h *RecommendationHandler) Dismiss(w http.ResponseWriter, r *http.Request) 
 	// feed by ID. 404 (not 403) on mismatch to avoid leaking existence.
 	rec, err := h.recs.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if rec == nil || !auth.CheckOwnership(r.Context(), rec.UserID) {
@@ -157,8 +157,8 @@ func (h *RecommendationHandler) Dismiss(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := h.recs.Dismiss(r.Context(), 1, id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	if err := h.recs.Dismiss(r.Context(), auth.UserIDFromContext(r.Context()), id); err != nil {
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -174,7 +174,7 @@ func (h *RecommendationHandler) Add(w http.ResponseWriter, r *http.Request) {
 
 	rec, err := h.recs.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if rec == nil {
@@ -231,7 +231,7 @@ func (h *RecommendationHandler) Add(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.books.Create(r.Context(), book); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	h.hydrateHardcoverEditions(r.Context(), book)
@@ -239,7 +239,7 @@ func (h *RecommendationHandler) Add(w http.ResponseWriter, r *http.Request) {
 	fileFound := handleNewWantedBook(r.Context(), h.books, h.series, h.finder, *book, rec.AuthorName)
 
 	// Dismiss the recommendation now that the book is added.
-	_ = h.recs.Dismiss(r.Context(), 1, id)
+	_ = h.recs.Dismiss(r.Context(), auth.UserIDFromContext(r.Context()), id)
 
 	// Trigger search in background unless the file already exists on disk.
 	// Use the process-lifecycle context so the goroutine is cancelled on
@@ -255,8 +255,11 @@ func (h *RecommendationHandler) Add(w http.ResponseWriter, r *http.Request) {
 // The goroutine derives its context from the process-lifecycle context so it
 // is cancelled on shutdown instead of running on context.Background(). See #550.
 func (h *RecommendationHandler) Refresh(w http.ResponseWriter, r *http.Request) {
+	// Capture the caller's user id before the goroutine: r may be recycled
+	// once this handler returns, so the background run must not read from it.
+	uid := auth.UserIDFromContext(r.Context())
 	go func() {
-		if err := h.engine.Run(h.appCtx, 1); err != nil {
+		if err := h.engine.Run(h.appCtx, uid); err != nil {
 			slog.Error("recommendation refresh failed", "error", err)
 		}
 	}()
@@ -265,8 +268,8 @@ func (h *RecommendationHandler) Refresh(w http.ResponseWriter, r *http.Request) 
 
 // ClearDismissals removes all dismissals for the current user.
 func (h *RecommendationHandler) ClearDismissals(w http.ResponseWriter, r *http.Request) {
-	if err := h.recs.ClearDismissals(r.Context(), 1); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	if err := h.recs.ClearDismissals(r.Context(), auth.UserIDFromContext(r.Context())); err != nil {
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -274,9 +277,9 @@ func (h *RecommendationHandler) ClearDismissals(w http.ResponseWriter, r *http.R
 
 // ListAuthorExclusions returns all excluded authors for the current user.
 func (h *RecommendationHandler) ListAuthorExclusions(w http.ResponseWriter, r *http.Request) {
-	exclusions, err := h.recs.ListAuthorExclusions(r.Context(), 1)
+	exclusions, err := h.recs.ListAuthorExclusions(r.Context(), auth.UserIDFromContext(r.Context()))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if exclusions == nil {
@@ -295,8 +298,8 @@ func (h *RecommendationHandler) ExcludeAuthor(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := h.recs.AddAuthorExclusion(r.Context(), 1, req.AuthorName); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	if err := h.recs.AddAuthorExclusion(r.Context(), auth.UserIDFromContext(r.Context()), req.AuthorName); err != nil {
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -310,8 +313,8 @@ func (h *RecommendationHandler) RemoveAuthorExclusion(w http.ResponseWriter, r *
 		return
 	}
 
-	if err := h.recs.RemoveAuthorExclusion(r.Context(), 1, name); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	if err := h.recs.RemoveAuthorExclusion(r.Context(), auth.UserIDFromContext(r.Context()), name); err != nil {
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

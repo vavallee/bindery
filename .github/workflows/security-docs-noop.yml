@@ -1,0 +1,36 @@
+# Companion to security.yml (#1380).
+#
+# "Security Summary" is a required status check on main, but security.yml
+# skips docs-only changes via paths-ignore — so a docs-only PR never received
+# the check and could never merge. This workflow triggers on exactly the
+# inverted path set and reports an immediately-green "Security Summary":
+# there is nothing to scan in a docs-only diff, so branch protection is
+# satisfied without running the scanners.
+#
+# Keep the `paths:` list below in lockstep with security.yml's `paths-ignore`.
+# On a mixed docs+code PR both workflows run and both same-named checks must
+# pass, so the real summary still gates code changes.
+name: Security (docs-only)
+
+on:
+  pull_request:
+    paths:
+      - '**/*.md'
+      - 'docs/**'
+      - 'CHANGELOG*'
+      - 'CONTRIBUTING*'
+      - 'README*'
+      - 'LICENSE*'
+      - 'CODE_OF_CONDUCT*'
+      - '.github/ISSUE_TEMPLATE/**'
+
+permissions:
+  contents: read
+
+jobs:
+  security-summary:
+    name: Security Summary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Docs-only change
+        run: echo "Docs-only change — security scans not applicable; reporting success for branch protection."

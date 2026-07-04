@@ -190,7 +190,7 @@ func (h *AuthorRefreshHandler) RefreshAllStatus(w http.ResponseWriter, r *http.R
 	}
 	setting, err := h.settings.Get(r.Context(), SettingAuthorBulkRefresh)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if setting == nil {

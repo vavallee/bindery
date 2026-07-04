@@ -186,7 +186,12 @@ const (
 
 func (h *AuthorHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	userID := auth.UserIDFromContext(ctx)
+	// Scope the browse list with ListScopeUserID (not UserIDFromContext): admins
+	// and API-key/no-tenancy callers get 0 = unscoped so they see the shared
+	// library, matching CheckOwnership's per-item bypass; non-admins stay scoped
+	// to their own + unowned rows. Fixes admins not seeing another admin's
+	// authors in the list even though they can open them by ID.
+	userID := auth.ListScopeUserID(ctx)
 	limit, offset := parseLimitOffset(r, authorListDefaultLimit, authorListMaxLimit)
 	filter := db.AuthorListFilter{
 		UserID: userID,
@@ -203,7 +208,7 @@ func (h *AuthorHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	authors, total, err := h.authors.ListPageFiltered(ctx, filter, limit, offset)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if authors == nil {
@@ -230,7 +235,7 @@ func (h *AuthorHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	author, err := h.authors.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if author == nil {
@@ -286,7 +291,7 @@ func (h *AuthorHandler) ListSeries(w http.ResponseWriter, r *http.Request) {
 	// check runs before we list series belonging to it.
 	author, err := h.authors.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if author == nil || !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
@@ -299,7 +304,7 @@ func (h *AuthorHandler) ListSeries(w http.ResponseWriter, r *http.Request) {
 	}
 	series, err := h.series.ListByAuthor(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, series)
@@ -355,7 +360,7 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if canonical, ambiguous, err := h.findCanonicalAuthorMatch(r.Context(), req.Name, author.Name); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	} else if ambiguous {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "author name resolves ambiguously — merge manually"})
@@ -367,15 +372,20 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 					writeJSON(w, http.StatusConflict, map[string]string{"error": "upstream author already exists locally"})
 					return
 				}
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				writeServerError(w, r, err)
 				return
 			}
 			mediaType := req.MediaType
 			if mediaType == "" {
 				mediaType = h.resolveDefaultMediaType(r.Context())
 			}
-			h.fetchAuthorBooksAsync(canonical, req.SearchOnAdd, mediaType)
+			// Finish mutating `canonical` (description clean-up) BEFORE spawning
+			// the async catalogue+profile refresh. fetchAuthorBooksAsync snapshots
+			// the author at spawn time and the goroutine now reads/writes profile
+			// fields (Description, ImageURL, ...); cleaning afterwards would race
+			// the snapshot read against this write (see fetchAuthorBooksAsync).
 			cleanAuthorDescription(canonical)
+			h.fetchAuthorBooksAsync(canonical, req.SearchOnAdd, mediaType)
 			writeJSON(w, http.StatusOK, canonical)
 			return
 		}
@@ -398,7 +408,7 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "author already exists"})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	h.recordAuthorCreateAlias(r.Context(), author, req.Name)
@@ -416,11 +426,16 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		mediaType = h.resolveDefaultMediaType(r.Context())
 	}
 
+	// Clean the description BEFORE spawning the async refresh: the goroutine
+	// snapshots `author` and now reads/writes its profile fields (Description,
+	// ImageURL, ...). Cleaning after the spawn would race the snapshot read
+	// against this write (see fetchAuthorBooksAsync).
+	cleanAuthorDescription(author)
+
 	// Fetch and store books for this author. Always populate the catalogue;
 	// pass searchOnAdd so FetchAuthorBooks knows whether to also queue grabs.
 	h.fetchAuthorBooksAsync(author, req.SearchOnAdd, mediaType)
 
-	cleanAuthorDescription(author)
 	writeJSON(w, http.StatusCreated, author)
 }
 
@@ -836,7 +851,7 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.authors.Update(r.Context(), author); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -848,7 +863,7 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if len(*req.MonitoredSeriesIDs) > 0 {
 			ownSeries, err := h.series.ListByAuthor(r.Context(), author.ID)
 			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				writeServerError(w, r, err)
 				return
 			}
 			owned := make(map[int64]struct{}, len(ownSeries))
@@ -863,7 +878,7 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err := h.authors.SetMonitoredSeriesIDs(r.Context(), author.ID, *req.MonitoredSeriesIDs); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeServerError(w, r, err)
 			return
 		}
 		author.MonitoredSeriesIDs = append([]int64(nil), (*req.MonitoredSeriesIDs)...)
@@ -876,16 +891,16 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.ApplyMonitorModeToExisting {
-		if err := h.applyMonitorModeToExistingBooks(r.Context(), author); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		if err := applyMonitorModeToExistingBooks(r.Context(), h.books, h.authors, h.series, author); err != nil {
+			writeServerError(w, r, err)
 			return
 		}
 	}
 	writeJSON(w, http.StatusOK, author)
 }
 
-func (h *AuthorHandler) applyMonitorModeToExistingBooks(ctx context.Context, author *models.Author) error {
-	books, err := h.books.ListByAuthorIncludingExcluded(ctx, author.ID)
+func applyMonitorModeToExistingBooks(ctx context.Context, booksRepo *db.BookRepo, authorsRepo *db.AuthorRepo, seriesRepo *db.SeriesRepo, author *models.Author) error {
+	books, err := booksRepo.ListByAuthorIncludingExcluded(ctx, author.ID)
 	if err != nil {
 		return fmt.Errorf("list author books: %w", err)
 	}
@@ -900,7 +915,7 @@ func (h *AuthorHandler) applyMonitorModeToExistingBooks(ctx context.Context, aut
 		bookSeries   map[int64][]int64
 	)
 	if author.MonitorMode == models.AuthorMonitorModeSeries {
-		ids, err := h.authors.ListMonitoredSeriesIDs(ctx, author.ID)
+		ids, err := authorsRepo.ListMonitoredSeriesIDs(ctx, author.ID)
 		if err != nil {
 			return fmt.Errorf("list monitored series ids: %w", err)
 		}
@@ -908,8 +923,8 @@ func (h *AuthorHandler) applyMonitorModeToExistingBooks(ctx context.Context, aut
 		for _, id := range ids {
 			monitoredSet[id] = struct{}{}
 		}
-		if h.series != nil {
-			bookSeries, err = h.series.ListBookSeriesByAuthor(ctx, author.ID)
+		if seriesRepo != nil {
+			bookSeries, err = seriesRepo.ListBookSeriesByAuthor(ctx, author.ID)
 			if err != nil {
 				return fmt.Errorf("list book→series for author: %w", err)
 			}
@@ -931,7 +946,7 @@ func (h *AuthorHandler) applyMonitorModeToExistingBooks(ctx context.Context, aut
 			continue
 		}
 		books[i].Monitored = next
-		if err := h.books.Update(ctx, &books[i]); err != nil {
+		if err := booksRepo.Update(ctx, &books[i]); err != nil {
 			return fmt.Errorf("update book %d monitor state: %w", books[i].ID, err)
 		}
 	}
@@ -976,7 +991,7 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromContext(r.Context())
 	author, err := h.authors.GetByIDForUser(r.Context(), id, userID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if author == nil {
@@ -1015,7 +1030,7 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if canonical, ambiguous, err := h.findCanonicalAuthorMatchExcluding(r.Context(), author.ID, author.Name, upstream.Name); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	} else if ambiguous {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "author name resolves ambiguously — merge manually"})
@@ -1025,7 +1040,7 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if existing, err := h.authors.GetByAnyForeignIDForUser(r.Context(), upstream.ForeignID, userID); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	} else if existing != nil && existing.ID != author.ID {
 		h.writeCanonicalAuthorConflict(w, existing, "upstream author already exists locally")
@@ -1037,7 +1052,7 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "upstream author already exists locally"})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 
@@ -1054,7 +1069,7 @@ func (h *AuthorHandler) RelinkCandidates(w http.ResponseWriter, r *http.Request)
 	}
 	author, err := h.authors.GetByIDForUser(r.Context(), id, auth.UserIDFromContext(r.Context()))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if author == nil {
@@ -1083,7 +1098,7 @@ func (h *AuthorHandler) RelinkCandidates(w http.ResponseWriter, r *http.Request)
 	}
 	identifiers, err := h.authors.ListAuthorIdentifiers(r.Context(), author.ID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	for _, identifier := range identifiers {
@@ -1118,7 +1133,7 @@ func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// missing row so non-owners cannot probe for existence by status code.
 	author, err := h.authors.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if author == nil || !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
@@ -1152,12 +1167,16 @@ func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.authors.Delete(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 
+	// The author's books (and their book_files rows) were cascade-deleted above,
+	// so excludeBookID=0 makes the ownership guard skip any path still tracked by
+	// a surviving book of another author — deleting an author must not delete a
+	// file some other book still owns (#1368).
 	for _, p := range pathsToRemove {
-		if _, err := safeRemoveBookPath(r.Context(), h.roots, p, "", "author_id", id); err != nil {
+		if _, err := safeRemoveBookPath(r.Context(), h.roots, h.books, 0, p, "", "author_id", id); err != nil {
 			slog.Warn("delete author: failed to remove file", "author_id", id, "path", p, "error", err)
 		}
 	}
@@ -1300,6 +1319,77 @@ func (h *AuthorHandler) relinkCalibreAuthor(ctx context.Context, author *models.
 	return nil
 }
 
+// refreshAuthorProfile re-fetches the author's profile fields (bio, photo,
+// disambiguation, ratings) from the linked metadata provider and persists any
+// the provider now supplies. The manual "Refresh Metadata" action previously
+// only repopulated the catalogue, leaving the author's own Description and
+// ImageURL empty even after the user added them upstream (Discussion #1226).
+//
+// Best-effort: a missing aggregator, a provider miss, or a save error is logged
+// and swallowed — the catalogue sync that follows must still run. Identity
+// (ForeignID/Name/MetadataProvider) and user-controlled monitoring fields are
+// never touched here; only the read-only profile fields are merged.
+func (h *AuthorHandler) refreshAuthorProfile(ctx context.Context, author *models.Author) {
+	if h.meta == nil || author == nil {
+		return
+	}
+	upstream, err := h.meta.GetAuthor(ctx, author.ForeignID)
+	if err != nil {
+		slog.Warn("author profile refresh: metadata lookup failed",
+			"author", author.Name, "foreignId", author.ForeignID, "error", err)
+		return
+	}
+	if upstream == nil {
+		return
+	}
+	if !mergeAuthorProfileFields(author, upstream) {
+		return // provider returned nothing new — skip a no-op write
+	}
+	now := time.Now().UTC()
+	author.LastMetadataRefreshAt = &now
+	if err := h.authors.Update(ctx, author); err != nil {
+		slog.Warn("author profile refresh: save failed", "author", author.Name, "error", err)
+		return
+	}
+	slog.Info("refreshed author profile from metadata provider",
+		"author", author.Name, "foreignId", author.ForeignID)
+}
+
+// mergeAuthorProfileFields copies provider-supplied profile fields onto the
+// local author, following the project's established "only overwrite when the
+// provider has a non-empty value" merge policy (mirrors
+// relinkExistingAuthorToUpstream). It reports whether any field actually
+// changed so the caller can skip a redundant DB write. SortName is only filled
+// when missing, since the local sort order may have been curated.
+func mergeAuthorProfileFields(author, upstream *models.Author) bool {
+	changed := false
+	if desc := textutil.CleanDescription(upstream.Description); desc != "" && desc != author.Description {
+		author.Description = desc
+		changed = true
+	}
+	if imageURL := strings.TrimSpace(upstream.ImageURL); imageURL != "" && imageURL != author.ImageURL {
+		author.ImageURL = imageURL
+		changed = true
+	}
+	if disambiguation := strings.TrimSpace(upstream.Disambiguation); disambiguation != "" && disambiguation != author.Disambiguation {
+		author.Disambiguation = disambiguation
+		changed = true
+	}
+	if upstream.RatingsCount > 0 && upstream.RatingsCount != author.RatingsCount {
+		author.RatingsCount = upstream.RatingsCount
+		changed = true
+	}
+	if upstream.AverageRating > 0 && upstream.AverageRating != author.AverageRating {
+		author.AverageRating = upstream.AverageRating
+		changed = true
+	}
+	if sn := strings.TrimSpace(upstream.SortName); sn != "" && strings.TrimSpace(author.SortName) == "" {
+		author.SortName = sn
+		changed = true
+	}
+	return changed
+}
+
 // FetchAuthorBooks populates the author's catalogue from the metadata provider.
 // mediaType is applied to each newly-created book when the provider didn't
 // return one; pass an empty string to accept whatever the provider set.
@@ -1313,11 +1403,23 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 	// provider by name so the first Refresh Metadata click pulls real data.
 	// If the re-link fails (name not found, network error) we fall through and
 	// keep the synthetic ID, matching the prior skip-silently behaviour.
-	if strings.HasPrefix(author.ForeignID, "calibre:") {
+	wasCalibre := strings.HasPrefix(author.ForeignID, "calibre:")
+	if wasCalibre {
 		if err := h.relinkCalibreAuthor(ctx, author); err != nil {
 			slog.Info("calibre author not re-linked to metadata provider", "author", author.Name, "reason", err)
 			return
 		}
+	}
+
+	// Refresh the author's OWN profile (bio, photo, disambiguation, ratings)
+	// from the metadata provider. Everything below only repopulates the
+	// author's BOOKS; without this step an already-linked author's Description
+	// and ImageURL stay stale on a manual "Refresh Metadata" even after they
+	// appear upstream (Discussion #1226). Calibre authors are skipped here
+	// because relinkCalibreAuthor already pulled and persisted their profile
+	// just above, so re-fetching would only spend a redundant round-trip.
+	if !wasCalibre {
+		h.refreshAuthorProfile(ctx, author)
 	}
 
 	// Use the dedicated author works endpoint for accurate results, with
@@ -2077,7 +2179,7 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 		if author == nil {
 			if err := h.authors.CreateForUser(ctx, fetched, userID); err != nil {
 				if !strings.Contains(err.Error(), "UNIQUE constraint failed") && !errors.Is(err, db.ErrAuthorIdentifierConflict) {
-					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+					writeServerError(w, r, err)
 					return
 				}
 				// Race: another request created it between our check and insert.
@@ -2186,7 +2288,7 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	// 3. Mark the book monitored (wanted).
 	book.Monitored = true
 	if err := h.books.Update(ctx, book); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/notifier"
 )
@@ -26,6 +27,10 @@ func notificationFixture(t *testing.T) (*NotificationHandler, *db.NotificationRe
 	n := notifier.New(repo)
 	// Disable SSRF validation so httptest.NewServer (loopback) works in tests.
 	n.SetValidator(nil)
+	// notifier.New also installs a dial-time SSRF guard (NewDialContext) that
+	// blocks loopback regardless of the validator; opt loopback into the dialer
+	// so the webhook test can reach its httptest server.
+	t.Cleanup(httpsec.AllowLoopbackForTests())
 	return NewNotificationHandler(repo, n), repo
 }
 

@@ -25,7 +25,7 @@ func NewQualityProfileHandler(profiles *db.QualityProfileRepo) *QualityProfileHa
 func (h *QualityProfileHandler) List(w http.ResponseWriter, r *http.Request) {
 	profiles, err := h.profiles.List(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if profiles == nil {
@@ -42,7 +42,7 @@ func (h *QualityProfileHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := h.profiles.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if p == nil {
@@ -72,7 +72,7 @@ func (h *QualityProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	taken, err := h.profiles.NameExists(r.Context(), p.Name, 0)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if taken {
@@ -80,7 +80,7 @@ func (h *QualityProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.profiles.Create(r.Context(), &p); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, p)
@@ -94,7 +94,7 @@ func (h *QualityProfileHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	existing, err := h.profiles.GetByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if existing == nil {
@@ -113,7 +113,7 @@ func (h *QualityProfileHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	taken, err := h.profiles.NameExists(r.Context(), p.Name, id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	if taken {
@@ -121,7 +121,7 @@ func (h *QualityProfileHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.profiles.Update(r.Context(), &p); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, p)
@@ -148,7 +148,7 @@ func (h *QualityProfileHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "quality profile not found"})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

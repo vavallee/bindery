@@ -134,6 +134,7 @@ func TestAddTorrent_HTTPRedirectToMagnet(t *testing.T) {
 
 	c := newTestClient(rpc.URL, "user", "pass")
 	c.validateTorrentURL = func(string) error { return nil } // allow the loopback test server
+	c.fetchHTTP.Transport = nil                              // and drop the dial-time SSRF guard
 
 	id, err := c.AddTorrent(context.Background(), indexer.URL+"/download/123", "", nil)
 	if err != nil {
@@ -702,6 +703,7 @@ const testTorrentContent = "d8:announce32:http://tracker.example.com/announce4:i
 // loopback httptest server. Mirrors allowNZBFetch in the sabnzbd tests.
 func allowTorrentFetch(c *Client) {
 	c.validateTorrentURL = func(string) error { return nil }
+	c.fetchHTTP.Transport = nil // also drop the dial-time SSRF guard for loopback test servers
 }
 
 // readRPCArgs decodes the JSON-RPC request body and returns the arguments

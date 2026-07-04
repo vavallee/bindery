@@ -111,6 +111,7 @@ func (a *Aggregator) GetAuthorWorksForAuthor(ctx context.Context, author models.
 		}
 	}
 	books = pruneAuthorWorkCompilations(books, compilationTitles)
+	books = pruneAuthorWorkSubjectOutliers(books)
 
 	a.enrichMissingAuthorWorkCovers(ctx, books)
 	if supplementsComplete {
@@ -178,6 +179,71 @@ func pruneAuthorWorkCompilations(books []models.Book, compilationTitles map[stri
 		filtered = append(filtered, b)
 	}
 	return filtered
+}
+
+// pruneAuthorWorkSubjectOutliers drops obvious same-name-author collisions from
+// primary-provider author work lists. OpenLibrary occasionally groups unrelated
+// people who share a name; when a catalog is overwhelmingly fiction/juvenile
+// fiction, a computer-networking textbook is almost certainly from another
+// author and should not be auto-wanted under the fiction author.
+func pruneAuthorWorkSubjectOutliers(books []models.Book) []models.Book {
+	if len(books) < 4 || fictionCatalogSignalCount(books) < 3 {
+		return books
+	}
+	filtered := books[:0]
+	for _, b := range books {
+		if isTechnicalSubjectOutlier(b) {
+			continue
+		}
+		filtered = append(filtered, b)
+	}
+	return filtered
+}
+
+func fictionCatalogSignalCount(books []models.Book) int {
+	count := 0
+	for _, b := range books {
+		if hasFictionSubjectSignal(b) {
+			count++
+		}
+	}
+	return count
+}
+
+func isTechnicalSubjectOutlier(book models.Book) bool {
+	if hasFictionSubjectSignal(book) {
+		return false
+	}
+	signals := 0
+	for _, genre := range book.Genres {
+		g := strings.ToLower(strings.TrimSpace(genre))
+		switch {
+		case strings.Contains(g, "computer network"),
+			strings.Contains(g, "software-defined network"),
+			strings.Contains(g, "networking"),
+			strings.Contains(g, "telecommunication"),
+			strings.Contains(g, "programming language"),
+			strings.Contains(g, "software engineering"):
+			signals++
+		}
+	}
+	return signals >= 2
+}
+
+func hasFictionSubjectSignal(book models.Book) bool {
+	for _, genre := range book.Genres {
+		g := strings.ToLower(strings.TrimSpace(genre))
+		switch {
+		case strings.Contains(g, "fiction"),
+			strings.Contains(g, "fantasy"),
+			strings.Contains(g, "science fiction"),
+			strings.Contains(g, "juvenile"),
+			strings.Contains(g, "christian life"),
+			strings.Contains(g, "religious"):
+			return true
+		}
+	}
+	return false
 }
 
 func cloneBooks(books []models.Book) []models.Book {
