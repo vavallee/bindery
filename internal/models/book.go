@@ -77,6 +77,13 @@ type Book struct {
 	// Transport-only: series data from the metadata provider, used during
 	// ingestion to populate series/series_books. Never stored in books table.
 	SeriesRefs []SeriesRef `json:"-"`
+
+	// Transport-only: the provider author keys credited on this work (e.g.
+	// OpenLibrary author IDs from the work's authors array). Used by the
+	// author sync to tell a legitimate co-author attachment apart from a row
+	// mis-parented under a duplicate/stale author record (issue #1405).
+	// Never stored in the books table.
+	CreditedAuthorForeignIDs []string `json:"-"`
 }
 
 // WantsEbook reports whether the ebook format is monitored for this book.
