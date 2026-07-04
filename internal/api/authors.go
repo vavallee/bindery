@@ -1560,6 +1560,18 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 		existing, _ := h.books.GetByForeignID(ctx, b.ForeignID)
 		if existing != nil {
 			changed := false
+			// GetByForeignID matches globally (foreign_id is UNIQUE across all
+			// authors), so the row may sit under a different author — created
+			// under a duplicate/stale author record, a calibre shell author,
+			// or one that no longer exists. Such a row is invisible on this
+			// author's page (ListByAuthor filters by author_id) and, without
+			// this, the sync would refresh its ratings forever while the book
+			// never appears (issue #1405). Re-link it — unless the current
+			// owner is genuinely credited on the work (co-authored books must
+			// not ping-pong between their authors on alternating syncs).
+			if h.reparentMisattachedBook(ctx, existing, author, b.CreditedAuthorForeignIDs) {
+				changed = true
+			}
 			if b.RatingsCount > 0 && (existing.RatingsCount == 0 || b.RatingsCount > existing.RatingsCount) {
 				existing.RatingsCount = b.RatingsCount
 				existing.AverageRating = b.AverageRating
@@ -1648,8 +1660,16 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 
 		if err := h.books.Create(ctx, &b); err != nil {
 			// A UNIQUE constraint on foreign_id means the book was already
-			// created by a concurrent or earlier sync — treat as a benign skip.
+			// created by a concurrent or earlier sync — treat as a benign
+			// skip, but give the mis-attached case (#1405) the same re-link
+			// chance the existing-row branch above gets.
 			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+				if raced, _ := h.books.GetByForeignID(ctx, b.ForeignID); raced != nil &&
+					h.reparentMisattachedBook(ctx, raced, author, b.CreditedAuthorForeignIDs) {
+					if uerr := h.books.Update(ctx, raced); uerr != nil {
+						slog.Warn("authors: re-link after unique conflict", "error", uerr, "book_id", raced.ID)
+					}
+				}
 				continue
 			}
 			slog.Warn("failed to create book", "title", b.Title, "error", err)
@@ -1670,6 +1690,47 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 	}
 	runBookSearches(ctx, h.searcher, searchQueue, authorAutoSearchConcurrency)
 	slog.Info("author books synced", "author", author.Name, "added", added, "skipped_language", skippedLang, "skipped_junk", skippedJunk, "total", len(books))
+}
+
+// reparentMisattachedBook re-links existing to the author being synced when
+// the row is attached to an author that demonstrably shouldn't own it (issue
+// #1405). foreign_id is globally UNIQUE, so a work fetched during this
+// author's sync can match a row created under a duplicate/stale author record
+// (OpenLibrary has duplicate author keys), a calibre shell author, or an
+// author that no longer exists — and such a row never shows on this author's
+// page. The provider's credited-author list is what separates that from a
+// legitimately co-authored work: stealing a co-authored row would make it
+// ping-pong between its authors on alternating syncs, so when the current
+// owner is credited (or authorship is unknown) the row stays put.
+// Returns true when existing.AuthorID was changed; the caller persists it.
+func (h *AuthorHandler) reparentMisattachedBook(ctx context.Context, existing *models.Book, author *models.Author, creditedAuthorIDs []string) bool {
+	if existing.AuthorID == author.ID {
+		return false
+	}
+	owner, err := h.authors.GetByID(ctx, existing.AuthorID)
+	if err != nil {
+		// Can't verify ownership — leave the row alone rather than moving it
+		// on a transient DB error.
+		return false
+	}
+	switch {
+	case owner == nil:
+		// Owner row was deleted; the book is orphaned.
+	case owner.ForeignID == author.ForeignID:
+		// Duplicate author rows sharing one provider identity.
+	case len(creditedAuthorIDs) > 0 && !slices.Contains(creditedAuthorIDs, owner.ForeignID):
+		// The synced author's catalogue contains this work but the current
+		// owner isn't credited on it — a mis-parent, not a co-author.
+	default:
+		// Owner is credited on the work (co-author) or authorship is unknown
+		// (no credited list from this provider) — don't move it.
+		return false
+	}
+	slog.Info("re-linking book to synced author",
+		"title", existing.Title, "book_id", existing.ID,
+		"from_author_id", existing.AuthorID, "to_author_id", author.ID)
+	existing.AuthorID = author.ID
+	return true
 }
 
 // handleNewWantedBook performs the post-create steps that every newly-created

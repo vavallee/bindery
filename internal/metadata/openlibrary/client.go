@@ -306,6 +306,11 @@ func (c *Client) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]
 				MetadataProvider: "openlibrary",
 			},
 		}
+		for _, a := range entry.Authors {
+			if key := strings.TrimPrefix(a.Author.Key, "/authors/"); key != "" {
+				b.CreditedAuthorForeignIDs = append(b.CreditedAuthorForeignIDs, key)
+			}
+		}
 		if len(entry.Covers) > 0 && entry.Covers[0] > 0 {
 			b.ImageURL = fmt.Sprintf("%s/b/id/%d-L.jpg", coverURL, entry.Covers[0])
 		}
@@ -324,6 +329,11 @@ func (c *Client) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]
 			if e.RatingsCount > 0 {
 				b.RatingsCount = e.RatingsCount
 				b.AverageRating = e.AverageRating
+			}
+			// Older works records sometimes omit the authors array; the
+			// search index's author_key list fills the gap (#1405).
+			if len(b.CreditedAuthorForeignIDs) == 0 {
+				b.CreditedAuthorForeignIDs = e.CreditedAuthorForeignIDs
 			}
 		}
 		index[workID] = len(books)
@@ -361,7 +371,7 @@ func (c *Client) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]
 // HTML web-UI path still served by Solr, which returns HTTP 500
 // "DEPRECATED ENDPOINT ACCESSED" for API consumers (issue #462).
 func (c *Client) searchAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, error) {
-	u := fmt.Sprintf("%s/search.json?author_key=%s&fields=key,title,language,edition_count,first_publish_year,cover_i,isbn,subject,ratings_count,ratings_average&limit=200",
+	u := fmt.Sprintf("%s/search.json?author_key=%s&fields=key,title,language,edition_count,first_publish_year,cover_i,isbn,subject,ratings_count,ratings_average,author_key&limit=200",
 		baseURL, authorForeignID)
 	var resp struct {
 		Docs []struct {
@@ -375,6 +385,7 @@ func (c *Client) searchAuthorWorks(ctx context.Context, authorForeignID string) 
 			Subject          []string `json:"subject"`
 			RatingsCount     int      `json:"ratings_count"`
 			RatingsAverage   float64  `json:"ratings_average"`
+			AuthorKey        []string `json:"author_key"`
 		} `json:"docs"`
 	}
 	if err := c.getJSON(ctx, u, &resp); err != nil {
@@ -387,17 +398,18 @@ func (c *Client) searchAuthorWorks(ctx context.Context, authorForeignID string) 
 			continue
 		}
 		b := models.Book{
-			ForeignID:        workID,
-			Title:            doc.Title,
-			SortTitle:        doc.Title,
-			Genres:           truncateSlice(doc.Subject, 10),
-			Language:         pickPreferredLanguage(doc.Language),
-			RatingsCount:     doc.RatingsCount,
-			AverageRating:    doc.RatingsAverage,
-			ISBNs:            doc.ISBN,
-			MetadataProvider: "openlibrary",
-			Monitored:        true,
-			Status:           models.BookStatusWanted,
+			ForeignID:                workID,
+			Title:                    doc.Title,
+			SortTitle:                doc.Title,
+			Genres:                   truncateSlice(doc.Subject, 10),
+			Language:                 pickPreferredLanguage(doc.Language),
+			RatingsCount:             doc.RatingsCount,
+			AverageRating:            doc.RatingsAverage,
+			ISBNs:                    doc.ISBN,
+			MetadataProvider:         "openlibrary",
+			Monitored:                true,
+			Status:                   models.BookStatusWanted,
+			CreditedAuthorForeignIDs: doc.AuthorKey,
 		}
 		if doc.CoverI != nil && *doc.CoverI > 0 {
 			b.ImageURL = fmt.Sprintf("%s/b/id/%d-L.jpg", coverURL, *doc.CoverI)

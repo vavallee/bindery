@@ -319,16 +319,36 @@ export default function AuthorDetailPage() {
 
   const filteredBooks = useMemo(() => {
     let list = books
-    if (typeFilter) list = list.filter(b => (b.mediaType || 'ebook') === typeFilter)
+    // A 'both' book carries the selected format too, so it matches either
+    // type chip — an exact mediaType comparison made dual-format books vanish
+    // from both Type: Ebook and Type: Audiobook (#1406).
+    if (typeFilter) {
+      list = list.filter(b => {
+        const mt = b.mediaType || 'ebook'
+        return mt === typeFilter || mt === 'both'
+      })
+    }
     if (statusFilter) {
+      // For a 'both' book under an active type filter, judge the selected
+      // format rather than the aggregate status: the aggregate stays 'wanted'
+      // until BOTH formats are on disk, which hid a book whose ebook was
+      // already imported from Type: Ebook + Status: Imported (#1406). The
+      // per-format file path is the format-scoped truth for 'imported'; when
+      // the selected format has no file yet, the aggregate still supplies
+      // 'wanted' and the in-flight states (which have no per-format field).
+      const statusOf = (b: Book): string => {
+        if (!typeFilter || (b.mediaType || 'ebook') !== 'both') return b.status
+        const path = typeFilter === 'ebook' ? b.ebookFilePath : b.audiobookFilePath
+        return path ? 'imported' : b.status
+      }
       // "Wanted" means genuinely wanted: monitored AND status=wanted. An
       // unmonitored book can carry a stale `wanted` status (#1173) but is not
       // actually wanted, so it must be excluded — mirroring the backend's
       // BookListFilter ("wanted" additionally requires monitored=1) and the
       // monitored-aware status badge.
       list = statusFilter === 'wanted'
-        ? list.filter(b => b.status === 'wanted' && b.monitored)
-        : list.filter(b => b.status === statusFilter)
+        ? list.filter(b => statusOf(b) === 'wanted' && b.monitored)
+        : list.filter(b => statusOf(b) === statusFilter)
     }
     if (publishedFilter === 'released') {
       list = list.filter(b => !b.releaseDate || b.releaseDate.slice(0, 10) <= TODAY)

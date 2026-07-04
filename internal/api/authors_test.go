@@ -4345,3 +4345,97 @@ func TestAuthorHandler_GoroutineCancelsOnLifetimeCtxCancel(t *testing.T) {
 		t.Fatal("goroutine did not observe lifetime ctx cancellation")
 	}
 }
+
+// --- reparenting mis-attached books during author sync (#1405) ---
+
+// reparentFixture creates the author being synced plus an existing book row
+// attached to a different owner, then runs FetchAuthorBooks with a stub work
+// matching that book's foreign id. Returns the synced author and the book row
+// re-read after the sync.
+func reparentFixture(t *testing.T, ownerForeignID string, credited []string) (*models.Author, *models.Book) {
+	t.Helper()
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	synced := &models.Author{
+		ForeignID: "OL500A", Name: "Real Author", SortName: "Author, Real",
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := authorRepo.Create(ctx, synced); err != nil {
+		t.Fatal(err)
+	}
+
+	// The current owner of the book row. (A truly orphaned owner row can't be
+	// fabricated here: books.author_id is FK-enforced in-memory — the
+	// owner==nil branch in reparentMisattachedBook is defensive cover for
+	// legacy databases that predate FK enforcement.)
+	owner := &models.Author{
+		ForeignID: ownerForeignID, Name: "Other Author", SortName: "Author, Other",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, owner); err != nil {
+		t.Fatal(err)
+	}
+	ownerID := owner.ID
+
+	book := &models.Book{
+		ForeignID: "OL501W", AuthorID: ownerID, Title: "Elantris", SortTitle: "elantris",
+		Language: "eng", Status: models.BookStatusWanted, Monitored: true,
+		Genres: []string{}, MetadataProvider: "openlibrary",
+	}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	stub := &stubMetaProvider{
+		works: []models.Book{{
+			ForeignID: "OL501W", Title: "Elantris", SortTitle: "elantris",
+			Language: "eng", Status: models.BookStatusWanted, Genres: []string{},
+			MetadataProvider: "openlibrary", CreditedAuthorForeignIDs: credited,
+		}},
+	}
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(stub), nil, profileRepo, &searcherSpy{})
+	h.FetchAuthorBooks(synced, false, "")
+
+	got, err := bookRepo.GetByForeignID(ctx, "OL501W")
+	if err != nil || got == nil {
+		t.Fatalf("re-read book: %v (nil=%v)", err, got == nil)
+	}
+	return synced, got
+}
+
+// A row sitting under an author who is NOT credited on the work (duplicate OL
+// author record, wrong link) is re-linked to the author being synced, making
+// it visible on that author's page again.
+func TestFetchAuthorBooks_ReparentsMisattachedBook(t *testing.T) {
+	synced, got := reparentFixture(t, "OL777A", []string{"OL500A"})
+	if got.AuthorID != synced.ID {
+		t.Errorf("book should be re-linked to synced author %d, still under %d", synced.ID, got.AuthorID)
+	}
+}
+
+// A co-authored work (current owner IS credited) must stay put — otherwise it
+// would ping-pong between its authors on alternating syncs.
+func TestFetchAuthorBooks_KeepsCoauthoredBook(t *testing.T) {
+	synced, got := reparentFixture(t, "OL777A", []string{"OL500A", "OL777A"})
+	if got.AuthorID == synced.ID {
+		t.Error("co-authored book must not be stolen from its credited owner")
+	}
+}
+
+// Without a credited-author list the attachment cannot be verified, so the
+// row stays where it is (conservative default).
+func TestFetchAuthorBooks_KeepsBookWithUnknownAuthorship(t *testing.T) {
+	synced, got := reparentFixture(t, "OL777A", nil)
+	if got.AuthorID == synced.ID {
+		t.Error("book with unknown authorship must not be moved")
+	}
+}

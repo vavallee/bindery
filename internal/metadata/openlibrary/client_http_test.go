@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1388,5 +1389,51 @@ func TestNilIfZero(t *testing.T) {
 	p := nilIfZero(5)
 	if p == nil || *p != 5 {
 		t.Errorf("nilIfZero(5) = %v", p)
+	}
+}
+
+// TestGetAuthorWorks_HTTP_CreditedAuthors verifies that the works endpoint's
+// authors array and the search index's author_key list both surface as
+// CreditedAuthorForeignIDs — the signal the author sync uses to tell a
+// co-authored work apart from a row mis-parented under another author (#1405).
+func TestGetAuthorWorks_HTTP_CreditedAuthors(t *testing.T) {
+	worksBody := `{
+		"size": 1,
+		"entries": [{
+			"key": "/works/OL700W",
+			"title": "Co-Written Book",
+			"authors": [
+				{"author": {"key": "/authors/OL123A"}},
+				{"author": {"key": "/authors/OL999A"}}
+			]
+		}]
+	}`
+	// One doc enriches the primary work; the second exists only in the
+	// search index and must carry its author_key list through the
+	// enrichment-only append.
+	searchBody := `{
+		"docs": [
+			{"key": "/works/OL700W", "title": "Co-Written Book", "author_key": ["OL123A", "OL999A"]},
+			{"key": "/works/OL701W", "title": "Search Only Book", "author_key": ["OL123A"]}
+		]
+	}`
+	c := newClientWithPaths(t, map[string]interface{}{
+		"/authors/OL123A/works.json": worksBody,
+		"/search.json":               searchBody,
+	})
+
+	books, err := c.GetAuthorWorks(context.Background(), "OL123A")
+	if err != nil {
+		t.Fatalf("GetAuthorWorks: %v", err)
+	}
+	byID := map[string][]string{}
+	for _, b := range books {
+		byID[b.ForeignID] = b.CreditedAuthorForeignIDs
+	}
+	if got := byID["OL700W"]; !slices.Equal(got, []string{"OL123A", "OL999A"}) {
+		t.Errorf("primary work credited authors: got %v", got)
+	}
+	if got := byID["OL701W"]; !slices.Equal(got, []string{"OL123A"}) {
+		t.Errorf("enrichment-only work credited authors: got %v", got)
 	}
 }

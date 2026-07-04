@@ -28,6 +28,19 @@ This happened on Bindery **1.22.1 and earlier**: Bindery sent the category **and
 
 **Fix:** upgrade to the current release. Bindery now enables auto_tmm and omits the explicit save path whenever a category is set, so qBittorrent places files at the category's configured save path (the source of truth for Bindery's health checks). On an older version, work around it by enabling **Automatic Torrent Management** for the category in qBittorrent, or by setting the category's save path to match Bindery's download root.
 
+## Grab fails with "not allowed to download NZBs" (newznab error 203) on a Prowlarr-synced indexer
+
+Searching works and the same release downloads fine from inside Prowlarr, but grabbing it in Bindery fails with something like:
+
+```
+fetch nzb: indexer refused the download (HTTP 400, newznab error 203:
+This application is not allowed to download NZBs from NZBFinder.)
+```
+
+Some indexers (NZBFinder is the known case) restrict NZB downloads to a whitelist of approved applications. Prowlarr is on that list; Bindery is not. When Prowlarr performs the download itself and hands Bindery the file, the indexer sees Prowlarr and allows it. But if the indexer's **Redirect** setting is enabled in Prowlarr, Prowlarr answers Bindery's grab with a redirect straight to the indexer instead of proxying it — the indexer then sees Bindery, and rejects the download with error 203. The error message names both hosts when this hand-off happened.
+
+**Fix:** in Prowlarr, open **Settings → Indexers → (the indexer)**, show advanced settings, and disable **Redirect**. Prowlarr then downloads the NZB itself with its whitelisted identity and streams it to Bindery. This only matters for whitelisting indexers — Redirect is safe to leave on for indexers that don't restrict by application.
+
 ## "Could not reach the metadata provider" / OpenLibrary timeout
 
 ```
