@@ -20,9 +20,18 @@ type Author struct {
 	Monitored          bool    `json:"monitored"`
 	MonitorMode        string  `json:"monitorMode"`
 	MonitorLatestCount int     `json:"monitorLatestCount"`
-	QualityProfileID   *int64  `json:"qualityProfileId"`
-	MetadataProfileID  *int64  `json:"metadataProfileId"`
-	RootFolderID       *int64  `json:"rootFolderId"`
+	// MonitorNewItems governs works discovered AFTER the initial catalogue
+	// sync — the refresh paths, not the add flow (issue #1348). "all"
+	// (default) follows MonitorMode as before; "none" creates
+	// newly-discovered works unmonitored, so a metadata refresh can never
+	// mass-monitor a back-catalogue and trigger a search storm. Importers
+	// create authors with "none": import-created authors start with a
+	// partial catalogue, which made the first refresh after an import the
+	// classic detonation point.
+	MonitorNewItems   string `json:"monitorNewItems"`
+	QualityProfileID  *int64 `json:"qualityProfileId"`
+	MetadataProfileID *int64 `json:"metadataProfileId"`
+	RootFolderID      *int64 `json:"rootFolderId"`
 	// AudiobookRootFolderID overrides the audiobook destination for this
 	// author. Distinct from RootFolderID, which only routes ebooks: keeping
 	// them separate ensures an ebook root folder never redirects audiobooks
@@ -103,6 +112,14 @@ const (
 
 	DefaultAuthorMonitorMode        = AuthorMonitorModeAll
 	DefaultAuthorMonitorLatestCount = 1
+
+	// MonitorNewItems values (issue #1348): "all" defers to MonitorMode for
+	// refresh-discovered works (previous behaviour), "none" leaves them
+	// unmonitored.
+	AuthorMonitorNewItemsAll  = "all"
+	AuthorMonitorNewItemsNone = "none"
+
+	DefaultAuthorMonitorNewItems = AuthorMonitorNewItemsAll
 )
 
 func IsAuthorMonitorModeValid(mode string) bool {
@@ -112,6 +129,20 @@ func IsAuthorMonitorModeValid(mode string) bool {
 	default:
 		return false
 	}
+}
+
+func IsAuthorMonitorNewItemsValid(v string) bool {
+	return v == AuthorMonitorNewItemsAll || v == AuthorMonitorNewItemsNone
+}
+
+// NormalizeAuthorMonitorNewItems maps empty/unknown values to the default so
+// rows written by pre-#1348 code paths (or hand-edited databases) behave like
+// the historical "follow MonitorMode" semantics.
+func NormalizeAuthorMonitorNewItems(v string) string {
+	if IsAuthorMonitorNewItemsValid(v) {
+		return v
+	}
+	return DefaultAuthorMonitorNewItems
 }
 
 // IsAuthorMonitorModeValidAsGlobalDefault returns true when mode is acceptable

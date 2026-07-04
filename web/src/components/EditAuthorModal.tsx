@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, Author, AuthorMonitorMode, MetadataProfile, QualityProfile, RootFolder, Series, UpdateAuthorRequest } from '../api/client'
+import { api, Author, AuthorMonitorMode, MetadataProfile, MonitorNewItems, QualityProfile, RootFolder, Series, UpdateAuthorRequest } from '../api/client'
 
 interface Props {
   author: Author
@@ -22,6 +22,7 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
   const [rootFolderId, setRootFolderId] = useState<number | null>(author.rootFolderId ?? null)
   const [audiobookRootFolderId, setAudiobookRootFolderId] = useState<number | null>(author.audiobookRootFolderId ?? null)
   const [monitorMode, setMonitorMode] = useState<AuthorMonitorMode>(author.monitorMode ?? 'all')
+  const [monitorNewItems, setMonitorNewItems] = useState<MonitorNewItems>(author.monitorNewItems ?? 'all')
   const [monitorLatestCount, setMonitorLatestCount] = useState(author.monitorLatestCount ?? 1)
   const [applyMonitorModeToExisting, setApplyMonitorModeToExisting] = useState(false)
   const [monitoredSeriesIds, setMonitoredSeriesIds] = useState<number[]>(author.monitoredSeriesIds ?? [])
@@ -98,6 +99,9 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
     }
     if (monitorMode !== (author.monitorMode ?? 'all')) {
       patch.monitorMode = monitorMode
+    }
+    if (monitorNewItems !== (author.monitorNewItems ?? 'all')) {
+      patch.monitorNewItems = monitorNewItems
     }
     if (monitorLatestCount !== (author.monitorLatestCount ?? 1)) {
       patch.monitorLatestCount = monitorLatestCount
@@ -219,6 +223,18 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                   <option value="none">{t('monitorMode.none', 'None')}</option>
                   <option value="series">{t('monitorMode.series', 'By series')}</option>
                 </select>
+              </div>
+              <div className="mb-3">
+                <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('editAuthorModal.monitorNewItems', 'Monitor newly discovered books')}</label>
+                <select
+                  value={monitorNewItems}
+                  onChange={e => setMonitorNewItems(e.target.value as MonitorNewItems)}
+                  className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="all">{t('monitorNewItems.all', 'Follow monitor mode')}</option>
+                  <option value="none">{t('monitorNewItems.none', 'Add as unmonitored')}</option>
+                </select>
+                <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('editAuthorModal.monitorNewItemsHint', 'Applies to books found by a metadata refresh after the author was added. "Add as unmonitored" stops a refresh from mass-monitoring the back-catalogue.')}</p>
               </div>
               {monitorMode === 'series' && (
                 <div className="mb-3">

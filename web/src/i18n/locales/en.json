@@ -49,6 +49,10 @@
     "none": "None",
     "series": "By series"
   },
+  "monitorNewItems": {
+    "all": "Follow monitor mode",
+    "none": "Add as unmonitored"
+  },
   "nav": {
     "authors": "Authors",
     "books": "Books",

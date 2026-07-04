@@ -600,14 +600,14 @@ func main() {
 		// never auto-grabs). Resolve the default media type per call so newly
 		// discovered books inherit the global default, matching AuthorHandler.Refresh.
 		WithRefreshFunc(func(a *models.Author) {
-			authorHandler.FetchAuthorBooks(a, false, authorHandler.ResolveDefaultMediaType(appCtx))
+			authorHandler.RefreshAuthorBooks(a, false, authorHandler.ResolveDefaultMediaType(appCtx))
 		})
 	// "Refresh all authors" background job (#863, shape 2). Reuses the exact
 	// per-author catalogue fetch the bulk "refresh" action and single-author
 	// Refresh use (metadata only, never auto-grabs), run sequentially over
 	// every author with progress persisted to the settings table.
 	authorRefreshHandler := api.NewAuthorRefreshHandler(authorRepo, func(a *models.Author) {
-		authorHandler.FetchAuthorBooks(a, false, authorHandler.ResolveDefaultMediaType(appCtx))
+		authorHandler.RefreshAuthorBooks(a, false, authorHandler.ResolveDefaultMediaType(appCtx))
 	}).WithSettings(settingsRepo)
 	backupHandler := api.NewBackupHandler(database, cfg.DBPath, cfg.DataDir)
 	rootFolderHandler := api.NewRootFolderHandler(rootFolderRepo)

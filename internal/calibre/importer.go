@@ -534,10 +534,14 @@ func (i *Importer) resolveAuthor(ctx context.Context, runID int64, ca CalibreAut
 	}
 
 	author := &models.Author{
-		ForeignID:        foreignID,
-		Name:             name,
-		SortName:         firstNonEmpty(ca.Sort, sortNameFromFull(name)),
-		Monitored:        true,
+		ForeignID: foreignID,
+		Name:      name,
+		SortName:  firstNonEmpty(ca.Sort, sortNameFromFull(name)),
+		Monitored: true,
+		// Import-created authors start with a partial catalogue; a later
+		// refresh/relink discovering the full back-catalogue must not
+		// mass-monitor it (issue #1348).
+		MonitorNewItems:  models.AuthorMonitorNewItemsNone,
 		MetadataProvider: "calibre",
 	}
 	if err := i.authors.Create(ctx, author); err != nil {
