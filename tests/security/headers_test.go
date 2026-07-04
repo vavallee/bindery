@@ -13,7 +13,7 @@ import (
 // header is a regression against the v0.12.0 hardening.
 func TestSecurityHeaders_AlwaysPresent(t *testing.T) {
 	t.Parallel()
-	h := api.SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	h := api.SecurityHeaders("")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -40,7 +40,7 @@ func TestSecurityHeaders_AlwaysPresent(t *testing.T) {
 // without documenting the reason should fail this test.
 func TestSecurityHeaders_CSPLocksDownExternalOrigins(t *testing.T) {
 	t.Parallel()
-	h := api.SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	h := api.SecurityHeaders("")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -73,7 +73,7 @@ func TestSecurityHeaders_CSPLocksDownExternalOrigins(t *testing.T) {
 // it on plaintext would lock the browser into a host that doesn't speak TLS.
 func TestSecurityHeaders_HSTSOnlyUnderTLS(t *testing.T) {
 	t.Parallel()
-	h := api.SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	h := api.SecurityHeaders("")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 

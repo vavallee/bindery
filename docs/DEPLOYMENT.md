@@ -335,6 +335,7 @@ Bindery parks the download as *handed off* and reconciles the managed copy the e
 | `BINDERY_LOG_RETENTION_DAYS` | `14` | Days to retain persisted log entries in the SQLite log store before they are pruned. |
 | `BINDERY_TRUSTED_PROXY` | _(empty)_ | Comma-separated IP/CIDR list of reverse proxies trusted to set `X-Forwarded-*`. Bindery resolves the real client IP (for local-only auth and the per-IP login rate-limiter) by walking the `X-Forwarded-For` chain and only trusting hops in this list; it never trusts a client-supplied leftmost entry. An entry like `0.0.0.0/0` trusts every peer and effectively disables per-IP decisions. **Required** when proxy auth mode is active — Bindery refuses to start without it. |
 | `BINDERY_TELEMETRY_DISABLED` | _(unset)_ | Set to `true` to opt out of the daily anonymous telemetry ping before any DB setting exists (e.g. on first boot). Equivalent to `telemetry.enabled: false` in **Settings → General**, but takes effect before the first ping fires. |
+| `BINDERY_FRAME_ANCESTORS` | _(empty)_ | Allow the UI to be embedded in an `<iframe>` by a dashboard such as Organizr ([#1367](https://github.com/vavallee/bindery/issues/1367)). Empty (the default) blocks all framing (`Content-Security-Policy: frame-ancestors 'none'` + `X-Frame-Options: DENY`). Set it to a CSP `frame-ancestors` source list to opt in — `'self'` for same-origin framing, or a specific origin like `https://organizr.example.com` (space-separate multiple origins). When set, `X-Frame-Options` is dropped so it can't override the allowlist. Only allow origins you trust: framing widens clickjacking exposure. |
 
 ## Service URLs and the SSRF policy
 
@@ -407,7 +408,7 @@ auth:
   existingSecret: my-bindery-secret  # kubectl create secret generic my-bindery-secret --from-literal=apiKey=...
 ```
 
-**Response headers.** Every response now sets CSP, `X-Frame-Options: DENY`, `Referrer-Policy`, and — when TLS is in play — HSTS. If you previously embedded the Bindery UI in an `<iframe>`, `X-Frame-Options: DENY` will block it. No such usage is supported, but it's the most likely breakage vector.
+**Response headers.** Every response now sets CSP, `X-Frame-Options: DENY`, `Referrer-Policy`, and — when TLS is in play — HSTS. If you previously embedded the Bindery UI in an `<iframe>`, `X-Frame-Options: DENY` will block it; opt back in for a trusted dashboard origin with [`BINDERY_FRAME_ANCESTORS`](#environment-variables).
 
 ### From v0.10.x to v0.11.0
 
