@@ -55,11 +55,11 @@ func (e *AuthorIdentifierConflictError) Unwrap() error {
 
 const authorSelectCols = `id, foreign_id, name, sort_name, description, image_url, disambiguation,
 	       ratings_count, average_rating, monitored, quality_profile_id, metadata_profile_id, root_folder_id,
-	       audiobook_root_folder_id, monitor_mode, monitor_latest_count, metadata_provider, last_metadata_refresh_at,
+	       audiobook_root_folder_id, monitor_mode, monitor_latest_count, monitor_new_items, metadata_provider, last_metadata_refresh_at,
 	       created_at, updated_at, COALESCE(owner_user_id, 0)`
 const authorSelectColsA = `a.id, a.foreign_id, a.name, a.sort_name, a.description, a.image_url, a.disambiguation,
 		       a.ratings_count, a.average_rating, a.monitored, a.quality_profile_id, a.metadata_profile_id, a.root_folder_id,
-		       a.audiobook_root_folder_id, a.monitor_mode, a.monitor_latest_count, a.metadata_provider, a.last_metadata_refresh_at,
+		       a.audiobook_root_folder_id, a.monitor_mode, a.monitor_latest_count, a.monitor_new_items, a.metadata_provider, a.last_metadata_refresh_at,
 		       a.created_at, a.updated_at, COALESCE(a.owner_user_id, 0)`
 
 func (r *AuthorRepo) List(ctx context.Context) ([]models.Author, error) {
@@ -364,12 +364,12 @@ func (r *AuthorRepo) CreateForUser(ctx context.Context, a *models.Author, ownerU
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO authors (foreign_id, name, sort_name, sort_key, description, image_url, disambiguation,
 		                     ratings_count, average_rating, monitored, quality_profile_id, metadata_profile_id, root_folder_id,
-		                     audiobook_root_folder_id, monitor_mode, monitor_latest_count, metadata_provider, owner_user_id,
+		                     audiobook_root_folder_id, monitor_mode, monitor_latest_count, monitor_new_items, metadata_provider, owner_user_id,
 		                     created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ForeignID, a.Name, a.SortName, authorSortKey(a.SortName), a.Description, a.ImageURL, a.Disambiguation,
 		a.RatingsCount, a.AverageRating, a.Monitored, a.QualityProfileID, a.MetadataProfileID, a.RootFolderID,
-		a.AudiobookRootFolderID, a.MonitorMode, a.MonitorLatestCount, a.MetadataProvider, ownerArg, timeValueArg(now), timeValueArg(now))
+		a.AudiobookRootFolderID, a.MonitorMode, a.MonitorLatestCount, a.MonitorNewItems, a.MetadataProvider, ownerArg, timeValueArg(now), timeValueArg(now))
 	if err != nil {
 		return fmt.Errorf("create author: %w", err)
 	}
@@ -617,12 +617,12 @@ func (r *AuthorRepo) update(ctx context.Context, exec dbExecutor, a *models.Auth
 		UPDATE authors SET foreign_id=?, name=?, sort_name=?, sort_key=?, description=?, image_url=?, disambiguation=?,
 		                   ratings_count=?, average_rating=?, monitored=?, quality_profile_id=?,
 		                   metadata_profile_id=?, root_folder_id=?, audiobook_root_folder_id=?, monitor_mode=?,
-		                   monitor_latest_count=?, metadata_provider=?, last_metadata_refresh_at=?, updated_at=?
+		                   monitor_latest_count=?, monitor_new_items=?, metadata_provider=?, last_metadata_refresh_at=?, updated_at=?
 		WHERE id=?`,
 		a.ForeignID, a.Name, a.SortName, authorSortKey(a.SortName), a.Description, a.ImageURL, a.Disambiguation,
 		a.RatingsCount, a.AverageRating, a.Monitored, a.QualityProfileID,
 		a.MetadataProfileID, a.RootFolderID, a.AudiobookRootFolderID, a.MonitorMode,
-		a.MonitorLatestCount, a.MetadataProvider, timeArg(a.LastMetadataRefreshAt), timeValueArg(now), a.ID)
+		a.MonitorLatestCount, a.MonitorNewItems, a.MetadataProvider, timeArg(a.LastMetadataRefreshAt), timeValueArg(now), a.ID)
 	if err != nil {
 		return fmt.Errorf("update author %d: %w", a.ID, err)
 	}
@@ -727,7 +727,7 @@ func scanAuthorFrom(s rowScanner) (models.Author, error) {
 	err := s.Scan(&a.ID, &a.ForeignID, &a.Name, &a.SortName, &a.Description, &a.ImageURL,
 		&a.Disambiguation, &a.RatingsCount, &a.AverageRating, &monitored,
 		&a.QualityProfileID, &a.MetadataProfileID, &a.RootFolderID, &a.AudiobookRootFolderID,
-		&a.MonitorMode, &a.MonitorLatestCount, &a.MetadataProvider,
+		&a.MonitorMode, &a.MonitorLatestCount, &a.MonitorNewItems, &a.MetadataProvider,
 		&lastMetadataRefreshAtStr, &createdAtStr, &updatedAtStr, &a.OwnerUserID)
 	if err != nil {
 		return a, err
@@ -754,4 +754,5 @@ func normalizeAuthorMonitorDefaults(a *models.Author) {
 	if a.MonitorLatestCount <= 0 {
 		a.MonitorLatestCount = models.DefaultAuthorMonitorLatestCount
 	}
+	a.MonitorNewItems = models.NormalizeAuthorMonitorNewItems(a.MonitorNewItems)
 }

@@ -480,3 +480,63 @@ func TestAuthorRepo_GetByDNBSyntheticName_LikePatternConstants(t *testing.T) {
 		t.Fatalf("synthetic prefix changed unexpectedly: %q", wantPrefix)
 	}
 }
+
+// MonitorNewItems (#1348): defaults to "all" when unset (create + scan
+// normalization), and an explicit "none" round-trips through Update/Get.
+func TestAuthorRepo_MonitorNewItemsRoundTrip(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	repo := NewAuthorRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID:        "OL-MNI-A",
+		Name:             "Discovery Author",
+		SortName:         "Author, Discovery",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := repo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	if author.MonitorNewItems != models.AuthorMonitorNewItemsAll {
+		t.Fatalf("create default monitorNewItems = %q, want %q", author.MonitorNewItems, models.AuthorMonitorNewItemsAll)
+	}
+
+	got, err := repo.GetByID(ctx, author.ID)
+	if err != nil || got == nil {
+		t.Fatalf("get author: %v (nil=%v)", err, got == nil)
+	}
+	if got.MonitorNewItems != models.AuthorMonitorNewItemsAll {
+		t.Fatalf("default did not round trip: %q", got.MonitorNewItems)
+	}
+
+	got.MonitorNewItems = models.AuthorMonitorNewItemsNone
+	if err := repo.Update(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	got, err = repo.GetByID(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MonitorNewItems != models.AuthorMonitorNewItemsNone {
+		t.Fatalf("monitorNewItems=none did not round trip: %q", got.MonitorNewItems)
+	}
+
+	// An invalid value normalizes back to the default rather than persisting.
+	got.MonitorNewItems = "sometimes"
+	if err := repo.Update(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	got, err = repo.GetByID(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MonitorNewItems != models.AuthorMonitorNewItemsAll {
+		t.Fatalf("invalid value should normalize to default, got %q", got.MonitorNewItems)
+	}
+}

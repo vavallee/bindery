@@ -17,6 +17,9 @@ export interface Author {
   metadataProvider?: string
   monitorMode?: AuthorMonitorMode
   monitorLatestCount?: number
+  // Policy for works discovered after the initial sync (#1348): 'all' follows
+  // monitorMode (default), 'none' adds refresh-discovered works unmonitored.
+  monitorNewItems?: MonitorNewItems
   qualityProfileId?: number | null
   metadataProfileId?: number | null
   rootFolderId?: number | null
@@ -57,6 +60,7 @@ export interface MergeAuthorsResult {
 
 export type MediaType = 'ebook' | 'audiobook' | 'both'
 export type AuthorMonitorMode = 'all' | 'future' | 'latest' | 'none' | 'series'
+export type MonitorNewItems = 'all' | 'none'
 
 export interface AddAuthorRequest {
   foreignAuthorId: string
@@ -79,6 +83,7 @@ export interface UpdateAuthorRequest {
   monitored?: boolean
   monitorMode?: AuthorMonitorMode
   monitorLatestCount?: number
+  monitorNewItems?: MonitorNewItems
   qualityProfileId?: number | null
   metadataProfileId?: number | null
   rootFolderId?: number | null

@@ -4439,3 +4439,83 @@ func TestFetchAuthorBooks_KeepsBookWithUnknownAuthorship(t *testing.T) {
 		t.Error("book with unknown authorship must not be moved")
 	}
 }
+
+// --- MonitorNewItems: refresh discovery vs initial sync (#1348) ---
+
+// monitorNewItemsFixture runs a catalogue sync for an author with the given
+// MonitorNewItems policy and returns the created book. initial selects the
+// add-flow entry point (FetchAuthorBooks) vs the refresh/discovery one
+// (RefreshAuthorBooks).
+func monitorNewItemsFixture(t *testing.T, monitorNewItems string, initial bool) *models.Book {
+	t.Helper()
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID: "OL800A", Name: "Prolific Author", SortName: "Author, Prolific",
+		MetadataProvider: "openlibrary", Monitored: true,
+		MonitorMode: models.AuthorMonitorModeAll, MonitorNewItems: monitorNewItems,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	stub := &stubMetaProvider{
+		works: []models.Book{{
+			ForeignID: "OL801W", Title: "Back Catalogue Book", SortTitle: "back catalogue book",
+			Language: "eng", Status: models.BookStatusWanted, Genres: []string{},
+			MetadataProvider: "openlibrary",
+		}},
+	}
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(stub), nil, profileRepo, &searcherSpy{})
+	if initial {
+		h.FetchAuthorBooks(author, false, "")
+	} else {
+		h.RefreshAuthorBooks(author, false, "")
+	}
+
+	got, err := bookRepo.GetByForeignID(ctx, "OL801W")
+	if err != nil || got == nil {
+		t.Fatalf("re-read book: %v (nil=%v)", err, got == nil)
+	}
+	return got
+}
+
+// With MonitorNewItems=none, a refresh discovering new works creates them
+// unmonitored — the #1348 trap (refresh mass-monitoring a back-catalogue
+// under monitor-mode 'all') is defused.
+func TestRefreshAuthorBooks_MonitorNewItemsNone_CreatesUnmonitored(t *testing.T) {
+	got := monitorNewItemsFixture(t, models.AuthorMonitorNewItemsNone, false)
+	if got.Monitored {
+		t.Error("refresh-discovered book must be unmonitored under monitorNewItems=none")
+	}
+	if got.Status != models.BookStatusWanted {
+		t.Errorf("book status should still be wanted (it just isn't monitored), got %q", got.Status)
+	}
+}
+
+// The default policy keeps the historical behaviour: refresh-discovered works
+// follow the author's monitor mode.
+func TestRefreshAuthorBooks_MonitorNewItemsAll_FollowsMode(t *testing.T) {
+	got := monitorNewItemsFixture(t, models.AuthorMonitorNewItemsAll, false)
+	if !got.Monitored {
+		t.Error("refresh-discovered book should follow monitor-mode 'all' under monitorNewItems=all")
+	}
+}
+
+// The initial sync (add flow, migrations) is governed by MonitorMode alone —
+// MonitorNewItems only constrains later discovery.
+func TestFetchAuthorBooks_InitialSyncIgnoresMonitorNewItems(t *testing.T) {
+	got := monitorNewItemsFixture(t, models.AuthorMonitorNewItemsNone, true)
+	if !got.Monitored {
+		t.Error("initial sync must honour monitor-mode 'all' even with monitorNewItems=none")
+	}
+}

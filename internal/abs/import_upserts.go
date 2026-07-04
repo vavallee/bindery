@@ -188,10 +188,14 @@ func (i *Importer) resolveAuthor(ctx context.Context, cfg ImportConfig, runID in
 	}
 
 	author := &models.Author{
-		ForeignID:        absForeignID("author", item.LibraryID, externalID),
-		Name:             name,
-		SortName:         sortNameFromFull(name),
-		Monitored:        true,
+		ForeignID: absForeignID("author", item.LibraryID, externalID),
+		Name:      name,
+		SortName:  sortNameFromFull(name),
+		Monitored: true,
+		// Import-created authors start with a partial catalogue; a later
+		// refresh/relink discovering the full back-catalogue must not
+		// mass-monitor it (issue #1348).
+		MonitorNewItems:  models.AuthorMonitorNewItemsNone,
 		MetadataProvider: providerAudiobookshelf,
 	}
 	if err := i.authors.Create(ctx, author); err != nil {
@@ -302,10 +306,12 @@ func (i *Importer) resolveManualAuthor(ctx context.Context, cfg ImportConfig, ru
 	}
 
 	author := &models.Author{
-		ForeignID:        foreignID,
-		Name:             name,
-		SortName:         sortNameFromFull(name),
-		Monitored:        true,
+		ForeignID: foreignID,
+		Name:      name,
+		SortName:  sortNameFromFull(name),
+		Monitored: true,
+		// Import-created authors start with a partial catalogue (#1348).
+		MonitorNewItems:  models.AuthorMonitorNewItemsNone,
 		MetadataProvider: "openlibrary",
 	}
 	if i.meta != nil && !cfg.DryRun {
@@ -319,6 +325,9 @@ func (i *Importer) resolveManualAuthor(ctx context.Context, cfg ImportConfig, ru
 			}
 			author.ForeignID = foreignID
 			author.Monitored = true
+			// author = full replaced the struct above; keep the
+			// import-created policy (#1348).
+			author.MonitorNewItems = models.AuthorMonitorNewItemsNone
 			if author.MetadataProvider == "" {
 				author.MetadataProvider = "openlibrary"
 			}

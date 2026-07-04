@@ -385,7 +385,7 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 			// fields (Description, ImageURL, ...); cleaning afterwards would race
 			// the snapshot read against this write (see fetchAuthorBooksAsync).
 			cleanAuthorDescription(canonical)
-			h.fetchAuthorBooksAsync(canonical, req.SearchOnAdd, mediaType)
+			h.fetchAuthorBooksAsync(canonical, req.SearchOnAdd, mediaType, false)
 			writeJSON(w, http.StatusOK, canonical)
 			return
 		}
@@ -434,7 +434,7 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch and store books for this author. Always populate the catalogue;
 	// pass searchOnAdd so FetchAuthorBooks knows whether to also queue grabs.
-	h.fetchAuthorBooksAsync(author, req.SearchOnAdd, mediaType)
+	h.fetchAuthorBooksAsync(author, req.SearchOnAdd, mediaType, false)
 
 	writeJSON(w, http.StatusCreated, author)
 }
@@ -445,12 +445,12 @@ func cleanAuthorDescription(author *models.Author) {
 	}
 }
 
-func (h *AuthorHandler) fetchAuthorBooksAsync(author *models.Author, autoSearch bool, mediaType string) {
+func (h *AuthorHandler) fetchAuthorBooksAsync(author *models.Author, autoSearch bool, mediaType string, discovery bool) {
 	if author == nil {
 		return
 	}
 	snapshot := *author
-	go h.FetchAuthorBooks(&snapshot, autoSearch, mediaType)
+	go h.fetchAuthorBooks(&snapshot, autoSearch, mediaType, discovery)
 }
 
 func (h *AuthorHandler) fetchAuthorForCreate(ctx context.Context, foreignID, fallbackName string) (*models.Author, error) {
@@ -797,6 +797,7 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Monitored             *bool   `json:"monitored"`
 		MonitorMode           *string `json:"monitorMode"`
 		MonitorLatestCount    *int    `json:"monitorLatestCount"`
+		MonitorNewItems       *string `json:"monitorNewItems"`
 		QualityProfileID      *int64  `json:"qualityProfileId"`
 		MetadataProfileID     *int64  `json:"metadataProfileId"`
 		RootFolderID          *int64  `json:"rootFolderId"`
@@ -827,6 +828,14 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		author.MonitorMode = mode
+	}
+	if req.MonitorNewItems != nil {
+		v := strings.TrimSpace(*req.MonitorNewItems)
+		if !models.IsAuthorMonitorNewItemsValid(v) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "monitorNewItems must be one of: all, none"})
+			return
+		}
+		author.MonitorNewItems = v
 	}
 	if req.MonitorLatestCount != nil {
 		if *req.MonitorLatestCount <= 0 {
@@ -1206,7 +1215,7 @@ func (h *AuthorHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	// the user triggered it to refresh metadata, not to queue downloads.
 	// Newly-discovered books inherit the global default media type; rows
 	// that already exist keep whatever value they were created with.
-	h.fetchAuthorBooksAsync(author, false, h.resolveDefaultMediaType(r.Context()))
+	h.fetchAuthorBooksAsync(author, false, h.resolveDefaultMediaType(r.Context()), true)
 	writeJSON(w, http.StatusAccepted, map[string]string{"message": "refresh started"})
 }
 
@@ -1393,7 +1402,25 @@ func mergeAuthorProfileFields(author, upstream *models.Author) bool {
 // FetchAuthorBooks populates the author's catalogue from the metadata provider.
 // mediaType is applied to each newly-created book when the provider didn't
 // return one; pass an empty string to accept whatever the provider set.
+//
+// This is the INITIAL-sync entry point (add flow, migrations): monitoring of
+// created books is governed by the author's MonitorMode alone. Refresh paths
+// must use RefreshAuthorBooks instead so the author's MonitorNewItems policy
+// applies to later-discovered works (issue #1348).
 func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool, mediaType string) {
+	h.fetchAuthorBooks(author, autoSearch, mediaType, false)
+}
+
+// RefreshAuthorBooks is the discovery variant of FetchAuthorBooks used by the
+// refresh paths (single-author Refresh, bulk refresh, refresh-all, relink).
+// Works discovered here additionally honour the author's MonitorNewItems
+// policy: "none" creates them unmonitored, so a metadata refresh can never
+// mass-monitor a back-catalogue and trigger a search storm (issue #1348).
+func (h *AuthorHandler) RefreshAuthorBooks(author *models.Author, autoSearch bool, mediaType string) {
+	h.fetchAuthorBooks(author, autoSearch, mediaType, true)
+}
+
+func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool, mediaType string, discovery bool) {
 	ctx := h.bgCtx()
 	slog.Info("fetching books for author", "author", author.Name, "foreignId", author.ForeignID)
 
@@ -1553,6 +1580,13 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 					break
 				}
 			}
+		}
+		// MonitorNewItems=none overrides every mode on refresh discovery
+		// (issue #1348): works found after the initial sync are created
+		// unmonitored, so refreshing metadata can never mass-monitor a
+		// back-catalogue. Initial sync (add/migrate) is not affected.
+		if discovery && b.Monitored && author.MonitorNewItems == models.AuthorMonitorNewItemsNone {
+			b.Monitored = false
 		}
 
 		// Update ratings + genres on existing books, then skip further
@@ -2258,7 +2292,7 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 				// direct-insert below still creates the picked book and keeps the
 				// author non-orphan.
 				if !resolvedByName {
-					h.fetchAuthorBooksAsync(author, false, h.resolveDefaultMediaType(ctx))
+					h.fetchAuthorBooksAsync(author, false, h.resolveDefaultMediaType(ctx), true)
 				}
 			}
 		}

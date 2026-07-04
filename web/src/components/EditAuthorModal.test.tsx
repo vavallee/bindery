@@ -69,13 +69,14 @@ describe('EditAuthorModal', () => {
   })
 
   async function getSelects() {
-    // Wait for profiles to load — once they do all five selects render
-    // (quality, metadata, ebook root folder, audiobook root folder, monitor mode).
+    // Wait for profiles to load — once they do all six selects render
+    // (quality, metadata, ebook root folder, audiobook root folder,
+    // monitor mode, monitor new items).
     await screen.findByRole('option', { name: 'Any' })
     const selects = screen.getAllByRole('combobox') as HTMLSelectElement[]
-    expect(selects).toHaveLength(5)
-    const [quality, metadata, root, audiobookRoot, monitorMode] = selects
-    return { quality, metadata, root, audiobookRoot, monitorMode }
+    expect(selects).toHaveLength(6)
+    const [quality, metadata, root, audiobookRoot, monitorMode, monitorNewItems] = selects
+    return { quality, metadata, root, audiobookRoot, monitorMode, monitorNewItems }
   }
 
   it('opens with the current author values prefilled', async () => {
@@ -122,6 +123,19 @@ describe('EditAuthorModal', () => {
       monitorLatestCount: 3,
       applyMonitorModeToExisting: true,
     })
+  })
+
+  it('sends monitorNewItems when changed and defaults to all (#1348)', async () => {
+    render(<EditAuthorModal author={baseAuthor} onClose={onClose} onSaved={onSaved} />)
+
+    const { monitorNewItems } = await getSelects()
+    expect(monitorNewItems.value).toBe('all')
+
+    fireEvent.change(monitorNewItems, { target: { value: 'none' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => expect(api.updateAuthor).toHaveBeenCalledTimes(1))
+    expect(api.updateAuthor).toHaveBeenCalledWith(42, { monitorNewItems: 'none' })
   })
 
   it('prefills the audiobook root folder and sends it when changed', async () => {
