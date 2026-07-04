@@ -10,11 +10,13 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 The Grimmory integration goes from a settings tab nothing read to a working
 push pipeline, and the UI can now be embedded in a dashboard iframe when an
-operator explicitly opts in. Three community bug reports filed this week are
-fixed in the same cut: books silently stranded under the wrong author, the
-author-page filters mishandling dual-format books, and unreadable NZB grab
-failures. Repo-side, the CI pipeline gains AI triage/review bots and a
-hardening pass on the fork-facing workflows.
+operator explicitly opts in. A new per-author "Monitor newly discovered
+books" policy defuses the refresh-mass-monitors-the-back-catalogue trap.
+Three community bug reports filed this week are fixed in the same cut: books
+silently stranded under the wrong author, the author-page filters mishandling
+dual-format books, and unreadable NZB grab failures. Repo-side, the CI
+pipeline gains AI triage/review bots and a hardening pass on the fork-facing
+workflows.
 
 ### Added
 - **Grimmory push pipeline — BookDrop upload on import plus bulk sync**
@@ -47,6 +49,18 @@ hardening pass on the fork-facing workflows.
   set, `X-Frame-Options` is dropped, since it can't express an origin allowlist
   and `DENY`/`SAMEORIGIN` would override the more expressive CSP directive.
   Documented in `docs/DEPLOYMENT.md` and `charts/bindery/values.yaml`.
+- **Per-author "Monitor newly discovered books" setting** (#1348) — "Refresh
+  Metadata" shares the add code path, so on a default-config author (monitor
+  mode `all`) a refresh that discovered the provider's full back-catalogue
+  created every work monitored + Wanted, queueing a search storm the user
+  never asked for. Each author now has a Monitor New Items policy in the edit
+  modal: **Follow monitor mode** (default, previous behaviour) or **Add as
+  unmonitored**, which applies to works discovered *after* the initial sync —
+  the add flow and migrations still honour the monitor mode, and a genuinely
+  wanted back-catalogue is one bulk-monitor away. Import-created authors
+  (Calibre, Audiobookshelf) default to **Add as unmonitored**: they start
+  with a partial catalogue, which made the first refresh after an import the
+  classic detonation point.
 
 ### Fixed
 - **Author sync no longer strands books under the wrong author** (#1405) — a
