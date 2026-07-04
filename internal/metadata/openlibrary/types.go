@@ -82,6 +82,14 @@ type authorWorkEntry struct {
 	Covers      []int           `json:"covers"`
 	Subjects    []string        `json:"subjects"`
 	Series      flexStringSlice `json:"series"`
+	// Authors carries the work's credited author references
+	// ({"author": {"key": "/authors/OL123A"}}), used to tell co-authored
+	// works apart from rows mis-parented under another author (#1405).
+	Authors []struct {
+		Author struct {
+			Key string `json:"key"`
+		} `json:"author"`
+	} `json:"authors"`
 }
 
 type workResponse struct {
