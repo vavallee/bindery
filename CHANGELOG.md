@@ -10,8 +10,11 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 The Grimmory integration goes from a settings tab nothing read to a working
 push pipeline, and the UI can now be embedded in a dashboard iframe when an
-operator explicitly opts in. Repo-side, the CI pipeline gains AI triage/review
-bots and a hardening pass on the fork-facing workflows.
+operator explicitly opts in. Three community bug reports filed this week are
+fixed in the same cut: books silently stranded under the wrong author, the
+author-page filters mishandling dual-format books, and unreadable NZB grab
+failures. Repo-side, the CI pipeline gains AI triage/review bots and a
+hardening pass on the fork-facing workflows.
 
 ### Added
 - **Grimmory push pipeline — BookDrop upload on import plus bulk sync**
@@ -44,6 +47,38 @@ bots and a hardening pass on the fork-facing workflows.
   set, `X-Frame-Options` is dropped, since it can't express an origin allowlist
   and `DENY`/`SAMEORIGIN` would override the more expressive CSP directive.
   Documented in `docs/DEPLOYMENT.md` and `charts/bindery/values.yaml`.
+
+### Fixed
+- **Author sync no longer strands books under the wrong author** (#1405) — a
+  work fetched during an author's sync could match an existing row created
+  under a different author record (a duplicate OpenLibrary author key, a
+  Calibre shell author, or an earlier book-level add). The sync refreshed that
+  row's ratings forever but never re-linked it, and since the author page
+  filters by `author_id` the book was permanently invisible under the real
+  author — the reported case being Elantris missing from Brandon Sanderson
+  despite being fetched on every sync. The sync now re-links such rows to the
+  author being synced, using the provider's credited-author list as the
+  safety check: a genuinely co-authored work (credited to both authors, e.g.
+  the Wheel of Time books Sanderson finished for Robert Jordan) stays with
+  its current owner so it can't ping-pong between authors on alternating
+  syncs, and when authorship can't be determined the row is left untouched.
+- **Author-page filters now respect the selected media type for dual-format
+  books** (#1406) — a book wanted as Both was invisible under the
+  Type: Ebook / Type: Audiobook chips (the filter compared `mediaType`
+  exactly), and the Status chips judged the combined status, so a Both book
+  whose ebook was already imported never showed under Type: Ebook +
+  Status: Imported while its audiobook was still wanted. Both books now match
+  either type chip, and with a type selected the status filter judges that
+  format's own state (its file on disk → imported), so each side of a
+  dual-format book filters correctly.
+- **NZB grab failures now explain themselves — including the NZBFinder
+  "error 203" case** (#1404) — when an indexer refuses the NZB download, the
+  error now surfaces the parsed newznab code and description instead of raw
+  XML, and when the grab was redirected off its original host (Prowlarr's
+  per-indexer **Redirect** setting handing the fetch to an app-whitelisting
+  indexer that rejects Bindery's identity) the error names both hosts and
+  points at the Prowlarr setting to disable. Applies to both SABnzbd and
+  NZBGet grabs; a matching entry was added to the troubleshooting guide.
 
 ### CI
 - **AI triage, PR review, and nightly backlog-sweep bots** (#1222) — new
