@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/downloader/nethint"
+	"github.com/vavallee/bindery/internal/downloader/nzbfetch"
 	"github.com/vavallee/bindery/internal/downloader/urlbase"
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/useragent"
@@ -219,8 +220,8 @@ func (c *Client) fetchNZBContent(ctx context.Context, nzbURL string) ([]byte, er
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
-		return nil, fmt.Errorf("fetch nzb: indexer returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, nzbfetch.MaxErrorBody))
+		return nil, nzbfetch.Error(nzbURL, resp, body)
 	}
 	return io.ReadAll(io.LimitReader(resp.Body, 50<<20)) // 50 MB cap
 }
