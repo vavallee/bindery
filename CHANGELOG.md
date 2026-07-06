@@ -6,6 +6,37 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.24.1] — 2026-07-06
+
+A patch cut of fixes surfaced by the community in the days after v1.24.0: two
+were Bindery giving actively wrong information (a dead-end fix for NZBFinder's
+error 203, and Grimmory test failures rendering as an opaque "Bad Gateway"),
+and two were the library scan and bulk import silently mishandling flat
+`Author/Title.epub` layouts.
+
+### Fixed
+- **Error 203 guidance no longer points at a setting that can't be changed**
+  (#1424) — the NZB grab error and the Troubleshooting wiki suggested
+  disabling Prowlarr's per-indexer Redirect setting, which Prowlarr requires
+  for Usenet indexers. Both now explain the real situation:
+  application-whitelisting indexers (like NZBFinder) have to approve
+  Bindery's identity, tracked in #1425.
+- **Grimmory "Test Connection" failures now show the real error** (#1431) — a
+  failed test displayed the bare HTTP status text ("Bad Gateway") instead of
+  the actual diagnostic (connection refused, login rejected, upstream proxy
+  error). The UI now surfaces the full message, upstream HTTP errors are
+  labeled with their status code, and failures are logged server-side.
+- **Bulk folder import shows the full source path on every row** (#1435) —
+  previously only the basename was shown, so an ambiguous match gave no way
+  to tell which file the "pick a book" dropdown referred to.
+- **Library scan no longer hides untracked ebooks that share a folder with a
+  tracked one** (#1436) — in a flat `Author/Title.epub` layout, one
+  registered file made the scan silently skip every sibling ebook in that
+  author folder, and the skipped files were missing from the result counts
+  entirely. Folder-level suppression now only applies to audiobook folders,
+  and the scan result shows an "Already tracked" count so files found always
+  adds up.
+
 ## [v1.24.0] — 2026-07-04
 
 The Grimmory integration goes from a settings tab nothing read to a working
