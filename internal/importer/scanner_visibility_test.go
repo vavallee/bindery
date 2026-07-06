@@ -23,6 +23,7 @@ type scanResultPayload struct {
 	FilesFound   int      `json:"files_found"`
 	Reconciled   int      `json:"reconciled"`
 	Unmatched    int      `json:"unmatched"`
+	AlreadyTrack int      `json:"already_tracked"`
 	TagReadFail  int      `json:"tag_read_failed"`
 	LibraryDir   string   `json:"library_dir"`
 	AudiobookDir string   `json:"audiobook_dir"`

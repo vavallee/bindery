@@ -34,6 +34,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
     files_found: number
     reconciled: number
     unmatched: number
+    already_tracked?: number
     tag_read_failed?: number
     unmatched_files?: Array<{ path: string; parsed_title: string; parsed_author: string }>
     library_dir?: string
@@ -436,6 +437,9 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                 <span>{t('settings.general.filesFound')} <span className="font-mono text-slate-800 dark:text-zinc-200">{lastScan.files_found}</span></span>
                 <span>{t('settings.general.reconciled')} <span className="font-mono text-emerald-700 dark:text-emerald-400">{lastScan.reconciled}</span></span>
                 <span>{t('settings.general.unmatched')} <span className="font-mono text-slate-800 dark:text-zinc-200">{lastScan.unmatched}</span></span>
+                {(lastScan.already_tracked ?? 0) > 0 && (
+                  <span>{t('settings.general.alreadyTracked')} <span className="font-mono text-slate-800 dark:text-zinc-200">{lastScan.already_tracked}</span></span>
+                )}
               </div>
               <p className="mt-1 text-slate-500 dark:text-zinc-500">
                 {new Date(lastScan.ran_at).toLocaleString()}

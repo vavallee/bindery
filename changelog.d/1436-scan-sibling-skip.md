@@ -1,0 +1,2 @@
+### Fixed
+- **Library scan no longer hides untracked ebooks that share a folder with a tracked one** (#1436) — in a flat `Author/Title.epub` layout, one registered file made the scan silently skip every sibling ebook in that author folder, and the skipped files were missing from the result counts entirely. Folder-level suppression now only applies to audiobook folders, and the scan result shows an "Already tracked" count so files found always adds up.

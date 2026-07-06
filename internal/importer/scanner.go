@@ -1707,7 +1707,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 	slog.Info("library scan found files", "paths", []string{s.libraryDir, s.audiobookDir}, "count", len(foundFiles))
 
 	if len(foundFiles) == 0 {
-		s.writeScanResult(ctx, len(foundFiles), 0, 0, 0, nil)
+		s.writeScanResult(ctx, len(foundFiles), 0, 0, 0, 0, nil)
 		return
 	}
 
@@ -1722,16 +1722,20 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 		return
 	}
 
-	// Build a set of tracked file paths AND their parent directories.
-	// Populated from book_files (all registered paths, not just the first per
-	// format) so that multi-file books don't show their non-first files as
-	// untracked on subsequent scans.
+	// Build a set of tracked file paths, plus the parent directories of
+	// tracked AUDIO files: a multi-track audiobook registers one path but its
+	// folder holds sibling tracks belonging to the same book. Ebook parents
+	// must not be tracked — in a flat Author/Title.epub layout the parent is
+	// the author folder, and tracking it hid every untracked sibling ebook in
+	// that folder from the scan (#1436).
 	trackedPaths := make(map[string]bool)
 	if allPaths, err := s.books.ListAllBookFilePaths(ctx); err == nil {
 		for _, p := range allPaths {
 			cleanP := filepath.Clean(p)
 			trackedPaths[cleanP] = true
-			trackedPaths[filepath.Clean(filepath.Dir(cleanP))] = true
+			if detectDownloadFormat([]string{cleanP}) == models.MediaTypeAudiobook {
+				trackedPaths[filepath.Clean(filepath.Dir(cleanP))] = true
+			}
 		}
 	}
 
@@ -1858,7 +1862,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 	}
 
 	var unmatchedFiles []unmatchedFile
-	var reconciled, unmatched, tagReadFailed int
+	var reconciled, unmatched, alreadyTracked, tagReadFailed int
 
 	// tryReconcileTitle attempts to reconcile path to the given wanted book via
 	// the fuzzy title tier, returning true once a book is claimed. The
@@ -1900,16 +1904,24 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 		}
 		slog.Info("library scan: reconciled book", "title", b.Title, "path", path, "jw", jwScore)
 		trackedPaths[cleanPath] = true
+		if detectedFmt == models.MediaTypeAudiobook {
+			// Sibling tracks of a just-reconciled audiobook folder belong to
+			// this book — count them as tracked, not unmatched.
+			trackedPaths[filepath.Clean(filepath.Dir(cleanPath))] = true
+		}
 		reconciledBooks[b.ID] = true
 		reconciled++
 		return true
 	}
 
 	for _, path := range foundFiles {
-		// Skip files already tracked, or files inside a tracked directory
-		// (individual tracks inside an already-imported audiobook folder).
+		// Files already registered, and sibling tracks inside a tracked
+		// audiobook folder, are counted instead of silently skipped so
+		// files_found always equals reconciled + unmatched + already_tracked
+		// (#1436).
 		cleanPath := filepath.Clean(path)
 		if trackedPaths[cleanPath] || trackedPaths[filepath.Clean(filepath.Dir(cleanPath))] {
+			alreadyTracked++
 			continue
 		}
 
@@ -1979,6 +1991,9 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 				}
 				slog.Info("library scan: reconciled book via ASIN", "asin", parsed.ASIN, "title", b.Title, "path", path)
 				trackedPaths[cleanPath] = true
+				if detectedFmt == models.MediaTypeAudiobook {
+					trackedPaths[filepath.Clean(filepath.Dir(cleanPath))] = true
+				}
 				reconciledBooks[b.ID] = true
 				reconciled++
 				matched = true
@@ -2031,6 +2046,9 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 						slog.Info("library scan: reconciled book via series position",
 							"series", parsed.Series, "position", parsed.SeriesNumber, "title", book.Title, "path", path)
 						trackedPaths[cleanPath] = true
+						if detectedFmt == models.MediaTypeAudiobook {
+							trackedPaths[filepath.Clean(filepath.Dir(cleanPath))] = true
+						}
 						reconciledBooks[book.ID] = true
 						reconciled++
 						matched = true
@@ -2065,7 +2083,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 	slog.Info("library scan complete", "paths", scanRoots, "bookFiles", len(foundFiles),
 		"reconciled", reconciled, "unmatched", unmatched, "tagReadFailed", tagReadFailed)
 
-	s.writeScanResult(ctx, len(foundFiles), reconciled, unmatched, tagReadFailed, unmatchedFiles)
+	s.writeScanResult(ctx, len(foundFiles), reconciled, unmatched, alreadyTracked, tagReadFailed, unmatchedFiles)
 }
 
 // isReconcileCandidate reports whether a book should be considered for
@@ -2153,19 +2171,19 @@ type unmatchedFile struct {
 // shape as a normal scan — zero counts plus a non-empty scan_error message the
 // frontend renders the same way as the other scan-outcome warnings.
 func (s *Scanner) writeScanError(ctx context.Context, message string) {
-	s.writeScanResultWithError(ctx, 0, 0, 0, 0, nil, message)
+	s.writeScanResultWithError(ctx, 0, 0, 0, 0, 0, nil, message)
 }
 
 // writeScanResult persists the scan summary to the settings table under
 // "library.lastScan" so the UI can surface the result without polling logs.
-func (s *Scanner) writeScanResult(ctx context.Context, filesFound, reconciled, unmatched, tagReadFailed int, unmatchedFiles []unmatchedFile) {
-	s.writeScanResultWithError(ctx, filesFound, reconciled, unmatched, tagReadFailed, unmatchedFiles, "")
+func (s *Scanner) writeScanResult(ctx context.Context, filesFound, reconciled, unmatched, alreadyTracked, tagReadFailed int, unmatchedFiles []unmatchedFile) {
+	s.writeScanResultWithError(ctx, filesFound, reconciled, unmatched, alreadyTracked, tagReadFailed, unmatchedFiles, "")
 }
 
 // writeScanResultWithError is the shared writer for both successful scans and
 // early-return failures. scanError is empty for a normal scan and a
 // user-facing message when the scan could not complete (#965).
-func (s *Scanner) writeScanResultWithError(ctx context.Context, filesFound, reconciled, unmatched, tagReadFailed int, unmatchedFiles []unmatchedFile, scanError string) {
+func (s *Scanner) writeScanResultWithError(ctx context.Context, filesFound, reconciled, unmatched, alreadyTracked, tagReadFailed int, unmatchedFiles []unmatchedFile, scanError string) {
 	if s.settings == nil {
 		return
 	}
@@ -2214,9 +2232,9 @@ func (s *Scanner) writeScanResultWithError(ctx context.Context, filesFound, reco
 	}
 
 	payload := fmt.Sprintf(
-		`{"ran_at":%q,"files_found":%d,"reconciled":%d,"unmatched":%d,"tag_read_failed":%d,"unmatched_files":%s,"library_dir":%q,"audiobook_dir":%q,"scanned_paths":%s,"no_files_found":%t,"scan_error":%s}`,
+		`{"ran_at":%q,"files_found":%d,"reconciled":%d,"unmatched":%d,"already_tracked":%d,"tag_read_failed":%d,"unmatched_files":%s,"library_dir":%q,"audiobook_dir":%q,"scanned_paths":%s,"no_files_found":%t,"scan_error":%s}`,
 		time.Now().UTC().Format(time.RFC3339),
-		filesFound, reconciled, unmatched, tagReadFailed,
+		filesFound, reconciled, unmatched, alreadyTracked, tagReadFailed,
 		unmatchedJSON,
 		s.libraryDir, s.audiobookDir, pathsJSON, noFilesFound, scanErrorJSON,
 	)

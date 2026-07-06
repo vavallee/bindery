@@ -636,6 +636,7 @@
       "filesFound": "Files found:",
       "reconciled": "Reconciled:",
       "unmatched": "Unmatched:",
+      "alreadyTracked": "Already tracked:",
       "scannedPaths": "Scanned:",
       "scanNoFilesWarning": "No book files found under {{path}} — check BINDERY_LIBRARY_DIR points at your library.",
       "scanAllUnmatchedHint": "Files were found but none matched a book. Unmatched files need their author's book catalogue populated first — refresh the author (or re-run the import so it fetches books) and scan again.",
