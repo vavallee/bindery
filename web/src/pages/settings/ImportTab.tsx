@@ -392,6 +392,10 @@ export function FolderScanSection() {
                       {matchBadge(it.match)}
                       <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">{it.detectedFormat}</span>
                     </div>
+                    {/* Full source path so the user can tell which file a match
+                        (or the ambiguous picker below) refers to — the basename
+                        alone is ambiguous across folders (#1435). */}
+                    <div className="text-xs font-mono text-slate-500 dark:text-zinc-600 truncate" title={it.path}>{it.path}</div>
                     <div className="text-xs text-slate-500 dark:text-zinc-600 truncate">
                       {t('settings.import.bulkParsed', { title: it.parsedTitle || '?', author: it.parsedAuthor || '?', defaultValue: `parsed: ${it.parsedTitle || '?'} / ${it.parsedAuthor || '?'}` })}
                     </div>
