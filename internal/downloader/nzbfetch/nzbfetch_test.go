@@ -40,12 +40,13 @@ func TestError_ParsesNewznabErrorDocument(t *testing.T) {
 
 // The #1404 shape: the release's nzbUrl points at Prowlarr, Prowlarr 302s to
 // the indexer (its per-indexer Redirect setting), the indexer rejects
-// Bindery's identity. The error must name both hosts and the Prowlarr setting.
+// Bindery's identity. The error must name both hosts and explain that the fix
+// is indexer-side whitelisting — Prowlarr can't proxy Usenet grabs (#1424).
 func TestError_CrossHostRedirectAddsProwlarrGuidance(t *testing.T) {
 	err := Error("http://prowlarr:9696/3/download?apikey=k&link=abc", &http.Response{StatusCode: 400, Request: endedAt(t, "https://nzbfinder.ws/getnzb/abc")}, []byte(nzbfinder203))
 
 	msg := err.Error()
-	for _, want := range []string{"newznab error 203", `redirected from "prowlarr" to "nzbfinder.ws"`, "Redirect setting", "whitelisted identity"} {
+	for _, want := range []string{"newznab error 203", `redirected from "prowlarr" to "nzbfinder.ws"`, "approved applications", "No Prowlarr setting avoids this hop"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error missing %q: %s", want, msg)
 		}
