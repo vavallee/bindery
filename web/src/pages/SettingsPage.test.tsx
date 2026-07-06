@@ -593,6 +593,27 @@ describe('SettingsPage', () => {
     })
   })
 
+  it('defaults the import mode selector to Auto when unset and persists an explicit Auto choice', async () => {
+    // No import.mode row (seedSettingsMocks default) — the backend treats an
+    // absent value as auto (hardlink/copy), so the UI must show Auto selected,
+    // not Move (#1444: the display default used to be 'move' and contradicted
+    // the backend, misleading operators into thinking sources were being moved).
+    renderSettings()
+
+    expect(await screen.findByText('Import Mode')).toBeInTheDocument()
+    const fileNaming = sectionForHeading('settings.general.fileNaming')
+
+    const autoBtn = fileNaming.getByRole('button', { name: 'Auto' })
+    const moveBtn = fileNaming.getByRole('button', { name: 'Move' })
+    expect(autoBtn.className).toContain('bg-emerald-600')
+    expect(moveBtn.className).not.toContain('bg-emerald-600')
+
+    // Clicking Auto writes the explicit value so the choice round-trips through
+    // the settings table rather than relying on an absent key.
+    fireEvent.click(autoBtn)
+    await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('import.mode', 'auto'))
+  })
+
   it('refreshes library scan status', async () => {
     vi.mocked(api.libraryScanStatus)
       .mockResolvedValueOnce({ ran_at: new Date(Date.now() - 10_000).toISOString(), files_found: 2, reconciled: 1, unmatched: 1 })

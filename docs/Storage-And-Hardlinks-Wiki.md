@@ -14,13 +14,15 @@ This is the standard *arr layout. It matters because **hardlinks only work withi
 
 ## Import modes
 
-Set the import mode in **Settings → File Naming**.
+Set the import mode in **Settings → General → File Naming**.
 
 | Mode | Extra disk | Seeding | Notes |
 |---|---|---|---|
-| **hardlink** | none | kept | Recommended for torrents. The completed file is linked into the library instantly; the download client keeps seeding the same data on disk. Requires downloads and library on one filesystem. |
-| **copy** | doubled | kept | Use when downloads and library are on different filesystems. Copies into the library and leaves the download in place so it can keep seeding. |
+| **auto** *(default)* | none / doubled | kept | Recommended. Hardlinks when the download folder and library share a filesystem (no extra disk), otherwise copies (doubled). The source stays in place either way, so torrents keep seeding. Picks hardlink or copy automatically per download. |
+| **hardlink** | none | kept | Forces hardlinking for torrents. The completed file is linked into the library instantly; the download client keeps seeding the same data on disk. Requires downloads and library on one filesystem. |
+| **copy** | doubled | kept | Forces copying. Use when downloads and library are on different filesystems. Copies into the library and leaves the download in place so it can keep seeding. |
 | **move** | none | **broken** | Moves the file out of the download location, so a torrent can no longer seed it. Only suitable for Usenet, or when you do not seed. |
+| **external** | none | kept | Hands off to a sibling tool (Calibre, CWA, Grimmory, Storyteller). Bindery stops after grabbing; the external tool processes and places the file, then Bindery reconciles it on the next library scan. Can drop the file into a configured watch folder. |
 
 ## Multi-disc audiobook flattening
 
