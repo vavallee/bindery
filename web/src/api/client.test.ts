@@ -114,3 +114,34 @@ describe('api/client CSRF handling', () => {
     expect(logoutCSRF).toBe('cookie-token')
   })
 })
+
+describe('ApiError message extraction', () => {
+  it('surfaces a `message`-shaped failure body instead of the HTTP status text (#1431)', async () => {
+    server.use(
+      http.post(apiUrl('/grimmory/test'), () =>
+        HttpResponse.json(
+          { ok: false, message: 'grimmory login: dial tcp 192.168.1.5:6060: connection refused' },
+          { status: 502 },
+        ),
+      ),
+    )
+
+    const { api } = await loadClient()
+
+    await expect(api.grimmoryTest({ baseUrl: 'http://192.168.1.5:6060' })).rejects.toThrow(
+      /connection refused/,
+    )
+  })
+
+  it('prefers `error` over `message` when both are present', async () => {
+    server.use(
+      http.post(apiUrl('/grimmory/test'), () =>
+        HttpResponse.json({ error: 'primary', message: 'secondary' }, { status: 502 }),
+      ),
+    )
+
+    const { api } = await loadClient()
+
+    await expect(api.grimmoryTest()).rejects.toThrow('primary')
+  })
+})

@@ -56,10 +56,13 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 // unaffected.
 export class ApiError extends Error {
   status: number
-  body: { error?: string; [key: string]: unknown }
+  body: { error?: string; message?: string; [key: string]: unknown }
 
-  constructor(status: number, body: { error?: string; [key: string]: unknown }, fallback: string) {
-    super(body.error || fallback)
+  constructor(status: number, body: { error?: string; message?: string; [key: string]: unknown }, fallback: string) {
+    // Some endpoints report failures under `message` instead of `error`
+    // (e.g. POST /grimmory/test) — without this fallback the user sees the
+    // bare HTTP status text ("Bad Gateway") instead of the diagnostic (#1431).
+    super(body.error || body.message || fallback)
     this.name = 'ApiError'
     this.status = status
     this.body = body

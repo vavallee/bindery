@@ -39,7 +39,15 @@ func (e *APIError) Error() string {
 	if e.Message == "" {
 		return fmt.Sprintf("grimmory api error (%d)", e.StatusCode)
 	}
-	return e.Message
+	// Always carry the upstream status: a reverse proxy in front of Grimmory
+	// answering 502 with "Bad Gateway" must read as "Grimmory's URL replied
+	// 502", not as an opaque failure inside Bindery (#1431). Bodies can be
+	// whole proxy error pages — keep the rendered message short.
+	msg := e.Message
+	if len(msg) > 300 {
+		msg = strings.ToValidUTF8(msg[:300], "") + " […]"
+	}
+	return fmt.Sprintf("grimmory api error (%d): %s", e.StatusCode, msg)
 }
 
 // StatusResponse is the shape returned by GET /api/status.
