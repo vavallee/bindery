@@ -363,8 +363,15 @@ func TestDo_OmitsAuthHeaderWhenKeyEmpty(t *testing.T) {
 func TestAPIError_Error(t *testing.T) {
 	t.Run("with message", func(t *testing.T) {
 		e := &APIError{StatusCode: 403, Message: "forbidden"}
-		if got := e.Error(); got != "forbidden" {
-			t.Errorf("Error() = %q, want %q", got, "forbidden")
+		want := "grimmory api error (403): forbidden"
+		if got := e.Error(); got != want {
+			t.Errorf("Error() = %q, want %q", got, want)
+		}
+	})
+	t.Run("long body truncated", func(t *testing.T) {
+		e := &APIError{StatusCode: 502, Message: strings.Repeat("x", 1000)}
+		if got := e.Error(); len(got) > 350 || !strings.HasSuffix(got, "[…]") {
+			t.Errorf("Error() not truncated: len=%d %q", len(got), got[:50])
 		}
 	})
 	t.Run("empty message fallback", func(t *testing.T) {

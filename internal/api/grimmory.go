@@ -209,6 +209,7 @@ func (h *GrimmoryHandler) Test(w http.ResponseWriter, r *http.Request) {
 
 	status, err := client.Ping(r.Context())
 	if err != nil {
+		slog.Warn("grimmory: test connection failed", "baseURL", baseURL, "error", err)
 		writeJSON(w, http.StatusBadGateway, grimmoryTestResponse{OK: false, Message: err.Error()})
 		return
 	}
@@ -219,6 +220,7 @@ func (h *GrimmoryHandler) Test(w http.ResponseWriter, r *http.Request) {
 	}
 	if client.HasCredentials() {
 		if err := client.VerifyAuth(r.Context()); err != nil {
+			slog.Warn("grimmory: test login failed", "baseURL", baseURL, "error", err)
 			writeJSON(w, http.StatusBadGateway, grimmoryTestResponse{
 				OK: false, Message: msg + ", but login failed: " + err.Error(), Version: status.Version,
 			})
