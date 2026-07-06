@@ -16,8 +16,8 @@ const nzbfinder203Body = `<?xml version="1.0" encoding="UTF-8"?>
 // URL points at a Prowlarr-style proxy which 302-redirects to the indexer
 // (Prowlarr's per-indexer Redirect setting), and the indexer rejects Bindery's
 // identity with newznab error 203. The resulting error must surface the
-// structured newznab error plus the redirect hop and the Prowlarr fix, instead
-// of the raw XML soup the log used to carry.
+// structured newznab error plus the redirect hop and the whitelist guidance
+// (#1424), instead of the raw XML soup the log used to carry.
 //
 // The proxy is addressed as "localhost" and redirects to "127.0.0.1" so the
 // two ends of the hop have different hostnames, like prowlarr → nzbfinder.ws.
@@ -52,7 +52,7 @@ func TestAddURL_ProwlarrRedirectRejection(t *testing.T) {
 		"newznab error 203",
 		"not allowed to download NZBs",
 		`redirected from "localhost" to "127.0.0.1"`,
-		"Redirect setting",
+		"approved applications",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error missing %q:\n%s", want, msg)

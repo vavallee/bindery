@@ -37,9 +37,15 @@ fetch nzb: indexer refused the download (HTTP 400, newznab error 203:
 This application is not allowed to download NZBs from NZBFinder.)
 ```
 
-Some indexers (NZBFinder is the known case) restrict NZB downloads to a whitelist of approved applications. Prowlarr is on that list; Bindery is not. When Prowlarr performs the download itself and hands Bindery the file, the indexer sees Prowlarr and allows it. But if the indexer's **Redirect** setting is enabled in Prowlarr, Prowlarr answers Bindery's grab with a redirect straight to the indexer instead of proxying it — the indexer then sees Bindery, and rejects the download with error 203. The error message names both hosts when this hand-off happened.
+Some indexers (NZBFinder is the known case) restrict API access to a whitelist of approved applications, keyed on the client's identity rather than your API key. Prowlarr is on that list; Bindery is not yet. Prowlarr answers Bindery's grab with a redirect straight to the indexer (its per-indexer **Redirect** setting), so the indexer sees Bindery's own identity and rejects the download with error 203. The error message names both hosts when this hand-off happened.
 
-**Fix:** in Prowlarr, open **Settings → Indexers → (the indexer)**, show advanced settings, and disable **Redirect**. Prowlarr then downloads the NZB itself with its whitelisted identity and streams it to Bindery. This only matters for whitelisting indexers — Redirect is safe to leave on for indexers that don't restrict by application.
+There is **no user-side workaround**:
+
+- Disabling Redirect in Prowlarr is not possible for Usenet indexers — Prowlarr requires it and no longer proxies NZB downloads itself (earlier versions of this page and of Bindery's error text suggested that setting; that advice was wrong, see #1424).
+- Adding the indexer to Bindery directly doesn't help either: the whitelist covers the whole newznab API, so searches fail with the same error 203 even with a valid API key (#1404).
+- Bindery always identifies itself honestly as `bindery/<version>` and will not impersonate Prowlarr or an arr to get around a whitelist.
+
+**Fix:** the indexer has to add Bindery to its approved applications. For NZBFinder that request is underway (#1425 tracks it) — if you're a member there, asking them too genuinely helps. For other whitelisting indexers, point them at Bindery's stable User-Agent (`bindery/<version>`) and the request pattern (standard newznab caps/search/download on the user's own API key, same as Readarr).
 
 ## "Could not reach the metadata provider" / OpenLibrary timeout
 

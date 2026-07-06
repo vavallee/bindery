@@ -40,7 +40,10 @@ type newznabError struct {
 // instead of the proxy's (Prowlarr etc.), which is exactly how app-whitelisting
 // indexers like NZBFinder come to reject the grab with error 203 even though
 // the same release downloads fine from inside Prowlarr (#1404). That hop is
-// therefore called out, with the Prowlarr setting that removes it.
+// called out so the failure is explainable, but there is no user-side setting
+// that removes it: Prowlarr refuses to disable Redirect for Usenet indexers
+// and no longer proxies NZB downloads (#1424), so the only real fix is the
+// indexer whitelisting Bindery's identity (#1425).
 func Error(requestedURL string, resp *http.Response, body []byte) error {
 	msg := describeBody(resp.StatusCode, body)
 	if hop := crossHostHop(requestedURL, resp); hop != "" {
@@ -76,5 +79,5 @@ func crossHostHop(requestedURL string, resp *http.Response) string {
 	if from == "" || to == "" || from == to {
 		return ""
 	}
-	return fmt.Sprintf(" — the download request was redirected from %q to %q, so the indexer saw Bindery directly instead of the app that performed the search. If %q is Prowlarr, disable this indexer's Redirect setting there (Settings → Indexers → indexer → Redirect, advanced) so Prowlarr downloads the NZB itself with its own whitelisted identity", from, to, from)
+	return fmt.Sprintf(" — the download request was redirected from %q to %q, so the indexer saw Bindery directly instead of the app that performed the search. Indexers that whitelist applications (NZBFinder is the known case) reject that with error 203. No Prowlarr setting avoids this hop: Prowlarr requires Redirect for Usenet indexers and no longer proxies NZB downloads. The fix is the indexer adding Bindery to its approved applications — see the error 203 entry in the Troubleshooting wiki", from, to)
 }
