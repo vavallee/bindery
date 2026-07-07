@@ -69,6 +69,13 @@ const (
 	SettingImportDropLinkMode = "import.drop_link_mode"
 )
 
+// SettingImportMode is the KV key for the operator-chosen import placement
+// mode. Valid values are "", "auto" (equivalent — hardlink same-filesystem,
+// copy otherwise), "move", "copy", "hardlink", "external". The importer
+// package reads this key as a string literal to avoid an import cycle; keep
+// the literal in sync with this constant.
+const SettingImportMode = "import.mode"
+
 // SettingSearchInterval is the KV key for the wanted-book search cadence.
 // Value is a Go duration string (e.g. "12h", "24h"). Empty or unset falls
 // back to the scheduler's defaultSearchInterval (12h). Takes effect on restart.
@@ -368,6 +375,20 @@ func validateSettingValue(key, value string) error {
 		}
 		if value != "copy" && value != "hardlink" {
 			return fmt.Errorf("import.drop_link_mode %q is not one of: copy, hardlink", value)
+		}
+	case SettingImportMode:
+		// Empty falls back to auto at read time; validate non-empty writes
+		// so a typo can't silently strand the setting in an unrecognised
+		// state (configuredImportMode would then treat it as "" == auto,
+		// masking the typo instead of failing loudly).
+		if value == "" {
+			return nil
+		}
+		switch value {
+		case "auto", "move", "copy", "hardlink", "external":
+			return nil
+		default:
+			return fmt.Errorf("import.mode %q is not one of: auto, move, copy, hardlink, external", value)
 		}
 	case SettingCalibreMode:
 		// Canonical values only. An empty string falls through to the

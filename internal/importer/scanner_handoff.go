@@ -48,8 +48,8 @@ func uniqueNonEmptyStrings(values []string) []string {
 }
 
 // configuredImportMode returns the operator-set "import.mode" ("move", "copy",
-// "hardlink", or "external"), or "" when the setting is absent/unrecognised,
-// meaning "auto" (let resolveImportMode pick hardlink-vs-copy per destination).
+// "hardlink", or "external"), or "" when the setting is absent/unrecognised or
+// explicitly "auto" (let resolveImportMode pick hardlink-vs-copy per destination).
 // Read once per download so a mid-run UI toggle can't mix modes (#705).
 func (s *Scanner) configuredImportMode(ctx context.Context) string {
 	if s.settings != nil {
@@ -58,6 +58,8 @@ func (s *Scanner) configuredImportMode(ctx context.Context) string {
 			switch setting.Value {
 			case "move", "copy", "hardlink", "external":
 				return setting.Value
+			case "auto":
+				return ""
 			}
 		}
 	}
