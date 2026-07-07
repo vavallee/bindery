@@ -68,6 +68,82 @@ func (h *stubSensitiveHandler) ImportGoodreadsPreview(w http.ResponseWriter, _ *
 func (h *stubSensitiveHandler) ImportGoodreadsCommit(w http.ResponseWriter, _ *http.Request) {
 	h.record("import-goodreads-commit", w)
 }
+func (h *stubSensitiveHandler) GetLevel(w http.ResponseWriter, _ *http.Request) {
+	h.record("get-level", w)
+}
+func (h *stubSensitiveHandler) SetLevel(w http.ResponseWriter, _ *http.Request) {
+	h.record("set-level", w)
+}
+
+// TestSystemLogRoutesRequireAdmin locks in the sweep finding that
+// /system/logs and /system/loglevel were mounted outside any admin Group, so
+// role=user could read the app-wide log stream (other users' titles, OIDC
+// usernames) and flip the global log level. A non-admin must be rejected
+// before the handler runs.
+func TestSystemLogRoutesRequireAdmin(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{name: "read logs", method: http.MethodGet, path: "/system/logs"},
+		{name: "get loglevel", method: http.MethodGet, path: "/system/loglevel"},
+		{name: "set loglevel", method: http.MethodPut, path: "/system/loglevel"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &stubSensitiveHandler{}
+			router := chi.NewRouter()
+			registerSystemLogRoutes(router, h)
+
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			req = req.WithContext(auth.WithUserRole(req.Context(), "user"))
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d; want %d (RequireAdmin should reject role=user)", rec.Code, http.StatusForbidden)
+			}
+			if len(h.called) != 0 {
+				t.Fatalf("handler invoked for non-admin request: %v", h.called)
+			}
+		})
+	}
+}
+
+// TestSystemLogRoutesAllowAdmin is the symmetry case: an admin must reach each
+// handler (guards against mounting them outside the group so they 404).
+func TestSystemLogRoutesAllowAdmin(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		called string
+	}{
+		{name: "read logs", method: http.MethodGet, path: "/system/logs", called: "list"},
+		{name: "get loglevel", method: http.MethodGet, path: "/system/loglevel", called: "get-level"},
+		{name: "set loglevel", method: http.MethodPut, path: "/system/loglevel", called: "set-level"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &stubSensitiveHandler{}
+			router := chi.NewRouter()
+			registerSystemLogRoutes(router, h)
+
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			req = req.WithContext(auth.WithUserRole(req.Context(), "admin"))
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusNoContent {
+				t.Fatalf("status = %d; want %d", rec.Code, http.StatusNoContent)
+			}
+			if len(h.called) != 1 || h.called[0] != tt.called {
+				t.Fatalf("called = %v; want [%s]", h.called, tt.called)
+			}
+		})
+	}
+}
 
 // TestSensitiveRoutesRequireAdmin nails down the security finding from the
 // v1.15.0 review: List/Get/Create/Update/Delete on the indexer, prowlarr, and

@@ -969,10 +969,8 @@ func main() {
 			r.Delete("/backup/{filename}", backupHandler.Delete)
 		})
 
-		// System logs
-		r.Get("/system/logs", logHandler.List)
-		r.Get("/system/loglevel", logHandler.GetLevel)
-		r.Put("/system/loglevel", logHandler.SetLevel)
+		// System logs — admin-only (see registerSystemLogRoutes).
+		registerSystemLogRoutes(r, logHandler)
 
 		// Storage paths (read-only view of the env/config-driven dirs plus
 		// exists/writable/hardlink-able health, #1183). Admin-only: it reveals

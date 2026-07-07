@@ -9,6 +9,28 @@ import (
 	"github.com/vavallee/bindery/internal/auth"
 )
 
+// systemLogRouteHandler is the surface registerSystemLogRoutes needs.
+type systemLogRouteHandler interface {
+	List(http.ResponseWriter, *http.Request)
+	GetLevel(http.ResponseWriter, *http.Request)
+	SetLevel(http.ResponseWriter, *http.Request)
+}
+
+// registerSystemLogRoutes mounts the /system/logs and /system/loglevel routes.
+// The whole subtree is admin-only: List streams app-wide log output — other
+// users' book/author names, OIDC usernames, download titles — which is exactly
+// the cross-tenant disclosure the multi-user model forbids, and SetLevel is a
+// global mutation that can be flipped to debug to amplify it. Same privilege
+// level as /system/storage.
+func registerSystemLogRoutes(r chi.Router, h systemLogRouteHandler) {
+	r.Group(func(r chi.Router) {
+		r.Use(auth.RequireAdmin)
+		r.Get("/system/logs", h.List)
+		r.Get("/system/loglevel", h.GetLevel)
+		r.Put("/system/loglevel", h.SetLevel)
+	})
+}
+
 // migrateRouteHandler is the surface registerMigrateRoutes needs.
 type migrateRouteHandler interface {
 	ImportCSV(http.ResponseWriter, *http.Request)
