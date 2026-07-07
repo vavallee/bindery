@@ -317,7 +317,9 @@ func (c *Client) fetchNZBContent(ctx context.Context, nzbURL string) ([]byte, er
 	req.Header.Set("User-Agent", useragent.Get())
 	resp, err := c.fetchHTTP.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetch nzb from indexer: %w", err)
+		// Scrub the indexer apikey the *url.Error would otherwise leak into
+		// the download row / history / webhook payloads.
+		return nil, fmt.Errorf("fetch nzb from indexer: %w", httpsec.RedactURLError(err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {

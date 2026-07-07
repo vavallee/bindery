@@ -1,6 +1,9 @@
 package httpsec
 
 import (
+	"errors"
+	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -52,5 +55,44 @@ func TestRedactSecrets(t *testing.T) {
 				t.Fatalf("secret value leaked through redaction: %q", got)
 			}
 		})
+	}
+}
+
+// sentinelNetErr stands in for the underlying net error a *url.Error wraps, so
+// we can assert RedactURLError leaves the chain reachable by errors.Is/As.
+type sentinelNetErr struct{}
+
+func (sentinelNetErr) Error() string { return "dial tcp 10.0.0.53:443: i/o timeout" }
+
+func TestRedactURLError(t *testing.T) {
+	inner := sentinelNetErr{}
+	ue := &url.Error{
+		Op:  "Get",
+		URL: "https://indexer.example/download?id=42&apikey=SECRET123",
+		Err: inner,
+	}
+
+	// Wrap it the way the download clients do, to prove the apikey does not
+	// survive stringification even one %w-layer up.
+	wrapped := fmt.Errorf("fetch torrent from indexer: %w", RedactURLError(ue))
+
+	if strings.Contains(wrapped.Error(), "SECRET123") {
+		t.Fatalf("apikey leaked through redaction: %q", wrapped.Error())
+	}
+	if !strings.Contains(wrapped.Error(), "apikey=REDACTED") {
+		t.Fatalf("expected apikey=REDACTED, got %q", wrapped.Error())
+	}
+	// The chain must stay intact so nethint can still classify the net error.
+	if !errors.As(wrapped, new(*url.Error)) {
+		t.Fatal("*url.Error no longer reachable via errors.As")
+	}
+	if !errors.Is(wrapped, inner) {
+		t.Fatal("underlying net error no longer reachable via errors.Is")
+	}
+
+	// Non-url.Error values pass through unchanged.
+	plain := errors.New("plain failure")
+	if RedactURLError(plain) != plain {
+		t.Fatal("non-url.Error should pass through unchanged")
 	}
 }
