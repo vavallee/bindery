@@ -1,0 +1,2 @@
+### Fixed
+- **Transmission downloads queued behind others no longer fail to import** — the RPC status enum was mapped wrong (`3` was treated as "seeding", `6` as "stopped"; they are actually "queued to download" and "seeding"). A torrent sitting in Transmission's download queue at 0% was treated as complete, import fired against an empty directory, failed, and after exhausting its retries the download was terminally blocked even though it was perfectly healthy. Completion is now keyed off real seeding / 100%-downloaded state.

@@ -166,6 +166,25 @@ func (s *Scanner) tryImportNZBGet(ctx context.Context, ng *nzbget.Client, dl *mo
 	}, nil)
 }
 
+// transmissionCompletion classifies a torrent from its RPC status and progress.
+// The status enum is stable since Transmission 2.40:
+//
+//	0=stopped 1=queued-to-check 2=checking
+//	3=queued-to-download 4=downloading 5=queued-to-seed 6=seeding
+//
+// complete means the payload is fully downloaded (seeding, or PercentDone at
+// 1.0 for the brief window before it flips to seed/seed-wait). stopped means
+// Transmission has halted the torrent (paused by the user, or failed with an
+// errorString). The previous mapping treated status 3 as "seeding" and 6 as
+// "stopped" — inverted — so a torrent merely *queued to download* at 0% was
+// imported prematurely, failed with "no book files", burned its retry budget,
+// and got terminally blocked while perfectly healthy.
+func transmissionCompletion(status int, percentDone float64) (complete, stopped bool) {
+	complete = status == 6 || percentDone >= 1.0 // 6=seeding
+	stopped = status == 0                        // 0=stopped
+	return complete, stopped
+}
+
 // checkTransmissionDownloads polls Transmission for status changes.
 func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models.DownloadClient) {
 	trans := downloader.TransmissionFor(client)
@@ -222,9 +241,7 @@ func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models
 			continue
 		}
 
-		// Status codes: 0=stopped, 1=checking, 2=downloading, 3=seeding, 4=allocating, 5=checking, 6=stopped
-		isComplete := torrent.Status == 3 || (torrent.PercentDone >= 1.0)
-		isStopped := torrent.Status == 0 || torrent.Status == 6
+		isComplete, isStopped := transmissionCompletion(torrent.Status, torrent.PercentDone)
 		stopError := strings.TrimSpace(torrent.ErrorString)
 
 		if isComplete && (dl.Status == models.StateDownloading || dl.Status == models.StateGrabbed) {

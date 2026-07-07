@@ -355,7 +355,7 @@ func transmissionMatrixHandler(t *testing.T, conflicts *atomic.Int32, downloadDi
 					"hashString":  "feedfacefeedfacefeedfacefeedfacefeedface",
 					"name":        "the-book",
 					"percentDone": 1.0,
-					"status":      3, // seeding
+					"status":      6, // seeding
 					"downloadDir": downloadDir,
 				}},
 			},
