@@ -183,25 +183,61 @@ func (c *Client) WithCredentials(username, password string) *Client {
 }
 
 // Ping calls GET /api/status to verify connectivity and authentication.
+//
+// Current Grimmory guards /api/status behind a valid session, so an
+// unauthenticated probe now returns 401 (#1448). When username/password (or a
+// static key) is configured, Ping authenticates first — acquiring a JWT via
+// login when needed — and retries once on 401 after forcing a fresh login, so
+// an expired cached token heals transparently. Without any credentials it
+// falls back to an unauthenticated probe (still useful against a Grimmory that
+// leaves /api/status public).
 func (c *Client) Ping(ctx context.Context) (*StatusResponse, error) {
 	var resp StatusResponse
-	if err := c.do(ctx, http.MethodGet, "/api/status", nil, &resp); err != nil {
+	if !c.HasCredentials() {
+		if err := c.do(ctx, http.MethodGet, "/api/status", nil, &resp); err != nil {
+			return nil, err
+		}
+		return &resp, nil
+	}
+	token, err := c.bearer(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	err = c.doWithToken(ctx, http.MethodGet, "/api/status", token, nil, &resp)
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusUnauthorized && c.apiKey == "" {
+		if token, err = c.bearer(ctx, true); err != nil {
+			return nil, err
+		}
+		err = c.doWithToken(ctx, http.MethodGet, "/api/status", token, nil, &resp)
+	}
+	if err != nil {
 		return nil, err
 	}
 	return &resp, nil
 }
 
+// do issues a request carrying only a statically-configured API key as auth
+// (or none). Used by the login/refresh calls, which must not present a JWT —
+// they are how the JWT is obtained.
+//
+// Grimmory v3.x does not have API keys; the maintainer confirmed this on
+// grimmory-tools/grimmory#1487 (#818). Send the Authorization header only when
+// the user actually configured one — sending "Bearer " with an empty token is
+// a no-op against current Grimmory and just noise on the wire.
 func (c *Client) do(ctx context.Context, method, path string, body io.Reader, out any) error {
+	return c.doWithToken(ctx, method, path, c.apiKey, body, out)
+}
+
+// doWithToken issues a request carrying the given bearer token (empty token =
+// no Authorization header).
+func (c *Client) doWithToken(ctx context.Context, method, path, token string, body io.Reader, out any) error {
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
 	if err != nil {
 		return err
 	}
-	// Grimmory v3.x does not have API keys; the maintainer confirmed this on
-	// grimmory-tools/grimmory#1487 (#818). Send the Authorization header only
-	// when the user actually configured one — sending "Bearer " with an empty
-	// token is a no-op against current Grimmory and just noise on the wire.
-	if c.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	req.Header.Set("User-Agent", c.userAgent)
 	if body != nil {
