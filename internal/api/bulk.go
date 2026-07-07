@@ -441,13 +441,23 @@ func (h *BulkHandler) WantedBulk(w http.ResponseWriter, r *http.Request) {
 
 	var searchTargets []models.Book
 
+	// The search action needs the full book for each id. Fetch them in one
+	// query instead of a GetByID per id — GetByID runs the book CTE (which
+	// aggregates the whole book_files table twice) for a single row, so a
+	// 500-id bulk search was ~500 of those. A nil map (query error) makes every
+	// lookup miss, which yields the same not-owned result the per-id path did.
+	var booksByID map[int64]*models.Book
+	if req.Action == "search" {
+		booksByID, _ = h.books.GetByIDs(r.Context(), req.IDs)
+	}
+
 	for _, id := range req.IDs {
 		key := fmt.Sprintf("%d", id)
 		var opErr error
 		switch req.Action {
 		case "search":
-			book, err := h.books.GetByID(r.Context(), id)
-			if err != nil || book == nil || !auth.CheckOwnership(r.Context(), book.OwnerUserID) {
+			book := booksByID[id]
+			if book == nil || !auth.CheckOwnership(r.Context(), book.OwnerUserID) {
 				resp.Results[key] = bulkItemResult{Error: errBulkBookNotOwned.Error()}
 				continue
 			}
