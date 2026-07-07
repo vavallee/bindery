@@ -762,28 +762,56 @@ func (s *Scheduler) searchWanted() {
 		}
 	}
 
+	searchQueue := s.wantedSearchQueue(ctx)
+	if len(searchQueue) == 0 {
+		return
+	}
+	concurrency.RunBounded(ctx, searchQueue, scheduledWantedSearchConcurrency, func(ctx context.Context, book models.Book) {
+		s.SearchAndGrabBook(ctx, book)
+	})
+}
+
+// inFlightDownloadStates are the states in which a download is actively working
+// toward a completed import. A Wanted book with a download in any of these must
+// not be re-searched: nothing flips the book off Wanted when it's grabbed (that
+// happens only once the file is imported and reconciled), so a re-search would
+// grab a *second* release for the same book, and even a same-GUID hit burns
+// indexer calls. Dead states (failed / import-failed / import-blocked) are
+// intentionally excluded from this list — those are the recovery path where
+// re-searching for a different release is correct.
+var inFlightDownloadStates = []models.DownloadState{
+	models.StateGrabbed,
+	models.StateDownloading,
+	models.StateCompleted,
+	models.StateImportPending,
+	models.StateImporting,
+	models.StateImportExternal, // external hand-off outstanding (issue #706 finding 3)
+}
+
+// wantedSearchQueue returns the Wanted books eligible for an auto-grab this
+// sweep, excluding user-excluded books and any book with a grab already in
+// flight (see inFlightDownloadStates).
+func (s *Scheduler) wantedSearchQueue(ctx context.Context) []models.Book {
 	wanted, err := s.books.ListByStatus(ctx, models.BookStatusWanted)
 	if err != nil {
 		slog.Error("failed to list wanted books", "error", err)
-		return
+		return nil
 	}
 	if len(wanted) == 0 {
-		return
+		return nil
 	}
 
-	// Books with a download parked in StateImportExternal have been handed off
-	// to an external import tool; the book is deliberately still Wanted so
-	// ScanLibrary can reconcile the file once it lands, but the release must
-	// NOT be re-grabbed in the meantime or the importer re-downloads the same
-	// book every sweep (issue #706 finding 3).
-	externalHandoffBooks := make(map[int64]bool)
+	inFlightBooks := make(map[int64]bool)
 	if s.downloads != nil {
-		if pending, derr := s.downloads.ListByStatus(ctx, models.StateImportExternal); derr != nil {
-			slog.Warn("failed to list external-handoff downloads", "error", derr)
-		} else {
-			for _, d := range pending {
+		for _, st := range inFlightDownloadStates {
+			active, derr := s.downloads.ListByStatus(ctx, st)
+			if derr != nil {
+				slog.Warn("failed to list in-flight downloads", "state", st, "error", derr)
+				continue
+			}
+			for _, d := range active {
 				if d.BookID != nil {
-					externalHandoffBooks[*d.BookID] = true
+					inFlightBooks[*d.BookID] = true
 				}
 			}
 		}
@@ -794,15 +822,13 @@ func (s *Scheduler) searchWanted() {
 		if book.Excluded {
 			continue
 		}
-		if externalHandoffBooks[book.ID] {
-			slog.Debug("skipping wanted search — external import hand-off outstanding", "book", book.Title)
+		if inFlightBooks[book.ID] {
+			slog.Debug("skipping wanted search — a grab is already in flight for this book", "book", book.Title)
 			continue
 		}
 		searchQueue = append(searchQueue, book)
 	}
-	concurrency.RunBounded(ctx, searchQueue, scheduledWantedSearchConcurrency, func(ctx context.Context, book models.Book) {
-		s.SearchAndGrabBook(ctx, book)
-	})
+	return searchQueue
 }
 
 func (s *Scheduler) refreshMetadata() {

@@ -1,0 +1,2 @@
+### Fixed
+- **The wanted-book sweep no longer double-grabs** — a Wanted book stays Wanted until its file is imported and reconciled, so a book whose grab was still downloading (or working through the import pipeline) was re-searched on the next scheduled sweep and, if the indexer now ranked a different release best, a second download was grabbed for the same book. The sweep now skips books with a grab already in flight, while still re-searching books whose previous download failed.

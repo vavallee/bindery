@@ -328,6 +328,69 @@ func TestSearchWanted_NoBooksInStatus(t *testing.T) {
 	s.searchWanted() // no panic; exits early because no "wanted" books
 }
 
+// TestWantedSearchQueue_SkipsInFlightGrabs is the regression guard for the
+// double-grab bug: a Wanted book with a grab already downloading must be left
+// out of the search queue (else the next sweep grabs a second release for it),
+// while a Wanted book whose only download died (import-failed) stays IN the
+// queue so a different release can be tried.
+func TestWantedSearchQueue_SkipsInFlightGrabs(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatalf("OpenMemory: %v", err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	authRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	dlRepo := db.NewDownloadRepo(database)
+
+	a := &models.Author{ForeignID: "OL9A", Name: "A", SortName: "A", MetadataProvider: "ol", Monitored: true}
+	if err := authRepo.Create(ctx, a); err != nil {
+		t.Fatalf("create author: %v", err)
+	}
+	mkBook := func(fid, title string) *models.Book {
+		b := &models.Book{
+			ForeignID: fid, AuthorID: a.ID, Title: title, SortTitle: title,
+			Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "ol", Monitored: true,
+		}
+		if err := bookRepo.Create(ctx, b); err != nil {
+			t.Fatalf("create book %s: %v", title, err)
+		}
+		return b
+	}
+	inFlight := mkBook("OL-INFLIGHT", "Being Downloaded")
+	dead := mkBook("OL-DEAD", "Import Failed")
+	fresh := mkBook("OL-FRESH", "Never Grabbed")
+
+	mkDownload := func(b *models.Book, st models.DownloadState) {
+		if err := dlRepo.Create(ctx, &models.Download{
+			GUID: "guid-" + b.ForeignID, BookID: &b.ID, Title: b.Title, Status: st, Protocol: "torrent",
+		}); err != nil {
+			t.Fatalf("create download for %s: %v", b.Title, err)
+		}
+	}
+	mkDownload(inFlight, models.StateDownloading)
+	mkDownload(dead, models.StateImportFailed)
+
+	s := &Scheduler{books: bookRepo, downloads: dlRepo}
+	queue := s.wantedSearchQueue(ctx)
+
+	got := make(map[int64]bool, len(queue))
+	for _, b := range queue {
+		got[b.ID] = true
+	}
+	if got[inFlight.ID] {
+		t.Errorf("book with a downloading grab was queued for re-search (double-grab bug)")
+	}
+	if !got[dead.ID] {
+		t.Errorf("book whose import failed must stay searchable (recovery path)")
+	}
+	if !got[fresh.ID] {
+		t.Errorf("never-grabbed wanted book must be searchable")
+	}
+}
+
 // TestRefreshMetadata_EmptyDB exercises the no-authors early-return path.
 func TestRefreshMetadata_EmptyDB(t *testing.T) {
 	database, err := db.OpenMemory()
