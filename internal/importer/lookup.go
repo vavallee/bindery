@@ -34,6 +34,55 @@ type LookupResult struct {
 // "audiobook" regardless of content.
 func (s *Scanner) Lookup(ctx context.Context, path string) (LookupResult, error) {
 	parsed := ParseFilename(path)
+	base := LookupResult{
+		DetectedFormat: lookupDetectFormat(path),
+		ParsedTitle:    parsed.Title,
+		ParsedAuthor:   parsed.Author,
+	}
+	books, err := s.books.List(ctx)
+	if err != nil {
+		return base, fmt.Errorf("lookup: list books: %w", err)
+	}
+	authors, err := s.authors.List(ctx)
+	if err != nil {
+		return base, fmt.Errorf("lookup: list authors: %w", err)
+	}
+	return lookupWith(path, books, authors), nil
+}
+
+// LookupBatch runs the same catalogue match as Lookup over many paths while
+// loading the books and authors catalogue exactly ONCE for the whole batch,
+// instead of re-querying both full tables per path. Bulk Folder Import points
+// this at a folder with hundreds of entries; the old per-item Lookup issued
+// hundreds of full-table scans in a single synchronous request and blew past
+// the server WriteTimeout (issue #1473). Results are returned aligned with the
+// input paths. It returns an error only if the one-time catalogue load fails,
+// in which case the caller should fail the whole scan loudly rather than
+// swallow it per item.
+func (s *Scanner) LookupBatch(ctx context.Context, paths []string) ([]LookupResult, error) {
+	books, err := s.books.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("lookup batch: list books: %w", err)
+	}
+	authors, err := s.authors.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("lookup batch: list authors: %w", err)
+	}
+	results := make([]LookupResult, len(paths))
+	for i, p := range paths {
+		results[i] = lookupWith(p, books, authors)
+	}
+	return results, nil
+}
+
+// lookupWith performs the catalogue match against PRE-LOADED books and authors
+// slices instead of querying the repositories itself. Bulk scans (Scan) load
+// the catalogue once and call this per item so a folder of several hundred
+// entries no longer triggers a full-table books+authors query per item — the
+// N+1 that stalled large scans past the server WriteTimeout (issue #1473). The
+// match logic is identical to Lookup's.
+func lookupWith(path string, books []models.Book, authors []models.Author) LookupResult {
+	parsed := ParseFilename(path)
 	detectedFormat := lookupDetectFormat(path)
 
 	result := LookupResult{
@@ -44,12 +93,7 @@ func (s *Scanner) Lookup(ctx context.Context, path string) (LookupResult, error)
 
 	if parsed.Title == "" && parsed.ASIN == "" {
 		result.Match = "none"
-		return result, nil
-	}
-
-	books, err := s.books.List(ctx)
-	if err != nil {
-		return result, fmt.Errorf("lookup: list books: %w", err)
+		return result
 	}
 
 	// Tier 1: ASIN exact match.
@@ -58,16 +102,12 @@ func (s *Scanner) Lookup(ctx context.Context, path string) (LookupResult, error)
 			if books[i].ASIN == parsed.ASIN {
 				result.Match = "confident"
 				result.Book = &books[i]
-				return result, nil
+				return result
 			}
 		}
 	}
 
 	// Tiers 2+: title match with optional author filter.
-	authors, err := s.authors.List(ctx)
-	if err != nil {
-		return result, fmt.Errorf("lookup: list authors: %w", err)
-	}
 	authorNames := make(map[int64]string, len(authors))
 	for _, a := range authors {
 		authorNames[a.ID] = a.Name
@@ -94,7 +134,7 @@ func (s *Scanner) Lookup(ctx context.Context, path string) (LookupResult, error)
 		result.Match = "ambiguous"
 		result.Candidates = matches
 	}
-	return result, nil
+	return result
 }
 
 // matchBookForDownload tries to associate an unmatched download (one grabbed

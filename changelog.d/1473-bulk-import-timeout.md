@@ -1,0 +1,2 @@
+### Fixed
+- **Bulk Folder Import no longer times out on large libraries** (#1473). Scanning a folder used to reload the entire book and author catalogue once for every item in the folder, so a folder with a few hundred entries fired hundreds of full table queries in a single request and ran past the server's request timeout, leaving the connection dead and no logs to explain it. The scan now loads the catalogue once and reuses it for every item, and it logs when a scan starts and finishes with how long it took and how many matches it found.

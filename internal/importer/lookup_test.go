@@ -149,6 +149,59 @@ func TestScanner_Lookup_TitleAuthor(t *testing.T) {
 	}
 }
 
+// TestScanner_LookupBatch_MatchesEqualLookup verifies LookupBatch returns the
+// same per-path match as calling Lookup individually, so the N+1 fix for #1473
+// (loading the catalogue once for the whole batch) does not alter matching.
+func TestScanner_LookupBatch_MatchesEqualLookup(t *testing.T) {
+	t.Parallel()
+	s, books, authors, ctx := scannerFixture(t, t.TempDir())
+
+	author := &models.Author{Name: "Andy Weir", ForeignID: "a1", SortName: "Weir, Andy"}
+	if err := authors.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{AuthorID: author.ID, Title: "Project Hail Mary", ForeignID: "b1", Status: "wanted"}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	tmp := t.TempDir()
+	match := filepath.Join(tmp, "Project.Hail.Mary.Andy.Weir.epub")
+	miss := filepath.Join(tmp, "Unknown.Book.Nobody.epub")
+	for _, f := range []string{match, miss} {
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	paths := []string{match, miss}
+	batch, err := s.LookupBatch(ctx, paths)
+	if err != nil {
+		t.Fatalf("LookupBatch: %v", err)
+	}
+	if len(batch) != len(paths) {
+		t.Fatalf("batch len = %d, want %d", len(batch), len(paths))
+	}
+	for i, p := range paths {
+		want, err := s.Lookup(ctx, p)
+		if err != nil {
+			t.Fatalf("Lookup(%s): %v", p, err)
+		}
+		if batch[i].Match != want.Match {
+			t.Errorf("path %s: batch match = %q, want %q", p, batch[i].Match, want.Match)
+		}
+		if (batch[i].Book == nil) != (want.Book == nil) {
+			t.Errorf("path %s: batch book presence mismatch", p)
+		}
+		if batch[i].Book != nil && want.Book != nil && batch[i].Book.ID != want.Book.ID {
+			t.Errorf("path %s: batch book id = %d, want %d", p, batch[i].Book.ID, want.Book.ID)
+		}
+	}
+	if batch[0].Match != "confident" || batch[1].Match != "none" {
+		t.Errorf("matches = %q,%q; want confident,none", batch[0].Match, batch[1].Match)
+	}
+}
+
 // TestScanner_Lookup_None verifies no-match returns "none".
 func TestScanner_Lookup_None(t *testing.T) {
 	t.Parallel()
