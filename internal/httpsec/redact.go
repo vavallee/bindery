@@ -1,6 +1,10 @@
 package httpsec
 
-import "regexp"
+import (
+	"errors"
+	"net/url"
+	"regexp"
+)
 
 // secretQueryParamRE matches sensitive query-string parameters whose values
 // must never reach a client-facing error. Google Books puts the API key in the
@@ -20,4 +24,22 @@ var secretQueryParamRE = regexp.MustCompile(`(?i)([?&](?:key|api_key|apikey|toke
 // any path that stringifies the error.
 func RedactSecrets(s string) string {
 	return secretQueryParamRE.ReplaceAllString(s, "${1}REDACTED")
+}
+
+// RedactURLError scrubs sensitive query-parameter values from the URL embedded
+// in a *url.Error, in place, and returns the same error. Transport failures
+// (timeout, DNS, TLS, an SSRF-guard dial rejection) surface as a *url.Error
+// whose Error() prints the full request URL — and download-fetch URLs carry the
+// indexer apikey (see newznab.signDownloadURL), so a raw %w-wrap leaks the key
+// into the download row, history, and webhook payloads.
+//
+// The error chain is left intact so errors.As/Is still reach the underlying net
+// error (nethint's timeout/DNS classification depends on it). Non-*url.Error
+// values pass through unchanged.
+func RedactURLError(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		ue.URL = RedactSecrets(ue.URL)
+	}
+	return err
 }

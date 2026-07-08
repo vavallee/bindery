@@ -533,7 +533,9 @@ func (c *Client) fetchTorrentContent(ctx context.Context, rawURL string) (*fetch
 
 		resp, err := fetchClient.Do(req)
 		if err != nil {
-			return nil, err
+			// Scrub the indexer apikey the *url.Error would otherwise leak into
+			// the download row / history / webhook payloads.
+			return nil, httpsec.RedactURLError(err)
 		}
 
 		if resp.StatusCode >= http.StatusMultipleChoices && resp.StatusCode < http.StatusBadRequest {
