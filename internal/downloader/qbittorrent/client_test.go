@@ -780,6 +780,39 @@ func TestSetAutoManagement(t *testing.T) {
 	}
 }
 
+// TestSetCategory_HTTPError verifies that a non-2xx status from setCategory
+// (qBittorrent returns 409 when the category does not exist) surfaces as an
+// error rather than being swallowed, so the caller's missing-category warning
+// (#969) can fire.
+func TestSetCategory_HTTPError(t *testing.T) {
+	var hit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/setCategory":
+			hit = true
+			w.WriteHeader(http.StatusConflict)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	c.loggedIn = true
+	err := c.setCategory(context.Background(), "abc123", "books")
+	if err == nil {
+		t.Fatal("expected setCategory to return an error on a 409, got nil")
+	}
+	if !hit {
+		t.Fatal("expected setCategory endpoint to be hit")
+	}
+	if !strings.Contains(err.Error(), "409") {
+		t.Errorf("error should surface the 409 status, got %q", err.Error())
+	}
+}
+
 // TestAddTorrent_DuplicateRecovery_EnablesAutoManagement verifies that the 409
 // duplicate-recovery path re-categorises the existing torrent AND enables
 // automatic torrent management so it relocates to the category's save path.
