@@ -351,6 +351,20 @@ If a same-host service still isn't reachable, the usual cause is that the servic
 
 **Outbound proxy interaction.** When `BINDERY_OUTBOUND_PROXY` is set, in-scope requests are dialled to the proxy and the proxy resolves the destination, so the destination-URL SSRF validation still runs up front. The per-connection dial re-check (the DNS-rebind guard) can then only see the proxy's own address, not the target's — so for the strict-policy cover-image proxy that re-check is skipped whenever a proxy is configured; otherwise it would reject a LAN/loopback proxy and block every cover fetch. Local destinations skip the proxy entirely per `BINDERY_OUTBOUND_PROXY_BYPASS_LOCAL` (see [Environment variables](#environment-variables)), which is also what keeps a LAN indexer manager (Jackett/Prowlarr) reachable.
 
+### Running Bindery behind a VPN (network_mode: service:*)
+
+When Bindery shares a VPN container's network namespace (for example `network_mode: service:gluetun`), all of Bindery's outbound traffic egresses through the VPN. gluetun's killswitch firewall blocks LAN bound traffic by default, so "Test connection" to on LAN services (Audiobookshelf, Calibre, download clients) times out with `Client.Timeout exceeded while awaiting headers`, even though those same services load fine from a browser on the LAN. That contrast is the tell: the browser reaches the service directly because it is on the LAN, but Bindery is inside the VPN namespace and its LAN bound requests are dropped by the killswitch.
+
+The fix is on the gluetun container, not Bindery. Allow the LAN by setting `FIREWALL_OUTBOUND_SUBNETS` to your LAN CIDR:
+
+```yaml
+# gluetun service
+environment:
+  - FIREWALL_OUTBOUND_SUBNETS=192.168.1.0/24
+```
+
+Use your actual LAN subnet. If the target services sit on a different subnet than gluetun, list both comma separated. Restart gluetun after changing it.
+
 ## First-run setup
 
 On first launch Bindery bootstraps itself — **no environment variables are required for auth.**
