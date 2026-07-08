@@ -80,8 +80,8 @@ func (r *LogRepo) Query(ctx context.Context, f LogFilter) ([]LogEntry, error) {
 		args = append(args, f.ToTS.UTC())
 	}
 	if f.Q != "" {
-		conds = append(conds, "(message LIKE ? OR fields LIKE ?)")
-		pattern := "%" + strings.ReplaceAll(f.Q, "%", "\\%") + "%"
+		conds = append(conds, "(message LIKE ? ESCAPE '\\' OR fields LIKE ? ESCAPE '\\')")
+		pattern := "%" + escapeLike(f.Q) + "%"
 		args = append(args, pattern, pattern)
 	}
 

@@ -146,6 +146,42 @@ func TestLogRepo_QueryFullText(t *testing.T) {
 	}
 }
 
+// A search term containing LIKE metacharacters (%, _) must match literally,
+// not act as a wildcard (#1466).
+func TestLogRepo_QueryEscapesLikeWildcards(t *testing.T) {
+	repo, cleanup := openLogDB(t)
+	defer cleanup()
+
+	now := time.Now().UTC()
+	insertEntry(t, repo, now.Add(-2*time.Second), "INFO", "", "job 100% complete")
+	insertEntry(t, repo, now.Add(-1*time.Second), "INFO", "", "job aborted at start")
+	insertEntry(t, repo, now, "INFO", "", "user_id resolved")
+	// Decoy: an unescaped "_" wildcard would also match this "userXid" row.
+	insertEntry(t, repo, now, "INFO", "", "userXid resolved")
+
+	// "%" must be literal: it should match only the "100% complete" row, not
+	// every row (which is what an unescaped "%...%" wildcard would do).
+	entries, err := repo.Query(context.Background(), LogFilter{Q: "100%", Limit: 100})
+	if err != nil {
+		t.Fatalf("query %%: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry matching literal '100%%', got %d", len(entries))
+	}
+	if entries[0].Message != "job 100% complete" {
+		t.Errorf("matched wrong row: %q", entries[0].Message)
+	}
+
+	// "_" must be literal: it should match "user_id", not "userXid".
+	entries, err = repo.Query(context.Background(), LogFilter{Q: "user_id", Limit: 100})
+	if err != nil {
+		t.Fatalf("query _: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry matching literal 'user_id', got %d", len(entries))
+	}
+}
+
 func TestLogRepo_Trim(t *testing.T) {
 	repo, cleanup := openLogDB(t)
 	defer cleanup()
