@@ -566,3 +566,89 @@ func TestRefreshMetadata_NilAuthor_DoesNotPanic(t *testing.T) {
 	}()
 	s.refreshMetadata()
 }
+
+// TestRefreshMetadata_SparseRefresh_DoesNotClobber pins down #1463: a sparse
+// upstream record (empty description/ratings, e.g. OpenLibrary) must not
+// overwrite previously enriched values with empties. A populated refresh must
+// still update them.
+func TestRefreshMetadata_SparseRefresh_DoesNotClobber(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatalf("OpenMemory: %v", err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	authRepo := db.NewAuthorRepo(database)
+	if err := authRepo.Create(ctx, &models.Author{
+		ForeignID:        "OL_SPARSE_A",
+		Name:             "Enriched Author",
+		SortName:         "Author, Enriched",
+		Description:      "A rich, previously enriched biography.",
+		ImageURL:         "https://example.com/keep.jpg",
+		AverageRating:    4.5,
+		RatingsCount:     1200,
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}); err != nil {
+		t.Fatalf("create author: %v", err)
+	}
+
+	// Sparse upstream: name only, everything enriched is empty/zero.
+	sparse := &mockMetaProvider{
+		author: &models.Author{
+			ForeignID: "OL_SPARSE_A",
+			Name:      "Enriched Author",
+		},
+	}
+	s := &Scheduler{authors: authRepo, meta: metadata.NewAggregator(sparse)}
+	s.refreshMetadata()
+
+	got, err := authRepo.GetByForeignID(ctx, "OL_SPARSE_A")
+	if err != nil {
+		t.Fatalf("GetByForeignID: %v", err)
+	}
+	if got.Description != "A rich, previously enriched biography." {
+		t.Errorf("Description clobbered by sparse refresh: %q", got.Description)
+	}
+	if got.ImageURL != "https://example.com/keep.jpg" {
+		t.Errorf("ImageURL clobbered by sparse refresh: %q", got.ImageURL)
+	}
+	if got.AverageRating != 4.5 {
+		t.Errorf("AverageRating clobbered by sparse refresh: %v", got.AverageRating)
+	}
+	if got.RatingsCount != 1200 {
+		t.Errorf("RatingsCount clobbered by sparse refresh: %d", got.RatingsCount)
+	}
+
+	// Populated upstream: values present, so they must overwrite.
+	populated := &mockMetaProvider{
+		author: &models.Author{
+			ForeignID:     "OL_SPARSE_A",
+			Name:          "Enriched Author",
+			Description:   "A fresher biography from upstream.",
+			ImageURL:      "https://example.com/new.jpg",
+			AverageRating: 4.8,
+			RatingsCount:  1500,
+		},
+	}
+	s = &Scheduler{authors: authRepo, meta: metadata.NewAggregator(populated)}
+	s.refreshMetadata()
+
+	got, err = authRepo.GetByForeignID(ctx, "OL_SPARSE_A")
+	if err != nil {
+		t.Fatalf("GetByForeignID: %v", err)
+	}
+	if got.Description != "A fresher biography from upstream." {
+		t.Errorf("Description not updated by populated refresh: %q", got.Description)
+	}
+	if got.ImageURL != "https://example.com/new.jpg" {
+		t.Errorf("ImageURL not updated by populated refresh: %q", got.ImageURL)
+	}
+	if got.AverageRating != 4.8 {
+		t.Errorf("AverageRating not updated by populated refresh: %v", got.AverageRating)
+	}
+	if got.RatingsCount != 1500 {
+		t.Errorf("RatingsCount not updated by populated refresh: %d", got.RatingsCount)
+	}
+}

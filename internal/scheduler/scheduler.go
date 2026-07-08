@@ -841,13 +841,22 @@ func (s *Scheduler) refreshMetadata() {
 			continue
 		}
 
-		// Update changed fields
-		author.Description = updated.Description
+		// Update changed fields. Only overwrite when the upstream record
+		// actually carries a value: a sparse OpenLibrary refresh must not
+		// clobber a previously enriched description/ratings with empties
+		// (#1463). Same guard the ImageURL update has always had.
+		if updated.Description != "" {
+			author.Description = updated.Description
+		}
 		if updated.ImageURL != "" {
 			author.ImageURL = updated.ImageURL
 		}
-		author.AverageRating = updated.AverageRating
-		author.RatingsCount = updated.RatingsCount
+		if updated.AverageRating != 0 {
+			author.AverageRating = updated.AverageRating
+		}
+		if updated.RatingsCount != 0 {
+			author.RatingsCount = updated.RatingsCount
+		}
 		if err := s.authors.Update(ctx, &author); err != nil {
 			slog.Warn("failed to persist refreshed author", "author", author.Name, "error", err)
 			continue
