@@ -741,6 +741,9 @@ func (c *Client) setCategory(ctx context.Context, hash, category string) error {
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("setCategory HTTP %d", resp.StatusCode)
+	}
 	return nil
 }
 
