@@ -1,2 +1,0 @@
-### Fixed
-- **Grimmory "Test connection" now authenticates before probing status** (#1448) — recent Grimmory guards `/api/status` behind a valid session, so the test button returned a 401 for anyone using username/password auth. Bindery now logs in first and presents the token when checking connectivity (retrying once if a cached token has expired), so the test succeeds instead of failing at the door.

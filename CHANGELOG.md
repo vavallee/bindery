@@ -6,6 +6,85 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.24.2] — 2026-07-07
+
+A fast follow-up patch. The headline fix is Bulk Folder Import, which stalled for
+minutes and then failed with no logs on any library with a few hundred entries,
+because it reloaded the whole book and author catalogue once for every item in
+the folder. The rest is a batch of correctness and security fixes surfaced by an
+internal audit: two data-safety races on the download pipeline, a nightly refresh
+that wiped enriched author metadata, a Transmission queue mapping that failed
+healthy downloads, and two hardening fixes covering system logs and indexer keys.
+
+### Security
+- **System logs are now admin-only** (#1451) — `/system/logs` and
+  `/system/loglevel` were reachable by any authenticated user, exposing the
+  app-wide log stream (other users' book and author names, OIDC usernames,
+  download titles) and letting a non-admin flip the global log level. They now
+  require admin, matching every other global-infra route.
+- **Indexer API keys no longer leak into errors** (#1450) — when a torrent/NZB
+  fetch failed at the transport layer (timeout, DNS, TLS), the underlying
+  `url.Error` carried the full signed download URL, including the indexer's
+  `apikey`, into the download row, history, and webhook/Discord notifications.
+  All five download-client fetch paths now scrub the key before the error is
+  wrapped.
+
+### Fixed
+- **Bulk Folder Import no longer times out on large libraries** (#1473) —
+  scanning a folder used to reload the entire book and author catalogue once for
+  every item, so a folder with a few hundred entries fired hundreds of
+  full-table queries in a single request and ran past the server's request
+  timeout, leaving the connection dead and no logs to explain it. The scan now
+  loads the catalogue once and reuses it for every item, and it logs when a scan
+  starts and finishes with how long it took and how many matches it found.
+- **Download status races** (#1462) — two things updating the same download at
+  once could slip an illegal state change through (re-completing an already
+  imported download or double stamping timestamps). The status update is now
+  applied atomically so only one writer wins and the row can't land in a bad
+  state.
+- **Transmission downloads queued behind others no longer fail to import**
+  (#1452) — the RPC status enum was mapped wrong (`3` was treated as "seeding",
+  `6` as "stopped"; they are actually "queued to download" and "seeding"). A
+  torrent sitting in Transmission's download queue at 0% was treated as
+  complete, import fired against an empty directory, failed, and after
+  exhausting its retries the download was terminally blocked even though it was
+  perfectly healthy. Completion is now keyed off real seeding / 100%-downloaded
+  state.
+- **The wanted-book sweep no longer double-grabs** (#1453) — a Wanted book stays
+  Wanted until its file is imported and reconciled, so a book whose grab was
+  still downloading (or working through the import pipeline) was re-searched on
+  the next scheduled sweep and, if the indexer now ranked a different release
+  best, a second download was grabbed for the same book. The sweep now skips
+  books with a grab already in flight, while still re-searching books whose
+  previous download failed.
+- **Author metadata refresh no longer wipes enriched fields** (#1463) — the
+  nightly refresh now keeps the existing description, ratings and rating count
+  when the upstream record comes back sparse, instead of overwriting them with
+  empty values.
+- **qBittorrent category rejections are no longer ignored** (#1464) — Bindery
+  now notices when qBittorrent rejects a category assignment (for example a 409
+  because the category does not exist) instead of silently ignoring it, so the
+  missing-category warning fires and a mis-categorized torrent no longer
+  vanishes from the download poll.
+- **Grimmory "Test connection" now authenticates before probing status** (#1448)
+  — recent Grimmory guards `/api/status` behind a valid session, so the test
+  button returned a 401 for anyone using username/password auth. Bindery now
+  logs in first and presents the token when checking connectivity (retrying once
+  if a cached token has expired), so the test succeeds instead of failing at the
+  door.
+- **Log search takes wildcards literally** (#1466) — searching the logs for a
+  term containing `%`, `_`, or `\` now matches those characters as text instead
+  of treating them as SQL wildcards, so you get the results you expect.
+- **Faster library, book, and search queries** (#1454) — the query that finds
+  each book's ebook/audiobook file ran twice per book listing and was doing a
+  full scan of the `book_files` table because no index covered its `format`
+  filter. A new composite index makes it an index seek, most noticeable on large
+  libraries and on the paginated Books page. Applied automatically on upgrade.
+- **Bulk "search" on the Wanted page is much faster** (#1455) — selecting a
+  large batch and hitting search issued one of the heaviest book queries per
+  book instead of a single batched fetch, so a 500-book bulk search ran hundreds
+  of full-table aggregations. It now loads all selected books in one query.
+
 ## [v1.24.1] — 2026-07-06
 
 A patch cut of fixes surfaced by the community in the days after v1.24.0: two
