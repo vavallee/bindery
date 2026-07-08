@@ -92,7 +92,11 @@ func TestRedactURLError(t *testing.T) {
 
 	// Non-url.Error values pass through unchanged.
 	plain := errors.New("plain failure")
-	if RedactURLError(plain) != plain {
+	got := RedactURLError(plain)
+	if got.Error() != plain.Error() {
+		t.Fatalf("non-url.Error message changed: got %q, want %q", got.Error(), plain.Error())
+	}
+	if !errors.Is(got, plain) {
 		t.Fatal("non-url.Error should pass through unchanged")
 	}
 }
