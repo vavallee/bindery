@@ -22,6 +22,7 @@ import (
 
 type manualImportScanner interface {
 	Lookup(ctx context.Context, path string) (importer.LookupResult, error)
+	LookupBatch(ctx context.Context, paths []string) ([]importer.LookupResult, error)
 	ImportFromPath(ctx context.Context, dl *models.Download, path, formatHint string)
 }
 
@@ -365,10 +366,23 @@ func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 
-	resp := ScanResponse{Items: []ScanItem{}}
+	start := time.Now()
+
+	// Collect the importable children first, then run a single catalogue-backed
+	// batch lookup. Previously each child called Lookup, which re-queried the
+	// full books AND authors tables per item; a folder of several hundred
+	// entries produced hundreds of full-table scans in one synchronous request
+	// and blew past the server WriteTimeout, killing the connection mid-write
+	// with no logs (issue #1473).
+	type candidate struct {
+		path string
+		name string
+	}
+	var cands []candidate
+	truncated := false
 	for _, e := range entries {
-		if len(resp.Items) >= maxScanEntries {
-			resp.Truncated = true
+		if len(cands) >= maxScanEntries {
+			truncated = true
 			break
 		}
 		child := filepath.Join(path, e.Name())
@@ -379,13 +393,32 @@ func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
 		if isDir && !dirHasBookFile(child) {
 			continue
 		}
-		res, err := h.scanner.Lookup(r.Context(), child)
-		if err != nil {
-			continue
+		cands = append(cands, candidate{path: child, name: e.Name()})
+	}
+
+	slog.Info("bulk folder import scan started", "path", path, "entries", len(cands), "truncated", truncated)
+
+	paths := make([]string, len(cands))
+	for i, c := range cands {
+		paths[i] = c.path
+	}
+	results, err := h.scanner.LookupBatch(r.Context(), paths)
+	if err != nil {
+		slog.Error("bulk folder import scan failed to load catalogue", "path", path, "error", err)
+		writeServerError(w, r, err)
+		return
+	}
+
+	resp := ScanResponse{Items: make([]ScanItem, 0, len(cands)), Truncated: truncated}
+	matched := 0
+	for i, c := range cands {
+		res := results[i]
+		if res.Match == "confident" {
+			matched++
 		}
 		resp.Items = append(resp.Items, ScanItem{
-			Path:           child,
-			Name:           e.Name(),
+			Path:           c.path,
+			Name:           c.name,
 			Match:          res.Match,
 			ParsedTitle:    res.ParsedTitle,
 			ParsedAuthor:   res.ParsedAuthor,
@@ -394,6 +427,12 @@ func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
 			Candidates:     res.Candidates,
 		})
 	}
+	slog.Info("bulk folder import scan complete",
+		"path", path,
+		"duration", time.Since(start),
+		"items", len(resp.Items),
+		"matched", matched,
+		"truncated", truncated)
 	writeJSON(w, http.StatusOK, resp)
 }
 

@@ -30,12 +30,25 @@ func lookupRequest(path string) *http.Request {
 // ImportFromPath is a no-op because the handler calls it in a goroutine and
 // the tests only verify the synchronous HTTP response.
 type stubManualImportScanner struct {
-	lookupResult importer.LookupResult
-	lookupErr    error
+	lookupResult     importer.LookupResult
+	lookupErr        error
+	lookupBatchCalls int
 }
 
 func (s *stubManualImportScanner) Lookup(_ context.Context, _ string) (importer.LookupResult, error) {
 	return s.lookupResult, s.lookupErr
+}
+
+func (s *stubManualImportScanner) LookupBatch(_ context.Context, paths []string) ([]importer.LookupResult, error) {
+	s.lookupBatchCalls++
+	if s.lookupErr != nil {
+		return nil, s.lookupErr
+	}
+	out := make([]importer.LookupResult, len(paths))
+	for i := range paths {
+		out[i] = s.lookupResult
+	}
+	return out, nil
 }
 
 func (s *stubManualImportScanner) ImportFromPath(_ context.Context, _ *models.Download, _, _ string) {
@@ -673,6 +686,12 @@ func TestManualImportScan_EnumeratesBookUnits(t *testing.T) {
 	}
 	if resp.Truncated {
 		t.Error("unexpected truncation for a small folder")
+	}
+	// Regression guard for #1473: however many units a scan enumerates, it must
+	// load the catalogue exactly once (a single batch lookup) rather than once
+	// per item, which is the N+1 that stalled large scans past WriteTimeout.
+	if stub.lookupBatchCalls != 1 {
+		t.Errorf("LookupBatch called %d times, want exactly 1 for the whole scan", stub.lookupBatchCalls)
 	}
 }
 
