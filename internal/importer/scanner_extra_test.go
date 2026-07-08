@@ -398,7 +398,7 @@ func TestCheckTransmissionDownloads_StoppedWithErrorMarksFailed(t *testing.T) {
 			"arguments": map[string]any{
 				"torrents": []map[string]any{{
 					"id":          9,
-					"status":      6,
+					"status":      0,
 					"percentDone": 0.2,
 					"downloadDir": "/downloads",
 					"errorString": "tracker connection failed",
