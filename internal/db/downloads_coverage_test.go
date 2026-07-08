@@ -2,6 +2,9 @@ package db
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -143,6 +146,90 @@ func TestDownloadRepo_RecoverInterruptedImports(t *testing.T) {
 	}
 	if len(again) != 0 {
 		t.Errorf("second sweep recovered %d downloads, want 0", len(again))
+	}
+}
+
+// TestDownloadRepo_UpdateStatusRaceGuard is the regression test for #1462.
+// UpdateStatus used to validate the transition in Go and then issue an UPDATE
+// with no status guard, so two writers that both read the same starting state
+// could each "succeed" and double-apply an illegal transition (re-completing an
+// already-imported row, double-stamping timestamps, etc.). The UPDATE is now
+// conditional on the status the caller read (WHERE ... AND status=?), so the
+// check-and-set is atomic: exactly one racing writer wins and the losers get
+// ErrInvalidTransition without mutating the row.
+//
+// The invariant exploited here: StateGrabbed -> StateDownloading is a valid
+// transition, but StateDownloading -> StateDownloading is not (no self-loop in
+// validTransitions). So no matter how the two statements of each caller
+// interleave on the single shared connection, at most one writer can ever
+// legally land the row in StateDownloading. Before the fix, an interleave of
+// (A.select, B.select, A.update, B.update) let both writers commit.
+func TestDownloadRepo_UpdateStatusRaceGuard(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewDownloadRepo(database)
+
+	const iterations = 300
+	const writers = 6
+
+	for i := 0; i < iterations; i++ {
+		dl := &models.Download{
+			GUID: fmt.Sprintf("race-%d", i), Title: "race.release", NZBURL: "x",
+			Size: 1, Status: models.StateGrabbed, Protocol: "torrent",
+		}
+		if err := repo.Create(ctx, dl); err != nil {
+			t.Fatalf("iteration %d: create: %v", i, err)
+		}
+
+		// Fan several writers at the same Grabbed -> Downloading transition and
+		// release them together to maximise the chance of interleaving the
+		// select and update halves on the shared connection.
+		results := make([]error, writers)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for w := 0; w < writers; w++ {
+			wg.Add(1)
+			go func(w int) {
+				defer wg.Done()
+				<-start
+				// Each writer writes only its own results slot, so this stays
+				// data-race clean under `go test -race`.
+				results[w] = repo.UpdateStatus(ctx, dl.ID, models.StateDownloading)
+			}(w)
+		}
+		close(start)
+		wg.Wait()
+
+		successes := 0
+		for _, e := range results {
+			if e == nil {
+				successes++
+				continue
+			}
+			// Every loser must fail with the invalid-transition error, whether
+			// it lost at the fast-path CanTransitionTo check (its select already
+			// saw Downloading) or at the SQL guard (its update matched 0 rows).
+			var invalid models.ErrInvalidTransition
+			if !errors.As(e, &invalid) {
+				t.Fatalf("iteration %d: loser returned %v, want ErrInvalidTransition", i, e)
+			}
+		}
+		if successes != 1 {
+			t.Fatalf("iteration %d: %d writers succeeded, want exactly 1 (illegal transition double-applied)", i, successes)
+		}
+
+		// The row must sit in exactly the one applied state.
+		got, err := repo.GetByGUID(ctx, dl.GUID)
+		if err != nil || got == nil {
+			t.Fatalf("iteration %d: get after race: %v", i, err)
+		}
+		if got.Status != models.StateDownloading {
+			t.Fatalf("iteration %d: final status = %q, want %q", i, got.Status, models.StateDownloading)
+		}
 	}
 }
 

@@ -204,14 +204,24 @@ func (r *DownloadRepo) UpdateStatus(ctx context.Context, id int64, next models.D
 	}
 
 	now := time.Now().UTC()
+	// Every UPDATE below guards on `status=current` so the check-and-set is
+	// atomic in a single statement. The CanTransitionTo check above is only a
+	// fast-path/early-exit: between that read and the write, a concurrent
+	// writer could have moved the row on (re-completing an already-imported
+	// row, double-stamping a timestamp, or any other illegal hop). The SQL
+	// guard is the real safety — if the status has changed out from under us
+	// the UPDATE matches zero rows and we report the transition as invalid
+	// rather than clobbering the new state. See RetryFailed /
+	// RecoverInterruptedImports for the same pattern.
+	var result sql.Result
 	switch next {
 	case models.StateDownloading:
 		// Stamp grabbed_at on the Grabbed -> Downloading transition. The
 		// COALESCE preserves an earlier SetGrabbedAt value (e.g. a replayed
 		// historical timestamp) so an explicit override is never clobbered.
-		_, err = r.db.ExecContext(ctx,
-			"UPDATE downloads SET status=?, grabbed_at=COALESCE(grabbed_at, ?) WHERE id=?",
-			next, now, id)
+		result, err = r.db.ExecContext(ctx,
+			"UPDATE downloads SET status=?, grabbed_at=COALESCE(grabbed_at, ?) WHERE id=? AND status=?",
+			next, now, id, current)
 	case models.StateCompleted:
 		// Backfill grabbed_at on the duplicate-add fast-path (#769 and finding
 		// 22): a torrent that was already at 100 percent jumps straight from
@@ -219,20 +229,35 @@ func (r *DownloadRepo) UpdateStatus(ctx context.Context, id int64, next models.D
 		// StateDownloading. Without the backfill the row stays invisible to
 		// the stall detector (which filters on grabbed_at IS NOT NULL) and
 		// shows an empty Grabbed column in the queue UI.
-		_, err = r.db.ExecContext(ctx,
-			"UPDATE downloads SET status=?, completed_at=?, grabbed_at=COALESCE(grabbed_at, ?) WHERE id=?",
-			next, now, now, id)
+		result, err = r.db.ExecContext(ctx,
+			"UPDATE downloads SET status=?, completed_at=?, grabbed_at=COALESCE(grabbed_at, ?) WHERE id=? AND status=?",
+			next, now, now, id, current)
 	case models.StateImported:
-		_, err = r.db.ExecContext(ctx, "UPDATE downloads SET status=?, imported_at=? WHERE id=?", next, now, id)
+		result, err = r.db.ExecContext(ctx,
+			"UPDATE downloads SET status=?, imported_at=? WHERE id=? AND status=?", next, now, id, current)
 	default:
 		// StateGrabbed -> StateFailed (couldn't send to client) deliberately
 		// leaves grabbed_at NULL: nothing was ever grabbed. All other forward
 		// transitions stay in the import lifecycle, which is gated by the
 		// validTransitions table and only reachable after StateCompleted has
 		// already backfilled grabbed_at above.
-		_, err = r.db.ExecContext(ctx, "UPDATE downloads SET status=? WHERE id=?", next, id)
+		result, err = r.db.ExecContext(ctx,
+			"UPDATE downloads SET status=? WHERE id=? AND status=?", next, id, current)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update status rows affected: %w", err)
+	}
+	if affected == 0 {
+		// The row's status changed between our read and write — the transition
+		// we validated no longer applies. Report it as invalid rather than
+		// silently no-op'ing.
+		return models.ErrInvalidTransition{From: current, To: next}
+	}
+	return nil
 }
 
 // SetGrabbedAt overrides the grabbed_at timestamp for a download. It exists
@@ -283,10 +308,24 @@ func (r *DownloadRepo) SetErrorWithStatus(ctx context.Context, id int64, status 
 	if current != status && !current.CanTransitionTo(status) {
 		return models.ErrInvalidTransition{From: current, To: status}
 	}
-	_, err := r.db.ExecContext(ctx,
-		"UPDATE downloads SET status=?, error_message=? WHERE id=?",
-		status, errMsg, id)
-	return err
+	// Guard on status=current so the validated transition is applied
+	// atomically: a concurrent writer that moved the row on between our read
+	// and write matches zero rows and we report the transition as invalid
+	// rather than stamping a failure onto whatever state it landed in.
+	result, err := r.db.ExecContext(ctx,
+		"UPDATE downloads SET status=?, error_message=? WHERE id=? AND status=?",
+		status, errMsg, id, current)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set error with status rows affected: %w", err)
+	}
+	if affected == 0 {
+		return models.ErrInvalidTransition{From: current, To: status}
+	}
+	return nil
 }
 
 // IncrementImportRetryCount bumps the import_retry_count for the download by
