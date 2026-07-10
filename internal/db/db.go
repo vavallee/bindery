@@ -637,7 +637,7 @@ func parseMigration(content string) (statements []string, togglesForeignKeys boo
 
 // splitSQLStatements splits SQL text on ';' boundaries while respecting `--`
 // line comments, `/* */` block comments, and single-quoted string literals
-// (including the '' escape). A ';' inside any of those no longer terminates a
+// (including the ” escape). A ';' inside any of those no longer terminates a
 // statement — the historical "semicolon gotcha" (#1465) where a semicolon in a
 // migration comment split the comment mid-line and glued its tail onto the
 // next statement, aborting boot. Comment text is dropped from the returned
