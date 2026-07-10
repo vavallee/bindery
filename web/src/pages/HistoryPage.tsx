@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { api, HistoryEvent } from '../api/client'
 import BookAuthorLink from '../components/BookAuthorLink'
 import Pagination from '../components/Pagination'
-import { usePagination } from '../components/usePagination'
+import { useServerPagination } from '../components/usePagination'
 import { dangerLink } from '../components/buttons'
 
 const EVENT_TYPE_COLORS: Record<string, string> = {
@@ -58,11 +58,32 @@ function detectMediaType(title: string): '' | 'ebook' | 'audiobook' {
 
 const BLOCKLISTABLE = new Set(['grabbed', 'downloadFailed', 'importFailed'])
 
+// Every event type the backend can emit (internal/models/settings.go). The
+// filter dropdown is built from this list merged with whatever appears in the
+// loaded page, so the filter still offers types that happen not to occur in
+// the currently visible rows (#1467) while never dropping an unknown/legacy
+// type that does.
+const KNOWN_EVENT_TYPES = [
+  'grabbed',
+  'bookImported',
+  'downloadFailed',
+  'importFailed',
+  'bookRenamed',
+  'downloadFolderImported',
+  'bookFileDeleted',
+  'downloadStalled',
+  'downloadRequeued',
+  'bookRebound',
+]
+
 export default function HistoryPage() {
   const { t } = useTranslation()
   const [events, setEvents] = useState<HistoryEvent[]>([])
+  const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [typeFilter, setTypeFilter] = useState('')
+
+  const { page, pageSize, paginationProps, reset } = useServerPagination(total, 100, 'history')
 
   // Friendly label for an event-type enum: curated i18n where available, else a
   // humanized camelCase fallback. Keeps the enum as the filter <option> value.
@@ -71,12 +92,21 @@ export default function HistoryPage() {
     [t],
   )
 
-  const load = useCallback((filter?: string) => {
-    api.listHistory(filter ? { eventType: filter } : undefined)
-      .then(({ items }) => setEvents(items))
+  // Server-side list (#1467): page, page size, and event-type filter are all
+  // applied by the API and `total` drives the pager, so history older than the
+  // server's default page of 100 stays reachable. Previously the response was
+  // never paged past offset 0 and the client pager sliced those same 100 rows.
+  const load = useCallback(() => {
+    setLoading(true)
+    api.listHistory({
+      eventType: typeFilter || undefined,
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+    })
+      .then(({ items, total }) => { setEvents(items); setTotal(total) })
       .catch(console.error)
       .finally(() => setLoading(false))
-  }, [])
+  }, [typeFilter, page, pageSize])
 
   useEffect(() => { load() }, [load])
 
@@ -87,25 +117,24 @@ export default function HistoryPage() {
 
   const handleFilterChange = (val: string) => {
     setTypeFilter(val)
-    setLoading(true)
-    load(val || undefined)
+    reset()
   }
 
+  // Row actions drop the row locally and decrement the pager total; the next
+  // page fetch resyncs with the server.
   const handleDelete = async (id: number) => {
     await api.deleteHistory(id).catch(console.error)
     setEvents(prev => prev.filter(e => e.id !== id))
+    setTotal(prev => Math.max(0, prev - 1))
   }
 
   const handleBlocklist = async (id: number) => {
     await api.blocklistFromHistory(id).catch(console.error)
     setEvents(prev => prev.filter(e => e.id !== id))
+    setTotal(prev => Math.max(0, prev - 1))
   }
 
-  const eventTypes = Array.from(new Set(events.map(e => e.eventType))).sort()
-
-  const { pageItems, paginationProps, reset } = usePagination(events, 100, 'history')
-
-  useEffect(() => { reset() }, [typeFilter, reset])
+  const eventTypes = Array.from(new Set([...KNOWN_EVENT_TYPES, ...events.map(e => e.eventType)])).sort()
 
   return (
     <div>
@@ -146,7 +175,7 @@ export default function HistoryPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 dark:divide-zinc-800">
-                  {pageItems.map(event => {
+                  {events.map(event => {
                     const parsed = parseEventData(event.data)
                     const detail = parsed.message || parsed.path || ''
                     const isError = event.eventType === 'downloadFailed' || event.eventType === 'importFailed'
@@ -212,7 +241,7 @@ export default function HistoryPage() {
 
           {/* Mobile card list */}
           <div className="sm:hidden space-y-2">
-            {pageItems.map(event => {
+            {events.map(event => {
               const parsed = parseEventData(event.data)
               const detail = parsed.message || parsed.path || ''
               const isError = event.eventType === 'downloadFailed' || event.eventType === 'importFailed'

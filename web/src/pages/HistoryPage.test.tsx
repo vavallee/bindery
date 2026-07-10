@@ -36,28 +36,13 @@ vi.mock('react-i18next', () => ({
         'history.colDate': 'Date',
         'history.blocklist': 'Blocklist',
         'history.delete': 'Delete',
+        'pagination.previous': 'Previous',
+        'pagination.next': 'Next',
       }
       return labels[key] ?? opts?.defaultValue ?? key
     },
   }),
 }))
-
-vi.mock('../components/usePagination', () => ({
-  usePagination: <T,>(items: T[]) => ({
-    pageItems: items,
-    paginationProps: {
-      page: 1,
-      totalPages: 1,
-      pageSize: 100,
-      totalItems: items.length,
-      onPageChange: vi.fn(),
-      onPageSizeChange: vi.fn(),
-    },
-    reset: vi.fn(),
-  }),
-}))
-
-vi.mock('../components/Pagination', () => ({ default: () => null }))
 
 function makeHistory(overrides: Partial<HistoryEvent> = {}): HistoryEvent {
   return {
@@ -106,6 +91,7 @@ function rowFor(text: string) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  localStorage.clear()
   document.title = 'Bindery'
   vi.mocked(api.listHistory).mockResolvedValue({ items: [], total: 0, limit: 100, offset: 0 })
   vi.mocked(api.deleteHistory).mockResolvedValue(undefined)
@@ -186,9 +172,11 @@ describe('HistoryPage', () => {
     const table = await findDesktopTable()
     expect(await within(table).findByText('Grabbed Release')).toBeInTheDocument()
 
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'downloadFailed' } })
+    // [0] is the event-type filter; the per-page selector inside Pagination is
+    // a second combobox.
+    fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: 'downloadFailed' } })
 
-    await waitFor(() => expect(api.listHistory).toHaveBeenLastCalledWith({ eventType: 'downloadFailed' }))
+    await waitFor(() => expect(api.listHistory).toHaveBeenLastCalledWith({ eventType: 'downloadFailed', limit: 100, offset: 0 }))
     expect(await within(desktopTable()).findByText('Failed Release')).toBeInTheDocument()
     await waitFor(() => expect(within(desktopTable()).queryByText('Grabbed Release')).not.toBeInTheDocument())
   })
@@ -261,6 +249,49 @@ describe('HistoryPage', () => {
     renderHistoryPage()
 
     expect(await screen.findByText('No history events found')).toBeInTheDocument()
-    expect(api.listHistory).toHaveBeenCalledWith(undefined)
+    expect(api.listHistory).toHaveBeenCalledWith({ eventType: undefined, limit: 100, offset: 0 })
+  })
+
+  it('fetches later pages from the server so history beyond 100 events is reachable (#1467)', async () => {
+    const firstPage = Array.from({ length: 100 }, (_, i) =>
+      makeHistory({ id: i + 1, sourceTitle: `Event ${i + 1}` }))
+    const secondPage = Array.from({ length: 50 }, (_, i) =>
+      makeHistory({ id: 101 + i, sourceTitle: `Event ${101 + i}` }))
+    vi.mocked(api.listHistory).mockImplementation(async params => {
+      const offset = params?.offset ?? 0
+      return { items: offset === 0 ? firstPage : secondPage, total: 150, limit: 100, offset }
+    })
+
+    renderHistoryPage()
+
+    const table = await findDesktopTable()
+    expect(await within(table).findByText('Event 1')).toBeInTheDocument()
+    expect(screen.getByText('1–100 of 150')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '2' }))
+
+    await waitFor(() => expect(api.listHistory).toHaveBeenLastCalledWith({ eventType: undefined, limit: 100, offset: 100 }))
+    expect(await within(desktopTable()).findByText('Event 101')).toBeInTheDocument()
+    expect(within(desktopTable()).queryByText('Event 1')).not.toBeInTheDocument()
+    expect(screen.getByText('101–150 of 150')).toBeInTheDocument()
+  })
+
+  it('offers known event types in the filter even when absent from the loaded page (#1467)', async () => {
+    vi.mocked(api.listHistory).mockResolvedValue({
+      items: [makeHistory({ id: 1, eventType: 'grabbed', sourceTitle: 'Only Grab' })],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    })
+
+    renderHistoryPage()
+    await findDesktopTable()
+
+    const filter = screen.getAllByRole('combobox')[0]
+    expect(within(filter).getByRole('option', { name: 'Grabbed' })).toBeInTheDocument()
+    // These types exist on the server but not in the visible rows — they must
+    // still be offered so filtering can surface older events.
+    expect(within(filter).getByRole('option', { name: 'Download Requeued' })).toBeInTheDocument()
+    expect(within(filter).getByRole('option', { name: 'Book Rebound' })).toBeInTheDocument()
   })
 })

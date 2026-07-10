@@ -140,10 +140,11 @@ export const booksApi = {
     return request<Page<Book>>(`/book${qs ? '?' + qs : ''}`)
   },
   // listAllBooks pages through the server until the full set is collected. For
-  // callers that need every book (calendar, series book picker) rather than one
-  // display page. Heavy on very large libraries by design — prefer paginated
-  // listBooks for browse views.
-  listAllBooks: async (params?: { search?: string; status?: string; mediaType?: string; sort?: string; includeExcluded?: boolean }): Promise<Book[]> => {
+  // callers that need every book (calendar month, author detail, series book
+  // picker) rather than one display page. Heavy on very large libraries by
+  // design — prefer paginated listBooks for browse views; use this only when
+  // the query itself is bounded (one author, one month, ...).
+  listAllBooks: async (params?: { authorId?: number; search?: string; status?: string; mediaType?: string; sort?: string; includeExcluded?: boolean; releaseFrom?: string; releaseBefore?: string }): Promise<Book[]> => {
     const pageSize = 500
     let offset = 0
     const all: Book[] = []

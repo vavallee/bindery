@@ -38,8 +38,11 @@ export default function CalendarPage() {
     const beforeMonth = viewMonth === 11 ? 0 : viewMonth + 1
     const before = `${beforeYear}-${pad(beforeMonth + 1)}-01`
     setLoading(true)
-    api.listBooks({ releaseFrom: from, releaseBefore: before, limit: 500 })
-      .then(({ items }) => setBooks(items))
+    // listAllBooks pages through the server so a month with more releases than
+    // the server's 500-row cap still renders completely (#1467). The query is
+    // bounded to one month, so the full fetch stays cheap.
+    api.listAllBooks({ releaseFrom: from, releaseBefore: before })
+      .then(setBooks)
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [viewYear, viewMonth])

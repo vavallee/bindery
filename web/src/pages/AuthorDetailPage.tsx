@@ -148,11 +148,14 @@ export default function AuthorDetailPage() {
   useEffect(() => {
     let cancelled = false
     setLoading(true)
+    // listAllBooks pages through the server until the author's complete
+    // catalogue is loaded — a plain listBooks call silently capped the list at
+    // the server default of 100, corrupting counts/filters/select-all (#1467).
     Promise.all([
       api.getAuthor(authorId),
-      api.listBooks({ authorId, includeExcluded: showExcluded }),
+      api.listAllBooks({ authorId, includeExcluded: showExcluded }),
     ])
-      .then(([a, bs]) => { if (!cancelled) { setAuthor(a); setBooks(bs.items) } })
+      .then(([a, bs]) => { if (!cancelled) { setAuthor(a); setBooks(bs) } })
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load'))
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
@@ -181,9 +184,9 @@ export default function AuthorDetailPage() {
     setRefreshing(true)
     try {
       await api.refreshAuthor(author.id)
-      const [a, bs] = await Promise.all([api.getAuthor(authorId), api.listBooks({ authorId, includeExcluded: showExcluded })])
+      const [a, bs] = await Promise.all([api.getAuthor(authorId), api.listAllBooks({ authorId, includeExcluded: showExcluded })])
       setAuthor(a)
-      setBooks(bs.items)
+      setBooks(bs)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Refresh failed')
     } finally {
@@ -268,7 +271,7 @@ export default function AuthorDetailPage() {
   // unless showExcluded is on; delete removes them outright).
   const reloadBooks = async () => {
     try {
-      const { items } = await api.listBooks({ authorId, includeExcluded: showExcluded })
+      const items = await api.listAllBooks({ authorId, includeExcluded: showExcluded })
       setBooks(items)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Reload failed')
@@ -755,8 +758,8 @@ export default function AuthorDetailPage() {
           onClose={() => setShowMetadataLink(false)}
           onLinked={updated => {
             setAuthor(updated)
-            Promise.all([api.getAuthor(authorId), api.listBooks({ authorId, includeExcluded: showExcluded })])
-              .then(([a, bs]) => { setAuthor(a); setBooks(bs.items) })
+            Promise.all([api.getAuthor(authorId), api.listAllBooks({ authorId, includeExcluded: showExcluded })])
+              .then(([a, bs]) => { setAuthor(a); setBooks(bs) })
               .catch(console.error)
           }}
         />
@@ -769,8 +772,8 @@ export default function AuthorDetailPage() {
           onClose={() => setShowMerge(false)}
           onMerged={() => {
             // Reload current author (aliases may have grown) + its books.
-            Promise.all([api.getAuthor(authorId), api.listBooks({ authorId })])
-              .then(([a, bs]) => { setAuthor(a); setBooks(bs.items) })
+            Promise.all([api.getAuthor(authorId), api.listAllBooks({ authorId })])
+              .then(([a, bs]) => { setAuthor(a); setBooks(bs) })
               .catch(console.error)
           }}
         />

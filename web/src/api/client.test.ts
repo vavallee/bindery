@@ -145,3 +145,65 @@ describe('ApiError message extraction', () => {
     await expect(api.grimmoryTest()).rejects.toThrow('primary')
   })
 })
+
+describe('listAllBooks', () => {
+  it('forwards authorId/includeExcluded and pages until the full catalogue is collected (#1467)', async () => {
+    const requests: Array<{ authorId: string | null; includeExcluded: string | null; limit: number; offset: number }> = []
+    const total = 230
+
+    server.use(
+      http.get(apiUrl('/book'), ({ request }) => {
+        const url = new URL(request.url)
+        const limit = Number(url.searchParams.get('limit'))
+        const offset = Number(url.searchParams.get('offset'))
+        requests.push({
+          authorId: url.searchParams.get('authorId'),
+          includeExcluded: url.searchParams.get('includeExcluded'),
+          limit,
+          offset,
+        })
+        const count = Math.max(0, Math.min(limit, total - offset))
+        const items = Array.from({ length: count }, (_, i) => ({ id: offset + i + 1, title: `Book ${offset + i + 1}` }))
+        return HttpResponse.json({ items, total, limit, offset })
+      }),
+    )
+
+    const { api } = await loadClient()
+
+    const books = await api.listAllBooks({ authorId: 42, includeExcluded: true })
+
+    // 230 books at a 500 page size: one request would suffice, but the loop
+    // must have asked for the author's rows with the filters intact.
+    expect(books).toHaveLength(total)
+    expect(books[0].id).toBe(1)
+    expect(books[total - 1].id).toBe(total)
+    expect(requests.every(r => r.authorId === '42' && r.includeExcluded === 'true')).toBe(true)
+    expect(requests[0].offset).toBe(0)
+  })
+
+  it('keeps fetching pages while the server returns partial pages', async () => {
+    // Server caps the page size below the client's 500 request — the loop must
+    // keep advancing by the *returned* count until total is reached.
+    const total = 250
+    const serverCap = 100
+    const offsets: number[] = []
+
+    server.use(
+      http.get(apiUrl('/book'), ({ request }) => {
+        const url = new URL(request.url)
+        const offset = Number(url.searchParams.get('offset'))
+        offsets.push(offset)
+        const count = Math.max(0, Math.min(serverCap, total - offset))
+        const items = Array.from({ length: count }, (_, i) => ({ id: offset + i + 1, title: `Book ${offset + i + 1}` }))
+        return HttpResponse.json({ items, total, limit: serverCap, offset })
+      }),
+    )
+
+    const { api } = await loadClient()
+
+    const books = await api.listAllBooks({ authorId: 7 })
+
+    expect(books).toHaveLength(total)
+    expect(offsets).toEqual([0, 100, 200])
+  })
+})

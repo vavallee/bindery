@@ -14,7 +14,7 @@ vi.mock('../api/client', async importOriginal => {
     api: {
       ...actual.api,
       getAuthor: vi.fn(),
-      listBooks: vi.fn(),
+      listAllBooks: vi.fn(),
       listAuthors: vi.fn(),
       refreshAuthor: vi.fn(),
       searchAuthorLinkCandidates: vi.fn(),
@@ -96,7 +96,7 @@ function LocationProbe({ onLocation }: { onLocation?: (location: string) => void
 function renderAuthorDetailPage(books: Book[], view: 'grid' | 'table' = 'grid', authorOverride: Partial<Author> = {}, initialPath = '/author/42', onLocation?: (location: string) => void) {
   localStorage.setItem('bindery.view.author-detail', view)
   vi.mocked(api.getAuthor).mockResolvedValue({ ...author, ...authorOverride })
-  vi.mocked(api.listBooks).mockResolvedValue({ items: books, total: books.length, limit: 100, offset: 0 })
+  vi.mocked(api.listAllBooks).mockResolvedValue(books)
 
   return render(
     <MemoryRouter initialEntries={[initialPath]}>
@@ -124,6 +124,31 @@ function mockElementOverflow(overflows: boolean): () => void {
 }
 
 describe('AuthorDetailPage', () => {
+  it('loads the complete author catalogue via the paging fetch-all, and renders past 100 books (#1467)', async () => {
+    const books = Array.from({ length: 150 }, (_, i) =>
+      makeBook({ id: i + 1, title: `Book ${i + 1}`, status: 'imported' }))
+    renderAuthorDetailPage(books, 'table')
+
+    await screen.findByText('Book 1')
+
+    // The fetch must go through listAllBooks (which pages until `total` is
+    // reached) scoped to this author — a bare listBooks call silently stopped
+    // at the server's default page of 100.
+    expect(api.listAllBooks).toHaveBeenCalledWith({ authorId: 42, includeExcluded: false })
+    expect(screen.getByText('Book 150')).toBeInTheDocument()
+    expect(screen.getByText(/150 books/)).toBeInTheDocument()
+  })
+
+  it('passes includeExcluded through to the fetch-all when Show excluded is toggled', async () => {
+    renderAuthorDetailPage([makeBook({ id: 1, title: 'Visible Book', status: 'imported' })], 'table')
+
+    await screen.findByText('Visible Book')
+    fireEvent.click(screen.getByRole('checkbox', { name: /Show excluded/i }))
+
+    await waitFor(() =>
+      expect(api.listAllBooks).toHaveBeenCalledWith({ authorId: 42, includeExcluded: true }))
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     installLocalStorageMock()
