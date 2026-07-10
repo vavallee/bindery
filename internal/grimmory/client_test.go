@@ -298,6 +298,32 @@ func TestPing_ServerError(t *testing.T) {
 	}
 }
 
+// TestPing_HTMLBody covers #1485: a 2xx response carrying HTML (SPA fallback
+// or an interposing reverse proxy) must produce an actionable error naming the
+// content type, not json's bare "invalid character '<'".
+func TestPing_HTMLBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("<!doctype html><html><body>Grimmory</body></html>"))
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(srv.URL, "testkey")
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	_, err = c.Ping(context.Background())
+	if err == nil {
+		t.Fatal("Ping: want error for HTML body, got nil")
+	}
+	for _, want := range []string{"non-JSON", "text/html", "/api/status"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q: want it to mention %q", err, want)
+		}
+	}
+}
+
 // TestPing_AuthedStatusWithCredentials covers #1448: Grimmory guards
 // /api/status behind a valid session, so an unauthenticated probe 401s. When a
 // username/password is configured, Ping must log in first and present the JWT
