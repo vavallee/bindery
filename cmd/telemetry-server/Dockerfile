@@ -8,7 +8,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /telemetry-server ./cmd
 # Distroless runtime — parity with the main Dockerfile. The binary is a static
 # CGO-free build (modernc.org/sqlite is pure Go), so distroless/static is
 # sufficient: no runtime sqlite package, no shell, minimal attack surface.
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:d093aa3e30dbadd3efe1310db061a14da60299baff8450a17fe0ccc514a16639
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:b7bb25d9f7c31d2bdd1982feb4dafcaf137703c7075dbe2febb41c24212b946f
 COPY --from=builder /telemetry-server /telemetry-server
 # Numeric non-root UID, matching runAsUser in deploy/telemetry-server.yaml.
 USER 1000:1000
