@@ -1,2 +1,0 @@
-### Fixed
-- **Lists no longer silently truncate at 100 rows** (#1467) — the History page now pages through your full history on the server (with a working event-type filter that offers all event types), an author's page loads the complete catalogue even for authors with more than 100 books (so counts, filters, and select-all cover everything), and the Calendar loads every release in the month instead of stopping at 500.

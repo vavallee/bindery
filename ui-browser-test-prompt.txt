@@ -1,0 +1,112 @@
+You are testing the web UI of "bindery" (a self-hosted book/audiobook download
+manager: Go backend serving an embedded React/TypeScript SPA) by driving it in a
+real browser. Goal: find UI bugs. The repo is checked out at /home/ubuntu/bindery
+(adjust if different). Work methodically and report concrete, reproducible bugs.
+
+────────────────────────────────────────────────────────────────────────
+1. BUILD AND RUN THE APP (do this exactly — there's one non-obvious step)
+────────────────────────────────────────────────────────────────────────
+The Go binary embeds the built frontend from internal/webui/dist, which is
+EMPTY in a git checkout (it's populated only in the Docker build). So you must
+build the frontend and copy it into the embed dir before building the binary:
+
+  cd /home/ubuntu/bindery
+  cd web && npm ci && npm run build && cd ..
+  rm -rf internal/webui/dist && cp -r web/dist internal/webui/dist
+  go build -o /tmp/bindery ./cmd/bindery
+
+Run it on a temp DB with telemetry off (pick any free port):
+
+  D=$(mktemp -d)
+  BINDERY_PORT=8799 \
+  BINDERY_DB_PATH="$D/bindery.db" \
+  BINDERY_DATA_DIR="$D" \
+  BINDERY_LIBRARY_DIR="$D/books" \
+  BINDERY_TELEMETRY_DISABLED=true \
+  /tmp/bindery &
+
+Open http://localhost:8799 in the browser.
+
+Cleanup when done: kill the bindery process; then restore the deleted tracked
+placeholder with `git checkout -- internal/webui/dist/.gitkeep` and
+`rm -rf internal/webui/dist` so the repo tree is clean (dist contents are
+gitignored; only .gitkeep is tracked).
+
+────────────────────────────────────────────────────────────────────────
+2. GET INTO THE APP
+────────────────────────────────────────────────────────────────────────
+On first load you'll hit the first-run setup screen ("Create the catalogue
+administrator"). Create an admin (e.g. user "admin", password "password123")
+and you'll be logged in via a session cookie. From then on the UI is fully
+navigable. (There is no seeded content; you'll create data as you test.)
+
+To exercise pages that need data, use the UI:
+ - Authors → "Add Author" → search a real author (e.g. "Brandon Sanderson").
+   This calls the OpenLibrary API; if outbound network is blocked, note that and
+   fall back to testing empty states + forms + navigation.
+ - Add Book / Add Series modals similarly.
+
+────────────────────────────────────────────────────────────────────────
+3. WHAT TO TEST (crawl every route; for EACH page do the checklist)
+────────────────────────────────────────────────────────────────────────
+Routes to visit (top nav + deep links): / , /authors , /author/<id> , /books ,
+/book/<id> , /wanted , /history , /calendar , /queue , /series , /discover ,
+/search , /blocklist , /settings (every tab), /users (if visible).
+
+Per-page checklist:
+ - Open the browser devtools console + network panel. Flag ANY console error or
+   warning (especially React errors, "Each child needs a key", uncaught
+   exceptions, failed prop types) and ANY failed/unexpected network response
+   (5xx, or a 4xx the UI doesn't handle gracefully).
+ - Does the page render, or does it blank out / show an error boundary?
+ - Any raw i18n keys visible on screen (text like "common.actionFailed" or
+   "settings.x.y" instead of real words)? That's a missing translation bug.
+ - Toggle DARK MODE (theme switch) and re-check: every surface, border, and text
+   must be legible in both light and dark (the app pairs slate/zinc). Look for
+   invisible text, white-on-white, missing borders.
+ - Resize narrow (mobile width ~375px): layout shouldn't overflow or clip
+   controls.
+ - Hard-refresh the page on a DEEP route (e.g. reload while on /author/1 or
+   /settings): it must load the app, not a blank page or a raw JSON/JS file.
+
+────────────────────────────────────────────────────────────────────────
+4. HIGH-RISK AREAS TO HAMMER (recently changed — most likely to have bugs)
+────────────────────────────────────────────────────────────────────────
+ - Authors & Books pages PAGINATION + SEARCH + SORT + FILTERS: these were just
+   moved to server-side. Create/seed enough rows if possible, then:
+     * page through (next/prev, jump to last page, change "Per page"),
+     * type in the search box (it's debounced) and confirm results filter and
+       the footer count updates, clear it and confirm it resets to page 1,
+     * toggle sort (A–Z / Z–A / Recent for authors; title/date for books),
+     * toggle filters (monitored chips on Authors; status + type on Books),
+     * confirm the empty-state vs no-match messages are correct.
+ - AUTHOR DETAIL page:
+     * Alias chips: hover/focus a chip — a "×" remove button should appear;
+       click it → a confirm dialog → on confirm the alias disappears, on cancel
+       it stays.
+     * Author DESCRIPTION: should render light markdown (bold/italic), strip
+       "(Sources: …)" / reference noise, and show a "Show more / Show less"
+       toggle for long text. Check it doesn't render raw markdown or broken HTML.
+ - SETTINGS → Indexers: Add/Edit indexer form has a "Priority" number field —
+   confirm it saves and round-trips.
+ - SETTINGS → General (or Import): with Import Mode = External, a "drop folder"
+   section (path + layout + link-mode) should appear; confirm validation errors
+   surface inline.
+ - All MODALS (Add Author/Book/Series, Merge authors, Edit author): open/close,
+   submit empty (validation), submit valid, Esc to close, backdrop click.
+ - BULK actions on Authors/Books (select-all-on-page checkbox, the bulk action
+   bar) — confirm selection state and that actions fire.
+
+────────────────────────────────────────────────────────────────────────
+5. REPORT FORMAT
+────────────────────────────────────────────────────────────────────────
+For every bug, give:
+  - Title (one line)
+  - Severity (blocker / major / minor / cosmetic)
+  - Route + exact steps to reproduce
+  - Expected vs Actual
+  - Evidence: the console error text and/or the failing network request
+    (method, URL, status), and a screenshot if the tool supports it
+End with a short summary table and a "no issues found in X" list for the areas
+you checked that were clean. Be precise and reproducible; don't speculate about
+code you didn't observe failing.
