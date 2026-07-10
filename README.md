@@ -128,7 +128,7 @@ Clean-room Go rewrite, modern React UI, MIT-licensed, actively developed.
 
 **Import & organize**
 - Completed downloads matched by NZO ID and placed in the library with configurable naming. Modes: **Move** (default), **Copy** (keep source for seeding), **Hardlink** (zero extra disk; same filesystem required).
-- Naming tokens — `{Author}`, `{SortAuthor}`, `{Title}`, `{Year}`, `{Series}`, `{SeriesNumber}`, `{ext}` — collapse cleanly for non-series books.
+- Naming tokens — `{Author}`, `{SortAuthor}`, `{Title}`, `{Year}`, `{Series}`, `{SeriesNumber}`, `{Genre}`, `{Lang}`, `{ext}` — collapse cleanly for non-series books.
 - Cross-filesystem-safe moves: atomic rename when possible, copy + verify + delete for NFS / separate volumes. Full grab / import / failure history per book.
 - Calibre integration in three modes: `calibredb` CLI hook on import, [Bindery Bridge plugin](https://github.com/vavallee/bindery-plugins) (cross-container), or direct read of an existing Calibre library's `metadata.db` as Bindery's catalogue.
 

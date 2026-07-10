@@ -18,7 +18,8 @@ import (
 func TestRenamerPreviewSampleDriftGuard(t *testing.T) {
 	// Mirrors SAMPLE_BOOK: author "Jane Doe" (sort "Doe, Jane"),
 	// title "Sample Book", year 2024, ASIN "B01ABCDEFG",
-	// series "Demo Series", series number "2", genre "Fantasy", ext "epub".
+	// series "Demo Series", series number "2", genre "Fantasy", lang "en",
+	// ext "epub".
 	releaseDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	author := &models.Author{Name: "Jane Doe"}
 	book := &models.Book{
@@ -26,6 +27,7 @@ func TestRenamerPreviewSampleDriftGuard(t *testing.T) {
 		ASIN:        "B01ABCDEFG",
 		ReleaseDate: &releaseDate,
 		Genres:      []string{"Fantasy"},
+		Language:    "en",
 	}
 	const series = "Demo Series"
 	const seriesNumber = "2"
@@ -40,9 +42,9 @@ func TestRenamerPreviewSampleDriftGuard(t *testing.T) {
 	}{
 		{
 			name:     "all tokens (ebook)",
-			template: "{Author}|{SortAuthor}|{Title}|{Year}|{ASIN}|{Series}|{SeriesNumber}|{Genre}|{ext}",
+			template: "{Author}|{SortAuthor}|{Title}|{Year}|{ASIN}|{Series}|{SeriesNumber}|{Genre}|{Lang}|{ext}",
 			ext:      "epub",
-			want:     "Jane Doe|Doe, Jane|Sample Book|2024|B01ABCDEFG|Demo Series|2|Fantasy|epub",
+			want:     "Jane Doe|Doe, Jane|Sample Book|2024|B01ABCDEFG|Demo Series|2|Fantasy|en|epub",
 		},
 		{
 			name:     "default ebook template",

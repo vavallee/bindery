@@ -16,7 +16,7 @@ export interface NamingToken {
   ebookOnly?: boolean
 }
 
-// The 8 tokens supported by Renamer.apply, in display order. {ext} is
+// The tokens supported by Renamer.apply, in display order. {ext} is
 // ebook-only: the audiobook template names a directory, so the renderer
 // substitutes it with the empty string there.
 export const NAMING_TOKENS: readonly NamingToken[] = [
@@ -28,6 +28,7 @@ export const NAMING_TOKENS: readonly NamingToken[] = [
   { token: '{Series}', descKey: 'tokenSeries' },
   { token: '{SeriesNumber}', descKey: 'tokenSeriesNumber' },
   { token: '{Genre}', descKey: 'tokenGenre' },
+  { token: '{Lang}', descKey: 'tokenLang' },
   { token: '{ext}', descKey: 'tokenExt', ebookOnly: true },
 ] as const
 
@@ -46,6 +47,7 @@ export interface SampleBook {
   series: string
   seriesNumber: string
   genre: string
+  lang: string
   ext: string
 }
 
@@ -59,6 +61,7 @@ export const SAMPLE_BOOK: SampleBook = {
   series: 'Demo Series',
   seriesNumber: '2',
   genre: 'Fantasy',
+  lang: 'en',
   ext: 'epub',
 }
 
@@ -119,6 +122,7 @@ export function renderTemplate(
     Series: sanitizePath(sample.series),
     SeriesNumber: sanitizePath(sample.seriesNumber),
     Genre: sanitizePath(sample.genre),
+    Lang: sanitizePath(sample.lang),
     ext,
   }
   return template

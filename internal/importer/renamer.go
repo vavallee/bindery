@@ -113,6 +113,7 @@ func (r *Renamer) apply(template string, author *models.Author, book *models.Boo
 		"Series":       sanitizePath(series),
 		"SeriesNumber": sanitizePath(seriesNumber),
 		"Genre":        sanitizePath(firstGenre(book.Genres)),
+		"Lang":         sanitizePath(book.Language),
 		"ext":          ext,
 	}
 

@@ -605,6 +605,7 @@
         "tokenSeries": "{Series} — series title (blank for standalone)",
         "tokenSeriesNumber": "{SeriesNumber} — position in series",
         "tokenGenre": "{Genre} — primary genre, best with Hardcover enabled. Use {Genre:Unsorted} to set a fallback folder.",
+        "tokenLang": "{Lang} — book language code, e.g. en (blank if unknown)",
         "tokenExt": "{ext} — file extension, no leading dot (ebook only)",
         "tokenIgnoredAudiobook": "{{token}} is ignored for the audiobook folder template",
         "errorTraversal": "Template must not contain \".\" or \"..\" path segments.",
