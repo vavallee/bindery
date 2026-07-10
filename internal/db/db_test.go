@@ -1980,6 +1980,74 @@ func TestParseMigrationStripsForeignKeysPragma(t *testing.T) {
 	}
 }
 
+// TestParseMigrationSemicolonSafety pins the fix for the historical
+// "semicolon gotcha" (#1465): a ';' inside a `--` comment, a `/* */` block
+// comment, or a string literal must not split a statement. Before the fix the
+// runner split on ';' first and stripped comment lines second, so a comment
+// containing a semicolon left a non-comment tail glued to the next statement
+// and boot aborted with a syntax error.
+func TestParseMigrationSemicolonSafety(t *testing.T) {
+	t.Run("semicolon in line comment", func(t *testing.T) {
+		stmts, _ := parseMigration(
+			"-- +migrate Up\n" +
+				"-- careful; this comment has a semicolon\n" +
+				"CREATE TABLE a (id INTEGER); -- trailing; comment\n" +
+				"CREATE TABLE b (id INTEGER);\n")
+		if len(stmts) != 2 {
+			t.Fatalf("statements = %d (%q), want 2", len(stmts), stmts)
+		}
+		if stmts[0] != "CREATE TABLE a (id INTEGER)" || stmts[1] != "CREATE TABLE b (id INTEGER)" {
+			t.Fatalf("unexpected statements: %q", stmts)
+		}
+	})
+
+	t.Run("semicolon in block comment", func(t *testing.T) {
+		stmts, _ := parseMigration(
+			"-- +migrate Up\n" +
+				"/* block; comment; with; semicolons */\n" +
+				"CREATE TABLE a (id INTEGER);\n")
+		if len(stmts) != 1 || stmts[0] != "CREATE TABLE a (id INTEGER)" {
+			t.Fatalf("unexpected statements: %q", stmts)
+		}
+	})
+
+	t.Run("semicolon and escaped quote in string literal", func(t *testing.T) {
+		stmts, _ := parseMigration(
+			"-- +migrate Up\n" +
+				"INSERT INTO settings (key, value) VALUES ('greeting', 'hi; it''s -- not a comment');\n" +
+				"CREATE TABLE c (id INTEGER);\n")
+		if len(stmts) != 2 {
+			t.Fatalf("statements = %d (%q), want 2", len(stmts), stmts)
+		}
+		want := "INSERT INTO settings (key, value) VALUES ('greeting', 'hi; it''s -- not a comment')"
+		if stmts[0] != want {
+			t.Fatalf("literal statement = %q, want %q", stmts[0], want)
+		}
+	})
+
+	t.Run("every embedded migration still parses to nonempty statements", func(t *testing.T) {
+		entries, err := migrationsFS.ReadDir("migrations")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
+				continue
+			}
+			content, err := migrationsFS.ReadFile("migrations/" + e.Name())
+			if err != nil {
+				t.Fatalf("read %s: %v", e.Name(), err)
+			}
+			stmts, _ := parseMigration(string(content))
+			for _, s := range stmts {
+				if strings.TrimSpace(s) == "" {
+					t.Fatalf("%s: empty statement leaked", e.Name())
+				}
+			}
+		}
+	})
+}
+
 // TestMigrationVersionIsFilenameNumber verifies the canonical version is the
 // filename prefix, not the slice index. With the 010 gap, migration 011 must
 // resolve to version 11 (finding 2).

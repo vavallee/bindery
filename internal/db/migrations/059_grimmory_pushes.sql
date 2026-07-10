@@ -7,9 +7,9 @@
 -- file_path is the library path at push time (book_files.path or the legacy
 -- books.file_path column). grimmory_book_id is Grimmory's id when the upload
 -- response carried one, 0 when the file went to the review queue without an id.
--- NOTE for future migrations: the migration runner splits statements on
--- semicolons even inside comments — keep the semicolon character out of
--- comment text.
+-- NOTE: the runner's historical "semicolon in a comment" gotcha was fixed in
+-- #1465 — the splitter is now comment- and literal-aware. Trigger bodies
+-- (BEGIN ... END) are still unsupported.
 CREATE TABLE IF NOT EXISTS grimmory_pushes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     book_id INTEGER NOT NULL,
