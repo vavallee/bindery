@@ -55,6 +55,10 @@ func (h *stubSeriesRouteHandler) Fill(w http.ResponseWriter, _ *http.Request) {
 	h.record("fill", w)
 }
 
+func (h *stubSeriesRouteHandler) ApplyGenres(w http.ResponseWriter, _ *http.Request) {
+	h.record("applyGenres", w)
+}
+
 func (h *stubSeriesRouteHandler) GetHardcoverLink(w http.ResponseWriter, _ *http.Request) {
 	h.record("get-hardcover-link", w)
 }
