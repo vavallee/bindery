@@ -205,6 +205,32 @@ func (c *Client) GetUserLists(ctx context.Context) ([]HCList, error) {
 	return lists, nil
 }
 
+// GetUsername returns the Hardcover username of the account the client's
+// token belongs to (#1489). Built-in shelves share one slug per account
+// ("want-to-read", ...), so the username is what makes a saved list's
+// identity unique across accounts: (slug, account).
+func (c *Client) GetUsername(ctx context.Context) (string, error) {
+	gql := `query GetUsername {
+		me {
+			username
+		}
+	}`
+	var resp struct {
+		Data struct {
+			Me []struct {
+				Username string `json:"username"`
+			} `json:"me"`
+		} `json:"data"`
+	}
+	if err := c.query(ctx, gql, nil, &resp); err != nil {
+		return "", fmt.Errorf("hardcover get username: %w", err)
+	}
+	if len(resp.Data.Me) == 0 {
+		return "", nil
+	}
+	return resp.Data.Me[0].Username, nil
+}
+
 type hcCountAggregate struct {
 	Aggregate struct {
 		Count int `json:"count"`

@@ -213,6 +213,7 @@ function makeImportList(overrides: Partial<ImportList> = {}): ImportList {
     url: 'want-to-read',
     apiKey: '',
     apiKeyConfigured: false,
+  account: '',
     rootFolderId: null,
     qualityProfileId: null,
     monitorNew: true,
@@ -246,6 +247,7 @@ function seedSettingsMocks(options: {
   oidcProviders?: OidcProvider[]
   importLists?: ImportList[]
   hardcoverLists?: HardcoverList[]
+  hardcoverAccount?: string
 } = {}) {
   vi.mocked(api.listIndexers).mockResolvedValue(options.indexers ?? [])
   vi.mocked(api.addIndexer).mockImplementation(async data => makeIndexer({ id: 100, ...data }))
@@ -285,7 +287,7 @@ function seedSettingsMocks(options: {
     vi.mocked(api.updateImportList).mockImplementation(async (id, data) => makeImportList({ id, ...data }))
     vi.mocked(api.deleteImportList).mockResolvedValue(undefined)
     vi.mocked(api.syncImportList).mockResolvedValue({ status: 'ok' })
-    vi.mocked(api.hardcoverLists).mockResolvedValue(options.hardcoverLists ?? [])
+    vi.mocked(api.hardcoverLists).mockResolvedValue({ account: options.hardcoverAccount ?? '', lists: options.hardcoverLists ?? [] })
     vi.mocked(api.triggerLibraryScan).mockResolvedValue({ message: 'started' })
     vi.mocked(api.createBackup).mockResolvedValue({ name: 'bindery-backup.zip', size: 0, modTime: '' })
     vi.mocked(api.deleteBackup).mockResolvedValue(undefined)
@@ -535,6 +537,37 @@ describe('SettingsPage', () => {
     await waitFor(() => {
       expect(api.updateImportList).toHaveBeenCalledWith(44, { enabled: true })
     })
+  })
+
+  it("keeps two accounts' identically-slugged shelves apart (#1489)", async () => {
+    // Alice's Want to Read is already saved. Browsing Bob's lists (account
+    // "bob") must NOT match Alice's row: the shelf shows as a fresh, addable
+    // list, and clicking it creates a NEW import list carrying account bob —
+    // not a toggle of Alice's row.
+    renderSettings({
+      importLists: [
+        makeImportList({ id: 61, name: "Alice Want to Read", url: 'want-to-read', account: 'alice', apiKeyConfigured: true, enabled: true }),
+      ],
+      hardcoverLists: [makeHardcoverList({ name: 'Want to Read', slug: 'want-to-read', booksCount: 4 })],
+      hardcoverAccount: 'bob',
+    })
+
+    await openImportTab()
+    const remoteName = await screen.findByText('Want to Read')
+    expect(screen.getByText('Alice Want to Read')).toBeInTheDocument()
+    // Alice's healthy row from another account must not be flagged stale.
+    expect(screen.queryByText('Saved only')).not.toBeInTheDocument()
+
+    const remoteRow = remoteName.closest('label')
+    expect(remoteRow).not.toBeNull()
+    fireEvent.click(within(remoteRow as HTMLElement).getByRole('checkbox'))
+
+    await waitFor(() => {
+      expect(api.addImportList).toHaveBeenCalledWith(
+        expect.objectContaining({ url: 'want-to-read', account: 'bob' }),
+      )
+    })
+    expect(api.updateImportList).not.toHaveBeenCalled()
   })
 
   it('can load Hardcover list picker results from a per-list override token', async () => {

@@ -9,6 +9,11 @@ type ImportList struct {
 	URL              string `json:"url"`
 	APIKey           string `json:"apiKey"`
 	APIKeyConfigured bool   `json:"apiKeyConfigured"`
+	// Account is the provider-side account identity the list belongs to
+	// (#1489) — for Hardcover, the username reported by the token the list
+	// was loaded with. Two accounts' built-in shelves share slugs, so list
+	// identity is (URL slug, Account). Empty for legacy rows.
+	Account string `json:"account"`
 	RootFolderID     *int64 `json:"rootFolderId"`
 	QualityProfileID *int64 `json:"qualityProfileId"`
 	MonitorNew       bool   `json:"monitorNew"`

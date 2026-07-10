@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -24,6 +25,7 @@ type HardcoverListSyncer interface {
 
 type hardcoverUserListClient interface {
 	GetUserLists(ctx context.Context) ([]hardcover.HCList, error)
+	GetUsername(ctx context.Context) (string, error)
 }
 
 type ImportListHandler struct {
@@ -165,7 +167,16 @@ func (h *ImportListHandler) HardcoverLists(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, lists)
+	// account identifies whose lists these are (#1489): built-in shelves share
+	// one slug per account, so the frontend needs the username to keep two
+	// accounts' "Want to Read" apart. Best-effort — an empty account degrades
+	// to the legacy slug-only matching.
+	account, err := client.GetUsername(r.Context())
+	if err != nil {
+		slog.Debug("hardcover lists: username lookup failed", "error", err)
+		account = ""
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"account": account, "lists": lists})
 }
 
 // --- Exclusions ---
