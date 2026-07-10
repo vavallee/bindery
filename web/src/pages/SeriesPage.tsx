@@ -13,6 +13,7 @@ export default function SeriesPage() {
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<number | null>(null)
   const [filling, setFilling] = useState<number | null>(null)
+  const [applyingGenres, setApplyingGenres] = useState<number | null>(null)
   const [fillResult, setFillResult] = useState<Record<number, string>>({})
   // Format to target when adding missing Hardcover books, keyed by series id.
   // Defaults to ebook to preserve the previous add behaviour.
@@ -67,6 +68,26 @@ export default function SeriesPage() {
     const updated = await api.updateSeries(editingSeries.id, { title })
     setSeriesList(prev => prev.map(series => series.id === updated.id ? { ...series, ...updated } : series))
     setEditingSeries(null)
+  }
+
+  // Genre override (#1446): prompt for a comma-separated list, then set +
+  // lock it on every book in the series so metadata refresh keeps it.
+  const applySeriesGenres = async (series: Series) => {
+    const input = prompt(
+      `Set genres for every book in "${series.title}" (comma-separated). Edited genres are locked against metadata refresh.`,
+    )
+    if (input === null) return
+    const genres = input.split(',').map(g => g.trim()).filter(Boolean)
+    if (genres.length === 0) return
+    setApplyingGenres(series.id)
+    try {
+      const { updated } = await api.applySeriesGenres(series.id, genres)
+      setLinkResult(prev => ({ ...prev, [series.id]: `Genres set on ${updated} book(s)` }))
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Genre apply failed')
+    } finally {
+      setApplyingGenres(null)
+    }
   }
 
   const deleteSeries = async (series: Series) => {
@@ -301,6 +322,16 @@ export default function SeriesPage() {
                       className="text-xs px-2.5 py-1 rounded font-medium bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700"
                     >
                       Add Book
+                    </button>
+                  )}
+                  {isOpen && bookCount > 0 && (
+                    <button
+                      onClick={() => applySeriesGenres(series)}
+                      disabled={applyingGenres === series.id}
+                      className="text-xs px-2.5 py-1 rounded font-medium bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 disabled:opacity-50"
+                      title="Set the same genres on every book in this series and lock them against metadata refresh"
+                    >
+                      {applyingGenres === series.id ? '…' : 'Set genre'}
                     </button>
                   )}
                   <button

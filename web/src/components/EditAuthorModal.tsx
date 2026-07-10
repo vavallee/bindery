@@ -31,6 +31,28 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Genre override (#1446): applies immediately (separate from Save) since it
+  // fans out to every book row and locks the genres field on each.
+  const [genreOverride, setGenreOverride] = useState('')
+  const [applyingGenres, setApplyingGenres] = useState(false)
+  const [genreApplied, setGenreApplied] = useState<number | null>(null)
+
+  const applyGenres = async () => {
+    const genres = genreOverride.split(',').map(g => g.trim()).filter(Boolean)
+    if (genres.length === 0) return
+    setApplyingGenres(true)
+    setError(null)
+    setGenreApplied(null)
+    try {
+      const { updated } = await api.applyAuthorGenres(author.id, genres)
+      setGenreApplied(updated)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('editAuthorModal.genreOverrideFail', 'Genre apply failed'))
+    } finally {
+      setApplyingGenres(false)
+    }
+  }
+
   useEffect(() => {
     let cancelled = false
     Promise.all([
@@ -298,6 +320,37 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                   <span className="block text-xs text-slate-600 dark:text-zinc-400 mt-0.5">{t('editAuthorModal.applyMonitorModeToExistingHint', 'Otherwise this only affects books discovered in future refreshes.')}</span>
                 </span>
               </label>
+              <div className="mt-4 pt-4 border-t border-slate-200 dark:border-zinc-800">
+                <label className="block text-sm font-medium mb-1" htmlFor="author-genre-override">
+                  {t('editAuthorModal.genreOverride', 'Genre override')}
+                </label>
+                <p className="text-xs text-slate-600 dark:text-zinc-400 mb-2">
+                  {t('editAuthorModal.genreOverrideHint', 'Set the same genres on every book by this author and lock them so metadata refresh keeps your values. Comma-separated.')}
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    id="author-genre-override"
+                    type="text"
+                    value={genreOverride}
+                    onChange={e => setGenreOverride(e.target.value)}
+                    placeholder="Fantasy, Epic"
+                    className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={applyGenres}
+                    disabled={applyingGenres || genreOverride.trim() === ''}
+                    className="px-3 py-2 text-sm bg-slate-300 dark:bg-zinc-700 hover:bg-slate-400 dark:hover:bg-zinc-600 disabled:opacity-50 rounded-md font-medium"
+                  >
+                    {applyingGenres ? '…' : t('editAuthorModal.genreOverrideApply', 'Apply to all books')}
+                  </button>
+                </div>
+                {genreApplied !== null && (
+                  <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1">
+                    {t('editAuthorModal.genreOverrideDone', 'Updated {{count}} book(s).', { count: genreApplied })}
+                  </p>
+                )}
+              </div>
               {error && (
                 <p className="text-sm text-red-600 dark:text-red-400 mt-2">{error}</p>
               )}

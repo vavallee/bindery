@@ -126,6 +126,10 @@ export const authorsApi = {
   getAuthor: (id: number) => request<Author>(`/author/${id}`),
   addAuthor: (data: AddAuthorRequest) => request<Author>('/author', { method: 'POST', body: JSON.stringify(data) }),
   updateAuthor: (id: number, data: UpdateAuthorRequest) => request<Author>(`/author/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  // Genre override (#1446): set + lock the genre list on every book of the
+  // author so metadata refresh keeps the user's taxonomy.
+  applyAuthorGenres: (id: number, genres: string[]) =>
+    request<{ updated: number }>(`/author/${id}/genres`, { method: 'PUT', body: JSON.stringify({ genres }) }),
   deleteAuthor: (id: number, deleteFiles = false) =>
     request<void>(`/author/${id}${deleteFiles ? '?deleteFiles=true' : ''}`, { method: 'DELETE' }),
   refreshAuthor: (id: number) => request<void>(`/author/${id}/refresh`, { method: 'POST' }),

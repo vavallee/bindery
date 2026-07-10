@@ -108,6 +108,10 @@ export const seriesApi = {
       method: 'POST',
       ...(mediaType ? { body: JSON.stringify({ mediaType }) } : {}),
     }),
+  // Genre override (#1446): set + lock the genre list on every book in the
+  // series so metadata refresh keeps the user's taxonomy.
+  applySeriesGenres: (id: number, genres: string[]) =>
+    request<{ updated: number }>(`/series/${id}/genres`, { method: 'PUT', body: JSON.stringify({ genres }) }),
   searchHardcoverSeries: (term: string, limit = 10) =>
     request<SeriesHardcoverSearchResult[]>(`/series/hardcover/search?term=${encodeURIComponent(term)}&limit=${limit}`),
   getSeriesHardcoverLink: (id: number) => request<SeriesHardcoverLink>(`/series/${id}/hardcover-link`),

@@ -12,6 +12,7 @@ import { useClipboardCopy } from '../components/useClipboardCopy'
 import { safeHref } from '../util/safeHref'
 import { metadataSourceLink } from '../util/metadataSource'
 import FixMatchModal from '../components/FixMatchModal'
+import EditBookModal from '../components/EditBookModal'
 
 function formatSize(n: number): string {
   if (!n || n <= 0) return ''
@@ -181,6 +182,7 @@ export default function BookDetailPage() {
   const [togglingExclude, setTogglingExclude] = useState(false)
   const [showRebind, setShowRebind] = useState(false)
   const [showFixMatch, setShowFixMatch] = useState(false)
+  const [showEdit, setShowEdit] = useState(false)
   const [showDeleteBook, setShowDeleteBook] = useState(false)
   const pathClipboard = useClipboardCopy()
   // For dual-format books, which format the file section is acting on.
@@ -627,6 +629,15 @@ export default function BookDetailPage() {
             >
               {t('bookDetail.download')}
             </a>
+            <button
+              type="button"
+              onClick={() => setShowEdit(true)}
+              className={actionBtnCls}
+              title={t('bookDetail.edit.hint', 'Manually edit metadata; edited fields are locked against refresh')}
+            >
+              {t('bookDetail.edit.button', 'Edit')}
+              {(book.lockedFields?.length ?? 0) > 0 && <span aria-hidden> 🔒</span>}
+            </button>
             <button type="button" onClick={() => setShowRebind(true)} className={actionBtnCls}>
               {t('bookDetail.rebind')}
             </button>
@@ -792,6 +803,13 @@ export default function BookDetailPage() {
         </div>
       </section>
 
+      {showEdit && (
+        <EditBookModal
+          book={book}
+          onClose={() => setShowEdit(false)}
+          onSaved={updated => setBook(updated)}
+        />
+      )}
       {showRebind && (
         <RebindModal
           book={book}

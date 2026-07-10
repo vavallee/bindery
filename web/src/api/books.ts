@@ -30,6 +30,9 @@ export interface Book {
   // All on-disk files tracked in book_files (populated on single-book GET).
   bookFiles?: BookFile[]
   excluded: boolean
+  // Fields manually edited by the user and locked against metadata refresh
+  // (#1237, #1446): title | description | genres | language | releaseDate.
+  lockedFields?: string[]
   narrator?: string
   durationSeconds?: number
   asin?: string
