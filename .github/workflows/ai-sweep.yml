@@ -37,10 +37,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
-          egress-policy: audit
+          # block (#1401): this job hands ANTHROPIC_API_KEY and a write-scoped
+          # token to an LLM agent that reads untrusted issue/PR text. The
+          # allowedTools list is the first barrier; the egress allowlist is the
+          # network backstop so a future allowlist regression can't exfiltrate.
+          egress-policy: block
+          allowed-endpoints: >
+            api.anthropic.com:443
+            api.github.com:443
+            github.com:443
+            objects.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            discord.com:443
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -129,5 +140,10 @@ jobs:
           if [ -n "${MAINTAINER_ID:-}" ]; then
             MSG="<@${MAINTAINER_ID}> ${MSG}"
           fi
+          # allowed_mentions (#1400): the digest embeds untrusted issue/PR
+          # titles, so an issue titled "@everyone" (or carrying a raw role
+          # mention) must not ping the channel. parse:["users"] keeps the
+          # explicit maintainer <@id> ping working while suppressing
+          # everyone/here/role parsing — same guard as notify-external-pr.yml.
           curl -fsS -H "Content-Type: application/json" \
-            -d "$(jq -Rn --arg c "$MSG" '{content:$c}')" "$DISCORD_WEBHOOK"
+            -d "$(jq -Rn --arg c "$MSG" '{content:$c, allowed_mentions:{parse:["users"]}}')" "$DISCORD_WEBHOOK"
