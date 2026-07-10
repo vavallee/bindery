@@ -132,34 +132,114 @@ export function renderTemplate(
     .join(SEP)
 }
 
-// Group 1: token name. Group 2 (optional): default after a colon, used when the
-// token renders empty ("{Genre:Unsorted}"). Mirrors templateTokenRe in renamer.go.
-const SEGMENT_TOKEN_RE = /\{(\w+)(?::([^}]*))?\}/g
+// Mirrors templateGroupRe in renamer.go: one {...} group; renderGroup parses
+// the content (simple token, token:default, token:width, or a conditional
+// group with literal text alongside the token(s), #1127).
+const SEGMENT_GROUP_RE = /\{([^{}]*)\}/g
+const SIMPLE_GROUP_RE = /^(\w+)(?::([^{}]*))?$/
+const GROUP_WORD_RE = /(\w+)(:\d{1,2})?/g
 
-// renderSegment mirrors renamer.go renderSegment: substitute "{Token}"
-// placeholders in a single path segment and, when the leading token(s) render
-// empty, drop the separator glue that would otherwise dangle before the first
-// real value ("{SeriesNumber} - {Title}" with no series number → "Title", not
+// sanitizeInline mirrors renamer.go sanitizeInline: neutralise path
+// separators in a conditional-group literal without trimming — its
+// whitespace is meaningful glue ("{ - Series}").
+function sanitizeInline(s: string): string {
+  let cleaned = ''
+  for (const ch of s) {
+    switch (ch) {
+      case '/':
+      case '\\':
+      case ':':
+        cleaned += '-'
+        break
+      case '*':
+      case '?':
+      case '"':
+      case '<':
+      case '>':
+      case '|':
+        break
+      default:
+        cleaned += ch
+    }
+  }
+  return cleaned
+}
+
+// parseWidth mirrors renamer.go parseWidth: a ":modifier" of 1–2 digits
+// (1–99) is a zero-pad width; longer digit strings keep the historical
+// default-text meaning.
+function parseWidth(mod: string): number | null {
+  if (!/^\d{1,2}$/.test(mod)) return null
+  const w = parseInt(mod, 10)
+  return w > 0 ? w : null
+}
+
+// zeroPad mirrors renamer.go zeroPad: left-pad an all-digit value.
+function zeroPad(v: string, width: number): string {
+  if (v === '' || v.length >= width || !/^\d+$/.test(v)) return v
+  return v.padStart(width, '0')
+}
+
+// renderGroup mirrors renamer.go renderGroup. Returns null when the group
+// references no known token (caller keeps it verbatim).
+function renderGroup(content: string, values: Record<string, string>): string | null {
+  const simple = SIMPLE_GROUP_RE.exec(content)
+  if (simple) {
+    let v = values[simple[1]]
+    if (v === undefined) return null
+    const mod = simple[2]
+    if (mod !== undefined && mod !== '') {
+      const w = parseWidth(mod)
+      if (w !== null) {
+        v = zeroPad(v, w)
+      } else if (v === '') {
+        v = sanitizePath(mod)
+      }
+    }
+    return v
+  }
+
+  let anyKnown = false
+  let anyValue = false
+  let out = ''
+  let prev = 0
+  GROUP_WORD_RE.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = GROUP_WORD_RE.exec(content)) !== null) {
+    let v = values[m[1]]
+    if (v === undefined) continue // non-keyword word run: stays literal
+    anyKnown = true
+    out += sanitizeInline(content.slice(prev, m.index))
+    if (m[2]) {
+      const w = parseWidth(m[2].slice(1))
+      if (w !== null) v = zeroPad(v, w)
+    }
+    if (v !== '') anyValue = true
+    out += v
+    prev = m.index + m[0].length
+  }
+  if (!anyKnown) return null
+  if (!anyValue) return ''
+  return out + sanitizeInline(content.slice(prev))
+}
+
+// renderSegment mirrors renamer.go renderSegment: substitute "{...}" groups
+// in a single path segment and, when the leading group(s) render empty, drop
+// the separator glue that would otherwise dangle before the first real value
+// ("{SeriesNumber} - {Title}" with no series number → "Title", not
 // " - Title"). Only leading glue is collapsed; interior/trailing glue stays so
 // "{Title} ({Year})" → "Title ()" and "{Title}.{ext}" → "Title." are preserved.
-// A "{Token:default}" empty token renders its default instead. Unknown tokens
-// are kept verbatim.
+// Groups with no known token are kept verbatim.
 function renderSegment(seg: string, values: Record<string, string>): string {
   const lits: string[] = []
   const vals: string[] = []
   let prev = 0
-  SEGMENT_TOKEN_RE.lastIndex = 0
+  SEGMENT_GROUP_RE.lastIndex = 0
   let m: RegExpExecArray | null
-  while ((m = SEGMENT_TOKEN_RE.exec(seg)) !== null) {
+  while ((m = SEGMENT_GROUP_RE.exec(seg)) !== null) {
     lits.push(seg.slice(prev, m.index))
-    const v = values[m[1]]
-    if (v === undefined) {
-      vals.push(m[0]) // unknown token: keep "{Token}" (or "{Token:def}") verbatim
-    } else if (v === '' && m[2] !== undefined) {
-      vals.push(sanitizePath(m[2])) // empty known token with a default
-    } else {
-      vals.push(v)
-    }
+    const rendered = renderGroup(m[1], values)
+    vals.push(rendered === null ? m[0] : rendered)
     prev = m.index + m[0].length
   }
   if (vals.length === 0) return seg.trim()
@@ -191,17 +271,30 @@ export interface ValidationResult {
 const TOKEN_RE = /\{[^{}]*\}/g
 const TRAVERSAL_RE = /(^|\/)\.\.?($|\/)/
 
-// validateTemplate flags any {Foo} not in the supported set, an empty template,
-// and explicit path-traversal segments. These mirror the failure modes the
-// backend would reject (ensureContained) or that produce surprising output.
+// groupIsKnown reports whether one {...} group references at least one
+// supported token — a simple "{Token}"/"{Token:mod}" with a known keyword, or
+// a conditional group (#1127) whose literal text sits alongside a known
+// keyword. Mirrors renderGroup's known/verbatim decision.
+function groupIsKnown(content: string): boolean {
+  const simple = SIMPLE_GROUP_RE.exec(content)
+  if (simple) return SUPPORTED.has(`{${simple[1]}}`)
+  GROUP_WORD_RE.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = GROUP_WORD_RE.exec(content)) !== null) {
+    if (SUPPORTED.has(`{${m[1]}}`)) return true
+  }
+  return false
+}
+
+// validateTemplate flags any {...} group that references no supported token,
+// an empty template, and explicit path-traversal segments. These mirror the
+// failure modes the backend would reject (ensureContained) or that produce
+// surprising output (a verbatim "{Titel}" in the folder name).
 export function validateTemplate(template: string): ValidationResult {
   const matches = template.match(TOKEN_RE) ?? []
   const unknown: string[] = []
   for (const m of matches) {
-    // Strip an optional ":default" ("{Genre:Unsorted}" → "{Genre}") before the
-    // supported-token check; report the original token text if still unknown.
-    const norm = m.replace(/^(\{\w+):[^}]*\}$/, '$1}')
-    if (!SUPPORTED.has(norm) && !unknown.includes(m)) unknown.push(m)
+    if (!groupIsKnown(m.slice(1, -1)) && !unknown.includes(m)) unknown.push(m)
   }
   return {
     unknownTokens: unknown,

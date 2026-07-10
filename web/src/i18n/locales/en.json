@@ -603,7 +603,7 @@
         "tokenYear": "{Year} — release year (blank if unknown)",
         "tokenAsin": "{ASIN} — Audible ASIN (blank if none)",
         "tokenSeries": "{Series} — series title (blank for standalone)",
-        "tokenSeriesNumber": "{SeriesNumber} — position in series",
+        "tokenSeriesNumber": "{SeriesNumber} — position in series. {SeriesNumber:2} zero-pads to 2 digits; literal text inside braces ({Title}{ - Series}) renders only when the token has a value.",
         "tokenGenre": "{Genre} — primary genre, best with Hardcover enabled. Use {Genre:Unsorted} to set a fallback folder.",
         "tokenLang": "{Lang} — book language code, e.g. en (blank if unknown)",
         "tokenExt": "{ext} — file extension, no leading dot (ebook only)",

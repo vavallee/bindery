@@ -82,6 +82,40 @@ describe('namingTemplate renderer (renamer.go mirror)', () => {
     ).toBe('Sample Book ()')
   })
 
+  // #1127 conditional groups + width modifiers — every case here is pinned
+  // identically in renamer_preview_test.go. Keep the two in lockstep.
+  it('renders conditional groups with literal text alongside the token', () => {
+    expect(renderTemplate('{Title}{ - Series}.{ext}', 'book')).toBe('Sample Book - Demo Series.epub')
+    const noSeries = { ...SAMPLE_BOOK, series: '', seriesNumber: '' }
+    expect(renderTemplate('{Title}{ - Series}.{ext}', 'book', noSeries)).toBe('Sample Book.epub')
+    // Conditional-only segment is dropped entirely when its tokens are empty.
+    expect(renderTemplate('{Vol SeriesNumber}/{Title}.{ext}', 'book', noSeries)).toBe('Sample Book.epub')
+    // Non-keyword words inside the group stay literal.
+    expect(renderTemplate('{Vol SeriesNumber}', 'book')).toBe('Vol 2')
+    // A group with no known token stays verbatim.
+    expect(renderTemplate('{ - Titel}', 'book')).toBe('{ - Titel}')
+  })
+
+  it('zero-pads numeric values via the :N width modifier', () => {
+    expect(renderTemplate('{SeriesNumber:2} - {Title}', 'book')).toBe('02 - Sample Book')
+    expect(renderTemplate('{Title}{ #SeriesNumber:3}', 'book')).toBe('Sample Book #002')
+    // Width on a non-numeric value is a no-op.
+    expect(renderTemplate('{Series:2}', 'book')).toBe('Demo Series')
+    // Width does not invent a value for an empty token.
+    const noSeries = { ...SAMPLE_BOOK, series: '', seriesNumber: '' }
+    expect(renderTemplate('{SeriesNumber:2} - {Title}', 'book', noSeries)).toBe('Sample Book')
+    // 3+ digit modifiers keep the historical default-text meaning.
+    const noYear = { ...SAMPLE_BOOK, year: '' }
+    expect(renderTemplate('{Year:2024}', 'book', noYear)).toBe('2024')
+    expect(renderTemplate('{Year:20}', 'book', noYear)).toBe('')
+  })
+
+  it('accepts conditional groups and widths in validation', () => {
+    expect(validateTemplate('{Title}{ - Series}.{ext}').unknownTokens).toEqual([])
+    expect(validateTemplate('{SeriesNumber:2} - {Title}').unknownTokens).toEqual([])
+    expect(validateTemplate('{ - Titel}').unknownTokens).toEqual(['{ - Titel}'])
+  })
+
   it('renders the {Genre} token and {Token:default} fallback', () => {
     expect(renderTemplate('{Genre}/{Title}.{ext}', 'book')).toBe('Fantasy/Sample Book.epub')
     const noGenre = { ...SAMPLE_BOOK, genre: '' }

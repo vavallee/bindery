@@ -58,11 +58,80 @@ func TestRenamerPreviewSampleDriftGuard(t *testing.T) {
 			ext:      "", // AudiobookDestDir passes ext=""
 			want:     "Sample Book.",
 		},
+		// #1127 conditional groups + width modifiers. Every case here is
+		// mirrored in NamingTemplateField.test.tsx — keep them in lockstep.
+		{
+			name:     "conditional group renders literal with value",
+			template: "{Title}{ - Series}.{ext}",
+			ext:      "epub",
+			want:     "Sample Book - Demo Series.epub",
+		},
+		{
+			name:     "width modifier zero-pads a numeric value",
+			template: "{SeriesNumber:2} - {Title}",
+			ext:      "epub",
+			want:     "02 - Sample Book",
+		},
+		{
+			name:     "width modifier inside a conditional group",
+			template: "{Title}{ #SeriesNumber:3}",
+			ext:      "epub",
+			want:     "Sample Book #002",
+		},
+		{
+			name:     "width on a non-numeric value is a no-op",
+			template: "{Series:2}",
+			ext:      "epub",
+			want:     "Demo Series",
+		},
+		{
+			name:     "non-keyword words in a conditional group stay literal",
+			template: "{Vol SeriesNumber}",
+			ext:      "epub",
+			want:     "Vol 2",
+		},
+		{
+			name:     "group with no known token stays verbatim",
+			template: "{ - Titel}",
+			ext:      "epub",
+			want:     "{ - Titel}",
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := r.apply(tc.template, author, book, series, seriesNumber, tc.ext)
+			if got != tc.want {
+				t.Errorf("apply(%q) = %q, want %q (TS preview mirror must match)", tc.template, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRenamerConditionalGroupCollapse pins the empty-token side of #1127:
+// a conditional group's literal text collapses with its token(s), and 3+
+// digit modifiers keep their historical default-text meaning. Mirrored in
+// NamingTemplateField.test.tsx.
+func TestRenamerConditionalGroupCollapse(t *testing.T) {
+	author := &models.Author{Name: "Jane Doe"}
+	book := &models.Book{Title: "Sample Book"} // no series, no year, no genre
+
+	r := NewRenamer("")
+
+	cases := []struct {
+		name     string
+		template string
+		want     string
+	}{
+		{"conditional group collapses when empty", "{Title}{ - Series}.{ext}", "Sample Book.epub"},
+		{"conditional-only segment is dropped", "{Vol SeriesNumber}/{Title}.{ext}", "Sample Book.epub"},
+		{"width does not invent a value", "{SeriesNumber:2} - {Title}", "Sample Book"},
+		{"3+ digit modifier stays a default", "{Year:2024}", "2024"},
+		{"1-2 digit modifier is a width, not a default", "{Year:20}", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := r.apply(tc.template, author, book, "", "", "epub")
 			if got != tc.want {
 				t.Errorf("apply(%q) = %q, want %q (TS preview mirror must match)", tc.template, got, tc.want)
 			}

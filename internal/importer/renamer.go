@@ -13,13 +13,21 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
-// templateTokenRe matches a "{Token}" placeholder, optionally with a default
-// value after a colon ("{Genre:Unsorted}"). The default is substituted when the
-// token renders empty, mirroring Calibre's ifempty(...) so a top-level taxonomy
-// folder (e.g. genre) can route un-tagged books to a fixed folder instead of
-// collapsing the path segment. Group 1 is the token name; group 2 (optional) is
-// the default text.
-var templateTokenRe = regexp.MustCompile(`\{(\w+)(?::([^}]*))?\}`)
+// templateGroupRe matches one "{...}" group. The content is parsed by
+// renderGroup: either the classic simple form — a bare "{Token}", optionally
+// with a default after a colon ("{Genre:Unsorted}") or a zero-pad width
+// ("{SeriesNumber:2}") — or a conditional group (#1127) where literal text
+// sits alongside the token(s) inside the braces ("{Title}{ - Series}") and
+// the whole group collapses to "" when every token in it is empty.
+var templateGroupRe = regexp.MustCompile(`\{([^{}]*)\}`)
+
+// simpleGroupRe matches the classic single-token group content: a keyword
+// with an optional ":modifier" (default text or zero-pad width).
+var simpleGroupRe = regexp.MustCompile(`^(\w+)(?::([^{}]*))?$`)
+
+// groupWordRe finds keyword candidates inside a conditional group: a word
+// run with an optional ":N" width. Non-keyword word runs stay literal.
+var groupWordRe = regexp.MustCompile(`(\w+)(:\d{1,2})?`)
 
 const defaultNamingTemplate = "{Author}/{Title} ({Year})/{Title} - {Author}.{ext}"
 const defaultAudiobookTemplate = "{Author}/{Title} ({Year})"
@@ -131,8 +139,8 @@ func (r *Renamer) apply(template string, author *models.Author, book *models.Boo
 	return strings.Join(kept, "/")
 }
 
-// renderSegment substitutes "{Token}" placeholders in a single path segment.
-// When the leading token(s) of a segment resolve to empty, the separator glue
+// renderSegment substitutes "{...}" groups in a single path segment.
+// When the leading group(s) of a segment resolve to empty, the separator glue
 // that would dangle in front of the first real value is dropped, so a template
 // like "{SeriesNumber} - {Title}" with no series number yields "Title" rather
 // than " - Title" (issue: Discord report, Jonathan Stroud "The Hollow Boy").
@@ -142,29 +150,26 @@ func (r *Renamer) apply(template string, author *models.Author, book *models.Boo
 // "{Title}.{ext}" → "Title." (audiobook folders) is preserved — those are
 // pinned by the preview drift guard and mirrored client-side.
 //
-// Unknown tokens are left verbatim (e.g. a "{Titel}" typo stays "{Titel}"),
-// matching the previous literal-passthrough behaviour.
+// Groups that reference no known token are left verbatim (e.g. a "{Titel}"
+// typo stays "{Titel}"), matching the previous literal-passthrough behaviour.
 func renderSegment(seg string, values map[string]string) string {
-	locs := templateTokenRe.FindAllStringSubmatchIndex(seg, -1)
+	locs := templateGroupRe.FindAllStringSubmatchIndex(seg, -1)
 	if len(locs) == 0 {
 		return strings.TrimSpace(seg)
 	}
 
-	// Split the segment into literals (len n+1) interleaved with token values
+	// Split the segment into literals (len n+1) interleaved with group values
 	// (len n): lits[0] vals[0] lits[1] vals[1] ... vals[n-1] lits[n].
 	lits := make([]string, 0, len(locs)+1)
 	vals := make([]string, 0, len(locs))
 	prev := 0
 	for _, m := range locs {
 		start, end := m[0], m[1]
-		name := seg[m[2]:m[3]]
+		content := seg[m[2]:m[3]]
 		lits = append(lits, seg[prev:start])
-		v, ok := values[name]
-		switch {
-		case !ok:
-			v = seg[start:end] // unknown token: keep "{Token}" (or "{Token:def}") verbatim
-		case v == "" && m[4] >= 0:
-			v = sanitizePath(seg[m[4]:m[5]]) // empty known token with a default
+		v, known := renderGroup(content, values)
+		if !known {
+			v = seg[start:end] // no known token in the group: keep it verbatim
 		}
 		vals = append(vals, v)
 		prev = end
@@ -191,6 +196,100 @@ func renderSegment(seg string, values map[string]string) string {
 	}
 	b.WriteString(lits[len(lits)-1])
 	return strings.TrimSpace(b.String())
+}
+
+// renderGroup renders the content of one "{...}" group. known=false means
+// the group references no known token and the caller keeps it verbatim.
+//
+// Two forms (#1127):
+//
+//   - Simple: "Token", "Token:default", "Token:N". A ":modifier" of 1–2
+//     digits is a zero-pad width applied to an all-digit value
+//     ("{SeriesNumber:2}" → "02"); anything else is the classic default text
+//     substituted when the token is empty ("{Genre:Unsorted}").
+//   - Conditional: literal text alongside the token(s) inside the braces
+//     ("{ - Series}", "{Vol SeriesNumber}"). Literals render only when at
+//     least one token in the group has a value; when every token is empty
+//     the whole group collapses to "". Widths are allowed after a token
+//     (":N"); text defaults are not supported in conditional groups.
+func renderGroup(content string, values map[string]string) (rendered string, known bool) {
+	if m := simpleGroupRe.FindStringSubmatch(content); m != nil {
+		v, ok := values[m[1]]
+		if !ok {
+			return "", false
+		}
+		if mod := m[2]; mod != "" {
+			if w, isWidth := parseWidth(mod); isWidth {
+				v = zeroPad(v, w)
+			} else if v == "" {
+				v = sanitizePath(mod)
+			}
+		}
+		return v, true
+	}
+
+	anyKnown, anyValue := false, false
+	var b strings.Builder
+	prev := 0
+	for _, m := range groupWordRe.FindAllStringSubmatchIndex(content, -1) {
+		word := content[m[2]:m[3]]
+		v, ok := values[word]
+		if !ok {
+			continue // non-keyword word run: stays part of the literal text
+		}
+		anyKnown = true
+		b.WriteString(sanitizeInline(content[prev:m[0]]))
+		if m[4] >= 0 { // ":N" width attached to this token
+			if w, isWidth := parseWidth(content[m[4]+1 : m[5]]); isWidth {
+				v = zeroPad(v, w)
+			}
+		}
+		if v != "" {
+			anyValue = true
+		}
+		b.WriteString(v)
+		prev = m[1]
+	}
+	if !anyKnown {
+		return "", false
+	}
+	if !anyValue {
+		return "", true
+	}
+	b.WriteString(sanitizeInline(content[prev:]))
+	return b.String(), true
+}
+
+// parseWidth reports whether a ":modifier" is a zero-pad width: 1–2 digits
+// (1–99). Longer all-digit strings (e.g. "{Year:2024}") keep their historical
+// meaning as default text.
+func parseWidth(mod string) (int, bool) {
+	if len(mod) == 0 || len(mod) > 2 {
+		return 0, false
+	}
+	w := 0
+	for i := 0; i < len(mod); i++ {
+		if mod[i] < '0' || mod[i] > '9' {
+			return 0, false
+		}
+		w = w*10 + int(mod[i]-'0')
+	}
+	return w, w > 0
+}
+
+// zeroPad left-pads an all-digit value with zeros to the given width so
+// alphabetic filename sorts order "02" before "10". Non-numeric and empty
+// values are returned unchanged — padding "Demo Series" would be nonsense.
+func zeroPad(v string, width int) string {
+	if v == "" || len(v) >= width {
+		return v
+	}
+	for i := 0; i < len(v); i++ {
+		if v[i] < '0' || v[i] > '9' {
+			return v
+		}
+	}
+	return strings.Repeat("0", width-len(v)) + v
 }
 
 // firstGenre returns the primary genre for the {Genre} token: the first entry
@@ -857,12 +956,33 @@ func CopyDirCtx(ctx context.Context, src, dst string) error {
 // any uniqueness suffix the importer appends.
 const maxPathComponentLen = 200
 
+// pathCharReplacer neutralises characters that are problematic in file
+// paths. Shared by sanitizePath (full field sanitisation) and sanitizeInline
+// (conditional-group literals, #1127).
+var pathCharReplacer = strings.NewReplacer(
+	"/", "-", "\\", "-", ":", "-", "*", "", "?", "",
+	"\"", "", "<", "", ">", "", "|", "",
+)
+
+// sanitizeInline neutralises path separators and control characters in a
+// conditional-group literal without trimming or segment-splitting — the
+// literal's surrounding whitespace is meaningful glue ("{ - Series}").
+// Replacing the separators is what keeps a group literal from injecting an
+// extra path level or a traversal segment after the template has been split
+// on "/".
+func sanitizeInline(s string) string {
+	cleaned := pathCharReplacer.Replace(s)
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, cleaned)
+}
+
 func sanitizePath(s string) string {
 	// Remove characters that are problematic in file paths
-	replacer := strings.NewReplacer(
-		"/", "-", "\\", "-", ":", "-", "*", "", "?", "",
-		"\"", "", "<", "", ">", "", "|", "",
-	)
+	replacer := pathCharReplacer
 	cleaned := strings.TrimSpace(replacer.Replace(s))
 	// Drop control characters, including the NUL byte: a NUL makes the os.*
 	// calls fail with EINVAL (a hard import failure driven by attacker-
