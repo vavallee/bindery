@@ -273,14 +273,16 @@ func (r *SeriesRepo) GetByIDForUser(ctx context.Context, id, userID int64) (*mod
 	// Fetch series books with minimal book data, scoped to the caller's
 	// visible books when userID != 0.
 	scope, args := QueryScopeForIncludingNull("b.owner_user_id", "WHERE sb.series_id = ?", userID, id)
-	bookRows, err := r.db.QueryContext(ctx, `
+	//nolint:gosec // scope is a fixed predicate from QueryScopeForIncludingNull; userID and id are bound via args, never concatenated into the SQL
+	q := `
 		SELECT sb.series_id, sb.book_id, sb.position_in_series, sb.primary_series,
 		       b.id, b.foreign_id, b.author_id, b.title, b.sort_title, b.status,
 		       b.monitored, b.image_url, b.created_at, b.updated_at
 		FROM series_books sb
 		JOIN books b ON b.id = sb.book_id
-		`+scope+`
-		ORDER BY sb.position_in_series`, args...)
+		` + scope + `
+		ORDER BY sb.position_in_series`
+	bookRows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return &s, nil
 	}
