@@ -7,6 +7,9 @@ export interface ImportList {
   url: string
   apiKey: string
   apiKeyConfigured: boolean
+  // Provider-side account the list belongs to (#1489): the Hardcover username
+  // reported by the token the list was loaded with. Empty for legacy rows.
+  account: string
   rootFolderId?: number | null
   qualityProfileId?: number | null
   monitorNew: boolean
@@ -29,6 +32,14 @@ export interface HardcoverList {
   name: string
   slug: string
   booksCount: number
+}
+
+// Envelope for GET /importlist/hardcover/lists (#1489): the lists plus the
+// username of the account the supplied token belongs to, so the picker can
+// keep two accounts' identically-slugged shelves apart.
+export interface HardcoverListsResponse {
+  account: string
+  lists: HardcoverList[]
 }
 
 // GoodreadsRow mirrors a parsed Goodreads CSV row returned in a preview.
@@ -78,7 +89,7 @@ export const importListsApi = {
   deleteImportList: (id: number) => request<void>(`/importlist/${id}`, { method: 'DELETE' }),
   syncImportList: (id: number) => request<{ status: string }>(`/importlist/${id}/sync`, { method: 'POST' }),
   hardcoverLists: (token?: string) =>
-    request<HardcoverList[]>('/importlist/hardcover/lists', {
+    request<HardcoverListsResponse>('/importlist/hardcover/lists', {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     }),
   uploadMigrate: <T>(endpoint: 'csv' | 'readarr', body: FormData) =>

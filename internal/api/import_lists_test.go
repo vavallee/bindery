@@ -501,10 +501,15 @@ func TestHardcoverListsHeaderOverrideDoesNotRequireAdmin(t *testing.T) {
 }
 
 type fakeHardcoverUserListClient struct {
-	lists []hardcover.HCList
-	err   error
+	lists   []hardcover.HCList
+	account string
+	err     error
 }
 
 func (f fakeHardcoverUserListClient) GetUserLists(context.Context) ([]hardcover.HCList, error) {
 	return f.lists, f.err
+}
+
+func (f fakeHardcoverUserListClient) GetUsername(context.Context) (string, error) {
+	return f.account, nil
 }

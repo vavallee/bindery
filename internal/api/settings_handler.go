@@ -84,6 +84,14 @@ const SettingSearchInterval = "search.interval"
 // the literal in sync with this constant.
 const SettingImportAudiobookFlattenMultiDisc = "import.audiobook.flatten_multi_disc"
 
+// SettingImportMode is the placement mode for completed downloads. Recognised
+// values are "auto" (empty/unset behaves identically — hardlink when the source
+// and destination share a filesystem, else copy; preserves seeding), "move"
+// (relocate the source, breaking seeding), "copy", "hardlink", and "external"
+// (hand off to a sibling tool). The importer reads this key as a string literal
+// (configuredImportMode) to avoid an import cycle; keep the literal in sync.
+const SettingImportMode = "import.mode"
+
 type SettingsHandler struct {
 	settings *db.SettingsRepo
 }
@@ -368,6 +376,19 @@ func validateSettingValue(key, value string) error {
 		}
 		if value != "copy" && value != "hardlink" {
 			return fmt.Errorf("import.drop_link_mode %q is not one of: copy, hardlink", value)
+		}
+	case SettingImportMode:
+		// Empty = auto (same as "auto"); a typo must fail loudly here rather
+		// than silently fall through to auto at import time, where the operator
+		// would think Move/External was in effect.
+		if value == "" {
+			return nil
+		}
+		switch value {
+		case "auto", "move", "copy", "hardlink", "external":
+			return nil
+		default:
+			return fmt.Errorf("import.mode %q is not one of: auto, move, copy, hardlink, external", value)
 		}
 	case SettingCalibreMode:
 		// Canonical values only. An empty string falls through to the

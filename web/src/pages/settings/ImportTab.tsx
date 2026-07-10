@@ -476,6 +476,7 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
   const { t } = useTranslation()
   const [lists, setLists] = useState<ImportList[]>([])
   const [hcLists, setHcLists] = useState<HardcoverList[]>([])
+  const [hcAccount, setHcAccount] = useState('')
   const [loadingLists, setLoadingLists] = useState(true)
   const [pickerToken, setPickerToken] = useState('')
   const [activePickerToken, setActivePickerToken] = useState('')
@@ -495,9 +496,12 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
       setError(err instanceof Error ? err.message : 'Failed to load saved Hardcover lists')
     }
     try {
-      setHcLists(await api.hardcoverLists(token || undefined))
+      const { account, lists: remote } = await api.hardcoverLists(token || undefined)
+      setHcLists(remote)
+      setHcAccount(account)
     } catch (err) {
       setHcLists([])
+      setHcAccount('')
       setError(err instanceof Error ? err.message : 'Failed to load Hardcover lists')
     } finally {
       setLoadingLists(false)
@@ -548,6 +552,7 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
         type: 'hardcover',
         url: list.slug,
         apiKey: tokenOverride,
+        account: hcAccount,
         enabled: Boolean(tokenOverride),
         monitorNew: true,
         autoAdd: true,
@@ -616,16 +621,25 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
     }
   }
 
-  const localsBySlug = new Map<string, ImportList[]>()
-  for (const il of lists) {
-    localsBySlug.set(il.url, [...(localsBySlug.get(il.url) ?? []), il])
+  // List identity is (slug, account) — two Hardcover accounts share built-in
+  // shelf slugs, so slug-only matching folded a second account's Want to Read
+  // into the first one's row (#1489). Legacy rows (empty account) match only
+  // in the saved-token view, where they were originally created.
+  const viewingSavedToken = activePickerToken.trim() === ''
+  const matchedLocalIds = new Set<number>()
+  const accountOf = (il: ImportList) => il.account ?? ''
+  const localsFor = (slug: string): ImportList[] => {
+    const exact = lists.filter(il => il.url === slug && accountOf(il) === hcAccount)
+    if (exact.length > 0) return exact
+    if (viewingSavedToken) return lists.filter(il => il.url === slug && accountOf(il) === '')
+    return []
   }
-  const remoteSlugs = new Set(hcLists.map(l => l.slug))
   const rows: HardcoverImportListRow[] = []
   for (const list of hcLists) {
-    const locals = localsBySlug.get(list.slug)
-    if (locals?.length) {
+    const locals = localsFor(list.slug)
+    if (locals.length) {
       for (const il of locals) {
+        matchedLocalIds.add(il.id)
         rows.push({ slug: il.url, name: il.name, booksCount: list.booksCount, remote: list, local: il, stale: false })
       }
       continue
@@ -633,8 +647,12 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
     rows.push({ slug: list.slug, name: list.name, booksCount: list.booksCount, remote: list, stale: false })
   }
   for (const il of lists) {
-    if (!remoteSlugs.has(il.url)) {
-      rows.push({ slug: il.url, name: il.name, booksCount: 0, local: il, stale: true })
+    if (!matchedLocalIds.has(il.id)) {
+      // Stale = this row belongs to the CURRENT view's account context but its
+      // slug no longer exists remotely. Rows saved from a different account
+      // are healthy — they just aren't part of the lists being browsed.
+      const inCurrentView = accountOf(il) === hcAccount || (viewingSavedToken && accountOf(il) === '')
+      rows.push({ slug: il.url, name: il.name, booksCount: 0, local: il, stale: inCurrentView })
     }
   }
 
@@ -702,6 +720,7 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
                     <span className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-medium">{row.name}</span>
                       <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">{row.slug}</span>
+                      {(row.local?.account || (!row.local && hcAccount)) && <span className="text-[10px] px-1.5 py-0.5 bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-400 rounded">@{row.local?.account || hcAccount}</span>}
                       {row.stale && <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400 rounded">{t('settings.import.hardcoverSavedOnly', 'Saved only')}</span>}
                       {il && <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">{il.apiKeyConfigured ? t('settings.import.hardcoverOverrideConfigured', 'Override token') : t('settings.import.hardcoverGlobalToken', 'Global token')}</span>}
                     </span>

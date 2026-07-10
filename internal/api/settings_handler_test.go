@@ -562,6 +562,25 @@ func TestValidateSettingValue_SearchInterval(t *testing.T) {
 	}
 }
 
+func TestValidateSettingValue_ImportMode(t *testing.T) {
+	// Empty = auto (same as the explicit "auto"), accepted.
+	if err := validateSettingValue(SettingImportMode, ""); err != nil {
+		t.Errorf("empty should be accepted (auto): %v", err)
+	}
+	// All recognised modes, including the explicit "auto" the UI now writes for
+	// the default (#1444).
+	for _, v := range []string{"auto", "move", "copy", "hardlink", "external"} {
+		if err := validateSettingValue(SettingImportMode, v); err != nil {
+			t.Errorf("%q should be accepted: %v", v, err)
+		}
+	}
+	// A typo must fail loudly rather than silently fall through to auto at
+	// import time, where the operator would think Move/External was in effect.
+	if err := validateSettingValue(SettingImportMode, "moove"); err == nil {
+		t.Error("'moove' should be rejected (not a valid import mode)")
+	}
+}
+
 func mustJSON(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
