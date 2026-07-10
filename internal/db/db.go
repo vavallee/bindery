@@ -623,21 +623,7 @@ func parseMigration(content string) (statements []string, togglesForeignKeys boo
 	}
 	sqlStr = strings.Replace(sqlStr, "-- +migrate Up", "", 1)
 
-	for _, stmt := range strings.Split(sqlStr, ";") {
-		// Strip comment-only lines
-		lines := strings.Split(stmt, "\n")
-		var cleaned []string
-		for _, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "" || strings.HasPrefix(trimmed, "--") {
-				continue
-			}
-			cleaned = append(cleaned, line)
-		}
-		stmt = strings.TrimSpace(strings.Join(cleaned, "\n"))
-		if stmt == "" {
-			continue
-		}
+	for _, stmt := range splitSQLStatements(sqlStr) {
 		// PRAGMA foreign_keys is a no-op inside a transaction; pull it out of
 		// the transactional body and signal the caller to handle it.
 		if isForeignKeysPragma(stmt) {
@@ -647,6 +633,77 @@ func parseMigration(content string) (statements []string, togglesForeignKeys boo
 		statements = append(statements, stmt)
 	}
 	return statements, togglesForeignKeys
+}
+
+// splitSQLStatements splits SQL text on ';' boundaries while respecting `--`
+// line comments, `/* */` block comments, and single-quoted string literals
+// (including the '' escape). A ';' inside any of those no longer terminates a
+// statement — the historical "semicolon gotcha" (#1465) where a semicolon in a
+// migration comment split the comment mid-line and glued its tail onto the
+// next statement, aborting boot. Comment text is dropped from the returned
+// statements; string literals are preserved verbatim.
+//
+// Known limitation: BEGIN...END trigger bodies still can't be expressed,
+// because the ';' terminators inside the body split it. No migration uses
+// triggers today; if one ever does, this splitter needs a BEGIN/END depth
+// counter.
+func splitSQLStatements(sqlStr string) []string {
+	var out []string
+	var b strings.Builder
+	i, n := 0, len(sqlStr)
+	for i < n {
+		c := sqlStr[i]
+		switch {
+		case c == '-' && i+1 < n && sqlStr[i+1] == '-':
+			// Line comment: skip to (not past) the newline so statements keep
+			// their line separation.
+			for i < n && sqlStr[i] != '\n' {
+				i++
+			}
+		case c == '/' && i+1 < n && sqlStr[i+1] == '*':
+			// Block comment: skip past the closing */ (or to EOF if unclosed).
+			i += 2
+			for i < n {
+				if sqlStr[i] == '*' && i+1 < n && sqlStr[i+1] == '/' {
+					i += 2
+					break
+				}
+				i++
+			}
+		case c == '\'':
+			// String literal: copy verbatim through the closing quote,
+			// honouring the '' escape.
+			b.WriteByte(c)
+			i++
+			for i < n {
+				b.WriteByte(sqlStr[i])
+				if sqlStr[i] == '\'' {
+					if i+1 < n && sqlStr[i+1] == '\'' {
+						i++
+						b.WriteByte(sqlStr[i])
+						i++
+						continue
+					}
+					i++
+					break
+				}
+				i++
+			}
+		case c == ';':
+			if s := strings.TrimSpace(b.String()); s != "" {
+				out = append(out, s)
+			}
+			b.Reset()
+			i++
+		default:
+			b.WriteByte(c)
+			i++
+		}
+	}
+	if s := strings.TrimSpace(b.String()); s != "" {
+		out = append(out, s)
+	}
+	return out
 }
 
 // isForeignKeysPragma reports whether stmt is a bare `PRAGMA foreign_keys=...`
