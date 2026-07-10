@@ -11,12 +11,20 @@ import (
 	"github.com/vavallee/bindery/internal/importer"
 )
 
-// fakeScanner records the context it received so the test can inspect it.
+// fakeScanner records the context it received so the test can inspect it,
+// and can simulate an in-flight scan via err.
 type fakeScanner struct {
 	called chan context.Context
+	err    error
 }
 
-func (f *fakeScanner) ScanLibrary(ctx context.Context) { f.called <- ctx }
+func (f *fakeScanner) StartScan(ctx context.Context) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.called <- ctx
+	return nil
+}
 
 func newLibraryHandler(t *testing.T) *LibraryHandler {
 	t.Helper()
@@ -51,7 +59,7 @@ func TestLibraryScan_ContextOutlivesRequest(t *testing.T) {
 	// handler returns (the 202 has been flushed to the client).
 	cancel()
 
-	// Wait for the goroutine to call ScanLibrary and deliver its context.
+	// Receive the context the handler passed to StartScan.
 	scanCtx := <-fake.called
 
 	// The scan context must still be live even though the request context was
@@ -61,6 +69,27 @@ func TestLibraryScan_ContextOutlivesRequest(t *testing.T) {
 		t.Fatal("scan context was cancelled when the request context was cancelled (issue #55 regression)")
 	default:
 		// pass — context.WithoutCancel keeps the scan alive
+	}
+}
+
+// TestLibraryScan_AlreadyRunningReturns409 is the regression test for #1460:
+// a scan request while another scan is in flight must surface 409 Conflict
+// instead of spawning a second concurrent full walk.
+func TestLibraryScan_AlreadyRunningReturns409(t *testing.T) {
+	fake := &fakeScanner{err: importer.ErrScanAlreadyRunning}
+	h := &LibraryHandler{scanner: fake}
+
+	rec := httptest.NewRecorder()
+	h.Scan(rec, httptest.NewRequest(http.MethodPost, "/library/scan", nil))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 Conflict while a scan is running, got %d", rec.Code)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("response is not valid JSON: %v", err)
+	}
+	if body["error"] == "" {
+		t.Error("expected non-empty error in response body")
 	}
 }
 
