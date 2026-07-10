@@ -549,11 +549,14 @@ func (s *Scanner) markDownloadFailed(ctx context.Context, dl *models.Download, m
 // predicate).
 //
 // sourceListIsComplete must be true only when seenSourceIDs was built from a
-// complete enumeration of the client's sources. Torrent clients return every
-// torrent, so a missing entry definitively means the source is gone. Usenet
-// history APIs are paginated (SABnzbd is capped at 50 slots here), so a missing
-// entry there could merely be an aged-out-but-healthy download — for those
-// callers this is false and only the retry-exhaustion case blocks, never the
+// complete enumeration of the client's sources. An UNFILTERED torrent listing
+// qualifies: a missing entry definitively means the source is gone. A
+// category/label-filtered or degraded listing does NOT (#1461): a torrent moved
+// to another directory/category or stripped of its label is absent from the
+// filtered view while still healthy in the client. Usenet history APIs are
+// paginated (SABnzbd is capped at 50 slots here), so a missing entry there
+// could merely be an aged-out-but-healthy download. For all such callers this
+// is false and only the retry-exhaustion case blocks, never the
 // vanished-source case.
 //
 // The download list is re-fetched here rather than reusing the caller's

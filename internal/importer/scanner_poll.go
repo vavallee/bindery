@@ -278,9 +278,13 @@ func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models
 
 	// Terminally block StateImportFailed downloads whose torrent has been
 	// removed from Transmission, or whose retry budget is spent (issue #706
-	// finding 4). sourceListIsComplete is true: GetTorrents returns every
-	// torrent, so a missing entry definitively means the source is gone.
-	s.blockStaleImportFailures(ctx, seenSourceIDs, true, func(d models.Download) bool {
+	// finding 4). sourceListIsComplete only without a Category filter: with a
+	// Category, GetTorrents filters by downloadDir/label, so a torrent that was
+	// moved to another directory or lost its label is absent from the filtered
+	// list while still healthy in the daemon — treating that as "source gone"
+	// terminally blocked a seeding download (#1461). With a filter in play only
+	// the retry-exhaustion case may block.
+	s.blockStaleImportFailures(ctx, seenSourceIDs, client.Category == "", func(d models.Download) bool {
 		return d.DownloadClientID != nil && *d.DownloadClientID == client.ID
 	})
 }
@@ -548,9 +552,13 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 
 	// Terminally block StateImportFailed downloads whose torrent has been
 	// removed from qBittorrent, or whose retry budget is spent (issue #706
-	// finding 4). sourceListIsComplete is true: GetTorrents returns every
-	// torrent, so a missing entry definitively means the source is gone.
-	s.blockStaleImportFailures(ctx, seenSourceIDs, true, func(d models.Download) bool {
+	// finding 4). sourceListIsComplete only when the unfiltered listing
+	// succeeded: seenSourceIDs then covers every torrent regardless of category,
+	// so a missing entry definitively means the source is gone. When allErr is
+	// non-nil the view degraded to the category-filtered fetches, and a healthy
+	// torrent qBittorrent holds under another category would wrongly look
+	// vanished (#1461) — only the retry-exhaustion case may block then.
+	s.blockStaleImportFailures(ctx, seenSourceIDs, allErr == nil, func(d models.Download) bool {
 		return d.DownloadClientID != nil && *d.DownloadClientID == client.ID
 	})
 }
