@@ -61,6 +61,12 @@ type Book struct {
 	// in JSON: callers identify books by id, not owner.
 	OwnerUserID int64 `json:"-"`
 
+	// LockedFields lists metadata fields the user has edited by hand
+	// (#1237, #1446) — see the BookField* constants for the canonical names.
+	// Every refresh/enrichment/merge path must check IsFieldLocked before
+	// overwriting one of these. Persisted as a JSON array (migration 062).
+	LockedFields []string `json:"lockedFields"`
+
 	Excluded bool `json:"excluded"`
 
 	// EbookFilePath and AudiobookFilePath are computed views over the book_files
@@ -84,6 +90,41 @@ type Book struct {
 	// mis-parented under a duplicate/stale author record (issue #1405).
 	// Never stored in the books table.
 	CreditedAuthorForeignIDs []string `json:"-"`
+}
+
+// Lockable book metadata fields (#1237, #1446). These are the JSON names the
+// API accepts in lockedFields and the names checked by refresh guards.
+const (
+	BookFieldTitle       = "title"
+	BookFieldDescription = "description"
+	BookFieldGenres      = "genres"
+	BookFieldLanguage    = "language"
+	BookFieldReleaseDate = "releaseDate"
+)
+
+// LockableBookFields is the closed set of field names accepted in
+// Book.LockedFields, in display order.
+var LockableBookFields = []string{
+	BookFieldTitle, BookFieldDescription, BookFieldGenres,
+	BookFieldLanguage, BookFieldReleaseDate,
+}
+
+// IsFieldLocked reports whether the named field was manually edited and must
+// not be overwritten by metadata refresh / enrichment / merge paths.
+func (b *Book) IsFieldLocked(field string) bool {
+	for _, f := range b.LockedFields {
+		if f == field {
+			return true
+		}
+	}
+	return false
+}
+
+// LockField adds the named field to LockedFields if not already present.
+func (b *Book) LockField(field string) {
+	if !b.IsFieldLocked(field) {
+		b.LockedFields = append(b.LockedFields, field)
+	}
 }
 
 // WantsEbook reports whether the ebook format is monitored for this book.

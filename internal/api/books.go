@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -411,12 +412,23 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// importer once a grab lands, and letting clients write it arbitrarily
 	// would let an API caller later trigger os.RemoveAll on that path via
 	// DELETE /book/{id}?deleteFiles=true or DELETE /book/{id}/file.
+	//
+	// Title/Description/Genres/Language/ReleaseDate are the manual metadata
+	// edits (#1237, #1446). Setting one updates the value AND locks the field
+	// against metadata refresh; LockedFields, when present, replaces the lock
+	// set wholesale so a client can also unlock fields.
 	var req struct {
-		Monitored *bool   `json:"monitored"`
-		Status    *string `json:"status"`
-		MediaType *string `json:"mediaType"`
-		ASIN      *string `json:"asin"`
-		Narrator  *string `json:"narrator"`
+		Monitored    *bool     `json:"monitored"`
+		Status       *string   `json:"status"`
+		MediaType    *string   `json:"mediaType"`
+		ASIN         *string   `json:"asin"`
+		Narrator     *string   `json:"narrator"`
+		Title        *string   `json:"title"`
+		Description  *string   `json:"description"`
+		Genres       *[]string `json:"genres"`
+		Language     *string   `json:"language"`
+		ReleaseDate  *string   `json:"releaseDate"`
+		LockedFields *[]string `json:"lockedFields"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -450,6 +462,70 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Narrator != nil {
 		book.Narrator = *req.Narrator
+	}
+
+	// Manual metadata edits (#1237, #1446): apply the value and lock the
+	// field so refresh paths leave it alone.
+	if req.Title != nil {
+		title := strings.TrimSpace(*req.Title)
+		if title == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "title must not be empty"})
+			return
+		}
+		book.Title = title
+		book.SortTitle = title
+		book.LockField(models.BookFieldTitle)
+	}
+	if req.Description != nil {
+		book.Description = *req.Description
+		book.LockField(models.BookFieldDescription)
+	}
+	if req.Genres != nil {
+		genres := make([]string, 0, len(*req.Genres))
+		for _, g := range *req.Genres {
+			if g = strings.TrimSpace(g); g != "" {
+				genres = append(genres, g)
+			}
+		}
+		book.Genres = genres
+		book.LockField(models.BookFieldGenres)
+	}
+	if req.Language != nil {
+		book.Language = strings.TrimSpace(*req.Language)
+		book.LockField(models.BookFieldLanguage)
+	}
+	if req.ReleaseDate != nil {
+		if *req.ReleaseDate == "" {
+			book.ReleaseDate = nil
+		} else {
+			rd, perr := time.Parse("2006-01-02", *req.ReleaseDate)
+			if perr != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "releaseDate must be YYYY-MM-DD or empty"})
+				return
+			}
+			book.ReleaseDate = &rd
+		}
+		book.LockField(models.BookFieldReleaseDate)
+	}
+	// An explicit lock set replaces the computed one — this is the unlock
+	// path. Validated against the closed lockable-field list.
+	if req.LockedFields != nil {
+		cleaned := make([]string, 0, len(*req.LockedFields))
+		for _, f := range *req.LockedFields {
+			valid := false
+			for _, known := range models.LockableBookFields {
+				if f == known {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("unknown locked field %q (valid: %s)", f, strings.Join(models.LockableBookFields, ", "))})
+				return
+			}
+			cleaned = append(cleaned, f)
+		}
+		book.LockedFields = cleaned
 	}
 
 	// A media-type change shifts the wanted↔imported boundary: switching an
@@ -876,6 +952,11 @@ func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
 	// Update the book with the new foreign ID and refreshed metadata.
 	// Preserve fields managed by the user or the import pipeline (status,
 	// monitored, file paths, media type, ASIN, narrator, calibre_id).
+	//
+	// A rebind is an explicit "this is the wrong record, take the new one"
+	// action, so manual field locks (#1237) are cleared: the user is asking
+	// for the new provider's metadata wholesale.
+	book.LockedFields = nil
 	book.ForeignID = req.ForeignID
 	book.MetadataProvider = req.Provider
 	if upstream.Title != "" {
@@ -1085,6 +1166,9 @@ func preserveBookStateForMetadataMap(book *models.Book, target *models.Book) {
 	audiobookFilePath := book.AudiobookFilePath
 	excluded := book.Excluded
 
+	// An explicit metadata map is a wholesale identity change, so manual
+	// field locks (#1237) are cleared — the user asked for the new record.
+	book.LockedFields = nil
 	book.ForeignID = target.ForeignID
 	book.Title = target.Title
 	book.SortTitle = firstNonEmpty(target.SortTitle, target.Title)

@@ -705,16 +705,19 @@ func (i *Importer) upsertBook(ctx context.Context, runID int64, author *models.A
 // format) and leave anything outside that scope intact so user-curated
 // metadata is preserved.
 func (i *Importer) applyBookFields(ctx context.Context, book *models.Book, cb CalibreBook) error {
-	book.Title = cb.Title
-	book.SortTitle = firstNonEmpty(cb.SortTitle, cb.Title)
-	if cb.PublishDate != nil {
+	// Locked fields (#1237): a manual edit survives Calibre re-imports.
+	if !book.IsFieldLocked(models.BookFieldTitle) {
+		book.Title = cb.Title
+		book.SortTitle = firstNonEmpty(cb.SortTitle, cb.Title)
+	}
+	if cb.PublishDate != nil && !book.IsFieldLocked(models.BookFieldReleaseDate) {
 		book.ReleaseDate = cb.PublishDate
 	}
 	if len(cb.Formats) > 0 && cb.Formats[0].AbsolutePath != "" {
 		book.FilePath = cb.Formats[0].AbsolutePath
 		book.Status = models.BookStatusImported
 	}
-	if cb.Language != "" && book.Language == "" {
+	if cb.Language != "" && book.Language == "" && !book.IsFieldLocked(models.BookFieldLanguage) {
 		book.Language = cb.Language
 	}
 	if book.MetadataProvider == "" {

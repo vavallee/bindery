@@ -1615,9 +1615,9 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool,
 			// sourcing existed. Gated to Hardcover provenance (a HardcoverForeignID
 			// means HC matched this work this fetch) so a refresh while HC is
 			// unavailable never downgrades clean genres back to OL subjects.
-			// NOTE: once a per-book genre override lands (follow-up), this must
-			// be guarded to not clobber a user-edited value.
-			if b.HardcoverForeignID != "" && len(b.Genres) > 0 && !slices.Equal(existing.Genres, b.Genres) {
+			// A user-edited genre set (#1446) is locked and never clobbered.
+			if b.HardcoverForeignID != "" && len(b.Genres) > 0 && !slices.Equal(existing.Genres, b.Genres) &&
+				!existing.IsFieldLocked(models.BookFieldGenres) {
 				existing.Genres = b.Genres
 				changed = true
 			}

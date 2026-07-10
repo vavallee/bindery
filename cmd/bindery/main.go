@@ -781,6 +781,7 @@ func main() {
 		r.Post("/author/bulk", bulkHandler.AuthorsBulk)
 		r.Get("/author/{id}", authorHandler.Get)
 		r.Put("/author/{id}", authorHandler.Update)
+		r.Put("/author/{id}/genres", authorHandler.ApplyGenres)
 		r.Delete("/author/{id}", authorHandler.Delete)
 		r.Post("/author/{id}/refresh", authorHandler.Refresh)
 		r.Get("/author/{id}/relink-upstream/candidates", authorHandler.RelinkCandidates)

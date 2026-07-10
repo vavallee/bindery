@@ -864,18 +864,21 @@ func (i *Importer) findBookByNormalizedTitle(ctx context.Context, authorID int64
 
 func (i *Importer) applyBookFields(ctx context.Context, book *models.Book, authorID int64, item NormalizedLibraryItem) error {
 	book.AuthorID = authorID
-	book.Title = strings.TrimSpace(item.Title)
-	book.SortTitle = book.Title
-	if desc := textutil.CleanDescription(item.Description); desc != "" {
+	// Locked fields (#1237): a manual edit survives ABS re-imports.
+	if !book.IsFieldLocked(models.BookFieldTitle) {
+		book.Title = strings.TrimSpace(item.Title)
+		book.SortTitle = book.Title
+	}
+	if desc := textutil.CleanDescription(item.Description); desc != "" && !book.IsFieldLocked(models.BookFieldDescription) {
 		book.Description = desc
 	}
-	if rd := parseABSDate(item.PublishedDate, item.PublishedYear); rd != nil {
+	if rd := parseABSDate(item.PublishedDate, item.PublishedYear); rd != nil && !book.IsFieldLocked(models.BookFieldReleaseDate) {
 		book.ReleaseDate = rd
 	}
-	if genres := cleanStrings(item.Genres); len(genres) > 0 {
+	if genres := cleanStrings(item.Genres); len(genres) > 0 && !book.IsFieldLocked(models.BookFieldGenres) {
 		book.Genres = genres
 	}
-	if lang := normalizeLanguage(item.Language); lang != "" {
+	if lang := normalizeLanguage(item.Language); lang != "" && !book.IsFieldLocked(models.BookFieldLanguage) {
 		book.Language = lang
 	}
 	if narrator := joinNarrators(item.Narrators); narrator != "" {

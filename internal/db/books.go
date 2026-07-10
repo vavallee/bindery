@@ -155,7 +155,8 @@ const bookColumns = `books.id, books.foreign_id, books.author_id, books.title, b
 	COALESCE(fa.path, COALESCE(books.audiobook_file_path, '')),
 	books.excluded, COALESCE(books.dedup_key, ''),
 	au.id, au.foreign_id, au.name, au.sort_name,
-	COALESCE(books.owner_user_id, 0)`
+	COALESCE(books.owner_user_id, 0),
+	COALESCE(books.locked_fields, '[]')`
 
 // bookJoins are the LEFT JOINs that attach the first_ebook and first_audiobook
 // CTE results plus the author row to the books table. Must follow the FROM
@@ -421,6 +422,15 @@ func (r *BookRepo) GetByForeignIDForUser(ctx context.Context, foreignID string, 
 	return &books[0], nil
 }
 
+// lockedOrEmpty normalises a nil LockedFields slice to an empty one so the
+// persisted JSON is always an array ("[]"), never "null".
+func lockedOrEmpty(fields []string) []string {
+	if fields == nil {
+		return []string{}
+	}
+	return fields
+}
+
 func (r *BookRepo) Create(ctx context.Context, b *models.Book) error {
 	now := time.Now().UTC()
 	genresJSON, err := json.Marshal(b.Genres)
@@ -439,18 +449,23 @@ func (r *BookRepo) Create(ctx context.Context, b *models.Book) error {
 	// write byte-identical keys for the same work.
 	b.DedupKey = indexer.CanonicalDedupKey(b.Title)
 
+	lockedJSON, err := json.Marshal(lockedOrEmpty(b.LockedFields))
+	if err != nil {
+		return fmt.Errorf("marshal book locked_fields: %w", err)
+	}
+
 	result, err := r.db.ExecContext(ctx, `
 		INSERT INTO books (foreign_id, author_id, title, sort_title, original_title, description,
 		                   image_url, release_date, genres, average_rating, ratings_count,
 		                   monitored, status, any_edition_ok, selected_edition_id,
 		                   language, media_type, narrator, duration_seconds, asin,
-		                   metadata_provider, dedup_key, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                   metadata_provider, dedup_key, locked_fields, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		b.ForeignID, b.AuthorID, b.Title, b.SortTitle, b.OriginalTitle, b.Description,
 		b.ImageURL, timeArg(b.ReleaseDate), string(genresJSON), b.AverageRating, b.RatingsCount,
 		b.Monitored, b.Status, b.AnyEditionOK, b.SelectedEditionID,
 		b.Language, mediaType, b.Narrator, b.DurationSeconds, b.ASIN,
-		b.MetadataProvider, b.DedupKey, timeValueArg(now), timeValueArg(now))
+		b.MetadataProvider, b.DedupKey, string(lockedJSON), timeValueArg(now), timeValueArg(now))
 	if err != nil {
 		return fmt.Errorf("create book: %w", err)
 	}
@@ -482,19 +497,24 @@ func (r *BookRepo) Update(ctx context.Context, b *models.Book) error {
 	// stale key after a title edit/refresh from silently breaking future binds.
 	b.DedupKey = indexer.CanonicalDedupKey(b.Title)
 
+	lockedJSON, err := json.Marshal(lockedOrEmpty(b.LockedFields))
+	if err != nil {
+		return fmt.Errorf("marshal book locked_fields: %w", err)
+	}
+
 	_, err = r.exec.ExecContext(ctx, `
 		UPDATE books SET foreign_id=?, author_id=?, title=?, sort_title=?, original_title=?, description=?, image_url=?,
 		                 release_date=?, genres=?, average_rating=?, ratings_count=?,
 		                 monitored=?, status=?, any_edition_ok=?, selected_edition_id=?,
 		                 file_path=?, language=?, media_type=?, narrator=?, duration_seconds=?, asin=?,
-		                 metadata_provider=?, dedup_key=?, last_metadata_refresh_at=?, updated_at=?,
+		                 metadata_provider=?, dedup_key=?, locked_fields=?, last_metadata_refresh_at=?, updated_at=?,
 		                 ebook_file_path=?, audiobook_file_path=?
 		WHERE id=?`,
 		b.ForeignID, b.AuthorID, b.Title, b.SortTitle, b.OriginalTitle, b.Description, b.ImageURL,
 		timeArg(b.ReleaseDate), string(genresJSON), b.AverageRating, b.RatingsCount,
 		b.Monitored, b.Status, b.AnyEditionOK, b.SelectedEditionID,
 		b.FilePath, b.Language, mediaType, b.Narrator, b.DurationSeconds, b.ASIN,
-		b.MetadataProvider, b.DedupKey, timeArg(b.LastMetadataRefreshAt), timeValueArg(now),
+		b.MetadataProvider, b.DedupKey, string(lockedJSON), timeArg(b.LastMetadataRefreshAt), timeValueArg(now),
 		b.EbookFilePath, b.AudiobookFilePath, b.ID)
 	if err != nil {
 		return fmt.Errorf("update book %d: %w", b.ID, err)
@@ -778,6 +798,7 @@ func (r *BookRepo) query(ctx context.Context, q string, args []any) ([]models.Bo
 		// match when author_id points at a deleted author row.
 		var authorID sql.NullInt64
 		var authorForeignID, authorName, authorSortName sql.NullString
+		var lockedFieldsStr string
 		err := rows.Scan(
 			&b.ID, &b.ForeignID, &b.AuthorID, &b.Title, &b.SortTitle,
 			&b.OriginalTitle, &b.Description, &b.ImageURL, &releaseDateStr,
@@ -791,10 +812,12 @@ func (r *BookRepo) query(ctx context.Context, q string, args []any) ([]models.Bo
 			&excluded, &b.DedupKey,
 			&authorID, &authorForeignID, &authorName, &authorSortName,
 			&b.OwnerUserID,
+			&lockedFieldsStr,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan book: %w", err)
 		}
+		_ = json.Unmarshal([]byte(lockedFieldsStr), &b.LockedFields)
 		// parseFlexibleTime tolerates the Calibre and legacy-Go date
 		// shapes (#914). On a truly garbage value we log and substitute
 		// nil / zero so a single corrupt row does not blank out the
