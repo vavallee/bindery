@@ -14,6 +14,8 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
   const [adding, setAdding] = useState<string | null>(null)
   const [added, setAdded] = useState<Set<string>>(new Set())
   const [searchOnAdd, setSearchOnAdd] = useState(true)
+  // '' = keep the provider's media type / the default.media_type setting.
+  const [mediaType, setMediaType] = useState('')
 
   const search = async () => {
     const q = query.trim()
@@ -55,6 +57,7 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
         foreignAuthorId: book.author.foreignAuthorId ?? '',
         authorName: book.author.authorName,
         searchOnAdd,
+        ...(mediaType ? { mediaType } : {}),
       })
       setAdded(prev => new Set(prev).add(book.foreignBookId))
       onAdded(created)
@@ -85,6 +88,22 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
               <span className="font-medium">Search indexers after adding</span>
               <span className="block text-xs text-slate-600 dark:text-zinc-400 mt-0.5">Attempt to grab the book automatically once it's added to wanted.</span>
             </span>
+          </label>
+
+          <label className="flex items-center gap-2 text-sm mb-3 select-none">
+            <span className="font-medium">Format</span>
+            <select
+              aria-label="Format to add"
+              value={mediaType}
+              onChange={e => setMediaType(e.target.value)}
+              className="text-xs bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+              title="Choose which format to add"
+            >
+              <option value="">Default</option>
+              <option value="ebook">📖 Ebook</option>
+              <option value="audiobook">🎧 Audiobook</option>
+              <option value="both">📖🎧 Both</option>
+            </select>
           </label>
 
           <div className="flex gap-2">

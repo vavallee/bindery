@@ -3701,6 +3701,109 @@ func TestAddBook_DirectInsertCoversAlternateAuthorIdentifier(t *testing.T) {
 	}
 }
 
+// TestAddBook_InvalidMediaTypeRejected pins the request validation for the
+// optional mediaType field (#1397): anything outside ebook/audiobook/both
+// fails fast with a 400 before any author/book work happens.
+func TestAddBook_InvalidMediaTypeRejected(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(&stubMetaProvider{name: "openlibrary"}), nil, profileRepo, nil)
+
+	body, _ := json.Marshal(map[string]any{
+		"foreignBookId":   "OL-BOOK",
+		"foreignAuthorId": "OL-AUTHOR",
+		"mediaType":       "paperback",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	h.AddBook(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid mediaType, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAddBook_MediaTypeOverridesProvider verifies the explicit request
+// choice (#1397) wins over the provider's media type on the direct-insert
+// path and is persisted on the final monitored book.
+func TestAddBook_MediaTypeOverridesProvider(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	ctx := context.Background()
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	existing := &models.Author{
+		ForeignID:        "OL-ALICE",
+		Name:             "Alice Author",
+		SortName:         "Author, Alice",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := authorRepo.Create(ctx, existing); err != nil {
+		t.Fatalf("seed author: %v", err)
+	}
+	if err := authorRepo.UpsertAuthorIdentifier(ctx, existing.ID, "hc:alice-author"); err != nil {
+		t.Fatalf("seed author identifier: %v", err)
+	}
+	primary := &models.Book{
+		ForeignID:        "hc:book-one",
+		Title:            "Book One",
+		SortTitle:        "Book One",
+		Status:           models.BookStatusWanted,
+		Genres:           []string{},
+		MediaType:        models.MediaTypeEbook, // provider says ebook; request forces audiobook
+		MetadataProvider: "hardcover",
+	}
+	provider := &stubMetaProvider{
+		name:  "hardcover",
+		works: nil,
+		getBookByID: map[string]*models.Book{
+			"hc:book-one": primary,
+		},
+	}
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(provider), nil, profileRepo, nil)
+	body, _ := json.Marshal(map[string]any{
+		"foreignBookId":   "hc:book-one",
+		"foreignAuthorId": "hc:alice-author",
+		"authorName":      "Alice Author",
+		"mediaType":       models.MediaTypeAudiobook,
+	})
+	parent, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body)).WithContext(parent)
+	rec := httptest.NewRecorder()
+
+	h.AddBook(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, err := bookRepo.GetByForeignID(ctx, "hc:book-one")
+	if err != nil || got == nil {
+		t.Fatalf("book after AddBook = %+v err=%v, want persisted", got, err)
+	}
+	if got.MediaType != models.MediaTypeAudiobook {
+		t.Fatalf("book mediaType = %q, want %q (request override)", got.MediaType, models.MediaTypeAudiobook)
+	}
+	if !got.Monitored {
+		t.Fatalf("book should be monitored after AddBook success")
+	}
+}
+
 // TestAddBook_OrphanAuthorDeletedOnTimeout is the end-to-end guarantee
 // for issue #667. With a DNB-shaped synthetic author ID, the
 // (legacy-flow) async fetch returns zero books deterministically and the
