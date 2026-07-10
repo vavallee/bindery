@@ -6,6 +6,31 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.24.3] — 2026-07-10
+
+A small security-driven patch. The Go toolchain moves to 1.26.5 to pick up two
+stdlib vulnerability fixes that are reachable from Bindery code paths, and the
+Grimmory connection test now says what it actually received when a server (or a
+reverse proxy in front of it) answers with something other than JSON.
+
+### Security
+- **Go toolchain bumped to 1.26.5** (#1492) — rebuilds all binaries and images
+  against a stdlib carrying the fixes for GO-2026-4970 (`crypto/tls`) and
+  GO-2026-5856 (`os.Root`), both confirmed reachable in Bindery by
+  `govulncheck`. v1.24.2 binaries were built with the affected stdlib; no
+  Bindery code changes were needed. Workflow `go-version` pins and the main
+  `Dockerfile` digest move together so CI and the published image agree on the
+  toolchain.
+
+### Fixed
+- **Grimmory connection errors now name the content type** (#1493) — adding a
+  Grimmory connection whose URL answers 2xx with a non-JSON body (typically a
+  reverse proxy or SPA fallback serving an HTML page on the API path) failed
+  with the bare JSON decoder error `invalid character '<' looking for beginning
+  of value`. The client now reports the HTTP status and `Content-Type` it got
+  back and points at the URL as the likely culprit, so misrouted proxies are
+  diagnosable from the Settings screen. Refs #1485.
+
 ## [v1.24.2] — 2026-07-07
 
 A fast follow-up patch. The headline fix is Bulk Folder Import, which stalled for
