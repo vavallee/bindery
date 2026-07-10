@@ -259,7 +259,13 @@ func (c *Client) doWithToken(ctx context.Context, method, path, token string, bo
 		return &APIError{StatusCode: resp.StatusCode, Message: msg}
 	}
 	if out != nil && len(raw) > 0 {
-		return json.Unmarshal(raw, out)
+		if err := json.Unmarshal(raw, out); err != nil {
+			// A 2xx with a non-JSON body is almost always a SPA fallback page
+			// or a reverse proxy answering in Grimmory's place (#1485) — say
+			// so instead of surfacing json's "invalid character '<'".
+			return fmt.Errorf("grimmory: %s %s returned HTTP %d with a non-JSON body (Content-Type %q) — the base URL likely points at a web UI or proxy rather than the Grimmory API: %w",
+				method, path, resp.StatusCode, resp.Header.Get("Content-Type"), err)
+		}
 	}
 	return nil
 }
