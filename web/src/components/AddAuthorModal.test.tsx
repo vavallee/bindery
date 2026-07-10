@@ -8,7 +8,12 @@ vi.mock('react-i18next', () => ({
       const strings: Record<string, string> = {
         'addAuthorModal.searchPlaceholder': 'Search by author name...',
         'addAuthorModal.search': 'Search',
-        'addAuthorModal.add': 'Add',
+        'addAuthorModal.select': 'Select',
+        'addAuthorModal.confirmAdd': 'Add author',
+        'addAuthorModal.customizeMonitoring': 'Customize monitoring',
+        'addAuthorModal.mediaType': 'Media type',
+        'addAuthorModal.monitorMode': 'Monitor mode',
+        'addAuthorModal.monitorLatestCount': 'Latest book count',
         'addAuthorModal.noResults': 'No results found',
         'addAuthorModal.openExisting': 'Open existing author',
         'addAuthorModal.findMetadata': 'Find metadata',
@@ -219,7 +224,8 @@ describe('AddAuthorModal — search error handling', () => {
     fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
     await waitFor(() => expect(screen.getByText('J.R.R. Tolkien')).toBeInTheDocument())
 
-    fireEvent.click(screen.getByRole('button', { name: /^add$/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
 
     await waitFor(() => expect(onAdded).toHaveBeenCalledTimes(1))
     expect(onClose).toHaveBeenCalledTimes(1)
@@ -265,7 +271,8 @@ describe('AddAuthorModal — search error handling', () => {
     fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
     await waitFor(() => expect(screen.getByText('Emilia Jae')).toBeInTheDocument())
 
-    fireEvent.click(screen.getByRole('button', { name: /^add$/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
 
     await waitFor(() => expect(screen.getByText('author already exists')).toBeInTheDocument())
     expect(screen.getByRole('link', { name: 'Open existing author' })).toHaveAttribute('href', '/author/60')
@@ -300,19 +307,18 @@ describe('AddAuthorModal — search error handling', () => {
 
     render(<AddAuthorModal onClose={onClose} onAdded={onAdded} />)
 
-    await waitFor(() => {
-      const selects = screen.getAllByRole('combobox') as HTMLSelectElement[]
-      expect(selects[1].value).toBe('latest')
-    })
-    expect(screen.getByRole('spinbutton')).toHaveValue(5)
-
     fireEvent.change(screen.getByPlaceholderText('Search by author name...'), {
       target: { value: 'tolkien' },
     })
     fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
     await waitFor(() => expect(screen.getByText('J.R.R. Tolkien')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }))
+    fireEvent.click(screen.getByText('Customize monitoring'))
 
-    fireEvent.click(screen.getByRole('button', { name: /^add$/i }))
+    await waitFor(() => expect(screen.getByLabelText('Monitor mode')).toHaveValue('latest'))
+    expect(screen.getByLabelText('Latest book count')).toHaveValue(5)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
 
     await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
     expect(api.addAuthor).toHaveBeenCalledWith(expect.objectContaining({
@@ -342,17 +348,17 @@ describe('AddAuthorModal — search error handling', () => {
 
     render(<AddAuthorModal onClose={onClose} onAdded={onAdded} />)
 
-    const monitorMode = screen.getAllByRole('combobox')[1]
-    fireEvent.change(monitorMode, { target: { value: 'latest' } })
-    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '3' } })
-
     fireEvent.change(screen.getByPlaceholderText('Search by author name...'), {
       target: { value: 'tolkien' },
     })
     fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
     await waitFor(() => expect(screen.getByText('J.R.R. Tolkien')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }))
+    fireEvent.click(screen.getByText('Customize monitoring'))
+    fireEvent.change(screen.getByLabelText('Monitor mode'), { target: { value: 'latest' } })
+    fireEvent.change(screen.getByLabelText('Latest book count'), { target: { value: '3' } })
 
-    fireEvent.click(screen.getByRole('button', { name: /^add$/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
 
     await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
     expect(api.addAuthor).toHaveBeenCalledWith(expect.objectContaining({
@@ -418,7 +424,8 @@ describe('AddAuthorModal — search error handling', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
     fireEvent.click(await screen.findByRole('button', { name: /show 1 hidden result/i }))
-    fireEvent.click(screen.getByRole('button', { name: /^add$/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
 
     await waitFor(() =>
       expect(api.addAuthor).toHaveBeenCalledWith(expect.objectContaining({

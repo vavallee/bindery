@@ -157,7 +157,7 @@ Cover images are fetched and cached server-side under `<dataDir>/image-cache/` (
 - **Arr-compatible queue** at `GET /api/queue` for [Harpoon](https://github.com/harpoon-io/harpoon) and other *arr-aware tools — pagination, sort, live size, status, client, remote ID, protocol.
 
 **UI**
-- Modern React 19 + TypeScript + Tailwind CSS SPA with deep-linkable routed `/book/:id` and `/author/:id` pages.
+- Modern React 19 + TypeScript + Tailwind CSS SPA with search-first author acquisition and deep-linkable routed `/book/:id` and `/author/:id` pages.
 - Light / dark themes (respecting `prefers-color-scheme` first paint), grid / table view toggles, mobile-friendly responsive layout, hamburger nav, agenda-style mobile Calendar.
 - Full pagination, search, filter, and sort on every list page; preferences persist to `localStorage`.
 - 7 languages — English, French, German, Dutch, Spanish, Filipino (Tagalog), Indonesian — auto-detected from the browser, override in Settings.
