@@ -589,6 +589,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	dl := &models.Download{
 		GUID:             best.GUID,
 		BookID:           &book.ID,
+		OwnerUserID:      book.OwnerUserID, // tenancy (#1457): background grab inherits the book's owner
 		IndexerID:        &best.IndexerID,
 		DownloadClientID: &client.ID,
 		Title:            best.Title,

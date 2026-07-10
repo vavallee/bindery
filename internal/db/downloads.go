@@ -19,7 +19,7 @@ const downloadSelectColumns = `
 	id, guid, book_id, edition_id, indexer_id, download_client_id,
 	title, nzb_url, size, sabnzbd_nzo_id, torrent_id, status, protocol,
 	quality, indexer_flags, error_message, added_at, grabbed_at, completed_at, imported_at,
-	import_retry_count`
+	import_retry_count, COALESCE(owner_user_id, 0)`
 
 func NewDownloadRepo(db *sql.DB) *DownloadRepo {
 	return &DownloadRepo{db: db}
@@ -69,16 +69,25 @@ func (r *DownloadRepo) GetByTorrentID(ctx context.Context, torrentID string) (*m
 	return &dl[0], nil
 }
 
+// downloadOwnerArg maps 0 to NULL so unowned downloads keep the legacy
+// NULL-owner representation (matching CreateForUser's ownerArg idiom).
+func downloadOwnerArg(ownerUserID int64) any {
+	if ownerUserID == 0 {
+		return nil
+	}
+	return ownerUserID
+}
+
 func (r *DownloadRepo) Create(ctx context.Context, d *models.Download) error {
 	now := time.Now().UTC()
 	result, err := r.db.ExecContext(ctx, `
 		INSERT INTO downloads (guid, book_id, edition_id, indexer_id, download_client_id,
 		                       title, nzb_url, size, sabnzbd_nzo_id, torrent_id, status, protocol,
-		                       quality, indexer_flags, error_message, added_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                       quality, indexer_flags, error_message, owner_user_id, added_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		d.GUID, d.BookID, d.EditionID, d.IndexerID, d.DownloadClientID,
 		d.Title, d.NZBURL, d.Size, d.SABnzbdNzoID, d.TorrentID, d.Status, d.Protocol,
-		d.Quality, d.IndexerFlags, d.ErrorMessage, now)
+		d.Quality, d.IndexerFlags, d.ErrorMessage, downloadOwnerArg(d.OwnerUserID), now)
 	if err != nil {
 		return fmt.Errorf("create download: %w", err)
 	}
@@ -567,7 +576,7 @@ func (r *DownloadRepo) query(ctx context.Context, q string, args ...interface{})
 			&d.Title, &d.NZBURL, &d.Size, &d.SABnzbdNzoID, &d.TorrentID, &d.Status, &d.Protocol,
 			&d.Quality, &d.IndexerFlags, &d.ErrorMessage,
 			&d.AddedAt, &d.GrabbedAt, &d.CompletedAt, &d.ImportedAt,
-			&d.ImportRetryCount,
+			&d.ImportRetryCount, &d.OwnerUserID,
 		); err != nil {
 			return nil, fmt.Errorf("scan download: %w", err)
 		}

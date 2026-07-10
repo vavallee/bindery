@@ -698,8 +698,10 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 	}
 
 	book := &models.Book{
-		ForeignID:        fid,
-		AuthorID:         author.ID,
+		ForeignID:   fid,
+		AuthorID:    author.ID,
+		OwnerUserID: author.OwnerUserID, // tenancy (#1457): inherit author's owner
+
 		Title:            title,
 		SortTitle:        title,
 		Description:      textutil.CleanDescription(item.Description),
@@ -755,6 +757,7 @@ func (i *Importer) upsertManualBook(ctx context.Context, cfg ImportConfig, runID
 	book := &models.Book{
 		ForeignID:        foreignID,
 		AuthorID:         author.ID,
+		OwnerUserID:      author.OwnerUserID, // tenancy (#1457): inherit author's owner
 		Title:            title,
 		SortTitle:        title,
 		Description:      textutil.CleanDescription(item.Description),
@@ -775,6 +778,7 @@ func (i *Importer) upsertManualBook(ctx context.Context, cfg ImportConfig, runID
 			book = full
 			book.ForeignID = foreignID
 			book.AuthorID = author.ID
+			book.OwnerUserID = author.OwnerUserID // tenancy (#1457)
 			if book.Title == "" {
 				book.Title = title
 			}

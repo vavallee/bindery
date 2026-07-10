@@ -48,6 +48,23 @@ func (r *SeriesRepo) List(ctx context.Context) ([]models.Series, error) {
 
 // ListWithBooks returns all series rows with their linked books populated.
 func (r *SeriesRepo) ListWithBooks(ctx context.Context) ([]models.Series, error) {
+	return r.ListWithBooksForUser(ctx, 0)
+}
+
+// ListWithBooksForUser is ListWithBooks with per-user book scoping (#1457):
+// books owned by another user scan as NULL (dropped like an unlinked join
+// row), so a non-admin can no longer enumerate other users' titles through
+// the series view. userID 0 = unscoped (admin / tenancy off). Legacy
+// NULL-owned books stay visible to everyone, matching the include-NULL tier
+// used by the book and history lists. Series rows themselves are global —
+// one series can span books owned by different users.
+func (r *SeriesRepo) ListWithBooksForUser(ctx context.Context, userID int64) ([]models.Series, error) {
+	bookJoin := "LEFT JOIN books b ON b.id = sb.book_id"
+	args := []any{}
+	if userID != 0 {
+		bookJoin += " AND (b.owner_user_id = ? OR b.owner_user_id IS NULL)"
+		args = append(args, userID)
+	}
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT s.id, s.foreign_id, s.title, s.description, s.monitored, s.created_at,
 		       sb.series_id, sb.book_id, sb.position_in_series, sb.primary_series,
@@ -55,8 +72,8 @@ func (r *SeriesRepo) ListWithBooks(ctx context.Context) ([]models.Series, error)
 		       b.monitored, b.image_url, b.release_date, b.created_at, b.updated_at
 		FROM series s
 		LEFT JOIN series_books sb ON sb.series_id = s.id
-		LEFT JOIN books b ON b.id = sb.book_id
-		ORDER BY s.title, CAST(NULLIF(sb.position_in_series, '') AS REAL), sb.position_in_series, b.sort_title`)
+		`+bookJoin+`
+		ORDER BY s.title, CAST(NULLIF(sb.position_in_series, '') AS REAL), sb.position_in_series, b.sort_title`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list series with books: %w", err)
 	}
@@ -233,6 +250,12 @@ func (r *SeriesRepo) ListBooksInSeries(ctx context.Context, seriesID int64) ([]m
 }
 
 func (r *SeriesRepo) GetByID(ctx context.Context, id int64) (*models.Series, error) {
+	return r.GetByIDForUser(ctx, id, 0)
+}
+
+// GetByIDForUser is GetByID with per-user book scoping (#1457) — see
+// ListWithBooksForUser for the semantics.
+func (r *SeriesRepo) GetByIDForUser(ctx context.Context, id, userID int64) (*models.Series, error) {
 	row := r.db.QueryRowContext(ctx,
 		"SELECT id, foreign_id, title, description, monitored, created_at FROM series WHERE id=?", id)
 
@@ -247,15 +270,17 @@ func (r *SeriesRepo) GetByID(ctx context.Context, id int64) (*models.Series, err
 		return nil, fmt.Errorf("get series %d: %w", id, err)
 	}
 
-	// Fetch series books with minimal book data
+	// Fetch series books with minimal book data, scoped to the caller's
+	// visible books when userID != 0.
+	scope, args := QueryScopeForIncludingNull("b.owner_user_id", "WHERE sb.series_id = ?", userID, id)
 	bookRows, err := r.db.QueryContext(ctx, `
 		SELECT sb.series_id, sb.book_id, sb.position_in_series, sb.primary_series,
 		       b.id, b.foreign_id, b.author_id, b.title, b.sort_title, b.status,
 		       b.monitored, b.image_url, b.created_at, b.updated_at
 		FROM series_books sb
 		JOIN books b ON b.id = sb.book_id
-		WHERE sb.series_id = ?
-		ORDER BY sb.position_in_series`, id)
+		`+scope+`
+		ORDER BY sb.position_in_series`, args...)
 	if err != nil {
 		return &s, nil
 	}

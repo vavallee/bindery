@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/models"
@@ -130,6 +131,11 @@ func (h *ManualImportHandler) prepareImport(ctx context.Context, rawPath string,
 		BookID: &bookID,
 		Title:  book.Title,
 		Status: models.StateCompleted,
+		// Tenancy (#1457): downloads use the strict owner scope, so an
+		// unstamped row is invisible to its own non-admin creator. Stamp
+		// from the request identity, falling back to the book's owner for
+		// API-key callers (uid 0).
+		OwnerUserID: downloadOwnerForRequest(ctx, book.OwnerUserID),
 	}
 	dl.CompletedAt = &now
 	if err := h.downloads.Create(ctx, dl); err != nil {
@@ -549,4 +555,15 @@ func (h *ManualImportHandler) ImportBatch(w http.ResponseWriter, r *http.Request
 	}
 
 	writeJSON(w, http.StatusAccepted, resp)
+}
+
+// downloadOwnerForRequest resolves the owner to stamp on a download created
+// by an HTTP request (#1457): the authenticated user when there is one,
+// otherwise (API-key / disabled-auth callers, uid 0) the owner of the book
+// the download belongs to, so the row stays visible to that library's user.
+func downloadOwnerForRequest(ctx context.Context, bookOwner int64) int64 {
+	if uid := auth.UserIDFromContext(ctx); uid != 0 {
+		return uid
+	}
+	return bookOwner
 }
