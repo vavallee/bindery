@@ -6,6 +6,7 @@ package importer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/vavallee/bindery/internal/calibre"
@@ -85,6 +87,12 @@ type Scanner struct {
 	absLib               absNotifier
 	absLibraryIDsFn      func() []string
 	notif                eventNotifier
+
+	// scanRunning is the single-flight guard for library scans (#1460).
+	// Concurrent full walks race on book creation (books has no unique
+	// constraint equivalent to book_files.path) and clobber library.lastScan,
+	// so only one scan — manual or scheduled — runs at a time.
+	scanRunning atomic.Bool
 
 	// testImportHook, when non-nil, intercepts tryImportInternal before any
 	// state transition or file operation and replaces the import entirely.
@@ -1664,10 +1672,47 @@ func authorTitleFromLayout(path string, roots ...string) (author, title string, 
 	return "", "", false
 }
 
-// ScanLibrary walks the library directory (and the separate audiobook directory
-// when configured) for book files not yet tracked in the database and reconciles
-// found files with existing "wanted" book records.
+// ErrScanAlreadyRunning is returned by StartScan when a library scan (manual
+// or scheduled) is already in flight. Matches the ABS importer's
+// ErrAlreadyRunning / Grimmory syncer's ErrSyncAlreadyRunning pattern.
+var ErrScanAlreadyRunning = errors.New("library scan already running")
+
+// StartScan launches a library scan in the background and returns
+// immediately. If a scan is already in flight it returns
+// ErrScanAlreadyRunning so callers (the manual-scan endpoint) can surface a
+// 409 instead of piling up concurrent full walks (#1460). Callers pass
+// context.WithoutCancel(r.Context()) so the HTTP response-send doesn't cancel
+// the scan.
+func (s *Scanner) StartScan(ctx context.Context) error {
+	if !s.scanRunning.CompareAndSwap(false, true) {
+		return ErrScanAlreadyRunning
+	}
+	go func() {
+		defer s.scanRunning.Store(false)
+		s.scanLibrary(ctx)
+	}()
+	return nil
+}
+
+// ScanLibrary runs a library scan synchronously, sharing the single-flight
+// guard with StartScan: if a scan is already in flight (e.g. a manual scan
+// racing the 6-hourly cron job) the call is skipped with a log line. The
+// cron scheduler's SkipIfStillRunning only guards cron-vs-cron, so this is
+// what prevents cron-vs-manual overlap (#1460).
 func (s *Scanner) ScanLibrary(ctx context.Context) {
+	if !s.scanRunning.CompareAndSwap(false, true) {
+		slog.Info("library scan already running; skipping")
+		return
+	}
+	defer s.scanRunning.Store(false)
+	s.scanLibrary(ctx)
+}
+
+// scanLibrary walks the library directory (and the separate audiobook directory
+// when configured) for book files not yet tracked in the database and reconciles
+// found files with existing "wanted" book records. Callers must hold the
+// scanRunning single-flight flag (via StartScan or ScanLibrary).
+func (s *Scanner) scanLibrary(ctx context.Context) {
 	if s.libraryDir == "" {
 		// #965: previously this returned without writing any result, so the UI
 		// kept showing a stale prior scan and the #962 "no files found" warning
