@@ -2147,6 +2147,10 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 		ForeignAuthorID string `json:"foreignAuthorId"`
 		AuthorName      string `json:"authorName"`
 		SearchOnAdd     bool   `json:"searchOnAdd"`
+		// MediaType optionally forces ebook/audiobook/both for the added book
+		// (#1397). Empty keeps the provider's media type, falling back to the
+		// default.media_type setting — the pre-selector behaviour.
+		MediaType string `json:"mediaType"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -2154,6 +2158,12 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ForeignBookID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "foreignBookId required"})
+		return
+	}
+	switch req.MediaType {
+	case "", models.MediaTypeEbook, models.MediaTypeAudiobook, models.MediaTypeBoth:
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "mediaType must be 'ebook', 'audiobook', or 'both'"})
 		return
 	}
 
@@ -2336,10 +2346,14 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 				if primary.Status == "" {
 					primary.Status = models.BookStatusWanted
 				}
-				// Some providers (notably Google Books) don't set a media type;
-				// fall back to the global default so the row isn't created with an
-				// empty format (which would mis-route its indexer search).
-				if primary.MediaType == "" {
+				// An explicit request choice wins over the provider's media type
+				// (#1397). Otherwise some providers (notably Google Books) don't
+				// set one; fall back to the global default so the row isn't
+				// created with an empty format (which would mis-route its
+				// indexer search).
+				if req.MediaType != "" {
+					primary.MediaType = req.MediaType
+				} else if primary.MediaType == "" {
 					primary.MediaType = h.resolveDefaultMediaType(ctx)
 				}
 				if err := h.books.Create(ctx, primary); err != nil {
@@ -2380,8 +2394,16 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	}
 	bookCreated = true
 
-	// 3. Mark the book monitored (wanted).
+	// 3. Mark the book monitored (wanted). An explicit media-type choice is
+	// applied here too — the poll may have found a row created by the async
+	// catalogue sync (or one already in the library) carrying the default.
+	// Re-evaluate status on a change so e.g. adding an already-imported ebook
+	// as 'both' flips it back to wanted for the missing format (#1148).
 	book.Monitored = true
+	if req.MediaType != "" && book.MediaType != req.MediaType {
+		book.MediaType = req.MediaType
+		reevaluateBookStatus(book)
+	}
 	if err := h.books.Update(ctx, book); err != nil {
 		writeServerError(w, r, err)
 		return

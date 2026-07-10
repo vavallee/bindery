@@ -110,3 +110,44 @@ describe('AddBookModal — ASIN lookup (#1189)', () => {
     expect(api.lookupISBN).not.toHaveBeenCalled()
   })
 })
+
+describe('AddBookModal — media-type selector (#1397)', () => {
+  const onClose = vi.fn()
+  const onAdded = vi.fn()
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.searchBooks).mockResolvedValue([
+      { foreignBookId: 'OL-DUNE', title: 'Dune', author: { authorName: 'Frank Herbert', foreignAuthorId: 'OL-FH' } },
+    ] as never)
+    vi.mocked(api.addBook).mockResolvedValue({ id: 1, title: 'Dune' } as never)
+  })
+
+  const searchAndFind = async () => {
+    fireEvent.change(screen.getByPlaceholderText(/Title, ISBN, or ASIN/i), {
+      target: { value: 'Dune' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
+    await waitFor(() => expect(screen.getByText('Dune')).toBeInTheDocument())
+  }
+
+  it('omits mediaType when the selector is left on Default', async () => {
+    render(<AddBookModal onClose={onClose} onAdded={onAdded} />)
+    await searchAndFind()
+    fireEvent.click(screen.getByRole('button', { name: /^add$/i }))
+    await waitFor(() => expect(api.addBook).toHaveBeenCalled())
+    expect(vi.mocked(api.addBook).mock.calls[0][0]).not.toHaveProperty('mediaType')
+  })
+
+  it('sends the chosen mediaType with the add request', async () => {
+    render(<AddBookModal onClose={onClose} onAdded={onAdded} />)
+    await searchAndFind()
+    fireEvent.change(screen.getByLabelText('Format to add'), { target: { value: 'audiobook' } })
+    fireEvent.click(screen.getByRole('button', { name: /^add$/i }))
+    await waitFor(() => expect(api.addBook).toHaveBeenCalled())
+    expect(vi.mocked(api.addBook).mock.calls[0][0]).toMatchObject({
+      foreignBookId: 'OL-DUNE',
+      mediaType: 'audiobook',
+    })
+  })
+})

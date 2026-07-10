@@ -112,8 +112,10 @@ export const booksApi = {
   lookupISBN: (isbn: string) => request<Book>(`/book/lookup?isbn=${encodeURIComponent(isbn)}`),
   lookupASIN: (asin: string) => request<Book>(`/book/lookup?asin=${encodeURIComponent(asin)}`),
 
-  // Add a single book to wanted (adds author silently if new)
-  addBook: (data: { foreignBookId: string; foreignAuthorId: string; authorName?: string; searchOnAdd?: boolean }) =>
+  // Add a single book to wanted (adds author silently if new). mediaType
+  // optionally forces ebook/audiobook/both; empty keeps the provider value /
+  // default.media_type setting (#1397).
+  addBook: (data: { foreignBookId: string; foreignAuthorId: string; authorName?: string; searchOnAdd?: boolean; mediaType?: string }) =>
     request<Book>('/author/book', { method: 'POST', body: JSON.stringify(data) }),
 
   // Fix Match (#1238): move a mis-matched file to a different book. The file is
