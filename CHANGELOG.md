@@ -6,6 +6,103 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.25.0] — 2026-07-10
+
+A contributor-driven release. The headline is manual metadata editing with
+field locks — edit a book's title, genres, language, description, or release
+date and every refresh path keeps your values — which also unlocks clean
+opinionated genre taxonomies in folder paths. Around it: naming-template
+conditionals and zero-pad widths, a `{Lang}` token, an ebook/audiobook/both
+selector on Add Book, per-account Hardcover reading lists, an honest Import
+Mode default (community PR), multi-user tenancy fixes for owner stamping and
+the series views, and the next batch of audit bug fixes.
+
+### Added
+- **Manual metadata editing with field locks** (#1237, #1446) — the book page
+  gains an Edit action for title, description, genres, language, and release
+  date. Every field you edit is locked so the nightly metadata refresh,
+  author-works sync, and ABS/Calibre re-imports keep your values (a 🔒 marks
+  locked fields; one click unlocks them all). Genres can also be applied in
+  bulk: an author-level override in Edit Author and a Set genre action per
+  series stamp + lock the same genre list across all their books, so an
+  opinionated genre taxonomy in folder paths (`{Genre}/...`) stays clean.
+  Re-bind and metadata re-map clear locks — an explicit identity change asks
+  for the new record wholesale. See the new
+  [Metadata Editing wiki page](docs/Metadata-Editing-Wiki.md).
+- **Conditional text and zero-pad widths in naming templates** (#1127) —
+  literal text placed inside a brace group renders only when its token has a
+  value (`{Title}{ - Series}` emits the dash only for series books, no more
+  trailing separators), and numeric tokens accept a width modifier
+  (`{SeriesNumber:2}` → `02`) so alphabetic filename sorts keep parts in
+  order. Both are backward compatible: bare tokens, `{Genre:Unsorted}`-style
+  defaults, and unknown-token passthrough behave exactly as before. One edge:
+  a 1–2 digit modifier is now a width, so a numeric *default* that short is
+  no longer supported (3+ digits, e.g. `{Year:2024}`, still works as a
+  default).
+- **`{Lang}` naming token** (#1175) — naming templates can now include the
+  book's language code (e.g. `en`), so foreign-language books can carry the
+  language in their folder or file name. Blank when the language is unknown,
+  collapsing cleanly like the other optional tokens.
+- **Format selector on Add Book** (#1397) — the Add Book modal (Authors/Home
+  page) now has an ebook / audiobook / both selector, matching the Series
+  page. Default keeps the previous behaviour (provider metadata, falling back
+  to the `default.media_type` setting). Picking a format applies it to the
+  added book even when it already existed in the library, re-evaluating
+  wanted status so the missing format gets searched.
+
+### Security
+- **Multi-user tenancy: owners are now stamped and series views scoped**
+  (#1457, #1416) — new books inherit their author's owner on every create
+  path (add-book, author sync, series fill, ABS/Calibre imports), and new
+  downloads carry the grabbing user (background grabs inherit the book's
+  owner), so per-user scoping finally has data to scope on: a non-admin's
+  queue is no longer empty under tenancy, and the series list/detail no
+  longer let one user enumerate another user's titles, covers, and statuses.
+  The author page's embedded book list now applies the same owner predicate
+  as the book list, so the two views agree on co-authored books. Existing
+  unowned rows keep their legacy world-visible behaviour; only affects
+  deployments with `BINDERY_ENFORCE_TENANCY` enabled.
+
+### Fixed
+- **Import Mode UI no longer claims Move is the default** (#1444) — the
+  selector pre-selected Move while the backend has defaulted to auto
+  (hardlink on the same filesystem, else copy) since the seeding fix. Auto is
+  now a first-class, selectable mode shown as the default, restoring a UI
+  path back to the safe behaviour, and `import.mode` is validated so a typo
+  fails loudly instead of silently behaving as auto. Contributed by
+  @johnistheman.
+- **Per-account Hardcover reading lists** (#1489) — Hardcover's built-in
+  shelves ("Want to Read", …) share one slug per account, so loading a second
+  person's lists with their token showed their shelf as the already-added
+  first one and toggled the wrong list. List identity is now (slug, account):
+  the picker reports which Hardcover account it's browsing, saved lists
+  remember the account they came from (shown as an @username chip), and two
+  households' "Want to Read" lists sync side by side, each with its own
+  token.
+- **Lists no longer silently truncate at 100 rows** (#1467) — the History
+  page now pages through your full history on the server (with a working
+  event-type filter that offers all event types), an author's page loads the
+  complete catalogue even for authors with more than 100 books (so counts,
+  filters, and select-all cover everything), and the Calendar loads every
+  release in the month instead of stopping at 500.
+- **Transmission/qBittorrent: healthy downloads no longer blocked as "source
+  no longer available"** (#1461) — the stale-failure check treated a
+  category-filtered torrent listing as a complete one. A failed-import
+  download whose torrent was moved to another download directory, lost its
+  label, or sat under a different qBittorrent category (while the unfiltered
+  listing was unavailable) was terminally blocked even though the torrent was
+  still seeding. Filtered or degraded listings now only block on retry
+  exhaustion, never on "missing from the list".
+- **Library scan single-flight** (#1460) — triggering a manual library scan
+  while another scan is running (manual or the scheduled one) now returns
+  409 Conflict instead of starting a second concurrent walk that could race
+  on book creation and clobber the last-scan status.
+- **Migration runner semicolon gotcha** (#1465) — the SQL migration runner
+  split statements on `;` before stripping comments, so a semicolon inside a
+  `--` comment (or a string literal) corrupted the statement list and aborted
+  boot. The splitter is now aware of line comments, block comments, and
+  quoted literals, so migration authors can write natural SQL comments.
+
 ## [v1.24.3] — 2026-07-10
 
 A small security-driven patch. The Go toolchain moves to 1.26.5 to pick up two
