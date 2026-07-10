@@ -2,6 +2,35 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import AddBookModal from './AddBookModal'
 
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (key: string) => ({
+      'addBookModal.title': 'Add Book',
+      'addBookModal.description': 'Search by title, ISBN, or ASIN to add a specific book to your wanted list.',
+      'addBookModal.autoSearchLabel': 'Search indexers after adding',
+      'addBookModal.autoSearchHint': 'Try to grab the book automatically after adding it to wanted.',
+      'addBookModal.format': 'Format',
+      'addBookModal.formatLabel': 'Format to add',
+      'addBookModal.formatHint': 'Choose which format to add',
+      'addBookModal.defaultFormat': 'Default',
+      'addBookModal.searchPlaceholder': 'Title, ISBN, or ASIN (for example, Dune, 9780441478125, B0DBJBFHGT)',
+      'addBookModal.searching': 'Searching...',
+      'addBookModal.searchFailed': 'Search failed',
+      'addBookModal.authorMissing': 'Author name missing on this result',
+      'addBookModal.added': 'Added',
+      'addBookModal.adding': 'Adding...',
+      'addBookModal.addFailed': 'Failed to add book',
+      'common.search': 'Search',
+      'common.add': 'Add',
+      'common.cancel': 'Cancel',
+      'common.noResults': 'No results found',
+      'common.ebook': 'Ebook',
+      'common.audiobook': 'Audiobook',
+      'common.both': 'Both',
+    }[key] ?? key),
+  }),
+}))
+
 // Mock the api/client module so no real HTTP calls are made.
 vi.mock('../api/client', () => ({
   api: {
@@ -20,6 +49,14 @@ describe('AddBookModal — null search results (#1188)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  it('exposes dialog semantics and uses Cancel to close', () => {
+    render(<AddBookModal onClose={onClose} onAdded={onAdded} />)
+
+    expect(screen.getByRole('dialog', { name: 'Add Book' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('renders "No results found." when the search returns null instead of crashing', async () => {
@@ -149,5 +186,19 @@ describe('AddBookModal — media-type selector (#1397)', () => {
       foreignBookId: 'OL-DUNE',
       mediaType: 'audiobook',
     })
+  })
+
+  it('shows add failures inline without closing the dialog', async () => {
+    vi.mocked(api.addBook).mockRejectedValue(new Error('book already exists'))
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    render(<AddBookModal onClose={onClose} onAdded={onAdded} />)
+    await searchAndFind()
+
+    fireEvent.click(screen.getByRole('button', { name: /^add$/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('book already exists')
+    expect(alertSpy).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+    alertSpy.mockRestore()
   })
 })

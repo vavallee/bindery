@@ -821,6 +821,23 @@
     "findMetadata": "Find metadata",
     "addFail": "Failed to add author"
   },
+  "addBookModal": {
+    "title": "Add Book",
+    "description": "Search by title, ISBN, or ASIN to add a specific book to your wanted list.",
+    "autoSearchLabel": "Search indexers after adding",
+    "autoSearchHint": "Try to grab the book automatically after adding it to wanted.",
+    "format": "Format",
+    "formatLabel": "Format to add",
+    "formatHint": "Choose which format to add",
+    "defaultFormat": "Default",
+    "searchPlaceholder": "Title, ISBN, or ASIN (for example, Dune, 9780441478125, B0DBJBFHGT)",
+    "searching": "Searching...",
+    "searchFailed": "Search failed",
+    "authorMissing": "Author name missing on this result",
+    "added": "Added",
+    "adding": "Adding...",
+    "addFailed": "Failed to add book"
+  },
   "authorMetadataLink": {
     "actionLink": "Link metadata",
     "actionFindBetter": "Find better metadata",
