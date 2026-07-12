@@ -159,7 +159,9 @@ func validateSeriesTitle(title string) (string, string) {
 }
 
 func (h *SeriesHandler) List(w http.ResponseWriter, r *http.Request) {
-	series, err := h.series.ListWithBooks(r.Context())
+	// Owner-scoped books (#1457): a non-admin must not enumerate other
+	// users' titles through the series view. Series rows stay global.
+	series, err := h.series.ListWithBooksForUser(r.Context(), auth.ListScopeUserID(r.Context()))
 	if err != nil {
 		writeServerError(w, r, err)
 		return
@@ -177,7 +179,7 @@ func (h *SeriesHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s, err := h.series.GetByID(r.Context(), id)
+	s, err := h.series.GetByIDForUser(r.Context(), id, auth.ListScopeUserID(r.Context()))
 	if err != nil {
 		writeServerError(w, r, err)
 		return
@@ -1380,6 +1382,8 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 	}
 
 	book.AuthorID = storedAuthor.ID
+	// Tenancy (#1457): inherit the author's owner.
+	book.OwnerUserID = storedAuthor.OwnerUserID
 	book.Author = nil
 	book.Title = firstNonEmpty(book.Title, catalogBook.Title)
 	book.SortTitle = firstNonEmpty(book.SortTitle, book.Title)

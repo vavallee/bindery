@@ -454,18 +454,27 @@ func (r *BookRepo) Create(ctx context.Context, b *models.Book) error {
 		return fmt.Errorf("marshal book locked_fields: %w", err)
 	}
 
+	// owner_user_id: NULL when unowned (#1457), matching CreateForUser's
+	// ownerArg idiom in authors.go. Callers stamp b.OwnerUserID before Create
+	// (HTTP paths from the request identity, background paths by inheriting
+	// the author row's owner).
+	var ownerArg any
+	if b.OwnerUserID != 0 {
+		ownerArg = b.OwnerUserID
+	}
+
 	result, err := r.db.ExecContext(ctx, `
 		INSERT INTO books (foreign_id, author_id, title, sort_title, original_title, description,
 		                   image_url, release_date, genres, average_rating, ratings_count,
 		                   monitored, status, any_edition_ok, selected_edition_id,
 		                   language, media_type, narrator, duration_seconds, asin,
-		                   metadata_provider, dedup_key, locked_fields, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                   metadata_provider, dedup_key, locked_fields, owner_user_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		b.ForeignID, b.AuthorID, b.Title, b.SortTitle, b.OriginalTitle, b.Description,
 		b.ImageURL, timeArg(b.ReleaseDate), string(genresJSON), b.AverageRating, b.RatingsCount,
 		b.Monitored, b.Status, b.AnyEditionOK, b.SelectedEditionID,
 		b.Language, mediaType, b.Narrator, b.DurationSeconds, b.ASIN,
-		b.MetadataProvider, b.DedupKey, string(lockedJSON), timeValueArg(now), timeValueArg(now))
+		b.MetadataProvider, b.DedupKey, string(lockedJSON), ownerArg, timeValueArg(now), timeValueArg(now))
 	if err != nil {
 		return fmt.Errorf("create book: %w", err)
 	}

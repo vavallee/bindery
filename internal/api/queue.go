@@ -780,12 +780,21 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 		editionID = existing.EditionID
 		indexerFlags = existing.IndexerFlags
 	}
+	// Tenancy (#1457): stamp from the request identity; API-key callers
+	// (uid 0) inherit the target book's owner when one is known.
+	grabOwner := auth.UserIDFromContext(ctx)
+	if grabOwner == 0 && bookID != nil {
+		if b, err := h.books.GetByID(ctx, *bookID); err == nil && b != nil {
+			grabOwner = b.OwnerUserID
+		}
+	}
 	dl := &models.Download{
 		GUID:             req.GUID,
 		BookID:           bookID,
 		EditionID:        editionID,
 		IndexerID:        indexerID,
 		DownloadClientID: &client.ID,
+		OwnerUserID:      grabOwner,
 		Title:            req.Title,
 		NZBURL:           req.NZBURL,
 		Size:             req.Size,

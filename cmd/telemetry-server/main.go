@@ -282,7 +282,7 @@ func (s *server) snapshotDay(ctx context.Context, day time.Time) error {
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT(day) DO UPDATE SET
 			active_day   = excluded.active_day,
-			new_installs = excluded.new_installs,
+			new_installs = MAX(daily_global.new_installs, excluded.new_installs),
 			total        = excluded.total
 	`, dayStr, activeDay, newInstalls, total); err != nil {
 		return fmt.Errorf("snapshot %s: upsert global: %w", dayStr, err)
@@ -356,8 +356,15 @@ func (s *server) snapshotDay(ctx context.Context, day time.Time) error {
 // backfillNewInstalls populates daily_global.new_installs for every day in
 // the installs table's first_seen range. Only this column is historically
 // recoverable; the others depend on last_seen which has rolled forward.
-// Idempotent: existing rows have new_installs replaced; active_day, total
-// are preserved (only set non-zero when we have current data for the day).
+//
+// Idempotent AND monotonic: the conflict clause raises new_installs but never
+// lowers it (MAX). This matters because the source is COUNT(*) over installs,
+// which the 60-day retention sweep erodes for old days — once the churned
+// rows first-seen on day D are GC'd, recomputing D from survivors yields a
+// smaller count. Without the MAX guard, every restart would clobber a
+// correctly-recorded historical value downward. new_installs is genuinely
+// monotonic (a day's true count only ever grew, on the day itself), so MAX is
+// the correct reconciliation: whichever snapshot saw the day freshest wins.
 //
 // Runs once at startup. Cheap: one INSERT ... SELECT against an indexed
 // substring; the installs table holds at most ~5k rows at our scale.
@@ -369,9 +376,67 @@ func (s *server) backfillNewInstalls(ctx context.Context) error {
 		 WHERE first_seen IS NOT NULL
 		 GROUP BY day
 		ON CONFLICT(day) DO UPDATE SET
-			new_installs = excluded.new_installs
+			new_installs = MAX(daily_global.new_installs, excluded.new_installs)
 	`)
 	return err
+}
+
+// dayKeyRE matches a YYYY-MM-DD seed key. Keys that don't match are skipped
+// so a malformed seed file can't inject junk rows into daily_global.
+var dayKeyRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+
+// reconcileNewInstallsSeed raises daily_global.new_installs for each day in a
+// {day: count} JSON file to at least the seeded value, never lowering it. It
+// restores historical counts that a pre-monotonic backfill eroded once the
+// underlying installs aged past the 60-day retention window (those raw rows
+// are gone, so the only source of the true count is an external snapshot).
+//
+// The seed is aggregate-only (day -> integer count); it carries no install
+// IDs or any per-install data. Idempotent: re-running with the same seed is a
+// no-op. Returns the number of days whose stored value was actually raised.
+func (s *server) reconcileNewInstallsSeed(ctx context.Context, path string) (int, error) {
+	raw, err := os.ReadFile(path) // #nosec G304 -- path is an operator-supplied env var, not user input
+	if err != nil {
+		return 0, fmt.Errorf("read seed: %w", err)
+	}
+	var seed map[string]int
+	if err := json.Unmarshal(raw, &seed); err != nil {
+		return 0, fmt.Errorf("parse seed: %w", err)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	raised := 0
+	for day, count := range seed {
+		if !dayKeyRE.MatchString(day) {
+			slog.Warn("seed reconcile: skipping malformed day key", "key", day)
+			continue
+		}
+		if count < 0 {
+			continue
+		}
+		res, err := tx.ExecContext(ctx, `
+			INSERT INTO daily_global (day, active_day, new_installs, total)
+			VALUES (?, 0, ?, 0)
+			ON CONFLICT(day) DO UPDATE SET
+				new_installs = excluded.new_installs
+			WHERE excluded.new_installs > daily_global.new_installs
+		`, day, count)
+		if err != nil {
+			return 0, fmt.Errorf("upsert %s: %w", day, err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			raised++
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit: %w", err)
+	}
+	return raised, nil
 }
 
 // runAggregateLoop drives snapshotDay on the same daily cadence as
@@ -442,18 +507,20 @@ type pingResponse struct {
 }
 
 type statsResponse struct {
-	Active30d int            `json:"active_30d"`
-	Total     int            `json:"total"`
-	Versions  map[string]int `json:"versions"`
+	Active30d  int            `json:"active_30d"`
+	Total      int            `json:"total"`
+	Cumulative int            `json:"cumulative"`
+	Versions   map[string]int `json:"versions"`
 }
 
 // statsJSON is the response shape for the public /stats.json endpoint. It
-// surfaces the three numbers the Discord stats bot (and any future scraper)
-// needs without requiring the full /api/stats token-gated payload.
+// surfaces the numbers the Discord stats bot (and any future scraper) needs
+// without requiring the full /api/stats token-gated payload.
 type statsJSON struct {
-	Active int    `json:"active"` // 30-day active install count
-	Total  int    `json:"total"`  // all-time install count
-	Latest string `json:"latest"` // latest released version, e.g. "v1.9.5"
+	Active     int    `json:"active"`     // 30-day active install count
+	Total      int    `json:"total"`      // rolling 60-day distinct count (bounded by retention)
+	Cumulative int    `json:"cumulative"` // all-time installs ever (sum of daily new_installs)
+	Latest     string `json:"latest"`     // latest released version, e.g. "v1.9.5"
 }
 
 func main() {
@@ -582,6 +649,20 @@ func main() {
 	// a failure here does not block startup.
 	if err := s.backfillNewInstalls(context.Background()); err != nil {
 		slog.Warn("aggregate backfill failed", "error", err)
+	}
+
+	// Optional one-time repair: when NEW_INSTALLS_SEED_PATH points at a
+	// {day: count} JSON file, raise each day's new_installs to the seeded
+	// value (never lowers). Used to restore historical new_installs that an
+	// earlier, non-monotonic backfill eroded once installs aged past the
+	// 60-day retention window. Aggregate-only data, idempotent, no-op when
+	// the env var is unset; safe to leave mounted across restarts.
+	if seedPath := env("NEW_INSTALLS_SEED_PATH", ""); seedPath != "" {
+		if n, err := s.reconcileNewInstallsSeed(context.Background(), seedPath); err != nil {
+			slog.Warn("new-installs seed reconcile failed", "path", seedPath, "error", err)
+		} else {
+			slog.Info("new-installs seed reconciled", "path", seedPath, "days_raised", n)
+		}
 	}
 
 	// Daily snapshot job for the aggregate tables. Mirrors the retention
@@ -977,7 +1058,13 @@ type statsData struct {
 	Active7d  int
 	Active30d int
 	Total     int
-	Versions  []statsBucket
+	// Cumulative is the true all-time install count: the sum of new_installs
+	// across every day in daily_global. Unlike Total (a rolling 60-day count
+	// bounded by the retention sweep), this is monotonic — it counts every
+	// distinct install_id ever seen, including those long since evicted from
+	// the installs table. Backed by the perpetual daily_global aggregate.
+	Cumulative int
+	Versions   []statsBucket
 	// VersionsRecent is the same set of buckets restricted to installs that
 	// pinged in the last 7 days. Dashboard renders both alongside each other
 	// so dormant installs (e.g. v1.8.1 pinged once and never again) stop
@@ -1025,6 +1112,14 @@ func (s *server) computeStats(ctx context.Context) (*statsData, error) {
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM installs`,
 	).Scan(&d.Total); err != nil {
+		return nil, err
+	}
+	// Cumulative all-time installs from the perpetual daily aggregate. Survives
+	// the 60-day retention sweep on raw rows and, thanks to the MAX-guarded
+	// backfill, only ever grows.
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(new_installs), 0) FROM daily_global`,
+	).Scan(&d.Cumulative); err != nil {
 		return nil, err
 	}
 
@@ -1287,9 +1382,10 @@ func (s *server) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(statsResponse{
-		Active30d: d.Active30d,
-		Total:     d.Total,
-		Versions:  versions,
+		Active30d:  d.Active30d,
+		Total:      d.Total,
+		Cumulative: d.Cumulative,
+		Versions:   versions,
 	})
 }
 
@@ -1375,6 +1471,13 @@ func (s *server) handleStatsJSON(w http.ResponseWriter, r *http.Request) {
 		`SELECT COUNT(*) FROM installs`,
 	).Scan(&resp.Total); err != nil {
 		slog.Error("stats.json: total count", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if err := s.db.QueryRowContext(r.Context(),
+		`SELECT COALESCE(SUM(new_installs), 0) FROM daily_global`,
+	).Scan(&resp.Cumulative); err != nil {
+		slog.Error("stats.json: cumulative count", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -1909,13 +2012,13 @@ func (s *server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
   <header>
     <a class="back" href="/">← Bindery</a>
     <h1>Telemetry</h1>
-    <p>Anonymous install counts from instances that opted in to update checks. No identifying information is collected, only an opaque install UUID, the version, the OS/arch reported by Go's runtime, and (on v1.15.3+) per-subsystem adoption counts. "Active 7d" is the count of installs that pinged in the last seven days (the closest proxy we have for "running right now"); "Active 30d" is the wider 30-day window and includes dormant installs that have not pinged in a while. Full schema and opt-out instructions: <a href="/telemetry-fields" style="color:#10b981">/telemetry-fields</a>.</p>
+    <p>Anonymous install counts from instances that opted in to update checks. No identifying information is collected, only an opaque install UUID, the version, the OS/arch reported by Go's runtime, and (on v1.15.3+) per-subsystem adoption counts. "Active 7d" is the count of installs that pinged in the last seven days (the closest proxy we have for "running right now"); "Active 30d" is the wider 30-day window and includes dormant installs that have not pinged in a while. "Cumulative installs" is every distinct install ever seen — it only ever grows and counts each install UUID once, so an install that recreates its database (a fresh volume, a wiped config) is counted again. Full schema and opt-out instructions: <a href="/telemetry-fields" style="color:#10b981">/telemetry-fields</a>.</p>
   </header>
 
   <div class="summary">
     <div class="stat"><div class="num">%d</div><div class="label">Active installs (7d)</div></div>
     <div class="stat"><div class="num">%d</div><div class="label">Active installs (30d)</div></div>
-    <div class="stat"><div class="num">%d</div><div class="label">Total installs (all-time)</div></div>
+    <div class="stat"><div class="num">%d</div><div class="label">Cumulative installs</div></div>
   </div>
 
   <section>
@@ -1974,7 +2077,7 @@ func (s *server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
 </div>
 </body>
 </html>`,
-		d.Active7d, d.Active30d, d.Total,
+		d.Active7d, d.Active30d, d.Cumulative,
 		renderVersionsTable(d.Versions, d.VersionsRecent, 8, normalizeVersion(s.latest())),
 		renderBarChart(d.OS, 0, ""),
 		renderBarChart(d.Arch, 0, ""),

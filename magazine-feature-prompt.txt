@@ -1,0 +1,120 @@
+PLANNING PROMPT — Magazine / periodical support for Bindery
+(Paste this into a fresh Claude Code session opened in the bindery repo. It is a
+plan-only task: investigate the codebase first, then produce an implementation
+plan. Do NOT write feature code in that session — end by proposing the plan and,
+where scope is genuinely ambiguous, ask me to choose.)
+
+------------------------------------------------------------------------------
+GOAL
+------------------------------------------------------------------------------
+Plan how to add MAGAZINE / periodical support to Bindery (Go backend in
+internal/ + cmd/, React+TypeScript+Tailwind frontend in web/, single SQLite DB
+with numbered migrations in internal/db/migrations, Helm chart in charts/). The
+model to learn from is LazyLibrarian's magazine feature (subscribe to a magazine
+title, monitor for new issues, search/download each issue, post-process into the
+library, scan existing issues, show covers), but Bindery must implement it the
+Bindery way — see HARD CONSTRAINTS.
+
+------------------------------------------------------------------------------
+HARD CONSTRAINTS (do not violate; they are why this project exists)
+------------------------------------------------------------------------------
+1. NO SCRAPING. Bindery's whole thesis is "stable, documented APIs only — no
+   HTML scraping, no dead backends" (Readarr died from Goodreads scraping).
+   Magazines MUST be searched/grabbed through the EXISTING Newznab/Torznab
+   indexer path that Bindery already uses for books (Usenet + torrent indexers
+   expose magazine categories, e.g. Newznab 7000/7010-series "Books/Magazines").
+   Do NOT propose libgen/zlibrary/Anna's-Archive style direct scrapers (that is
+   exactly LazyLibrarian's perpetual-breakage failure mode).
+2. Reuse Bindery's existing abstractions; do not fork a parallel pipeline:
+   - indexer search (internal/indexer — newznab/torznab client, query builder,
+     multi-indexer fan-out, dedup, ranking),
+   - download clients (internal/downloader — sab/nzbget/qbit/transmission/
+     deluge),
+   - import/placement (internal/importer — scanner, renamer, naming tokens,
+     move/copy/hardlink, and the new external-mode DROP FOLDER added in #941),
+   - scheduling (internal/scheduler — cron sweeps),
+   - blocklist / quality / delay profiles (internal/decision),
+   - notifications (internal/notifier), OPDS (internal/opds),
+   - the media-type concept already in internal/models (ebook / audiobook /
+     both) and the wanted -> downloading -> downloaded -> imported workflow.
+3. Match the codebase's conventions: migration numbering (next free number, the
+   gap at 010 is intentional, renumber on collision), in-memory SQLite tests
+   (db.OpenMemory) with httptest handlers, the web ui-design conventions
+   (slate/zinc dark-mode pairs, every string via i18n t(), shared form styles),
+   and `make check` must stay green.
+
+------------------------------------------------------------------------------
+WHAT TO INVESTIGATE FIRST (read the code before designing)
+------------------------------------------------------------------------------
+- How a book currently flows end to end: model (internal/models book/edition/
+  media type), search (internal/indexer query builder + category selection +
+  ranking), the wanted/auto-grab loop (internal/scheduler), grab -> download
+  client (internal/downloader) -> import (internal/importer scanner/renamer,
+  naming tokens, drop folder). Note every seam a "magazine" would plug into.
+- Newznab/Torznab category handling: how categories are chosen per search today,
+  and what it takes to query magazine categories instead of book categories.
+- The media-type enum and everywhere it branches (DB columns, API, importer
+  routing, UI filters) — adding a 3rd kind "magazine" touches all of these.
+- Naming tokens (internal/importer/renamer) and how a magazine issue would be
+  named (needs issue date / issue number tokens that books don't have).
+- Library scan reconciliation (importer ScanLibrary) — how it would discover and
+  catalogue existing magazine issues already on disk.
+- OPDS feeds, notifications, blocklist, quality/format filtering — how each would
+  need a magazine variant or be reused as-is.
+- How LazyLibrarian does it, as prior art only (their modules: searchmag.py,
+  magazinescan.py; their data model tracks a magazine title plus per-issue rows;
+  docs: https://lazylibrarian.gitlab.io/magazines/). We are NOT copying their
+  code or their scraper providers — only the UX shape and the issue-matching
+  ideas.
+
+------------------------------------------------------------------------------
+THE HARD PROBLEM TO DESIGN CAREFULLY: issue identity & matching
+------------------------------------------------------------------------------
+Magazines are recurring, with messy release naming. The plan must specify an
+algorithm for:
+- Parsing an issue identifier from a release title: dates (YYYY-MM, "January
+  2026", "2026-01", weekly dates), issue numbers ("Issue 42", "No. 42",
+  "Vol 12 No 3"), and mixed forms. Define the normalized issue key.
+- Deciding "is this a NEW issue we don't have yet?" vs a dup of an issue already
+  grabbed/imported (idempotency — reuse the lessons from the book dedup_key work
+  and the importer idempotency guards).
+- Subscription semantics: monitor a magazine title and auto-grab new issues on
+  the sweep (with an optional "keep last N issues" / "only future issues from
+  now" policy, mirroring author monitor modes), plus manual per-issue search.
+- Avoiding false positives (a magazine title that is a substring of another;
+  language/edition variants). Reuse the existing keyword/word-boundary matching
+  philosophy from the book searcher.
+
+------------------------------------------------------------------------------
+DELIVERABLES FROM THE PLANNING SESSION
+------------------------------------------------------------------------------
+Produce a written plan that includes:
+1. Context: why, and exactly which existing seams are reused vs newly added.
+2. Data model + migration: new tables/columns (magazine title, subscription/
+   monitor policy, per-issue rows with normalized issue key + status + file
+   path + cover), with the chosen migration number.
+3. The issue-parsing/matching algorithm (with example titles -> normalized keys)
+   and the dedup/idempotency strategy.
+4. Backend changes by package (models, indexer category selection + search,
+   scheduler sweep, downloader reuse, importer placement + magazine naming
+   tokens + library-scan reconciliation, API endpoints, notifications, OPDS).
+5. Frontend changes: a Magazines page (add/search a title, subscribe, list
+   issues with covers + status, manual issue search/grab), settings, i18n keys —
+   following the web ui-design conventions.
+6. Scope tiers: a minimal shippable MVP (e.g. subscribe + auto-grab new issues
+   via indexers + import + basic issue list) vs the full feature (covers,
+   library scan of existing issues, OPDS, retention policy, per-issue manual
+   search). Recommend where to cut the first release.
+7. Critical files to touch (name them), reusable utilities to lean on, and a
+   phased, reviewable PR breakdown.
+8. A verification section (unit tests with in-memory SQLite, an end-to-end
+   manual test, make check / web typecheck-build-lint-test).
+9. Open questions / scope decisions to confirm with me before implementation
+   (at minimum: is expanding Bindery's scope to periodicals desired at all; flat
+   vs templated on-disk layout for issues; retention policy default; whether
+   magazines get their own quality/format handling or reuse the book one).
+
+Use plan mode and the Plan/Explore agents to investigate. Be adversarial about
+scope: magazines are a real expansion of what Bindery is, so call out the
+maintenance/UX cost honestly and propose the smallest version that delivers the
+"subscribe and auto-collect new issues" core. Repo is at /home/ubuntu/bindery.

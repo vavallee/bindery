@@ -37,8 +37,13 @@ type DownloadClientHealth struct {
 }
 
 type Download struct {
-	ID               int64         `json:"id"`
-	GUID             string        `json:"guid"`
+	ID   int64  `json:"id"`
+	GUID string `json:"guid"`
+	// OwnerUserID scopes the download to the user whose grab created it
+	// (#1457). 0 = unowned (persisted as NULL); the downloads list uses the
+	// STRICT owner scope, so stamping is what makes a non-admin's queue
+	// non-empty under tenancy. Background grabs inherit the book's owner.
+	OwnerUserID      int64         `json:"-"`
 	BookID           *int64        `json:"bookId"`
 	EditionID        *int64        `json:"editionId"`
 	IndexerID        *int64        `json:"indexerId"`

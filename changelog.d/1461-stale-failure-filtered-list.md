@@ -1,2 +1,0 @@
-### Fixed
-- **Transmission/qBittorrent: healthy downloads no longer blocked as "source no longer available"** (#1461) — the stale-failure check treated a category-filtered torrent listing as a complete one. A failed-import download whose torrent was moved to another download directory, lost its label, or sat under a different qBittorrent category (while the unfiltered listing was unavailable) was terminally blocked even though the torrent was still seeding. Filtered or degraded listings now only block on retry exhaustion, never on "missing from the list".

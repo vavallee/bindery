@@ -26,6 +26,6 @@ export default defineConfig({
       },
     },
     globals: true,
-    setupFiles: './src/test-setup.ts',
+    setupFiles: ['./src/test-localstorage.ts', './src/test-setup.ts'],
   },
 })

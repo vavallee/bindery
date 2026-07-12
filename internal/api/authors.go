@@ -249,8 +249,10 @@ func (h *AuthorHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Attach books
-	books, err := h.books.ListByAuthor(r.Context(), id)
+	// Attach books, owner-scoped (#1416): the embedded list must apply the
+	// same tenancy predicate as GET /book?authorId=, or a co-author book
+	// owned by another user appears here but not there.
+	books, err := h.books.ListByAuthorAndUser(r.Context(), id, auth.ListScopeUserID(r.Context()))
 	if err == nil {
 		author.Books = books
 	}
@@ -1692,6 +1694,9 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool,
 		}
 		seenTitles[dedupKey] = &b
 
+		// Tenancy (#1457): a new book inherits its author's owner so per-user
+		// scoping sees the sync's output. NULL-owned authors stay NULL-owned.
+		b.OwnerUserID = author.OwnerUserID
 		if err := h.books.Create(ctx, &b); err != nil {
 			// A UNIQUE constraint on foreign_id means the book was already
 			// created by a concurrent or earlier sync — treat as a benign
@@ -2342,6 +2347,9 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 					"foreignBookId", req.ForeignBookID, "error", err)
 			} else if primary != nil {
 				primary.AuthorID = author.ID
+				// Tenancy (#1457): inherit the author's owner (stamped from the
+				// requesting user when this request created the author).
+				primary.OwnerUserID = author.OwnerUserID
 				primary.Monitored = author.Monitored
 				if primary.Status == "" {
 					primary.Status = models.BookStatusWanted

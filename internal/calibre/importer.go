@@ -678,6 +678,7 @@ func (i *Importer) upsertBook(ctx context.Context, runID int64, author *models.A
 	book := &models.Book{
 		ForeignID:        "calibre:book:" + strconv.FormatInt(cb.CalibreID, 10),
 		AuthorID:         author.ID,
+		OwnerUserID:      author.OwnerUserID, // tenancy (#1457): inherit author's owner
 		Title:            cb.Title,
 		SortTitle:        firstNonEmpty(cb.SortTitle, cb.Title),
 		ReleaseDate:      cb.PublishDate,

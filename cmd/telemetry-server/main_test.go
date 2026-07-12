@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1002,5 +1004,148 @@ func TestComputeStats_MonthlyReadsFromAggregates(t *testing.T) {
 	}
 	if got != 42 {
 		t.Errorf("Monthly[%s] = %d, want 42 (from daily_global with no raw rows)", monthLabel, got)
+	}
+}
+
+// TestBackfillNewInstalls_Monotonic is the regression test for the erosion
+// bug: once installs first-seen on a day age past the 60-day retention window
+// and are swept, recomputing that day's new_installs from surviving rows
+// yields a smaller count. The MAX-guarded conflict clause must refuse to
+// lower a day's already-recorded value.
+func TestBackfillNewInstalls_Monotonic(t *testing.T) {
+	s := newTestServer(t, "v1.20.0")
+	day := time.Date(2026, 5, 5, 10, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+
+	// The true count for 2026-05-05 was 5, recorded back when the day was
+	// fresh. Simulate that historical record.
+	if _, err := s.db.ExecContext(context.Background(),
+		`INSERT INTO daily_global (day, active_day, new_installs, total)
+		 VALUES ('2026-05-05', 0, 5, 0)`); err != nil {
+		t.Fatalf("seed history: %v", err)
+	}
+	// Only one install first-seen that day has survived the retention sweep;
+	// the other four rows are long gone.
+	insertInstall(t, s, uuid('1'), "1.20.0", day, now)
+
+	if err := s.backfillNewInstalls(context.Background()); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+
+	var got int
+	if err := s.db.QueryRowContext(context.Background(),
+		`SELECT new_installs FROM daily_global WHERE day = '2026-05-05'`,
+	).Scan(&got); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if got != 5 {
+		t.Errorf("new_installs eroded to %d; MAX guard must keep the recorded 5", got)
+	}
+}
+
+// TestComputeStats_Cumulative verifies the cumulative headline sums
+// daily_global.new_installs across all days, independent of the raw installs
+// table (which the retention sweep bounds to 60 days).
+func TestComputeStats_Cumulative(t *testing.T) {
+	s := newTestServer(t, "v1.25.0")
+	for _, r := range []struct {
+		day string
+		n   int
+	}{
+		{"2026-05-05", 5},
+		{"2026-05-06", 3},
+		{"2026-06-01", 10},
+		{"2026-07-01", 2},
+	} {
+		if _, err := s.db.ExecContext(context.Background(),
+			`INSERT INTO daily_global (day, active_day, new_installs, total) VALUES (?, 0, ?, 0)`,
+			r.day, r.n); err != nil {
+			t.Fatalf("seed %s: %v", r.day, err)
+		}
+	}
+
+	d, err := s.computeStats(context.Background())
+	if err != nil {
+		t.Fatalf("computeStats: %v", err)
+	}
+	if d.Cumulative != 20 {
+		t.Errorf("Cumulative = %d, want 20 (5+3+10+2)", d.Cumulative)
+	}
+	if d.Total != 0 {
+		t.Errorf("Total = %d, want 0 (no live installs rows); cumulative must not read the installs table", d.Total)
+	}
+}
+
+// TestReconcileNewInstallsSeed verifies the one-time repair hook: it raises
+// eroded/missing days to the seeded value, never lowers a healthy day, skips
+// malformed keys, and is idempotent.
+func TestReconcileNewInstallsSeed(t *testing.T) {
+	s := newTestServer(t, "v1.25.0")
+
+	// Existing state: one eroded day (below seed) and one healthy day (above seed).
+	for _, r := range []struct {
+		day string
+		n   int
+	}{
+		{"2026-05-05", 1},  // eroded — seed says 5, should be raised
+		{"2026-06-01", 20}, // healthy — seed says 10, must NOT be lowered
+	} {
+		if _, err := s.db.ExecContext(context.Background(),
+			`INSERT INTO daily_global (day, active_day, new_installs, total) VALUES (?, 0, ?, 0)`,
+			r.day, r.n); err != nil {
+			t.Fatalf("seed %s: %v", r.day, err)
+		}
+	}
+
+	seed := map[string]int{
+		"2026-05-05": 5,  // raise 1 -> 5
+		"2026-05-20": 7,  // insert brand-new day
+		"2026-06-01": 10, // must not lower 20
+		"garbage":    99, // must be skipped
+	}
+	buf, _ := json.Marshal(seed)
+	path := filepath.Join(t.TempDir(), "seed.json")
+	if err := os.WriteFile(path, buf, 0o600); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+
+	raised, err := s.reconcileNewInstallsSeed(context.Background(), path)
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if raised != 2 {
+		t.Errorf("raised = %d, want 2 (2026-05-05 up, 2026-05-20 inserted)", raised)
+	}
+
+	want := map[string]int{"2026-05-05": 5, "2026-05-20": 7, "2026-06-01": 20}
+	for day, exp := range want {
+		var got int
+		if err := s.db.QueryRowContext(context.Background(),
+			`SELECT new_installs FROM daily_global WHERE day = ?`, day,
+		).Scan(&got); err != nil {
+			t.Fatalf("read %s: %v", day, err)
+		}
+		if got != exp {
+			t.Errorf("new_installs[%s] = %d, want %d", day, got, exp)
+		}
+	}
+	// The malformed key must not have created a row.
+	var junk int
+	if err := s.db.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM daily_global WHERE day = 'garbage'`,
+	).Scan(&junk); err != nil {
+		t.Fatalf("count junk: %v", err)
+	}
+	if junk != 0 {
+		t.Errorf("malformed seed key created %d rows, want 0", junk)
+	}
+
+	// Idempotent: re-running raises nothing.
+	raised2, err := s.reconcileNewInstallsSeed(context.Background(), path)
+	if err != nil {
+		t.Fatalf("reconcile twice: %v", err)
+	}
+	if raised2 != 0 {
+		t.Errorf("second reconcile raised = %d, want 0 (idempotent)", raised2)
 	}
 }
