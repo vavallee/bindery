@@ -112,8 +112,9 @@ jobs:
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
-  # PR-only race detector. Four API test-name shards plus the remaining Go
-  # packages run in parallel so internal/api does not dominate PR feedback.
+  # PR-only race detector. Four API test-name shards, internal/db, and the
+  # remaining Go packages run in parallel so large packages do not dominate
+  # PR feedback.
   # The post-merge race job uses the same shard layout.
   validate-race-go:
     name: validate (Go race) (${{ matrix.shard }})
@@ -124,15 +125,21 @@ jobs:
       matrix:
         include:
           - shard: api-a-b
+            scope: api
             pattern: '^Test[A-B]'
           - shard: api-c-k
+            scope: api
             pattern: '^Test[C-K]'
           - shard: api-l-q
+            scope: api
             pattern: '^Test[L-Q]'
           - shard: api-rest
+            scope: api
             pattern: '^(Test([^A-Q]|$)|Fuzz|Example)'
+          - shard: db
+            scope: db
           - shard: non-api
-            pattern: ''
+            scope: non-api
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -147,13 +154,16 @@ jobs:
           go-version: "1.26.5"
           cache: true
       - name: Run API race shard
-        if: matrix.pattern != ''
+        if: matrix.scope == 'api'
         run: go test -race -timeout=15m -run '${{ matrix.pattern }}' ./internal/api
+      - name: Run database race shard
+        if: matrix.scope == 'db'
+        run: go test -race -timeout=15m ./internal/db
       - name: Run non-API race shard
-        if: matrix.pattern == ''
+        if: matrix.scope == 'non-api'
         run: |
           set -o pipefail
-          go list ./cmd/... ./internal/... | grep -v '/internal/api$' | xargs go test -race -timeout=15m
+          go list ./cmd/... ./internal/... | grep -v -e '/internal/api$' -e '/internal/db$' | xargs go test -race -timeout=15m
 
   validate-frontend:
     name: validate (frontend)
@@ -212,7 +222,7 @@ jobs:
       - run: npm run build --prefix web
       - run: npm test --prefix web
 
-  # Race-detector run — the same five shards as PR validation, parallel with
+  # Race-detector run — the same six shards as PR validation, parallel with
   # image/goreleaser and not a deploy gate. Fix failures before the next release.
   race:
     name: race (${{ matrix.shard }})
@@ -223,15 +233,21 @@ jobs:
       matrix:
         include:
           - shard: api-a-b
+            scope: api
             pattern: '^Test[A-B]'
           - shard: api-c-k
+            scope: api
             pattern: '^Test[C-K]'
           - shard: api-l-q
+            scope: api
             pattern: '^Test[L-Q]'
           - shard: api-rest
+            scope: api
             pattern: '^(Test([^A-Q]|$)|Fuzz|Example)'
+          - shard: db
+            scope: db
           - shard: non-api
-            pattern: ''
+            scope: non-api
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -246,13 +262,16 @@ jobs:
           go-version: "1.26.5"
           cache: true
       - name: Run API race shard
-        if: matrix.pattern != ''
+        if: matrix.scope == 'api'
         run: go test -race -timeout=15m -run '${{ matrix.pattern }}' ./internal/api
+      - name: Run database race shard
+        if: matrix.scope == 'db'
+        run: go test -race -timeout=15m ./internal/db
       - name: Run non-API race shard
-        if: matrix.pattern == ''
+        if: matrix.scope == 'non-api'
         run: |
           set -o pipefail
-          go list ./cmd/... ./internal/... | grep -v '/internal/api$' | xargs go test -race -timeout=15m
+          go list ./cmd/... ./internal/... | grep -v -e '/internal/api$' -e '/internal/db$' | xargs go test -race -timeout=15m
 
   # ── Docker image — runs after test passes ──────────────────────────────────
   image:
