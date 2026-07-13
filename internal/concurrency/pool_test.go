@@ -259,3 +259,117 @@ func TestRunBoundedWithTimeout_EmptyInput(t *testing.T) {
 		t.Fatalf("expected empty results, got %d", len(results))
 	}
 }
+
+func TestRunBoundedPaced_ThrottlesLaunchRate(t *testing.T) {
+	const items = 6
+	const interval = 20 * time.Millisecond
+
+	work := make([]int, items)
+	for i := range work {
+		work[i] = i
+	}
+
+	var processed int32
+	start := time.Now()
+	// High concurrency so the semaphore never blocks; pacing is the only
+	// thing gating the launch rate.
+	RunBoundedPaced(context.Background(), work, 100, interval, func(_ context.Context, _ int) {
+		atomic.AddInt32(&processed, 1)
+	})
+	elapsed := time.Since(start)
+
+	if got := atomic.LoadInt32(&processed); got != items {
+		t.Fatalf("processed = %d, want %d", got, items)
+	}
+	// n items paced at `interval` cannot complete faster than (n-1)*interval,
+	// since the first starts immediately and each subsequent launch waits.
+	min := time.Duration(items-1) * interval
+	if elapsed < min*9/10 {
+		t.Fatalf("completed in %v, want >= ~%v (pacing not applied)", elapsed, min)
+	}
+}
+
+func TestRunBoundedPaced_RespectsConcurrencyCap(t *testing.T) {
+	const items = 30
+	const cap = 3
+
+	work := make([]int, items)
+	for i := range work {
+		work[i] = i
+	}
+
+	var active, maxActive int32
+	// Tiny interval so pacing doesn't dominate; the point is the cap holds.
+	RunBoundedPaced(context.Background(), work, cap, time.Millisecond, func(_ context.Context, _ int) {
+		now := atomic.AddInt32(&active, 1)
+		for {
+			prev := atomic.LoadInt32(&maxActive)
+			if now <= prev || atomic.CompareAndSwapInt32(&maxActive, prev, now) {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+		atomic.AddInt32(&active, -1)
+	})
+
+	if got := atomic.LoadInt32(&maxActive); got > cap {
+		t.Fatalf("max concurrent = %d, want <= %d", got, cap)
+	}
+}
+
+func TestRunBoundedPaced_ZeroIntervalIsUnpaced(t *testing.T) {
+	const items = 50
+	work := make([]int, items)
+	for i := range work {
+		work[i] = i
+	}
+
+	var processed int32
+	start := time.Now()
+	RunBoundedPaced(context.Background(), work, 8, 0, func(_ context.Context, _ int) {
+		atomic.AddInt32(&processed, 1)
+	})
+	elapsed := time.Since(start)
+
+	if got := atomic.LoadInt32(&processed); got != items {
+		t.Fatalf("processed = %d, want %d", got, items)
+	}
+	// With no pacing this should finish near-instantly, not accumulate any
+	// per-item delay.
+	if elapsed > 100*time.Millisecond {
+		t.Fatalf("unpaced run took %v, expected near-instant", elapsed)
+	}
+}
+
+func TestRunBoundedPaced_CtxCancelStopsLaunching(t *testing.T) {
+	const items = 100
+	const interval = 30 * time.Millisecond
+
+	work := make([]int, items)
+	for i := range work {
+		work[i] = i
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var processed int32
+	go func() {
+		// Let a couple launch, then cancel mid-pace.
+		time.Sleep(75 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	RunBoundedPaced(ctx, work, 4, interval, func(_ context.Context, _ int) {
+		atomic.AddInt32(&processed, 1)
+	})
+	elapsed := time.Since(start)
+
+	if got := atomic.LoadInt32(&processed); got >= items {
+		t.Fatalf("processed = %d, expected to stop early on ctx cancel", got)
+	}
+	// Should return shortly after cancel, not run the full paced batch
+	// (which would take ~3s).
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("returned in %v, expected prompt exit after cancel", elapsed)
+	}
+}

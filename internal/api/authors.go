@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 
@@ -20,6 +19,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/bookhydrate"
+	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/metadata"
@@ -1808,32 +1808,16 @@ func handleNewWantedBook(ctx context.Context, books *db.BookRepo, series *db.Ser
 	return false
 }
 
-func runBookSearches(ctx context.Context, searcher BookSearcher, books []models.Book, concurrency int) {
+func runBookSearches(ctx context.Context, searcher BookSearcher, books []models.Book, maxConcurrent int) {
 	if searcher == nil || len(books) == 0 {
 		return
 	}
-	if concurrency <= 0 {
-		concurrency = 1
-	}
-
-	sem := make(chan struct{}, concurrency)
-	var wg sync.WaitGroup
-	for _, book := range books {
-		select {
-		case sem <- struct{}{}:
-		case <-ctx.Done():
-			wg.Wait()
-			return
-		}
-		book := book
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer func() { <-sem }()
-			searcher.SearchAndGrabBook(ctx, book)
-		}()
-	}
-	wg.Wait()
+	// Paced so a large author's auto-search doesn't burst every indexer at
+	// once as slots free up (#1515); shares the package pace with the bulk
+	// "search all" and series-fill fan-outs.
+	concurrency.RunBoundedPaced(ctx, books, maxConcurrent, searchPaceInterval, func(ctx context.Context, book models.Book) {
+		searcher.SearchAndGrabBook(ctx, book)
+	})
 }
 
 func shouldMonitorBookForAuthor(author *models.Author, book models.Book, latestKeys map[string]struct{}, today time.Time) bool {

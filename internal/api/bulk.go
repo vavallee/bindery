@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/concurrency"
@@ -33,6 +34,19 @@ var (
 // uses the same bound. Tune in code if real-world indexer pools change
 // shape — a setting for one number would be more noise than signal.
 const bulkSearchConcurrency = 8
+
+// searchPaceInterval is the minimum gap between successive indexer-search
+// launches in every user- or catalogue-triggered fan-out in this package
+// (bulk "search all", per-author auto-search, series fill). The concurrency
+// caps bound parallelism; this bounds rate, so a large author or series can't
+// burst a rate-limit-free Prowlarr into dropping requests (#1515). Fixed in
+// code, like the concurrency caps — one tunable number is more noise than
+// signal. The scheduled wanted loop paces itself with the same value
+// (scheduler.searchPaceInterval, kept in sync).
+//
+// A var, not a const, only so tests that assert concurrency behaviour can set
+// it to 0 and observe an unpaced fan-out; production never mutates it.
+var searchPaceInterval = 3 * time.Second
 
 // BulkHandler handles multi-ID mutation endpoints for authors, books, and
 // wanted books. All three endpoints use a per-ID result map with 200 status
@@ -329,7 +343,7 @@ func (h *BulkHandler) fanOutSearches(books []models.Book) {
 		return
 	}
 	bgCtx := h.bgCtx()
-	go concurrency.RunBounded(bgCtx, books, bulkSearchConcurrency, func(ctx context.Context, b models.Book) {
+	go concurrency.RunBoundedPaced(bgCtx, books, bulkSearchConcurrency, searchPaceInterval, func(ctx context.Context, b models.Book) {
 		h.searcher.SearchAndGrabBook(ctx, b)
 	})
 }

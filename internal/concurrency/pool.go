@@ -53,6 +53,65 @@ func RunBounded[T any](ctx context.Context, items []T, maxConcurrent int, fn fun
 	wg.Wait()
 }
 
+// RunBoundedPaced is RunBounded plus a minimum gap between successive task
+// starts. maxConcurrent still caps how many fns run at once; minInterval
+// additionally throttles the launch rate so a large batch can't burst its
+// downstream even as slots free up. The first item starts immediately; each
+// subsequent launch waits until at least minInterval has elapsed since the
+// previous one.
+//
+// This exists for the indexer-search fan-outs (bulk "search all", per-author
+// auto-search, series fill, the scheduled wanted loop): a bare concurrency cap
+// bounds parallelism but not rate, so as each search returns the next fires
+// instantly and a 30-book author sustains a tight loop of indexer queries that
+// can overwhelm a Prowlarr with no per-indexer limits of its own (#1515).
+//
+// minInterval <= 0 makes this behave exactly like RunBounded.
+func RunBoundedPaced[T any](ctx context.Context, items []T, maxConcurrent int, minInterval time.Duration, fn func(context.Context, T)) {
+	if fn == nil || len(items) == 0 {
+		return
+	}
+	if maxConcurrent <= 0 {
+		maxConcurrent = 1
+	}
+
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+	var lastStart time.Time
+	for _, item := range items {
+		// Pace gate: hold the launch until minInterval has passed since the
+		// previous actual start. Measured from the real launch (below), not
+		// the loop iteration, so a stall on the concurrency gate doesn't let
+		// the next two starts bunch up.
+		if minInterval > 0 && !lastStart.IsZero() {
+			if wait := minInterval - time.Since(lastStart); wait > 0 {
+				select {
+				case <-time.After(wait):
+				case <-ctx.Done():
+					wg.Wait()
+					return
+				}
+			}
+		}
+		// Concurrency gate.
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			wg.Wait()
+			return
+		}
+		lastStart = time.Now()
+		item := item
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			fn(ctx, item)
+		}()
+	}
+	wg.Wait()
+}
+
 // BoundedResult pairs a per-item outcome with whether it actually
 // completed within the per-call deadline. Items whose fn returned an
 // error, whose timeout fired, or whose parent ctx was canceled before
