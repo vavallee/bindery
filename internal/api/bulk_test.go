@@ -1046,6 +1046,11 @@ func (m *boundedMockSearcher) SearchAndGrabBook(_ context.Context, _ models.Book
 // (8); we use 32 books and assert the observed in-flight count never
 // exceeds it.
 func TestAuthorsBulk_Search_BoundsConcurrency(t *testing.T) {
+	// Asserts the concurrency cap; disable pacing so launches aren't spaced
+	// out (pacing is covered in the concurrency package).
+	searchPaceInterval = 0
+	t.Cleanup(func() { searchPaceInterval = 3 * time.Second })
+
 	const total = 32
 	searcher := newBoundedMockSearcher(total)
 	h, _, books, author, ctx := bulkFixtureWithSearcher(t, searcher)

@@ -154,6 +154,14 @@ type Scheduler struct {
 
 const scheduledWantedSearchConcurrency = 2
 
+// searchPaceInterval is the minimum gap between successive indexer-search
+// launches in the scheduled wanted loop. Kept in sync with the api package's
+// searchPaceInterval so every search fan-out (manual bulk, per-author, series
+// fill, and this loop) throttles Prowlarr at the same rate (#1515).
+//
+// A var, not a const, only so tests can set it to 0; production never mutates it.
+var searchPaceInterval = 3 * time.Second
+
 // New creates a new scheduler.
 //
 // appCtx is the process-lifecycle context — a context that is not tied to any
@@ -767,7 +775,7 @@ func (s *Scheduler) searchWanted() {
 	if len(searchQueue) == 0 {
 		return
 	}
-	concurrency.RunBounded(ctx, searchQueue, scheduledWantedSearchConcurrency, func(ctx context.Context, book models.Book) {
+	concurrency.RunBoundedPaced(ctx, searchQueue, scheduledWantedSearchConcurrency, searchPaceInterval, func(ctx context.Context, book models.Book) {
 		s.SearchAndGrabBook(ctx, book)
 	})
 }

@@ -521,7 +521,7 @@ func (h *SeriesHandler) fanOutSeriesSearches(_ context.Context, books []models.B
 	// per-call indexer credentials are already baked into searcher state, so
 	// there is nothing on the request ctx that the search needs.
 	bgCtx := h.bgCtx()
-	go concurrency.RunBounded(bgCtx, books, seriesFillSearchConcurrency, func(ctx context.Context, b models.Book) {
+	go concurrency.RunBoundedPaced(bgCtx, books, seriesFillSearchConcurrency, searchPaceInterval, func(ctx context.Context, b models.Book) {
 		h.searcher.SearchAndGrabBook(ctx, b)
 	})
 }

@@ -481,6 +481,11 @@ func TestFetchAuthorBooks_RefreshesAuthorProfile(t *testing.T) {
 }
 
 func TestFetchAuthorBooks_AutoSearchUsesBoundedConcurrency(t *testing.T) {
+	// This test asserts the concurrency cap; disable search pacing so launches
+	// aren't spaced out (pacing is covered in the concurrency package).
+	searchPaceInterval = 0
+	t.Cleanup(func() { searchPaceInterval = 3 * time.Second })
+
 	database, err := db.OpenMemory()
 	if err != nil {
 		t.Fatal(err)
