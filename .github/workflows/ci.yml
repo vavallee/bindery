@@ -151,7 +151,9 @@ jobs:
         run: go test -race -timeout=15m -run '${{ matrix.pattern }}' ./internal/api
       - name: Run non-API race shard
         if: matrix.pattern == ''
-        run: go list ./cmd/... ./internal/... | grep -v '/internal/api$' | xargs go test -race -timeout=15m
+        run: |
+          set -o pipefail
+          go list ./cmd/... ./internal/... | grep -v '/internal/api$' | xargs go test -race -timeout=15m
 
   validate-frontend:
     name: validate (frontend)
@@ -248,7 +250,9 @@ jobs:
         run: go test -race -timeout=15m -run '${{ matrix.pattern }}' ./internal/api
       - name: Run non-API race shard
         if: matrix.pattern == ''
-        run: go list ./cmd/... ./internal/... | grep -v '/internal/api$' | xargs go test -race -timeout=15m
+        run: |
+          set -o pipefail
+          go list ./cmd/... ./internal/... | grep -v '/internal/api$' | xargs go test -race -timeout=15m
 
   # ── Docker image — runs after test passes ──────────────────────────────────
   image:
