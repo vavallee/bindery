@@ -228,7 +228,7 @@ func TestPing_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(StatusResponse{Status: "ok", Version: "1.0"})
+		_, _ = w.Write([]byte(`{"data":{"status":"UP","version":"1.0"},"message":"Pong","status":200}`))
 	}))
 	defer srv.Close()
 
@@ -240,8 +240,8 @@ func TestPing_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Ping: unexpected error: %v", err)
 	}
-	if resp.Status != "ok" {
-		t.Errorf("Status: got %q, want %q", resp.Status, "ok")
+	if resp.Status != "UP" {
+		t.Errorf("Status: got %q, want %q", resp.Status, "UP")
 	}
 	if resp.Version != "1.0" {
 		t.Errorf("Version: got %q, want %q", resp.Version, "1.0")
@@ -317,37 +317,34 @@ func TestPing_HTMLBody(t *testing.T) {
 	if err == nil {
 		t.Fatal("Ping: want error for HTML body, got nil")
 	}
-	for _, want := range []string{"non-JSON", "text/html", "/api/status"} {
+	for _, want := range []string{"non-JSON", "text/html", "/api/v1/healthcheck"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q: want it to mention %q", err, want)
 		}
 	}
 }
 
-// TestPing_AuthedStatusWithCredentials covers #1448: Grimmory guards
-// /api/status behind a valid session, so an unauthenticated probe 401s. When a
-// username/password is configured, Ping must log in first and present the JWT
-// on /api/status rather than failing the "Test connection" button outright.
-func TestPing_AuthedStatusWithCredentials(t *testing.T) {
-	var logins, statusHits int
+// TestPing_HealthcheckEnvelope covers #1485: Ping probes the public
+// GET /api/v1/healthcheck route and pulls the status/version out of the nested
+// "data" envelope. It must not require authentication — no JWT login, no
+// Authorization header — because verifying credentials is VerifyAuth's job.
+func TestPing_HealthcheckEnvelope(t *testing.T) {
+	var loginHits int
+	var probePath, probeAuth string
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/auth/login", func(w http.ResponseWriter, r *http.Request) {
-		var creds map[string]string
-		_ = json.NewDecoder(r.Body).Decode(&creds)
-		if creds["username"] != "bindery" || creds["password"] != "s3cret" {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		logins++
+		loginHits++
 		_ = json.NewEncoder(w).Encode(map[string]string{"accessToken": "jwt-1", "refreshToken": "refresh-1"})
 	})
+	mux.HandleFunc("GET /api/v1/healthcheck", func(w http.ResponseWriter, r *http.Request) {
+		probePath = r.URL.Path
+		probeAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"data":{"status":"UP","version":"v3.2.4"},"message":"Pong","status":200}`))
+	})
+	// The old route is gone in current Grimmory; 401 it like Spring security does
+	// so a regression back to /api/status fails loudly instead of silently.
 	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, r *http.Request) {
-		statusHits++
-		if r.Header.Get("Authorization") != "Bearer jwt-1" {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(StatusResponse{Status: "ok", Version: "3.1"})
+		w.WriteHeader(http.StatusUnauthorized)
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -362,58 +359,20 @@ func TestPing_AuthedStatusWithCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Ping: unexpected error: %v", err)
 	}
-	if resp.Version != "3.1" {
-		t.Errorf("Version: got %q, want %q", resp.Version, "3.1")
+	if resp.Version != "v3.2.4" {
+		t.Errorf("Version: got %q, want %q", resp.Version, "v3.2.4")
 	}
-	if logins != 1 {
-		t.Errorf("logins: got %d, want 1", logins)
+	if resp.Status != "UP" {
+		t.Errorf("Status: got %q, want %q", resp.Status, "UP")
 	}
-}
-
-// TestPing_AuthedStatusRetriesOn401 covers the stale-token path: a cached JWT
-// that Grimmory has since expired should trigger one forced re-login and a
-// retry rather than surfacing the 401 to the "Test connection" button.
-func TestPing_AuthedStatusRetriesOn401(t *testing.T) {
-	var logins int
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/v1/auth/login", func(w http.ResponseWriter, r *http.Request) {
-		logins++
-		// First login hands out the stale token, second the fresh one.
-		tok := "jwt-fresh"
-		if logins == 1 {
-			tok = "jwt-stale"
-		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"accessToken": tok, "refreshToken": "refresh-1"})
-	})
-	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer jwt-fresh" {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(StatusResponse{Status: "ok", Version: "3.1"})
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	c, err := NewClient(srv.URL, "")
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+	if probePath != "/api/v1/healthcheck" {
+		t.Errorf("probe path: got %q, want /api/v1/healthcheck", probePath)
 	}
-	c.WithCredentials("bindery", "s3cret")
-	// Seed a stale token so the first /api/status attempt 401s.
-	if _, err := c.login(context.Background()); err != nil {
-		t.Fatalf("seed login: %v", err)
+	if loginHits != 0 {
+		t.Errorf("Ping must not authenticate: got %d logins, want 0", loginHits)
 	}
-
-	resp, err := c.Ping(context.Background())
-	if err != nil {
-		t.Fatalf("Ping: unexpected error: %v", err)
-	}
-	if resp.Version != "3.1" {
-		t.Errorf("Version: got %q, want %q", resp.Version, "3.1")
-	}
-	if logins != 2 {
-		t.Errorf("logins: got %d, want 2 (seed + forced re-login)", logins)
+	if probeAuth != "" {
+		t.Errorf("Ping must not send an Authorization header, got %q", probeAuth)
 	}
 }
 
