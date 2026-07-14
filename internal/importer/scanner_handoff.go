@@ -66,6 +66,35 @@ func (s *Scanner) configuredImportMode(ctx context.Context) string {
 	return ""
 }
 
+// isUsenetClient reports whether clientType names a usenet download client.
+// Completed usenet job folders have no post-import purpose — nothing seeds
+// from them — which is what justifies effectiveConfiguredMode's remapping.
+func isUsenetClient(clientType string) bool {
+	return clientType == "sabnzbd" || clientType == "nzbget"
+}
+
+// effectiveConfiguredMode maps the operator-set import mode through the
+// protocol of the client that produced the download (#1542). Hardlink — and
+// the auto default that probes for it — exists solely to preserve torrent
+// seeding; for a usenet download it has zero benefit and a real cost: the
+// completed job folder is left behind forever, and invisibly so, because the
+// post-import cleanup removes the client's history entry but not its files.
+// Both therefore resolve to "move" for usenet downloads. Explicit "copy" is
+// honoured (an operator may want the client's own retention or external
+// tooling to see the finished files), as are "move" and "external". Non-usenet
+// clients and client-less imports (drop folder, ABS, manual) pass through
+// untouched.
+func effectiveConfiguredMode(configuredMode, clientType string) string {
+	if !isUsenetClient(clientType) {
+		return configuredMode
+	}
+	switch configuredMode {
+	case "", "hardlink":
+		return "move"
+	}
+	return configuredMode
+}
+
 // resolveImportMode picks the effective placement mode for a destination root.
 // An explicit operator setting (configuredMode) is honoured as-is. For the auto
 // default it returns "hardlink" when a file can actually be hard-linked from

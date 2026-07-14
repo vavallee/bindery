@@ -239,6 +239,9 @@ func carryRootSidecars(ctx context.Context, mode, srcRoot, destDir string, reser
 		if audioFlattenExtensions[strings.ToLower(filepath.Ext(name))] {
 			continue
 		}
+		if isDownloadArtifact(name) {
+			continue // receipts/repair files never enter the library (#1542)
+		}
 		if _, taken := reserved[name]; taken {
 			continue
 		}

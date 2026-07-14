@@ -730,8 +730,10 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// that was deliberately copied. The auto (unset) hardlink-vs-copy choice is
 	// made per placement below against the file's real destination root, not
 	// s.libraryDir, because per-author / audiobook roots can be on a separate
-	// mount (#1254).
-	configuredMode := s.configuredImportMode(ctx)
+	// mount (#1254). Usenet downloads remap auto/hardlink to move first —
+	// nothing seeds from a finished usenet job, so leaving the source behind
+	// is a pure disk leak (#1542); see effectiveConfiguredMode.
+	configuredMode := effectiveConfiguredMode(s.configuredImportMode(ctx), cleanupClientType)
 
 	// External mode: skip all file operations and leave the book Wanted so the
 	// library scan can reconcile it after the user's external tool (Calibre,
@@ -964,20 +966,32 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				return
 			}
 			if srcInfo.IsDir() {
-				// Multi-disc flattening (#886): when enabled AND the resolved
-				// mode is copy/hardlink (NEVER move — the source must keep
-				// seeding and flattening renames files) AND the source is a
-				// multi-disc audiobook, place every track flat into destDir as
-				// "Part 001.ext", … instead of mirroring the disc-folder tree.
-				// The mode restriction is enforced here in the backend even if a
-				// stale UI setting is enabled, because import mode is resolved at
-				// import time. Falls through to the normal dir placement when the
-				// source is single-disc.
-				if (mode == "copy" || mode == "hardlink") &&
+				// Multi-disc flattening (#886): when enabled AND the source is
+				// a multi-disc audiobook, place every track flat into destDir
+				// as "Part 001.ext", … instead of mirroring the disc-folder
+				// tree. flattenAudiobookDir itself only places via copy or
+				// hardlink (it renames files, so it never touches the source);
+				// "move" — which since #1542 is what usenet downloads resolve
+				// to — flattens via copy and then removes the source, the same
+				// copy-then-delete contract as MoveDirCtx's slow path. The
+				// source removal is skipped when the import context was
+				// cancelled: sidecar carry is best-effort and swallows
+				// per-file errors, so only an uncancelled nil return proves
+				// the folder was fully placed.
+				if (mode == "copy" || mode == "hardlink" || mode == "move") &&
 					s.flattenMultiDiscEnabled(ctx) &&
 					isMultiDiscAudiobook(audiobookSource) {
-					slog.Info("flattening multi-disc audiobook", "src", audiobookSource, "dst", destDir, "mode", mode)
-					dirErr = flattenAudiobookDir(importCtx, mode, audiobookSource, destDir)
+					flattenMode := mode
+					if mode == "move" {
+						flattenMode = "copy"
+					}
+					slog.Info("flattening multi-disc audiobook", "src", audiobookSource, "dst", destDir, "mode", flattenMode)
+					dirErr = flattenAudiobookDir(importCtx, flattenMode, audiobookSource, destDir)
+					if dirErr == nil && mode == "move" && importCtx.Err() == nil {
+						if rmErr := os.RemoveAll(audiobookSource); rmErr != nil {
+							slog.Warn("flatten: could not remove source after move-mode flatten", "src", audiobookSource, "error", rmErr)
+						}
+					}
 				} else {
 					switch mode {
 					case "hardlink":
