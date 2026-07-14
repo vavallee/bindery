@@ -131,13 +131,13 @@ func TestGrimmorySetConfig_InvalidBaseURL(t *testing.T) {
 	}
 }
 
-// TestGrimmoryTest_Success points the handler at a fake Grimmory /api/status
-// endpoint and asserts the version is reported.
+// TestGrimmoryTest_Success points the handler at a fake Grimmory
+// /api/v1/healthcheck endpoint and asserts the version is reported.
 func TestGrimmoryTest_Success(t *testing.T) {
 	h, _ := grimmoryFixture(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/status" {
-			_, _ = w.Write([]byte(`{"status":"ok","version":"3.4.1"}`))
+		if r.URL.Path == "/api/v1/healthcheck" {
+			_, _ = w.Write([]byte(`{"data":{"status":"UP","version":"3.4.1"}}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -208,8 +208,8 @@ func TestGrimmoryTest_InvalidBaseURL(t *testing.T) {
 func TestGrimmoryTest_UsesStoredConfig(t *testing.T) {
 	h, settings := grimmoryFixture(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/status" {
-			_, _ = w.Write([]byte(`{"status":"ok","version":"9.9.9"}`))
+		if r.URL.Path == "/api/v1/healthcheck" {
+			_, _ = w.Write([]byte(`{"data":{"status":"UP","version":"9.9.9"}}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)

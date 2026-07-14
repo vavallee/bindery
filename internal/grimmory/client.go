@@ -50,10 +50,21 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("grimmory api error (%d): %s", e.StatusCode, msg)
 }
 
-// StatusResponse is the shape returned by GET /api/status.
+// StatusResponse is the connectivity/version summary Ping distills from
+// Grimmory's health endpoint (see healthcheckEnvelope).
 type StatusResponse struct {
 	Status  string `json:"status"`
 	Version string `json:"version,omitempty"`
+}
+
+// healthcheckEnvelope is the shape returned by GET /api/v1/healthcheck. Grimmory
+// wraps the interesting fields in a "data" object alongside a top-level
+// message/status/timestamp; only the nested status and version matter here.
+type healthcheckEnvelope struct {
+	Data struct {
+		Status  string `json:"status"`
+		Version string `json:"version"`
+	} `json:"data"`
 }
 
 // NormalizeBaseURL validates and canonicalises the user-supplied server URL.
@@ -182,39 +193,24 @@ func (c *Client) WithCredentials(username, password string) *Client {
 	return c
 }
 
-// Ping calls GET /api/status to verify connectivity and authentication.
+// Ping calls GET /api/v1/healthcheck to confirm the base URL points at a real
+// Grimmory API and to read its version. That endpoint is public and returns a
+// JSON envelope with the status and version nested under "data"; it needs no
+// authentication. Verifying that the configured credentials actually work is a
+// separate concern owned by VerifyAuth, which the "Test connection" handler
+// calls right after a successful Ping.
 //
-// Current Grimmory guards /api/status behind a valid session, so an
-// unauthenticated probe now returns 401 (#1448). When username/password (or a
-// static key) is configured, Ping authenticates first — acquiring a JWT via
-// login when needed — and retries once on 401 after forcing a fresh login, so
-// an expired cached token heals transparently. Without any credentials it
-// falls back to an unauthenticated probe (still useful against a Grimmory that
-// leaves /api/status public).
+// Earlier versions probed GET /api/status and treated its 401 as "guarded by a
+// session" (#1448). But current Grimmory (v3.x) has no /api/status route at
+// all: its Spring security layer answers any unmapped /api/** path with a 401
+// Whitelabel page, which read like an auth wall but was really a 404 in
+// disguise — so the probe could never succeed (#1485).
 func (c *Client) Ping(ctx context.Context) (*StatusResponse, error) {
-	var resp StatusResponse
-	if !c.HasCredentials() {
-		if err := c.do(ctx, http.MethodGet, "/api/status", nil, &resp); err != nil {
-			return nil, err
-		}
-		return &resp, nil
-	}
-	token, err := c.bearer(ctx, false)
-	if err != nil {
+	var env healthcheckEnvelope
+	if err := c.do(ctx, http.MethodGet, "/api/v1/healthcheck", nil, &env); err != nil {
 		return nil, err
 	}
-	err = c.doWithToken(ctx, http.MethodGet, "/api/status", token, nil, &resp)
-	var apiErr *APIError
-	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusUnauthorized && c.apiKey == "" {
-		if token, err = c.bearer(ctx, true); err != nil {
-			return nil, err
-		}
-		err = c.doWithToken(ctx, http.MethodGet, "/api/status", token, nil, &resp)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &resp, nil
+	return &StatusResponse{Status: env.Data.Status, Version: env.Data.Version}, nil
 }
 
 // do issues a request carrying only a statically-configured API key as auth
