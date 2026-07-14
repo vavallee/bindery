@@ -45,7 +45,7 @@ spec:
           # GitHub release every 30m. Deploys here are manual (the cluster is
           # unreachable from CI runners), so bump this sha when rolling a new
           # telemetry-server build.
-          image: ghcr.io/vavallee/bindery-ping:sha-793ee55580f2e5cf3e2bda525fc8ec71b076ade4
+          image: ghcr.io/vavallee/bindery-ping:sha-23586cd355e40700e2b60e8d9344ba4e2afd3cb3
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
