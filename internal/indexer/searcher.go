@@ -345,12 +345,87 @@ func authorMatchesRelease(normResult string, tokens []string) bool {
 	}
 }
 
+// seriesMarkerTokens are words that legitimately sit before the title in a
+// release name as part of a series/sequence label ("Book 1 - Title",
+// "Vol. 2 Title", German "Band 3 Titel"). They carry no evidence that the
+// phrase belongs to a different work, so matchAnchored treats them as benign
+// prefix filler alongside numbers and stop words.
+var seriesMarkerTokens = map[string]bool{
+	"book": true, "vol": true, "volume": true, "part": true, "tome": true, "band": true,
+}
+
+// isAllDigits reports whether s is non-empty and consists only of ASCII digits.
+func isAllDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
+// benignPrefixToken reports whether tok, appearing before the matched title in
+// a release name, is compatible with the release actually BEING that title:
+// the requested author's tokens, bare numbers (series indices, years), tokens
+// SigWords itself would discard (stop words, initials, "01"), and generic
+// series markers ("book", "vol", …). Anything else is a real foreign word —
+// most likely part of a different work's longer title.
+func benignPrefixToken(tok string, authorToks []string) bool {
+	if isAllDigits(tok) {
+		return true
+	}
+	if len(newznab.SigWords(tok)) == 0 {
+		return true
+	}
+	if seriesMarkerTokens[tok] {
+		return true
+	}
+	for _, a := range authorToks {
+		if WordBoundaryRegex(a).MatchString(tok) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchAnchored reports whether re's leftmost match in normResult is preceded
+// only by benign tokens (see benignPrefixToken). Legitimate release naming
+// puts the author, a series label, or nothing before the title; a title
+// embedded mid-way through a longer different title ("Reborn as an Assassin's
+// Apprentice" for "Assassin's Apprentice") has that other work's words in
+// front. Checking the leftmost match is sufficient: prefixes only grow, so a
+// foreign word before the first match precedes every later match too.
+func matchAnchored(normResult string, re *regexp.Regexp, authorToks []string) bool {
+	loc := re.FindStringIndex(normResult)
+	if loc == nil {
+		return false
+	}
+	for _, tok := range strings.Fields(normResult[:loc[0]]) {
+		if !benignPrefixToken(tok, authorToks) {
+			return false
+		}
+	}
+	return true
+}
+
 // titleMatchesResult returns true if the normalized result contains the
 // significant words of the title either as a contiguous phrase or (for
 // multi-word titles as a fallback) with every significant word appearing at
 // a word boundary. A single-significant-word title additionally requires the
 // author to be present (first+last for multi-token authors, surname-only for
 // single-token authors); see authorMatchesRelease.
+//
+// A phrase or in-order hit alone is only trusted when it is ANCHORED (see
+// matchAnchored): a release whose title merely embeds the requested title
+// inside a longer, different one ("Reborn as an Assassin's Apprentice, Vol. 1
+// by okiuta" for Robin Hobb's "Assassin's Apprentice", #1539) must name the
+// requested author somewhere to be accepted. Requiring the author on EVERY
+// phrase hit was considered and rejected — releases titled with just the book
+// title and no author are a large legitimate class — so the author demand
+// kicks in only when foreign words precede the phrase. Known tradeoff: a
+// "SeriesName 01 - Title" release that names neither the author nor a bare
+// series marker is now rejected; a wrong grab imports the wrong book, a missed
+// grab retries on another release.
 func titleMatchesResult(normResult string, titleKws []string, authorToks []string, allowKwFallback bool) bool {
 	switch len(titleKws) {
 	case 0:
@@ -366,7 +441,12 @@ func titleMatchesResult(normResult string, titleKws []string, authorToks []strin
 		return authorMatchesRelease(normResult, authorToks)
 	default:
 		if ContainsPhrase(normResult, titleKws) {
-			return true
+			if len(authorToks) == 0 {
+				// No author tokens to corroborate with — accept (can't do better).
+				return true
+			}
+			return matchAnchored(normResult, phraseRegex(titleKws), authorToks) ||
+				authorMatchesRelease(normResult, authorToks)
 		}
 		if !allowKwFallback {
 			return false
@@ -381,11 +461,16 @@ func titleMatchesResult(normResult string, titleKws []string, authorToks []strin
 		// Locked" vs "Locked Doors"; "Secrets of the Human Body" vs "Body of
 		// Secrets"). Accept only if the author anchors it, or the words appear in
 		// title order (legit stop-word-separated titles like "The Lord of the
-		// Rings").
+		// Rings") — and, mirroring the phrase branch, the in-order hit itself
+		// must be anchored so an embedded title can't sneak back in through
+		// this weaker path.
 		if len(authorToks) > 0 && authorMatchesRelease(normResult, authorToks) {
 			return true
 		}
-		return containsInOrder(normResult, titleKws)
+		if !containsInOrder(normResult, titleKws) {
+			return false
+		}
+		return len(authorToks) == 0 || matchAnchored(normResult, inOrderRegex(titleKws), authorToks)
 	}
 }
 
