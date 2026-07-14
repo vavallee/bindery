@@ -165,7 +165,9 @@ func (h *CalibreHandler) Test(w http.ResponseWriter, r *http.Request) {
 		version, err := pc.Health(r.Context())
 		if err != nil {
 			slog.Warn("calibre test failed: plugin health", "plugin_url", cfg.PluginURL, "error", err)
-			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			// Timeout against a LAN host → likely a VPN-container
+			// killswitch dropping LAN traffic; name it (#1474).
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": lanTimeoutHint(cfg.PluginURL, err)})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{

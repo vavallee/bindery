@@ -410,7 +410,10 @@ func (h *ABSHandler) writeProbeError(w http.ResponseWriter, logMsg, baseURL stri
 		}
 	}
 	slog.Warn(logMsg, "host", redactABSHost(baseURL), "error", err)
-	writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+	// A bare Client.Timeout against a LAN host is the VPN-killswitch
+	// signature (#1474) — say so instead of leaving the operator with a
+	// timeout that contradicts what their browser sees.
+	writeJSON(w, http.StatusBadGateway, map[string]string{"error": lanTimeoutHint(baseURL, err)})
 }
 
 func redactABSHost(raw string) string {
