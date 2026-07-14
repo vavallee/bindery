@@ -6,6 +6,132 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.26.0] — 2026-07-14
+
+A correctness release. Two independent reports pinned real bugs in the parts of
+Bindery that decide *what to grab* and *what to do with it afterwards*: the
+relevance filter could grab a completely different book whose title merely
+contained yours, and usenet imports were quietly leaking every completed
+download folder to disk forever. Both are fixed. Around them, this release is
+mostly about Bindery telling you the truth when something is wrong — storage
+health, VPN-blocked connection tests, and Grimmory's connection probe all stop
+hiding behind generic errors — plus a search-first Add Author flow and a Calibre
+path-remap escape hatch for mismatched container mounts.
+
+### Added
+- **Calibre push path remap** (#1346) — Bindery hands the Bindery Bridge
+  plugin the exact path it stores each book at, and the plugin opens that
+  path on *its* side of the container boundary; when the two containers mount
+  the library at different points (the recurring Unraid case), every push
+  failed with "No such file or directory". A new **Settings → Calibre → Push
+  path remap** field (plugin mode) translates Bindery's library prefix to the
+  Calibre container's before the push, using the same `from:to[,from:to]`
+  grammar as `BINDERY_DOWNLOAD_PATH_REMAP` — e.g.
+  `/books:/mnt/user/media/books`. Malformed pairs are rejected at save time;
+  empty means no translation, and aligning the mounts remains the preferred
+  zero-config setup.
+
+### Changed
+- **Search-first author acquisition** (#1227, #1516) — select an author result
+  before reviewing monitoring and download options, with consistent localized
+  add dialogs and inline errors. Stage 1 of unifying the add and search
+  acquisition flows; the issue stays open to gather feedback before the next
+  stage. Community PR from @magrhino.
+- **Base image and dependencies refreshed** (#1527, #1528, #1529) — the
+  distroless `static-debian12` base moves to its current digest, alongside the
+  usual grouped Go and frontend dependency bumps.
+
+### Fixed
+- **Usenet imports no longer leak completed job folders or library receipts**
+  (#1542) — `import.mode` was applied with no protocol distinction, so usenet
+  downloads inherited hardlink/copy behaviour whose only purpose is preserving
+  torrent seeding. The completed job folder was left behind forever — and
+  invisibly, since post-import cleanup removes the client's history entry but
+  not its files (one report: 2.4 GB orphaned from three audiobook grabs).
+  SABnzbd/NZBGet downloads now resolve `auto` and `hardlink` to `move`
+  (explicit `copy` stays honoured for operators who want the client's
+  retention to see finished files). Separately, directory placements copied
+  the whole job tree verbatim, so `.nzb` receipts and `.par2` repair files
+  landed in the library next to the media: hardlink, copy, move, and
+  multi-disc-flatten placements now all skip download artifacts
+  (`.nzb`/`.par2`/`.sfv`/`.srr`/`.srs`/`.diz` — `.nfo`, covers, and cue
+  sheets are deliberately kept). Multi-disc flattening also works under move
+  mode now (flatten via copy, then remove the source), so usenet downloads
+  resolving to move don't lose it. Reported by cleb on Discord with both root
+  causes correctly identified.
+- **Wrong-author grabs from embedded title phrases** (#1539) — the release
+  relevance filter accepted any release whose name contained the book's title
+  words as a contiguous phrase, with no author check on that path, so a
+  different work embedding the requested title could be grabbed and imported
+  ("Reborn as an Assassin's Apprentice, Vol. 1 by okiuta" matched for Robin
+  Hobb's "Assassin's Apprentice"; reported by cleb on Discord with the root
+  cause pinned). Phrase and in-order title hits are now only trusted on their
+  own when *anchored* — preceded by nothing but the author, a series index
+  ("Book 1", "Vol. 2"), numbers, or filler words. When real foreign words sit
+  in front of the title (usually another work's longer title), the requested
+  author must appear somewhere in the release name. Releases titled with just
+  the book title still pass, so the fix costs no recall on the common
+  author-less naming shapes; the narrow tradeoff is that a release naming only
+  a series *name* (no author, no "Book N" marker) before the title is now
+  rejected rather than risk importing the wrong book.
+- **Bulk searches no longer burst your indexers** (#1515) — "search all wanted"
+  for a prolific author, filling a series, per-author auto-search, and the
+  scheduled wanted loop now pace their indexer searches (a short gap between
+  each) instead of firing as fast as slots free up. A 30-book author could
+  previously flood a rate-limit-free Prowlarr into dropping requests, so
+  nothing got grabbed; the fan-outs still run with the same concurrency caps
+  but no longer sustain a tight query loop.
+- **Transmission polling on large torrent histories** (#1524) — the download
+  poller read at most 1 MiB of Transmission's `torrent-get` reply, so an
+  instance with a few thousand torrents (one report: ~12 MiB for 5000+) had its
+  response silently truncated and every poll failed with "unexpected end of
+  JSON input", blocking imports. The RPC read cap is now 64 MiB, and a reply
+  that somehow still exceeds it returns a clear "too many torrents to poll in
+  one request" error instead of invalid JSON.
+- **Grimmory "Test connection" against Grimmory v3.x** (#1485) — the connection
+  test probed `GET /api/status`, a route current Grimmory (v3.x) no longer has.
+  Its Spring security layer answers any unmapped `/api/**` path with a 401
+  Whitelabel page, which looked like an auth wall (and was mistaken for one in
+  #1448) but was really a missing route, so the test could never pass and failed
+  with `invalid character '<'`. The probe now hits Grimmory's public
+  `GET /api/v1/healthcheck` endpoint for reachability and version; credential
+  verification stays with the separate login round-trip, so "Test connection"
+  still reports whether your username/password actually work.
+- **Storage health now says *why*, not just *that*** (#1427) — the
+  "downloads and library can't hardlink" banner and the "not writable"
+  warnings were generic, sending operators hunting through mount tables and
+  permission bits blind. The hardlink probe now names the actual cause
+  (different filesystems; same device ID but cross-mount EXDEV, typical of
+  mergerfs pools, separate bind mounts, and Unraid `/mnt/user` shares; or a
+  filesystem that refuses hardlinks, common on exFAT/NTFS/network shares) in
+  Settings → General. And a failed writability check now reports the uid/gid
+  the process actually runs as versus who owns the directory, with the
+  `user: "UID:GID"` hint when they differ — the classic case being folders
+  prepared for the stack's usual user while the container runs as the
+  distroless default `65532` because `user:` was never set in Compose.
+- **VPN-killswitch timeouts are named, not just reported** (#1474) — when an
+  ABS or Calibre-plugin "Test connection" times out against a LAN-shaped host
+  (private IP, bare Docker hostname, `.local`/`.lan` suffix), the error now
+  points at the usual culprit: Bindery sharing a VPN container's network
+  (`network_mode: service:gluetun`) whose killswitch drops LAN traffic, with
+  the `FIREWALL_OUTBOUND_SUBNETS` fix named inline. Real upstream errors
+  (auth failures, refused connections) and public hosts keep their unmodified
+  message. Complements the "Running Bindery behind a VPN" deployment docs.
+- **Go race CI no longer times out** (#1531) — split the race suite into six
+  parallel shards so the large API and database test packages stay below their
+  per-package deadlines. Community PR from @magrhino.
+
+### Docs
+- **Shared ebook + audiobook folder layout, and what `BINDERY_DOWNLOAD_DIR`
+  actually does** (#1426) — the Storyteller-style shared folder (an ebook and
+  its audio files in one directory) is Bindery's *default* behaviour when
+  `BINDERY_AUDIOBOOK_DIR` is left unset, since both naming templates share the
+  `{Author}/{Title} ({Year})` prefix; now documented with the resulting tree.
+  And `BINDERY_DOWNLOAD_DIR` is **not** a watch folder — per-job import paths
+  come from the download client's API, and the env var only feeds validation,
+  storage health, the hardlink probe, and qBittorrent save paths — so the
+  TRaSH split-tree layout (`/data/torrents` + `/data/usenet`) works as-is.
+
 ## [v1.25.0] — 2026-07-10
 
 A contributor-driven release. The headline is manual metadata editing with
