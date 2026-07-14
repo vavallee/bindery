@@ -481,6 +481,28 @@ func validateHost(host string) error {
 }
 
 // doRequest sends a request and handles the 409 conflict response (session ID update).
+// maxRPCResponseBytes caps how much of a Transmission RPC reply doRequest will
+// read. torrent-get returns every torrent in one response, so an instance with
+// a large history is easily multiple MiB (one report: ~12 MiB for 5000+
+// torrents, #1524). The old 1 MiB cap silently truncated the body and the
+// caller saw "unexpected end of JSON input"; 64 MiB gives generous headroom
+// and readRPCBody turns an over-limit reply into a clear error instead.
+const maxRPCResponseBytes = 64 << 20
+
+// readRPCBody reads an RPC response under maxRPCResponseBytes. Unlike a bare
+// io.LimitReader it reports truncation as an explicit error rather than
+// handing back a half-JSON document that fails to parse (#1524).
+func readRPCBody(r io.Reader) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(r, maxRPCResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > maxRPCResponseBytes {
+		return nil, fmt.Errorf("transmission RPC response exceeded %d bytes — too many torrents to poll in one request", maxRPCResponseBytes)
+	}
+	return body, nil
+}
+
 func (c *Client) doRequest(req *http.Request) ([]byte, error) {
 	if err := c.validateRequestTarget(req.URL); err != nil {
 		return nil, err
@@ -492,7 +514,10 @@ func (c *Client) doRequest(req *http.Request) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	body, err := readRPCBody(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("transmission: read body: %w", err)
+	}
 
 	// Handle 409 Conflict - need to set session ID and retry
 	if resp.StatusCode == http.StatusConflict {
@@ -516,7 +541,7 @@ func (c *Client) doRequest(req *http.Request) ([]byte, error) {
 			}
 			defer resp2.Body.Close()
 
-			body, err = io.ReadAll(io.LimitReader(resp2.Body, 1024*1024))
+			body, err = readRPCBody(resp2.Body)
 			if err != nil {
 				return nil, fmt.Errorf("transmission: read retry body: %w", err)
 			}

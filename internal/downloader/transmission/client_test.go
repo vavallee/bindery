@@ -945,3 +945,39 @@ func TestAddTorrent_SeedRatio_Unset(t *testing.T) {
 		t.Error("seedRatioMode must be omitted when no override is set")
 	}
 }
+
+// TestGetTorrents_LargeResponseExceedsOldCap is the regression test for #1524:
+// a Transmission instance with a large torrent history returns a torrent-get
+// body well over the old 1 MiB read cap. The cap silently truncated the JSON
+// and the caller saw "unexpected end of JSON input". The body must now be read
+// in full and decoded.
+func TestGetTorrents_LargeResponseExceedsOldCap(t *testing.T) {
+	const n = 20000 // ~1.8 MiB of JSON, comfortably past the old 1 MiB cap
+	var b strings.Builder
+	b.WriteString(`{"result":"success","arguments":{"torrents":[`)
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, `{"id":%d,"name":"Book %d","percentDone":1.0,"status":6,"downloadDir":"/downloads"}`, i, i)
+	}
+	b.WriteString(`]}}`)
+	payload := b.String()
+	if len(payload) <= 1024*1024 {
+		t.Fatalf("test payload is %d bytes, expected > 1 MiB to exercise the old cap", len(payload))
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(payload))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "user", "pass")
+	torrents, err := c.GetTorrents(context.Background(), "")
+	if err != nil {
+		t.Fatalf("GetTorrents on large response: %v", err)
+	}
+	if len(torrents) != n {
+		t.Fatalf("expected %d torrents, got %d", n, len(torrents))
+	}
+}
