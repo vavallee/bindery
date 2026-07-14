@@ -405,6 +405,9 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             ) : (
               <p className="text-xs text-amber-600 dark:text-amber-400 border-t border-slate-200 dark:border-zinc-800 pt-3">
                 {t('settings.general.storageHardlinkWarning')}
+                {storage.hardlinkReason && (
+                  <span className="block mt-1 text-slate-600 dark:text-zinc-400">{storage.hardlinkReason}</span>
+                )}
               </p>
             )
           )}

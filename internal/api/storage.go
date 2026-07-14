@@ -48,6 +48,10 @@ type storageResponse struct {
 	// filesystem, so completed downloads can be hard-linked into the library
 	// instead of copied. False means imports will copy (slower, double disk).
 	Hardlinkable bool `json:"hardlinkable"`
+	// HardlinkReason explains WHY hardlinking is unavailable when
+	// Hardlinkable is false (different filesystems, cross-mount EXDEV,
+	// filesystem refusing links, …); empty when hardlinking works (#1427).
+	HardlinkReason string `json:"hardlinkReason,omitempty"`
 }
 
 // statusFor builds a dirStatus from config.CheckDir.
@@ -79,12 +83,14 @@ func (h *StorageHandler) Get(w http.ResponseWriter, _ *http.Request) {
 		dirs = append(dirs, statusFor("audiobook-download", cfg.AudiobookDownloadDir))
 	}
 
+	linkable, linkReason := hardlinkableReason(cfg.DownloadDir, cfg.LibraryDir)
 	writeJSON(w, http.StatusOK, storageResponse{
 		DownloadDir:          cfg.DownloadDir,
 		AudiobookDownloadDir: cfg.AudiobookDownloadDir,
 		LibraryDir:           cfg.LibraryDir,
 		AudiobookDir:         cfg.AudiobookDir,
 		Dirs:                 dirs,
-		Hardlinkable:         hardlinkable(cfg.DownloadDir, cfg.LibraryDir),
+		Hardlinkable:         linkable,
+		HardlinkReason:       linkReason,
 	})
 }

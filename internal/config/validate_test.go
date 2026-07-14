@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -254,5 +255,32 @@ func TestValidate_NilLogger(t *testing.T) {
 	}
 	if err := cfg.Validate(nil); err != nil {
 		t.Errorf("nil logger should not cause error; got: %v", err)
+	}
+}
+
+// TestCheckDir_NotWritableNamesProcessIdentity covers the #1427 diagnostics:
+// a permission failure must name the uid/gid the process runs as and the
+// directory's owner, so the recurring "the folders have the right
+// permissions" confusion (folders prepared for the stack's user while the
+// container runs as the distroless default 65532) is self-diagnosing.
+func TestCheckDir_NotWritableNamesProcessIdentity(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uid/gid identity diagnostics are unix-only")
+	}
+	if os.Getuid() == 0 {
+		t.Skip("root can write anywhere; the probe cannot fail")
+	}
+	dir := filepath.Join(t.TempDir(), "readonly")
+	if err := os.Mkdir(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	h := CheckDir(dir)
+	if h.Writable {
+		t.Fatal("0o555 dir must not be writable")
+	}
+	for _, want := range []string{"process runs as uid=", "owned by uid="} {
+		if !strings.Contains(h.Reason, want) {
+			t.Errorf("reason %q should contain %q", h.Reason, want)
+		}
 	}
 }

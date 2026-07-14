@@ -39,6 +39,7 @@ export interface StorageHealth {
   audiobookDir: string
   dirs: StorageDirStatus[]
   hardlinkable: boolean
+  hardlinkReason?: string
 }
 
 export const systemApi = {

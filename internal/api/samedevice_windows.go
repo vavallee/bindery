@@ -2,16 +2,10 @@
 
 package api
 
-// sameDevice always returns false on Windows because device-ID comparison via
-// syscall.Stat_t is not available — mirrors importer.sameDevice so the storage
-// health endpoint reports downloads/library as not hardlink-able there.
-func sameDevice(_, _ string) bool {
-	return false
-}
-
-// hardlinkable mirrors sameDevice on Windows — device comparison is
-// unavailable, so the storage health endpoint reports downloads/library as not
-// hardlink-able.
-func hardlinkable(_, _ string) bool {
-	return false
+// hardlinkableReason always reports not-hardlinkable on Windows because
+// device-ID comparison via syscall.Stat_t is not available there — mirrors
+// importer.sameDevice's platform split, with the explanation the #1427
+// storage-health surface expects.
+func hardlinkableReason(_, _ string) (bool, string) {
+	return false, "hardlink detection is not supported on Windows; imports will copy instead"
 }

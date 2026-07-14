@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/config"
@@ -80,7 +82,7 @@ func TestStorageHandler_HardlinkableSameRoot(t *testing.T) {
 }
 
 func TestStorageHandler_HardlinkableFieldPresentForMissingPaths(t *testing.T) {
-	// When a path can't be stat'd, sameDevice returns false; assert the field
+	// When a path can't be stat'd, the probe reports not-hardlinkable; assert the field
 	// is a definite boolean (best-effort cross-filesystem coverage).
 	cfg := &config.Config{DownloadDir: "/nonexistent-aaa", LibraryDir: "/nonexistent-bbb"}
 	got := getStorage(t, cfg)
@@ -159,4 +161,41 @@ func TestStorageHandler_EmptyAudiobookDownloadDirPassesThrough(t *testing.T) {
 	if got.AudiobookDownloadDir != "" {
 		t.Errorf("AudiobookDownloadDir = %q, want empty so the UI can fall back to DownloadDir", got.AudiobookDownloadDir)
 	}
+}
+
+// TestStorageHandler_HardlinkReason covers #1427: when hardlinking is
+// unavailable the response must say WHY, and when it works the reason must be
+// empty so the UI shows the green state alone.
+func TestStorageHandler_HardlinkReason(t *testing.T) {
+	t.Run("healthy has no reason", func(t *testing.T) {
+		tmp := t.TempDir()
+		cfg := &config.Config{DownloadDir: tmp, LibraryDir: filepath.Join(tmp, "lib")}
+		got := getStorage(t, cfg)
+		if !got.Hardlinkable || got.HardlinkReason != "" {
+			t.Errorf("same-root paths: hardlinkable=%v reason=%q, want true and empty", got.Hardlinkable, got.HardlinkReason)
+		}
+	})
+	t.Run("unstattable paths carry a reason", func(t *testing.T) {
+		cfg := &config.Config{DownloadDir: "/nonexistent-aaa", LibraryDir: "/nonexistent-bbb"}
+		got := getStorage(t, cfg)
+		if got.Hardlinkable {
+			t.Fatal("unstattable paths must not be hardlinkable")
+		}
+		if got.HardlinkReason == "" {
+			t.Error("non-hardlinkable state must carry a reason")
+		}
+	})
+	t.Run("different filesystems named as the cause", func(t *testing.T) {
+		if runtime.GOOS != "linux" {
+			t.Skip("uses /proc to guarantee a distinct filesystem; linux only")
+		}
+		cfg := &config.Config{DownloadDir: "/proc", LibraryDir: t.TempDir()}
+		got := getStorage(t, cfg)
+		if got.Hardlinkable {
+			t.Fatal("/proc and tmp must not be hardlinkable")
+		}
+		if !strings.Contains(got.HardlinkReason, "different filesystems") {
+			t.Errorf("reason should name different filesystems, got %q", got.HardlinkReason)
+		}
+	})
 }
