@@ -166,6 +166,14 @@ func checkDir(logger *slog.Logger, envVar, path string) error {
 	// Probe writability by creating and immediately removing a temporary file.
 	f, err := os.CreateTemp(path, ".bindery-write-check-*")
 	if err != nil {
+		// Name who the process is and who owns the directory (#1427): the
+		// classic failure is folders prepared for the stack's usual user
+		// while the container runs as the distroless default 65532 because
+		// `user:` was never set — invisible from the bare "permission
+		// denied".
+		if identity := writabilityIdentity(info); identity != "" {
+			return fmt.Errorf("not writable: %w (%s)", err, identity)
+		}
 		return fmt.Errorf("not writable: %w", err)
 	}
 	_ = f.Close()

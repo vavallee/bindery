@@ -69,6 +69,7 @@ describe('GeneralTab storage health', () => {
   it('renders a failing reason for a missing dir and the cross-filesystem warning', async () => {
     vi.mocked(api.getStorage).mockResolvedValue(storage({
       hardlinkable: false,
+      hardlinkReason: 'the download directory and the library are on different filesystems, so imports copy instead of hardlinking',
       dirs: [
         { name: 'download', path: '/downloads', exists: true, writable: true },
         { name: 'library', path: '/books', exists: false, writable: false, reason: 'directory does not exist' },
@@ -81,5 +82,7 @@ describe('GeneralTab storage health', () => {
     expect(screen.getByText(/directory does not exist/)).toBeTruthy()
     // Different-filesystem notice ("imports will copy, not hardlink").
     expect(screen.getByText('settings.general.storageHardlinkWarning')).toBeTruthy()
+    // The specific WHY from the backend is rendered under it (#1427).
+    expect(screen.getByText(/different filesystems/)).toBeTruthy()
   })
 })
