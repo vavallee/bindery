@@ -347,7 +347,7 @@ func main() {
 	calibreCfg := api.LoadCalibreConfig(ctxBoot, settingsRepo)
 	currentMode := api.LoadCalibreMode(ctxBoot, settingsRepo)
 	if currentMode == calibre.ModePlugin {
-		pluginClient := calibre.NewPluginClient(calibreCfg.PluginURL, calibreCfg.PluginAPIKey)
+		pluginClient := calibre.NewPluginClient(calibreCfg.PluginURL, calibreCfg.PluginAPIKey).WithPushPathRemap(calibreCfg.PushPathRemap)
 		importScanner.WithCalibre(modeResolver, pluginClient)
 		slog.Info("calibre integration enabled", "mode", "plugin", "url", calibreCfg.PluginURL)
 	} else {

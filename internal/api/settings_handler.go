@@ -18,6 +18,7 @@ import (
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/pathmap"
 )
 
 // SettingDefaultMediaType is the KV key for the global media-type default
@@ -451,6 +452,16 @@ func validateSettingValue(key, value string) error {
 			return nil
 		default:
 			return fmt.Errorf("metadata.primary_provider %q is not one of: openlibrary, dnb", value)
+		}
+	case SettingCalibrePushPathRemap:
+		if value == "" {
+			return nil
+		}
+		// Same "from:to[,from:to]" grammar as BINDERY_DOWNLOAD_PATH_REMAP;
+		// reject malformed pairs at save time instead of silently skipping
+		// them at push time (#1346).
+		if err := pathmap.Validate(value); err != nil {
+			return fmt.Errorf("push_path_remap: %w", err)
 		}
 	case SettingCalibrePluginURL:
 		if value == "" {

@@ -32,6 +32,7 @@ type Config struct {
 	SyncOnStartup bool   // run a library import when Bindery starts
 	PluginURL     string // base URL of the Bindery Bridge Calibre plugin (mode=plugin)
 	PluginAPIKey  string // bearer token for the plugin's HTTP API (mode=plugin)
+	PushPathRemap string // pathmap "from:to" pairs translating Bindery paths to the plugin container's mounts (#1346)
 }
 
 // runner is the shape of exec.CommandContext, abstracted for tests.

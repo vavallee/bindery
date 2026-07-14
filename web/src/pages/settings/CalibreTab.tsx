@@ -66,6 +66,7 @@ function CalibreSection({
   const [libraryPathSaveResult, libraryPathSave] = useSaveResult()
   const [binaryPathSaveResult, binaryPathSave] = useSaveResult()
   const [pluginUrlSaveResult, pluginUrlSave] = useSaveResult()
+  const [pushRemapSaveResult, pushRemapSave] = useSaveResult()
   const [pluginKeySaveResult, pluginKeySave] = useSaveResult()
   const [cwaPathSaveResult, cwaPathSave] = useSaveResult()
   const [importProgress, setImportProgress] = useState<CalibreImportProgress | null>(null)
@@ -346,6 +347,36 @@ function CalibreSection({
               </button>
             </div>
             {saveError?.key === 'calibre.plugin_api_key' && (
+              <p className="text-xs text-red-600 dark:text-red-400 mt-1">{saveError.msg}</p>
+            )}
+          </div>
+        )}
+
+        {mode === 'plugin' && (
+          <div>
+            <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Push path remap</label>
+            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+              Optional. If the Calibre container mounts your library at a different path than Bindery,
+              map Bindery&rsquo;s prefix to Calibre&rsquo;s as <code className="font-mono">from:to</code> pairs
+              (comma separated), e.g. <code className="font-mono">/books:/mnt/user/media/books</code>.
+              Leave empty when both containers see the library at the same path.
+            </p>
+            <div className="flex gap-2">
+              <input
+                value={settings['calibre.push_path_remap'] ?? ''}
+                onChange={e => setSettings(s => ({ ...s, 'calibre.push_path_remap': e.target.value }))}
+                placeholder="/books:/mnt/user/media/books"
+                className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+              />
+              <button
+                onClick={() => pushRemapSave(() => saveSettingWithErrorThrowing('calibre.push_path_remap'))}
+                disabled={saving === 'calibre.push_path_remap'}
+                className={`px-3 py-2 rounded text-xs font-medium disabled:opacity-50 ${pushRemapSaveResult === 'saved' ? 'bg-emerald-500' : pushRemapSaveResult === 'error' ? 'bg-red-600' : 'bg-emerald-600 hover:bg-emerald-500'}`}
+              >
+                {pushRemapSaveResult === 'saved' ? 'Saved ✓' : pushRemapSaveResult === 'error' ? 'Error' : saving === 'calibre.push_path_remap' ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+            {saveError?.key === 'calibre.push_path_remap' && (
               <p className="text-xs text-red-600 dark:text-red-400 mt-1">{saveError.msg}</p>
             )}
           </div>
