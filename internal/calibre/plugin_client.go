@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/vavallee/bindery/internal/pathmap"
 )
 
 // ErrAlreadyInCalibre is returned by PluginClient.Add when the plugin
@@ -30,6 +32,9 @@ type PluginClient struct {
 	baseURL string
 	apiKey  string
 	http    *http.Client
+	// remap translates Bindery-side library paths to the prefix the plugin's
+	// container sees before they go over the wire (#1346). nil = passthrough.
+	remap *pathmap.Remapper
 
 	capMu                 sync.Mutex
 	capabilitiesLoaded    bool
@@ -48,6 +53,29 @@ func NewPluginClient(baseURL, apiKey string) *PluginClient {
 	}
 }
 
+// WithPushPathRemap installs a pathmap "from:to[,from:to]" translation applied
+// to every file path sent to the plugin (#1346). Bindery hands the Bridge the
+// path it stores a book at and the plugin opens that path on ITS side of the
+// container boundary; when the two containers mount the library at different
+// points (the recurring Unraid case) every push fails with "No such file or
+// directory". The spec is parsed once here; empty or all-malformed input
+// leaves the client in passthrough mode. Returns the client for chaining.
+func (c *PluginClient) WithPushPathRemap(spec string) *PluginClient {
+	if r := pathmap.Parse(spec); !r.Empty() {
+		c.remap = r
+	}
+	return c
+}
+
+// pushPathFor returns the path to put on the wire for filePath: remapped when
+// a translation is configured, verbatim otherwise.
+func (c *PluginClient) pushPathFor(filePath string) string {
+	if c.remap == nil {
+		return filePath
+	}
+	return c.remap.Apply(filePath)
+}
+
 // Add POSTs the file path and Bindery metadata to the plugin and returns the
 // Calibre book id.
 // Retries once on 503 (library swap in progress); all other non-2xx
@@ -63,7 +91,9 @@ func (c *PluginClient) Add(ctx context.Context, filePath string, meta Metadata) 
 			legacyPayload = true
 		}
 	}
-	return c.addWithRetry(ctx, filePath, meta, 1, legacyPayload)
+	// Translate once, up front: addWithRetry recurses for the 503 and
+	// legacy-payload retries and must carry the already-translated path.
+	return c.addWithRetry(ctx, c.pushPathFor(filePath), meta, 1, legacyPayload)
 }
 
 func (c *PluginClient) addWithRetry(ctx context.Context, filePath string, meta Metadata, retries int, legacyPayload bool) (int64, error) {

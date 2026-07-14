@@ -585,3 +585,19 @@ func mustJSON(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
+
+// TestValidateSettingValue_CalibrePushPathRemap covers the #1346 save-time
+// grammar check: valid from:to pairs (and empty) pass, malformed pairs are
+// rejected instead of being silently skipped at push time.
+func TestValidateSettingValue_CalibrePushPathRemap(t *testing.T) {
+	for _, v := range []string{"", "/books:/mnt/user/media/books", "/a:/b,/c:/d"} {
+		if err := validateSettingValue(SettingCalibrePushPathRemap, v); err != nil {
+			t.Errorf("value %q should validate, got %v", v, err)
+		}
+	}
+	for _, v := range []string{"/books", "/books:", ":/books", "/a:/b,broken"} {
+		if err := validateSettingValue(SettingCalibrePushPathRemap, v); err == nil {
+			t.Errorf("value %q should be rejected", v)
+		}
+	}
+}

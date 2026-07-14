@@ -100,7 +100,7 @@ func NewSyncer(books BookLister) *Syncer {
 	return &Syncer{
 		books: books,
 		newClient: func(cfg Config) pluginPusher {
-			return NewPluginClient(cfg.PluginURL, cfg.PluginAPIKey)
+			return NewPluginClient(cfg.PluginURL, cfg.PluginAPIKey).WithPushPathRemap(cfg.PushPathRemap)
 		},
 	}
 }

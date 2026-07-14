@@ -238,3 +238,55 @@ func TestPluginClient_TrimsTrailingSlash(t *testing.T) {
 		t.Errorf("baseURL should be trimmed: %q", c.baseURL)
 	}
 }
+
+// TestPluginClient_AddAppliesPushPathRemap covers #1346: with a remap
+// configured, the path that goes over the wire is the Calibre container's
+// view of the file, while paths outside every mapped prefix pass through
+// verbatim. An empty spec leaves the client in passthrough mode.
+func TestPluginClient_AddAppliesPushPathRemap(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"plugin_version":"0.5.0","calibre_version":"9.8","library":"/books","capabilities":["book_metadata"]}`))
+			return
+		}
+		var body struct {
+			Path string `json:"path"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotPath = body.Path
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":7,"duplicate":false}`))
+	}))
+	defer srv.Close()
+
+	t.Run("remapped prefix", func(t *testing.T) {
+		c := NewPluginClient(srv.URL, "k").WithPushPathRemap("/books:/mnt/user/media/books")
+		if _, err := c.Add(context.Background(), "/books/Robin Hobb/Assassins Apprentice (1995)/book.epub", Metadata{Title: "x"}); err != nil {
+			t.Fatalf("Add: %v", err)
+		}
+		want := "/mnt/user/media/books/Robin Hobb/Assassins Apprentice (1995)/book.epub"
+		if gotPath != want {
+			t.Errorf("wire path = %q, want %q", gotPath, want)
+		}
+	})
+	t.Run("path outside mapped prefix passes through", func(t *testing.T) {
+		c := NewPluginClient(srv.URL, "k").WithPushPathRemap("/books:/mnt/user/media/books")
+		if _, err := c.Add(context.Background(), "/audiobooks/x.epub", Metadata{Title: "x"}); err != nil {
+			t.Fatalf("Add: %v", err)
+		}
+		if gotPath != "/audiobooks/x.epub" {
+			t.Errorf("wire path = %q, want passthrough", gotPath)
+		}
+	})
+	t.Run("empty spec is passthrough", func(t *testing.T) {
+		c := NewPluginClient(srv.URL, "k").WithPushPathRemap("")
+		if _, err := c.Add(context.Background(), "/books/y.epub", Metadata{Title: "x"}); err != nil {
+			t.Fatalf("Add: %v", err)
+		}
+		if gotPath != "/books/y.epub" {
+			t.Errorf("wire path = %q, want verbatim", gotPath)
+		}
+	})
+}

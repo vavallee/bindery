@@ -22,6 +22,14 @@ const (
 	SettingCalibreSyncOnStartup = "calibre.sync_on_startup"
 	SettingCalibrePluginURL     = "calibre.plugin_url"
 	SettingCalibrePluginAPIKey  = "calibre.plugin_api_key"
+	// SettingCalibrePushPathRemap translates Bindery library paths to the
+	// prefix the Calibre (Bridge plugin) container sees before a push, in
+	// pathmap "from:to[,from:to]" form — e.g. "/books:/mnt/user/media/books".
+	// Bindery hands the Bridge the path it stores a book at and the plugin
+	// opens it on ITS side; when the two containers mount the library at
+	// different points every push fails with "No such file or directory"
+	// (#1346, Unraid setups mostly). Empty = no translation.
+	SettingCalibrePushPathRemap = "calibre.push_path_remap"
 )
 
 // SettingCWAIngestPath is the directory bindery copies finished ebook
@@ -96,6 +104,7 @@ func LoadCalibreConfig(ctx context.Context, settings *db.SettingsRepo) calibre.C
 		SyncOnStartup: strings.EqualFold(get(SettingCalibreSyncOnStartup), "true"),
 		PluginURL:     get(SettingCalibrePluginURL),
 		PluginAPIKey:  get(SettingCalibrePluginAPIKey),
+		PushPathRemap: get(SettingCalibrePushPathRemap),
 	}
 }
 
