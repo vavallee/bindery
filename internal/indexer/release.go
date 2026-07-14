@@ -106,6 +106,21 @@ func WordBoundaryRegex(kw string) *regexp.Regexp {
 	return re
 }
 
+// phraseRegex returns the cached contiguous-phrase regex for the given words:
+// each word at a boundary, separated only by non-word characters, with German
+// umlaut expansions matched flexibly (ae/oe/ue optionally contracts to a/o/u).
+// Callers needing the match position (see matchAnchored in searcher.go) share
+// this instead of rebuilding the pattern.
+func phraseRegex(phrase []string) *regexp.Regexp {
+	parts := make([]string, len(phrase))
+	for i, w := range phrase {
+		parts[i] = umlautFlexRegex(regexp.QuoteMeta(strings.ToLower(w)))
+	}
+	pattern := `(?i)\b` + strings.Join(parts, `\W+`) + `\b`
+	re, _ := regexCache.LoadOrStore(pattern, regexp.MustCompile(pattern))
+	return re.(*regexp.Regexp)
+}
+
 // ContainsPhrase returns true if all words in phrase appear in haystack in the
 // given order, separated only by non-word characters. haystack must already be
 // normalized (lowercased, separators→space). German umlaut expansions in phrase
@@ -114,13 +129,7 @@ func ContainsPhrase(haystack string, phrase []string) bool {
 	if len(phrase) == 0 {
 		return true
 	}
-	parts := make([]string, len(phrase))
-	for i, w := range phrase {
-		parts[i] = umlautFlexRegex(regexp.QuoteMeta(strings.ToLower(w)))
-	}
-	pattern := `(?i)\b` + strings.Join(parts, `\W+`) + `\b`
-	re, _ := regexCache.LoadOrStore(pattern, regexp.MustCompile(pattern))
-	return re.(*regexp.Regexp).MatchString(haystack)
+	return phraseRegex(phrase).MatchString(haystack)
 }
 
 // ParseRelease extracts structured metadata from an indexer result title.

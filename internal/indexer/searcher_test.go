@@ -1366,3 +1366,80 @@ func TestSearchBook_TimeoutConstantExists(t *testing.T) {
 type nopWriter struct{}
 
 func (nopWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+// TestFilterRelevantEmbeddedTitleDifferentAuthor covers #1539: a release
+// whose (longer, different) title EMBEDS the requested title as a contiguous
+// phrase must not pass on the phrase alone when the requested author is
+// nowhere in the release. The reported grab: searching Robin Hobb's
+// "Assassin's Apprentice" (audiobook) matched "Reborn as an Assassin's
+// Apprentice, Vol. 1 by okiuta" — an unrelated light novel. Anchored phrase
+// hits (nothing but author/series-index/filler before the title) must keep
+// passing without the author, since title-only release names are a large
+// legitimate class.
+func TestFilterRelevantEmbeddedTitleDifferentAuthor(t *testing.T) {
+	results := toResults(
+		// The reported wrong grab: embedded phrase, different author named.
+		"Reborn.as.an.Assassins.Apprentice.Vol.1.by.okiuta.ENG.M4B.VIP",
+		// Embedded phrase, no author at all — still a different work's title.
+		"Reborn.as.an.Assassins.Apprentice.Vol.2.M4B",
+		// Legit shapes that must keep passing:
+		"Robin.Hobb.-.Assassins.Apprentice.Farseer.1.Unabridged.M4B", // author-prefixed
+		"Assassins.Apprentice.1995.RETAIL.EPUB.eBook-NODE",           // bare title-only
+		"The.Assassins.Apprentice.epub",                              // article-prefixed
+		"Book.1.Assassins.Apprentice.m4b",                            // series-marker-prefixed
+		"Hobb.Assassins.Apprentice.epub",                             // surname-prefixed
+		// Unanchored phrase but the author appears later — corroborated, passes.
+		"Fantasy.Anthology.Assassins.Apprentice.Robin.Hobb.m4b",
+	)
+	got := filterRelevant(results, "Assassin's Apprentice", "Robin Hobb", nil)
+
+	for _, title := range []string{
+		"Reborn.as.an.Assassins.Apprentice.Vol.1.by.okiuta.ENG.M4B.VIP",
+		"Reborn.as.an.Assassins.Apprentice.Vol.2.M4B",
+	} {
+		if contains(got, title) {
+			t.Errorf("embedded-title release %q must be rejected; got %v", title, resultTitles(got))
+		}
+	}
+	for _, title := range []string{
+		"Robin.Hobb.-.Assassins.Apprentice.Farseer.1.Unabridged.M4B",
+		"Assassins.Apprentice.1995.RETAIL.EPUB.eBook-NODE",
+		"The.Assassins.Apprentice.epub",
+		"Book.1.Assassins.Apprentice.m4b",
+		"Hobb.Assassins.Apprentice.epub",
+		"Fantasy.Anthology.Assassins.Apprentice.Robin.Hobb.m4b",
+	} {
+		if !contains(got, title) {
+			t.Errorf("legitimate release %q must keep passing; got %v", title, resultTitles(got))
+		}
+	}
+}
+
+// The in-order fallback (stop-word-separated titles) has the same embedding
+// hole as the phrase path — a contiguous phrase is trivially in-order, and a
+// gapped sequence inside a longer foreign title is equally weak evidence. Both
+// must demand the author when the hit is unanchored (#1539).
+func TestFilterRelevantInOrderEmbeddedDifferentWork(t *testing.T) {
+	results := toResults(
+		// kws ["name","wind"] appear in order inside a different work's title,
+		// foreign words in front, requested author absent → reject.
+		"Jane.Doe.Chronicles.The.Name.That.Rides.The.Wind.epub",
+		// Anchored in-order hits without the author must keep passing.
+		"The.Name.of.the.Wind.Unabridged.m4b",
+		// Author-corroborated release passes as before.
+		"Patrick.Rothfuss.The.Name.of.the.Wind.Kingkiller.1.epub",
+	)
+	got := filterRelevant(results, "The Name of the Wind", "Patrick Rothfuss", nil)
+
+	if contains(got, "Jane.Doe.Chronicles.The.Name.That.Rides.The.Wind.epub") {
+		t.Errorf("unanchored in-order hit without author must be rejected; got %v", resultTitles(got))
+	}
+	for _, title := range []string{
+		"The.Name.of.the.Wind.Unabridged.m4b",
+		"Patrick.Rothfuss.The.Name.of.the.Wind.Kingkiller.1.epub",
+	} {
+		if !contains(got, title) {
+			t.Errorf("expected %q to pass; got %v", title, resultTitles(got))
+		}
+	}
+}
