@@ -232,6 +232,47 @@ env:
 
 If you genuinely can't use a single mount (the download client mounts the share at a different path than Bindery), keep them separate and use [path remapping](#path-remapping-multi-container--multi-pod-setups) below — but note imports will then **`copy`**, not hardlink.
 
+### Shared ebook + audiobook folder (Storyteller layout)
+
+Storyteller (and similar read-along tools) wants a book's ebook and its audio
+files in **one folder**. Bindery already produces exactly that when
+`BINDERY_LIBRARY_DIR` and `BINDERY_AUDIOBOOK_DIR` point at the same path —
+which is the default: leave `BINDERY_AUDIOBOOK_DIR` unset and audiobooks use
+the library dir. Both default naming templates share the
+`{Author}/{Title} ({Year})` prefix, so the audiobook import creates
+`Author/Title (Year)/` with the audio files inside, and the ebook import
+places its file in that same folder:
+
+```
+/data/books/Ursula K. Le Guin/A Wizard of Earthsea (1968)/
+├── A Wizard of Earthsea.epub
+├── Part 001.m4b
+└── cover.jpg
+```
+
+No extra configuration needed — just don't split the two dirs if you want the
+shared layout. (For handing files to Storyteller's *watch folder* instead,
+see [Handing off to another library tool](#handing-off-to-another-library-tool-cwa-calibre-storyteller).)
+
+### `BINDERY_DOWNLOAD_DIR` is not a watch folder
+
+A common misreading: `BINDERY_DOWNLOAD_DIR` does **not** mean "all completed
+downloads must land here" — Bindery never scans it to discover finished
+downloads. Import paths come from the **download client's API, per job**: when
+SABnzbd or qBittorrent reports a job complete, it also reports where the files
+are, and Bindery imports from that reported path. The env var is used for:
+
+- startup validation and the Settings → General storage-health panel,
+- the hardlink probe (whether imports can link instead of copy),
+- the save path Bindery submits with qBittorrent grabs (and the category
+  save-path warning in Settings),
+- manual/bulk import's default scan location.
+
+So the TRaSH split-tree layout — separate `/data/torrents` and `/data/usenet`
+trees, one per client — works as-is. Point `BINDERY_DOWNLOAD_DIR` at whichever
+completed folder is your primary (or the common parent); each client's own
+reported paths drive the actual imports.
+
 ## Path remapping (multi-container / multi-pod setups)
 
 When Bindery and your download client run in **separate containers**, they typically mount the same storage volume at different paths. Bindery needs to read the files the download client just completed, but the path the client reports (e.g. `/downloads/complete/My.Book`) doesn't exist inside Bindery's container.
@@ -312,7 +353,7 @@ Bindery parks the download as *handed off* and reconciles the managed copy the e
 | `BINDERY_DATA_DIR` | `/config` on Linux; `%APPDATA%\Bindery` on Windows; `~/Library/Application Support/Bindery` on macOS | Config directory (backups live here) |
 | `BINDERY_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `BINDERY_API_KEY` | _(empty)_ | **Seed only.** Bootstraps the initial API key on first launch if set; after that the key lives in the database and can be regenerated from the UI. |
-| `BINDERY_DOWNLOAD_DIR` | `/downloads` | Where the download client places completed downloads. Manual/bulk import may also read from here (and from `BINDERY_AUDIOBOOK_DOWNLOAD_DIR`), so a migration backlog sitting in the download folder can be scanned and attached in bulk. |
+| `BINDERY_DOWNLOAD_DIR` | `/downloads` | Where the download client places completed downloads. **Not a watch folder** — per-job import paths come from the client's API; this feeds validation, storage health, the hardlink probe, and qBittorrent save paths (see [above](#bindery_download_dir-is-not-a-watch-folder)). Manual/bulk import may also read from here (and from `BINDERY_AUDIOBOOK_DOWNLOAD_DIR`), so a migration backlog sitting in the download folder can be scanned and attached in bulk. |
 | `BINDERY_AUDIOBOOK_DOWNLOAD_DIR` | falls back to `BINDERY_DOWNLOAD_DIR` | Separate watch folder for audiobook downloads; set this when your download client routes audiobook grabs to a dedicated category/path |
 | `BINDERY_LIBRARY_DIR` | `/books` | Destination for imported ebook files |
 | `BINDERY_AUDIOBOOK_DIR` | falls back to `BINDERY_LIBRARY_DIR` | Destination for imported audiobook folders |
