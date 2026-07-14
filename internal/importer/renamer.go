@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,6 +14,42 @@ import (
 
 	"github.com/vavallee/bindery/internal/models"
 )
+
+// downloadArtifactExts are download-client receipt and repair files that ride
+// along in a completed job folder but have no business in the library: the
+// queued .nzb itself, PAR2 repair volumes, and scene checksum/description
+// sidecars (#1542). Directory placements (hardlink, copy, move) skip them so
+// a usenet job's receipts never land next to the imported media. Deliberately
+// NOT included: .nfo, cover art, .cue, booklets — files some users want kept.
+var downloadArtifactExts = map[string]bool{
+	".nzb": true, ".par2": true, ".sfv": true, ".srr": true, ".srs": true, ".diz": true,
+}
+
+// isDownloadArtifact reports whether name has a download-artifact extension
+// (case-insensitive). PAR2 volumes like "x.vol01+02.par2" resolve to ".par2"
+// via filepath.Ext, so they are covered without special-casing.
+func isDownloadArtifact(name string) bool {
+	return downloadArtifactExts[strings.ToLower(filepath.Ext(name))]
+}
+
+// removeDownloadArtifacts deletes download-artifact files anywhere under dir.
+// Used after MoveDir's same-filesystem rename fast path, which moves the job
+// folder wholesale (a rename cannot filter); the copy-based paths skip the
+// artifacts at placement time instead. Best-effort: a receipt that cannot be
+// removed is not worth failing an otherwise-successful import over.
+func removeDownloadArtifacts(dir string) {
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.Type().IsRegular() && isDownloadArtifact(d.Name()) {
+			if rmErr := os.Remove(path); rmErr != nil {
+				slog.Warn("could not remove download artifact from imported folder", "path", path, "error", rmErr)
+			}
+		}
+		return nil
+	})
+}
 
 // templateGroupRe matches one "{...}" group. The content is parsed by
 // renderGroup: either the classic simple form — a bare "{Token}", optionally
@@ -368,8 +406,12 @@ func moveDirCtx(ctx context.Context, src, dst string) error {
 		return fmt.Errorf("create parent dir: %w", err)
 	}
 
-	// Fast path: same filesystem.
+	// Fast path: same filesystem. Rename moves the folder wholesale, so any
+	// download artifacts (.nzb receipts, .par2 volumes) ride along — sweep
+	// them out of the destination afterwards to match the filtering the
+	// copy-based paths do at placement time.
 	if err := os.Rename(src, dst); err == nil {
+		removeDownloadArtifacts(dst)
 		return nil
 	}
 
@@ -498,6 +540,9 @@ func hardlinkDirRooted(srcRoot, dstRoot *os.Root, rel string) error {
 		if !e.Type().IsRegular() && !e.IsDir() {
 			continue // skip symlinks
 		}
+		if e.Type().IsRegular() && isDownloadArtifact(e.Name()) {
+			continue // receipts/repair files never enter the library (#1542)
+		}
 		if e.IsDir() {
 			if err := dstRoot.Mkdir(child, 0o750); err != nil && !os.IsExist(err) {
 				return err
@@ -577,6 +622,9 @@ func copyDirRooted(ctx context.Context, srcRoot, dstRoot *os.Root, rel string) e
 		child := filepath.Join(rel, e.Name())
 		if !e.Type().IsRegular() && !e.IsDir() {
 			continue // skip symlinks and other non-regular entries
+		}
+		if e.Type().IsRegular() && isDownloadArtifact(e.Name()) {
+			continue // receipts/repair files never enter the library (#1542)
 		}
 		if e.IsDir() {
 			if err := dstRoot.Mkdir(child, 0o750); err != nil && !os.IsExist(err) {

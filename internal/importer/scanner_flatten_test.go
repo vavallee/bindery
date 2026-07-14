@@ -110,23 +110,25 @@ func TestScannerFlatten_HardlinkMode(t *testing.T) {
 	}
 }
 
-// TestScannerFlatten_MoveModeNeverFlattens asserts the backend enforces the
-// copy/hardlink restriction: with import mode "move" the multi-disc folder is
-// moved whole (disc subfolders preserved), never flattened, even if the setting
-// is on.
-func TestScannerFlatten_MoveModeNeverFlattens(t *testing.T) {
+// TestScannerFlatten_MoveModeFlattensAndConsumesSource asserts the #1542
+// contract: move mode flattens like copy/hardlink and then removes the
+// source. The old "never move" restriction guarded seeding, which a
+// move-mode source doesn't do anyway — and since #1542 usenet downloads
+// resolve to move, keeping the restriction would have silently cost usenet
+// users flattening. Placement is copy-then-delete, matching MoveDirCtx's
+// slow-path semantics.
+func TestScannerFlatten_MoveModeFlattensAndConsumesSource(t *testing.T) {
 	s, dl, downloadPath := flattenScannerFixture(t, "move", true)
 	ctx := context.Background()
 
 	s.tryImportInternal(ctx, dl, downloadPath, "", "", "", nil, nil)
 
 	dest := importedAudiobookDir(t, s)
-	// Disc subfolders must be preserved (no flattening in move mode).
-	if _, err := os.Stat(filepath.Join(dest, "Disc 1", "Track 01.mp3")); err != nil {
-		t.Errorf("move mode must preserve disc-folder layout, missing Disc 1/Track 01.mp3: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dest, "Part 001.mp3")); !os.IsNotExist(err) {
-		t.Error("move mode must NOT produce flattened Part 001.mp3")
+	assertFlatResult(t, dest)
+
+	// Move mode must consume the source after a successful flatten.
+	if _, err := os.Stat(downloadPath); !os.IsNotExist(err) {
+		t.Errorf("move mode must remove the source after flattening, stat err=%v", err)
 	}
 }
 

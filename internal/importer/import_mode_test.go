@@ -305,3 +305,121 @@ func TestImportMode_Settings(t *testing.T) {
 		}
 	}
 }
+
+// TestEffectiveConfiguredMode covers the #1542 usenet remap: hardlink (and
+// the auto default) exists to preserve torrent seeding, which a finished
+// usenet job doesn't do, so both resolve to move for sabnzbd/nzbget
+// downloads. Explicit copy/move/external are honoured, and torrent or
+// client-less imports pass through untouched.
+func TestEffectiveConfiguredMode(t *testing.T) {
+	cases := []struct {
+		mode, clientType, want string
+	}{
+		// Usenet clients: auto and hardlink collapse to move.
+		{"", "sabnzbd", "move"},
+		{"hardlink", "sabnzbd", "move"},
+		{"", "nzbget", "move"},
+		{"hardlink", "nzbget", "move"},
+		// Usenet clients: explicit copy/move/external honoured.
+		{"copy", "sabnzbd", "copy"},
+		{"move", "nzbget", "move"},
+		{"external", "sabnzbd", "external"},
+		// Torrent clients: untouched, including auto.
+		{"", "qbittorrent", ""},
+		{"hardlink", "transmission", "hardlink"},
+		{"copy", "deluge", "copy"},
+		// Client-less imports (drop folder, ABS, manual): untouched.
+		{"", "", ""},
+		{"hardlink", "", "hardlink"},
+	}
+	for _, c := range cases {
+		if got := effectiveConfiguredMode(c.mode, c.clientType); got != c.want {
+			t.Errorf("effectiveConfiguredMode(%q, %q) = %q, want %q", c.mode, c.clientType, got, c.want)
+		}
+	}
+}
+
+// TestDirectoryPlacementSkipsDownloadArtifacts covers the #1542 receipt
+// filtering: .nzb/.par2/.sfv style artifacts in a job folder must not reach
+// the library under any directory placement mode, while media and wanted
+// sidecars (cover art, .nfo, .cue) ride along untouched.
+func TestDirectoryPlacementSkipsDownloadArtifacts(t *testing.T) {
+	mkSrc := func(t *testing.T) string {
+		t.Helper()
+		src := filepath.Join(t.TempDir(), "job")
+		if err := os.MkdirAll(filepath.Join(src, "CD1"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range []string{
+			"book.m4b", "cover.jpg", "book.nfo", "book.cue",
+			"receipt.nzb", "book.vol01+02.par2", "book.sfv", "book.srr", "file_id.diz",
+			filepath.Join("CD1", "track.mp3"), filepath.Join("CD1", "cd1.par2"),
+		} {
+			if err := os.WriteFile(filepath.Join(src, f), []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return src
+	}
+	wantKept := []string{"book.m4b", "cover.jpg", "book.nfo", "book.cue", filepath.Join("CD1", "track.mp3")}
+	wantGone := []string{"receipt.nzb", "book.vol01+02.par2", "book.sfv", "book.srr", "file_id.diz", filepath.Join("CD1", "cd1.par2")}
+
+	check := func(t *testing.T, dst string) {
+		t.Helper()
+		for _, f := range wantKept {
+			if _, err := os.Stat(filepath.Join(dst, f)); err != nil {
+				t.Errorf("%s missing from destination: %v", f, err)
+			}
+		}
+		for _, f := range wantGone {
+			if _, err := os.Stat(filepath.Join(dst, f)); err == nil {
+				t.Errorf("download artifact %s reached the library", f)
+			}
+		}
+	}
+
+	t.Run("hardlink", func(t *testing.T) {
+		src, dst := mkSrc(t), filepath.Join(t.TempDir(), "lib")
+		if err := HardlinkDir(src, dst); err != nil {
+			t.Fatalf("HardlinkDir: %v", err)
+		}
+		check(t, dst)
+	})
+	t.Run("copy", func(t *testing.T) {
+		src, dst := mkSrc(t), filepath.Join(t.TempDir(), "lib")
+		if err := CopyDir(src, dst); err != nil {
+			t.Fatalf("CopyDir: %v", err)
+		}
+		check(t, dst)
+		// Copy mode must leave the source intact, artifacts included.
+		if _, err := os.Stat(filepath.Join(src, "receipt.nzb")); err != nil {
+			t.Error("copy mode must not touch the source's artifacts")
+		}
+	})
+	t.Run("move-rename-fastpath", func(t *testing.T) {
+		// src and dst share t.TempDir's filesystem, so MoveDir takes the
+		// os.Rename fast path; artifacts ride along and must be swept after.
+		base := t.TempDir()
+		src := filepath.Join(base, "job")
+		if err := os.MkdirAll(filepath.Join(src, "CD1"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range []string{
+			"book.m4b", "cover.jpg", "book.nfo", "book.cue",
+			"receipt.nzb", "book.vol01+02.par2", "book.sfv", "book.srr", "file_id.diz",
+			filepath.Join("CD1", "track.mp3"), filepath.Join("CD1", "cd1.par2"),
+		} {
+			if err := os.WriteFile(filepath.Join(src, f), []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		dst := filepath.Join(base, "lib", "job")
+		if err := MoveDir(src, dst); err != nil {
+			t.Fatalf("MoveDir: %v", err)
+		}
+		check(t, dst)
+		if _, err := os.Stat(src); err == nil {
+			t.Error("move mode must consume the source")
+		}
+	})
+}
