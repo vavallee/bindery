@@ -93,13 +93,17 @@ func (s *Searcher) makeClient(baseURL, apiKey string) *newznab.Client {
 // match exists. Substituting a standard fallback ID (3030, 7020) on such
 // indexers returns unrelated results because the standard IDs do not cover
 // the indexer's extended subcategory tree.
+//
+// When includeParentCategories is true, the media-specific parent is prepended
+// even if it is absent from cats. Existing indexers may not have the parent
+// stored because Prowlarr sync historically removed it.
 func filterCategoriesForMedia(cats []int, mediaType string, includeParentCategories bool) []int {
 	// Newznab category convention: 7xxx is the Books parent (7020 ebook,
 	// 7030 magazines), 3xxx is Audio (3030 audiobook). The bare parents
 	// (7000 / 3000) are dropped by default: Prowlarr reports them for generic
 	// trackers and sending them as-is returns the entire books or audio surface.
-	// A per-indexer opt-in lets those parents pass when an indexer's mapping is
-	// incomplete; it never synthesizes a parent that was not configured.
+	// A per-indexer opt-in adds the relevant parent after filtering so it also
+	// works for existing rows from which Prowlarr sync previously removed it.
 	//
 	// Beyond that, every non-parent subcategory in the matching bucket is
 	// trusted: the user explicitly added it to the indexer's category list
@@ -118,13 +122,14 @@ func filterCategoriesForMedia(cats []int, mediaType string, includeParentCategor
 		parent = 3000
 		fallback = []int{3030}
 	}
-	if len(cats) == 0 {
-		return fallback
-	}
 	var out []int
 	hasNonStandard := false
+	hasParent := false
 	for _, c := range cats {
-		if c/1000 == wantThousand && (c != parent || includeParentCategories) {
+		if c == parent {
+			hasParent = true
+		}
+		if c/1000 == wantThousand && c != parent {
 			out = append(out, c)
 		}
 		if c > 9999 {
@@ -133,9 +138,19 @@ func filterCategoriesForMedia(cats []int, mediaType string, includeParentCategor
 	}
 	if len(out) == 0 {
 		if hasNonStandard {
-			return cats
+			for _, c := range cats {
+				if c != parent {
+					out = append(out, c)
+				}
+			}
+		} else if includeParentCategories && hasParent {
+			return []int{parent}
+		} else {
+			out = append([]int(nil), fallback...)
 		}
-		return fallback
+	}
+	if includeParentCategories {
+		out = append([]int{parent}, out...)
 	}
 	return out
 }

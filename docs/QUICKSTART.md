@@ -63,10 +63,11 @@ point Bindery at a Prowlarr instance.
   non-standard categories.
 - **Include broad parent categories** — disabled by default. Enable it for an
   indexer that advertises releases only under Books (`7000`) or Audio (`3000`).
-  Bindery then searches the supplied parent alongside specific children; it
-  never adds an unadvertised parent. Broader queries can recover releases
-  missed by incomplete mappings, but can also return comics, magazines, music,
-  or other unrelated results. Prowlarr re-syncs preserve this local choice.
+  Bindery then adds the appropriate parent to searches alongside the specific
+  children, including for existing indexers whose stored mappings no longer
+  contain the parent. Broader queries can recover releases missed by incomplete
+  mappings, but can also return comics, magazines, music, or other unrelated
+  results. Prowlarr re-syncs preserve this local choice.
 
 **Prowlarr** — under **Settings → Indexers → Add Prowlarr**, give the base URL
 (e.g. `http://prowlarr:9696`) and API key, then **Sync now** to pull its

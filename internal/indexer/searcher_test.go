@@ -895,15 +895,17 @@ func TestFilterCategoriesParentOptIn(t *testing.T) {
 		mediaType string
 		want      []int
 	}{
+		{"existing ebook children", []int{7010, 7030, 7050}, "ebook", []int{7000, 7010, 7030, 7050}},
+		{"existing audiobook children", []int{3010, 3030, 3040}, "audiobook", []int{3000, 3010, 3030, 3040}},
 		{"ebook parent only", []int{7000}, "ebook", []int{7000}},
 		{"ebook parent and children", []int{7000, 7020, 7030}, "ebook", []int{7000, 7020, 7030}},
+		{"ebook parent after child is not duplicated", []int{7020, 7000}, "ebook", []int{7000, 7020}},
 		{"audiobook parent only", []int{3000}, "audiobook", []int{3000}},
 		{"audiobook parent and child", []int{3000, 3030}, "audiobook", []int{3000, 3030}},
 		{"ebook excludes audio parent", []int{3000, 7000, 7020}, "ebook", []int{7000, 7020}},
 		{"audiobook excludes books parent", []int{7000, 3000, 3030}, "audiobook", []int{3000, 3030}},
-		{"parent is not added", []int{7020}, "ebook", []int{7020}},
-		{"nonstandard fallback unchanged", []int{100060}, "ebook", []int{100060}},
-		{"empty still uses fallback", nil, "ebook", []int{7020}},
+		{"nonstandard categories retain parent opt-in", []int{100060}, "ebook", []int{7000, 100060}},
+		{"empty adds parent to fallback", nil, "ebook", []int{7000, 7020}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -913,6 +915,58 @@ func TestFilterCategoriesParentOptIn(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFilterCategoriesParentOptOutWithExistingChildren(t *testing.T) {
+	got := filterCategoriesForMedia([]int{7010, 7030, 7050}, "ebook", false)
+	want := []int{7010, 7030, 7050}
+	if !slices.Equal(got, want) {
+		t.Errorf("filterCategoriesForMedia() = %v, want %v", got, want)
+	}
+}
+
+func TestSearchBookUsesEachIndexersParentCategoryPreference(t *testing.T) {
+	newCaptureServer := func() (*httptest.Server, chan string) {
+		cats := make(chan string, 4)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case cats <- r.URL.Query().Get("cat"):
+			default:
+			}
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = w.Write([]byte(`<?xml version="1.0"?><rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/"><channel><newznab:response total="0"/></channel></rss>`))
+		}))
+		return srv, cats
+	}
+
+	enabledServer, enabledCats := newCaptureServer()
+	defer enabledServer.Close()
+	disabledServer, disabledCats := newCaptureServer()
+	defer disabledServer.Close()
+
+	searcher := newTestSearcher()
+	searcher.SearchBook(context.Background(), []models.Indexer{
+		{ID: 1, Name: "parent enabled", URL: enabledServer.URL, Categories: []int{7010, 7030, 7050}, IncludeParentCategories: true, Enabled: true},
+		{ID: 2, Name: "parent disabled", URL: disabledServer.URL, Categories: []int{7060}, IncludeParentCategories: false, Enabled: true},
+	}, MatchCriteria{Title: "Dune", Author: "Frank Herbert", MediaType: "ebook"})
+	close(enabledCats)
+	close(disabledCats)
+
+	assertAllCategories := func(name string, got <-chan string, want string) {
+		t.Helper()
+		count := 0
+		for cats := range got {
+			count++
+			if cats != want {
+				t.Errorf("%s request categories = %q, want %q", name, cats, want)
+			}
+		}
+		if count == 0 {
+			t.Errorf("%s made no search requests", name)
+		}
+	}
+	assertAllCategories("enabled indexer", enabledCats, "7000,7010,7030,7050")
+	assertAllCategories("disabled indexer", disabledCats, "7060")
 }
 
 func TestIsAudiobookFormat(t *testing.T) {
