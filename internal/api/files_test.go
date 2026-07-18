@@ -480,3 +480,116 @@ func downloadReqCtx(ctx context.Context, id int64) *http.Request {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/file/download", nil).WithContext(ctx)
 	return withURLParam(req, "id", strconv.FormatInt(id, 10))
 }
+
+// ── ?format= scoping (#1561) ─────────────────────────────────────────────────
+
+// downloadReqFormat is downloadReq with a ?format= query param.
+func downloadReqFormat(id int64, format string) *http.Request {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/file/download?format="+format, nil)
+	return withURLParam(req, "id", strconv.FormatInt(id, 10))
+}
+
+// A dual-format book must serve the format the client asked for, not whichever
+// path the legacy fallback chain reaches first (#1561).
+func TestFileDownload_FormatParamDualBook(t *testing.T) {
+	h, books, author, ctx, tmp := fileFixture(t)
+
+	epub := filepath.Join(tmp, "book.epub")
+	if err := os.WriteFile(epub, []byte("epub bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	audioDir := filepath.Join(tmp, "Title (Audio)")
+	if err := os.MkdirAll(audioDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(audioDir, "part1.m4b"), []byte("m4b bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	book := &models.Book{ForeignID: "OL3B", AuthorID: author.ID, Title: "T", MediaType: models.MediaTypeBoth}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.SetFormatFilePath(ctx, book.ID, models.MediaTypeEbook, epub); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.SetFormatFilePath(ctx, book.ID, models.MediaTypeAudiobook, audioDir); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.Download(rec, downloadReqFormat(book.ID, "audiobook"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("format=audiobook: expected 200, got %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/zip" {
+		t.Errorf("format=audiobook: Content-Type got %q, want application/zip (epub served instead?)", ct)
+	}
+
+	rec = httptest.NewRecorder()
+	h.Download(rec, downloadReqFormat(book.ID, "ebook"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("format=ebook: expected 200, got %d", rec.Code)
+	}
+	if !bytes.Equal(rec.Body.Bytes(), []byte("epub bytes")) {
+		t.Errorf("format=ebook: body mismatch, got %q", rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	h.Download(rec, downloadReqFormat(book.ID, "pdf"))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("format=pdf: expected 400, got %d", rec.Code)
+	}
+}
+
+// A format-scoped request against a pre-dual-format row (only the legacy
+// file_path column set) serves the legacy path only when its on-disk shape
+// matches the requested format: file = ebook, directory = audiobook.
+func TestFileDownload_FormatParamLegacyFilePath(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	books := db.NewBookRepo(database)
+	authors := db.NewAuthorRepo(database)
+	ctx := context.Background()
+	author := &models.Author{ForeignID: "OL9A", Name: "A", SortName: "A"}
+	if err := authors.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	h := NewFileHandler(books, root)
+
+	epub := filepath.Join(root, "legacy.epub")
+	if err := os.WriteFile(epub, []byte("legacy epub"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{ForeignID: "OL9B", AuthorID: author.ID, Title: "T", MediaType: models.MediaTypeEbook}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	// Write the legacy column directly — SetFilePath would register a
+	// book_files row and populate the per-format columns, which is exactly
+	// the modern state this test must avoid.
+	if _, err := database.ExecContext(ctx, `UPDATE books SET file_path=? WHERE id=?`, epub, book.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.Download(rec, downloadReqFormat(book.ID, "ebook"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("format=ebook on legacy file: expected 200, got %d", rec.Code)
+	}
+	if !bytes.Equal(rec.Body.Bytes(), []byte("legacy epub")) {
+		t.Errorf("format=ebook on legacy file: body mismatch, got %q", rec.Body.String())
+	}
+
+	// The legacy path is a regular file, so it cannot satisfy an audiobook
+	// request — 404, not the epub mislabeled as an audiobook.
+	rec = httptest.NewRecorder()
+	h.Download(rec, downloadReqFormat(book.ID, "audiobook"))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("format=audiobook on legacy ebook file: expected 404, got %d", rec.Code)
+	}
+}
