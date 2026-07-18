@@ -390,6 +390,8 @@
         "categories": "카테고리",
         "categoriesPlaceholder": "카테고리 (예: 7020, 7120, 3030)",
         "categoriesHint": "쉼표로 구분된 Newznab 카테고리 ID입니다. 7020 = 전자책, 3030 = 오디오북. 비표준 카테고리를 사용하는 인덱서에는 사용자 지정 ID를 추가하세요(예: 독일어 도서의 경우 7120).",
+        "includeParentCategories": "Include broad parent categories",
+        "includeParentCategoriesHint": "Search Books (7000) or Audio (3000) in addition to specific subcategories. This may find releases missed by incomplete mappings, but may also return comics, magazines, music, or other unrelated results.",
         "priority": "우선순위",
         "priorityHint": "같은 릴리스가 여러 인덱서에서 발견될 때 값이 높을수록 우선합니다. 특정 인덱서를 선호하도록 설정하세요(예: Usenet 인덱서를 토렌트보다 높게). 기본값 0.",
         "seedRatio": "시드 비율",

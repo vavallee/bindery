@@ -1244,6 +1244,7 @@ describe('SettingsPage', () => {
         apiKey: 'scene-key',
         type: 'torznab',
         categories: [7020, 7120, 3030],
+        includeParentCategories: false,
         priority: 0,
         enabled: true,
         seedRatio: null,
@@ -1274,10 +1275,28 @@ describe('SettingsPage', () => {
         url: 'https://slug.example.com/api',
         apiKey: 'slug-key',
         categories: [7020, 3030],
+        includeParentCategories: false,
         seedRatio: null,
       })
     })
     expect(await screen.findByText('DrunkenSlug')).toBeInTheDocument()
+  })
+
+  it('loads and changes the broad parent category option', async () => {
+    const indexer = makeIndexer({ id: 8, name: 'Parent Indexer', categories: [7000, 7020], includeParentCategories: true })
+    renderSettings({ indexers: [indexer] })
+    await openIndexersTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
+    const checkbox = screen.getByRole('checkbox', { name: /settings\.indexers\.form\.includeParentCategories/ })
+    expect(checkbox).toBeChecked()
+    expect(screen.getByText('settings.indexers.form.includeParentCategoriesHint')).toBeInTheDocument()
+    fireEvent.click(checkbox)
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
+
+    await waitFor(() => {
+      expect(api.updateIndexer).toHaveBeenCalledWith(8, expect.objectContaining({ includeParentCategories: false }))
+    })
   })
 
   it('saves a numeric per-indexer seed ratio', async () => {

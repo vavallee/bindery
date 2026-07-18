@@ -1,0 +1,2 @@
+### Added
+- **Optional broad indexer categories** — Indexers can now opt in to searching the Newznab Books (`7000`) or Audio (`3000`) parent categories alongside their configured subcategories, helping recover releases from incomplete category mappings. The setting is available when adding or editing an indexer, persists across updates, and is preserved during Prowlarr syncs; it remains disabled by default because broad categories can return unrelated results.

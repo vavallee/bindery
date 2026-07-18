@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -17,6 +18,12 @@ import (
 	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/models"
 )
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) {
+	return 0, errors.New("read failed")
+}
 
 // mockIndexerSearcher implements indexerSearcher for unit tests.
 type mockIndexerSearcher struct {
@@ -75,7 +82,7 @@ func TestIndexerCRUD(t *testing.T) {
 	h := indexerFixture(t)
 
 	// Create
-	body := `{"name":"NZBGeek","url":"https://api.nzbgeek.info","apiKey":"testkey","type":"newznab"}`
+	body := `{"name":"NZBGeek","url":"https://api.nzbgeek.info","apiKey":"testkey","type":"newznab","includeParentCategories":true}`
 	rec := httptest.NewRecorder()
 	h.Create(rec, httptest.NewRequest(http.MethodPost, "/indexer", bytes.NewBufferString(body)))
 	if rec.Code != http.StatusCreated {
@@ -89,6 +96,9 @@ func TestIndexerCRUD(t *testing.T) {
 	// Default categories should be set
 	if len(created.Categories) == 0 {
 		t.Error("expected default categories to be populated")
+	}
+	if !created.IncludeParentCategories {
+		t.Error("expected includeParentCategories to round-trip on create")
 	}
 
 	// List
@@ -121,6 +131,13 @@ func TestIndexerCRUD(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("update: expected 200, got %d", rec.Code)
 	}
+	var updated models.Indexer
+	if err := json.NewDecoder(rec.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode update: %v", err)
+	}
+	if !updated.IncludeParentCategories {
+		t.Error("legacy update without includeParentCategories should preserve the stored value")
+	}
 
 	// Update — not found
 	rec = httptest.NewRecorder()
@@ -135,6 +152,52 @@ func TestIndexerCRUD(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("delete: expected 204, got %d", rec.Code)
 	}
+}
+
+func TestIndexerUpdate_RequestBodyHandling(t *testing.T) {
+	h := indexerFixture(t)
+	idx := &models.Indexer{
+		Name: "Existing", URL: "https://example.com/api", Type: "newznab",
+		Categories: []int{7020}, IncludeParentCategories: true,
+	}
+	if err := h.indexers.Create(context.Background(), idx); err != nil {
+		t.Fatalf("create fixture indexer: %v", err)
+	}
+
+	t.Run("read error", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPut, "/indexer/1", failingReader{})
+		h.Update(rec, withURLParam(req, "id", strconv.FormatInt(idx.ID, 10)))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("malformed JSON", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPut, "/indexer/1", bytes.NewBufferString(`{"name":`))
+		h.Update(rec, withURLParam(req, "id", strconv.FormatInt(idx.ID, 10)))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("explicit false disables option", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		body := `{"name":"Existing","url":"https://example.com/api","type":"newznab","categories":[7020],"includeParentCategories":false}`
+		req := httptest.NewRequest(http.MethodPut, "/indexer/1", bytes.NewBufferString(body))
+		h.Update(rec, withURLParam(req, "id", strconv.FormatInt(idx.ID, 10)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var updated models.Indexer
+		if err := json.NewDecoder(rec.Body).Decode(&updated); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if updated.IncludeParentCategories {
+			t.Error("explicit false did not disable IncludeParentCategories")
+		}
+	})
 }
 
 func TestIndexerCreate_Validation(t *testing.T) {

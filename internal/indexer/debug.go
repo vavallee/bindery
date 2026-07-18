@@ -121,7 +121,7 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 			start := time.Now()
 
 			client := s.makeClient(idx.URL, idx.APIKey)
-			cats := filterCategoriesForMedia(idx.Categories, c.MediaType)
+			cats := filterCategoriesForMedia(idx.Categories, c.MediaType, idx.IncludeParentCategories)
 			entry.Categories = cats
 
 			hits, err := client.BookSearch(ctx, c.Title, c.Author, cats)

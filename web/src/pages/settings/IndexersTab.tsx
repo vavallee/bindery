@@ -89,6 +89,24 @@ function SeedRatioField({ value, onChange, source }: { value: number | null | un
   )
 }
 
+function ParentCategoriesField({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+  const { t } = useTranslation()
+  return (
+    <label className="flex items-start gap-2 text-xs text-slate-600 dark:text-zinc-400">
+      <input
+        type="checkbox"
+        checked={value}
+        onChange={e => onChange(e.target.checked)}
+        className="mt-0.5 accent-emerald-600 dark:accent-emerald-500"
+      />
+      <span>
+        <span className="block font-medium text-slate-700 dark:text-zinc-300">{t('settings.indexers.form.includeParentCategories')}</span>
+        <span className="block mt-1 text-slate-500 dark:text-zinc-500">{t('settings.indexers.form.includeParentCategoriesHint')}</span>
+      </span>
+    </label>
+  )
+}
+
 // indexers/prowlarrInstances are owned by SettingsPage so they can be fetched
 // eagerly on page mount (matching the pre-refactor monolith), not on tab open.
 interface Props {
@@ -331,6 +349,7 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
   const [url, setUrl] = useState(indexer.url)
   const [apiKey, setApiKey] = useState(indexer.apiKey)
   const [categories, setCategories] = useState((indexer.categories ?? [7020]).join(', '))
+  const [includeParentCategories, setIncludeParentCategories] = useState(indexer.includeParentCategories ?? false)
   const [priority, setPriority] = useState(String(indexer.priority ?? 0))
   const [seedRatio, setSeedRatio] = useState<number | null>(indexer.seedRatio ?? null)
   const [testing, setTesting] = useState(false)
@@ -338,7 +357,7 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const submit = async () => {
-    const updated = await api.updateIndexer(indexer.id, { ...indexer, name, type, url, apiKey, categories: parseCats(categories), priority: parsePriority(priority), seedRatio })
+    const updated = await api.updateIndexer(indexer.id, { ...indexer, name, type, url, apiKey, categories: parseCats(categories), includeParentCategories, priority: parsePriority(priority), seedRatio })
     onSaved(updated)
   }
 
@@ -389,6 +408,7 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
         <input type="number" value={priority} onChange={e => setPriority(e.target.value)} placeholder="0" className={inputCls} />
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.priorityHint')}</p>
       </div>
+      <ParentCategoriesField value={includeParentCategories} onChange={setIncludeParentCategories} />
       <SeedRatioField value={seedRatio} onChange={setSeedRatio} source={indexer.seedRatioSource} />
       {testResult && <IndexerTestResultBanner r={testResult} />}
       <div className="flex gap-2 justify-end">
@@ -407,6 +427,7 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
   const [url, setUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [categories, setCategories] = useState('7020')
+  const [includeParentCategories, setIncludeParentCategories] = useState(false)
   const [priority, setPriority] = useState('0')
   const [seedRatio, setSeedRatio] = useState<number | null>(null)
   const [testing, setTesting] = useState(false)
@@ -414,7 +435,7 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const submit = async () => {
-    const idx = await api.addIndexer({ name, url, apiKey, type, categories: parseCats(categories), priority: parsePriority(priority), enabled: true, seedRatio })
+    const idx = await api.addIndexer({ name, url, apiKey, type, categories: parseCats(categories), includeParentCategories, priority: parsePriority(priority), enabled: true, seedRatio })
     onAdded(idx)
   }
 
@@ -465,6 +486,7 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
         <input type="number" value={priority} onChange={e => setPriority(e.target.value)} placeholder="0" className={inputCls} />
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.priorityHint')}</p>
       </div>
+      <ParentCategoriesField value={includeParentCategories} onChange={setIncludeParentCategories} />
       <SeedRatioField value={seedRatio} onChange={setSeedRatio} />
       {testResult && <IndexerTestResultBanner r={testResult} />}
       <div className="flex gap-2 justify-end">

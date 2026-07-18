@@ -52,8 +52,8 @@ func NewSearcher() *Searcher {
 // rejected. MediaType filters the indexer category set; "audiobook" narrows
 // to the Newznab audiobook subcategory (303x, primarily 3030), anything else
 // narrows to the ebook subcategory (702x, primarily 7020). The broad parent
-// categories 7000 and 3000 are never sent — they cause indexers to return
-// noisier, less-targeted result sets.
+// categories 7000 and 3000 are only sent for indexers that explicitly opt in;
+// they can find releases missed by incomplete mappings but are often noisy.
 // AllowedLanguages is the author's metadata-profile language list; when it
 // contains exactly "eng" (or "en"), foreign-tagged releases are filtered out.
 type MatchCriteria struct {
@@ -93,12 +93,17 @@ func (s *Searcher) makeClient(baseURL, apiKey string) *newznab.Client {
 // match exists. Substituting a standard fallback ID (3030, 7020) on such
 // indexers returns unrelated results because the standard IDs do not cover
 // the indexer's extended subcategory tree.
-func filterCategoriesForMedia(cats []int, mediaType string) []int {
+//
+// When includeParentCategories is true, the media-specific parent is prepended
+// even if it is absent from cats. Existing indexers may not have the parent
+// stored because Prowlarr sync historically removed it.
+func filterCategoriesForMedia(cats []int, mediaType string, includeParentCategories bool) []int {
 	// Newznab category convention: 7xxx is the Books parent (7020 ebook,
 	// 7030 magazines), 3xxx is Audio (3030 audiobook). The bare parents
-	// (7000 / 3000) are deliberately dropped: Prowlarr reports them for
-	// generic book trackers and sending them as-is returns the entire
-	// books or audio surface, which is noise.
+	// (7000 / 3000) are dropped by default: Prowlarr reports them for generic
+	// trackers and sending them as-is returns the entire books or audio surface.
+	// A per-indexer opt-in adds the relevant parent after filtering so it also
+	// works for existing rows from which Prowlarr sync previously removed it.
 	//
 	// Beyond that, every non-parent subcategory in the matching bucket is
 	// trusted: the user explicitly added it to the indexer's category list
@@ -117,12 +122,13 @@ func filterCategoriesForMedia(cats []int, mediaType string) []int {
 		parent = 3000
 		fallback = []int{3030}
 	}
-	if len(cats) == 0 {
-		return fallback
-	}
 	var out []int
 	hasNonStandard := false
+	hasParent := false
 	for _, c := range cats {
+		if c == parent {
+			hasParent = true
+		}
 		if c/1000 == wantThousand && c != parent {
 			out = append(out, c)
 		}
@@ -132,9 +138,19 @@ func filterCategoriesForMedia(cats []int, mediaType string) []int {
 	}
 	if len(out) == 0 {
 		if hasNonStandard {
-			return cats
+			for _, c := range cats {
+				if c != parent {
+					out = append(out, c)
+				}
+			}
+		} else if includeParentCategories && hasParent {
+			return []int{parent}
+		} else {
+			out = append([]int(nil), fallback...)
 		}
-		return fallback
+	}
+	if includeParentCategories {
+		out = append([]int{parent}, out...)
 	}
 	return out
 }
@@ -165,7 +181,7 @@ func (s *Searcher) SearchBook(ctx context.Context, indexers []models.Indexer, c 
 			defer wg.Done()
 
 			client := s.makeClient(idx.URL, idx.APIKey)
-			cats := filterCategoriesForMedia(idx.Categories, c.MediaType)
+			cats := filterCategoriesForMedia(idx.Categories, c.MediaType, idx.IncludeParentCategories)
 			hits, err := client.BookSearch(ctx, c.Title, c.Author, cats)
 			if err != nil {
 				slog.Warn("indexer search failed", "indexer", idx.Name, "error", err)
@@ -197,7 +213,9 @@ func (s *Searcher) SearchBook(ctx context.Context, indexers []models.Indexer, c 
 	return results
 }
 
-// SearchQuery performs a generic text search across all enabled indexers.
+// SearchQuery performs a generic text search across all enabled indexers. It
+// intentionally retains its existing behavior and sends configured categories
+// directly because there is no media type with which to select a parent.
 func (s *Searcher) SearchQuery(ctx context.Context, indexers []models.Indexer, query string) []newznab.SearchResult {
 	var (
 		mu      sync.Mutex

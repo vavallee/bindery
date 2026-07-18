@@ -105,7 +105,7 @@ func TestFilterCategoriesForMedia(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := filterCategoriesForMedia(tc.in)
+			got := filterCategoriesForMedia(tc.in, false)
 			if len(got) != len(tc.want) {
 				t.Errorf("filterCategoriesForMedia(%v) = %v, want %v", tc.in, got, tc.want)
 				return
@@ -116,6 +116,50 @@ func TestFilterCategoriesForMedia(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestFilterCategoriesForMedia_ParentOptIn(t *testing.T) {
+	tests := []struct {
+		in, want []int
+	}{
+		{[]int{7000}, []int{7000}},
+		{[]int{7000, 7020, 7030}, []int{7000, 7020, 7030}},
+		{[]int{3000}, []int{3000}},
+		{[]int{3000, 3030}, []int{3000, 3030}},
+		{[]int{7020, 100060}, []int{7020, 100060}},
+	}
+	for _, tt := range tests {
+		got := filterCategoriesForMedia(tt.in, true)
+		if !intSliceEqual(got, tt.want) {
+			t.Errorf("filterCategoriesForMedia(%v, true) = %v, want %v", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestSyncer_PreservesParentCategoryChoiceAndUpdatesCategories(t *testing.T) {
+	pID := 10
+	instID := int64(1)
+	existing := []models.Indexer{{
+		ID: 10, Name: "IndexerA", Type: "torznab", Categories: []int{7020},
+		IncludeParentCategories: true, ProwlarrInstanceID: &instID, ProwlarrIndexerID: &pID,
+	}}
+	srv := prowlarrStub(t, `[{"id":10,"name":"IndexerA","enable":true,"protocol":"torrent","supportsSearch":true,"categories":[{"id":7000},{"id":7020},{"id":7030}]}]`)
+	defer srv.Close()
+	existing[0].URL = srv.URL + "/10/api"
+	store := &fakeIndexerStore{existing: existing}
+
+	if _, err := NewSyncer(New(srv.URL, "k"), store, fakeInstanceStore{}).Sync(context.Background(), 1); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(store.updated) != 1 {
+		t.Fatalf("updated = %d, want 1", len(store.updated))
+	}
+	if !store.updated[0].IncludeParentCategories {
+		t.Fatal("IncludeParentCategories was overwritten during sync")
+	}
+	if want := []int{7000, 7020, 7030}; !intSliceEqual(store.updated[0].Categories, want) {
+		t.Errorf("Categories = %v, want %v", store.updated[0].Categories, want)
 	}
 }
 

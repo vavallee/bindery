@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"sync"
@@ -152,10 +153,29 @@ func (h *IndexerHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var idx models.Indexer
-	if err := json.NewDecoder(r.Body).Decode(&idx); err != nil {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
+	}
+	// Decode the model and presence-sensitive option together. The pointer
+	// distinguishes an omitted field from an explicit false without parsing the
+	// same JSON twice (whose second error path would be unreachable).
+	var update struct {
+		models.Indexer
+		IncludeParentCategories *bool `json:"includeParentCategories"`
+	}
+	if err := json.Unmarshal(body, &update); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	idx := update.Indexer
+	// Preserve the opt-in for older API clients that do not know about the new
+	// field. A present false still explicitly disables it.
+	if update.IncludeParentCategories == nil {
+		idx.IncludeParentCategories = existing.IncludeParentCategories
+	} else {
+		idx.IncludeParentCategories = *update.IncludeParentCategories
 	}
 	if idx.URL != "" {
 		if err := httpsec.ValidateOutboundURL(idx.URL, httpsec.PolicyLANLoopback); err != nil {
