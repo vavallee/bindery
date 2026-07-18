@@ -16,6 +16,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/models"
 )
 
 type FileHandler struct {
@@ -55,6 +56,8 @@ func (h *FileHandler) WithRootFolders(rf *db.RootFolderRepo) *FileHandler {
 //   - Ebook (FilePath is a file): streams the file with its original name.
 //   - Audiobook (FilePath is a directory): streams a zip of the folder so
 //     multi-part m4b/mp3 + cover art come down as one bundle.
+//   - ?format=ebook|audiobook picks that format's file on dual-format books;
+//     without it the legacy FilePath wins, then ebook, then audiobook.
 func (h *FileHandler) Download(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
@@ -75,14 +78,33 @@ func (h *FileHandler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prefer the legacy FilePath, fall back to per-format columns for books
-	// created after the dual-format schema landed (migration 026+).
-	filePath := book.FilePath
-	if filePath == "" {
+	// Optional ?format=ebook|audiobook scopes the download to one format on
+	// dual-format books (same query param contract as DeleteFile). Without it,
+	// keep the legacy FilePath-first chain so single-format books and rows
+	// predating the dual-format schema (migration 026) behave as before.
+	var filePath string
+	switch format := r.URL.Query().Get("format"); format {
+	case "":
+		filePath = book.FilePath
+		if filePath == "" {
+			filePath = book.EbookFilePath
+		}
+		if filePath == "" {
+			filePath = book.AudiobookFilePath
+		}
+	case models.MediaTypeEbook:
 		filePath = book.EbookFilePath
-	}
-	if filePath == "" {
+		if filePath == "" {
+			filePath = legacyPathForFormat(book.FilePath, false)
+		}
+	case models.MediaTypeAudiobook:
 		filePath = book.AudiobookFilePath
+		if filePath == "" {
+			filePath = legacyPathForFormat(book.FilePath, true)
+		}
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid format"})
+		return
 	}
 	if filePath == "" {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no file available for this book"})
@@ -112,6 +134,23 @@ func (h *FileHandler) Download(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", contentDisposition(filename))
 	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
 	http.ServeFile(w, r, filePath)
+}
+
+// legacyPathForFormat returns the legacy single FilePath when its on-disk
+// shape matches the requested format — a directory is an audiobook bundle, a
+// regular file is an ebook — and "" otherwise. Books imported before the
+// dual-format schema only populate FilePath, so a format-scoped download has
+// to infer which format that path actually holds rather than serve whatever
+// is there.
+func legacyPathForFormat(p string, wantDir bool) string {
+	if p == "" {
+		return ""
+	}
+	info, err := os.Stat(p)
+	if err != nil || info.IsDir() != wantDir {
+		return ""
+	}
+	return p
 }
 
 // contentDisposition builds an RFC 6266 / RFC 5987 attachment header that

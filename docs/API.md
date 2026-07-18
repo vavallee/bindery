@@ -64,12 +64,12 @@ POST   /api/v1/book/bulk                          bulk monitor / status flip
 GET    /api/v1/book/{id}                          book detail (with editions, history, formats)
 PUT    /api/v1/book/{id}                          update monitor / status / metadata
 DELETE /api/v1/book/{id}                          remove from library
-DELETE /api/v1/book/{id}/file                     delete imported file(s) on disk
+DELETE /api/v1/book/{id}/file                     delete imported file(s) on disk (`?format=ebook|audiobook` scopes to one format)
 PUT    /api/v1/book/{id}/exclude                  exclude from future searches
 POST   /api/v1/book/{id}/rebind                   re-link to a different metadata record
 POST   /api/v1/book/{id}/enrich-audiobook         pull narrator/duration/cover from Audnex
 POST   /api/v1/book/{id}/search                   manual indexer search
-GET    /api/v1/book/{id}/file                     download the imported file (auth required)
+GET    /api/v1/book/{id}/file                     download the imported file (auth required; `?format=ebook|audiobook` picks the format on dual-format books)
 ```
 
 ### Search & discovery
