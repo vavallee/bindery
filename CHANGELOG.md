@@ -6,6 +6,48 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.26.1] — 2026-07-18
+
+A patch release fixing three reported bugs: dual-format downloads serving the
+wrong file, combined Audiobookshelf libraries dropping their ebooks on import,
+and the return of the author-sync foreign-key warning burst.
+
+### Fixed
+- **Downloading a dual-format book now serves the format you selected**
+  (#1561, #1563) — the UI sends `?format=ebook|audiobook` when a book has
+  both formats, but the download handler never read the parameter and always
+  walked its legacy path chain, so selecting Audiobook still delivered the
+  epub whenever an ebook file existed. `GET /api/v1/book/{id}/file` now scopes
+  the file selection by the requested format, using the same query-parameter
+  contract the delete endpoint already had. Requests without the parameter
+  keep the old behaviour, and books imported before the dual-format schema
+  satisfy a format-scoped request from their single legacy path only when its
+  on-disk shape matches (directory = audiobook bundle, file = ebook). Closes
+  #1561.
+- **ABS import now picks up ebooks that Audiobookshelf marks supplementary**
+  (#1565, #1566) — a combined item (epub stored next to the audio files in
+  one ABS library item) imported only the audiobook when the ABS library has
+  "Audiobooks only" enabled: ABS then never promotes the epub to
+  `media.ebookFile`, exposing it only as a supplementary `libraryFiles` entry,
+  and Bindery read `media.ebookFile` exclusively. The normalizer now falls
+  back to the supplementary ebook (preferring `.epub`, mirroring ABS's own
+  primary-ebook selection), so both editions import — no extra API calls,
+  since the expanded detail fetch already carried the data. A promoted
+  primary ebook still wins. Reported in Discussion #1556 on ABS v2.35.1;
+  closes #1565.
+- **Author catalogue sync stops mid-flight when its author is deleted**
+  (#1559, #1564) — the async sync runs against a snapshot of the author and
+  can spend minutes fetching a prolific author's catalogue. If the row was
+  deleted in that window (the Add Book orphan cleanup after a poll timeout
+  where #808's direct insert didn't land, or a user deleting the author
+  mid-refresh), the insert loop failed the `author_id` foreign-key constraint
+  once per work — the reported burst logged 180 warnings for a single
+  "Michael Lewis" sync. The sync now re-checks the author row after the slow
+  fetch phase and aborts on a foreign-key failure whose author has vanished,
+  logging a single line instead. Harmless before and after (the failed
+  inserts were never persisted), but the noise made real errors easy to miss.
+  Closes #1559.
+
 ## [v1.26.0] — 2026-07-14
 
 A correctness release. Two independent reports pinned real bugs in the parts of
