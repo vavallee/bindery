@@ -790,6 +790,42 @@ func TestIndexerCRUD(t *testing.T) {
 	}
 }
 
+func TestIndexerListByProwlarrInstance_ParentCategoryOption(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	prowlarrRepo := NewProwlarrRepo(database)
+	instance := &models.ProwlarrInstance{Name: "Prowlarr", URL: "http://prowlarr:9696", APIKey: "key"}
+	if err := prowlarrRepo.Create(ctx, instance); err != nil {
+		t.Fatalf("create Prowlarr instance: %v", err)
+	}
+	prowlarrIndexerID := 42
+	idx := &models.Indexer{
+		Name: "Synced", Type: "torznab", URL: "http://prowlarr:9696/42/api",
+		Categories: []int{7010}, IncludeParentCategories: true,
+		ProwlarrInstanceID: &instance.ID, ProwlarrIndexerID: &prowlarrIndexerID,
+	}
+	repo := NewIndexerRepo(database)
+	if err := repo.Create(ctx, idx); err != nil {
+		t.Fatalf("create indexer: %v", err)
+	}
+
+	got, err := repo.ListByProwlarrInstance(ctx, instance.ID)
+	if err != nil {
+		t.Fatalf("list by Prowlarr instance: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d indexers, want 1", len(got))
+	}
+	if !got[0].IncludeParentCategories {
+		t.Error("IncludeParentCategories was not returned")
+	}
+}
+
 func TestCascadeDeleteAuthorBooks(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {
