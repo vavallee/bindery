@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -4625,5 +4626,74 @@ func TestFetchAuthorBooks_InitialSyncIgnoresMonitorNewItems(t *testing.T) {
 	got := monitorNewItemsFixture(t, models.AuthorMonitorNewItemsNone, true)
 	if !got.Monitored {
 		t.Error("initial sync must honour monitor-mode 'all' even with monitorNewItems=none")
+	}
+}
+
+// ── #1559: author deleted while the catalogue sync goroutine is running ─────
+
+// captureSlog redirects the default slog logger into a buffer for the test's
+// duration so assertions can pin which log lines a code path emits.
+func captureSlog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &buf
+}
+
+// When the author row disappears while fetchAuthorBooks is fetching the
+// catalogue (AddBook's orphan cleanup after a poll timeout, or a user
+// deleting the author mid-refresh), the sync must abort before the insert
+// loop instead of emitting one FK-constraint WARN per work (#804, #1559 —
+// 180 warns in one burst).
+func TestFetchAuthorBooks_AuthorDeletedDuringFetch_AbortsWithoutFKBurst(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+
+	author := &models.Author{
+		ForeignID: "OL-GONE", Name: "Michael Lewis", SortName: "Lewis, Michael",
+		MetadataProvider: "openlibrary",
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := *author // what fetchAuthorBooksAsync hands the goroutine
+
+	provider := &stubMetaProvider{works: []models.Book{
+		{ForeignID: "OL-W1", Title: "The Big Short", Status: models.BookStatusWanted, Genres: []string{}},
+		{ForeignID: "OL-W2", Title: "Moneyball", Status: models.BookStatusWanted, Genres: []string{}},
+		{ForeignID: "OL-W3", Title: "Liar's Poker", Status: models.BookStatusWanted, Genres: []string{}},
+	}}
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(provider), nil, profileRepo, nil)
+
+	// Simulate the race: the row is gone by the time the goroutine's slow
+	// catalogue fetch would have completed.
+	if err := authorRepo.Delete(ctx, author.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	logs := captureSlog(t)
+	h.fetchAuthorBooks(&snapshot, false, models.MediaTypeEbook, true)
+
+	if got := logs.String(); strings.Contains(got, "failed to create book") {
+		t.Errorf("sync against deleted author emitted per-book create failures:\n%s", got)
+	} else if !strings.Contains(got, "aborting sync") {
+		t.Errorf("expected sync to log an abort, got:\n%s", got)
+	}
+	books, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 0 {
+		t.Errorf("expected no books for deleted author, got %d", len(books))
 	}
 }
