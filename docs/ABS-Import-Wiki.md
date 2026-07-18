@@ -26,7 +26,7 @@ Bindery does not just create a shell entry with a title. It imports the ABS meta
 - authors
 - books
 - series and sequence numbers when ABS provides them
-- ebook and audiobook editions
+- ebook and audiobook editions (a combined item — epub stored alongside the audio files — imports both, even when the ABS library has "Audiobooks only" set and the epub is only listed as a supplementary file)
 - description
 - release date
 - genres

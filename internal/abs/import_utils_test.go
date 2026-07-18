@@ -86,3 +86,84 @@ func TestNormalizeTitle_DistinctBooksStayDistinct(t *testing.T) {
 		}
 	}
 }
+
+// ── Supplementary ebook fallback (#1565, Discussion #1556) ──────────────────
+
+func supplementaryTrue() *bool { b := true; return &b }
+
+// A combined audiobook+ebook item from a library with "Audiobooks only"
+// enabled carries no media.ebookFile — the epub is only a supplementary
+// libraryFiles entry. Normalization must still surface it as EbookPath so
+// the import derives an ebook edition.
+func TestNormalizeLibraryItem_SupplementaryEbookFallback(t *testing.T) {
+	item := LibraryItem{
+		ID:        "li_1",
+		MediaType: "book",
+		Media: BookMedia{
+			AudioFiles: []AudioFile{{INO: "ino_a1", Index: 1, Path: "/books/A/T/[Audio]/1.mp3"}},
+		},
+		LibraryFiles: []LibraryFile{
+			{INO: "ino_mp3", FileType: "audio", Metadata: LibraryFileMetadata{Ext: ".mp3", Path: "/books/A/T/[Audio]/1.mp3"}},
+			{INO: "ino_pdf", FileType: "ebook", IsSupplementary: supplementaryTrue(), Metadata: LibraryFileMetadata{Ext: ".pdf", Path: "/books/A/T/extras.pdf"}},
+			{INO: "ino_epub", FileType: "ebook", IsSupplementary: supplementaryTrue(), Metadata: LibraryFileMetadata{Ext: ".epub", Path: "/books/A/T/Title.epub"}},
+			{INO: "ino_jpg", FileType: "image", Metadata: LibraryFileMetadata{Ext: ".jpg", Path: "/books/A/T/cover.jpg"}},
+		},
+	}
+
+	out := NormalizeLibraryItem(item, true)
+	if out.EbookPath != "/books/A/T/Title.epub" {
+		t.Fatalf("EbookPath = %q, want the supplementary epub (preferred over pdf)", out.EbookPath)
+	}
+	if out.EbookINO != "ino_epub" {
+		t.Errorf("EbookINO = %q, want ino_epub", out.EbookINO)
+	}
+}
+
+// When ABS did promote a primary ebook, media.ebookFile wins and the
+// supplementary fallback must not override it.
+func TestNormalizeLibraryItem_PrimaryEbookFileWinsOverSupplementary(t *testing.T) {
+	item := LibraryItem{
+		ID: "li_2",
+		Media: BookMedia{
+			EbookFile: &EbookFile{Path: "/books/A/T/Primary.epub", INO: "ino_primary"},
+		},
+		LibraryFiles: []LibraryFile{
+			{INO: "ino_other", FileType: "ebook", Metadata: LibraryFileMetadata{Ext: ".epub", Path: "/books/A/T/Other.epub"}},
+		},
+	}
+	out := NormalizeLibraryItem(item, true)
+	if out.EbookPath != "/books/A/T/Primary.epub" || out.EbookINO != "ino_primary" {
+		t.Fatalf("EbookPath/INO = %q/%q, want the primary ebookFile", out.EbookPath, out.EbookINO)
+	}
+}
+
+// No ebook-typed library files at all: EbookPath stays empty (audiobook-only
+// item), no accidental promotion of images or audio files.
+func TestNormalizeLibraryItem_NoEbookFilesNoFallback(t *testing.T) {
+	item := LibraryItem{
+		ID: "li_3",
+		LibraryFiles: []LibraryFile{
+			{INO: "ino_mp3", FileType: "audio", Metadata: LibraryFileMetadata{Ext: ".mp3", Path: "/x/1.mp3"}},
+			{INO: "ino_jpg", FileType: "image", Metadata: LibraryFileMetadata{Ext: ".jpg", Path: "/x/c.jpg"}},
+		},
+	}
+	if out := NormalizeLibraryItem(item, true); out.EbookPath != "" || out.EbookINO != "" {
+		t.Fatalf("EbookPath/INO = %q/%q, want empty", out.EbookPath, out.EbookINO)
+	}
+}
+
+// The detail fetch is what carries libraryFiles; the merge must not drop the
+// list item's copy when the detail response omits it (defensive symmetry with
+// every other MergeLibraryItem field).
+func TestMergeLibraryItem_CarriesLibraryFiles(t *testing.T) {
+	listItem := LibraryItem{
+		ID: "li_4",
+		LibraryFiles: []LibraryFile{
+			{INO: "ino_epub", FileType: "ebook", Metadata: LibraryFileMetadata{Ext: ".epub", Path: "/x/T.epub"}},
+		},
+	}
+	merged := MergeLibraryItem(listItem, LibraryItem{ID: "li_4"})
+	if len(merged.LibraryFiles) != 1 || merged.LibraryFiles[0].INO != "ino_epub" {
+		t.Fatalf("merged.LibraryFiles = %+v, want the list item's entry carried over", merged.LibraryFiles)
+	}
+}
