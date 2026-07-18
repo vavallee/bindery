@@ -304,6 +304,129 @@ func TestFileDownload_DualFormatHonoursEbookQuery(t *testing.T) {
 	}
 }
 
+func TestFileDownload_LegacyEbookPathWithFormatQuery(t *testing.T) {
+	h, books, author, ctx, tmp := fileFixture(t)
+	path := filepath.Join(tmp, "legacy.epub")
+	if err := os.WriteFile(path, []byte("legacy ebook bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rows created before per-format paths were introduced only have FilePath.
+	book := &models.Book{
+		ForeignID: "OL-LEGACY-EBOOK", AuthorID: author.ID, Title: "Legacy ebook",
+		MediaType: models.MediaTypeEbook, FilePath: path,
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.Update(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.Download(rec, downloadReqFormat(book.ID, models.MediaTypeEbook))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Equal(rec.Body.Bytes(), []byte("legacy ebook bytes")) {
+		t.Errorf("body mismatch: got %q", rec.Body.String())
+	}
+}
+
+func TestFileDownload_LegacyAudiobookPathWithFormatQuery(t *testing.T) {
+	h, books, author, ctx, tmp := fileFixture(t)
+	path := filepath.Join(tmp, "legacy.m4b")
+	if err := os.WriteFile(path, []byte("legacy audiobook bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Legacy audiobook rows likewise keep their only path in FilePath.
+	book := &models.Book{
+		ForeignID: "OL-LEGACY-AUDIOBOOK", AuthorID: author.ID, Title: "Legacy audiobook",
+		MediaType: models.MediaTypeAudiobook, FilePath: path,
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.Update(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.Download(rec, downloadReqFormat(book.ID, models.MediaTypeAudiobook))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Equal(rec.Body.Bytes(), []byte("legacy audiobook bytes")) {
+		t.Errorf("body mismatch: got %q", rec.Body.String())
+	}
+}
+
+func TestFileDownload_NoFormatPreservesLegacyPreferenceOrder(t *testing.T) {
+	tests := []struct {
+		name          string
+		legacyPath    bool
+		ebookPath     bool
+		audiobookPath bool
+		want          string
+	}{
+		{name: "legacy path before per-format paths", legacyPath: true, ebookPath: true, audiobookPath: true, want: "legacy bytes"},
+		{name: "ebook path before audiobook path", ebookPath: true, audiobookPath: true, want: "ebook bytes"},
+		{name: "audiobook path when it is the only path", audiobookPath: true, want: "audiobook bytes"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, books, author, ctx, tmp := fileFixture(t)
+			paths := map[string]string{
+				"legacy":    filepath.Join(tmp, "legacy.epub"),
+				"ebook":     filepath.Join(tmp, "ebook.epub"),
+				"audiobook": filepath.Join(tmp, "audiobook.m4b"),
+			}
+			for name, path := range paths {
+				if err := os.WriteFile(path, []byte(name+" bytes"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			book := &models.Book{
+				ForeignID: "OL-NO-FORMAT", AuthorID: author.ID, Title: "No format",
+				MediaType: models.MediaTypeBoth,
+			}
+			if err := books.Create(ctx, book); err != nil {
+				t.Fatal(err)
+			}
+			if tt.ebookPath {
+				if err := books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, paths["ebook"]); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.audiobookPath {
+				if err := books.AddBookFile(ctx, book.ID, models.MediaTypeAudiobook, paths["audiobook"]); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.legacyPath {
+				// AddBookFile maintains FilePath for compatibility, so restore the
+				// distinct legacy value after populating the per-format slots.
+				book.FilePath = paths["legacy"]
+				if err := books.Update(ctx, book); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			rec := httptest.NewRecorder()
+			h.Download(rec, withURLParam(httptest.NewRequest(http.MethodGet, "/api/v1/file/1/download", nil), "id", "1"))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if rec.Body.String() != tt.want {
+				t.Errorf("body mismatch: got %q, want %q", rec.Body.String(), tt.want)
+			}
+		})
+	}
+}
+
 func TestFileDownload_InvalidFormat(t *testing.T) {
 	h, books, author, ctx, _ := fileFixture(t)
 	book := &models.Book{ForeignID: "OL-BAD-FORMAT", AuthorID: author.ID, Title: "T"}
