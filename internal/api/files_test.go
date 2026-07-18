@@ -224,6 +224,100 @@ func TestFileDownload_AudiobookDirStreamsZip(t *testing.T) {
 	}
 }
 
+func TestFileDownload_DualFormatHonoursAudiobookQuery(t *testing.T) {
+	h, books, author, ctx, tmp := fileFixture(t)
+	ebookPath := filepath.Join(tmp, "book.epub")
+	if err := os.WriteFile(ebookPath, []byte("ebook bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	audiobookDir := filepath.Join(tmp, "audiobook")
+	if err := os.MkdirAll(audiobookDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(audiobookDir, "book.m4b"), []byte("audio bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	book := &models.Book{
+		ForeignID: "OL-DUAL-AUDIO", AuthorID: author.ID, Title: "Dual",
+		MediaType: models.MediaTypeBoth, FilePath: filepath.Join(tmp, "stale.epub"),
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.Update(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, ebookPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.AddBookFile(ctx, book.ID, models.MediaTypeAudiobook, audiobookDir); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.Download(rec, downloadReqFormat(book.ID, models.MediaTypeAudiobook))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/zip" {
+		t.Fatalf("Content-Type: got %q, want application/zip", ct)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+	if err != nil {
+		t.Fatalf("zip reader: %v", err)
+	}
+	if len(zr.File) != 1 || zr.File[0].Name != "book.m4b" {
+		t.Fatalf("unexpected audiobook zip entries: %+v", zr.File)
+	}
+}
+
+func TestFileDownload_DualFormatHonoursEbookQuery(t *testing.T) {
+	h, books, author, ctx, tmp := fileFixture(t)
+	ebookPath := filepath.Join(tmp, "book.epub")
+	if err := os.WriteFile(ebookPath, []byte("ebook bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	audiobookDir := filepath.Join(tmp, "audiobook")
+	if err := os.MkdirAll(audiobookDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	book := &models.Book{ForeignID: "OL-DUAL-EBOOK", AuthorID: author.ID, Title: "Dual", MediaType: models.MediaTypeBoth}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, ebookPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.AddBookFile(ctx, book.ID, models.MediaTypeAudiobook, audiobookDir); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.Download(rec, downloadReqFormat(book.ID, models.MediaTypeEbook))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Equal(rec.Body.Bytes(), []byte("ebook bytes")) {
+		t.Errorf("body mismatch: got %q", rec.Body.String())
+	}
+}
+
+func TestFileDownload_InvalidFormat(t *testing.T) {
+	h, books, author, ctx, _ := fileFixture(t)
+	book := &models.Book{ForeignID: "OL-BAD-FORMAT", AuthorID: author.ID, Title: "T"}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.Download(rec, downloadReqFormat(book.ID, "magazine"))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid format: expected 400, got %d", rec.Code)
+	}
+}
+
 // ── Root-folder allow-list (request-time resolution) ────────────────────────
 //
 // The download allow-list must include user-configured root folders, not just
@@ -471,6 +565,11 @@ func TestFileDownload_OwnershipEnforcedUnderRootFolder(t *testing.T) {
 // {id} URL param populated.
 func downloadReq(id int64) *http.Request {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/file/download", nil)
+	return withURLParam(req, "id", strconv.FormatInt(id, 10))
+}
+
+func downloadReqFormat(id int64, format string) *http.Request {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/file/download?format="+url.QueryEscape(format), nil)
 	return withURLParam(req, "id", strconv.FormatInt(id, 10))
 }
 

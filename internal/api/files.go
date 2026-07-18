@@ -16,6 +16,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/models"
 )
 
 type FileHandler struct {
@@ -75,14 +76,35 @@ func (h *FileHandler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prefer the legacy FilePath, fall back to per-format columns for books
-	// created after the dual-format schema landed (migration 026+).
-	filePath := book.FilePath
-	if filePath == "" {
+	// Dual-format book pages tell us which slot the user selected. Honour that
+	// before consulting the legacy FilePath column, which can point at the other
+	// format (or at a file that no longer exists). Legacy single-format rows may
+	// not have their per-format view populated yet, so retain a type-safe fallback
+	// for those records. Callers that omit format (including OPDS) keep the
+	// historical preference order.
+	var filePath string
+	switch r.URL.Query().Get("format") {
+	case models.MediaTypeEbook:
 		filePath = book.EbookFilePath
-	}
-	if filePath == "" {
+		if filePath == "" && book.MediaType != models.MediaTypeAudiobook {
+			filePath = book.FilePath
+		}
+	case models.MediaTypeAudiobook:
 		filePath = book.AudiobookFilePath
+		if filePath == "" && book.MediaType == models.MediaTypeAudiobook {
+			filePath = book.FilePath
+		}
+	case "":
+		filePath = book.FilePath
+		if filePath == "" {
+			filePath = book.EbookFilePath
+		}
+		if filePath == "" {
+			filePath = book.AudiobookFilePath
+		}
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid format"})
+		return
 	}
 	if filePath == "" {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no file available for this book"})
