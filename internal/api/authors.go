@@ -1494,6 +1494,19 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool,
 		langSampled = h.meta.FillMissingAuthorWorkLanguages(ctx, books)
 	}
 
+	// Everything above can take minutes for a prolific author (works fetch,
+	// Audible supplement, language sampling), and this goroutine holds only a
+	// snapshot of the author row. By now the row may be gone: AddBook's
+	// orphan cleanup rolls back a speculative author insert when its poll
+	// times out and the direct insert didn't land (#804, #1559), and a user
+	// can delete the author mid-refresh. Bail out instead of running an
+	// insert loop where every row fails the author_id FK constraint.
+	if current, err := h.authors.GetByID(ctx, author.ID); err == nil && current == nil {
+		slog.Info("author deleted while catalogue fetch was running; aborting sync",
+			"author", author.Name, "authorId", author.ID)
+		return
+	}
+
 	// Track titles we've already added (case-insensitive) to avoid OL duplicates.
 	// The value is a pointer to the existing book so we can enrich calibre-imported
 	// stubs with the OL foreign ID and language when they title-match an OL record.
@@ -1710,6 +1723,18 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool,
 					}
 				}
 				continue
+			}
+			// A FOREIGN KEY failure here almost always means the author row
+			// was deleted after the pre-loop existence check (orphan cleanup
+			// or a user delete racing this goroutine). Confirm and abort the
+			// whole sync — every remaining insert would fail the same way,
+			// emitting one WARN per work (#1559 saw 180 in a burst).
+			if strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
+				if current, gerr := h.authors.GetByID(ctx, author.ID); gerr == nil && current == nil {
+					slog.Info("author deleted mid-sync; aborting catalogue sync",
+						"author", author.Name, "authorId", author.ID, "added", added)
+					return
+				}
 			}
 			slog.Warn("failed to create book", "title", b.Title, "error", err)
 			continue
