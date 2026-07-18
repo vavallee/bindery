@@ -48,6 +48,13 @@ func WithRealPeer(ctx context.Context, remoteAddr string) context.Context {
 	return context.WithValue(ctx, realPeerCtxKey, remoteAddr)
 }
 
+// RealPeerHost returns the bare host of the request's original TCP peer,
+// before trusted-proxy middleware rewrites RemoteAddr from forwarded headers.
+// When no original peer was stashed, it falls back to the current RemoteAddr.
+func RealPeerHost(r *http.Request) string {
+	return realPeerHost(r)
+}
+
 // realPeerHost returns the bare host of the request's true TCP peer. It
 // prefers the value stashed by WithRealPeer (the address before RealIP
 // rewriting); if that is absent it falls back to r.RemoteAddr. The fallback is

@@ -4,6 +4,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/vavallee/bindery/internal/auth"
 )
 
 // ResolveOIDCRedirectBase returns the base URL to use as the prefix for OIDC
@@ -56,14 +58,10 @@ func ResolveOIDCRedirectBase(r *http.Request, configured string, trusted []*net.
 }
 
 // requestFromTrustedProxy reports whether the request's immediate peer (the
-// last hop) is in the configured proxy CIDR list. Mirrors the trust check in
-// internal/auth/middleware.go but lives here to avoid a circular import.
+// last hop, captured before real-IP rewriting) is in the configured proxy CIDR
+// list.
 func requestFromTrustedProxy(r *http.Request, trusted []*net.IPNet) bool {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	ip := net.ParseIP(host)
+	ip := net.ParseIP(auth.RealPeerHost(r))
 	if ip == nil {
 		return false
 	}
