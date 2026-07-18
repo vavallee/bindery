@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"sync"
@@ -152,10 +153,27 @@ func (h *IndexerHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var idx models.Indexer
-	if err := json.NewDecoder(r.Body).Decode(&idx); err != nil {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
+	}
+	var idx models.Indexer
+	if err := json.Unmarshal(body, &idx); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	// Preserve the opt-in for older API clients that do not know about the new
+	// field. A present false still explicitly disables it.
+	var optional struct {
+		IncludeParentCategories *bool `json:"includeParentCategories"`
+	}
+	if err := json.Unmarshal(body, &optional); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if optional.IncludeParentCategories == nil {
+		idx.IncludeParentCategories = existing.IncludeParentCategories
 	}
 	if idx.URL != "" {
 		if err := httpsec.ValidateOutboundURL(idx.URL, httpsec.PolicyLANLoopback); err != nil {

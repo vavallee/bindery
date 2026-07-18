@@ -421,6 +421,8 @@
         "categories": "Categories",
         "categoriesPlaceholder": "Categories (e.g. 7020, 7120, 3030)",
         "categoriesHint": "Comma-separated Newznab category IDs. 7020 = eBooks, 3030 = Audiobooks. Add custom IDs for indexers with non-standard categories (e.g. 7120 for German books).",
+        "includeParentCategories": "Include broad parent categories",
+        "includeParentCategoriesHint": "Search Books (7000) or Audio (3000) in addition to specific subcategories. This may find releases missed by incomplete mappings, but may also return comics, magazines, music, or other unrelated results.",
         "priority": "Priority",
         "priorityHint": "Higher wins ties when the same release is found on multiple indexers. Use it to prefer one indexer — e.g. set Usenet indexers above torrent ones. Default 0.",
         "seedRatio": "Seed ratio",

@@ -76,7 +76,9 @@ func (s *Syncer) Sync(ctx context.Context, instanceID int64) (SyncResult, error)
 		// ones disabled in Prowlarr, ones that don't support search, and
 		// ones with no ebook/audiobook categories. Users then deleted them
 		// manually and watched them reappear on the next sync.
-		cats := filterCategoriesForMedia(ri.Categories)
+		ex, exists := byProwlarrID[ri.ProwlarrID]
+		includeParentCategories := exists && ex.IncludeParentCategories
+		cats := filterCategoriesForMedia(ri.Categories, includeParentCategories)
 		switch {
 		case !ri.Enable:
 			slog.Debug("prowlarr sync: skipping disabled indexer",
@@ -98,7 +100,7 @@ func (s *Syncer) Sync(ctx context.Context, instanceID int64) (SyncResult, error)
 		instID := instanceID
 		idxType := indexerTypeForProtocol(ri.Protocol)
 
-		if ex, ok := byProwlarrID[ri.ProwlarrID]; ok {
+		if exists {
 			// Auto-populate the seed-ratio override from Prowlarr (#1065), but
 			// only on rows the user has not taken ownership of. An explicit
 			// user value/clear (source="user") always wins and is never touched;
@@ -191,10 +193,14 @@ func indexerTypeForProtocol(protocol string) string {
 
 // filterCategoriesForMedia normalises the Newznab category list at sync time.
 // Broad parent categories (7000 Other, 3000 Audio) are dropped when specific
-// children are already present. When only the parent is present (no children),
+// children are already present unless the indexer has opted in to retaining
+// parents. When only the parent is present (no children) and opt-in is off,
 // it is widened to its most useful specific child: 7000→7020 (Ebooks),
 // 3000→3030 (Audiobooks). All other categories pass through unchanged.
-func filterCategoriesForMedia(cats []int) []int {
+func filterCategoriesForMedia(cats []int, includeParentCategories bool) []int {
+	if includeParentCategories {
+		return append([]int(nil), cats...)
+	}
 	var has7000, has3000, hasChild7, hasChild3 bool
 	for _, c := range cats {
 		switch {

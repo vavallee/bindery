@@ -744,14 +744,15 @@ func TestIndexerCRUD(t *testing.T) {
 	repo := NewIndexerRepo(database)
 
 	idx := &models.Indexer{
-		Name:           "Test Indexer",
-		Type:           "newznab",
-		URL:            "https://example.com/api",
-		APIKey:         "testkey123",
-		Categories:     []int{7000, 7020},
-		Priority:       25,
-		Enabled:        true,
-		SupportsSearch: true,
+		Name:                    "Test Indexer",
+		Type:                    "newznab",
+		URL:                     "https://example.com/api",
+		APIKey:                  "testkey123",
+		Categories:              []int{7000, 7020},
+		IncludeParentCategories: true,
+		Priority:                25,
+		Enabled:                 true,
+		SupportsSearch:          true,
 	}
 	err = repo.Create(ctx, idx)
 	if err != nil {
@@ -770,6 +771,9 @@ func TestIndexerCRUD(t *testing.T) {
 	}
 	if len(got.Categories) != 2 || got.Categories[0] != 7000 {
 		t.Errorf("unexpected categories: %v", got.Categories)
+	}
+	if !got.IncludeParentCategories {
+		t.Error("IncludeParentCategories was not persisted")
 	}
 
 	list, err := repo.List(ctx)
