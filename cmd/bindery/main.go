@@ -428,6 +428,7 @@ func main() {
 		authorRepo, bookRepo, indexerRepo, downloadRepo, dlClientRepo, settingsRepo, blocklistRepo)
 	sched.WithHistory(historyRepo)
 	sched.WithAliases(authorAliasRepo)
+	sched.WithMetadataProfiles(metadataProfileRepo)
 	sched.WithDelayProfiles(delayProfileRepo)
 	sched.WithPendingReleases(pendingReleaseRepo)
 	sched.WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir)

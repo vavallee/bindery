@@ -678,6 +678,63 @@ func TestFilterByLanguagePassesAllWhenNoForeignTags(t *testing.T) {
 	}
 }
 
+func TestFilterByAllowedLanguages(t *testing.T) {
+	results := toResults(
+		"Il.Libro.ITALIAN.epub", // ita — allowed
+		"The.Book.epub",         // untagged — passes
+		"The.Book.ENGLISH.epub", // eng — allowed
+		"Das.Buch.GERMAN.epub",  // ger — dropped
+		"Le.Livre.FRENCH.epub",  // fre — dropped
+		"El.Libro.SPANISH.epub", // spa — dropped
+	)
+	got := FilterByAllowedLanguages(results, []string{"ita", "eng"})
+	want := []string{"Il.Libro.ITALIAN.epub", "The.Book.epub", "The.Book.ENGLISH.epub"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d results, got %v", len(want), resultTitles(got))
+	}
+	for _, w := range want {
+		if !contains(got, w) {
+			t.Errorf("expected %q to pass the ita/eng filter, got %v", w, resultTitles(got))
+		}
+	}
+}
+
+func TestFilterByAllowedLanguagesTwoLetterAliases(t *testing.T) {
+	results := toResults(
+		"Il.Libro.ITALIANO.epub",
+		"Das.Buch.GERMAN.epub",
+	)
+	// Hand-edited profiles may hold 639-1 codes; "it" must behave like "ita".
+	got := FilterByAllowedLanguages(results, []string{"it"})
+	if !contains(got, "Il.Libro.ITALIANO.epub") || contains(got, "Das.Buch.GERMAN.epub") {
+		t.Errorf("alias 'it' should keep the Italian release and drop the German one, got %v", resultTitles(got))
+	}
+}
+
+func TestFilterByAllowedLanguagesDisabled(t *testing.T) {
+	results := toResults("Das.Buch.GERMAN.epub", "The.Book.epub")
+	if got := FilterByAllowedLanguages(results, nil); len(got) != 2 {
+		t.Errorf("empty allowed set must pass everything, got %v", resultTitles(got))
+	}
+	if got := FilterByAllowedLanguages(results, []string{"ita", "any"}); len(got) != 2 {
+		t.Errorf("an 'any' entry must disable the filter, got %v", resultTitles(got))
+	}
+}
+
+func TestFilterByLanguageEnglishKeepsEnglishTagged(t *testing.T) {
+	results := toResults(
+		"The.Book.ENGLISH.epub",
+		"Das.Buch.GERMAN.epub",
+	)
+	got := FilterByLanguage(results, "en")
+	if !contains(got, "The.Book.ENGLISH.epub") {
+		t.Error("explicitly ENGLISH-tagged release must pass lang=en")
+	}
+	if contains(got, "Das.Buch.GERMAN.epub") {
+		t.Error("GERMAN-tagged release must be dropped for lang=en")
+	}
+}
+
 func TestIsArticle(t *testing.T) {
 	for _, w := range []string{"the", "The", "THE", "a", "A", "an", "AN"} {
 		if !IsArticle(w) {
