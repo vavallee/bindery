@@ -6,6 +6,38 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [v1.26.2] — 2026-07-19
+
+A patch release fixing two reported metadata bugs: profile language filters
+that never applied to what actually got downloaded, and DNB-primary setups
+silently importing English OpenLibrary catalogues.
+
+### Fixed
+- **Metadata profile languages now constrain downloads, not just the
+  catalogue** (#1573, #1576, Discussion #1572) — the profile's
+  `allowed_languages` filtered which books entered the library, but the
+  release filter only activated for English-only profiles and the automatic
+  grab path never loaded the profile at all, so an ITA/ENG profile still
+  grabbed German or French releases whenever one ranked first. The
+  foreign-tag list now maps each release marker to its ISO 639-2/B code so
+  any profile language set can be checked against a release: tagged with a
+  language outside the set drops it, untagged passes (the tag is only ever
+  a negative signal). Auto-grab resolves the author's profile before
+  grabbing, mirroring the interactive search, with the global
+  `search.preferredLanguage` setting as the fallback. Closes #1573.
+- **DNB as primary provider now keeps the DNB author identity** (#1574,
+  #1577) — author search collapses same-name records from multiple
+  providers to the most complete one, judged by work and rating counts
+  that only OpenLibrary reports, so the `dnb:` record lost the collapse
+  every time even with DNB promoted to primary. The added author kept an
+  OpenLibrary foreign ID, and since the catalogue imports from the
+  provider the foreign ID names, DNB-primary users got English OL work
+  titles — and book searches built from those titles could never match
+  German releases. The primary provider's record now wins the collapse
+  ahead of the count comparisons; OpenLibrary-primary setups are
+  unchanged. Authors already imported under the OL identity can be
+  relinked once via **Link metadata** on the author page. Closes #1574.
+
 ## [v1.26.1] — 2026-07-18
 
 A patch release fixing three reported bugs: dual-format downloads serving the
