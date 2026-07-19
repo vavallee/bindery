@@ -253,26 +253,6 @@ func TestIndexerSearchQuery_MissingQ(t *testing.T) {
 	}
 }
 
-func TestLangFilterFromAllowed(t *testing.T) {
-	for _, tc := range []struct {
-		langs []string
-		want  string
-		desc  string
-	}{
-		{[]string{"en"}, "en", "English-only (en)"},
-		{[]string{"eng"}, "en", "English-only (eng)"},
-		{[]string{"en", "fr"}, "", "multi-language — no filter"},
-		{[]string{"fr"}, "", "French-only — no English filter"},
-		{nil, "", "nil — no filter"},
-		{[]string{}, "", "empty — no filter"},
-	} {
-		got := langFilterFromAllowed(tc.langs)
-		if got != tc.want {
-			t.Errorf("%s: langFilterFromAllowed(%v) = %q, want %q", tc.desc, tc.langs, got, tc.want)
-		}
-	}
-}
-
 func TestSearchBook_DualFormat_MediaTypeTagging(t *testing.T) {
 	database, err := db.OpenMemory()
 	if err != nil {

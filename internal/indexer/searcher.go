@@ -54,8 +54,10 @@ func NewSearcher() *Searcher {
 // narrows to the ebook subcategory (702x, primarily 7020). The broad parent
 // categories 7000 and 3000 are never sent — they cause indexers to return
 // noisier, less-targeted result sets.
-// AllowedLanguages is the author's metadata-profile language list; when it
-// contains exactly "eng" (or "en"), foreign-tagged releases are filtered out.
+// AllowedLanguages is the author's metadata-profile language list; callers
+// apply it to results via FilterByAllowedLanguages (releases tagged with a
+// language outside the set are dropped). Recorded here so search debug
+// output shows which set was in force.
 type MatchCriteria struct {
 	Title            string
 	Author           string
@@ -772,54 +774,107 @@ func protocolForType(t string) string {
 	return "usenet"
 }
 
-// knownForeignTags lists release-name markers indicating a non-English
-// release. Matched at word boundaries against the normalized title — so
-// "RUSSE" (French for "Russian") no longer falsely matches "RUSSELL".
-var knownForeignTags = []string{
-	"french", "francais",
-	"vf", "vostfr", "vff",
-	"german", "deutsch",
-	"spanish", "espanol", "español",
-	"dutch", "netherlands",
-	"italian", "italiano",
-	"portuguese", "portugues",
-	"russian", "russe",
-	"japanese", "japonais",
-	"chinese", "mandarin",
-	"korean",
-	"arabic", "arabe",
-	"swedish", "svenska", "norwegian", "danish",
-	"polish", "polski",
-	"czech",
-	"turkish",
-	"hindi",
+// releaseLanguageTags maps release-name language markers to the ISO 639-2/B
+// code of the language they indicate. Matched at word boundaries against the
+// normalized title — so "RUSSE" (French for "Russian") no longer falsely
+// matches "RUSSELL". The codes use the same vocabulary the metadata-profile
+// editor writes into allowed_languages, so a profile's language set can be
+// checked against a release directly.
+var releaseLanguageTags = map[string]string{
+	"english": "eng",
+	"french":  "fre", "francais": "fre",
+	"vf": "fre", "vostfr": "fre", "vff": "fre",
+	"german": "ger", "deutsch": "ger",
+	"spanish": "spa", "espanol": "spa", "español": "spa",
+	"dutch": "dut", "netherlands": "dut",
+	"italian": "ita", "italiano": "ita",
+	"portuguese": "por", "portugues": "por",
+	"russian": "rus", "russe": "rus",
+	"japanese": "jpn", "japonais": "jpn",
+	"chinese": "chi", "mandarin": "chi",
+	"korean": "kor",
+	"arabic": "ara", "arabe": "ara",
+	"swedish": "swe", "svenska": "swe",
+	"norwegian": "nor",
+	"danish":    "dan",
+	"polish":    "pol", "polski": "pol",
+	"czech":   "cze",
+	"turkish": "tur",
+	"hindi":   "hin",
 }
 
-// FilterByLanguage removes results whose titles contain known foreign-language
-// markers when lang is "en". When lang is "any" (or empty), all results pass.
-// Tag matching is word-boundary anchored to avoid false positives (e.g. the
-// former "RUSSE" ⊂ "RUSSELL" bug).
-func FilterByLanguage(results []newznab.SearchResult, lang string) []newznab.SearchResult {
-	if lang == "" || lang == "any" {
+// iso639TwoLetterAliases maps common two-letter (ISO 639-1) codes to the
+// 639-2/B codes used by releaseLanguageTags and the profile editor, so a
+// hand-edited profile like "it,en" still filters correctly.
+var iso639TwoLetterAliases = map[string]string{
+	"en": "eng", "fr": "fre", "de": "ger", "nl": "dut", "es": "spa",
+	"it": "ita", "pt": "por", "ja": "jpn", "zh": "chi", "ru": "rus",
+}
+
+// releaseLanguageCodes returns the distinct language codes indicated by
+// markers in the normalized release title. Empty means the release carries no
+// recognisable language tag.
+func releaseLanguageCodes(norm string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for tag, code := range releaseLanguageTags {
+		if seen[code] {
+			continue
+		}
+		if WordBoundaryRegex(tag).MatchString(norm) {
+			seen[code] = true
+			out = append(out, code)
+		}
+	}
+	return out
+}
+
+// FilterByAllowedLanguages drops results whose release name is tagged with a
+// language outside the metadata profile's allowed set. Untagged releases
+// always pass — most releases carry no language marker, and dropping them
+// would empty nearly every search; the tag check can only ever be a negative
+// signal. An empty allowed list disables the filter, and codes are normalized
+// to the ISO 639-2/B vocabulary the profile editor writes ("en" → "eng").
+func FilterByAllowedLanguages(results []newznab.SearchResult, allowed []string) []newznab.SearchResult {
+	if len(allowed) == 0 {
 		return results
 	}
-	if lang != "en" {
-		return results
+	set := make(map[string]bool, len(allowed))
+	for _, code := range allowed {
+		code = strings.ToLower(strings.TrimSpace(code))
+		if alias, ok := iso639TwoLetterAliases[code]; ok {
+			code = alias
+		}
+		if code == "any" {
+			return results
+		}
+		set[code] = true
 	}
 
 	filtered := make([]newznab.SearchResult, 0, len(results))
 	for _, r := range results {
 		norm := NormalizeRelease(r.Title)
-		foreign := false
-		for _, tag := range knownForeignTags {
-			if WordBoundaryRegex(tag).MatchString(norm) {
-				foreign = true
+		ok := true
+		for _, code := range releaseLanguageCodes(norm) {
+			if !set[code] {
+				ok = false
 				break
 			}
 		}
-		if !foreign {
+		if ok {
 			filtered = append(filtered, r)
 		}
 	}
 	return filtered
+}
+
+// FilterByLanguage removes results whose titles contain known foreign-language
+// markers when lang is "en". When lang is "any" (or empty), all results pass.
+// This is the global search.preferredLanguage setting's filter; profile-aware
+// callers use FilterByAllowedLanguages directly.
+func FilterByLanguage(results []newznab.SearchResult, lang string) []newznab.SearchResult {
+	if lang != "en" {
+		return results
+	}
+	return FilterByAllowedLanguages(results, []string{"eng"})
 }
