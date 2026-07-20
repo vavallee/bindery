@@ -117,6 +117,15 @@ export const queueApi = {
   listQueue: () => request<QueueListResponse>('/queue').then(r => r.items ?? []),
   grab: (data: GrabRequest) => request<Download>('/queue/grab', { method: 'POST', body: JSON.stringify(data) }),
   retryImport: (id: number) => request<{ ok: boolean }>(`/queue/${id}/retry-import`, { method: 'POST' }),
+  // matchDownload attaches an unmatched, import-failed download to an existing
+  // book and imports the already-downloaded files against it (#1589). Returns
+  // whether the files were imported directly (imported=true) or the import was
+  // re-queued for the download client to place on its next poll.
+  matchDownload: (downloadId: number, bookId: number) =>
+    request<{ imported: boolean; retryQueued?: boolean; located?: boolean }>('/queue/manual-import/match', {
+      method: 'POST',
+      body: JSON.stringify({ downloadId, bookId }),
+    }),
   deleteFromQueue: (id: number, deleteFiles = false) =>
     request<void>(`/queue/${id}${deleteFiles ? '?deleteFiles=true' : ''}`, { method: 'DELETE' }),
 

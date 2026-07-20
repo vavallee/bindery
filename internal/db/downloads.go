@@ -19,7 +19,7 @@ const downloadSelectColumns = `
 	id, guid, book_id, edition_id, indexer_id, download_client_id,
 	title, nzb_url, size, sabnzbd_nzo_id, torrent_id, status, protocol,
 	quality, indexer_flags, error_message, added_at, grabbed_at, completed_at, imported_at,
-	import_retry_count, COALESCE(owner_user_id, 0)`
+	import_retry_count, COALESCE(owner_user_id, 0), import_path`
 
 func NewDownloadRepo(db *sql.DB) *DownloadRepo {
 	return &DownloadRepo{db: db}
@@ -46,6 +46,14 @@ func (r *DownloadRepo) ListByStatusAndUser(ctx context.Context, status models.Do
 
 func (r *DownloadRepo) GetByGUID(ctx context.Context, guid string) (*models.Download, error) {
 	dl, err := r.query(ctx, "SELECT "+downloadSelectColumns+" FROM downloads WHERE guid=?", guid)
+	if err != nil || len(dl) == 0 {
+		return nil, err
+	}
+	return &dl[0], nil
+}
+
+func (r *DownloadRepo) GetByID(ctx context.Context, id int64) (*models.Download, error) {
+	dl, err := r.query(ctx, "SELECT "+downloadSelectColumns+" FROM downloads WHERE id=?", id)
 	if err != nil || len(dl) == 0 {
 		return nil, err
 	}
@@ -242,8 +250,12 @@ func (r *DownloadRepo) UpdateStatus(ctx context.Context, id int64, next models.D
 			"UPDATE downloads SET status=?, completed_at=?, grabbed_at=COALESCE(grabbed_at, ?) WHERE id=? AND status=?",
 			next, now, now, id, current)
 	case models.StateImported:
+		// Clear any stale error_message: a download that failed (e.g. unmatched)
+		// and later imported — via manual match (#1589) or a client re-poll —
+		// is no longer in error, so the queue must not keep showing the old
+		// "could not match…" line next to an Imported status.
 		result, err = r.db.ExecContext(ctx,
-			"UPDATE downloads SET status=?, imported_at=? WHERE id=? AND status=?", next, now, id, current)
+			"UPDATE downloads SET status=?, imported_at=?, error_message='' WHERE id=? AND status=?", next, now, id, current)
 	default:
 		// StateGrabbed -> StateFailed (couldn't send to client) deliberately
 		// leaves grabbed_at NULL: nothing was ever grabbed. All other forward
@@ -296,6 +308,15 @@ func (r *DownloadRepo) SetTorrentID(ctx context.Context, id int64, torrentID str
 // without one (e.g. a free-text Search grab) — issue #1014.
 func (r *DownloadRepo) SetBookID(ctx context.Context, id, bookID int64) error {
 	_, err := r.db.ExecContext(ctx, "UPDATE downloads SET book_id=? WHERE id=?", bookID, id)
+	return err
+}
+
+// SetImportPath records the on-disk location of a completed download's files so
+// a later manual "Match to book" (#1589) can import them directly. Called when
+// an import fails only because no catalogue book matched — the files are valid
+// and present, they just have nowhere to go yet.
+func (r *DownloadRepo) SetImportPath(ctx context.Context, id int64, path string) error {
+	_, err := r.db.ExecContext(ctx, "UPDATE downloads SET import_path=? WHERE id=?", path, id)
 	return err
 }
 
@@ -576,7 +597,7 @@ func (r *DownloadRepo) query(ctx context.Context, q string, args ...interface{})
 			&d.Title, &d.NZBURL, &d.Size, &d.SABnzbdNzoID, &d.TorrentID, &d.Status, &d.Protocol,
 			&d.Quality, &d.IndexerFlags, &d.ErrorMessage,
 			&d.AddedAt, &d.GrabbedAt, &d.CompletedAt, &d.ImportedAt,
-			&d.ImportRetryCount, &d.OwnerUserID,
+			&d.ImportRetryCount, &d.OwnerUserID, &d.ImportPath,
 		); err != nil {
 			return nil, fmt.Errorf("scan download: %w", err)
 		}

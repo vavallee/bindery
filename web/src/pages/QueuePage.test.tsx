@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
-import QueuePage from './QueuePage'
+import QueuePage, { MatchBookControl } from './QueuePage'
 import { summarizeError, ERROR_SUMMARY_LEN } from './queueError'
 import { api } from '../api/client'
 import type { Download, PendingRelease, QueueItem } from '../api/client'
@@ -18,6 +18,8 @@ vi.mock('../api/client', async importOriginal => {
       retryImport: vi.fn(),
       dismissPending: vi.fn(),
       grabPending: vi.fn(),
+      listAllBooks: vi.fn(),
+      matchDownload: vi.fn(),
     },
   }
 })
@@ -418,5 +420,149 @@ describe('QueuePage', () => {
     expect(api.listQueue).toHaveBeenCalledTimes(2)
     expect(api.listPending).toHaveBeenCalledTimes(2)
     clearIntervalSpy.mockRestore()
+  })
+})
+
+describe('QueuePage manual match (#1589)', () => {
+  it('matches an unmatched download to a book and shows feedback', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue([makeQueueItem({
+      id: 7,
+      title: 'Unmatched Release',
+      status: 'importFailed',
+      errorMessage: 'could not match any book to this download',
+    })])
+    vi.mocked(api.listAllBooks).mockResolvedValue([
+      { id: 55, title: 'The Right Book', author: { authorName: 'A. Writer' } },
+    ] as never)
+    vi.mocked(api.matchDownload).mockResolvedValue({ imported: true })
+
+    renderQueuePage()
+
+    expect(await screen.findByText('Unmatched Release')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('queue.matchBook'))
+    fireEvent.change(screen.getByLabelText('queue.matchBookSearch'), { target: { value: 'Right' } })
+    fireEvent.click(screen.getByText('queue.matchBookSearchBtn'))
+
+    fireEvent.click(await screen.findByText(/The Right Book/))
+
+    await waitFor(() => expect(api.matchDownload).toHaveBeenCalledWith(7, 55))
+    // Feedback is surfaced instead of a silent no-op.
+    expect(await screen.findByText('queue.matchImporting')).toBeInTheDocument()
+  })
+
+  it('shows a persistent matched indicator (survives reload) for an already-matched failed item', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue([makeQueueItem({
+      id: 9,
+      title: 'Already Matched Release',
+      status: 'importFailed',
+      errorMessage: 'could not match any book to this download',
+      book: { id: 3, title: 'Assigned Book', authorId: 1, authorName: 'A. Writer' },
+    })])
+
+    renderQueuePage()
+
+    // Persistent indicator is driven by item.book, not transient state.
+    expect(await screen.findByText('queue.matchedTo')).toBeInTheDocument()
+    // The action makes clear it's already matched.
+    expect(screen.getByText('queue.matchBookChange')).toBeInTheDocument()
+  })
+
+  it('routes Retry import on a matched item to a direct re-import of its book', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue([makeQueueItem({
+      id: 9,
+      title: 'Already Matched Release',
+      status: 'importFailed',
+      book: { id: 3, title: 'Assigned Book', authorId: 1, authorName: 'A. Writer' },
+    })])
+    vi.mocked(api.matchDownload).mockResolvedValue({ imported: true })
+
+    renderQueuePage()
+
+    fireEvent.click(await screen.findByText('Retry import'))
+    // Matched → re-imports the recorded files against the assigned book,
+    // instead of the client-only retry-reset.
+    await waitFor(() => expect(api.matchDownload).toHaveBeenCalledWith(9, 3))
+    expect(api.retryImport).not.toHaveBeenCalled()
+  })
+
+  it('routes Retry import on an unmatched item to the client retry-reset', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue([makeQueueItem({
+      id: 10,
+      title: 'Unmatched Release',
+      status: 'importFailed',
+    })])
+
+    renderQueuePage()
+
+    fireEvent.click(await screen.findByText('Retry import'))
+    await waitFor(() => expect(api.retryImport).toHaveBeenCalledWith(10))
+    expect(api.matchDownload).not.toHaveBeenCalled()
+  })
+
+  it('surfaces an error when the match request fails', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue([makeQueueItem({
+      id: 11,
+      title: 'Match Fails',
+      status: 'importFailed',
+      book: { id: 3, title: 'Assigned Book', authorId: 1, authorName: 'A. Writer' },
+    })])
+    vi.mocked(api.matchDownload).mockRejectedValue(new Error('nope'))
+
+    renderQueuePage()
+
+    fireEvent.click(await screen.findByText('Retry import'))
+    expect(await screen.findByText('Retry failed: nope')).toBeInTheDocument()
+  })
+})
+
+describe('MatchBookControl', () => {
+  const mockListAllBooks = api.listAllBooks as ReturnType<typeof vi.fn>
+  beforeEach(() => vi.clearAllMocks())
+
+  it('searches the library and matches the picked book (#1589)', async () => {
+    mockListAllBooks.mockResolvedValue([
+      { id: 42, title: 'Target Book', author: { authorName: 'A. Writer' } },
+    ])
+    const onMatch = vi.fn()
+    render(<MatchBookControl disabled={false} onMatch={onMatch} />)
+
+    // Opens the picker.
+    fireEvent.click(screen.getByText('queue.matchBook'))
+    fireEvent.change(screen.getByLabelText('queue.matchBookSearch'), { target: { value: 'Target' } })
+    fireEvent.click(screen.getByText('queue.matchBookSearchBtn'))
+
+    await waitFor(() => expect(screen.getByText(/Target Book/)).toBeInTheDocument())
+    // Searches the library by the entered term.
+    expect(mockListAllBooks).toHaveBeenCalledWith({ search: 'Target' })
+
+    fireEvent.click(screen.getByText(/Target Book/))
+    expect(onMatch).toHaveBeenCalledWith(42)
+  })
+
+  it('ignores an empty query submitted via Enter', () => {
+    render(<MatchBookControl disabled={false} onMatch={vi.fn()} />)
+    fireEvent.click(screen.getByText('queue.matchBook'))
+    fireEvent.keyDown(screen.getByLabelText('queue.matchBookSearch'), { key: 'Enter' })
+    expect(mockListAllBooks).not.toHaveBeenCalled()
+  })
+
+  it('searches on Enter and shows no results when the lookup errors', async () => {
+    mockListAllBooks.mockRejectedValue(new Error('boom'))
+    render(<MatchBookControl disabled={false} onMatch={vi.fn()} />)
+    fireEvent.click(screen.getByText('queue.matchBook'))
+    fireEvent.change(screen.getByLabelText('queue.matchBookSearch'), { target: { value: 'X' } })
+    fireEvent.keyDown(screen.getByLabelText('queue.matchBookSearch'), { key: 'Enter' })
+    await waitFor(() => expect(mockListAllBooks).toHaveBeenCalledWith({ search: 'X' }))
+    // Error path swallows results; the Search button returns from its loading state.
+    expect(await screen.findByText('queue.matchBookSearchBtn')).toBeInTheDocument()
+  })
+
+  it('closes the picker on Cancel', () => {
+    render(<MatchBookControl disabled={false} onMatch={vi.fn()} />)
+    fireEvent.click(screen.getByText('queue.matchBook'))
+    expect(screen.getByLabelText('queue.matchBookSearch')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('queue.matchBookCancel'))
+    expect(screen.getByText('queue.matchBook')).toBeInTheDocument()
+    expect(screen.queryByLabelText('queue.matchBookSearch')).not.toBeInTheDocument()
   })
 })

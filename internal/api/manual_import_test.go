@@ -11,7 +11,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/importer"
@@ -33,6 +35,13 @@ type stubManualImportScanner struct {
 	lookupResult     importer.LookupResult
 	lookupErr        error
 	lookupBatchCalls int
+
+	// importMu guards the fields below: ImportFromPath is invoked in a goroutine
+	// by the handler, so tests read these under the lock after a short wait.
+	importMu    sync.Mutex
+	importCalls int
+	lastPath    string
+	lastBookID  int64
 }
 
 func (s *stubManualImportScanner) Lookup(_ context.Context, _ string) (importer.LookupResult, error) {
@@ -51,7 +60,14 @@ func (s *stubManualImportScanner) LookupBatch(_ context.Context, paths []string)
 	return out, nil
 }
 
-func (s *stubManualImportScanner) ImportFromPath(_ context.Context, _ *models.Download, _, _ string) {
+func (s *stubManualImportScanner) ImportFromPath(_ context.Context, dl *models.Download, path, _ string) {
+	s.importMu.Lock()
+	defer s.importMu.Unlock()
+	s.importCalls++
+	s.lastPath = path
+	if dl.BookID != nil {
+		s.lastBookID = *dl.BookID
+	}
 }
 
 // manualImportFixture spins up an in-memory DB and wires a ManualImportHandler.
@@ -372,6 +388,398 @@ func TestManualImportImport_DownloadCreateFails(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "failed to create import record") {
 		t.Errorf("body = %q, want 'failed to create import record'", rec.Body.String())
+	}
+}
+
+// TestMatchDownload_ImportsRecordedPath is the #1589 core: an unmatched
+// import-failed download that recorded where its files are is matched to a book
+// and imported directly against it — book assigned, ImportFromPath invoked with
+// the recorded path.
+func TestMatchDownload_ImportsRecordedPath(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	authors := db.NewAuthorRepo(database)
+	downloads := db.NewDownloadRepo(database)
+	books := db.NewBookRepo(database)
+	ctx := context.Background()
+	book := seedBook(t, authors, books, ctx)
+
+	stub := &stubManualImportScanner{}
+	h := NewManualImportHandler(stub, downloads, books) // nil roots ⇒ containment allows
+
+	tmp := t.TempDir()
+	epub := filepath.Join(tmp, "unmatched.epub")
+	if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dl := &models.Download{
+		GUID: "match-guid", Title: "Unmatched Release", NZBURL: "http://x/y.nzb",
+		Status: models.StateImportFailed, Protocol: "usenet",
+	}
+	if err := downloads.Create(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+	if err := downloads.SetImportPath(ctx, dl.ID, epub); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]any{"downloadId": dl.ID, "bookId": book.ID})
+	rec := httptest.NewRecorder()
+	h.MatchDownload(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/match", bytes.NewReader(body)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Imported bool `json:"imported"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Imported {
+		t.Errorf("imported = false, want true (recorded path present)")
+	}
+	// Book assigned to the download.
+	got, _ := downloads.GetByID(ctx, dl.ID)
+	if got.BookID == nil || *got.BookID != book.ID {
+		t.Errorf("download book = %v, want %d", got.BookID, book.ID)
+	}
+	// ImportFromPath invoked (async) with the recorded path and the assigned book.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		stub.importMu.Lock()
+		calls, path, bid := stub.importCalls, stub.lastPath, stub.lastBookID
+		stub.importMu.Unlock()
+		if calls > 0 {
+			if path != epub {
+				t.Errorf("import path = %q, want %q", path, epub)
+			}
+			if bid != book.ID {
+				t.Errorf("import bookID = %d, want %d", bid, book.ID)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("ImportFromPath was not called within 2s")
+}
+
+// TestMatchDownload_ClientFallbackResetsRetry: a download with no recorded path
+// but an owning download client is assigned the book and its retry is reset so
+// the next client poll re-derives the location and imports.
+func TestMatchDownload_ClientFallbackResetsRetry(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	authors := db.NewAuthorRepo(database)
+	downloads := db.NewDownloadRepo(database)
+	books := db.NewBookRepo(database)
+	clients := db.NewDownloadClientRepo(database)
+	ctx := context.Background()
+	book := seedBook(t, authors, books, ctx)
+
+	client := &models.DownloadClient{Name: "sab", Type: "sabnzbd", Host: "h", Port: 1, Enabled: true}
+	if err := clients.Create(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+
+	stub := &stubManualImportScanner{}
+	h := NewManualImportHandler(stub, downloads, books)
+
+	dl := &models.Download{
+		GUID: "match-client", Title: "Client Release", NZBURL: "http://x/y.nzb",
+		Status: models.StateImportFailed, Protocol: "usenet", DownloadClientID: &client.ID,
+	}
+	if err := downloads.Create(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "UPDATE downloads SET import_retry_count=3, download_client_id=? WHERE id=?", client.ID, dl.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]any{"downloadId": dl.ID, "bookId": book.ID})
+	rec := httptest.NewRecorder()
+	h.MatchDownload(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/match", bytes.NewReader(body)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body = %s", rec.Code, rec.Body.String())
+	}
+	got, _ := downloads.GetByID(ctx, dl.ID)
+	if got.BookID == nil || *got.BookID != book.ID {
+		t.Errorf("download book = %v, want %d", got.BookID, book.ID)
+	}
+	if got.ImportRetryCount != 0 {
+		t.Errorf("retry count = %d, want 0 (reset for re-poll)", got.ImportRetryCount)
+	}
+}
+
+// TestMatchDownload_NoPathNoClientReportsUnlocated: with neither a recorded path
+// nor an owning client there are no files to import and nothing to re-poll — the
+// book is still assigned, but the response reports located=false so the UI can
+// tell the user honestly instead of promising a retry that never fires (#1589).
+func TestMatchDownload_NoPathNoClientReportsUnlocated(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	authors := db.NewAuthorRepo(database)
+	downloads := db.NewDownloadRepo(database)
+	books := db.NewBookRepo(database)
+	ctx := context.Background()
+	book := seedBook(t, authors, books, ctx)
+
+	h := NewManualImportHandler(&stubManualImportScanner{}, downloads, books)
+	dl := &models.Download{
+		GUID: "match-orphan", Title: "No Files", NZBURL: "http://x/y.nzb",
+		Status: models.StateImportFailed, Protocol: "usenet",
+	}
+	if err := downloads.Create(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]any{"downloadId": dl.ID, "bookId": book.ID})
+	rec := httptest.NewRecorder()
+	h.MatchDownload(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/match", bytes.NewReader(body)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Imported    bool `json:"imported"`
+		RetryQueued bool `json:"retryQueued"`
+		Located     bool `json:"located"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Imported || resp.RetryQueued || resp.Located {
+		t.Errorf("resp = %+v, want all false (nothing to import, nothing to re-poll)", resp)
+	}
+	// Book is still assigned so the queue shows it as matched.
+	got, _ := downloads.GetByID(ctx, dl.ID)
+	if got.BookID == nil || *got.BookID != book.ID {
+		t.Errorf("download book = %v, want %d", got.BookID, book.ID)
+	}
+}
+
+// TestMatchDownload_RejectsNonImportFailed guards against matching a book onto a
+// download that isn't in the importFailed state.
+func TestMatchDownload_RejectsNonImportFailed(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	authors := db.NewAuthorRepo(database)
+	downloads := db.NewDownloadRepo(database)
+	books := db.NewBookRepo(database)
+	ctx := context.Background()
+	book := seedBook(t, authors, books, ctx)
+
+	h := NewManualImportHandler(&stubManualImportScanner{}, downloads, books)
+	dl := &models.Download{
+		GUID: "match-completed", Title: "Done", NZBURL: "http://x/y.nzb",
+		Status: models.StateCompleted, Protocol: "usenet",
+	}
+	if err := downloads.Create(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{"downloadId": dl.ID, "bookId": book.ID})
+	rec := httptest.NewRecorder()
+	h.MatchDownload(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/match", bytes.NewReader(body)))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", rec.Code)
+	}
+}
+
+func TestMatchDownload_BadJSON(t *testing.T) {
+	h, _, _, _, _ := manualImportFixture(t)
+	rec := httptest.NewRecorder()
+	h.MatchDownload(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/match", bytes.NewBufferString("not-json")))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestMatchDownload_MissingIDs(t *testing.T) {
+	h, _, _, _, _ := manualImportFixture(t)
+	for _, body := range []string{`{}`, `{"downloadId":1}`, `{"bookId":1}`} {
+		rec := httptest.NewRecorder()
+		h.MatchDownload(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/match", bytes.NewBufferString(body)))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("body %q: status = %d, want 400", body, rec.Code)
+		}
+	}
+}
+
+func TestMatchDownload_DownloadNotFound(t *testing.T) {
+	h, _, _, _, _ := manualImportFixture(t)
+	body, _ := json.Marshal(map[string]any{"downloadId": 999, "bookId": 1})
+	rec := httptest.NewRecorder()
+	h.MatchDownload(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/match", bytes.NewReader(body)))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestMatchDownload_BookNotFound(t *testing.T) {
+	h, _, downloads, _, ctx := manualImportFixture(t)
+	dl := &models.Download{GUID: "match-nobook", Title: "t", NZBURL: "x", Status: models.StateImportFailed, Protocol: "usenet"}
+	if err := downloads.Create(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{"downloadId": dl.ID, "bookId": 9999})
+	rec := httptest.NewRecorder()
+	h.MatchDownload(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/match", bytes.NewReader(body)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (book not found)", rec.Code)
+	}
+}
+
+// TestMatchDownload_RecordedPathMissingFallsBack: import_path is set but the
+// file no longer exists on disk, so the direct-import branch is skipped and the
+// handler falls through — here with no client, so it reports located=false.
+func TestMatchDownload_RecordedPathMissingFallsBack(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	authors := db.NewAuthorRepo(database)
+	downloads := db.NewDownloadRepo(database)
+	books := db.NewBookRepo(database)
+	ctx := context.Background()
+	book := seedBook(t, authors, books, ctx)
+
+	h := NewManualImportHandler(&stubManualImportScanner{}, downloads, books)
+	dl := &models.Download{GUID: "match-gonepath", Title: "t", NZBURL: "x", Status: models.StateImportFailed, Protocol: "usenet"}
+	if err := downloads.Create(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+	if err := downloads.SetImportPath(ctx, dl.ID, filepath.Join(t.TempDir(), "vanished.epub")); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]any{"downloadId": dl.ID, "bookId": book.ID})
+	rec := httptest.NewRecorder()
+	h.MatchDownload(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/match", bytes.NewReader(body)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct{ Imported, Located bool }
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
+	if resp.Imported || resp.Located {
+		t.Errorf("resp = %+v, want imported=false located=false (recorded file gone, no client)", resp)
+	}
+}
+
+// TestMatchDownload_LoadError forces the initial GetByID to fail by closing the
+// database, exercising the writeServerError branch.
+func TestMatchDownload_LoadError(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	downloads := db.NewDownloadRepo(database)
+	books := db.NewBookRepo(database)
+	h := NewManualImportHandler(&stubManualImportScanner{}, downloads, books)
+	database.Close() // subsequent queries error
+
+	body, _ := json.Marshal(map[string]any{"downloadId": 1, "bookId": 1})
+	rec := httptest.NewRecorder()
+	h.MatchDownload(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/match", bytes.NewReader(body)))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 on DB error", rec.Code)
+	}
+}
+
+// TestMatchDownload_SetBookError forces the SetBookID write to fail (read-only
+// DB) after the reads succeed, exercising that writeServerError branch.
+func TestMatchDownload_SetBookError(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	database.SetMaxOpenConns(1) // one conn so the query_only pragma sticks
+
+	authors := db.NewAuthorRepo(database)
+	downloads := db.NewDownloadRepo(database)
+	books := db.NewBookRepo(database)
+	ctx := context.Background()
+	book := seedBook(t, authors, books, ctx)
+	dl := &models.Download{GUID: "match-roerr", Title: "t", NZBURL: "x", Status: models.StateImportFailed, Protocol: "usenet"}
+	if err := downloads.Create(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+	// Reads still succeed; the next UPDATE (SetBookID) fails.
+	if _, err := database.ExecContext(ctx, "PRAGMA query_only=ON"); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewManualImportHandler(&stubManualImportScanner{}, downloads, books)
+	body, _ := json.Marshal(map[string]any{"downloadId": dl.ID, "bookId": book.ID})
+	rec := httptest.NewRecorder()
+	h.MatchDownload(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/match", bytes.NewReader(body)))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 when SetBookID fails; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestMatchDownload_RetryResetError reaches the client fallback (no recorded
+// path, has a client) and forces ResetImportRetry to fail via a trigger that
+// aborts only import_retry_count updates — so SetBookID still succeeds but the
+// retry reset errors, exercising that writeServerError branch.
+func TestMatchDownload_RetryResetError(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	database.SetMaxOpenConns(1)
+
+	authors := db.NewAuthorRepo(database)
+	downloads := db.NewDownloadRepo(database)
+	books := db.NewBookRepo(database)
+	clients := db.NewDownloadClientRepo(database)
+	ctx := context.Background()
+	book := seedBook(t, authors, books, ctx)
+	client := &models.DownloadClient{Name: "sab", Type: "sabnzbd", Host: "h", Port: 1, Enabled: true}
+	if err := clients.Create(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+	dl := &models.Download{GUID: "match-reseterr", Title: "t", NZBURL: "x", Status: models.StateImportFailed, Protocol: "usenet", DownloadClientID: &client.ID}
+	if err := downloads.Create(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "UPDATE downloads SET download_client_id=? WHERE id=?", client.ID, dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Fires only when import_retry_count is updated: SetBookID (book_id) passes,
+	// ResetImportRetry (import_retry_count) aborts.
+	if _, err := database.ExecContext(ctx,
+		"CREATE TRIGGER fail_retry_reset BEFORE UPDATE OF import_retry_count ON downloads BEGIN SELECT RAISE(ABORT, 'boom'); END;"); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewManualImportHandler(&stubManualImportScanner{}, downloads, books)
+	body, _ := json.Marshal(map[string]any{"downloadId": dl.ID, "bookId": book.ID})
+	rec := httptest.NewRecorder()
+	h.MatchDownload(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/match", bytes.NewReader(body)))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 when ResetImportRetry fails; body = %s", rec.Code, rec.Body.String())
+	}
+	// SetBookID still applied before the failing reset.
+	got, _ := downloads.GetByID(ctx, dl.ID)
+	if got.BookID == nil || *got.BookID != book.ID {
+		t.Errorf("book = %v, want %d assigned before the reset error", got.BookID, book.ID)
 	}
 }
 
