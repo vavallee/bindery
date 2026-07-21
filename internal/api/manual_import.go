@@ -606,8 +606,12 @@ func (h *ManualImportHandler) MatchDownload(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download not found"})
 		return
 	}
-	if dl.Status != models.StateImportFailed {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "download is not in importFailed state"})
+	// Recoverable failures only: an unmatched import that failed (importFailed)
+	// or one the scanner terminally blocked after exhausting its retry budget
+	// (importBlocked — the "stuck after three attempts" case, #1589). Any other
+	// state has no files waiting to be matched.
+	if dl.Status != models.StateImportFailed && dl.Status != models.StateImportBlocked {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "download is not in a recoverable import-failed state"})
 		return
 	}
 	book, err := h.books.GetByID(ctx, req.BookID)

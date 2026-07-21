@@ -16,7 +16,12 @@ All notable changes to Bindery are documented here. Format loosely follows
   feedback. The scanner now records where an unmatched download's files are (it
   previously discarded that path), so the match can import them directly instead
   of hoping the download client still remembers the release; downloads without a
-  recorded path fall back to a client re-poll.
+  recorded path fall back to a client re-poll. Downloads the scanner terminally
+  blocked after exhausting their import-retry budget (the "stuck after three
+  attempts" case) are recoverable too — the Match to book and Retry import
+  controls now appear for `importBlocked` items, and a match re-imports the
+  recorded files (or re-arms the scanner with a fresh retry budget) instead of
+  leaving them permanently stuck.
 
 ## [v1.26.2] — 2026-07-19
 

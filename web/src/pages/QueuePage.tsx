@@ -192,6 +192,11 @@ export default function QueuePage() {
   }
   const FAILED_STATUSES = new Set(['failed', 'importFailed', 'importBlocked'])
   const failedItems = queue.filter(q => FAILED_STATUSES.has(q.status))
+  // A download can be manually matched/retried when its files are waiting: an
+  // unmatched import failure, or one blocked after exhausting its retry budget
+  // ("stuck after three attempts", #1589). A plain 'failed' download never got
+  // files, so it isn't matchable.
+  const isMatchable = (status: string) => status === 'importFailed' || status === 'importBlocked'
 
   // Bulk actions over failed/blocked items, done client-side over the existing
   // per-item endpoints (no new API). Retry only applies to importFailed.
@@ -350,7 +355,7 @@ export default function QueuePage() {
                         )}
                       </div>
                     )}
-                    {item.status === 'importFailed' && !item.book && (
+                    {isMatchable(item.status) && !item.book && (
                       <div className="mt-1 text-xs text-slate-600 dark:text-zinc-400 bg-slate-200/70 dark:bg-zinc-800/70 rounded px-2 py-1 break-words">
                         {t('queue.retryImportHint')}
                       </div>
@@ -358,7 +363,7 @@ export default function QueuePage() {
                     {/* Persistent match indicator: an import-failed download that
                         already has a book was matched — survives reload so the
                         user isn't left wondering whether the match took (#1589). */}
-                    {item.status === 'importFailed' && item.book && (
+                    {isMatchable(item.status) && item.book && (
                       <div className="mt-1 text-xs text-emerald-700 dark:text-emerald-400 bg-emerald-400/10 rounded px-2 py-1 break-words">
                         {t('queue.matchedTo', { title: item.book.title, defaultValue: `Matched to ${item.book.title} — use Retry import to import it.` })}
                       </div>
@@ -383,14 +388,14 @@ export default function QueuePage() {
                     )}
                   </div>
                   <div className="ml-4 flex flex-col sm:flex-row items-end sm:items-center gap-2 flex-shrink-0">
-                    {item.status === 'importFailed' && (
+                    {isMatchable(item.status) && (
                       <MatchBookControl
                         disabled={retryingImportIds.has(item.id)}
                         alreadyMatched={!!item.book}
                         onMatch={bookId => handleMatch(item.id, bookId)}
                       />
                     )}
-                    {item.status === 'importFailed' && (
+                    {isMatchable(item.status) && (
                       <button
                         // A matched item re-imports its recorded files against the
                         // assigned book (works with no download client); an

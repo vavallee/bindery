@@ -221,11 +221,13 @@ describe('QueuePage', () => {
     expect(screen.getByText('Import Failed')).toBeInTheDocument()
     expect(screen.getByText('Import failed:')).toBeInTheDocument()
     expect(screen.getByText('Missing target folder')).toBeInTheDocument()
-    expect(screen.getByText(/After fixing the path remap/)).toBeInTheDocument()
+    // Both the blocked and the failed import (neither matched to a book) show the
+    // retry hint and controls — a blocked-after-3-attempts item is recoverable (#1589).
+    expect(screen.getAllByText(/After fixing the path remap/)).toHaveLength(2)
     expect(screen.getByText('Failed')).toBeInTheDocument()
     expect(screen.getByText('Error:')).toBeInTheDocument()
     expect(screen.getByText('Client rejected download')).toBeInTheDocument()
-    expect(screen.getAllByRole('button', { name: 'Retry import' })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: 'Retry import' })).toHaveLength(2)
     expect(container.querySelector('[style="width: 45%;"]')).toBeInTheDocument()
   })
 
@@ -448,6 +450,32 @@ describe('QueuePage manual match (#1589)', () => {
     await waitFor(() => expect(api.matchDownload).toHaveBeenCalledWith(7, 55))
     // Feedback is surfaced instead of a silent no-op.
     expect(await screen.findByText('queue.matchImporting')).toBeInTheDocument()
+  })
+
+  it('matches a download blocked after exhausting its retry budget', async () => {
+    // "Stuck after three attempts": the scanner terminally blocked it, but the
+    // files are still there — the match controls must render and work (#1589).
+    vi.mocked(api.listQueue).mockResolvedValue([makeQueueItem({
+      id: 8,
+      title: 'Blocked Release',
+      status: 'importBlocked',
+      errorMessage: 'import retry limit reached (3 attempts)',
+    })])
+    vi.mocked(api.listAllBooks).mockResolvedValue([
+      { id: 55, title: 'The Right Book', author: { authorName: 'A. Writer' } },
+    ] as never)
+    vi.mocked(api.matchDownload).mockResolvedValue({ imported: true })
+
+    renderQueuePage()
+
+    expect(await screen.findByText('Blocked Release')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('queue.matchBook'))
+    fireEvent.change(screen.getByLabelText('queue.matchBookSearch'), { target: { value: 'Right' } })
+    fireEvent.click(screen.getByText('queue.matchBookSearchBtn'))
+
+    fireEvent.click(await screen.findByText(/The Right Book/))
+
+    await waitFor(() => expect(api.matchDownload).toHaveBeenCalledWith(8, 55))
   })
 
   it('shows a persistent matched indicator (survives reload) for an already-matched failed item', async () => {

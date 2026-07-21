@@ -160,12 +160,15 @@ func (r *DownloadRepo) RetryFailed(ctx context.Context, d *models.Download) (boo
 }
 
 // ResetImportRetry atomically re-enables scanner retries for a download stuck
-// in StateImportFailed. It returns accepted=false when the row exists but is in
-// another state, and found=false when no row exists.
+// in StateImportFailed — or one already terminally blocked (StateImportBlocked)
+// after exhausting its retry budget, which it flips back to StateImportFailed so
+// the scanner picks it up again with a fresh count (#1589). It returns
+// accepted=false when the row exists but is in another (non-recoverable) state,
+// and found=false when no row exists.
 func (r *DownloadRepo) ResetImportRetry(ctx context.Context, id int64) (accepted bool, found bool, err error) {
 	result, err := r.db.ExecContext(ctx,
-		"UPDATE downloads SET import_retry_count=0 WHERE id=? AND status=?",
-		id, models.StateImportFailed)
+		"UPDATE downloads SET import_retry_count=0, status=? WHERE id=? AND status IN (?, ?)",
+		models.StateImportFailed, id, models.StateImportFailed, models.StateImportBlocked)
 	if err != nil {
 		return false, false, fmt.Errorf("reset import retry: %w", err)
 	}

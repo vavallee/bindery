@@ -467,6 +467,78 @@ func TestMatchDownload_ImportsRecordedPath(t *testing.T) {
 	t.Fatal("ImportFromPath was not called within 2s")
 }
 
+// TestMatchDownload_RecoversBlockedDownload: a download terminally blocked after
+// exhausting its retry budget ("stuck after three attempts") is still matchable —
+// the gate accepts importBlocked and the recorded path imports directly (#1589).
+func TestMatchDownload_RecoversBlockedDownload(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	authors := db.NewAuthorRepo(database)
+	downloads := db.NewDownloadRepo(database)
+	books := db.NewBookRepo(database)
+	ctx := context.Background()
+	book := seedBook(t, authors, books, ctx)
+
+	stub := &stubManualImportScanner{}
+	h := NewManualImportHandler(stub, downloads, books)
+
+	tmp := t.TempDir()
+	epub := filepath.Join(tmp, "blocked.epub")
+	if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dl := &models.Download{
+		GUID: "match-blocked", Title: "Blocked Release", NZBURL: "http://x/y.nzb",
+		Status: models.StateImportFailed, Protocol: "usenet",
+	}
+	if err := downloads.Create(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+	if err := downloads.SetImportPath(ctx, dl.ID, epub); err != nil {
+		t.Fatal(err)
+	}
+	// Move it to the terminal blocked state, as the scanner would after 3 retries.
+	if _, err := database.ExecContext(ctx, "UPDATE downloads SET status=?, import_retry_count=3 WHERE id=?",
+		models.StateImportBlocked, dl.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]any{"downloadId": dl.ID, "bookId": book.ID})
+	rec := httptest.NewRecorder()
+	h.MatchDownload(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/match", bytes.NewReader(body)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Imported bool `json:"imported"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Imported {
+		t.Errorf("imported = false, want true (recorded path present on a blocked download)")
+	}
+	got, _ := downloads.GetByID(ctx, dl.ID)
+	if got.BookID == nil || *got.BookID != book.ID {
+		t.Errorf("download book = %v, want %d", got.BookID, book.ID)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		stub.importMu.Lock()
+		calls := stub.importCalls
+		stub.importMu.Unlock()
+		if calls > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("ImportFromPath was not called within 2s")
+}
+
 // TestMatchDownload_ClientFallbackResetsRetry: a download with no recorded path
 // but an owning download client is assigned the book and its retry is reset so
 // the next client poll re-derives the location and imports.
