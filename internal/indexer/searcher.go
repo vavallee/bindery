@@ -9,6 +9,7 @@ import (
 	"math"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -194,6 +195,7 @@ func (s *Searcher) SearchBook(ctx context.Context, indexers []models.Indexer, c 
 
 	results = dedupe(results)
 	results = filterUsenetJunk(results)
+	results = filterNonBookContent(results)
 	results = filterRelevant(results, c.Title, c.Author, c.AuthorAliases)
 	rankResults(results, c)
 	return results
@@ -740,6 +742,56 @@ func filterUsenetJunk(results []newznab.SearchResult) []newznab.SearchResult {
 		if !usenetJunkRe.MatchString(r.Title) {
 			out = append(out, r)
 		}
+	}
+	return out
+}
+
+// videoMarkerRe matches release-name tokens that only appear on movie/TV
+// video content: resolutions, video codecs, rip/source tags, and television
+// season-episode numbering. No legitimate ebook or audiobook release carries
+// any of these, so a single match disqualifies the result outright (#1591:
+// a movie sharing a few title words with the requested book was auto-grabbed
+// and imported as its audiobook).
+var videoMarkerRe = regexp.MustCompile(
+	`(?i)\b(?:` +
+		`(?:480|576|720|1080|2160)[pi]` + `|` + // video resolutions
+		`[xh]\.?26[45]|hevc|xvid|divx` + `|` + // video codecs
+		`web-?rip|web-?dl|hdtv|bd-?rip|br-?rip|dvd-?rip|blu-?ray|bluray|remux` + `|` + // video rip sources
+		`s\d{1,2}e\d{1,3}` + // S01E02 television numbering
+		`)\b`,
+)
+
+// isNonBookCategory reports whether a result's self-reported Newznab category
+// sits under a top-level category that can never contain book content:
+// 1000 Console, 2000 Movies, 4000 PC, 5000 TV, 6000 XXX. Books are 7000s,
+// audio(books) 3000s, 0/8000s are misc/other — those are left alone, as is
+// anything empty or unparseable: only positive evidence drops a result.
+func isNonBookCategory(cat string) bool {
+	n, err := strconv.Atoi(strings.TrimSpace(cat))
+	if err != nil {
+		return false
+	}
+	return (n >= 1000 && n < 3000) || (n >= 4000 && n < 7000)
+}
+
+// filterNonBookContent drops results that are demonstrably not book content:
+// releases whose names carry video-only markers, and results the indexer
+// itself filed under a movie/TV/console/PC category. Book searches already
+// request book/audiobook categories, but some indexers ignore category
+// filters on q= searches and return anything matching the title words
+// (#1591) — this is the response-side backstop.
+func filterNonBookContent(results []newznab.SearchResult) []newznab.SearchResult {
+	out := make([]newznab.SearchResult, 0, len(results))
+	for _, r := range results {
+		if videoMarkerRe.MatchString(r.Title) {
+			slog.Debug("dropping video release from book search", "title", r.Title, "indexer", r.IndexerName)
+			continue
+		}
+		if isNonBookCategory(r.Category) {
+			slog.Debug("dropping non-book category result", "title", r.Title, "category", r.Category, "indexer", r.IndexerName)
+			continue
+		}
+		out = append(out, r)
 	}
 	return out
 }

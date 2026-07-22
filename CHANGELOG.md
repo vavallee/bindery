@@ -23,6 +23,24 @@ All notable changes to Bindery are documented here. Format loosely follows
   recorded files (or re-arms the scanner with a fresh retry budget) instead of
   leaving them permanently stuck.
 
+### Fixed
+- **Auto-grab no longer selects or imports unrelated video releases** (#1591) —
+  an automatic audiobook search could pick a movie, TV, or music release that
+  shared a few words with the book title, download it, and move the whole folder
+  (video file included) into the audiobook library marked as imported. Two new
+  guards close this: release names carrying video-only markers (`1080p`, `x265`,
+  `WEBRip`, `S01E02`, and similar) and results the indexer filed under a
+  movie/TV/console/PC category are now dropped from book search results; and at
+  import time, a download whose largest file is a video file is blocked for
+  manual review instead of being imported (an explicit format chosen through
+  manual import overrides the block).
+
+### Changed
+- The queue **Retry import** control now also revives downloads the scanner
+  terminally blocked (`importBlocked`) after exhausting their retry budget, not
+  only `importFailed` ones — previously it silently no-op'd on blocked items.
+  (Part of #1589.)
+
 ## [v1.26.2] — 2026-07-19
 
 A patch release fixing two reported metadata bugs: profile language filters

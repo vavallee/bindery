@@ -818,6 +818,20 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 
 	s.updateDownloadStatus(ctx, dl.ID, models.StateImporting)
 
+	// Video-content guard (#1591): a movie/TV release that slipped through
+	// release-name filtering can still reach import — e.g. a film whose folder
+	// carries one soundtrack .mp3, which both passes discoverBookFiles and tips
+	// detectDownloadFormat to audiobook, dragging the whole folder (video file
+	// included) into the audiobook library. If the download's dominant file is
+	// a video file, the release is not a book: block it for manual review
+	// instead of importing. An explicit formatHint is the override — a human
+	// declared the format, so their call wins.
+	if formatHint == "" && largestFileIsVideo(downloadPath, explicitFiles) {
+		s.failImport(ctx, dl, models.StateImportBlocked,
+			"download looks like video content (largest file is a video file) — not imported; use manual import with an explicit format to override")
+		return
+	}
+
 	// Per-import timeout so a stalled NFS copy does not hold the download in
 	// StateImporting indefinitely. 30 minutes is generous for any realistic
 	// book file; the context-aware file operations return promptly when it fires.
@@ -1355,6 +1369,50 @@ func detectDownloadFormat(files []string) string {
 		}
 	}
 	return models.MediaTypeEbook
+}
+
+// videoExtensions lists common video container extensions. None of these are
+// book files, so a download whose largest file carries one is a movie/TV
+// release regardless of what smaller files ride along (#1591).
+var videoExtensions = map[string]bool{
+	".mkv": true, ".mp4": true, ".avi": true, ".wmv": true, ".mov": true,
+	".mpg": true, ".mpeg": true, ".m2ts": true, ".ts": true, ".vob": true,
+	".webm": true, ".flv": true,
+}
+
+// largestFileIsVideo reports whether the download's single largest file by
+// size is a video file. When the caller supplied an explicit per-torrent file
+// list (#903) only those files are considered — downloadPath can be a shared
+// download root there, and walking it would judge this download by an
+// unrelated sibling's video file. Without an explicit list, downloadPath is a
+// per-job directory (SABnzbd/NZBGet) or a single file and is walked directly.
+// Unreadable entries are skipped: this is a rejection heuristic, and an
+// unstat-able file must not block an otherwise legitimate import.
+func largestFileIsVideo(downloadPath string, explicitFiles []string) bool {
+	var largestExt string
+	var largestSize int64
+	consider := func(path string, size int64) {
+		if size > largestSize {
+			largestSize = size
+			largestExt = strings.ToLower(filepath.Ext(path))
+		}
+	}
+	if len(explicitFiles) > 0 {
+		for _, f := range explicitFiles {
+			if fi, err := os.Lstat(f); err == nil && fi.Mode().IsRegular() {
+				consider(f, fi.Size())
+			}
+		}
+	} else if err := filepath.Walk(downloadPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !info.Mode().IsRegular() {
+			return nil //nolint:nilerr // best-effort walk: skip unreadable entries rather than abort the scan
+		}
+		consider(path, info.Size())
+		return nil
+	}); err != nil {
+		return false
+	}
+	return videoExtensions[largestExt]
 }
 
 // FindExisting searches the library directories for a book file that matches
