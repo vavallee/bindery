@@ -207,3 +207,29 @@ describe('listAllBooks', () => {
     expect(offsets).toEqual([0, 100, 200])
   })
 })
+
+describe('matchDownload (#1589)', () => {
+  beforeEach(() => {
+    document.cookie = 'bindery_csrf=; Max-Age=0; path=/'
+    window.history.pushState(null, '', '/')
+  })
+
+  it('POSTs the downloadId and bookId and returns the outcome', async () => {
+    let body: unknown = null
+    server.use(
+      http.get(apiUrl('/auth/csrf'), () => HttpResponse.json({ csrfToken: 't' })),
+      http.post(apiUrl('/queue/manual-import/match'), async ({ request }) => {
+        body = await request.json()
+        return HttpResponse.json({ imported: false, retryQueued: false, located: false })
+      }),
+    )
+
+    const { api, initCSRF } = await loadClient()
+    await initCSRF()
+
+    const res = await api.matchDownload(7, 42)
+
+    expect(body).toEqual({ downloadId: 7, bookId: 42 })
+    expect(res).toEqual({ imported: false, retryQueued: false, located: false })
+  })
+})

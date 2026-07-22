@@ -41,7 +41,10 @@ var validTransitions = map[DownloadState][]DownloadState{
 	StateImported:      {},
 	StateFailed:        {},
 	StateImportFailed:  {StateImportPending, StateImportBlocked, StateImporting},
-	StateImportBlocked: {},
+	// Terminal to the automatic pollers, but a manual match / retry can recover
+	// it: back into the import flow directly (StateImportPending), or back to
+	// StateImportFailed so the scanner re-polls with a fresh retry budget (#1589).
+	StateImportBlocked: {StateImportPending, StateImportFailed},
 	// External hand-off is non-terminal. It can only be retired by a manual
 	// retry (which routes through StateImportPending) — there is no automatic
 	// path out, by design: ScanLibrary reconciles the file independently.

@@ -567,3 +567,95 @@ func downloadOwnerForRequest(ctx context.Context, bookOwner int64) int64 {
 	}
 	return bookOwner
 }
+
+type matchDownloadRequest struct {
+	DownloadID int64 `json:"downloadId"`
+	BookID     int64 `json:"bookId"`
+}
+
+// MatchDownload handles POST /api/v1/queue/manual-import/match.
+//
+// It resolves an unmatched, import-failed download (#1589): the auto-matcher
+// couldn't tie the completed files to a book, so they sat in the queue with no
+// way forward. The user picks an existing book here; we attach the download to
+// it and import the already-downloaded files against it.
+//
+// When the scanner recorded where the files are (import_path, set when the
+// unmatched-import failed with valid files present), we import them directly and
+// synchronously — the state flips to imported and the file is attached to the
+// book immediately. When there's no recorded path (a client-grabbed download
+// whose location is only known live), we reset the import retry so the scanner
+// re-imports against the now-assigned book on its next poll.
+func (h *ManualImportHandler) MatchDownload(w http.ResponseWriter, r *http.Request) {
+	var req matchDownloadRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if req.DownloadID <= 0 || req.BookID <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "downloadId and bookId are required"})
+		return
+	}
+	ctx := r.Context()
+	dl, err := h.downloads.GetByID(ctx, req.DownloadID)
+	if err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	if dl == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download not found"})
+		return
+	}
+	// Recoverable failures only: an unmatched import that failed (importFailed)
+	// or one the scanner terminally blocked after exhausting its retry budget
+	// (importBlocked — the "stuck after three attempts" case, #1589). Any other
+	// state has no files waiting to be matched.
+	if dl.Status != models.StateImportFailed && dl.Status != models.StateImportBlocked {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "download is not in a recoverable import-failed state"})
+		return
+	}
+	book, err := h.books.GetByID(ctx, req.BookID)
+	if err != nil || book == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "book not found"})
+		return
+	}
+	// Attach the chosen book so whichever import path runs targets it.
+	if err := h.downloads.SetBookID(ctx, req.DownloadID, req.BookID); err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	dl.BookID = &req.BookID
+
+	// Preferred path: the scanner recorded the files' location on the unmatched
+	// failure, so import them directly against the book. Runs in the background
+	// (a large audiobook copy can take a while) — the queue page polls and shows
+	// the state flip to imported.
+	if dl.ImportPath != "" {
+		if resolved, ok := h.roots.ResolveContained(ctx, dl.ImportPath); ok {
+			if _, statErr := os.Stat(resolved); statErr == nil { //nolint:gosec // #nosec G304 -- symlink-resolved and confirmed inside a configured library root; RequireAdmin enforced at route level
+				go h.scanner.ImportFromPath(context.WithoutCancel(ctx), dl, resolved, "")
+				writeJSON(w, http.StatusAccepted, map[string]any{"imported": true})
+				return
+			}
+		}
+		slog.Warn("manual match: recorded import path missing or outside roots; falling back to retry",
+			"downloadID", req.DownloadID, "path", dl.ImportPath)
+	}
+
+	// Fallback: no usable recorded path. If a download client still owns this
+	// download, reset the retry so the next poll re-derives the location and
+	// re-imports against the now-assigned book. With no client there is nothing
+	// to re-poll and no recorded files — the book is assigned, but we can't
+	// import automatically, so say so rather than promising a retry that will
+	// never fire (a source of "stuck on import failed" confusion, #1589).
+	if dl.DownloadClientID != nil {
+		accepted, _, err := h.downloads.ResetImportRetry(ctx, req.DownloadID)
+		if err != nil {
+			writeServerError(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"imported": false, "retryQueued": accepted})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"imported": false, "retryQueued": false, "located": false})
+}

@@ -149,6 +149,86 @@ func TestDownloadRepo_RecoverInterruptedImports(t *testing.T) {
 	}
 }
 
+// TestDownloadRepo_GetByIDAndSetImportPath covers the two accessors added for
+// the manual-match flow (#1589): fetch a download by primary key, and record
+// where its unmatched files live.
+func TestDownloadRepo_GetByIDAndSetImportPath(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewDownloadRepo(database)
+
+	// Unknown id: nil, no error.
+	if got, err := repo.GetByID(ctx, 9999); err != nil || got != nil {
+		t.Fatalf("GetByID(unknown) = %v, %v; want nil, nil", got, err)
+	}
+
+	dl := &models.Download{GUID: "get-by-id", Title: "t", NZBURL: "x", Status: models.StateImportFailed}
+	if err := repo.Create(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.GetByID(ctx, dl.ID)
+	if err != nil || got == nil {
+		t.Fatalf("GetByID(%d) = %v, %v; want the row", dl.ID, got, err)
+	}
+	if got.GUID != "get-by-id" || got.ImportPath != "" {
+		t.Fatalf("GetByID returned %+v; want GUID get-by-id, empty ImportPath", got)
+	}
+
+	const p = "/data/downloads/Some Book"
+	if err := repo.SetImportPath(ctx, dl.ID, p); err != nil {
+		t.Fatalf("SetImportPath: %v", err)
+	}
+	got, _ = repo.GetByID(ctx, dl.ID)
+	if got.ImportPath != p {
+		t.Errorf("ImportPath = %q, want %q", got.ImportPath, p)
+	}
+}
+
+// TestDownloadRepo_ImportClearsError verifies the StateImported transition
+// clears a stale error_message (#1589): a download that failed as unmatched and
+// then imported (via manual match or a client re-poll) must not keep showing the
+// old "could not match…" line next to an Imported status.
+func TestDownloadRepo_ImportClearsError(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewDownloadRepo(database)
+
+	dl := &models.Download{GUID: "unmatched-then-imported", Title: "x", NZBURL: "x", Status: models.StateCompleted}
+	if err := repo.Create(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+	// Fail it as unmatched (records an error_message), then walk to imported.
+	if err := repo.SetErrorWithStatus(ctx, dl.ID, models.StateImportFailed, "could not match any book to this download"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdateStatus(ctx, dl.ID, models.StateImporting); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdateStatus(ctx, dl.ID, models.StateImported); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.GetByGUID(ctx, "unmatched-then-imported")
+	if err != nil || got == nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got.Status != models.StateImported {
+		t.Fatalf("status = %q, want imported", got.Status)
+	}
+	if got.ErrorMessage != "" {
+		t.Errorf("error_message = %q, want cleared on import", got.ErrorMessage)
+	}
+}
+
 // TestDownloadRepo_UpdateStatusRaceGuard is the regression test for #1462.
 // UpdateStatus used to validate the transition in Go and then issue an UPDATE
 // with no status guard, so two writers that both read the same starting state

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, PendingRelease, QueueItem } from '../api/client'
+import { api, Book, PendingRelease, QueueItem } from '../api/client'
 import BookAuthorLink from '../components/BookAuthorLink'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
@@ -16,6 +16,7 @@ export default function QueuePage() {
   const [grabbingPending, setGrabbingPending] = useState<number | null>(null)
   const [retryingImportIds, setRetryingImportIds] = useState<Set<number>>(() => new Set())
   const [retryImportErrors, setRetryImportErrors] = useState<Record<number, string>>({})
+  const [matchMessages, setMatchMessages] = useState<Record<number, string>>({})
   const [deleteTarget, setDeleteTarget] = useState<QueueItem | null>(null)
   const [deleteFiles, setDeleteFiles] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -133,6 +134,36 @@ export default function QueuePage() {
     }
   }
 
+  // handleMatch attaches an unmatched download to the picked book and imports its
+  // files against it (#1589), then surfaces the outcome inline so the user gets
+  // feedback rather than a silent no-op.
+  const handleMatch = async (id: number, bookId: number) => {
+    setRetryingImportIds(prev => new Set(prev).add(id))
+    clearRetryImportError(id)
+    setMatchMessages(prev => { const n = { ...prev }; delete n[id]; return n })
+    try {
+      const res = await api.matchDownload(id, bookId)
+      const message = res.imported
+        ? t('queue.matchImporting', 'Matched — importing now; the status will update shortly.')
+        : res.retryQueued
+          ? t('queue.matchQueued', 'Matched — the import will run on the next download-client check.')
+          : t('queue.matchNoFiles', 'Matched to the book, but the downloaded files could not be located to import automatically. Re-import them with Manual file import, or re-download.')
+      setMatchMessages(prev => ({ ...prev, [id]: message }))
+      load()
+    } catch (e) {
+      setRetryImportErrors(prev => ({
+        ...prev,
+        [id]: e instanceof Error ? e.message : 'Match failed',
+      }))
+    } finally {
+      setRetryingImportIds(prev => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+    }
+  }
+
 
   const statusLabels: Record<string, string> = {
     grabbed: 'Grabbed',
@@ -161,6 +192,11 @@ export default function QueuePage() {
   }
   const FAILED_STATUSES = new Set(['failed', 'importFailed', 'importBlocked'])
   const failedItems = queue.filter(q => FAILED_STATUSES.has(q.status))
+  // A download can be manually matched/retried when its files are waiting: an
+  // unmatched import failure, or one blocked after exhausting its retry budget
+  // ("stuck after three attempts", #1589). A plain 'failed' download never got
+  // files, so it isn't matchable.
+  const isMatchable = (status: string) => status === 'importFailed' || status === 'importBlocked'
 
   // Bulk actions over failed/blocked items, done client-side over the existing
   // per-item endpoints (no new API). Retry only applies to importFailed.
@@ -319,14 +355,27 @@ export default function QueuePage() {
                         )}
                       </div>
                     )}
-                    {item.status === 'importFailed' && (
+                    {isMatchable(item.status) && !item.book && (
                       <div className="mt-1 text-xs text-slate-600 dark:text-zinc-400 bg-slate-200/70 dark:bg-zinc-800/70 rounded px-2 py-1 break-words">
                         {t('queue.retryImportHint')}
+                      </div>
+                    )}
+                    {/* Persistent match indicator: an import-failed download that
+                        already has a book was matched — survives reload so the
+                        user isn't left wondering whether the match took (#1589). */}
+                    {isMatchable(item.status) && item.book && (
+                      <div className="mt-1 text-xs text-emerald-700 dark:text-emerald-400 bg-emerald-400/10 rounded px-2 py-1 break-words">
+                        {t('queue.matchedTo', { title: item.book.title, defaultValue: `Matched to ${item.book.title} — use Retry import to import it.` })}
                       </div>
                     )}
                     {retryImportErrors[item.id] && (
                       <div className="mt-1 text-xs text-red-600 dark:text-red-400 bg-red-400/10 rounded px-2 py-1 break-words">
                         {t('queue.retryImportError', { error: retryImportErrors[item.id] })}
+                      </div>
+                    )}
+                    {matchMessages[item.id] && (
+                      <div className="mt-1 text-xs text-emerald-700 dark:text-emerald-400 bg-emerald-400/10 rounded px-2 py-1 break-words">
+                        {matchMessages[item.id]}
                       </div>
                     )}
                     {item.percentage && (
@@ -339,9 +388,19 @@ export default function QueuePage() {
                     )}
                   </div>
                   <div className="ml-4 flex flex-col sm:flex-row items-end sm:items-center gap-2 flex-shrink-0">
-                    {item.status === 'importFailed' && (
+                    {isMatchable(item.status) && (
+                      <MatchBookControl
+                        disabled={retryingImportIds.has(item.id)}
+                        alreadyMatched={!!item.book}
+                        onMatch={bookId => handleMatch(item.id, bookId)}
+                      />
+                    )}
+                    {isMatchable(item.status) && (
                       <button
-                        onClick={() => handleRetryImport(item.id)}
+                        // A matched item re-imports its recorded files against the
+                        // assigned book (works with no download client); an
+                        // unmatched item resets the client retry counter (#1589).
+                        onClick={() => item.book ? handleMatch(item.id, item.book.id) : handleRetryImport(item.id)}
                         disabled={retryingImportIds.has(item.id)}
                         title={t('queue.retryImportHint')}
                         className="px-3 py-2 text-xs bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded font-medium touch-manipulation"
@@ -454,6 +513,83 @@ export default function QueuePage() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// MatchBookControl lets the user attach an unmatched (importFailed) download to
+// an existing library book, then retry the import against it (#1589). Search is
+// against books already in the library — the download's files exist on disk, we
+// only need to tell Bindery which book they belong to. Exported for tests.
+export function MatchBookControl({ disabled, onMatch, alreadyMatched = false }: { disabled: boolean; onMatch: (bookId: number) => void; alreadyMatched?: boolean }) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<Book[]>([])
+  const [searching, setSearching] = useState(false)
+
+  const search = async () => {
+    if (!query.trim()) return
+    setSearching(true)
+    try {
+      const books = await api.listAllBooks({ search: query.trim() })
+      setResults(books ?? [])
+    } catch {
+      setResults([])
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        disabled={disabled}
+        title={t('queue.matchBookHint', 'Attach this download to an existing book and import it')}
+        className="px-3 py-2 text-xs bg-slate-200 dark:bg-zinc-700 hover:bg-slate-300 dark:hover:bg-zinc-600 disabled:opacity-50 rounded font-medium touch-manipulation"
+      >
+        {alreadyMatched ? t('queue.matchBookChange', 'Match to a different book') : t('queue.matchBook', 'Match to book')}
+      </button>
+    )
+  }
+
+  return (
+    <div className="w-64 p-2 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded space-y-1">
+      <div className="flex gap-1">
+        <input
+          autoFocus
+          className="flex-1 px-2 py-1 text-xs rounded border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-900"
+          placeholder={t('queue.matchBookPlaceholder', 'Search your library')}
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') search() }}
+          aria-label={t('queue.matchBookSearch', 'Search for a book')}
+        />
+        <button
+          onClick={search}
+          disabled={searching || !query.trim()}
+          className="px-2 py-1 text-xs bg-slate-200 dark:bg-zinc-700 hover:bg-slate-300 dark:hover:bg-zinc-600 disabled:opacity-50 rounded"
+        >
+          {searching ? t('queue.matchBookSearching', 'Searching…') : t('queue.matchBookSearchBtn', 'Search')}
+        </button>
+      </div>
+      {results.length > 0 && (
+        <div className="max-h-40 overflow-auto">
+          {results.map(b => (
+            <button
+              key={b.id}
+              onClick={() => { setOpen(false); onMatch(b.id) }}
+              className="block w-full text-left text-xs px-1 py-0.5 rounded text-emerald-700 dark:text-emerald-400 hover:bg-slate-200 dark:hover:bg-zinc-800"
+            >
+              {b.title}{b.author ? ` (${b.author.authorName})` : ''}
+            </button>
+          ))}
+        </div>
+      )}
+      <button onClick={() => setOpen(false)} className="text-[10px] text-slate-500 dark:text-zinc-500 hover:underline">
+        {t('queue.matchBookCancel', 'Cancel')}
+      </button>
     </div>
   )
 }

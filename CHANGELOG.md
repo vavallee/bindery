@@ -6,6 +6,23 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **Manually match an unmatched download in the queue** (#1589) — a download the
+  auto-matcher couldn't tie to a book ("could not match any book to this
+  download") used to sit in the queue as a dead-end import failure. Import-failed
+  items now have a **Match to book** control: search your library, pick the book
+  the files belong to, and Bindery imports the already-downloaded files against
+  it — attaching the file and flipping the download to imported, with inline
+  feedback. The scanner now records where an unmatched download's files are (it
+  previously discarded that path), so the match can import them directly instead
+  of hoping the download client still remembers the release; downloads without a
+  recorded path fall back to a client re-poll. Downloads the scanner terminally
+  blocked after exhausting their import-retry budget (the "stuck after three
+  attempts" case) are recoverable too — the Match to book and Retry import
+  controls now appear for `importBlocked` items, and a match re-imports the
+  recorded files (or re-arms the scanner with a fresh retry budget) instead of
+  leaving them permanently stuck.
+
 ## [v1.26.2] — 2026-07-19
 
 A patch release fixing two reported metadata bugs: profile language filters

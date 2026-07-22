@@ -506,6 +506,18 @@ func (s *Scanner) failImport(ctx context.Context, dl *models.Download, status mo
 	})
 }
 
+// recordUnmatchedImportPath persists where a completed download's files are so a
+// later manual "Match to book" (#1589) can import them directly. Best-effort: a
+// failure here only loses the manual-import shortcut, not any files.
+func (s *Scanner) recordUnmatchedImportPath(ctx context.Context, downloadID int64, path string) {
+	if path == "" {
+		return
+	}
+	if err := s.downloads.SetImportPath(ctx, downloadID, path); err != nil {
+		slog.Warn("failed to record unmatched import path", "download_id", downloadID, "path", path, "error", err)
+	}
+}
+
 func (s *Scanner) createHistoryEvent(ctx context.Context, eventType string, sourceTitle string, bookID *int64, data map[string]string) {
 	if s.history == nil {
 		return
@@ -873,6 +885,10 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// BookID, the lookup errored, or the book row was deleted between
 		// grab and import.
 		if book == nil {
+			// Files are present and valid — only the book match is missing. Record
+			// the path so the queue "Match to book" action (#1589) can import these
+			// files directly against the book the user picks.
+			s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
 			s.failImport(ctx, dl, models.StateImportFailed, "could not match any book to this download — check the release title")
 			return
 		}
@@ -1172,6 +1188,9 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// can see WHY it didn't match rather than getting a bare "check the release
 	// title" (issue #1014 point 5).
 	if imported == 0 && failed == 0 && book == nil {
+		// Valid files, no matching book — record where they are so the queue
+		// "Match to book" action (#1589) can import them against a chosen book.
+		s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
 		s.failImport(ctx, dl, models.StateImportFailed, unmatchedReason(bookFiles))
 		return
 	}

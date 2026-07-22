@@ -63,6 +63,11 @@ type Download struct {
 	CompletedAt      *time.Time    `json:"completedAt"`
 	ImportedAt       *time.Time    `json:"importedAt"`
 	ImportRetryCount int           `json:"importRetryCount"`
+	// ImportPath is the on-disk location of the completed download's files,
+	// recorded when an import fails because no catalogue book matched (#1589).
+	// The queue "Match to book" action imports from here directly. Empty when
+	// no path was recorded (never completed, or matched successfully).
+	ImportPath string `json:"-"`
 }
 
 // Legacy status aliases — callers should prefer the typed State* constants in
