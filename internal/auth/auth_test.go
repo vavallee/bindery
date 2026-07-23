@@ -1306,6 +1306,25 @@ func cidrs(t *testing.T, raw string) []*net.IPNet {
 	return ParseTrustedProxyCIDRs(raw)
 }
 
+func TestRealPeerHost(t *testing.T) {
+	t.Run("uses original peer from context", func(t *testing.T) {
+		r := &http.Request{RemoteAddr: "203.0.113.50:443"}
+		r = r.WithContext(WithRealPeer(r.Context(), "10.0.0.5:54321"))
+
+		if got := RealPeerHost(r); got != "10.0.0.5" {
+			t.Fatalf("RealPeerHost = %q; want original peer 10.0.0.5", got)
+		}
+	})
+
+	t.Run("falls back to current remote address", func(t *testing.T) {
+		r := &http.Request{RemoteAddr: "[2001:db8::1]:443"}
+
+		if got := RealPeerHost(r); got != "2001:db8::1" {
+			t.Fatalf("RealPeerHost = %q; want fallback peer 2001:db8::1", got)
+		}
+	})
+}
+
 func TestResolveClientIP_NoTrustedProxy_IgnoresXFF(t *testing.T) {
 	// No trusted proxy: the TCP peer is the client; a forged XFF must be
 	// ignored entirely. A remote client claiming a private IP stays remote.
