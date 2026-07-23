@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/downloader/qbittorrent"
+	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/pathmap"
 )
@@ -121,7 +122,13 @@ func CheckingHealth() models.DownloadClientHealth {
 	return models.DownloadClientHealth{Status: HealthChecking, Message: "Checking qBittorrent category path"}
 }
 
-func RefreshDownloadClientHealthAsync(parent context.Context, store *HealthStore, clients []models.DownloadClient, downloadDir, audiobookDownloadDir string) {
+// RefreshDownloadClientHealthAsync fans out one health probe per enabled
+// qbittorrent client. When g is non-nil each probe is launched through the
+// background-jobs group so it runs on the shutdown-scoped context and is drained
+// on process shutdown (#1458); the group's context is used as the parent, so
+// parent is ignored in that path. When g is nil (tests, non-wired callers) it
+// falls back to an untracked goroutine derived from parent.
+func RefreshDownloadClientHealthAsync(parent context.Context, g *jobs.Group, store *HealthStore, clients []models.DownloadClient, downloadDir, audiobookDownloadDir string) {
 	if store == nil {
 		return
 	}
@@ -131,11 +138,16 @@ func RefreshDownloadClientHealthAsync(parent context.Context, store *HealthStore
 			continue
 		}
 		store.Set(client.ID, CheckingHealth())
-		go func() {
-			ctx, cancel := context.WithTimeout(parent, 15*time.Second)
+		probe := func(base context.Context) {
+			ctx, cancel := context.WithTimeout(base, 15*time.Second)
 			defer cancel()
 			store.Set(client.ID, CheckDownloadClientHealth(ctx, &client, downloadDir, audiobookDownloadDir))
-		}()
+		}
+		if g != nil {
+			g.Go("download-health-refresh", probe)
+		} else {
+			go probe(parent)
+		}
 	}
 }
 

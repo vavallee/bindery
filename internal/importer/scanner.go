@@ -22,6 +22,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
 )
@@ -88,6 +89,12 @@ type Scanner struct {
 	absLibraryIDsFn      func() []string
 	notif                eventNotifier
 
+	// jobs, when set, tracks the detached scan goroutine launched by StartScan
+	// so process shutdown can cancel and drain it before the database closes
+	// (#1458). When nil, StartScan falls back to an untracked goroutine on the
+	// caller's context (tests, non-wired callers).
+	jobs *jobs.Group
+
 	// scanRunning is the single-flight guard for library scans (#1460).
 	// Concurrent full walks race on book creation (books has no unique
 	// constraint equivalent to book_files.path) and clobber library.lastScan,
@@ -144,6 +151,14 @@ func (s *Scanner) WithAudiobookDownloadDir(dir string) *Scanner {
 // fall-back to the default download dir.
 func (s *Scanner) AudiobookDownloadDir() string {
 	return s.audiobookDownloadDir
+}
+
+// WithJobs registers the process-wide background-jobs group so a StartScan()
+// launched scan is tracked and drained on shutdown before the database closes
+// (#1458).
+func (s *Scanner) WithJobs(g *jobs.Group) *Scanner {
+	s.jobs = g
+	return s
 }
 
 // WithRootFolders attaches the root folder repo so the scanner can resolve
@@ -1846,10 +1861,21 @@ func (s *Scanner) StartScan(ctx context.Context) error {
 	if !s.scanRunning.CompareAndSwap(false, true) {
 		return ErrScanAlreadyRunning
 	}
-	go func() {
-		defer s.scanRunning.Store(false)
-		s.scanLibrary(ctx)
-	}()
+	// When a jobs group is wired, the scan runs on the shutdown-scoped context
+	// so SIGTERM cancels and drains it before the DB closes, instead of the
+	// never-cancelled WithoutCancel(request) context. Fall back to an untracked
+	// goroutine for tests/non-wired callers (#1458).
+	if s.jobs != nil {
+		s.jobs.Go("library-scan", func(ctx context.Context) {
+			defer s.scanRunning.Store(false)
+			s.scanLibrary(ctx)
+		})
+	} else {
+		go func() {
+			defer s.scanRunning.Store(false)
+			s.scanLibrary(ctx)
+		}()
+	}
 	return nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -59,6 +60,12 @@ type Syncer struct {
 	books  BookLister
 	pusher *Pusher
 
+	// jobs, when set, tracks the detached sync goroutine so process shutdown
+	// can cancel and drain it before the database closes (#1458). A sync dying
+	// mid-upload would otherwise re-push everything next run (BookDrop has no
+	// server-side dedup). When nil, Start falls back to an untracked goroutine.
+	jobs *jobs.Group
+
 	mu       sync.Mutex
 	running  bool
 	progress SyncProgress
@@ -69,6 +76,13 @@ type Syncer struct {
 // idempotency store.
 func NewSyncer(books BookLister, pusher *Pusher) *Syncer {
 	return &Syncer{books: books, pusher: pusher}
+}
+
+// WithJobs registers the process-wide background-jobs group so a Start()-launched
+// sync is tracked and drained on shutdown before the database closes (#1458).
+func (s *Syncer) WithJobs(g *jobs.Group) *Syncer {
+	s.jobs = g
+	return s
 }
 
 // Progress returns a snapshot of the current (or most recent) sync.
@@ -100,7 +114,15 @@ func (s *Syncer) Start(ctx context.Context, cfg PushConfig) error {
 	}
 	s.mu.Unlock()
 
-	go s.run(ctx, cfg)
+	// See the abs importer for the rationale: when a jobs group is wired the
+	// sync runs on the shutdown-scoped context so SIGTERM cancels and drains it
+	// before the DB closes, instead of the never-cancelled WithoutCancel(request)
+	// context. Fall back to an untracked goroutine for tests/non-wired callers.
+	if s.jobs != nil {
+		s.jobs.Go("grimmory-sync", func(ctx context.Context) { s.run(ctx, cfg) })
+	} else {
+		go s.run(ctx, cfg)
+	}
 	return nil
 }
 
