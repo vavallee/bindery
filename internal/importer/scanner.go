@@ -1054,8 +1054,44 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			return
 		}
 		if book != nil {
-			if err := s.books.SetFormatFilePath(ctx, book.ID, models.MediaTypeAudiobook, destDir); err != nil {
-				slog.Error("failed to update audiobook file path", "bookID", book.ID, "error", err)
+			// Recording the audiobook location MUST succeed before the download
+			// is marked imported. If it fails and we mark imported anyway, the
+			// book has no format file path, still reads as wanted, and the
+			// wanted sweep re-grabs it into a "Title (2)" duplicate — while in
+			// move mode the original source is already gone (#1459). Unlike the
+			// ebook path below (which stages the file, writes the row, then
+			// atomically promotes), the folder is already placed here, so the
+			// best we can do is retry the write to ride out transient SQLite
+			// lock/busy errors and, on persistent failure, refuse to mark the
+			// import complete.
+			var setErr error
+			for attempt := 0; attempt < 3; attempt++ {
+				if setErr = s.books.SetFormatFilePath(ctx, book.ID, models.MediaTypeAudiobook, destDir); setErr == nil {
+					break
+				}
+				if ctx.Err() != nil {
+					break // a cancelled context won't recover; stop retrying
+				}
+				time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
+			}
+			if setErr != nil {
+				slog.Error("failed to record audiobook file path — failing import to avoid a re-grab duplicate",
+					"bookID", book.ID, "dst", destDir, "error", setErr)
+				// copy/hardlink left the source intact, so remove the
+				// just-placed destination and let the import retry cleanly.
+				// move already consumed the source, so keep the placed folder
+				// and point the user at it rather than deleting their only copy.
+				if mode == "copy" || mode == "hardlink" {
+					if rmErr := os.RemoveAll(destDir); rmErr != nil {
+						slog.Warn("failed to remove audiobook destination after DB error", "dst", destDir, "error", rmErr)
+					}
+					s.failImport(ctx, dl, models.StateImportBlocked,
+						fmt.Sprintf("audiobook placed but could not be recorded (%v) — retry the import", setErr))
+				} else {
+					s.failImport(ctx, dl, models.StateImportBlocked,
+						fmt.Sprintf("audiobook moved to %s but could not be recorded (%v); the files are preserved there — retry the import to record them", destDir, setErr))
+				}
+				return
 			}
 		}
 		s.updateDownloadStatus(ctx, dl.ID, models.StateImported)
