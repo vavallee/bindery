@@ -1,0 +1,2 @@
+### Fixed
+- **Authors with dotted initials match releases again** (#1608) — a name like "J.R.R. Tolkien" produced an author token ("j.r.r") that can never appear in a normalized release name, so searches for single-keyword titles ("The Hobbit") returned zero results even when indexers found dozens. Author names are now normalized the same way release titles are before tokenizing; hyphenated first names ("Mary-Kate") are fixed by the same change.

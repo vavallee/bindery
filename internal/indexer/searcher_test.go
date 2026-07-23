@@ -1224,17 +1224,77 @@ func TestAuthorMatchesReleaseSingleName(t *testing.T) {
 }
 
 // TestAuthorMatchesReleaseHyphenated covers hyphenated names like
-// "Mary-Kate Olsen" (#563). The hyphen is non-word so the regex \bmary-kate\b
-// matches "mary-kate" in the release, and "olsen" matches separately.
+// "Mary-Kate Olsen" (#563, #1608). The hyphen is a token boundary — the name
+// tokenizes to ["mary", "kate", "olsen"], matching both the hyphenated raw
+// form (the \W+ phrase separator covers "-") and the NormalizeRelease form
+// where the hyphen has collapsed to a space.
 func TestAuthorMatchesReleaseHyphenated(t *testing.T) {
 	toks := authorTokens("Mary-Kate Olsen")
 	if !authorMatchesRelease("mary-kate olsen biography epub", toks) {
 		t.Errorf("hyphenated name should match: tokens=%v", toks)
 	}
-	// Bare "kate" alone is not enough — the monitored author has the hyphenated
-	// first name as one token; partial first-name match doesn't count.
+	// Production haystacks always come out of NormalizeRelease, which turns
+	// the hyphen into a space (#1608): the tokens must match that form too.
+	if !authorMatchesRelease("mary kate olsen biography epub", toks) {
+		t.Errorf("normalized (hyphen→space) release should match: tokens=%v", toks)
+	}
+	// Bare "kate" alone is not enough — every significant token of the name
+	// must appear; partial first-name match doesn't count.
 	if authorMatchesRelease("kate olsen biography epub", toks) {
 		t.Errorf("partial first-name match should be rejected: tokens=%v", toks)
+	}
+}
+
+// TestAuthorTokensDottedInitials covers #1608: compact dotted initials
+// ("J.R.R. Tolkien") must decompose exactly like the spaced form
+// ("J. R. R. Tolkien") — interior punctuation is a token boundary, the
+// initials drop as insignificant, and only ["tolkien"] remains. Previously
+// the first token survived as "j.r.r", which can never occur in a
+// NormalizeRelease haystack (dots collapse to spaces there), so every
+// all-tokens author match failed.
+func TestAuthorTokensDottedInitials(t *testing.T) {
+	cases := []struct {
+		author string
+		want   []string
+	}{
+		{"J.R.R. Tolkien", []string{"tolkien"}},
+		{"J. R. R. Tolkien", []string{"tolkien"}},
+		{"George R.R. Martin", []string{"george", "martin"}},
+		{"Mary-Kate Olsen", []string{"mary", "kate", "olsen"}},
+	}
+	for _, c := range cases {
+		if got := authorTokens(c.author); !equalSlices(got, c.want) {
+			t.Errorf("authorTokens(%q) = %v, want %v", c.author, got, c.want)
+		}
+	}
+}
+
+// TestFilterRelevantDottedInitialsAuthor is the end-to-end regression for
+// #1608: with author "J.R.R. Tolkien" (OpenLibrary's canonical compact form)
+// and the single-significant-word title "The Hobbit", releases naming the
+// author in any punctuation variant must pass the relevance filter. Before
+// the fix the unmatchable "j.r.r" token zeroed out every one of these while
+// multi-word titles escaped via the anchored phrase path — the same author
+// worked for "The Lord of the Rings" but returned nothing for "The Hobbit".
+func TestFilterRelevantDottedInitialsAuthor(t *testing.T) {
+	cases := []struct {
+		release string
+		want    bool // true = kept (relevant), false = dropped
+	}{
+		{"J R R Tolkien - The Hobbit (retail) (azw3)", true},
+		{"The Hobbit - J. R. R. Tolkien", true},
+		{"J.R.R. Tolkien - The Hobbit EPUB", true},
+		// Single-keyword titles still demand the author: a foreign-author
+		// release must not ride in on the loosened tokenization.
+		{"The Hobbit by Jane Doe EPUB", false},
+	}
+	for _, c := range cases {
+		got := filterRelevant([]newznab.SearchResult{{Title: c.release}}, "The Hobbit", "J.R.R. Tolkien", nil)
+		kept := len(got) == 1
+		if kept != c.want {
+			t.Errorf("filterRelevant(%q | title=%q author=%q): kept=%v, want %v",
+				c.release, "The Hobbit", "J.R.R. Tolkien", kept, c.want)
+		}
 	}
 }
 

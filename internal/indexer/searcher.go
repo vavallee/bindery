@@ -295,20 +295,28 @@ func stripPossessivePrefix(title, author string) string {
 }
 
 // authorTokens splits an author name into a (significant, all-lowercased)
-// token list suitable for word-boundary matching. Significant means >=3 chars
-// of letters/digits; shorter tokens (typically initials like "R." or "R")
-// are treated as optional and dropped. German umlauts are transliterated to
-// match NormalizeRelease. Returns nil for empty / all-initials input — the
-// caller should fall back to surname-only behaviour.
+// token list suitable for word-boundary matching. The name is passed through
+// NormalizeRelease first so the tokens live in the same alphabet as the
+// normalized release strings they are matched against: interior punctuation
+// becomes a token boundary exactly as it does on the release side. Previously
+// only edge punctuation was trimmed, so "J.R.R. Tolkien" produced the token
+// "j.r.r" — which can never occur in a NormalizeRelease haystack (dots
+// collapse to spaces there), making every all-tokens author match fail and
+// zeroing out single-keyword-title searches for such authors (#1608).
+// Hyphenated first names ("Mary-Kate") had the same defect.
+//
+// Significant means >=3 chars of letters/digits; shorter tokens (typically
+// initials like "R." or "R") are treated as optional and dropped, so the
+// compact dotted form decomposes exactly like the spaced "J. R. R. Tolkien".
+// German umlauts are transliterated by the normalization. Returns nil for
+// empty / all-initials input — the caller should fall back to surname-only
+// behaviour.
 func authorTokens(author string) []string {
 	if author == "" {
 		return nil
 	}
 	var out []string
-	for _, w := range strings.Fields(strings.ToLower(author)) {
-		w = strings.ReplaceAll(w, "'", "")
-		w = strings.Trim(w, ".,;:()[]")
-		w = transliterateUmlauts(w)
+	for _, w := range strings.Fields(NormalizeRelease(author)) {
 		if len(w) >= 3 {
 			out = append(out, w)
 		}
