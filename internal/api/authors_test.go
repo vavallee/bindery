@@ -4105,6 +4105,130 @@ func TestAddBook_DirectInsertCoversSlowAsyncSync(t *testing.T) {
 	}
 }
 
+// TestAddBook_ExistingAuthorDirectInsertWhenSyncSkipsWork is the #1612
+// regression test.
+//
+// Scenario from the bug report: the author already exists and their catalogue
+// has been synced, but the sync deterministically skips one specific work —
+// here via the allowed-languages filter (the live case was OpenLibrary's
+// "Harry Potter and the Chamber of Secrets", whose work-level language was
+// derived from a translated-edition sample). AddBook ran no direct insert for
+// an existing author: it only polled for a row the sync refused to create, so
+// every attempt returned 404 "book not found after author sync — try again
+// shortly" forever, even though GetBook resolved the work fine.
+//
+// The test also pins the sync-side filters in place: the junk-title and
+// allowed-languages skips still apply to everything the user did NOT
+// explicitly pick, and the explicit add creates only the requested work.
+func TestAddBook_ExistingAuthorDirectInsertWhenSyncSkipsWork(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+
+	ctx := context.Background()
+	// The author is already in the library, added long before this request.
+	author := &models.Author{
+		ForeignID: "OL23919A", Name: "J. K. Rowling", SortName: "Rowling, J. K.",
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	// The catalogue sync sees the requested work tagged with a language the
+	// seeded Standard profile (allowed_languages='eng') rejects, plus a
+	// junk-titled work and an allowed sibling. GetBook returns the full
+	// record — mirroring the live case where /book/lookup resolved the work
+	// while the add kept failing.
+	requested := &models.Book{
+		ForeignID: "OL82537W", Title: "Harry Potter and the Chamber of Secrets",
+		SortTitle: "harry potter and the chamber of secrets", Language: "eng",
+		Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary",
+	}
+	stub := &stubMetaProvider{
+		name: "openlibrary",
+		works: []models.Book{
+			{ForeignID: "OL82537W", Title: "Harry Potter and the Chamber of Secrets", SortTitle: "harry potter and the chamber of secrets", Language: "spa", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+			{ForeignID: "OLJUNK1W", Title: "J. K. Rowling", SortTitle: "j. k. rowling", Language: "eng", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+			{ForeignID: "OL82563W", Title: "Harry Potter and the Prisoner of Azkaban", SortTitle: "harry potter and the prisoner of azkaban", Language: "eng", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+		},
+		getBookByID: map[string]*models.Book{
+			"OL82537W": requested,
+		},
+	}
+	agg := metadata.NewAggregator(stub)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, nil, profileRepo, nil)
+
+	// A prior catalogue sync ran: the allowed sibling is created, the
+	// language-filtered work and the junk-titled work are skipped. This is
+	// the library state the bug report's deployment was stuck in.
+	h.FetchAuthorBooks(author, false, "")
+	if b, _ := bookRepo.GetByForeignID(ctx, "OL82537W"); b != nil {
+		t.Fatalf("precondition: sync should have language-skipped OL82537W, got %+v", b)
+	}
+	if b, _ := bookRepo.GetByForeignID(ctx, "OLJUNK1W"); b != nil {
+		t.Fatalf("precondition: sync should have junk-skipped OLJUNK1W, got %+v", b)
+	}
+	if b, _ := bookRepo.GetByForeignID(ctx, "OL82563W"); b == nil {
+		t.Fatal("precondition: sync should have created the allowed sibling OL82563W")
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"foreignBookId":   "OL82537W",
+		"foreignAuthorId": "OL23919A",
+		"authorName":      "J. K. Rowling",
+		"mediaType":       models.MediaTypeEbook,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	h.AddBook(rec, req)
+
+	// 201 (not 404) proves the direct insert now also covers existing
+	// authors — before the fix this polled 15 s for a row nothing would
+	// create and 404'd on every retry, forever.
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, err := bookRepo.GetByForeignID(ctx, "OL82537W")
+	if err != nil || got == nil {
+		t.Fatalf("book not persisted: err=%v got=%v", err, got)
+	}
+	if got.AuthorID != author.ID {
+		t.Errorf("book should link to the existing author %d, got %d", author.ID, got.AuthorID)
+	}
+	if !got.Monitored {
+		t.Error("book should be Monitored=true after AddBook success")
+	}
+	if got.MediaType != models.MediaTypeEbook {
+		t.Errorf("explicit media type should win, got %q", got.MediaType)
+	}
+	// Tenancy (#1457): the direct-inserted row inherits the author's owner.
+	if got.OwnerUserID != author.OwnerUserID {
+		t.Errorf("book owner = %d, want the author's owner %d", got.OwnerUserID, author.OwnerUserID)
+	}
+
+	// The explicit add must not resurrect anything the user did NOT pick:
+	// the junk-titled work stays out, and no duplicate author row appeared.
+	if b, _ := bookRepo.GetByForeignID(ctx, "OLJUNK1W"); b != nil {
+		t.Errorf("junk-titled work must remain skipped, got %+v", b)
+	}
+	authors, err := authorRepo.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(authors) != 1 {
+		t.Errorf("expected 1 author (no duplicate), got %d", len(authors))
+	}
+}
+
 func TestAddBook_DirectInsertHydratesMatchedHardcoverEditions(t *testing.T) {
 	database, err := db.OpenMemory()
 	if err != nil {

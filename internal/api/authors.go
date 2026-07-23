@@ -2246,10 +2246,8 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	// 1. Find or create the author (unmonitored if new so we don't auto-want all books).
 	userID := auth.UserIDFromContext(ctx)
 	author, _ := h.authors.GetByForeignIDForUser(ctx, req.ForeignAuthorID, userID)
-	authorMatchedByAlternateID := false
 	if author == nil {
 		author, _ = h.authors.GetByAnyForeignIDForUser(ctx, req.ForeignAuthorID, userID)
-		authorMatchedByAlternateID = author != nil
 	}
 	if author == nil {
 		name := req.AuthorName
@@ -2347,40 +2345,49 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	// cleanup defer sees a non-empty book list (so it keeps the author).
 	// The async sync still runs as a backfill for the rest of the catalogue;
 	// any UNIQUE collision against this row is silently tolerated.
-	directInsertNeeded := authorWasJustCreated || authorMatchedByAlternateID || strings.HasPrefix(req.ForeignBookID, "dnb:") || resolvedByName
-	if directInsertNeeded {
-		if existing, _ := h.books.GetByForeignID(ctx, req.ForeignBookID); existing == nil {
-			primary, err := h.meta.GetBook(ctx, req.ForeignBookID)
-			if err != nil {
-				slog.Warn("AddBook: direct fetch failed",
-					"foreignBookId", req.ForeignBookID, "error", err)
-			} else if primary != nil {
-				primary.AuthorID = author.ID
-				// Tenancy (#1457): inherit the author's owner (stamped from the
-				// requesting user when this request created the author).
-				primary.OwnerUserID = author.OwnerUserID
-				primary.Monitored = author.Monitored
-				if primary.Status == "" {
-					primary.Status = models.BookStatusWanted
+	//
+	// #1612 made the direct insert unconditional. When the author already
+	// EXISTED, AddBook used to skip it and rely entirely on a catalogue sync
+	// having created the row — but the sync can deterministically refuse a
+	// specific work (e.g. the work-level language sampled from the first few
+	// OpenLibrary editions falls outside the profile's allowed set, which is
+	// how heavily-translated works ended up permanently un-addable). Every
+	// attempt then polled 15 s for a row nothing would ever create and
+	// returned 404 "try again shortly" forever. An explicit add of one
+	// specific work is the strongest possible user signal and must not be
+	// vetoed by catalogue-sync heuristics; those heuristics still govern
+	// everything the user did NOT explicitly pick.
+	if existing, _ := h.books.GetByForeignID(ctx, req.ForeignBookID); existing == nil {
+		primary, err := h.meta.GetBook(ctx, req.ForeignBookID)
+		if err != nil {
+			slog.Warn("AddBook: direct fetch failed",
+				"foreignBookId", req.ForeignBookID, "error", err)
+		} else if primary != nil {
+			primary.AuthorID = author.ID
+			// Tenancy (#1457): inherit the author's owner (stamped from the
+			// requesting user when this request created the author).
+			primary.OwnerUserID = author.OwnerUserID
+			primary.Monitored = author.Monitored
+			if primary.Status == "" {
+				primary.Status = models.BookStatusWanted
+			}
+			// An explicit request choice wins over the provider's media type
+			// (#1397). Otherwise some providers (notably Google Books) don't
+			// set one; fall back to the global default so the row isn't
+			// created with an empty format (which would mis-route its
+			// indexer search).
+			if req.MediaType != "" {
+				primary.MediaType = req.MediaType
+			} else if primary.MediaType == "" {
+				primary.MediaType = h.resolveDefaultMediaType(ctx)
+			}
+			if err := h.books.Create(ctx, primary); err != nil {
+				if !strings.Contains(err.Error(), "UNIQUE constraint failed") {
+					slog.Warn("AddBook: direct insert failed",
+						"foreignBookId", req.ForeignBookID, "error", err)
 				}
-				// An explicit request choice wins over the provider's media type
-				// (#1397). Otherwise some providers (notably Google Books) don't
-				// set one; fall back to the global default so the row isn't
-				// created with an empty format (which would mis-route its
-				// indexer search).
-				if req.MediaType != "" {
-					primary.MediaType = req.MediaType
-				} else if primary.MediaType == "" {
-					primary.MediaType = h.resolveDefaultMediaType(ctx)
-				}
-				if err := h.books.Create(ctx, primary); err != nil {
-					if !strings.Contains(err.Error(), "UNIQUE constraint failed") {
-						slog.Warn("AddBook: direct insert failed",
-							"foreignBookId", req.ForeignBookID, "error", err)
-					}
-				} else {
-					h.hydrateHardcoverEditions(ctx, primary)
-				}
+			} else {
+				h.hydrateHardcoverEditions(ctx, primary)
 			}
 		}
 	}
