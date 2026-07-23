@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/metadata"
 )
 
@@ -220,6 +221,12 @@ type Importer struct {
 	rootFolders            *db.RootFolderRepo
 	libraryDir             string
 	audiobookDir           string
+
+	// jobs, when set, tracks the detached import goroutine so process
+	// shutdown can cancel and drain it before the database closes (#1458).
+	// When nil (tests, non-wired callers) Start falls back to an untracked
+	// goroutine on the caller's context.
+	jobs *jobs.Group
 
 	mu       sync.Mutex
 	running  bool
