@@ -127,10 +127,11 @@ export const booksApi = {
     request<{ id: number }>('/queue/manual-import/reassign', { method: 'POST', body: JSON.stringify(data) }),
 
   // Books
-  listBooks: (params?: { authorId?: number; status?: string; includeExcluded?: boolean; limit?: number; offset?: number; search?: string; mediaType?: string; sort?: string; releaseFrom?: string; releaseBefore?: string }) => {
+  listBooks: (params?: { authorId?: number; status?: string; monitored?: boolean; includeExcluded?: boolean; limit?: number; offset?: number; search?: string; mediaType?: string; sort?: string; releaseFrom?: string; releaseBefore?: string }) => {
     const q = new URLSearchParams()
     if (params?.authorId) q.set('authorId', String(params.authorId))
     if (params?.status) q.set('status', params.status)
+    if (params?.monitored !== undefined) q.set('monitored', String(params.monitored))
     if (params?.includeExcluded) q.set('includeExcluded', 'true')
     if (params?.limit !== undefined) q.set('limit', String(params.limit))
     if (params?.offset !== undefined) q.set('offset', String(params.offset))

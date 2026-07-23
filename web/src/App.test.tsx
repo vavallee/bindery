@@ -57,6 +57,7 @@ vi.mock('react-i18next', () => ({
     t: (key: string) => {
       const m: Record<string, string> = {
         'nav.authors': 'Authors', 'nav.books': 'Books', 'nav.wanted': 'Wanted',
+        'nav.import': 'Import',
         'nav.queue': 'Queue', 'nav.history': 'History', 'nav.series': 'Series',
         'nav.calendar': 'Calendar', 'nav.discover': 'Discover', 'nav.settings': 'Settings',
         'nav.search': 'Search',
@@ -100,16 +101,17 @@ describe('App auth routes', () => {
 })
 
 describe('Shell — desktop navigation', () => {
-  it('renders all 8 nav links in the desktop nav bar', () => {
+  it('renders all 9 nav links in the desktop nav bar', () => {
     renderShell()
     const desktopNav = document.querySelector('nav.hidden.lg\\:flex')
     expect(desktopNav).not.toBeNull()
     const links = desktopNav!.querySelectorAll('a')
-    expect(links.length).toBe(8)
+    expect(links.length).toBe(9)
     const labels = Array.from(links).map(l => l.textContent)
     expect(labels).toContain('Authors')
     expect(labels).toContain('Books')
     expect(labels).toContain('Wanted')
+    expect(labels).toContain('Import')
     expect(labels).toContain('Discover')
     expect(labels).toContain('Calendar')
   })
@@ -159,10 +161,11 @@ describe('Shell — mobile navigation', () => {
     const mobileNav = document.querySelector('div.lg\\:hidden > nav')!
     const links = Array.from(mobileNav.querySelectorAll('a')).map(l => l.textContent)
     expect(links).toContain('Authors')
+    expect(links).toContain('Import')
     expect(links).toContain('Discover')
     expect(links).toContain('Search')
     expect(links).toContain('Settings')
-    expect(links.length).toBe(10) // 8 main + Search + Settings
+    expect(links.length).toBe(11) // 9 main + Search + Settings
   })
 
   it('closes mobile menu when a nav link is clicked', () => {

@@ -4,12 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -23,7 +21,7 @@ import (
 
 type manualImportScanner interface {
 	Lookup(ctx context.Context, path string) (importer.LookupResult, error)
-	LookupBatch(ctx context.Context, paths []string) ([]importer.LookupResult, error)
+	LookupBatchLayout(ctx context.Context, root string, paths []string) ([]importer.LookupResult, error)
 	ImportFromPath(ctx context.Context, dl *models.Download, path, formatHint string)
 }
 
@@ -331,15 +329,17 @@ type ScanResponse struct {
 	Truncated bool       `json:"truncated"`
 }
 
-// maxScanEntries caps how many child units a single Scan returns so pointing at
+// maxScanEntries caps how many book units a single Scan returns so pointing at
 // an enormous tree can't produce an unbounded response or stall the request.
 const maxScanEntries = 1000
 
 // Scan handles GET /api/v1/queue/manual-import/scan?path=...
-// It enumerates the immediate children of a folder (each book file, and each
-// subdirectory that contains at least one book file) and runs the same
-// catalogue Lookup on each, returning a per-unit match list to review and
-// bulk-import. No state is modified.
+// It walks a folder RECURSIVELY (issue #1434), enumerating individual ebook
+// files as units at whatever depth they live while keeping a genuine
+// folder-based audiobook as a single unit, and runs one catalogue-backed batch
+// lookup — matching by embedded EPUB metadata and folder-derived author, not the
+// filename alone — returning a per-unit match list to review and bulk-import. No
+// state is modified.
 func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
 	path := filepath.Clean(r.URL.Query().Get("path"))
 	if path == "" || path == "." {
@@ -365,42 +365,17 @@ func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path must be a folder; use lookup for a single book"})
 		return
 	}
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		writeServerError(w, r, err)
-		return
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-
 	start := time.Now()
 
-	// Collect the importable children first, then run a single catalogue-backed
-	// batch lookup. Previously each child called Lookup, which re-queried the
-	// full books AND authors tables per item; a folder of several hundred
-	// entries produced hundreds of full-table scans in one synchronous request
-	// and blew past the server WriteTimeout, killing the connection mid-write
-	// with no logs (issue #1473).
-	type candidate struct {
-		path string
-		name string
-	}
-	var cands []candidate
-	truncated := false
-	for _, e := range entries {
-		if len(cands) >= maxScanEntries {
-			truncated = true
-			break
-		}
-		child := filepath.Join(path, e.Name())
-		isDir := e.IsDir()
-		if !isDir && !importer.IsBookFile(child) {
-			continue
-		}
-		if isDir && !dirHasBookFile(child) {
-			continue
-		}
-		cands = append(cands, candidate{path: child, name: e.Name()})
-	}
+	// Enumerate importable units by walking the tree RECURSIVELY (issue #1434):
+	// individual ebook files become units at whatever depth they live, while a
+	// genuine folder-based audiobook (loose tracks or disc subfolders) stays one
+	// unit. The old immediate-children scan collapsed an Author/Books/Title.epub
+	// layout into a single row and silently dropped every file but the one Lookup
+	// happened to match. A single catalogue-backed batch lookup then matches them
+	// all at once — the per-item full-table scan that stalled large scans past the
+	// server WriteTimeout stays fixed (issue #1473).
+	cands, truncated := enumerateImportUnits(path, maxScanEntries)
 
 	slog.Info("bulk folder import scan started", "path", path, "entries", len(cands), "truncated", truncated)
 
@@ -408,7 +383,7 @@ func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
 	for i, c := range cands {
 		paths[i] = c.path
 	}
-	results, err := h.scanner.LookupBatch(r.Context(), paths)
+	results, err := h.scanner.LookupBatchLayout(r.Context(), path, paths)
 	if err != nil {
 		slog.Error("bulk folder import scan failed to load catalogue", "path", path, "error", err)
 		writeServerError(w, r, err)
@@ -440,30 +415,6 @@ func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
 		"matched", matched,
 		"truncated", truncated)
 	writeJSON(w, http.StatusOK, resp)
-}
-
-// dirHasBookFile reports whether dir contains at least one recognized book
-// file, walking up to a bounded number of entries so a deep or huge tree can't
-// stall the scan.
-func dirHasBookFile(dir string) bool {
-	const limit = 5000
-	count := 0
-	found := false
-	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil // skip unreadable entries rather than abort the walk
-		}
-		count++
-		if count > limit {
-			return fs.SkipAll
-		}
-		if !d.IsDir() && importer.IsBookFile(p) {
-			found = true
-			return fs.SkipAll
-		}
-		return nil
-	})
-	return found
 }
 
 // BatchImportItem is one (path, bookId, format) pair in a batch import.

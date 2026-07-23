@@ -307,6 +307,7 @@ func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
 			Search:        strings.TrimSpace(r.URL.Query().Get("search")),
 			Status:        status,
 			MediaType:     r.URL.Query().Get("mediaType"),
+			Monitored:     parseMonitoredParam(r.URL.Query().Get("monitored")),
 			Sort:          r.URL.Query().Get("sort"),
 			ReleaseFrom:   strings.TrimSpace(r.URL.Query().Get("releaseFrom")),
 			ReleaseBefore: strings.TrimSpace(r.URL.Query().Get("releaseBefore")),
@@ -330,6 +331,22 @@ func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
 		Limit:  limit,
 		Offset: offset,
 	})
+}
+
+// parseMonitoredParam maps the ?monitored= query value to a tri-state filter:
+// "true"/"false" pin the flag, anything else (including empty) means "all" and
+// returns nil so the filter is skipped. Mirrors the Authors list handler.
+func parseMonitoredParam(v string) *bool {
+	switch v {
+	case "true":
+		t := true
+		return &t
+	case "false":
+		f := false
+		return &f
+	default:
+		return nil
+	}
 }
 
 // pageBooks slices a fully-loaded book list by (limit, offset) and returns
