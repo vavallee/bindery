@@ -514,30 +514,56 @@ func TestGetHistory(t *testing.T) {
 	}
 }
 
-// TestRemove verifies that Remove sends the DeleteFinal editqueue command.
+// TestRemove verifies that Remove maps the deleteFiles flag to the correct
+// editqueue command: "GroupParkDelete" (keep files) when false, "GroupDelete"
+// (delete files) when true. This guards #1456 — the default queue removal
+// (deleteFiles=false) must send a command that provably keeps the downloaded
+// files on disk. Per the NZBGet editqueue API and the NZBGet 17 changelog,
+// GroupParkDelete keeps already-downloaded files while GroupDelete deletes them;
+// both move the item into history. The prior "DeleteFinal" string was not a
+// valid editqueue command.
 func TestRemove(t *testing.T) {
-	var gotReq rpcRequest
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotReq = decodeRequest(t, r)
-		json.NewEncoder(w).Encode(editQueueResponse{Result: true})
-	}))
-	defer srv.Close()
+	cases := []struct {
+		name        string
+		deleteFiles bool
+		wantCommand string
+	}{
+		{name: "keep files (default queue removal)", deleteFiles: false, wantCommand: "GroupParkDelete"},
+		{name: "delete files", deleteFiles: true, wantCommand: "GroupDelete"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotReq rpcRequest
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotReq = decodeRequest(t, r)
+				json.NewEncoder(w).Encode(editQueueResponse{Result: true})
+			}))
+			defer srv.Close()
 
-	host, port := serverHostPort(t, srv.URL)
-	c := New(host, port, "", "", "", false)
+			host, port := serverHostPort(t, srv.URL)
+			c := New(host, port, "", "", "", false)
 
-	if err := c.Remove(context.Background(), 101); err != nil {
-		t.Fatalf("Remove: %v", err)
-	}
-	if gotReq.Method != "editqueue" {
-		t.Errorf("expected method=editqueue, got %q", gotReq.Method)
-	}
-	// Verify first param is "DeleteFinal"
-	if len(gotReq.Params) == 0 {
-		t.Fatal("expected params in editqueue request")
-	}
-	if gotReq.Params[0] != "DeleteFinal" {
-		t.Errorf("expected DeleteFinal command, got %v", gotReq.Params[0])
+			if err := c.Remove(context.Background(), 101, tc.deleteFiles); err != nil {
+				t.Fatalf("Remove: %v", err)
+			}
+			if gotReq.Method != "editqueue" {
+				t.Errorf("expected method=editqueue, got %q", gotReq.Method)
+			}
+			if len(gotReq.Params) == 0 {
+				t.Fatal("expected params in editqueue request")
+			}
+			if gotReq.Params[0] != tc.wantCommand {
+				t.Errorf("deleteFiles=%v: expected %q command, got %v", tc.deleteFiles, tc.wantCommand, gotReq.Params[0])
+			}
+			// The NZBID must be forwarded as the third editqueue parameter.
+			if len(gotReq.Params) < 3 {
+				t.Fatalf("expected 3 editqueue params, got %d: %v", len(gotReq.Params), gotReq.Params)
+			}
+			ids, ok := gotReq.Params[2].([]any)
+			if !ok || len(ids) != 1 || ids[0] != float64(101) {
+				t.Errorf("expected IDs param [101], got %T %v", gotReq.Params[2], gotReq.Params[2])
+			}
+		})
 	}
 }
 

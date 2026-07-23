@@ -348,12 +348,29 @@ func (c *Client) GetHistory(ctx context.Context) ([]HistoryItem, error) {
 	return resp.Result, nil
 }
 
-// Remove permanently deletes a download (queue or history) by NZBID.
-// It uses the "DeleteFinal" command which removes both the download and its files
-// from the queue or history. For already-completed downloads use RemoveHistory.
-func (c *Client) Remove(ctx context.Context, nzbID int) error {
+// Remove deletes an active download from the NZBGet queue by NZBID, moving it
+// into history. The deleteFiles flag decides the fate of the already-downloaded
+// files on disk:
+//
+//   - deleteFiles=false → "GroupParkDelete": move to history, KEEP the
+//     downloaded files on disk. This is the safe default a queue removal uses.
+//   - deleteFiles=true  → "GroupDelete": move to history AND delete the
+//     already-downloaded files from disk.
+//
+// Command vocabulary per the NZBGet JSON-RPC editqueue reference
+// (https://nzbget.com/documentation/api/editqueue/) and the NZBGet 17 changelog:
+// "remote command 'GroupDelete' now always delete already downloaded files; new
+// remote command 'GroupParkDelete' keeps already downloaded files". The previous
+// "DeleteFinal" string this method sent is not a valid editqueue command.
+//
+// For already-completed downloads in history use RemoveHistory.
+func (c *Client) Remove(ctx context.Context, nzbID int, deleteFiles bool) error {
+	command := "GroupParkDelete"
+	if deleteFiles {
+		command = "GroupDelete"
+	}
 	var resp editQueueResponse
-	if err := c.call(ctx, "editqueue", []any{"DeleteFinal", "", []int{nzbID}}, &resp); err != nil {
+	if err := c.call(ctx, "editqueue", []any{command, "", []int{nzbID}}, &resp); err != nil {
 		return fmt.Errorf("remove nzb %d: %w", nzbID, err)
 	}
 	return nil
