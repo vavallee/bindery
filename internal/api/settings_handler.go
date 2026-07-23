@@ -85,6 +85,14 @@ const SettingSearchInterval = "search.interval"
 // the literal in sync with this constant.
 const SettingImportAudiobookFlattenMultiDisc = "import.audiobook.flatten_multi_disc"
 
+// SettingNamingAudiobookFileTemplate is the per-file audiobook naming template
+// (#1126). Empty (the default) preserves the download's internal layout; a
+// non-empty value flattens every audiobook folder and renames each track from
+// the template, whose {Part} token carries the playback order. The importer
+// reads this key as a string literal to avoid an import cycle; keep the literal
+// in sync with this constant.
+const SettingNamingAudiobookFileTemplate = "naming.audiobook_file_template"
+
 // SettingImportMode is the placement mode for completed downloads. Recognised
 // values are "auto" (empty/unset behaves identically — hardlink when the source
 // and destination share a filesystem, else copy; preserves seeding), "move"
@@ -370,6 +378,16 @@ func validateSettingValue(key, value string) error {
 		}
 		if value != "flat" && value != "templated" {
 			return fmt.Errorf("import.drop_layout %q is not one of: flat, templated", value)
+		}
+	case SettingNamingAudiobookFileTemplate:
+		// Empty disables per-file audiobook renaming (#1126). A non-empty
+		// template MUST carry a {Part} token, otherwise every track flattens to
+		// the same filename and all but the last are dropped.
+		if value == "" {
+			return nil
+		}
+		if !strings.Contains(value, "{Part") {
+			return fmt.Errorf("naming.audiobook_file_template must include a {Part} token so each track gets a unique name")
 		}
 	case SettingImportDropLinkMode:
 		if value == "" {

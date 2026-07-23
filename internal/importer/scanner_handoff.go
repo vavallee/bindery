@@ -146,6 +146,24 @@ func (s *Scanner) flattenMultiDiscEnabled(ctx context.Context) bool {
 	return setting.Value == "true"
 }
 
+// audiobookFileTemplate reads the "naming.audiobook_file_template" setting
+// (#1126). A non-empty value opts the install into per-file audiobook renaming:
+// every audiobook folder import is flattened into destDir with each track named
+// from this template (its {Part} token carries the playback order). Empty (the
+// default) preserves the download's internal layout. Kept as a string literal
+// to avoid an import cycle with the api package; keep in sync with
+// api.SettingNamingAudiobookFileTemplate.
+func (s *Scanner) audiobookFileTemplate(ctx context.Context) string {
+	if s.settings == nil {
+		return ""
+	}
+	setting, err := s.settings.Get(ctx, "naming.audiobook_file_template")
+	if err != nil || setting == nil {
+		return ""
+	}
+	return strings.TrimSpace(setting.Value)
+}
+
 // pushToCWA copies the just-imported file into the directory watched by a
 // sibling Calibre-Web-Automated container, when the cwa.ingest_path setting
 // is configured. CWA's auto-ingest deletes whatever lands in that folder
