@@ -13,10 +13,11 @@ import (
 // alphabets, so the match was silently always-false (#940, #871, #1608, #1642,
 // #1643, #1646, #1647).
 //
-// There are FOUR distinct comparison alphabets in this codebase, and they
-// legitimately differ. What was wrong before was that the difference was
-// accidental and undocumented, and that each fold was copy-pasted at its point
-// of use. They are named here so the next person can tell which one they want.
+// There are FOUR distinct comparison alphabets in this codebase (plus one
+// outgoing-query reduction, listed fifth), and they legitimately differ. What
+// was wrong before was that the difference was accidental and undocumented, and
+// that each fold was copy-pasted at its point of use. They are named here so the
+// next person can tell which one they want.
 //
 //  1. TITLE / RELEASE MATCHING — FoldForTitleMatch.
 //     German umlauts EXPAND (ö→oe) because that is the convention German NZB
@@ -48,8 +49,18 @@ import (
 //     keeps its marks, because in kana, Devanagari, Hebrew and Arabic the mark
 //     is part of the letter and dropping it merges distinct works.
 //
+//  5. OUTGOING INDEXER QUERY — newznab.TransliterateQuery
+//     (indexer/newznab/words.go). Not a comparison alphabet but a one-directional
+//     query reduction, listed here so it is not overlooked. It expands German
+//     umlauts (ö→oe) on the title/author sent to Newznab/Torznab indexers, whose
+//     release names use that convention, and — deliberately, like alphabet (1) —
+//     leaves other Latin diacritics and non-Latin scripts alone, so a result the
+//     ASCII query returns still matches under FoldForTitleMatch. It lives in the
+//     newznab package (an import cycle keeps it out of here) but is registered in
+//     internal/normdrift alongside the folds above.
+//
 // If you are about to write a `strings.ToLower` next to a comparison, one of
-// the four above is what you actually want.
+// the first four above is what you actually want.
 
 // TransliterateUmlauts maps German umlaut characters to their common ASCII
 // two-letter equivalents (ä→ae, ö→oe, ü→ue, ß→ss). German NZB indexers almost

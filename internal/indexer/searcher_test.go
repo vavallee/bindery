@@ -298,6 +298,32 @@ func TestFilterRelevantEditionQualifier(t *testing.T) {
 	}
 }
 
+// TestFilterRelevantAcceptsTransliteratedUmlautRelease is the #1610 acceptance
+// criterion the review asked for: a book whose metadata title carries a German
+// umlaut ("Phönix") must still match the ASCII-transliterated release names
+// ("Phoenix") that the transliterated indexer query returns. The query side
+// (newznab.TransliterateQuery) and the match side (textutil.FoldForTitleMatch,
+// via filterRelevant) both expand umlauts, so the two stay in one alphabet; if
+// they diverged, filterRelevant would discard exactly the releases the query
+// was widened to find.
+func TestFilterRelevantAcceptsTransliteratedUmlautRelease(t *testing.T) {
+	results := toResults(
+		"Juergen.Mueller.Der.Orden.des.Phoenix.epub",
+		"Der.Orden.des.Phoenix.Mueller.German.Retail.epub",
+		"Some.Unrelated.Audiobook.m4b",
+	)
+	got := filterRelevant(results, "Der Orden des Phönix", "Jürgen Müller", nil)
+	if !contains(got, "Juergen.Mueller.Der.Orden.des.Phoenix.epub") {
+		t.Errorf("expected transliterated release to pass, got %v", resultTitles(got))
+	}
+	if !contains(got, "Der.Orden.des.Phoenix.Mueller.German.Retail.epub") {
+		t.Errorf("expected transliterated release to pass, got %v", resultTitles(got))
+	}
+	if contains(got, "Some.Unrelated.Audiobook.m4b") {
+		t.Error("unrelated release must not pass")
+	}
+}
+
 func TestRankResultsRetailBeatsScene(t *testing.T) {
 	results := toResults(
 		"The.Sparrow.Russell.SCENE.epub",

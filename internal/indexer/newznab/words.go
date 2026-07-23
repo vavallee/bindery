@@ -3,6 +3,8 @@ package newznab
 import (
 	"strings"
 
+	"golang.org/x/text/unicode/norm"
+
 	"github.com/vavallee/bindery/internal/textutil"
 )
 
@@ -62,4 +64,45 @@ func foldForSigWordMatch(s string) string {
 	s = strings.ReplaceAll(s, "'", "")
 	s = strings.ReplaceAll(s, "’", "")
 	return textutil.TransliterateUmlauts(s)
+}
+
+// queryUmlautReplacer expands German umlauts (both cases, plus ß/ẞ) to the
+// two-letter ASCII forms Usenet release names conventionally use.
+//
+// This is deliberately separate from textutil.TransliterateUmlauts, which is
+// lowercase-only because its callers (FoldForTitleMatch, foldForSigWordMatch)
+// have already run strings.ToLower. TransliterateQuery runs on the OUTGOING
+// query, which is NOT lowercased — so an uppercase "Öl" or "Böll" must
+// transliterate too, hence the extra Ä/Ö/Ü/ẞ arms here.
+var queryUmlautReplacer = strings.NewReplacer(
+	"ä", "ae", "ö", "oe", "ü", "ue", "ß", "ss",
+	"Ä", "Ae", "Ö", "Oe", "Ü", "Ue", "ẞ", "SS",
+)
+
+// TransliterateQuery converts a metadata title or author name into the ASCII
+// spelling Usenet release names conventionally use: German umlauts expand to
+// their two-letter equivalents (ä→ae, ö→oe, ü→ue, ß→ss). Input is NFC-composed
+// first, so a decomposed "ö" (o + U+0308, as macOS and some providers emit)
+// still matches the replacer instead of slipping through and being queried as
+// a bare "o".
+//
+// Only German umlauts are transliterated; other Latin diacritics (é, ñ, ç) are
+// left ALONE. The result-matching side (textutil.FoldForTitleMatch, via
+// SigWords / NormalizeRelease) expands umlauts but keeps é/ñ as-is, so folding
+// those here — but not there — would make the query ask the indexer for
+// "Senor" and then discard every "Senor" release as irrelevant. Scoping to
+// umlauts keeps the two alphabets symmetric (#1610 review). Non-Latin scripts
+// (CJK, Cyrillic, …) pass through unchanged.
+//
+// Only outgoing BookSearch queries use this (#1610): release names are almost
+// universally ASCII-transliterated and indexers match query terms close to
+// literally, so a query carrying "Phönix" misses releases named "Phoenix".
+// Titles that keep the literal umlaut are recovered by BookSearch's
+// original-spelling retry pass.
+//
+// Registered in internal/normdrift (the map in normdrift_test.go), so the drift
+// properties are asserted against it automatically: Unicode-form invariance
+// (guaranteed by the NFC compose below) and idempotence.
+func TransliterateQuery(s string) string {
+	return queryUmlautReplacer.Replace(norm.NFC.String(s))
 }

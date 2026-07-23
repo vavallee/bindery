@@ -274,7 +274,47 @@ func (c *Client) Search(ctx context.Context, query string, categories []int) ([]
 }
 
 // BookSearch tries a series of query variants against a Newznab/Torznab
-// indexer and returns the first variant that yields results. Query order:
+// indexer and returns the first variant that yields results.
+//
+// The query is sent in the ASCII alphabet release names actually use (#1610):
+// metadata titles carry German umlauts ("Phönix") but Usenet releases are
+// transliterated ("Phoenix"), and indexers match query terms close to
+// literally — the raw form returns (near-)zero results for every German title
+// containing ä/ö/ü. The relevance filter downstream reduces both the metadata
+// title and the release name through textutil.FoldForTitleMatch, which expands
+// umlauts the same way, so a result found by the ASCII query still matches the
+// original metadata title. Free-text SearchQuery is deliberately untouched —
+// the user controls that string.
+//
+// A minority of releases keep the literal umlaut instead of transliterating,
+// and those are invisible to the ASCII query. So when the transliterated
+// cascade comes up empty AND transliteration actually changed the query, the
+// whole cascade runs a second time with the original spelling. The retry is
+// gated on inequality, so titles without umlauts (the common case, and every
+// non-Latin script) never issue a second pass — the cost is one extra cascade
+// only for German titles that the ASCII form failed to find.
+func (c *Client) BookSearch(ctx context.Context, title, author string, categories []int) ([]SearchResult, error) {
+	origTitle := primaryTitleForQuery(title)
+	origAuthor := norm.NFC.String(author)
+	queryTitle := TransliterateQuery(origTitle)
+	queryAuthor := TransliterateQuery(origAuthor)
+
+	results, err := c.bookSearchTiers(ctx, queryTitle, queryAuthor, categories)
+	if err != nil {
+		return nil, err
+	}
+	if len(results) == 0 && (queryTitle != origTitle || queryAuthor != origAuthor) {
+		slog.Debug("indexer book search retry with original umlaut spelling",
+			"title", origTitle, "author", origAuthor)
+		return c.bookSearchTiers(ctx, origTitle, origAuthor, categories)
+	}
+	return results, nil
+}
+
+// bookSearchTiers runs the four-tier query cascade for one spelling of the
+// title/author and returns the first tier that yields results (empty if none
+// do). BookSearch calls it with the ASCII-transliterated spelling first and,
+// on a miss, with the original umlaut spelling. Query order:
 //
 //  1. Structured t=book with title+author (primary title only — subtitles
 //     are dropped for the query; filterRelevant still matches on the full).
@@ -282,8 +322,7 @@ func (c *Client) Search(ctx context.Context, query string, categories []int) ([]
 //     short titles (e.g. "Russell The Sparrow" beats "The Sparrow" alone).
 //  3. t=search "Author Title" — full author name + title.
 //  4. t=search "Title" — last-resort fallback.
-func (c *Client) BookSearch(ctx context.Context, title, author string, categories []int) ([]SearchResult, error) {
-	queryTitle := primaryTitleForQuery(title)
+func (c *Client) bookSearchTiers(ctx context.Context, queryTitle, author string, categories []int) ([]SearchResult, error) {
 	surname := authorSurname(author)
 	cats := intSliceToCSV(categories)
 

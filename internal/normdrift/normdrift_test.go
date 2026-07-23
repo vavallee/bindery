@@ -98,6 +98,7 @@ var stringFolds = []struct {
 	{"indexer.CanonicalDedupKey", indexer.CanonicalDedupKey},
 	{"seriesmatch.NormalizeSeriesName", seriesmatch.NormalizeSeriesName},
 	{"newznab.NormalizeQueryTitle", newznab.NormalizeQueryTitle},
+	{"newznab.TransliterateQuery", newznab.TransliterateQuery},
 }
 
 // TestNormalizersAgreeAcrossUnicodeForm is the single most valuable property

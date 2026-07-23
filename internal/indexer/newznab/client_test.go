@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // errRoundTripper makes http.Client.Do fail with a transport error; net/http
@@ -415,6 +417,190 @@ func TestBookSearch_FinalFallbackTitleOnly(t *testing.T) {
 	}
 	if len(results) != 2 {
 		t.Errorf("expected 2 results, got %d", len(results))
+	}
+}
+
+// TestTransliterateQuery covers #1610: outgoing book-search queries must be
+// sent in the ASCII alphabet Usenet release names use. German umlauts expand
+// to their two-letter forms (a blind diacritic fold would collapse ä to a;
+// releases use ae). Only umlauts are transliterated: the match side
+// (textutil.FoldForTitleMatch) expands umlauts but keeps other Latin
+// diacritics (é, ñ, ç) as-is, so folding them here — but not there — would
+// discard every matching release (#1610 review). Everything that is not a
+// German umlaut therefore passes through unchanged.
+func TestTransliterateQuery(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"Harry Potter und der Orden des Phönix", "Harry Potter und der Orden des Phoenix"},
+		{"Die Heiligtümer des Todes", "Die Heiligtuemer des Todes"},
+		{"Über Nacht", "Ueber Nacht"},
+		{"Straße der Träume", "Strasse der Traeume"},
+		{"Jürgen Müller", "Juergen Mueller"},
+		// NFD input: a decomposed "ö" (o + U+0308) must be composed before the
+		// replacer runs, or it slips through and the query carries a bare "o".
+		{"Orden des Ph\u006f\u0308nix", "Orden des Phoenix"}, // in-field is decomposed (o + U+0308)
+		// Non-umlaut Latin diacritics are left ALONE so the query stays in the
+		// same alphabet as the match side (which does not fold them).
+		{"Señor Núñez", "Señor Núñez"},
+		{"José Ángel", "José Ángel"},
+		{"François", "François"},
+		{"Dark Matter", "Dark Matter"}, // plain ASCII untouched
+		{"村上春樹", "村上春樹"},               // CJK untouched
+		{"Тихий Дон", "Тихий Дон"},     // Cyrillic untouched
+		{"Το Νησί", "Το Νησί"},         // Greek untouched
+	}
+	for _, c := range cases {
+		if got := TransliterateQuery(c.in); got != c.want {
+			t.Errorf("TransliterateQuery(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestBookSearch_TransliteratesUmlautQueries covers #1610 end to end. Metadata
+// says "Phönix" but the wanted releases are named "Phoenix"; with the raw form,
+// literal-matching indexers returned (near-)zero results for every German
+// title containing an umlaut, so those books never auto-grabbed.
+//
+// When the transliterated cascade finds nothing (mock returns total=0 for
+// everything here), BookSearch retries the whole cascade with the ORIGINAL
+// umlaut spelling to catch the minority of releases that keep the literal
+// umlaut. So the expected traffic is two passes: four transliterated tiers,
+// then four original-spelling tiers.
+func TestBookSearch_TransliteratesUmlautQueries(t *testing.T) {
+	type captured struct{ t, q, title, author string }
+	var got []captured
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Query()
+		got = append(got, captured{p.Get("t"), p.Get("q"), p.Get("title"), p.Get("author")})
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(`<?xml version="1.0"?><rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/"><channel><newznab:response total="0"/></channel></rss>`))
+	}))
+	defer srv.Close()
+
+	c := testNew(srv.URL, "testkey")
+	if _, err := c.BookSearch(context.Background(), "Harry Potter und der Orden des Phönix", "Jürgen Müller", []int{7020}); err != nil {
+		t.Fatalf("BookSearch: %v", err)
+	}
+	if len(got) != 8 {
+		t.Fatalf("expected 4 transliterated + 4 retry tiers, got %d: %+v", len(got), got)
+	}
+	want := []captured{
+		// Pass 1: transliterated (ASCII) spelling.
+		{"book", "", "Harry Potter und der Orden des Phoenix", "Juergen Mueller"},
+		{"search", "Mueller Harry Potter und der Orden des Phoenix", "", ""},
+		{"search", "Juergen Mueller Harry Potter und der Orden des Phoenix", "", ""},
+		{"search", "Harry Potter und der Orden des Phoenix", "", ""},
+		// Pass 2: original umlaut spelling, fired only because pass 1 was empty.
+		{"book", "", "Harry Potter und der Orden des Phönix", "Jürgen Müller"},
+		{"search", "Müller Harry Potter und der Orden des Phönix", "", ""},
+		{"search", "Jürgen Müller Harry Potter und der Orden des Phönix", "", ""},
+		{"search", "Harry Potter und der Orden des Phönix", "", ""},
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("query %d = %+v, want %+v", i+1, got[i], w)
+		}
+	}
+	// The transliterated pass must never carry a raw umlaut; the retry pass is
+	// where the original umlaut spelling is deliberately (re)sent.
+	for i := 0; i < 4; i++ {
+		g := got[i]
+		for _, s := range []string{g.q, g.title, g.author} {
+			if strings.ContainsAny(s, "äöüÄÖÜß") {
+				t.Errorf("transliterated tier %d sent a raw umlaut: %+v", i+1, g)
+			}
+		}
+	}
+}
+
+// TestBookSearch_RetryRecoversOriginalUmlautSpelling covers the #1610 retry
+// pass: when the ASCII query finds nothing ANYWHERE, BookSearch re-queries with
+// the original umlaut spelling, recovering releases that kept the literal umlaut
+// instead of transliterating. This is the all-or-nothing case the retry is for —
+// when the ASCII query already returns some hits the retry never fires, so any
+// umlaut-only releases among the rest stay unfound (the review's point on the
+// "~2/11" sample: there the ASCII form found 9, so the retry did not run).
+func TestBookSearch_RetryRecoversOriginalUmlautSpelling(t *testing.T) {
+	var sawRawUmlaut bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Query()
+		raw := p.Get("title") + p.Get("author") + p.Get("q")
+		w.Header().Set("Content-Type", "application/xml")
+		if strings.ContainsAny(raw, "äöüÄÖÜß") {
+			sawRawUmlaut = true
+			w.Write([]byte(testRSS)) // only the original-spelling pass matches
+			return
+		}
+		// The ASCII (transliterated) pass finds nothing.
+		w.Write([]byte(`<?xml version="1.0"?><rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/"><channel><newznab:response total="0"/></channel></rss>`))
+	}))
+	defer srv.Close()
+
+	c := testNew(srv.URL, "testkey")
+	results, err := c.BookSearch(context.Background(), "Der Orden des Phönix", "Jürgen Müller", []int{7020})
+	if err != nil {
+		t.Fatalf("BookSearch: %v", err)
+	}
+	if !sawRawUmlaut {
+		t.Fatal("expected the retry pass to send the original umlaut spelling")
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected the retry to recover 2 results, got %d", len(results))
+	}
+}
+
+// TestBookSearch_NoRetryForAsciiTitle proves the retry is gated: a title and
+// author with no umlaut transliterate to themselves, so BookSearch must not
+// fire a second cascade even when every tier comes up empty. Non-German titles
+// therefore never pay for the retry.
+func TestBookSearch_NoRetryForAsciiTitle(t *testing.T) {
+	var n int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(`<?xml version="1.0"?><rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/"><channel><newznab:response total="0"/></channel></rss>`))
+	}))
+	defer srv.Close()
+
+	c := testNew(srv.URL, "testkey")
+	if _, err := c.BookSearch(context.Background(), "Dark Matter", "Blake Crouch", []int{7020}); err != nil {
+		t.Fatalf("BookSearch: %v", err)
+	}
+	if n != 4 {
+		t.Fatalf("ASCII title must fire exactly one 4-tier cascade (no retry), got %d requests", n)
+	}
+}
+
+// TestBookSearch_NoRetryForAccentedNonGermanTitle guards the invariant flagged in
+// the #1610 review: an accented but non-German title (é/ñ, which the query side
+// deliberately does NOT transliterate) must fire exactly one cascade, never the
+// umlaut retry. The gate is queryTitle != origTitle, and it stays false only
+// because origTitle (via NormalizeQueryTitle) and TransliterateQuery both compose
+// to NFC first — so even a DECOMPOSED accented title compares equal and does not
+// double-query. Feeding NFD input here is the case that regresses if either NFC
+// normalisation is dropped: origTitle would then differ from its transliteration
+// and every accented title would start firing a pointless second cascade.
+func TestBookSearch_NoRetryForAccentedNonGermanTitle(t *testing.T) {
+	var n int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(`<?xml version="1.0"?><rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/"><channel><newznab:response total="0"/></channel></rss>`))
+	}))
+	defer srv.Close()
+
+	// Decomposed (NFD) accented forms of "Señor Núñez" / "José García".
+	title := norm.NFD.String("Señor Núñez")
+	author := norm.NFD.String("José García")
+	c := testNew(srv.URL, "testkey")
+	if _, err := c.BookSearch(context.Background(), title, author, []int{7020}); err != nil {
+		t.Fatalf("BookSearch: %v", err)
+	}
+	if n != 4 {
+		t.Fatalf("accented non-German title must fire exactly one 4-tier cascade "+
+			"(no umlaut retry), got %d requests", n)
 	}
 }
 
