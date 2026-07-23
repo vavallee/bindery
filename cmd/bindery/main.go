@@ -1138,7 +1138,12 @@ func main() {
 		slog.Info("serving under path prefix", "urlBase", cfg.URLBase)
 	}
 
-	gracePeriod := 30 * time.Second
+	// HTTP-drain grace and the background-job drain grace (#1458) run serially on
+	// shutdown, so their SUM is the pod's total termination budget. The defaults
+	// (10s + 15s = 25s) are sized to finish under Kubernetes' default 30s
+	// terminationGracePeriodSeconds with headroom before SIGKILL. Operators who
+	// raise terminationGracePeriodSeconds can raise either env var to match.
+	gracePeriod := 10 * time.Second
 	if v := os.Getenv("BINDERY_SHUTDOWN_GRACE"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			gracePeriod = d
@@ -1149,7 +1154,7 @@ func main() {
 	// stops, before the database is closed (#1458). Kept separate from the HTTP
 	// grace above so a long-running import gets its own budget rather than
 	// competing with in-flight request draining.
-	bgDrainGracePeriod := 25 * time.Second
+	bgDrainGracePeriod := 15 * time.Second
 	if v := os.Getenv("BINDERY_JOBS_DRAIN_GRACE"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			bgDrainGracePeriod = d
