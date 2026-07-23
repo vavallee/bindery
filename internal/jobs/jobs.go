@@ -45,6 +45,7 @@ type Group struct {
 // process-lifetime context (the one wired to SIGINT/SIGTERM) as parent so the
 // group is also cancelled if the process context is.
 func NewGroup(parent context.Context) *Group {
+	//nolint:gosec // G118: cancel is retained on the Group and invoked in Shutdown; gosec cannot track a CancelFunc stored in a struct field
 	ctx, cancel := context.WithCancel(parent)
 	return &Group{
 		ctx:    ctx,
