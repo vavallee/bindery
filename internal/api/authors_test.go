@@ -84,6 +84,16 @@ type stubMetaProvider struct {
 	// Used to exercise the AddBook direct-insert path for DNB-prefixed
 	// foreign IDs (issue #667).
 	getBookByID map[string]*models.Book
+	// getBookErrByID lets a test fail GetBook for a specific foreign ID,
+	// exercising the AddBook direct-fetch error path (#1612).
+	getBookErrByID map[string]error
+	// getBookEntered (non-blocking send) and getBookGate (blocking receive)
+	// let a test deterministically interleave work with an in-flight GetBook
+	// call: the stub signals getBookEntered on entry, then blocks until
+	// getBookGate is closed. Used to reproduce the direct-insert vs.
+	// concurrent-sync UNIQUE race (#1612) without sleeps.
+	getBookEntered chan struct{}
+	getBookGate    chan struct{}
 	// name overrides the provider's reported name. When non-empty it's
 	// returned by Name() — required when a test exercises a code path
 	// that routes by prefix via the aggregator (e.g. "dnb" for DNB IDs).
@@ -115,6 +125,20 @@ func (p *stubMetaProvider) GetAuthor(_ context.Context, _ string) (*models.Autho
 	return p.author, nil
 }
 func (p *stubMetaProvider) GetBook(_ context.Context, fid string) (*models.Book, error) {
+	if p.getBookEntered != nil {
+		select {
+		case p.getBookEntered <- struct{}{}:
+		default:
+		}
+	}
+	if p.getBookGate != nil {
+		<-p.getBookGate
+	}
+	if p.getBookErrByID != nil {
+		if err, ok := p.getBookErrByID[fid]; ok {
+			return nil, err
+		}
+	}
 	if p.getBookByID != nil {
 		if b, ok := p.getBookByID[fid]; ok {
 			return b, nil
@@ -4226,6 +4250,163 @@ func TestAddBook_ExistingAuthorDirectInsertWhenSyncSkipsWork(t *testing.T) {
 	}
 	if len(authors) != 1 {
 		t.Errorf("expected 1 author (no duplicate), got %d", len(authors))
+	}
+}
+
+// TestAddBook_DirectFetchErrorFallsBackToSyncPoll pins the failure mode of
+// the (now unconditional, #1612) direct insert: when the metadata provider
+// errors on the direct fetch, AddBook must log-and-continue into the poll —
+// NOT fail the request — so a row produced by the catalogue sync (simulated
+// here while GetBook is in flight) still completes the add.
+func TestAddBook_DirectFetchErrorFallsBackToSyncPoll(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+
+	ctx := context.Background()
+	author := &models.Author{
+		ForeignID: "OL23919A", Name: "J. K. Rowling", SortName: "Rowling, J. K.",
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	entered := make(chan struct{}, 1)
+	gate := make(chan struct{})
+	stub := &stubMetaProvider{
+		name:           "openlibrary",
+		getBookErrByID: map[string]error{"OL82537W": errors.New("openlibrary: upstream 502")},
+		getBookEntered: entered,
+		getBookGate:    gate,
+	}
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(stub), nil, profileRepo, nil)
+
+	// While the direct fetch is in flight (so strictly AFTER AddBook's
+	// existing-row check saw nothing), the async catalogue sync lands the
+	// row. The gate makes the interleaving deterministic — no sleeps.
+	go func() {
+		<-entered
+		if err := bookRepo.Create(context.Background(), &models.Book{
+			ForeignID: "OL82537W", AuthorID: author.ID,
+			Title: "Harry Potter and the Chamber of Secrets", SortTitle: "harry potter and the chamber of secrets",
+			Status: models.BookStatusWanted, MediaType: models.MediaTypeEbook,
+			Genres: []string{}, MetadataProvider: "openlibrary",
+		}); err != nil {
+			t.Error(err)
+		}
+		close(gate)
+	}()
+
+	body, _ := json.Marshal(map[string]any{
+		"foreignBookId":   "OL82537W",
+		"foreignAuthorId": "OL23919A",
+		"authorName":      "J. K. Rowling",
+		"mediaType":       models.MediaTypeEbook,
+	})
+	rec := httptest.NewRecorder()
+	h.AddBook(rec, httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body)))
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 despite direct-fetch error, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, err := bookRepo.GetByForeignID(ctx, "OL82537W")
+	if err != nil || got == nil {
+		t.Fatalf("book not persisted: err=%v got=%v", err, got)
+	}
+	if !got.Monitored {
+		t.Error("book should be Monitored=true after AddBook success")
+	}
+}
+
+// TestAddBook_DirectInsertToleratesConcurrentSyncRow reproduces the race the
+// direct-insert block documents: the async catalogue sync creates the row
+// between AddBook's existing-row check and its books.Create, so the insert
+// fails with a UNIQUE constraint. That collision must be silently tolerated —
+// the poll picks up the sync's row and the request still succeeds with
+// exactly one row. The stub's returned record carries an empty Status to also
+// pin the wanted-status default applied before the insert attempt.
+func TestAddBook_DirectInsertToleratesConcurrentSyncRow(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+
+	ctx := context.Background()
+	author := &models.Author{
+		ForeignID: "OL23919A", Name: "J. K. Rowling", SortName: "Rowling, J. K.",
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	entered := make(chan struct{}, 1)
+	gate := make(chan struct{})
+	stub := &stubMetaProvider{
+		name: "openlibrary",
+		getBookByID: map[string]*models.Book{
+			"OL82537W": {
+				ForeignID: "OL82537W", Title: "Harry Potter and the Chamber of Secrets",
+				SortTitle: "harry potter and the chamber of secrets", Language: "eng",
+				Status: "", Genres: []string{}, MetadataProvider: "openlibrary",
+			},
+		},
+		getBookEntered: entered,
+		getBookGate:    gate,
+	}
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(stub), nil, profileRepo, nil)
+
+	// The sync's row lands while the direct fetch is in flight — after the
+	// existing-row check (which saw nothing), before books.Create (which
+	// must now collide and tolerate it).
+	go func() {
+		<-entered
+		if err := bookRepo.Create(context.Background(), &models.Book{
+			ForeignID: "OL82537W", AuthorID: author.ID,
+			Title: "Harry Potter and the Chamber of Secrets", SortTitle: "harry potter and the chamber of secrets",
+			Status: models.BookStatusWanted, MediaType: models.MediaTypeEbook,
+			Genres: []string{}, MetadataProvider: "openlibrary",
+		}); err != nil {
+			t.Error(err)
+		}
+		close(gate)
+	}()
+
+	body, _ := json.Marshal(map[string]any{
+		"foreignBookId":   "OL82537W",
+		"foreignAuthorId": "OL23919A",
+		"authorName":      "J. K. Rowling",
+		"mediaType":       models.MediaTypeEbook,
+	})
+	rec := httptest.NewRecorder()
+	h.AddBook(rec, httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body)))
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 after tolerated UNIQUE collision, got %d: %s", rec.Code, rec.Body.String())
+	}
+	books, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("expected exactly 1 row after collision, got %d", len(books))
+	}
+	if !books[0].Monitored {
+		t.Error("book should be Monitored=true after AddBook success")
 	}
 }
 
