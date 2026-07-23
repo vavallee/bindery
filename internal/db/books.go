@@ -703,6 +703,15 @@ func (r *BookRepo) SetFilePath(ctx context.Context, id int64, filePath string) e
 	return r.SetFormatFilePath(ctx, id, mediaType, filePath)
 }
 
+// SetLanguage persists a book's language code. Used by the importer to fill an
+// empty language from an embedded EPUB dc:language at import time (#1160); the
+// caller is responsible for gating on an empty existing value and an unlocked
+// language field, so this only writes the single column.
+func (r *BookRepo) SetLanguage(ctx context.Context, id int64, language string) error {
+	_, err := r.db.ExecContext(ctx, "UPDATE books SET language=? WHERE id=?", language, id)
+	return err
+}
+
 // SetCalibreID stores the Calibre-assigned book id for the given Bindery
 // book row. Called from the importer after a successful `calibredb add`.
 func (r *BookRepo) SetCalibreID(ctx context.Context, id, calibreID int64) error {
