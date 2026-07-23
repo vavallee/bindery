@@ -3,6 +3,8 @@ package newznab
 import (
 	"strings"
 	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // stopWords are common English words excluded from keyword significance checks.
@@ -59,4 +61,54 @@ func transliterateUmlauts(s string) string {
 	s = strings.ReplaceAll(s, "ü", "ue")
 	s = strings.ReplaceAll(s, "ß", "ss")
 	return s
+}
+
+// queryUmlautReplacer expands German umlauts (both cases, plus ß/ẞ) to the
+// two-letter ASCII forms Usenet release names conventionally use. Applied
+// before the generic diacritic fold in transliterateQuery, which would
+// otherwise collapse ä to a — the release side expects ae.
+var queryUmlautReplacer = strings.NewReplacer(
+	"ä", "ae", "ö", "oe", "ü", "ue", "ß", "ss",
+	"Ä", "Ae", "Ö", "Oe", "Ü", "Ue", "ẞ", "SS",
+)
+
+// transliterateQuery converts a metadata title or author name into the ASCII
+// form Usenet release names conventionally use: German umlauts expand to
+// their two-letter equivalents (ä→ae, ö→oe, ü→ue, ß→ss) and remaining Latin
+// diacritics fold to their base letter (é→e, ú→u, ñ→n). Non-Latin scripts
+// (CJK, Cyrillic, …) pass through unchanged.
+//
+// Only outgoing BookSearch queries use this (#1610): release names are almost
+// universally ASCII-transliterated and indexers match query terms close to
+// literally, so a query carrying "Phönix" misses releases named "Phoenix".
+// The result-matching side (SigWords / NormalizeRelease / umlautFlexRegex)
+// already speaks both forms, so results found by the transliterated query
+// still match the original metadata title downstream.
+func transliterateQuery(s string) string {
+	return foldLatinDiacritics(queryUmlautReplacer.Replace(s))
+}
+
+// foldLatinDiacritics decomposes s (NFD), drops combining marks whose base
+// letter is Latin, and recomposes (NFC), folding é→e, ú→u, ñ→n, ç→c. Marks
+// on non-Latin bases are kept: a blanket Mn-strip (as the internal/db
+// sort-key folder uses for ordering) would corrupt other scripts — Cyrillic
+// й is и + combining breve and must stay й in a query. norm.Form values are
+// stateless and safe for concurrent use, unlike a transform.Chain (#1374).
+func foldLatinDiacritics(s string) string {
+	decomposed := norm.NFD.String(s)
+	var b strings.Builder
+	b.Grow(len(decomposed))
+	prevLatin := false
+	for _, r := range decomposed {
+		if unicode.Is(unicode.Mn, r) {
+			if prevLatin {
+				continue // strip the accent from a Latin base letter
+			}
+			b.WriteRune(r) // keep marks on non-Latin bases (й, Greek tonos, …)
+			continue
+		}
+		prevLatin = unicode.In(r, unicode.Latin)
+		b.WriteRune(r)
+	}
+	return norm.NFC.String(b.String())
 }

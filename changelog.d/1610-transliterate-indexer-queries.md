@@ -1,0 +1,2 @@
+### Fixed
+- **German titles with umlauts find their releases** (#1610) — indexer queries were sent with literal ä/ö/ü/ß while Usenet release names use the ASCII convention (Phönix vs. Phoenix), so every umlaut-containing title returned (near-)zero results and never auto-grabbed. Book-search queries are now transliterated (ä→ae, ö→oe, ü→ue, ß→ss; other Latin diacritics fold to their base letter) before being sent; free-text searches are unchanged.

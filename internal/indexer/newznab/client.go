@@ -235,7 +235,17 @@ func (c *Client) Search(ctx context.Context, query string, categories []int) ([]
 //  3. t=search "Author Title" — full author name + title.
 //  4. t=search "Title" — last-resort fallback.
 func (c *Client) BookSearch(ctx context.Context, title, author string, categories []int) ([]SearchResult, error) {
-	queryTitle := primaryTitleForQuery(title)
+	// Send every tier's query in the ASCII alphabet release names actually
+	// use (#1610): metadata titles carry umlauts/diacritics ("Phönix") but
+	// Usenet releases are transliterated ("Phoenix"), and indexers match
+	// query terms close to literally — the raw form returns (near-)zero
+	// results for e.g. every German title containing ä/ö/ü. The relevance
+	// filter downstream matches the original metadata title against whatever
+	// comes back (umlautFlexRegex accepts both forms), so this only widens
+	// recall. Free-text SearchQuery is deliberately untouched — the user
+	// controls that string.
+	queryTitle := transliterateQuery(primaryTitleForQuery(title))
+	author = transliterateQuery(author)
 	surname := authorSurname(author)
 	cats := intSliceToCSV(categories)
 
