@@ -537,6 +537,70 @@ func TestFetchAuthorBooks_AutoSearchUsesBoundedConcurrency(t *testing.T) {
 	}
 }
 
+// TestFetchAuthorBooks_StrictMediaType verifies the #1575 strict policy: with
+// default.media_type=ebook and default.media_type_strict=true, an audiobook-only
+// work is skipped (never created), a "both" work is narrowed to ebook, and an
+// ebook work is created unchanged.
+func TestFetchAuthorBooks_StrictMediaType(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+
+	ctx := context.Background()
+	if err := settingsRepo.Set(ctx, SettingDefaultMediaTypeStrict, "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	author := &models.Author{
+		ForeignID: "OL900A", Name: "Strict Author", SortName: "Author, Strict",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	works := []models.Book{
+		{ForeignID: "OL901W", Title: "Ebook Only", SortTitle: "ebook only", Language: "eng",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary"},
+		{ForeignID: "OL902W", Title: "Audio Only", SortTitle: "audio only", Language: "eng",
+			MediaType: models.MediaTypeAudiobook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary"},
+		{ForeignID: "OL903W", Title: "Both Formats", SortTitle: "both formats", Language: "eng",
+			MediaType: models.MediaTypeBoth, Status: models.BookStatusWanted, MetadataProvider: "openlibrary"},
+	}
+	agg := metadata.NewAggregator(&stubMetaProvider{works: works})
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	got, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTitle := make(map[string]models.Book, len(got))
+	for _, b := range got {
+		byTitle[b.Title] = b
+	}
+	if _, ok := byTitle["Audio Only"]; ok {
+		t.Errorf("audiobook-only work should have been skipped under strict ebook default, but it was created")
+	}
+	if b, ok := byTitle["Ebook Only"]; !ok {
+		t.Errorf("ebook work should have been created")
+	} else if b.MediaType != models.MediaTypeEbook {
+		t.Errorf("ebook work MediaType = %q, want ebook", b.MediaType)
+	}
+	if b, ok := byTitle["Both Formats"]; !ok {
+		t.Errorf("both-format work should have been created (narrowed to ebook)")
+	} else if b.MediaType != models.MediaTypeEbook {
+		t.Errorf("both-format work MediaType = %q, want ebook (narrowed)", b.MediaType)
+	}
+}
+
 // stubLibraryFinder is a mock LibraryFinder that returns a fixed path for
 // a specific title and "" for everything else.
 type stubLibraryFinder struct {

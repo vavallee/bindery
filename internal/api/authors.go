@@ -1248,6 +1248,23 @@ func (h *AuthorHandler) resolveDefaultMediaType(ctx context.Context) string {
 	}
 }
 
+// resolveDefaultMediaTypeStrict reports whether the strict media-type policy
+// is enabled (#1575). When on, catalogue books whose media type falls entirely
+// outside default.media_type are skipped at add/refresh time instead of being
+// created as un-grabbable rows, and "both" works are narrowed to the default.
+// Defaults to off so existing installs keep their historical mixed catalogue;
+// a "both" default is unaffected because there is nothing to narrow to.
+func (h *AuthorHandler) resolveDefaultMediaTypeStrict(ctx context.Context) bool {
+	if h.settings == nil {
+		return false
+	}
+	s, _ := h.settings.Get(ctx, SettingDefaultMediaTypeStrict)
+	if s == nil {
+		return false
+	}
+	return s.Value == "true"
+}
+
 // isAutoGrabEnabled reads the autoGrab.enabled setting. Defaults to true when
 // the key is absent so existing installs keep working without any migration.
 func (h *AuthorHandler) isAutoGrabEnabled(ctx context.Context) bool {
@@ -1553,7 +1570,12 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool,
 	searchQueue := make([]models.Book, 0)
 	autoSearchEnabled := autoSearch && h.searcher != nil && author.Monitored && h.isAutoGrabEnabled(ctx)
 
-	var added, skippedLang, skippedJunk int
+	// Strict media-type policy (#1575). When on and the default is a single
+	// format, catalogue population is narrowed to that format so an ebook-only
+	// (or audiobook-only) user never accumulates rows they can't grab.
+	strictMediaType := h.resolveDefaultMediaTypeStrict(ctx)
+
+	var added, skippedLang, skippedJunk, skippedMediaType int
 	for _, b := range books {
 		b.AuthorID = author.ID
 		// Apply the caller-provided default media type when the provider
@@ -1562,6 +1584,27 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool,
 		// through with MediaType=audiobook already.
 		if mediaType != "" && b.MediaType == "" {
 			b.MediaType = mediaType
+		}
+
+		// Strict media-type policy (#1575): when enabled and the default is a
+		// single format, keep the catalogue to that format. A "both" work is
+		// narrowed to the default — its wanted format is still available. A
+		// work that is ONLY the other format has nothing the user asked for,
+		// so it is skipped rather than created as an un-grabbable row. A "both"
+		// default disables the clamp (the user wants everything). Existing rows
+		// are untouched; the Books bulk-edit action migrates those.
+		if strictMediaType && (mediaType == models.MediaTypeEbook || mediaType == models.MediaTypeAudiobook) {
+			switch b.MediaType {
+			case models.MediaTypeBoth:
+				b.MediaType = mediaType
+			case mediaType:
+				// already the wanted single format
+			default:
+				skippedMediaType++
+				slog.Debug("skipping media-type-mismatched book under strict default",
+					"title", b.Title, "bookMediaType", b.MediaType, "default", mediaType)
+				continue
+			}
 		}
 
 		// Filter out OpenLibrary "works" whose title is empty or is just the
@@ -1753,7 +1796,7 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool,
 		}
 	}
 	runBookSearches(ctx, h.searcher, searchQueue, authorAutoSearchConcurrency)
-	slog.Info("author books synced", "author", author.Name, "added", added, "skipped_language", skippedLang, "skipped_junk", skippedJunk, "total", len(books))
+	slog.Info("author books synced", "author", author.Name, "added", added, "skipped_language", skippedLang, "skipped_junk", skippedJunk, "skipped_media_type", skippedMediaType, "total", len(books))
 }
 
 // reparentMisattachedBook re-links existing to the author being synced when

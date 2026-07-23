@@ -104,6 +104,26 @@ export default function MetadataTab() {
               <option value="audiobook">{t('mediaType.audiobook', 'Audiobook')}</option>
               <option value="both">{t('mediaType.both', 'Both')}</option>
             </select>
+            {(settings['default.media_type'] ?? 'ebook') !== 'both' && (
+              <label className="mt-3 flex items-start gap-2 text-sm text-slate-800 dark:text-zinc-200">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 accent-emerald-500"
+                  checked={(settings['default.media_type_strict'] ?? 'false') === 'true'}
+                  onChange={async e => {
+                    const next = e.target.checked ? 'true' : 'false'
+                    setSettings(s => ({ ...s, 'default.media_type_strict': next }))
+                    await api.setSetting('default.media_type_strict', next).catch(console.error)
+                  }}
+                />
+                <span>
+                  {t('settings.general.strictMediaTypeLabel', 'Restrict new books to this media type')}
+                  <span className="block text-xs text-slate-600 dark:text-zinc-500">
+                    {t('settings.general.strictMediaTypeHint', 'Skip catalogue books available only in the other format, and narrow dual-format books to this one. Prevents monitoring books you can never grab.')}
+                  </span>
+                </span>
+              </label>
+            )}
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">

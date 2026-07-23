@@ -27,6 +27,13 @@ import (
 // unset falls back to ebook for backwards compatibility.
 const SettingDefaultMediaType = "default.media_type"
 
+// SettingDefaultMediaTypeStrict is the KV key for the strict media-type policy
+// (#1575). "true" narrows/skips catalogue books that don't match
+// default.media_type at add/refresh time so single-format users stop
+// accumulating un-grabbable rows; any other value (or unset) leaves the
+// historical mixed-catalogue behaviour untouched.
+const SettingDefaultMediaTypeStrict = "default.media_type_strict"
+
 // SettingAuthorDefaultMonitorMode controls which newly discovered books are
 // monitored for authors created without an explicit monitorMode.
 const SettingAuthorDefaultMonitorMode = "author.default_monitor_mode"
@@ -414,6 +421,13 @@ func validateSettingValue(key, value string) error {
 		default:
 			return fmt.Errorf("default.media_type %q is not one of: ebook, audiobook, both", value)
 		}
+	case SettingDefaultMediaTypeStrict:
+		// Boolean flag; empty or "false" = off. Only accept the two canonical
+		// values so a typo can't be misread as truthy.
+		if value == "" || value == "true" || value == "false" {
+			return nil
+		}
+		return fmt.Errorf("default.media_type_strict %q is not one of: true, false", value)
 	case SettingAuthorDefaultMonitorMode:
 		if value == "" {
 			return nil
