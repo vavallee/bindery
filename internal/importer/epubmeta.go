@@ -9,6 +9,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/vavallee/bindery/internal/models"
 )
 
 // EpubMetadata is the subset of an EPUB's embedded Dublin Core metadata the
@@ -17,9 +19,10 @@ import (
 // metadata is far more reliable than the release filename, which routinely
 // encodes author/title/series in inconsistent orders (issue #1014).
 type EpubMetadata struct {
-	Title  string
-	Author string
-	ISBN   string // normalised (digits only); ISBN-13 preferred over ISBN-10
+	Title    string
+	Author   string
+	ISBN     string // normalised (digits only); ISBN-13 preferred over ISBN-10
+	Language string // ISO 639-2/B code from dc:language, normalised ("en" → "eng")
 }
 
 // IsEpubFile reports whether path is an EPUB we can read embedded metadata from.
@@ -132,6 +135,13 @@ func parseOPFMetadata(r io.Reader) (EpubMetadata, error) {
 					meta.ISBN = i13
 				} else if i10 != "" && isbn10 == "" {
 					isbn10 = i10
+				}
+			case "language":
+				// First dc:language wins. Normalise to the ISO 639-2/B code the
+				// language filter and metadata profiles use so a value like "en"
+				// or "en-US" matches an "eng" profile (#1160).
+				if meta.Language == "" {
+					meta.Language = models.NormalizeLanguageCode(val)
 				}
 			}
 		case xml.EndElement:
