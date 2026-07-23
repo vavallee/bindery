@@ -1121,6 +1121,12 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// library, so move-mode cleanup can delete exactly those files rather than
 	// RemoveAll-ing the whole download path (issue #705 finding 4).
 	var importedSrcFiles []string
+	// detectedLang holds a language read from an embedded EPUB dc:language, used
+	// to backfill an empty book language after the loop (#1160). Captured inside
+	// the loop because move mode consumes the source file on commit, so it must
+	// be read while srcFile still exists.
+	var detectedLang string
+	fillLanguage := book != nil && book.Language == "" && !book.IsFieldLocked(models.BookFieldLanguage)
 	// Resolve the ebook destination root and (auto) placement mode once: the
 	// root is stable for this author across the loop, and choosing hardlink-vs-
 	// copy against it rather than s.libraryDir avoids a cross-device hardlink
@@ -1133,6 +1139,15 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			parsed := ParseFilename(srcFile)
 			slog.Info("unmatched import", "title", parsed.Title, "author", parsed.Author, "file", srcFile)
 			continue
+		}
+
+		// Read the embedded EPUB language while the source is still present
+		// (move mode deletes it on commit). Only when we actually intend to
+		// backfill, so we never open the zip needlessly.
+		if fillLanguage && detectedLang == "" && IsEpubFile(srcFile) {
+			if meta, err := ReadEpubMetadata(srcFile); err == nil && meta.Language != "" {
+				detectedLang = meta.Language
+			}
 		}
 
 		seriesTitle, seriesNum := s.primarySeriesFor(ctx, book)
@@ -1220,6 +1235,20 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		s.pushToGrimmory(ctx, book, destPath)
 
 		s.createHistoryEvent(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, map[string]string{"path": destPath, "format": models.MediaTypeEbook})
+	}
+
+	// Backfill the book's language from the embedded EPUB dc:language when the
+	// catalogue left it empty (#1160). Providers frequently have no work-level
+	// language (OpenLibrary especially), so an imported file is often the most
+	// reliable source. Best-effort: gated on an empty, unlocked field and at
+	// least one imported file; a persistence error just leaves it empty.
+	if fillLanguage && imported > 0 && detectedLang != "" {
+		if err := s.books.SetLanguage(ctx, book.ID, detectedLang); err != nil {
+			slog.Warn("failed to persist EPUB-detected language", "bookID", book.ID, "language", detectedLang, "error", err)
+		} else {
+			slog.Info("filled book language from embedded EPUB metadata", "bookID", book.ID, "language", detectedLang)
+			book.Language = detectedLang
+		}
 	}
 
 	// If every file failed to copy/move, the destination is likely not writable —
