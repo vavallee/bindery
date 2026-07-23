@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -70,6 +71,12 @@ var groupWordRe = regexp.MustCompile(`(\w+)(:\d{1,2})?`)
 const defaultNamingTemplate = "{Author}/{Title} ({Year})/{Title} - {Author}.{ext}"
 const defaultAudiobookTemplate = "{Author}/{Title} ({Year})"
 
+// defaultAudiobookFileTemplate is the per-file audiobook name used when
+// audiobook file renaming is enabled but no explicit template is set (#1126).
+// {Part} is the 1-based playback-order index; ":3" zero-pads it so an
+// alphabetic sort keeps "Part 002" before "Part 010".
+const defaultAudiobookFileTemplate = "{Title} - Part {Part:3}.{ext}"
+
 // Renamer moves and renames imported book files according to a naming template.
 // Separate templates for ebook (per-file) and audiobook (per-folder) outputs.
 type Renamer struct {
@@ -102,6 +109,24 @@ func (r *Renamer) DestPath(rootFolder string, author *models.Author, book *model
 	ext := strings.TrimPrefix(filepath.Ext(srcPath), ".")
 	dest := filepath.Join(rootFolder, r.apply(r.template, author, book, series, seriesNumber, ext))
 	return ensureContained(dest, rootFolder)
+}
+
+// AudiobookFileName renders the per-file audiobook naming template for one
+// track at 1-based playback position `part`. The result is a single sanitized
+// filename (no path separators) to place directly inside the audiobook
+// destination directory (#1126). An empty template falls back to the default.
+// ext is the source extension WITHOUT a leading dot (the template supplies the
+// dot before {ext}, matching the ebook template convention).
+func (r *Renamer) AudiobookFileName(template string, author *models.Author, book *models.Book, series, seriesNumber, ext string, part int) string {
+	if template == "" {
+		template = defaultAudiobookFileTemplate
+	}
+	name := r.applyWithExtra(template, author, book, series, seriesNumber, ext, map[string]string{
+		"Part": strconv.Itoa(part),
+	})
+	// Defensive: collapse any separator a hand-edited template might introduce
+	// so a track can never escape the destination directory.
+	return filepath.Base(name)
 }
 
 // AudiobookDestDir computes the destination directory into which an audiobook
@@ -142,6 +167,13 @@ func ensureContained(dest, baseDir string) (string, error) {
 }
 
 func (r *Renamer) apply(template string, author *models.Author, book *models.Book, series, seriesNumber, ext string) string {
+	return r.applyWithExtra(template, author, book, series, seriesNumber, ext, nil)
+}
+
+// applyWithExtra is apply with an extra token map merged over the standard
+// book/author tokens. Used by the per-file audiobook namer to inject {Part}
+// (the playback-order index), which has no meaning at the book level.
+func (r *Renamer) applyWithExtra(template string, author *models.Author, book *models.Book, series, seriesNumber, ext string, extra map[string]string) string {
 	year := ""
 	if book.ReleaseDate != nil {
 		year = fmt.Sprintf("%d", book.ReleaseDate.Year())
@@ -161,6 +193,9 @@ func (r *Renamer) apply(template string, author *models.Author, book *models.Boo
 		"Genre":        sanitizePath(firstGenre(book.Genres)),
 		"Lang":         sanitizePath(book.Language),
 		"ext":          ext,
+	}
+	for k, v := range extra {
+		values[k] = v
 	}
 
 	// Render per path segment. A segment that renders empty (e.g. an empty

@@ -146,6 +146,24 @@ func (s *Scanner) flattenMultiDiscEnabled(ctx context.Context) bool {
 	return setting.Value == "true"
 }
 
+// audiobookFileTemplate reads the "naming.audiobook_file_template" setting
+// (#1126). A non-empty value opts the install into per-file audiobook renaming:
+// every audiobook folder import is flattened into destDir with each track named
+// from this template (its {Part} token carries the playback order). Empty (the
+// default) preserves the download's internal layout. Kept as a string literal
+// to avoid an import cycle with the api package; keep in sync with
+// api.SettingNamingAudiobookFileTemplate.
+func (s *Scanner) audiobookFileTemplate(ctx context.Context) string {
+	if s.settings == nil {
+		return ""
+	}
+	setting, err := s.settings.Get(ctx, "naming.audiobook_file_template")
+	if err != nil || setting == nil {
+		return ""
+	}
+	return strings.TrimSpace(setting.Value)
+}
+
 // pushToCWA copies the just-imported file into the directory watched by a
 // sibling Calibre-Web-Automated container, when the cwa.ingest_path setting
 // is configured. CWA's auto-ingest deletes whatever lands in that folder
@@ -267,18 +285,9 @@ func (s *Scanner) dropToFolder(ctx context.Context, dl *models.Download, downloa
 		return true
 	}
 
-	// Resolve book + author for naming (best-effort; nil book is fatal for the
-	// drop path because we can't compute a destination name).
-	var book *models.Book
-	var author *models.Author
-	if dl.BookID != nil {
-		if b, err := s.books.GetByID(ctx, *dl.BookID); err == nil && b != nil {
-			book = b
-			if a, err := s.authors.GetByID(ctx, b.AuthorID); err == nil {
-				author = a
-			}
-		}
-	}
+	// Resolve book + author for naming. A nil book is fatal for the drop path
+	// because we can't compute a destination name.
+	book, author := s.resolveBookAuthor(ctx, dl.BookID)
 	if book == nil {
 		s.failImport(ctx, dl, models.StateImportFailed, "could not match any book to this download — check the release title")
 		return true
@@ -289,59 +298,110 @@ func (s *Scanner) dropToFolder(ctx context.Context, dl *models.Download, downloa
 		detectedFormat = formatHint
 	}
 
+	// Pair gating (#942): a media_type=both book only hands off once BOTH
+	// formats are present, so the drop of this format may be held back until its
+	// sibling arrives. Single-format books, and everything when gating is off,
+	// fall through to the immediate placement below unchanged.
+	if s.dropPairGatingEnabled(ctx) && book.MediaType == models.MediaTypeBoth {
+		return s.dropPairGated(ctx, dl, book, author, downloadPath, bookFiles, explicitFiles, detectedFormat, folder, layout, linkMode)
+	}
+
+	dest, blocked, err := s.placeDroppedFormat(ctx, book, author, downloadPath, bookFiles, explicitFiles, detectedFormat, folder, layout, linkMode)
+	if err != nil {
+		s.failDrop(ctx, dl, blocked, err)
+		return true
+	}
+	s.finishDrop(ctx, dl, layout, linkMode, detectedFormat, dest)
+	return true
+}
+
+// placeDroppedFormat copies/hardlinks one completed format (ebook or audiobook)
+// into the configured drop folder using the flat or templated layout, never
+// moving the source (the download keeps seeding). It returns the destination
+// path recorded in history, a "blocked" flag distinguishing an invalid
+// destination (a template/config error — StateImportBlocked, retryable by the
+// user after fixing settings) from a placement failure (StateImportFailed), and
+// the error. Shared by the immediate drop, the paired release, and the timeout
+// escape hatch so all three place files identically.
+func (s *Scanner) placeDroppedFormat(ctx context.Context, book *models.Book, author *models.Author, downloadPath string, bookFiles, explicitFiles []string, format, folder, layout, linkMode string) (dest string, blocked bool, err error) {
 	importCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
 	seriesTitle, seriesNum := s.primarySeriesFor(ctx, book)
 
-	if detectedFormat == models.MediaTypeAudiobook {
-		var dest string
+	if format == models.MediaTypeAudiobook {
 		if layout == "templated" {
-			d, err := s.renamer.AudiobookDestDir(folder, author, book, seriesTitle, seriesNum)
-			if err != nil {
-				s.failImport(ctx, dl, models.StateImportBlocked, fmt.Sprintf("drop folder destination invalid: %v", err))
-				return true
+			d, derr := s.renamer.AudiobookDestDir(folder, author, book, seriesTitle, seriesNum)
+			if derr != nil {
+				return "", true, derr
 			}
 			dest = d
 		} else {
 			dest = filepath.Join(folder, s.renamer.DropAudiobookName(author, book))
 		}
 		dest = UniqueDir(dest)
-		if err := s.dropPlaceAudiobook(importCtx, downloadPath, bookFiles, explicitFiles, dest, linkMode); err != nil {
-			slog.Warn("drop: audiobook handoff failed", "title", dl.Title, "dst", dest, "mode", linkMode, "error", err)
-			s.failImport(ctx, dl, models.StateImportFailed, fmt.Sprintf("drop folder handoff failed: %v", err))
-			return true
+		if perr := s.dropPlaceAudiobook(importCtx, downloadPath, bookFiles, explicitFiles, dest, linkMode); perr != nil {
+			return "", false, perr
 		}
-		s.finishDrop(ctx, dl, layout, linkMode, models.MediaTypeAudiobook, dest)
-		return true
+		return dest, false, nil
 	}
 
 	var placed int
 	var lastErr error
 	for _, srcFile := range bookFiles {
-		var dest string
+		var fileDest string
 		if layout == "templated" {
-			d, err := s.renamer.DestPath(folder, author, book, seriesTitle, seriesNum, srcFile)
-			if err != nil {
-				lastErr = err
+			d, derr := s.renamer.DestPath(folder, author, book, seriesTitle, seriesNum, srcFile)
+			if derr != nil {
+				lastErr = derr
 				continue
 			}
-			dest = d
+			fileDest = d
 		} else {
-			dest = filepath.Join(folder, s.renamer.DropEbookName(author, book, srcFile))
+			fileDest = filepath.Join(folder, s.renamer.DropEbookName(author, book, srcFile))
 		}
-		if err := dropPlaceFile(importCtx, srcFile, dest, linkMode); err != nil {
-			lastErr = err
+		if perr := dropPlaceFile(importCtx, srcFile, fileDest, linkMode); perr != nil {
+			lastErr = perr
 			continue
 		}
 		placed++
 	}
 	if placed == 0 {
-		slog.Warn("drop: ebook handoff placed no files", "title", dl.Title, "error", lastErr)
-		s.failImport(ctx, dl, models.StateImportFailed, fmt.Sprintf("drop folder handoff failed: %v", lastErr))
-		return true
+		if lastErr == nil {
+			lastErr = fmt.Errorf("no book files could be placed")
+		}
+		return "", false, lastErr
 	}
-	s.finishDrop(ctx, dl, layout, linkMode, models.MediaTypeEbook, folder)
-	return true
+	return folder, false, nil
+}
+
+// failDrop marks a drop-path import as failed, distinguishing an invalid
+// destination (StateImportBlocked — the operator must fix the naming template /
+// folder before a retry can succeed) from a transient placement failure
+// (StateImportFailed — retryable as-is).
+func (s *Scanner) failDrop(ctx context.Context, dl *models.Download, blocked bool, err error) {
+	if blocked {
+		s.failImport(ctx, dl, models.StateImportBlocked, fmt.Sprintf("drop folder destination invalid: %v", err))
+		return
+	}
+	slog.Warn("drop: handoff failed", "title", dl.Title, "error", err)
+	s.failImport(ctx, dl, models.StateImportFailed, fmt.Sprintf("drop folder handoff failed: %v", err))
+}
+
+// resolveBookAuthor loads the book (and, best-effort, its author) for a
+// download's BookID. Returns nil book when the download has no BookID or the
+// lookup fails — callers treat that as "unmatched".
+func (s *Scanner) resolveBookAuthor(ctx context.Context, bookID *int64) (*models.Book, *models.Author) {
+	if bookID == nil {
+		return nil, nil
+	}
+	b, err := s.books.GetByID(ctx, *bookID)
+	if err != nil || b == nil {
+		return nil, nil
+	}
+	if a, err := s.authors.GetByID(ctx, b.AuthorID); err == nil {
+		return b, a
+	}
+	return b, nil
 }
 
 // finishDrop parks a successful drop handoff in StateImportExternal and records

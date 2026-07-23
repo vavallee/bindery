@@ -308,6 +308,30 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             onSave={() => saveSetting('naming_template_audiobook')}
             saving={saving === 'naming_template_audiobook'}
           />
+          <div>
+            <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
+              {t('settings.general.audiobookFileTemplate', 'Audiobook file naming (per track)')}
+            </label>
+            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+              {t('settings.general.audiobookFileTemplateHint', 'Leave empty to keep the download’s original file layout. Set a template to rename every audiobook track in playback order — it must include {Part}.')}
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={settings['naming.audiobook_file_template'] ?? ''}
+                onChange={e => setSettings(s => ({ ...s, 'naming.audiobook_file_template': e.target.value }))}
+                placeholder="{Title} - Part {Part:3}.{ext}"
+                className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+              />
+              <button
+                onClick={() => saveSetting('naming.audiobook_file_template')}
+                disabled={saving === 'naming.audiobook_file_template'}
+                className="px-3 py-2 rounded text-xs font-medium disabled:opacity-50 bg-emerald-600 hover:bg-emerald-500"
+              >
+                {saving === 'naming.audiobook_file_template' ? t('common.saving') : t('common.save')}
+              </button>
+            </div>
+          </div>
         </div>
       </section>
 
