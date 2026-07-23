@@ -599,6 +599,22 @@ func (r *BookRepo) ListBookFiles(ctx context.Context, bookID int64) ([]models.Bo
 	return r.files.ListByBook(ctx, bookID)
 }
 
+// BookIDForFile returns the owning book id for a book_files row id (0 if none).
+func (r *BookRepo) BookIDForFile(ctx context.Context, fileID int64) (int64, error) {
+	return r.files.BookIDForFile(ctx, fileID)
+}
+
+// UpdateBookFilePath repoints a tracked book_files row at newPath (after the
+// library reorganize action moved the file on disk, #1181) and refreshes the
+// owning book's aggregate status so the computed ebook/audiobook path views
+// track the new location.
+func (r *BookRepo) UpdateBookFilePath(ctx context.Context, fileID, bookID int64, newPath string) error {
+	if err := r.files.UpdatePath(ctx, fileID, newPath); err != nil {
+		return err
+	}
+	return r.refreshBookStatus(ctx, bookID)
+}
+
 // refreshBookStatus recomputes the aggregate status for a book from its
 // current book_files rows and updates both the status and legacy columns.
 // It queries book_files directly so the result is always authoritative,

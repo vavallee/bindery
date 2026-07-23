@@ -556,6 +556,7 @@ func main() {
 	manualImportHandler := api.NewManualImportHandler(importScanner, downloadRepo, bookRepo).
 		WithRoots(importRoots)
 	pendingHandler := api.NewPendingHandler(pendingReleaseRepo, queueHandler, downloadRepo, bookRepo)
+	reorganizeHandler := api.NewReorganizeHandler(importScanner)
 	importScanner.WithSettings(settingsRepo)
 	importScanner.WithRootFolders(rootFolderRepo)
 	importScanner.WithSeriesRepo(seriesRepo)
@@ -838,6 +839,11 @@ func main() {
 			r.Post("/queue/manual-import/batch", manualImportHandler.ImportBatch)
 			r.Post("/queue/manual-import/reassign", manualImportHandler.Reassign)
 			r.Post("/queue/manual-import/match", manualImportHandler.MatchDownload)
+
+			// Library reorganize (#1181) — admin-only: recomputes tracked files'
+			// paths from the current naming template and moves them in place.
+			r.Get("/reorganize/preview", reorganizeHandler.Preview)
+			r.Post("/reorganize/apply", reorganizeHandler.Apply)
 		})
 		r.Get("/pending", pendingHandler.List)
 		r.Delete("/pending/{id}", pendingHandler.Delete)

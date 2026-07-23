@@ -124,6 +124,10 @@ POST   /api/v1/queue/manual-import/batch          import selected {path, bookId}
 POST   /api/v1/queue/manual-import/reassign       move a mis-matched file to another book (admin)
 POST   /api/v1/queue/manual-import/match          attach an importFailed download to a book and import its files (admin)
 
+GET    /api/v1/reorganize/preview                 preview renaming tracked files to the current template (admin)
+                                                    ?scope=book|author|library (&id=N for book/author)
+POST   /api/v1/reorganize/apply                   move the selected files {fileIds:[…]} to their templated paths (admin)
+
 GET    /api/v1/history                            grab / import / failure timeline
 POST   /api/v1/history/{id}/blocklist             add the release to the blocklist
 
