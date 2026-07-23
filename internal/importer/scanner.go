@@ -760,6 +760,13 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// searchWanted skip the book while the hand-off is outstanding, and
 	// ScanLibrary still reconciles the file the moment it lands.
 	if configuredMode == "external" {
+		// Escape hatch for pair gating (#942): before handing off, release any
+		// formats that have been held past the timeout waiting for a sibling
+		// that never arrived. Evaluated here — on every external-mode tick —
+		// rather than on a dedicated scheduled sweep, so held formats drain on
+		// the next drop-folder activity after their deadline. No-op when nothing
+		// is held.
+		s.sweepHeldPairGating(ctx)
 		// When a drop folder is configured (#941), external mode renames the
 		// finished file into that folder (copy/hardlink, never move) for a
 		// sibling tool (CWA, Calibre, Storyteller) to ingest, then still parks

@@ -68,6 +68,23 @@ const (
 	// typically deletes what it ingests) or "hardlink" (disk-free same-fs). The
 	// source is never moved, so the download keeps seeding.
 	SettingImportDropLinkMode = "import.drop_link_mode"
+	// SettingImportDropPairGating (#942) opts media_type=both books into
+	// hold-until-paired handoff on the drop path: "true" holds the first-arriving
+	// format (ebook or audiobook) and drops it only once the sibling format is
+	// present too, so a paired-reader tool (Storyteller) ingests both together
+	// instead of wasting a watch-folder cycle on a half-pair. Unset/"false"
+	// (default) keeps the original behaviour — each format drops the moment it
+	// completes. Only affects media_type=both books; single-format books are
+	// never held. The importer reads this key as a string literal to avoid an
+	// import cycle; keep the literal in sync with this constant.
+	SettingImportDropPairGating = "import.drop_pair_gating"
+	// SettingImportDropPairGatingTimeoutHours (#942) is the escape hatch: it
+	// bounds how long a held format waits for its sibling before being dropped
+	// alone and finished. Value is a positive integer number of hours; unset,
+	// empty, non-numeric, or non-positive falls back to 72h. Without it a
+	// never-arriving second format would wedge the first forever. The importer
+	// reads this key as a string literal; keep the literal in sync.
+	SettingImportDropPairGatingTimeoutHours = "import.drop_pair_gating_timeout_hours"
 )
 
 // SettingSearchInterval is the KV key for the wanted-book search cadence.
@@ -395,6 +412,24 @@ func validateSettingValue(key, value string) error {
 		}
 		if value != "copy" && value != "hardlink" {
 			return fmt.Errorf("import.drop_link_mode %q is not one of: copy, hardlink", value)
+		}
+	case SettingImportDropPairGating:
+		// Boolean flag; empty or "false" = off. Only accept the two canonical
+		// values so a typo can't be silently misread as truthy.
+		if value == "" || value == "true" || value == "false" {
+			return nil
+		}
+		return fmt.Errorf("import.drop_pair_gating %q is not one of: true, false", value)
+	case SettingImportDropPairGatingTimeoutHours:
+		// Empty falls back to the 72h default; a non-empty value must be a
+		// positive integer number of hours so a typo fails loudly here rather
+		// than silently reverting to the default at hold time.
+		if value == "" {
+			return nil
+		}
+		n, err := strconv.Atoi(value)
+		if err != nil || n <= 0 {
+			return fmt.Errorf("import.drop_pair_gating_timeout_hours %q must be a positive integer number of hours", value)
 		}
 	case SettingImportMode:
 		// Empty = auto (same as "auto"); a typo must fail loudly here rather
