@@ -418,6 +418,79 @@ func TestBookSearch_FinalFallbackTitleOnly(t *testing.T) {
 	}
 }
 
+// TestTransliterateQuery covers #1610: outgoing book-search queries must be
+// sent in the ASCII alphabet Usenet release names use. German umlauts expand
+// to their two-letter forms (a blind diacritic fold would collapse ä to a;
+// releases use ae), other Latin diacritics fold to the base letter, and
+// non-Latin scripts pass through unchanged.
+func TestTransliterateQuery(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"Harry Potter und der Orden des Phönix", "Harry Potter und der Orden des Phoenix"},
+		{"Die Heiligtümer des Todes", "Die Heiligtuemer des Todes"},
+		{"Über Nacht", "Ueber Nacht"},
+		{"Straße der Träume", "Strasse der Traeume"},
+		{"Jürgen Müller", "Juergen Mueller"},
+		{"Señor Núñez", "Senor Nunez"},
+		{"José Ángel", "Jose Angel"},
+		{"François", "Francois"},
+		{"Dark Matter", "Dark Matter"}, // plain ASCII untouched
+		{"村上春樹", "村上春樹"},               // CJK untouched
+		{"Тихий Дон", "Тихий Дон"},     // Cyrillic untouched (й is и + combining breve — must survive the fold)
+		{"Το Νησί", "Το Νησί"},         // Greek untouched (tonos is a combining mark on a non-Latin base)
+	}
+	for _, c := range cases {
+		if got := transliterateQuery(c.in); got != c.want {
+			t.Errorf("transliterateQuery(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestBookSearch_TransliteratesUmlautQueries covers #1610 end to end: every
+// query tier must carry the transliterated title and author. Metadata says
+// "Phönix" but the wanted releases are named "Phoenix" — with the raw form,
+// literal-matching indexers returned (near-)zero results for every German
+// title containing an umlaut, so those books never auto-grabbed.
+func TestBookSearch_TransliteratesUmlautQueries(t *testing.T) {
+	type captured struct{ t, q, title, author string }
+	var got []captured
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Query()
+		got = append(got, captured{p.Get("t"), p.Get("q"), p.Get("title"), p.Get("author")})
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(`<?xml version="1.0"?><rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/"><channel><newznab:response total="0"/></channel></rss>`))
+	}))
+	defer srv.Close()
+
+	c := testNew(srv.URL, "testkey")
+	if _, err := c.BookSearch(context.Background(), "Harry Potter und der Orden des Phönix", "Jürgen Müller", []int{7020}); err != nil {
+		t.Fatalf("BookSearch: %v", err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("expected all 4 query tiers to fire, got %d: %+v", len(got), got)
+	}
+	want := []captured{
+		{"book", "", "Harry Potter und der Orden des Phoenix", "Juergen Mueller"},
+		{"search", "Mueller Harry Potter und der Orden des Phoenix", "", ""},
+		{"search", "Juergen Mueller Harry Potter und der Orden des Phoenix", "", ""},
+		{"search", "Harry Potter und der Orden des Phoenix", "", ""},
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("tier %d query = %+v, want %+v", i+1, got[i], w)
+		}
+	}
+	for i, g := range got {
+		for _, s := range []string{g.q, g.title, g.author} {
+			if strings.ContainsAny(s, "äöüÄÖÜß") {
+				t.Errorf("tier %d sent a raw umlaut: %+v", i+1, g)
+			}
+		}
+	}
+}
+
 // TestProbe_Success checks the happy-path of the Test button probe: an
 // OK caps response yields populated status/categories/bookSearch fields
 // with a finite latency.
