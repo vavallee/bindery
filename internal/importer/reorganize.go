@@ -139,7 +139,8 @@ func (s *Scanner) previewBook(ctx context.Context, book *models.Book) ([]Reorgan
 func (s *Scanner) proposedPathFor(ctx context.Context, book *models.Book, author *models.Author, seriesTitle, seriesNum string, f models.BookFile) (proposed, status, msg string) {
 	var dest string
 	var err error
-	if f.Format == models.MediaTypeAudiobook {
+	audiobook := f.Format == models.MediaTypeAudiobook
+	if audiobook {
 		root := s.effectiveAudiobookDir(ctx, author)
 		dest, err = s.renamer.AudiobookDestDir(root, author, book, seriesTitle, seriesNum)
 	} else {
@@ -148,6 +149,18 @@ func (s *Scanner) proposedPathFor(ctx context.Context, book *models.Book, author
 	}
 	if err != nil {
 		return "", ReorgStatusError, err.Error()
+	}
+
+	// Mirror the import path's uniqueness handling for audiobook folders. Import
+	// runs the templated dir through UniqueDir (scanner.go), so a dual-format
+	// book whose audiobook template resolves to the same "Title (Year)" folder
+	// its ebook already occupies lands at "Title (Year) (2)". Reorganize must
+	// resolve to the same variant — treating this file's OWN current location as
+	// available, so an already-correctly-placed audiobook reads as a noop rather
+	// than a false collision (or an endless (N)→(N+1) churn). Ebooks are single
+	// files and are not uniquified at import, so they skip this.
+	if audiobook {
+		dest = uniqueDirExcluding(dest, f.Path)
 	}
 
 	if filepath.Clean(dest) == filepath.Clean(f.Path) {
@@ -167,7 +180,40 @@ func (s *Scanner) proposedPathFor(ctx context.Context, book *models.Book, author
 	} else if !os.IsNotExist(err) {
 		return dest, ReorgStatusError, err.Error()
 	}
+	// The destination can be free on disk yet already claimed in the index by a
+	// dangling book_files row (a file deleted off disk without clearing its
+	// row). book_files.path is UNIQUE, so moving here would land the file but
+	// then fail the index update, leaving the row pointing at a now-missing
+	// path. Treat an index-level owner as a collision too.
+	if owned, err := s.books.PathOwnedByOtherBook(ctx, dest, book.ID); err != nil {
+		return dest, ReorgStatusError, err.Error()
+	} else if owned {
+		return dest, ReorgStatusCollision, "another book already tracks the destination path"
+	}
 	return dest, ReorgStatusMove, ""
+}
+
+// uniqueDirExcluding mirrors UniqueDir but treats keep as if it were absent, so
+// resolving the destination for a file already parked at a uniquified location
+// returns that same location (a noop) instead of bumping to the next suffix.
+func uniqueDirExcluding(base, keep string) string {
+	keep = filepath.Clean(keep)
+	if filepath.Clean(base) == keep {
+		return base
+	}
+	if _, err := os.Stat(base); os.IsNotExist(err) {
+		return base
+	}
+	for i := 2; i < 1000; i++ {
+		candidate := fmt.Sprintf("%s (%d)", base, i)
+		if filepath.Clean(candidate) == keep {
+			return candidate
+		}
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			return candidate
+		}
+	}
+	return base
 }
 
 // ApplyReorganize moves each of the given tracked files to its templated
