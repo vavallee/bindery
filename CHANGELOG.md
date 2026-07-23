@@ -4,7 +4,14 @@ All notable changes to Bindery are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com) and versions follow
 [Semantic Versioning](https://semver.org).
 
-## [Unreleased]
+## [v1.27.0] — 2026-07-22
+
+A feature release built around library management. Two new tools for keeping an
+existing library tidy — **Rename files** (reorganize files to the current
+naming template) and **Match to book** (rescue a completed download the
+auto-matcher couldn't place) — plus a guard against auto-grab pulling in
+unrelated movie/TV releases and a fix for German National Library catalogues
+showing one book per printing.
 
 ### Added
 - **Rename files: reorganize an existing library to the naming template**
@@ -48,12 +55,34 @@ All notable changes to Bindery are documented here. Format loosely follows
   import time, a download whose largest file is a video file is blocked for
   manual review instead of being imported (an explicit format chosen through
   manual import overrides the block).
+- **DNB author catalogues collapse editions into one book per work** (#1585,
+  #1586) — the Deutsche Nationalbibliothek issues one MARC record per edition,
+  printing, and volume with no work abstraction, so adding a DNB-primary
+  author's catalogue produced a wall of near-duplicate books for the same work.
+  The author-works path now groups records by work and volume, drops the
+  combined volume-0 record when a work has numbered volumes, and rebuilds each
+  representative's title from its series/volume statement, so one work becomes
+  one book. Existing libraries keep any duplicate rows already imported (the
+  author sync is add-only); remove them manually or via a future merge (#1358).
+- **Security: the wanted/missing list is now scoped per user** (#1600) — under
+  multi-user tenancy (`BINDERY_ENFORCE_TENANCY`), `GET /api/v1/wanted/missing`
+  returned every user's wanted/missing books to any non-admin instead of just
+  their own, the one book-list route that had missed the `owner_user_id` scope
+  applied everywhere else. It now filters like the main book list; admins,
+  API-key, and single-tenant deployments are unaffected.
 
 ### Changed
 - The queue **Retry import** control now also revives downloads the scanner
   terminally blocked (`importBlocked`) after exhausting their retry budget, not
   only `importFailed` ones — previously it silently no-op'd on blocked items.
   (Part of #1589.)
+- **Dependencies:** `modernc.org/sqlite` 1.53 → 1.54, the distroless base image
+  for the main binary and the discord-stats/telemetry sidecars, and seven
+  minor/patch web dependencies (#1582, #1583, #1584, #1554, #1555).
+
+### Docs
+- Clarified that `BINDERY_LIBRARY_DIR` is a scan/reconcile target in External
+  import mode, not a destination Bindery writes to (#1558).
 
 ## [v1.26.2] — 2026-07-19
 
