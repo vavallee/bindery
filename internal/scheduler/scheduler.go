@@ -834,6 +834,7 @@ var inFlightDownloadStates = []models.DownloadState{
 	models.StateImportPending,
 	models.StateImporting,
 	models.StateImportExternal, // external hand-off outstanding (issue #706 finding 3)
+	models.StateImportHeld,     // drop-folder format held awaiting its pair (#942)
 }
 
 // wantedSearchQueue returns the Wanted books eligible for an auto-grab this
