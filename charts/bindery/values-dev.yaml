@@ -1,16 +1,2 @@
 image:
-  tag: "1.2.0"
-
-# Log-rate alerting (#1085): page Discord when bindery-dev accumulates
-# WARN/ERROR log entries, so the dev instance acts as a live canary instead
-# of failures sitting unseen in its logs. Secrets come from the
-# "bindery-secrets" ExternalSecret in the bindery-dev namespace, which syncs
-# Vault's secret/cluster/bindery (keys: dev-api-key, webhook-url).
-logAlert:
-  enabled: true
-  apiKeySecret:
-    name: bindery-secrets
-    key: dev-api-key
-  webhookSecret:
-    name: bindery-secrets
-    key: webhook-url
+  tag: "sha-a3681e5"
