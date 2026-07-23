@@ -1500,3 +1500,76 @@ func TestFilterRelevantInOrderEmbeddedDifferentWork(t *testing.T) {
 		}
 	}
 }
+
+func TestFilterNonBookContentVideoMarkers(t *testing.T) {
+	// The #1591 report: a movie release sharing a few title words with the
+	// requested book was selected as its audiobook. Every video-marked title
+	// must be dropped regardless of how well its words match.
+	dropped := []string{
+		"Unrelated.Release.WEBRip.1080p.x265",
+		"Example.Book.2019.720p.WEB-DL.h264-GRP",
+		"Example Book S01E03 HDTV x264",
+		"Example.Book.2160p.BluRay.REMUX.HEVC",
+		"Example.Book.DVDRip.XviD",
+	}
+	kept := []string{
+		"Example Author - Example Book (Unabridged) [M4B]",
+		"Example.Book.Example.Author.EPUB",
+		"Example Book by Example Author MP3 320",
+	}
+	results := filterNonBookContent(toResults(append(dropped, kept...)...))
+	for _, title := range dropped {
+		if contains(results, title) {
+			t.Errorf("video-marked release %q should be dropped", title)
+		}
+	}
+	for _, title := range kept {
+		if !contains(results, title) {
+			t.Errorf("book release %q should be kept", title)
+		}
+	}
+}
+
+func TestFilterNonBookContentCategories(t *testing.T) {
+	mk := func(title, cat string) newznab.SearchResult {
+		return newznab.SearchResult{Title: title, GUID: title, Category: cat}
+	}
+	results := filterNonBookContent([]newznab.SearchResult{
+		mk("movie-cat", "2040"),   // Movies/HD
+		mk("tv-cat", "5030"),      // TV/SD
+		mk("console-cat", "1010"), // Console
+		mk("pc-cat", "4050"),      // PC/Games
+		mk("audiobook-cat", "3030"),
+		mk("ebook-cat", "7020"),
+		mk("misc-cat", "8010"),
+		mk("no-cat", ""),
+		mk("garbage-cat", "Books > Audiobooks"),
+	})
+	for _, want := range []string{"audiobook-cat", "ebook-cat", "misc-cat", "no-cat", "garbage-cat"} {
+		if !contains(results, want) {
+			t.Errorf("result %q should be kept", want)
+		}
+	}
+	for _, drop := range []string{"movie-cat", "tv-cat", "console-cat", "pc-cat"} {
+		if contains(results, drop) {
+			t.Errorf("result %q should be dropped", drop)
+		}
+	}
+}
+
+func TestVideoMarkerReNoFalsePositives(t *testing.T) {
+	// Titles that skirt the marker vocabulary but are legitimate books.
+	for _, title := range []string{
+		"1080 Recipes - Simone Ortega EPUB",             // bare number, no p/i suffix
+		"Windows 10 for Dummies.epub",                   // OS version number
+		"Seveneves - Neal Stephenson (Unabridged)",      // contains 'eve', 'ns'
+		"The Subtle Art of Not Giving a F*ck MP3",       // profanity masking punctuation
+		"Sherlock Holmes - The Complete Series [M4B]",   // 'Series' without SxxExx
+		"Ready Player One - Ernest Cline - 2011 - AZW3", // year present
+		"Remus Lupin Chronicles - Book 2 (2020) [EPUB]", // 'Remu...' prefix of remux but bounded
+	} {
+		if videoMarkerRe.MatchString(title) {
+			t.Errorf("videoMarkerRe should not match book title %q", title)
+		}
+	}
+}
