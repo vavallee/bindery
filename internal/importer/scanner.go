@@ -22,6 +22,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
 )
@@ -88,6 +89,12 @@ type Scanner struct {
 	absLibraryIDsFn      func() []string
 	notif                eventNotifier
 
+	// jobs, when set, tracks the detached scan goroutine launched by StartScan
+	// so process shutdown can cancel and drain it before the database closes
+	// (#1458). When nil, StartScan falls back to an untracked goroutine on the
+	// caller's context (tests, non-wired callers).
+	jobs *jobs.Group
+
 	// scanRunning is the single-flight guard for library scans (#1460).
 	// Concurrent full walks race on book creation (books has no unique
 	// constraint equivalent to book_files.path) and clobber library.lastScan,
@@ -144,6 +151,14 @@ func (s *Scanner) WithAudiobookDownloadDir(dir string) *Scanner {
 // fall-back to the default download dir.
 func (s *Scanner) AudiobookDownloadDir() string {
 	return s.audiobookDownloadDir
+}
+
+// WithJobs registers the process-wide background-jobs group so a StartScan()
+// launched scan is tracked and drained on shutdown before the database closes
+// (#1458).
+func (s *Scanner) WithJobs(g *jobs.Group) *Scanner {
+	s.jobs = g
+	return s
 }
 
 // WithRootFolders attaches the root folder repo so the scanner can resolve
@@ -1054,8 +1069,44 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			return
 		}
 		if book != nil {
-			if err := s.books.SetFormatFilePath(ctx, book.ID, models.MediaTypeAudiobook, destDir); err != nil {
-				slog.Error("failed to update audiobook file path", "bookID", book.ID, "error", err)
+			// Recording the audiobook location MUST succeed before the download
+			// is marked imported. If it fails and we mark imported anyway, the
+			// book has no format file path, still reads as wanted, and the
+			// wanted sweep re-grabs it into a "Title (2)" duplicate — while in
+			// move mode the original source is already gone (#1459). Unlike the
+			// ebook path below (which stages the file, writes the row, then
+			// atomically promotes), the folder is already placed here, so the
+			// best we can do is retry the write to ride out transient SQLite
+			// lock/busy errors and, on persistent failure, refuse to mark the
+			// import complete.
+			var setErr error
+			for attempt := 0; attempt < 3; attempt++ {
+				if setErr = s.books.SetFormatFilePath(ctx, book.ID, models.MediaTypeAudiobook, destDir); setErr == nil {
+					break
+				}
+				if ctx.Err() != nil {
+					break // a cancelled context won't recover; stop retrying
+				}
+				time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
+			}
+			if setErr != nil {
+				slog.Error("failed to record audiobook file path — failing import to avoid a re-grab duplicate",
+					"bookID", book.ID, "dst", destDir, "error", setErr)
+				// copy/hardlink left the source intact, so remove the
+				// just-placed destination and let the import retry cleanly.
+				// move already consumed the source, so keep the placed folder
+				// and point the user at it rather than deleting their only copy.
+				if mode == "copy" || mode == "hardlink" {
+					if rmErr := os.RemoveAll(destDir); rmErr != nil {
+						slog.Warn("failed to remove audiobook destination after DB error", "dst", destDir, "error", rmErr)
+					}
+					s.failImport(ctx, dl, models.StateImportBlocked,
+						fmt.Sprintf("audiobook placed but could not be recorded (%v) — retry the import", setErr))
+				} else {
+					s.failImport(ctx, dl, models.StateImportBlocked,
+						fmt.Sprintf("audiobook moved to %s but could not be recorded (%v); the files are preserved there — retry the import to record them", destDir, setErr))
+				}
+				return
 			}
 		}
 		s.updateDownloadStatus(ctx, dl.ID, models.StateImported)
@@ -1781,10 +1832,21 @@ func (s *Scanner) StartScan(ctx context.Context) error {
 	if !s.scanRunning.CompareAndSwap(false, true) {
 		return ErrScanAlreadyRunning
 	}
-	go func() {
-		defer s.scanRunning.Store(false)
-		s.scanLibrary(ctx)
-	}()
+	// When a jobs group is wired, the scan runs on the shutdown-scoped context
+	// so SIGTERM cancels and drains it before the DB closes, instead of the
+	// never-cancelled WithoutCancel(request) context. Fall back to an untracked
+	// goroutine for tests/non-wired callers (#1458).
+	if s.jobs != nil {
+		s.jobs.Go("library-scan", func(ctx context.Context) {
+			defer s.scanRunning.Store(false)
+			s.scanLibrary(ctx)
+		})
+	} else {
+		go func() {
+			defer s.scanRunning.Store(false)
+			s.scanLibrary(ctx)
+		}()
+	}
 	return nil
 }
 

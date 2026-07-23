@@ -185,7 +185,14 @@ func (e *Enumerator) Enumerate(ctx context.Context, libraryID string, fn func(co
 	// successfully processed item rather than discarding the partial progress
 	// captured since the last debounced write.
 	flushOnReturn := func() {
-		if flushErr := cp.flush(ctx); flushErr != nil {
+		// Detach from ctx deliberately: this runs precisely when ctx has been
+		// cancelled (shutdown drain, or a callback error), and the checkpoint
+		// write IS the resume mechanism that cancel path exists to protect.
+		// Flushing on the cancelled ctx would fail every write and throw away
+		// the progress we are trying to save (#1472). Previously unreachable
+		// because ABS import ran on a non-cancellable context; wiring it into
+		// the shutdown-scoped group (#1458) makes it live.
+		if flushErr := cp.flush(context.WithoutCancel(ctx)); flushErr != nil {
 			slog.Warn("abs enumerate: flush checkpoint failed", "libraryID", libraryID, "error", flushErr)
 		}
 	}

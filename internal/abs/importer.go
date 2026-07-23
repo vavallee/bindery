@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -64,6 +65,13 @@ func (i *Importer) WithMetadata(meta *metadata.Aggregator) *Importer {
 
 func (i *Importer) WithEnhancedHardcoverSeriesEnabled(enabled func(context.Context) bool) *Importer {
 	i.hardcoverSeriesEnabled = enabled
+	return i
+}
+
+// WithJobs registers the process-wide background-jobs group so a Start()-launched
+// import is tracked and drained on shutdown before the database closes (#1458).
+func (i *Importer) WithJobs(g *jobs.Group) *Importer {
+	i.jobs = g
 	return i
 }
 
@@ -234,7 +242,16 @@ func (i *Importer) Start(ctx context.Context, cfg ImportConfig) error {
 	}
 	i.mu.Unlock()
 
-	go i.run(ctx, cfg)
+	// When a jobs group is wired, launch through it so the import runs on the
+	// shutdown-scoped context (cancelled on SIGTERM, drained before the DB
+	// closes) rather than the caller's WithoutCancel(request) context, which
+	// nothing ever cancels. Fall back to an untracked goroutine otherwise so
+	// tests and non-wired callers keep the previous behaviour (#1458).
+	if i.jobs != nil {
+		i.jobs.Go("abs-import", func(ctx context.Context) { i.run(ctx, cfg) })
+	} else {
+		go i.run(ctx, cfg)
+	}
 	return nil
 }
 

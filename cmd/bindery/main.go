@@ -33,6 +33,7 @@ import (
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/indexer"
+	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/logbuf"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/metadata/dnb"
@@ -201,6 +202,20 @@ func main() {
 	appCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Background-jobs group. Detached jobs (ABS import, Grimmory bulk sync,
+	// manual library scan, and the startup syncs below) run on this group's
+	// shutdown-scoped context instead of context.WithoutCancel(request) /
+	// context.Background(). That context is deliberately NOT derived from any
+	// HTTP request (a response returning must not cancel the job) NOR from
+	// appCtx: it is cancelled only when bgJobs.Shutdown() runs, which happens
+	// AFTER srv.Shutdown during process teardown. So in-flight jobs keep making
+	// progress while HTTP connections drain, then get the drain grace window —
+	// measured from drain start — to wind down before database.Close(). The
+	// group's WaitGroup lets that drain complete before the deferred DB close,
+	// so jobs never race DB teardown (#1458). Drain step is below, after
+	// srv.Shutdown.
+	bgJobs := jobs.NewGroup(context.Background())
+
 	// Parse trusted-proxy CIDRs once at startup (shared by trustedProxyMiddleware
 	// and the proxy-auth identity check).
 	trustedCIDRs := parseTrustedProxyCIDRs(os.Getenv("BINDERY_TRUSTED_PROXY"))
@@ -310,6 +325,7 @@ func main() {
 		cfg.DownloadPathRemap,
 	)
 	importScanner.WithNotifier(notif)
+	importScanner.WithJobs(bgJobs) // drain manual scans on shutdown (#1458)
 
 	// Grimmory push pipeline (#826). Config is loaded live per push, so the
 	// Settings toggle takes effect without a restart.
@@ -372,7 +388,8 @@ func main() {
 		WithMetadata(metaAgg).
 		WithEnhancedHardcoverSeriesEnabled(func(ctx context.Context) bool {
 			return api.HardcoverFeatureStateFor(ctx, settingsRepo, cfg.EnhancedHardcoverAPI).EnhancedHardcoverAPI
-		})
+		}).
+		WithJobs(bgJobs) // drain in-flight imports on shutdown (#1458)
 	storedABS := api.LoadABSConfig(ctxBoot, settingsRepo)
 	resumeCfg := abs.ImportConfig{
 		SourceID:   abs.DefaultSourceID,
@@ -393,11 +410,12 @@ func main() {
 		cfg := api.LoadCalibreConfig(ctxBoot, settingsRepo)
 		if cfg.Enabled && cfg.LibraryPath != "" {
 			slog.Info("calibre sync_on_startup enabled — kicking off library import")
-			go func() {
-				if _, err := calibreImporter.Run(appCtx, cfg.LibraryPath); err != nil {
+			libPath := cfg.LibraryPath
+			bgJobs.Go("calibre-startup-import", func(ctx context.Context) {
+				if _, err := calibreImporter.Run(ctx, libPath); err != nil {
 					slog.Warn("calibre startup import failed", "error", err)
 				}
-			}()
+			})
 		} else {
 			slog.Info("calibre sync_on_startup is on but integration is not configured — skipping")
 		}
@@ -413,13 +431,13 @@ func main() {
 				continue
 			}
 			inst := inst // capture
-			go func() {
+			bgJobs.Go("prowlarr-startup-sync", func(ctx context.Context) {
 				client := prowlarr.NewWithTimeout(inst.URL, inst.APIKey, prowlarrTimeout)
 				syncer := prowlarr.NewSyncer(client, indexerRepo, prowlarrRepo)
-				if _, err := syncer.Sync(context.Background(), inst.ID); err != nil {
+				if _, err := syncer.Sync(ctx, inst.ID); err != nil {
 					slog.Warn("prowlarr startup sync failed", "instance", inst.Name, "error", err)
 				}
-			}()
+			})
 		}
 	}
 
@@ -534,7 +552,7 @@ func main() {
 	indexerHandler := api.NewIndexerHandler(indexerRepo, bookRepo, authorRepo, metadataProfileRepo, idxSearcher, settingsRepo, blocklistRepo).WithAliases(authorAliasRepo)
 	downloadHealth := downloader.NewHealthStore().WithNotifier(notif)
 	if clients, err := dlClientRepo.List(ctxBoot); err == nil {
-		downloader.RefreshDownloadClientHealthAsync(context.Background(), downloadHealth, clients, cfg.DownloadDir, cfg.AudiobookDownloadDir)
+		downloader.RefreshDownloadClientHealthAsync(context.Background(), bgJobs, downloadHealth, clients, cfg.DownloadDir, cfg.AudiobookDownloadDir)
 	} else {
 		slog.Warn("download client startup health check skipped", "error", err)
 	}
@@ -618,7 +636,7 @@ func main() {
 	calibreHandler := api.NewCalibreHandler(settingsRepo).
 		WithLifetimeCtx(appCtx)
 	grimmoryHandler := api.NewGrimmoryHandler(settingsRepo).WithVersion(version)
-	grimmorySyncer := grimmory.NewSyncer(bookRepo, grimmoryPusher)
+	grimmorySyncer := grimmory.NewSyncer(bookRepo, grimmoryPusher).WithJobs(bgJobs) // drain mid-upload syncs on shutdown (#1458)
 	grimmorySyncHandler := api.NewGrimmorySyncHandler(grimmorySyncer, grimmoryLoadPushCfg).
 		WithLastPush(grimmoryPushRepo.LastPush)
 	absHandler := api.NewABSHandler(settingsRepo).WithVersion(version)
@@ -1120,10 +1138,26 @@ func main() {
 		slog.Info("serving under path prefix", "urlBase", cfg.URLBase)
 	}
 
-	gracePeriod := 30 * time.Second
+	// HTTP-drain grace and the background-job drain grace (#1458) run serially on
+	// shutdown, so their SUM is the pod's total termination budget. The defaults
+	// (10s + 15s = 25s) are sized to finish under Kubernetes' default 30s
+	// terminationGracePeriodSeconds with headroom before SIGKILL. Operators who
+	// raise terminationGracePeriodSeconds can raise either env var to match.
+	gracePeriod := 10 * time.Second
 	if v := os.Getenv("BINDERY_SHUTDOWN_GRACE"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			gracePeriod = d
+		}
+	}
+
+	// Grace window for draining detached background jobs after the HTTP server
+	// stops, before the database is closed (#1458). Kept separate from the HTTP
+	// grace above so a long-running import gets its own budget rather than
+	// competing with in-flight request draining.
+	bgDrainGracePeriod := 15 * time.Second
+	if v := os.Getenv("BINDERY_JOBS_DRAIN_GRACE"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			bgDrainGracePeriod = d
 		}
 	}
 
@@ -1155,6 +1189,16 @@ func main() {
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			slog.Warn("server shutdown did not complete cleanly", "error", err)
+		}
+		// Drain detached background jobs (ABS import, Grimmory sync, manual scan,
+		// startup syncs) before the deferred database.Close() runs. srv.Shutdown
+		// above already stopped accepting new work, so no new jobs can start.
+		// bgJobs.Shutdown cancels their shutdown-scoped context and waits up to
+		// the grace window; jobs that ignore cancellation are logged and we
+		// proceed rather than hang the pod's termination indefinitely (#1458).
+		if stillRunning := bgJobs.Shutdown(bgDrainGracePeriod); len(stillRunning) > 0 {
+			slog.Warn("background jobs did not drain within grace period; proceeding to shut down",
+				"jobs", stillRunning, "grace", bgDrainGracePeriod)
 		}
 		slog.Info("shutdown complete")
 	}
