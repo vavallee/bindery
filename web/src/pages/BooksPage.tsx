@@ -12,7 +12,13 @@ import BulkActionBar from '../components/BulkActionBar'
 import Pagination from '../components/Pagination'
 import { useServerPagination } from '../components/usePagination'
 
-type SortMode = 'title-az' | 'title-za' | 'date-new' | 'date-old'
+type SortMode =
+  | 'title-az' | 'title-za'
+  | 'date-new' | 'date-old'
+  | 'author-az' | 'author-za'
+  | 'type-az' | 'type-za'
+  | 'status-az' | 'status-za'
+type MonitoredFilter = '' | 'monitored' | 'unmonitored'
 
 
 // statusLabel is populated at render time from t() — see BooksPage
@@ -31,6 +37,13 @@ export default function BooksPage() {
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('')
   const [mediaFilter, setMediaFilter] = useState<'' | 'ebook' | 'audiobook'>('')
+  const [monitoredFilter, setMonitoredFilter] = useState<MonitoredFilter>(() => {
+    try {
+      const v = localStorage.getItem('bindery.filter.books.monitored')
+      if (v === 'monitored' || v === 'unmonitored') return v
+    } catch { /* ignore */ }
+    return ''
+  })
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [sort, setSort] = useState<SortMode>('title-az')
@@ -40,11 +53,12 @@ export default function BooksPage() {
   const [bulkBusy, setBulkBusy] = useState(false)
   const selectAllRef = useRef<HTMLInputElement>(null)
 
+  const monitoredParam = monitoredFilter === 'monitored' ? true : monitoredFilter === 'unmonitored' ? false : undefined
   const { page, pageSize, paginationProps, reset } = useServerPagination(total, 50, 'books')
 
-  // Server-side list: page, page size, search, status, media type, and sort are
-  // all applied by the API so a library with >100 books is fully reachable
-  // (issue #1010). load() refetches the current page after mutations.
+  // Server-side list: page, page size, search, status, media type, monitored,
+  // and sort are all applied by the API so a library with >100 books is fully
+  // reachable (issue #1010). load() refetches the current page after mutations.
   const load = useCallback(() => {
     setLoading(true)
     api.listBooks({
@@ -53,11 +67,12 @@ export default function BooksPage() {
       search: debouncedSearch || undefined,
       status: statusFilter || undefined,
       mediaType: mediaFilter || undefined,
+      monitored: monitoredParam,
       sort,
     }).then(({ items, total }) => { setBooks(items); setTotal(total) })
       .catch(console.error)
       .finally(() => setLoading(false))
-  }, [page, pageSize, debouncedSearch, statusFilter, mediaFilter, sort])
+  }, [page, pageSize, debouncedSearch, statusFilter, mediaFilter, monitoredParam, sort])
 
   useEffect(() => { load() }, [load])
 
@@ -68,7 +83,12 @@ export default function BooksPage() {
   }, [search])
 
   // Jump back to page 1 whenever the query changes.
-  useEffect(() => { reset() }, [debouncedSearch, statusFilter, mediaFilter, sort, pageSize, reset])
+  useEffect(() => { reset() }, [debouncedSearch, statusFilter, mediaFilter, monitoredFilter, sort, pageSize, reset])
+
+  // Persist the monitored filter so it survives a reload, mirroring AuthorsPage.
+  useEffect(() => {
+    try { localStorage.setItem('bindery.filter.books.monitored', monitoredFilter) } catch { /* ignore */ }
+  }, [monitoredFilter])
 
   // Keep the select-all checkbox indeterminate state in sync. "Page" here is
   // the server-returned page held in `books`.
@@ -116,6 +136,31 @@ export default function BooksPage() {
   const sortBtnCls = (active: boolean) =>
     `px-3 py-1 rounded-md text-xs font-medium transition-colors ${active ? 'bg-slate-300 dark:bg-zinc-700 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/50 dark:hover:bg-zinc-800/50'}`
 
+  // Clicking a column header sorts by that column: first click ascending, a
+  // second click on the same column flips to descending (mirrors the sort
+  // buttons, which use the same whitelisted keys the backend accepts).
+  const toggleSort = (asc: SortMode, desc: SortMode) =>
+    setSort(prev => (prev === asc ? desc : asc))
+
+  // SortableHeader renders a clickable <th> with an ▲/▼ affordance when its
+  // column is the active sort. asc/desc are the whitelisted keys for the column.
+  const SortableHeader = ({ label, asc, desc, className = '' }: { label: string; asc: SortMode; desc: SortMode; className?: string }) => {
+    const active = sort === asc || sort === desc
+    const arrow = sort === asc ? ' ▲' : sort === desc ? ' ▼' : ''
+    return (
+      <th className={`text-left px-3 py-2 text-xs font-medium uppercase ${className}`}>
+        <button
+          type="button"
+          onClick={() => toggleSort(asc, desc)}
+          aria-label={label}
+          className={`inline-flex items-center gap-0.5 uppercase transition-colors ${active ? 'text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'}`}
+        >
+          {label}<span aria-hidden="true">{arrow}</span>
+        </button>
+      </th>
+    )
+  }
+
   return (
     <div className={selectedIds.size > 0 ? 'pb-16' : ''}>
       <div className="flex items-center justify-between mb-4">
@@ -159,6 +204,11 @@ export default function BooksPage() {
         <button onClick={() => setMediaFilter('')} className={sortBtnCls(mediaFilter === '')}>{t('common.all')}</button>
         <button onClick={() => setMediaFilter('ebook')} className={sortBtnCls(mediaFilter === 'ebook')}>📖 {t('common.ebook')}</button>
         <button onClick={() => setMediaFilter('audiobook')} className={sortBtnCls(mediaFilter === 'audiobook')}>🎧 {t('common.audiobook')}</button>
+
+        <span className="text-xs text-slate-600 dark:text-zinc-500 mx-2 self-center">{t('books.filterMonitored', 'Monitored:')}</span>
+        <button onClick={() => setMonitoredFilter('')} className={sortBtnCls(monitoredFilter === '')}>{t('books.filterAll', 'All')}</button>
+        <button onClick={() => setMonitoredFilter('monitored')} className={sortBtnCls(monitoredFilter === 'monitored')}>{t('books.filterMonitoredOnly', 'Monitored')}</button>
+        <button onClick={() => setMonitoredFilter('unmonitored')} className={sortBtnCls(monitoredFilter === 'unmonitored')}>{t('books.filterUnmonitored', 'Unmonitored')}</button>
       </div>
 
       <BookStatusLegend />
@@ -167,7 +217,7 @@ export default function BooksPage() {
         <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
       ) : total === 0 ? (
         <div className="text-center py-16 text-slate-600 dark:text-zinc-500">
-          {!debouncedSearch && !statusFilter && !mediaFilter ? (
+          {!debouncedSearch && !statusFilter && !mediaFilter && !monitoredFilter ? (
             <>
               {needsSetup && <GettingStartedGuidance reasonKey="gettingStarted.reasonBooks" />}
               <p className="font-medium">{t('books.empty')}</p>
@@ -194,11 +244,11 @@ export default function BooksPage() {
                       title="Select all on this page"
                     />
                   </th>
-                  <th className="text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase">{t('books.colTitle')}</th>
-                  <th className="text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase hidden md:table-cell">{t('books.colAuthor')}</th>
-                  <th className="text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase hidden sm:table-cell">{t('books.colYear')}</th>
-                  <th className="text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase">{t('books.colType')}</th>
-                  <th className="text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase">{t('books.colStatus')}</th>
+                  <SortableHeader label={t('books.colTitle')} asc="title-az" desc="title-za" />
+                  <SortableHeader label={t('books.colAuthor')} asc="author-az" desc="author-za" className="hidden md:table-cell" />
+                  <SortableHeader label={t('books.colYear')} asc="date-old" desc="date-new" className="hidden sm:table-cell" />
+                  <SortableHeader label={t('books.colType')} asc="type-az" desc="type-za" />
+                  <SortableHeader label={t('books.colStatus')} asc="status-az" desc="status-za" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-zinc-800">

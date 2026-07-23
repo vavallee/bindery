@@ -218,7 +218,12 @@ type BookListFilter struct {
 	// MediaType is "ebook" (matches ebook/both/unset, mirroring the UI default)
 	// or "audiobook" (matches audiobook/both). Any other value disables it.
 	MediaType string
-	// Sort is one of "title-az" (default), "title-za", "date-new", "date-old".
+	// Monitored, when non-nil, restricts to books with that monitored flag. This
+	// is orthogonal to Status: a book can be any status while monitored or not.
+	// Lets the Books page surface unmonitored/unwanted books (#1349).
+	Monitored *bool
+	// Sort is one of "title-az" (default), "title-za", "date-new", "date-old",
+	// "author-az", "author-za", "type-az", "type-za", "status-az", "status-za".
 	Sort string
 	// ReleaseFrom / ReleaseBefore bound release_date to [ReleaseFrom, ReleaseBefore)
 	// (ISO date strings; lexical compare works for ISO-8601). Used by the
@@ -230,8 +235,10 @@ type BookListFilter struct {
 }
 
 // bookSortOrder maps a whitelisted sort key to a fixed ORDER BY clause. Never
-// contains user input, so safe to interpolate. NULL release dates sort last in
-// both date orders (matching the old client-side comparator).
+// contains user input, so safe to interpolate. NULL release dates / author
+// names sort last in every order (matching the old client-side comparator).
+// sort_title is the stable tiebreaker for the non-title sorts so equal keys
+// (same author, media type, or status) keep a deterministic page order.
 func bookSortOrder(sort string) string {
 	switch sort {
 	case "title-za":
@@ -240,6 +247,18 @@ func bookSortOrder(sort string) string {
 		return "release_date IS NULL, release_date DESC"
 	case "date-old":
 		return "release_date IS NULL, release_date ASC"
+	case "author-az":
+		return "au.sort_name IS NULL, au.sort_name COLLATE NOCASE ASC, sort_title ASC"
+	case "author-za":
+		return "au.sort_name IS NULL, au.sort_name COLLATE NOCASE DESC, sort_title ASC"
+	case "type-az":
+		return "books.media_type COLLATE NOCASE ASC, sort_title ASC"
+	case "type-za":
+		return "books.media_type COLLATE NOCASE DESC, sort_title ASC"
+	case "status-az":
+		return "books.status COLLATE NOCASE ASC, sort_title ASC"
+	case "status-za":
+		return "books.status COLLATE NOCASE DESC, sort_title ASC"
 	default:
 		return "sort_title ASC"
 	}
@@ -276,6 +295,13 @@ func (r *BookRepo) ListPageFiltered(ctx context.Context, f BookListFilter, limit
 		where += " AND (books.media_type IN ('ebook','both') OR books.media_type IS NULL OR books.media_type = '')"
 	case "audiobook":
 		where += " AND books.media_type IN ('audiobook','both')"
+	}
+	// Monitored is a separate column from status; the parameterised equality is a
+	// cheap scan (no dedicated index — the WHERE is already narrowed by excluded=0
+	// and the owner scope, so a boolean filter over the remainder is inexpensive).
+	if f.Monitored != nil {
+		where += " AND books.monitored = ?"
+		args = append(args, boolToInt(*f.Monitored))
 	}
 	if rf := strings.TrimSpace(f.ReleaseFrom); rf != "" {
 		where += " AND books.release_date >= ?"
