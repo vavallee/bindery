@@ -48,7 +48,7 @@ func (s *stubManualImportScanner) Lookup(_ context.Context, _ string) (importer.
 	return s.lookupResult, s.lookupErr
 }
 
-func (s *stubManualImportScanner) LookupBatch(_ context.Context, paths []string) ([]importer.LookupResult, error) {
+func (s *stubManualImportScanner) LookupBatchLayout(_ context.Context, _ string, paths []string) ([]importer.LookupResult, error) {
 	s.lookupBatchCalls++
 	if s.lookupErr != nil {
 		return nil, s.lookupErr
