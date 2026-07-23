@@ -243,6 +243,58 @@ func TestReorganize_AudiobookFolderMove(t *testing.T) {
 	}
 }
 
+// TestReorganize_DualFormatSharedRoot is the regression test for the audiobook
+// UniqueDir mismatch: with BINDERY_AUDIOBOOK_DIR unset (audiobookDir ==
+// libraryDir), a dual-format book's audiobook template resolves to the same
+// "Title (Year)" folder the ebook already sits in. Import parks it at
+// "Title (Year) (2)"; reorganize must read that as a noop, not a false
+// collision, and must not try to move an already-correctly-placed audiobook.
+func TestReorganize_DualFormatSharedRoot(t *testing.T) {
+	// Shared root: audiobookDir == libraryDir.
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	ctx := context.Background()
+	root := t.TempDir()
+	books := db.NewBookRepo(database)
+	authors := db.NewAuthorRepo(database)
+	s := NewScanner(db.NewDownloadRepo(database), db.NewDownloadClientRepo(database),
+		books, authors, db.NewHistoryRepo(database), root, root, "", "", "")
+	s.WithSettings(db.NewSettingsRepo(database))
+	s.WithRootFolders(db.NewRootFolderRepo(database))
+	s.WithSeriesRepo(db.NewSeriesRepo(database))
+	env := reorgEnv{s: s, books: books, authors: authors}
+
+	book := env.seed(t, ctx, "Jane Doe", "My Book")
+
+	// Ebook already at its templated path: <root>/Jane Doe/My Book (2020)/My Book - Jane Doe.epub
+	ebook := filepath.Join(root, "Jane Doe", "My Book (2020)", "My Book - Jane Doe.epub")
+	writeFileAt(t, ebook)
+	if err := books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, ebook); err != nil {
+		t.Fatal(err)
+	}
+	// Audiobook parked at the uniquified folder <root>/Jane Doe/My Book (2020) (2)
+	// (where import would have placed it, since (2020) is the ebook's folder).
+	audioDir := filepath.Join(root, "Jane Doe", "My Book (2020) (2)")
+	writeFileAt(t, filepath.Join(audioDir, "part1.mp3"))
+	if err := books.AddBookFile(ctx, book.ID, models.MediaTypeAudiobook, audioDir); err != nil {
+		t.Fatal(err)
+	}
+
+	moves, err := s.PreviewReorganizeBook(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both files are already correctly placed — no collisions, no moves.
+	for _, m := range moves {
+		if m.Status != ReorgStatusNoop {
+			t.Errorf("%s file %q: status = %q (%s), want noop", m.Format, m.Current, m.Status, m.Message)
+		}
+	}
+}
+
 func TestReorganize_AuthorAndLibraryScope(t *testing.T) {
 	env, libraryDir, _, ctx := reorgFixture(t)
 	author := env.seedAuthor(t, ctx, "Jane Doe")
