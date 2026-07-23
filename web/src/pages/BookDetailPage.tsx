@@ -6,6 +6,7 @@ import SearchDebugPanel from '../components/SearchDebugPanel'
 import MediaBadge from '../components/MediaBadge'
 import { bookStatusBadge } from '../components/bookStatus'
 import RebindModal from '../components/RebindModal'
+import RenameFilesModal from '../components/RenameFilesModal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import ClipboardManualFallback from '../components/ClipboardManualFallback'
 import { useClipboardCopy } from '../components/useClipboardCopy'
@@ -182,6 +183,7 @@ export default function BookDetailPage() {
   const [togglingExclude, setTogglingExclude] = useState(false)
   const [showRebind, setShowRebind] = useState(false)
   const [showFixMatch, setShowFixMatch] = useState(false)
+  const [showRename, setShowRename] = useState(false)
   const [showEdit, setShowEdit] = useState(false)
   const [showDeleteBook, setShowDeleteBook] = useState(false)
   const pathClipboard = useClipboardCopy()
@@ -661,6 +663,15 @@ export default function BookDetailPage() {
             </button>
             <button
               type="button"
+              onClick={() => setShowRename(true)}
+              disabled={!(book.ebookFilePath || book.audiobookFilePath) || deletingFile || deletingBook}
+              className={actionBtnCls}
+              title={t('bookDetail.renameFiles.hint', 'Move this book’s files to match the current naming template')}
+            >
+              {t('bookDetail.renameFiles.button', 'Rename files')}
+            </button>
+            <button
+              type="button"
               onClick={() => deleteFile(isDual ? fmt : undefined)}
               disabled={deletingFile || deletingBook || !hasActiveFile}
               className={`ml-auto ${dangerBtnCls}`}
@@ -818,6 +829,16 @@ export default function BookDetailPage() {
             setBook(updated)
             setShowRebind(false)
           }}
+        />
+      )}
+
+      {showRename && (
+        <RenameFilesModal
+          scope="book"
+          id={book.id}
+          label={book.title}
+          onClose={() => setShowRename(false)}
+          onApplied={() => api.getBook(bookId).then(setBook).catch(() => {})}
         />
       )}
 

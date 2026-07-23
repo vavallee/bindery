@@ -7,6 +7,20 @@ All notable changes to Bindery are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **Rename files: reorganize an existing library to the naming template**
+  (#1181) — the naming template used to apply only at import time, so changing
+  it later, importing a pre-existing library, or ending up with a half-renamed
+  mix left no way to reconcile files short of deleting and re-importing. A new
+  **Rename files** action (on the book detail page and the author page) previews
+  every tracked file's `current → proposed` path under the current template and,
+  once confirmed, moves the ones that differ — updating the library index and
+  recording a rename in history. It is always a move within the library (never a
+  copy), refuses to overwrite an existing destination, skips files already in
+  the right place, and leaves anything not on disk untouched. Ebooks move as
+  single files; audiobooks move as whole folders. Backed by
+  `GET /api/v1/reorganize/preview` and `POST /api/v1/reorganize/apply` (both
+  admin-only). Whole-library scope is available through the API; the UI exposes
+  the per-book and per-author scopes.
 - **Manually match an unmatched download in the queue** (#1589) — a download the
   auto-matcher couldn't tie to a book ("could not match any book to this
   download") used to sit in the queue as a dead-end import failure. Import-failed
