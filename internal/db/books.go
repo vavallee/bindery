@@ -347,6 +347,15 @@ func (r *BookRepo) ListByStatusIncludingExcluded(ctx context.Context, status str
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE status = ? AND books.monitored = 1 ORDER BY sort_title", []any{status})
 }
 
+// ListByStatusIncludingExcludedAndUser is ListByStatusIncludingExcluded scoped
+// to a user's own + unowned books (userID 0 leaves it unscoped, for admins and
+// single-tenant deployments). The excluded-aware counterpart to
+// ListByStatusAndUser.
+func (r *BookRepo) ListByStatusIncludingExcludedAndUser(ctx context.Context, status string, userID int64) ([]models.Book, error) {
+	where, args := QueryScopeForIncludingNull("books.owner_user_id", "WHERE status = ? AND books.monitored = 1", userID, status)
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY sort_title", args)
+}
+
 func (r *BookRepo) GetByID(ctx context.Context, id int64) (*models.Book, error) {
 	books, err := r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE books.id = ?", []any{id})
 	if err != nil {

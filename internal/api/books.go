@@ -839,12 +839,18 @@ func sweepMatchesFormat(name, format string) bool {
 }
 
 func (h *BookHandler) ListWanted(w http.ResponseWriter, r *http.Request) {
+	// Scope to the caller's own + unowned books under tenancy (0 = unscoped for
+	// admins / API-key / single-tenant), matching the main book list. Without
+	// this a non-admin's wanted/missing page leaked every user's books (#1220
+	// tenancy: the scoped ListByStatusAndUser existed and was used by OPDS, but
+	// this handler still called the unscoped variant).
+	scope := auth.ListScopeUserID(r.Context())
 	var books []models.Book
 	var err error
 	if r.URL.Query().Get("includeExcluded") == "true" {
-		books, err = h.books.ListByStatusIncludingExcluded(r.Context(), models.BookStatusWanted)
+		books, err = h.books.ListByStatusIncludingExcludedAndUser(r.Context(), models.BookStatusWanted, scope)
 	} else {
-		books, err = h.books.ListByStatus(r.Context(), models.BookStatusWanted)
+		books, err = h.books.ListByStatusAndUser(r.Context(), models.BookStatusWanted, scope)
 	}
 	if err != nil {
 		writeServerError(w, r, err)
