@@ -30,6 +30,7 @@ const BooksPage = lazy(() => import('./pages/BooksPage'))
 const BookDetailPage = lazy(() => import('./pages/BookDetailPage'))
 const WantedPage = lazy(() => import('./pages/WantedPage'))
 const QueuePage = lazy(() => import('./pages/QueuePage'))
+const ManualImportPage = lazy(() => import('./pages/ManualImportPage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 const UsersPage = lazy(() => import('./pages/UsersPage'))
 const HistoryPage = lazy(() => import('./pages/HistoryPage'))
@@ -43,6 +44,7 @@ const NAV_KEYS = [
   { to: '/books', key: 'books' },
   { to: '/wanted', key: 'wanted' },
   { to: '/queue', key: 'queue' },
+  { to: '/import', key: 'import' },
   { to: '/history', key: 'history' },
   { to: '/series', key: 'series' },
   { to: '/calendar', key: 'calendar' },
@@ -269,6 +271,7 @@ function Shell() {
             <Route path="/book/:id" element={<BookDetailPage />} />
             <Route path="/wanted" element={<WantedPage />} />
             <Route path="/queue" element={<QueuePage />} />
+            <Route path="/import" element={<ManualImportPage />} />
             <Route path="/history" element={<HistoryPage />} />
             <Route path="/series" element={<SeriesPage />} />
             <Route path="/calendar" element={<CalendarPage />} />
