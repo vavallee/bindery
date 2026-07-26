@@ -82,6 +82,25 @@ type EbookFile struct {
 	INO  string `json:"ino"`
 }
 
+type LibraryFileMetadata struct {
+	Filename string `json:"filename"`
+	Ext      string `json:"ext"`
+	Path     string `json:"path"`
+	RelPath  string `json:"relPath"`
+}
+
+// LibraryFile is one entry of a library item's libraryFiles array (returned
+// by the expanded detail fetch). ABS lists every file it found for the item
+// here, including ebooks it did NOT promote to media.ebookFile — a library
+// with "Audiobooks only" enabled never promotes one, and marks the ebook
+// isSupplementary instead.
+type LibraryFile struct {
+	INO             string              `json:"ino"`
+	FileType        string              `json:"fileType"`
+	IsSupplementary *bool               `json:"isSupplementary"`
+	Metadata        LibraryFileMetadata `json:"metadata"`
+}
+
 type BookMetadata struct {
 	Title         string           `json:"title"`
 	Subtitle      string           `json:"subtitle"`
@@ -109,14 +128,15 @@ type BookMedia struct {
 }
 
 type LibraryItem struct {
-	ID        string    `json:"id"`
-	LibraryID string    `json:"libraryId"`
-	FolderID  string    `json:"folderId"`
-	Path      string    `json:"path"`
-	RelPath   string    `json:"relPath"`
-	IsFile    bool      `json:"isFile"`
-	MediaType string    `json:"mediaType"`
-	Media     BookMedia `json:"media"`
+	ID           string        `json:"id"`
+	LibraryID    string        `json:"libraryId"`
+	FolderID     string        `json:"folderId"`
+	Path         string        `json:"path"`
+	RelPath      string        `json:"relPath"`
+	IsFile       bool          `json:"isFile"`
+	MediaType    string        `json:"mediaType"`
+	Media        BookMedia     `json:"media"`
+	LibraryFiles []LibraryFile `json:"libraryFiles,omitempty"`
 }
 
 type LibraryItemsPage struct {
@@ -182,6 +202,30 @@ type NormalizedLibraryItem struct {
 	ResolvedBookForeignID   string                `json:"resolvedBookForeignId,omitempty"`
 	ResolvedBookTitle       string                `json:"resolvedBookTitle,omitempty"`
 	EditedTitle             string                `json:"editedTitle,omitempty"`
+}
+
+// SupplementaryEbookFile returns the libraryFiles entry to use as the item's
+// ebook when ABS didn't promote one to media.ebookFile — the case for every
+// item in a library with "Audiobooks only" enabled, where ebooks are only
+// listed as supplementary library files (#1565, Discussion #1556). Prefers
+// .epub over other formats, mirroring ABS's own primary-ebook selection
+// (BookScanner picks the first epub, else the first ebook file). Returns nil
+// when the item has no ebook-typed library files.
+func (i LibraryItem) SupplementaryEbookFile() *LibraryFile {
+	var first *LibraryFile
+	for idx := range i.LibraryFiles {
+		lf := &i.LibraryFiles[idx]
+		if lf.FileType != "ebook" || lf.Metadata.Path == "" {
+			continue
+		}
+		if strings.EqualFold(strings.TrimPrefix(lf.Metadata.Ext, "."), "epub") {
+			return lf
+		}
+		if first == nil {
+			first = lf
+		}
+	}
+	return first
 }
 
 func (i LibraryItem) DetailFetchReasons() []string {
@@ -284,6 +328,9 @@ func MergeLibraryItem(listItem, detailItem LibraryItem) LibraryItem {
 	if merged.Media.EbookFile == nil {
 		merged.Media.EbookFile = listItem.Media.EbookFile
 	}
+	if len(merged.LibraryFiles) == 0 {
+		merged.LibraryFiles = listItem.LibraryFiles
+	}
 	if !merged.IsFile && listItem.IsFile {
 		merged.IsFile = true
 	}
@@ -321,6 +368,16 @@ func NormalizeLibraryItem(item LibraryItem, detailFetched bool) NormalizedLibrar
 	if item.Media.EbookFile != nil {
 		out.EbookPath = item.Media.EbookFile.Path
 		out.EbookINO = item.Media.EbookFile.INO
+	}
+	// ABS only sets media.ebookFile when the library allows a primary ebook.
+	// With "Audiobooks only" enabled the epub is still on disk and listed in
+	// libraryFiles as a supplementary ebook — fall back to it so combined
+	// audiobook+ebook items import both formats (#1565, Discussion #1556).
+	if out.EbookPath == "" {
+		if lf := item.SupplementaryEbookFile(); lf != nil {
+			out.EbookPath = lf.Metadata.Path
+			out.EbookINO = lf.INO
+		}
 	}
 	out.Authors = make([]NormalizedAuthor, 0, len(item.Media.Metadata.Authors))
 	for _, author := range item.Media.Metadata.Authors {

@@ -521,9 +521,11 @@ func (c *Client) parseResults(items []rssItem) []SearchResult {
 			PubDate: item.PubDate,
 		}
 
-		// Parse newznab attributes
+		// Parse newznab attributes. Matched case-insensitively: the torznab
+		// spec is lowercase but trackers/proxies vary, and the sibling caps
+		// parser below already lowercases attribute names.
 		for _, attr := range item.Attrs {
-			switch attr.Name {
+			switch strings.ToLower(attr.Name) {
 			case "size":
 				if s, err := strconv.ParseInt(attr.Value, 10, 64); err == nil {
 					r.Size = s
@@ -540,6 +542,15 @@ func (c *Client) parseResults(items []rssItem) []SearchResult {
 				r.BookTitle = attr.Value
 			case "language":
 				r.Language = attr.Value
+			case "downloadvolumefactor":
+				// Ratio cost of this release (0 = freeleech). Parsed so the
+				// per-indexer freeleech-only policy can hold ratio-costing
+				// releases for manual approval instead of auto-grabbing them.
+				// A malformed value leaves the field nil ("unreported"), which
+				// the policy treats as unsafe rather than assuming freeleech.
+				if f, err := strconv.ParseFloat(strings.TrimSpace(attr.Value), 64); err == nil {
+					r.DownloadVolumeFactor = &f
+				}
 			}
 		}
 

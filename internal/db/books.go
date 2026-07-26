@@ -218,7 +218,12 @@ type BookListFilter struct {
 	// MediaType is "ebook" (matches ebook/both/unset, mirroring the UI default)
 	// or "audiobook" (matches audiobook/both). Any other value disables it.
 	MediaType string
-	// Sort is one of "title-az" (default), "title-za", "date-new", "date-old".
+	// Monitored, when non-nil, restricts to books with that monitored flag. This
+	// is orthogonal to Status: a book can be any status while monitored or not.
+	// Lets the Books page surface unmonitored/unwanted books (#1349).
+	Monitored *bool
+	// Sort is one of "title-az" (default), "title-za", "date-new", "date-old",
+	// "author-az", "author-za", "type-az", "type-za", "status-az", "status-za".
 	Sort string
 	// ReleaseFrom / ReleaseBefore bound release_date to [ReleaseFrom, ReleaseBefore)
 	// (ISO date strings; lexical compare works for ISO-8601). Used by the
@@ -230,8 +235,10 @@ type BookListFilter struct {
 }
 
 // bookSortOrder maps a whitelisted sort key to a fixed ORDER BY clause. Never
-// contains user input, so safe to interpolate. NULL release dates sort last in
-// both date orders (matching the old client-side comparator).
+// contains user input, so safe to interpolate. NULL release dates / author
+// names sort last in every order (matching the old client-side comparator).
+// sort_title is the stable tiebreaker for the non-title sorts so equal keys
+// (same author, media type, or status) keep a deterministic page order.
 func bookSortOrder(sort string) string {
 	switch sort {
 	case "title-za":
@@ -240,6 +247,18 @@ func bookSortOrder(sort string) string {
 		return "release_date IS NULL, release_date DESC"
 	case "date-old":
 		return "release_date IS NULL, release_date ASC"
+	case "author-az":
+		return "au.sort_name IS NULL, au.sort_name COLLATE NOCASE ASC, sort_title ASC"
+	case "author-za":
+		return "au.sort_name IS NULL, au.sort_name COLLATE NOCASE DESC, sort_title ASC"
+	case "type-az":
+		return "books.media_type COLLATE NOCASE ASC, sort_title ASC"
+	case "type-za":
+		return "books.media_type COLLATE NOCASE DESC, sort_title ASC"
+	case "status-az":
+		return "books.status COLLATE NOCASE ASC, sort_title ASC"
+	case "status-za":
+		return "books.status COLLATE NOCASE DESC, sort_title ASC"
 	default:
 		return "sort_title ASC"
 	}
@@ -276,6 +295,13 @@ func (r *BookRepo) ListPageFiltered(ctx context.Context, f BookListFilter, limit
 		where += " AND (books.media_type IN ('ebook','both') OR books.media_type IS NULL OR books.media_type = '')"
 	case "audiobook":
 		where += " AND books.media_type IN ('audiobook','both')"
+	}
+	// Monitored is a separate column from status; the parameterised equality is a
+	// cheap scan (no dedicated index — the WHERE is already narrowed by excluded=0
+	// and the owner scope, so a boolean filter over the remainder is inexpensive).
+	if f.Monitored != nil {
+		where += " AND books.monitored = ?"
+		args = append(args, boolToInt(*f.Monitored))
 	}
 	if rf := strings.TrimSpace(f.ReleaseFrom); rf != "" {
 		where += " AND books.release_date >= ?"
@@ -345,6 +371,15 @@ func (r *BookRepo) ListByStatusAndUser(ctx context.Context, status string, userI
 // ListByStatusIncludingExcluded returns books with the given status regardless of excluded flag.
 func (r *BookRepo) ListByStatusIncludingExcluded(ctx context.Context, status string) ([]models.Book, error) {
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE status = ? AND books.monitored = 1 ORDER BY sort_title", []any{status})
+}
+
+// ListByStatusIncludingExcludedAndUser is ListByStatusIncludingExcluded scoped
+// to a user's own + unowned books (userID 0 leaves it unscoped, for admins and
+// single-tenant deployments). The excluded-aware counterpart to
+// ListByStatusAndUser.
+func (r *BookRepo) ListByStatusIncludingExcludedAndUser(ctx context.Context, status string, userID int64) ([]models.Book, error) {
+	where, args := QueryScopeForIncludingNull("books.owner_user_id", "WHERE status = ? AND books.monitored = 1", userID, status)
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY sort_title", args)
 }
 
 func (r *BookRepo) GetByID(ctx context.Context, id int64) (*models.Book, error) {
@@ -599,6 +634,22 @@ func (r *BookRepo) ListBookFiles(ctx context.Context, bookID int64) ([]models.Bo
 	return r.files.ListByBook(ctx, bookID)
 }
 
+// BookIDForFile returns the owning book id for a book_files row id (0 if none).
+func (r *BookRepo) BookIDForFile(ctx context.Context, fileID int64) (int64, error) {
+	return r.files.BookIDForFile(ctx, fileID)
+}
+
+// UpdateBookFilePath repoints a tracked book_files row at newPath (after the
+// library reorganize action moved the file on disk, #1181) and refreshes the
+// owning book's aggregate status so the computed ebook/audiobook path views
+// track the new location.
+func (r *BookRepo) UpdateBookFilePath(ctx context.Context, fileID, bookID int64, newPath string) error {
+	if err := r.files.UpdatePath(ctx, fileID, newPath); err != nil {
+		return err
+	}
+	return r.refreshBookStatus(ctx, bookID)
+}
+
 // refreshBookStatus recomputes the aggregate status for a book from its
 // current book_files rows and updates both the status and legacy columns.
 // It queries book_files directly so the result is always authoritative,
@@ -676,6 +727,15 @@ func (r *BookRepo) SetFilePath(ctx context.Context, id int64, filePath string) e
 		mediaType = models.MediaTypeEbook // shouldn't happen; default to ebook
 	}
 	return r.SetFormatFilePath(ctx, id, mediaType, filePath)
+}
+
+// SetLanguage persists a book's language code. Used by the importer to fill an
+// empty language from an embedded EPUB dc:language at import time (#1160); the
+// caller is responsible for gating on an empty existing value and an unlocked
+// language field, so this only writes the single column.
+func (r *BookRepo) SetLanguage(ctx context.Context, id int64, language string) error {
+	_, err := r.db.ExecContext(ctx, "UPDATE books SET language=? WHERE id=?", language, id)
+	return err
 }
 
 // SetCalibreID stores the Calibre-assigned book id for the given Bindery

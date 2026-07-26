@@ -22,10 +22,16 @@ type ImportList struct {
 	// MediaType pins the format that books synced from this list are created
 	// as: "ebook", "audiobook", or "both". Empty means "unset" — keep the
 	// media type derived from the source (e.g. Hardcover edition availability).
-	MediaType  string     `json:"mediaType"`
-	LastSyncAt *time.Time `json:"lastSyncAt"`
-	CreatedAt  time.Time  `json:"createdAt"`
-	UpdatedAt  time.Time  `json:"updatedAt"`
+	MediaType string `json:"mediaType"`
+	// OwnerUserID is the Bindery user who owns books and authors synced from
+	// this list under multi-user tenancy. nil = global (visible to all users),
+	// which is what legacy rows carry and what an admin picks for a shared
+	// shelf. A user id scopes every synced book+author to that user, closing
+	// the leak where scheduler-synced content was always NULL-owned/global.
+	OwnerUserID *int64     `json:"ownerUserId"`
+	LastSyncAt  *time.Time `json:"lastSyncAt"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
 }
 
 type ImportListExclusion struct {

@@ -18,6 +18,10 @@ export interface ImportList {
   // Per-list media type override: 'ebook' | 'audiobook' | 'both', or '' (unset
   // — synced books keep the source-derived media type).
   mediaType: string
+  // Owner of books/authors synced from this list under multi-user tenancy.
+  // null = global (visible to all users); a user id scopes synced content to
+  // that Bindery user. Only meaningful for provider-sync lists (e.g. hardcover).
+  ownerUserId?: number | null
   lastSyncAt?: string | null
   createdAt: string
   updatedAt: string

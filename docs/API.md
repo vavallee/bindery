@@ -64,12 +64,12 @@ POST   /api/v1/book/bulk                          bulk monitor / status flip
 GET    /api/v1/book/{id}                          book detail (with editions, history, formats)
 PUT    /api/v1/book/{id}                          update monitor / status / metadata
 DELETE /api/v1/book/{id}                          remove from library
-DELETE /api/v1/book/{id}/file                     delete imported file(s) on disk
+DELETE /api/v1/book/{id}/file                     delete imported file(s) on disk (`?format=ebook|audiobook` scopes to one format)
 PUT    /api/v1/book/{id}/exclude                  exclude from future searches
 POST   /api/v1/book/{id}/rebind                   re-link to a different metadata record
 POST   /api/v1/book/{id}/enrich-audiobook         pull narrator/duration/cover from Audnex
 POST   /api/v1/book/{id}/search                   manual indexer search
-GET    /api/v1/book/{id}/file                     download the imported file (auth required)
+GET    /api/v1/book/{id}/file                     download the imported file (auth required; `?format=ebook|audiobook` picks the format on dual-format books)
 ```
 
 ### Search & discovery
@@ -122,6 +122,11 @@ GET    /api/v1/queue/manual-import/scan           enumerate + match book units u
 POST   /api/v1/queue/manual-import                import one path against a book (admin)
 POST   /api/v1/queue/manual-import/batch          import selected {path, bookId} pairs (admin)
 POST   /api/v1/queue/manual-import/reassign       move a mis-matched file to another book (admin)
+POST   /api/v1/queue/manual-import/match          attach an importFailed download to a book and import its files (admin)
+
+GET    /api/v1/reorganize/preview                 preview renaming tracked files to the current template (admin)
+                                                    ?scope=book|author|library (&id=N for book/author)
+POST   /api/v1/reorganize/apply                   move the selected files {fileIds:[…]} to their templated paths (admin)
 
 GET    /api/v1/history                            grab / import / failure timeline
 POST   /api/v1/history/{id}/blocklist             add the release to the blocklist

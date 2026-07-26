@@ -581,6 +581,59 @@ func TestValidateSettingValue_ImportMode(t *testing.T) {
 	}
 }
 
+// TestValidateSettingValue_AudiobookFileTemplate covers the #1126 per-file
+// audiobook naming template. Empty disables the feature; a non-empty template
+// MUST carry a {Part} token, otherwise every track would flatten to the same
+// filename and all but the last would be dropped.
+func TestValidateSettingValue_AudiobookFileTemplate(t *testing.T) {
+	// Empty = feature off, accepted.
+	if err := validateSettingValue(SettingNamingAudiobookFileTemplate, ""); err != nil {
+		t.Errorf("empty should be accepted (feature off): %v", err)
+	}
+	// Templates carrying a {Part} token, with and without a zero-pad width.
+	for _, v := range []string{
+		"{Title} - Part {Part:3}.{ext}",
+		"{Part}.{ext}",
+		"{Author} - {Title} - {Part:2}.{ext}",
+	} {
+		if err := validateSettingValue(SettingNamingAudiobookFileTemplate, v); err != nil {
+			t.Errorf("%q should be accepted: %v", v, err)
+		}
+	}
+	// No {Part} token: must be rejected at save time rather than collapsing
+	// every track onto one name at import time.
+	for _, v := range []string{"{Title}.{ext}", "track.{ext}", "{Author}/{Title}"} {
+		if err := validateSettingValue(SettingNamingAudiobookFileTemplate, v); err == nil {
+			t.Errorf("%q should be rejected (no {Part} token)", v)
+		}
+	}
+}
+
+// TestValidateSettingValue_DropPairGating covers the #942 pair-gating keys:
+// the boolean opt-in and the positive-integer-hours escape-hatch timeout.
+func TestValidateSettingValue_DropPairGating(t *testing.T) {
+	for _, v := range []string{"", "true", "false"} {
+		if err := validateSettingValue(SettingImportDropPairGating, v); err != nil {
+			t.Errorf("gating %q should be accepted: %v", v, err)
+		}
+	}
+	if err := validateSettingValue(SettingImportDropPairGating, "yes"); err == nil {
+		t.Error("'yes' should be rejected (not a canonical boolean)")
+	}
+
+	for _, v := range []string{"", "1", "72", "168"} {
+		if err := validateSettingValue(SettingImportDropPairGatingTimeoutHours, v); err != nil {
+			t.Errorf("timeout %q should be accepted: %v", v, err)
+		}
+	}
+	// Non-positive / non-numeric must not silently wedge a held format forever.
+	for _, v := range []string{"0", "-5", "soon"} {
+		if err := validateSettingValue(SettingImportDropPairGatingTimeoutHours, v); err == nil {
+			t.Errorf("timeout %q should be rejected", v)
+		}
+	}
+}
+
 func mustJSON(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)

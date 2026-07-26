@@ -25,6 +25,12 @@ func TestCanTransitionTo(t *testing.T) {
 		// Terminal states have no outgoing transitions
 		{StateImported, StateImporting, false},
 		{StateFailed, StateGrabbed, false},
+
+		// StateImportBlocked is terminal to the pollers but manually recoverable
+		// (#1589): a match imports directly (→ importPending) or the reset re-arms
+		// the scanner (→ importFailed); it still cannot jump straight to importing.
+		{StateImportBlocked, StateImportPending, true},
+		{StateImportBlocked, StateImportFailed, true},
 		{StateImportBlocked, StateImporting, false},
 
 		// External hand-off is non-terminal (issue #706 finding 3)

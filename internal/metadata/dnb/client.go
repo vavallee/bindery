@@ -146,13 +146,41 @@ func (c *Client) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]
 	if err != nil {
 		return nil, fmt.Errorf("dnb get author works %s: %w", authorForeignID, err)
 	}
+	// Series titles the author's records declare in MARC 490/800 — used to drop
+	// whole-series records (e.g. the complete-series audiobook titled "Die
+	// Königsmörder-Chronik") that would otherwise show up as a book (#1574).
+	seriesTitles := collectSeriesTitles(records)
 	books := make([]models.Book, 0, len(records))
+	vols := make([]int, 0, len(records))
 	for _, rec := range records {
-		if b := recordToBook(rec); b != nil {
-			books = append(books, *b)
+		b := recordToBook(rec)
+		if b == nil {
+			continue
 		}
+		// A record catalogued under a collective/series title names the actual book
+		// in 245 $p (e.g. $a="Die Königsmörder-Chronik" $p="Der Name des Windes").
+		// Prefer that individual title so the record collapses onto the standalone
+		// edition instead of surviving as a series-named dup — even though the two
+		// carry different ISBNs (#1574).
+		if title, vol, isPart := seriesPartTitle(rec); isPart {
+			b.Title = title
+			b.SortTitle = title
+			books = append(books, *b)
+			vols = append(vols, vol)
+			continue
+		}
+		// No $p: a record whose own title is a known series name is a whole-series
+		// / omnibus product, not one of the author's books — drop it.
+		if seriesTitles[workDedupKey(b.Title)] {
+			continue
+		}
+		books = append(books, *b)
+		vols = append(vols, dnbVolumeNumber(rec, b.Title))
 	}
-	return books, nil
+	// DNB returns one record per edition/printing/volume; collapse the printings
+	// of each volume to a single book so the author catalogue doesn't fill with
+	// near-duplicate rows, while keeping distinct volumes apart (#1574 follow-up).
+	return collapseAuthorWorks(books, vols), nil
 }
 
 // GetBook fetches a single record by its DNB control number (the foreignID

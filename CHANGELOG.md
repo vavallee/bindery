@@ -4,7 +4,313 @@ All notable changes to Bindery are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com) and versions follow
 [Semantic Versioning](https://semver.org).
 
-## [Unreleased]
+## [v1.28.0] — 2026-07-25
+
+A feature release driven almost entirely by user reports. Getting an existing
+library in gets a **recursive bulk import** and a **manual import wizard**;
+private-tracker users get a **per-indexer freeleech policy** that holds
+ratio-costing releases for approval instead of hiding them; an accidental mass
+import can now be undone with **bulk queue removal**. Alongside those, a
+multi-user ownership leak in Hardcover list sync is closed, and a batch of
+durability fixes stop a failed database write from being reported as a
+successful import and stop background jobs racing the database on shutdown.
+
+### Added
+- **Bulk select and remove queue items** (#1622) — the queue could only "clear
+  all failed", so an accidental mass import (one report: a CSV author import
+  with monitoring left on, which queued ~1250 books) had no practical undo:
+  the Books and Wanted bulk actions select one page at a time, and removing a
+  queue item resets its book to wanted — so with the books still monitored the
+  scheduler simply grabbed them again on the next sweep. The queue page now has
+  per-row checkboxes and a **select-all that spans the entire queue, not just
+  the visible page**, plus a bulk **Remove selected** with two options: *Also
+  stop monitoring these books* (on by default — this is what stops the
+  re-grab) and *Delete downloaded files* (off by default, so data and torrent
+  seeds are kept). Backed by `POST /api/v1/queue/bulk-delete`, which removes
+  each item from its download client under a bounded fan-out and reports a
+  per-id result so one stale id can't fail the whole batch.
+- **Per-indexer freeleech policy: hold ratio-costing releases for approval**
+  (#1624) — a private-tracker user near a ratio floor previously had to
+  restrict the whole indexer to Freeleech/VIP upstream in Jackett, which also
+  hid normal releases from interactive search (where they'd happily pay the
+  ratio cost on a book they actually want) and did nothing for bulk
+  multi-book search, which has no picker and is pure fire-and-forget. Indexers
+  gain an opt-in **Only auto-grab freeleech releases**: automatic grabbing
+  takes only releases the tracker reports as freeleech (torznab
+  `downloadvolumefactor` of 0 — an attribute Bindery previously never read),
+  and anything that would cost ratio is parked in the existing **Pending**
+  queue for manual approval rather than hidden or grabbed blind. Interactive
+  search is deliberately untouched and still shows everything. Per-indexer
+  rather than global because ratio economics are per-tracker — public trackers
+  and Usenet are unaffected. A release whose ratio cost the indexer doesn't
+  report is held rather than grabbed, on the principle that a visible hold is
+  recoverable and an over-spent ratio isn't; half-leech (0.5) is held too.
+- **Recursive bulk folder import** (#1434, closes #1402) — the bulk scan
+  enumerated only immediate children and treated every subdirectory as a single
+  unit, so a `Author/Books/Title.epub` layout collapsed into one row and
+  dropped files, and any directory was labelled "audiobook" regardless of
+  contents. The scan now walks recursively, yields per-file units at any depth,
+  decides the directory-as-unit boundary by inspecting what's actually inside
+  (audio vs ebook), derives the author from the folder layout, and matches on
+  embedded EPUB metadata first, then folder author, then filename. A lone loose
+  single-title match with no author corroboration is demoted from *confident*
+  to *ambiguous*, which is the box-set mismatch reported in #1402.
+- **Manual import wizard** (#1236) — a new `/import` page scans a folder,
+  groups the results into *confident* / *ambiguous* / *unmatched*, and lets each
+  unit be resolved individually (accept the match, pick from candidates, or
+  search the existing catalogue) with a per-unit format override, then imports
+  the resolved set in one batch.
+- **Books view sorting and filtering** (#1349) — clickable sortable column
+  headers (author, type, status, title, date; ascending↔descending, whitelisted
+  server-side) and an all/monitored/unmonitored filter, mirroring the Authors
+  view. Additive — no migration.
+- **Per-file audiobook renaming** (#1126) — ebook imports have always renamed
+  per file, but audiobook folders were copied in verbatim, so a library with a
+  naming template still ended up with whatever track names the release shipped.
+  A new `naming.audiobook_file_template` (empty = off, unchanged behaviour)
+  flattens the audiobook folder on import and renames each track in resolved
+  playback order, with the `{Part}` token carrying the index. It shares one
+  deterministic track-ordering and sidecar-carry path with the existing
+  multi-disc flatten, and works across copy, hardlink, and move. A template
+  without `{Part}` is rejected when saved — and defensively fails the flatten
+  rather than collapsing every track onto one filename.
+- **Ebook + audiobook drop-folder pair gating** (closes #942) — completes the
+  drop-folder handoff started in #941. A new `import.drop_pair_gating` opts
+  `media_type=both` books into hold-until-paired handoff: the first format to
+  arrive is parked in a non-terminal held state (files left in place, and kept
+  out of the re-grab loop) until its sibling completes, then both are dropped
+  together so a paired-reader tool ingests them as one. If the sibling never
+  arrives, `import.drop_pair_gating_timeout_hours` (default 72) releases the
+  held format on its own.
+- **Ebook language detection at import** (#1160) — `dc:language` is now read
+  from the imported EPUB and canonicalised, along with provider-supplied codes,
+  to the ISO 639-2/B vocabulary the metadata-profile language filter already
+  uses (`en`/`en-US` → `eng`, `zh-Hans` → `chi`). At import the ebook branch
+  backfills a book's language when the catalogue left it empty, so the library
+  and the language filter reflect what the file actually is. Locked fields are
+  never overwritten.
+- **Strict media-type policy** (#1575) — a new `default.media_type_strict`
+  setting (off by default). Under a single-format default, a work available in
+  both formats is narrowed to the configured one, and a work available *only*
+  in the other format is skipped at add/refresh time instead of being created
+  as a row that can never be satisfied (Discussion #1572). Skips are counted
+  into the author-sync summary log, so the outcome is visible in the Logs tab
+  without a notification per book.
+
+### Security
+- **Hardcover list sync now stamps an owner on the books and authors it
+  creates** (#1621) — the follow-up to the v1.25.0 ownership work (#1457),
+  which covered every create path *except* this one. Because the list syncer
+  set no `owner_user_id`, everything it created was NULL-owned — and a NULL
+  owner reads as global, so books synced from one user's Hardcover list were
+  visible to **every** user, while manually added books stayed correctly
+  private. Import lists are admin-configured and sync on a background schedule
+  with no request identity to stamp from, so ownership now lives on the list
+  row: each import list gains an **Owner**, and the syncer stamps that owner
+  onto the books and authors it creates. An existing author reused by a sync
+  keeps whatever owner it already had, so a list can never reassign another
+  user's — or a shared — author. Leaving the owner unset means *Global*, which
+  is the previous behaviour and what every existing list gets, so nothing
+  changes until an owner is chosen. Only affects deployments with
+  `BINDERY_ENFORCE_TENANCY` enabled.
+
+### Fixed
+- **Usenet ebook imports no longer leave an empty job folder behind** (#1623) —
+  a single-file ebook grabbed via SABnzbd/NZBGet imported cleanly but left its
+  completed job folder sitting empty under `complete/`. Usenet clients report
+  the storage path of a single-file job as the *file*, not a directory, and the
+  move-mode cleanup only ever pruned directories at or below the download path
+  — which a file's parent is not, so the folder was never even a candidate for
+  removal. Cleanup now prunes from the parent directory when the download path
+  is the imported file itself. The existing protections are unchanged: a folder
+  still holding anything else is kept, and the category directory above the job
+  folder is never touched. (Torrent imports and audiobook folder imports were
+  never affected, which is why audiobooks looked fixed as of v1.26.0.)
+- **Audiobook import no longer reports success after a failed database write**
+  (#1459) — the audiobook branch moved or copied the folder, recorded the
+  format path on a best-effort basis, and then marked the download imported
+  regardless of whether that write landed. With the path unrecorded the book
+  still read as wanted, so the next sweep re-grabbed it into a `Title (2)`
+  duplicate — and in move mode the original source was already gone. The write
+  is now retried on transient SQLite lock/busy errors and, if it still fails,
+  the import is marked blocked rather than falsely completed.
+- **Background jobs are drained before the database closes on shutdown**
+  (#1458) — the ABS import, Grimmory sync, and manual library scan ran on
+  detached contexts and raced `database.Close()` on SIGTERM, producing
+  "database is closed" errors and making Grimmory re-upload everything after
+  each deploy, since the push is only recorded once it succeeds. Those jobs now
+  run on a shutdown-scoped context that is drained, within a bounded grace
+  window, after HTTP shutdown and before the database is closed.
+- **ABS import keeps its resume checkpoint across a shutdown** (#1472,
+  partial) — the enumerator flushed its resume checkpoint on the very context
+  that had just been cancelled, so the flush failed and the progress it existed
+  to preserve was discarded. It now writes on a detached context. Previously
+  unreachable, and made live by the shutdown work above.
+- **NZBGet queue removal honours "keep files"** (#1456) — removing a download
+  sent `DeleteFinal`, which isn't a valid editqueue command and ignored the
+  flag entirely. Keeping files now sends `GroupParkDelete` and deleting them
+  sends `GroupDelete`. Requires NZBGet 17 or newer.
+
+### Changed
+- **Shutdown grace defaults lowered** (part of #1458) — the HTTP shutdown grace
+  drops from 30s to 10s and the background-job drain window is 15s, so the two
+  serial waits total 25s and fit inside the chart's 30s
+  `terminationGracePeriodSeconds` instead of being cut short by it. Operators
+  who raised that value can raise these to match.
+
+## [v1.27.0] — 2026-07-22
+
+A feature release built around library management. Two new tools for keeping an
+existing library tidy — **Rename files** (reorganize files to the current
+naming template) and **Match to book** (rescue a completed download the
+auto-matcher couldn't place) — plus a guard against auto-grab pulling in
+unrelated movie/TV releases and a fix for German National Library catalogues
+showing one book per printing.
+
+### Added
+- **Rename files: reorganize an existing library to the naming template**
+  (#1181) — the naming template used to apply only at import time, so changing
+  it later, importing a pre-existing library, or ending up with a half-renamed
+  mix left no way to reconcile files short of deleting and re-importing. A new
+  **Rename files** action (on the book detail page and the author page) previews
+  every tracked file's `current → proposed` path under the current template and,
+  once confirmed, moves the ones that differ — updating the library index and
+  recording a rename in history. It is always a move within the library (never a
+  copy), refuses to overwrite an existing destination, skips files already in
+  the right place, and leaves anything not on disk untouched. Ebooks move as
+  single files; audiobooks move as whole folders. Backed by
+  `GET /api/v1/reorganize/preview` and `POST /api/v1/reorganize/apply` (both
+  admin-only). Whole-library scope is available through the API; the UI exposes
+  the per-book and per-author scopes.
+- **Manually match an unmatched download in the queue** (#1589) — a download the
+  auto-matcher couldn't tie to a book ("could not match any book to this
+  download") used to sit in the queue as a dead-end import failure. Import-failed
+  items now have a **Match to book** control: search your library, pick the book
+  the files belong to, and Bindery imports the already-downloaded files against
+  it — attaching the file and flipping the download to imported, with inline
+  feedback. The scanner now records where an unmatched download's files are (it
+  previously discarded that path), so the match can import them directly instead
+  of hoping the download client still remembers the release; downloads without a
+  recorded path fall back to a client re-poll. Downloads the scanner terminally
+  blocked after exhausting their import-retry budget (the "stuck after three
+  attempts" case) are recoverable too — the Match to book and Retry import
+  controls now appear for `importBlocked` items, and a match re-imports the
+  recorded files (or re-arms the scanner with a fresh retry budget) instead of
+  leaving them permanently stuck.
+
+### Fixed
+- **Auto-grab no longer selects or imports unrelated video releases** (#1591) —
+  an automatic audiobook search could pick a movie, TV, or music release that
+  shared a few words with the book title, download it, and move the whole folder
+  (video file included) into the audiobook library marked as imported. Two new
+  guards close this: release names carrying video-only markers (`1080p`, `x265`,
+  `WEBRip`, `S01E02`, and similar) and results the indexer filed under a
+  movie/TV/console/PC category are now dropped from book search results; and at
+  import time, a download whose largest file is a video file is blocked for
+  manual review instead of being imported (an explicit format chosen through
+  manual import overrides the block).
+- **DNB author catalogues collapse editions into one book per work** (#1585,
+  #1586) — the Deutsche Nationalbibliothek issues one MARC record per edition,
+  printing, and volume with no work abstraction, so adding a DNB-primary
+  author's catalogue produced a wall of near-duplicate books for the same work.
+  The author-works path now groups records by work and volume, drops the
+  combined volume-0 record when a work has numbered volumes, and rebuilds each
+  representative's title from its series/volume statement, so one work becomes
+  one book. Existing libraries keep any duplicate rows already imported (the
+  author sync is add-only); remove them manually or via a future merge (#1358).
+- **Security: the wanted/missing list is now scoped per user** (#1600) — under
+  multi-user tenancy (`BINDERY_ENFORCE_TENANCY`), `GET /api/v1/wanted/missing`
+  returned every user's wanted/missing books to any non-admin instead of just
+  their own, the one book-list route that had missed the `owner_user_id` scope
+  applied everywhere else. It now filters like the main book list; admins,
+  API-key, and single-tenant deployments are unaffected.
+
+### Changed
+- The queue **Retry import** control now also revives downloads the scanner
+  terminally blocked (`importBlocked`) after exhausting their retry budget, not
+  only `importFailed` ones — previously it silently no-op'd on blocked items.
+  (Part of #1589.)
+- **Dependencies:** `modernc.org/sqlite` 1.53 → 1.54, the distroless base image
+  for the main binary and the discord-stats/telemetry sidecars, and seven
+  minor/patch web dependencies (#1582, #1583, #1584, #1554, #1555).
+
+### Docs
+- Clarified that `BINDERY_LIBRARY_DIR` is a scan/reconcile target in External
+  import mode, not a destination Bindery writes to (#1558).
+
+## [v1.26.2] — 2026-07-19
+
+A patch release fixing two reported metadata bugs: profile language filters
+that never applied to what actually got downloaded, and DNB-primary setups
+silently importing English OpenLibrary catalogues.
+
+### Fixed
+- **Metadata profile languages now constrain downloads, not just the
+  catalogue** (#1573, #1576, Discussion #1572) — the profile's
+  `allowed_languages` filtered which books entered the library, but the
+  release filter only activated for English-only profiles and the automatic
+  grab path never loaded the profile at all, so an ITA/ENG profile still
+  grabbed German or French releases whenever one ranked first. The
+  foreign-tag list now maps each release marker to its ISO 639-2/B code so
+  any profile language set can be checked against a release: tagged with a
+  language outside the set drops it, untagged passes (the tag is only ever
+  a negative signal). Auto-grab resolves the author's profile before
+  grabbing, mirroring the interactive search, with the global
+  `search.preferredLanguage` setting as the fallback. Closes #1573.
+- **DNB as primary provider now keeps the DNB author identity** (#1574,
+  #1577) — author search collapses same-name records from multiple
+  providers to the most complete one, judged by work and rating counts
+  that only OpenLibrary reports, so the `dnb:` record lost the collapse
+  every time even with DNB promoted to primary. The added author kept an
+  OpenLibrary foreign ID, and since the catalogue imports from the
+  provider the foreign ID names, DNB-primary users got English OL work
+  titles — and book searches built from those titles could never match
+  German releases. The primary provider's record now wins the collapse
+  ahead of the count comparisons; OpenLibrary-primary setups are
+  unchanged. Authors already imported under the OL identity can be
+  relinked once via **Link metadata** on the author page. Closes #1574.
+
+## [v1.26.1] — 2026-07-18
+
+A patch release fixing three reported bugs: dual-format downloads serving the
+wrong file, combined Audiobookshelf libraries dropping their ebooks on import,
+and the return of the author-sync foreign-key warning burst.
+
+### Fixed
+- **Downloading a dual-format book now serves the format you selected**
+  (#1561, #1563) — the UI sends `?format=ebook|audiobook` when a book has
+  both formats, but the download handler never read the parameter and always
+  walked its legacy path chain, so selecting Audiobook still delivered the
+  epub whenever an ebook file existed. `GET /api/v1/book/{id}/file` now scopes
+  the file selection by the requested format, using the same query-parameter
+  contract the delete endpoint already had. Requests without the parameter
+  keep the old behaviour, and books imported before the dual-format schema
+  satisfy a format-scoped request from their single legacy path only when its
+  on-disk shape matches (directory = audiobook bundle, file = ebook). Closes
+  #1561.
+- **ABS import now picks up ebooks that Audiobookshelf marks supplementary**
+  (#1565, #1566) — a combined item (epub stored next to the audio files in
+  one ABS library item) imported only the audiobook when the ABS library has
+  "Audiobooks only" enabled: ABS then never promotes the epub to
+  `media.ebookFile`, exposing it only as a supplementary `libraryFiles` entry,
+  and Bindery read `media.ebookFile` exclusively. The normalizer now falls
+  back to the supplementary ebook (preferring `.epub`, mirroring ABS's own
+  primary-ebook selection), so both editions import — no extra API calls,
+  since the expanded detail fetch already carried the data. A promoted
+  primary ebook still wins. Reported in Discussion #1556 on ABS v2.35.1;
+  closes #1565.
+- **Author catalogue sync stops mid-flight when its author is deleted**
+  (#1559, #1564) — the async sync runs against a snapshot of the author and
+  can spend minutes fetching a prolific author's catalogue. If the row was
+  deleted in that window (the Add Book orphan cleanup after a poll timeout
+  where #808's direct insert didn't land, or a user deleting the author
+  mid-refresh), the insert loop failed the `author_id` foreign-key constraint
+  once per work — the reported burst logged 180 warnings for a single
+  "Michael Lewis" sync. The sync now re-checks the author row after the slow
+  fetch phase and aborts on a foreign-key failure whose author has vanished,
+  logging a single line instead. Harmless before and after (the failed
+  inserts were never persisted), but the noise made real errors easy to miss.
+  Closes #1559.
 
 ## [v1.26.0] — 2026-07-14
 

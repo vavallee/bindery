@@ -31,6 +31,32 @@ func TestParseAllowedLanguages(t *testing.T) {
 	}
 }
 
+func TestNormalizeLanguageCode(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"", ""},
+		{"  ", ""},
+		{"en", "eng"},
+		{"EN", "eng"},
+		{"en-US", "eng"},
+		{"pt_BR", "por"},
+		{"zh-Hans", "chi"},
+		{"de", "ger"},
+		// Already three-letter: passed through lowercased unchanged.
+		{"eng", "eng"},
+		{"GER", "ger"},
+		// Unknown two-letter code round-trips rather than being dropped.
+		{"xx", "xx"},
+	}
+	for _, tc := range cases {
+		if got := NormalizeLanguageCode(tc.in); got != tc.want {
+			t.Errorf("NormalizeLanguageCode(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestIsLanguageAllowed(t *testing.T) {
 	cases := []struct {
 		code        string

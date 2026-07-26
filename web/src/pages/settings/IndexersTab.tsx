@@ -89,6 +89,21 @@ function SeedRatioField({ value, onChange, source }: { value: number | null | un
   )
 }
 
+// FreeleechOnlyField gates automatic grabbing to freeleech releases. It sits
+// next to the seed-ratio override because both are tracker-economics knobs.
+function FreeleechOnlyField({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+  const { t } = useTranslation()
+  return (
+    <div>
+      <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-zinc-400">
+        <input type="checkbox" checked={value} onChange={e => onChange(e.target.checked)} className="accent-emerald-600 dark:accent-emerald-500" />
+        {t('settings.indexers.form.freeleechOnly')}
+      </label>
+      <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.freeleechOnlyHint')}</p>
+    </div>
+  )
+}
+
 // indexers/prowlarrInstances are owned by SettingsPage so they can be fetched
 // eagerly on page mount (matching the pre-refactor monolith), not on tab open.
 interface Props {
@@ -333,12 +348,13 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
   const [categories, setCategories] = useState((indexer.categories ?? [7020]).join(', '))
   const [priority, setPriority] = useState(String(indexer.priority ?? 0))
   const [seedRatio, setSeedRatio] = useState<number | null>(indexer.seedRatio ?? null)
+  const [freeleechOnly, setFreeleechOnly] = useState(indexer.freeleechOnly ?? false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<IndexerTestResult | null>(null)
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const submit = async () => {
-    const updated = await api.updateIndexer(indexer.id, { ...indexer, name, type, url, apiKey, categories: parseCats(categories), priority: parsePriority(priority), seedRatio })
+    const updated = await api.updateIndexer(indexer.id, { ...indexer, name, type, url, apiKey, categories: parseCats(categories), priority: parsePriority(priority), seedRatio, freeleechOnly })
     onSaved(updated)
   }
 
@@ -390,6 +406,7 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.priorityHint')}</p>
       </div>
       <SeedRatioField value={seedRatio} onChange={setSeedRatio} source={indexer.seedRatioSource} />
+      <FreeleechOnlyField value={freeleechOnly} onChange={setFreeleechOnly} />
       {testResult && <IndexerTestResultBanner r={testResult} />}
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">{t('common.cancel')}</button>
@@ -409,12 +426,13 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
   const [categories, setCategories] = useState('7020')
   const [priority, setPriority] = useState('0')
   const [seedRatio, setSeedRatio] = useState<number | null>(null)
+  const [freeleechOnly, setFreeleechOnly] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<IndexerTestResult | null>(null)
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const submit = async () => {
-    const idx = await api.addIndexer({ name, url, apiKey, type, categories: parseCats(categories), priority: parsePriority(priority), enabled: true, seedRatio })
+    const idx = await api.addIndexer({ name, url, apiKey, type, categories: parseCats(categories), priority: parsePriority(priority), enabled: true, seedRatio, freeleechOnly })
     onAdded(idx)
   }
 
@@ -466,6 +484,7 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.priorityHint')}</p>
       </div>
       <SeedRatioField value={seedRatio} onChange={setSeedRatio} />
+      <FreeleechOnlyField value={freeleechOnly} onChange={setFreeleechOnly} />
       {testResult && <IndexerTestResultBanner r={testResult} />}
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">{t('common.cancel')}</button>

@@ -182,6 +182,17 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 
 	slog.Info("syncing hardcover list", "list", il.Name, "slug", il.URL, "books", len(books))
 
+	// Owner to stamp on every book and author this sync creates. The list runs
+	// on a background scheduler with no request identity, so the owner is read
+	// from the list row (migration 065). 0 = global (NULL owner_user_id), the
+	// legacy behaviour, kept for shared shelves. Without this, scheduler-synced
+	// content was always NULL-owned and therefore visible to every user under
+	// tenancy — the create path the v1.25.0 audit missed (hoxtonia report).
+	var ownerID int64
+	if il.OwnerUserID != nil {
+		ownerID = *il.OwnerUserID
+	}
+
 	// Index existing authors by normalized name so a Hardcover author already in
 	// the library under a different provider's foreign id (e.g. an OpenLibrary
 	// author imported via ABS) is reused instead of duplicated (#1223).
@@ -200,7 +211,7 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		}
 
 		// Look up or create the author
-		authorID, err := s.ensureAuthor(ctx, &book, nameIndex)
+		authorID, err := s.ensureAuthor(ctx, &book, nameIndex, ownerID)
 		if err != nil {
 			slog.Warn("failed to ensure author for book", "title", book.Title, "error", err)
 			continue
@@ -221,6 +232,9 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		book.AuthorID = authorID
 		book.Monitored = true
 		book.Status = models.BookStatusWanted
+		// Stamp the list owner so the synced book is scoped to that user (0 =
+		// global). BookRepo.Create honours b.OwnerUserID directly.
+		book.OwnerUserID = ownerID
 		// A list can pin the format its books are created as, overriding the
 		// Hardcover-derived media type (most works report both editions, so
 		// without this an "Audiobooks" and an "Ebooks" list yield identical
@@ -335,8 +349,10 @@ func uniqueAuthorByName(index map[string][]models.Author, name string) *models.A
 
 // ensureAuthor looks up the author by foreign ID, then by normalized name,
 // creating a minimal record only if neither matches. Returns the author's
-// database ID.
-func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book, nameIndex map[string][]models.Author) (int64, error) {
+// database ID. ownerID (0 = global) is stamped only on a freshly created
+// author; a reused existing author keeps whatever owner it already had, so a
+// list never silently reassigns another user's — or a shared/global — author.
+func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book, nameIndex map[string][]models.Author, ownerID int64) (int64, error) {
 	if book.Author == nil {
 		return 0, fmt.Errorf("book %q has no author metadata", book.Title)
 	}
@@ -378,7 +394,7 @@ func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book, nameIn
 		author.SortName = sortName(author.Name)
 	}
 
-	if err := s.authors.Create(ctx, author); err != nil {
+	if err := s.authors.CreateForUser(ctx, author, ownerID); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") || errors.Is(err, db.ErrAuthorIdentifierConflict) {
 			// Race: author created between our check and insert
 			existing, _ = s.authors.GetByAnyForeignID(ctx, author.ForeignID)

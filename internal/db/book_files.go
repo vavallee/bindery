@@ -31,6 +31,43 @@ func (r *BookFileRepo) Add(ctx context.Context, bookID int64, format, path strin
 	return nil
 }
 
+// UpdatePath changes the on-disk path of the book_files row with the given id.
+// Used by the library reorganize action (#1181) after a tracked file is moved
+// to the location the current naming template computes. The path column is
+// globally UNIQUE, so a move onto a path another row already owns fails here
+// rather than silently corrupting the index.
+func (r *BookFileRepo) UpdatePath(ctx context.Context, id int64, newPath string) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE book_files SET path = ? WHERE id = ?`, newPath, id)
+	if err != nil {
+		return fmt.Errorf("book_files update path: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("book_files update path rows: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("book_files update path: no row with id %d", id)
+	}
+	return nil
+}
+
+// BookIDForFile returns the owning book_id for a book_files row id, or 0 when
+// no such row exists. Used by the reorganize apply path (#1181) to resolve a
+// file the client picked back to its book.
+func (r *BookFileRepo) BookIDForFile(ctx context.Context, fileID int64) (int64, error) {
+	var bookID int64
+	err := r.db.QueryRowContext(ctx,
+		`SELECT book_id FROM book_files WHERE id = ?`, fileID).Scan(&bookID)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("book_files book_id lookup: %w", err)
+	}
+	return bookID, nil
+}
+
 // ListByBook returns all book_files rows for the given book, ordered by id.
 func (r *BookFileRepo) ListByBook(ctx context.Context, bookID int64) ([]models.BookFile, error) {
 	rows, err := r.db.QueryContext(ctx,

@@ -167,6 +167,18 @@ func isMultiDiscAudiobook(srcRoot string) bool {
 // importer: every destination path is a direct child of destDir (Part NNN has
 // no separators), so book-derived strings cannot escape the library.
 func flattenAudiobookDir(ctx context.Context, mode, srcRoot, destDir string) error {
+	// Default "Part NNN.ext" naming: mirrors the historical multi-disc flatten.
+	return flattenAudiobookDirNamed(ctx, mode, srcRoot, destDir, func(index int, ext string) string {
+		return fmt.Sprintf("Part %03d%s", index+1, ext)
+	})
+}
+
+// flattenAudiobookDirNamed is flattenAudiobookDir with a caller-supplied namer,
+// so both the built-in "Part NNN" multi-disc flatten and the opt-in per-file
+// audiobook naming template (#1126) share one deterministic placement path.
+// nameFor receives the 0-based playback index and the lowercased source
+// extension (with leading dot) and returns the destination basename.
+func flattenAudiobookDirNamed(ctx context.Context, mode, srcRoot, destDir string, nameFor func(index int, ext string) string) error {
 	if mode != "copy" && mode != "hardlink" {
 		return fmt.Errorf("flatten supports copy/hardlink only, got %q", mode)
 	}
@@ -184,7 +196,7 @@ func flattenAudiobookDir(ctx context.Context, mode, srcRoot, destDir string) err
 		return fmt.Errorf("create dest dir: %w", err)
 	}
 
-	// reserved tracks every generated Part filename so a sidecar copy can never
+	// reserved tracks every generated filename so a sidecar copy can never
 	// clobber one, and so a re-run never silently overwrites.
 	reserved := make(map[string]struct{}, len(tracks))
 	for i, tr := range tracks {
@@ -193,7 +205,13 @@ func flattenAudiobookDir(ctx context.Context, mode, srcRoot, destDir string) err
 			return err
 		}
 		ext := strings.ToLower(filepath.Ext(tr.src))
-		name := fmt.Sprintf("Part %03d%s", i+1, ext)
+		name := filepath.Base(nameFor(i, ext))
+		if _, clash := reserved[name]; clash {
+			// A template that omits {Part} would collapse every track to one
+			// name and silently drop all but the last. Fail loudly instead.
+			_ = os.RemoveAll(destDir)
+			return fmt.Errorf("audiobook file template produced a duplicate name %q for %q — include {Part}", name, tr.rel)
+		}
 		reserved[name] = struct{}{}
 		dst := filepath.Join(destDir, name)
 		if err := placeFlattened(ctx, mode, tr.src, dst); err != nil {

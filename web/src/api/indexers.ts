@@ -18,6 +18,10 @@ export interface Indexer {
   // seedCriteria.seedRatio (a later Prowlarr change may refresh it); 'user' = the
   // user set/cleared it (Prowlarr won't touch it); omitted/'' = unset.
   seedRatioSource?: string
+  // Only auto-grab freeleech releases from this indexer. Non-freeleech
+  // releases are held in the Pending queue for manual approval instead of
+  // being grabbed automatically. Interactive search is unaffected.
+  freeleechOnly?: boolean
 }
 
 export interface IndexerTestResult {

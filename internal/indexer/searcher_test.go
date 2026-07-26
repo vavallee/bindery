@@ -678,6 +678,63 @@ func TestFilterByLanguagePassesAllWhenNoForeignTags(t *testing.T) {
 	}
 }
 
+func TestFilterByAllowedLanguages(t *testing.T) {
+	results := toResults(
+		"Il.Libro.ITALIAN.epub", // ita — allowed
+		"The.Book.epub",         // untagged — passes
+		"The.Book.ENGLISH.epub", // eng — allowed
+		"Das.Buch.GERMAN.epub",  // ger — dropped
+		"Le.Livre.FRENCH.epub",  // fre — dropped
+		"El.Libro.SPANISH.epub", // spa — dropped
+	)
+	got := FilterByAllowedLanguages(results, []string{"ita", "eng"})
+	want := []string{"Il.Libro.ITALIAN.epub", "The.Book.epub", "The.Book.ENGLISH.epub"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d results, got %v", len(want), resultTitles(got))
+	}
+	for _, w := range want {
+		if !contains(got, w) {
+			t.Errorf("expected %q to pass the ita/eng filter, got %v", w, resultTitles(got))
+		}
+	}
+}
+
+func TestFilterByAllowedLanguagesTwoLetterAliases(t *testing.T) {
+	results := toResults(
+		"Il.Libro.ITALIANO.epub",
+		"Das.Buch.GERMAN.epub",
+	)
+	// Hand-edited profiles may hold 639-1 codes; "it" must behave like "ita".
+	got := FilterByAllowedLanguages(results, []string{"it"})
+	if !contains(got, "Il.Libro.ITALIANO.epub") || contains(got, "Das.Buch.GERMAN.epub") {
+		t.Errorf("alias 'it' should keep the Italian release and drop the German one, got %v", resultTitles(got))
+	}
+}
+
+func TestFilterByAllowedLanguagesDisabled(t *testing.T) {
+	results := toResults("Das.Buch.GERMAN.epub", "The.Book.epub")
+	if got := FilterByAllowedLanguages(results, nil); len(got) != 2 {
+		t.Errorf("empty allowed set must pass everything, got %v", resultTitles(got))
+	}
+	if got := FilterByAllowedLanguages(results, []string{"ita", "any"}); len(got) != 2 {
+		t.Errorf("an 'any' entry must disable the filter, got %v", resultTitles(got))
+	}
+}
+
+func TestFilterByLanguageEnglishKeepsEnglishTagged(t *testing.T) {
+	results := toResults(
+		"The.Book.ENGLISH.epub",
+		"Das.Buch.GERMAN.epub",
+	)
+	got := FilterByLanguage(results, "en")
+	if !contains(got, "The.Book.ENGLISH.epub") {
+		t.Error("explicitly ENGLISH-tagged release must pass lang=en")
+	}
+	if contains(got, "Das.Buch.GERMAN.epub") {
+		t.Error("GERMAN-tagged release must be dropped for lang=en")
+	}
+}
+
 func TestIsArticle(t *testing.T) {
 	for _, w := range []string{"the", "The", "THE", "a", "A", "an", "AN"} {
 		if !IsArticle(w) {
@@ -1440,6 +1497,79 @@ func TestFilterRelevantInOrderEmbeddedDifferentWork(t *testing.T) {
 	} {
 		if !contains(got, title) {
 			t.Errorf("expected %q to pass; got %v", title, resultTitles(got))
+		}
+	}
+}
+
+func TestFilterNonBookContentVideoMarkers(t *testing.T) {
+	// The #1591 report: a movie release sharing a few title words with the
+	// requested book was selected as its audiobook. Every video-marked title
+	// must be dropped regardless of how well its words match.
+	dropped := []string{
+		"Unrelated.Release.WEBRip.1080p.x265",
+		"Example.Book.2019.720p.WEB-DL.h264-GRP",
+		"Example Book S01E03 HDTV x264",
+		"Example.Book.2160p.BluRay.REMUX.HEVC",
+		"Example.Book.DVDRip.XviD",
+	}
+	kept := []string{
+		"Example Author - Example Book (Unabridged) [M4B]",
+		"Example.Book.Example.Author.EPUB",
+		"Example Book by Example Author MP3 320",
+	}
+	results := filterNonBookContent(toResults(append(dropped, kept...)...))
+	for _, title := range dropped {
+		if contains(results, title) {
+			t.Errorf("video-marked release %q should be dropped", title)
+		}
+	}
+	for _, title := range kept {
+		if !contains(results, title) {
+			t.Errorf("book release %q should be kept", title)
+		}
+	}
+}
+
+func TestFilterNonBookContentCategories(t *testing.T) {
+	mk := func(title, cat string) newznab.SearchResult {
+		return newznab.SearchResult{Title: title, GUID: title, Category: cat}
+	}
+	results := filterNonBookContent([]newznab.SearchResult{
+		mk("movie-cat", "2040"),   // Movies/HD
+		mk("tv-cat", "5030"),      // TV/SD
+		mk("console-cat", "1010"), // Console
+		mk("pc-cat", "4050"),      // PC/Games
+		mk("audiobook-cat", "3030"),
+		mk("ebook-cat", "7020"),
+		mk("misc-cat", "8010"),
+		mk("no-cat", ""),
+		mk("garbage-cat", "Books > Audiobooks"),
+	})
+	for _, want := range []string{"audiobook-cat", "ebook-cat", "misc-cat", "no-cat", "garbage-cat"} {
+		if !contains(results, want) {
+			t.Errorf("result %q should be kept", want)
+		}
+	}
+	for _, drop := range []string{"movie-cat", "tv-cat", "console-cat", "pc-cat"} {
+		if contains(results, drop) {
+			t.Errorf("result %q should be dropped", drop)
+		}
+	}
+}
+
+func TestVideoMarkerReNoFalsePositives(t *testing.T) {
+	// Titles that skirt the marker vocabulary but are legitimate books.
+	for _, title := range []string{
+		"1080 Recipes - Simone Ortega EPUB",             // bare number, no p/i suffix
+		"Windows 10 for Dummies.epub",                   // OS version number
+		"Seveneves - Neal Stephenson (Unabridged)",      // contains 'eve', 'ns'
+		"The Subtle Art of Not Giving a F*ck MP3",       // profanity masking punctuation
+		"Sherlock Holmes - The Complete Series [M4B]",   // 'Series' without SxxExx
+		"Ready Player One - Ernest Cline - 2011 - AZW3", // year present
+		"Remus Lupin Chronicles - Book 2 (2020) [EPUB]", // 'Remu...' prefix of remux but bounded
+	} {
+		if videoMarkerRe.MatchString(title) {
+			t.Errorf("videoMarkerRe should not match book title %q", title)
 		}
 	}
 }

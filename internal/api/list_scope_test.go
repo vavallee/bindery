@@ -202,3 +202,48 @@ func TestListScope_TenancyDisabled_Unscoped(t *testing.T) {
 	assertSameSet(t, f.listAuthorNames(t, ctx), []string{"Alice Author", "Bob Author", "Global Author"})
 	assertSameSet(t, f.listBookTitles(t, ctx), []string{"Alice Book", "Bob Book", "Global Book"})
 }
+
+func (f *listScopeFixture) listWantedTitles(t *testing.T, ctx context.Context) []string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/wanted/missing", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	f.booksH.ListWanted(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("wanted list status %d: %s", rec.Code, rec.Body.String())
+	}
+	var books []models.Book
+	if err := json.Unmarshal(rec.Body.Bytes(), &books); err != nil {
+		t.Fatalf("decode wanted: %v", err)
+	}
+	titles := make([]string, 0, len(books))
+	for _, b := range books {
+		titles = append(titles, b.Title)
+	}
+	return titles
+}
+
+// TestListScope_Wanted_NonAdminIsolated is the security regression: the
+// /wanted/missing endpoint used the unscoped ListByStatus, so a non-admin saw
+// every user's wanted books. It must now scope like the main book list —
+// own + unowned only, never the other user's.
+func TestListScope_Wanted_NonAdminIsolated(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
+	f := newListScopeFixture(t)
+	ctx := auth.WithUserRole(auth.WithUserID(context.Background(), f.bob), "user")
+
+	got := f.listWantedTitles(t, ctx)
+	assertSameSet(t, got, []string{"Bob Book", "Global Book"})
+	if slices.Contains(got, "Alice Book") {
+		t.Errorf("ISOLATION LEAK: non-admin bob saw alice's wanted book: %v", got)
+	}
+}
+
+// TestListScope_Wanted_AdminSeesEverything confirms the scoping does not hide
+// other users' wanted books from an admin (scope userID 0 = unscoped).
+func TestListScope_Wanted_AdminSeesEverything(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
+	f := newListScopeFixture(t)
+	ctx := auth.WithUserRole(auth.WithUserID(context.Background(), f.bob), "admin")
+
+	assertSameSet(t, f.listWantedTitles(t, ctx), []string{"Alice Book", "Bob Book", "Global Book"})
+}

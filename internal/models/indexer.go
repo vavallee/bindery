@@ -20,6 +20,15 @@ type Indexer struct {
 	// (Prowlarr/qBittorrent convention). The downloader adapters translate the
 	// value into each client's own API shape.
 	SeedRatio *float64 `json:"seedRatio,omitempty"`
+	// FreeleechOnly restricts this indexer's AUTOMATIC grabs to releases that
+	// cost no download ratio (torznab downloadvolumefactor == 0). Non-freeleech
+	// releases are not hidden: they are held in pending_releases for manual
+	// approval, so bulk and scheduled searches stay ratio-safe while the user
+	// can still deliberately pay the cost on a book they care about.
+	// Interactive search is unaffected — it builds its own specification set.
+	// Intended for private trackers; leave off for public trackers and usenet,
+	// where there is no ratio economy.
+	FreeleechOnly bool `json:"freeleechOnly"`
 	// SeedRatioSource records who last wrote SeedRatio, so the Prowlarr syncer
 	// (#1065) can auto-populate the ratio without clobbering an explicit user
 	// choice. See the SeedRatioSource* constants. The empty string means "unset"

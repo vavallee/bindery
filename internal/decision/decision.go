@@ -28,6 +28,10 @@ type Release struct {
 	Format      string // epub, pdf, m4b, … (parsed from title)
 	MediaType   string // "ebook" | "audiobook" | "" — set for dual-format book searches
 	CustomScore int    // cumulative custom-format score
+	// DownloadVolumeFactor is the torznab downloadvolumefactor: the fraction of
+	// the release size charged against the user's download ratio (0 =
+	// freeleech, 1 = normal). nil means the indexer did not report it.
+	DownloadVolumeFactor *float64
 }
 
 // Decision is the result of evaluating a single release.
@@ -101,6 +105,8 @@ func ReleaseFromSearchResult(sr newznab.SearchResult) Release {
 		Language:    sr.Language,
 		Format:      indexer.ParseRelease(sr.Title).Format,
 		MediaType:   sr.MediaType,
+
+		DownloadVolumeFactor: sr.DownloadVolumeFactor,
 	}
 }
 

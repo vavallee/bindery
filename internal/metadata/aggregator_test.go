@@ -377,6 +377,43 @@ func TestAggregator_SearchAuthors_CollapsesFragments(t *testing.T) {
 	}
 }
 
+// TestAggregator_SearchAuthors_PrimaryProviderIdentityWins is the regression
+// test for issue #1574: with DNB promoted to primary, the dnb: author record
+// must survive dedup even though OpenLibrary's same-name record reports work
+// and rating counts DNB never populates. The author's provider identity decides
+// where the catalogue imports from, so losing the dnb: record silently turned a
+// German-primary setup back into an English OpenLibrary catalogue.
+func TestAggregator_SearchAuthors_PrimaryProviderIdentityWins(t *testing.T) {
+	stats := func(n int) *models.AuthorStats { return &models.AuthorStats{BookCount: n} }
+	dnb := &mockProvider{name: "dnb", searchAuthors: []models.Author{
+		{Name: "Rothfuss, Patrick", ForeignID: "dnb:gnd:132949156", MetadataProvider: "dnb"},
+	}}
+	ol := &mockProvider{name: "ol", searchAuthors: []models.Author{
+		{Name: "Patrick Rothfuss", ForeignID: "OL1394865A", MetadataProvider: "openlibrary", Statistics: stats(23), RatingsCount: 900},
+	}}
+
+	// DNB primary: the count-less dnb: record wins the collapse.
+	got, err := newTestAggregator(dnb, ol).SearchAuthors(context.Background(), "Patrick Rothfuss")
+	if err != nil {
+		t.Fatalf("SearchAuthors: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("same-person records should collapse to 1, got %d: %+v", len(got), got)
+	}
+	if got[0].ForeignID != "dnb:gnd:132949156" {
+		t.Errorf("DNB primary must keep the dnb: identity, got %s", got[0].ForeignID)
+	}
+
+	// OL primary with DNB as enricher: unchanged behaviour, OL record wins.
+	got, err = newTestAggregator(ol, dnb).SearchAuthors(context.Background(), "Patrick Rothfuss")
+	if err != nil {
+		t.Fatalf("SearchAuthors: %v", err)
+	}
+	if len(got) != 1 || got[0].ForeignID != "OL1394865A" {
+		t.Errorf("OL primary must keep the OL identity, got %+v", got)
+	}
+}
+
 func TestAggregator_SearchAuthors_PrefersCleanNameOverDuplicatedProviderNoise(t *testing.T) {
 	stats := func(n int) *models.AuthorStats { return &models.AuthorStats{BookCount: n} }
 	primary := &mockProvider{name: "ol", searchAuthors: []models.Author{

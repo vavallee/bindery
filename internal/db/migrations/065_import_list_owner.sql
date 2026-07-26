@@ -1,0 +1,12 @@
+-- +migrate Up
+-- Owner attribution for provider-sync import lists under multi-user tenancy
+-- (hoxtonia report). The Hardcover list syncer created books and authors with
+-- no owner_user_id, so every synced row was NULL-owned = globally visible to
+-- ALL users — the one create path the v1.25.0 multi-user audit missed. Import
+-- lists are admin-configured global config synced from a background scheduler,
+-- so there is no request identity at sync time to stamp; the owner has to live
+-- on the list row. Persisting it lets the admin attribute a synced list to a
+-- specific Bindery user, and the syncer stamps that owner onto the books and
+-- authors it creates. NULL = global (the prior behavior), kept as an explicit
+-- choice for shared shelves and the value legacy rows carry.
+ALTER TABLE import_lists ADD COLUMN owner_user_id INTEGER REFERENCES users(id);

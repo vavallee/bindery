@@ -150,4 +150,53 @@ func TestImport_UnmatchedWithNoCatalogueMatchFails(t *testing.T) {
 	if reloaded.Status != models.StateImportFailed {
 		t.Errorf("status = %q, want %q", reloaded.Status, models.StateImportFailed)
 	}
+	// #1589: the files' location is recorded so a later manual "Match to book"
+	// can import them directly rather than hunting for the path.
+	if reloaded.ImportPath != downloadDir {
+		t.Errorf("ImportPath = %q, want %q (recorded for manual match)", reloaded.ImportPath, downloadDir)
+	}
+}
+
+// TestRecordUnmatchedImportPath_EmptyPathNoOp covers the guard: an empty path is
+// never persisted (nothing to import from), so the column stays clear.
+func TestRecordUnmatchedImportPath_EmptyPathNoOp(t *testing.T) {
+	s, downloads, _, _, _, _, ctx := unmatchedFixture(t)
+	dl := &models.Download{GUID: "empty-path", Title: "t", NZBURL: "x", Status: models.StateImportFailed}
+	if err := downloads.Create(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+	s.recordUnmatchedImportPath(ctx, dl.ID, "")
+	got, _ := downloads.GetByID(ctx, dl.ID)
+	if got.ImportPath != "" {
+		t.Errorf("ImportPath = %q, want empty (empty path is a no-op)", got.ImportPath)
+	}
+}
+
+// TestRecordUnmatchedImportPath_WriteErrorLogged covers the error branch: a
+// failing SetImportPath (here a read-only DB) is logged and swallowed — recording
+// the path is best-effort and must never abort the import failure handling.
+func TestRecordUnmatchedImportPath_WriteErrorLogged(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	database.SetMaxOpenConns(1)
+	downloads := db.NewDownloadRepo(database)
+	dl := &models.Download{GUID: "roerr", Title: "t", NZBURL: "x", Status: models.StateImportFailed}
+	if err := downloads.Create(context.Background(), dl); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(context.Background(), "PRAGMA query_only=ON"); err != nil {
+		t.Fatal(err)
+	}
+	s := NewScanner(downloads, db.NewDownloadClientRepo(database), db.NewBookRepo(database),
+		db.NewAuthorRepo(database), db.NewHistoryRepo(database), t.TempDir(), "", "", "", "")
+
+	s.recordUnmatchedImportPath(context.Background(), dl.ID, "/data/downloads/whatever") // UPDATE fails, logged
+
+	got, _ := downloads.GetByID(context.Background(), dl.ID)
+	if got.ImportPath != "" {
+		t.Errorf("ImportPath = %q, want empty (write failed, logged)", got.ImportPath)
+	}
 }

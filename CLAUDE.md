@@ -12,7 +12,9 @@ All PRs target `main`. Tag push triggers CI:
 
 **CHANGELOG.md entry for the version MUST exist before tagging** — the release step reads it and aborts if missing. Tag the commit that contains the entry. (Learned the hard way on v1.1.1.)
 
-**Prod never auto-deploys.** Promotion is manual: Actions → "Promote to production" workflow_dispatch → enter tag → PR bumping `charts/bindery/values.yaml` on main → merge → ArgoCD `bindery` app syncs.
+**A `v*` tag deploys automatically** — there is no manual promotion step. `deploy-prod` is gated on the tag plus a green `goreleaser`, bumps `charts/bindery/values.yaml` on main, and the ArgoCD `bindery` app syncs it. `notify-discord` posts the release announcement at the same time. (The old "Promote to production" workflow_dispatch flow is gone; this file described it long after it was removed.)
+
+The ArgoCD "prod" app is the maintainer's own instance, not a customer fleet — the parts that actually reach other people are the public GitHub Release and the Discord post.
 
 ## Security conventions (from the v1.1.1 multi-user audit)
 

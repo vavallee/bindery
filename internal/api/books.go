@@ -307,6 +307,7 @@ func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
 			Search:        strings.TrimSpace(r.URL.Query().Get("search")),
 			Status:        status,
 			MediaType:     r.URL.Query().Get("mediaType"),
+			Monitored:     parseMonitoredParam(r.URL.Query().Get("monitored")),
 			Sort:          r.URL.Query().Get("sort"),
 			ReleaseFrom:   strings.TrimSpace(r.URL.Query().Get("releaseFrom")),
 			ReleaseBefore: strings.TrimSpace(r.URL.Query().Get("releaseBefore")),
@@ -330,6 +331,22 @@ func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
 		Limit:  limit,
 		Offset: offset,
 	})
+}
+
+// parseMonitoredParam maps the ?monitored= query value to a tri-state filter:
+// "true"/"false" pin the flag, anything else (including empty) means "all" and
+// returns nil so the filter is skipped. Mirrors the Authors list handler.
+func parseMonitoredParam(v string) *bool {
+	switch v {
+	case "true":
+		t := true
+		return &t
+	case "false":
+		f := false
+		return &f
+	default:
+		return nil
+	}
 }
 
 // pageBooks slices a fully-loaded book list by (limit, offset) and returns
@@ -839,12 +856,18 @@ func sweepMatchesFormat(name, format string) bool {
 }
 
 func (h *BookHandler) ListWanted(w http.ResponseWriter, r *http.Request) {
+	// Scope to the caller's own + unowned books under tenancy (0 = unscoped for
+	// admins / API-key / single-tenant), matching the main book list. Without
+	// this a non-admin's wanted/missing page leaked every user's books (#1220
+	// tenancy: the scoped ListByStatusAndUser existed and was used by OPDS, but
+	// this handler still called the unscoped variant).
+	scope := auth.ListScopeUserID(r.Context())
 	var books []models.Book
 	var err error
 	if r.URL.Query().Get("includeExcluded") == "true" {
-		books, err = h.books.ListByStatusIncludingExcluded(r.Context(), models.BookStatusWanted)
+		books, err = h.books.ListByStatusIncludingExcludedAndUser(r.Context(), models.BookStatusWanted, scope)
 	} else {
-		books, err = h.books.ListByStatus(r.Context(), models.BookStatusWanted)
+		books, err = h.books.ListByStatusAndUser(r.Context(), models.BookStatusWanted, scope)
 	}
 	if err != nil {
 		writeServerError(w, r, err)

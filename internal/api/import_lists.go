@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -28,22 +29,67 @@ type hardcoverUserListClient interface {
 	GetUsername(ctx context.Context) (string, error)
 }
 
+// userLookup is the narrow surface the handler needs to validate that a list's
+// owner_user_id points at a real user before persisting it. Satisfied by
+// *db.UserRepo.
+type userLookup interface {
+	GetByID(ctx context.Context, id int64) (*db.User, error)
+}
+
 type ImportListHandler struct {
 	repo         *db.ImportListRepo
 	settings     *db.SettingsRepo
 	hcSync       HardcoverListSyncer
+	users        userLookup
 	hcListClient func(token string) hardcoverUserListClient
 }
 
-func NewImportListHandler(repo *db.ImportListRepo, settings *db.SettingsRepo, hcSync HardcoverListSyncer) *ImportListHandler {
+func NewImportListHandler(repo *db.ImportListRepo, settings *db.SettingsRepo, hcSync HardcoverListSyncer, users userLookup) *ImportListHandler {
 	return &ImportListHandler{
 		repo:     repo,
 		settings: settings,
 		hcSync:   hcSync,
+		users:    users,
 		hcListClient: func(token string) hardcoverUserListClient {
 			return hardcover.NewAuthenticated(token)
 		},
 	}
+}
+
+// errInvalidOwner marks an owner_user_id the client supplied that cannot be
+// accepted (non-positive, or not an existing user). The handler maps it to 400;
+// a wrapped lookup failure (not this sentinel) maps to 500.
+var errInvalidOwner = errors.New("invalid ownerUserId")
+
+// validateOwner reports an error when ownerID is set (non-nil) but does not
+// reference an existing user. nil is always valid — it means "global", the
+// shared-shelf default. A nil users lookup skips validation (single-user
+// deployments that never wire tenancy).
+func (h *ImportListHandler) validateOwner(ctx context.Context, ownerID *int64) error {
+	if ownerID == nil || h.users == nil {
+		return nil
+	}
+	if *ownerID <= 0 {
+		return fmt.Errorf("%w: must be a positive user id or null", errInvalidOwner)
+	}
+	u, err := h.users.GetByID(ctx, *ownerID)
+	if err != nil {
+		return fmt.Errorf("look up owner user %d: %w", *ownerID, err)
+	}
+	if u == nil {
+		return fmt.Errorf("%w: user %d does not exist", errInvalidOwner, *ownerID)
+	}
+	return nil
+}
+
+// writeOwnerError maps a validateOwner error to the right status: a bad client
+// value is 400, an internal lookup failure is 500.
+func writeOwnerError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, errInvalidOwner) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeServerError(w, r, err)
 }
 
 func (h *ImportListHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -93,6 +139,10 @@ func (h *ImportListHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "mediaType must be one of: ebook, audiobook, both (or empty)"})
 		return
 	}
+	if err := h.validateOwner(r.Context(), il.OwnerUserID); err != nil {
+		writeOwnerError(w, r, err)
+		return
+	}
 	il.APIKey = hardcover.NormalizeAPIToken(il.APIKey)
 	if err := h.repo.Create(r.Context(), &il); err != nil {
 		writeServerError(w, r, err)
@@ -120,6 +170,10 @@ func (h *ImportListHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := applyImportListPatch(&il, raw); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if err := h.validateOwner(r.Context(), il.OwnerUserID); err != nil {
+		writeOwnerError(w, r, err)
 		return
 	}
 	il.ID = id
@@ -317,6 +371,12 @@ func applyImportListPatch(il *models.ImportList, raw map[string]json.RawMessage)
 		return err
 	}
 	if err := apply("mediaType", &il.MediaType); err != nil {
+		return err
+	}
+	// ownerUserId patch semantics: an explicit null clears the owner (back to
+	// global), a number sets it, an absent key leaves the current owner intact.
+	// Existence against the users table is validated by the handler afterwards.
+	if err := apply("ownerUserId", &il.OwnerUserID); err != nil {
 		return err
 	}
 	if !validImportListMediaType(il.MediaType) {

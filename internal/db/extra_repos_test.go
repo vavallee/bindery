@@ -1002,3 +1002,66 @@ func TestSettingsRepo_SetMany_RollsBackOnFailure(t *testing.T) {
 		t.Errorf("abs.library_id = %+v, want nil (rollback failed)", got)
 	}
 }
+
+// TestIndexerRepo_FreeleechOnly covers the per-indexer freeleech policy column:
+// it defaults off for existing/new rows, survives a create+update round trip,
+// and can be turned back off.
+func TestIndexerRepo_FreeleechOnly(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewIndexerRepo(database)
+
+	idx := &models.Indexer{
+		Name: "Private Tracker", Type: "torznab", URL: "https://example.com/api",
+		APIKey: "k", Categories: []int{7020}, Priority: 1, Enabled: true,
+	}
+	if err := repo.Create(ctx, idx); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := repo.GetByID(ctx, idx.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.FreeleechOnly {
+		t.Error("FreeleechOnly must default to off — the policy is strictly opt-in")
+	}
+
+	// Turn it on.
+	got.FreeleechOnly = true
+	if err := repo.Update(ctx, got); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	got, err = repo.GetByID(ctx, idx.ID)
+	if err != nil {
+		t.Fatalf("GetByID after enable: %v", err)
+	}
+	if !got.FreeleechOnly {
+		t.Error("FreeleechOnly did not persist through Update")
+	}
+	// And it must come back through List, which the scheduler uses to build
+	// the policy set.
+	all, err := repo.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(all) != 1 || !all[0].FreeleechOnly {
+		t.Errorf("List must carry FreeleechOnly, got %+v", all)
+	}
+
+	// And off again.
+	got.FreeleechOnly = false
+	if err := repo.Update(ctx, got); err != nil {
+		t.Fatalf("Update (disable): %v", err)
+	}
+	got, err = repo.GetByID(ctx, idx.ID)
+	if err != nil {
+		t.Fatalf("GetByID after disable: %v", err)
+	}
+	if got.FreeleechOnly {
+		t.Error("FreeleechOnly did not clear through Update")
+	}
+}

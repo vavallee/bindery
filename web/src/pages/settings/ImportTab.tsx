@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, BatchImportItem, BatchImportResponse, Book, HardcoverList, ImportList, ManualImportLookup, ScanItem } from '../../api/client'
+import { api, BatchImportItem, BatchImportResponse, Book, HardcoverList, ImportList, ManagedUser, ManualImportLookup, ScanItem } from '../../api/client'
 import { inputCls } from './formStyles'
 import GoodreadsImportSection from './GoodreadsImportSection'
 
@@ -477,6 +477,7 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
   const [lists, setLists] = useState<ImportList[]>([])
   const [hcLists, setHcLists] = useState<HardcoverList[]>([])
   const [hcAccount, setHcAccount] = useState('')
+  const [users, setUsers] = useState<ManagedUser[]>([])
   const [loadingLists, setLoadingLists] = useState(true)
   const [pickerToken, setPickerToken] = useState('')
   const [activePickerToken, setActivePickerToken] = useState('')
@@ -512,6 +513,12 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
     void loadLists('')
   }, [loadLists])
 
+  // Owner picker options (admin-only tab, so /auth/users is safe to call).
+  // Tolerate failure: with no users loaded the picker still offers "Global".
+  useEffect(() => {
+    api.listUsers().then(setUsers).catch(() => setUsers([]))
+  }, [])
+
   const updateLocalList = (updated: ImportList) => {
     setLists(prev => sortImportLists(prev.map(l => l.id === updated.id ? updated : l)))
   }
@@ -536,6 +543,17 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
     }
   }
 
+  const handleOwnerChange = async (il: ImportList, value: string) => {
+    setError(null)
+    try {
+      const ownerUserId = value === '' ? null : Number(value)
+      const updated = await api.updateImportList(il.id, { ownerUserId })
+      updateLocalList(updated)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update owner')
+    }
+  }
+
   const handleSelectList = async (list: HardcoverList, existing?: ImportList) => {
     setActionSlug(list.slug)
     setError(null)
@@ -556,6 +574,9 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
         enabled: Boolean(tokenOverride),
         monitorNew: true,
         autoAdd: true,
+        // New lists default to global (visible to all users); the per-list
+        // Owner picker below scopes synced content to a single user.
+        ownerUserId: null,
       })
       setLists(prev => sortImportLists([...prev, created]))
     } catch (err) {
@@ -747,6 +768,18 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
                       <option value="ebook">{t('settings.import.mediaTypeEbook', 'Ebook')}</option>
                       <option value="audiobook">{t('settings.import.mediaTypeAudiobook', 'Audiobook')}</option>
                       <option value="both">{t('settings.import.mediaTypeBoth', 'Both')}</option>
+                    </select>
+                    <select
+                      value={il.ownerUserId ?? ''}
+                      onChange={e => handleOwnerChange(il, e.target.value)}
+                      aria-label={t('settings.import.ownerLabel', 'Owner')}
+                      title={t('settings.import.ownerHint', 'Who sees books synced from this list. Global shows them to all users.')}
+                      className="text-xs px-2 py-1 rounded bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300"
+                    >
+                      <option value="">{t('settings.import.ownerGlobal', 'Global (all users)')}</option>
+                      {users.map(u => (
+                        <option key={u.id} value={u.id}>{u.username}</option>
+                      ))}
                     </select>
                     <button
                       onClick={() => handleSync(il.id)}

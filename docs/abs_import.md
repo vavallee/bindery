@@ -147,7 +147,7 @@ The importer does not create an ABS-only ownership model. It reuses Bindery's ex
 
 Accepted paths:
 
-- ebook ownership comes from `NormalizedLibraryItem.EbookPath`
+- ebook ownership comes from `NormalizedLibraryItem.EbookPath`. That is `media.ebookFile` when ABS promoted a primary ebook; when the ABS library has **"Audiobooks only"** enabled ABS never promotes one, so the importer falls back to the item's supplementary ebook in `libraryFiles` (preferring `.epub`, matching ABS's own primary-ebook pick)
 - audiobook ownership comes from the ABS item `Path`
 - a path is only accepted when it resolves under a Bindery-visible library root
 

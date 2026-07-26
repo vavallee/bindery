@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -460,6 +461,126 @@ func TestQueueDelete_FlipsBookToWanted(t *testing.T) {
 	got, _ := books.GetByID(ctx, b.ID)
 	if got.Status != models.BookStatusWanted {
 		t.Errorf("book status should flip to wanted, got %q", got.Status)
+	}
+}
+
+// TestQueueBulkDelete_UnmonitorsBooks is the accidental-mass-import recovery
+// path: removing many queue items at once, with unmonitorBooks set, must delete
+// every download and unmonitor each linked book so the scheduler won't re-grab
+// them. Downloads here have no client, so removeQueueItem skips the client call.
+func TestQueueBulkDelete_UnmonitorsBooks(t *testing.T) {
+	h, database, downloads, _, books, ctx := queueFixture(t)
+	a := &models.Author{ForeignID: "OL1", Name: "X", SortName: "X", MetadataProvider: "openlibrary", Monitored: true}
+	if err := db.NewAuthorRepo(database).Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	var ids []int64
+	var bookIDs []int64
+	for i := 0; i < 3; i++ {
+		b := &models.Book{
+			ForeignID: fmt.Sprintf("B%d", i), AuthorID: a.ID, Title: fmt.Sprintf("T%d", i), SortTitle: "t",
+			Status: models.BookStatusDownloading, Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+		}
+		if err := books.Create(ctx, b); err != nil {
+			t.Fatal(err)
+		}
+		bookIDs = append(bookIDs, b.ID)
+		d := &models.Download{
+			GUID: fmt.Sprintf("g%d", i), BookID: &b.ID, Title: b.Title,
+			Status: models.DownloadStatusDownloading, Protocol: "usenet",
+		}
+		if err := downloads.Create(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, d.ID)
+	}
+
+	body, _ := json.Marshal(map[string]any{"ids": ids, "unmonitorBooks": true})
+	rec := httptest.NewRecorder()
+	h.BulkDelete(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/bulk-delete", bytes.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Results map[string]struct {
+			OK    bool   `json:"ok"`
+			Error string `json:"error"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Results) != len(ids) {
+		t.Fatalf("expected %d results, got %d", len(ids), len(resp.Results))
+	}
+	for _, id := range ids {
+		if r := resp.Results[strconv.FormatInt(id, 10)]; !r.OK {
+			t.Errorf("id %d not ok: %q", id, r.Error)
+		}
+	}
+	// Every download gone.
+	remaining, _ := downloads.List(ctx)
+	if len(remaining) != 0 {
+		t.Errorf("expected all downloads removed, %d remain", len(remaining))
+	}
+	// Every linked book unmonitored and flipped off downloading.
+	for _, bid := range bookIDs {
+		got, _ := books.GetByID(ctx, bid)
+		if got == nil {
+			t.Fatalf("book %d missing", bid)
+		}
+		if got.Monitored {
+			t.Errorf("book %d still monitored, want unmonitored", bid)
+		}
+		if got.Status != models.BookStatusWanted {
+			t.Errorf("book %d status = %q, want wanted", bid, got.Status)
+		}
+	}
+}
+
+// TestQueueBulkDelete_KeepsMonitoringByDefault confirms that without
+// unmonitorBooks the linked book stays monitored (only its downloading status
+// is reset), matching the single-item Delete behaviour.
+func TestQueueBulkDelete_KeepsMonitoringByDefault(t *testing.T) {
+	h, database, downloads, _, books, ctx := queueFixture(t)
+	a := &models.Author{ForeignID: "OL1", Name: "X", SortName: "X", MetadataProvider: "openlibrary", Monitored: true}
+	if err := db.NewAuthorRepo(database).Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	b := &models.Book{
+		ForeignID: "B1", AuthorID: a.ID, Title: "T", SortTitle: "t",
+		Status: models.BookStatusDownloading, Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	d := &models.Download{GUID: "g", BookID: &b.ID, Title: "T", Status: models.DownloadStatusDownloading, Protocol: "usenet"}
+	if err := downloads.Create(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]any{"ids": []int64{d.ID}})
+	rec := httptest.NewRecorder()
+	h.BulkDelete(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/bulk-delete", bytes.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, _ := books.GetByID(ctx, b.ID)
+	if !got.Monitored {
+		t.Errorf("book should stay monitored without unmonitorBooks")
+	}
+	if got.Status != models.BookStatusWanted {
+		t.Errorf("book status = %q, want wanted", got.Status)
+	}
+}
+
+// TestQueueBulkDelete_RequiresIDs rejects an empty batch.
+func TestQueueBulkDelete_RequiresIDs(t *testing.T) {
+	h, _, _, _, _, _ := queueFixture(t)
+	rec := httptest.NewRecorder()
+	h.BulkDelete(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/bulk-delete", bytes.NewBufferString(`{"ids":[]}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty ids, got %d", rec.Code)
 	}
 }
 

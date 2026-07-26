@@ -336,6 +336,70 @@ func TestBookRepo_ListPageFiltered(t *testing.T) {
 	if len(za) != 1 || za[0].Title != "Warbreaker" {
 		t.Errorf("title-za first = %v, want [Warbreaker]", za)
 	}
+
+	// Monitored filter is orthogonal to status: only "Warbreaker" is unmonitored,
+	// regardless of its wanted status.
+	unmon := false
+	unmonitored, total, err := bookRepo.ListPageFiltered(ctx, BookListFilter{Monitored: &unmon}, 50, 0)
+	if err != nil {
+		t.Fatalf("monitored=false: %v", err)
+	}
+	if total != 1 || len(unmonitored) != 1 || unmonitored[0].Title != "Warbreaker" {
+		t.Errorf("monitored=false = %d rows, want 1 (Warbreaker only)", total)
+	}
+	mon := true
+	if _, total, err := bookRepo.ListPageFiltered(ctx, BookListFilter{Monitored: &mon}, 50, 0); err != nil || total != 3 {
+		t.Errorf("monitored=true total=%d err=%v, want 3", total, err)
+	}
+
+	// status-az orders by the status column (imported < wanted alphabetically),
+	// with sort_title as the tiebreaker within a status.
+	byStatus, _, err := bookRepo.ListPageFiltered(ctx, BookListFilter{Sort: "status-az"}, 50, 0)
+	if err != nil {
+		t.Fatalf("status-az: %v", err)
+	}
+	// imported: Mistborn, The Way of Kings; wanted: Elantris, Warbreaker.
+	wantStatusOrder := []string{"Mistborn", "The Way of Kings", "Elantris", "Warbreaker"}
+	for i, w := range wantStatusOrder {
+		if byStatus[i].Title != w {
+			t.Fatalf("status-az order = %v, want %v", titles(byStatus), wantStatusOrder)
+		}
+	}
+
+	// author-az sorts by the joined author sort_name; all four share one author,
+	// so it falls through to the sort_title tiebreaker (alphabetical titles).
+	byAuthor, _, err := bookRepo.ListPageFiltered(ctx, BookListFilter{Sort: "author-az"}, 50, 0)
+	if err != nil {
+		t.Fatalf("author-az: %v", err)
+	}
+	wantAuthorOrder := []string{"Elantris", "Mistborn", "The Way of Kings", "Warbreaker"}
+	for i, w := range wantAuthorOrder {
+		if byAuthor[i].Title != w {
+			t.Fatalf("author-az order = %v, want %v", titles(byAuthor), wantAuthorOrder)
+		}
+	}
+
+	// type-za orders media_type descending: ebook > both > audiobook. Titles are
+	// the tiebreaker within a type.
+	byType, _, err := bookRepo.ListPageFiltered(ctx, BookListFilter{Sort: "type-za"}, 50, 0)
+	if err != nil {
+		t.Fatalf("type-za: %v", err)
+	}
+	// ebook: Mistborn, Warbreaker; both: The Way of Kings; audiobook: Elantris.
+	wantTypeOrder := []string{"Mistborn", "Warbreaker", "The Way of Kings", "Elantris"}
+	for i, w := range wantTypeOrder {
+		if byType[i].Title != w {
+			t.Fatalf("type-za order = %v, want %v", titles(byType), wantTypeOrder)
+		}
+	}
+}
+
+func titles(books []models.Book) []string {
+	out := make([]string, len(books))
+	for i, b := range books {
+		out[i] = b.Title
+	}
+	return out
 }
 
 // TestAuthorRepo_ListPageFiltered_SearchMatchesAlias covers #1176: searching a

@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vavallee/bindery/internal/auth"
@@ -543,7 +544,7 @@ func queueItemSizeLeft(item enrichedQueueItem) int64 {
 	switch item.Download.Status {
 	case models.StateCompleted, models.StateImportPending, models.StateImporting,
 		models.StateImported, models.StateFailed, models.StateImportFailed,
-		models.StateImportBlocked, models.StateImportExternal:
+		models.StateImportBlocked, models.StateImportExternal, models.StateImportHeld:
 		return 0
 	default:
 		return item.Download.Size
@@ -930,10 +931,24 @@ func (h *QueueHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// the files is opt-in via `?deleteFiles=true`, mirroring book Delete.
 	deleteFiles := r.URL.Query().Get("deleteFiles") == "true"
 
+	if err := h.removeQueueItem(r.Context(), target, deleteFiles, false); err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// removeQueueItem removes one download from its client and the local DB. The
+// downloaded data stays on disk unless deleteFiles is set. A downloading/
+// downloaded book is reset to wanted so it doesn't look stuck. When
+// unmonitorBook is true the linked book is also unmonitored, so the scheduler's
+// wanted-search loop won't immediately re-grab it — the key to making a bulk
+// "clear the queue" actually stick after an accidental mass import (#Daize).
+func (h *QueueHandler) removeQueueItem(ctx context.Context, target *models.Download, deleteFiles, unmonitorBook bool) error {
 	if target.DownloadClientID != nil {
-		client, err := h.clients.GetByID(r.Context(), *target.DownloadClientID)
+		client, err := h.clients.GetByID(ctx, *target.DownloadClientID)
 		if err == nil && client != nil {
-			if err := downloader.RemoveDownload(r.Context(), client, target, deleteFiles); err != nil {
+			if err := downloader.RemoveDownload(ctx, client, target, deleteFiles); err != nil {
 				slog.Warn("failed to remove download from client", "download_id", target.ID, "client_id", client.ID, "error", err)
 			}
 		} else if err != nil {
@@ -942,20 +957,93 @@ func (h *QueueHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if target.BookID != nil {
-		book, err := h.books.GetByID(r.Context(), *target.BookID)
+		book, err := h.books.GetByID(ctx, *target.BookID)
 		if err != nil {
 			slog.Warn("failed to load book for download delete", "download_id", target.ID, "book_id", *target.BookID, "error", err)
-		} else if book != nil && (book.Status == models.BookStatusDownloading || book.Status == models.BookStatusDownloaded) {
-			book.Status = models.BookStatusWanted
-			if err := h.books.Update(r.Context(), book); err != nil {
-				slog.Warn("failed to reset book status after download delete", "download_id", target.ID, "book_id", book.ID, "error", err)
+		} else if book != nil {
+			changed := false
+			if book.Status == models.BookStatusDownloading || book.Status == models.BookStatusDownloaded {
+				book.Status = models.BookStatusWanted
+				changed = true
+			}
+			if unmonitorBook && book.Monitored {
+				book.Monitored = false
+				changed = true
+			}
+			if changed {
+				if err := h.books.Update(ctx, book); err != nil {
+					slog.Warn("failed to update book after download delete", "download_id", target.ID, "book_id", book.ID, "error", err)
+				}
 			}
 		}
 	}
 
-	if err := h.downloads.Delete(r.Context(), id); err != nil {
+	return h.downloads.Delete(ctx, target.ID)
+}
+
+// bulkDeleteConcurrency bounds how many queue items a single bulk-remove fans
+// out at once. Each item makes one download-client call (RemoveDownload), so
+// this keeps a 1000+ item cleanup from opening a connection per item against
+// qBittorrent/SABnzbd. DB writes serialise on the single-conn pool regardless.
+const bulkDeleteConcurrency = 6
+
+// BulkDelete removes many queue items in one request. Body:
+//
+//	{"ids": [1,2,3], "deleteFiles": false, "unmonitorBooks": true}
+//
+// Per-ID results mirror the author/book bulk endpoints: a stale or not-owned id
+// is reported inline (as "download not found", the same opaque message the
+// single Delete uses under tenancy) rather than failing the whole batch. This
+// is the recovery path for an accidental mass import that flooded the queue —
+// pair it with unmonitorBooks:true so the freed books don't re-grab.
+func (h *QueueHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		IDs            []int64 `json:"ids"`
+		DeleteFiles    bool    `json:"deleteFiles"`
+		UnmonitorBooks bool    `json:"unmonitorBooks"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if len(req.IDs) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ids required"})
+		return
+	}
+
+	// One List instead of a GetByID per id: List already sources the full
+	// Download state removeQueueItem needs, and the single Delete path reads it
+	// the same way. Ownership is enforced per item against the loaded row.
+	downloads, err := h.downloads.List(r.Context())
+	if err != nil {
 		writeServerError(w, r, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	byID := make(map[int64]models.Download, len(downloads))
+	for _, d := range downloads {
+		byID[d.ID] = d
+	}
+
+	results := make(map[string]bulkItemResult, len(req.IDs))
+	var mu sync.Mutex
+	setResult := func(id int64, res bulkItemResult) {
+		mu.Lock()
+		results[strconv.FormatInt(id, 10)] = res
+		mu.Unlock()
+	}
+
+	concurrency.RunBounded(r.Context(), req.IDs, bulkDeleteConcurrency, func(ctx context.Context, id int64) {
+		target, ok := byID[id]
+		if !ok || !auth.CheckOwnership(ctx, target.OwnerUserID) {
+			setResult(id, bulkItemResult{Error: "download not found"})
+			return
+		}
+		if err := h.removeQueueItem(ctx, &target, req.DeleteFiles, req.UnmonitorBooks); err != nil {
+			setResult(id, bulkItemResult{Error: err.Error()})
+			return
+		}
+		setResult(id, bulkItemResult{OK: true})
+	})
+
+	writeJSON(w, http.StatusOK, bulkResponse{Results: results})
 }

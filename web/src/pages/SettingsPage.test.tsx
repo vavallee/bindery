@@ -1247,6 +1247,7 @@ describe('SettingsPage', () => {
         priority: 0,
         enabled: true,
         seedRatio: null,
+        freeleechOnly: false,
       })
     })
     expect(await screen.findByText('SceneNZBs')).toBeInTheDocument()
@@ -1275,6 +1276,7 @@ describe('SettingsPage', () => {
         apiKey: 'slug-key',
         categories: [7020, 3030],
         seedRatio: null,
+        freeleechOnly: false,
       })
     })
     expect(await screen.findByText('DrunkenSlug')).toBeInTheDocument()
@@ -1315,6 +1317,29 @@ describe('SettingsPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
     expect(screen.getByLabelText('settings.indexers.form.seedRatioUnlimited')).toBeChecked()
+  })
+
+  it('saves the freeleech-only auto-grab toggle', async () => {
+    const indexer = makeIndexer({ id: 14, name: 'FreeleechIdx' })
+    renderSettings({ indexers: [indexer] })
+    await openIndexersTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
+    fireEvent.click(screen.getByLabelText('settings.indexers.form.freeleechOnly'))
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
+
+    await waitFor(() => {
+      expect(api.updateIndexer).toHaveBeenCalledWith(14, expect.objectContaining({ freeleechOnly: true }))
+    })
+  })
+
+  it('initializes the freeleech-only toggle from the existing indexer', async () => {
+    const indexer = makeIndexer({ id: 15, name: 'PreFreeleech', freeleechOnly: true })
+    renderSettings({ indexers: [indexer] })
+    await openIndexersTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
+    expect(screen.getByLabelText('settings.indexers.form.freeleechOnly')).toBeChecked()
   })
 
   it('toggles and deletes an indexer', async () => {

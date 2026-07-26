@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/auth"
@@ -16,6 +17,12 @@ import (
 
 func importListFixture(t *testing.T) (*ImportListHandler, *db.ImportListRepo, *db.SettingsRepo) {
 	t.Helper()
+	h, repo, settings, _ := importListFixtureWithUsers(t)
+	return h, repo, settings
+}
+
+func importListFixtureWithUsers(t *testing.T) (*ImportListHandler, *db.ImportListRepo, *db.SettingsRepo, *db.UserRepo) {
+	t.Helper()
 	database, err := db.OpenMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -23,7 +30,8 @@ func importListFixture(t *testing.T) (*ImportListHandler, *db.ImportListRepo, *d
 	t.Cleanup(func() { database.Close() })
 	importLists := db.NewImportListRepo(database)
 	settings := db.NewSettingsRepo(database)
-	return NewImportListHandler(importLists, settings, nil), importLists, settings
+	users := db.NewUserRepo(database)
+	return NewImportListHandler(importLists, settings, nil, users), importLists, settings, users
 }
 
 func TestImportListList_Empty(t *testing.T) {
@@ -36,6 +44,89 @@ func TestImportListList_Empty(t *testing.T) {
 	// Expect [] not null so the UI can render.
 	if bytes.TrimSpace(rec.Body.Bytes())[0] != '[' {
 		t.Errorf("expected JSON array, got %s", rec.Body.String())
+	}
+}
+
+func TestImportListOwner_ValidUserPersists(t *testing.T) {
+	h, repo, _, users := importListFixtureWithUsers(t)
+	ctx := context.Background()
+	owner, err := users.Create(ctx, "alice", "hash")
+	if err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	body := `{"name":"Alice WTR","type":"hardcover","url":"wtr","ownerUserId":` +
+		strconv.FormatInt(owner.ID, 10) + `}`
+	h.Create(rec, httptest.NewRequest(http.MethodPost, "/api/v1/importlist", bytes.NewBufferString(body)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var created models.ImportList
+	json.NewDecoder(rec.Body).Decode(&created)
+	if created.OwnerUserID == nil || *created.OwnerUserID != owner.ID {
+		t.Fatalf("created OwnerUserID = %v, want %d", created.OwnerUserID, owner.ID)
+	}
+	stored, _ := repo.GetByID(ctx, created.ID)
+	if stored == nil || stored.OwnerUserID == nil || *stored.OwnerUserID != owner.ID {
+		t.Fatalf("stored owner = %+v, want %d", stored, owner.ID)
+	}
+}
+
+func TestImportListOwner_UnknownUserRejected(t *testing.T) {
+	h, _, _, _ := importListFixtureWithUsers(t)
+	rec := httptest.NewRecorder()
+	// No users seeded, so id 999 cannot exist.
+	body := `{"name":"Bad owner","type":"hardcover","url":"x","ownerUserId":999}`
+	h.Create(rec, httptest.NewRequest(http.MethodPost, "/api/v1/importlist", bytes.NewBufferString(body)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unknown owner, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestImportListOwner_NullIsGlobal(t *testing.T) {
+	h, repo, _, _ := importListFixtureWithUsers(t)
+	ctx := context.Background()
+	rec := httptest.NewRecorder()
+	// Explicit null owner = global; must be accepted with no users present.
+	body := `{"name":"Shared","type":"hardcover","url":"s","ownerUserId":null}`
+	h.Create(rec, httptest.NewRequest(http.MethodPost, "/api/v1/importlist", bytes.NewBufferString(body)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for global list, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var created models.ImportList
+	json.NewDecoder(rec.Body).Decode(&created)
+	stored, _ := repo.GetByID(ctx, created.ID)
+	if stored == nil || stored.OwnerUserID != nil {
+		t.Fatalf("stored owner = %+v, want nil (global)", stored)
+	}
+}
+
+func TestImportListOwner_UpdateClearsToGlobal(t *testing.T) {
+	h, repo, _, users := importListFixtureWithUsers(t)
+	ctx := context.Background()
+	owner, err := users.Create(ctx, "bob", "hash")
+	if err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	il := models.ImportList{Name: "Bob", Type: "hardcover", URL: "b", OwnerUserID: &owner.ID}
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed list: %v", err)
+	}
+
+	// PUT with explicit null must clear the owner back to global.
+	rec := httptest.NewRecorder()
+	idStr := strconv.FormatInt(il.ID, 10)
+	h.Update(rec, withURLParam(
+		httptest.NewRequest(http.MethodPut, "/api/v1/importlist/"+idStr,
+			bytes.NewBufferString(`{"ownerUserId":null}`)),
+		"id", idStr))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	stored, _ := repo.GetByID(ctx, il.ID)
+	if stored == nil || stored.OwnerUserID != nil {
+		t.Fatalf("after clear, owner = %+v, want nil", stored)
 	}
 }
 

@@ -67,6 +67,30 @@ func TestReadEpubMetadata(t *testing.T) {
 	if meta.ISBN != "9780345472199" {
 		t.Errorf("ISBN = %q, want %q", meta.ISBN, "9780345472199")
 	}
+	// dc:language "en" is normalised to the ISO 639-2/B code the filter uses.
+	if meta.Language != "eng" {
+		t.Errorf("Language = %q, want %q", meta.Language, "eng")
+	}
+}
+
+func TestReadEpubMetadata_LanguageRegionSubtag(t *testing.T) {
+	// A region-qualified dc:language ("de-DE") normalises to the bare 639-2/B code.
+	opf := `<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Der Schwarm</dc:title>
+    <dc:creator>Frank Schätzing</dc:creator>
+    <dc:language>de-DE</dc:language>
+  </metadata>
+</package>`
+	p := writeTestEpub(t, "content.opf", opf)
+	meta, err := ReadEpubMetadata(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Language != "ger" {
+		t.Errorf("Language = %q, want %q", meta.Language, "ger")
+	}
 }
 
 func TestReadEpubMetadata_PrefersAutCreator(t *testing.T) {

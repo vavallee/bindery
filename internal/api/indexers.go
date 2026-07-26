@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/vavallee/bindery/internal/auth"
@@ -392,18 +393,19 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 	var specs []decision.Specification
 
 	// Language filter: author profile takes precedence, fall back to global setting.
-	lang := langFilterFromAllowed(allowedLangs)
-	if lang == "" {
-		if s, _ := h.settings.Get(r.Context(), "search.preferredLanguage"); s != nil {
-			lang = s.Value
-		}
-	}
 	beforeLang := len(results)
-	results = indexer.FilterByLanguage(results, lang)
+	filterDesc := ""
+	if len(allowedLangs) > 0 {
+		results = indexer.FilterByAllowedLanguages(results, allowedLangs)
+		filterDesc = "allowed=" + strings.Join(allowedLangs, ",")
+	} else if s, _ := h.settings.Get(r.Context(), "search.preferredLanguage"); s != nil {
+		results = indexer.FilterByLanguage(results, s.Value)
+		filterDesc = "filter=" + s.Value
+	}
 	if dbg != nil && beforeLang != len(results) {
 		dbg.Filters = append(dbg.Filters, indexer.FilterDebug{
 			Stage:  "language",
-			Reason: "release name matched a foreign-language tag (filter=" + lang + ")",
+			Reason: "release name tagged with a language outside the profile (" + filterDesc + ")",
 			Title:  "(" + strconv.Itoa(beforeLang-len(results)) + " result(s) dropped)",
 		})
 	}
@@ -488,17 +490,6 @@ func (h *IndexerHandler) resolveAllowedLanguages(ctx context.Context, author *mo
 		return []string{}
 	}
 	return models.ParseAllowedLanguages(p.AllowedLanguages)
-}
-
-// langFilterFromAllowed converts an AllowedLanguages slice to the single-lang
-// token expected by indexer.FilterByLanguage. Returns "en" only when the
-// profile is English-exclusive (so the foreign-tag filter is active).
-// Returns "" for multi-language or empty profiles (filter is skipped).
-func langFilterFromAllowed(langs []string) string {
-	if len(langs) == 1 && (langs[0] == "en" || langs[0] == "eng") {
-		return "en"
-	}
-	return ""
 }
 
 // SearchQuery performs a freeform search across all indexers.

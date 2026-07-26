@@ -255,3 +255,57 @@ func (s *CustomFormatScoreSpec) matchCondition(r Release, c models.CustomConditi
 		return false
 	}
 }
+
+// --- FreeleechOnly ---
+
+// RejectionFreeleechHold prefixes every rejection produced by
+// FreeleechOnlySpec. The scheduler matches on this prefix to decide that a
+// release should be parked in pending_releases for manual approval rather than
+// discarded, so keep the two in step (the delay profile uses the same
+// substring-matching convention).
+const RejectionFreeleechHold = "freeleech hold"
+
+// FreeleechOnlySpec restricts AUTOMATIC grabs from selected indexers to
+// releases that cost no download ratio. It exists for private trackers where a
+// user near a ratio floor would otherwise have to restrict the whole indexer to
+// Freeleech/VIP upstream — which also hides normal releases from interactive
+// search, where they would happily pay the cost on a book they actually want.
+//
+// Gating here instead means the scheduler (and bulk multi-book search, which
+// has no picker and is pure fire-and-forget) stays ratio-safe, while rejected
+// releases are held for manual approval rather than hidden. Interactive search
+// builds its own specification set and must NOT include this spec.
+//
+// It must be part of the same DecisionMaker the scheduler uses to re-evaluate
+// pending releases: that path re-grabs anything that starts passing, so a
+// release held here has to keep failing until the user approves it by hand.
+type FreeleechOnlySpec struct {
+	// IndexerIDs is the set of indexer ids with the policy enabled. Releases
+	// from any other indexer pass untouched.
+	IndexerIDs map[int64]bool
+}
+
+func (s FreeleechOnlySpec) IsSatisfiedBy(r Release, _ models.Book) (bool, string) {
+	if len(s.IndexerIDs) == 0 || !s.IndexerIDs[r.IndexerID] {
+		return true, ""
+	}
+	// Usenet has no ratio economy — downloadvolumefactor is a torznab concept
+	// and is never reported. Holding usenet releases would be pure noise if the
+	// policy were switched on for a newznab indexer by mistake.
+	if r.Protocol != "torrent" {
+		return true, ""
+	}
+	if r.DownloadVolumeFactor == nil {
+		// Deliberately fail closed. This is a ratio-protection policy: assuming
+		// an unreported release is free would silently spend the ratio the user
+		// asked us to protect. Holding it is visible and recoverable — the item
+		// shows up in Pending with this reason and can be approved or the
+		// policy turned off.
+		return false, RejectionFreeleechHold + ": indexer did not report downloadvolumefactor"
+	}
+	if *r.DownloadVolumeFactor == 0 {
+		return true, ""
+	}
+	// Anything above zero costs ratio, including half-leech (0.5).
+	return false, fmt.Sprintf("%s: costs %g× ratio (not freeleech)", RejectionFreeleechHold, *r.DownloadVolumeFactor)
+}

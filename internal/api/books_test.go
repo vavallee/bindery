@@ -1136,3 +1136,20 @@ func TestBookHandler_LifetimeCtxFallsBackToBackground(t *testing.T) {
 		t.Error("WithLifetimeCtx(nil) must not clobber a previously installed ctx")
 	}
 }
+
+// TestParseMonitoredParam covers the #1349 Books-list monitored filter. Only
+// the two canonical values select a filter; anything else (absent, empty, or
+// junk) means "all", so a malformed query string can never silently hide books.
+func TestParseMonitoredParam(t *testing.T) {
+	if got := parseMonitoredParam("true"); got == nil || !*got {
+		t.Errorf(`parseMonitoredParam("true") = %v, want pointer to true`, got)
+	}
+	if got := parseMonitoredParam("false"); got == nil || *got {
+		t.Errorf(`parseMonitoredParam("false") = %v, want pointer to false`, got)
+	}
+	for _, v := range []string{"", "all", "1", "0", "TRUE", "yes"} {
+		if got := parseMonitoredParam(v); got != nil {
+			t.Errorf("parseMonitoredParam(%q) = %v, want nil (no filter)", v, *got)
+		}
+	}
+}

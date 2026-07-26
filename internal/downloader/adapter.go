@@ -229,7 +229,7 @@ func RemoveDownload(ctx context.Context, client *models.DownloadClient, dl *mode
 			return err
 		}
 		ng := NzbgetFor(client)
-		return ng.Remove(ctx, nzbID)
+		return ng.Remove(ctx, nzbID, deleteFiles)
 	default:
 		if dl.SABnzbdNzoID == nil || *dl.SABnzbdNzoID == "" {
 			return nil

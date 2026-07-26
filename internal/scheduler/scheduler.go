@@ -140,14 +140,15 @@ type Scheduler struct {
 	blocklist            *db.BlocklistRepo
 	delayProfiles        *db.DelayProfileRepo
 	pending              *db.PendingReleaseRepo
-	aliases              *db.AuthorAliasRepo  // optional; used for non-latin author matching
-	calibreSyncer        CalibreSyncer        // optional; nil if Calibre is not configured
-	recommender          RecommendationEngine // optional; generates recommendations
-	hcSyncer             HCListSyncer         // optional; syncs Hardcover import lists
-	telemetry            TelemetryPinger      // optional; sends daily anonymous install ping
-	logs                 *db.LogRepo          // optional; enables periodic log retention trim
-	notif                eventNotifier        // optional; fires EventGrabbed on auto-grab success (#849)
-	logRetainDays        int                  // 0 = use default (14)
+	aliases              *db.AuthorAliasRepo     // optional; used for non-latin author matching
+	profiles             *db.MetadataProfileRepo // optional; applies profile language filters to auto-grab
+	calibreSyncer        CalibreSyncer           // optional; nil if Calibre is not configured
+	recommender          RecommendationEngine    // optional; generates recommendations
+	hcSyncer             HCListSyncer            // optional; syncs Hardcover import lists
+	telemetry            TelemetryPinger         // optional; sends daily anonymous install ping
+	logs                 *db.LogRepo             // optional; enables periodic log retention trim
+	notif                eventNotifier           // optional; fires EventGrabbed on auto-grab success (#849)
+	logRetainDays        int                     // 0 = use default (14)
 	downloadDir          string
 	audiobookDownloadDir string
 }
@@ -223,6 +224,14 @@ func (s *Scheduler) WithHistory(h *db.HistoryRepo) {
 // in MatchCriteria for non-latin author name matching. Must be called before Start.
 func (s *Scheduler) WithAliases(aliases *db.AuthorAliasRepo) {
 	s.aliases = aliases
+}
+
+// WithMetadataProfiles attaches the metadata profile repo so auto-grab can
+// apply the author's allowed-languages set to search results — previously
+// only the interactive search honoured it (Discussion #1572). Must be called
+// before Start.
+func (s *Scheduler) WithMetadataProfiles(profiles *db.MetadataProfileRepo) {
+	s.profiles = profiles
 }
 
 // WithStoragePaths attaches the process-level download roots used when sending
@@ -451,6 +460,26 @@ func (s *Scheduler) SearchAndGrabBook(ctx context.Context, book models.Book) {
 	}
 }
 
+// resolveAllowedLanguages returns the parsed allowed-language list for an
+// author's metadata profile, mirroring the api package's resolver. Returns
+// empty (no filter) when the repo is unattached or the profile cannot be
+// loaded — falling back to English-only would silently break users whose
+// indexers return language-tagged releases.
+func (s *Scheduler) resolveAllowedLanguages(ctx context.Context, author *models.Author) []string {
+	if s.profiles == nil {
+		return nil
+	}
+	id := models.DefaultMetadataProfileID
+	if author.MetadataProfileID != nil {
+		id = *author.MetadataProfileID
+	}
+	p, err := s.profiles.GetByID(ctx, id)
+	if err != nil || p == nil {
+		return nil
+	}
+	return models.ParseAllowedLanguages(p.AllowedLanguages)
+}
+
 // resolveSeedRatio looks up the per-indexer seed-ratio override (#883) for the
 // indexer a release was grabbed from. Returns nil (no override) when the
 // indexer repo is unset, the id is zero, the lookup fails, or the indexer has
@@ -464,6 +493,24 @@ func (s *Scheduler) resolveSeedRatio(ctx context.Context, indexerID int64) *floa
 		return nil
 	}
 	return idx.SeedRatio
+}
+
+// freeleechOnlyIndexerIDs returns the set of indexer ids whose freeleech-only
+// policy is enabled. Returns nil when none are, so the caller can skip adding
+// the specification entirely and leave the decision path untouched for the
+// (overwhelmingly common) case where nobody uses a private tracker.
+func freeleechOnlyIndexerIDs(idxs []models.Indexer) map[int64]bool {
+	var out map[int64]bool
+	for _, idx := range idxs {
+		if !idx.FreeleechOnly {
+			continue
+		}
+		if out == nil {
+			out = make(map[int64]bool)
+		}
+		out[idx.ID] = true
+	}
+	return out
 }
 
 // searchAndGrabFormat searches for and grabs a specific format of a book.
@@ -490,11 +537,13 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 
 	authorName := ""
 	var authorAliases []string
+	var allowedLangs []string
 	if s.authors != nil {
 		if a, err := s.authors.GetByID(ctx, book.AuthorID); err != nil {
 			slog.Warn("failed to load author for search", "author_id", book.AuthorID, "error", err)
 		} else if a != nil {
 			authorName = a.Name
+			allowedLangs = s.resolveAllowedLanguages(ctx, a)
 			if s.aliases != nil {
 				if aliases, err := s.aliases.ListByAuthor(ctx, a.ID); err == nil {
 					for _, al := range aliases {
@@ -505,18 +554,26 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		}
 	}
 	crit := indexer.MatchCriteria{
-		Title:         book.Title,
-		Author:        authorName,
-		MediaType:     mediaType,
-		ASIN:          book.ASIN,
-		AuthorAliases: authorAliases,
+		Title:            book.Title,
+		Author:           authorName,
+		MediaType:        mediaType,
+		ASIN:             book.ASIN,
+		AuthorAliases:    authorAliases,
+		AllowedLanguages: allowedLangs,
 	}
 	if book.ReleaseDate != nil {
 		crit.Year = book.ReleaseDate.Year()
 	}
 
 	results := s.searcher.SearchBook(ctx, idxs, crit)
-	results = indexer.FilterByLanguage(results, lang)
+	// Author profile takes precedence over the global preferred-language
+	// setting, mirroring the interactive SearchBook endpoint (Discussion
+	// #1572: auto-grab previously ignored the profile entirely).
+	if len(allowedLangs) > 0 {
+		results = indexer.FilterByAllowedLanguages(results, allowedLangs)
+	} else {
+		results = indexer.FilterByLanguage(results, lang)
+	}
 
 	var specs []decision.Specification
 	if s.blocklist != nil {
@@ -530,6 +587,15 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 			delayProfile = &profiles[0]
 			specs = append(specs, decision.DelayProfileSpec{Profile: delayProfile})
 		}
+	}
+	// Per-indexer freeleech-only policy: releases that would cost download
+	// ratio on a flagged indexer are rejected here and parked in
+	// pending_releases below for manual approval. Applied only on this
+	// automatic path — interactive search (api/indexers.go) builds its own
+	// specification set deliberately without it, so a user can still see and
+	// hand-pick a ratio-costing release for a book they care about.
+	if freeleechOnly := freeleechOnlyIndexerIDs(idxs); len(freeleechOnly) > 0 {
+		specs = append(specs, decision.FreeleechOnlySpec{IndexerIDs: freeleechOnly})
 	}
 	dm := decision.New(specs...)
 	releases := make([]decision.Release, len(results))
@@ -547,7 +613,14 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		// The sentinel "delay not met" matches both "usenet delay not met" and
 		// "torrent delay not met" produced by DelayProfileSpec. There is no typed
 		// flag on Decision today; left as-is per #707 (minor finding).
-		if s.pending != nil && strings.Contains(d.Rejection, "delay not met") {
+		// A freeleech hold is stored the same way, but for the opposite reason:
+		// a delayed release is expected to pass on a later sweep, whereas a
+		// ratio-costing one never will (the same spec runs in
+		// checkPendingReleases), so it waits in Pending until the user
+		// approves it by hand. Without this it would simply be discarded and
+		// the user would never learn the release existed.
+		if s.pending != nil && (strings.Contains(d.Rejection, "delay not met") ||
+			strings.Contains(d.Rejection, decision.RejectionFreeleechHold)) {
 			s.storePending(ctx, book.ID, mediaType, results[i], d.Rejection)
 		}
 	}
@@ -795,6 +868,7 @@ var inFlightDownloadStates = []models.DownloadState{
 	models.StateImportPending,
 	models.StateImporting,
 	models.StateImportExternal, // external hand-off outstanding (issue #706 finding 3)
+	models.StateImportHeld,     // drop-folder format held awaiting its pair (#942)
 }
 
 // wantedSearchQueue returns the Wanted books eligible for an auto-grab this

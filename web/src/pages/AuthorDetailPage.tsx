@@ -7,6 +7,7 @@ import { bookStatusBadge } from '../components/bookStatus'
 import MergeAuthorsModal from '../components/MergeAuthorsModal'
 import EditAuthorModal from '../components/EditAuthorModal'
 import AuthorMetadataLinkModal from '../components/AuthorMetadataLinkModal'
+import RenameFilesModal from '../components/RenameFilesModal'
 import BulkActionBar from '../components/BulkActionBar'
 import { useView } from '../components/useView'
 import MarkdownDescription from '../components/MarkdownDescription'
@@ -49,6 +50,7 @@ export default function AuthorDetailPage() {
   const [searchingWanted, setSearchingWanted] = useState(false)
   const [showMerge, setShowMerge] = useState(false)
   const [showEdit, setShowEdit] = useState(false)
+  const [showRename, setShowRename] = useState(false)
   const [showMetadataLink, setShowMetadataLink] = useState(false)
   const [showExcluded, setShowExcluded] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -700,6 +702,13 @@ export default function AuthorDetailPage() {
               Edit
             </button>
             <button
+              onClick={() => setShowRename(true)}
+              className={`${btn.secondary} px-3 py-1.5 text-xs`}
+              title="Move this author’s files to match the current naming template"
+            >
+              Rename files
+            </button>
+            <button
               onClick={() => {
                 if (allAuthors.length === 0) api.listAllAuthors().then(setAllAuthors).catch(console.error)
                 setShowMerge(true)
@@ -749,6 +758,16 @@ export default function AuthorDetailPage() {
           author={author}
           onClose={() => setShowEdit(false)}
           onSaved={updated => setAuthor(updated)}
+        />
+      )}
+
+      {showRename && (
+        <RenameFilesModal
+          scope="author"
+          id={author.id}
+          label={author.authorName}
+          onClose={() => setShowRename(false)}
+          onApplied={() => api.listAllBooks({ authorId, includeExcluded: showExcluded }).then(setBooks).catch(() => {})}
         />
       )}
 

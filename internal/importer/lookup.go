@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -73,6 +74,200 @@ func (s *Scanner) LookupBatch(ctx context.Context, paths []string) ([]LookupResu
 		results[i] = lookupWith(p, books, authors)
 	}
 	return results, nil
+}
+
+// LookupBatchLayout is the bulk-folder-import match (issues #1434, #1402). Like
+// LookupBatch it loads the books+authors catalogue exactly ONCE for the whole
+// batch, but each path is matched with three layered signals instead of the
+// filename alone:
+//
+//  1. embedded EPUB metadata (title/author/ISBN) read from the file itself;
+//  2. the author derived from the folder LAYOUT under root
+//     (<root>/<Author>/…), so an Author/Title.epub library feeds the author
+//     from the folder rather than parsing the author's name as a book title;
+//  3. the release filename (the original, weakest signal).
+//
+// Embedded metadata wins over the filename, mirroring matchBookForDownload's
+// tiering. Format is detected from the unit's CONTENTS, so an all-ebook folder
+// is no longer blindly labelled "audiobook". A lone loose title match with no
+// author corroboration is demoted from "confident" to "ambiguous" so the wizard
+// asks instead of mis-importing a box set (the #1402 symptom).
+//
+// root is the folder the scan was pointed at; it anchors the layout author
+// derivation. Results are aligned with the input paths.
+func (s *Scanner) LookupBatchLayout(ctx context.Context, root string, paths []string) ([]LookupResult, error) {
+	books, err := s.books.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("lookup batch: list books: %w", err)
+	}
+	authors, err := s.authors.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("lookup batch: list authors: %w", err)
+	}
+	authorNames := make(map[int64]string, len(authors))
+	for _, a := range authors {
+		authorNames[a.ID] = a.Name
+	}
+	results := make([]LookupResult, len(paths))
+	for i, p := range paths {
+		results[i] = lookupUnit(root, p, books, authorNames)
+	}
+	return results, nil
+}
+
+// lookupUnit matches one bulk-import unit against the pre-loaded catalogue using
+// the embedded-metadata → folder-layout → filename precedence described on
+// LookupBatchLayout. See that method for the full rationale.
+func lookupUnit(root, path string, books []models.Book, authorNames map[int64]string) LookupResult {
+	parsed := ParseFilename(path)
+	layoutAuthor, layoutTitle, _ := authorTitleFromLayout(path, root)
+	var embedded EpubMetadata
+	if ep := firstEpubIn(path); ep != "" {
+		if meta, err := ReadEpubMetadata(ep); err == nil {
+			embedded = meta
+		} else {
+			slog.Debug("bulk import: epub metadata unreadable; falling back to layout/filename", "path", ep, "error", err)
+		}
+	}
+
+	// Effective signals in precedence order: embedded > filename > folder layout.
+	effTitle := firstNonEmpty(embedded.Title, parsed.Title, layoutTitle)
+	effAuthor := firstNonEmpty(embedded.Author, parsed.Author, layoutAuthor)
+
+	result := LookupResult{
+		DetectedFormat: detectUnitFormat(path),
+		ParsedTitle:    effTitle,
+		ParsedAuthor:   effAuthor,
+	}
+
+	// Tier 1: ASIN exact match (filename only — EPUBs rarely carry an ASIN).
+	if parsed.ASIN != "" {
+		for i := range books {
+			if books[i].ASIN == parsed.ASIN {
+				result.Match = "confident"
+				result.Book = &books[i]
+				return result
+			}
+		}
+	}
+
+	if effTitle == "" {
+		result.Match = "none"
+		return result
+	}
+
+	// Tier 2: title match, narrowed by the effective author when we have one.
+	// (Embedded ISBN is read and surfaced but not matched here: catalogue ISBNs
+	// live in the editions table, which the batch catalogue load doesn't join,
+	// so Book.ISBNs is empty for this comparison — matchByTitleAuthor has the
+	// same limitation. Title+author is the reliable signal against the loaded
+	// catalogue.)
+	var matches []models.Book
+	for i := range books {
+		if !titleMatch(books[i].Title, effTitle) {
+			continue
+		}
+		if effAuthor != "" && !lookupAuthorMatch(effAuthor, authorNames[books[i].AuthorID]) {
+			continue
+		}
+		matches = append(matches, books[i])
+	}
+
+	switch len(matches) {
+	case 0:
+		result.Match = "none"
+	case 1:
+		// A single match is "confident" only when it is corroborated: either the
+		// title is an exact (normalised) match, or an author signal narrowed it.
+		// A lone loose token-overlap match with no author is the #1402 box-set
+		// mismatch — demote it to "ambiguous" so the wizard asks.
+		exactTitle := normalizeTitle(matches[0].Title) == normalizeTitle(effTitle)
+		authorCorroborated := effAuthor != "" && lookupAuthorMatch(effAuthor, authorNames[matches[0].AuthorID])
+		if exactTitle || authorCorroborated {
+			result.Match = "confident"
+			result.Book = &matches[0]
+		} else {
+			result.Match = "ambiguous"
+			result.Candidates = matches
+		}
+	default:
+		result.Match = "ambiguous"
+		result.Candidates = matches
+	}
+	return result
+}
+
+// firstNonEmpty returns the first non-blank string, trimmed, or "".
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if s := strings.TrimSpace(v); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// firstEpubIn returns an EPUB to read embedded metadata from for a unit: the
+// path itself when it is an EPUB, or the first EPUB found within a directory
+// unit (bounded walk). Returns "" when there is nothing to read.
+func firstEpubIn(path string) string {
+	if IsEpubFile(path) {
+		return path
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return ""
+	}
+	const limit = 2000
+	count := 0
+	found := ""
+	_ = filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		count++
+		if count > limit {
+			return filepath.SkipAll
+		}
+		if !d.IsDir() && IsEpubFile(p) {
+			found = p
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
+}
+
+// detectUnitFormat classifies a bulk-import unit by its CONTENTS rather than
+// assuming any directory is an audiobook (the old lookupDetectFormat behaviour
+// that mislabelled an all-ebook folder, #1434). A file is judged by extension; a
+// directory is "audiobook" when it holds any audio, else "ebook".
+func detectUnitFormat(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return detectDownloadFormat([]string{path})
+	}
+	if !info.IsDir() {
+		return detectDownloadFormat([]string{path})
+	}
+	const limit = 2000
+	count := 0
+	format := models.MediaTypeEbook
+	_ = filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		count++
+		if count > limit {
+			return filepath.SkipAll
+		}
+		if !d.IsDir() && IsAudioFile(p) {
+			format = models.MediaTypeAudiobook
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return format
 }
 
 // lookupWith performs the catalogue match against PRE-LOADED books and authors

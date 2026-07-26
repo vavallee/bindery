@@ -22,6 +22,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
 )
@@ -88,6 +89,12 @@ type Scanner struct {
 	absLibraryIDsFn      func() []string
 	notif                eventNotifier
 
+	// jobs, when set, tracks the detached scan goroutine launched by StartScan
+	// so process shutdown can cancel and drain it before the database closes
+	// (#1458). When nil, StartScan falls back to an untracked goroutine on the
+	// caller's context (tests, non-wired callers).
+	jobs *jobs.Group
+
 	// scanRunning is the single-flight guard for library scans (#1460).
 	// Concurrent full walks race on book creation (books has no unique
 	// constraint equivalent to book_files.path) and clobber library.lastScan,
@@ -144,6 +151,14 @@ func (s *Scanner) WithAudiobookDownloadDir(dir string) *Scanner {
 // fall-back to the default download dir.
 func (s *Scanner) AudiobookDownloadDir() string {
 	return s.audiobookDownloadDir
+}
+
+// WithJobs registers the process-wide background-jobs group so a StartScan()
+// launched scan is tracked and drained on shutdown before the database closes
+// (#1458).
+func (s *Scanner) WithJobs(g *jobs.Group) *Scanner {
+	s.jobs = g
+	return s
 }
 
 // WithRootFolders attaches the root folder repo so the scanner can resolve
@@ -506,6 +521,18 @@ func (s *Scanner) failImport(ctx context.Context, dl *models.Download, status mo
 	})
 }
 
+// recordUnmatchedImportPath persists where a completed download's files are so a
+// later manual "Match to book" (#1589) can import them directly. Best-effort: a
+// failure here only loses the manual-import shortcut, not any files.
+func (s *Scanner) recordUnmatchedImportPath(ctx context.Context, downloadID int64, path string) {
+	if path == "" {
+		return
+	}
+	if err := s.downloads.SetImportPath(ctx, downloadID, path); err != nil {
+		slog.Warn("failed to record unmatched import path", "download_id", downloadID, "path", path, "error", err)
+	}
+}
+
 func (s *Scanner) createHistoryEvent(ctx context.Context, eventType string, sourceTitle string, bookID *int64, data map[string]string) {
 	if s.history == nil {
 		return
@@ -748,6 +775,13 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// searchWanted skip the book while the hand-off is outstanding, and
 	// ScanLibrary still reconciles the file the moment it lands.
 	if configuredMode == "external" {
+		// Escape hatch for pair gating (#942): before handing off, release any
+		// formats that have been held past the timeout waiting for a sibling
+		// that never arrived. Evaluated here — on every external-mode tick —
+		// rather than on a dedicated scheduled sweep, so held formats drain on
+		// the next drop-folder activity after their deadline. No-op when nothing
+		// is held.
+		s.sweepHeldPairGating(ctx)
 		// When a drop folder is configured (#941), external mode renames the
 		// finished file into that folder (copy/hardlink, never move) for a
 		// sibling tool (CWA, Calibre, Storyteller) to ingest, then still parks
@@ -805,6 +839,20 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	}
 
 	s.updateDownloadStatus(ctx, dl.ID, models.StateImporting)
+
+	// Video-content guard (#1591): a movie/TV release that slipped through
+	// release-name filtering can still reach import — e.g. a film whose folder
+	// carries one soundtrack .mp3, which both passes discoverBookFiles and tips
+	// detectDownloadFormat to audiobook, dragging the whole folder (video file
+	// included) into the audiobook library. If the download's dominant file is
+	// a video file, the release is not a book: block it for manual review
+	// instead of importing. An explicit formatHint is the override — a human
+	// declared the format, so their call wins.
+	if formatHint == "" && largestFileIsVideo(downloadPath, explicitFiles) {
+		s.failImport(ctx, dl, models.StateImportBlocked,
+			"download looks like video content (largest file is a video file) — not imported; use manual import with an explicit format to override")
+		return
+	}
 
 	// Per-import timeout so a stalled NFS copy does not hold the download in
 	// StateImporting indefinitely. 30 minutes is generous for any realistic
@@ -873,6 +921,10 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// BookID, the lookup errored, or the book row was deleted between
 		// grab and import.
 		if book == nil {
+			// Files are present and valid — only the book match is missing. Record
+			// the path so the queue "Match to book" action (#1589) can import these
+			// files directly against the book the user picks.
+			s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
 			s.failImport(ctx, dl, models.StateImportFailed, "could not match any book to this download — check the release title")
 			return
 		}
@@ -966,19 +1018,42 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				return
 			}
 			if srcInfo.IsDir() {
-				// Multi-disc flattening (#886): when enabled AND the source is
-				// a multi-disc audiobook, place every track flat into destDir
-				// as "Part 001.ext", … instead of mirroring the disc-folder
-				// tree. flattenAudiobookDir itself only places via copy or
-				// hardlink (it renames files, so it never touches the source);
-				// "move" — which since #1542 is what usenet downloads resolve
-				// to — flattens via copy and then removes the source, the same
-				// copy-then-delete contract as MoveDirCtx's slow path. The
-				// source removal is skipped when the import context was
-				// cancelled: sidecar carry is best-effort and swallows
-				// per-file errors, so only an uncancelled nil return proves
-				// the folder was fully placed.
-				if (mode == "copy" || mode == "hardlink" || mode == "move") &&
+				// Per-file audiobook renaming (#1126): when a naming template is
+				// configured, flatten EVERY audiobook folder (single- or
+				// multi-disc) into destDir with each track named from the
+				// template's {Part} order. This supersedes both the verbatim
+				// folder copy and the "Part NNN" multi-disc flatten. Move mode
+				// flattens via copy then removes the source, matching the
+				// multi-disc contract below.
+				if tmpl := s.audiobookFileTemplate(ctx); tmpl != "" &&
+					(mode == "copy" || mode == "hardlink" || mode == "move") {
+					flattenMode := mode
+					if mode == "move" {
+						flattenMode = "copy"
+					}
+					namer := func(index int, ext string) string {
+						return s.renamer.AudiobookFileName(tmpl, author, book, seriesTitle, seriesNum, strings.TrimPrefix(ext, "."), index+1)
+					}
+					slog.Info("renaming audiobook files per template", "src", audiobookSource, "dst", destDir, "mode", flattenMode, "template", tmpl)
+					dirErr = flattenAudiobookDirNamed(importCtx, flattenMode, audiobookSource, destDir, namer)
+					if dirErr == nil && mode == "move" && importCtx.Err() == nil {
+						if rmErr := os.RemoveAll(audiobookSource); rmErr != nil {
+							slog.Warn("could not remove source after move-mode audiobook rename", "src", audiobookSource, "error", rmErr)
+						}
+					}
+				} else if (mode == "copy" || mode == "hardlink" || mode == "move") &&
+					// Multi-disc flattening (#886): when enabled AND the source is
+					// a multi-disc audiobook, place every track flat into destDir
+					// as "Part 001.ext", … instead of mirroring the disc-folder
+					// tree. flattenAudiobookDir itself only places via copy or
+					// hardlink (it renames files, so it never touches the source);
+					// "move" — which since #1542 is what usenet downloads resolve
+					// to — flattens via copy and then removes the source, the same
+					// copy-then-delete contract as MoveDirCtx's slow path. The
+					// source removal is skipped when the import context was
+					// cancelled: sidecar carry is best-effort and swallows
+					// per-file errors, so only an uncancelled nil return proves
+					// the folder was fully placed.
 					s.flattenMultiDiscEnabled(ctx) &&
 					isMultiDiscAudiobook(audiobookSource) {
 					flattenMode := mode
@@ -1024,8 +1099,44 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			return
 		}
 		if book != nil {
-			if err := s.books.SetFormatFilePath(ctx, book.ID, models.MediaTypeAudiobook, destDir); err != nil {
-				slog.Error("failed to update audiobook file path", "bookID", book.ID, "error", err)
+			// Recording the audiobook location MUST succeed before the download
+			// is marked imported. If it fails and we mark imported anyway, the
+			// book has no format file path, still reads as wanted, and the
+			// wanted sweep re-grabs it into a "Title (2)" duplicate — while in
+			// move mode the original source is already gone (#1459). Unlike the
+			// ebook path below (which stages the file, writes the row, then
+			// atomically promotes), the folder is already placed here, so the
+			// best we can do is retry the write to ride out transient SQLite
+			// lock/busy errors and, on persistent failure, refuse to mark the
+			// import complete.
+			var setErr error
+			for attempt := 0; attempt < 3; attempt++ {
+				if setErr = s.books.SetFormatFilePath(ctx, book.ID, models.MediaTypeAudiobook, destDir); setErr == nil {
+					break
+				}
+				if ctx.Err() != nil {
+					break // a cancelled context won't recover; stop retrying
+				}
+				time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
+			}
+			if setErr != nil {
+				slog.Error("failed to record audiobook file path — failing import to avoid a re-grab duplicate",
+					"bookID", book.ID, "dst", destDir, "error", setErr)
+				// copy/hardlink left the source intact, so remove the
+				// just-placed destination and let the import retry cleanly.
+				// move already consumed the source, so keep the placed folder
+				// and point the user at it rather than deleting their only copy.
+				if mode == "copy" || mode == "hardlink" {
+					if rmErr := os.RemoveAll(destDir); rmErr != nil {
+						slog.Warn("failed to remove audiobook destination after DB error", "dst", destDir, "error", rmErr)
+					}
+					s.failImport(ctx, dl, models.StateImportBlocked,
+						fmt.Sprintf("audiobook placed but could not be recorded (%v) — retry the import", setErr))
+				} else {
+					s.failImport(ctx, dl, models.StateImportBlocked,
+						fmt.Sprintf("audiobook moved to %s but could not be recorded (%v); the files are preserved there — retry the import to record them", destDir, setErr))
+				}
+				return
 			}
 		}
 		s.updateDownloadStatus(ctx, dl.ID, models.StateImported)
@@ -1055,6 +1166,12 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// library, so move-mode cleanup can delete exactly those files rather than
 	// RemoveAll-ing the whole download path (issue #705 finding 4).
 	var importedSrcFiles []string
+	// detectedLang holds a language read from an embedded EPUB dc:language, used
+	// to backfill an empty book language after the loop (#1160). Captured inside
+	// the loop because move mode consumes the source file on commit, so it must
+	// be read while srcFile still exists.
+	var detectedLang string
+	fillLanguage := book != nil && book.Language == "" && !book.IsFieldLocked(models.BookFieldLanguage)
 	// Resolve the ebook destination root and (auto) placement mode once: the
 	// root is stable for this author across the loop, and choosing hardlink-vs-
 	// copy against it rather than s.libraryDir avoids a cross-device hardlink
@@ -1067,6 +1184,15 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			parsed := ParseFilename(srcFile)
 			slog.Info("unmatched import", "title", parsed.Title, "author", parsed.Author, "file", srcFile)
 			continue
+		}
+
+		// Read the embedded EPUB language while the source is still present
+		// (move mode deletes it on commit). Only when we actually intend to
+		// backfill, so we never open the zip needlessly.
+		if fillLanguage && detectedLang == "" && IsEpubFile(srcFile) {
+			if meta, err := ReadEpubMetadata(srcFile); err == nil && meta.Language != "" {
+				detectedLang = meta.Language
+			}
 		}
 
 		seriesTitle, seriesNum := s.primarySeriesFor(ctx, book)
@@ -1156,6 +1282,20 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		s.createHistoryEvent(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, map[string]string{"path": destPath, "format": models.MediaTypeEbook})
 	}
 
+	// Backfill the book's language from the embedded EPUB dc:language when the
+	// catalogue left it empty (#1160). Providers frequently have no work-level
+	// language (OpenLibrary especially), so an imported file is often the most
+	// reliable source. Best-effort: gated on an empty, unlocked field and at
+	// least one imported file; a persistence error just leaves it empty.
+	if fillLanguage && imported > 0 && detectedLang != "" {
+		if err := s.books.SetLanguage(ctx, book.ID, detectedLang); err != nil {
+			slog.Warn("failed to persist EPUB-detected language", "bookID", book.ID, "language", detectedLang, "error", err)
+		} else {
+			slog.Info("filled book language from embedded EPUB metadata", "bookID", book.ID, "language", detectedLang)
+			book.Language = detectedLang
+		}
+	}
+
 	// If every file failed to copy/move, the destination is likely not writable —
 	// mark as blocked so the user knows manual intervention is needed.
 	if imported == 0 && failed > 0 {
@@ -1172,6 +1312,9 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// can see WHY it didn't match rather than getting a bare "check the release
 	// title" (issue #1014 point 5).
 	if imported == 0 && failed == 0 && book == nil {
+		// Valid files, no matching book — record where they are so the queue
+		// "Match to book" action (#1589) can import them against a chosen book.
+		s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
 		s.failImport(ctx, dl, models.StateImportFailed, unmatchedReason(bookFiles))
 		return
 	}
@@ -1233,12 +1376,26 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 func (s *Scanner) cleanupMovedSources(downloadPath string, importedSrcFiles []string) {
 	cleanDownloadPath := filepath.Clean(downloadPath)
 
-	// Refuse to prune if downloadPath is empty, relative, the filesystem root, or
+	// pruneRoot is the boundary directory the cleanup is allowed to remove up to
+	// (inclusive). It is normally the download path itself. But a single-file
+	// usenet job resolves downloadPath to the *file*, not its containing folder
+	// (SABnzbd/NZBGet report the storage path of the single file) — and every
+	// guard below is "at or under downloadPath", which a file's parent is not.
+	// The result was the now-empty job folder being left behind after an
+	// otherwise-clean ebook import (cleb's report; audiobooks escaped it because
+	// they move the whole directory via MoveDirCtx). When downloadPath is a
+	// file, prune from its parent folder instead.
+	pruneRoot := cleanDownloadPath
+	if downloadPathIsFile(cleanDownloadPath, importedSrcFiles) {
+		pruneRoot = filepath.Dir(cleanDownloadPath)
+	}
+
+	// Refuse to prune if pruneRoot is empty, relative, the filesystem root, or
 	// equal to / an ancestor of a configured library root. This is a
 	// belt-and-braces guard on top of the os.Remove non-empty-dir protection.
-	if cleanDownloadPath == "" || cleanDownloadPath == "." ||
-		cleanDownloadPath == string(filepath.Separator) ||
-		!filepath.IsAbs(cleanDownloadPath) {
+	if pruneRoot == "" || pruneRoot == "." ||
+		pruneRoot == string(filepath.Separator) ||
+		!filepath.IsAbs(pruneRoot) {
 		slog.Warn("move cleanup: refusing to prune unsafe download path", "path", downloadPath)
 		return
 	}
@@ -1247,33 +1404,33 @@ func (s *Scanner) cleanupMovedSources(downloadPath string, importedSrcFiles []st
 			continue
 		}
 		cleanRoot := filepath.Clean(root)
-		if cleanDownloadPath == cleanRoot || pathUnderDir(cleanRoot, cleanDownloadPath) {
+		if pruneRoot == cleanRoot || pathUnderDir(cleanRoot, pruneRoot) {
 			slog.Warn("move cleanup: download path equals or contains a library root — skipping cleanup",
-				"downloadPath", cleanDownloadPath, "libraryRoot", cleanRoot)
+				"downloadPath", cleanDownloadPath, "pruneRoot", pruneRoot, "libraryRoot", cleanRoot)
 			return
 		}
 	}
 
-	// dirsToPrune collects every directory at or below downloadPath that may now
+	// dirsToPrune collects every directory at or below pruneRoot that may now
 	// be empty, deepest-first so children are removed before parents.
 	prune := make(map[string]bool)
 	for _, src := range importedSrcFiles {
 		cleanSrc := filepath.Clean(src)
-		// Only touch files that actually live under downloadPath — never delete
+		// Only touch files that actually live under pruneRoot — never delete
 		// something outside the download we were asked to import.
-		if cleanSrc != cleanDownloadPath && !pathUnderDir(cleanSrc, cleanDownloadPath) {
+		if cleanSrc != pruneRoot && !pathUnderDir(cleanSrc, pruneRoot) {
 			slog.Warn("move cleanup: imported source outside download path, skipping",
-				"src", cleanSrc, "downloadPath", cleanDownloadPath)
+				"src", cleanSrc, "pruneRoot", pruneRoot)
 			continue
 		}
 		if err := os.Remove(cleanSrc); err != nil && !os.IsNotExist(err) {
 			slog.Warn("move cleanup: failed to remove imported source file", "src", cleanSrc, "error", err)
 		}
 		// Mark every ancestor directory from the file up to (and including)
-		// downloadPath as a pruning candidate.
+		// pruneRoot as a pruning candidate.
 		for dir := filepath.Dir(cleanSrc); ; dir = filepath.Dir(dir) {
 			prune[dir] = true
-			if dir == cleanDownloadPath || !pathUnderDir(dir, cleanDownloadPath) {
+			if dir == pruneRoot || !pathUnderDir(dir, pruneRoot) {
 				break
 			}
 		}
@@ -1289,8 +1446,8 @@ func (s *Scanner) cleanupMovedSources(downloadPath string, importedSrcFiles []st
 	// Deepest paths first: longer cleaned paths sort after shorter ancestors.
 	sort.Slice(dirs, func(i, j int) bool { return len(dirs[i]) > len(dirs[j]) })
 	for _, dir := range dirs {
-		// Never prune above downloadPath.
-		if dir != cleanDownloadPath && !pathUnderDir(dir, cleanDownloadPath) {
+		// Never prune above pruneRoot.
+		if dir != pruneRoot && !pathUnderDir(dir, pruneRoot) {
 			continue
 		}
 		if err := os.Remove(dir); err != nil {
@@ -1304,6 +1461,23 @@ func (s *Scanner) cleanupMovedSources(downloadPath string, importedSrcFiles []st
 		}
 		slog.Debug("move cleanup: pruned empty directory", "dir", dir)
 	}
+}
+
+// downloadPathIsFile reports whether cleanDownloadPath refers to a single file
+// rather than a download folder. It stats the path first; in move mode the file
+// has usually already been renamed away by the time cleanup runs, so it falls
+// back to checking whether the path is exactly one of the imported source files
+// (a folder never appears in importedSrcFiles, only the files inside it do).
+func downloadPathIsFile(cleanDownloadPath string, importedSrcFiles []string) bool {
+	if info, err := os.Stat(cleanDownloadPath); err == nil {
+		return !info.IsDir()
+	}
+	for _, src := range importedSrcFiles {
+		if filepath.Clean(src) == cleanDownloadPath {
+			return true
+		}
+	}
+	return false
 }
 
 func safeRemoteID(id *string) string {
@@ -1336,6 +1510,50 @@ func detectDownloadFormat(files []string) string {
 		}
 	}
 	return models.MediaTypeEbook
+}
+
+// videoExtensions lists common video container extensions. None of these are
+// book files, so a download whose largest file carries one is a movie/TV
+// release regardless of what smaller files ride along (#1591).
+var videoExtensions = map[string]bool{
+	".mkv": true, ".mp4": true, ".avi": true, ".wmv": true, ".mov": true,
+	".mpg": true, ".mpeg": true, ".m2ts": true, ".ts": true, ".vob": true,
+	".webm": true, ".flv": true,
+}
+
+// largestFileIsVideo reports whether the download's single largest file by
+// size is a video file. When the caller supplied an explicit per-torrent file
+// list (#903) only those files are considered — downloadPath can be a shared
+// download root there, and walking it would judge this download by an
+// unrelated sibling's video file. Without an explicit list, downloadPath is a
+// per-job directory (SABnzbd/NZBGet) or a single file and is walked directly.
+// Unreadable entries are skipped: this is a rejection heuristic, and an
+// unstat-able file must not block an otherwise legitimate import.
+func largestFileIsVideo(downloadPath string, explicitFiles []string) bool {
+	var largestExt string
+	var largestSize int64
+	consider := func(path string, size int64) {
+		if size > largestSize {
+			largestSize = size
+			largestExt = strings.ToLower(filepath.Ext(path))
+		}
+	}
+	if len(explicitFiles) > 0 {
+		for _, f := range explicitFiles {
+			if fi, err := os.Lstat(f); err == nil && fi.Mode().IsRegular() {
+				consider(f, fi.Size())
+			}
+		}
+	} else if err := filepath.Walk(downloadPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !info.Mode().IsRegular() {
+			return nil //nolint:nilerr // best-effort walk: skip unreadable entries rather than abort the scan
+		}
+		consider(path, info.Size())
+		return nil
+	}); err != nil {
+		return false
+	}
+	return videoExtensions[largestExt]
 }
 
 // FindExisting searches the library directories for a book file that matches
@@ -1704,10 +1922,21 @@ func (s *Scanner) StartScan(ctx context.Context) error {
 	if !s.scanRunning.CompareAndSwap(false, true) {
 		return ErrScanAlreadyRunning
 	}
-	go func() {
-		defer s.scanRunning.Store(false)
-		s.scanLibrary(ctx)
-	}()
+	// When a jobs group is wired, the scan runs on the shutdown-scoped context
+	// so SIGTERM cancels and drains it before the DB closes, instead of the
+	// never-cancelled WithoutCancel(request) context. Fall back to an untracked
+	// goroutine for tests/non-wired callers (#1458).
+	if s.jobs != nil {
+		s.jobs.Go("library-scan", func(ctx context.Context) {
+			defer s.scanRunning.Store(false)
+			s.scanLibrary(ctx)
+		})
+	} else {
+		go func() {
+			defer s.scanRunning.Store(false)
+			s.scanLibrary(ctx)
+		}()
+	}
 	return nil
 }
 

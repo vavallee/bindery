@@ -332,6 +332,106 @@ func TestSyncOne_NewAuthorPinnedToMonitorModeNone(t *testing.T) {
 	}
 }
 
+// TestSyncOne_StampsListOwner is the hoxtonia-report regression: under
+// multi-user tenancy a list with an owner_user_id must stamp that owner onto
+// every book AND author it creates, so scheduler-synced content is scoped to
+// that user instead of landing NULL-owned (globally visible to everyone).
+func TestSyncOne_StampsListOwner(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatalf("open memory db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	importLists := db.NewImportListRepo(database)
+	authors := db.NewAuthorRepo(database)
+	books := db.NewBookRepo(database)
+	users := db.NewUserRepo(database)
+	ctx := context.Background()
+
+	owner, err := users.Create(ctx, "alice", "hash")
+	if err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
+	s := New(importLists, authors, books)
+	il := testImportList("Alice's Want to Read", "hardcover", true)
+	il.OwnerUserID = &owner.ID
+	if err := importLists.Create(ctx, &il); err != nil {
+		t.Fatalf("seed list: %v", err)
+	}
+	s.WithClientFactory(func(string) hardcoverClient {
+		return &fakeHardcoverClient{
+			lists: []hardcover.HCList{{ID: 3, Slug: il.URL, Name: il.Name}},
+			books: []models.Book{
+				{ForeignID: "hc:owned", Title: "Owned Book", MetadataProvider: "hardcover",
+					Author: &models.Author{ForeignID: "hc:ownedauthor", Name: "Owned Author", MetadataProvider: "hardcover"}},
+			},
+		}
+	})
+
+	if err := s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatalf("SyncOne: %v", err)
+	}
+
+	gotBook, err := books.GetByForeignID(ctx, "hc:owned")
+	if err != nil || gotBook == nil {
+		t.Fatalf("created book not found: %v", err)
+	}
+	if gotBook.OwnerUserID != owner.ID {
+		t.Errorf("book OwnerUserID = %d, want %d (list owner)", gotBook.OwnerUserID, owner.ID)
+	}
+	gotAuthor, err := authors.GetByAnyForeignID(ctx, "hc:ownedauthor")
+	if err != nil || gotAuthor == nil {
+		t.Fatalf("created author not found: %v", err)
+	}
+	if gotAuthor.OwnerUserID != owner.ID {
+		t.Errorf("author OwnerUserID = %d, want %d (list owner)", gotAuthor.OwnerUserID, owner.ID)
+	}
+}
+
+// TestSyncOne_GlobalListLeavesContentUnowned confirms the back-compat default:
+// a list with no owner (nil) creates NULL-owned (owner id 0) content, matching
+// the pre-fix behaviour of a shared/global shelf.
+func TestSyncOne_GlobalListLeavesContentUnowned(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	il := testImportList("Shared shelf", "hardcover", true)
+	// OwnerUserID deliberately left nil → global.
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed list: %v", err)
+	}
+	s.WithClientFactory(func(string) hardcoverClient {
+		return &fakeHardcoverClient{
+			lists: []hardcover.HCList{{ID: 4, Slug: il.URL, Name: il.Name}},
+			books: []models.Book{
+				{ForeignID: "hc:global", Title: "Global Book", MetadataProvider: "hardcover",
+					Author: &models.Author{ForeignID: "hc:globalauthor", Name: "Global Author", MetadataProvider: "hardcover"}},
+			},
+		}
+	})
+
+	if err := s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatalf("SyncOne: %v", err)
+	}
+
+	gotBook, err := s.books.GetByForeignID(ctx, "hc:global")
+	if err != nil || gotBook == nil {
+		t.Fatalf("created book not found: %v", err)
+	}
+	if gotBook.OwnerUserID != 0 {
+		t.Errorf("book OwnerUserID = %d, want 0 (global)", gotBook.OwnerUserID)
+	}
+	gotAuthor, err := s.authors.GetByAnyForeignID(ctx, "hc:globalauthor")
+	if err != nil || gotAuthor == nil {
+		t.Fatalf("created author not found: %v", err)
+	}
+	if gotAuthor.OwnerUserID != 0 {
+		t.Errorf("author OwnerUserID = %d, want 0 (global)", gotAuthor.OwnerUserID)
+	}
+}
+
 func TestSortName(t *testing.T) {
 	tests := []struct {
 		in, want string
