@@ -48,18 +48,11 @@ func WithRealPeer(ctx context.Context, remoteAddr string) context.Context {
 	return context.WithValue(ctx, realPeerCtxKey, remoteAddr)
 }
 
-// RealPeerHost returns the bare host of the request's original TCP peer,
-// before trusted-proxy middleware rewrites RemoteAddr from forwarded headers.
-// When no original peer was stashed, it falls back to the current RemoteAddr.
-func RealPeerHost(r *http.Request) string {
-	return realPeerHost(r)
-}
-
-// realPeerHost returns the bare host of the request's true TCP peer. It
+// RealPeerHost returns the bare host of the request's true TCP peer. It
 // prefers the value stashed by WithRealPeer (the address before RealIP
 // rewriting); if that is absent it falls back to r.RemoteAddr. The fallback is
 // only safe when no proxy rewriting happened — see ResolveClientIP.
-func realPeerHost(r *http.Request) string {
+func RealPeerHost(r *http.Request) string {
 	addr := r.RemoteAddr
 	if v, ok := r.Context().Value(realPeerCtxKey).(string); ok && v != "" {
 		addr = v
@@ -114,7 +107,7 @@ func IsLocalRequestTrusted(r *http.Request, trusted []*net.IPNet) bool {
 //
 // The returned string is a bare IP, or "" if no usable address is found.
 func ResolveClientIP(r *http.Request, trusted []*net.IPNet) string {
-	peer := realPeerHost(r)
+	peer := RealPeerHost(r)
 
 	// No trusted proxy configured: the TCP peer is the client, full stop.
 	// Any X-Forwarded-For header is untrusted and ignored.
