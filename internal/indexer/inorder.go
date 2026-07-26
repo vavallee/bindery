@@ -26,7 +26,12 @@ func inOrderRegex(seq []string) *regexp.Regexp {
 	for i, w := range seq {
 		parts[i] = umlautFlexRegex(regexp.QuoteMeta(strings.ToLower(w)))
 	}
-	pattern := `(?i)\b` + strings.Join(parts, `\b.*\b`) + `\b`
+	// wordSep rather than \b so non-ASCII words match (#1642). The gap between
+	// consecutive words is `SEP(?:.*SEP)?` rather than `.*` so that ADJACENT
+	// words still match: the separator after each word is consumed, leaving no
+	// separator for the next word to assert on, which a bare `.*` would break.
+	gap := wordSep + `(?:.*` + wordSep + `)?`
+	pattern := `(?i)(?:^|` + wordSep + `)` + strings.Join(parts, gap) + `(?:` + wordSep + `|$)`
 	re, _ := regexCache.LoadOrStore(pattern, regexp.MustCompile(pattern))
 	return re.(*regexp.Regexp)
 }

@@ -80,6 +80,28 @@ func StripArticles(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// wordSep is the character class separating tokens in a NormalizeRelease
+// haystack: anything that is not a Unicode letter or number. It replaces `\b`
+// in every matcher below.
+//
+// Go's regexp is RE2, where `\b` is defined against ASCII `\w` ([0-9A-Za-z_]).
+// NormalizeRelease deliberately PRESERVES \p{L}/\p{N} so CJK and accented-Latin
+// survive, which makes the two mutually incompatible: a position next to a
+// non-ASCII letter has a non-\w rune on both sides, so it is never an ASCII
+// word boundary. Any keyword whose first or last rune was non-ASCII therefore
+// compiled to a regex that could not match anything, ever — "åsa", "josé",
+// "nesbø", "刘慈欣" and every Cyrillic/Greek/Hebrew/Arabic token (#1642).
+// German was the one script that worked, purely because transliterateUmlauts
+// converts ä/ö/ü/ß to ASCII before the pattern is built, which is why this went
+// unnoticed. Diacritics INTERIOR to a token ("miéville", "stanisław") always
+// worked, since only the edges touch a boundary.
+//
+// RE2 has no lookaround, so the boundary is matched by CONSUMING the separator
+// rather than asserting on it. That is safe here because every haystack is
+// NormalizeRelease output (single-space-separated \p{L}/\p{N} tokens) and each
+// matcher only asks whether a match exists.
+const wordSep = `[^\p{L}\p{N}]`
+
 // umlautFlexRegex makes "ae", "oe", "ue" in an already-QuoteMeta'd keyword
 // flexible by appending "?" to the second letter: "ae"→"ae?", "oe"→"oe?",
 // "ue"→"ue?". This allows a single regex to match both the German
@@ -93,15 +115,16 @@ func umlautFlexRegex(kw string) string {
 	return kw
 }
 
-// WordBoundaryRegex returns a cached case-insensitive \bkw\b regex for the
-// given keyword. Safe for concurrent use. German umlaut expansions (ae/oe/ue)
-// produced by transliterateUmlauts are treated as flexible so the regex
-// matches both the expanded (ae) and compact (a) NZB-name conventions.
+// WordBoundaryRegex returns a cached case-insensitive regex matching kw as a
+// whole token in a normalized haystack. Safe for concurrent use. German umlaut
+// expansions (ae/oe/ue) produced by transliterateUmlauts are treated as
+// flexible so the regex matches both the expanded (ae) and compact (a)
+// NZB-name conventions. See wordSep for why this is not `\b` (#1642).
 func WordBoundaryRegex(kw string) *regexp.Regexp {
 	if v, ok := regexCache.Load(kw); ok {
 		return v.(*regexp.Regexp)
 	}
-	re := regexp.MustCompile(`(?i)\b` + umlautFlexRegex(regexp.QuoteMeta(kw)) + `\b`)
+	re := regexp.MustCompile(`(?i)(?:^|` + wordSep + `)` + umlautFlexRegex(regexp.QuoteMeta(kw)) + `(?:` + wordSep + `|$)`)
 	regexCache.Store(kw, re)
 	return re
 }
@@ -116,7 +139,9 @@ func phraseRegex(phrase []string) *regexp.Regexp {
 	for i, w := range phrase {
 		parts[i] = umlautFlexRegex(regexp.QuoteMeta(strings.ToLower(w)))
 	}
-	pattern := `(?i)\b` + strings.Join(parts, `\W+`) + `\b`
+	// wordSep rather than \b/\W so non-ASCII words match (#1642). The inner
+	// separator stays a + run, matching the previous \W+ behaviour.
+	pattern := `(?i)(?:^|` + wordSep + `)` + strings.Join(parts, wordSep+`+`) + `(?:` + wordSep + `|$)`
 	re, _ := regexCache.LoadOrStore(pattern, regexp.MustCompile(pattern))
 	return re.(*regexp.Regexp)
 }
