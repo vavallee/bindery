@@ -50,6 +50,29 @@ func SigWords(s string) []string {
 	return out
 }
 
+// foldForSigWordMatch reduces a haystack through the same CHARACTER-REWRITING
+// steps SigWords applies to the words it emits: lowercase, strip both
+// apostrophe forms, and transliterate German umlauts.
+//
+// Any string that a SigWords output is tested against must go through this, or
+// the two sides live in different alphabets and the comparison silently fails
+// (#1643). titleHasRelevantResult compared SigWords keywords against a merely
+// lowercased release name, so a byte-identical result was rejected as a "canned
+// feed": "Ender's Game" emitted the keyword "enders", which is absent from
+// "ender's game". Every English possessive title was affected, and — perversely
+// — every German title where BOTH sides carried the umlaut, which is exactly
+// what the transliteration exists for.
+//
+// Word SPLITTING is deliberately not applied here: callers use strings.Contains
+// against the whole haystack, so collapsing punctuation to spaces would only
+// remove separators the substring test already tolerates.
+func foldForSigWordMatch(s string) string {
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, "'", "")
+	s = strings.ReplaceAll(s, "’", "")
+	return transliterateUmlauts(s)
+}
+
 // transliterateUmlauts maps German umlaut characters to their common ASCII
 // two-letter equivalents (ä→ae, ö→oe, ü→ue, ß→ss). Must be called after
 // strings.ToLower so only the lowercase forms need to be handled.

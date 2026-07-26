@@ -398,7 +398,7 @@ func titleHasRelevantResult(queryTitle string, results []SearchResult) bool {
 	}
 	combined := make([]string, len(results))
 	for i, r := range results {
-		combined[i] = strings.ToLower(r.Title + " " + r.BookTitle)
+		combined[i] = foldForSigWordMatch(r.Title + " " + r.BookTitle)
 	}
 	for _, w := range words {
 		found := false
