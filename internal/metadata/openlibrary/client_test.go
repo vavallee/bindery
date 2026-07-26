@@ -173,7 +173,10 @@ func TestParseSeriesRef(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.raw, func(t *testing.T) {
-			got := parseSeriesRef(tt.raw)
+			got, ok := parseSeriesRef(tt.raw)
+			if !ok {
+				t.Fatalf("parseSeriesRef(%q) returned ok=false; want a usable ref", tt.raw)
+			}
 			if got.Title != tt.wantTitle {
 				t.Errorf("Title: want %q, got %q", tt.wantTitle, got.Title)
 			}
@@ -202,5 +205,66 @@ func TestSeriesSlug(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("seriesSlug(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+// TestSeriesSlugNonLatin is the regression test for #1645. The previous slug
+// kept only ASCII [a-z0-9], so a title with no ASCII alphanumerics produced ""
+// and the ForeignID degenerated to the bare "ol-series:" prefix — which, via
+// CreateOrGet's INSERT OR IGNORE on foreign_id, merged every non-Latin series
+// onto a single shared row. Accented Latin collided the same way.
+func TestSeriesSlugNonLatin(t *testing.T) {
+	// Previously "" (→ shared row); must now be distinct and non-empty.
+	nonLatin := []string{"三体", "ハリー・ポッター", "Гарри Поттер", "Ὀδύσσεια", "سلسلة"}
+	seen := map[string]string{}
+	for _, title := range nonLatin {
+		got := seriesSlug(title)
+		if got == "" {
+			t.Errorf("seriesSlug(%q) = %q; non-Latin titles must produce a usable slug", title, got)
+			continue
+		}
+		if prev, dup := seen[got]; dup {
+			t.Errorf("seriesSlug collision: %q and %q both produce %q", prev, title, got)
+		}
+		seen[got] = title
+	}
+
+	// Accented Latin folds to its base letters rather than dropping the rune,
+	// which is what made these two collide on "dland".
+	if got, want := seriesSlug("Ödland"), "odland"; got != want {
+		t.Errorf("seriesSlug(%q) = %q, want %q", "Ödland", got, want)
+	}
+	if got, want := seriesSlug("Ådland"), "adland"; got != want {
+		t.Errorf("seriesSlug(%q) = %q, want %q", "Ådland", got, want)
+	}
+	if seriesSlug("Ödland") == seriesSlug("Ådland") {
+		t.Error("Ödland and Ådland must not share a slug")
+	}
+
+	// Only genuinely identity-free titles yield "", and those must be dropped
+	// by the caller rather than emitting a prefix-only ForeignID.
+	for _, empty := range []string{"", "   ", "---", "!!!"} {
+		if got := seriesSlug(empty); got != "" {
+			t.Errorf("seriesSlug(%q) = %q, want empty", empty, got)
+		}
+		if _, ok := parseSeriesRef(empty); ok {
+			t.Errorf("parseSeriesRef(%q) returned ok=true; a slugless title must be dropped", empty)
+		}
+	}
+}
+
+// TestParseSeriesRefPrimaryTracksKeptRefs guards the ordering subtlety in the
+// #1645 fix: Primary must mark the first ref actually kept, so dropping an
+// unusable leading entry doesn't leave the book with no primary series.
+func TestParseSeriesRefPrimaryTracksKeptRefs(t *testing.T) {
+	refs := seriesRefsFrom([]string{"!!!", "Dune Chronicles #1", "Other Series"})
+	if len(refs) != 2 {
+		t.Fatalf("expected the slugless entry to be dropped, got %d refs", len(refs))
+	}
+	if !refs[0].Primary {
+		t.Error("first KEPT ref should be Primary after a leading entry is dropped")
+	}
+	if refs[1].Primary {
+		t.Error("only one ref should be Primary")
 	}
 }

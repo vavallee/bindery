@@ -16,6 +16,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
@@ -201,12 +204,18 @@ func (c *Client) GetBook(ctx context.Context, foreignID string) (*models.Book, e
 	}
 
 	// Parse series membership.
-	for i, s := range resp.Series {
+	for _, s := range resp.Series {
 		if s == "" {
 			continue
 		}
-		ref := parseSeriesRef(s)
-		ref.Primary = i == 0
+		ref, ok := parseSeriesRef(s)
+		if !ok {
+			continue
+		}
+		// Primary tracks the first ref actually KEPT, not input index i: if the
+		// first entry is dropped for having no usable slug, the next one is the
+		// primary series rather than the book having none at all (#1645).
+		ref.Primary = len(b.SeriesRefs) == 0
 		b.SeriesRefs = append(b.SeriesRefs, ref)
 	}
 
@@ -480,18 +489,24 @@ func pickPreferredLanguage(langs []string) string {
 }
 
 // seriesRefsFrom parses the OL series strings attached to a works-endpoint
-// entry into SeriesRefs with the first entry flagged Primary.
+// entry into SeriesRefs, flagging the first KEPT entry Primary. Entries whose
+// title yields no usable slug are dropped rather than sharing a ForeignID
+// (#1645).
 func seriesRefsFrom(series []string) []models.SeriesRef {
 	if len(series) == 0 {
 		return nil
 	}
 	refs := make([]models.SeriesRef, 0, len(series))
-	for i, s := range series {
+	for _, s := range series {
 		if s == "" {
 			continue
 		}
-		ref := parseSeriesRef(s)
-		ref.Primary = i == 0
+		ref, ok := parseSeriesRef(s)
+		if !ok {
+			continue
+		}
+		// See GetBook: primary is the first ref KEPT, not input index (#1645).
+		ref.Primary = len(refs) == 0
 		refs = append(refs, ref)
 	}
 	return refs
@@ -851,7 +866,11 @@ var reBookPos = regexp.MustCompile(`(?:,?\s*-{1,2}\s*|,\s*|\s+)[Bb]ook\s+(\d+(?:
 
 // parseSeriesRef parses an OpenLibrary series string (e.g. "Dune Chronicles #1")
 // into a SeriesRef with a stable ForeignID slug, extracted title, and position.
-func parseSeriesRef(raw string) models.SeriesRef {
+//
+// Reports ok=false when the title yields no usable slug, in which case the
+// caller must DROP the ref. Emitting a prefix-only "ol-series:" ForeignID would
+// make every such series collide onto one row (#1645).
+func parseSeriesRef(raw string) (models.SeriesRef, bool) {
 	title := strings.TrimSpace(raw)
 	position := ""
 
@@ -863,30 +882,61 @@ func parseSeriesRef(raw string) models.SeriesRef {
 		title = strings.TrimSpace(title[:m[0]])
 	}
 
+	slug := seriesSlug(title)
+	if slug == "" {
+		return models.SeriesRef{}, false
+	}
 	return models.SeriesRef{
-		ForeignID: "ol-series:" + seriesSlug(title),
+		ForeignID: "ol-series:" + slug,
 		Title:     title,
 		Position:  position,
-	}
+	}, true
 }
 
 // seriesSlug converts a series title to a lowercase slug suitable for use as a
 // foreign_id (e.g. "Dune Chronicles" → "dune-chronicles").
+// seriesSlug builds the stable identity part of a series ForeignID.
+//
+// It NFD-decomposes and drops combining marks, so accented Latin folds to its
+// base letters ("Ödland" → "odland"), then keeps Unicode letters and numbers
+// and collapses everything else to a single "-".
+//
+// Both of those matter (#1645). The previous version kept only ASCII [a-z0-9]
+// and dropped every other rune, which produced two distinct failures:
+//
+//   - A title with NO ASCII alphanumerics slugged to the empty string, so the
+//     ForeignID degenerated to the bare prefix "ol-series:". Since
+//     SeriesRepo.CreateOrGet is INSERT OR IGNORE keyed on foreign_id, the first
+//     non-Latin series to arrive claimed that row and every later Japanese,
+//     Chinese, Russian, Greek, Hebrew or Arabic series bound to it — one row
+//     holding books from every unrelated series.
+//   - Accented Latin silently collided: "Ödland" and "Ådland" both dropped
+//     their leading rune and slugged to "dland".
+//
+// Keeping \p{L}/\p{N} rather than transliterating means "三体" stays "三体".
+// That is fine for an identity key — it only has to be stable and distinct, not
+// readable — and it is what makes non-Latin series distinguishable at all.
+//
+// Returns "" when the title carries no letters or digits at all (pure
+// punctuation or emoji). Callers MUST treat that as "no usable identity" and
+// skip the series rather than emitting a prefix-only ForeignID.
 func seriesSlug(title string) string {
-	var buf []byte
+	var b strings.Builder
 	prevDash := false
-	for _, r := range strings.ToLower(title) {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			buf = append(buf, byte(r)) //nolint:gosec // r is gated to ASCII range above
+	for _, r := range norm.NFD.String(strings.TrimSpace(title)) {
+		switch {
+		case unicode.Is(unicode.Mn, r):
+			// Combining mark from NFD decomposition — drop it, keep the base letter.
+			continue
+		case unicode.IsLetter(r) || unicode.IsNumber(r):
+			b.WriteRune(unicode.ToLower(r))
 			prevDash = false
-		} else if !prevDash && len(buf) > 0 {
-			buf = append(buf, '-')
-			prevDash = true
+		default:
+			if !prevDash && b.Len() > 0 {
+				b.WriteByte('-')
+				prevDash = true
+			}
 		}
 	}
-	// trim trailing dash
-	for len(buf) > 0 && buf[len(buf)-1] == '-' {
-		buf = buf[:len(buf)-1]
-	}
-	return string(buf)
+	return strings.TrimRight(b.String(), "-")
 }

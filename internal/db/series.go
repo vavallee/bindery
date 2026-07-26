@@ -472,6 +472,13 @@ func (r *SeriesRepo) Create(ctx context.Context, s *models.Series) error {
 // populates s.ID with the persisted row's ID. Safe to call concurrently; the
 // INSERT OR IGNORE prevents duplicate-key errors.
 func (r *SeriesRepo) CreateOrGet(ctx context.Context, s *models.Series) error {
+	// An empty foreign_id is never a real identity, and because this is an
+	// INSERT OR IGNORE keyed on foreign_id it would silently bind every such
+	// caller onto one shared row. Refuse it rather than corrupting the table;
+	// the OpenLibrary slug bug that motivated this did exactly that (#1645).
+	if strings.TrimSpace(s.ForeignID) == "" {
+		return fmt.Errorf("upsert series %q: refusing to create a series with an empty foreign_id", s.Title)
+	}
 	now := time.Now().UTC()
 	result, err := r.db.ExecContext(ctx,
 		"INSERT OR IGNORE INTO series (foreign_id, title, description, created_at) VALUES (?, ?, ?, ?)",
