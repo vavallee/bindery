@@ -12,6 +12,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 // ImportStats summarises one import run. Exposed verbatim to the UI so
@@ -554,11 +555,30 @@ func (i *Importer) resolveAuthor(ctx context.Context, runID int64, ca CalibreAut
 	return author, true, nil
 }
 
-// findAuthorByName returns the first author whose name matches
-// case-insensitively, or nil. AuthorRepo has no "list by name" helper so
-// we scan in-memory — acceptable because resolveAuthor runs once per
-// Calibre book and List() is already O(authors) per call; for a typical
-// library the author count is a few hundred.
+// findAuthorByName returns the author whose name identifies the same person as
+// name, or nil. AuthorRepo has no "list by name" helper so we scan in-memory —
+// acceptable because resolveAuthor runs once per Calibre book and List() is
+// already O(authors) per call; for a typical library the author count is a few
+// hundred.
+//
+// Matching is tiered: exact lowercase first (so an unambiguous byte match keeps
+// winning), then exact-via-variants from textutil, which is NFC/NFD safe and
+// understands dotted initials, last-first inversion and transliterated
+// diacritics.
+//
+// This was the only author matching site in the tree that skipped textutil
+// entirely — a raw `strings.ToLower(a) == strings.ToLower(b)` (#1647). ABS has
+// a three-tier matcher and the API normalizes; Calibre byte-compared. Calibre's
+// metadata.db holds whatever wrote it, and Calibre desktop on macOS emits NFD,
+// so "Jörg Müller" imported from Calibre could not find the "Jörg Müller"
+// already created by ABS or OpenLibrary. The alias fallback in resolveAuthor
+// does not save it either: AuthorAliasRepo.LookupByName uses SQLite
+// `LOWER(name) = LOWER(?)`, which folds ASCII only. The result was a duplicate
+// author row on first import, recreated on every later import, with the books
+// split across two author pages.
+//
+// Deliberately Exact-only: fuzzy tiers belong in the interactive paths, not in
+// a bulk import that can silently merge hundreds of books under one author.
 //
 // TODO(post-v0.8.1): add an indexed lookup to AuthorRepo if library sizes
 // grow beyond a few thousand authors.
@@ -567,13 +587,32 @@ func (i *Importer) findAuthorByName(ctx context.Context, name string) (*models.A
 	if err != nil {
 		return nil, err
 	}
-	lower := strings.ToLower(name)
+	lower := strings.ToLower(strings.TrimSpace(name))
 	for idx := range all {
-		if strings.ToLower(all[idx].Name) == lower {
+		if strings.ToLower(strings.TrimSpace(all[idx].Name)) == lower {
 			return &all[idx], nil
 		}
 	}
-	return nil, nil
+	// Two distinct rows can both match via variants (a library already holding
+	// both "J. R. R. Tolkien" and "Tolkien, J.R.R." as separate authors). Take
+	// the lowest ID so repeated imports converge on one row instead of
+	// alternating, and say so rather than merging silently.
+	var best *models.Author
+	for idx := range all {
+		if textutil.MatchAuthorName(name, all[idx].Name).Kind != textutil.AuthorMatchExact {
+			continue
+		}
+		if best == nil {
+			best = &all[idx]
+			continue
+		}
+		slog.Warn("calibre import: author name matches more than one existing author",
+			"name", name, "chosen", best.Name, "chosen_id", best.ID, "also", all[idx].Name, "also_id", all[idx].ID)
+		if all[idx].ID < best.ID {
+			best = &all[idx]
+		}
+	}
+	return best, nil
 }
 
 // recordSecondaryAuthors adds every co-author after the first to the

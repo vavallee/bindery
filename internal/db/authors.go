@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 type AuthorRepo struct {
@@ -493,26 +494,43 @@ func (r *AuthorRepo) GetByDNBSyntheticName(ctx context.Context, sortName string,
 	if sortName == "" {
 		return nil, nil
 	}
-	var (
-		row *sql.Row
-		q   = `SELECT ` + authorSelectCols + `
+	// The SQL narrows to synthetic DNB rows only; the name comparison happens
+	// in Go. It used to be `LOWER(sort_name) = LOWER(?)`, and SQLite's LOWER()
+	// folds ASCII only — but worse, the two sides are produced by different
+	// code. DNB stores SortName verbatim from MARC 100 $a ("Tolkien, J. R. R."),
+	// while the canonical side is sortName(), a strings.Fields last-token flip
+	// ("Tolkien, J.R.R." from OpenLibrary's "J.R.R. Tolkien"). Those never
+	// compare equal, so this function returned nothing and the duplicate it
+	// exists to prevent was created anyway: a leftover synthetic
+	// dnb:author:<slug> row holding the German books alongside a new
+	// OpenLibrary row (#1647). textutil.MatchAuthorName scores that pair Exact.
+	q := `SELECT ` + authorSelectCols + `
 			FROM authors
-			WHERE foreign_id LIKE 'dnb:author:%' AND LOWER(sort_name) = LOWER(?)`
-	)
-	if userID == 0 {
-		row = r.db.QueryRowContext(ctx, q, sortName)
-	} else {
+			WHERE foreign_id LIKE 'dnb:author:%'`
+	args := []any{}
+	if userID != 0 {
 		q += ` AND (owner_user_id = ? OR owner_user_id IS NULL)`
-		row = r.db.QueryRowContext(ctx, q, sortName, userID)
+		args = append(args, userID)
 	}
-	a, err := scanAuthorRow(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
+	q += ` ORDER BY id`
+	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get author by dnb-synthetic sort_name %q: %w", sortName, err)
 	}
-	return &a, nil
+	defer rows.Close()
+	for rows.Next() {
+		a, err := scanAuthor(rows)
+		if err != nil {
+			return nil, fmt.Errorf("get author by dnb-synthetic sort_name %q: %w", sortName, err)
+		}
+		if textutil.MatchAuthorName(sortName, a.SortName).Kind == textutil.AuthorMatchExact {
+			return &a, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("get author by dnb-synthetic sort_name %q: %w", sortName, err)
+	}
+	return nil, nil
 }
 
 // UpgradeSyntheticDNB migrates a synthetic DNB-only author row to a canonical

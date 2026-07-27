@@ -7,6 +7,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/metadata/audnex"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 // EnrichAudiobook fills narrator, duration, and cover from audnex when a
@@ -403,22 +404,44 @@ func preferStrongerRating(curAvg float64, curCount int, inAvg float64, inCount i
 // matches. Conservative by design: a false negative just leaves
 // enrichment empty; a false positive overwrites the user's book with
 // data from an unrelated record.
+// Both sides of this comparison arrive over HTTP from DIFFERENT providers, so
+// differing initial spacing and Unicode form is the expected case, not the
+// exotic one. Comparing raw lowercased strings meant enrichment was simply dead
+// for any book whose author or title was spelled differently by the two
+// providers — permanently, since the comparison is deterministic and every
+// retry failed identically. It fails closed, so nothing was corrupted;
+// description, cover, rating and Hardcover genres just never arrived (#1647).
+//
+// Both accept paths are kept: the substring test still handles subtitle-style
+// containment ("Der Prozess" inside "Der Prozess: Roman"), and the folded/
+// variant comparisons handle the spellings it cannot see through.
 func pickEnrichmentMatch(candidates []models.Book, target *models.Book) *models.Book {
 	targetTitle := strings.ToLower(strings.TrimSpace(target.Title))
 	if targetTitle == "" {
 		return nil
 	}
+	targetTitleFolded := textutil.FoldForTitleMatch(target.Title)
 	targetAuthor := ""
 	if target.Author != nil {
 		targetAuthor = strings.ToLower(strings.TrimSpace(target.Author.Name))
 	}
+	titleMatches := func(cTitle string) bool {
+		lower := strings.ToLower(strings.TrimSpace(cTitle))
+		if lower == "" {
+			return false
+		}
+		if strings.Contains(lower, targetTitle) || strings.Contains(targetTitle, lower) {
+			return true
+		}
+		// NFC vs NFD "Geräusch" defeats the raw substring test even though
+		// CanonicalDedupKey folds the two equal.
+		folded := textutil.FoldForTitleMatch(cTitle)
+		return folded != "" && targetTitleFolded != "" &&
+			(strings.Contains(folded, targetTitleFolded) || strings.Contains(targetTitleFolded, folded))
+	}
 	for i := range candidates {
 		c := &candidates[i]
-		cTitle := strings.ToLower(strings.TrimSpace(c.Title))
-		if cTitle == "" {
-			continue
-		}
-		if !strings.Contains(cTitle, targetTitle) && !strings.Contains(targetTitle, cTitle) {
+		if !titleMatches(c.Title) {
 			continue
 		}
 		if targetAuthor == "" {
@@ -431,10 +454,17 @@ func pickEnrichmentMatch(candidates []models.Book, target *models.Book) *models.
 		if cAuthor == "" {
 			continue
 		}
-		if !strings.Contains(cAuthor, targetAuthor) && !strings.Contains(targetAuthor, cAuthor) {
-			continue
+		if strings.Contains(cAuthor, targetAuthor) || strings.Contains(targetAuthor, cAuthor) {
+			return c
 		}
-		return c
+		// "J.R.R. Tolkien" vs "J. R. R. Tolkien", "Tolkien, J.R.R." vs the
+		// same, NFC vs NFD — all Exact under textutil, none a substring of the
+		// other. FuzzyAuto is included because enrichment fails closed and both
+		// names are already corroborated by a title match.
+		switch textutil.MatchAuthorName(target.Author.Name, c.Author.Name).Kind {
+		case textutil.AuthorMatchExact, textutil.AuthorMatchFuzzyAuto:
+			return c
+		}
 	}
 	return nil
 }

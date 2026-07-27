@@ -540,3 +540,84 @@ func TestAuthorRepo_MonitorNewItemsRoundTrip(t *testing.T) {
 		t.Fatalf("invalid value should normalize to default, got %q", got.MonitorNewItems)
 	}
 }
+
+// TestAuthorRepo_GetByDNBSyntheticName_InitialSpacing covers #1647. DNB stores
+// SortName verbatim from MARC 100 $a ("Tolkien, J. R. R."), while the canonical
+// side is sortName(), a strings.Fields last-token flip that turns OpenLibrary's
+// "J.R.R. Tolkien" into "Tolkien, J.R.R.". Those two never compared equal under
+// SQLite `LOWER(sort_name) = LOWER(?)`, so this function returned nothing and
+// the duplicate it exists to prevent was created anyway.
+func TestAuthorRepo_GetByDNBSyntheticName_InitialSpacing(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	repo := NewAuthorRepo(database)
+	ctx := context.Background()
+
+	if err := repo.Create(ctx, &models.Author{
+		ForeignID: "dnb:author:jrr-tolkien", Name: "J. R. R. Tolkien",
+		SortName: "Tolkien, J. R. R.", MetadataProvider: "dnb",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	for _, lookup := range []string{
+		"Tolkien, J.R.R.",   // what sortName() produces from OpenLibrary's form
+		"Tolkien, J. R. R.", // byte-identical
+		"J. R. R. Tolkien",  // un-inverted
+	} {
+		got, err := repo.GetByDNBSyntheticName(ctx, lookup, 0)
+		if err != nil {
+			t.Fatalf("GetByDNBSyntheticName(%q): %v", lookup, err)
+		}
+		if got == nil || got.ForeignID != "dnb:author:jrr-tolkien" {
+			t.Errorf("GetByDNBSyntheticName(%q) = %+v, want the synthetic Tolkien row", lookup, got)
+		}
+	}
+}
+
+// TestAuthorRepo_GetByDNBSyntheticName_NonASCIICase pins the other half of the
+// old SQL comparison: SQLite's LOWER() folds ASCII only, so a synthetic row
+// stored with an uppercase non-ASCII initial was unreachable by its own
+// lowercased name.
+func TestAuthorRepo_GetByDNBSyntheticName_NonASCIICase(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	repo := NewAuthorRepo(database)
+	ctx := context.Background()
+
+	if err := repo.Create(ctx, &models.Author{
+		ForeignID: "dnb:author:oestergaard", Name: "Østergaard, Anne",
+		SortName: "Østergaard, Anne", MetadataProvider: "dnb",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// "Ostergaard, Anne" is the ø→o romanisation; the ø→oe one is deliberately
+	// NOT accepted here — this decides an author MERGE, so it stays Exact-only.
+	for _, lookup := range []string{"østergaard, anne", "Østergaard, Anne", "Ostergaard, Anne"} {
+		got, err := repo.GetByDNBSyntheticName(ctx, lookup, 0)
+		if err != nil {
+			t.Fatalf("GetByDNBSyntheticName(%q): %v", lookup, err)
+		}
+		if got == nil {
+			t.Errorf("GetByDNBSyntheticName(%q) = nil, want the synthetic Østergaard row", lookup)
+		}
+	}
+
+	// Still discriminating: a different person must not match.
+	got, err := repo.GetByDNBSyntheticName(ctx, "Østergaard, Lars", 0)
+	if err != nil {
+		t.Fatalf("GetByDNBSyntheticName(Lars): %v", err)
+	}
+	if got != nil {
+		t.Errorf("a shared surname alone should not match, got %+v", got)
+	}
+}
