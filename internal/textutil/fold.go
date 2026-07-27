@@ -3,6 +3,8 @@ package textutil
 import (
 	"strings"
 	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // This file is the single home for the character-level reductions used when
@@ -68,15 +70,25 @@ var umlautExpander = strings.NewReplacer(
 )
 
 // FoldForTitleMatch reduces s to the alphabet used for every title/release
-// comparison: lowercased, apostrophes deleted, German umlauts expanded, and
-// every run of non-letter/non-number characters collapsed to a single space.
-// The result is trimmed and single-space separated.
+// comparison: NFC-composed, lowercased, apostrophes deleted, German umlauts
+// expanded, and every run of non-letter/non-number characters collapsed to a
+// single space. The result is trimmed and single-space separated.
 //
 // Both sides of a title comparison must pass through this, or they live in
 // different alphabets and the comparison silently fails. Tokenisation POLICY
 // (stop-words, minimum length) deliberately stays with the caller — only the
 // character rewriting is shared.
+//
+// The NFC step is load-bearing and was missing from every open-coded copy of
+// this fold. A combining mark is category Mn, not a letter, so in decomposed
+// input it hits the separator branch and TRUNCATES the word at the accent:
+// NFD "Café Society" folded to "cafe society" while the NFC spelling of the
+// same title folded to "café society". Two tokens, never equal — the #1642
+// failure mode arriving by a different route. macOS hands filenames back
+// decomposed while every metadata provider returns composed, so the two forms
+// meet constantly.
 func FoldForTitleMatch(s string) string {
+	s = norm.NFC.String(s)
 	s = strings.ToLower(s)
 	s = apostropheStripper.Replace(s)
 	s = TransliterateUmlauts(s)

@@ -3,6 +3,8 @@ package textutil
 import (
 	"strings"
 	"testing"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 func TestFoldForTitleMatch(t *testing.T) {
@@ -31,6 +33,26 @@ func TestFoldForTitleMatch(t *testing.T) {
 				t.Fatalf("FoldForTitleMatch(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestFoldForTitleMatchUnicodeForms pins the NFC step. Without it a combining
+// mark (category Mn, not a letter) takes the separator branch and truncates the
+// word at the accent, so the decomposed spelling of a title produces a token
+// the composed spelling can never equal.
+func TestFoldForTitleMatchUnicodeForms(t *testing.T) {
+	for _, in := range []string{
+		"Café Society", "Die Höhle", "José Saramago", "Miéville",
+		"Amélie", "Ångström", "Señor", "Dvořák",
+	} {
+		nfc, nfd := norm.NFC.String(in), norm.NFD.String(in)
+		if nfc == nfd {
+			t.Fatalf("%q has no distinct NFD form; the case would be vacuous", in)
+		}
+		gotC, gotD := FoldForTitleMatch(nfc), FoldForTitleMatch(nfd)
+		if gotC != gotD {
+			t.Errorf("FoldForTitleMatch disagrees on Unicode form of %q: NFC %q vs NFD %q", in, gotC, gotD)
+		}
 	}
 }
 
@@ -81,9 +103,12 @@ func TestFoldNonDecomposableLatin(t *testing.T) {
 	}
 }
 
-// TestFoldForTitleMatchMatchesLegacyPipeline pins FoldForTitleMatch to the exact
+// TestFoldForTitleMatchMatchesLegacyPipeline pins FoldForTitleMatch to the
 // sequence the three call sites used to open-code, so the consolidation in
-// #1648 cannot have silently changed release matching.
+// #1648 cannot have silently changed release matching. Inputs are composed
+// (NFC), which is the form every producer already emitted — the added NFC step
+// is a no-op for them and only changes decomposed input, which previously had
+// no consistent behaviour at all (see TestFoldForTitleMatchUnicodeForms).
 func TestFoldForTitleMatchMatchesLegacyPipeline(t *testing.T) {
 	legacy := func(s string) string {
 		s = strings.ToLower(s)
