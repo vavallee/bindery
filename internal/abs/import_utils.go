@@ -116,24 +116,6 @@ func cleanStrings(values []string) []string {
 	return out
 }
 
-func dedupeStrings(values []string) []string {
-	out := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		key := strings.ToLower(value)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		out = append(out, value)
-	}
-	return out
-}
-
 func normalizeLibraryIDs(primary string, values []string) []string {
 	primary = strings.TrimSpace(primary)
 	out := make([]string, 0, len(values)+1)

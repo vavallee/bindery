@@ -2093,24 +2093,6 @@ func authorSearchQueries(name string) []string {
 	return textutil.AuthorSearchQueries(name)
 }
 
-func dedupeAuthorQueries(values []string) []string {
-	out := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		key := strings.ToLower(value)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		out = append(out, value)
-	}
-	return out
-}
-
 // AddBook adds a single book to the wanted list by its metadata foreign ID.
 // If the author is not yet in Bindery it is added as unmonitored and its
 // books are fetched in the background; the endpoint then polls until the
