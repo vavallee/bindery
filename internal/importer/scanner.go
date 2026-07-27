@@ -1631,7 +1631,8 @@ func (s *Scanner) findExistingInDir(root, title, authorName string) string {
 	return found
 }
 
-// normalizeTitle lowercases a title, converts comma-suffix article form to
+// normalizeTitle folds a title into the shared title-comparison alphabet
+// (textutil.FoldForTitleMatch), converts comma-suffix article form to
 // leading-article form, then strips the leading article so that all three
 // representations of the same title compare equal:
 //
@@ -1639,6 +1640,11 @@ func (s *Scanner) findExistingInDir(root, title, authorName string) string {
 //	"Darker Shade of Magic, A"      → "darker shade of magic"
 //	"The Fragile Threads of Power"  → "fragile threads of power"
 //	"Fragile Threads of Power, The" → "fragile threads of power"
+//
+// The fold is what lets a library folder meet its catalogue row when the two
+// spell the same title differently: "Enders Game" vs "Ender's Game", "Die
+// Hoehle" vs "Die Höhle", "Der Prozess" vs "Der Prozeß" (#1646). It runs AFTER
+// the comma-suffix inversion, which needs the comma the fold would remove.
 func normalizeTitle(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	// Invert comma-suffix form: check ", an" before ", a" to avoid prefix collision.
@@ -1648,6 +1654,7 @@ func normalizeTitle(s string) string {
 			break
 		}
 	}
+	s = textutil.FoldForTitleMatch(s)
 	// Strip leading article; check "an " before "a " for the same reason.
 	for _, art := range []string{"the ", "an ", "a "} {
 		if strings.HasPrefix(s, art) {
@@ -1656,6 +1663,33 @@ func normalizeTitle(s string) string {
 		}
 	}
 	return s
+}
+
+// titleStopwords are dropped from the significant-token comparison in
+// titleMatch. Package-level so the map is not rebuilt on every call — the
+// library scan runs titleMatch once per (file, candidate book) pair.
+var titleStopwords = map[string]bool{
+	"the": true, "a": true, "an": true, "of": true,
+	"and": true, "in": true, "to": true, "for": true,
+}
+
+// titleSigTokens returns the significant (2+ char, non-stopword) tokens of a
+// title, reduced through the shared title-comparison alphabet.
+//
+// This used to keep only [a-z0-9] and treat every other rune as a separator,
+// which quietly destroyed non-ASCII titles: "Die Höhle" tokenised to
+// [die hle], because the ö split the word and the leftover single-rune "h"
+// fell under the 2-char floor (#1646). It also disagreed with normalizeTitle,
+// its own neighbour, about apostrophes and diacritics — the two reductions in
+// one function using two different alphabets.
+func titleSigTokens(s string) []string {
+	var out []string
+	for _, w := range strings.Fields(textutil.FoldForTitleMatch(s)) {
+		if len(w) >= 2 && !titleStopwords[w] {
+			out = append(out, w)
+		}
+	}
+	return out
 }
 
 // titleMatch returns true when bookTitle and parsedTitle refer to the same work.
@@ -1671,36 +1705,8 @@ func titleMatch(bookTitle, parsedTitle string) bool {
 		return true
 	}
 
-	// sigTokens splits on non-alphanumeric runs, preserving digits, and removes stopwords.
-	sigTokens := func(s string) []string {
-		stopwords := map[string]bool{
-			"the": true, "a": true, "an": true, "of": true,
-			"and": true, "in": true, "to": true, "for": true,
-		}
-		var out []string
-		var cur []rune
-		flush := func() {
-			if len(cur) >= 2 {
-				w := string(cur)
-				if !stopwords[w] {
-					out = append(out, w)
-				}
-			}
-			cur = cur[:0]
-		}
-		for _, r := range strings.ToLower(s) {
-			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-				cur = append(cur, r)
-			} else {
-				flush()
-			}
-		}
-		flush()
-		return out
-	}
-
-	btTok := sigTokens(bookTitle)
-	ptTok := sigTokens(parsedTitle)
+	btTok := titleSigTokens(bookTitle)
+	ptTok := titleSigTokens(parsedTitle)
 	if len(btTok) == 0 || len(ptTok) == 0 {
 		return false
 	}
@@ -1734,30 +1740,55 @@ func titleMatch(bookTitle, parsedTitle string) bool {
 	return overlap >= required
 }
 
-// authorTokenRegexCache caches per-token compiled word-boundary regexes used
-// by authorMatch. ScanLibrary can perform thousands of comparisons in one
-// pass, so we amortise the regexp.MustCompile cost across calls.
-var authorTokenRegexCache sync.Map // map[string]*regexp.Regexp
+// authorNameTokensCache memoises authorNameTokens. ScanLibrary can perform
+// thousands of comparisons in one pass over a small set of distinct author
+// names, so the normalisation is worth amortising across calls.
+var authorNameTokensCache sync.Map // map[string][]string
 
-// authorTokenRegex returns a cached case-insensitive \btoken\b regex. token
-// is already lowercased and stripped of punctuation by the caller.
-func authorTokenRegex(token string) *regexp.Regexp {
-	if v, ok := authorTokenRegexCache.Load(token); ok {
-		return v.(*regexp.Regexp)
+// authorNameTokens returns the comparison tokens of an author name: the fields
+// of textutil.NormalizeAuthorName, which NFD-decomposes, drops combining
+// marks, keeps only letters and digits, lowercases and collapses whitespace.
+//
+// This is the author-identity alphabet (see internal/textutil/fold.go). Both
+// sides of every comparison in this file go through it, which is what makes
+// the comparison work at all — see authorMatch. The returned slice is shared
+// and MUST NOT be mutated.
+func authorNameTokens(name string) []string {
+	if v, ok := authorNameTokensCache.Load(name); ok {
+		return v.([]string)
 	}
-	re := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(token) + `\b`)
-	authorTokenRegexCache.Store(token, re)
-	return re
+	toks := strings.Fields(textutil.NormalizeAuthorName(name))
+	authorNameTokensCache.Store(name, toks)
+	return toks
 }
 
 // authorMatch returns true when parsedAuthor is consistent with bookAuthor.
 // If parsedAuthor is empty the function returns true (can't disprove).
 //
-// Significant tokens (>=3 chars, lowercased, punctuation-stripped) are
-// extracted from parsedAuthor. Each significant token must appear at a word
-// boundary in bookAuthor. Initials (1-2 char tokens like "R." in "George R.
-// R. Martin") are dropped — they are treated as optional, so the parsed name
-// "George Martin" can still match "George R. R. Martin".
+// Significant tokens (>=3 bytes) are extracted from parsedAuthor and each must
+// appear as a whole token of bookAuthor. Initials (1-2 char tokens like "R." in
+// "George R. R. Martin") are dropped — they are treated as optional, so the
+// parsed name "George Martin" can still match "George R. R. Martin".
+//
+// Both sides are reduced by authorNameTokens first. Before #1646 the parsed
+// side was split on whitespace and trimmed of punctuation only at its ENDS,
+// while the catalogue side was searched with an ASCII `\b…\b` regex, so two
+// separate defects fell out:
+//
+//   - "J.R.R. Tolkien" yielded the token "j.r.r" — 5 characters, so it survived
+//     the >=3 gate meant to discard initials, and no author name can contain
+//     it. This is #1608 re-implemented in a second package. It was directional:
+//     it fired when the PARSED side (an author folder or an ID3 Artist tag,
+//     where audiobook releases overwhelmingly write "J.R.R. Tolkien") had the
+//     run-together form and the catalogue had the spaced form that OpenLibrary
+//     and DNB return.
+//   - Nothing in this package applied Unicode normalisation, so an NFD folder
+//     name from macOS never met the NFC catalogue row for the same author.
+//
+// Both went all the way to unmatched rather than degrading: matchingAuthors
+// verifies every index candidate with this predicate and returns an empty
+// non-nil set, which the caller reads as "restrict candidates to these",
+// leaving nothing for the title tier to consider.
 //
 // This is stricter than a plain substring check: it eliminates the
 // surname-overlap false positives where a co-author shares a token with the
@@ -1775,21 +1806,22 @@ func authorMatch(bookAuthor, parsedAuthor string) bool {
 	if len(tokens) == 0 {
 		return true // only initials/punctuation — can't disprove
 	}
+	have := authorNameTokens(bookAuthor)
 	for _, tok := range tokens {
-		if !authorTokenRegex(tok).MatchString(bookAuthor) {
+		if !slices.Contains(have, tok) {
 			return false
 		}
 	}
 	return true
 }
 
-// significantAuthorTokens splits name into lowercased, punctuation-trimmed
-// tokens of length >=3. Hyphenated names ("Mary-Kate Olsen") are kept as
-// single tokens so the word-boundary regex matches the hyphen-delimited form.
+// significantAuthorTokens returns the tokens of name that are long enough to
+// carry identity — 3+ bytes, which drops initials and the punctuation they used
+// to drag along. Hyphenated names ("Mary-Kate Olsen") split into their parts,
+// so both the hyphenated and the spaced spelling of such a name now match.
 func significantAuthorTokens(name string) []string {
 	var out []string
-	for _, w := range strings.Fields(strings.ToLower(name)) {
-		w = strings.Trim(w, ".,;:()[]'\"")
+	for _, w := range authorNameTokens(name) {
 		if len(w) >= 3 {
 			out = append(out, w)
 		}
@@ -1810,59 +1842,6 @@ type scanBook struct {
 	book      *models.Book
 	normTitle string
 	normLen   int
-}
-
-// wordRunsInto appends every maximal [0-9A-Za-z_] run of s, lowercased, to dst
-// and returns the result. These are the runs a `\b…\b` regex (authorTokenRegex,
-// used by authorMatch) treats as words, so an index of them is an exact
-// super-set key for authorMatch candidates. dst is reused to avoid allocations.
-func wordRunsInto(dst []string, s string) []string {
-	start := -1
-	for i := range len(s) {
-		c := s[i]
-		isWord := c == '_' || (c >= '0' && c <= '9') ||
-			(c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-		if isWord {
-			if start < 0 {
-				start = i
-			}
-			continue
-		}
-		if start >= 0 {
-			dst = append(dst, strings.ToLower(s[start:i]))
-			start = -1
-		}
-	}
-	if start >= 0 {
-		dst = append(dst, strings.ToLower(s[start:]))
-	}
-	return dst
-}
-
-// firstWordRun returns the first maximal [0-9A-Za-z_] run of tok, lowercased,
-// or "" if tok has no word characters. Whenever authorMatch's `\btok\b` test
-// matches an author name, firstWordRun(tok) is one of that name's word runs —
-// which is what makes authorWordIndex a guaranteed super-set (see ScanLibrary).
-func firstWordRun(tok string) string {
-	start := -1
-	for i := range len(tok) {
-		c := tok[i]
-		isWord := c == '_' || (c >= '0' && c <= '9') ||
-			(c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-		if isWord {
-			if start < 0 {
-				start = i
-			}
-			continue
-		}
-		if start >= 0 {
-			return strings.ToLower(tok[start:i])
-		}
-	}
-	if start >= 0 {
-		return strings.ToLower(tok[start:])
-	}
-	return ""
 }
 
 // cleanLayoutTitle strips bracket/paren annotations from a book-folder name —
@@ -2086,19 +2065,20 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		}
 	}
 
-	// authorWordIndex maps each author-name word run to the authors containing
-	// it. The title tier only matches a book when authorMatch(authorName,
+	// authorWordIndex maps each author-name token to the authors containing it.
+	// The title tier only matches a book when authorMatch(authorName,
 	// parsed.Author) holds, so resolving the matching authors up front lets the
 	// title comparison skip every other author's books — turning the tier from
 	// O(files × books) into roughly O(files × books-per-author).
+	//
+	// Keyed by authorNameTokens, the SAME reduction authorMatch compares with,
+	// so the index is an exact super-set by construction. It previously used
+	// raw ASCII word runs, which stopped being a super-set the moment either
+	// side carried a non-ASCII letter (#1646).
 	authorWordIndex := make(map[string][]int64)
-	{
-		var runs []string
-		for id, name := range authorNames {
-			runs = wordRunsInto(runs[:0], name)
-			for _, w := range runs {
-				authorWordIndex[w] = append(authorWordIndex[w], id)
-			}
+	for id, name := range authorNames {
+		for _, w := range authorNameTokens(name) {
+			authorWordIndex[w] = append(authorWordIndex[w], id)
 		}
 	}
 
@@ -2122,30 +2102,21 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			authorMatchCache[parsedAuthor] = nil
 			return nil
 		}
-		var candidates []int64
-		haveBucket := false
-		for _, tok := range tokens {
-			run := firstWordRun(tok)
-			if run == "" {
-				continue
-			}
-			if bucket := authorWordIndex[run]; !haveBucket || len(bucket) < len(candidates) {
-				candidates, haveBucket = bucket, true
+		// Both the index and these tokens come from authorNameTokens, so a
+		// significant token is looked up verbatim. authorMatch requires EVERY
+		// significant token to be a token of the author's name, so each of
+		// their buckets is on its own a super-set of the answer — take the
+		// smallest and verify.
+		candidates := authorWordIndex[tokens[0]]
+		for _, tok := range tokens[1:] {
+			if bucket := authorWordIndex[tok]; len(bucket) < len(candidates) {
+				candidates = bucket
 			}
 		}
 		set := make(map[int64]bool)
-		if !haveBucket {
-			// No indexable token — fall back to scanning every author.
-			for id, name := range authorNames {
-				if authorMatch(name, parsedAuthor) {
-					set[id] = true
-				}
-			}
-		} else {
-			for _, id := range candidates {
-				if !set[id] && authorMatch(authorNames[id], parsedAuthor) {
-					set[id] = true
-				}
+		for _, id := range candidates {
+			if !set[id] && authorMatch(authorNames[id], parsedAuthor) {
+				set[id] = true
 			}
 		}
 		authorMatchCache[parsedAuthor] = set
