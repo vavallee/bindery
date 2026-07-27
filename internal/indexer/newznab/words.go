@@ -2,7 +2,8 @@ package newznab
 
 import (
 	"strings"
-	"unicode"
+
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 // stopWords are common English words excluded from keyword significance checks.
@@ -32,17 +33,7 @@ var stopWords = map[string]bool{
 // word characters so non-Latin titles still tokenise.
 func SigWords(s string) []string {
 	var out []string
-	s = strings.ToLower(s)
-	s = strings.ReplaceAll(s, "'", "")
-	s = strings.ReplaceAll(s, "’", "")
-	normalised := strings.Map(func(r rune) rune {
-		if unicode.IsLetter(r) || unicode.IsNumber(r) {
-			return r
-		}
-		return ' '
-	}, s)
-	for _, w := range strings.Fields(normalised) {
-		w = transliterateUmlauts(w)
+	for _, w := range strings.Fields(textutil.FoldForTitleMatch(s)) {
 		if len(w) >= 3 && !stopWords[w] {
 			out = append(out, w)
 		}
@@ -70,16 +61,5 @@ func foldForSigWordMatch(s string) string {
 	s = strings.ToLower(s)
 	s = strings.ReplaceAll(s, "'", "")
 	s = strings.ReplaceAll(s, "’", "")
-	return transliterateUmlauts(s)
-}
-
-// transliterateUmlauts maps German umlaut characters to their common ASCII
-// two-letter equivalents (ä→ae, ö→oe, ü→ue, ß→ss). Must be called after
-// strings.ToLower so only the lowercase forms need to be handled.
-func transliterateUmlauts(s string) string {
-	s = strings.ReplaceAll(s, "ä", "ae")
-	s = strings.ReplaceAll(s, "ö", "oe")
-	s = strings.ReplaceAll(s, "ü", "ue")
-	s = strings.ReplaceAll(s, "ß", "ss")
-	return s
+	return textutil.TransliterateUmlauts(s)
 }

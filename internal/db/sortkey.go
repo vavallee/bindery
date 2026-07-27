@@ -7,6 +7,8 @@ import (
 	"golang.org/x/text/runes"
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
+
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 // authorSortKey derives an accent-folded, lowercased, BINARY-comparable key
@@ -32,7 +34,7 @@ func authorSortKey(sortName string) string {
 		return ""
 	}
 	s = strings.ToLower(s)
-	s = nonDecomposableFolder.Replace(s)
+	s = textutil.FoldNonDecomposableLatin(s)
 	folded, _, err := transform.String(newAccentStripper(), s)
 	if err != nil {
 		// transform only errors on malformed input we can't normalize; fall
@@ -57,20 +59,6 @@ func newAccentStripper() transform.Transformer {
 	)
 }
 
-// nonDecomposableFolder handles the Latin letters NFD leaves intact because
-// they are atomic code points, not base+combining-mark compositions. Applied
-// to already-lowercased input. Order/uppercase variants are unnecessary since
-// authorSortKey lowercases first.
-var nonDecomposableFolder = strings.NewReplacer(
-	"ø", "o",
-	"ł", "l",
-	"æ", "ae",
-	"œ", "oe",
-	"ß", "ss",
-	"þ", "th",
-	"ð", "d",
-	"đ", "d",
-	"ħ", "h",
-	"ı", "i",
-	"ŀ", "l",
-)
+// The Latin letters NFD leaves intact (ø, ł, æ, ß, …) are folded by
+// textutil.FoldNonDecomposableLatin, which is shared so this table and the
+// author-identity fold cannot drift apart (#1648).

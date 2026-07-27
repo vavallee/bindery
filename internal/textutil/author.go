@@ -137,9 +137,19 @@ func lastFirstSwap(tokens []string) []string {
 //   - compact-initials ("rr haywood")
 //   - expanded-initials ("r r haywood" from "rr haywood")
 //   - last-first ("haywood r r")
+//   - ASCII-transliterated ("joerg mueller" from "Jörg Müller")
 //
 // Callers should treat any match across the two variant sets as equivalent.
 // The first element is always the canonical base form.
+//
+// The ASCII-transliterated chain exists because NormalizeAuthorName STRIPS
+// diacritics (ö→o) while every title normalizer in the tree EXPANDS them
+// (ö→oe), so "Jörg Müller" and the ASCII-ised "Joerg Mueller" that German
+// library folders and providers routinely carry scored 0.9347 — just under the
+// 0.94 auto threshold, landing in the ambiguous band that either floods the
+// review queue or creates a duplicate author row (#1647). Adding the expanded
+// form as a variant makes that pair Exact. Variants only ever ADD matches, so
+// no previously-matching pair can stop matching.
 func NormalizeAuthorNameWithVariants(name string) []string {
 	base := NormalizeAuthorName(name)
 	if base == "" {
@@ -159,7 +169,7 @@ func NormalizeAuthorNameWithVariants(name string) []string {
 		seen[v] = struct{}{}
 		out = append(out, v)
 	}
-	addName := func(raw string) {
+	addForm := func(raw string) {
 		tokens := strings.Fields(NormalizeAuthorName(raw))
 		tokens = stripAuthorSuffixes(tokens)
 		if len(tokens) == 0 {
@@ -172,12 +182,38 @@ func NormalizeAuthorNameWithVariants(name string) []string {
 		add(compactInitials(lastFirstSwap(tokens)))
 		add(expandInitials(lastFirstSwap(tokens)))
 	}
+	addName := func(raw string) {
+		addForm(raw)
+		// Only pay for the second chain when the name actually contains
+		// something to transliterate — pure-ASCII names are the common case and
+		// would just re-derive identical variants that `seen` discards anyway.
+		if ascii := asciiTransliterate(raw); ascii != "" {
+			addForm(ascii)
+		}
+	}
 
 	addName(name)
 	if before, after, ok := strings.Cut(name, ","); ok {
 		addName(strings.TrimSpace(after) + " " + strings.TrimSpace(before))
 	}
 	return out
+}
+
+// asciiTransliterate returns the lowercased name with German umlauts expanded
+// (ö→oe) and the non-decomposable Latin letters folded (ø→o, ł→l), or "" when
+// neither step changed anything. See NormalizeAuthorNameWithVariants for why
+// this second romanisation is needed alongside the diacritic-stripping one.
+//
+// "Nesbø"/"Nesbo" and "Łukasz"/"Lukasz" are the same class as the umlaut case:
+// NFD leaves those letters intact, so stripping combining marks alone never
+// reconciles them with the ASCII spelling a provider or folder name used.
+func asciiTransliterate(name string) string {
+	lower := strings.ToLower(name)
+	folded := FoldNonDecomposableLatin(TransliterateUmlauts(lower))
+	if folded == lower {
+		return ""
+	}
+	return folded
 }
 
 // AuthorMatchKind classifies how confident a name match is.

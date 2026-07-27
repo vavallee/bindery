@@ -105,3 +105,45 @@ func TestMatchAuthorName_Symmetric(t *testing.T) {
 		}
 	}
 }
+
+// TestMatchAuthorNameAcrossRomanisations pins the #1647 fix: a name written
+// with diacritics and the ASCII spelling a German/Scandinavian library folder
+// or provider uses must resolve to the same author. Before the transliterated
+// variant chain these scored 0.9347 — inside the ambiguous band, which callers
+// turn into either a review-queue entry or a duplicate author row.
+func TestMatchAuthorNameAcrossRomanisations(t *testing.T) {
+	cases := []struct{ a, b string }{
+		{"Jörg Müller", "Joerg Mueller"},
+		{"Heinrich Böll", "Heinrich Boell"},
+		{"Böll, Heinrich", "Heinrich Boell"},
+		{"Günter Graß", "Guenter Grass"},
+		{"Jo Nesbø", "Jo Nesbo"},
+		{"Łukasz Orbitowski", "Lukasz Orbitowski"},
+		// The existing diacritic-stripping chain must keep working alongside it.
+		{"Jörg Müller", "Jorg Muller"},
+		{"José Saramago", "Jose Saramago"},
+	}
+	for _, tc := range cases {
+		if got := MatchAuthorName(tc.a, tc.b); got.Kind != AuthorMatchExact {
+			t.Errorf("MatchAuthorName(%q, %q) = %v (score %.4f), want Exact", tc.a, tc.b, got.Kind, got.Score)
+		}
+	}
+}
+
+// TestMatchAuthorNameStillRejectsDistinctAuthors makes sure the extra variants
+// only widen matching where the names really are the same person. Variants are
+// compared for equality and fed to Jaro-Winkler, so a careless addition could
+// push genuinely different authors over the auto-accept threshold.
+func TestMatchAuthorNameStillRejectsDistinctAuthors(t *testing.T) {
+	cases := []struct{ a, b string }{
+		{"Heinrich Böll", "Heinrich Mann"},
+		{"Jo Nesbø", "Jo Walton"},
+		{"Jörg Müller", "Jörg Fauser"},
+		{"Günter Graß", "Günter Wallraff"},
+	}
+	for _, tc := range cases {
+		if got := MatchAuthorName(tc.a, tc.b); got.Kind == AuthorMatchExact || got.Kind == AuthorMatchFuzzyAuto {
+			t.Errorf("MatchAuthorName(%q, %q) = %v (score %.4f), want no auto-match", tc.a, tc.b, got.Kind, got.Score)
+		}
+	}
+}

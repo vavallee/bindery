@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 // ParsedRelease holds metadata extracted from a release/NZB title.
@@ -21,7 +23,6 @@ type ParsedRelease struct {
 }
 
 var (
-	separatorRe  = regexp.MustCompile(`[^\p{L}\p{N}]+`)
 	multiSpaceRe = regexp.MustCompile(`\s{2,}`)
 	articleRe    = regexp.MustCompile(`\b(a|an|the|and|or|of)\b`)
 
@@ -36,20 +37,6 @@ var (
 	articleSet = map[string]bool{"a": true, "an": true, "the": true, "and": true, "or": true, "of": true}
 )
 
-// transliterateUmlauts maps German umlaut characters to their common ASCII
-// two-letter equivalents (ä→ae, ö→oe, ü→ue, ß→ss). German NZB indexers
-// almost universally use this convention in release names, so normalising both
-// sides of a comparison to ASCII prevents false-negative title matches for
-// German-language books. Must be called after strings.ToLower so only the
-// lowercase forms need to be handled.
-func transliterateUmlauts(s string) string {
-	s = strings.ReplaceAll(s, "ä", "ae")
-	s = strings.ReplaceAll(s, "ö", "oe")
-	s = strings.ReplaceAll(s, "ü", "ue")
-	s = strings.ReplaceAll(s, "ß", "ss")
-	return s
-}
-
 // NormalizeRelease lowercases s and replaces every run of non-alphanumeric
 // characters with a single space, so all punctuation (dots, dashes, brackets,
 // pipes, and symbols like %, !, ?, #, $) collapses to word boundaries. This
@@ -62,14 +49,13 @@ func transliterateUmlauts(s string) string {
 // typically omit them ("Enders"). German umlauts are transliterated to their
 // ASCII equivalents (ä→ae etc.) to match the convention used by German-language
 // NZB indexers like Scenenzbs.
+//
+// The character rewriting itself lives in textutil.FoldForTitleMatch, which is
+// the ONE place the title-comparison alphabet is defined — newznab.SigWords and
+// the library-scan title matcher share it. It used to be copy-pasted per call
+// site, which is how #1643 (and its ancestors) happened.
 func NormalizeRelease(s string) string {
-	s = strings.ToLower(s)
-	s = strings.ReplaceAll(s, "'", "") // "ender's" → "enders", "hitchhiker's" → "hitchhikers"
-	s = strings.ReplaceAll(s, "’", "") // Unicode right single quote, same intent
-	s = transliterateUmlauts(s)
-	s = separatorRe.ReplaceAllString(s, " ")
-	s = multiSpaceRe.ReplaceAllString(s, " ")
-	return strings.TrimSpace(s)
+	return textutil.FoldForTitleMatch(s)
 }
 
 // StripArticles removes common English articles used as connectives from an

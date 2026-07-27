@@ -7,6 +7,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/vavallee/bindery/internal/indexer/newznab"
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 // NormalizeTitleForDedup returns a canonical form of title used as the
@@ -34,7 +35,7 @@ func NormalizeTitleForDedup(title string) string {
 	title = newznab.NormalizeQueryTitle(title)
 	title = stripSubtitle(title)
 	title = strings.ToLower(title)
-	title = transliterateUmlauts(title)
+	title = textutil.TransliterateUmlauts(title)
 	return title
 }
 
