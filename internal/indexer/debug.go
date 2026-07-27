@@ -52,10 +52,11 @@ type IndexerDebug struct {
 // PipelineDebug counts how results flowed through each filter stage in the
 // Searcher. Mismatches between stages reveal which filter is eating results.
 type PipelineDebug struct {
-	RawCount        int `json:"rawCount"`
-	AfterDedupe     int `json:"afterDedupe"`
-	AfterUsenetJunk int `json:"afterUsenetJunk"`
-	AfterRelevance  int `json:"afterRelevance"`
+	RawCount            int `json:"rawCount"`
+	AfterDedupe         int `json:"afterDedupe"`
+	AfterUsenetJunk     int `json:"afterUsenetJunk"`
+	AfterNonBookContent int `json:"afterNonBookContent"`
+	AfterRelevance      int `json:"afterRelevance"`
 }
 
 // FilterDebug records a per-candidate rejection emitted during the Searcher
@@ -171,6 +172,13 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 	results, junkFilters := filterUsenetJunkDebug(results)
 	dbg.Filters = append(dbg.Filters, junkFilters...)
 	dbg.Pipeline.AfterUsenetJunk = len(results)
+
+	// MUST stay in lockstep with SearchBook's pipeline (searcher.go). This stage
+	// was missing here, and since SearchBookWithDebug is the only entrypoint the
+	// API uses, the #1591 video guard was absent from every interactive search
+	// while the scheduler had it (#1644).
+	results = filterNonBookContent(results)
+	dbg.Pipeline.AfterNonBookContent = len(results)
 
 	results, relFilters := filterRelevantDebug(results, c.Title, c.Author, c.AuthorAliases)
 	dbg.Filters = append(dbg.Filters, relFilters...)

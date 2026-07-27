@@ -1,0 +1,2 @@
+### Fixed
+- **Interactive search no longer shows video releases the automatic grabber rejects** (#1644) — the guard that keeps movie and TV releases out of book results was applied to scheduled searches but was missing from the search you run yourself, which is the one the UI uses. Releases tagged 1080p/x264/WEB-DL, or filed by the indexer under Movies, TV or similar, could therefore appear in manual search results and be grabbed by hand. The search details panel now also reports how many results that stage removed.
