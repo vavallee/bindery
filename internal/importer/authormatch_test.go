@@ -110,16 +110,13 @@ func TestAuthorMatch_CoAuthorSurnameOverlap(t *testing.T) {
 	}
 }
 
-// TestAuthorMatch_RegexCacheReuse verifies the regex cache is consulted on
-// repeated calls (sanity check; cache correctness is covered indirectly by
-// the case-table tests above).
-func TestAuthorMatch_RegexCacheReuse(t *testing.T) {
-	// First call populates the cache.
+// TestAuthorMatch_TokenCacheReuse verifies the normalized-token cache is
+// consulted on repeated calls (sanity check; cache correctness is covered
+// indirectly by the case-table tests above).
+func TestAuthorMatch_TokenCacheReuse(t *testing.T) {
+	// First call populates the cache for both sides.
 	_ = authorMatch("Rachel Reid", "Rachel Reid")
-	if _, ok := authorTokenRegexCache.Load("rachel"); !ok {
-		t.Error("expected 'rachel' regex to be cached after first call")
-	}
-	if _, ok := authorTokenRegexCache.Load("reid"); !ok {
-		t.Error("expected 'reid' regex to be cached after first call")
+	if _, ok := authorNameTokensCache.Load("Rachel Reid"); !ok {
+		t.Error("expected 'Rachel Reid' tokens to be cached after first call")
 	}
 }

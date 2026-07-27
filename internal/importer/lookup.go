@@ -473,6 +473,14 @@ func lookupAuthorMatch(parsed, catalogue string) bool {
 	if invertAuthorName(cNorm) == pNorm {
 		return true
 	}
+	// Exact-via-variants catches the pairs raw Jaro-Winkler scores far too low
+	// to reach 0.80: transliterated diacritics in particular, where
+	// "Boell, Heinrich" against "Heinrich Böll" scores 0.441 because every
+	// character after the shared prefix differs. Strictly a widening — the
+	// score check below still runs. See internal/textutil/fold.go.
+	if textutil.MatchAuthorName(parsed, catalogue).Kind == textutil.AuthorMatchExact {
+		return true
+	}
 	return textutil.JaroWinkler(pNorm, cNorm) >= 0.80
 }
 
