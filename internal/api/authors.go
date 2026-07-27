@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/go-chi/chi/v5"
 
@@ -1528,9 +1527,16 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool,
 	// The value is a pointer to the existing book so we can enrich calibre-imported
 	// stubs with the OL foreign ID and language when they title-match an OL record.
 	existingBooks, _ := h.books.ListByAuthor(ctx, author.ID)
+	// CanonicalDedupKey, not NormalizeTitleForDedup: this map decides whether a
+	// provider work becomes a NEW book row, which is exactly the #940 invariant
+	// that CanonicalDedupKey exists to be the single authority for. The two
+	// differ by StripBracketSuffixes, so an ABS-sourced row stored as
+	// "X [Unabridged]" did not match OpenLibrary's "X" here — a second row was
+	// created, and both then carried the same books.dedup_key, violating the
+	// invariant from the inside (#1648).
 	seenTitles := make(map[string]*models.Book)
 	for i := range existingBooks {
-		seenTitles[indexer.NormalizeTitleForDedup(existingBooks[i].Title)] = &existingBooks[i]
+		seenTitles[indexer.CanonicalDedupKey(existingBooks[i].Title)] = &existingBooks[i]
 	}
 
 	normalizedAuthor := strings.ToLower(strings.TrimSpace(author.Name))
@@ -1699,7 +1705,7 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool,
 		//     behaviour — preserves the pre-#442 upgrade path).
 		//   • A duplicate that carries the same media_type as the existing row is
 		//     truly redundant and is silently skipped (no format gain).
-		dedupKey := indexer.NormalizeTitleForDedup(b.Title)
+		dedupKey := indexer.CanonicalDedupKey(b.Title) // must match how seenTitles was keyed
 		if existing := seenTitles[dedupKey]; existing != nil {
 			hydrateExistingFromMatchedHardcover := false
 			switch {
@@ -2080,69 +2086,11 @@ func (h *AuthorHandler) lookupUpstreamAuthorByName(ctx context.Context, name str
 	return full, nil
 }
 
+// authorSearchQueries delegates to textutil, which owns this expansion. It and
+// the three helpers it used were byte-identical to the copies in internal/abs
+// (#1648).
 func authorSearchQueries(name string) []string {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return nil
-	}
-	queries := []string{name}
-	if compact := compactInitialsAuthorQuery(name); compact != "" {
-		queries = append(queries, compact)
-	}
-	if norm := textutil.NormalizeAuthorName(name); norm != "" {
-		queries = append(queries, norm)
-		if surname := initialedSurnameFallback(norm); surname != "" {
-			queries = append(queries, surname)
-		}
-	}
-	return dedupeAuthorQueries(queries)
-}
-
-func compactInitialsAuthorQuery(name string) string {
-	fields := strings.Fields(name)
-	if len(fields) < 3 {
-		return ""
-	}
-	initials := make([]string, 0, len(fields)-1)
-	idx := 0
-	for idx < len(fields)-1 {
-		initial, ok := authorInitial(fields[idx])
-		if !ok {
-			break
-		}
-		initials = append(initials, strings.ToUpper(initial)+".")
-		idx++
-	}
-	if len(initials) < 2 || idx >= len(fields) {
-		return ""
-	}
-	return strings.Join(initials, "") + " " + strings.Join(fields[idx:], " ")
-}
-
-func authorInitial(token string) (string, bool) {
-	var letters []rune
-	for _, r := range token {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			letters = append(letters, unicode.ToLower(r))
-		}
-	}
-	if len(letters) != 1 {
-		return "", false
-	}
-	return string(letters[0]), true
-}
-
-func initialedSurnameFallback(normalized string) string {
-	fields := strings.Fields(normalized)
-	if len(fields) < 2 {
-		return ""
-	}
-	for _, field := range fields[:len(fields)-1] {
-		if len([]rune(field)) != 1 {
-			return ""
-		}
-	}
-	return fields[len(fields)-1]
+	return textutil.AuthorSearchQueries(name)
 }
 
 func dedupeAuthorQueries(values []string) []string {

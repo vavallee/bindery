@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"strings"
-	"unicode"
 
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
@@ -595,67 +594,9 @@ func authorSearchWorkCount(author models.Author) int {
 	return author.Statistics.BookCount
 }
 
+// authorSearchQueries delegates to textutil, which owns this expansion. It and
+// the three helpers it used were byte-identical to the copies in internal/api
+// (#1648).
 func authorSearchQueries(name string) []string {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return nil
-	}
-	queries := []string{name}
-	if compact := compactInitialsAuthorQuery(name); compact != "" {
-		queries = append(queries, compact)
-	}
-	if norm := normalizeAuthorName(name); norm != "" {
-		queries = append(queries, norm)
-		if surname := initialedSurnameFallback(norm); surname != "" {
-			queries = append(queries, surname)
-		}
-	}
-	return dedupeStrings(queries)
-}
-
-func compactInitialsAuthorQuery(name string) string {
-	fields := strings.Fields(name)
-	if len(fields) < 3 {
-		return ""
-	}
-	initials := make([]string, 0, len(fields)-1)
-	idx := 0
-	for idx < len(fields)-1 {
-		initial, ok := authorInitial(fields[idx])
-		if !ok {
-			break
-		}
-		initials = append(initials, strings.ToUpper(initial)+".")
-		idx++
-	}
-	if len(initials) < 2 || idx >= len(fields) {
-		return ""
-	}
-	return strings.Join(initials, "") + " " + strings.Join(fields[idx:], " ")
-}
-
-func authorInitial(token string) (string, bool) {
-	var letters []rune
-	for _, r := range token {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			letters = append(letters, unicode.ToLower(r))
-		}
-	}
-	if len(letters) != 1 {
-		return "", false
-	}
-	return string(letters[0]), true
-}
-
-func initialedSurnameFallback(normalized string) string {
-	fields := strings.Fields(normalized)
-	if len(fields) < 2 {
-		return ""
-	}
-	for _, field := range fields[:len(fields)-1] {
-		if len([]rune(field)) != 1 {
-			return ""
-		}
-	}
-	return fields[len(fields)-1]
+	return textutil.AuthorSearchQueries(name)
 }

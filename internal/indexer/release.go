@@ -197,6 +197,19 @@ func ParseRelease(title string) ParsedRelease {
 
 // AuthorSurname returns the last whitespace-separated token of author,
 // lowercased. Returns "" for empty input.
+//
+// It deliberately does NOT go through NormalizeRelease, unlike its neighbour
+// authorTokens (#1609). Its only consumer is the latin-alias gate in
+// filterRelevant, which asks "is this surname non-ASCII, so should I also try
+// romanised aliases?". Transliteration would answer that question wrongly in
+// the direction that LOSES matches: "Böll" folds to the ASCII "boell", which
+// would close the gate and stop trying a German author's latin aliases
+// altogether. Answering with the raw form only ever opens the gate wider, and
+// the gate only ever ADDS candidate token sets.
+//
+// So the inconsistency with authorTokens is real and intended. Do not "fix" it
+// without moving the gate's ASCII test somewhere it can widen instead of
+// narrow.
 func AuthorSurname(author string) string {
 	fields := strings.Fields(author)
 	if len(fields) == 0 {

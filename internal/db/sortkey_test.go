@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 
+	"golang.org/x/text/unicode/norm"
+
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -152,4 +154,23 @@ func TestAuthorSortKey_ConcurrentUse(t *testing.T) {
 		}(g)
 	}
 	wg.Wait()
+}
+
+// TestAuthorSortKeyUnicodeFormInvariant is the unexported-normalizer half of
+// the drift suite in internal/normdrift, which can only reach exported folds.
+// A sort key that depends on Unicode form would order the two spellings of one
+// name into different places in the A–Z list.
+func TestAuthorSortKeyUnicodeFormInvariant(t *testing.T) {
+	for _, in := range []string{
+		"Östergaard, Anne", "Miéville, China", "Böll, Heinrich",
+		"Larsson, Åsa", "Saramago, José", "Dvořák, Antonín",
+	} {
+		nfc, nfd := norm.NFC.String(in), norm.NFD.String(in)
+		if nfc == nfd {
+			t.Fatalf("%q has no distinct NFD form; the case would be vacuous", in)
+		}
+		if got, want := authorSortKey(nfd), authorSortKey(nfc); got != want {
+			t.Errorf("authorSortKey is not Unicode-form invariant for %q: NFD %q vs NFC %q", in, got, want)
+		}
+	}
 }

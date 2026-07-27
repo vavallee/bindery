@@ -20,6 +20,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/text/unicode/norm"
+
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/useragent"
 )
@@ -354,7 +356,14 @@ var parenSuffixRe = regexp.MustCompile(`\s*\([^)]*\)\s*$`)
 // and collapsed, and a single trailing parenthesised qualifier is removed.
 // Called by primaryTitleForQuery and exported so ingestion paths can use
 // the same normalization for title-based deduplication.
+//
+// Unicode form is composed first, which is the same class of "incidental
+// difference" this function already exists to strip: macOS-sourced titles
+// arrive decomposed while providers return composed, so the two spellings of
+// one accented title produced two different indexer queries and two different
+// dedup keys. Found by the drift test in internal/normdrift (#1648).
 func NormalizeQueryTitle(title string) string {
+	title = norm.NFC.String(title)
 	title = strings.NewReplacer(
 		"\u2018", "'", "\u2019", "'",
 		"\u201C", `"`, "\u201D", `"`,

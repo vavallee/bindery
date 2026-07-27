@@ -27,8 +27,20 @@ func SamePosition(a, b string) bool {
 	return aerr == nil && berr == nil && math.Abs(af-bf) < 0.001
 }
 
+// NormalizeSeriesName reduces a series name for comparison: the canonical
+// dedup key, minus a redundant trailing collective noun ("… Series", "…
+// Trilogy").
+//
+// It builds on CanonicalDedupKey rather than NormalizeTitleForDedup so that it
+// is a strict WIDENING of the key ABS uses to LOOK UP an existing series
+// (findSeriesByTitle → normalizeTitle → CanonicalDedupKey). The two differ by
+// StripBracketSuffixes, and before #1648 neither was a subset of the other, so
+// both directions leaked: "The Expanse Series" never reached the promotion
+// check it exists for, while "The Expanse [Audiobook]" matched on lookup and
+// was then refused promotion. Widening keeps the implication that matters —
+// if a series matched on lookup, it can still be promoted.
 func NormalizeSeriesName(name string) string {
-	normalized := indexer.NormalizeTitleForDedup(strings.TrimSpace(name))
+	normalized := indexer.CanonicalDedupKey(strings.TrimSpace(name))
 	if normalized == "" {
 		return ""
 	}

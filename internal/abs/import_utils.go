@@ -205,13 +205,7 @@ func itemFileIDs(item NormalizedLibraryItem) []string {
 }
 
 func sortNameFromFull(name string) string {
-	fields := strings.Fields(name)
-	if len(fields) < 2 {
-		return name
-	}
-	last := fields[len(fields)-1]
-	rest := strings.Join(fields[:len(fields)-1], " ")
-	return last + ", " + rest
+	return textutil.SortName(name)
 }
 
 func firstNonEmpty(values ...string) string {
