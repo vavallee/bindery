@@ -2,7 +2,7 @@
 # in sync on a weekly cadence (see .github/dependabot.yml).
 
 # Stage 1: Build frontend (runs on the builder's native arch — output is arch-agnostic JS)
-FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:e88a35be04478413b7c71c455cd9865de9b9360e1f43456be5951032d7ac1a66 AS frontend
+FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/node:26-alpine@sha256:e88a35be04478413b7c71c455cd9865de9b9360e1f43456be5951032d7ac1a66 AS frontend
 WORKDIR /app/web
 COPY web/package*.json ./
 RUN npm ci
@@ -10,7 +10,7 @@ COPY web/ .
 RUN npm run build
 
 # Stage 2: Build Go binary (native on BUILDPLATFORM, cross-compile to TARGETOS/TARGETARCH)
-FROM --platform=$BUILDPLATFORM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS builder
+FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
