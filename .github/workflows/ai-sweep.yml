@@ -53,7 +53,7 @@ jobs:
             raw.githubusercontent.com:443
             discord.com:443
 
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # No push token in .git/config: the agent reads untrusted issue/PR
           # titles and its Read tool can see that file. Checkout is only for
