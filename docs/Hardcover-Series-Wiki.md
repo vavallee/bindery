@@ -36,7 +36,8 @@ If either requirement is missing, Bindery hides the enhanced controls and the en
 4. Use **Search** to find a matching Hardcover series.
 5. Pick the correct Hardcover result, or remove a bad existing link.
 6. Open the linked series to load the Hardcover catalog diff.
-7. Use **add** on a single missing row, or **add all** / **Fill gaps** to queue every missing catalog entry.
+7. Optionally use **Set genre** before adding books. The override is applied to current and newly added books in the series and locked against metadata refresh.
+8. Use **add** on a single missing row, or **add all** / **Fill gaps** to queue every missing catalog entry.
 
 Added Hardcover books are created as wanted and monitored rows. Bindery then queues indexer searches the same way it does for other wanted books.
 

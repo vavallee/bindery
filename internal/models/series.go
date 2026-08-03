@@ -3,12 +3,14 @@ package models
 import "time"
 
 type Series struct {
-	ID          int64     `json:"id"`
-	ForeignID   string    `json:"foreignSeriesId"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Monitored   bool      `json:"monitored"`
-	CreatedAt   time.Time `json:"createdAt"`
+	ID               int64     `json:"id"`
+	ForeignID        string    `json:"foreignSeriesId"`
+	Title            string    `json:"title"`
+	Description      string    `json:"description"`
+	Monitored        bool      `json:"monitored"`
+	GenreOverride    []string  `json:"-"`
+	GenreOverrideSet bool      `json:"-"`
+	CreatedAt        time.Time `json:"createdAt"`
 
 	// Joined data
 	Books         []SeriesBook         `json:"books,omitempty"`

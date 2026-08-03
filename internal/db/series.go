@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -196,6 +197,20 @@ func (r *SeriesRepo) SetMonitored(ctx context.Context, id int64, monitored bool)
 	return err
 }
 
+// SetGenreOverride stores the genres that should be applied to current and
+// subsequently created books in a series. A non-NULL empty array deliberately
+// means "keep genres empty and locked".
+func (r *SeriesRepo) SetGenreOverride(ctx context.Context, id int64, genres []string) error {
+	encoded, err := json.Marshal(genres)
+	if err != nil {
+		return fmt.Errorf("marshal series genre override: %w", err)
+	}
+	if _, err := r.db.ExecContext(ctx, "UPDATE series SET genre_override=? WHERE id=?", string(encoded), id); err != nil {
+		return fmt.Errorf("update series %d genre override: %w", id, err)
+	}
+	return nil
+}
+
 func (r *SeriesRepo) CreateManual(ctx context.Context, title string) (*models.Series, error) {
 	s := &models.Series{
 		ForeignID:   fmt.Sprintf("manual:series:%d", time.Now().UTC().UnixNano()),
@@ -257,17 +272,27 @@ func (r *SeriesRepo) GetByID(ctx context.Context, id int64) (*models.Series, err
 // ListWithBooksForUser for the semantics.
 func (r *SeriesRepo) GetByIDForUser(ctx context.Context, id, userID int64) (*models.Series, error) {
 	row := r.db.QueryRowContext(ctx,
-		"SELECT id, foreign_id, title, description, monitored, created_at FROM series WHERE id=?", id)
+		"SELECT id, foreign_id, title, description, monitored, genre_override, created_at FROM series WHERE id=?", id)
 
 	var s models.Series
 	var monitored int
-	err := row.Scan(&s.ID, &s.ForeignID, &s.Title, &s.Description, &monitored, &s.CreatedAt)
+	var genreOverride sql.NullString
+	err := row.Scan(&s.ID, &s.ForeignID, &s.Title, &s.Description, &monitored, &genreOverride, &s.CreatedAt)
 	s.Monitored = monitored == 1
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get series %d: %w", id, err)
+	}
+	if genreOverride.Valid {
+		s.GenreOverrideSet = true
+		if err := json.Unmarshal([]byte(genreOverride.String), &s.GenreOverride); err != nil {
+			return nil, fmt.Errorf("decode series %d genre override: %w", id, err)
+		}
+		if s.GenreOverride == nil {
+			s.GenreOverride = []string{}
+		}
 	}
 
 	// Fetch series books with minimal book data, scoped to the caller's

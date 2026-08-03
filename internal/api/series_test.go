@@ -1440,6 +1440,9 @@ func TestSeriesFillCreatesMissingHardcoverBook(t *testing.T) {
 	if err := seriesRepo.UpsertHardcoverLink(context.Background(), link); err != nil {
 		t.Fatal(err)
 	}
+	if err := seriesRepo.SetGenreOverride(context.Background(), series.ID, []string{"Fantasy", "Epic"}); err != nil {
+		t.Fatal(err)
+	}
 
 	rec := httptest.NewRecorder()
 	h.Fill(rec, withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/series/1/fill", nil), "id", "1"))
@@ -1470,6 +1473,12 @@ func TestSeriesFillCreatesMissingHardcoverBook(t *testing.T) {
 	}
 	if !created.AnyEditionOK {
 		t.Fatal("expected anyEditionOk to be preserved")
+	}
+	if len(created.Genres) != 2 || created.Genres[0] != "Fantasy" || created.Genres[1] != "Epic" {
+		t.Fatalf("expected series genres on created book, got %v", created.Genres)
+	}
+	if !created.IsFieldLocked(models.BookFieldGenres) {
+		t.Fatal("expected series genres to be locked on created book")
 	}
 	books, err := seriesRepo.ListBooksInSeries(context.Background(), series.ID)
 	if err != nil {

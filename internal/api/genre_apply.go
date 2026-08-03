@@ -110,7 +110,12 @@ func (h *SeriesHandler) ApplyGenres(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err)
 		return
 	}
-	updated, err := applyGenresToBooks(r.Context(), h.books, books, cleanGenreList(req.Genres))
+	genres := cleanGenreList(req.Genres)
+	if err := h.series.SetGenreOverride(r.Context(), series.ID, genres); err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	updated, err := applyGenresToBooks(r.Context(), h.books, books, genres)
 	if err != nil {
 		writeServerError(w, r, err)
 		return

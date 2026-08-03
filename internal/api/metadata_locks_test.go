@@ -201,4 +201,11 @@ func TestSeriesApplyGenres(t *testing.T) {
 	if other.IsFieldLocked(models.BookFieldGenres) {
 		t.Fatalf("standalone book must be untouched; locked=%v", other.LockedFields)
 	}
+	storedSeries, err := seriesRepo.GetByID(ctx, series.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !storedSeries.GenreOverrideSet || len(storedSeries.GenreOverride) != 1 || storedSeries.GenreOverride[0] != "Fantasy" {
+		t.Fatalf("series genre override not persisted: %+v", storedSeries)
+	}
 }

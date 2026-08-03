@@ -1423,6 +1423,10 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 	book.MediaType = firstNonEmpty(mediaType, models.MediaTypeEbook)
 	book.Language = firstNonEmpty(book.Language, "eng")
 	book.MetadataProvider = firstNonEmpty(book.MetadataProvider, "hardcover")
+	if series.GenreOverrideSet {
+		book.Genres = append([]string(nil), series.GenreOverride...)
+		book.LockField(models.BookFieldGenres)
+	}
 	if book.Genres == nil {
 		book.Genres = []string{}
 	}

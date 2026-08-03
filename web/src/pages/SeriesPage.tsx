@@ -327,7 +327,7 @@ export default function SeriesPage() {
                       Add Book
                     </button>
                   )}
-                  {isOpen && bookCount > 0 && (
+                  {isOpen && (
                     <button
                       onClick={() => applySeriesGenres(series)}
                       disabled={applyingGenres === series.id}

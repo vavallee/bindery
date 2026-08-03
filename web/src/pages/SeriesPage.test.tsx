@@ -25,6 +25,7 @@ vi.mock('../api/client', async importOriginal => {
       linkBookToSeries: vi.fn(),
       fillSeries: vi.fn(),
       fillSeriesAll: vi.fn(),
+      applySeriesGenres: vi.fn(),
       autoLinkSeriesHardcover: vi.fn(),
       getSeriesHardcoverLink: vi.fn(),
       searchHardcoverSeries: vi.fn(),
@@ -89,6 +90,30 @@ describe('SeriesPage', () => {
     fireEvent.click(screen.getByRole('heading', { name: 'The Stormlight Archive' }))
     expect(screen.queryByText(/Hardcover:/)).not.toBeInTheDocument()
     expect(api.getSeriesHardcoverDiff).not.toHaveBeenCalled()
+  })
+
+  it('offers a genre override before a series has books', async () => {
+    vi.mocked(api.applySeriesGenres).mockResolvedValue({ updated: 0 })
+    const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('Fantasy, Epic')
+
+    try {
+      renderSeriesPage([{
+        id: 12,
+        foreignSeriesId: 'series-12',
+        title: 'Empty Series',
+        description: '',
+        monitored: true,
+        books: [],
+      }])
+
+      fireEvent.click(await screen.findByRole('heading', { name: 'Empty Series' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Set genre' }))
+
+      await waitFor(() => expect(api.applySeriesGenres).toHaveBeenCalledWith(12, ['Fantasy', 'Epic']))
+      expect(await screen.findByText('Genres set on 0 book(s)')).toBeInTheDocument()
+    } finally {
+      promptSpy.mockRestore()
+    }
   })
 
   it('links expanded series book rows to their book pages', async () => {
