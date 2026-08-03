@@ -607,3 +607,47 @@ func TestSeriesGetBookBySeriesPosition(t *testing.T) {
 		t.Fatalf("ambiguous position = %+v, want nil", got)
 	}
 }
+
+func TestSeriesGenreOverridePersistence(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	ctx := context.Background()
+	repo := NewSeriesRepo(database)
+	series, err := repo.CreateManual(ctx, "Demo Series")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.SetGenreOverride(ctx, series.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.GetByID(ctx, series.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.GenreOverrideSet || stored.GenreOverride == nil || len(stored.GenreOverride) != 0 {
+		t.Fatalf("empty genre override not preserved: %+v", stored)
+	}
+
+	if _, err := database.ExecContext(ctx, "UPDATE series SET genre_override='not-json' WHERE id=?", series.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.GetByID(ctx, series.ID); err == nil || !strings.Contains(err.Error(), "decode series") {
+		t.Fatalf("expected malformed override error, got %v", err)
+	}
+
+	if _, err := database.ExecContext(ctx, `
+		CREATE TRIGGER reject_series_genre_override
+		BEFORE UPDATE OF genre_override ON series
+		BEGIN
+			SELECT RAISE(FAIL, 'genre override rejected');
+		END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetGenreOverride(ctx, series.ID, []string{"Fantasy"}); err == nil || !strings.Contains(err.Error(), "update series") {
+		t.Fatalf("expected update error, got %v", err)
+	}
+}

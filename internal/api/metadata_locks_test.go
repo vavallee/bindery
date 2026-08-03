@@ -209,3 +209,35 @@ func TestSeriesApplyGenres(t *testing.T) {
 		t.Fatalf("series genre override not persisted: %+v", storedSeries)
 	}
 }
+
+func TestSeriesApplyGenresPersistenceFailure(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	seriesRepo := db.NewSeriesRepo(database)
+	ctx := context.Background()
+	series, err := seriesRepo.CreateManual(ctx, "Demo Series")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		CREATE TRIGGER reject_series_genre_override
+		BEFORE UPDATE OF genre_override ON series
+		BEGIN
+			SELECT RAISE(FAIL, 'genre override rejected');
+		END`); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewSeriesHandler(seriesRepo, db.NewBookRepo(database), db.NewAuthorRepo(database), nil, nil)
+	raw, _ := json.Marshal(map[string]any{"genres": []string{"Fantasy"}})
+	req := withURLParam(httptest.NewRequest(http.MethodPut, "/api/v1/series/"+strconv.FormatInt(series.ID, 10)+"/genres", bytes.NewReader(raw)), "id", strconv.FormatInt(series.ID, 10))
+	rec := httptest.NewRecorder()
+	h.ApplyGenres(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
