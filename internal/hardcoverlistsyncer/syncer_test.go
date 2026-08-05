@@ -332,6 +332,53 @@ func TestSyncOne_NewAuthorPinnedToMonitorModeNone(t *testing.T) {
 	}
 }
 
+// TestSyncOne_NewAuthorDefaultsMetadataProfile is the #1736 regression:
+// ensureAuthor built the author struct by hand and called CreateForUser
+// directly, bypassing applyAuthorCreateOptions (internal/api/authors.go) —
+// the only place a metadata profile was ever defaulted. Every other
+// author-create path falls back to DefaultMetadataProfileID when the caller
+// sends none; list-sync-created authors must do the same instead of landing
+// with a permanently unset profile.
+func TestSyncOne_NewAuthorDefaultsMetadataProfile(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	il := testImportList("HC", "hardcover", true)
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed list: %v", err)
+	}
+
+	newAuthor := func() *models.Author {
+		return &models.Author{ForeignID: "hc:newauthor", Name: "Brand New Author", MetadataProvider: "hardcover"}
+	}
+	s.WithClientFactory(func(string) hardcoverClient {
+		return &fakeHardcoverClient{
+			lists: []hardcover.HCList{{ID: 7, Slug: il.URL, Name: il.Name}},
+			books: []models.Book{
+				{ForeignID: "hc:listed", Title: "The Listed Book", MetadataProvider: "hardcover", Author: newAuthor()},
+			},
+		}
+	})
+
+	if err := s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatalf("SyncOne: %v", err)
+	}
+
+	created, err := s.authors.GetByAnyForeignID(ctx, "hc:newauthor")
+	if err != nil {
+		t.Fatalf("GetByAnyForeignID: %v", err)
+	}
+	if created == nil {
+		t.Fatal("expected the new author to be created")
+	}
+	if created.MetadataProfileID == nil {
+		t.Fatal("new author MetadataProfileID is nil, want DefaultMetadataProfileID (#1736)")
+	}
+	if *created.MetadataProfileID != models.DefaultMetadataProfileID {
+		t.Errorf("new author MetadataProfileID = %d, want %d", *created.MetadataProfileID, models.DefaultMetadataProfileID)
+	}
+}
+
 // TestSyncOne_StampsListOwner is the hoxtonia-report regression: under
 // multi-user tenancy a list with an owner_user_id must stamp that owner onto
 // every book AND author it creates, so scheduler-synced content is scoped to

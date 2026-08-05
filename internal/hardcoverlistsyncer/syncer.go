@@ -397,6 +397,13 @@ func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book, nameIn
 	if author.SortName == "" {
 		author.SortName = sortName(author.Name)
 	}
+	// Mirror applyAuthorCreateOptions' fallback (internal/api/authors.go) so a
+	// list-sync-created author gets the same default metadata profile every
+	// other creation path stamps, instead of staying unset (#1736).
+	if author.MetadataProfileID == nil {
+		def := models.DefaultMetadataProfileID
+		author.MetadataProfileID = &def
+	}
 
 	if err := s.authors.CreateForUser(ctx, author, ownerID); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") || errors.Is(err, db.ErrAuthorIdentifierConflict) {
