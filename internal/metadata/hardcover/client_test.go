@@ -1654,6 +1654,58 @@ func TestToBook_DefaultEditionIDsSetMediaType(t *testing.T) {
 	}
 }
 
+// TestToBook_InlineAudioEditionSuppliesASIN covers the #1694 replacement for
+// the removed per-book edition fan-out: list and shelf queries inline a
+// couple of ASIN-bearing audio editions, and toBook lifts the ASIN off them
+// directly. An inlined audio edition also proves the work has an audiobook,
+// so it drives the media type too — the promotion the fan-out used to do.
+func TestToBook_InlineAudioEditionSuppliesASIN(t *testing.T) {
+	c := New()
+	ebookID := 20
+
+	t.Run("asin lifted from inline audio edition", func(t *testing.T) {
+		got := c.toBook(hcBook{
+			ID: 1, Title: "Inline", Slug: "inline",
+			AudioEditions: []hcASINEdition{{ASIN: "b09abc1234", EditionFormat: "Audible"}},
+		})
+		// Normalized to upper case, matching the old promotion path.
+		if got.ASIN != "B09ABC1234" {
+			t.Fatalf("ASIN = %q, want B09ABC1234", got.ASIN)
+		}
+		if got.MediaType != models.MediaTypeAudiobook {
+			t.Fatalf("MediaType = %q, want audiobook (an inline audio edition implies one)", got.MediaType)
+		}
+	})
+
+	t.Run("audio edition alongside an ebook yields both", func(t *testing.T) {
+		got := c.toBook(hcBook{
+			ID: 2, Title: "Inline Both", Slug: "inline-both",
+			DefaultEbookEditionID: &ebookID,
+			AudioEditions:         []hcASINEdition{{ASIN: "B09ABC1234"}},
+		})
+		if got.MediaType != models.MediaTypeBoth {
+			t.Fatalf("MediaType = %q, want both", got.MediaType)
+		}
+	})
+
+	t.Run("first non-empty asin wins", func(t *testing.T) {
+		got := c.toBook(hcBook{
+			ID: 3, Title: "Inline Blank", Slug: "inline-blank",
+			AudioEditions: []hcASINEdition{{ASIN: "   "}, {ASIN: "B0SECOND12"}},
+		})
+		if got.ASIN != "B0SECOND12" {
+			t.Fatalf("ASIN = %q, want B0SECOND12 (blank entries skipped)", got.ASIN)
+		}
+	})
+
+	t.Run("no inline editions leaves asin empty", func(t *testing.T) {
+		got := c.toBook(hcBook{ID: 4, Title: "None", Slug: "none"})
+		if got.ASIN != "" {
+			t.Fatalf("ASIN = %q, want empty", got.ASIN)
+		}
+	})
+}
+
 func TestToBook_ZeroReleaseYear(t *testing.T) {
 	c := New()
 	zero := 0

@@ -638,6 +638,19 @@ type hcBook struct {
 	AuthorNames           []string           `json:"author_names"`
 	BookSeries            []hcBookSeries     `json:"book_series"`
 	SeriesRefs            []models.SeriesRef `json:"-"`
+	// AudioEditions carries a small, server-filtered slice of audio editions
+	// that have an ASIN. List/shelf queries request it inline so the ASIN is
+	// available without a per-book GetEditions round-trip (#1694). Empty for
+	// every other query.
+	AudioEditions []hcASINEdition `json:"editions"`
+}
+
+// hcASINEdition is the trimmed edition shape the list/shelf queries inline to
+// carry an audiobook ASIN. Kept separate from hcEdition so the full edition
+// projection stays exclusive to GetEditions.
+type hcASINEdition struct {
+	ASIN          string `json:"asin"`
+	EditionFormat string `json:"edition_format"`
 }
 
 // hcBookSeries captures the Hardcover GraphQL `book_series` relation on a
@@ -1175,7 +1188,11 @@ func (c *Client) toBook(b hcBook) models.Book {
 	if len(b.Genres) > 0 {
 		bk.Genres = b.Genres
 	}
-	hasAudiobook := b.HasAudiobook || hasPositiveInt(b.DefaultAudioEditionID)
+	// An inlined audio edition is itself proof the work has an audiobook, and
+	// covers the case where Hardcover reports no default_audio_edition_id but
+	// audio editions exist — the promotion the removed per-book edition
+	// fan-out used to perform (#1694).
+	hasAudiobook := b.HasAudiobook || hasPositiveInt(b.DefaultAudioEditionID) || len(b.AudioEditions) > 0
 	hasEbook := b.HasEbook || hasPositiveInt(b.DefaultEbookEditionID)
 	switch {
 	case hasAudiobook && hasEbook:
@@ -1184,6 +1201,15 @@ func (c *Client) toBook(b hcBook) models.Book {
 		bk.MediaType = models.MediaTypeAudiobook
 	case hasEbook:
 		bk.MediaType = models.MediaTypeEbook
+	}
+	// Carry an audiobook ASIN straight off the list/shelf response when the
+	// query inlined one. Only list and shelf queries populate AudioEditions;
+	// every other caller leaves it empty and this is a no-op (#1694).
+	for _, e := range b.AudioEditions {
+		if asin := strings.ToUpper(strings.TrimSpace(e.ASIN)); asin != "" {
+			bk.ASIN = asin
+			break
+		}
 	}
 	if b.Image != nil {
 		bk.ImageURL = b.Image.URL

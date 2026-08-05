@@ -1,0 +1,2 @@
+### Fixed
+- **Hardcover list sync no longer stalls on large lists** (#1694) — syncing a list issued one fully-paginated GraphQL edition query per newly imported book, so a first sync of a big shelf ran out of the request's time budget after a handful of books and reported success anyway. The audiobook ASIN and media type those queries were after now arrive inline on the list response itself. Measured on a real 1,660-book shelf: 216 books in 60s (then a timeout) → **1,485 books in 6s**, with 330 ASINs resolved instead of 18.

@@ -472,8 +472,7 @@ func main() {
 		WithSeriesRepo(seriesRepo).
 		WithTokenSource(func(ctx context.Context) string {
 			return api.GetHardcoverAPIToken(ctx, settingsRepo)
-		}).
-		WithEditionHydration(editionRepo, metaAgg)
+		})
 	sched.WithHardcoverSyncer(hcSyncer)
 	sched.WithLogRepo(logRepo, cfg.LogRetentionDays)
 

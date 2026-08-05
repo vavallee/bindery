@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/vavallee/bindery/internal/bookhydrate"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/models"
@@ -22,11 +21,9 @@ type ListSyncer struct {
 	authors     *db.AuthorRepo
 	books       *db.BookRepo
 	series      seriesLinker
-	editions    *db.EditionRepo
 
 	tokenSource   func(context.Context) string
 	clientFactory hardcoverClientFactory
-	enricher      bookhydrate.AudiobookEnricher
 }
 
 type hardcoverClient interface {
@@ -64,13 +61,6 @@ func (s *ListSyncer) WithSeriesRepo(repo *db.SeriesRepo) *ListSyncer {
 		return s
 	}
 	s.series = repo
-	return s
-}
-
-// WithEditionHydration wires edition persistence for Hardcover list imports.
-func (s *ListSyncer) WithEditionHydration(editions *db.EditionRepo, enricher bookhydrate.AudiobookEnricher) *ListSyncer {
-	s.editions = editions
-	s.enricher = enricher
 	return s
 }
 
@@ -243,6 +233,13 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		// and a manually-set media type survives re-sync.
 		if il.MediaType != "" {
 			book.MediaType = il.MediaType
+			// The list response may have carried an audiobook ASIN (#1694).
+			// A list pinned to a non-audio format must not keep it, matching
+			// the pre-existing rule that an ebook-pinned book never takes the
+			// audio edition's ASIN (#1732).
+			if book.MediaType != models.MediaTypeAudiobook && book.MediaType != models.MediaTypeBoth {
+				book.ASIN = ""
+			}
 		}
 		if book.Genres == nil {
 			book.Genres = []string{}
@@ -256,10 +253,6 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 			slog.Warn("failed to create book", "title", book.Title, "error", err)
 			continue
 		}
-		// Tell hydration whether the media type was pinned by the list above:
-		// a pinned ebook must not be widened to "both" just because the work
-		// has an audio edition on Hardcover (#1732).
-		s.hydrateHardcoverEditions(ctx, &book, client, il.MediaType != "")
 		slog.Info("imported book from hardcover list", "title", book.Title, "author_id", authorID)
 
 		s.linkSeriesRefs(ctx, &book)
@@ -295,21 +288,6 @@ func (s *ListSyncer) tokenForList(ctx context.Context, il models.ImportList) str
 		return ""
 	}
 	return hardcover.NormalizeAPIToken(s.tokenSource(ctx))
-}
-
-func (s *ListSyncer) hydrateHardcoverEditions(ctx context.Context, book *models.Book, client hardcoverClient, mediaTypePinned bool) {
-	if book == nil || client == nil || s.editions == nil {
-		return
-	}
-	bookhydrate.HydrateHardcoverEditions(ctx, bookhydrate.Options{
-		Book:            book,
-		Provider:        "hardcover",
-		Editions:        s.editions,
-		Books:           s.books,
-		FetchEditions:   client.GetEditions,
-		Enricher:        s.enricher,
-		MediaTypePinned: mediaTypePinned,
-	})
 }
 
 // buildAuthorNameIndex maps each existing author's normalized name to the
