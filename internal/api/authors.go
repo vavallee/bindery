@@ -2362,7 +2362,16 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 			// merges into one media_type=both row — in both cases the
 			// requested foreign id has no row of its own, which is exactly the
 			// state that brings a user here.
-			if match, ferr := h.books.FindByAuthorAndDedupKey(ctx, author.ID, primary.Title); ferr == nil && match != nil {
+			match, ferr := h.books.FindByAuthorAndDedupKey(ctx, author.ID, primary.Title)
+			// A subtitle-collapsed dedup key (indexer.CanonicalDedupKey strips a
+			// ": subtitle" tail) merges every "Series: Volume" sibling onto one
+			// key. Adopting such a match would rebind the requested foreign id
+			// onto a *different* volume and — because adopt is a no-op when the
+			// row needs no field change — leave the poll below unable to find the
+			// requested id, returning 404 forever. When the requested work is a
+			// distinct volume of the matched row's series (same series, different
+			// sequence), skip the adopt and create a distinct row instead.
+			if ferr == nil && match != nil && !h.directInsertSeriesConflict(ctx, match.ID, primary.SeriesRefs) {
 				h.adoptDirectInsertMatch(ctx, match, primary, req.ForeignBookID)
 			} else if err := h.books.Create(ctx, primary); err != nil {
 				if !strings.Contains(err.Error(), "UNIQUE constraint failed") {
@@ -2553,6 +2562,53 @@ func (h *AuthorHandler) directInsertTitleUsable(title, authorName string) bool {
 		return false
 	}
 	return !strings.EqualFold(title, strings.TrimSpace(authorName))
+}
+
+// directInsertSeriesConflict reports whether the dedup-key match found for a
+// direct insert is a *different volume of the same series* as the requested
+// work: the match's primary series title equals one of the requested work's
+// series refs and both sequence numbers are present but unequal. When true the
+// caller creates a distinct row rather than adopting the collapsed sibling. A
+// blank sequence on either side, or no primary series on the match, is not a
+// conflict — there is no positive evidence the two are different volumes, so the
+// existing dedup/adopt behavior is preserved.
+func (h *AuthorHandler) directInsertSeriesConflict(ctx context.Context, matchBookID int64, requested []models.SeriesRef) bool {
+	if h.series == nil || len(requested) == 0 {
+		return false
+	}
+	matchTitle, matchPos, err := h.series.GetPrimarySeriesForBook(ctx, matchBookID)
+	if err != nil {
+		return false
+	}
+	matchTitle = strings.TrimSpace(matchTitle)
+	matchPos = strings.TrimSpace(matchPos)
+	if matchTitle == "" || matchPos == "" {
+		return false
+	}
+	for _, ref := range requested {
+		name := strings.TrimSpace(ref.Title)
+		pos := strings.TrimSpace(ref.Position)
+		if name == "" || pos == "" {
+			continue
+		}
+		if strings.EqualFold(name, matchTitle) && !seriesSequencesEqual(pos, matchPos) {
+			return true
+		}
+	}
+	return false
+}
+
+// seriesSequencesEqual compares two series sequence strings numerically when
+// both parse ("1" == "1.0"), else by trimmed case-insensitive string compare.
+func seriesSequencesEqual(a, b string) bool {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if fa, errA := strconv.ParseFloat(a, 64); errA == nil {
+		if fb, errB := strconv.ParseFloat(b, 64); errB == nil {
+			return fa == fb
+		}
+	}
+	return strings.EqualFold(a, b)
 }
 
 // adoptDirectInsertMatch points an existing title-equivalent row at the
