@@ -29,6 +29,11 @@ export const btn = {
   // in both themes. Pair with a confirmation at the call site — this is styling,
   // not a guard.
   danger: `${base} border border-red-300 dark:border-red-900/70 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 focus-visible:ring-red-500`,
+  // Irreversible destructive action — solid red, the loudest control we have.
+  // Reserve it for actions with no undo (delete a book and its files, delete an
+  // author). A reversible destructive action gets `danger` above; when both
+  // appear on one page, solid red must mark the one you can't take back.
+  dangerSolid: `${base} bg-red-600 hover:bg-red-500 text-white focus-visible:ring-red-500`,
 } as const
 
 export const btnSize = {

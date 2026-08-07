@@ -55,6 +55,7 @@ vi.mock('../api/client', async importOriginal => {
       deleteBookFile: vi.fn(),
       toggleExcluded: vi.fn(),
       enrichAudiobook: vi.fn(),
+      listAuthorSeries: vi.fn(),
     },
   }
 })
@@ -181,6 +182,7 @@ beforeEach(() => {
   vi.mocked(api.deleteBookFile).mockImplementation(async () => makeBook())
   vi.mocked(api.toggleExcluded).mockImplementation(async () => makeBook({ excluded: true }))
   vi.mocked(api.enrichAudiobook).mockImplementation(async () => makeBook())
+  vi.mocked(api.listAuthorSeries).mockResolvedValue([])
   // jsdom has no clipboard by default.
   Object.defineProperty(navigator, 'clipboard', {
     value: { writeText: vi.fn().mockResolvedValue(undefined) },
@@ -347,10 +349,31 @@ describe('BookDetailPage — file section actions', () => {
     expect(await screen.findByText('Re-bind metadata')).toBeInTheDocument()
   })
 
-  it('toggles exclude via api.toggleExcluded', async () => {
+  // Exclude and Rename files moved behind the File card's More menu so the row
+  // doesn't present six equally-weighted actions.
+  it('toggles exclude via api.toggleExcluded, from the More menu', async () => {
     renderBookDetailPage()
-    fireEvent.click(await screen.findByRole('button', { name: 'Exclude' }))
+    fireEvent.click(await screen.findByRole('button', { name: /More/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Exclude' }))
     await waitFor(() => expect(api.toggleExcluded).toHaveBeenCalledWith(42))
+  })
+
+  it('keeps Download, Re-bind and Fix match on the row itself', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({ filePath: '/library/book.epub' }))
+    renderBookDetailPage()
+    expect(await screen.findByRole('link', { name: 'Download' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Re-bind' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Fix match' })).toBeInTheDocument()
+    // …and the overflow ones off it, until the menu is opened.
+    expect(screen.queryByRole('button', { name: 'Exclude' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Rename files' })).toBeNull()
+  })
+
+  it('opens the rename-files modal from the More menu', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({ ebookFilePath: '/library/book.epub' }))
+    renderBookDetailPage()
+    fireEvent.click(await screen.findByRole('button', { name: /More/ }))
+    expect(await screen.findByRole('menuitem', { name: 'Rename files' })).toBeEnabled()
   })
 
   it('deletes a file via api.deleteBookFile after confirmation', async () => {
@@ -681,5 +704,71 @@ describe('BookDetailPage — File card grid (regression: invalid arbitrary value
 
     const grid = container.querySelector('[class*="grid-cols-["]')
     expect(grid!.className).not.toMatch(/grid-cols-\[[^\]]*,/)
+  })
+})
+
+describe('BookDetailPage — header', () => {
+  it('surfaces series name and position in the meta row', async () => {
+    // series_books has been populated since v0.7.0; the page never showed it.
+    vi.mocked(api.listAuthorSeries).mockResolvedValue([
+      {
+        id: 7,
+        foreignSeriesId: 'ol:s7',
+        title: 'Discworld',
+        description: '',
+        monitored: true,
+        books: [{ seriesId: 7, bookId: 42, positionInSeries: '3' }],
+      },
+      // A series the author is in but this book is not — must not appear.
+      {
+        id: 8,
+        foreignSeriesId: 'ol:s8',
+        title: 'Long Earth',
+        description: '',
+        monitored: true,
+        books: [{ seriesId: 8, bookId: 99, positionInSeries: '1' }],
+      },
+    ] as unknown as Awaited<ReturnType<typeof api.listAuthorSeries>>)
+
+    renderBookDetailPage()
+    expect(await screen.findByText('Discworld #3')).toBeInTheDocument()
+    expect(screen.queryByText(/Long Earth/)).toBeNull()
+  })
+
+  it('renders no series row when the book is in none', async () => {
+    vi.mocked(api.listAuthorSeries).mockResolvedValue([])
+    renderBookDetailPage()
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+    expect(screen.queryByText(/#\d/)).toBeNull()
+  })
+
+  it('survives the series lookup failing', async () => {
+    vi.mocked(api.listAuthorSeries).mockRejectedValue(new Error('boom'))
+    renderBookDetailPage()
+    // The page still renders; series is simply absent.
+    expect(
+      await screen.findByRole('heading', { name: 'The Final Empire' }),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/#\d/)).toBeNull()
+  })
+
+  it('puts Edit in the header, not the File card', async () => {
+    renderBookDetailPage()
+    const edit = await screen.findByRole('button', { name: /Edit/ })
+    const fileHeading = screen.getByText(resolveKey('bookDetail.fileHeading')!)
+    // Edit edits metadata, so it must sit above the File section in the DOM.
+    expect(
+      edit.compareDocumentPosition(fileHeading) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+
+  it('keeps solid red for Delete book and ghost-danger for Delete file', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({ filePath: '/library/book.epub' }))
+    renderBookDetailPage()
+    const deleteFile = await screen.findByRole('button', { name: /Delete file/ })
+    const deleteBook = screen.getByRole('button', { name: /Delete book/ })
+    // Solid red is reserved for the irreversible one.
+    expect(deleteBook.className).toContain('bg-red-600')
+    expect(deleteFile.className).not.toContain('bg-red-600')
   })
 })

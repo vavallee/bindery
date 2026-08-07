@@ -1,8 +1,13 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
-import { api, BINDERY_BASE, Book, HistoryEvent, MediaType, SearchResult, SearchDebug } from '../api/client'
+import { api, BINDERY_BASE, Book, HistoryEvent, MediaType, SearchResult, SearchDebug, Series } from '../api/client'
 import SearchDebugPanel from '../components/SearchDebugPanel'
+import CoverPlaceholder from '../components/CoverPlaceholder'
+import MarkdownDescription from '../components/MarkdownDescription'
+import MoreMenu from '../components/MoreMenu'
+import Section from '../components/Section'
+import { btn, btnSize } from '../components/buttons'
 import MediaBadge from '../components/MediaBadge'
 import { bookStatusBadge } from '../components/bookStatus'
 import RebindModal from '../components/RebindModal'
@@ -150,15 +155,11 @@ export function SearchResultsSection({
   )
 }
 
-// Uniform neutral action button used across the file action row.
-const actionBtnCls =
-  'px-3 py-1.5 rounded text-sm font-medium border ' +
-  'bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 ' +
-  'border-slate-300 dark:border-zinc-700 ' +
-  'hover:bg-slate-300 dark:hover:bg-zinc-700 disabled:opacity-40'
-
-const dangerBtnCls =
-  'px-3 py-1.5 rounded text-sm font-medium bg-red-600 hover:bg-red-500 text-white disabled:opacity-40'
+// Neutral action button used across the page. Composed from the shared
+// vocabulary rather than hand-rolled — this file used to define its own
+// `actionBtnCls`/`dangerBtnCls`, which is exactly the drift buttons.ts exists
+// to prevent.
+const actionBtnCls = `${btn.secondary} ${btnSize.md}`
 
 export default function BookDetailPage() {
   const { t } = useTranslation()
@@ -189,6 +190,9 @@ export default function BookDetailPage() {
   const pathClipboard = useClipboardCopy()
   // For dual-format books, which format the file section is acting on.
   const [activeFormat, setActiveFormat] = useState<'ebook' | 'audiobook'>('ebook')
+  // Series membership for the meta row. series_books has been populated since
+  // v0.7.0 but this page never surfaced it.
+  const [series, setSeries] = useState<{ title: string; position: string }[]>([])
 
   useEffect(() => {
     if (book?.title) {
@@ -208,6 +212,31 @@ export default function BookDetailPage() {
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [bookId, t])
+
+  // Series membership. There is no book→series endpoint, so this reuses the
+  // author's series list and picks out this book's entries — deliberately not a
+  // new API. It runs after the book has loaded (it needs authorId), never
+  // blocks the page, and fails silently: no series data simply means no series
+  // row, which is the same as a book that genuinely isn't in one.
+  useEffect(() => {
+    const authorId = book?.authorId
+    const id = book?.id
+    if (!authorId || !id) return
+    let cancelled = false
+    api.listAuthorSeries(authorId)
+      .then((list: Series[]) => {
+        if (cancelled) return
+        const mine: { title: string; position: string }[] = []
+        for (const s of list) {
+          for (const entry of s.books ?? []) {
+            if (entry.bookId === id) mine.push({ title: s.title, position: entry.positionInSeries })
+          }
+        }
+        setSeries(mine)
+      })
+      .catch(() => { /* no series row */ })
+    return () => { cancelled = true }
+  }, [book?.authorId, book?.id])
 
   // While a grab is in flight, the download → import pipeline finishes
   // asynchronously on the backend. Poll the book + history so the file and
@@ -420,7 +449,10 @@ export default function BookDetailPage() {
     }`
 
   return (
-    <div className="max-w-4xl">
+    // One width shared with AuthorDetailPage. These two pages used to disagree
+    // (7xl vs 4xl), so author → book collapsed the content by 384px and
+    // left-aligned it mid-navigation.
+    <div className="max-w-7xl">
       <div className="mb-4 flex items-center gap-3 text-sm">
         <button
           onClick={() => navigate(-1)}
@@ -432,25 +464,38 @@ export default function BookDetailPage() {
 
       {/* ===== Header: cover + metadata ===== */}
       <div className="flex flex-col sm:flex-row gap-6">
-        <div className="w-44 flex-shrink-0">
+        <div className="w-32 flex-shrink-0">
           {book.imageUrl ? (
-            <img src={book.imageUrl} alt={book.title} className="w-full rounded-lg shadow-lg" />
+            <img src={book.imageUrl} alt={book.title} className="w-full rounded-lg" />
           ) : (
-            <div className="aspect-[2/3] bg-slate-200 dark:bg-zinc-800 rounded-lg flex items-center justify-center p-4 text-center text-sm text-slate-500 dark:text-zinc-600">
-              {book.title}
-            </div>
+            <CoverPlaceholder id={book.id} title={book.title} className="aspect-[2/3] rounded-lg" />
           )}
         </div>
         <div className="min-w-0 flex-1">
-          <h2 className="text-2xl font-semibold text-slate-900 dark:text-white">{book.title}</h2>
-          {book.author?.authorName && (
-            <Link
-              to={`/author/${book.authorId}`}
-              className="text-sm text-emerald-600 dark:text-emerald-400 hover:underline"
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-2xl font-semibold text-slate-900 dark:text-white">{book.title}</h2>
+              {book.author?.authorName && (
+                <Link
+                  to={`/author/${book.authorId}`}
+                  className="text-sm text-emerald-600 dark:text-emerald-400 hover:underline"
+                >
+                  {book.author.authorName}
+                </Link>
+              )}
+            </div>
+            {/* Edit belongs with the metadata it edits, not in the File card,
+                which is about the bytes on disk. */}
+            <button
+              type="button"
+              onClick={() => setShowEdit(true)}
+              className={`${actionBtnCls} shrink-0`}
+              title={t('bookDetail.edit.hint', 'Manually edit metadata; edited fields are locked against refresh')}
             >
-              {book.author.authorName}
-            </Link>
-          )}
+              {t('bookDetail.edit.button', 'Edit')}
+              {(book.lockedFields?.length ?? 0) > 0 && <span aria-hidden> 🔒</span>}
+            </button>
+          </div>
 
           <div className="flex flex-wrap items-center gap-2 mt-3 text-xs">
             {(() => {
@@ -499,6 +544,20 @@ export default function BookDetailPage() {
                 <span className="text-slate-600 dark:text-zinc-400">{formatDuration(book.durationSeconds)}</span>
               </>
             ) : null}
+            {series.map(s => (
+              <span key={`${s.title}-${s.position}`} className="contents">
+                <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
+                <span className="text-slate-600 dark:text-zinc-400">
+                  {s.position
+                    ? t('bookDetail.seriesPosition', {
+                        series: s.title,
+                        position: s.position,
+                        defaultValue: '{{series}} #{{position}}',
+                      })
+                    : s.title}
+                </span>
+              </span>
+            ))}
             {(() => {
               const src = metadataSourceLink(book.foreignBookId, 'book')
               return src ? (
@@ -517,8 +576,15 @@ export default function BookDetailPage() {
             })()}
           </div>
 
+          {/* Clamped with show more/less, matching AuthorDetailPage. max-w-prose
+              keeps the line length readable now the page runs to 7xl. */}
           {book.description && (
-            <p className="mt-3 text-sm text-slate-700 dark:text-zinc-300 leading-relaxed">{book.description}</p>
+            <MarkdownDescription
+              text={book.description}
+              showMoreLabel={t('bookDetail.description.showMore', 'Show more')}
+              showLessLabel={t('bookDetail.description.showLess', 'Show less')}
+              className="mt-3 max-w-prose"
+            />
           )}
 
           {/* Media type scopes what the indexer search looks for, so it sits
@@ -543,7 +609,7 @@ export default function BookDetailPage() {
             <button
               onClick={runSearch}
               disabled={searching}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50"
+              className={`${btn.primary} ${btnSize.md}`}
             >
               <span aria-hidden>🔍</span> {searchLabel}
             </button>
@@ -558,11 +624,8 @@ export default function BookDetailPage() {
       )}
 
       {/* ===== File section ===== */}
-      <section className="mt-8">
-        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">
-          {t('bookDetail.fileHeading')}
-        </h3>
-        <div className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-zinc-900 p-4">
+      <Section title={t('bookDetail.fileHeading')}>
+        <div>
           <div className="grid grid-cols-[92px_1fr] gap-x-4 gap-y-3 text-sm items-center">
             <span className="text-xs text-slate-500 dark:text-zinc-500">{t('bookDetail.formatLabel')}</span>
             {isDual ? (
@@ -632,26 +695,8 @@ export default function BookDetailPage() {
             >
               {t('bookDetail.download')}
             </a>
-            <button
-              type="button"
-              onClick={() => setShowEdit(true)}
-              className={actionBtnCls}
-              title={t('bookDetail.edit.hint', 'Manually edit metadata; edited fields are locked against refresh')}
-            >
-              {t('bookDetail.edit.button', 'Edit')}
-              {(book.lockedFields?.length ?? 0) > 0 && <span aria-hidden> 🔒</span>}
-            </button>
             <button type="button" onClick={() => setShowRebind(true)} className={actionBtnCls}>
               {t('bookDetail.rebind')}
-            </button>
-            <button
-              type="button"
-              onClick={toggleExclude}
-              disabled={togglingExclude}
-              className={actionBtnCls}
-              title={book.excluded ? t('bookDetail.unexcludeHint') : t('bookDetail.excludeHint')}
-            >
-              {togglingExclude ? '…' : book.excluded ? t('bookDetail.unexclude') : t('bookDetail.exclude')}
             </button>
             <button
               type="button"
@@ -662,20 +707,39 @@ export default function BookDetailPage() {
             >
               {t('bookDetail.fixMatch.button', 'Fix match')}
             </button>
-            <button
-              type="button"
-              onClick={() => setShowRename(true)}
-              disabled={!(book.ebookFilePath || book.audiobookFilePath) || deletingFile || deletingBook}
-              className={actionBtnCls}
-              title={t('bookDetail.renameFiles.hint', 'Move this book’s files to match the current naming template')}
-            >
-              {t('bookDetail.renameFiles.button', 'Rename files')}
-            </button>
+            {/* Exclude and Rename files are the rarely-reached ones; keeping
+                them visible pushed Delete file out to the row's far edge and
+                made the whole row read as equally weighted. */}
+            <MoreMenu
+              label={t('common.more', 'More')}
+              buttonClassName={actionBtnCls}
+              items={[
+                {
+                  label: togglingExclude
+                    ? '…'
+                    : book.excluded
+                      ? t('bookDetail.unexclude')
+                      : t('bookDetail.exclude'),
+                  title: book.excluded ? t('bookDetail.unexcludeHint') : t('bookDetail.excludeHint'),
+                  disabled: togglingExclude,
+                  onSelect: toggleExclude,
+                },
+                {
+                  label: t('bookDetail.renameFiles.button', 'Rename files'),
+                  title: t('bookDetail.renameFiles.hint', 'Move this book’s files to match the current naming template'),
+                  disabled: !(book.ebookFilePath || book.audiobookFilePath) || deletingFile || deletingBook,
+                  onSelect: () => setShowRename(true),
+                },
+              ]}
+            />
+            {/* Ghost-danger, not solid red. Deleting the file is reversible by
+                re-downloading; solid red stays reserved for "Delete book +
+                files" in the Danger zone, which is not. */}
             <button
               type="button"
               onClick={() => deleteFile(isDual ? fmt : undefined)}
               disabled={deletingFile || deletingBook || !hasActiveFile}
-              className={`ml-auto ${dangerBtnCls}`}
+              className={`ml-auto ${btn.danger} ${btnSize.md}`}
             >
               <span aria-hidden>🗑 </span>
               {deletingFile ? t('bookDetail.deletingFile') : t('bookDetail.deleteFile')}
@@ -688,15 +752,12 @@ export default function BookDetailPage() {
             </p>
           )}
         </div>
-      </section>
+      </Section>
 
       {/* ===== Audiobook ASIN / enrich (audiobook + dual-format only) ===== */}
       {(mt === 'audiobook' || mt === 'both') && (
-        <section className="mt-8">
-          <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">
-            {t('bookDetail.audiobookHeading')}
-          </h3>
-          <div className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-zinc-900 p-4">
+        <Section title={t('bookDetail.audiobookHeading')}>
+          <div>
             <div className="flex flex-col sm:flex-row sm:items-end gap-2">
               <div className="flex-1">
                 <label htmlFor="book-asin" className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
@@ -729,7 +790,7 @@ export default function BookDetailPage() {
               </button>
             </div>
           </div>
-        </section>
+        </Section>
       )}
 
       {/* ===== Search results ===== */}
@@ -769,11 +830,8 @@ export default function BookDetailPage() {
 
       {/* ===== History section ===== */}
       {events.length > 0 && (
-        <section className="mt-8">
-          <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">
-            {t('bookDetail.historyHeading')}
-          </h3>
-          <div className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-zinc-900 divide-y divide-slate-200 dark:divide-zinc-800">
+        <Section title={t('bookDetail.historyHeading')} cardClassName="divide-y divide-slate-200 dark:divide-zinc-800">
+          <>
             {events.map(ev => (
               <div key={ev.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
                 <span
@@ -791,29 +849,30 @@ export default function BookDetailPage() {
                 </span>
               </div>
             ))}
-          </div>
-        </section>
+          </>
+        </Section>
       )}
 
       {/* ===== Danger zone ===== */}
-      <section className="mt-8">
-        <h3 className="text-base font-semibold mb-3 text-rose-700 dark:text-rose-400">
-          {t('bookDetail.dangerHeading')}
-        </h3>
-        <div className="rounded-lg border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/30 p-4 flex flex-col sm:flex-row sm:items-center gap-4">
-          <p className="text-sm text-slate-600 dark:text-zinc-400 flex-1">
-            {t('bookDetail.dangerBody')}
-          </p>
-          <button
-            type="button"
-            onClick={() => setShowDeleteBook(true)}
-            disabled={deletingBook || deletingFile}
-            className={`shrink-0 ${dangerBtnCls}`}
-          >
-            {t('bookDetail.deleteBook')}
-          </button>
-        </div>
-      </section>
+      <Section
+        title={t('bookDetail.dangerHeading')}
+        tone="danger"
+        cardClassName="p-4 flex flex-col sm:flex-row sm:items-center gap-4"
+      >
+        <p className="text-sm text-slate-600 dark:text-zinc-400 flex-1">
+          {t('bookDetail.dangerBody')}
+        </p>
+        {/* The only solid-red control on the page. Deleting the book and every
+            file on disk is the one genuinely irreversible action here. */}
+        <button
+          type="button"
+          onClick={() => setShowDeleteBook(true)}
+          disabled={deletingBook || deletingFile}
+          className={`shrink-0 ${btn.dangerSolid} ${btnSize.md}`}
+        >
+          {t('bookDetail.deleteBook')}
+        </button>
+      </Section>
 
       {showEdit && (
         <EditBookModal

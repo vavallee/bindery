@@ -42,7 +42,8 @@
     "clipboardBlocked": "Clipboard access is blocked. Copy the selected text below.",
     "clipboardTextLabel": "Text to copy",
     "saved": "Saved ✓",
-    "saveError": "Error"
+    "saveError": "Error",
+    "more": "More"
   },
   "monitorMode": {
     "all": "All books",
@@ -1085,6 +1086,14 @@
       "renamed": "File renamed",
       "bookFileRenamed": "File renamed",
       "ignored": "Release ignored"
+    },
+    "seriesPosition": "{{series}} #{{position}}",
+    "description": {
+      "showMore": "Show more",
+      "showLess": "Show less"
+    },
+    "renameFiles": {
+      "button": "Rename files"
     }
   }
 }
