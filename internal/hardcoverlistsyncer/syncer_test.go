@@ -681,6 +681,10 @@ type fakeHardcoverClient struct {
 	lists    []hardcover.HCList
 	books    []models.Book
 	editions []models.Edition
+
+	// getEditionsCalls counts per-book edition fan-out. List sync must never
+	// call GetEditions (#1694); tests assert this stays zero.
+	getEditionsCalls int
 }
 
 func (f *fakeHardcoverClient) GetUserLists(context.Context) ([]hardcover.HCList, error) {
@@ -692,6 +696,7 @@ func (f *fakeHardcoverClient) GetListBooks(context.Context, int) ([]models.Book,
 }
 
 func (f *fakeHardcoverClient) GetEditions(context.Context, string) ([]models.Edition, error) {
+	f.getEditionsCalls++
 	return f.editions, nil
 }
 
@@ -872,7 +877,12 @@ func TestSyncOne_NoSeriesRepo_NoSeriesLinkAttempted(t *testing.T) {
 	}
 }
 
-func TestSync_HydratesHardcoverEditions(t *testing.T) {
+// TestSync_DoesNotFanOutToEditions is the #1694 regression guard: list sync
+// used to call GetEditions once per newly imported book — a fully paginated
+// GraphQL query per book — which made a first sync of a large list
+// impossible to finish inside the request deadline. The edition data it was
+// after now arrives inline on the list response instead.
+func TestSync_DoesNotFanOutToEditions(t *testing.T) {
 	database, err := db.OpenMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -910,7 +920,6 @@ func TestSync_HydratesHardcoverEditions(t *testing.T) {
 		}},
 	}
 	syncer := New(importLists, authors, books).
-		WithEditionHydration(editions, nil).
 		WithClientFactory(func(string) hardcoverClient { return client })
 	il := testImportList("Want", "hardcover", true)
 	il.URL = "want-to-read"
@@ -925,23 +934,32 @@ func TestSync_HydratesHardcoverEditions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if book == nil || book.ASIN != audioASIN {
-		t.Fatalf("book was not hydrated: %+v", book)
+	if book == nil {
+		t.Fatal("book was not created")
 	}
+	// #1694: list sync must never fan out to a per-book edition fetch. That
+	// call is what made a large first sync impossible to finish inside the
+	// request deadline — one paginated GraphQL round-trip per new book.
+	if client.getEditionsCalls != 0 {
+		t.Fatalf("GetEditions called %d times during list sync, want 0 (#1694 fan-out must not return)", client.getEditionsCalls)
+	}
+	// The ASIN now rides in on the list response itself (see the metadata
+	// package's toBook), so nothing here should have written editions.
 	got, err := editions.ListByBook(ctx, book.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].ForeignID != "hc:list-book-audio" {
-		t.Fatalf("expected hydrated edition, got %+v", got)
+	if len(got) != 0 {
+		t.Fatalf("list sync stored %d editions, want 0 — edition persistence belongs to the on-demand hydration paths", len(got))
 	}
 }
 
-// newHydrationSyncer wires a syncer with edition hydration against a real
-// in-memory DB and a stub client whose list serves one book (with the given
-// Hardcover-derived media type) plus one audio-shaped edition for it — the
-// shape that used to trigger the ebook → both promotion (#1732).
-func newHydrationSyncer(t *testing.T, listMediaType, derivedMediaType string) (*ListSyncer, *db.BookRepo, context.Context) {
+// newHydrationSyncer wires a syncer against a real in-memory DB and a stub
+// client whose list serves one book carrying the given Hardcover-derived
+// media type and an audiobook ASIN — the shape the list response itself now
+// delivers since the per-book edition fan-out was removed (#1694). The
+// client is returned so tests can assert GetEditions is never called.
+func newHydrationSyncer(t *testing.T, listMediaType, derivedMediaType string) (*ListSyncer, *db.BookRepo, *fakeHardcoverClient, context.Context) {
 	t.Helper()
 	database, err := db.OpenMemory()
 	if err != nil {
@@ -952,9 +970,7 @@ func newHydrationSyncer(t *testing.T, listMediaType, derivedMediaType string) (*
 	importLists := db.NewImportListRepo(database)
 	authors := db.NewAuthorRepo(database)
 	books := db.NewBookRepo(database)
-	editions := db.NewEditionRepo(database)
 
-	audioASIN := "B123PINNED"
 	client := &fakeHardcoverClient{
 		lists: []hardcover.HCList{{ID: 42, Slug: "pinned-list", Name: "Pinned"}},
 		books: []models.Book{{
@@ -963,7 +979,10 @@ func newHydrationSyncer(t *testing.T, listMediaType, derivedMediaType string) (*
 			SortTitle:        "Pinned Book",
 			MetadataProvider: "hardcover",
 			MediaType:        derivedMediaType,
-			Genres:           []string{},
+			// Supplied by the list response itself now, the way toBook fills
+			// it from the inlined audio edition (#1694).
+			ASIN:   "B123PINNED",
+			Genres: []string{},
 			Author: &models.Author{
 				ForeignID:        "hc:pinned-author",
 				Name:             "Pinned Author",
@@ -971,16 +990,8 @@ func newHydrationSyncer(t *testing.T, listMediaType, derivedMediaType string) (*
 				MetadataProvider: "hardcover",
 			},
 		}},
-		editions: []models.Edition{{
-			ForeignID: "hc:pinned-book-audio",
-			Title:     "Pinned Book",
-			ASIN:      &audioASIN,
-			Format:    "Audiobook",
-			Monitored: true,
-		}},
 	}
 	syncer := New(importLists, authors, books).
-		WithEditionHydration(editions, nil).
 		WithClientFactory(func(string) hardcoverClient { return client })
 	il := testImportList("Pinned", "hardcover", true)
 	il.URL = "pinned-list"
@@ -988,7 +999,7 @@ func newHydrationSyncer(t *testing.T, listMediaType, derivedMediaType string) (*
 	if err := importLists.Create(ctx, &il); err != nil {
 		t.Fatal(err)
 	}
-	return syncer, books, ctx
+	return syncer, books, client, ctx
 }
 
 // TestSync_EbookPinnedListSurvivesAudioEditionHydration is the #1732
@@ -997,7 +1008,7 @@ func newHydrationSyncer(t *testing.T, listMediaType, derivedMediaType string) (*
 // just because the work has an audio edition on Hardcover (true for most
 // popular titles).
 func TestSync_EbookPinnedListSurvivesAudioEditionHydration(t *testing.T) {
-	syncer, books, ctx := newHydrationSyncer(t, models.MediaTypeEbook, models.MediaTypeBoth)
+	syncer, books, _, ctx := newHydrationSyncer(t, models.MediaTypeEbook, models.MediaTypeBoth)
 	if err := syncer.Sync(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -1014,11 +1025,11 @@ func TestSync_EbookPinnedListSurvivesAudioEditionHydration(t *testing.T) {
 	}
 }
 
-// TestSync_AudiobookPinnedListUnchangedByHydration confirms the working half
-// of the #1732 asymmetry stays working: an audiobook-pinned list stays
-// audiobook and still picks up the audio edition's ASIN.
-func TestSync_AudiobookPinnedListUnchangedByHydration(t *testing.T) {
-	syncer, books, ctx := newHydrationSyncer(t, models.MediaTypeAudiobook, models.MediaTypeBoth)
+// TestSync_AudiobookPinnedListKeepsASIN confirms the working half of the
+// #1732 asymmetry stays working: an audiobook-pinned list stays audiobook and
+// keeps the ASIN the list response supplied — without any edition fan-out.
+func TestSync_AudiobookPinnedListKeepsASIN(t *testing.T) {
+	syncer, books, client, ctx := newHydrationSyncer(t, models.MediaTypeAudiobook, models.MediaTypeBoth)
 	if err := syncer.Sync(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -1030,16 +1041,20 @@ func TestSync_AudiobookPinnedListUnchangedByHydration(t *testing.T) {
 		t.Fatalf("media type = %q, want audiobook", book.MediaType)
 	}
 	if book.ASIN != "B123PINNED" {
-		t.Fatalf("ASIN = %q, want the audio edition's ASIN promoted", book.ASIN)
+		t.Fatalf("ASIN = %q, want the ASIN carried by the list response", book.ASIN)
+	}
+	if client.getEditionsCalls != 0 {
+		t.Fatalf("GetEditions called %d times, want 0 (#1694)", client.getEditionsCalls)
 	}
 }
 
-// TestSync_UnpinnedEmptyMediaTypeStillPromotesToAudiobook confirms the fix
-// only suppresses the promotion for pinned lists: with no list pin and no
-// Hardcover-derived media type, an audio edition still promotes "" to
-// audiobook so downstream audio enrichment stays eligible.
-func TestSync_UnpinnedEmptyMediaTypeStillPromotesToAudiobook(t *testing.T) {
-	syncer, books, ctx := newHydrationSyncer(t, "", "")
+// TestSync_UnpinnedListKeepsDerivedMediaTypeAndASIN covers the unpinned case:
+// with no list pin, the media type and ASIN the list response derived are
+// both persisted as-is. Before #1694 this data came from a per-book edition
+// fetch; it now rides in on the list query itself, so the syncer's only job
+// is to not lose it.
+func TestSync_UnpinnedListKeepsDerivedMediaTypeAndASIN(t *testing.T) {
+	syncer, books, client, ctx := newHydrationSyncer(t, "", models.MediaTypeAudiobook)
 	if err := syncer.Sync(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -1048,9 +1063,89 @@ func TestSync_UnpinnedEmptyMediaTypeStillPromotesToAudiobook(t *testing.T) {
 		t.Fatalf("created book not found: %v", err)
 	}
 	if book.MediaType != models.MediaTypeAudiobook {
-		t.Fatalf("media type = %q, want audiobook (unpinned \"\" still promotes)", book.MediaType)
+		t.Fatalf("media type = %q, want audiobook (derived type must survive an unpinned list)", book.MediaType)
 	}
 	if book.ASIN != "B123PINNED" {
-		t.Fatalf("ASIN = %q, want the audio edition's ASIN promoted", book.ASIN)
+		t.Fatalf("ASIN = %q, want the ASIN carried by the list response", book.ASIN)
+	}
+	if client.getEditionsCalls != 0 {
+		t.Fatalf("GetEditions called %d times, want 0 (#1694)", client.getEditionsCalls)
+	}
+}
+
+// recordingEnricher implements bookhydrate.AudiobookEnricher and records the
+// ASINs it was invoked with, mutating the book the way Audnex enrichment does
+// so tests can assert the mutation is persisted.
+type recordingEnricher struct {
+	calls []string
+	fail  bool
+}
+
+func (r *recordingEnricher) EnrichAudiobook(_ context.Context, book *models.Book) error {
+	r.calls = append(r.calls, book.ASIN)
+	if r.fail {
+		return errors.New("audnex unavailable")
+	}
+	book.Narrator = "Recorded Narrator"
+	return nil
+}
+
+// TestSync_EnrichesWhenListSuppliesASIN covers the #1694 Audnex re-wire: a
+// list-synced book whose ASIN arrived inline must still get audiobook
+// enrichment (previously triggered inside edition hydration), and the
+// enriched fields must be persisted — all without any GetEditions call.
+func TestSync_EnrichesWhenListSuppliesASIN(t *testing.T) {
+	syncer, books, client, ctx := newHydrationSyncer(t, models.MediaTypeAudiobook, models.MediaTypeBoth)
+	enricher := &recordingEnricher{}
+	syncer.WithAudiobookEnricher(enricher)
+
+	if err := syncer.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(enricher.calls) != 1 || enricher.calls[0] != "B123PINNED" {
+		t.Fatalf("enricher calls = %v, want [B123PINNED]", enricher.calls)
+	}
+	book, err := books.GetByForeignID(ctx, "hc:pinned-book")
+	if err != nil || book == nil {
+		t.Fatalf("created book not found: %v", err)
+	}
+	if book.Narrator != "Recorded Narrator" {
+		t.Fatalf("Narrator = %q, want the enricher's mutation persisted", book.Narrator)
+	}
+	if client.getEditionsCalls != 0 {
+		t.Fatalf("GetEditions called %d times, want 0 — enrichment must not reintroduce the fan-out", client.getEditionsCalls)
+	}
+}
+
+// TestSync_EnricherFailureDoesNotBlockImport: enrichment is best-effort; an
+// Audnex outage must not fail the sync or lose the imported book.
+func TestSync_EnricherFailureDoesNotBlockImport(t *testing.T) {
+	syncer, books, _, ctx := newHydrationSyncer(t, models.MediaTypeAudiobook, models.MediaTypeBoth)
+	syncer.WithAudiobookEnricher(&recordingEnricher{fail: true})
+
+	if err := syncer.Sync(ctx); err != nil {
+		t.Fatalf("Sync must succeed despite enricher failure, got: %v", err)
+	}
+	book, err := books.GetByForeignID(ctx, "hc:pinned-book")
+	if err != nil || book == nil {
+		t.Fatalf("book must still be imported: %v", err)
+	}
+	if book.ASIN != "B123PINNED" {
+		t.Fatalf("ASIN = %q, want kept despite failed enrichment", book.ASIN)
+	}
+}
+
+// TestSync_NoEnrichmentWithoutASIN: an ebook-pinned list clears the ASIN
+// (#1732), so the enricher must never fire for it.
+func TestSync_NoEnrichmentWithoutASIN(t *testing.T) {
+	syncer, _, _, ctx := newHydrationSyncer(t, models.MediaTypeEbook, models.MediaTypeBoth)
+	enricher := &recordingEnricher{}
+	syncer.WithAudiobookEnricher(enricher)
+
+	if err := syncer.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(enricher.calls) != 0 {
+		t.Fatalf("enricher calls = %v, want none for an ebook-pinned book", enricher.calls)
 	}
 }

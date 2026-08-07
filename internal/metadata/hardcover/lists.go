@@ -265,6 +265,16 @@ func (c *Client) GetListBooks(ctx context.Context, listID int) ([]models.Book, e
 				rating
 				default_audio_edition_id
 				default_ebook_edition_id
+				default_ebook_edition { language { language } }
+				default_audio_edition { language { language } }
+				editions(
+					where: {asin: {_is_null: false}, reading_format: {format: {_eq: "Listened"}}},
+					order_by: {id: asc},
+					limit: 2
+				) {
+					asin
+					language { language }
+				}
 				book_series(order_by: { position: asc }) {
 					position
 					series { id name }
@@ -322,6 +332,16 @@ func (c *Client) getShelfBooks(ctx context.Context, statusID int) ([]models.Book
 					rating
 					default_audio_edition_id
 					default_ebook_edition_id
+					default_ebook_edition { language { language } }
+					default_audio_edition { language { language } }
+					editions(
+						where: {asin: {_is_null: false}, reading_format: {format: {_eq: "Listened"}}},
+						order_by: {id: asc},
+						limit: 2
+					) {
+						asin
+						language { language }
+					}
 					book_series(order_by: { position: asc }) {
 						position
 						series { id name }
