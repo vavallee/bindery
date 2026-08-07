@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { COVER_COLORS, COVER_FG, coverColorFor } from '../components/coverPalette'
 
 // WCAG 2.1 relative-luminance + contrast ratio for sRGB hex colors.
 function srgbToLinear(c: number): number {
@@ -55,5 +56,40 @@ describe('theme text tokens meet WCAG AA on app surfaces', () => {
 
   it('regression: the old bare emerald-400 fails on light (why accent-text exists)', () => {
     expect(contrast('#34d399', SURFACES.lightCard)).toBeLessThan(AA_NORMAL)
+  })
+})
+
+// CoverPlaceholder paints its own ground, so its text contrast is
+// theme-independent — but the tile still has to read as an object against both
+// page surfaces, which is what pins the palette to the 700 level.
+const AA_NON_TEXT = 3
+
+describe('CoverPlaceholder palette', () => {
+  for (const color of COVER_COLORS) {
+    it(`${color.className}: white title >= ${AA_NORMAL}:1`, () => {
+      expect(contrast(COVER_FG, color.bg)).toBeGreaterThanOrEqual(AA_NORMAL)
+    })
+
+    it(`${color.className}: tile edge >= ${AA_NON_TEXT}:1 on both page surfaces`, () => {
+      expect(contrast(color.bg, SURFACES.lightPage)).toBeGreaterThanOrEqual(AA_NON_TEXT)
+      expect(contrast(color.bg, SURFACES.darkPage)).toBeGreaterThanOrEqual(AA_NON_TEXT)
+    })
+  }
+
+  it('regression: a 900-level ground dissolves into the dark page', () => {
+    // Why the palette sits at 700 and not deeper. zinc-800 — what the old flat
+    // placeholder used — is worse still.
+    expect(contrast('#7f1d1d', SURFACES.darkPage)).toBeLessThan(AA_NON_TEXT)
+    expect(contrast('#27272a', SURFACES.darkPage)).toBeLessThan(AA_NON_TEXT)
+  })
+
+  it('assigns a stable colour per id', () => {
+    expect(coverColorFor(42)).toBe(coverColorFor(42))
+    expect(coverColorFor(42)).toBe(coverColorFor('42'))
+  })
+
+  it('spreads ids across the whole palette', () => {
+    const seen = new Set(Array.from({ length: 400 }, (_, i) => coverColorFor(i + 1).className))
+    expect(seen.size).toBe(COVER_COLORS.length)
   })
 })
