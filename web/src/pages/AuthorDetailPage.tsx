@@ -615,7 +615,7 @@ export default function AuthorDetailPage() {
     view === 'table' ? renderTable(list, withHeaderControls) : renderGrid(list)
 
   return (
-    <div className={`max-w-5xl${selected.size > 0 ? ' pb-20' : ''}`}>
+    <div className={`max-w-5xl ${selected.size > 0 ? 'pb-20' : ''}`}>
       <div className="mb-4 flex items-center gap-3 text-sm">
         <button onClick={() => navigate(-1)} className="text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">← Back</button>
       </div>

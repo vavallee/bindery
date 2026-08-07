@@ -563,7 +563,7 @@ export default function BookDetailPage() {
           {t('bookDetail.fileHeading')}
         </h3>
         <div className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-zinc-900 p-4">
-          <div className="grid grid-cols-[92px,1fr] gap-x-4 gap-y-3 text-sm items-center">
+          <div className="grid grid-cols-[92px_1fr] gap-x-4 gap-y-3 text-sm items-center">
             <span className="text-xs text-slate-500 dark:text-zinc-500">{t('bookDetail.formatLabel')}</span>
             {isDual ? (
               <div className="inline-flex rounded overflow-hidden w-fit" role="group" aria-label={t('bookDetail.formatLabel')}>

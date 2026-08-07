@@ -636,3 +636,45 @@ describe('BookDetailPage — live import polling (#1161)', () => {
     }
   })
 })
+
+// Regression guard for the File card's two-column grid.
+//
+// `grid-cols-[92px,1fr]` compiles to `grid-template-columns:92px,1fr`, which is
+// invalid CSS — every browser drops the declaration and the card silently
+// collapses to a single track. The class name still *looks* right in the DOM
+// and the build still succeeds, so nothing catches it. jsdom's CSS parser
+// rejects the same value a browser does, so round-tripping the arbitrary value
+// through a style declaration reproduces the real failure without a build.
+describe('BookDetailPage — File card grid (regression: invalid arbitrary value)', () => {
+  // Pull the grid-cols-[…] arbitrary value off the File card and resolve it the
+  // way a browser would: assign it, then read back what survived parsing.
+  function computedTracks(el: Element): string {
+    const cls = Array.from(el.classList).find(c => c.startsWith('grid-cols-['))
+    if (!cls) throw new Error(`no grid-cols-[…] class on ${el.className}`)
+    const raw = cls.slice('grid-cols-['.length, -1).replace(/_/g, ' ')
+    const probe = document.createElement('div')
+    probe.style.gridTemplateColumns = raw
+    return probe.style.gridTemplateColumns
+  }
+
+  it('declares two grid tracks that survive CSS parsing', async () => {
+    const { container } = renderBookDetailPage()
+    await screen.findByText(resolveKey('bookDetail.fileHeading')!)
+
+    const grid = container.querySelector('[class*="grid-cols-["]')
+    expect(grid, 'File card grid element').not.toBeNull()
+
+    const tracks = computedTracks(grid!)
+    // A comma in the arbitrary value makes this empty — the browser drops it.
+    expect(tracks, 'grid-template-columns was rejected by the CSS parser').not.toBe('')
+    expect(tracks.split(/\s+/).filter(Boolean)).toHaveLength(2)
+  })
+
+  it('uses underscore, not comma, as the arbitrary-value separator', async () => {
+    const { container } = renderBookDetailPage()
+    await screen.findByText(resolveKey('bookDetail.fileHeading')!)
+
+    const grid = container.querySelector('[class*="grid-cols-["]')
+    expect(grid!.className).not.toMatch(/grid-cols-\[[^\]]*,/)
+  })
+})
