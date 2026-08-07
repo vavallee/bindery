@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -649,7 +650,7 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 		return &bookUpsertResult{row: existing, matchedBy: "foreign_id"}, false, false, metaResult, err
 	}
 
-	match, ambiguous, err := i.findBookByNormalizedTitle(ctx, author.ID, item.Title)
+	match, ambiguous, err := i.findBookByNormalizedTitle(ctx, author.ID, item.Title, item.Series)
 	if err != nil {
 		return nil, false, false, metadataMergeResult{}, err
 	}
@@ -857,10 +858,32 @@ func (i *Importer) upsertBookProvenance(ctx context.Context, cfg ImportConfig, r
 //
 // Returns (match, ambiguous, err). ambiguous is true when more than one local
 // row shares the key — the caller routes that to review rather than guessing.
-func (i *Importer) findBookByNormalizedTitle(ctx context.Context, authorID int64, title string) (*models.Book, bool, error) {
+//
+// incomingSeries carries the series memberships of the item being imported.
+// The canonical dedup key strips a ": subtitle" tail, so a series whose volumes
+// are titled "Series: Volume" collapses every volume onto one key — importing
+// volume 2 would otherwise link onto volume 1 (or hit ambiguity once several
+// exist) instead of creating a distinct row. Any candidate that is a *different
+// volume of one of the incoming series* (same series title, both sequence
+// numbers present and unequal) is a distinct work and is dropped before the
+// match/ambiguous decision, so the create path runs for it.
+func (i *Importer) findBookByNormalizedTitle(ctx context.Context, authorID int64, title string, incomingSeries []NormalizedSeries) (*models.Book, bool, error) {
 	books, err := i.books.FindAllByAuthorAndDedupKey(ctx, authorID, title)
 	if err != nil {
 		return nil, false, err
+	}
+	if len(incomingSeries) > 0 {
+		filtered := books[:0]
+		for _, b := range books {
+			conflict, err := i.candidateSeriesConflicts(ctx, b.ID, incomingSeries)
+			if err != nil {
+				return nil, false, err
+			}
+			if !conflict {
+				filtered = append(filtered, b)
+			}
+		}
+		books = filtered
 	}
 	switch len(books) {
 	case 0:
@@ -871,6 +894,53 @@ func (i *Importer) findBookByNormalizedTitle(ctx context.Context, authorID int64
 	default:
 		return nil, true, nil
 	}
+}
+
+// candidateSeriesConflicts reports whether an existing local book is a different
+// volume of one of the incoming item's series: its primary series title matches
+// an incoming series name and both sequence numbers are present but unequal.
+// Such a book shares the incoming item's subtitle-collapsed dedup key yet is a
+// distinct work, so it must not be treated as a dedup match. A candidate with no
+// recorded primary series, or one whose sequence or the incoming sequence is
+// blank, is not a conflict (no positive evidence they differ).
+func (i *Importer) candidateSeriesConflicts(ctx context.Context, bookID int64, incoming []NormalizedSeries) (bool, error) {
+	if i.series == nil {
+		return false, nil
+	}
+	candTitle, candPos, err := i.series.GetPrimarySeriesForBook(ctx, bookID)
+	if err != nil {
+		return false, err
+	}
+	candTitle = strings.TrimSpace(candTitle)
+	candPos = strings.TrimSpace(candPos)
+	if candTitle == "" || candPos == "" {
+		return false, nil
+	}
+	for _, s := range incoming {
+		name := strings.TrimSpace(s.Name)
+		seq := strings.TrimSpace(s.Sequence)
+		if name == "" || seq == "" {
+			continue
+		}
+		if strings.EqualFold(name, candTitle) && !sequencesEqual(seq, candPos) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// sequencesEqual compares two series sequence strings. Numerically equal values
+// are equal ("1" == "1.0" == "01"); otherwise it falls back to a trimmed,
+// case-insensitive string compare so non-numeric sequences ("1a") still match.
+func sequencesEqual(a, b string) bool {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if fa, errA := strconv.ParseFloat(a, 64); errA == nil {
+		if fb, errB := strconv.ParseFloat(b, 64); errB == nil {
+			return fa == fb
+		}
+	}
+	return strings.EqualFold(a, b)
 }
 
 func (i *Importer) applyBookFields(ctx context.Context, book *models.Book, authorID int64, item NormalizedLibraryItem) error {

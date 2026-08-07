@@ -479,7 +479,7 @@ func (i *Importer) findExistingHardcoverCatalogBook(ctx context.Context, authorI
 		}
 	}
 	title := firstNonEmpty(catalogBook.Title, catalogBook.Book.Title)
-	match, ambiguous, err := i.findBookByNormalizedTitle(ctx, authorID, title)
+	match, ambiguous, err := i.findBookByNormalizedTitle(ctx, authorID, title, nil)
 	if err != nil || ambiguous || match == nil {
 		return nil, err
 	}
