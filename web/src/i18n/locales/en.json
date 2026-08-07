@@ -217,6 +217,46 @@
       "failed": "Bulk {{action}} failed: {{error}}",
       "selectAll": "Select all",
       "deselectAll": "Deselect all"
+    },
+    "booksHeading": "Books",
+    "filteredCount": "{{shown}} of {{total}}",
+    "groupBySeries": "Group by series",
+    "showFlatList": "Show flat list",
+    "stats": {
+      "books": "Books",
+      "inLibrary": "In library",
+      "wanted": "Wanted",
+      "audiobooks": "Audiobooks"
+    },
+    "actions": {
+      "searchWanted": "Search {{count}} wanted",
+      "searchWantedNone": "No wanted books to search",
+      "searching": "Searching…",
+      "refresh": "Refresh",
+      "refreshing": "Refreshing…",
+      "edit": "Edit",
+      "editHint": "Edit quality, metadata, and root folder",
+      "renameFiles": "Rename files",
+      "renameFilesHint": "Move this author’s files to match the current naming template",
+      "merge": "Merge…",
+      "mergeHint": "Merge another author into this one",
+      "delete": "Delete"
+    },
+    "filters": {
+      "type": "Type",
+      "status": "Status",
+      "published": "Published",
+      "allTypes": "All types",
+      "allStatuses": "All statuses",
+      "allPublished": "Any date",
+      "released": "Released",
+      "upcoming": "Upcoming",
+      "status_wanted": "Wanted",
+      "status_downloading": "Downloading",
+      "status_downloaded": "Downloaded",
+      "status_imported": "Imported",
+      "status_skipped": "Skipped",
+      "status_excluded": "Excluded"
     }
   },
   "books": {

@@ -136,14 +136,19 @@ describe('AuthorDetailPage', () => {
     // at the server's default page of 100.
     expect(api.listAllBooks).toHaveBeenCalledWith({ authorId: 42, includeExcluded: false })
     expect(screen.getByText('Book 150')).toBeInTheDocument()
-    expect(screen.getByText(/150 books/)).toBeInTheDocument()
+    // The run-on stats sentence is now a four-cell strip; the total lives in
+    // the "Books" cell rather than in prose.
+    expect(screen.getByTestId('author-stats')).toHaveTextContent('Books150')
   })
 
-  it('passes includeExcluded through to the fetch-all when Show excluded is toggled', async () => {
+  // "Show excluded" folded into the status select — it is a status like any
+  // other, and as a loose checkbox it read as belonging to whichever chip group
+  // it happened to wrap beside.
+  it('passes includeExcluded through to the fetch-all when Excluded status is picked', async () => {
     renderAuthorDetailPage([makeBook({ id: 1, title: 'Visible Book', status: 'imported' })], 'table')
 
     await screen.findByText('Visible Book')
-    fireEvent.click(screen.getByRole('checkbox', { name: /Show excluded/i }))
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'excluded' } })
 
     await waitFor(() =>
       expect(api.listAllBooks).toHaveBeenCalledWith({ authorId: 42, includeExcluded: true }))
@@ -239,7 +244,7 @@ describe('AuthorDetailPage', () => {
       makeBook({ id: 11, title: 'Imported Book', status: 'imported' }),
     ])
 
-    const button = await screen.findByRole('button', { name: 'Search all wanted' })
+    const button = await screen.findByRole('button', { name: 'Search 1 wanted' })
     expect(button).toBeEnabled()
 
     fireEvent.click(button)
@@ -253,7 +258,7 @@ describe('AuthorDetailPage', () => {
       makeBook({ id: 11, title: 'Imported Book', status: 'imported' }),
     ])
 
-    const button = await screen.findByRole('button', { name: 'Search all wanted' })
+    const button = await screen.findByRole('button', { name: 'Search 0 wanted' })
     expect(button).toBeDisabled()
 
     fireEvent.click(button)
@@ -269,7 +274,8 @@ describe('AuthorDetailPage', () => {
       metadataProvider: 'audiobookshelf',
     })
 
-    expect(await screen.findByRole('button', { name: 'Link metadata' })).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: /More/ }))
+    expect(await screen.findByRole('menuitem', { name: 'Link metadata' })).toBeInTheDocument()
   })
 
   it('shows link metadata for calibre-provider authors with legacy IDs', async () => {
@@ -284,7 +290,8 @@ describe('AuthorDetailPage', () => {
       averageRating: 4.1,
     })
 
-    expect(await screen.findByRole('button', { name: 'Link metadata' })).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: /More/ }))
+    expect(await screen.findByRole('menuitem', { name: 'Link metadata' })).toBeInTheDocument()
   })
 
   it('shows find-better metadata for linked sparse authors and relinks a selected candidate', async () => {
@@ -313,7 +320,8 @@ describe('AuthorDetailPage', () => {
 
     renderAuthorDetailPage([], 'grid', sparseAuthor)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Find better metadata' }))
+    fireEvent.click(await screen.findByRole('button', { name: /More/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Find better metadata' }))
 
     await waitFor(() => expect(api.searchAuthorLinkCandidates).toHaveBeenCalledWith(42, 'Emilia Jae'))
     expect(await screen.findByText('Hardcover')).toBeInTheDocument()
@@ -548,7 +556,7 @@ describe('AuthorDetailPage', () => {
     await screen.findByText('Genuinely Wanted')
 
     // Apply the Wanted status filter.
-    fireEvent.click(screen.getByRole('button', { name: 'Wanted' }))
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'wanted' } })
 
     // Monitored wanted book stays; unmonitored "wanted" and imported drop out.
     expect(screen.getByText('Genuinely Wanted')).toBeInTheDocument()
@@ -574,19 +582,19 @@ describe('AuthorDetailPage', () => {
 
     // Type: Ebook + Status: Imported must include the dual-format book whose
     // ebook is on disk — the aggregate 'wanted' used to hide it.
-    fireEvent.click(screen.getByRole('button', { name: '📖 Ebook' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Imported' }))
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'ebook' } })
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'imported' } })
     expect(screen.getByText('Dual Ebook Done')).toBeInTheDocument()
     expect(screen.getByText('Plain Ebook Imported')).toBeInTheDocument()
     expect(screen.queryByText('Plain Ebook Wanted')).not.toBeInTheDocument()
 
     // And its ebook is NOT wanted anymore, so the Wanted chip must drop it.
-    fireEvent.click(screen.getByRole('button', { name: 'Wanted' }))
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'wanted' } })
     expect(screen.queryByText('Dual Ebook Done')).not.toBeInTheDocument()
     expect(screen.getByText('Plain Ebook Wanted')).toBeInTheDocument()
 
     // The reverse direction: the audiobook side of the same book IS wanted.
-    fireEvent.click(screen.getByRole('button', { name: '🎧 Audiobook' }))
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'audiobook' } })
     expect(screen.getByText('Dual Ebook Done')).toBeInTheDocument()
     expect(screen.queryByText('Plain Ebook Wanted')).not.toBeInTheDocument()
   })
@@ -602,12 +610,12 @@ describe('AuthorDetailPage', () => {
     )
     await screen.findByText('Both Formats')
 
-    fireEvent.click(screen.getByRole('button', { name: '📖 Ebook' }))
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'ebook' } })
     expect(screen.getByText('Both Formats')).toBeInTheDocument()
     expect(screen.getByText('Ebook Only')).toBeInTheDocument()
     expect(screen.queryByText('Audio Only')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '🎧 Audiobook' }))
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'audiobook' } })
     expect(screen.getByText('Both Formats')).toBeInTheDocument()
     expect(screen.queryByText('Ebook Only')).not.toBeInTheDocument()
     expect(screen.getByText('Audio Only')).toBeInTheDocument()
@@ -636,7 +644,7 @@ describe('AuthorDetailPage', () => {
 
     // Now narrow to just the wanted book and Select all again: selection must
     // cover only the filtered (displayed) book, not the hidden imported one.
-    fireEvent.click(screen.getByRole('button', { name: 'Wanted' }))
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'wanted' } })
     expect(screen.queryByText('Imported Book')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Select all' }))
@@ -711,5 +719,91 @@ describe('AuthorDetailPage', () => {
     // Toggling back returns to the flat list (headings gone).
     fireEvent.click(screen.getByRole('switch', { name: 'Show flat list' }))
     await waitFor(() => expect(screen.queryByRole('heading', { name: /Mistborn/ })).not.toBeInTheDocument())
+  })
+})
+
+describe('AuthorDetailPage — toolbar and stats', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    installLocalStorageMock()
+    vi.mocked(api.listAuthorSeries).mockResolvedValue([])
+  })
+
+  it('offers every StatusFilter value, including the two the chips never exposed', async () => {
+    renderAuthorDetailPage([makeBook({ id: 1, title: 'A', status: 'imported' })])
+    const select = await screen.findByLabelText('Status')
+    const values = within(select).getAllByRole('option').map(o => (o as HTMLOptionElement).value)
+    // downloading and skipped have been in the StatusFilter type all along but
+    // the chip row only ever offered wanted/downloaded/imported.
+    expect(values).toEqual(['', 'wanted', 'downloading', 'downloaded', 'imported', 'skipped', 'excluded'])
+  })
+
+  it('filters to downloading, a status the chips never offered', async () => {
+    renderAuthorDetailPage([
+      makeBook({ id: 1, title: 'Grabbing Book', status: 'downloading' }),
+      makeBook({ id: 2, title: 'Shelved Book', status: 'imported' }),
+    ])
+    // Grid cards draw the title twice for a coverless book — once in the card
+    // heading and once inside the aria-hidden CoverPlaceholder — so query the
+    // heading rather than the raw text.
+    await screen.findByRole('heading', { name: 'Grabbing Book' })
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'downloading' } })
+    expect(screen.getByRole('heading', { name: 'Grabbing Book' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Shelved Book' })).toBeNull()
+  })
+
+  it('persists the status filter across remounts', async () => {
+    const { unmount } = renderAuthorDetailPage([makeBook({ id: 1, title: 'A', status: 'imported' })])
+    await screen.findByLabelText('Status')
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'skipped' } })
+    unmount()
+
+    renderAuthorDetailPage([makeBook({ id: 1, title: 'A', status: 'imported' })])
+    expect(await screen.findByLabelText('Status')).toHaveValue('skipped')
+  })
+
+  it('keeps all four stat cells when a count is zero', async () => {
+    // The audiobook count used to disappear at zero, changing the row's shape
+    // from one author to the next.
+    renderAuthorDetailPage([makeBook({ id: 1, title: 'Only Ebook', status: 'imported' })])
+    const stats = await screen.findByTestId('author-stats')
+    for (const label of ['Books', 'In library', 'Wanted', 'Audiobooks']) {
+      expect(within(stats).getByText(label)).toBeInTheDocument()
+    }
+    expect(within(stats).getByText('Audiobooks').parentElement).toHaveTextContent('0')
+  })
+
+  it('puts the wanted count in the primary action label', async () => {
+    renderAuthorDetailPage([
+      makeBook({ id: 1, title: 'W1', status: 'wanted' }),
+      makeBook({ id: 2, title: 'W2', status: 'wanted' }),
+    ])
+    expect(await screen.findByRole('button', { name: 'Search 2 wanted' })).toBeInTheDocument()
+  })
+
+  it('holds the long-tail actions in the More menu', async () => {
+    renderAuthorDetailPage([])
+    // Off the row until opened…
+    expect(screen.queryByRole('button', { name: 'Rename files' })).toBeNull()
+    fireEvent.click(await screen.findByRole('button', { name: /More/ }))
+    for (const label of ['Rename files', 'Merge…', 'Delete']) {
+      expect(screen.getByRole('menuitem', { name: label })).toBeInTheDocument()
+    }
+  })
+
+  it('navigates client-side from a table row, without a full page load', async () => {
+    let seen = ''
+    renderAuthorDetailPage(
+      [makeBook({ id: 7, title: 'Row Book', status: 'imported' })],
+      'table',
+      {},
+      '/author/42',
+      loc => { seen = loc },
+    )
+    await screen.findByText('Row Book')
+    // The row used window.location.href while the <Link> inside it routed
+    // client-side — same row, two behaviours.
+    fireEvent.click(rowForTitle('Row Book'))
+    await waitFor(() => expect(seen).toBe('/book/7'))
   })
 })
