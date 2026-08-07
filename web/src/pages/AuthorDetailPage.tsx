@@ -624,22 +624,27 @@ export default function AuthorDetailPage() {
             {/* Fixed height. The badge row and the year are both variable, so
                 cards in the same row used to end at different heights and the
                 grid went ragged. */}
-            <div className="p-2 h-[68px] flex flex-col">
+            <div className="p-2 h-[72px] flex flex-col">
               <h4 className="text-xs font-medium truncate" title={book.title}>{book.title}</h4>
-              <div className="flex items-center gap-1 mt-1 flex-wrap overflow-hidden">
+              {/* nowrap, not wrap: at a fixed height a wrapped second badge row
+                  would be clipped through the middle of a badge. Overflowing
+                  sideways instead cuts a badge at the card edge, which at least
+                  reads as "there is more here". Three badges plus a long
+                  translated status label is the case that overflows. */}
+              <div className="flex items-center gap-1 mt-1 flex-nowrap overflow-hidden">
                 {(() => {
                   const badge = bookStatusBadge(book.status, book.monitored, t)
                   return (
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${badge.colorClass}`}>
+                    <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ${badge.colorClass}`}>
                       {badge.label}
                     </span>
                   )
                 })()}
                 {book.mediaType === 'audiobook' && (
-                  <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">🎧 Audio</span>
+                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">🎧 Audio</span>
                 )}
                 {book.excluded && (
-                  <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">Excluded</span>
+                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">Excluded</span>
                 )}
               </div>
               {/* No `book.releaseDate &&` guard: fmtPublishedYear already
