@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/vavallee/bindery/internal/bookhydrate"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/models"
@@ -24,6 +25,7 @@ type ListSyncer struct {
 
 	tokenSource   func(context.Context) string
 	clientFactory hardcoverClientFactory
+	enricher      bookhydrate.AudiobookEnricher
 }
 
 type hardcoverClient interface {
@@ -61,6 +63,15 @@ func (s *ListSyncer) WithSeriesRepo(repo *db.SeriesRepo) *ListSyncer {
 		return s
 	}
 	s.series = repo
+	return s
+}
+
+// WithAudiobookEnricher wires Audnex enrichment for list-synced books whose
+// ASIN arrived inline on the list response. Replaces the enrichment that
+// previously ran inside the per-book edition hydration (#1694): same trigger
+// condition (a promoted ASIN on an audio-typed book), no edition fetch.
+func (s *ListSyncer) WithAudiobookEnricher(enricher bookhydrate.AudiobookEnricher) *ListSyncer {
+	s.enricher = enricher
 	return s
 }
 
@@ -254,6 +265,19 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 			continue
 		}
 		slog.Info("imported book from hardcover list", "title", book.Title, "author_id", authorID)
+
+		// The list response can carry an audiobook ASIN inline (#1694). When
+		// it does, run the same Audnex enrichment the per-book edition
+		// hydration used to trigger on ASIN promotion — narrator, refined
+		// duration, summary — then persist. Failures are logged and skipped:
+		// enrichment is best-effort and must not block the import loop.
+		if s.enricher != nil && book.ASIN != "" {
+			if err := s.enricher.EnrichAudiobook(ctx, &book); err != nil {
+				slog.Debug("audiobook enrichment skipped", "title", book.Title, "asin", book.ASIN, "error", err)
+			} else if err := s.books.Update(ctx, &book); err != nil {
+				slog.Warn("failed to persist enriched book", "title", book.Title, "error", err)
+			}
+		}
 
 		s.linkSeriesRefs(ctx, &book)
 	}

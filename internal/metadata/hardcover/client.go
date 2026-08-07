@@ -643,14 +643,29 @@ type hcBook struct {
 	// available without a per-book GetEditions round-trip (#1694). Empty for
 	// every other query.
 	AudioEditions []hcASINEdition `json:"editions"`
+	// DefaultEbookEdition / DefaultAudioEdition carry the language of the
+	// book's default editions for the same queries — the only inline source
+	// of language, since `books` has no language field of its own.
+	DefaultEbookEdition *hcEditionLanguage `json:"default_ebook_edition"`
+	DefaultAudioEdition *hcEditionLanguage `json:"default_audio_edition"`
 }
 
 // hcASINEdition is the trimmed edition shape the list/shelf queries inline to
-// carry an audiobook ASIN. Kept separate from hcEdition so the full edition
-// projection stays exclusive to GetEditions.
+// carry an audiobook ASIN and a language fallback. Kept separate from
+// hcEdition so the full edition projection stays exclusive to GetEditions.
+// The queries order by edition id so the promoted ASIN is stable across
+// syncs rather than dependent on server-side row order.
 type hcASINEdition struct {
-	ASIN          string `json:"asin"`
-	EditionFormat string `json:"edition_format"`
+	ASIN     string      `json:"asin"`
+	Language *hcLanguage `json:"language"`
+}
+
+// hcEditionLanguage carries just the language of a default-edition relation.
+// The `books` GraphQL type has no direct `language` field (confirmed against
+// the live API: selecting it fails validation), so list/shelf queries read it
+// off default_ebook_edition / default_audio_edition instead.
+type hcEditionLanguage struct {
+	Language *hcLanguage `json:"language"`
 }
 
 // hcBookSeries captures the Hardcover GraphQL `book_series` relation on a
@@ -1209,6 +1224,30 @@ func (c *Client) toBook(b hcBook) models.Book {
 		if asin := strings.ToUpper(strings.TrimSpace(e.ASIN)); asin != "" {
 			bk.ASIN = asin
 			break
+		}
+	}
+	// Fill Language from the inline edition relations when the book itself
+	// carried none (list/shelf queries — `books` has no language field).
+	// Preference: default ebook edition → default audio edition → any inline
+	// audio edition. An empty Language is "unknown" to IsLanguageAllowed and
+	// can silently drop the book under UnknownLanguageBehavior == fail, which
+	// is why losing this on list sync mattered (#1694 review).
+	if bk.Language == "" {
+		candidates := []*hcLanguage{}
+		if b.DefaultEbookEdition != nil {
+			candidates = append(candidates, b.DefaultEbookEdition.Language)
+		}
+		if b.DefaultAudioEdition != nil {
+			candidates = append(candidates, b.DefaultAudioEdition.Language)
+		}
+		for _, e := range b.AudioEditions {
+			candidates = append(candidates, e.Language)
+		}
+		for _, c := range candidates {
+			if lang := hardcoverLanguageName(c); lang != "" {
+				bk.Language = lang
+				break
+			}
 		}
 	}
 	if b.Image != nil {

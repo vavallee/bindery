@@ -1666,7 +1666,7 @@ func TestToBook_InlineAudioEditionSuppliesASIN(t *testing.T) {
 	t.Run("asin lifted from inline audio edition", func(t *testing.T) {
 		got := c.toBook(hcBook{
 			ID: 1, Title: "Inline", Slug: "inline",
-			AudioEditions: []hcASINEdition{{ASIN: "b09abc1234", EditionFormat: "Audible"}},
+			AudioEditions: []hcASINEdition{{ASIN: "b09abc1234"}},
 		})
 		// Normalized to upper case, matching the old promotion path.
 		if got.ASIN != "B09ABC1234" {
@@ -2125,7 +2125,7 @@ func TestGetListBooks_PositiveID(t *testing.T) {
 		_ = json.Unmarshal(body, &req)
 		gotVars = req.Variables
 		gotQuery = req.Query
-		resp := `{"data":{"list_books":[{"book":{"id":99,"title":"Dune","slug":"dune","contributions":[{"author":{"id":1,"name":"Frank Herbert","slug":"frank-herbert"}}]}}]}}`
+		resp := `{"data":{"list_books":[{"book":{"id":99,"title":"Dune","slug":"dune","default_ebook_edition":{"language":{"language":"English"}},"editions":[{"asin":"b09gxyzzz1"}],"contributions":[{"author":{"id":1,"name":"Frank Herbert","slug":"frank-herbert"}}]}}]}}`
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(resp)),
@@ -2140,6 +2140,26 @@ func TestGetListBooks_PositiveID(t *testing.T) {
 	}
 	if len(books) != 1 || books[0].Title != "Dune" {
 		t.Errorf("books = %+v, want [{Title:Dune}]", books)
+	}
+	// #1694 seam guard: the inline ASIN and language must survive the full
+	// query → JSON decode → toBook path, not just a hand-built hcBook. The
+	// filter fails silently (empty array, no error), so deleting the editions
+	// selection from the query must fail THESE assertions, not only unit
+	// tests that construct the struct directly.
+	if books[0].ASIN != "B09GXYZZZ1" {
+		t.Errorf("ASIN = %q, want B09GXYZZZ1 (decoded from inline editions, uppercased)", books[0].ASIN)
+	}
+	if books[0].Language != "eng" {
+		t.Errorf("Language = %q, want eng (decoded from the inline language selection and normalized to its ISO code — the form IsLanguageAllowed compares)", books[0].Language)
+	}
+	if !strings.Contains(gotQuery, `editions(`) || !strings.Contains(gotQuery, `reading_format: {format: {_eq: "Listened"}}`) {
+		t.Errorf("query must inline ASIN-bearing audio editions (#1694), got: %q", gotQuery)
+	}
+	if !strings.Contains(gotQuery, "order_by: {id: asc}") {
+		t.Errorf("editions selection must be ordered so the promoted ASIN is deterministic, got: %q", gotQuery)
+	}
+	if !strings.Contains(gotQuery, "default_ebook_edition { language { language } }") || !strings.Contains(gotQuery, "default_audio_edition { language { language } }") {
+		t.Errorf("query must select language via the default-edition relations (books has no language field; without it every list-synced book has unknown language and can be dropped by the language filter), got: %q", gotQuery)
 	}
 	if gotVars["id"] != float64(42) {
 		t.Errorf("id var = %v, want 42", gotVars["id"])
@@ -2164,6 +2184,47 @@ func TestGetListBooks_PositiveID(t *testing.T) {
 	}
 	if strings.Contains(gotQuery, "lists(where:") {
 		t.Errorf("query should not use nested lists field, got: %q", gotQuery)
+	}
+}
+
+// TestGetListBooks_BuiltinShelfInlinesASINAndLanguage is the shelf-side twin
+// of the seam assertions in TestGetListBooks_PositiveID: the built-in shelf
+// path uses a separate query string, so the #1694 editions/language
+// selections must be pinned there independently.
+func TestGetListBooks_BuiltinShelfInlinesASINAndLanguage(t *testing.T) {
+	var gotQuery string
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		var req gqlRequest
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &req)
+		gotQuery = req.Query
+		resp := `{"data":{"me":[{"user_books":[{"book":{"id":7,"title":"Shelf Book","slug":"shelf-book","editions":[{"asin":"b0shelf111","language":{"language":"Japanese"}}],"contributions":[{"author":{"id":1,"name":"Author","slug":"author"}}]}}]}]}}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(resp)),
+			Header:     make(http.Header),
+		}, nil
+	})
+	c = c.WithToken("hc-token")
+
+	books, err := c.GetListBooks(context.Background(), -1)
+	if err != nil {
+		t.Fatalf("GetListBooks shelf: %v", err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("book count = %d, want 1", len(books))
+	}
+	if books[0].ASIN != "B0SHELF111" {
+		t.Errorf("ASIN = %q, want B0SHELF111 (decoded from inline editions)", books[0].ASIN)
+	}
+	if books[0].Language != "jpn" {
+		t.Errorf("Language = %q, want jpn (decoded from the inline language selection, ISO-normalized)", books[0].Language)
+	}
+	if !strings.Contains(gotQuery, `reading_format: {format: {_eq: "Listened"}}`) || !strings.Contains(gotQuery, "order_by: {id: asc}") {
+		t.Errorf("shelf query must inline ordered ASIN-bearing audio editions (#1694), got: %q", gotQuery)
+	}
+	if !strings.Contains(gotQuery, "default_ebook_edition { language { language } }") {
+		t.Errorf("shelf query must select language via the default-edition relations (#1694), got: %q", gotQuery)
 	}
 }
 

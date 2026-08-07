@@ -1072,3 +1072,80 @@ func TestSync_UnpinnedListKeepsDerivedMediaTypeAndASIN(t *testing.T) {
 		t.Fatalf("GetEditions called %d times, want 0 (#1694)", client.getEditionsCalls)
 	}
 }
+
+// recordingEnricher implements bookhydrate.AudiobookEnricher and records the
+// ASINs it was invoked with, mutating the book the way Audnex enrichment does
+// so tests can assert the mutation is persisted.
+type recordingEnricher struct {
+	calls []string
+	fail  bool
+}
+
+func (r *recordingEnricher) EnrichAudiobook(_ context.Context, book *models.Book) error {
+	r.calls = append(r.calls, book.ASIN)
+	if r.fail {
+		return errors.New("audnex unavailable")
+	}
+	book.Narrator = "Recorded Narrator"
+	return nil
+}
+
+// TestSync_EnrichesWhenListSuppliesASIN covers the #1694 Audnex re-wire: a
+// list-synced book whose ASIN arrived inline must still get audiobook
+// enrichment (previously triggered inside edition hydration), and the
+// enriched fields must be persisted — all without any GetEditions call.
+func TestSync_EnrichesWhenListSuppliesASIN(t *testing.T) {
+	syncer, books, client, ctx := newHydrationSyncer(t, models.MediaTypeAudiobook, models.MediaTypeBoth)
+	enricher := &recordingEnricher{}
+	syncer.WithAudiobookEnricher(enricher)
+
+	if err := syncer.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(enricher.calls) != 1 || enricher.calls[0] != "B123PINNED" {
+		t.Fatalf("enricher calls = %v, want [B123PINNED]", enricher.calls)
+	}
+	book, err := books.GetByForeignID(ctx, "hc:pinned-book")
+	if err != nil || book == nil {
+		t.Fatalf("created book not found: %v", err)
+	}
+	if book.Narrator != "Recorded Narrator" {
+		t.Fatalf("Narrator = %q, want the enricher's mutation persisted", book.Narrator)
+	}
+	if client.getEditionsCalls != 0 {
+		t.Fatalf("GetEditions called %d times, want 0 — enrichment must not reintroduce the fan-out", client.getEditionsCalls)
+	}
+}
+
+// TestSync_EnricherFailureDoesNotBlockImport: enrichment is best-effort; an
+// Audnex outage must not fail the sync or lose the imported book.
+func TestSync_EnricherFailureDoesNotBlockImport(t *testing.T) {
+	syncer, books, _, ctx := newHydrationSyncer(t, models.MediaTypeAudiobook, models.MediaTypeBoth)
+	syncer.WithAudiobookEnricher(&recordingEnricher{fail: true})
+
+	if err := syncer.Sync(ctx); err != nil {
+		t.Fatalf("Sync must succeed despite enricher failure, got: %v", err)
+	}
+	book, err := books.GetByForeignID(ctx, "hc:pinned-book")
+	if err != nil || book == nil {
+		t.Fatalf("book must still be imported: %v", err)
+	}
+	if book.ASIN != "B123PINNED" {
+		t.Fatalf("ASIN = %q, want kept despite failed enrichment", book.ASIN)
+	}
+}
+
+// TestSync_NoEnrichmentWithoutASIN: an ebook-pinned list clears the ASIN
+// (#1732), so the enricher must never fire for it.
+func TestSync_NoEnrichmentWithoutASIN(t *testing.T) {
+	syncer, _, _, ctx := newHydrationSyncer(t, models.MediaTypeEbook, models.MediaTypeBoth)
+	enricher := &recordingEnricher{}
+	syncer.WithAudiobookEnricher(enricher)
+
+	if err := syncer.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(enricher.calls) != 0 {
+		t.Fatalf("enricher calls = %v, want none for an ebook-pinned book", enricher.calls)
+	}
+}
