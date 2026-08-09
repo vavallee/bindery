@@ -24,13 +24,13 @@ on:
         default: '7'
 
 permissions:
-  pull-requests: write   # list + dedupe label; no checkout, so no contents access needed
+  pull-requests: write   # list PRs + apply the dedupe label
+  issues: write          # create the dedupe label if it has gone missing
 
 jobs:
   backstop:
     name: Catch missed external PRs
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
@@ -40,15 +40,23 @@ jobs:
       - name: Notify and label any missed external PRs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          # PR notifications go to #pr-feed, not the user-facing #releases
+          # channel. Falls back to the release webhook until DISCORD_PR_WEBHOOK
+          # is set, so this workflow keeps working across the split.
+          WEBHOOK: ${{ secrets.DISCORD_PR_WEBHOOK || secrets.DISCORD_RELEASE_WEBHOOK }}
           MAINTAINER_ID: ${{ vars.DISCORD_MAINTAINER_ID }}
           REPO: ${{ github.repository }}
           REPO_OWNER: ${{ github.repository_owner }}
           LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days || '7' }}
         run: |
           set -euo pipefail
+
+          # Self-heal the dedupe key before relying on it.
+          gh label create bindery-notified --repo "$REPO" \
+            --description "Discord notification already sent for this PR" \
+            --color ededed 2>/dev/null || true
           if [ -z "$WEBHOOK" ]; then
-            echo "::warning::DISCORD_RELEASE_WEBHOOK not set; nothing to do"
+            echo "::warning::no Discord PR webhook configured; nothing to do"
             exit 0
           fi
 
@@ -106,8 +114,9 @@ jobs:
               -X POST -H "Content-Type: application/json" \
               -d "$PAYLOAD" "$WEBHOOK") || HTTP=000
             if [ "$HTTP" = "204" ]; then
-              gh pr edit "$num" --repo "$REPO" --add-label bindery-notified || \
-                echo "::warning::failed to add label to #${num}; will retry on next tick"
+              # NOT best-effort. This is the only dedupe key; a post we cannot
+              # record is a post we will make again in 15 minutes, forever.
+              gh pr edit "$num" --repo "$REPO" --add-label bindery-notified
               POSTED=$((POSTED+1))
             else
               echo "::warning::Discord returned HTTP ${HTTP} for PR #${num}; will retry on next tick"
@@ -115,3 +124,12 @@ jobs:
           done
 
           echo "Posted ${POSTED} backstop notifications"
+
+          # A backstop is meant to catch the occasional miss. Catching several
+          # in one tick means the event-driven path or the dedupe is broken,
+          # and the next tick will do it again.
+          if [ "$POSTED" -gt 3 ]; then
+            echo "::error::backstop posted ${POSTED} notifications in a single run;" \
+                 "the event-driven workflow or the bindery-notified label is broken"
+            exit 1
+          fi

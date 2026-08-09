@@ -26,7 +26,8 @@ on:
     types: [opened, ready_for_review]
 
 permissions:
-  pull-requests: write   # dedupe label; everything else (incl. contents) defaults to none
+  pull-requests: write   # apply the dedupe label
+  issues: write          # create the dedupe label if it has gone missing
 
 jobs:
   notify:
@@ -47,7 +48,9 @@ jobs:
       - name: Post to Discord
         id: post
         env:
-          WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          # PR notifications go to #pr-feed, not #releases. Falls back to the
+          # release webhook until DISCORD_PR_WEBHOOK is set.
+          WEBHOOK: ${{ secrets.DISCORD_PR_WEBHOOK || secrets.DISCORD_RELEASE_WEBHOOK }}
           # Optional: a Discord user ID to @mention so the maintainer gets a real
           # ping (a plain channel post is easy to miss). Stored as a repo variable
           # rather than hardcoded so the ID isn't baked into this public file and
@@ -60,7 +63,7 @@ jobs:
           PR_DRAFT: ${{ github.event.pull_request.draft }}
         run: |
           if [ -z "$WEBHOOK" ]; then
-            echo "::warning::DISCORD_RELEASE_WEBHOOK not set; skipping"
+            echo "::warning::no Discord PR webhook configured; skipping"
             echo "posted=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -102,8 +105,15 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
-          # Best-effort: a missing label permission must not fail the job
-          # (the backstop will see no label and try again, which is fine
-          # because Discord requests at this volume are essentially free).
-          gh pr edit "$PR_NUMBER" --add-label bindery-notified --repo "$REPO" || \
-            echo "::warning::failed to add bindery-notified label (the cron backstop will retry)"
+          set -euo pipefail
+          # Self-heal: the label going missing (deleted, or never created in a
+          # fork) is the failure mode that turns the backstop into a ping loop.
+          gh label create bindery-notified --repo "$REPO" \
+            --description "Discord notification already sent for this PR" \
+            --color ededed 2>/dev/null || true
+
+          # NOT best-effort. This label is the backstop's only dedupe key: if we
+          # posted but failed to record it, the backstop re-posts every 15
+          # minutes forever. Fail loudly so it gets fixed rather than accruing
+          # silently in a channel nobody reads.
+          gh pr edit "$PR_NUMBER" --add-label bindery-notified --repo "$REPO"
