@@ -4376,9 +4376,11 @@ func TestAddBook_ExistingAuthorDirectInsertWhenSyncSkipsWork(t *testing.T) {
 
 	ctx := context.Background()
 	// The author is already in the library, added long before this request.
+	const ownerID = 7
 	author := &models.Author{
 		ForeignID: "OL23919A", Name: "J. K. Rowling", SortName: "Rowling, J. K.",
 		MetadataProvider: "openlibrary", Monitored: true,
+		OwnerUserID: ownerID,
 	}
 	if err := authorRepo.Create(ctx, author); err != nil {
 		t.Fatal(err)
@@ -4453,8 +4455,10 @@ func TestAddBook_ExistingAuthorDirectInsertWhenSyncSkipsWork(t *testing.T) {
 		t.Errorf("explicit media type should win, got %q", got.MediaType)
 	}
 	// Tenancy (#1457): the direct-inserted row inherits the author's owner.
-	if got.OwnerUserID != author.OwnerUserID {
-		t.Errorf("book owner = %d, want the author's owner %d", got.OwnerUserID, author.OwnerUserID)
+	// Assert against the literal ownerID (not author.OwnerUserID) so a zero
+	// author owner cannot make this pass vacuously.
+	if got.OwnerUserID != ownerID {
+		t.Errorf("book owner = %d, want %d (inherited from the author)", got.OwnerUserID, ownerID)
 	}
 
 	// The explicit add must not resurrect anything the user did NOT pick:
