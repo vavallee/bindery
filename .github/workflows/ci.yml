@@ -618,6 +618,20 @@ jobs:
           FILE_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}?ref=${DEPLOY_BRANCH}" --jq .sha)
           CONTENT=$(gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}?ref=${DEPLOY_BRANCH}" \
             --jq '.content' | base64 -d | sed "s|tag:.*|tag: \"${IMAGE_TAG}\"|" | base64 -w0)
+
+          # Keep Chart.yaml's appVersion in step with the deployed tag. It sat
+          # frozen (1.22.3 vs tag 1.30.0) because only values.yaml was bumped
+          # here — anyone reading `helm show chart` got a stale answer.
+          CHART_PATH="charts/bindery/Chart.yaml"
+          CHART_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/contents/${CHART_PATH}?ref=${DEPLOY_BRANCH}" --jq .sha)
+          CHART_CONTENT=$(gh api "repos/${GITHUB_REPOSITORY}/contents/${CHART_PATH}?ref=${DEPLOY_BRANCH}" \
+            --jq '.content' | base64 -d | sed "s|^appVersion:.*|appVersion: \"${IMAGE_TAG}\"|" | base64 -w0)
+          gh api "repos/${GITHUB_REPOSITORY}/contents/${CHART_PATH}" \
+            -X PUT \
+            -f message="chore(deploy): appVersion ${IMAGE_TAG}" \
+            -f content="${CHART_CONTENT}" \
+            -f sha="${CHART_SHA}" \
+            -f branch="${DEPLOY_BRANCH}"
           # NOTE: the branch commit deliberately does NOT carry [skip ci]. The
           # required checks (lint, validate, Security Summary) must actually run
           # on the PR head, otherwise they stay "expected" forever and the merge
