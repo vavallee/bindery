@@ -9,6 +9,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import Logo from './components/Logo'
 import SetupBanner from './components/SetupBanner'
 import VersionBadge from './components/VersionBadge'
+import WhatsNewToast from './components/WhatsNewToast'
 import { useTheme } from './theme'
 
 // Route-scoped error boundary: a render crash in one page shows an inline error
@@ -243,6 +244,7 @@ function Shell() {
       </header>
 
       {isAdmin && <SetupBanner />}
+      <WhatsNewToast version={version} />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <Suspense fallback={<PageLoadingFallback />}>
