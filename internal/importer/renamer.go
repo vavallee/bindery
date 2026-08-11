@@ -473,7 +473,23 @@ var ErrDestInsideSource = errors.New("destination is inside the source directory
 // dirContains reports whether p is lexically nested strictly inside dir. Purely
 // path-based (the destination normally does not exist yet), matching how the
 // rest of the importer reasons about containment.
+//
+// Compared case-insensitively as well as exactly, because the filesystem
+// underneath decides what "same directory" means and we cannot see it from
+// here: on APFS or a Windows bind mount, /library/Author and /library/author
+// are one directory, and a case-only difference between source and destination
+// would otherwise slip past into the runaway this guard exists to stop. The
+// cost of the extra check on a case-sensitive filesystem is refusing a move
+// between two genuinely distinct directories whose paths differ only in case —
+// a pathological library layout, and refusing it is the safe direction.
 func dirContains(dir, p string) bool {
+	if containsExact(dir, p) {
+		return true
+	}
+	return containsExact(strings.ToLower(dir), strings.ToLower(p))
+}
+
+func containsExact(dir, p string) bool {
 	rel, err := filepath.Rel(filepath.Clean(dir), filepath.Clean(p))
 	if err != nil || rel == "." {
 		return false
@@ -603,6 +619,15 @@ func HardlinkDir(src, dst string) error {
 	}
 	if _, err := os.Stat(dst); err == nil {
 		return fmt.Errorf("destination already exists: %s", dst)
+	}
+	// Same hazard as the copy path (#1809): hardlinkDirRooted MkdirAlls the
+	// destination and then walks the source, so a destination nested inside the
+	// source would descend into the tree it is creating and recurse until the
+	// inode table or the path length gives out. Not reachable from reorganize —
+	// that path never hardlinks — but the primitive is exported and the guard
+	// costs one comparison.
+	if dirContains(src, dst) {
+		return fmt.Errorf("%w: %s is inside %s", ErrDestInsideSource, dst, src)
 	}
 	if err := os.MkdirAll(dst, 0o750); err != nil {
 		return fmt.Errorf("create dest dir: %w", err)

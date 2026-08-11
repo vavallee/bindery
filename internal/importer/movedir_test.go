@@ -74,3 +74,53 @@ func mustWrite(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+// hardlinkDirRooted MkdirAlls the destination and then walks the source, so a
+// nested destination recurses into the tree it is creating — the same hazard as
+// the copy path (#1809). Unreachable from reorganize, which never hardlinks,
+// but HardlinkDir is exported.
+func TestHardlinkDirRefusesDstInsideSrc(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "book.m4b"), []byte("data"), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	dst := filepath.Join(src, "Series", "Title")
+
+	err := HardlinkDir(src, dst)
+	if !errors.Is(err, ErrDestInsideSource) {
+		t.Fatalf("HardlinkDir err = %v, want ErrDestInsideSource", err)
+	}
+	// Nothing created: the guard runs before MkdirAll.
+	if _, statErr := os.Stat(filepath.Join(src, "Series")); !os.IsNotExist(statErr) {
+		t.Error("the refused hardlink still created a directory inside the source")
+	}
+	if _, statErr := os.Stat(filepath.Join(src, "book.m4b")); statErr != nil {
+		t.Errorf("source content disturbed: %v", statErr)
+	}
+}
+
+// The filesystem decides what "same directory" means and dirContains cannot see
+// it. On a case-insensitive volume /library/Author and /library/author are one
+// directory, so a case-only difference must still be refused — otherwise the
+// guard is bypassed by nothing more than a template that lowercases.
+func TestDirContainsIsCaseInsensitiveToo(t *testing.T) {
+	for _, tc := range []struct {
+		name, dir, p string
+		want         bool
+	}{
+		{"exact nesting", "/library/Author", "/library/Author/Series/Title", true},
+		{"case-only difference", "/library/Author", "/library/author/Series/Title", true},
+		{"upper vs lower root", "/Library/AUTHOR", "/library/author/Title", true},
+		{"same dir is not containment", "/library/Author", "/library/Author", false},
+		{"sibling", "/library/Author", "/library/Authors", false},
+		{"sibling differing in case only", "/library/Author", "/library/AUTHORS", false},
+		{"parent", "/library/Author/Book", "/library/Author", false},
+		{"unrelated", "/library/A", "/other/B", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := dirContains(tc.dir, tc.p); got != tc.want {
+				t.Errorf("dirContains(%q, %q) = %v, want %v", tc.dir, tc.p, got, tc.want)
+			}
+		})
+	}
+}
