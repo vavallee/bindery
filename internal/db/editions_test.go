@@ -7,6 +7,57 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
+func TestEditionRepo_GetByID(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+
+	authorRepo := NewAuthorRepo(database)
+	bookRepo := NewBookRepo(database)
+	a := &models.Author{ForeignID: "OL-GET-ED-A", Name: "A", SortName: "A", MetadataProvider: "openlibrary", Monitored: true}
+	if err := authorRepo.Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	b := &models.Book{
+		ForeignID: "OL-GET-ED-B", AuthorID: a.ID, Title: "Book", SortTitle: "Book",
+		Status: "wanted", Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := bookRepo.Create(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := NewEditionRepo(database)
+	ed := &models.Edition{
+		ForeignID: "calibre:42:EPUB", BookID: b.ID, Title: "Named Edition",
+		Format: "EPUB", Language: "eng", IsEbook: true, Monitored: true,
+	}
+	if err := repo.Upsert(ctx, ed); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.GetByID(ctx, ed.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected edition, got nil")
+	}
+	if got.ID != ed.ID || got.BookID != b.ID || got.Title != "Named Edition" || got.Format != "EPUB" {
+		t.Fatalf("unexpected edition: %+v", got)
+	}
+
+	missing, err := repo.GetByID(ctx, ed.ID+1000)
+	if err != nil {
+		t.Fatalf("GetByID missing: %v", err)
+	}
+	if missing != nil {
+		t.Fatalf("expected nil for missing edition, got %+v", missing)
+	}
+}
+
 func TestEditionRepo_UpsertInsertAndUpdate(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {

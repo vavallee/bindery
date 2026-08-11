@@ -642,16 +642,11 @@ func rollbackDisplayName(ctx context.Context, books *db.BookRepo, authors *db.Au
 		if editions == nil {
 			return ""
 		}
-		eds, err := editions.ListByBook(ctx, 0)
-		if err != nil {
+		e, err := editions.GetByID(ctx, entity.LocalID)
+		if err != nil || e == nil {
 			return ""
 		}
-		for _, e := range eds {
-			if e.ID == entity.LocalID {
-				return strings.TrimSpace(e.Title)
-			}
-		}
-		return ""
+		return strings.TrimSpace(e.Title)
 	default:
 		return ""
 	}

@@ -26,12 +26,31 @@ func NewEditionRepo(db *sql.DB) *EditionRepo {
 	return &EditionRepo{db: db, exec: db}
 }
 
-// WithTx returns a clone of this repo with its tx-aware methods (Delete)
-// routed through tx. See dbExecutor for the rationale.
+// WithTx returns a clone of this repo with its tx-aware methods routed through
+// tx. See dbExecutor for the rationale.
 func (r *EditionRepo) WithTx(tx *sql.Tx) *EditionRepo {
 	clone := *r
 	clone.exec = tx
 	return &clone
+}
+
+// GetByID returns the edition with the given local database ID. It uses the
+// repository executor so callers inside a transaction read through that same
+// transaction rather than waiting on the single database connection.
+func (r *EditionRepo) GetByID(ctx context.Context, id int64) (*models.Edition, error) {
+	row := r.exec.QueryRowContext(ctx, `
+		SELECT id, foreign_id, book_id, title, isbn_13, isbn_10, asin, publisher,
+		       publish_date, format, num_pages, language, image_url, is_ebook,
+		       edition_info, monitored, created_at, updated_at
+		FROM editions WHERE id = ?`, id)
+	e, err := scanEditionFrom(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get edition %d: %w", id, err)
+	}
+	return &e, nil
 }
 
 // GetByForeignID returns the edition keyed by its globally-unique foreign

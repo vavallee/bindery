@@ -139,6 +139,7 @@ func TestImporter_PreviewRollback_ReturnsExpectedActions(t *testing.T) {
 	}
 	// Preview must touch deletes for created authors/books/editions.
 	var sawAuthorDelete, sawBookDelete, sawEditionDelete bool
+	editionNames := make(map[string]bool)
 	for _, a := range preview.Actions {
 		switch {
 		case a.Action == "delete_author" && a.EntityType == entityTypeAuthor:
@@ -147,10 +148,16 @@ func TestImporter_PreviewRollback_ReturnsExpectedActions(t *testing.T) {
 			sawBookDelete = true
 		case a.Action == "delete_edition" && a.EntityType == entityTypeEdition:
 			sawEditionDelete = true
+			editionNames[a.DisplayName] = true
 		}
 	}
 	if !sawAuthorDelete || !sawBookDelete || !sawEditionDelete {
 		t.Errorf("missing planned actions: author=%v book=%v edition=%v", sawAuthorDelete, sawBookDelete, sawEditionDelete)
+	}
+	for _, want := range []string{"Book Ten", "Book Eleven"} {
+		if !editionNames[want] {
+			t.Errorf("missing edition display name %q; got %v", want, editionNames)
+		}
 	}
 }
 
