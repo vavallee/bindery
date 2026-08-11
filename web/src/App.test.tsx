@@ -103,6 +103,34 @@ describe('App auth routes', () => {
   })
 })
 
+describe('App — /authors alias', () => {
+  // Authors is served from "/" because it was the first page that existed.
+  // Every nav entry added later got a real path, so "/authors" matched no route
+  // — and with no catch-all it rendered the chrome around an empty <main>, a
+  // blank page rather than a 404. Reported by a user who guessed the URL from
+  // the pattern the other pages follow.
+  it('lands on the authors page instead of rendering nothing', async () => {
+    window.history.pushState(null, '', '/authors')
+
+    renderShell()
+
+    expect(await screen.findByTestId('page-authors')).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/')
+  })
+
+  // Guards the failure the alias fixes: a path with no route and no catch-all
+  // renders the shell with nothing inside it. If someone later removes the
+  // alias, this is the shape the regression takes.
+  it('still renders the shell chrome around an unrouted path', () => {
+    window.history.pushState(null, '', '/definitely-not-a-route')
+
+    renderShell()
+
+    expect(screen.queryByTestId('page-authors')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('page-books')).not.toBeInTheDocument()
+  })
+})
+
 describe('Shell — desktop navigation', () => {
   it('renders all 9 nav links in the desktop nav bar', () => {
     renderShell()

@@ -251,6 +251,14 @@ function Shell() {
           <RoutedErrorBoundary>
           <Routes>
             <Route path="/" element={<AuthorsPage />} />
+            {/* Authors has always been served from "/" because it was the first
+                page that existed; every nav entry added since (/books, /import,
+                /settings, ...) got a real path. "/authors" therefore matched
+                nothing, and with no catch-all route it rendered the chrome
+                around an empty <main> — a blank page rather than a 404. Alias it
+                to the canonical "/" the same way /blocklist aliases into
+                settings, so a guessed or bookmarked URL lands somewhere. */}
+            <Route path="/authors" element={<Navigate to="/" replace />} />
             <Route path="/author/:id" element={<AuthorDetailPage />} />
             <Route path="/books" element={<BooksPage />} />
             <Route path="/book/:id" element={<BookDetailPage />} />

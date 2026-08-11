@@ -144,6 +144,15 @@ export default function BooksPage() {
 
   // SortableHeader renders a clickable <th> with an ▲/▼ affordance when its
   // column is the active sort. asc/desc are the whitelisted keys for the column.
+  //
+  // The affordance matters more than it looks. Tailwind v4's Preflight does not
+  // give <button> a pointer cursor (v3 did), so without cursor-pointer these
+  // headers were clickable but indistinguishable from plain text: no cursor
+  // change, and the ▲/▼ only renders once a column is already the active sort.
+  // A user reading the Sort toolbar above the table — which offers only title
+  // and date — reasonably concluded type and status could not be sorted at all,
+  // when in fact both have worked since v1.28.0. AuthorDetailPage's sortable
+  // header already carried cursor-pointer select-none; this matches it.
   const SortableHeader = ({ label, asc, desc, className = '' }: { label: string; asc: SortMode; desc: SortMode; className?: string }) => {
     const active = sort === asc || sort === desc
     const arrow = sort === asc ? ' ▲' : sort === desc ? ' ▼' : ''
@@ -153,9 +162,13 @@ export default function BooksPage() {
           type="button"
           onClick={() => toggleSort(asc, desc)}
           aria-label={label}
-          className={`inline-flex items-center gap-0.5 uppercase transition-colors ${active ? 'text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'}`}
+          title={t('books.sortByColumn', { column: label, defaultValue: 'Sort by {{column}}' })}
+          className={`inline-flex items-center gap-0.5 uppercase transition-colors cursor-pointer select-none ${active ? 'text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'}`}
         >
-          {label}<span aria-hidden="true">{arrow}</span>
+          {label}
+          {active
+            ? <span aria-hidden="true">{arrow}</span>
+            : <span aria-hidden="true" className="opacity-40">↕</span>}
         </button>
       </th>
     )

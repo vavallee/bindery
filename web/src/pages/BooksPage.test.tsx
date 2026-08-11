@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { MemoryRouter } from 'react-router'
@@ -177,5 +177,81 @@ describe('BooksPage', () => {
     expect(consoleError).toHaveBeenCalled()
 
     consoleError.mockRestore()
+  })
+})
+
+// Column-header sorting on the Books table. Reported by a user on v1.30.1 as
+// "book titles are sortable by published date but not type or status" — the
+// sort works and has since v1.28.0 (#1349), but nothing on screen said so:
+// the Sort toolbar above the table lists only title and date, Tailwind v4's
+// Preflight gives <button> no pointer cursor, and the ▲/▼ marker only appeared
+// on the column already being sorted. An unsorted Type header was therefore
+// indistinguishable from plain text.
+describe('BooksPage — sortable column headers', () => {
+  beforeEach(() => {
+    // The table view is where the headers live; the page defaults to grid.
+    localStorage.setItem('bindery.view.books', 'table')
+  })
+
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  it('sorts by type and status from the column headers, not just title and date', async () => {
+    const sorts: string[] = []
+    server.use(
+      http.get(apiUrl('/book'), ({ request }) => {
+        sorts.push(new URL(request.url).searchParams.get('sort') ?? '')
+        return HttpResponse.json({
+          items: [makeBook({ id: 1, title: 'Dune' })],
+          total: 1,
+          limit: 50,
+          offset: 0,
+        })
+      }),
+    )
+
+    renderBooksPage()
+    await screen.findByRole('button', { name: 'Type' })
+
+    // Re-query before every click. SortableHeader is declared inside the
+    // component body, so each render produces a new component identity and
+    // React remounts the header cells — a node captured before a click is
+    // detached by the time the next one lands.
+    const click = (name: string) =>
+      fireEvent.click(screen.getByRole('button', { name }))
+
+    click('Type')
+    await waitFor(() => expect(sorts).toContain('type-az'))
+    // A second click on the same column flips the direction.
+    click('Type')
+    await waitFor(() => expect(sorts).toContain('type-za'))
+
+    click('Status')
+    await waitFor(() => expect(sorts).toContain('status-az'))
+  })
+
+  it('marks every sortable header as clickable, not only the active one', async () => {
+    server.use(
+      http.get(apiUrl('/book'), () =>
+        HttpResponse.json({
+          items: [makeBook({ id: 1, title: 'Dune' })],
+          total: 1,
+          limit: 50,
+          offset: 0,
+        }),
+      ),
+    )
+
+    renderBooksPage()
+
+    // Title is the default sort, so it is the active column; Type and Status
+    // are inactive. All three must still look interactive — that inactive
+    // columns looked inert is the whole of the reported bug.
+    for (const name of ['Title', 'Type', 'Status']) {
+      const header = await screen.findByRole('button', { name })
+      expect(header.className).toContain('cursor-pointer')
+      expect(header).toHaveAttribute('title')
+    }
   })
 })
