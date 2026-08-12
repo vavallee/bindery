@@ -115,6 +115,18 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 			mu.Unlock()
 			continue
 		}
+		// An indexer that told us to come back later is reported as skipped
+		// rather than silently omitted, so the panel that showed the original
+		// rate-limit error also shows why it is no longer being queried
+		// (#1934).
+		if reason, held := s.cooldownActive(idx); held {
+			entry.Skipped = true
+			entry.SkipReason = reason
+			mu.Lock()
+			perIdx = append(perIdx, entry)
+			mu.Unlock()
+			continue
+		}
 
 		wg.Add(1)
 		go func(idx models.Indexer, entry IndexerDebug) {
@@ -129,6 +141,7 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 			entry.DurationMs = time.Since(start).Milliseconds()
 			if err != nil {
 				entry.Error = err.Error()
+				s.noteIndexerError(idx, err)
 				slog.Warn("indexer search failed", "indexer", idx.Name, "error", err)
 				mu.Lock()
 				perIdx = append(perIdx, entry)

@@ -42,6 +42,11 @@ type Searcher struct {
 	// cache that respects their factory.
 	cacheOnce sync.Once
 	cache     *clientCache
+
+	// cooldowns holds the indexers that have answered a search with a
+	// rate-limit rejection, so we stop asking until the deadline they gave
+	// us passes (#1934). The zero value is ready to use.
+	cooldowns indexerCooldowns
 }
 
 // NewSearcher creates a new multi-indexer searcher.
@@ -250,6 +255,10 @@ func (s *Searcher) SearchBook(ctx context.Context, indexers []models.Indexer, c 
 		if !idx.Enabled {
 			continue
 		}
+		if reason, held := s.cooldownActive(idx); held {
+			slog.Debug("skipping indexer in rate-limit cooldown", "indexer", idx.Name, "reason", reason)
+			continue
+		}
 		wg.Add(1)
 		go func(idx models.Indexer) {
 			defer wg.Done()
@@ -258,6 +267,7 @@ func (s *Searcher) SearchBook(ctx context.Context, indexers []models.Indexer, c 
 			cats := filterCategoriesForMedia(idx.Categories, c.MediaType, idx.IncludeParentCategories)
 			hits, err := client.BookSearch(ctx, c.Title, c.Author, cats)
 			if err != nil {
+				s.noteIndexerError(idx, err)
 				slog.Warn("indexer search failed", "indexer", idx.Name, "error", err)
 				return
 			}
@@ -316,6 +326,10 @@ func (s *Searcher) SearchQuery(ctx context.Context, indexers []models.Indexer, q
 		if !idx.Enabled {
 			continue
 		}
+		if reason, held := s.cooldownActive(idx); held {
+			slog.Debug("skipping indexer in rate-limit cooldown", "indexer", idx.Name, "reason", reason)
+			continue
+		}
 		wg.Add(1)
 		go func(idx models.Indexer) {
 			defer wg.Done()
@@ -323,6 +337,7 @@ func (s *Searcher) SearchQuery(ctx context.Context, indexers []models.Indexer, q
 			client := s.makeClient(idx.URL, idx.APIKey)
 			hits, err := client.Search(ctx, query, idx.Categories)
 			if err != nil {
+				s.noteIndexerError(idx, err)
 				slog.Warn("indexer search failed", "indexer", idx.Name, "error", err)
 				return
 			}
