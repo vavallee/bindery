@@ -359,7 +359,8 @@
       "bookImported": "Book Imported",
       "bookFileDeleted": "File Deleted",
       "bookRenamed": "File Renamed",
-      "bookRebound": "Rebound"
+      "bookRebound": "Rebound",
+      "bookLanguageCorrected": "Language Corrected"
     },
     "empty": "No history events found",
     "colEvent": "Event",

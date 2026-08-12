@@ -86,4 +86,10 @@ const (
 	HistoryEventDownloadStalled      = "downloadStalled"
 	HistoryEventDownloadRequeued     = "downloadRequeued"
 	HistoryEventBookRebound          = "bookRebound"
+	// HistoryEventBookLanguageCorrected records that an imported EPUB's
+	// embedded dc:language disagreed with the language the metadata provider
+	// supplied, and the file's value was adopted (#1933). Data carries "from"
+	// and "to". Only emitted on a disagreement — filling a language the
+	// catalogue never had is not a correction.
+	HistoryEventBookLanguageCorrected = "bookLanguageCorrected"
 )

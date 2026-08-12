@@ -566,6 +566,56 @@ func (s *Scanner) createHistoryEvent(ctx context.Context, eventType string, sour
 	}
 }
 
+// applyEmbeddedLanguage reconciles the language recorded for a book with the
+// one embedded in the EPUB just imported for it.
+//
+// Precedence is user > file > provider. A user's own edit locks the field and
+// the caller never even opens the EPUB. Otherwise the file wins: a provider
+// describes an abstract *work* whose editions exist in many languages, while
+// the file on disk is one specific edition and is the thing the user opens.
+// Before #1933 the provider won unconditionally, so a Spanish EPUB imported
+// against an English OpenLibrary record displayed "English" indefinitely, with
+// the release name buried in a history row the only hint otherwise.
+//
+// detected is expected already normalised to ISO 639-2/B (ReadEpubMetadata does
+// this); book.Language is normalised here before comparing because provider
+// values arrive in both two- and three-letter forms (#1729).
+//
+// Best-effort throughout: a persistence failure is logged and leaves the
+// existing value alone rather than failing an import that otherwise succeeded.
+func (s *Scanner) applyEmbeddedLanguage(ctx context.Context, book *models.Book, detected, sourceTitle string) {
+	if book == nil || detected == "" {
+		return
+	}
+	previous := models.NormalizeLanguageCode(book.Language)
+	if previous == detected {
+		return
+	}
+	if err := s.books.SetLanguage(ctx, book.ID, detected); err != nil {
+		slog.Warn("failed to persist EPUB-detected language", "bookID", book.ID, "language", detected, "error", err)
+		return
+	}
+	book.Language = detected
+
+	if previous == "" {
+		// The catalogue had nothing; this is the #1160 backfill, and there is
+		// no disagreement to report.
+		slog.Info("filled book language from embedded EPUB metadata", "bookID", book.ID, "language", detected)
+		return
+	}
+	// A genuine disagreement means the file is not the edition the catalogue
+	// described. That is worth a history row: it is the answer to "why does my
+	// English book read as Spanish", and the language field alone cannot say
+	// that it was ever wrong.
+	slog.Info("corrected book language from embedded EPUB metadata",
+		"bookID", book.ID, "from", previous, "to", detected)
+	bookID := book.ID
+	s.createHistoryEvent(ctx, models.HistoryEventBookLanguageCorrected, sourceTitle, &bookID, map[string]string{
+		"from": previous,
+		"to":   detected,
+	})
+}
+
 func (s *Scanner) markDownloadFailed(ctx context.Context, dl *models.Download, message string) {
 	s.setDownloadError(ctx, dl.ID, message)
 	s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, map[string]string{"guid": dl.GUID, "message": message})
@@ -1181,11 +1231,18 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// RemoveAll-ing the whole download path (issue #705 finding 4).
 	var importedSrcFiles []string
 	// detectedLang holds a language read from an embedded EPUB dc:language, used
-	// to backfill an empty book language after the loop (#1160). Captured inside
-	// the loop because move mode consumes the source file on commit, so it must
-	// be read while srcFile still exists.
+	// after the loop to fill or correct the book's language (#1160, #1933).
+	// Captured inside the loop because move mode consumes the source file on
+	// commit, so it must be read while srcFile still exists.
+	//
+	// The tag is read on every import, not only when the catalogue left the
+	// field empty. A provider describes a *work*, which has editions in many
+	// languages; the file on disk is one specific edition, so when they
+	// disagree the file is the one telling the truth (#1933). Only a user's own
+	// edit outranks it, and that locks the field — in which case the EPUB is
+	// not opened at all.
 	var detectedLang string
-	fillLanguage := book != nil && book.Language == "" && !book.IsFieldLocked(models.BookFieldLanguage)
+	readLanguage := book != nil && !book.IsFieldLocked(models.BookFieldLanguage)
 	// Resolve the ebook destination root and (auto) placement mode once: the
 	// root is stable for this author across the loop, and choosing hardlink-vs-
 	// copy against it rather than s.libraryDir avoids a cross-device hardlink
@@ -1203,7 +1260,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// Read the embedded EPUB language while the source is still present
 		// (move mode deletes it on commit). Only when we actually intend to
 		// backfill, so we never open the zip needlessly.
-		if fillLanguage && detectedLang == "" && IsEpubFile(srcFile) {
+		if readLanguage && detectedLang == "" && IsEpubFile(srcFile) {
 			if meta, err := ReadEpubMetadata(srcFile); err == nil && meta.Language != "" {
 				detectedLang = meta.Language
 			}
@@ -1296,18 +1353,11 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		s.createHistoryEvent(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, map[string]string{"path": destPath, "format": models.MediaTypeEbook})
 	}
 
-	// Backfill the book's language from the embedded EPUB dc:language when the
-	// catalogue left it empty (#1160). Providers frequently have no work-level
-	// language (OpenLibrary especially), so an imported file is often the most
-	// reliable source. Best-effort: gated on an empty, unlocked field and at
-	// least one imported file; a persistence error just leaves it empty.
-	if fillLanguage && imported > 0 && detectedLang != "" {
-		if err := s.books.SetLanguage(ctx, book.ID, detectedLang); err != nil {
-			slog.Warn("failed to persist EPUB-detected language", "bookID", book.ID, "language", detectedLang, "error", err)
-		} else {
-			slog.Info("filled book language from embedded EPUB metadata", "bookID", book.ID, "language", detectedLang)
-			book.Language = detectedLang
-		}
+	// Reconcile the book's language with the file that just landed (#1160,
+	// #1933). Gated on at least one imported file: a failed import must not
+	// rewrite the catalogue from a file that is not in the library.
+	if readLanguage && imported > 0 && detectedLang != "" {
+		s.applyEmbeddedLanguage(ctx, book, detectedLang, dl.Title)
 	}
 
 	// If every file failed to copy/move, the destination is likely not writable —

@@ -16,6 +16,9 @@ const EVENT_TYPE_COLORS: Record<string, string> = {
   renamed: 'bg-purple-500/20 text-purple-400',
   ignored: 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400',
   bookFileRenamed: 'bg-purple-500/20 text-purple-400',
+  // Amber rather than green: the import worked, but the file turned out not to
+  // be the edition the catalogue described, which is worth a second look.
+  bookLanguageCorrected: 'bg-amber-500/20 text-amber-600 dark:text-amber-400',
 }
 
 // humanizeEventType turns a camelCase event enum into a Title Case fallback
@@ -36,6 +39,18 @@ function formatDate(s: string) {
 function parseEventData(data: string): { message?: string; path?: string; size?: number; [k: string]: unknown } {
   if (!data) return {}
   try { return JSON.parse(data) } catch { return {} }
+}
+
+// Detail line shown under the source title. Most events carry a `message` or a
+// `path`; a language correction carries `from`/`to` ISO codes, which only mean
+// anything shown together.
+function eventDetail(type: string, parsed: ReturnType<typeof parseEventData>): string {
+  if (type === 'bookLanguageCorrected') {
+    const from = typeof parsed.from === 'string' ? parsed.from : ''
+    const to = typeof parsed.to === 'string' ? parsed.to : ''
+    if (from && to) return `${from} → ${to}`
+  }
+  return parsed.message || parsed.path || ''
 }
 
 function formatSize(n: number): string {
@@ -74,6 +89,7 @@ const KNOWN_EVENT_TYPES = [
   'downloadStalled',
   'downloadRequeued',
   'bookRebound',
+  'bookLanguageCorrected',
 ]
 
 export default function HistoryPage() {
@@ -177,7 +193,7 @@ export default function HistoryPage() {
                 <tbody className="divide-y divide-slate-200 dark:divide-zinc-800">
                   {events.map(event => {
                     const parsed = parseEventData(event.data)
-                    const detail = parsed.message || parsed.path || ''
+                    const detail = eventDetail(event.eventType, parsed)
                     const isError = event.eventType === 'downloadFailed' || event.eventType === 'importFailed'
                     const size = typeof parsed.size === 'number' ? parsed.size : 0
                     const mt = detectMediaType(event.sourceTitle)
@@ -243,7 +259,7 @@ export default function HistoryPage() {
           <div className="sm:hidden space-y-2">
             {events.map(event => {
               const parsed = parseEventData(event.data)
-              const detail = parsed.message || parsed.path || ''
+              const detail = eventDetail(event.eventType, parsed)
               const isError = event.eventType === 'downloadFailed' || event.eventType === 'importFailed'
               const size = typeof parsed.size === 'number' ? parsed.size : 0
               const mt = detectMediaType(event.sourceTitle)
