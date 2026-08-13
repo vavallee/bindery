@@ -1702,6 +1702,102 @@ func TestSeriesFillReusesCrossProviderAuthorAndExistingBook(t *testing.T) {
 	}
 }
 
+// TestSeriesFillPrefersExactTitleOverOmnibusOnScoreTie is the regression
+// test for the live-observed bug where Fill matched a box-set/omnibus title
+// to a catalog slot instead of the real single-book title it happened to
+// contain. TitleScore's PartialRatio/TokenSetRatio components score a
+// substring match as a perfect 100 — the same score an exact match gets —
+// so the omnibus and the real book tie. The book is created deliberately
+// BEFORE the omnibus does not exist here: the omnibus is created first (so
+// it gets the lower ID and would win under first-match-wins iteration
+// order, matching the real repro), then the exact match second. Fill must
+// still queue and link the real book, not the omnibus.
+func TestSeriesFillPrefersExactTitleOverOmnibusOnScoreTie(t *testing.T) {
+	catalog := stormlightCatalog()
+	searcher := newMockBookSearcher()
+	h, seriesRepo, authorRepo, bookRepo := seriesFixtureWithProvider(t, &stubSeriesProvider{
+		catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
+	}, searcher)
+	ctx := context.Background()
+	series := &models.Series{ForeignID: "ol-series:stormlight", Title: "The Stormlight Archive"}
+	if err := seriesRepo.Create(ctx, series); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.UpsertHardcoverLink(ctx, &models.SeriesHardcoverLink{
+		SeriesID:            series.ID,
+		HardcoverSeriesID:   catalog.ForeignID,
+		HardcoverProviderID: catalog.ProviderID,
+		HardcoverTitle:      catalog.Title,
+		HardcoverAuthorName: catalog.AuthorName,
+		HardcoverBookCount:  catalog.BookCount,
+		Confidence:          1,
+		LinkedBy:            "manual",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	author := &models.Author{
+		ForeignID:        "ol:brandon-sanderson",
+		Name:             "Brandon Sanderson",
+		SortName:         "Sanderson, Brandon",
+		MetadataProvider: "openlibrary",
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	// Created first so it has the lower ID, matching the real repro's
+	// iteration order.
+	omnibus := &models.Book{
+		ForeignID:        "ol:stormlight-boxed-set",
+		AuthorID:         author.ID,
+		Title:            "The Stormlight Archive Boxed Set: The Way of Kings, Words of Radiance, Oathbringer",
+		SortTitle:        "stormlight archive boxed set the way of kings words of radiance oathbringer",
+		Status:           models.BookStatusWanted,
+		Genres:           []string{},
+		MetadataProvider: "openlibrary",
+	}
+	if err := bookRepo.Create(ctx, omnibus); err != nil {
+		t.Fatal(err)
+	}
+	exactMatch := &models.Book{
+		ForeignID:        "ol:the-way-of-kings",
+		AuthorID:         author.ID,
+		Title:            "The Way of Kings",
+		SortTitle:        "The Way of Kings",
+		Status:           models.BookStatusWanted,
+		Genres:           []string{},
+		MetadataProvider: "openlibrary",
+	}
+	if err := bookRepo.Create(ctx, exactMatch); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.Fill(rec, withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/series/1/fill", nil), "id", strconv.FormatInt(series.ID, 10)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var response map[string]int
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response["queued"] != 1 {
+		t.Fatalf("expected exactly one queued book, got %+v", response)
+	}
+	queued := searcher.waitForCall(t, time.Second)
+	if queued.ID != exactMatch.ID {
+		t.Fatalf("expected the exact-title match (id=%d) to be queued, got id=%d title=%q",
+			exactMatch.ID, queued.ID, queued.Title)
+	}
+
+	books, err := seriesRepo.ListBooksInSeries(ctx, series.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 1 || books[0].ID != exactMatch.ID {
+		t.Fatalf("expected only the exact-title match linked to the series, got %+v", books)
+	}
+}
+
 func TestSeriesFillSkipsExcludedHardcoverForeignIDMatch(t *testing.T) {
 	catalog := stormlightCatalog()
 	searcher := newMockBookSearcher()

@@ -1384,7 +1384,10 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 	}
 	blockedByExcludedTitle := false
 	incomingTitle := firstNonEmpty(book.Title, catalogBook.Title)
-	for _, existing := range existingByTitle {
+	var best *models.Book
+	bestScore := 0
+	for i := range existingByTitle {
+		existing := &existingByTitle[i]
 		// Volume numbers veto the similarity score (#1682). Fuzzy title
 		// matching cannot separate the volumes of a light novel or manga
 		// series — they differ by one number in an otherwise identical string,
@@ -1396,14 +1399,36 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 		if seriesmatch.DifferentVolumes(existing.Title, incomingTitle) {
 			continue
 		}
-		if seriesmatch.TitleScore(existing.Title, incomingTitle) >= 92 {
-			if existing.Excluded {
-				blockedByExcludedTitle = true
-				continue
-			}
-			_, err := h.series.LinkBookIfMissing(ctx, series.ID, existing.ID, catalogBook.Position, true)
-			return &existing, err
+		score := seriesmatch.TitleScore(existing.Title, incomingTitle)
+		if score < 92 {
+			continue
 		}
+		if existing.Excluded {
+			blockedByExcludedTitle = true
+			continue
+		}
+		// Keep the best match seen so far, not the first one over the
+		// threshold. TitleScore's PartialRatio/TokenSetRatio components
+		// score a substring match as a perfect 100 regardless of how much
+		// surrounding text there is, so a box-set/omnibus title containing
+		// the target as a substring (e.g. "Boxed Set: ... Abaddon's Gate")
+		// ties an exact match ("Abaddon's Gate") at the same score —
+		// first-match-wins let the omnibus silently win that tie and get
+		// linked to a slot it doesn't actually satisfy, leaving the real
+		// book unmatched. Break ties by title-length closeness to the
+		// incoming title instead: an omnibus is always much longer than
+		// the single book it happens to contain, so this reliably prefers
+		// the real book without changing TitleScore itself (Audiobookshelf
+		// import depends on its current behavior elsewhere).
+		if best == nil || score > bestScore ||
+			(score == bestScore && titleLengthCloser(existing.Title, best.Title, incomingTitle)) {
+			bestScore = score
+			best = existing
+		}
+	}
+	if best != nil {
+		_, err := h.series.LinkBookIfMissing(ctx, series.ID, best.ID, catalogBook.Position, true)
+		return best, err
 	}
 	if blockedByExcludedTitle {
 		return nil, nil
@@ -1531,6 +1556,27 @@ func hardcoverAuthorFallbackID(name string) string {
 		key = "unknown"
 	}
 	return "hc-author:" + key
+}
+
+// titleLengthCloser reports whether candidate's title length is closer to
+// target's length than current's is. Used to break TitleScore ties in
+// ensureHardcoverCatalogBook: when a box-set/omnibus title and a real
+// single-book title score identically (TitleScore's substring-aware
+// components don't penalize surrounding text), the omnibus is reliably the
+// longer of the two, so preferring length-closeness to the target picks the
+// real book.
+func titleLengthCloser(candidate, current, target string) bool {
+	targetLen := len([]rune(target))
+	candidateDiff := absInt(len([]rune(candidate)) - targetLen)
+	currentDiff := absInt(len([]rune(current)) - targetLen)
+	return candidateDiff < currentDiff
+}
+
+func absInt(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 func firstNonEmpty(values ...string) string {
