@@ -1,6 +1,10 @@
 package downloader
 
-import "github.com/vavallee/bindery/internal/models"
+import (
+	"strings"
+
+	"github.com/vavallee/bindery/internal/models"
+)
 
 // ResolveCategory picks the correct download-client category/label for a given
 // media type. Audiobook downloads use CategoryAudiobook when it is non-empty;
@@ -14,6 +18,34 @@ func ResolveCategory(client *models.DownloadClient, mediaType string) string {
 		return client.CategoryAudiobook
 	}
 	return client.Category
+}
+
+// FormatForCategory is the partial inverse of ResolveCategory: given the
+// category a client reports for a torrent, it returns the media type that
+// category was grabbed under — models.MediaTypeEbook, models.MediaTypeAudiobook,
+// or "" when the category says nothing about the format.
+//
+// It answers only when the per-media-type category split is actually configured
+// (CategoryAudiobook set and distinct from Category). Without the split every
+// grab shares one category, so a match carries no format information, and a
+// torrent sitting under some third category (a cross-seed Bindery failed to
+// recategorise) is equally uninformative. Callers must treat "" as unknown
+// rather than guessing — see importer.isBookAlreadyImported (#1885).
+func FormatForCategory(client *models.DownloadClient, category string) string {
+	if client == nil || client.CategoryAudiobook == "" || client.CategoryAudiobook == client.Category {
+		return ""
+	}
+	got := strings.ToLower(strings.TrimSpace(category))
+	if got == "" {
+		return ""
+	}
+	switch got {
+	case strings.ToLower(client.CategoryAudiobook):
+		return models.MediaTypeAudiobook
+	case strings.ToLower(client.Category):
+		return models.MediaTypeEbook
+	}
+	return ""
 }
 
 // CategoriesToPoll returns the set of category strings GetTorrents/GetStalledIDs

@@ -728,9 +728,69 @@ func (s *Scanner) alreadyImportedFormat(ctx context.Context, book *models.Book, 
 	return false
 }
 
+// audioReleaseTokens and ebookReleaseTokens map the format token a release
+// title carries (parsed at grab time into Download.Quality by
+// indexer.ParseRelease) onto a media type. Duplicated from the indexer package
+// rather than imported so the importer stays free of indexer internals; keep in
+// sync with indexer.formatTokens / indexer.isAudiobookFormat.
+var (
+	audioReleaseTokens = map[string]bool{
+		"m4b": true, "m4a": true, "mp3": true, "flac": true, "ogg": true,
+		"opus": true, "aac": true,
+	}
+	ebookReleaseTokens = map[string]bool{
+		"epub": true, "azw3": true, "azw": true, "mobi": true, "pdf": true,
+		"djvu": true, "cbr": true, "cbz": true, "fb2": true, "lit": true,
+		"rtf": true, "txt": true,
+	}
+)
+
+// formatForReleaseToken maps a release format token ("epub", "m4b", …) to a
+// media type, or "" when the token is empty or unrecognised.
+func formatForReleaseToken(token string) string {
+	switch t := strings.ToLower(strings.TrimSpace(token)); {
+	case audioReleaseTokens[t]:
+		return models.MediaTypeAudiobook
+	case ebookReleaseTokens[t]:
+		return models.MediaTypeEbook
+	default:
+		return ""
+	}
+}
+
+// downloadFormat resolves which format SLOT of the book a download is working
+// toward — models.MediaTypeEbook, models.MediaTypeAudiobook, or "" when it
+// cannot be determined. Signals, strongest first:
+//
+//  1. an explicit caller hint (manual import, drop-folder hand-off): a human or
+//     an API caller declared the format outright, so it wins over inference;
+//  2. the book's own media type when the book is monitored for a SINGLE format
+//     — a download attached to an ebook-only book can only fill its ebook slot,
+//     whatever tokens the release title happens to carry;
+//  3. the format token parsed from the release title at grab time
+//     (Download.Quality, e.g. "epub" / "m4b"), which is the only per-download
+//     signal available for a media_type=both book.
+//
+// A dual-format book whose release title carried no usable token resolves to
+// "" — callers MUST treat that as "unknown", never as "either format" (#1885).
+func downloadFormat(dl *models.Download, book *models.Book, formatHint string) string {
+	if formatHint == models.MediaTypeEbook || formatHint == models.MediaTypeAudiobook {
+		return formatHint
+	}
+	if book != nil {
+		switch book.MediaType {
+		case models.MediaTypeEbook, models.MediaTypeAudiobook:
+			return book.MediaType
+		}
+	}
+	if dl != nil {
+		return formatForReleaseToken(dl.Quality)
+	}
+	return ""
+}
+
 // isBookAlreadyImported reports whether the book linked to dl already has an
-// on-disk file tracked in book_files, scoped to the format(s) the book is
-// monitored for.
+// on-disk file tracked in book_files FOR THE FORMAT THIS DOWNLOAD TARGETS.
 //
 // It is used as a guard for duplicate-add re-grabs (#769): when a torrent is
 // re-grabbed after qBittorrent already holds it (409 response), the original
@@ -739,14 +799,17 @@ func (s *Scanner) alreadyImportedFormat(ctx context.Context, book *models.Book, 
 // book files found" and burning through the retry budget, the caller can check
 // this and mark the Download StateImported directly.
 //
-// Scoping: the check is limited to the format(s) the book is configured for
-// (book.MediaType). For single-format books (ebook or audiobook) this avoids
-// falsely marking a fresh download as imported when only the other format
-// already exists. For dual-format books (MediaTypeBoth) the Download record
-// does not carry which format this particular grab targets, so both formats
-// are checked; a re-grab of one format where only the other is on disk is
-// an accepted narrow false-positive in that case.
-func (s *Scanner) isBookAlreadyImported(ctx context.Context, dl *models.Download) bool {
+// Scoping (#1885): each title holds independent ebook/audiobook slots with
+// separate pipelines, so an import of one format must never satisfy a pending
+// download of the other. The download's format is resolved by downloadFormat;
+// only that format's slot is consulted. When the format cannot be determined —
+// a media_type=both book whose release title carried no format token — this
+// returns false rather than accepting either format. Being wrong in that
+// direction costs a bounded retry cycle ending in a visible StateImportBlocked;
+// being wrong the other way silently marks a still-downloading grab as imported
+// and abandons the format with no signal to the operator, which is exactly what
+// #1885 reported (an audiobook import closing out the pending ebook).
+func (s *Scanner) isBookAlreadyImported(ctx context.Context, dl *models.Download, formatHint string) bool {
 	if dl.BookID == nil {
 		return false
 	}
@@ -754,15 +817,13 @@ func (s *Scanner) isBookAlreadyImported(ctx context.Context, dl *models.Download
 	if err != nil || book == nil {
 		return false
 	}
-	switch book.MediaType {
-	case models.MediaTypeEbook:
-		return s.alreadyImportedFormat(ctx, book, models.MediaTypeEbook)
-	case models.MediaTypeAudiobook:
-		return s.alreadyImportedFormat(ctx, book, models.MediaTypeAudiobook)
-	default: // MediaTypeBoth or unknown
-		return s.alreadyImportedFormat(ctx, book, models.MediaTypeAudiobook) ||
-			s.alreadyImportedFormat(ctx, book, models.MediaTypeEbook)
+	format := downloadFormat(dl, book, formatHint)
+	if format == "" {
+		slog.Debug("already-in-library check skipped: cannot tell which format this download targets",
+			"title", dl.Title, "bookID", book.ID, "mediaType", book.MediaType, "quality", dl.Quality)
+		return false
 	}
+	return s.alreadyImportedFormat(ctx, book, format)
 }
 
 // alreadyImportedPath reports whether the exact destination path is already
@@ -876,8 +937,10 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// covers the case where a torrent was re-grabbed after its files were moved
 		// to the library by a prior Bindery import (move mode): the download path is
 		// empty but the book is already on disk. Marking it StateImported avoids
-		// spurious failure noise and retry churn (#769).
-		if s.isBookAlreadyImported(ctx, dl) {
+		// spurious failure noise and retry churn (#769). The check is scoped to
+		// THIS download's format (#1885) — a freshly imported audiobook must not
+		// close out the still-downloading ebook of the same title.
+		if s.isBookAlreadyImported(ctx, dl, formatHint) {
 			slog.Info("no book files at download path but book already in library — marking as imported",
 				"title", dl.Title, "path", downloadPath)
 			// Currently at StateImportPending (set at the top of this function).
