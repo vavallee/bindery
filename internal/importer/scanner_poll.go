@@ -58,6 +58,10 @@ func (s *Scanner) checkSABnzbdDownloads(ctx context.Context, client *models.Down
 			} else if dl.Status == models.StateImportFailed && dl.ImportRetryCount < importRetryLimit {
 				// Bug #7: retry a previously failed import.
 				localPath := s.remapDownloadClientPath(client, slot.Path)
+				if !importSourcePresent(localPath, nil) {
+					s.skipImportRetry(dl, localPath)
+					continue
+				}
 				slog.Info("retrying failed import", "title", dl.Title, "path", localPath,
 					"attempt", dl.ImportRetryCount+1, "limit", importRetryLimit)
 				if err := s.downloads.IncrementImportRetryCount(ctx, dl.ID); err != nil {
@@ -124,6 +128,10 @@ func (s *Scanner) checkNZBGetDownloads(ctx context.Context, client *models.Downl
 			} else if dl.Status == models.StateImportFailed && dl.ImportRetryCount < importRetryLimit {
 				// Bug #7: retry a previously failed import.
 				localPath := s.remapDownloadClientPath(client, item.DestDir)
+				if !importSourcePresent(localPath, nil) {
+					s.skipImportRetry(dl, localPath)
+					continue
+				}
 				slog.Info("retrying failed import", "title", dl.Title, "path", localPath,
 					"attempt", dl.ImportRetryCount+1, "limit", importRetryLimit)
 				if err := s.downloads.IncrementImportRetryCount(ctx, dl.ID); err != nil {
@@ -260,6 +268,10 @@ func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models
 			// Bug #7: retry a previously failed import.
 			downloadPath := s.remapDownloadClientPath(client, torrent.DownloadDir)
 			bookFiles := s.transmissionFilesFor(ctx, trans, client, torrent)
+			if !importSourcePresent(downloadPath, bookFiles) {
+				s.skipImportRetry(&dl, downloadPath)
+				continue
+			}
 			slog.Info("retrying failed import", "title", dl.Title, "path", downloadPath,
 				"attempt", dl.ImportRetryCount+1, "limit", importRetryLimit, "files", len(bookFiles))
 			if err := s.downloads.IncrementImportRetryCount(ctx, dl.ID); err != nil {
@@ -287,6 +299,87 @@ func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models
 	s.blockStaleImportFailures(ctx, seenSourceIDs, client.Category == "", func(d models.Download) bool {
 		return d.DownloadClientID != nil && *d.DownloadClientID == client.ID
 	})
+}
+
+// qbitPayloadNotInPlaceStates are the qBittorrent states in which the torrent's
+// payload is provably NOT sitting complete at its final save path, whatever the
+// other fields say. Each is a state qBittorrent only reports while it is still
+// working towards the payload:
+//
+//   - downloading / forcedDL / stalledDL / queuedDL / checkingDL / pausedDL /
+//     stoppedDL — the *DL family means bytes are still outstanding;
+//   - metaDL / forcedMetaDL — a magnet whose metadata has not arrived, so there
+//     is not even a file list yet;
+//   - allocating / checkingResumeData — the torrent has been handed to
+//     libtorrent but not initialised;
+//   - moving — the payload is complete but qBittorrent is still relocating it.
+//     This is the tail of the temp/incomplete-directory flow: the final save
+//     path does not exist until the move lands.
+//
+// checkingUP is deliberately absent: that is a re-check of a torrent whose data
+// is already in place, and treating it as complete is long-standing behaviour.
+var qbitPayloadNotInPlaceStates = map[string]bool{
+	"downloading":        true,
+	"forceddl":           true,
+	"stalleddl":          true,
+	"queueddl":           true,
+	"checkingdl":         true,
+	"pauseddl":           true,
+	"stoppeddl":          true,
+	"metadl":             true,
+	"forcedmetadl":       true,
+	"allocating":         true,
+	"checkingresumedata": true,
+	"moving":             true,
+}
+
+// qbitCompletion classifies a qBittorrent torrent from its state, progress and
+// byte counters. complete means the payload is fully downloaded AND sitting at
+// its final save path, so an import may run against it; failed means
+// qBittorrent has errored the torrent.
+//
+// Negative signals are evaluated FIRST and win outright. That ordering is the
+// #1884 fix: the previous check was a bare OR of positive signals, so ANY one
+// of them flipped a torrent to "complete" with nothing to corroborate it. A
+// torrent that has only just been added reports progress 1.0 for a moment
+// (libtorrent's is_seed() is trivially true before the piece picker exists),
+// which is how an import fired 0.15 s after the grab was sent, walked the final
+// save path — still empty, because qBittorrent was downloading into its
+// configured temp/incomplete directory — and burned the whole retry budget in
+// under a minute while the torrent was healthy and downloading.
+//
+// The two negative signals:
+//
+//  1. qbitPayloadNotInPlaceStates — qBittorrent's own state machine saying the
+//     payload is not (yet) where the importer would look;
+//  2. amount_left > 0 — the client's byte counter saying bytes are outstanding.
+//     This is the authoritative "not done" fact and outranks progress, which is
+//     a display value that can lead the counters.
+//
+// missingFiles is deliberately NOT treated as failed: a torrent whose data was
+// moved into the library by a prior Bindery import legitimately reports that
+// state, and the caller's already-in-library check (#769) is what must resolve
+// it. What protects the importer there is that the file list and the content
+// path are both checked against the filesystem before anything is imported.
+func qbitCompletion(t qbittorrent.Torrent) (complete, failed bool) {
+	state := strings.ToLower(strings.TrimSpace(t.State))
+	if strings.Contains(state, "error") {
+		return false, true
+	}
+	if qbitPayloadNotInPlaceStates[state] || t.AmountLeft > 0 {
+		return false, false
+	}
+	// #969: qBittorrent reports a fully-downloaded torrent as
+	// {progress:1, amount_left:0, state:"stalledUP"|"uploading"|"pausedUP"|...}.
+	// Treat any of those signals as complete. amount_left==0 (with a known
+	// non-zero size) is the most reliable "all bytes present" indicator and
+	// catches states the substring checks miss (e.g. "queuedUP", "forcedUP").
+	complete = t.Progress >= 1.0 ||
+		(t.Size > 0 && t.AmountLeft == 0) ||
+		strings.Contains(state, "upload") ||
+		strings.Contains(state, "stalledup") ||
+		strings.Contains(state, "checkingup")
+	return complete, false
 }
 
 // checkQbittorrentDownloads polls qBittorrent for status changes.
@@ -437,18 +530,7 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 			continue
 		}
 
-		state := strings.ToLower(torrent.State)
-		// #969: qBittorrent reports a fully-downloaded torrent as
-		// {progress:1, amount_left:0, state:"stalledUP"|"uploading"|"pausedUP"|...}.
-		// Treat any of those signals as complete. amount_left==0 (with a known
-		// non-zero size) is the most reliable "all bytes present" indicator and
-		// catches states the substring checks miss (e.g. "queuedUP", "forcedUP").
-		isComplete := torrent.Progress >= 1.0 ||
-			(torrent.Size > 0 && torrent.AmountLeft == 0) ||
-			strings.Contains(state, "upload") ||
-			strings.Contains(state, "stalledup") ||
-			strings.Contains(state, "checkingup")
-		isFailed := strings.Contains(state, "error")
+		isComplete, isFailed := qbitCompletion(torrent)
 
 		slog.Debug("qbittorrent: torrent status",
 			"title", dl.Title,
@@ -550,6 +632,10 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 			}
 			downloadPath := s.remapDownloadClientPath(client, rawPath)
 			bookFiles := s.qbittorrentFilesFor(ctx, qb, client, torrent)
+			if !importSourcePresent(downloadPath, bookFiles) {
+				s.skipImportRetry(&dl, downloadPath)
+				continue
+			}
 			slog.Info("retrying failed import", "title", dl.Title, "path", downloadPath,
 				"attempt", dl.ImportRetryCount+1, "limit", importRetryLimit, "files", len(bookFiles))
 			if err := s.downloads.IncrementImportRetryCount(ctx, dl.ID); err != nil {
@@ -628,6 +714,10 @@ func (s *Scanner) checkDelugeDownloads(ctx context.Context, client *models.Downl
 			s.tryImportDeluge(ctx, &dl, downloadPath, bookFiles)
 		case isComplete && dl.Status == models.StateImportFailed && dl.ImportRetryCount < importRetryLimit:
 			downloadPath, bookFiles := s.delugeImportSources(ctx, dlc, client, t)
+			if !importSourcePresent(downloadPath, bookFiles) {
+				s.skipImportRetry(&dl, downloadPath)
+				continue
+			}
 			slog.Info("retrying failed import", "title", dl.Title, "path", downloadPath,
 				"attempt", dl.ImportRetryCount+1, "limit", importRetryLimit, "files", len(bookFiles))
 			if err := s.downloads.IncrementImportRetryCount(ctx, dl.ID); err != nil {

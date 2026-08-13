@@ -328,6 +328,8 @@ For qBittorrent, Bindery also sends a save path when submitting torrent grabs. I
 
 After fixing a path or category mismatch, use **Queue → Retry import** on an `importFailed` item. This is also the right action after manually moving the completed torrent in qBittorrent to a path Bindery can read. Bindery resets the import retry counter and imports from the existing completed download, so the release does not need to be grabbed or downloaded again.
 
+A remap is **not** needed just because a torrent's save path does not exist yet. With qBittorrent's temp/incomplete directory enabled (`Session\TempPathEnabled=true`), the final save path is only created when the download finishes and qBittorrent moves the payload out of the temp directory. Bindery waits for the download client to report the torrent complete and its payload in place before importing, and does not spend import retry attempts while there is nothing at the path — so a slow download is never terminally blocked for being slow.
+
 ## Handing off to another library tool (CWA, Calibre, Storyteller)
 
 If a separate tool manages your library, there are two distinct topologies. Pick by who owns the library directory.

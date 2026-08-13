@@ -196,7 +196,7 @@ func (s *Scanner) pushToCWA(ctx context.Context, srcPath string) {
 // and the external-mode drop handoff.
 func discoverBookFiles(downloadPath string, explicitFiles []string) []string {
 	if len(explicitFiles) > 0 {
-		return filterSymlinks(explicitFiles)
+		return filterImportableFiles(explicitFiles)
 	}
 	var bookFiles []string
 	if err := filepath.Walk(downloadPath, func(path string, info os.FileInfo, err error) error {
@@ -222,14 +222,38 @@ func discoverBookFiles(downloadPath string, explicitFiles []string) []string {
 	return bookFiles
 }
 
-// filterSymlinks drops any path that is a symlink (Lstat, so the link itself is
-// inspected, not its target). The download client's authoritative file list
-// (#903) can include a symlink a malicious release planted to point at an
-// arbitrary file; importing it would copy the target's bytes into the library.
-func filterSymlinks(paths []string) []string {
+// filterImportableFiles reduces a download client's authoritative file list
+// (#903) to the entries the importer may actually act on. Two entries are
+// dropped:
+//
+//   - symlinks (Lstat, so the link itself is inspected, not its target). A
+//     malicious release can plant a book-extension symlink pointing at an
+//     arbitrary file; importing it would copy the target's bytes into the
+//     library where the user can download them.
+//   - paths that are not on this host at all. The list describes what the
+//     TORRENT contains, not what is on disk: a torrent whose payload was moved
+//     into the library by a prior Bindery import (move mode) — or deleted with
+//     the book from the UI — still enumerates every file, and qBittorrent keeps
+//     reporting it at 100%. Passing those phantom paths through made the
+//     importer believe it had files to work with (#1955 logged `files=1` for a
+//     file that no longer existed), so it skipped the already-in-library and
+//     path-missing checks and failed deep inside the mover with an opaque
+//     message, three times, before terminally blocking the download.
+//
+// An Lstat error other than "not exist" (a permission problem on the parent
+// directory, say) also drops the entry: the import would fail on it anyway,
+// and reporting "no usable files at the download path" is more accurate than
+// pretending the file is available.
+func filterImportableFiles(paths []string) []string {
 	out := paths[:0:0]
 	for _, p := range paths {
-		if fi, err := os.Lstat(p); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		fi, err := os.Lstat(p)
+		if err != nil {
+			slog.Warn("skipping download-client file that is not present on this host",
+				"path", p, "error", err)
+			continue
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
 			slog.Warn("skipping symlinked file in download path", "path", p)
 			continue
 		}
