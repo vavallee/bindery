@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -152,6 +153,25 @@ func TestLogExport_RedactsSecrets(t *testing.T) {
 	}
 	if strings.Count(entries[0], "REDACTED") != 2 {
 		t.Errorf("expected both the message and the attr to be redacted: %q", entries[0])
+	}
+}
+
+// TestLogExport_RedactsTheFilterHeader — the echoed filters are operator
+// input, so they get the same treatment as log values: an apikey pasted into
+// the search box must not end up in the header of an issue attachment, and a
+// newline must not be able to forge log lines inside the comment block.
+func TestLogExport_RedactsTheFilterHeader(t *testing.T) {
+	h, _, repo := logHandlerWithDB(t)
+	insertDBEntry(t, repo, time.Now().UTC(), "INFO", "indexer", "nothing to see")
+
+	rec, _ := exportBody(t, h, "?q="+url.QueryEscape("https://idx.example/api?apikey=s3cr3tvalue\nINFO forged line"))
+
+	body := rec.Body.String()
+	if strings.Contains(body, "s3cr3tvalue") {
+		t.Errorf("search term leaked a secret into the header:\n%s", body)
+	}
+	if strings.Contains(body, "\nINFO forged line") {
+		t.Errorf("newline in the search term broke the header block:\n%s", body)
 	}
 }
 

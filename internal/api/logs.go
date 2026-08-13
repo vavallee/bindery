@@ -263,14 +263,18 @@ func (e *exportWriter) header(f db.LogFilter, maxRows int, source string) {
 	e.str("#\n")
 }
 
-// describeLogFilter renders the applied filters as a one-line summary.
+// describeLogFilter renders the applied filters as a one-line summary. The
+// operator-supplied values (component, search) go through exportValue like any
+// log value: an admin who pasted a URL with an apikey into the search box would
+// otherwise put it in the header of a file meant for a public issue, and a
+// newline in either would break the comment block into forged log lines.
 func describeLogFilter(f db.LogFilter) string {
 	var parts []string
 	if f.HasLevel {
 		parts = append(parts, "level>="+f.Level.String())
 	}
 	if f.Component != "" {
-		parts = append(parts, "component="+f.Component)
+		parts = append(parts, "component="+exportValue(f.Component))
 	}
 	if !f.FromTS.IsZero() {
 		parts = append(parts, "from="+f.FromTS.UTC().Format(time.RFC3339))
@@ -279,7 +283,7 @@ func describeLogFilter(f db.LogFilter) string {
 		parts = append(parts, "to="+f.ToTS.UTC().Format(time.RFC3339))
 	}
 	if f.Q != "" {
-		parts = append(parts, "q="+f.Q)
+		parts = append(parts, "q="+exportValue(f.Q))
 	}
 	if len(parts) == 0 {
 		return "none"
