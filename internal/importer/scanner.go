@@ -2402,7 +2402,29 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		}
 
 		if !matched {
-			slog.Debug("library scan: unmatched file", "path", path, "parsedTitle", parsed.Title, "parsedAuthor", parsed.Author)
+			// Record WHY the file didn't match. The UI used to tell every user
+			// with an all-unmatched scan to refresh the author's book catalogue,
+			// which is only ever right for one of these three cases (#1958).
+			reason := unmatchedReasonNoTitleMatch
+			authorSet, matchAuthor := resolveAuthors(parsed.Author, layoutAuthor)
+			if authorSet != nil {
+				if len(authorSet) == 0 {
+					reason = unmatchedReasonAuthorNotInLibrary
+				} else {
+					candidates := 0
+					for id := range authorSet {
+						candidates += len(booksByAuthor[id])
+					}
+					if candidates == 0 {
+						reason = unmatchedReasonNoCandidateBooks
+					}
+				}
+			}
+			// matchAuthor is the author string the matcher actually used — it
+			// differs from parsedAuthor when a #1956 fallback fired, which is
+			// exactly what a support log needs to show.
+			slog.Debug("library scan: unmatched file", "path", path, "parsedTitle", parsed.Title,
+				"parsedAuthor", parsed.Author, "matchAuthor", matchAuthor, "reason", reason)
 			unmatched++
 			// Collect up to 1000 unmatched entries for UI display
 			if len(unmatchedFiles) < 1000 {
@@ -2410,6 +2432,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 					Path:         path,
 					ParsedTitle:  parsed.Title,
 					ParsedAuthor: parsed.Author,
+					Reason:       reason,
 				})
 			}
 		}
@@ -2503,11 +2526,34 @@ func isReconcileCandidate(b *models.Book) bool {
 	return true
 }
 
+// Reasons a scanned file stayed unmatched, persisted with each unmatched entry
+// so the UI can give advice that fits the actual failure instead of always
+// blaming the author's book catalogue (#1958). These strings are a wire
+// contract with the frontend — add cases, don't rename them.
+const (
+	// unmatchedReasonAuthorNotInLibrary: the parsed author matched no author in
+	// the library at all, so no book could even be considered. The file's tags
+	// or folder name are the thing to look at — refreshing an author cannot
+	// help. This is the case that cost the #1958 reporter two weeks.
+	unmatchedReasonAuthorNotInLibrary = "author_not_in_library"
+	// unmatchedReasonNoCandidateBooks: the author matched, but has no book that
+	// the scan can attach a file to (no books at all, or every book already has
+	// its files on disk). Populating the author's catalogue is the right advice
+	// here — this is #875's case.
+	unmatchedReasonNoCandidateBooks = "no_candidate_books"
+	// unmatchedReasonNoTitleMatch: candidate books existed but no title cleared
+	// the fuzzy-match gate (or the file sits outside the author's library root).
+	unmatchedReasonNoTitleMatch = "no_title_match"
+)
+
 // unmatchedFile represents a file that could not be reconciled during library scan.
 type unmatchedFile struct {
 	Path         string `json:"path"`
 	ParsedTitle  string `json:"parsed_title"`
 	ParsedAuthor string `json:"parsed_author"`
+	// Reason is one of the unmatchedReason* constants. Omitted when empty so
+	// results written before this field existed keep parsing unchanged.
+	Reason string `json:"reason,omitempty"`
 }
 
 // writeScanError persists a failed-scan result so the UI reflects the failure
