@@ -68,6 +68,41 @@ func isNarratorCredit(s string) bool {
 	return narratorCreditRe.MatchString(strings.TrimSpace(s))
 }
 
+// contributorRoleRe matches the " - <role>" suffix Audible-style contributor
+// lists append to a credit that is NOT the author ("Natasha Wimmer -
+// translator"). The dash must be surrounded by whitespace so hyphenated names
+// ("Jean-Paul Sartre") and dash-joined surnames are never split.
+var contributorRoleRe = regexp.MustCompile(`(?i)\s-\s*(translator|translated|narrator|narration|reader|read|editor|edited|illustrator|contributor|foreword|afterword|introduction|preface|adapter|adapted|abridged|producer)\b`)
+
+// primaryContributor returns the first contributor of a comma-separated
+// contributor list, skipping segments that carry a role suffix ("… -
+// translator") or read as a narrator credit ("Read by …"). It returns "" when
+// the value does not look like a contributor list at all, which is the case
+// that matters most: a librarian sort-form name ("Enrigue, Álvaro") also
+// contains a comma, so requiring the kept segment to hold at least two name
+// tokens keeps "Enrigue" from being mistaken for a whole author (#1956).
+//
+// Callers use this only as a last resort, after the full tag value has failed
+// to match any catalogue author — a contributor list that already matches is
+// never rewritten.
+func primaryContributor(s string) string {
+	parts := strings.Split(s, ",")
+	if len(parts) < 2 {
+		return ""
+	}
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" || isNarratorCredit(p) || contributorRoleRe.MatchString(p) {
+			continue
+		}
+		if len(authorNameTokens(p)) < 2 {
+			return "" // sort-form name, not a contributor list
+		}
+		return p
+	}
+	return ""
+}
+
 // pickAudioAuthor prefers the Artist tag (which audiobook tooling
 // conventionally uses for the book's author) and falls back to AlbumArtist
 // or Composer for files that leave Artist empty. Narrator-credit values

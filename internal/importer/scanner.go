@@ -2136,6 +2136,42 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		return set
 	}
 
+	// resolveAuthors picks the author set the title tier searches for a file,
+	// and reports which author string produced it.
+	//
+	// The parsed author (embedded tag when present, folder otherwise) is tried
+	// first, so well-tagged releases keep the #303 behaviour. When it matches
+	// NO catalogue author the file used to be unmatchable: authorMatch requires
+	// every significant token of the parsed author to be a token of the
+	// catalogue author's name, so an Audible-style contributor list — "Álvaro
+	// Enrigue, Natasha Wimmer - translator, Gabriel Porras", author plus
+	// translator plus narrator — can never match, and it had already overwritten
+	// the folder author that would have (#1956). Two fallbacks, in order:
+	//
+	//   1. the folder-derived author, which a {Author}/{Title}/ library resolves
+	//      correctly and which the tag overwrote;
+	//   2. the list's primary contributor, for layouts with no author folder.
+	//
+	// A fallback is used only when it matches at least one author, so a file
+	// whose author simply isn't in the library still reports the parsed value.
+	resolveAuthors := func(parsedAuthor, layoutAuthor string) (map[int64]bool, string) {
+		set := matchingAuthors(parsedAuthor)
+		if set == nil || len(set) > 0 {
+			return set, parsedAuthor
+		}
+		for _, alt := range []string{layoutAuthor, primaryContributor(parsedAuthor)} {
+			if alt == "" || alt == parsedAuthor {
+				continue
+			}
+			if altSet := matchingAuthors(alt); len(altSet) > 0 {
+				slog.Debug("library scan: parsed author matched no catalogue author, falling back",
+					"parsedAuthor", parsedAuthor, "using", alt)
+				return altSet, alt
+			}
+		}
+		return set, parsedAuthor
+	}
+
 	var unmatchedFiles []unmatchedFile
 	var reconciled, unmatched, alreadyTracked, tagReadFailed int
 
@@ -2206,10 +2242,11 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		// an "Author - Title" / "Title - Author" filename — the scan must not
 		// assume a single filename order (#754).
 		parsed := ParseFilename(path)
-		var layoutTitle string
+		var layoutTitle, layoutAuthor string
 		if a, t, ok := authorTitleFromLayout(path, s.libraryDir, s.audiobookDir); ok {
 			if a != "" {
 				parsed.Author = a
+				layoutAuthor = a
 			}
 			if t != "" {
 				parsed.Title = t
@@ -2235,6 +2272,12 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 				if tags.Title != "" && (layoutTitle == "" || !looksLikeChapterTitle(tags.Title)) {
 					parsed.Title = tags.Title
 				}
+				// The tag author still wins (#303), but it no longer DESTROYS
+				// the folder-derived author: layoutAuthor is kept as a fallback
+				// for the author tier below, because Audible-style contributor
+				// lists ("Author, X - translator, Narrator") match no catalogue
+				// author and used to leave such files permanently unmatched
+				// (#1956).
 				if tags.Author != "" {
 					parsed.Author = tags.Author
 				}
@@ -2285,7 +2328,8 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			// their books (booksByAuthor), iterated in library order. A nil set
 			// means the parsed author is empty/initials-only — authorMatch then
 			// accepts any author, so every wanted book is a candidate.
-			if authorSet := matchingAuthors(parsed.Author); authorSet == nil {
+			authorSet, _ := resolveAuthors(parsed.Author, layoutAuthor)
+			if authorSet == nil {
 				for i := range wantedBooks {
 					if tryReconcileTitle(&wantedBooks[i], path, cleanPath, normParsed, detectedFmt) {
 						matched = true
