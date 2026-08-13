@@ -34,6 +34,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -526,6 +527,120 @@ func TestCheckDownloads_DispatchMatrix_Deluge(t *testing.T) {
 	assertOnlyEndpoints(t, rec, "/json")
 }
 
+// --- rTorrent --------------------------------------------------------------
+
+// rtorrentMatrixHandler speaks rTorrent's XML-RPC dialect: d.multicall2 returns
+// one complete torrent as an array-of-arrays row in the multicallFields column
+// order, and f.multicall returns its file list. Anything else answers i8 0.
+func rtorrentMatrixHandler(t *testing.T, hash, directory string) http.HandlerFunc {
+	t.Helper()
+	// One complete torrent, columns in the exact order rtorrent.multicallFields
+	// requests them: name, hash, base_path, directory, custom1, size_bytes,
+	// left_bytes, down.rate, complete, is_active, is_open, message.
+	multicall := fmt.Sprintf(`<?xml version="1.0"?><methodResponse><params><param><value><array><data>
+<value><array><data>
+<value><string>the-book</string></value>
+<value><string>%s</string></value>
+<value><string>%s</string></value>
+<value><string>%s</string></value>
+<value><string>books</string></value>
+<value><i8>12</i8></value>
+<value><i8>0</i8></value>
+<value><i8>0</i8></value>
+<value><i8>1</i8></value>
+<value><i8>1</i8></value>
+<value><i8>1</i8></value>
+<value><string></string></value>
+</data></array></value>
+</data></array></value></param></params></methodResponse>`, strings.ToUpper(hash), directory, directory)
+
+	const files = `<?xml version="1.0"?><methodResponse><params><param><value><array><data>
+<value><array><data><value><string>the-book.epub</string></value><value><i8>12</i8></value></data></array></value>
+</data></array></value></param></params></methodResponse>`
+
+	const zero = `<?xml version="1.0"?><methodResponse><params><param><value><i8>0</i8></value></param></params></methodResponse>`
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/xml")
+		switch {
+		case strings.Contains(string(body), "d.multicall2"):
+			_, _ = io.WriteString(w, multicall)
+		case strings.Contains(string(body), "f.multicall"):
+			_, _ = io.WriteString(w, files)
+		default:
+			_, _ = io.WriteString(w, zero)
+		}
+	}
+}
+
+func TestCheckDownloads_DispatchMatrix_Rtorrent(t *testing.T) {
+	f := newDispatchFixture(t)
+	const (
+		hash      = "2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e"
+		directory = "/data/torrents/rtorrent/the-book"
+	)
+
+	rec := &requestLog{}
+	srv := httptest.NewServer(recording(rec, rtorrentMatrixHandler(t, hash, directory)))
+	t.Cleanup(srv.Close)
+
+	client := f.createClient(t, &models.DownloadClient{
+		Name: "rtorrent", Type: "rtorrent", Username: "u", Password: "p", Category: "books",
+	}, srv.URL)
+	// rTorrent reports hashes upper-case; Bindery stores them lower-cased, and
+	// the poller has to match across that difference.
+	torrentHash := hash
+	f.createDownload(t, &models.Download{
+		GUID: "guid-matrix-rtorrent", Title: "the-book", Status: models.StateDownloading,
+		Protocol: "torrent", TorrentID: &torrentHash, DownloadClientID: &client.ID,
+	})
+
+	f.scanner.CheckDownloads(f.ctx)
+
+	h := f.singleHandoff(t, "rtorrent", directory)
+	f.assertStatus(t, "guid-matrix-rtorrent", models.StateCompleted)
+	wantFile := filepath.Join(directory, "the-book.epub")
+	if len(h.files) != 1 || h.files[0] != wantFile {
+		t.Errorf("import handoff files = %v, want [%s] (issue #903 per-torrent file list)", h.files, wantFile)
+	}
+	if !rec.contains("POST /RPC2") {
+		t.Errorf("rTorrent stub never received an RPC call; requests: %v", rec.all())
+	}
+	assertOnlyEndpoints(t, rec, "/RPC2")
+}
+
+// The rTorrent poller matches by hash, not by label. A torrent whose ruTorrent
+// label no longer equals the client's configured category must still import —
+// filtering the listing would make it look vanished and hand it to
+// blockStaleImportFailures.
+func TestCheckDownloads_Rtorrent_ImportsDespiteLabelMismatch(t *testing.T) {
+	f := newDispatchFixture(t)
+	const (
+		hash      = "2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e"
+		directory = "/data/torrents/rtorrent/the-book"
+	)
+
+	rec := &requestLog{}
+	// The stub always labels its torrent "books".
+	srv := httptest.NewServer(recording(rec, rtorrentMatrixHandler(t, hash, directory)))
+	t.Cleanup(srv.Close)
+
+	client := f.createClient(t, &models.DownloadClient{
+		Name: "rtorrent", Type: "rtorrent", Category: "somethingelse",
+	}, srv.URL)
+	torrentHash := hash
+	f.createDownload(t, &models.Download{
+		GUID: "guid-rtorrent-label-drift", Title: "the-book", Status: models.StateDownloading,
+		Protocol: "torrent", TorrentID: &torrentHash, DownloadClientID: &client.ID,
+	})
+
+	f.scanner.CheckDownloads(f.ctx)
+
+	f.singleHandoff(t, "rtorrent", directory)
+	f.assertStatus(t, "guid-rtorrent-label-drift", models.StateCompleted)
+}
+
 // --- Multi-client: both polled in a single tick (#1090) ---------------------
 
 // TestCheckDownloads_DispatchMatrix_TwoClients verifies that a single
@@ -614,7 +729,7 @@ func TestCheckDownloads_DispatchMatrix_UnknownType(t *testing.T) {
 	})))
 	t.Cleanup(srv.Close)
 
-	client := f.createClient(t, &models.DownloadClient{Name: "mystery", Type: "rtorrent"}, srv.URL)
+	client := f.createClient(t, &models.DownloadClient{Name: "mystery", Type: "aria2"}, srv.URL)
 	torrentHash := "feedfeedfeedfeedfeedfeedfeedfeedfeedfeed"
 	f.createDownload(t, &models.Download{
 		GUID: "guid-matrix-unknown", Title: "the-book", Status: models.StateDownloading,
@@ -632,7 +747,7 @@ func TestCheckDownloads_DispatchMatrix_UnknownType(t *testing.T) {
 	if !strings.Contains(logs, "unsupported download client type") || !strings.Contains(logs, "level=WARN") {
 		t.Errorf("expected a WARN about the unsupported client type, got logs:\n%s", logs)
 	}
-	if !strings.Contains(logs, "type=rtorrent") {
+	if !strings.Contains(logs, "type=aria2") {
 		t.Errorf("safety-net warning should name the offending client type, got logs:\n%s", logs)
 	}
 	if got := rec.all(); len(got) != 0 {

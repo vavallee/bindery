@@ -576,7 +576,9 @@
       "audiobookCategoryPlaceholder": "audiobooks",
       "audiobookCategoryHelp": "Optional. When set, audiobook grabs use this category instead of the one above. Leave blank to use the same category as ebooks.",
       "pathNotVisible": "Connected, but Bindery can't read the client's completed-downloads folder. Configure a path remap or a shared mount so both point at the same storage, otherwise downloads won't import.",
-      "loopbackHint": "The host is localhost — if Bindery runs in Docker, localhost is the Bindery container itself, not the machine. Use the host's LAN IP or the client's container/service name instead."
+      "loopbackHint": "The host is localhost — if Bindery runs in Docker, localhost is the Bindery container itself, not the machine. Use the host's LAN IP or the client's container/service name instead.",
+      "rtorrentCategoryHelp": "Stored as the ruTorrent label (d.custom1) and used to filter which torrents Bindery polls. Leave blank to poll every torrent in the client.",
+      "rtorrentUrlBaseHelp": "Full path of rTorrent's XML-RPC endpoint, not a prefix. Usually /RPC2; ruTorrent installs often expose /plugins/rpc/rpc.php instead. Leave blank to use /RPC2. For a plain rTorrent with no web server in front of it, use rTorrent's own SCGI listener: scgi:// for the host and port above, scgi://host:port, or scgi:///path/to/socket. SCGI carries no credentials, so keep it off-network."
     },
     "notifications": {
       "heading": "Webhook Notifications",

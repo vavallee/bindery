@@ -19,5 +19,8 @@ export function downloadClientPathRemapHelp(type: string) {
   if (type === 'qbittorrent') {
     return "Map the path qBittorrent reports to the path Bindery can read. Example: if qBittorrent shows /downloads/books but Bindery sees that folder at /media/books, use /downloads:/media/books. Bindery also uses this in reverse when sending new torrents."
   }
+  if (type === 'rtorrent') {
+    return "Map the path rTorrent reports to the path Bindery can read. Seedbox installs almost always need this — e.g. rTorrent writes to /home/user/downloads while Bindery mounts that share at /media/books, so use /home/user/downloads:/media/books. Bindery also uses this in reverse when setting a new torrent's download directory, and to locate files when you remove a download with its data."
+  }
   return "Optional and separate from ABS remaps. Use when this download client reports paths under a different mount than Bindery."
 }

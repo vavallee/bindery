@@ -101,7 +101,7 @@ Clean-room Go rewrite, modern React UI, MIT-licensed, actively developed.
 | **Ebooks + audiobooks** | Yes — separate roots, narrator metadata | Yes (+ magazines, comics) | Yes | Limited |
 | **ARM / Raspberry Pi** | **Yes, to Pi Zero** (armv6) | Yes | arm64 only | Yes |
 | **Kubernetes / Helm** | **Yes, distroless** | No | No | Community |
-| **Usenet + torrents** | Both (SAB/NZBGet + qBit/Transmission/Deluge) | Both | Both (SAB + qBit) | Both |
+| **Usenet + torrents** | Both (SAB/NZBGet + qBit/Transmission/Deluge/rTorrent) | Both | Both (SAB + qBit) | Both |
 
 **Pick Bindery** for a modern, low-maintenance manager that survives metadata outages and swallows your old Readarr database whole.
 **Pick LazyLibrarian** if you want a long-established tool with magazine and comic support and don't mind a dated UI.
@@ -122,7 +122,7 @@ Clean-room Go rewrite, modern React UI, MIT-licensed, actively developed.
 **Search & downloads**
 - Newznab + Torznab indexers queried in parallel, deduplicated, then composite-ranked by format quality, edition tags (RETAIL / UNABRIDGED / ABRIDGED), year match, grab count, size, and ISBN exact-match bonus.
 - Smart matching — four-tier query fallback (`t=book` → `surname+title` → `author+title` → title), word-boundary keyword matching, contiguous-phrase requirement for multi-word titles, dual-author-anchor for ambiguous short titles, subtitle-aware (`Title: Subtitle`).
-- SABnzbd, NZBGet, qBittorrent, Transmission, Deluge — with **Use SSL** and **URL Base** for reverse-proxy subpaths.
+- SABnzbd, NZBGet, qBittorrent, Transmission, Deluge, rTorrent/ruTorrent — with **Use SSL** and **URL Base** for reverse-proxy subpaths.
 - Auto-grab sweep every 12h, immediate search on add or `wanted` flip, plus interactive per-book search and "Search all wanted" per author. Global kill-switch pauses auto-grab without losing your monitored list.
 - Quality profiles (EPUB / MOBI / AZW3 / PDF), language filter, regex-based custom formats, delay profiles, blocklist (consulted on every search; one-click add from History), and failure visibility in Queue and History.
 
@@ -229,7 +229,7 @@ The full reference (path remapping, API-key seeding, telemetry, trusted-proxy, r
 | Category | Implementations |
 |---|---|
 | **Usenet clients** | SABnzbd, NZBGet |
-| **Torrent clients** | qBittorrent, Transmission, Deluge |
+| **Torrent clients** | qBittorrent, Transmission, Deluge, rTorrent / ruTorrent (XML-RPC over HTTP or SCGI) |
 | **Indexers** | Newznab (NZBGeek, NZBFinder, NZBPlanet, DrunkenSlug, …), Torznab (Prowlarr, Jackett, direct endpoints), with per-indexer category overrides |
 | **Notifications** | Generic webhooks — pipe to Apprise / ntfy / Home Assistant / Slack / Discord |
 | **Authentication** | Local (argon2id), API key, OIDC (Google, GitHub via Dex, Authelia, Keycloak, …), forward-auth proxy |
@@ -247,7 +247,7 @@ Bindery is a single Go binary (chi router, distroless container) with the React 
          │
          ▼
 ┌────────────────────────────┐
-│         Bindery            │──► SABnzbd / NZBGet / qBittorrent / Transmission / Deluge
+│         Bindery            │──► SABnzbd / NZBGet / qBit / Transmission / Deluge / rTorrent
 │  Go backend + React SPA    │──► /books/ library
 │  SQLite (WAL mode)         │──► Webhook notifications
 └────────────────────────────┘

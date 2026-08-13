@@ -733,7 +733,7 @@ func protocolLabel(protocol string) string {
 // missing protocol.
 func protocolClientSuggestions(protocol string) string {
 	if protocol == "torrent" {
-		return "qBittorrent/Transmission/Deluge"
+		return "qBittorrent/Transmission/Deluge/rTorrent"
 	}
 	return "SABnzbd/NZBGet"
 }
