@@ -599,6 +599,18 @@ func applyMigration(database *sql.DB, version int, name, content string) (err er
 		}
 	}()
 
+	// Snapshot referential integrity BEFORE the rebuild so the post-rebuild
+	// gate can tell "this migration broke something" from "this database was
+	// already carrying orphan rows" (#1972).
+	var fkBefore map[string]int
+	if togglesForeignKeys {
+		before, e := foreignKeyViolationCounts(tx)
+		if e != nil {
+			return fmt.Errorf("migration %d: baseline foreign_key_check: %w", version, e)
+		}
+		fkBefore = before
+	}
+
 	for _, stmt := range statements {
 		if _, e := tx.Exec(stmt); e != nil {
 			return fmt.Errorf("migration %d statement: %w\nSQL: %s", version, e, stmt)
@@ -608,13 +620,12 @@ func applyMigration(database *sql.DB, version int, name, content string) (err er
 	if togglesForeignKeys {
 		// Documented SQLite table-rebuild ordering: verify referential
 		// integrity before committing the FK-disabled rebuild.
-		var fkRows int
-		row := tx.QueryRow("SELECT COUNT(*) FROM pragma_foreign_key_check")
-		if e := row.Scan(&fkRows); e != nil {
+		after, e := foreignKeyViolationCounts(tx)
+		if e != nil {
 			return fmt.Errorf("migration %d: foreign_key_check: %w", version, e)
 		}
-		if fkRows > 0 {
-			return fmt.Errorf("migration %d: foreign_key_check found %d violation(s)", version, fkRows)
+		if e := checkForeignKeyDelta(version, fkBefore, after); e != nil {
+			return e
 		}
 	}
 
