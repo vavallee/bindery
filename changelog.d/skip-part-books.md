@@ -1,0 +1,2 @@
+### Fixed
+- **Author sync now honors `skipPartBooks`** — the metadata profile setting previously had no effect during cataloging (only the field was persisted, nothing consumed it). Box sets, omnibuses, signed-copy cartons, and slash-separated multi-title anthologies are now filtered out of author sync/refresh when the setting is enabled, matching what the setting's name has always implied. `AuthorSyncSummary` gains a `skippedPartBooks` count alongside the existing skipped-language/junk/media-type counters so drops stay visible.

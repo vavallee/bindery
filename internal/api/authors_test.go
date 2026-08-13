@@ -780,6 +780,172 @@ func TestFetchAuthorBooks_StrictMediaType(t *testing.T) {
 	}
 }
 
+// TestIsPartBookTitle is a fast, DB-free check of partBookTitleRe against
+// every noise pattern denoise_author.py was built to catch (confirmed
+// against real OpenLibrary titles pulled during development) plus the
+// false-positive traps ("Catch 22", "Fahrenheit 451") that motivated
+// excluding a bare trailing number from the pattern set.
+func TestIsPartBookTitle(t *testing.T) {
+	cases := []struct {
+		title string
+		want  bool
+	}{
+		{"Expanse Hardcover Boxed Set : Leviathan Wakes, Caliban's War, Abaddon's Gate", true},
+		{"Expanse Series, Collection Set of 3 Books. Leviathan Wakes, Caliban's War, Abaddon's Gate", true},
+		{"Leviathan Falls - Carton of 10 Signed Copies", true},
+		{"Memory's Legion - Carton of 10 Signed Copies", true},
+		{"The Silmarillion Omnibus", true},
+		{"Books 1-3", true},
+		{"The Martian / Artemis / Project Hail Mary", true},
+		{"Leviathan Wakes", false},
+		{"Abaddon's Gate", false},
+		{"The Butcher of Anderson Station", false},
+		{"Caliban's War", false},
+		{"Catch 22", false},
+		{"Fahrenheit 451", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := isPartBookTitle(c.title); got != c.want {
+			t.Errorf("isPartBookTitle(%q) = %v, want %v", c.title, got, c.want)
+		}
+	}
+}
+
+// partBookTestWorks returns a fixed mix of box-set/omnibus/carton titles
+// (which SkipPartBooks should drop) alongside real single-book titles that
+// happen to share substrings with the noise (a bare "Abaddon's Gate" next to
+// a box set whose title contains "Abaddon's Gate" as a substring) so a
+// regression that over-matches real titles would be caught, not just one
+// that under-matches junk.
+func partBookTestWorks() []models.Book {
+	titles := []string{
+		"Expanse Hardcover Boxed Set : Leviathan Wakes, Caliban's War, Abaddon's Gate",
+		"Expanse Series, Collection Set of 3 Books. Leviathan Wakes, Caliban's War, Abaddon's Gate",
+		"Leviathan Falls - Carton of 10 Signed Copies",
+		"The Martian / Artemis / Project Hail Mary",
+		"Leviathan Wakes",
+		"Abaddon's Gate",
+		"Catch 22",
+	}
+	works := make([]models.Book, len(titles))
+	for i, title := range titles {
+		works[i] = models.Book{
+			ForeignID: fmt.Sprintf("OL9%02dW", i), Title: title, SortTitle: strings.ToLower(title),
+			Language: "eng", MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted,
+			MetadataProvider: "openlibrary",
+		}
+	}
+	return works
+}
+
+// TestFetchAuthorBooks_SkipsPartBooks verifies that once a metadata profile's
+// SkipPartBooks is enabled, box-set/omnibus/carton/anthology "works" are
+// dropped from author sync (matching skipPartBooks's name for the first
+// time — see partBookTitleRe), while real single-book titles that merely
+// share a substring with the junk (e.g. "Abaddon's Gate" appearing inside a
+// box-set title) still come through, and titles that resemble the pattern
+// only by coincidence (e.g. "Catch 22") are unaffected.
+func TestFetchAuthorBooks_SkipsPartBooks(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	profile, err := profileRepo.GetByID(ctx, models.DefaultMetadataProfileID)
+	if err != nil || profile == nil {
+		t.Fatalf("GetByID(default profile) failed: %v", err)
+	}
+	profile.SkipPartBooks = true
+	if err := profileRepo.Update(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	author := &models.Author{
+		ForeignID: "OL910A", Name: "Part-Book Author", SortName: "Author, Part-Book",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	agg := metadata.NewAggregator(&stubMetaProvider{works: partBookTestWorks()})
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	got, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTitle := make(map[string]bool, len(got))
+	for _, b := range got {
+		byTitle[b.Title] = true
+	}
+
+	for _, junk := range []string{
+		"Expanse Hardcover Boxed Set : Leviathan Wakes, Caliban's War, Abaddon's Gate",
+		"Expanse Series, Collection Set of 3 Books. Leviathan Wakes, Caliban's War, Abaddon's Gate",
+		"Leviathan Falls - Carton of 10 Signed Copies",
+		"The Martian / Artemis / Project Hail Mary",
+	} {
+		if byTitle[junk] {
+			t.Errorf("part-book title %q should have been skipped, but was created", junk)
+		}
+	}
+	for _, real := range []string{"Leviathan Wakes", "Abaddon's Gate", "Catch 22"} {
+		if !byTitle[real] {
+			t.Errorf("real single-book title %q should have been created, but was skipped", real)
+		}
+	}
+}
+
+// TestFetchAuthorBooks_PartBooksKeptWhenSkipDisabled verifies the inverse of
+// TestFetchAuthorBooks_SkipsPartBooks: with SkipPartBooks left at its default
+// (false), box-set/omnibus titles are still cataloged exactly as before this
+// change — the filter is opt-in, not a behavior change for profiles that
+// never touch the setting.
+func TestFetchAuthorBooks_PartBooksKeptWhenSkipDisabled(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID: "OL911A", Name: "Part-Book Author Two", SortName: "Author, Part-Book Two",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	agg := metadata.NewAggregator(&stubMetaProvider{works: partBookTestWorks()})
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	got, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(partBookTestWorks()) {
+		t.Errorf("got %d books, want %d (SkipPartBooks defaults to false, nothing should be dropped)",
+			len(got), len(partBookTestWorks()))
+	}
+}
+
 // stubLibraryFinder is a mock LibraryFinder that returns a fixed path for
 // a specific title and "" for everything else.
 type stubLibraryFinder struct {

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -34,6 +35,37 @@ var (
 )
 
 const authorAutoSearchConcurrency = 4
+
+// partBookTitleRe matches OpenLibrary work titles that describe a box set,
+// omnibus, signed-copy carton, or slash-separated multi-title anthology
+// rather than a single book. These "works" are real OL records, so they pass
+// every other filter (title is non-empty, language is set, media type
+// matches) and land in the wanted list indistinguishable from a real book,
+// which is what the (until now unused) SkipPartBooks profile setting always
+// implied it screened out.
+//
+// Ported from the interim external workaround (denoise_author.py) once it
+// was confirmed empirically, over several authors, that these patterns catch
+// the box-set noise without false-positiving on legitimate titles. Kept as a
+// title-text heuristic rather than an OL work-type field because OpenLibrary
+// does not reliably distinguish "part"/omnibus works from regular ones in its
+// API response.
+var partBookTitleRe = regexp.MustCompile(`(?i:` +
+	`\bbox\s*set\b` +
+	`|\bboxed\s*set\b` +
+	`|\bcollection\s*set\b` +
+	`|\bcollection\s+of\s+\d` +
+	`|\bomnibus\b` +
+	`|\bcarton\s+of\s+\d+\s+signed\s+cop` +
+	`|\bbooks?\s+\d+\s*-\s*\d+\b` +
+	`)` +
+	`|(?:[^/]+/){2,}[^/]+`) // "Title A / Title B / Title C" multi-title anthology naming
+
+// isPartBookTitle reports whether title looks like a box set, omnibus, or
+// carton rather than a single book. See partBookTitleRe.
+func isPartBookTitle(title string) bool {
+	return partBookTitleRe.MatchString(title)
+}
 
 type AuthorHandler struct {
 	authors                     *db.AuthorRepo
@@ -1640,6 +1672,7 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// Resolve the author's metadata profile (falling back to the seeded
 	// default) and parse its allowed_languages CSV. Nil means "no filter".
 	allowedLangs, unknownFail := h.resolveAllowedLanguages(ctx, author)
+	skipPartBooks := h.resolveSkipPartBooks(ctx, author)
 
 	// OpenLibrary works carry no work-level language; the search enricher only
 	// backfills it for indexed works, so a tail of works (often translations)
@@ -1824,7 +1857,7 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// skippedExcluded is logged but deliberately kept out of AuthorSyncSummary:
 	// the author page's notice explains works the user did NOT expect to lose,
 	// and a book they excluded by hand is not one of them.
-	var added, skippedLang, skippedJunk, skippedMediaType, skippedNotAccepted, skippedExcluded int
+	var added, skippedLang, skippedJunk, skippedMediaType, skippedNotAccepted, skippedExcluded, skippedPartBooks int
 	// Names of the first few language-rejected works, reported to the user
 	// alongside the count (#1889): "65 books skipped" is alarming, but it is
 	// the titles and their language codes that tell them whether the profile
@@ -1877,6 +1910,16 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		if normalizedTitle == "" || normalizedTitle == normalizedAuthor {
 			skippedJunk++
 			slog.Debug("skipping junk-title OL work", "title", b.Title, "foreignId", b.ForeignID)
+			continue
+		}
+
+		// Filter box-set/omnibus/carton "works" when the author's metadata
+		// profile has SkipPartBooks enabled. These are real OL records for a
+		// bundle of other books, not a book of their own, and previously
+		// passed every filter above unchanged (see partBookTitleRe).
+		if skipPartBooks && isPartBookTitle(b.Title) {
+			skippedPartBooks++
+			slog.Debug("skipping part-book/box-set title", "title", b.Title, "foreignId", b.ForeignID)
 			continue
 		}
 
@@ -2121,6 +2164,7 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		SkippedJunk:           skippedJunk,
 		SkippedMediaType:      skippedMediaType,
 		SkippedNotAccepted:    skippedNotAccepted,
+		SkippedPartBooks:      skippedPartBooks,
 		AllowedLanguages:      allowedLangs,
 		UnknownLanguageFail:   unknownFail,
 		SkippedLanguageSample: skippedLangSample,
@@ -2135,13 +2179,14 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		"author", author.Name, "added", added,
 		"skipped_language", skippedLang, "skipped_junk", skippedJunk, "skipped_media_type", skippedMediaType,
 		"skipped_not_accepted", skippedNotAccepted, "skipped_excluded", skippedExcluded,
+		"skipped_part_books", skippedPartBooks,
 		"total", len(books),
 	}
 	// The metadata filters dropping works is the surprising case and stays at
 	// Warn. The discovery-policy skip is not: the user configured it, the run
 	// already said so once at Info above, and a "Refresh all authors" pass
 	// over an ABS-imported library would otherwise emit one Warn per author.
-	if skippedLang+skippedJunk+skippedMediaType > 0 {
+	if skippedLang+skippedJunk+skippedMediaType+skippedPartBooks > 0 {
 		slog.Warn("author books synced", logArgs...)
 		return
 	}
@@ -3092,4 +3137,20 @@ func applyAuthorMajorityLanguageFallback(books []models.Book) {
 			books[i].Language = majorityLang
 		}
 	}
+}
+
+// resolveSkipPartBooks returns the author's effective metadata profile's
+// SkipPartBooks setting. Defaults to false (matches the setting's prior
+// no-op behavior) on any lookup failure, so an unresolvable profile never
+// turns into unexpected catalogue loss.
+func (h *AuthorHandler) resolveSkipPartBooks(ctx context.Context, author *models.Author) bool {
+	id := models.DefaultMetadataProfileID
+	if author.MetadataProfileID != nil {
+		id = *author.MetadataProfileID
+	}
+	p, err := h.profiles.GetByID(ctx, id)
+	if err != nil || p == nil {
+		return false
+	}
+	return p.SkipPartBooks
 }
