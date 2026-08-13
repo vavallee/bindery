@@ -54,7 +54,7 @@
   },
   "monitorNewItems": {
     "all": "Follow monitor mode",
-    "none": "Add as unmonitored"
+    "none": "Don’t add them"
   },
   "nav": {
     "authors": "Authors",

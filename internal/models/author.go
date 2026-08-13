@@ -85,6 +85,12 @@ type AuthorSyncSummary struct {
 	SkippedLanguage  int `json:"skippedLanguage"`
 	SkippedJunk      int `json:"skippedJunk"`
 	SkippedMediaType int `json:"skippedMediaType"`
+	// SkippedNotAccepted is the number of works a refresh found but did not
+	// add because the author isn't taking newly-discovered books (unmonitored,
+	// or Monitor new items = None). Reported for the same reason as the rest:
+	// "the refresh added nothing" needs to say why, or it reads as a failure
+	// (#1815).
+	SkippedNotAccepted int `json:"skippedNotAccepted,omitempty"`
 	// AllowedLanguages is the language set the run actually applied, so the UI
 	// can name the setting that did the dropping rather than making the user
 	// guess which profile the author is on. Empty means "no language filter".
@@ -115,7 +121,7 @@ func (s *AuthorSyncSummary) SkippedTotal() int {
 	if s == nil {
 		return 0
 	}
-	return s.SkippedLanguage + s.SkippedJunk + s.SkippedMediaType
+	return s.SkippedLanguage + s.SkippedJunk + s.SkippedMediaType + s.SkippedNotAccepted
 }
 
 // AuthorProviderFromForeignID returns the metadata provider implied by a

@@ -47,6 +47,10 @@ export interface AuthorSyncSummary {
   skippedLanguage: number
   skippedJunk: number
   skippedMediaType: number
+  // Works a refresh found but did not add because the author isn't taking
+  // newly discovered books (unmonitored, or Monitor new items = don't add).
+  // Absent on syncs that added everything they could (#1815).
+  skippedNotAccepted?: number
   // The language set the run applied, and whether it also rejected works the
   // provider reported no language for. Empty means no language filter.
   allowedLanguages?: string[]

@@ -1,0 +1,6 @@
+### Fixed
+- **Adding one book no longer imports the author's back catalogue** (#1816) — Authors → Add Book created the author and then quietly pulled their entire bibliography in behind it ("my collection just went from 75 imported books to over 500"). The picked book is now the only book added. When the provider's book endpoint fails, the fallback asks the author endpoint for that one work rather than the whole catalogue.
+- **A metadata refresh no longer grows the library behind your back** (#1815) — refreshing an author with monitoring off, or with *Monitor newly discovered books* set to don't add them, updated the covers, ratings, genres and series links of the books you have and then inserted every other work the author ever wrote. It now refreshes in place and adds nothing; the author page reports how many works it declined to add and why. An author with no books at all is still populated, so bulk **Refresh metadata** keeps repairing imports that landed an author without a catalogue.
+
+### Changed
+- **"Monitor newly discovered books" → *Don't add them*** (#1815) — the setting that used to add refresh-discovered works as unmonitored rows now doesn't add them at all, which is what the people asking for it were describing. Library imports (Calibre, Audiobookshelf) already set it on every author they create.

@@ -72,12 +72,14 @@ type BulkHandler struct {
 	blocklist *db.BlocklistRepo
 	searcher  BookSearcher
 
-	// refreshAuthor repopulates a single author's catalogue from the metadata
-	// provider (and resolves the default media type for newly-discovered
-	// books). Injected via WithRefreshFunc so the bulk "refresh" action reuses
-	// exactly the same fetch the per-author Refresh handler runs — it fetches
-	// metadata but never auto-grabs. Nil when not wired (e.g. in tests that
-	// don't exercise refresh), in which case "refresh" is rejected.
+	// refreshAuthor re-reads a single author's metadata from the provider (and
+	// resolves the default media type for any newly-discovered books).
+	// Injected via WithRefreshFunc so the bulk "refresh" action reuses exactly
+	// the same fetch the per-author Refresh handler runs — it fetches metadata
+	// but never auto-grabs, and whether it may add books the library doesn't
+	// have is the author's monitoring policy's call. Nil when not wired (e.g.
+	// in tests that don't exercise refresh), in which case "refresh" is
+	// rejected.
 	refreshAuthor func(author *models.Author)
 
 	// lifetimeCtx is the process-lifecycle context; cancelled on server
@@ -102,9 +104,12 @@ func (h *BulkHandler) WithSeriesRepo(series *db.SeriesRepo) *BulkHandler {
 
 // WithRefreshFunc attaches the per-author catalogue-refresh callback used by
 // the bulk "refresh" action. The callback must fetch metadata only (never
-// auto-grab) — wire it to AuthorHandler.FetchAuthorBooks(author, false,
-// defaultMediaType), matching the single-author Refresh endpoint. A nil fn is
-// tolerated and ignored; the "refresh" action then reports an error per ID.
+// auto-grab) — wire it to AuthorHandler.RefreshAuthorBooks(author, false,
+// defaultMediaType), matching the single-author Refresh endpoint. Refresh, not
+// Fetch: the refresh entry point is the one that leaves an author who isn't
+// taking new books unchanged instead of inserting their back catalogue
+// (#1815). A nil fn is tolerated and ignored; the "refresh" action then
+// reports an error per ID.
 func (h *BulkHandler) WithRefreshFunc(fn func(author *models.Author)) *BulkHandler {
 	if fn != nil {
 		h.refreshAuthor = fn
@@ -151,9 +156,10 @@ type bulkResponse struct {
 // "search" fires an async indexer search for every wanted book belonging
 // to each requested author and always returns ok:true immediately (the search
 // outcome is visible in History).
-// "refresh" repopulates each author's catalogue from the metadata provider
-// (the same fetch the per-author Refresh endpoint runs) — it fetches metadata
-// only and never auto-grabs. Like "search" it dispatches under a bounded pool
+// "refresh" re-reads each author's metadata from the provider (the same fetch
+// the per-author Refresh endpoint runs) — it fetches metadata only and never
+// auto-grabs, and only adds newly-discovered books for authors whose
+// monitoring asks for them (#1815). Like "search" it dispatches under a bounded pool
 // after the response and returns ok:true immediately. Used to recover authors
 // imported with empty catalogues (e.g. plain-name CSV rows) without clicking
 // per-author Refresh one at a time.
