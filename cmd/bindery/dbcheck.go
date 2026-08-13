@@ -25,12 +25,13 @@ const (
 	fkCheckEnv = "BINDERY_DB_FK_CHECK"
 )
 
-// runDBMaintenance dispatches the db-check / db-repair subcommands. It returns
-// false if os.Args names neither, so main can carry on with a normal boot.
-// An optional second argument overrides the database path.
-func runDBMaintenance(defaultPath string) bool {
+// runDBMaintenance dispatches the db-check / db-repair subcommands, exiting the
+// process when it handles one. It returns normally if os.Args names neither, so
+// main can carry on with a normal boot. An optional argument overrides the
+// database path.
+func runDBMaintenance(defaultPath string) {
 	if len(os.Args) < 2 {
-		return false
+		return
 	}
 	var repair bool
 	switch os.Args[1] {
@@ -38,7 +39,7 @@ func runDBMaintenance(defaultPath string) bool {
 	case "db-repair":
 		repair = true
 	default:
-		return false
+		return
 	}
 
 	path := defaultPath
@@ -59,7 +60,6 @@ func runDBMaintenance(defaultPath string) bool {
 	}
 
 	os.Exit(runFKTool(path, repair))
-	return true
 }
 
 // runDBFKCheckFromEnv is the same tool reachable through an environment
