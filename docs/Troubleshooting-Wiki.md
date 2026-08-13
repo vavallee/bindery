@@ -103,3 +103,17 @@ The usual culprit is the **allowed languages** list on the author's metadata pro
 - **"When book language is unknown".** OpenLibrary carries no language on many *work* records, so a large tail of an author's catalogue arrives with no language at all. Set to **fail**, every one of those is skipped too — which is what turns "a few translations were dropped" into "most of this author is missing". Setting it to **pass** and refreshing again brings them back.
 
 The skip counts are also in the log (`Settings → Logs`): the `author books synced` line carries `added`, `skipped_language`, `skipped_junk` and `skipped_media_type`, and is logged at WARN whenever anything was skipped. Per-book detail (which title, which language) is at DEBUG.
+
+## Collecting logs for a bug report
+
+`Settings → Logs` is the whole log store, so you don't need shell access to the container (rootless images give you nowhere to `cat` a file anyway).
+
+Filter down to the problem first — level, component, a search term, and a date range around when it happened — then click **Download** next to *Clear filters*. You get a plain-text file named `bindery-logs-<timestamp>.txt` containing exactly the entries the table was showing, with a header block recording which filters produced it. Attach that to the issue.
+
+Notes:
+
+- One entry per line, `timestamp LEVEL [component] message key=value`, so it stays greppable and pastes cleanly into an issue.
+- API keys and tokens that appear in logged URLs are replaced with `REDACTED` on the way out. Still skim the file before posting — paths and book titles are not redacted.
+- An export stops at 50,000 entries and says so in the last line of the file. If you hit that, narrow the level or the date range.
+- Admin-only, like the rest of the Logs tab.
+- Turn the **Runtime level** up to `DEBUG` before reproducing if the default output isn't enough; entries are persisted, so the download picks them up after the fact.

@@ -12,6 +12,7 @@ import (
 // systemLogRouteHandler is the surface registerSystemLogRoutes needs.
 type systemLogRouteHandler interface {
 	List(http.ResponseWriter, *http.Request)
+	Export(http.ResponseWriter, *http.Request)
 	GetLevel(http.ResponseWriter, *http.Request)
 	SetLevel(http.ResponseWriter, *http.Request)
 }
@@ -21,11 +22,14 @@ type systemLogRouteHandler interface {
 // users' book/author names, OIDC usernames, download titles — which is exactly
 // the cross-tenant disclosure the multi-user model forbids, and SetLevel is a
 // global mutation that can be flipped to debug to amplify it. Same privilege
-// level as /system/storage.
+// level as /system/storage. Export returns the same rows as List as a
+// downloadable file, so it inherits the same requirement — a non-admin must not
+// be able to walk out with a text dump of the app-wide log (#1903).
 func registerSystemLogRoutes(r chi.Router, h systemLogRouteHandler) {
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireAdmin)
 		r.Get("/system/logs", h.List)
+		r.Get("/system/logs/export", h.Export)
 		r.Get("/system/loglevel", h.GetLevel)
 		r.Put("/system/loglevel", h.SetLevel)
 	})

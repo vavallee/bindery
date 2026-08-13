@@ -672,6 +672,9 @@
       "componentPlaceholder": "Component",
       "searchPlaceholder": "Search messages",
       "clearFilters": "Clear filters",
+      "download": "Download",
+      "downloadHint": "Download the entries matching the current filters as a text file",
+      "downloadNote": "Download saves the entries matching the current filters as a plain-text file (up to 50,000) you can attach to a bug report.",
       "page": "Page {{page}}"
     },
     "general": {

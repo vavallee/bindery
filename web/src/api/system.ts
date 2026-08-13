@@ -1,4 +1,4 @@
-import { request } from './core'
+import { apiURL, request } from './core'
 
 export interface SystemStatus {
   version: string
@@ -57,23 +57,41 @@ export interface StorageHealth {
   hardlinkReason?: string
 }
 
+export interface LogQuery {
+  level?: string
+  component?: string
+  from?: string
+  to?: string
+  q?: string
+  limit?: number
+  offset?: number
+}
+
+/** Serialises the log filters. Shared by the list and the export so a
+ *  downloaded file reflects exactly the filters that were on screen (#1903). */
+function logQueryString(params?: LogQuery): string {
+  const p: Record<string, string> = {}
+  if (params?.level) p.level = params.level
+  if (params?.component) p.component = params.component
+  if (params?.from) p.from = params.from
+  if (params?.to) p.to = params.to
+  if (params?.q) p.q = params.q
+  if (params?.limit) p.limit = String(params.limit)
+  if (params?.offset) p.offset = String(params.offset)
+  const qs = new URLSearchParams(p).toString()
+  return qs ? '?' + qs : ''
+}
+
 export const systemApi = {
   // System
   health: () => request<{ status: string; version: string }>('/health'),
   status: () => request<SystemStatus>('/system/status'),
   setupState: () => request<SetupState>('/system/setup-state'),
-  getLogs: (params?: { level?: string; component?: string; from?: string; to?: string; q?: string; limit?: number; offset?: number }) => {
-    const p: Record<string, string> = {}
-    if (params?.level) p.level = params.level
-    if (params?.component) p.component = params.component
-    if (params?.from) p.from = params.from
-    if (params?.to) p.to = params.to
-    if (params?.q) p.q = params.q
-    if (params?.limit) p.limit = String(params.limit)
-    if (params?.offset) p.offset = String(params.offset)
-    const qs = new URLSearchParams(p).toString()
-    return request<LogEntry[]>(`/system/logs${qs ? '?' + qs : ''}`)
-  },
+  getLogs: (params?: LogQuery) => request<LogEntry[]>(`/system/logs${logQueryString(params)}`),
+  /** URL of the plain-text log export for these filters. Handed straight to a
+   *  download anchor — the session cookie authenticates it and the server
+   *  names the file, so there is nothing to fetch in JS. */
+  logExportURL: (params?: LogQuery) => apiURL(`/system/logs/export${logQueryString(params)}`),
   getLogLevel: () => request<{ level: string }>('/system/loglevel'),
   setLogLevel: (level: string) =>
     request<{ level: string }>('/system/loglevel', { method: 'PUT', body: JSON.stringify({ level }) }),

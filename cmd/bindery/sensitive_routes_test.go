@@ -68,6 +68,9 @@ func (h *stubSensitiveHandler) ImportGoodreadsPreview(w http.ResponseWriter, _ *
 func (h *stubSensitiveHandler) ImportGoodreadsCommit(w http.ResponseWriter, _ *http.Request) {
 	h.record("import-goodreads-commit", w)
 }
+func (h *stubSensitiveHandler) Export(w http.ResponseWriter, _ *http.Request) {
+	h.record("export-logs", w)
+}
 func (h *stubSensitiveHandler) GetLevel(w http.ResponseWriter, _ *http.Request) {
 	h.record("get-level", w)
 }
@@ -87,6 +90,10 @@ func TestSystemLogRoutesRequireAdmin(t *testing.T) {
 		path   string
 	}{
 		{name: "read logs", method: http.MethodGet, path: "/system/logs"},
+		// The export is the same data as a downloadable file (#1903), so it
+		// must sit behind the same gate — a non-admin walking out with a text
+		// dump of the app-wide log is the identical disclosure.
+		{name: "export logs", method: http.MethodGet, path: "/system/logs/export"},
 		{name: "get loglevel", method: http.MethodGet, path: "/system/loglevel"},
 		{name: "set loglevel", method: http.MethodPut, path: "/system/loglevel"},
 	}
@@ -121,6 +128,7 @@ func TestSystemLogRoutesAllowAdmin(t *testing.T) {
 		called string
 	}{
 		{name: "read logs", method: http.MethodGet, path: "/system/logs", called: "list"},
+		{name: "export logs", method: http.MethodGet, path: "/system/logs/export", called: "export-logs"},
 		{name: "get loglevel", method: http.MethodGet, path: "/system/loglevel", called: "get-level"},
 		{name: "set loglevel", method: http.MethodPut, path: "/system/loglevel", called: "set-level"},
 	}

@@ -47,6 +47,12 @@ export async function initCSRF(): Promise<void> {
   }
 }
 
+// Absolute URL for an API path, for the few places that hand a URL to the
+// browser itself (a download anchor) instead of going through request().
+export function apiURL(path: string): string {
+  return `${BASE}${path}`
+}
+
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
 // Error thrown for any non-OK API response. Carries the HTTP status and the
