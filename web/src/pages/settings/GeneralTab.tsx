@@ -213,6 +213,19 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                 </button>
               ))}
             </div>
+            {/* Hardlink was chosen deliberately but this setup can't hardlink,
+                so imports silently degrade to a copy. The same check is shown
+                down in Storage, which is too far from the decision to be seen
+                — Docker volume mounts look like sibling paths (#1720). `auto`
+                handles the fallback correctly, so only this choice warns. */}
+            {(settings['import.mode'] ?? 'auto') === 'hardlink' && storage && !storage.hardlinkable && (
+              <p data-testid="import-mode-hardlink-warning" className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+                {t('settings.general.importModeHardlinkWarning')}
+                {storage.hardlinkReason && (
+                  <span className="block mt-1 text-slate-600 dark:text-zinc-400">{storage.hardlinkReason}</span>
+                )}
+              </p>
+            )}
           </div>
           {['copy', 'hardlink'].includes(settings['import.mode'] ?? 'auto') && (
             <div className="border-t border-slate-200 dark:border-zinc-800 pt-3">

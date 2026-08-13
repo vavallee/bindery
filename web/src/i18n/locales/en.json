@@ -741,6 +741,7 @@
       "storageHealthMissing": "Missing",
       "storageHealthReadOnly": "Not writable",
       "storageHealthChecking": "Checking…",
+      "importModeHardlinkWarning": "⚠ Hardlink is selected, but this setup can't hardlink — imports will copy instead (slower and uses double the disk). Put the download folder and library on the same filesystem/volume, or switch to Auto.",
       "storageHardlinkOk": "Downloads and library share a filesystem — completed downloads are hardlinked into the library (instant, no extra disk).",
       "storageHardlinkWarning": "Downloads and library are on different filesystems — imports will copy files instead of hardlinking (slower and uses double the disk). Put both on the same volume to enable hardlinks.",
       "library": "Library",

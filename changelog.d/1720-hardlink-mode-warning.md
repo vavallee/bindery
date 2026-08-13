@@ -1,0 +1,2 @@
+### Fixed
+- **Import Mode now warns when Hardlink can't hardlink** (#1720) — picking **Hardlink** on a setup where the download folder and library are on different filesystems used to look like it worked while imports quietly fell back to copying; the usual cause is separate Docker volume mounts that look like sibling paths. The selector now shows the amber warning and the specific reason inline under the mode buttons, where the choice is made, instead of only in the Storage section further down. **Auto** is unaffected — it already picks per download.

@@ -24,6 +24,8 @@ Set the import mode in **Settings → General → File Naming**.
 | **move** | none | **broken** | Moves the file out of the download location, so a torrent can no longer seed it. Only suitable for Usenet, or when you do not seed. |
 | **external** | none | kept | Hands off to a sibling tool (Calibre, CWA, Grimmory, Storyteller). Bindery stops after grabbing; the external tool processes and places the file, then Bindery reconciles it on the next library scan. Can drop the file into a configured watch folder. |
 
+If you pick **hardlink** on a setup that cannot hardlink — separate Docker volume mounts for downloads and library are the usual cause, and they look like sibling paths — the selector warns right under the buttons and says why. Imports still work; they just copy. Put both under one mount, or use **auto**, which makes that decision per download.
+
 ## Multi-disc audiobook flattening
 
 Some audiobook releases arrive as nested disc folders with repeated track names, for example `Disc 1/Track 01.mp3`, `Disc 1/Track 02.mp3`, `Disc 2/Track 01.mp3`. Audiobook players that sort each disc folder independently (or treat repeated `Track 01` names as duplicates) play these in the wrong order.

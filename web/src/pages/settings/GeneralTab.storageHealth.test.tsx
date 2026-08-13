@@ -86,3 +86,44 @@ describe('GeneralTab storage health', () => {
     expect(screen.getByText(/different filesystems/)).toBeTruthy()
   })
 })
+
+// #1720 — the storage-section notice above is too far from the Import Mode
+// buttons to be seen at the moment of choice, so a deliberate Hardlink pick on
+// a setup that can't hardlink silently degrades to a copy.
+describe('GeneralTab import mode hardlink warning', () => {
+  const unhardlinkable = {
+    hardlinkable: false,
+    hardlinkReason: 'the download directory and the library are on different filesystems, so imports copy instead of hardlinking',
+  }
+
+  it('warns inline under the mode buttons when hardlink is picked but unavailable', async () => {
+    vi.mocked(api.listSettings).mockResolvedValue([{ key: 'import.mode', value: 'hardlink' }])
+    vi.mocked(api.getStorage).mockResolvedValue(storage(unhardlinkable))
+    render(<GeneralTab />)
+
+    const warning = await screen.findByTestId('import-mode-hardlink-warning')
+    expect(warning.textContent).toContain('settings.general.importModeHardlinkWarning')
+    // The backend's specific reason rides along, so the user knows what to fix.
+    expect(warning.textContent).toContain('different filesystems')
+  })
+
+  it('stays quiet when hardlinking works', async () => {
+    vi.mocked(api.listSettings).mockResolvedValue([{ key: 'import.mode', value: 'hardlink' }])
+    vi.mocked(api.getStorage).mockResolvedValue(storage())
+    render(<GeneralTab />)
+
+    await waitFor(() => expect(screen.getByText('settings.general.storageHardlinkOk')).toBeTruthy())
+    expect(screen.queryByTestId('import-mode-hardlink-warning')).toBeNull()
+  })
+
+  it('stays quiet for auto, which falls back to copy on its own', async () => {
+    // The default mode already handles an unhardlinkable setup correctly —
+    // warning there would be noise on every Docker install.
+    vi.mocked(api.listSettings).mockResolvedValue([{ key: 'import.mode', value: 'auto' }])
+    vi.mocked(api.getStorage).mockResolvedValue(storage(unhardlinkable))
+    render(<GeneralTab />)
+
+    await waitFor(() => expect(screen.getByText('settings.general.storageHardlinkWarning')).toBeTruthy())
+    expect(screen.queryByTestId('import-mode-hardlink-warning')).toBeNull()
+  })
+})
