@@ -104,6 +104,13 @@ const (
 // back to the scheduler's defaultSearchInterval (12h). Takes effect on restart.
 const SettingSearchInterval = "search.interval"
 
+// SettingHardcoverSyncInterval is the KV key for the Hardcover import-list
+// sync cadence (#1848). Value is a Go duration string (e.g. "1h", "6h", "24h")
+// bounded to [1h, 168h], the same window as SettingSearchInterval. Empty or
+// unset falls back to the scheduler's defaultHardcoverSyncInterval (24h, the
+// literal the job used before the setting existed). Takes effect on restart.
+const SettingHardcoverSyncInterval = "hardcover.sync_interval"
+
 // SettingImportAudiobookFlattenMultiDisc (#886) is "true" to flatten multi-disc
 // audiobook downloads into a single "Part 001.ext", … sequence on import, or
 // unset/"false" (default) to preserve the download's disc-folder layout.
@@ -583,6 +590,24 @@ func validateSettingValue(key, value string) error {
 		}
 		if d > 168*time.Hour {
 			return fmt.Errorf("search.interval %q exceeds the maximum of 168h (7 days)", value)
+		}
+	case SettingHardcoverSyncInterval:
+		// Empty = unset (scheduler falls back to its built-in 24h default).
+		// Same bounds as search.interval: below 1h a large shelf would be
+		// re-walked faster than a sync completes, above a week the setting
+		// stops being a cadence.
+		if value == "" {
+			return nil
+		}
+		d, err := time.ParseDuration(value)
+		if err != nil {
+			return fmt.Errorf("hardcover.sync_interval %q is not a valid duration (e.g. 1h, 6h, 24h)", value)
+		}
+		if d < time.Hour {
+			return fmt.Errorf("hardcover.sync_interval %q is too short — minimum is 1h to avoid hammering the Hardcover API", value)
+		}
+		if d > 168*time.Hour {
+			return fmt.Errorf("hardcover.sync_interval %q exceeds the maximum of 168h (7 days)", value)
 		}
 	}
 	return nil

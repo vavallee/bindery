@@ -574,6 +574,43 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
         </div>
       </section>
 
+      {/* Hardcover import-list sync interval (#1848). Sits directly under the
+          wanted-search interval because both are scheduler cadences read once
+          at startup. */}
+      <section>
+        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.hardcoverSync', 'Hardcover list sync')}</h3>
+        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+          <div>
+            <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
+              {t('settings.general.hardcoverSyncIntervalLabel', 'Hardcover list sync interval')}
+            </label>
+            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+              {t('settings.general.hardcoverSyncIntervalHint', 'How often Bindery re-syncs your enabled Hardcover import lists. Lower it if you curate a Hardcover list as your main way of adding books. Use Sync now on the Import tab for an immediate run.')}
+            </p>
+            <select
+              value={settings['hardcover.sync_interval'] ?? '24h'}
+              onChange={async e => {
+                const next = e.target.value
+                setSettings(s => ({ ...s, 'hardcover.sync_interval': next }))
+                await api.setSetting('hardcover.sync_interval', next).catch(console.error)
+              }}
+              className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+            >
+              <option value="1h">1 hour</option>
+              <option value="3h">3 hours</option>
+              <option value="6h">6 hours</option>
+              <option value="12h">12 hours</option>
+              <option value="24h">24 hours (default)</option>
+              <option value="48h">48 hours</option>
+              <option value="168h">7 days</option>
+            </select>
+            <p className="text-xs text-slate-500 dark:text-zinc-600 mt-1">
+              {t('settings.general.searchIntervalRestart')}
+            </p>
+          </div>
+        </div>
+      </section>
+
       {/* Default library location */}
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.defaultLibraryLocation')}</h3>

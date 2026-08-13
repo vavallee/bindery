@@ -90,23 +90,56 @@ const (
 	maxSearchInterval = 168 * time.Hour
 )
 
+// defaultHardcoverSyncInterval is the fallback Hardcover import-list sync
+// cadence used when the "hardcover.sync_interval" DB setting is absent or
+// invalid. 24h is the literal the job was registered with before the setting
+// existed (#1848), so an install that never touches the setting keeps its
+// previous behaviour.
+const defaultHardcoverSyncInterval = 24 * time.Hour
+
+// minHardcoverSyncInterval and maxHardcoverSyncInterval mirror the bounds the
+// API validator enforces for "hardcover.sync_interval" (see
+// internal/api/settings_handler.go::validateSettingValue,
+// SettingHardcoverSyncInterval case) — the same [1h, 168h] window as the
+// wanted-book search interval, re-checked here for values that reached the DB
+// out-of-band.
+const (
+	minHardcoverSyncInterval = time.Hour
+	maxHardcoverSyncInterval = 168 * time.Hour
+)
+
 // resolveSearchInterval reads the "search.interval" DB setting and returns the
 // wanted-book search cadence. It falls back to defaultSearchInterval (logging a
 // WARN) when the setting is unset/empty, unparseable, or outside the
 // [minSearchInterval, maxSearchInterval] bounds enforced by the API validator.
 func (s *Scheduler) resolveSearchInterval() time.Duration {
+	return s.resolveInterval("search.interval", defaultSearchInterval, minSearchInterval, maxSearchInterval)
+}
+
+// resolveHardcoverSyncInterval reads the "hardcover.sync_interval" DB setting
+// and returns the Hardcover import-list sync cadence, with the same
+// unset/invalid/out-of-bounds fallback rules as resolveSearchInterval (#1848).
+func (s *Scheduler) resolveHardcoverSyncInterval() time.Duration {
+	return s.resolveInterval("hardcover.sync_interval", defaultHardcoverSyncInterval, minHardcoverSyncInterval, maxHardcoverSyncInterval)
+}
+
+// resolveInterval is the shared body behind every DB-backed cron cadence: read
+// key, fall back to def when unset/empty/unparseable, and clamp to [min, max]
+// by falling back rather than honouring an absurd cadence. Kept in one place so
+// a new interval setting can never drift from the established semantics.
+func (s *Scheduler) resolveInterval(key string, def, minInterval, maxInterval time.Duration) time.Duration {
 	if s.settings == nil {
-		return defaultSearchInterval
+		return def
 	}
-	v, _ := s.settings.Get(s.ctx(), "search.interval")
+	v, _ := s.settings.Get(s.ctx(), key)
 	if v == nil || v.Value == "" {
-		return defaultSearchInterval
+		return def
 	}
 	d, err := time.ParseDuration(v.Value)
-	if err != nil || d < minSearchInterval || d > maxSearchInterval {
-		slog.Warn("scheduler: invalid search.interval, falling back to default",
-			"value", v.Value, "default", defaultSearchInterval)
-		return defaultSearchInterval
+	if err != nil || d < minInterval || d > maxInterval {
+		slog.Warn("scheduler: invalid interval setting, falling back to default",
+			"setting", key, "value", v.Value, "default", def)
+		return def
 	}
 	return d
 }
@@ -421,9 +454,13 @@ func (s *Scheduler) Start() {
 		}))
 	}
 
-	// Sync Hardcover import lists every 24 hours.
+	// Sync Hardcover import lists on a configurable interval (default 24h).
+	// Read once at Start() like the search interval — a restart applies changes
+	// — and clamped to the same [1h, 168h] bounds the API validator enforces
+	// (#1848).
 	if s.hcSyncer != nil {
-		s.cron.AddFunc("@every 24h", runJob("hardcover-sync", func() {
+		hcInterval := s.resolveHardcoverSyncInterval()
+		s.cron.AddFunc(fmt.Sprintf("@every %s", hcInterval), runJob("hardcover-sync", func() {
 			slog.Info("job: sync hardcover lists")
 			if err := s.hcSyncer.Sync(s.ctx()); err != nil {
 				slog.Error("hardcover list sync failed", "error", err)

@@ -116,10 +116,10 @@ func hasEntryWithDelay(entries []cron.Entry, d time.Duration) bool {
 	return false
 }
 
-// schedulerWithSearchInterval builds a Scheduler backed by an in-memory DB and
-// seeds (or omits) the search.interval setting. value=="" leaves the setting
-// unset. A nil settings repo is requested with seedSettings=false.
-func schedulerWithSearchInterval(t *testing.T, seedSettings bool, value string) *Scheduler {
+// schedulerWithSetting builds a Scheduler backed by an in-memory DB and seeds
+// (or omits) a single interval setting. value=="" leaves the setting unset. A
+// nil settings repo is requested with seedSettings=false.
+func schedulerWithSetting(t *testing.T, seedSettings bool, key, value string) *Scheduler {
 	t.Helper()
 	s := &Scheduler{cron: cron.New(cron.WithSeconds())}
 	if seedSettings {
@@ -130,13 +130,73 @@ func schedulerWithSearchInterval(t *testing.T, seedSettings bool, value string) 
 		t.Cleanup(func() { database.Close() })
 		repo := db.NewSettingsRepo(database)
 		if value != "" {
-			if err := repo.Set(context.Background(), "search.interval", value); err != nil {
-				t.Fatalf("seed search.interval: %v", err)
+			if err := repo.Set(context.Background(), key, value); err != nil {
+				t.Fatalf("seed %s: %v", key, err)
 			}
 		}
 		s.settings = repo
 	}
 	return s
+}
+
+// schedulerWithSearchInterval seeds the search.interval setting specifically.
+func schedulerWithSearchInterval(t *testing.T, seedSettings bool, value string) *Scheduler {
+	t.Helper()
+	return schedulerWithSetting(t, seedSettings, "search.interval", value)
+}
+
+// schedulerWithHardcoverInterval seeds hardcover.sync_interval and wires the
+// no-op stub syncer so Start() actually registers the hardcover-sync job.
+func schedulerWithHardcoverInterval(t *testing.T, seedSettings bool, value string) *Scheduler {
+	t.Helper()
+	s := schedulerWithSetting(t, seedSettings, "hardcover.sync_interval", value)
+	s.hcSyncer = &stubHCSyncer{}
+	return s
+}
+
+// TestStart_HardcoverSyncUsesConfiguredInterval verifies the hardcover-sync
+// cron entry honours a valid configured hardcover.sync_interval (#1848). 3h is
+// used because no other job registers at that cadence.
+func TestStart_HardcoverSyncUsesConfiguredInterval(t *testing.T) {
+	s := schedulerWithHardcoverInterval(t, true, "3h")
+	s.Start()
+	entries := s.cron.Entries()
+	s.Stop()
+
+	if !hasEntryWithDelay(entries, 3*time.Hour) {
+		t.Error("expected a cron entry at the configured 3h interval, found none")
+	}
+}
+
+// TestResolveHardcoverSyncInterval covers the helper directly: unset/nil falls
+// back to 24h, in-range values pass through, and out-of-bounds or unparseable
+// values fall back — the same clamping the API validator enforces.
+func TestResolveHardcoverSyncInterval(t *testing.T) {
+	if got := schedulerWithHardcoverInterval(t, false, "").resolveHardcoverSyncInterval(); got != defaultHardcoverSyncInterval {
+		t.Errorf("nil settings: got %s, want %s", got, defaultHardcoverSyncInterval)
+	}
+	if got := schedulerWithHardcoverInterval(t, true, "").resolveHardcoverSyncInterval(); got != defaultHardcoverSyncInterval {
+		t.Errorf("unset setting: got %s, want %s", got, defaultHardcoverSyncInterval)
+	}
+	// Inclusive bounds pass through unchanged.
+	for _, tc := range []struct {
+		value string
+		want  time.Duration
+	}{
+		{"1h", minHardcoverSyncInterval},
+		{"6h", 6 * time.Hour},
+		{"168h", maxHardcoverSyncInterval},
+	} {
+		if got := schedulerWithHardcoverInterval(t, true, tc.value).resolveHardcoverSyncInterval(); got != tc.want {
+			t.Errorf("valid %q: got %s, want %s", tc.value, got, tc.want)
+		}
+	}
+	// Below the minimum, above the maximum, and unparseable all fall back.
+	for _, bad := range []string{"59m", "169h", "garbage"} {
+		if got := schedulerWithHardcoverInterval(t, true, bad).resolveHardcoverSyncInterval(); got != defaultHardcoverSyncInterval {
+			t.Errorf("invalid %q: got %s, want default %s", bad, got, defaultHardcoverSyncInterval)
+		}
+	}
 }
 
 // TestStart_SearchWantedUsesConfiguredInterval verifies the search-wanted cron

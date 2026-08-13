@@ -562,6 +562,27 @@ func TestValidateSettingValue_SearchInterval(t *testing.T) {
 	}
 }
 
+// TestValidateSettingValue_HardcoverSyncInterval mirrors the search.interval
+// bounds test for the Hardcover import-list cadence (#1848): empty is allowed
+// (scheduler falls back to its 24h default), [1h, 168h] is accepted inclusive,
+// and short/long/unparseable values are rejected. The scheduler re-checks the
+// same bounds in resolveHardcoverSyncInterval; keep the two in sync.
+func TestValidateSettingValue_HardcoverSyncInterval(t *testing.T) {
+	if err := validateSettingValue(SettingHardcoverSyncInterval, ""); err != nil {
+		t.Errorf("empty should be accepted: %v", err)
+	}
+	for _, v := range []string{"1h", "6h", "24h", "168h"} {
+		if err := validateSettingValue(SettingHardcoverSyncInterval, v); err != nil {
+			t.Errorf("%q should be accepted: %v", v, err)
+		}
+	}
+	for _, v := range []string{"59m", "169h", "nightly"} {
+		if err := validateSettingValue(SettingHardcoverSyncInterval, v); err == nil {
+			t.Errorf("%q should be rejected", v)
+		}
+	}
+}
+
 func TestValidateSettingValue_ImportMode(t *testing.T) {
 	// Empty = auto (same as the explicit "auto"), accepted.
 	if err := validateSettingValue(SettingImportMode, ""); err != nil {

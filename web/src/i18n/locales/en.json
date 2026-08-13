@@ -786,6 +786,9 @@
       "searchIntervalLabel": "Wanted search interval",
       "searchIntervalHint": "How often Bindery searches all wanted books against your indexers. Reduce if you have a large library and are hitting indexer API rate limits.",
       "searchIntervalRestart": "Takes effect after the next Bindery restart.",
+      "hardcoverSync": "Hardcover list sync",
+      "hardcoverSyncIntervalLabel": "Hardcover list sync interval",
+      "hardcoverSyncIntervalHint": "How often Bindery re-syncs your enabled Hardcover import lists. Lower it if you curate a Hardcover list as your main way of adding books. Use Sync now on the Import tab for an immediate run.",
       "restartRequired": "Takes effect after the next Bindery restart."
     },
     "import": {
