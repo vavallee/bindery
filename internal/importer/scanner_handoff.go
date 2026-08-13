@@ -242,8 +242,8 @@ func discoverBookFiles(downloadPath string, explicitFiles []string) []string {
 //
 // An Lstat error other than "not exist" (a permission problem on the parent
 // directory, say) also drops the entry: the import would fail on it anyway,
-// and reporting "no usable files at the download path" is more accurate than
-// pretending the file is available.
+// and falling through to tryImportInternal's path checks describes the
+// situation better than a failure raised from inside the mover.
 func filterImportableFiles(paths []string) []string {
 	out := paths[:0:0]
 	for _, p := range paths {
