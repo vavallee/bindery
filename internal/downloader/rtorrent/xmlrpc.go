@@ -24,7 +24,10 @@ import (
 // that want to distinguish "torrent is gone" from "the endpoint is down" match
 // on this type rather than on the transport error.
 type Fault struct {
-	Code    int
+	// Code is int64 rather than int because that is what int64Value hands back
+	// and rTorrent's fault codes are arbitrary integers: narrowing here would
+	// silently truncate on the 32-bit ARM builds the release matrix ships.
+	Code    int64
 	Message string
 }
 
@@ -168,7 +171,7 @@ func faultFrom(v *xmlValue) error {
 		switch m.Name {
 		case "faultCode":
 			if n, err := m.Value.int64Value(); err == nil {
-				f.Code = int(n)
+				f.Code = n
 			}
 		case "faultString":
 			f.Message = m.Value.stringValue()
