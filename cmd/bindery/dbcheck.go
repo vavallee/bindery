@@ -25,51 +25,78 @@ const (
 	fkCheckEnv = "BINDERY_DB_FK_CHECK"
 )
 
-// runDBMaintenance dispatches the db-check / db-repair subcommands, exiting the
-// process when it handles one. It returns normally if os.Args names neither, so
-// main can carry on with a normal boot. An optional argument overrides the
-// database path.
-func runDBMaintenance(defaultPath string) {
-	if len(os.Args) < 2 {
-		return
+// dbMaintenanceRequest is a parsed db-check / db-repair invocation.
+type dbMaintenanceRequest struct {
+	repair    bool
+	path      string
+	confirmed bool
+}
+
+// parseDBMaintenanceArgs interprets a full argv. It returns nil when the
+// arguments name neither subcommand, so main can carry on with a normal boot.
+// Any argument that isn't a flag overrides the database path.
+func parseDBMaintenanceArgs(args []string, defaultPath string) *dbMaintenanceRequest {
+	if len(args) < 2 {
+		return nil
 	}
-	var repair bool
-	switch os.Args[1] {
+	req := dbMaintenanceRequest{path: defaultPath}
+	switch args[1] {
 	case "db-check":
 	case "db-repair":
-		repair = true
+		req.repair = true
 	default:
-		return
+		return nil
 	}
-
-	path := defaultPath
-	confirmed := false
-	for _, arg := range os.Args[2:] {
+	for _, arg := range args[2:] {
 		switch arg {
 		case "--yes", "-y":
-			confirmed = true
+			req.confirmed = true
 		default:
-			path = arg
+			req.path = arg
 		}
 	}
+	return &req
+}
 
-	if repair && !confirmed {
+// runDBMaintenance dispatches the db-check / db-repair subcommands, exiting the
+// process when it handles one, and returning normally when it does not.
+func runDBMaintenance(defaultPath string) {
+	req := parseDBMaintenanceArgs(os.Args, defaultPath)
+	if req == nil {
+		return
+	}
+	if req.repair && !req.confirmed {
 		fmt.Fprintf(os.Stderr,
-			"db-repair modifies your database. Back up %s first, then re-run with --yes:\n\n    bindery db-repair --yes\n\nRun `bindery db-check` to see what it would change.\n", path)
+			"db-repair modifies your database. Back up %s first, then re-run with --yes:\n\n    bindery db-repair --yes\n\nRun `bindery db-check` to see what it would change.\n", req.path)
 		os.Exit(2)
 	}
+	os.Exit(runFKTool(req.path, req.repair))
+}
 
-	os.Exit(runFKTool(path, repair))
+// fkCheckMode maps a BINDERY_DB_FK_CHECK value onto what to do: "" to boot
+// normally, "report", "repair", or "invalid".
+func fkCheckMode(value string) string {
+	switch value {
+	case "":
+		return ""
+	case "report", "check", "1", "true":
+		return "report"
+	case "repair":
+		return "repair"
+	default:
+		return "invalid"
+	}
 }
 
 // runDBFKCheckFromEnv is the same tool reachable through an environment
 // variable, for deployments where the command line is not editable. It runs
-// before the database is opened for real and always exits the process.
+// before the database is opened for real and exits the process whenever the
+// variable is set.
 func runDBFKCheckFromEnv(path string) {
-	switch os.Getenv(fkCheckEnv) {
+	switch fkCheckMode(os.Getenv(fkCheckEnv)) {
 	case "":
 		return
-	case "report", "check", "1", "true":
+	case "report":
 		os.Exit(runFKTool(path, false))
 	case "repair":
 		fmt.Printf("%s=repair is set — repairing, then exiting. Unset it before starting Bindery normally.\n", fkCheckEnv)

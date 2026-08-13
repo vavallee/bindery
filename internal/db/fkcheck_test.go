@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -274,6 +275,92 @@ func TestRepairForeignKeyViolations(t *testing.T) {
 	}
 	if intact != 1 {
 		t.Error("repair removed rows that were referentially sound")
+	}
+}
+
+// TestRepairSkipsUnsafeForeignKeys covers the deliberately conservative half of
+// the repair: where the schema declares no ON DELETE action, guessing risks
+// throwing away real data, so the row is left alone and reported by name.
+func TestRepairSkipsUnsafeForeignKeys(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	// authors.owner_user_id REFERENCES users(id) carries no ON DELETE clause.
+	for _, s := range []string{
+		`PRAGMA foreign_keys = OFF`,
+		`INSERT INTO authors (id, foreign_id, name, sort_name, owner_user_id) VALUES (1, 'OL1A', 'A', 'A', 999)`,
+		`PRAGMA foreign_keys = ON`,
+	} {
+		if _, err := database.Exec(s); err != nil {
+			t.Fatalf("seed %q: %v", s, err)
+		}
+	}
+
+	ctx := context.Background()
+	violations, err := ForeignKeyViolations(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("violations = %d, want 1", len(violations))
+	}
+
+	report, err := RepairForeignKeyViolations(ctx, database, violations)
+	if err != nil {
+		t.Fatalf("repair: %v", err)
+	}
+	if report.Skipped != 1 || report.Deleted != 0 || report.Nulled != 0 {
+		t.Errorf("report = %+v, want the row skipped and nothing touched", report)
+	}
+	if report.Remaining != 1 {
+		t.Errorf("remaining = %d, want 1 — a skipped row is still a violation", report.Remaining)
+	}
+	if len(report.SkipNotes) != 1 || !strings.Contains(report.SkipNotes[0], "NO ACTION") {
+		t.Errorf("skip notes %v do not explain why the row was left alone", report.SkipNotes)
+	}
+	var authors int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM authors WHERE id = 1`).Scan(&authors); err != nil {
+		t.Fatal(err)
+	}
+	if authors != 1 {
+		t.Error("repair deleted a row it had no safe rule for")
+	}
+}
+
+// TestOpenForMaintenanceSkipsMigrations is the contract the recovery path
+// depends on: the instance that needs db-check is the one that cannot get past
+// a migration, so opening for maintenance must not run any.
+func TestOpenForMaintenanceSkipsMigrations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bindery.db")
+	ctx := context.Background()
+
+	fresh, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := fresh.Exec(`DELETE FROM schema_migrations WHERE version = 1`); err != nil {
+		t.Fatalf("clear migration marker: %v", err)
+	}
+	if err := fresh.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	maint, err := OpenForMaintenance(ctx, path)
+	if err != nil {
+		t.Fatalf("open for maintenance: %v", err)
+	}
+	defer maint.Close()
+
+	// If migrations had run, the marker we removed would be back.
+	var marker int
+	if err := maint.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version = 1`).Scan(&marker); err != nil {
+		t.Fatal(err)
+	}
+	if marker != 0 {
+		t.Error("OpenForMaintenance ran migrations; it must not")
 	}
 }
 

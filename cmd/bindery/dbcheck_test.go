@@ -83,6 +83,67 @@ func TestRunFKToolMissingDatabase(t *testing.T) {
 	}
 }
 
+func TestParseDBMaintenanceArgs(t *testing.T) {
+	const def = "/config/bindery.db"
+	tests := []struct {
+		name          string
+		args          []string
+		wantNil       bool
+		wantRepair    bool
+		wantPath      string
+		wantConfirmed bool
+	}{
+		{name: "no arguments boots normally", args: []string{"bindery"}, wantNil: true},
+		{name: "unrelated subcommand boots normally", args: []string{"bindery", "healthcheck"}, wantNil: true},
+		{name: "db-check", args: []string{"bindery", "db-check"}, wantPath: def},
+		{name: "db-repair needs confirmation", args: []string{"bindery", "db-repair"}, wantRepair: true, wantPath: def},
+		{name: "db-repair confirmed", args: []string{"bindery", "db-repair", "--yes"}, wantRepair: true, wantPath: def, wantConfirmed: true},
+		{name: "path override", args: []string{"bindery", "db-check", "/data/other.db"}, wantPath: "/data/other.db"},
+		{
+			name: "path override with confirmation, either order",
+			args: []string{"bindery", "db-repair", "/data/other.db", "-y"},
+			// -y is accepted as a short form so an operator copying from a
+			// terminal habit isn't told their confirmation doesn't count.
+			wantRepair: true, wantPath: "/data/other.db", wantConfirmed: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseDBMaintenanceArgs(tc.args, def)
+			if tc.wantNil {
+				if got != nil {
+					t.Fatalf("got %+v, want nil", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("got nil, want a parsed request")
+			}
+			if got.repair != tc.wantRepair || got.path != tc.wantPath || got.confirmed != tc.wantConfirmed {
+				t.Errorf("got %+v, want repair=%v path=%q confirmed=%v",
+					*got, tc.wantRepair, tc.wantPath, tc.wantConfirmed)
+			}
+		})
+	}
+}
+
+func TestFKCheckMode(t *testing.T) {
+	for value, want := range map[string]string{
+		"":       "",
+		"report": "report",
+		"check":  "report",
+		"1":      "report",
+		"true":   "report",
+		"repair": "repair",
+		"yes":    "invalid",
+		"REPAIR": "invalid",
+	} {
+		if got := fkCheckMode(value); got != want {
+			t.Errorf("fkCheckMode(%q) = %q, want %q", value, got, want)
+		}
+	}
+}
+
 func countViolations(t *testing.T, ctx context.Context, path string) int {
 	t.Helper()
 	database, err := db.OpenForMaintenance(ctx, path)
