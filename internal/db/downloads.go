@@ -108,8 +108,17 @@ func (r *DownloadRepo) Create(ctx context.Context, d *models.Download) error {
 	return nil
 }
 
-// RetryFailed atomically claims an existing failed download for a manual retry.
-// It returns false when the row is no longer in the failed state.
+// RetryFailed atomically claims an existing DEAD download row for a re-grab of
+// the same release, resetting it to StateGrabbed with a clean error message,
+// timestamps and retry count. It returns false when the row has since moved to
+// a state that is not re-grabbable, which is what makes the claim atomic
+// against a concurrent grab.
+//
+// Two states qualify. StateFailed is the download-side failure. StateImportBlocked
+// (#1955) is the import-side one: terminal to every automatic path, so without
+// this the row pins the GUID forever and every later Grab of that release
+// answers "already grabbed". Keep the set in sync with api.regrabbableState,
+// which gates the caller.
 func (r *DownloadRepo) RetryFailed(ctx context.Context, d *models.Download) (bool, error) {
 	now := time.Now().UTC()
 	result, err := r.db.ExecContext(ctx, `
@@ -133,10 +142,10 @@ func (r *DownloadRepo) RetryFailed(ctx context.Context, d *models.Download) (boo
 		    completed_at=NULL,
 		    imported_at=NULL,
 		    import_retry_count=0
-		WHERE id=? AND status=?`,
+		WHERE id=? AND status IN (?, ?)`,
 		d.BookID, d.EditionID, d.IndexerID, d.DownloadClientID,
 		d.Title, d.NZBURL, d.Size, models.StateGrabbed, d.Protocol,
-		d.Quality, d.IndexerFlags, now, d.ID, models.StateFailed)
+		d.Quality, d.IndexerFlags, now, d.ID, models.StateFailed, models.StateImportBlocked)
 	if err != nil {
 		return false, fmt.Errorf("retry failed download: %w", err)
 	}

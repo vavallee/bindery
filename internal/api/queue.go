@@ -39,6 +39,49 @@ var queueClientPollTimeout = 1 * time.Second
 
 var errAlreadyGrabbed = errors.New("already grabbed")
 
+// regrabbableState reports whether an existing download row for the same GUID
+// may be reused by a fresh grab of that release.
+//
+// Only DEAD rows qualify. A download that is grabbed, downloading, importing or
+// already imported is live work, and re-grabbing it would either duplicate the
+// torrent or throw away a successful import — that is what the "already
+// grabbed" 409 exists to prevent.
+//
+// StateImportBlocked qualifies alongside StateFailed (#1955). Blocked is
+// terminal to every automatic path: the retry budget is spent, the poller will
+// never revisit the row, and the release stays on the book forever. Refusing
+// the re-grab left the reporter with a search result they could not act on —
+// they had deleted the audiobook from the UI, so the files the blocked download
+// pointed at were gone, and every Grab click answered "already grabbed" with no
+// way forward from that screen. The queue's Retry import remains the way to
+// re-run the ORIGINAL files; this is the way to fetch them again.
+//
+// StateImportFailed deliberately does NOT qualify: the scanner is still working
+// through its retry budget on that row, and a re-grab would race it.
+func regrabbableState(s models.DownloadState) bool {
+	return s == models.StateFailed || s == models.StateImportBlocked
+}
+
+// alreadyGrabbedDetail explains why a re-grab was refused and what to do
+// instead. It is appended to the bare "already grabbed" sentinel and reaches
+// the user verbatim — the search page renders the API error string.
+//
+// The bare sentinel was the entire message the reporter of #1955 got back, on a
+// screen that shows no queue state, so "already grabbed" read as a bug rather
+// than as a pointer at a queue row they could act on.
+func alreadyGrabbedDetail(status models.DownloadState) string {
+	switch status {
+	case models.StateImported:
+		return "this release has already been imported"
+	case models.StateImportFailed:
+		return "its import is still being retried — wait for it to settle, or use Retry import on the Queue page"
+	case models.StateImportExternal, models.StateImportHeld:
+		return "it is waiting to be picked up by your external import tool — see the Queue page"
+	default:
+		return fmt.Sprintf("it is already in the queue (%s) — see the Queue page", status)
+	}
+}
+
 type QueueHandler struct {
 	downloads            *db.DownloadRepo
 	clients              *db.DownloadClientRepo
@@ -613,7 +656,9 @@ func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
 
 	dl, err := h.grab(r.Context(), req)
 	if errors.Is(err, errAlreadyGrabbed) {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "already grabbed"})
+		// err carries alreadyGrabbedDetail's explanation; the search page shows
+		// this string verbatim, so send it rather than the bare sentinel (#1955).
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
 	if err != nil {
@@ -748,8 +793,8 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	if err != nil {
 		return nil, err
 	}
-	if existing != nil && existing.Status != models.StateFailed {
-		return nil, errAlreadyGrabbed
+	if existing != nil && !regrabbableState(existing.Status) {
+		return nil, fmt.Errorf("%w: %s", errAlreadyGrabbed, alreadyGrabbedDetail(existing.Status))
 	}
 
 	client, err := h.selectClient(ctx, req.Protocol, req.MediaType)

@@ -154,7 +154,8 @@ func (h *PendingHandler) Grab(w http.ResponseWriter, r *http.Request) {
 	dl, err := h.queue.grab(r.Context(), stored)
 	if err != nil {
 		if errors.Is(err, errAlreadyGrabbed) {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": "already grabbed"})
+			// err carries alreadyGrabbedDetail's explanation (#1955).
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 			return
 		}
 		writeServerError(w, r, err)

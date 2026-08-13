@@ -16,9 +16,24 @@ You may see `add torrent failed: {"added_torrent_ids":...}` or `failed to send t
 
 ### Bindery cannot read the completed files
 
-If Bindery and the download client see the storage at different paths (different container mounts), Bindery cannot find the finished download. This usually surfaces as `importFailed` in the Queue.
+If Bindery and the download client see the storage at different paths (different container mounts), Bindery cannot find the finished download. This usually surfaces as `importFailed` in the Queue with *nothing at `<path>` on this host*.
 
-**Fix:** set a download-client path remap in **Settings → Download clients**, then use **Queue → Retry import**. See [Path remapping](./DEPLOYMENT.md#path-remapping-multi-container--multi-pod-setups) in `DEPLOYMENT.md`.
+That message lists three causes, because all three produce the same missing path and only you can tell them apart:
+
+1. **The download hasn't finished.** With qBittorrent's temp/incomplete directory enabled (`Session\TempPathEnabled=true`), the final save path doesn't exist until qBittorrent finishes and moves the payload there. Nothing to do — Bindery imports it when it lands.
+2. **The files moved or were deleted since.** Common after deleting a book (or its files) from the UI while the torrent stays in the client, and after an import in `move` mode. Re-download, or point the client back at the files.
+3. **Bindery and the client see different filesystem roots.** This is the path-remap case: set a download-client path remap in **Settings → Download clients**, then use **Queue → Retry import**. See [Path remapping](./DEPLOYMENT.md#path-remapping-multi-container--multi-pod-setups) in `DEPLOYMENT.md`.
+
+Bindery does not spend import retry attempts while there is nothing at the path, so a download in this state is never terminally blocked just for waiting — it stays `importFailed` with the reason visible, and imports on its own as soon as the files appear.
+
+### "Already grabbed" when re-grabbing a release
+
+Clicking **Grab** on a release you already have a Queue entry for is refused with *already grabbed*, and the message now names the state that entry is in.
+
+- **`importFailed`** — the scanner is still retrying that download. Wait for it, or use **Queue → Retry import** to re-run the import against the files it already has.
+- **`imported`** — you already have it.
+- **downloading / grabbed / importing** — it's in flight; check the Queue.
+- **`importBlocked`** — a re-grab is allowed and reuses the existing Queue row with a fresh retry budget. Use this when the original files are gone; use **Retry import** instead when they're still on disk.
 
 ### "Could not match any book to this download"
 
