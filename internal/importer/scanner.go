@@ -1848,6 +1848,16 @@ func pathUnderDir(path, dir string) bool {
 	return err == nil && !strings.HasPrefix(rel, "..")
 }
 
+// bookFormatClaim identifies one (book, media format) slot claimed during a
+// single library-scan pass. book_files rows are per-format, so a book can
+// legitimately take one ebook file and one audiobook file in the same pass;
+// what must stay blocked is two files of the SAME format claiming one book,
+// where the second AddBookFile would overwrite the first (#1957).
+type bookFormatClaim struct {
+	bookID int64
+	format string
+}
+
 // scanBook is the precomputed per-book data the library-scan reconciliation
 // loop needs. Hoisting normalizeTitle into this struct makes it run once per
 // book instead of once per (file, book) pair — see ScanLibrary.
@@ -2034,11 +2044,19 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	}
 
 	// reconciledBooks prevents a single DB book from being matched to more
-	// than one file in the same scan pass. allBooks is loaded once and is
-	// never mutated in-memory, so without this guard a loose titleMatch could
-	// assign the same book to multiple files — last write wins, overwriting
-	// the correct earlier assignment.
-	reconciledBooks := make(map[int64]bool)
+	// than one file OF THE SAME FORMAT in the same scan pass. allBooks is
+	// loaded once and is never mutated in-memory, so without this guard a loose
+	// titleMatch could assign the same book to multiple files — last write
+	// wins, overwriting the correct earlier assignment.
+	//
+	// Keying on (book, format) rather than the bare book ID is what lets a
+	// dual-format folder attach both editions in ONE pass (#1957). AddBookFile
+	// is per-format: an epub and an m4b sitting side by side are two different
+	// rows on the same book, not a conflict. The old bare-ID guard claimed the
+	// book for whichever file the walk reached first and sent the other to
+	// Unmatched, so users had to run a second full scan — which then only
+	// worked if the second file's author/title parse survived (#1956).
+	reconciledBooks := make(map[bookFormatClaim]bool)
 
 	// Precompute per-book reconciliation data once. The title tier previously
 	// called normalizeTitle(book.Title) inside the per-file loop — a pure,
@@ -2182,7 +2200,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	var titleCand []int // reused candidate-index scratch
 	tryReconcileTitle := func(sb *scanBook, path, cleanPath, normParsed, detectedFmt string) bool {
 		b := sb.book
-		if reconciledBooks[b.ID] {
+		if reconciledBooks[bookFormatClaim{b.ID, detectedFmt}] {
 			return false
 		}
 		// Length gate: Jaro-Winkler is bounded above by 0.8 + 0.2·(minLen/
@@ -2220,7 +2238,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			// this book — count them as tracked, not unmatched.
 			trackedPaths[filepath.Clean(filepath.Dir(cleanPath))] = true
 		}
-		reconciledBooks[b.ID] = true
+		reconciledBooks[bookFormatClaim{b.ID, detectedFmt}] = true
 		reconciled++
 		return true
 	}
@@ -2231,7 +2249,15 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		// files_found always equals reconciled + unmatched + already_tracked
 		// (#1436).
 		cleanPath := filepath.Clean(path)
-		if trackedPaths[cleanPath] || trackedPaths[filepath.Clean(filepath.Dir(cleanPath))] {
+		detectedFmt := detectDownloadFormat([]string{path})
+		// The parent-directory entry in trackedPaths stands for "the sibling
+		// TRACKS of a tracked audiobook", so only an audio file may be absorbed
+		// by it. An ebook sharing that folder is a separate format on a
+		// possibly different book, and swallowing it as already-tracked hid
+		// every epub sitting next to an attached audiobook from the scan
+		// (#1957) — the mirror image of the one-format-per-pass claim below.
+		if trackedPaths[cleanPath] ||
+			(detectedFmt == models.MediaTypeAudiobook && trackedPaths[filepath.Clean(filepath.Dir(cleanPath))]) {
 			alreadyTracked++
 			continue
 		}
@@ -2289,11 +2315,10 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 
 		// Search existing books for a match: ASIN takes priority over fuzzy title+author.
 		matched := false
-		detectedFmt := detectDownloadFormat([]string{path})
 		if parsed.ASIN != "" {
 			for _, sb := range asinIndex[parsed.ASIN] {
 				b := sb.book
-				if reconciledBooks[b.ID] {
+				if reconciledBooks[bookFormatClaim{b.ID, detectedFmt}] {
 					continue
 				}
 				// File must live under the candidate book's effective library root.
@@ -2312,7 +2337,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 				if detectedFmt == models.MediaTypeAudiobook {
 					trackedPaths[filepath.Clean(filepath.Dir(cleanPath))] = true
 				}
-				reconciledBooks[b.ID] = true
+				reconciledBooks[bookFormatClaim{b.ID, detectedFmt}] = true
 				reconciled++
 				matched = true
 				break
@@ -2356,7 +2381,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			if seriesErr != nil {
 				slog.Warn("library scan: series position lookup error",
 					"series", parsed.Series, "position", parsed.SeriesNumber, "error", seriesErr)
-			} else if book != nil && !reconciledBooks[book.ID] {
+			} else if book != nil && !reconciledBooks[bookFormatClaim{book.ID, detectedFmt}] {
 				effDir := s.effectiveLibraryDir(ctx, authorMap[book.AuthorID])
 				if pathUnderDir(path, effDir) {
 					if err := s.books.AddBookFile(ctx, book.ID, detectedFmt, path); err != nil {
@@ -2368,7 +2393,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 						if detectedFmt == models.MediaTypeAudiobook {
 							trackedPaths[filepath.Clean(filepath.Dir(cleanPath))] = true
 						}
-						reconciledBooks[book.ID] = true
+						reconciledBooks[bookFormatClaim{book.ID, detectedFmt}] = true
 						reconciled++
 						matched = true
 					}
