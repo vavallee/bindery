@@ -8,13 +8,53 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/vavallee/bindery/internal/bookhydrate"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
 )
+
+// Trigger values reported on SyncProgress so the UI can tell a user-initiated
+// run apart from the scheduler's.
+const (
+	TriggerManual    = "manual"
+	TriggerScheduled = "scheduled"
+)
+
+// SyncStats summarises one list's pass. Processed counts books seen on the
+// Hardcover list, Imported the ones created in the catalogue, Skipped the ones
+// already tracked (by foreign id or canonical dedup key), and Failed the ones
+// whose author resolution or insert errored.
+type SyncStats struct {
+	Total     int `json:"total"`
+	Processed int `json:"processed"`
+	Imported  int `json:"imported"`
+	Skipped   int `json:"skipped"`
+	Failed    int `json:"failed"`
+}
+
+// SyncProgress is the polled shape for GET /importlist/sync/status. It always
+// describes the most recent (or in-flight) list pass: Running=false with a
+// non-nil FinishedAt means it completed, Running=false with a zero StartedAt
+// means nothing has synced yet this process. Mirrors grimmory.SyncProgress /
+// abs.ImportProgress so the UI polls the same way everywhere (#1854).
+type SyncProgress struct {
+	Running    bool       `json:"running"`
+	ListID     int64      `json:"listId,omitempty"`
+	ListName   string     `json:"listName,omitempty"`
+	Trigger    string     `json:"trigger,omitempty"`
+	StartedAt  time.Time  `json:"startedAt"`
+	FinishedAt *time.Time `json:"finishedAt,omitempty"`
+	Message    string     `json:"message,omitempty"`
+	Error      string     `json:"error,omitempty"`
+	Stats      SyncStats  `json:"stats"`
+}
 
 // ListSyncer syncs enabled Hardcover import lists into Bindery's book catalogue.
 type ListSyncer struct {
@@ -26,6 +66,22 @@ type ListSyncer struct {
 	tokenSource   func(context.Context) string
 	clientFactory hardcoverClientFactory
 	enricher      bookhydrate.AudiobookEnricher
+
+	// jobs, when set, tracks the detached goroutine StartOne launches so
+	// process shutdown can cancel and drain a sync before the database closes
+	// (#1458). When nil, StartOne falls back to an untracked goroutine.
+	jobs *jobs.Group
+
+	// syncRunning is the single-flight gate shared by every entry point —
+	// manual StartOne/SyncOne and the scheduled Sync — so a "Sync now" can
+	// never overlap the cron job (or itself) and double-walk the same shelf.
+	// Same CompareAndSwap shape as importer.Scanner.scanRunning.
+	syncRunning atomic.Bool
+
+	// progressMu guards progress, which is written by the running sync and read
+	// by status polls on other goroutines.
+	progressMu sync.Mutex
+	progress   SyncProgress
 }
 
 type hardcoverClient interface {
@@ -90,8 +146,33 @@ func (s *ListSyncer) WithTokenSource(source func(context.Context) string) *ListS
 	return s
 }
 
-// Sync processes all enabled import lists of type "hardcover".
+// WithJobs registers the process-wide background-jobs group so a StartOne()-
+// launched sync is tracked and drained on shutdown before the database closes
+// (#1458), instead of racing teardown on a never-cancelled context.
+func (s *ListSyncer) WithJobs(g *jobs.Group) *ListSyncer {
+	s.jobs = g
+	return s
+}
+
+// Progress returns a snapshot of the current (or most recent) list sync.
+func (s *ListSyncer) Progress() SyncProgress {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	return s.progress
+}
+
+// Sync processes all enabled import lists of type "hardcover". It shares the
+// single-flight gate with the manual paths: if a "Sync now" is already in
+// flight the scheduled run is skipped with a log line rather than double-
+// walking the same shelves (the same cron-vs-manual guard importer.Scanner
+// applies to library scans).
 func (s *ListSyncer) Sync(ctx context.Context) error {
+	if !s.syncRunning.CompareAndSwap(false, true) {
+		slog.Info("hardcover list sync already running; skipping scheduled run")
+		return nil
+	}
+	defer s.syncRunning.Store(false)
+
 	lists, err := s.importLists.ListByType(ctx, "hardcover")
 	if err != nil {
 		return fmt.Errorf("list hardcover import lists: %w", err)
@@ -103,53 +184,172 @@ func (s *ListSyncer) Sync(ctx context.Context) error {
 
 	var firstErr error
 	for _, il := range lists {
-		if err := s.syncList(ctx, il); err != nil {
-			slog.Error("hardcover list sync failed", "list", il.Name, "error", err)
+		if err := s.runList(ctx, il, TriggerScheduled); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
-			continue
-		}
-		if err := s.importLists.UpdateLastSyncAt(ctx, il.ID); err != nil {
-			slog.Error("failed to update last_sync_at", "list", il.Name, "error", err)
 		}
 	}
 	return firstErr
 }
 
-// SyncOne syncs a single hardcover import list by ID. Used by the manual
-// "Sync now" UI affordance. Returns ErrNotFound if the list doesn't exist,
-// ErrWrongType if it's not a hardcover list, or the underlying sync error.
+// SyncOne syncs a single hardcover import list by ID and waits for it to
+// finish. StartOne is what the API uses; this synchronous form remains for
+// callers (and tests) that want the completed result. Returns ErrNotFound if
+// the list doesn't exist, ErrWrongType if it's not a hardcover list,
+// ErrDisabled/ErrMissingToken if it can't run, ErrSyncAlreadyRunning if
+// another sync holds the single-flight gate, or the underlying sync error.
 func (s *ListSyncer) SyncOne(ctx context.Context, id int64) error {
-	il, err := s.importLists.GetByID(ctx, id)
+	il, err := s.loadSyncableList(ctx, id)
 	if err != nil {
-		return fmt.Errorf("load import list %d: %w", id, err)
-	}
-	if il == nil {
-		return ErrNotFound
-	}
-	if il.Type != "hardcover" {
-		return ErrWrongType
-	}
-	if !il.Enabled {
-		return ErrDisabled
-	}
-	if err := s.syncList(ctx, *il); err != nil {
 		return err
 	}
-	if err := s.importLists.UpdateLastSyncAt(ctx, il.ID); err != nil {
-		slog.Error("failed to update last_sync_at", "list", il.Name, "error", err)
+	if !s.syncRunning.CompareAndSwap(false, true) {
+		return ErrSyncAlreadyRunning
+	}
+	defer s.syncRunning.Store(false)
+	return s.runList(ctx, *il, TriggerManual)
+}
+
+// StartOne validates the list and then runs its sync in the background,
+// returning as soon as the job is launched. This is what the manual "Sync now"
+// endpoint calls: a large shelf takes minutes once per-book enrichment is in
+// play, and running it inside the request capped it at the server's 60s
+// request timeout — 519 of 1,660 books imported, the rest lost to "context
+// deadline exceeded" (#1854). The validation reads still happen synchronously
+// so a bad list id, a wrong type, a disabled list, or a missing token is still
+// an immediate 4xx instead of a job that fails invisibly.
+//
+// Tenancy is unchanged by the move off the request: every book and author the
+// sync creates is stamped with the owner recorded on the list row
+// (models.ImportList.OwnerUserID), never with the identity of whoever pressed
+// the button, so a background context cannot leak one user's list into
+// another's library.
+func (s *ListSyncer) StartOne(ctx context.Context, id int64) error {
+	il, err := s.loadSyncableList(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !s.syncRunning.CompareAndSwap(false, true) {
+		return ErrSyncAlreadyRunning
+	}
+	// Publish the "running" snapshot before returning so the 202 response and
+	// the first status poll can't observe a stale finished run.
+	list := *il
+	s.beginProgress(list, TriggerManual)
+
+	run := func(ctx context.Context) {
+		defer s.syncRunning.Store(false)
+		_ = s.syncListTracked(ctx, list)
+	}
+	// With a jobs group wired the sync runs on the shutdown-scoped context, so
+	// SIGTERM cancels and drains it before the DB closes. Fall back to an
+	// untracked goroutine for tests and non-wired callers (#1458).
+	if s.jobs != nil {
+		s.jobs.Go("hardcover-list-sync", run)
+	} else {
+		go run(ctx)
 	}
 	return nil
 }
 
-// Sentinel errors for SyncOne so the API handler can map them to HTTP status
-// codes without string-matching.
+// loadSyncableList resolves an import list id to a list that is eligible to
+// sync right now, returning the sentinel for whichever precondition failed.
+// Shared by SyncOne and StartOne so the synchronous and background paths reject
+// exactly the same inputs.
+func (s *ListSyncer) loadSyncableList(ctx context.Context, id int64) (*models.ImportList, error) {
+	il, err := s.importLists.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("load import list %d: %w", id, err)
+	}
+	if il == nil {
+		return nil, ErrNotFound
+	}
+	if il.Type != "hardcover" {
+		return nil, ErrWrongType
+	}
+	if !il.Enabled {
+		return nil, ErrDisabled
+	}
+	if s.tokenForList(ctx, *il) == "" {
+		return nil, ErrMissingToken
+	}
+	return il, nil
+}
+
+// runList publishes the starting progress snapshot and then syncs one list.
+// Callers must already hold the single-flight gate.
+func (s *ListSyncer) runList(ctx context.Context, il models.ImportList, trigger string) error {
+	s.beginProgress(il, trigger)
+	return s.syncListTracked(ctx, il)
+}
+
+// syncListTracked syncs one list, stamps last_sync_at on success, and finishes
+// the progress snapshot either way. Callers must already hold the single-flight
+// gate and have published the starting snapshot.
+func (s *ListSyncer) syncListTracked(ctx context.Context, il models.ImportList) error {
+	err := s.syncList(ctx, il)
+	if err != nil {
+		slog.Error("hardcover list sync failed", "list", il.Name, "error", err)
+		s.finishProgress(err)
+		return err
+	}
+	if uerr := s.importLists.UpdateLastSyncAt(ctx, il.ID); uerr != nil {
+		slog.Error("failed to update last_sync_at", "list", il.Name, "error", uerr)
+	}
+	s.finishProgress(nil)
+	return nil
+}
+
+// beginProgress resets the snapshot for a new list pass.
+func (s *ListSyncer) beginProgress(il models.ImportList, trigger string) {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	s.progress = SyncProgress{
+		Running:   true,
+		ListID:    il.ID,
+		ListName:  il.Name,
+		Trigger:   trigger,
+		StartedAt: time.Now().UTC(),
+		Message:   "reading list from Hardcover…",
+	}
+}
+
+// finishProgress closes out the snapshot, recording err (if any) as the
+// user-visible failure reason.
+func (s *ListSyncer) finishProgress(err error) {
+	now := time.Now().UTC()
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	s.progress.Running = false
+	s.progress.FinishedAt = &now
+	if err != nil {
+		s.progress.Error = err.Error()
+		s.progress.Message = "sync failed"
+		return
+	}
+	s.progress.Message = "sync complete"
+}
+
+// setProgress mutates the live snapshot under the lock.
+func (s *ListSyncer) setProgress(mutate func(*SyncProgress)) {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	mutate(&s.progress)
+}
+
+// Sentinel errors for SyncOne/StartOne so the API handler can map them to HTTP
+// status codes without string-matching.
 var (
 	ErrNotFound     = errors.New("import list not found")
 	ErrWrongType    = errors.New("import list is not a hardcover list")
 	ErrDisabled     = errors.New("import list is disabled")
 	ErrMissingToken = errors.New("hardcover API token is not configured")
+	// ErrSyncAlreadyRunning is returned when a sync is already in flight.
+	// Matches importer.ErrScanAlreadyRunning / grimmory.ErrSyncAlreadyRunning
+	// so the endpoint can answer 409 instead of piling up concurrent walks of
+	// the same shelf.
+	ErrSyncAlreadyRunning = errors.New("hardcover list sync already running")
 )
 
 func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
@@ -182,6 +382,10 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 	}
 
 	slog.Info("syncing hardcover list", "list", il.Name, "slug", il.URL, "books", len(books))
+	s.setProgress(func(p *SyncProgress) {
+		p.Stats.Total = len(books)
+		p.Message = fmt.Sprintf("importing %d books from %s…", len(books), il.Name)
+	})
 
 	// Owner to stamp on every book and author this sync creates. The list runs
 	// on a background scheduler with no request identity, so the owner is read
@@ -209,8 +413,23 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 	// author imported via ABS) is reused instead of duplicated (#1223).
 	nameIndex := s.buildAuthorNameIndex(ctx)
 
+	// countStat records one book's outcome on the polled progress snapshot.
+	countStat := func(mutate func(*SyncStats)) {
+		s.setProgress(func(p *SyncProgress) { mutate(&p.Stats) })
+	}
+
 	for _, book := range books {
+		// The sync now runs on the shutdown-scoped background context (#1854),
+		// so cancellation means the process is going down: stop walking rather
+		// than grinding through the remaining books with a dead context and a
+		// database that is about to close.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		countStat(func(st *SyncStats) { st.Processed++ })
+
 		if book.ForeignID == "" {
+			countStat(func(st *SyncStats) { st.Skipped++ })
 			continue
 		}
 
@@ -218,6 +437,7 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		existing, _ := s.books.GetByForeignID(ctx, book.ForeignID)
 		if existing != nil {
 			slog.Debug("book already tracked, skipping", "title", book.Title, "foreignID", book.ForeignID)
+			countStat(func(st *SyncStats) { st.Skipped++ })
 			continue
 		}
 
@@ -225,6 +445,7 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		authorID, err := s.ensureAuthor(ctx, &book, nameIndex, ownerID, qualityProfileID)
 		if err != nil {
 			slog.Warn("failed to ensure author for book", "title", book.Title, "error", err)
+			countStat(func(st *SyncStats) { st.Failed++ })
 			continue
 		}
 
@@ -237,6 +458,7 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 			slog.Warn("hardcover list sync: dedup-key lookup failed", "title", book.Title, "error", derr)
 		} else if owned != nil {
 			slog.Debug("book already owned under author, skipping", "title", book.Title, "author_id", authorID, "existing_id", owned.ID)
+			countStat(func(st *SyncStats) { st.Skipped++ })
 			continue
 		}
 
@@ -269,11 +491,14 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		if err := s.books.Create(ctx, &book); err != nil {
 			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 				slog.Debug("book already exists (race)", "title", book.Title)
+				countStat(func(st *SyncStats) { st.Skipped++ })
 				continue
 			}
 			slog.Warn("failed to create book", "title", book.Title, "error", err)
+			countStat(func(st *SyncStats) { st.Failed++ })
 			continue
 		}
+		countStat(func(st *SyncStats) { st.Imported++ })
 		slog.Info("imported book from hardcover list", "title", book.Title, "author_id", authorID)
 
 		// The list response can carry an audiobook ASIN inline (#1694). When

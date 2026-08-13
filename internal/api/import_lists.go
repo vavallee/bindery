@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -19,9 +18,12 @@ import (
 )
 
 // HardcoverListSyncer is the narrow surface ImportListHandler needs for the
-// manual "Sync now" affordance. Implemented by *hardcoverlistsyncer.ListSyncer.
+// manual "Sync now" affordance: launch the sync in the background, and report
+// what the current or most recent run did. Implemented by
+// *hardcoverlistsyncer.ListSyncer.
 type HardcoverListSyncer interface {
-	SyncOne(ctx context.Context, id int64) error
+	StartOne(ctx context.Context, id int64) error
+	Progress() hardcoverlistsyncer.SyncProgress
 }
 
 type hardcoverUserListClient interface {
@@ -277,9 +279,17 @@ func (h *ImportListHandler) DeleteExclusion(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// Sync triggers a manual sync of a single import list. Hardcover lists run
-// the full hardcoverlistsyncer.SyncOne path; other list types are rejected
-// with 400 since no other type has a syncer wired here yet.
+// Sync triggers a manual sync of a single import list. Hardcover lists run the
+// full hardcoverlistsyncer path; other list types are rejected with 400 since
+// no other type has a syncer wired here yet.
+//
+// The sync used to run inside this request, which capped it at the server's
+// 60s request timeout: on a 1,660-book shelf that meant 519 books imported and
+// 1,110 "context deadline exceeded" errors (#1854). It now starts a background
+// job on a context that outlives the request and answers 202 with the initial
+// progress snapshot, so the UI can poll SyncStatus instead of holding a
+// connection open. Preconditions (unknown id, wrong type, disabled list,
+// missing token) are still checked synchronously and still answer 4xx.
 // POST /api/v1/importlist/{id}/sync
 func (h *ImportListHandler) Sync(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -292,14 +302,12 @@ func (h *ImportListHandler) Sync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sync is a few GraphQL hops; bound the request lifetime so a hung upstream
-	// doesn't tie up the connection forever.
-	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
-	defer cancel()
-
-	switch err := h.hcSync.SyncOne(ctx, id); {
+	// context.WithoutCancel: the response returning must not cancel the job.
+	// The syncer prefers the process-wide jobs group when one is wired, so the
+	// run is still cancelled and drained on shutdown.
+	switch err := h.hcSync.StartOne(context.WithoutCancel(r.Context()), id); {
 	case err == nil:
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		writeJSON(w, http.StatusAccepted, h.hcSync.Progress())
 	case errors.Is(err, hardcoverlistsyncer.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 	case errors.Is(err, hardcoverlistsyncer.ErrWrongType):
@@ -308,9 +316,23 @@ func (h *ImportListHandler) Sync(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 	case errors.Is(err, hardcoverlistsyncer.ErrMissingToken):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+	case errors.Is(err, hardcoverlistsyncer.ErrSyncAlreadyRunning):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 	default:
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 	}
+}
+
+// SyncStatus reports the current (or most recent) Hardcover list sync so the
+// Import tab can show that a sync is running and when it finished, whether it
+// was started from "Sync now" or by the scheduler.
+// GET /api/v1/importlist/sync/status
+func (h *ImportListHandler) SyncStatus(w http.ResponseWriter, _ *http.Request) {
+	if h.hcSync == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "hardcover syncer not configured"})
+		return
+	}
+	writeJSON(w, http.StatusOK, h.hcSync.Progress())
 }
 
 func importListResponses(lists []models.ImportList) []models.ImportList {

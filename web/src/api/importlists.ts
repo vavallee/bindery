@@ -46,6 +46,32 @@ export interface HardcoverListsResponse {
   lists: HardcoverList[]
 }
 
+// ImportListSyncStats counts one list pass: books seen, created, already
+// tracked, and errored.
+export interface ImportListSyncStats {
+  total: number
+  processed: number
+  imported: number
+  skipped: number
+  failed: number
+}
+
+// ImportListSyncProgress is the polled shape of the Hardcover list sync (#1854).
+// "Sync now" answers 202 with this snapshot and the sync then runs in the
+// background, so the UI polls /importlist/sync/status until running is false.
+// The scheduler's own runs report here too (trigger: 'scheduled').
+export interface ImportListSyncProgress {
+  running: boolean
+  listId?: number
+  listName?: string
+  trigger?: 'manual' | 'scheduled'
+  startedAt: string
+  finishedAt?: string
+  message?: string
+  error?: string
+  stats: ImportListSyncStats
+}
+
 // GoodreadsRow mirrors a parsed Goodreads CSV row returned in a preview.
 export interface GoodreadsRow {
   rowNumber: number
@@ -91,7 +117,9 @@ export const importListsApi = {
   addImportList: (data: Partial<ImportList>) => request<ImportList>('/importlist', { method: 'POST', body: JSON.stringify(data) }),
   updateImportList: (id: number, data: ImportListUpdate) => request<ImportList>(`/importlist/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteImportList: (id: number) => request<void>(`/importlist/${id}`, { method: 'DELETE' }),
-  syncImportList: (id: number) => request<{ status: string }>(`/importlist/${id}/sync`, { method: 'POST' }),
+  // 202 Accepted — the sync runs in the background; poll importListSyncStatus.
+  syncImportList: (id: number) => request<ImportListSyncProgress>(`/importlist/${id}/sync`, { method: 'POST' }),
+  importListSyncStatus: () => request<ImportListSyncProgress>('/importlist/sync/status'),
   hardcoverLists: (token?: string) =>
     request<HardcoverListsResponse>('/importlist/hardcover/lists', {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,

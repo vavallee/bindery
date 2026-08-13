@@ -3,7 +3,9 @@ package hardcoverlistsyncer
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
@@ -1325,5 +1327,256 @@ func TestSync_NoEnrichmentWithoutASIN(t *testing.T) {
 	}
 	if len(enricher.calls) != 0 {
 		t.Fatalf("enricher calls = %v, want none for an ebook-pinned book", enricher.calls)
+	}
+}
+
+// blockingHardcoverClient holds GetUserLists open until release is closed, so a
+// test can observe the sync mid-flight. started is closed once the background
+// job has actually entered the client call.
+type blockingHardcoverClient struct {
+	fakeHardcoverClient
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (b *blockingHardcoverClient) GetUserLists(ctx context.Context) ([]hardcover.HCList, error) {
+	b.once.Do(func() { close(b.started) })
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return b.fakeHardcoverClient.GetUserLists(ctx)
+}
+
+// newBlockingSyncer wires a syncer whose single enabled list stalls inside the
+// Hardcover client until the returned release channel is closed.
+func newBlockingSyncer(t *testing.T) (s *ListSyncer, listID int64, started, release chan struct{}) {
+	t.Helper()
+	s, repo := newTestSyncer(t)
+	il := testImportList("Blocking", "hardcover", true)
+	if err := repo.Create(context.Background(), &il); err != nil {
+		t.Fatalf("seed list: %v", err)
+	}
+	client := &blockingHardcoverClient{
+		fakeHardcoverClient: fakeHardcoverClient{
+			lists: []hardcover.HCList{{ID: 7, Slug: il.URL, Name: il.Name}},
+			books: []models.Book{bookWithSeriesRef("hc:blocked", "Blocked Book", nil)},
+		},
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	s.WithClientFactory(func(string) hardcoverClient { return client })
+	return s, il.ID, client.started, client.release
+}
+
+// waitFor polls cond until it holds or the deadline passes.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+// TestStartOne_ReturnsWhileSyncStillRunning is the #1854 contract: the manual
+// path must not wait for the sync. StartOne returns while the Hardcover client
+// is still blocked, and the polled progress reports the run as in flight.
+func TestStartOne_ReturnsWhileSyncStillRunning(t *testing.T) {
+	s, listID, started, release := newBlockingSyncer(t)
+
+	done := make(chan error, 1)
+	go func() { done <- s.StartOne(context.Background(), listID) }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("StartOne: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("StartOne did not return while the sync was still running")
+	}
+
+	<-started
+	p := s.Progress()
+	if !p.Running || p.ListID != listID || p.Trigger != TriggerManual {
+		t.Fatalf("progress mid-flight = %+v, want running manual sync of list %d", p, listID)
+	}
+
+	close(release)
+	waitFor(t, "sync to finish", func() bool { return !s.Progress().Running })
+
+	final := s.Progress()
+	if final.FinishedAt == nil {
+		t.Error("finished progress must carry FinishedAt")
+	}
+	if final.Error != "" {
+		t.Errorf("unexpected sync error: %s", final.Error)
+	}
+	if final.Stats.Imported != 1 || final.Stats.Total != 1 {
+		t.Errorf("stats = %+v, want 1 book imported of 1", final.Stats)
+	}
+	if book, err := s.books.GetByForeignID(context.Background(), "hc:blocked"); err != nil || book == nil {
+		t.Fatalf("background sync did not import the book: %+v err=%v", book, err)
+	}
+}
+
+// TestStartOne_SingleFlight verifies a second manual start is rejected while
+// one is in flight, and that the scheduled Sync skips instead of double-walking
+// the same shelf.
+func TestStartOne_SingleFlight(t *testing.T) {
+	s, listID, started, release := newBlockingSyncer(t)
+	defer close(release)
+
+	if err := s.StartOne(context.Background(), listID); err != nil {
+		t.Fatalf("first StartOne: %v", err)
+	}
+	<-started
+
+	if err := s.StartOne(context.Background(), listID); !errors.Is(err, ErrSyncAlreadyRunning) {
+		t.Errorf("second StartOne: want ErrSyncAlreadyRunning, got %v", err)
+	}
+	if err := s.SyncOne(context.Background(), listID); !errors.Is(err, ErrSyncAlreadyRunning) {
+		t.Errorf("SyncOne during a run: want ErrSyncAlreadyRunning, got %v", err)
+	}
+	// The scheduled path skips silently rather than erroring.
+	if err := s.Sync(context.Background()); err != nil {
+		t.Errorf("scheduled Sync during a manual run: want nil (skipped), got %v", err)
+	}
+}
+
+// TestStartOne_ValidationErrorsAreSynchronous confirms the preconditions the
+// endpoint maps to 4xx are still checked before anything is launched, so a bad
+// request never turns into a silently failing background job.
+func TestStartOne_ValidationErrorsAreSynchronous(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	wrongType := testImportList("Goodreads", "goodreads", true)
+	if err := repo.Create(ctx, &wrongType); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	disabled := testImportList("Disabled", "hardcover", false)
+	if err := repo.Create(ctx, &disabled); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	noToken := testImportList("No token", "hardcover", true)
+	noToken.APIKey = ""
+	if err := repo.Create(ctx, &noToken); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		id   int64
+		want error
+	}{
+		{"missing", 99999, ErrNotFound},
+		{"wrong type", wrongType.ID, ErrWrongType},
+		{"disabled", disabled.ID, ErrDisabled},
+		{"no token", noToken.ID, ErrMissingToken},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := s.StartOne(ctx, tc.id); !errors.Is(err, tc.want) {
+				t.Errorf("StartOne: want %v, got %v", tc.want, err)
+			}
+			// A rejected start must not leave the gate held or publish progress.
+			if p := s.Progress(); p.Running {
+				t.Errorf("rejected start left progress running: %+v", p)
+			}
+		})
+	}
+}
+
+// TestStartOne_StampsListOwnerFromTheBackgroundJob is the tenancy guard for the
+// move off the request: ownership comes from the list row, not from whoever
+// pressed "Sync now", so the background context must still scope created
+// content to the list's owner.
+func TestStartOne_StampsListOwnerFromTheBackgroundJob(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatalf("open memory db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	importLists := db.NewImportListRepo(database)
+	authors := db.NewAuthorRepo(database)
+	books := db.NewBookRepo(database)
+	users := db.NewUserRepo(database)
+	ctx := context.Background()
+
+	owner, err := users.Create(ctx, "alice", "hash")
+	if err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
+	s := New(importLists, authors, books)
+	il := testImportList("Alice's shelf", "hardcover", true)
+	il.OwnerUserID = &owner.ID
+	if err := importLists.Create(ctx, &il); err != nil {
+		t.Fatalf("seed list: %v", err)
+	}
+	s.WithClientFactory(func(string) hardcoverClient {
+		return &fakeHardcoverClient{
+			lists: []hardcover.HCList{{ID: 3, Slug: il.URL, Name: il.Name}},
+			books: []models.Book{
+				{ForeignID: "hc:bg-owned", Title: "Owned Book", MetadataProvider: "hardcover",
+					Author: &models.Author{ForeignID: "hc:bg-author", Name: "Owned Author", MetadataProvider: "hardcover"}},
+			},
+		}
+	})
+
+	if err := s.StartOne(ctx, il.ID); err != nil {
+		t.Fatalf("StartOne: %v", err)
+	}
+	waitFor(t, "background sync to finish", func() bool {
+		p := s.Progress()
+		return !p.Running && p.FinishedAt != nil
+	})
+
+	gotBook, err := books.GetByForeignID(ctx, "hc:bg-owned")
+	if err != nil || gotBook == nil {
+		t.Fatalf("created book not found: %v", err)
+	}
+	if gotBook.OwnerUserID != owner.ID {
+		t.Errorf("book OwnerUserID = %d, want %d (list owner)", gotBook.OwnerUserID, owner.ID)
+	}
+	gotAuthor, err := authors.GetByAnyForeignID(ctx, "hc:bg-author")
+	if err != nil || gotAuthor == nil {
+		t.Fatalf("created author not found: %v", err)
+	}
+	if gotAuthor.OwnerUserID != owner.ID {
+		t.Errorf("author OwnerUserID = %d, want %d (list owner)", gotAuthor.OwnerUserID, owner.ID)
+	}
+}
+
+// TestProgress_ReportsFailureReason verifies a failed run closes out the
+// snapshot with the error the UI shows instead of leaving it "running".
+func TestProgress_ReportsFailureReason(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	il := testImportList("Missing slug", "hardcover", true)
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// No list on the account matches the configured slug.
+	s.WithClientFactory(func(string) hardcoverClient { return &fakeHardcoverClient{} })
+
+	if err := s.SyncOne(ctx, il.ID); err == nil {
+		t.Fatal("SyncOne: want an error for an unmatched slug")
+	}
+	p := s.Progress()
+	if p.Running || p.FinishedAt == nil {
+		t.Fatalf("progress after failure = %+v, want finished", p)
+	}
+	if p.Error == "" {
+		t.Error("progress must carry the failure reason")
 	}
 }

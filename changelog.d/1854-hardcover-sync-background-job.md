@@ -1,0 +1,2 @@
+### Fixed
+- **Hardcover "Sync now" no longer stops at 60 seconds** (#1854) — a manual list sync ran inside the HTTP request, so the server's request timeout cut it off partway: on a 1,660-book shelf that meant roughly a third of the books imported and the rest lost to `context deadline exceeded`. The sync now starts as a background job and the endpoint answers immediately; the import list row shows the run's progress and its result, one sync runs at a time, and an in-flight sync is drained on shutdown.

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import SettingsPage from './SettingsPage'
-import { api, type ABSImportRun, type DownloadClient, type HardcoverList, type ImportList, type Indexer, type OidcProvider, type ProwlarrInstance, type RootFolder, type SystemStatus } from '../api/client'
+import { api, type ABSImportRun, type DownloadClient, type HardcoverList, type ImportList, type ImportListSyncProgress, type Indexer, type OidcProvider, type ProwlarrInstance, type RootFolder, type SystemStatus } from '../api/client'
 
 const mockAuthContext = vi.hoisted(() => ({
   status: {
@@ -71,6 +71,7 @@ vi.mock('../api/client', async importOriginal => {
       updateImportList: vi.fn(),
       deleteImportList: vi.fn(),
       syncImportList: vi.fn(),
+      importListSyncStatus: vi.fn(),
       hardcoverLists: vi.fn(),
       triggerLibraryScan: vi.fn(),
       createBackup: vi.fn(),
@@ -227,6 +228,15 @@ function makeImportList(overrides: Partial<ImportList> = {}): ImportList {
   }
 }
 
+function makeSyncProgress(overrides: Partial<ImportListSyncProgress> = {}): ImportListSyncProgress {
+  return {
+    running: false,
+    startedAt: '0001-01-01T00:00:00Z',
+    stats: { total: 0, processed: 0, imported: 0, skipped: 0, failed: 0 },
+    ...overrides,
+  }
+}
+
 function makeHardcoverList(overrides: Partial<HardcoverList> = {}): HardcoverList {
   return {
     id: -1,
@@ -248,6 +258,10 @@ function seedSettingsMocks(options: {
   importLists?: ImportList[]
   hardcoverLists?: HardcoverList[]
   hardcoverAccount?: string
+  // Snapshot POST /importlist/{id}/sync answers with (202), and the one the
+  // status poll reports (#1854).
+  syncStart?: ImportListSyncProgress
+  syncStatus?: ImportListSyncProgress
 } = {}) {
   vi.mocked(api.listIndexers).mockResolvedValue(options.indexers ?? [])
   vi.mocked(api.addIndexer).mockImplementation(async data => makeIndexer({ id: 100, ...data }))
@@ -286,7 +300,10 @@ function seedSettingsMocks(options: {
     vi.mocked(api.addImportList).mockImplementation(async data => makeImportList({ id: 900, ...data }))
     vi.mocked(api.updateImportList).mockImplementation(async (id, data) => makeImportList({ id, ...data }))
     vi.mocked(api.deleteImportList).mockResolvedValue(undefined)
-    vi.mocked(api.syncImportList).mockResolvedValue({ status: 'ok' })
+    // "Sync now" answers 202 with a running snapshot; the tab then polls
+    // importListSyncStatus until running flips false (#1854).
+    vi.mocked(api.syncImportList).mockResolvedValue(options.syncStart ?? makeSyncProgress({ running: true }))
+    vi.mocked(api.importListSyncStatus).mockResolvedValue(options.syncStatus ?? makeSyncProgress())
     vi.mocked(api.hardcoverLists).mockResolvedValue({ account: options.hardcoverAccount ?? '', lists: options.hardcoverLists ?? [] })
     vi.mocked(api.triggerLibraryScan).mockResolvedValue({ message: 'started' })
     vi.mocked(api.createBackup).mockResolvedValue({ name: 'bindery-backup.zip', size: 0, modTime: '' })
@@ -512,6 +529,49 @@ describe('SettingsPage', () => {
     await waitFor(() => {
       expect(api.updateImportList).toHaveBeenCalledWith(44, { clearApiKey: true })
     })
+  })
+
+  it('starts a Hardcover sync in the background and shows it running (#1854)', async () => {
+    renderSettings({
+      importLists: [makeImportList({ id: 44, name: 'Want to Read', url: 'want-to-read', enabled: true })],
+      hardcoverLists: [makeHardcoverList()],
+      syncStart: makeSyncProgress({
+        running: true,
+        listId: 44,
+        trigger: 'manual',
+        message: 'reading list from Hardcover…',
+      }),
+    })
+
+    await openImportTab()
+    fireEvent.click(await screen.findByRole('button', { name: 'Sync now' }))
+
+    // The request returns 202 immediately: the row switches to "Syncing…" and
+    // the button locks, without the click awaiting the whole sync.
+    await waitFor(() => {
+      expect(api.syncImportList).toHaveBeenCalledWith(44)
+    })
+    const syncing = await screen.findByRole('button', { name: 'Syncing…' })
+    expect(syncing).toBeDisabled()
+    expect(screen.getByText(/reading list from Hardcover/)).toBeInTheDocument()
+  })
+
+  it('adopts a Hardcover sync already running when the tab mounts', async () => {
+    renderSettings({
+      importLists: [makeImportList({ id: 44, name: 'Want to Read', url: 'want-to-read', enabled: true })],
+      hardcoverLists: [makeHardcoverList()],
+      syncStatus: makeSyncProgress({
+        running: true,
+        listId: 44,
+        trigger: 'scheduled',
+        message: 'importing 40 books from Want to Read…',
+        stats: { total: 40, processed: 12, imported: 9, skipped: 3, failed: 0 },
+      }),
+    })
+
+    await openImportTab()
+    expect(await screen.findByText(/importing 40 books from Want to Read.*\(12\/40\)/)).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Syncing…' })).toBeDisabled()
   })
 
   it('keeps duplicate saved Hardcover lists with the same slug visible and actionable', async () => {

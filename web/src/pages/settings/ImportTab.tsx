@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, BatchImportItem, BatchImportResponse, Book, HardcoverList, ImportList, ManagedUser, ManualImportLookup, ScanItem } from '../../api/client'
+import { api, BatchImportItem, BatchImportResponse, Book, HardcoverList, ImportList, ImportListSyncProgress, ManagedUser, ManualImportLookup, ScanItem } from '../../api/client'
 import { inputCls } from './formStyles'
 import GoodreadsImportSection from './GoodreadsImportSection'
 
@@ -481,7 +481,10 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
   const [loadingLists, setLoadingLists] = useState(true)
   const [pickerToken, setPickerToken] = useState('')
   const [activePickerToken, setActivePickerToken] = useState('')
-  const [syncingId, setSyncingId] = useState<number | null>(null)
+  // Sync progress is polled, not awaited: "Sync now" answers 202 and the sync
+  // runs in the background (#1854). A scheduled run shows up here too, so the
+  // row reflects "syncing" even when this tab didn't start it.
+  const [syncProgress, setSyncProgress] = useState<ImportListSyncProgress | null>(null)
   const [actionSlug, setActionSlug] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [overrideOpen, setOverrideOpen] = useState<Record<number, boolean>>({})
@@ -600,18 +603,54 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
   }
 
   const handleSync = async (id: number) => {
-    setSyncingId(id)
     setError(null)
     try {
-      await api.syncImportList(id)
-      const all = await api.listImportLists()
-      setLists(sortImportLists(all.filter(l => l.type === 'hardcover')))
+      // 202 Accepted: the response carries the initial snapshot, the sync
+      // itself keeps running server-side.
+      const started = await api.syncImportList(id)
+      setSyncProgress(started)
+      if (!started.running) {
+        // A tiny list can finish before the response is written; the polling
+        // effect never fires in that case, so refresh the rows here.
+        const all = await api.listImportLists()
+        setLists(sortImportLists(all.filter(l => l.type === 'hardcover')))
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Sync failed')
-    } finally {
-      setSyncingId(null)
     }
   }
+
+  // Pick up a sync already in flight (a scheduled run, or a manual one started
+  // before this tab mounted) so the UI never looks idle while books are landing.
+  // Only an in-flight run is adopted: a finished snapshot from some earlier
+  // session isn't news, and applying it late could clobber a sync just started
+  // from this tab.
+  useEffect(() => {
+    api.importListSyncStatus().then(p => { if (p.running) setSyncProgress(p) }).catch(() => {})
+  }, [])
+
+  // Poll while a sync runs, then refresh the lists once so last-sync times and
+  // the newly imported books are reflected.
+  const syncRunning = Boolean(syncProgress?.running)
+  useEffect(() => {
+    if (!syncRunning) return
+    let cancelled = false
+    const timer = setInterval(async () => {
+      try {
+        const next = await api.importListSyncStatus()
+        if (cancelled) return
+        setSyncProgress(next)
+        if (!next.running) {
+          const all = await api.listImportLists()
+          if (!cancelled) setLists(sortImportLists(all.filter(l => l.type === 'hardcover')))
+        }
+      } catch {
+        // Transient poll failure: keep polling rather than dropping the UI
+        // back to idle while the sync is still running.
+      }
+    }, 2000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [syncRunning])
 
   const handleSaveOverride = async (il: ImportList) => {
     const token = (overrideDraft[il.id] ?? '').trim()
@@ -783,10 +822,12 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
                     </select>
                     <button
                       onClick={() => handleSync(il.id)}
-                      disabled={syncingId === il.id || !il.enabled}
+                      // One sync runs at a time server-side (409 otherwise), so
+                      // every row's button is disabled while any sync is in flight.
+                      disabled={syncRunning || !il.enabled}
                       className="text-xs px-2 py-1 rounded bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 hover:bg-slate-300 dark:hover:bg-zinc-700 disabled:opacity-50"
                     >
-                      {syncingId === il.id ? 'Syncing...' : 'Sync now'}
+                      {syncRunning && syncProgress?.listId === il.id ? t('settings.import.hardcoverSyncing', 'Syncing…') : t('settings.import.hardcoverSyncNow', 'Sync now')}
                     </button>
                     <button
                       onClick={() => setOverrideOpen(prev => ({ ...prev, [il.id]: !prev[il.id] }))}
@@ -798,6 +839,22 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
                   </div>
                 )}
               </div>
+              {/* Live sync line: shown while this list is syncing and left in
+                  place afterwards so the run's outcome is visible (#1854). */}
+              {il && syncProgress?.listId === il.id && (
+                <p className={`mt-2 text-xs ${syncProgress.error ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                  {syncProgress.running
+                    ? `${syncProgress.message ?? t('settings.import.hardcoverSyncing', 'Syncing…')}${syncProgress.stats.total > 0 ? ` (${syncProgress.stats.processed}/${syncProgress.stats.total})` : ''}`
+                    : syncProgress.error
+                      ? `${t('settings.import.hardcoverSyncFailed', 'Sync failed')}: ${syncProgress.error}`
+                      : t('settings.import.hardcoverSyncDone', {
+                        defaultValue: 'Sync finished — {{imported}} imported, {{skipped}} already tracked, {{failed}} failed',
+                        imported: syncProgress.stats.imported,
+                        skipped: syncProgress.stats.skipped,
+                        failed: syncProgress.stats.failed,
+                      })}
+                </p>
+              )}
               {il && overrideOpen[il.id] && (
                 <div className="mt-3 flex flex-col sm:flex-row gap-2">
                   <input

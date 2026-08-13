@@ -4,13 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/hardcoverlistsyncer"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -588,6 +594,163 @@ func TestHardcoverListsHeaderOverrideDoesNotRequireAdmin(t *testing.T) {
 	}
 	if gotToken != "override-token" {
 		t.Fatalf("token = %q, want override-token", gotToken)
+	}
+}
+
+// fakeHCSyncer stands in for *hardcoverlistsyncer.ListSyncer. startErr is what
+// StartOne returns; when it is nil the fake behaves like the real background
+// launcher — it flips progress to running and only settles once release is
+// closed, so a test can prove the handler answered without waiting.
+type fakeHCSyncer struct {
+	startErr error
+	release  chan struct{}
+
+	mu       sync.Mutex
+	progress hardcoverlistsyncer.SyncProgress
+	starts   []int64
+}
+
+func (f *fakeHCSyncer) StartOne(_ context.Context, id int64) error {
+	f.mu.Lock()
+	f.starts = append(f.starts, id)
+	if f.startErr != nil {
+		err := f.startErr
+		f.mu.Unlock()
+		return err
+	}
+	f.progress = hardcoverlistsyncer.SyncProgress{
+		Running: true, ListID: id, Trigger: hardcoverlistsyncer.TriggerManual,
+		StartedAt: time.Now().UTC(),
+	}
+	f.mu.Unlock()
+
+	if f.release != nil {
+		go func() {
+			<-f.release
+			f.mu.Lock()
+			f.progress.Running = false
+			f.mu.Unlock()
+		}()
+	}
+	return nil
+}
+
+func (f *fakeHCSyncer) Progress() hardcoverlistsyncer.SyncProgress {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.progress
+}
+
+// syncFixture wires the handler with a seeded hardcover list and the fake
+// syncer, returning the list id.
+func syncFixture(t *testing.T, syncer HardcoverListSyncer) (*ImportListHandler, int64) {
+	t.Helper()
+	h, repo, _, _ := importListFixtureWithUsers(t)
+	h.hcSync = syncer
+	il := models.ImportList{Name: "Want to Read", Type: "hardcover", URL: "wtr", Enabled: true}
+	if err := repo.Create(context.Background(), &il); err != nil {
+		t.Fatalf("seed list: %v", err)
+	}
+	return h, il.ID
+}
+
+// syncRequest issues POST /importlist/{id}/sync against the handler.
+func syncRequest(h *ImportListHandler, id int64) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/importlist/"+strconv.FormatInt(id, 10)+"/sync", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", strconv.FormatInt(id, 10))
+	h.Sync(rec, req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
+	return rec
+}
+
+// TestImportListSync_AcceptsWithoutWaiting is the #1854 contract at the HTTP
+// edge: "Sync now" answers 202 with a running snapshot while the sync is still
+// in flight, instead of holding the request until the 60s timeout kills it.
+func TestImportListSync_AcceptsWithoutWaiting(t *testing.T) {
+	syncer := &fakeHCSyncer{release: make(chan struct{})}
+	defer close(syncer.release)
+	h, id := syncFixture(t, syncer)
+
+	rec := syncRequest(h, id)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202: %s", rec.Code, rec.Body.String())
+	}
+	var got hardcoverlistsyncer.SyncProgress
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode progress: %v (%s)", err, rec.Body.String())
+	}
+	if !got.Running || got.ListID != id {
+		t.Errorf("progress = %+v, want a running sync of list %d", got, id)
+	}
+	if len(syncer.starts) != 1 || syncer.starts[0] != id {
+		t.Errorf("StartOne calls = %v, want [%d]", syncer.starts, id)
+	}
+}
+
+// TestImportListSync_MapsSyncerErrors pins the status code for each sentinel so
+// a rejected start stays a 4xx and never looks like a launched job.
+func TestImportListSync_MapsSyncerErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"not found", hardcoverlistsyncer.ErrNotFound, http.StatusNotFound},
+		{"wrong type", hardcoverlistsyncer.ErrWrongType, http.StatusBadRequest},
+		{"disabled", hardcoverlistsyncer.ErrDisabled, http.StatusBadRequest},
+		{"missing token", hardcoverlistsyncer.ErrMissingToken, http.StatusBadRequest},
+		{"already running", hardcoverlistsyncer.ErrSyncAlreadyRunning, http.StatusConflict},
+		{"upstream failure", errors.New("boom"), http.StatusBadGateway},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, id := syncFixture(t, &fakeHCSyncer{startErr: tc.err})
+			if rec := syncRequest(h, id); rec.Code != tc.want {
+				t.Errorf("status = %d, want %d: %s", rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestImportListSyncStatus_ReportsProgress covers the poll endpoint the UI uses
+// to tell that a sync is running and when it finished.
+func TestImportListSyncStatus_ReportsProgress(t *testing.T) {
+	finished := time.Now().UTC()
+	syncer := &fakeHCSyncer{}
+	syncer.progress = hardcoverlistsyncer.SyncProgress{
+		Running: false, ListID: 4, ListName: "Want to Read",
+		Trigger: hardcoverlistsyncer.TriggerScheduled, FinishedAt: &finished,
+		Stats: hardcoverlistsyncer.SyncStats{Total: 3, Processed: 3, Imported: 2, Skipped: 1},
+	}
+	h, _, _, _ := importListFixtureWithUsers(t)
+	h.hcSync = syncer
+
+	rec := httptest.NewRecorder()
+	h.SyncStatus(rec, httptest.NewRequest(http.MethodGet, "/api/v1/importlist/sync/status", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var got hardcoverlistsyncer.SyncProgress
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Running || got.ListID != 4 || got.Stats.Imported != 2 || got.FinishedAt == nil {
+		t.Errorf("progress = %+v, want the finished scheduled run", got)
+	}
+}
+
+// TestImportListSync_NoSyncerConfigured keeps both endpoints honest when the
+// Hardcover syncer isn't wired.
+func TestImportListSync_NoSyncerConfigured(t *testing.T) {
+	h, _, _, _ := importListFixtureWithUsers(t)
+	if rec := syncRequest(h, 1); rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("sync status = %d, want 503", rec.Code)
+	}
+	rec := httptest.NewRecorder()
+	h.SyncStatus(rec, httptest.NewRequest(http.MethodGet, "/api/v1/importlist/sync/status", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status endpoint = %d, want 503", rec.Code)
 	}
 }
 
