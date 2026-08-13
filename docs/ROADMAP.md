@@ -1,88 +1,66 @@
 # Roadmap
 
-Tracked feature requests for future releases. Not a commitment — priorities shift based on user feedback and available time. Open an [issue](https://github.com/vavallee/bindery/issues) to propose additions.
+What's being worked on, what's likely next, and what has already shipped. Not a commitment — priorities shift based on user feedback and available time. Open an [issue](https://github.com/vavallee/bindery/issues) to propose additions.
 
-✅ items have landed (either in a tagged release or on `development`); ⬜ items are planned. Items with sub-lists track partially-shipped work.
+Most of what ships is driven by issues and Discord reports rather than by this document. The **Now** and **Next up** sections are the parts worth reading; everything below them is history and standing answers.
 
-## Planned
+## Now
 
-- ✅ **Multi-user support** (v1.0.0/v1.0.1) — per-user libraries, per-user monitored authors, per-user quality profiles.
+Work in flight for the next point release.
 
-  Today Bindery assumes a single administrator — the auth schema has a `users` table but is seeded with exactly one row. Multi-user support needs role/permission scoping across the rest of the schema and UI:
+- **Library scan matching for dual-format books** ([#1956](https://github.com/vavallee/bindery/issues/1956), [#1957](https://github.com/vavallee/bindery/issues/1957), [#1958](https://github.com/vavallee/bindery/issues/1958)) — an audiobook whose Artist tag carries a contributor list (`Author, Translator - translator, Narrator`, the standard Audible shape) can never match its catalogue author, so it sits in Unmatched forever. Alongside it: a scan claims only one file per book per pass, so a folder holding both an epub and an m4b needs two full scans; and the unmatched-files hint blames the author catalogue even when the catalogue is fine.
 
-  - Author / book / profile rows gain an `owner_user_id` or join-table membership.
-  - Handlers filter by the authenticated session's user.
-  - The settings page splits into per-user (API key, password, preferences) and admin-only (indexers, download clients, system).
-  - Migration from single-user → multi-user re-parents all existing rows to the admin account.
+- **Format-scoped already-in-library check** ([#1885](https://github.com/vavallee/bindery/issues/1885)) — when the audiobook of a title imports first, the still-pending ebook download of the same title is marked imported and abandoned. Each title's ebook and audiobook slots are independent pipelines and an import of one must never satisfy the other.
 
-- **OIDC / SSO** — support both deployment shapes so Bindery fits any environment.
+- **Hardcover list sync off the request lifetime** ([#1854](https://github.com/vavallee/bindery/issues/1854), [#1848](https://github.com/vavallee/bindery/issues/1848)) — manual "Sync now" runs inside the HTTP request, so it's capped by the 60s request timeout; on a large shelf most of the list never imports. Moving it to a background job removes the ceiling. The fixed 24h sync interval becomes configurable at the same time.
 
-  - ✅ **Native OIDC client** (v1.0.0) — sign in directly against Authelia / Authentik / Keycloak / Google / GitHub without a reverse proxy in the path. Session cookies from the OIDC flow live alongside the existing username/password and API-key auth; users can mix.
-  - ✅ **Reverse-proxy SSO** (v1.0.0) — accept upstream-proxy identity headers (`X-Forwarded-User` / `Remote-User`) when the request arrives from a configured trusted proxy IP. First-class `proxy` auth mode with startup guard. See the [Reverse-proxy & SSO wiki page](https://github.com/vavallee/bindery/wiki/Reverse-proxy-and-SSO).
+- **Stop unwanted back-catalogue imports** ([#1816](https://github.com/vavallee/bindery/issues/1816), [#1815](https://github.com/vavallee/bindery/issues/1815)) — adding or searching for a single book can pull in the author's entire catalogue, and refreshing an author does it even with monitor mode set to None. Monitor mode should be authoritative, and "add this book" should mean only that book.
 
-  Goal: the same release supports both homelab users who already run Authelia at the edge **and** users who want to plug OIDC straight into Bindery without standing up a proxy.
+- **rTorrent / ruTorrent download client** ([#1618](https://github.com/vavallee/bindery/issues/1618)) — the most-requested missing download client.
 
-- ✅ **Reverse-proxy header trust** (v1.0.0) — `X-Forwarded-User` (configurable) trusted from `BINDERY_TRUSTED_PROXY` CIDR list. Startup refuses to start in proxy mode without a trust list configured.
+- **Support-cost reducers** — download log files from the UI ([#1903](https://github.com/vavallee/bindery/issues/1903)) so users on rootless containers can attach logs to issues, and a live hardlink warning at the Import Mode selector ([#1720](https://github.com/vavallee/bindery/issues/1720)) instead of only down in the Storage section.
 
-- ✅ **CSRF tokens** (v1.0.0) — double-submit token via `GET /auth/csrf`; all session-cookie mutations require matching `X-CSRF-Token` header. API-key clients exempt. See [Use CSRF tokens in scripts](https://github.com/vavallee/bindery/wiki/Howto-CSRF-tokens).
+## Next up
 
-- ~~**External database support (MySQL / Postgres)** ([#86](https://github.com/vavallee/bindery/issues/86))~~ — **Won't do.** SQLite with WAL mode handles all realistic single-instance and multi-user load. Introducing an external database server adds operational burden (credentials, backups, version management, connection pooling) with no concrete benefit for the homelab use case. Closed.
+Real candidates, not commitments, roughly in order of how much they'd change the product.
 
-- **UI localization (i18n)** — translate the web UI into French, Dutch, and German (starting point; more languages welcome as contributors show up).
-  - ✅ Translation-catalogue extraction pass (landed in v0.12.0).
-  - ✅ Runtime switcher (language selector in Settings, persisted in `localStorage` so it applies before first paint alongside the theme).
-  - ✅ Locale-aware date/number formatting.
-  - ✅ `Accept-Language` auto-detect on first load with manual override.
+- **Manual Import wizard** ([#1236](https://github.com/vavallee/bindery/issues/1236)) and its dead-end on unmatched files ([#1719](https://github.com/vavallee/bindery/issues/1719)) — matching each unmatched file to a new or existing book, with edition and profile choice. Together with bulk folder import ([#1292](https://github.com/vavallee/bindery/issues/1292)) and series-from-path ([#1430](https://github.com/vavallee/bindery/issues/1430)) this is one surface: bringing an existing library in. It's the single biggest source of support threads, so it deserves a full cycle rather than a corner of one.
 
-- ✅ **Direct title/keyword search** ([#85](https://github.com/vavallee/bindery/issues/85), [#267](https://github.com/vavallee/bindery/issues/267), landed in development) — Search page at `/search` lets users search all enabled indexers by title, author, or keyword directly from the nav without adding an author first. Results display inline with a Grab button. Backend endpoint (`GET /api/v1/indexer/search`) already existed; PR #266 added the dedicated UI.
+- **Merge books / multiple editions** ([#1358](https://github.com/vavallee/bindery/issues/1358)) — group alternate and non-English editions under one book instead of minting duplicates. Real design work; matters most to non-English users.
 
-- **Cover image privacy / local caching** — prevent the browser from contacting third-party image hosts (Goodreads, OpenLibrary, Google Books) directly, which would leak the user's IP and reading habits.
-  - ✅ **Server-side image proxy cache (closes [#112](https://github.com/vavallee/bindery/issues/112), landed in development)** — `GET /api/v1/images?url=<encoded>` fetches and caches cover images under `<dataDir>/image-cache/` with a 30-day TTL. All `imageURL` fields in API responses are rewritten to this proxy path before leaving the server. No browser-to-third-party requests, no fingerprinting.
+- **Unify add and search acquisition flows** ([#1227](https://github.com/vavallee/bindery/issues/1227)) — search-first Add Author / Add Book with configuration on a confirm step.
 
-- **Non-English indexer / metadata support** — let monitored authors and searches pull from language-tagged catalogues and filter results by language.
+- **slskd as a download client** ([#1717](https://github.com/vavallee/bindery/issues/1717)) — see the note under Won't do; the re-scoped version is an ordinary download client and shares its shape with the rTorrent work above.
 
-  - ✅ Per-author metadata profiles carry an `allowed_languages` list; OpenLibrary works whose language falls outside it are dropped during author ingestion ([#14](https://github.com/vavallee/bindery/issues/14), landed in v0.6.0).
-  - ✅ Propagate the profile's languages into indexer queries (Prowlarr's `Categories` + language filters, Jackett `/api?cat=7000&...`) so Newznab-side filtering applies (landed in v0.12.0).
-  - ✅ Surface the language tag in search-result and wanted-books views.
-  - ✅ Persist Hardcover/Google Books' `language` field for editions.
-  - ✅ **DNB (Deutsche Nationalbibliothek) metadata provider** ([#67](https://github.com/vavallee/bindery/issues/67), landed in development) — public SRU endpoint (`services.dnb.de/sru/dnb`) with MARC21-XML record schema; no API key. Always-on enricher alongside Hardcover. Fills description, language, year, publisher from MARC fields. Especially useful for German-language titles where OpenLibrary / Google Books coverage is thin.
+- **Dual-format storage and routing** — keep multiple formats rather than upgrade-replacing ([#1357](https://github.com/vavallee/bindery/issues/1357)), let an ebook and audiobook share one book folder instead of appending ` (2)` ([#1959](https://github.com/vavallee/bindery/issues/1959)), and route per-format on external import so a Calibre/CWA + Audiobookshelf split can be expressed ([#1632](https://github.com/vavallee/bindery/issues/1632)). Handling dual-format properly is Bindery's clearest advantage over running two Readarr instances, so this cluster is worth doing as a set.
 
-- ~~**LinuxServer.io-style runtime user switching** ([#56](https://github.com/vavallee/bindery/issues/56))~~ — **Won't do.** The distroless image is deliberately minimal (no shell, no `gosu`). Runtime UID/GID switching requires a shell entrypoint, which contradicts the minimal-attack-surface posture. Pass `--user <uid>:<gid>` to `docker run` or set `securityContext.runAsUser` in Helm. Closed as won't-fix.
+- **Ebook language handling** ([#1160](https://github.com/vavallee/bindery/issues/1160)) — read `dc:language`, make it editable and filterable, and stop authors pulling in foreign-language editions.
 
-- **Import mode — move / copy / hardlink** ([#54](https://github.com/vavallee/bindery/issues/54))
-  - ✅ **Move / Copy / Hardlink** (landed in v0.12.0) — configurable under **Settings → General → File Naming**. Hardlink requires the download dir and library on the same filesystem. Copy preserves the source so torrent clients continue seeding.
+## Delivered
 
-- **Calibre library integration** — treat a Calibre library as a first-class storage target, for users who already live in Calibre or want e-reader sync.
+Condensed; see [CHANGELOG.md](../CHANGELOG.md) for the full history.
 
-  The user-facing goal: a monitored author releases a new book, Bindery finds and grabs it, and the result lands in Calibre under the existing author automatically — no manual "Add books" step.
+**Auth and multi-user** — Multi-user support with per-user libraries, monitored authors and quality profiles (v1.0.0/v1.0.1). Native OIDC client for Authelia / Authentik / Keycloak / Google / GitHub without a proxy in the path, plus reverse-proxy SSO accepting upstream identity headers from a configured trusted-proxy CIDR list (both v1.0.0; see the [Reverse-proxy & SSO wiki page](https://github.com/vavallee/bindery/wiki/Reverse-proxy-and-SSO)). CSRF double-submit tokens on all session-cookie mutations, API-key clients exempt (v1.0.0; see [Use CSRF tokens in scripts](https://github.com/vavallee/bindery/wiki/Howto-CSRF-tokens)).
 
-  - ✅ **Path A — `calibredb` post-import hook** ([#32](https://github.com/vavallee/bindery/issues/32), landed in v0.8.0) — every successful Bindery import is mirrored into the configured Calibre library by shelling out to `calibredb add --with-library <path>`. The returned Calibre book id is persisted on the Bindery book row so future OPDS / sync work has a stable handle. Opt-in via Settings → Calibre (enabled / library path / binary path) with a Test connection button.
-  - ✅ **Library import & sync** ([#63](https://github.com/vavallee/bindery/issues/63), landed in v0.9.0) — reads an existing Calibre library's `metadata.db` directly (pure Go, no CGO, read-only) and ingests it as Bindery's catalogue. Three-tier dedup (by Calibre id → title+author → insert new) makes re-imports idempotent. Co-authors become alias rows. Trigger via **Settings → Calibre → Import library** or `calibre.sync_on_startup`.
-  - ~~**Path B — Calibre-watched drop folder** ([#64](https://github.com/vavallee/bindery/issues/64), landed in v0.9.0, **removed in v0.17.0**)~~ — The drop-folder mode copied files into a Calibre-watched directory and polled `metadata.db` for the resulting book id. **This mode has been removed** because it fundamentally depends on the Calibre GUI application running and its auto-add watcher being active. In a containerised / headless deployment (the primary Bindery use case), the Calibre GUI is not reliably open, so the watcher never fires and books silently time out. The `calibredb` mode achieves the same result without any of these constraints — it requires only that both Bindery and Calibre share the library directory via a volume mount, which is already required for the library import/sync feature.
-  - ✅ **Configurable per-library mode** ([#64](https://github.com/vavallee/bindery/issues/64), landed in v0.9.0) — Settings → Calibre exposes a mode selector: **Off** or **calibredb CLI**. Toggling takes effect without a restart.
-  - ✅ **OPDS feed** ([#65](https://github.com/vavallee/bindery/issues/65), landed in v0.9.0) — OPDS 1.2 Atom catalogue at `/opds/` so KOReader / Moon+ Reader / etc. can browse and download without running Calibre itself. Authenticated with HTTP Basic Auth (API key as password).
+**Calibre and e-reader integration** — `calibredb` post-import hook mirroring every import into a Calibre library ([#32](https://github.com/vavallee/bindery/issues/32), v0.8.0). Direct read-only ingest of an existing Calibre `metadata.db` as Bindery's catalogue, with three-tier idempotent dedup ([#63](https://github.com/vavallee/bindery/issues/63), v0.9.0). Per-library mode selector ([#64](https://github.com/vavallee/bindery/issues/64), v0.9.0). OPDS 1.2 catalogue at `/opds/` for KOReader, Moon+ Reader and friends ([#65](https://github.com/vavallee/bindery/issues/65), v0.9.0). Calibre-Web-Automated ingest folder ([#417](https://github.com/vavallee/bindery/issues/417), v1.9.0), later extended by the general post-import drop folder ([#941](https://github.com/vavallee/bindery/issues/941), v1.18.0).
 
-- ✅ **Default library location configurable from Settings UI** ([#332](https://github.com/vavallee/bindery/issues/332)) — a new "Default root folder" dropdown in Settings → General lets users pick any configured root folder as the library fallback for authors with no per-author root folder. `BINDERY_LIBRARY_DIR` continues to work as an env-var fallback when the setting is unset.
+The Calibre-watched drop folder ([#64](https://github.com/vavallee/bindery/issues/64)) shipped in v0.9.0 and was **removed in v0.17.0**: it depended on the Calibre GUI running with its auto-add watcher active, which never holds in a headless container, so books silently timed out. The `calibredb` mode reaches the same result needing only a shared library volume.
 
-- ✅ **Split ebook / audiobook results in search** ([#333](https://github.com/vavallee/bindery/issues/333)) — when both ebook and audiobook indexers are enabled, the search results page shows only one media type at a time based on the active filter. A two-section layout (ebooks / audiobooks) would surface both in the same view so users can compare and grab from either without toggling.
+**Search and metadata** — Direct title/keyword search page ([#85](https://github.com/vavallee/bindery/issues/85), [#267](https://github.com/vavallee/bindery/issues/267), v0.20.0). Split ebook/audiobook search results ([#333](https://github.com/vavallee/bindery/issues/333), v1.2.x). Non-English metadata: per-author `allowed_languages` filtering during ingestion ([#14](https://github.com/vavallee/bindery/issues/14), v0.6.0), language propagation into Prowlarr/Jackett queries (v0.12.0), language tags in result views, and edition-level language from Hardcover and Google Books. DNB (Deutsche Nationalbibliothek) provider over the public SRU/MARC21 endpoint, no API key ([#67](https://github.com/vavallee/bindery/issues/67), v0.x, deepened through v1.27.0).
 
-- ✅ **Calibre-Web-Automated (CWA) ingest** ([#417](https://github.com/vavallee/bindery/issues/417)) — when the operator runs CWA in a sibling container, bindery copies every successful ebook import into a configured shared ingest folder so CWA's auto-ingest picks it up automatically. Bindery keeps its own copy. No Calibre runtime dependency in the bindery container. Configured under the **Calibre-Web-Automated (CWA)** section of **Settings → Calibre**.
+**Storage and privacy** — Import modes move / copy / hardlink ([#54](https://github.com/vavallee/bindery/issues/54), v0.12.0). Configurable default root folder ([#332](https://github.com/vavallee/bindery/issues/332), v1.2.1). Server-side cover-image proxy and cache so the browser never contacts third-party image hosts ([#112](https://github.com/vavallee/bindery/issues/112), ~v0.16.0). Persistent structured log store in SQLite, queryable and retention-bounded ([#241](https://github.com/vavallee/bindery/issues/241), v1.2.x).
 
-- ✅ **Editable quality profiles** — the Settings → Quality tab is a full create / rename / delete editor where users pick which formats a profile allows. The filtering logic (`internal/decision/specs.go` `QualityAllowed`) enforces the selection, so a profile that only ticks `epub` correctly rejects `pdf` / `azw3` / `mobi` releases. Backed by POST/PUT/DELETE handlers under `/api/v1/qualityprofile` and the `QualityTab` editor in `web/src/pages/settings/`.
+**UI** — Full i18n: catalogue extraction (v0.12.0), runtime language switcher persisted before first paint, locale-aware date/number formatting, and `Accept-Language` auto-detect with manual override. Editable quality profiles with a full create/rename/delete editor; note the format allow-list was UI-only until v1.28.2 actually enforced it ([#1693](https://github.com/vavallee/bindery/issues/1693)).
 
-## v2 horizon
+## Won't do
 
-These items are too large or architectural for a minor release. They define the v2 milestone — the set of changes that would warrant a major version bump.
+- **External database (MySQL / Postgres)** ([#86](https://github.com/vavallee/bindery/issues/86)) — SQLite with WAL mode handles all realistic single-instance and multi-user load. An external database server adds credentials, backups, version management and connection pooling for no concrete homelab benefit.
 
-- ✅ **Multi-user with role separation** — shipped in v1.0.0/v1.0.1.
+- **LinuxServer.io-style runtime user switching** ([#56](https://github.com/vavallee/bindery/issues/56)) — the distroless image has no shell and no `gosu` on purpose. Runtime UID/GID switching needs a shell entrypoint, which contradicts the minimal-attack-surface posture. Pass `--user <uid>:<gid>` to `docker run` or set `securityContext.runAsUser` in Helm.
 
-- ✅ **Native OIDC / SSO with multi-provider discovery** — shipped in v1.0.0.
+- **Implementing the Soulseek `slsk://` protocol directly** ([#646](https://github.com/vavallee/bindery/issues/646)) — stateful, session-oriented peer protocol (handshake, peer discovery, queue, slot management) requiring a long-lived peer connection inside the Bindery process and a search-result schema rich enough to carry peer/file metadata through the ranker. That was the version this roadmap deferred to a v2 horizon, and it stays declined.
 
-- ~~**External database (MySQL / Postgres)** ([#86](https://github.com/vavallee/bindery/issues/86))~~ — **Won't do.** Closed as won't-fix; see the Planned section above.
-
-- ✅ **Persistent structured log store** ([#241](https://github.com/vavallee/bindery/issues/241), landed in development) — Persists log entries to SQLite (migration 026), survives restarts, queryable by date range / level / component / full-text. Retention defaults to 14 days and is configurable. The ring buffer remains as a fast in-process fallback when no DB is available.
-
-- **Soulseek as a download source** ([#417](https://github.com/vavallee/bindery/issues/417)) — Soulseek's slsk:// P2P protocol is stateful and session-oriented (handshake, peer discovery, queue, transfer, slot management) — fundamentally different shape from the fire-and-forget HTTP fetch of NZB/torrent/magnet that bindery's queue assumes today. Adding it requires a long-lived peer connection in the bindery process, a search-result schema rich enough to carry slsk peer/file/size metadata through the ranker and quality-profile machinery, and either a vendored slsk client (e.g. [slingamn/slsk](https://github.com/slingamn/slsk-client)) or a sidecar daemon with its own configuration story. Worth doing because of the genuinely strong content catalogue on the network, but not before the v2 milestone.
+  What replaced it: [#1717](https://github.com/vavallee/bindery/issues/1717) treats **slskd** as a download client rather than a protocol to implement. slskd is already the sidecar, exposing a REST API with key auth, search, and `transfers/downloads` — the same enqueue-then-poll shape `internal/downloader/adapter.go` assumes for every other client. It's in **Next up** above.
 
 ## Explicitly out of scope
 
