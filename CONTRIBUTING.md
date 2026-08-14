@@ -191,7 +191,7 @@ fragment per PR; format and examples are in
 
 1. Fork the repo.
 2. Create a feature branch (`git checkout -b feature/x` or `fix/NN-description` for issue links).
-3. Make the change. Keep the diff narrow — bug fixes don't need surrounding cleanup; one-shot operations don't need helpers.
+3. Make the change. Keep the diff narrow — bug fixes don't need surrounding cleanup; one-shot operations don't need helpers. Commit with `git commit -s` — see [Sign your work](#sign-your-work-dco).
 4. Add or adjust tests. Backend: follow the `internal/api/*_test.go` pattern (in-memory SQLite via `db.OpenMemory`, `httptest` handlers). Frontend: `vitest` + `@testing-library/react` with `jsdom`.
 5. Run the full local check suite above — every item must pass.
 6. Open a PR. Tie it to the tracking issue with `Closes #NN` in the body when applicable.
@@ -207,6 +207,44 @@ Follows [Conventional Commits](https://www.conventionalcommits.org/) loosely. Re
 - `docs: add roadmap (multi-user, SSO, external DB)`
 
 The `[skip ci]` trailer is reserved for bot deploy-commits — human commits should always go through CI.
+
+## Sign your work (DCO)
+
+Bindery uses the [Developer Certificate of Origin](DCO) — the same lightweight
+mechanism the Linux kernel uses. There is no CLA to sign and no form to fill in.
+
+Add a `Signed-off-by` trailer to every commit:
+
+```bash
+git commit -s -m "fix: honour skipPartBooks during author sync"
+```
+
+That appends one line, using your `git config` name and email:
+
+```
+Signed-off-by: Your Name <you@example.com>
+```
+
+By adding it you certify the statements in [DCO](DCO): that you wrote the
+change, or that you have the right to submit someone else's work under this
+project's licence. It is an assertion about provenance — it transfers nothing
+and gives the maintainers no rights beyond the licence below.
+
+Contributions are accepted under the project's [MIT licence](LICENSE), the same
+licence Bindery ships under. Nothing you contribute is relicensed out from under
+you.
+
+The `DCO / Sign-off` check enforces this on every PR. If it fails:
+
+```bash
+git commit -s --amend --no-edit    # one commit
+git rebase --signoff origin/main   # several
+git push --force-with-lease
+```
+
+The trailer has to match the commit author, so if `git config user.email` and
+your commits disagree, fix the config first. Merge commits, bot commits, and
+anything authored before 2026-08-20 are exempt.
 
 ## Reporting security issues
 
