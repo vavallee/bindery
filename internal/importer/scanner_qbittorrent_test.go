@@ -618,7 +618,7 @@ func TestCheckQbittorrentDownloads_ImportFailedContentPathGoneAlreadyImported(t 
 func TestIsBookAlreadyImported_NilBookID(t *testing.T) {
 	s, _, _, ctx := scannerFixture(t, t.TempDir())
 	dl := &models.Download{GUID: "no-book", Status: models.StateGrabbed} // BookID is nil
-	if s.isBookAlreadyImported(ctx, dl) {
+	if s.isBookAlreadyImported(ctx, dl, "") {
 		t.Error("expected false for download with no BookID, got true")
 	}
 }
@@ -635,21 +635,24 @@ func TestIsBookAlreadyImported_BookNotFound(t *testing.T) {
 		Status: models.StateGrabbed,
 		BookID: &missingID,
 	}
-	if s.isBookAlreadyImported(ctx, dl) {
+	if s.isBookAlreadyImported(ctx, dl, "") {
 		t.Error("expected false for download whose book does not exist, got true")
 	}
 }
 
-// TestIsBookAlreadyImported_MediaTypeBoth exercises the default branch of
-// isBookAlreadyImported for a MediaTypeBoth book where the ebook is already on
-// disk but no audiobook file exists. The audiobook check returns false (so both
-// sides of the || are evaluated) and the ebook check returns true, so the
-// function must return true.
+// TestIsBookAlreadyImported_MediaTypeBoth covers the dual-format arm of
+// isBookAlreadyImported: the book is monitored for both formats and only the
+// ebook is on disk, so the answer depends entirely on which format slot the
+// download targets (#1885).
+//
+// Before #1885 this returned true unconditionally here ("either format counts"),
+// which is what let an imported ebook/audiobook close out the sibling format's
+// still-pending download.
 func TestIsBookAlreadyImported_MediaTypeBoth(t *testing.T) {
 	libraryDir := t.TempDir()
 	s, bookRepo, authorRepo, ctx := scannerFixture(t, libraryDir)
 
-	// Put an ebook in the library.
+	// Put an ebook in the library. No audiobook file exists.
 	libEpub := filepath.Join(libraryDir, "book.epub")
 	if err := os.WriteFile(libEpub, []byte("epub-content"), 0o644); err != nil {
 		t.Fatal(err)
@@ -669,18 +672,36 @@ func TestIsBookAlreadyImported_MediaTypeBoth(t *testing.T) {
 	if err := bookRepo.Create(ctx, book); err != nil {
 		t.Fatal(err)
 	}
-	// Track only the ebook — no audiobook file — so the audiobook arm of the
-	// default case returns false before the ebook arm returns true.
 	if err := bookRepo.AddBookFile(ctx, book.ID, models.MediaTypeEbook, libEpub); err != nil {
 		t.Fatal(err)
 	}
 
-	dl := &models.Download{
-		GUID:   "guid-both",
-		Status: models.StateGrabbed,
-		BookID: &book.ID,
+	cases := []struct {
+		name       string
+		formatHint string
+		quality    string
+		want       bool
+	}{
+		{"ebook hint matches the on-disk ebook", models.MediaTypeEbook, "", true},
+		{"audiobook hint, no audiobook on disk", models.MediaTypeAudiobook, "", false},
+		{"epub release token resolves to the ebook slot", "", "epub", true},
+		{"m4b release token resolves to the empty audiobook slot", "", "m4b", false},
+		{"hint beats a conflicting release token", models.MediaTypeAudiobook, "epub", false},
+		{"unknown format must not accept the sibling's file", "", "", false},
+		{"unrecognised token is still unknown", "", "somequality", false},
 	}
-	if !s.isBookAlreadyImported(ctx, dl) {
-		t.Error("expected true for MediaTypeBoth book with ebook already on disk, got false")
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dl := &models.Download{
+				GUID:    "guid-both-" + c.name,
+				Status:  models.StateGrabbed,
+				BookID:  &book.ID,
+				Quality: c.quality,
+			}
+			if got := s.isBookAlreadyImported(ctx, dl, c.formatHint); got != c.want {
+				t.Errorf("isBookAlreadyImported(hint=%q, quality=%q) = %v, want %v",
+					c.formatHint, c.quality, got, c.want)
+			}
+		})
 	}
 }
