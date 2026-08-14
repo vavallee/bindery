@@ -52,6 +52,26 @@ jobs:
           fail=0
           checked=0
 
+          # Fetch first, into a file, so a failed API call fails the check.
+          # Reading straight from `< <(gh api ...)` would swallow the error:
+          # the loop sees no input, checked stays 0, and the job reports "no
+          # commits required a sign-off" and exits 0. A required check that
+          # passes when it could not run is worse than no check at all.
+          if ! gh api "repos/$REPO/pulls/$PR/commits" --paginate \
+            --jq '.[] | [.sha, (.parents | length | tostring), .commit.author.name, .commit.author.email, .commit.author.date, (.commit.message | @base64)] | @tsv' \
+            > commits.tsv; then
+            echo "FAIL  could not list the commits on this PR — refusing to pass without checking"
+            exit 1
+          fi
+
+          # A PR always has at least one commit, so an empty list means the
+          # query returned nothing useful rather than that there is nothing
+          # to check.
+          if [ ! -s commits.tsv ]; then
+            echo "FAIL  the commit list came back empty — refusing to pass without checking"
+            exit 1
+          fi
+
           # The PR commits endpoint tops out at 250 commits even with
           # --paginate. A PR that large needs splitting for review reasons
           # well before the DCO check becomes the binding constraint.
@@ -81,8 +101,7 @@ jobs:
               echo "                  expected: $expected"
               fail=1
             fi
-          done < <(gh api "repos/$REPO/pulls/$PR/commits" --paginate \
-            --jq '.[] | [.sha, (.parents | length | tostring), .commit.author.name, .commit.author.email, .commit.author.date, (.commit.message | @base64)] | @tsv')
+          done < commits.tsv
 
           if [ "$fail" -ne 0 ]; then
             cat <<'REMEDY'
