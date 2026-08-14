@@ -68,6 +68,65 @@ func isNarratorCredit(s string) bool {
 	return narratorCreditRe.MatchString(strings.TrimSpace(s))
 }
 
+// contributorRoleRe matches the " - <role>" suffix Audible-style contributor
+// lists append to a credit that is NOT the author ("Natasha Wimmer -
+// translator"). The dash must be PRECEDED by whitespace so hyphenated names
+// ("Jean-Paul Sartre") and dash-joined surnames are never split; whitespace
+// after the dash is optional, so "Natasha Wimmer -translator" is caught too.
+var contributorRoleRe = regexp.MustCompile(`(?i)\s-\s*(translator|translated|narrator|narration|reader|read|editor|edited|illustrator|contributor|foreword|afterword|introduction|preface|adapter|adapted|abridged|producer)\b`)
+
+// authorRoleRe matches the " - author" / " - writer" suffix of a credit that IS
+// the author. Audible emits this form ("Terry Pratchett - author, Nigel Planer
+// - narrator"); without it the whole literal "Terry Pratchett - author" was
+// returned as the author name and matched nobody. Same dash rule as
+// contributorRoleRe. The suffix and everything after it is dropped.
+var authorRoleRe = regexp.MustCompile(`(?i)\s-\s*(author|writer)\b.*$`)
+
+// contributorCandidates splits a comma-separated contributor list into the
+// credited names that could be the book's author, in list order. Segments that
+// read as a narrator credit ("Read by …") or carry a non-authorial role suffix
+// ("… - translator") are dropped; an authorial role suffix ("… - author") is
+// stripped and the name kept.
+//
+// It returns nil when the value does not look like a contributor list at all,
+// which is the case that matters most: a librarian sort-form name also contains
+// a comma. Requiring EVERY kept segment to hold at least two name tokens is
+// what separates the two — "Enrigue, Álvaro" and "García Márquez, Rodrigo" both
+// end on a lone given name, so neither is mistaken for a list of full names
+// (#1956). Checking every segment rather than just the first is deliberate: a
+// two-token multi-word surname ("García Márquez") passes a first-segment-only
+// test and would then match Gabriel García Márquez, because authorMatch only
+// requires the parsed tokens to be a subset of the catalogue author's.
+//
+// Callers use this only as a last resort, after the full tag value has failed
+// to match any catalogue author — a contributor list that already matches is
+// never rewritten — and they union the candidates that DO match rather than
+// trusting the first, because a co-author list gives no evidence about which
+// name the book is catalogued under ("Bill Clinton, James Patterson").
+func contributorCandidates(s string) []string {
+	parts := strings.Split(s, ",")
+	if len(parts) < 2 {
+		return nil
+	}
+	var out []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" || isNarratorCredit(p) {
+			continue
+		}
+		if loc := authorRoleRe.FindStringIndex(p); loc != nil {
+			p = strings.TrimSpace(p[:loc[0]])
+		} else if contributorRoleRe.MatchString(p) {
+			continue
+		}
+		if len(authorNameTokens(p)) < 2 {
+			return nil // sort-form name, not a contributor list
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 // pickAudioAuthor prefers the Artist tag (which audiobook tooling
 // conventionally uses for the book's author) and falls back to AlbumArtist
 // or Composer for files that leave Artist empty. Narrator-credit values
