@@ -336,6 +336,12 @@ PRs, issues, and feedback welcome. See **[CONTRIBUTING.md](CONTRIBUTING.md)** fo
 
 MIT. See [LICENSE](LICENSE) for details.
 
+## Disclaimer
+
+Bindery is not affiliated with or endorsed by Readarr, Audible, Amazon, Goodreads, Calibre, or Prowlarr. All trademarks are the property of their respective owners.
+
+Bindery is a download manager. It finds and organises files from the indexers and download clients **you** configure, and it ships with none. You are responsible for the legality of what you acquire with it and for complying with the terms of the services you point it at.
+
 ## Acknowledgments
 
 - The [*arr community](https://wiki.servarr.com/) for pioneering the monitor-search-download-import pattern
