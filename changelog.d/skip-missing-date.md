@@ -1,0 +1,2 @@
+### Fixed
+- **Author sync now honors `skipMissingDate`** — the metadata profile setting previously had no effect during cataloging (only the field was persisted, nothing consumed it, per #1980). Works with no release date are now filtered out of author sync/refresh when the setting is enabled. `AuthorSyncSummary` gains a `skippedMissingDate` count alongside the existing skipped-language/junk/media-type counters so drops stay visible.

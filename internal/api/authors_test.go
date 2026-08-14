@@ -780,6 +780,139 @@ func TestFetchAuthorBooks_StrictMediaType(t *testing.T) {
 	}
 }
 
+// missingDateTestWorks returns a fixed mix of works with and without a
+// release date, so SkipMissingDate's effect can be checked against both.
+func missingDateTestWorks() []models.Book {
+	dated := time.Date(2019, 6, 15, 0, 0, 0, 0, time.UTC)
+	return []models.Book{
+		{ForeignID: "OL920W", Title: "Leviathan Wakes", SortTitle: "leviathan wakes", Language: "eng",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary",
+			ReleaseDate: &dated},
+		{ForeignID: "OL921W", Title: "Caliban's War", SortTitle: "caliban's war", Language: "eng",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary",
+			ReleaseDate: &dated},
+		{ForeignID: "OL922W", Title: "Undated Work One", SortTitle: "undated work one", Language: "eng",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary"},
+		{ForeignID: "OL923W", Title: "Undated Work Two", SortTitle: "undated work two", Language: "eng",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary"},
+	}
+}
+
+// TestFetchAuthorBooks_SkipsMissingDate verifies that once a metadata
+// profile's SkipMissingDate is enabled, works with no release date are
+// dropped from author sync while dated works still come through, and that
+// the drop is reflected in both the SkippedMissingDate and SkippedTotal
+// summary counters.
+func TestFetchAuthorBooks_SkipsMissingDate(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	profile, err := profileRepo.GetByID(ctx, models.DefaultMetadataProfileID)
+	if err != nil || profile == nil {
+		t.Fatalf("GetByID(default profile) failed: %v", err)
+	}
+	profile.SkipMissingDate = true
+	if err := profileRepo.Update(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	author := &models.Author{
+		ForeignID: "OL930A", Name: "Missing-Date Author", SortName: "Author, Missing-Date",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	agg := metadata.NewAggregator(&stubMetaProvider{works: missingDateTestWorks()})
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	got, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTitle := make(map[string]bool, len(got))
+	for _, b := range got {
+		byTitle[b.Title] = true
+	}
+
+	for _, undated := range []string{"Undated Work One", "Undated Work Two"} {
+		if byTitle[undated] {
+			t.Errorf("undated work %q should have been skipped, but was created", undated)
+		}
+	}
+	for _, dated := range []string{"Leviathan Wakes", "Caliban's War"} {
+		if !byTitle[dated] {
+			t.Errorf("dated work %q should have been created, but was skipped", dated)
+		}
+	}
+
+	summary := h.syncSummaries.get(author.ID)
+	if summary == nil {
+		t.Fatal("expected a recorded sync summary, got nil")
+	}
+	if want := 2; summary.SkippedMissingDate != want {
+		t.Errorf("summary.SkippedMissingDate = %d, want %d", summary.SkippedMissingDate, want)
+	}
+	if summary.SkippedTotal() < summary.SkippedMissingDate {
+		t.Errorf("summary.SkippedTotal() = %d should include SkippedMissingDate = %d", summary.SkippedTotal(), summary.SkippedMissingDate)
+	}
+}
+
+// TestFetchAuthorBooks_MissingDateKeptWhenSkipDisabled verifies the inverse
+// of TestFetchAuthorBooks_SkipsMissingDate: with SkipMissingDate left at its
+// default (false), undated works are still cataloged exactly as before this
+// change — the filter is opt-in, not a behavior change for profiles that
+// never touch the setting.
+func TestFetchAuthorBooks_MissingDateKeptWhenSkipDisabled(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID: "OL931A", Name: "Missing-Date Author Two", SortName: "Author, Missing-Date Two",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	agg := metadata.NewAggregator(&stubMetaProvider{works: missingDateTestWorks()})
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	got, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(missingDateTestWorks()) {
+		t.Errorf("got %d books, want %d (SkipMissingDate defaults to false, nothing should be dropped)",
+			len(got), len(missingDateTestWorks()))
+	}
+
+	if summary := h.syncSummaries.get(author.ID); summary != nil && summary.SkippedMissingDate != 0 {
+		t.Errorf("summary.SkippedMissingDate = %d, want 0 (filter is opt-in)", summary.SkippedMissingDate)
+	}
+}
+
 // stubLibraryFinder is a mock LibraryFinder that returns a fixed path for
 // a specific title and "" for everything else.
 type stubLibraryFinder struct {

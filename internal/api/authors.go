@@ -1640,6 +1640,7 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// Resolve the author's metadata profile (falling back to the seeded
 	// default) and parse its allowed_languages CSV. Nil means "no filter".
 	allowedLangs, unknownFail := h.resolveAllowedLanguages(ctx, author)
+	skipMissingDate := h.resolveSkipMissingDate(ctx, author)
 
 	// OpenLibrary works carry no work-level language; the search enricher only
 	// backfills it for indexed works, so a tail of works (often translations)
@@ -1824,7 +1825,7 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// skippedExcluded is logged but deliberately kept out of AuthorSyncSummary:
 	// the author page's notice explains works the user did NOT expect to lose,
 	// and a book they excluded by hand is not one of them.
-	var added, skippedLang, skippedJunk, skippedMediaType, skippedNotAccepted, skippedExcluded int
+	var added, skippedLang, skippedJunk, skippedMediaType, skippedNotAccepted, skippedExcluded, skippedMissingDate int
 	// Names of the first few language-rejected works, reported to the user
 	// alongside the count (#1889): "65 books skipped" is alarming, but it is
 	// the titles and their language codes that tell them whether the profile
@@ -1877,6 +1878,16 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		if normalizedTitle == "" || normalizedTitle == normalizedAuthor {
 			skippedJunk++
 			slog.Debug("skipping junk-title OL work", "title", b.Title, "foreignId", b.ForeignID)
+			continue
+		}
+
+		// Filter works with no release date when the author's metadata profile
+		// has SkipMissingDate enabled. ReleaseDate is already merged in from
+		// the provider's work data by this point (aggregator_author_works.go),
+		// so this is a straight presence check, not a fetch.
+		if skipMissingDate && b.ReleaseDate == nil {
+			skippedMissingDate++
+			slog.Debug("skipping work with no release date", "title", b.Title, "foreignId", b.ForeignID)
 			continue
 		}
 
@@ -2121,6 +2132,7 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		SkippedJunk:           skippedJunk,
 		SkippedMediaType:      skippedMediaType,
 		SkippedNotAccepted:    skippedNotAccepted,
+		SkippedMissingDate:    skippedMissingDate,
 		AllowedLanguages:      allowedLangs,
 		UnknownLanguageFail:   unknownFail,
 		SkippedLanguageSample: skippedLangSample,
@@ -2135,13 +2147,14 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		"author", author.Name, "added", added,
 		"skipped_language", skippedLang, "skipped_junk", skippedJunk, "skipped_media_type", skippedMediaType,
 		"skipped_not_accepted", skippedNotAccepted, "skipped_excluded", skippedExcluded,
+		"skipped_missing_date", skippedMissingDate,
 		"total", len(books),
 	}
 	// The metadata filters dropping works is the surprising case and stays at
 	// Warn. The discovery-policy skip is not: the user configured it, the run
 	// already said so once at Info above, and a "Refresh all authors" pass
 	// over an ABS-imported library would otherwise emit one Warn per author.
-	if skippedLang+skippedJunk+skippedMediaType > 0 {
+	if skippedLang+skippedJunk+skippedMediaType+skippedMissingDate > 0 {
 		slog.Warn("author books synced", logArgs...)
 		return
 	}
@@ -3092,4 +3105,20 @@ func applyAuthorMajorityLanguageFallback(books []models.Book) {
 			books[i].Language = majorityLang
 		}
 	}
+}
+
+// resolveSkipMissingDate returns the author's effective metadata profile's
+// SkipMissingDate setting. Defaults to false (matches the setting's prior
+// no-op behavior) on any lookup failure, so an unresolvable profile never
+// turns into unexpected catalogue loss.
+func (h *AuthorHandler) resolveSkipMissingDate(ctx context.Context, author *models.Author) bool {
+	id := models.DefaultMetadataProfileID
+	if author.MetadataProfileID != nil {
+		id = *author.MetadataProfileID
+	}
+	p, err := h.profiles.GetByID(ctx, id)
+	if err != nil || p == nil {
+		return false
+	}
+	return p.SkipMissingDate
 }
