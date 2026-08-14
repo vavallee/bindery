@@ -529,7 +529,9 @@
   "pagination": {
     "previous": "Nakaraan",
     "next": "Susunod",
-    "pageOf": "Pahina {{page}} ng {{total}}"
+    "pageOf": "Pahina {{page}} ng {{total}}",
+    "jumpToPage": "Pumunta sa pahina",
+    "perPage": "Bawat pahina"
   },
   "bulkActionBar": {
     "selected": "{{count}} napili",

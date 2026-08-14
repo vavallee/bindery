@@ -841,7 +841,7 @@
       "hardcoverNotSelected": "Not selected",
       "hardcoverBooksCount": "{{count}} books",
       "hardcoverSyncNow": "Sync now",
-      "hardcoverSyncing": "Syncing...",
+      "hardcoverSyncing": "Syncing…",
       "hardcoverTokenOverride": "Token override",
       "hardcoverMediaType": "Media type",
       "hardcoverMediaTypeHint": "Format synced books are created as. Auto uses what Hardcover reports.",
@@ -862,8 +862,6 @@
       "hardcoverEmpty": "No Hardcover import lists configured.",
       "hardcoverLastSync": "Last sync: {{date}}",
       "hardcoverNeverSynced": "Never synced",
-      "hardcoverSyncNow": "Sync now",
-      "hardcoverSyncing": "Syncing…",
       "hardcoverSyncFailed": "Sync failed",
       "hardcoverSyncDone": "Sync finished — {{imported}} imported, {{skipped}} already tracked, {{failed}} failed",
       "manualImportHeading": "Manual file import",
@@ -1013,7 +1011,9 @@
   "pagination": {
     "previous": "Previous",
     "next": "Next",
-    "pageOf": "Page {{page}} of {{total}}"
+    "pageOf": "Page {{page}} of {{total}}",
+    "jumpToPage": "Jump to page",
+    "perPage": "Per page"
   },
   "bulkActionBar": {
     "selected": "{{count}} selected",

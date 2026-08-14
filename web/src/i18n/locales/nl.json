@@ -486,7 +486,9 @@
   "pagination": {
     "previous": "Vorige",
     "next": "Volgende",
-    "pageOf": "Pagina {{page}} van {{total}}"
+    "pageOf": "Pagina {{page}} van {{total}}",
+    "jumpToPage": "Ga naar pagina",
+    "perPage": "Per pagina"
   },
   "bulkActionBar": {
     "selected": "{{count}} geselecteerd",

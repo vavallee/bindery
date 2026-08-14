@@ -4,7 +4,12 @@ import Pagination from './Pagination'
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string) => ({ 'pagination.previous': 'Previous', 'pagination.next': 'Next' }[key] ?? key),
+    t: (key: string) => ({
+      'pagination.previous': 'Previous',
+      'pagination.next': 'Next',
+      'pagination.jumpToPage': 'Jump to page',
+      'pagination.perPage': 'Per page',
+    }[key] ?? key),
   }),
 }))
 
@@ -80,15 +85,45 @@ describe('Pagination', () => {
     expect(onPageChange).toHaveBeenCalledWith(5)
   })
 
-  it('shows ellipsis when totalPages > 7 and page is in the middle', () => {
+  it('shows a jump dropdown on each side when totalPages > 7 and page is in the middle', () => {
     render(<Pagination {...defaults} page={5} totalPages={10} />)
-    const ellipses = screen.getAllByText('…')
-    expect(ellipses.length).toBe(2) // one before, one after
+    const gaps = screen.getAllByRole('combobox', { name: 'Jump to page' })
+    expect(gaps.length).toBe(2) // one before, one after
+    expect(gaps[0].querySelector('option')?.textContent).toBe('…')
   })
 
-  it('shows no ellipsis when totalPages <= 7', () => {
+  // #2010: the gap used to be a dead "…", so reaching page 3 of 40 meant
+  // stepping through Next one page at a time. Each gap now lists exactly the
+  // pages it hides — the left one covers 2..(page-2), the right one
+  // (page+2)..(totalPages-1).
+  it('lists every hidden page in the gap it belongs to', () => {
+    render(<Pagination {...defaults} page={10} totalPages={40} />)
+    const [left, right] = screen.getAllByRole('combobox', { name: 'Jump to page' })
+    const values = (el: HTMLElement) =>
+      Array.from(el.querySelectorAll('option')).map(o => o.value).filter(Boolean).map(Number)
+    expect(values(left)).toEqual([2, 3, 4, 5, 6, 7, 8])
+    expect(values(right)).toEqual(Array.from({ length: 28 }, (_, i) => i + 12))
+  })
+
+  it('calls onPageChange with the page picked from a gap dropdown', () => {
+    const onPageChange = vi.fn()
+    render(<Pagination {...defaults} page={10} totalPages={40} onPageChange={onPageChange} />)
+    const [, right] = screen.getAllByRole('combobox', { name: 'Jump to page' })
+    fireEvent.change(right, { target: { value: '27' } })
+    expect(onPageChange).toHaveBeenCalledWith(27)
+  })
+
+  it('ignores the placeholder option without changing page', () => {
+    const onPageChange = vi.fn()
+    render(<Pagination {...defaults} page={10} totalPages={40} onPageChange={onPageChange} />)
+    const [left] = screen.getAllByRole('combobox', { name: 'Jump to page' })
+    fireEvent.change(left, { target: { value: '' } })
+    expect(onPageChange).not.toHaveBeenCalled()
+  })
+
+  it('shows no gap dropdown when totalPages <= 7', () => {
     render(<Pagination {...defaults} page={4} totalPages={7} />)
-    expect(screen.queryByText('…')).toBeNull()
+    expect(screen.queryByRole('combobox', { name: 'Jump to page' })).toBeNull()
     // All 7 page buttons present
     for (let i = 1; i <= 7; i++) {
       expect(screen.getByRole('button', { name: String(i) })).toBeInTheDocument()
@@ -98,13 +133,13 @@ describe('Pagination', () => {
   it('calls onPageSizeChange when page size selector changes', () => {
     const onPageSizeChange = vi.fn()
     render(<Pagination {...defaults} onPageSizeChange={onPageSizeChange} />)
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: '50' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Per page' }), { target: { value: '50' } })
     expect(onPageSizeChange).toHaveBeenCalledWith(50)
   })
 
   it('renders custom pageSizeOptions', () => {
     render(<Pagination {...defaults} pageSizeOptions={[10, 20, 30]} />)
-    const select = screen.getByRole('combobox')
+    const select = screen.getByRole('combobox', { name: 'Per page' })
     const options = Array.from(select.querySelectorAll('option')).map(o => o.value)
     expect(options).toEqual(['10', '20', '30'])
   })

@@ -529,7 +529,9 @@
   "pagination": {
     "previous": "Sebelumnya",
     "next": "Berikutnya",
-    "pageOf": "Halaman {{page}} dari {{total}}"
+    "pageOf": "Halaman {{page}} dari {{total}}",
+    "jumpToPage": "Lompat ke halaman",
+    "perPage": "Per halaman"
   },
   "bulkActionBar": {
     "selected": "{{count}} dipilih",

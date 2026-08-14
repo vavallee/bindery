@@ -529,7 +529,9 @@
   "pagination": {
     "previous": "Anterior",
     "next": "Siguiente",
-    "pageOf": "Página {{page}} de {{total}}"
+    "pageOf": "Página {{page}} de {{total}}",
+    "jumpToPage": "Ir a la página",
+    "perPage": "Por página"
   },
   "bulkActionBar": {
     "selected": "{{count}} seleccionado(s)",

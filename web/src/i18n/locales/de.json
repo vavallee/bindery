@@ -486,7 +486,9 @@
   "pagination": {
     "previous": "Zurück",
     "next": "Weiter",
-    "pageOf": "Seite {{page}} von {{total}}"
+    "pageOf": "Seite {{page}} von {{total}}",
+    "jumpToPage": "Zu Seite springen",
+    "perPage": "Pro Seite"
   },
   "bulkActionBar": {
     "selected": "{{count}} ausgewählt",
