@@ -79,9 +79,11 @@ is left alone.
 Two related labels:
 
 - **In Library** = status `imported` = Bindery can see the file on disk.
-- **Exclude vs Delete**: deleting an unwanted catalogue book is temporary —
-  the next metadata refresh recreates it. **Exclude** is the sticky action; it
-  hides the book and keeps it out of searches permanently.
+- **Exclude vs Delete**: a metadata refresh only adds books back for an author
+  you monitor and have set to take new items, so for those authors deleting an
+  unwanted catalogue book is temporary — the next refresh recreates it.
+  **Exclude** is the sticky action for every author: it hides the book, keeps
+  it out of searches, and a refresh will not recreate it under a new id either.
 
 ### 3. Bindery never watches folders
 
@@ -294,8 +296,10 @@ items (#1815). Rows an older version pulled in are ordinary books — bulk-selec
 them on the author page and Delete or Exclude.
 
 **I deleted books I don't want and they came back.**
-Delete is undone by the next metadata refresh — for an author still set to take
-new items. Use **Exclude**.
+Delete is undone by the next metadata refresh, for an author still set to take
+new items. It is not undone for an author you unmonitored or set to *Don't add
+them* — including one whose books you deleted all of. Use **Exclude** if you
+want the book gone regardless of how the author is monitored later.
 
 **A book is on hardcover.app but doesn't show up in search.**
 No Hardcover token configured — set one in Settings → API Keys.

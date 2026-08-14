@@ -117,6 +117,14 @@ type AuthorSyncSkippedBook struct {
 
 // SkippedTotal is the number of provider works this sync dropped for any
 // reason. Zero means nothing was filtered out.
+//
+// It matches what the author page's sync notice counts — the question there is
+// "is there anything to explain?", and a refresh that declined to add 83 works
+// has plenty. It deliberately does NOT match the log-level gate in
+// fetchAuthorBooks, which excludes SkippedNotAccepted: a metadata filter
+// silently discarding a catalogue is surprising and logs at Warn, while the
+// discovery policy is something the user configured and already logged once.
+// Two questions, two counts.
 func (s *AuthorSyncSummary) SkippedTotal() int {
 	if s == nil {
 		return 0

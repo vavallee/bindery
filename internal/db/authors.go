@@ -739,6 +739,52 @@ func (r *AuthorRepo) deleteWithIdentifiers(ctx context.Context, exec dbExecutor,
 	return nil
 }
 
+// CataloguePopulatedAt reports when this author's catalogue was first
+// populated, or nil if it never has been.
+//
+// It is the discriminator the refresh discovery policy needs (#1815, #1816): a
+// refresh may populate an author who has no books, because repairing an import
+// that resolved the author but no catalogue is what bulk "Refresh metadata"
+// exists for — but an author whose books the user deleted is also an author
+// with no books, and refilling that one is the bug, not the repair. Books
+// present says nothing about the second case; this column does.
+//
+// Deliberately not part of authorSelectCols: nothing but the sync gate reads
+// it, and threading it through the full scan/update surface would add a column
+// to every author query for one caller.
+func (r *AuthorRepo) CataloguePopulatedAt(ctx context.Context, authorID int64) (*time.Time, error) {
+	var raw sql.NullString
+	err := r.db.QueryRowContext(ctx,
+		`SELECT catalogue_populated_at FROM authors WHERE id = ?`, authorID).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read catalogue_populated_at for author %d: %w", authorID, err)
+	}
+	when, perr := parseFlexibleTime(raw)
+	if perr != nil {
+		slog.Warn("unparseable author.catalogue_populated_at, treating as never populated",
+			"author_id", authorID, "value", raw.String, "error", perr)
+		return nil, nil
+	}
+	return when, nil
+}
+
+// MarkCataloguePopulated stamps the author as having had their catalogue
+// populated, if it isn't stamped already. Write-once: the value records that it
+// happened at all, and re-stamping on every later sync would erase the
+// distinction it exists to draw.
+func (r *AuthorRepo) MarkCataloguePopulated(ctx context.Context, authorID int64, when time.Time) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE authors SET catalogue_populated_at = ? WHERE id = ? AND catalogue_populated_at IS NULL`,
+		timeValueArg(when.UTC()), authorID)
+	if err != nil {
+		return fmt.Errorf("mark author %d catalogue populated: %w", authorID, err)
+	}
+	return nil
+}
+
 // ListMonitoredSeriesIDs returns the series IDs the author is pinned to when
 // MonitorMode == AuthorMonitorModeSeries. Returns an empty slice (not nil)
 // when nothing is pinned so the JSON encoder produces `[]` rather than null,
