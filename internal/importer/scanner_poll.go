@@ -481,7 +481,9 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 				// Bindery import (move mode) and the torrent is re-grabbed via a
 				// 409 duplicate-add (#769). If the book is already in the library,
 				// close out this download immediately rather than looping forever.
-				if s.isBookAlreadyImported(ctx, &dl) {
+				// Scoped to this torrent's format (#1885) so an imported audiobook
+				// never closes out the ebook grab of the same title.
+				if s.isBookAlreadyImported(ctx, &dl, downloader.FormatForCategory(client, torrent.Category)) {
 					slog.Info("qbittorrent: content path gone but book already in library — marking as imported",
 						"title", dl.Title)
 					// Walk the state machine from wherever we are to imported,
@@ -532,8 +534,9 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 			rawPath, ok := resolveQbitContentPath(torrent)
 			if !ok {
 				// Same guard as the StateGrabbed branch: if the book is already in
-				// the library (files moved by a prior import), close out cleanly.
-				if s.isBookAlreadyImported(ctx, &dl) {
+				// the library (files moved by a prior import), close out cleanly —
+				// for THIS torrent's format only (#1885).
+				if s.isBookAlreadyImported(ctx, &dl, downloader.FormatForCategory(client, torrent.Category)) {
 					slog.Info("qbittorrent: content path gone but book already in library — marking as imported",
 						"title", dl.Title)
 					s.updateDownloadStatus(ctx, dl.ID, models.StateImportPending)
