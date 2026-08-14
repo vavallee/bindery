@@ -230,6 +230,50 @@ func TestAggregator_GetAuthorWorksForAuthor_PrunesCompilations(t *testing.T) {
 	}
 }
 
+// TestAggregator_GetAuthorWorksForAuthor_PrunesCollectionTitlesWithoutEnricher
+// verifies #1780: an OpenLibrary-only setup with no enrichers configured
+// (no Hardcover token, the default) still prunes box-set/omnibus titles from
+// an author's catalogue, using the title heuristic instead of an enricher's
+// compilation classification.
+func TestAggregator_GetAuthorWorksForAuthor_PrunesCollectionTitlesWithoutEnricher(t *testing.T) {
+	primary := &mockWorksProvider{
+		mockProvider: mockProvider{name: "ol", authorWorks: []models.Book{
+			{ForeignID: "OL1W", Title: "The Fellowship of the Ring", MetadataProvider: "openlibrary"},
+			{ForeignID: "OL2W", Title: "The Lord of the Rings 3 Books Box Set By J. R. R. Tolkien", MetadataProvider: "openlibrary"},
+			{ForeignID: "OL3W", Title: "The Complete History of Middle-Earth", MetadataProvider: "openlibrary"},
+			{ForeignID: "OL4W", Title: "The Two Towers", MetadataProvider: "openlibrary"},
+		}},
+	}
+	agg := &Aggregator{
+		primary: primary,
+		// No enrichers: this is the default OpenLibrary-only setup #1780 was
+		// filed against.
+		cache: newTTLCache(time.Minute),
+	}
+
+	got, err := agg.GetAuthorWorksForAuthor(context.Background(), models.Author{ForeignID: "OL26320A", Name: "J. R. R. Tolkien"})
+	if err != nil {
+		t.Fatalf("GetAuthorWorksForAuthor: %v", err)
+	}
+	titles := map[string]bool{}
+	for _, b := range got {
+		titles[b.Title] = true
+	}
+	for _, junk := range []string{"The Lord of the Rings 3 Books Box Set By J. R. R. Tolkien", "The Complete History of Middle-Earth"} {
+		if titles[junk] {
+			t.Errorf("collection-titled work %q should have been pruned without an enricher, got: %v", junk, got)
+		}
+	}
+	for _, want := range []string{"The Fellowship of the Ring", "The Two Towers"} {
+		if !titles[want] {
+			t.Errorf("expected real single-book title %q to remain, got: %v", want, titles)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 works after pruning the two collection titles, got %d: %+v", len(got), got)
+	}
+}
+
 func TestAggregator_GetAuthorWorksForAuthor_PrunesTechnicalSameNameCollision(t *testing.T) {
 	primary := &mockWorksProvider{
 		mockProvider: mockProvider{name: "ol", authorWorks: []models.Book{

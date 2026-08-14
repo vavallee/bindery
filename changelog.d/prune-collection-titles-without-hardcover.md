@@ -1,0 +1,2 @@
+### Fixed
+- **Box sets and omnibuses are now pruned from author sync even without Hardcover configured** — previously, catching a box-set/omnibus "work" from OpenLibrary relied entirely on Hardcover's compilation classification, so a default OpenLibrary-only install got no pruning at all. Author-work ingestion now also checks each title against the same collection-title heuristic the recommender already used to avoid suggesting bundles, shared via a new `textutil.LooksLikeCollectionTitle` helper so both consult one list.

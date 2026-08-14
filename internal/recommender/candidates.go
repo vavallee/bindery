@@ -9,6 +9,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 // SubjectBooksFetcher retrieves popular books for a genre/subject from an external API.
@@ -296,21 +297,10 @@ func GenerateListCross(
 
 // looksLikeCollection returns true when the title appears to describe a box
 // set, omnibus, anthology, or other multi-work collection rather than a single
-// book. The check is intentionally broad: some false positives (e.g. "Complete
-// Guide to Go Programming") are acceptable to keep the logic simple.
+// book. Shared with metadata author-work ingestion via textutil so both
+// consult one keyword list instead of two that can drift apart (#1780).
 func looksLikeCollection(title string) bool {
-	lower := strings.ToLower(title)
-	keywords := []string{
-		"complete", "collected", "omnibus", "boxed set", "box set", "anthology",
-		"the best of", "stories of", "tales of", "(omnibus)", "(collection)",
-		"complete works", "complete collection",
-	}
-	for _, kw := range keywords {
-		if strings.Contains(lower, kw) {
-			return true
-		}
-	}
-	return false
+	return textutil.LooksLikeCollectionTitle(title)
 }
 
 // genreToSubjectSlug converts a genre string (e.g. "Science Fiction") to an
