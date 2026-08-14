@@ -480,22 +480,6 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 	return "", fmt.Errorf("add torrent accepted but hash could not be determined")
 }
 
-func infoHashFromMagnet(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "magnet" {
-		return ""
-	}
-	xt := u.Query().Get("xt")
-	if !strings.HasPrefix(strings.ToLower(xt), "urn:btih:") {
-		return ""
-	}
-	h := strings.TrimSpace(xt[len("urn:btih:"):])
-	if h == "" {
-		return ""
-	}
-	return strings.ToLower(h)
-}
-
 type fetchedTorrentContent struct {
 	data      []byte
 	magnetURL string

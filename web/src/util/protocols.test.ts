@@ -12,8 +12,18 @@ describe('protocol mapping', () => {
     expect(indexerProtocol('newznab')).toBe('usenet')
     expect(indexerProtocol('')).toBe('usenet') // backend default type
     expect(clientProtocol('qbittorrent')).toBe('torrent')
+    expect(clientProtocol('transmission')).toBe('torrent')
+    expect(clientProtocol('deluge')).toBe('torrent')
+    expect(clientProtocol('rtorrent')).toBe('torrent')
     expect(clientProtocol('sabnzbd')).toBe('usenet')
     expect(clientProtocol('nzbget')).toBe('usenet')
+  })
+
+  // A torrent client missing from TORRENT_CLIENTS is silently classified as
+  // usenet, which makes the mismatch banner claim a configured torrent client
+  // doesn't exist. Mirrors downloader/adapter.go IsTorrentClient.
+  it('covers a torznab indexer with an rTorrent client', () => {
+    expect(protocolGaps([ix('torznab')], [cl('rtorrent')])).toEqual([])
   })
 })
 

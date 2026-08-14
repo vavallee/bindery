@@ -537,7 +537,7 @@
         "seedRatioPlaceholder": "e.g. 1.0",
         "seedRatioUnlimited": "Unlimited",
         "seedRatioFromProwlarr": "Auto-filled from Prowlarr. Edit and save to override; Prowlarr won't change it again.",
-        "seedRatioHint": "Per-indexer seed-ratio limit applied to torrents grabbed from this indexer (qBittorrent, Transmission, Deluge). Leave blank to use the download client's global rule, or check Unlimited to seed forever. Ignored for Usenet.",
+        "seedRatioHint": "Per-indexer seed-ratio limit applied to torrents grabbed from this indexer (qBittorrent, Transmission, Deluge). Leave blank to use the download client's global rule, or check Unlimited to seed forever. Ignored for Usenet, and for rTorrent, which has no per-torrent ratio limit — configure a ratio group in .rtorrent.rc instead.",
         "freeleechOnly": "Only auto-grab freeleech releases",
         "freeleechOnlyHint": "Automatic grabs from this indexer are limited to freeleech releases; anything else is held in the Pending queue for manual approval. Interactive search still shows everything. For private trackers where ratio matters — leave off for public trackers and Usenet."
       }
@@ -577,7 +577,10 @@
       "audiobookCategoryPlaceholder": "audiobooks",
       "audiobookCategoryHelp": "Optional. When set, audiobook grabs use this category instead of the one above. Leave blank to use the same category as ebooks.",
       "pathNotVisible": "Connected, but Bindery can't read the client's completed-downloads folder. Configure a path remap or a shared mount so both point at the same storage, otherwise downloads won't import.",
-      "loopbackHint": "The host is localhost — if Bindery runs in Docker, localhost is the Bindery container itself, not the machine. Use the host's LAN IP or the client's container/service name instead."
+      "loopbackHint": "The host is localhost — if Bindery runs in Docker, localhost is the Bindery container itself, not the machine. Use the host's LAN IP or the client's container/service name instead.",
+      "rtorrentCategoryHelp": "Stored as the ruTorrent label (d.custom1) and used to filter which torrents Bindery polls. Leave blank to poll every torrent in the client.",
+      "rtorrentUrlBaseHelp": "Full path of rTorrent's XML-RPC endpoint, not a prefix. Usually /RPC2; ruTorrent installs often expose /plugins/rpc/rpc.php instead. Leave blank to use /RPC2. For a plain rTorrent with no web server in front of it, use rTorrent's own SCGI listener: scgi:// for the host and port above, scgi://host:port, or scgi:///path/to/socket. SCGI carries no credentials, so keep it off-network.",
+      "rtorrentScgiIgnoredHint": "{{fields}} will be ignored — rTorrent's SCGI listener has no TLS and no authentication. Put rTorrent behind a web server and use an HTTP path instead if you need either."
     },
     "notifications": {
       "heading": "Webhook Notifications",
@@ -1054,7 +1057,7 @@
     "import": "First book imported"
   },
   "protocolMismatch": {
-    "torrent": "A Torznab indexer is enabled but no torrent download client (qBittorrent, Transmission, Deluge) is — its releases can be found but never downloaded.",
+    "torrent": "A Torznab indexer is enabled but no torrent download client (qBittorrent, Transmission, Deluge, rTorrent) is — its releases can be found but never downloaded.",
     "usenet": "A Newznab indexer is enabled but no usenet download client (SABnzbd, NZBGet) is — its releases can be found but never downloaded."
   },
   "users": {
