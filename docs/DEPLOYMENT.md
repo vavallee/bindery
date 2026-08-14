@@ -99,6 +99,12 @@ Pre-built archives are attached to every [Release](https://github.com/vavallee/b
 
 Pick the archive matching your platform, verify against `bindery_<version>_checksums.txt`, extract, and run.
 
+Each archive also carries `LICENSE` and `THIRD_PARTY_LICENSES.md` — the licenses
+and NOTICE files of everything statically linked into the binary and embedded in
+the web UI bundle. The container image has the same two files at `/LICENSE` and
+`/THIRD_PARTY_LICENSES.md`; if you redistribute Bindery, redistribute those with
+it.
+
 ### Linux
 
 ```bash

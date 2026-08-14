@@ -336,6 +336,16 @@ PRs, issues, and feedback welcome. See **[CONTRIBUTING.md](CONTRIBUTING.md)** fo
 
 MIT. See [LICENSE](LICENSE) for details.
 
+Bindery statically links its Go dependencies and embeds the compiled web UI, so
+the third-party attribution ships with every artifact:
+**[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)** lists every module and npm
+package in the released binary with its license, reproduces the NOTICE files the
+Apache-2.0 dependencies carry, and is included in the release archives and at
+`/THIRD_PARTY_LICENSES.md` inside the container image. The file is generated —
+`make licenses` regenerates it and CI fails the build when it drifts from the
+dependency set, so run it in the same PR whenever you add, drop, or bump a
+dependency.
+
 ## Acknowledgments
 
 - The [*arr community](https://wiki.servarr.com/) for pioneering the monitor-search-download-import pattern

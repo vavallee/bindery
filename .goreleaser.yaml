@@ -50,6 +50,10 @@ archives:
     files:
       - README.md
       - LICENSE
+      # Attribution for the statically linked Go modules and the embedded web
+      # bundle. CI fails if it drifts from the dependency set (see the
+      # `licenses` job in ci.yml), so what ships here is always current.
+      - THIRD_PARTY_LICENSES.md
       - CHANGELOG.md
 
 checksum:

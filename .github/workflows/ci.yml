@@ -59,6 +59,45 @@ jobs:
       - run: npm run lint --prefix web
       - run: npm run typecheck --prefix web
 
+  # Attribution drift gate. Regenerates THIRD_PARTY_LICENSES.md from the actual
+  # dependency graph and fails if the committed copy differs — adding, dropping
+  # or bumping a dependency without regenerating is a build failure, because a
+  # stale attribution file is close to no attribution file.
+  licenses:
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.26.6"
+          cache: true
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      # The npm side of the report reads licenses out of web/node_modules, so
+      # the production tree has to be installed before the check runs.
+      - run: npm ci --prefix web
+      - name: Install go-licenses
+        run: go install github.com/google/go-licenses@v1.6.0
+      - name: Check THIRD_PARTY_LICENSES.md is current
+        run: make licenses-check
+      - name: Show the drift
+        if: failure()
+        run: |
+          make licenses || true
+          git --no-pager diff --stat -- THIRD_PARTY_LICENSES.md
+          echo "::error::THIRD_PARTY_LICENSES.md is stale — run 'make licenses' and commit the result."
+
   smoke:
     timeout-minutes: 45
     runs-on: ubuntu-latest

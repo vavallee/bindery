@@ -32,3 +32,6 @@ e.log
 .github
 docs
 *.md
+# …except the third-party attribution file, which the runtime stage copies into
+# the image so the notices ship with every container.
+!THIRD_PARTY_LICENSES.md

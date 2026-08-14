@@ -35,6 +35,11 @@ LABEL org.opencontainers.image.title="Bindery" \
       org.opencontainers.image.source="https://github.com/vavallee/bindery" \
       org.opencontainers.image.url="https://github.com/vavallee/bindery"
 COPY --from=builder /bindery /bindery
+# Attribution travels with the image: Bindery's own MIT license plus the
+# licenses and NOTICE files of everything statically linked into the binary and
+# embedded in the web bundle.
+COPY LICENSE /LICENSE
+COPY THIRD_PARTY_LICENSES.md /THIRD_PARTY_LICENSES.md
 USER nonroot
 EXPOSE 8787
 # No shell in distroless, so invoke the binary directly. The healthcheck

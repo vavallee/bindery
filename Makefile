@@ -1,4 +1,8 @@
-.PHONY: build dev test lint clean docker-build web-build web-dev help security helm-lint sbom smoke predeploy-smoke abs-contract check changelog
+.PHONY: build dev test lint clean docker-build web-build web-dev help security helm-lint sbom smoke predeploy-smoke abs-contract check changelog licenses licenses-check
+
+# Pinned so local regeneration and the CI drift check classify licenses
+# identically — a classifier bump would otherwise look like dependency drift.
+GO_LICENSES_VERSION ?= v1.6.0
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -86,6 +90,14 @@ predeploy-smoke: ## Run pre-deploy smoke tests against a live instance (requires
 
 abs-contract: ## Run the pinned ABS contract suite
 	go test -count=1 -timeout=15m ./tests/abscontract/...
+
+licenses: ## Regenerate THIRD_PARTY_LICENSES.md (needs web/node_modules)
+	@command -v go-licenses >/dev/null || go install github.com/google/go-licenses@$(GO_LICENSES_VERSION)
+	go run ./tools/licensegen
+
+licenses-check: ## Fail if THIRD_PARTY_LICENSES.md is stale (the CI drift gate)
+	@command -v go-licenses >/dev/null || go install github.com/google/go-licenses@$(GO_LICENSES_VERSION)
+	go run ./tools/licensegen -check
 
 sbom: build ## Generate an SPDX SBOM for the local binary
 	@command -v syft >/dev/null || (echo "syft not installed; see https://github.com/anchore/syft"; exit 1)
