@@ -753,6 +753,18 @@
       "scannedPaths": "Scanned:",
       "scanNoFilesWarning": "No book files found under {{path}} — check BINDERY_LIBRARY_DIR points at your library.",
       "scanAllUnmatchedHint": "Files were found but none matched a book. Unmatched files need their author's book catalogue populated first — refresh the author (or re-run the import so it fetches books) and scan again.",
+      "scanUnmatchedAuthorUnknown": "Files were found but none matched a book. The parsed author \"{{author}}\" doesn't match any author in your library, so no book could be considered — check the files' embedded tags and folder names against the Parsed Author column below. Refreshing an author won't help here.",
+      "scanUnmatchedAuthorsUnknown": "Files were found but none matched a book. None of their parsed authors match an author in your library, so no book could be considered — compare the Parsed Author column below with your authors' names. Refreshing an author won't help here.",
+      "scanReason": {
+        "author_not_in_library": "Parsed author isn't in your library",
+        "no_candidate_books": "Author matched, but has no book waiting for a file",
+        "no_title_match": "No book by that author matched this title",
+        "no_title_parsed": "No title could be read from this file's name or tags"
+      },
+      "scanUnmatchedPath": "Path",
+      "scanUnmatchedParsedTitle": "Parsed Title",
+      "scanUnmatchedParsedAuthor": "Parsed Author",
+      "scanUnmatchedWhy": "Why",
       "opds": "OPDS Feed",
       "opdsFeedUrl": "OPDS Feed URL",
       "opdsHint": "Use this URL in KOReader, Moon+ Reader, or any OPDS client. Authenticate with your API key as the password (leave the username blank or use any value).",

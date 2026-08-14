@@ -79,10 +79,30 @@ func bencodeReadString(data []byte, pos int) ([]byte, int, error) {
 	return data[start:end], end, nil
 }
 
+// maxBencodeDepth bounds container nesting while walking a torrent file.
+//
+// bencodeSkipValue recurses once per nesting level, so without a cap a crafted
+// file of `d4:info` + N×`l` + N×`e` + `e` overflows the goroutine stack at
+// N ≈ 26M — roughly 36 MB of input, comfortably inside maxTorrentFileBytes.
+// A stack overflow is runtime.throw, not a panic, so no recover() catches it
+// and the whole process dies; the grab then retries into another crash. The
+// payload is fetched from an indexer, so the input is not trusted.
+//
+// A BEP-3 torrent nests 3-4 deep (dict → info dict → files list → file dict);
+// 64 leaves an order of magnitude of headroom for real-world extensions.
+const maxBencodeDepth = 64
+
 // bencodeSkipValue advances past one bencoded value of any type at pos and
 // returns the index immediately after it.
 func bencodeSkipValue(data []byte, pos int) (int, error) {
+	return bencodeSkipValueDepth(data, pos, 0)
+}
+
+func bencodeSkipValueDepth(data []byte, pos, depth int) (int, error) {
 	if pos >= len(data) {
+		return 0, errBencode
+	}
+	if depth > maxBencodeDepth {
 		return 0, errBencode
 	}
 	switch c := data[pos]; {
@@ -105,7 +125,7 @@ func bencodeSkipValue(data []byte, pos int) (int, error) {
 					return 0, err
 				}
 			}
-			if p, err = bencodeSkipValue(data, p); err != nil {
+			if p, err = bencodeSkipValueDepth(data, p, depth+1); err != nil {
 				return 0, err
 			}
 		}
