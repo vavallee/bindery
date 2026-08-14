@@ -581,6 +581,7 @@ func main() {
 	queueHandler := api.NewQueueHandler(downloadRepo, dlClientRepo, bookRepo, historyRepo).
 		WithNotifier(notif).
 		WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir).
+		WithDownloadPathRemap(cfg.DownloadPathRemap).
 		WithIndexers(indexerRepo)
 	// Manual/bulk import may read from the download dirs as well as the library
 	// roots — a Readarr/qBittorrent migrant's backlog sits in the download dir,

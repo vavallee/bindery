@@ -1625,6 +1625,16 @@ describe('SettingsPage', () => {
     expect(screen.getByPlaceholderText('Port')).toHaveValue('8112')
     expect(screen.getByText('Category / Label')).toBeInTheDocument()
     expect(screen.queryByPlaceholderText('Username')).not.toBeInTheDocument()
+
+    // rTorrent authenticates with HTTP basic auth, so — unlike Deluge — it has
+    // a username, and its URL Base is the full RPC path rather than a prefix.
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'rtorrent' } })
+    expect(screen.getByPlaceholderText('Name')).toHaveValue('rTorrent')
+    expect(screen.getByPlaceholderText('Port')).toHaveValue('8080')
+    expect(screen.getByText('Category / Label')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Username')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('/RPC2')).toBeInTheDocument()
+    expect(screen.getByText('settings.clients.rtorrentCategoryHelp')).toBeInTheDocument()
   })
 
   it.each([
@@ -1632,6 +1642,7 @@ describe('SettingsPage', () => {
     { type: 'qbittorrent', name: 'qBittorrent', port: 8080, username: 'qbit-user', password: 'qbit-pass', category: 'ebooks' },
     { type: 'transmission', name: 'Transmission', port: 9091, username: 'tr-user', password: 'tr-pass', category: '/downloads/books' },
     { type: 'deluge', name: 'Deluge', port: 8112, username: '', password: 'deluge-pass', category: 'books-audio' },
+    { type: 'rtorrent', name: 'rTorrent', port: 8080, username: 'rt-user', password: 'rt-pass', category: 'books' },
   ])('maps $name download client credentials on add', async ({ type, name, port, username, password, category }) => {
     renderSettings()
     await openClientsTab()

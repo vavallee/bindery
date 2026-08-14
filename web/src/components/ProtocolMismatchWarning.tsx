@@ -31,7 +31,7 @@ export default function ProtocolMismatchWarning({
       {gaps.map(p => (
         <p key={p} className="[&:not(:first-child)]:mt-1">
           {p === 'torrent'
-            ? t('protocolMismatch.torrent', 'A Torznab indexer is enabled but no torrent download client (qBittorrent, Transmission, Deluge) is — its releases can be found but never downloaded.')
+            ? t('protocolMismatch.torrent', 'A Torznab indexer is enabled but no torrent download client (qBittorrent, Transmission, Deluge, rTorrent) is — its releases can be found but never downloaded.')
             : t('protocolMismatch.usenet', 'A Newznab indexer is enabled but no usenet download client (SABnzbd, NZBGet) is — its releases can be found but never downloaded.')}
         </p>
       ))}

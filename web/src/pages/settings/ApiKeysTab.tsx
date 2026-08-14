@@ -206,7 +206,7 @@ export default function ApiKeysTab() {
                   className="px-3 py-2 bg-slate-300 dark:bg-zinc-700 hover:bg-slate-400 dark:hover:bg-zinc-600 rounded text-xs font-medium disabled:opacity-50"
                   aria-label={t('settings.general.hardcoverTestApi', 'Test Hardcover API')}
                 >
-                  {hardcoverTestResult?.testing ? t('common.testing', 'Testing...') : t('common.test', 'Test')}
+                  {hardcoverTestResult?.testing ? t('common.testing', 'Testing…') : t('common.test', 'Test')}
                 </button>
               </div>
               <a

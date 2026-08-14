@@ -67,7 +67,7 @@ export default function AboutTab() {
             </p>
           ) : !status ? (
             <p className="text-sm text-slate-600 dark:text-zinc-400">
-              {t('common.loading', 'Loading…')}
+              {t('common.loading', 'Loading...')}
             </p>
           ) : (
             <>
