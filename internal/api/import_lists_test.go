@@ -701,6 +701,9 @@ func TestImportListSync_MapsSyncerErrors(t *testing.T) {
 		{"disabled", hardcoverlistsyncer.ErrDisabled, http.StatusBadRequest},
 		{"missing token", hardcoverlistsyncer.ErrMissingToken, http.StatusBadRequest},
 		{"already running", hardcoverlistsyncer.ErrSyncAlreadyRunning, http.StatusConflict},
+		// The process was already draining, so the job was never launched.
+		// Nothing is broken and nothing is running: 503, not 502.
+		{"shutting down", hardcoverlistsyncer.ErrShuttingDown, http.StatusServiceUnavailable},
 		{"upstream failure", errors.New("boom"), http.StatusBadGateway},
 	}
 	for _, tc := range cases {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -166,7 +167,28 @@ func (s *ListSyncer) Progress() SyncProgress {
 // flight the scheduled run is skipped with a log line rather than double-
 // walking the same shelves (the same cron-vs-manual guard importer.Scanner
 // applies to library scans).
+//
+// With a jobs group wired the whole pass runs inside jobs.Group.Run, so it is
+// tracked and drained on shutdown exactly like the manual path. The scheduler
+// calls this on the process-lifecycle context, which SIGTERM cancels
+// immediately; without the group the run would be racing database.Close()
+// while still inside books.Create (#1458).
 func (s *ListSyncer) Sync(ctx context.Context) error {
+	if s.jobs == nil {
+		return s.syncAll(ctx)
+	}
+	var err error
+	if !s.jobs.Run("hardcover-list-sync-scheduled", func(jobCtx context.Context) {
+		err = s.syncAll(jobCtx)
+	}) {
+		slog.Info("hardcover list sync skipped; process is shutting down")
+		return nil
+	}
+	return err
+}
+
+// syncAll is Sync's body, split out so the jobs-group wrapper stays readable.
+func (s *ListSyncer) syncAll(ctx context.Context) error {
 	if !s.syncRunning.CompareAndSwap(false, true) {
 		slog.Info("hardcover list sync already running; skipping scheduled run")
 		return nil
@@ -246,10 +268,18 @@ func (s *ListSyncer) StartOne(ctx context.Context, id int64) error {
 	// SIGTERM cancels and drains it before the DB closes. Fall back to an
 	// untracked goroutine for tests and non-wired callers (#1458).
 	if s.jobs != nil {
-		s.jobs.Go("hardcover-list-sync", run)
-	} else {
-		go run(ctx)
+		// Go is a documented no-op once the group has begun shutting down. The
+		// gate and the "running" snapshot are published above, so a dropped
+		// launch has to be undone here or syncRunning stays true and Progress()
+		// keeps describing a run that will never finish.
+		if !s.jobs.Go("hardcover-list-sync", run) {
+			s.syncRunning.Store(false)
+			s.finishProgress(ErrShuttingDown)
+			return ErrShuttingDown
+		}
+		return nil
 	}
+	go run(ctx)
 	return nil
 }
 
@@ -287,8 +317,26 @@ func (s *ListSyncer) runList(ctx context.Context, il models.ImportList, trigger 
 // syncListTracked syncs one list, stamps last_sync_at on success, and finishes
 // the progress snapshot either way. Callers must already hold the single-flight
 // gate and have published the starting snapshot.
-func (s *ListSyncer) syncListTracked(ctx context.Context, il models.ImportList) error {
-	err := s.syncList(ctx, il)
+//
+// A panic anywhere in the sync (the Hardcover client, the audiobook enricher, a
+// repository call) is recovered and returned as an ordinary error. Before
+// #1854 this body ran inside the HTTP handler, where chi's middleware.Recoverer
+// turned such a panic into a 500 and the process lived; on a background
+// goroutine there is no such backstop, so without this the same panic would
+// take the service down. Recovering here — rather than only in jobs.Group —
+// also guarantees the progress snapshot reaches a terminal state instead of
+// reading "running" forever.
+func (s *ListSyncer) syncListTracked(ctx context.Context, il models.ImportList) (err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = fmt.Errorf("hardcover list sync panicked: %v", rec)
+			slog.Error("hardcover list sync panicked",
+				"list", il.Name, "panic", rec, "stack", string(debug.Stack()))
+			s.finishProgress(err)
+		}
+	}()
+
+	err = s.syncList(ctx, il)
 	if err != nil {
 		slog.Error("hardcover list sync failed", "list", il.Name, "error", err)
 		s.finishProgress(err)
@@ -350,6 +398,10 @@ var (
 	// so the endpoint can answer 409 instead of piling up concurrent walks of
 	// the same shelf.
 	ErrSyncAlreadyRunning = errors.New("hardcover list sync already running")
+	// ErrShuttingDown is returned when a background sync could not be launched
+	// because the process is already draining. The gate is released before it
+	// is returned, so a restarted process starts clean.
+	ErrShuttingDown = errors.New("server is shutting down")
 )
 
 func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {

@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -1579,4 +1581,196 @@ func TestProgress_ReportsFailureReason(t *testing.T) {
 	if p.Error == "" {
 		t.Error("progress must carry the failure reason")
 	}
+}
+
+// panickingHardcoverClient blows up where the real client can: mid-fetch,
+// after the run has already published its "running" snapshot.
+type panickingHardcoverClient struct {
+	fakeHardcoverClient
+}
+
+func (p *panickingHardcoverClient) GetUserLists(context.Context) ([]hardcover.HCList, error) {
+	panic("hardcover client exploded")
+}
+
+// TestStartOne_PanicIsContainedAndLeavesASaneTerminalState is the #1854
+// regression: before the move to a background job this body ran inside the chi
+// handler, where middleware.Recoverer turned a panic into a 500 and the process
+// lived. On a detached goroutine there is no such backstop, so an unrecovered
+// panic in syncList or the audiobook enricher would kill the service. Remove
+// the recover in syncListTracked and this test binary dies outright.
+//
+// Containment alone isn't enough: the single-flight gate has to be released and
+// the progress snapshot has to reach a terminal state, or the next "Sync now"
+// answers 409 forever and the UI spins on a run that will never finish.
+func TestStartOne_PanicIsContainedAndLeavesASaneTerminalState(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	il := testImportList("Exploding", "hardcover", true)
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	s.WithClientFactory(func(string) hardcoverClient { return &panickingHardcoverClient{} })
+
+	if err := s.StartOne(ctx, il.ID); err != nil {
+		t.Fatalf("StartOne: %v", err)
+	}
+	waitFor(t, "the panicking sync to close out", func() bool { return !s.Progress().Running })
+
+	p := s.Progress()
+	if p.FinishedAt == nil {
+		t.Error("a panicking run must still record FinishedAt")
+	}
+	if p.Error == "" {
+		t.Error("a panicking run must surface a failure reason, not look successful")
+	}
+
+	// The gate is free again: a fresh start is accepted rather than 409'd.
+	if !s.syncRunning.CompareAndSwap(false, true) {
+		t.Fatal("the single-flight gate stayed held after the panic")
+	}
+	s.syncRunning.Store(false)
+
+	// And the panic is reported to the caller of the synchronous form, not
+	// swallowed into a success.
+	if err := s.SyncOne(ctx, il.ID); err == nil {
+		t.Error("SyncOne over a panicking client returned nil")
+	}
+}
+
+// TestStartOne_ShuttingDownReleasesTheGate covers the launch that never
+// happens: jobs.Group.Go is a documented no-op once shutdown has begun, and
+// StartOne publishes the gate and the "running" snapshot before calling it. If
+// the drop isn't undone, syncRunning stays true and Progress() describes a run
+// that will never finish for the rest of the process's life.
+func TestStartOne_ShuttingDownReleasesTheGate(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	il := testImportList("Late", "hardcover", true)
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	s.WithClientFactory(func(string) hardcoverClient { return &fakeHardcoverClient{} })
+
+	g := jobs.NewGroup(context.Background())
+	g.Shutdown(time.Second)
+	s.WithJobs(g)
+
+	if err := s.StartOne(ctx, il.ID); !errors.Is(err, ErrShuttingDown) {
+		t.Fatalf("StartOne during shutdown = %v, want ErrShuttingDown", err)
+	}
+	if p := s.Progress(); p.Running {
+		t.Errorf("progress still reports a running sync after a dropped launch: %+v", p)
+	}
+	if !s.syncRunning.CompareAndSwap(false, true) {
+		t.Fatal("the single-flight gate stuck after a dropped launch")
+	}
+	s.syncRunning.Store(false)
+}
+
+// TestSync_ScheduledRunIsTrackedByTheJobsGroup closes the gap the manual path
+// already had: the scheduler calls Sync on the process-lifecycle context, which
+// SIGTERM cancels straight away, and nothing waited on it — so the run could
+// still be inside books.Create when database.Close() fired. Wired to the jobs
+// group, the whole scheduled pass is registered, so Shutdown both cancels it
+// and reports it if it overruns the grace window.
+func TestSync_ScheduledRunIsTrackedByTheJobsGroup(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	il := testImportList("Scheduled", "hardcover", true)
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// Deliberately deaf to cancellation, standing in for a run parked inside a
+	// provider call or a books.Create that shutdown must wait out rather than
+	// walk over.
+	client := &stubbornHardcoverClient{
+		fakeHardcoverClient: fakeHardcoverClient{lists: []hardcover.HCList{{ID: 7, Slug: il.URL, Name: il.Name}}},
+		started:             make(chan struct{}),
+		release:             make(chan struct{}),
+	}
+	s.WithClientFactory(func(string) hardcoverClient { return client })
+
+	g := jobs.NewGroup(context.Background())
+	s.WithJobs(g)
+
+	done := make(chan error, 1)
+	go func() { done <- s.Sync(ctx) }()
+	<-client.started
+
+	// The group knows about the run, which is only true if Sync registered it.
+	if still := g.Shutdown(150 * time.Millisecond); len(still) != 1 || still[0] != "hardcover-list-sync-scheduled" {
+		t.Fatalf("Shutdown reported %v, want the in-flight scheduled sync", still)
+	}
+	if !client.sawCancel.Load() {
+		t.Error("the scheduled run did not observe the group's shutdown cancellation")
+	}
+
+	close(client.release)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduled Sync did not return")
+	}
+	// Shutdown now drains, proving the run released its tracking slot.
+	if still := g.Shutdown(2 * time.Second); len(still) != 0 {
+		t.Fatalf("scheduled sync did not release its tracking slot: %v", still)
+	}
+}
+
+// stubbornHardcoverClient stalls until released, recording whether its context
+// was cancelled in the meantime but declining to return early because of it.
+type stubbornHardcoverClient struct {
+	fakeHardcoverClient
+	started   chan struct{}
+	release   chan struct{}
+	sawCancel atomic.Bool
+	once      sync.Once
+}
+
+func (b *stubbornHardcoverClient) GetUserLists(ctx context.Context) ([]hardcover.HCList, error) {
+	b.once.Do(func() { close(b.started) })
+	for {
+		select {
+		case <-b.release:
+			return b.fakeHardcoverClient.GetUserLists(ctx)
+		case <-ctx.Done():
+			b.sawCancel.Store(true)
+			<-b.release
+			return b.fakeHardcoverClient.GetUserLists(ctx)
+		}
+	}
+}
+
+// A scheduled run that arrives during shutdown is skipped rather than started
+// against a database that is about to close, and it reports no error — the
+// scheduler logs errors, and "we're shutting down" isn't one.
+func TestSync_ScheduledRunSkippedDuringShutdown(t *testing.T) {
+	s, repo := newTestSyncer(t)
+	ctx := context.Background()
+
+	il := testImportList("Late scheduled", "hardcover", true)
+	if err := repo.Create(ctx, &il); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	client := &fakeHardcoverClient{}
+	s.WithClientFactory(func(string) hardcoverClient { return client })
+
+	g := jobs.NewGroup(context.Background())
+	g.Shutdown(time.Second)
+	s.WithJobs(g)
+
+	if err := s.Sync(ctx); err != nil {
+		t.Fatalf("scheduled Sync during shutdown = %v, want nil (skipped)", err)
+	}
+	if p := s.Progress(); p.Running {
+		t.Errorf("a skipped scheduled run must not publish a running snapshot: %+v", p)
+	}
+	if !s.syncRunning.CompareAndSwap(false, true) {
+		t.Fatal("the single-flight gate was taken by a skipped scheduled run")
+	}
+	s.syncRunning.Store(false)
 }

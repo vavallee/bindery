@@ -318,6 +318,10 @@ func (h *ImportListHandler) Sync(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 	case errors.Is(err, hardcoverlistsyncer.ErrSyncAlreadyRunning):
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+	case errors.Is(err, hardcoverlistsyncer.ErrShuttingDown):
+		// The process is draining and refused to start new work. 503 rather
+		// than 502: nothing is broken, the request just arrived too late.
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
 	default:
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 	}

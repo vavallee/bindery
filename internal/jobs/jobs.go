@@ -22,6 +22,8 @@ package jobs
 
 import (
 	"context"
+	"log/slog"
+	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -65,34 +67,92 @@ func (g *Group) Context() context.Context { return g.ctx }
 // cancelled. name is a short label used only for shutdown logging when a job
 // overruns the grace window.
 //
-// If the group has already begun shutting down, Go is a no-op: the context is
-// already cancelled, and running the job would only race the resource teardown
-// the shutdown is about to perform.
-func (g *Group) Go(name string, fn func(ctx context.Context)) {
+// It reports whether the job was launched. If the group has already begun
+// shutting down, Go is a no-op and returns false: the context is already
+// cancelled, and running the job would only race the resource teardown the
+// shutdown is about to perform. Callers that publish "a job is running" state
+// before calling Go must undo it when Go returns false, or that state sticks
+// for the rest of the process's life.
+func (g *Group) Go(name string, fn func(ctx context.Context)) bool {
 	if fn == nil {
-		return
+		return false
 	}
 
+	id, ok := g.begin(name)
+	if !ok {
+		return false
+	}
+
+	go func() {
+		defer g.end(id)
+		guard(name, func() { fn(g.ctx) })
+	}()
+	return true
+}
+
+// Run is Go's synchronous twin: it runs fn on the calling goroutine, still
+// tracked by the group and still passing the shutdown-scoped context, and
+// returns once fn does. Use it for work that is already on its own goroutine
+// (a cron callback, say) but whose lifetime shutdown must nevertheless wait on
+// — without it, such a job runs on a context that is cancelled the moment
+// SIGTERM lands and can still be mid-write when database.Close() fires.
+//
+// It reports whether fn ran; false means the group had already begun shutting
+// down, in which case fn is not called at all.
+func (g *Group) Run(name string, fn func(ctx context.Context)) bool {
+	if fn == nil {
+		return false
+	}
+
+	id, ok := g.begin(name)
+	if !ok {
+		return false
+	}
+	defer g.end(id)
+
+	guard(name, func() { fn(g.ctx) })
+	return true
+}
+
+// begin registers an in-flight job, reporting false if the group is closed.
+func (g *Group) begin(name string) (int64, bool) {
 	g.mu.Lock()
+	defer g.mu.Unlock()
 	if g.closed {
-		g.mu.Unlock()
-		return
+		return 0, false
 	}
 	g.seq++
 	id := g.seq
 	g.active[id] = name
 	g.wg.Add(1)
-	g.mu.Unlock()
+	return id, true
+}
 
-	go func() {
-		defer g.wg.Done()
-		defer func() {
-			g.mu.Lock()
-			delete(g.active, id)
-			g.mu.Unlock()
-		}()
-		fn(g.ctx)
+// end deregisters an in-flight job and releases the WaitGroup token.
+func (g *Group) end(id int64) {
+	g.mu.Lock()
+	delete(g.active, id)
+	g.mu.Unlock()
+	g.wg.Done()
+}
+
+// guard runs fn and turns a panic into a logged error instead of a dead
+// process. Jobs launched through a Group are detached: unlike a handler behind
+// chi's middleware.Recoverer or a cron callback behind scheduler.runJob, there
+// is nothing above them on the stack to recover, so an unhandled panic in any
+// one of them takes the whole service down. Containing it here gives every
+// tracked job the same blast radius the request path already had.
+//
+// Recovering does not make the job's own state consistent — a job that keeps a
+// "running" flag or a progress snapshot must still reset it in its own defer.
+func guard(name string, fn func()) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Error("background job panicked",
+				"job", name, "panic", rec, "stack", string(debug.Stack()))
+		}
 	}()
+	fn()
 }
 
 // Shutdown signals every tracked job to stop by cancelling the shutdown-scoped
