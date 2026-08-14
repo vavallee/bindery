@@ -4,7 +4,7 @@ import { api, DownloadClient } from '../../api/client'
 import { inputCls } from './formStyles'
 import Toggle from './Toggle'
 import PathRemapField from './PathRemapField'
-import { downloadClientPathRemapHelp } from './helpers'
+import { downloadClientPathRemapHelp, rtorrentScgiIgnoredFields } from './helpers'
 import { dangerLink } from '../../components/buttons'
 
 // clients is owned by SettingsPage so it can be fetched eagerly on page mount
@@ -173,6 +173,10 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
   // both a username and a password (Deluge's Web UI has a password only).
   const hasUsername = (t: string) => t === 'qbittorrent' || t === 'transmission' || t === 'nzbget' || t === 'rtorrent'
 
+  // SCGI is rTorrent's own listener: no TLS, no auth. Say so where the choice
+  // is made rather than dropping the fields silently on save.
+  const scgiIgnored = rtorrentScgiIgnoredFields(type, urlBase, useSSL, username, credential)
+
   const buildData = () => isPasswordClient(type)
     ? { ...client, name, type, host, port: parseInt(port), username: hasUsername(type) ? username : '', password: credential, apiKey: '', category, categoryAudiobook: categoryAudiobook.trim(), pathRemap: pathRemap.trim(), useSsl: useSSL, urlBase: urlBase.trim() }
     : { ...client, name, type, host, port: parseInt(port), apiKey: credential, username: '', password: '', category, categoryAudiobook: categoryAudiobook.trim(), pathRemap: pathRemap.trim(), useSsl: useSSL, urlBase: urlBase.trim() }
@@ -252,6 +256,11 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{type === 'rtorrent'
           ? t('settings.clients.rtorrentUrlBaseHelp')
           : <>Optional path prefix for reverse proxy deployments (e.g. <code className="font-mono">/sabnzbd</code>). Leave blank for direct connections.</>}</p>
+        {scgiIgnored.length > 0 && (
+          <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+            {t('settings.clients.rtorrentScgiIgnoredHint', { fields: scgiIgnored.join(', ') })}
+          </p>
+        )}
       </div>
       {hasUsername(type) && (
         <div>
@@ -330,6 +339,10 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
   // rTorrent authenticates with HTTP basic auth on the RPC endpoint, so it takes
   // both a username and a password (Deluge's Web UI has a password only).
   const hasUsername = (t: string) => t === 'qbittorrent' || t === 'transmission' || t === 'nzbget' || t === 'rtorrent'
+
+  // SCGI is rTorrent's own listener: no TLS, no auth. Say so where the choice
+  // is made rather than dropping the fields silently on save.
+  const scgiIgnored = rtorrentScgiIgnoredFields(type, urlBase, useSSL, username, credential)
 
   const handleTypeChange = (newType: 'sabnzbd' | 'nzbget' | 'qbittorrent' | 'transmission' | 'deluge' | 'rtorrent') => {
     setType(newType)
@@ -443,6 +456,11 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{type === 'rtorrent'
           ? t('settings.clients.rtorrentUrlBaseHelp')
           : <>Optional path prefix for reverse proxy deployments (e.g. <code className="font-mono">/sabnzbd</code>). Leave blank for direct connections.</>}</p>
+        {scgiIgnored.length > 0 && (
+          <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+            {t('settings.clients.rtorrentScgiIgnoredHint', { fields: scgiIgnored.join(', ') })}
+          </p>
+        )}
       </div>
       {hasUsername(type) && (
         <div>
