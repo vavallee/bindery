@@ -1561,6 +1561,7 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// it doesn't (#1815), and those authors have books, so the never-populated
 	// carve-out doesn't apply either. Turning the setting back on for an author
 	// is what asks for their full bibliography.
+	//
 	// If the re-link fails (name not found, network error) we fall through and
 	// keep the synthetic ID, matching the prior skip-silently behaviour.
 	//
@@ -1729,9 +1730,10 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// unmonitored author leaves exactly the same zero-book row, so the next
 	// bulk refresh re-imported the whole bibliography — and bulk-deleting the
 	// clutter is precisely the cleanup this feature's own documentation
-	// recommends. authors.catalogue_populated_at (migration 075) is stamped the
-	// first time a sync creates books and never cleared, so a library the user
-	// emptied stays empty while a never-populated author is still repaired.
+	// recommends. authors.catalogue_populated_at (migration 075) is stamped on
+	// the author's first book — by BookRepo.Create, so an import or a list sync
+	// counts too — and never cleared, so a library the user emptied stays empty
+	// while a never-populated author is still repaired.
 	allowNewBooks := true
 	if discovery && !authorAcceptsDiscoveredBooks(author) && !h.authorAwaitsFirstCatalogue(ctx, author, len(allBooks)) {
 		allowNewBooks = false
@@ -2006,12 +2008,6 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		// placement: every update branch above (ratings, covers, genres,
 		// re-parenting, dual-format upgrades) has already run for the books
 		// the user does have, which is the half of "refresh" they asked for.
-		if !allowNewBooks {
-			skippedNotAccepted++
-			slog.Debug("skipping newly-discovered work: author is not accepting new books",
-				"title", b.Title, "foreignId", b.ForeignID, "author", author.Name)
-			continue
-		}
 		// An excluded row under this author already says "never bring this
 		// back". The GetByForeignID branch above catches the exact id, but a
 		// work whose local row carries a different one — a calibre: stub, a
@@ -2020,6 +2016,12 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		if _, excluded := excludedKeys[dedupKey]; excluded {
 			skippedExcluded++
 			slog.Debug("skipping newly-discovered work: an excluded book under this author has the same title",
+				"title", b.Title, "foreignId", b.ForeignID, "author", author.Name)
+			continue
+		}
+		if !allowNewBooks {
+			skippedNotAccepted++
+			slog.Debug("skipping newly-discovered work: author is not accepting new books",
 				"title", b.Title, "foreignId", b.ForeignID, "author", author.Name)
 			continue
 		}
@@ -2077,7 +2079,7 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// totals — 1 work, 1 added, everything else zero — are not an account of
 	// this author's catalogue, and writing them would overwrite a real
 	// catalogue sync's numbers on the author page and hide its skip notice.
-	if opts.onlyForeignID != "" {
+	if singleWork {
 		slog.Info("single-work catalogue fallback complete",
 			"author", author.Name, "foreignId", opts.onlyForeignID, "added", added)
 		return
