@@ -2072,19 +2072,6 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	}
 	runBookSearches(ctx, h.searcher, searchQueue, authorAutoSearchConcurrency)
 
-	// Stamp the author as populated the first time a sync actually creates
-	// books. This is what lets a later refresh tell "never had a catalogue" from
-	// "the user deleted the catalogue", so the empty-author repair above can
-	// stay permissive without re-importing a library somebody emptied on
-	// purpose (#1815). Write-once and best-effort: a failure here costs at most
-	// one more repair pass, so it must not abort a sync that just succeeded.
-	if added > 0 {
-		if err := h.authors.MarkCataloguePopulated(ctx, author.ID, time.Now().UTC()); err != nil {
-			slog.Warn("could not record that the author's catalogue was populated",
-				"author", author.Name, "authorId", author.ID, "error", err)
-		}
-	}
-
 	// A single-work run records nothing (#1816). It fetched the author's works
 	// only to pick out the one book the user explicitly asked for, so its
 	// totals — 1 work, 1 added, everything else zero — are not an account of

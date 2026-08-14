@@ -12,9 +12,11 @@
 -- refresh re-imported the whole bibliography -- which is the cleanup the docs
 -- recommend, re-arming the bug it documents.
 --
--- The column separates the two: set the first time a sync actually creates
--- books, never cleared. Zero books AND never populated is the repair case
--- Zero books AND populated before is a library the user emptied.
+-- The column separates the two: set by BookRepo.Create on the author's first
+-- book (every creation path flows through there, so an ABS import or a
+-- Hardcover list counts as much as a catalogue sync), never cleared. Zero books
+-- AND never populated is the repair case. Zero books AND populated before is a
+-- library the user emptied.
 --
 -- Backfill: any author who currently has books has demonstrably been populated.
 -- Authors emptied before this migration cannot be detected and get one more

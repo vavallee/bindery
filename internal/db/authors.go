@@ -739,8 +739,10 @@ func (r *AuthorRepo) deleteWithIdentifiers(ctx context.Context, exec dbExecutor,
 	return nil
 }
 
-// CataloguePopulatedAt reports when this author's catalogue was first
-// populated, or nil if it never has been.
+// CataloguePopulatedAt reports when this author first had a book, or nil if
+// they never have. BookRepo.Create stamps it — every book-creation path flows
+// through there, so it covers importers, list syncs and manual adds, not only
+// catalogue syncs.
 //
 // It is the discriminator the refresh discovery policy needs (#1815, #1816): a
 // refresh may populate an author who has no books, because repairing an import
@@ -771,10 +773,11 @@ func (r *AuthorRepo) CataloguePopulatedAt(ctx context.Context, authorID int64) (
 	return when, nil
 }
 
-// MarkCataloguePopulated stamps the author as having had their catalogue
-// populated, if it isn't stamped already. Write-once: the value records that it
-// happened at all, and re-stamping on every later sync would erase the
-// distinction it exists to draw.
+// MarkCataloguePopulated stamps the author as having had a catalogue, if it
+// isn't stamped already. Write-once: the value records that it happened at
+// all, and re-stamping later would erase the distinction it exists to draw.
+// BookRepo.Create does this inline on every insert; this is the explicit form,
+// used by tests and by any caller that needs to assert the fact directly.
 func (r *AuthorRepo) MarkCataloguePopulated(ctx context.Context, authorID int64, when time.Time) error {
 	_, err := r.db.ExecContext(ctx,
 		`UPDATE authors SET catalogue_populated_at = ? WHERE id = ? AND catalogue_populated_at IS NULL`,
