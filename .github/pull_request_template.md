@@ -4,6 +4,7 @@
 
 ## Checklist
 
+- [ ] Commits signed off with `git commit -s` — see [Sign your work](../CONTRIBUTING.md#sign-your-work-dco)
 - [ ] Tests added or updated
 - [ ] `docs/DEPLOYMENT.md` updated if env vars, config, or upgrade path changed
 - [ ] Added a changelog fragment under `changelog.d/` (not an edit to `CHANGELOG.md`) — see [changelog.d/README.md](../changelog.d/README.md)
