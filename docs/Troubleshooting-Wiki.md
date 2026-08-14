@@ -2,6 +2,41 @@
 
 Solutions to recurring problems, organised by symptom. Add new entries here as patterns come up in support.
 
+## Bindery will not start after upgrading: "foreign_key_check found N violation(s)"
+
+```
+ERROR msg=failed to open database error=run migrations: migration 72: foreign_key_check found 2231 violation(s)
+```
+
+Affects **v1.30.1, v1.30.2 and v1.30.3**. Fixed in **v1.30.4** — upgrading is the whole fix, and nothing else is required.
+
+**Your data is fine.** Migrations run in a transaction, so the failed migration rolled back and the database on disk is exactly as it was. Repulling the image does not help, because nothing is wrong with the image: the condition lives in your config volume.
+
+What happened: migration 72 rebuilds two Calibre tables, and its post-rebuild integrity check scanned the **whole** database instead of the tables it rebuilt. Long-running instances carry orphan rows left over from [#1727](https://github.com/vavallee/bindery/issues/1727), where foreign key enforcement could silently switch off and the schema's `ON DELETE CASCADE` rules stopped firing. Those old, unrelated orphans failed a migration that had nothing to do with them ([#1972](https://github.com/vavallee/bindery/issues/1972)). The more history an instance had, the more certain it was to hit this.
+
+### Fix
+
+Upgrade to v1.30.4 or later. The migration now checks only what it changed; pre-existing orphans are logged as a warning and the instance starts:
+
+```
+WARN database carries pre-existing foreign-key violations from before this upgrade ... violations=2231 tables="book_files=600, books=200, downloads=831, editions=600"
+```
+
+### Optional cleanup
+
+The warning is harmless — nothing is broken and there is no rush — but you can clear the orphans when convenient. Stop Bindery, back up the database, then:
+
+```bash
+docker run --rm -v bindery-config:/config ghcr.io/vavallee/bindery:latest db-check
+docker run --rm -v bindery-config:/config ghcr.io/vavallee/bindery:latest db-repair --yes
+```
+
+Bare-metal: `bindery db-check` / `bindery db-repair --yes` (add the database path as an argument if it isn't at `BINDERY_DB_PATH`).
+
+`db-check` lists every affected row (table, rowid, missing parent) and changes nothing. `db-repair` replays the delete rule the schema declares — `ON DELETE CASCADE` orphans are removed, `ON DELETE SET NULL` references are cleared so download history keeps its rows — and prints exactly what it did. It refuses to run without `--yes`.
+
+If your platform can't run a different command, set `BINDERY_DB_FK_CHECK=report` (or `=repair`), start the container once, read the log, and unset it.
+
 ## A grabbed book never imports
 
 The book shows **grabbed** in History and reaches 100% in your download client, but Bindery never imports it. Usually one of two causes.
