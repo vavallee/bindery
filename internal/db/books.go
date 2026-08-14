@@ -526,6 +526,26 @@ func (r *BookRepo) Create(ctx context.Context, b *models.Book) error {
 	b.ID = id
 	b.CreatedAt = now
 	b.UpdatedAt = now
+
+	// Record that this author has had a catalogue, for the refresh discovery
+	// policy (#1815, migration 075). Hung off Create for the same reason
+	// dedup_key is: every book-creation path flows through here, so the marker
+	// is true for books an importer, a Hardcover list or a manual add created,
+	// not only for ones a catalogue sync created. Without that, an author
+	// populated by an ABS import and then emptied by hand still reads as
+	// "never populated" and the next refresh re-imports the bibliography.
+	//
+	// Write-once (the WHERE clause), so it costs one no-op UPDATE per insert
+	// after the first, and best-effort: a book that exists matters more than
+	// the marker, which at worst allows one extra repair pass.
+	if b.AuthorID != 0 {
+		if _, merr := r.db.ExecContext(ctx,
+			`UPDATE authors SET catalogue_populated_at = ? WHERE id = ? AND catalogue_populated_at IS NULL`,
+			timeValueArg(now), b.AuthorID); merr != nil {
+			slog.Warn("could not mark author catalogue populated on book create",
+				"author_id", b.AuthorID, "book_id", id, "error", merr)
+		}
+	}
 	return nil
 }
 

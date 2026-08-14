@@ -397,7 +397,7 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 			// fields (Description, ImageURL, ...); cleaning afterwards would race
 			// the snapshot read against this write (see fetchAuthorBooksAsync).
 			cleanAuthorDescription(canonical)
-			h.fetchAuthorBooksAsync(canonical, req.SearchOnAdd, mediaType, false)
+			h.fetchAuthorBooksAsync(canonical, catalogueSyncOptions{autoSearch: req.SearchOnAdd, mediaType: mediaType})
 			writeJSON(w, http.StatusOK, canonical)
 			return
 		}
@@ -446,7 +446,7 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch and store books for this author. Always populate the catalogue;
 	// pass searchOnAdd so FetchAuthorBooks knows whether to also queue grabs.
-	h.fetchAuthorBooksAsync(author, req.SearchOnAdd, mediaType, false)
+	h.fetchAuthorBooksAsync(author, catalogueSyncOptions{autoSearch: req.SearchOnAdd, mediaType: mediaType})
 
 	telemetry.MarkFirst(r.Context(), h.settings, telemetry.SettingFirstAuthorAt)
 	writeJSON(w, http.StatusCreated, author)
@@ -458,12 +458,41 @@ func cleanAuthorDescription(author *models.Author) {
 	}
 }
 
-func (h *AuthorHandler) fetchAuthorBooksAsync(author *models.Author, autoSearch bool, mediaType string, discovery bool) {
+// catalogueSyncOptions configures one catalogue sync run (fetchAuthorBooks).
+// A struct rather than a widening parameter list: the flags interact — see
+// authorAcceptsDiscoveredBooks — and every call site should read as a sentence
+// about intent, not as four positional booleans.
+type catalogueSyncOptions struct {
+	// autoSearch queues an indexer search for each newly-created monitored
+	// book. Only the add flow sets it; refresh paths never auto-grab.
+	autoSearch bool
+	// mediaType is applied to created books the provider gave no format for.
+	// Empty accepts whatever the provider set.
+	mediaType string
+	// discovery marks a REFRESH-path sync (single-author Refresh, bulk
+	// refresh, refresh-all, relink) as opposed to the initial add/migrate
+	// sync. Refresh runs may only create books the library doesn't have when
+	// the author's monitoring policy says it wants new work from them
+	// (authorAcceptsDiscoveredBooks) — see #1348, #1815.
+	discovery bool
+	// onlyForeignID restricts the run to a single provider work. Set by
+	// AddBook's fallback so "add this one book" can never turn into "import
+	// this author's back catalogue" (#1816). Everything else the provider
+	// returns is dropped before the create loop sees it.
+	//
+	// A run with it set is an explicit user pick standing in for the direct
+	// insert, so it also skips the author-wide side effects (profile refresh,
+	// Calibre re-link, sync summary) and the catalogue heuristics that may veto
+	// a work — the strict media-type clamp and the language filter (#1612).
+	onlyForeignID string
+}
+
+func (h *AuthorHandler) fetchAuthorBooksAsync(author *models.Author, opts catalogueSyncOptions) {
 	if author == nil {
 		return
 	}
 	snapshot := *author
-	go h.fetchAuthorBooks(&snapshot, autoSearch, mediaType, discovery)
+	go h.fetchAuthorBooks(&snapshot, opts)
 }
 
 func (h *AuthorHandler) fetchAuthorForCreate(ctx context.Context, foreignID, fallbackName string) (*models.Author, error) {
@@ -1229,11 +1258,13 @@ func (h *AuthorHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Manual refresh always repopulates the catalogue but never auto-grabs —
-	// the user triggered it to refresh metadata, not to queue downloads.
-	// Newly-discovered books inherit the global default media type; rows
-	// that already exist keep whatever value they were created with.
-	h.fetchAuthorBooksAsync(author, false, h.resolveDefaultMediaType(r.Context()), true)
+	// Manual refresh re-reads the author's metadata but never auto-grabs — the
+	// user triggered it to refresh metadata, not to queue downloads. Whether
+	// it may also CREATE rows for works the library doesn't have is the
+	// author's monitoring policy's call (see authorAcceptsDiscoveredBooks);
+	// books that do get created inherit the global default media type, and
+	// rows that already exist keep whatever value they were created with.
+	h.fetchAuthorBooksAsync(author, catalogueSyncOptions{mediaType: h.resolveDefaultMediaType(r.Context()), discovery: true})
 	writeJSON(w, http.StatusAccepted, map[string]string{"message": "refresh started"})
 }
 
@@ -1443,30 +1474,109 @@ func mergeAuthorProfileFields(author, upstream *models.Author) bool {
 // must use RefreshAuthorBooks instead so the author's MonitorNewItems policy
 // applies to later-discovered works (issue #1348).
 func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool, mediaType string) {
-	h.fetchAuthorBooks(author, autoSearch, mediaType, false)
+	h.fetchAuthorBooks(author, catalogueSyncOptions{autoSearch: autoSearch, mediaType: mediaType})
 }
 
 // RefreshAuthorBooks is the discovery variant of FetchAuthorBooks used by the
 // refresh paths (single-author Refresh, bulk refresh, refresh-all, relink).
-// Works discovered here additionally honour the author's MonitorNewItems
-// policy: "none" creates them unmonitored, so a metadata refresh can never
-// mass-monitor a back-catalogue and trigger a search storm (issue #1348).
+// A refresh always updates the metadata of the books the library already has,
+// but it only DISCOVERS new works for an author whose monitoring policy asks
+// for them (authorAcceptsDiscoveredBooks) — a refresh must never grow the
+// library behind the user's back (issues #1348, #1815).
 func (h *AuthorHandler) RefreshAuthorBooks(author *models.Author, autoSearch bool, mediaType string) {
-	h.fetchAuthorBooks(author, autoSearch, mediaType, true)
+	h.fetchAuthorBooks(author, catalogueSyncOptions{autoSearch: autoSearch, mediaType: mediaType, discovery: true})
 }
 
-func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool, mediaType string, discovery bool) {
+// authorAcceptsDiscoveredBooks reports whether a refresh-path catalogue sync
+// may CREATE book rows for works the library doesn't have yet.
+//
+// Refreshing metadata and importing a back catalogue are two different
+// operations that shared one code path until #1815: a user with every
+// monitoring switch off clicked "Refresh metadata" to fix missing cover art
+// and got the author's entire bibliography inserted as new rows. Monitoring is
+// the only intent signal the user has, so it is the one that decides:
+//
+//   - Unmonitored author — "I'm not tracking new work from them". Refresh
+//     updates what's there and adds nothing.
+//   - MonitorNewItems "none" — the setting's whole purpose, and what every
+//     importer (ABS, Calibre) stamps on the authors it creates, precisely
+//     because those catalogues are partial and the first refresh was the
+//     classic detonation point (#1348). It now means "don't add them" rather
+//     than "add them unmonitored", which is what the users who asked for it
+//     were describing.
+//
+// MonitorMode "none" is deliberately NOT in this list: with new items allowed
+// it is the "list the whole catalogue, monitor none of it" setup (#1290's
+// Hardcover-list authors are exactly that), and those rows are created
+// unmonitored anyway.
+func authorAcceptsDiscoveredBooks(author *models.Author) bool {
+	if author == nil {
+		return false
+	}
+	if !author.Monitored {
+		return false
+	}
+	return models.NormalizeAuthorMonitorNewItems(author.MonitorNewItems) != models.AuthorMonitorNewItemsNone
+}
+
+// authorAwaitsFirstCatalogue reports whether this author is the empty-author
+// repair case: no books at all (excluded ones included — the user excluding
+// every book is a decision, not an empty catalogue) and no record of a sync
+// ever having populated them.
+//
+// A read error is answered false. The carve-out is the permissive branch, so
+// the safe answer when we can't tell is "don't discover": a refresh that adds
+// nothing is a support question, a refresh that re-imports 500 books the user
+// deleted is the bug this whole change exists to fix.
+func (h *AuthorHandler) authorAwaitsFirstCatalogue(ctx context.Context, author *models.Author, bookCount int) bool {
+	if bookCount > 0 {
+		return false
+	}
+	populatedAt, err := h.authors.CataloguePopulatedAt(ctx, author.ID)
+	if err != nil {
+		slog.Warn("could not read author catalogue-populated marker; treating the author as already populated",
+			"author", author.Name, "authorId", author.ID, "error", err)
+		return false
+	}
+	return populatedAt == nil
+}
+
+func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSyncOptions) {
+	autoSearch, mediaType, discovery := opts.autoSearch, opts.mediaType, opts.discovery
+	// singleWork: the caller picked one specific book and the direct insert
+	// couldn't produce it. This run exists only to create that one row, so it
+	// touches nothing about the author beyond it — no profile rewrite, no
+	// Calibre re-link, no sync summary — and it is exempt from the
+	// catalogue-sync heuristics that may veto a work (#1612).
+	singleWork := opts.onlyForeignID != ""
 	ctx := h.bgCtx()
 	slog.Info("fetching books for author", "author", author.Name, "foreignId", author.ForeignID)
 
 	// Calibre-imported authors carry a synthetic "calibre:author:N" foreign ID
 	// that has no counterpart in OL/Hardcover — they come in with no image,
 	// description, or real catalogue. Re-link them to the upstream metadata
-	// provider by name so the first Refresh Metadata click pulls real data.
+	// provider by name so the first Refresh Metadata click pulls real profile
+	// data and can update the books the import produced. It does not pull the
+	// rest of the catalogue: importers stamp MonitorNewItems=none precisely so
+	// it doesn't (#1815), and those authors have books, so the never-populated
+	// carve-out doesn't apply either. Turning the setting back on for an author
+	// is what asks for their full bibliography.
+	//
 	// If the re-link fails (name not found, network error) we fall through and
 	// keep the synthetic ID, matching the prior skip-silently behaviour.
+	//
+	// Not on a single-work run. Rewriting a Calibre author's identity is a
+	// consequential, author-wide change, and it has no business happening as a
+	// side effect of one Add Book whose provider call happened to 502. The
+	// author's synthetic id also means the works endpoint below has nothing to
+	// answer with, so there is nothing to fall through to.
 	wasCalibre := strings.HasPrefix(author.ForeignID, "calibre:")
 	if wasCalibre {
+		if singleWork {
+			slog.Info("single-work fallback skipped: author is not linked to a metadata provider",
+				"author", author.Name, "foreignId", author.ForeignID)
+			return
+		}
 		if err := h.relinkCalibreAuthor(ctx, author); err != nil {
 			slog.Info("calibre author not re-linked to metadata provider", "author", author.Name, "reason", err)
 			return
@@ -1480,7 +1590,11 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool,
 	// appear upstream (Discussion #1226). Calibre authors are skipped here
 	// because relinkCalibreAuthor already pulled and persisted their profile
 	// just above, so re-fetching would only spend a redundant round-trip.
-	if !wasCalibre {
+	//
+	// Single-work runs are skipped for the same reason as the re-link: the
+	// author usually already existed before this request, and an Add Book is
+	// not a request to rewrite their profile.
+	if !wasCalibre && !singleWork {
 		h.refreshAuthorProfile(ctx, author)
 	}
 
@@ -1490,6 +1604,15 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool,
 	if err != nil {
 		slog.Error("failed to fetch books", "author", author.Name, "error", err)
 		return
+	}
+
+	// Single-work run (#1816): the caller asked for one specific book, so drop
+	// everything else the provider returned right here — ahead of the Audible
+	// supplement, the language sampling and the create loop, none of which can
+	// tell us anything about a work we already have the foreign ID for. Every
+	// filter and dedup rule below still applies to the one work that survives.
+	if opts.onlyForeignID != "" {
+		books = keepWorkWithForeignID(books, opts.onlyForeignID)
 	}
 
 	// Supplement with Audible-direct author lookup for audiobook-favoring
@@ -1502,8 +1625,10 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool,
 	//
 	// Gated on the effective media type — ebook-only setups would just
 	// see audiobook rows they never asked for, and each call spends a
-	// network round-trip to api.audible.com.
-	if mediaType == models.MediaTypeAudiobook || mediaType == models.MediaTypeBoth {
+	// network round-trip to api.audible.com. A single-work run skips it: the
+	// requested work is identified by foreign ID, which Audible's catalogue
+	// cannot supply.
+	if opts.onlyForeignID == "" && (mediaType == models.MediaTypeAudiobook || mediaType == models.MediaTypeBoth) {
 		if audibleBooks, err := h.meta.GetAuthorAudiobooks(ctx, author.Name); err != nil {
 			slog.Warn("audible author lookup failed", "author", author.Name, "error", err)
 		} else if len(audibleBooks) > 0 {
@@ -1557,7 +1682,27 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool,
 	// Track titles we've already added (case-insensitive) to avoid OL duplicates.
 	// The value is a pointer to the existing book so we can enrich calibre-imported
 	// stubs with the OL foreign ID and language when they title-match an OL record.
-	existingBooks, _ := h.books.ListByAuthor(ctx, author.ID)
+	// IncludingExcluded, deliberately. An excluded book is one the user told
+	// Bindery to never bring back, so it has to count both ways below: as
+	// evidence the author is not an empty one waiting to be populated, and as a
+	// title that must not be re-created under a different foreign id. Reading
+	// only the non-excluded rows made "Exclude them all" look identical to
+	// "this author has no catalogue yet", so the documented cleanup disarmed
+	// the very guard it was recommended for (#1815).
+	allBooks, _ := h.books.ListByAuthorIncludingExcluded(ctx, author.ID)
+	existingBooks := make([]models.Book, 0, len(allBooks))
+	// Excluded titles, keyed the same way as seenTitles below. Kept separate
+	// from it rather than merged in: the seenTitles branches UPDATE the row
+	// they match (dual-format upgrades, calibre-stub adoption, ratings), and an
+	// excluded row is one the user wants left alone, not quietly upgraded.
+	excludedKeys := make(map[string]struct{})
+	for i := range allBooks {
+		if allBooks[i].Excluded {
+			excludedKeys[indexer.CanonicalDedupKey(allBooks[i].Title)] = struct{}{}
+			continue
+		}
+		existingBooks = append(existingBooks, allBooks[i])
+	}
 	// CanonicalDedupKey, not NormalizeTitleForDedup: this map decides whether a
 	// provider work becomes a NEW book row, which is exactly the #940 invariant
 	// that CanonicalDedupKey exists to be the single authority for. The two
@@ -1568,6 +1713,33 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool,
 	seenTitles := make(map[string]*models.Book)
 	for i := range existingBooks {
 		seenTitles[indexer.CanonicalDedupKey(existingBooks[i].Title)] = &existingBooks[i]
+	}
+
+	// Discovery policy (#1815). A refresh may always UPDATE the books the
+	// library already has — covers, ratings, genres, series links, the reason
+	// people click "Refresh metadata" — but it may only CREATE rows for works
+	// the user doesn't have when the author's monitoring says they want them.
+	//
+	// The one exception is an author who has never been populated. That is the
+	// repair the bulk "refresh" action and the "Refresh all authors" job exist
+	// for (an import that resolved the author but no catalogue, an add whose
+	// initial sync failed), and it cannot be the "my library went from 75 books
+	// to 500" surprise: there is nothing there to be surprised about yet.
+	//
+	// "Has no books" alone is not that test. Deleting every book under an
+	// unmonitored author leaves exactly the same zero-book row, so the next
+	// bulk refresh re-imported the whole bibliography — and bulk-deleting the
+	// clutter is precisely the cleanup this feature's own documentation
+	// recommends. authors.catalogue_populated_at (migration 075) is stamped on
+	// the author's first book — by BookRepo.Create, so an import or a list sync
+	// counts too — and never cleared, so a library the user emptied stays empty
+	// while a never-populated author is still repaired.
+	allowNewBooks := true
+	if discovery && !authorAcceptsDiscoveredBooks(author) && !h.authorAwaitsFirstCatalogue(ctx, author, len(allBooks)) {
+		allowNewBooks = false
+		slog.Info("refresh will update existing books only; author is not accepting newly-discovered books",
+			"author", author.Name, "authorId", author.ID,
+			"monitored", author.Monitored, "monitorNewItems", models.NormalizeAuthorMonitorNewItems(author.MonitorNewItems))
 	}
 
 	normalizedAuthor := strings.ToLower(strings.TrimSpace(author.Name))
@@ -1624,7 +1796,10 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool,
 	// (or audiobook-only) user never accumulates rows they can't grab.
 	strictMediaType := h.resolveDefaultMediaTypeStrict(ctx)
 
-	var added, skippedLang, skippedJunk, skippedMediaType int
+	// skippedExcluded is logged but deliberately kept out of AuthorSyncSummary:
+	// the author page's notice explains works the user did NOT expect to lose,
+	// and a book they excluded by hand is not one of them.
+	var added, skippedLang, skippedJunk, skippedMediaType, skippedNotAccepted, skippedExcluded int
 	// Names of the first few language-rejected works, reported to the user
 	// alongside the count (#1889): "65 books skipped" is alarming, but it is
 	// the titles and their language codes that tell them whether the profile
@@ -1647,7 +1822,14 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool,
 		// so it is skipped rather than created as an un-grabbable row. A "both"
 		// default disables the clamp (the user wants everything). Existing rows
 		// are untouched; the Books bulk-edit action migrates those.
-		if strictMediaType && (mediaType == models.MediaTypeEbook || mediaType == models.MediaTypeAudiobook) {
+		//
+		// A single-work run is exempt. #1612: "an explicit add of one specific
+		// work must not be vetoed by catalogue-sync heuristics" — the direct
+		// insert this run stands in for applies neither clamp nor language
+		// filter, and applying them here would turn an explicitly-picked
+		// audiobook into a 15s poll, a 404 "try again shortly", and an orphan
+		// cleanup that deletes the author the request just created.
+		if !singleWork && strictMediaType && (mediaType == models.MediaTypeEbook || mediaType == models.MediaTypeAudiobook) {
 			switch b.MediaType {
 			case models.MediaTypeBoth:
 				b.MediaType = mediaType
@@ -1676,7 +1858,12 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool,
 		// Filter by the author's metadata-profile allowed_languages.
 		// Books whose language is unknown honor the profile's
 		// unknown_language_behavior (pass by default; see #232).
-		if !models.IsLanguageAllowed(b.Language, allowedLangs, unknownFail) {
+		//
+		// Exempt on a single-work run, and this is the exact case #1612 was
+		// filed for: a heavily-translated work whose edition-sampled language
+		// falls outside the profile became permanently un-addable, because the
+		// only path that could create it kept refusing to.
+		if !singleWork && !models.IsLanguageAllowed(b.Language, allowedLangs, unknownFail) {
 			skippedLang++
 			if len(skippedLangSample) < authorSyncSkippedSampleLimit {
 				skippedLangSample = append(skippedLangSample, models.AuthorSyncSkippedBook{Title: b.Title, Language: b.Language})
@@ -1815,6 +2002,29 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool,
 			}
 			continue
 		}
+		// Everything from here on CREATES a book the library does not have.
+		// On a refresh of an author who isn't taking new work, that is the
+		// #1815/#1816 back-catalogue import — count it and move on. Note the
+		// placement: every update branch above (ratings, covers, genres,
+		// re-parenting, dual-format upgrades) has already run for the books
+		// the user does have, which is the half of "refresh" they asked for.
+		// An excluded row under this author already says "never bring this
+		// back". The GetByForeignID branch above catches the exact id, but a
+		// work whose local row carries a different one — a calibre: stub, a
+		// re-ided provider work — would otherwise be created afresh as a
+		// title the exclusion was meant to cover (#1815).
+		if _, excluded := excludedKeys[dedupKey]; excluded {
+			skippedExcluded++
+			slog.Debug("skipping newly-discovered work: an excluded book under this author has the same title",
+				"title", b.Title, "foreignId", b.ForeignID, "author", author.Name)
+			continue
+		}
+		if !allowNewBooks {
+			skippedNotAccepted++
+			slog.Debug("skipping newly-discovered work: author is not accepting new books",
+				"title", b.Title, "foreignId", b.ForeignID, "author", author.Name)
+			continue
+		}
 		seenTitles[dedupKey] = &b
 
 		// Tenancy (#1457): a new book inherits its author's owner so per-user
@@ -1864,6 +2074,17 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool,
 	}
 	runBookSearches(ctx, h.searcher, searchQueue, authorAutoSearchConcurrency)
 
+	// A single-work run records nothing (#1816). It fetched the author's works
+	// only to pick out the one book the user explicitly asked for, so its
+	// totals — 1 work, 1 added, everything else zero — are not an account of
+	// this author's catalogue, and writing them would overwrite a real
+	// catalogue sync's numbers on the author page and hide its skip notice.
+	if singleWork {
+		slog.Info("single-work catalogue fallback complete",
+			"author", author.Name, "foreignId", opts.onlyForeignID, "added", added)
+		return
+	}
+
 	// Publish the run's accounting so the author page can say what happened to
 	// the works that never became books (#1889). Recorded for every sync, not
 	// just ones that dropped something: "nothing was filtered out" is the
@@ -1875,6 +2096,7 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool,
 		SkippedLanguage:       skippedLang,
 		SkippedJunk:           skippedJunk,
 		SkippedMediaType:      skippedMediaType,
+		SkippedNotAccepted:    skippedNotAccepted,
 		AllowedLanguages:      allowedLangs,
 		UnknownLanguageFail:   unknownFail,
 		SkippedLanguageSample: skippedLangSample,
@@ -1888,13 +2110,31 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, autoSearch bool,
 	logArgs := []any{
 		"author", author.Name, "added", added,
 		"skipped_language", skippedLang, "skipped_junk", skippedJunk, "skipped_media_type", skippedMediaType,
+		"skipped_not_accepted", skippedNotAccepted, "skipped_excluded", skippedExcluded,
 		"total", len(books),
 	}
-	if summary.SkippedTotal() > 0 {
+	// The metadata filters dropping works is the surprising case and stays at
+	// Warn. The discovery-policy skip is not: the user configured it, the run
+	// already said so once at Info above, and a "Refresh all authors" pass
+	// over an ABS-imported library would otherwise emit one Warn per author.
+	if skippedLang+skippedJunk+skippedMediaType > 0 {
 		slog.Warn("author books synced", logArgs...)
 		return
 	}
 	slog.Info("author books synced", logArgs...)
+}
+
+// keepWorkWithForeignID narrows a provider works list to the single work the
+// caller asked for. Returns an empty slice when the list doesn't contain it —
+// the sync then adds nothing, which is the correct answer for a single-book
+// add whose work the author endpoint doesn't list (#1816).
+func keepWorkWithForeignID(books []models.Book, foreignID string) []models.Book {
+	for _, b := range books {
+		if b.ForeignID == foreignID {
+			return []models.Book{b}
+		}
+	}
+	return nil
 }
 
 // reparentMisattachedBook re-links existing to the author being synced when
@@ -2263,13 +2503,6 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	// book to guarantee it exists before the cleanup defer runs (#804).
 	authorWasJustCreated := false
 
-	// resolvedByName is set when the author was resolved from the result's NAME
-	// (not an ISBN/provider ID) — the case for Google Books results, which carry
-	// an author name but no author ID and no ISBN editions. It forces a direct
-	// insert of the chosen edition (the author's catalogue fetch won't contain a
-	// cross-provider book) and suppresses the speculative catalogue fetch.
-	resolvedByName := false
-
 	if req.ForeignAuthorID == "" {
 		resolved, err := h.resolveAuthorForBook(ctx, req.ForeignBookID)
 		if err != nil {
@@ -2298,7 +2531,6 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 			} else if canonical, cErr := h.meta.ResolveCanonicalAuthor(ctx, req.AuthorName); cErr == nil && canonical != nil {
 				req.ForeignAuthorID = canonical.ForeignID
 			}
-			resolvedByName = req.ForeignAuthorID != ""
 		}
 		if req.ForeignAuthorID == "" {
 			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{
@@ -2376,14 +2608,19 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 			} else {
 				author = fetched
 				authorWasJustCreated = true
-				// A name-resolved add (e.g. a Google Books pick) means the user
-				// chose ONE book; don't speculatively fetch this newly-adopted
-				// author's whole catalogue and flood Wanted. The synchronous
-				// direct-insert below still creates the picked book and keeps the
-				// author non-orphan.
-				if !resolvedByName {
-					h.fetchAuthorBooksAsync(author, false, h.resolveDefaultMediaType(ctx), true)
-				}
+				// No speculative catalogue fetch here (#1816). Adding a book
+				// creates its author as a side effect; the user picked ONE
+				// title, and pulling that author's whole bibliography in behind
+				// it is the "my collection went from 75 books to over 500"
+				// report — the thing nobody expects because adding a film to
+				// Radarr does not import the director's filmography.
+				//
+				// Nothing downstream needs it: the direct insert below creates
+				// the picked book synchronously, which is what makes the poll
+				// succeed and what keeps the orphan-cleanup defer from
+				// rolling the author back. The narrow case where that insert
+				// cannot produce the row has its own single-work fallback,
+				// just past the direct-insert block.
 			}
 		}
 		// Defer the orphan cleanup so cancellation paths inside the poll
@@ -2490,7 +2727,28 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 2. Poll until the book appears (FetchAuthorBooks runs asynchronously).
+	// 1c. Single-work fallback. The direct insert above covers the request in
+	// all but a couple of cases: the provider's book endpoint failed (#1612's
+	// OpenLibrary 502) or returned a record the title guard rejected, and the
+	// library has no row for the id either way. Ask the author endpoint for
+	// this ONE work instead — the same fetch the old speculative catalogue
+	// sync ran, restricted to the work the user actually picked, so the poll
+	// below can still succeed without the rest of the bibliography riding
+	// along (#1816).
+	if existing, _ := h.books.GetByForeignID(ctx, req.ForeignBookID); existing == nil {
+		// mediaType only fills a format the provider left blank, and step 3
+		// below applies the request's explicit choice to whatever row the poll
+		// finds — so the default is the right value to pass here. It no longer
+		// decides whether the work is created at all: a single-work run is
+		// exempt from the strict media-type clamp (#1612).
+		h.fetchAuthorBooksAsync(author, catalogueSyncOptions{
+			mediaType:     h.resolveDefaultMediaType(ctx),
+			onlyForeignID: req.ForeignBookID,
+		})
+	}
+
+	// 2. Poll until the book appears (the single-work fallback, if it ran,
+	// creates it asynchronously).
 	deadline := time.Now().Add(15 * time.Second)
 	var book *models.Book
 	for {
