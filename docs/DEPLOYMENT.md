@@ -377,6 +377,7 @@ Bindery parks the download as *handed off* and reconciles the managed copy the e
 | `BINDERY_LOG_RETENTION_DAYS` | `14` | Days to retain persisted log entries in the SQLite log store before they are pruned. |
 | `BINDERY_TRUSTED_PROXY` | _(empty)_ | Comma-separated IP/CIDR list of reverse proxies trusted to set `X-Forwarded-*`. Used for two things: (1) resolving the real client IP (for local-only auth and the per-IP login rate-limiter) by walking the `X-Forwarded-For` chain and only trusting hops in this list — never a client-supplied leftmost entry; and (2) honouring `X-Forwarded-Proto` / `X-Forwarded-Host` for the public scheme/host, which drives the fully-qualified OPDS feed link URLs, the `BINDERY_COOKIE_SECURE=auto` decision, and the OIDC `redirect_uri`. Requests from any peer **not** in this list have all `X-Forwarded-*` stripped, so behind a TLS-terminating proxy (Traefik / Caddy / nginx) those links fall back to `http://` until the proxy's IP/CIDR is listed here — **set it even if you are not using proxy auth.** An entry like `0.0.0.0/0` trusts every peer and effectively disables per-IP decisions. **Required** when proxy auth mode is active — Bindery refuses to start without it. |
 | `BINDERY_TELEMETRY_DISABLED` | _(unset)_ | Set to `true` to opt out of the daily anonymous telemetry ping before any DB setting exists (e.g. on first boot). Equivalent to `telemetry.enabled: false` in **Settings → General**, but takes effect before the first ping fires. |
+| `BINDERY_DB_FK_CHECK` | _(unset)_ | Offline database integrity tool, for deployments where the container command can't be edited. `report` lists rows whose foreign keys point at a missing parent and exits without changing anything; `repair` cleans them up (see [Database foreign-key integrity](#database-foreign-key-integrity)) and exits. Either value stops Bindery from starting normally — unset it afterwards. Equivalent to the `db-check` / `db-repair --yes` subcommands. |
 | `BINDERY_FRAME_ANCESTORS` | _(empty)_ | Allow the UI to be embedded in an `<iframe>` by a dashboard such as Organizr ([#1367](https://github.com/vavallee/bindery/issues/1367)). Empty (the default) blocks all framing (`Content-Security-Policy: frame-ancestors 'none'` + `X-Frame-Options: DENY`). Set it to a CSP `frame-ancestors` source list to opt in — `'self'` for same-origin framing, or a specific origin like `https://organizr.example.com` (space-separate multiple origins). When set, `X-Frame-Options` is dropped so it can't override the allowlist. Only allow origins you trust: framing widens clickjacking exposure. |
 
 ## Service URLs and the SSRF policy
@@ -419,6 +420,28 @@ On first launch Bindery bootstraps itself — **no environment variables are req
 
 - `local-only` — skip auth for requests from private IPs (`10/8`, `172.16/12`, `192.168/16`, loopback, IPv6 ULA, link-local). Useful for home networks where the risk profile doesn't warrant a login wall.
 - `disabled` — no auth at all. Only safe behind a trusted reverse proxy that handles authentication upstream.
+
+## Database foreign-key integrity
+
+Bindery ships two offline subcommands that operate on the database **without running migrations**, so they work on an instance that cannot start:
+
+```bash
+bindery db-check              # list rows whose foreign key points at a missing parent
+bindery db-repair --yes       # clean them up (back up the database first)
+```
+
+Both take an optional path argument and otherwise use `BINDERY_DB_PATH`. On Docker, run them against the stopped container's volume:
+
+```bash
+docker run --rm -v bindery-config:/config ghcr.io/vavallee/bindery:latest db-check
+docker run --rm -v bindery-config:/config ghcr.io/vavallee/bindery:latest db-repair --yes
+```
+
+If your platform doesn't let you change the container command (some NAS app UIs), set `BINDERY_DB_FK_CHECK=report` or `BINDERY_DB_FK_CHECK=repair` instead, start the container once, read the log, then unset the variable.
+
+`db-repair` is not a blanket delete. Each orphan row is resolved the way the schema says it should have been when its parent disappeared: `ON DELETE CASCADE` rows are removed, `ON DELETE SET NULL` references are cleared (so download history survives with an empty book reference), and anything the schema doesn't cover is left alone and reported. **Take a backup first** — `db-repair` refuses to run without `--yes` for that reason.
+
+Where the orphans come from: before [#1727](https://github.com/vavallee/bindery/issues/1727), foreign key enforcement could silently switch off on a replacement pooled connection, so declared cascades stopped firing. Long-running instances accumulated orphan rows. They are harmless to normal operation — Bindery starts and runs fine with them — and this tooling exists to clean them up on your schedule. See [Troubleshooting](Troubleshooting-Wiki.md#bindery-will-not-start-after-upgrading-foreign_key_check-found-n-violations).
 
 ## Upgrading
 

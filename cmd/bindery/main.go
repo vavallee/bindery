@@ -74,6 +74,13 @@ func main() {
 
 	cfg := config.Load()
 
+	// Offline database maintenance — `bindery db-check` / `bindery db-repair`
+	// (see dbcheck.go). These exist for an instance that cannot get past
+	// migrations, so they run before anything else touches the database and
+	// never return.
+	runDBMaintenance(cfg.DBPath)
+	runDBFKCheckFromEnv(cfg.DBPath)
+
 	level := slog.LevelInfo
 	switch cfg.LogLevel {
 	case "debug":
