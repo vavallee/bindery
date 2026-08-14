@@ -54,7 +54,7 @@
   },
   "monitorNewItems": {
     "all": "Follow monitor mode",
-    "none": "Add as unmonitored"
+    "none": "Don’t add them"
   },
   "nav": {
     "authors": "Authors",
@@ -226,6 +226,7 @@
       "unknownFail": "Works the metadata provider reported no language for were skipped too, because this author’s metadata profile is set to reject unknown languages.",
       "junk": "{{count}} skipped as untitled provider records",
       "mediaType": "{{count}} skipped as the wrong format for your default media type",
+      "notAccepted": "{{count}} not added, because this author is not taking newly discovered books — the author is unmonitored, or \"Monitor newly discovered books\" is set to don’t add them. Books already in your library were still refreshed.",
       "examples": "For example: {{titles}}",
       "sampleUnknownLanguage": "{{title}} (no language)",
       "anyLanguage": "any",

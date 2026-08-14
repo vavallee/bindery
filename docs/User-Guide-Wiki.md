@@ -79,9 +79,11 @@ is left alone.
 Two related labels:
 
 - **In Library** = status `imported` = Bindery can see the file on disk.
-- **Exclude vs Delete**: deleting an unwanted catalogue book is temporary —
-  the next metadata refresh recreates it. **Exclude** is the sticky action; it
-  hides the book and keeps it out of searches permanently.
+- **Exclude vs Delete**: a metadata refresh only adds books back for an author
+  you monitor and have set to take new items, so for those authors deleting an
+  unwanted catalogue book is temporary — the next refresh recreates it.
+  **Exclude** is the sticky action for every author: it hides the book, keeps
+  it out of searches, and a refresh will not recreate it under a new id either.
 
 ### 3. Bindery never watches folders
 
@@ -132,7 +134,7 @@ monitored.
 | Entry point | What it creates |
 |---|---|
 | **Authors → Add Author** | The author **plus their full catalogue** (up to ~100 titles), monitored per the monitor mode you pick |
-| **Authors → Add Book** (title/ISBN/ASIN) | One book, silently creating its author if needed |
+| **Authors → Add Book** (title/ISBN/ASIN) | One book, and only that book, silently creating its author if needed |
 | **Discover → Add to Wanted** | One recommended book |
 | **Series → Fill gaps** | The missing books of a linked series, wanted + monitored |
 | **Import lists** (Settings → Import, Hardcover reading lists) | Every list item, re-synced daily |
@@ -146,8 +148,11 @@ Two settings decide whether an author add stays a trickle or becomes a flood:
   a search target. If you only want new releases, pick *Future books only*;
   the global default lives in Settings → Metadata Profiles → Library Defaults
   → **Default monitor mode**.
-- **Monitor new items** (per author): whether books *discovered by later
-  metadata refreshes* follow the monitor mode or arrive unmonitored.
+- **Monitor new items** (per author): whether a later metadata refresh may add
+  books it discovers at all. *Follow monitor mode* adds them and monitors them
+  per the mode; *Don't add them* keeps the refresh to the books you already
+  have. Library imports (Calibre, ABS) set *Don't add them* on the authors they
+  create, because those catalogues are partial by design.
 
 The Books page shows the **whole catalogue** — monitored or not. "Why are
 there books here I never asked for?" is rule 2: unmonitored means "won't
@@ -255,9 +260,14 @@ When metadata is wrong, you have three levels of fix:
 3. A **metadata profile** (languages, minimum popularity, skip part-books)
    filters what a catalogue sync lets in.
 
-A **metadata refresh** re-syncs an author's catalogue from the provider. Note
-that it can discover new works — whether those arrive monitored is the
-author's *Monitor new items* setting (rule 2's flood control).
+A **metadata refresh** re-syncs an author's metadata from the provider:
+covers, descriptions, ratings, genres and series links on the books you
+already have. It only *adds* newly-discovered works for an author you monitor
+and have set to take new items — an unmonitored author, or one set to *Don't
+add them*, is refreshed in place and never grows. (Exception: an author with
+no books at all is populated, which is how bulk **Refresh metadata** repairs
+an import that landed an author but no catalogue.) When a refresh declines to
+add works, the author page says how many and why.
 
 ## What Bindery deliberately does not do
 
@@ -288,8 +298,17 @@ Rule 1 — the catalogue is empty or the authors don't exist yet. Populate
 first ([Bringing in an existing library](#bringing-in-an-existing-library)),
 then scan.
 
+**I added one book and got the author's whole back catalogue.**
+Fixed (#1816). Adding one book adds one book; a refresh only adds
+newly-discovered works for an author you monitor and have set to take new
+items (#1815). Rows an older version pulled in are ordinary books — bulk-select
+them on the author page and Delete or Exclude.
+
 **I deleted books I don't want and they came back.**
-Delete is undone by the next metadata refresh. Use **Exclude**.
+Delete is undone by the next metadata refresh, for an author still set to take
+new items. It is not undone for an author you unmonitored or set to *Don't add
+them* — including one whose books you deleted all of. Use **Exclude** if you
+want the book gone regardless of how the author is monitored later.
 
 **A book is on hardcover.app but doesn't show up in search.**
 No Hardcover token configured — set one in Settings → API Keys.
