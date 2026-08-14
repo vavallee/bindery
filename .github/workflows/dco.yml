@@ -1,0 +1,139 @@
+# Developer Certificate of Origin
+#
+# Every non-merge commit in a PR must carry a `Signed-off-by:` trailer that
+# matches its author. The trailer is the contributor's assertion that they
+# wrote the code and have the right to submit it under the project's MIT
+# license — see DCO and CONTRIBUTING.md ("Sign your work").
+#
+# Three categories are skipped rather than failed:
+#   - merge commits (nothing was authored in them)
+#   - commits authored before CUTOFF (they predate the requirement)
+#   - bot commits (dependabot, github-actions, step-security) — bots cannot
+#     certify authorship, and failing their PRs would block dependency updates
+name: DCO
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: dco-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sign-off:
+    name: Sign-off
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Check every commit carries a matching Signed-off-by
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          # Commits authored before this instant predate the DCO requirement.
+          # Set a week past adoption so the PRs already open when this landed
+          # (all authored on or before 2026-08-14) merge without a rebase, and
+          # contributors get notice before the check can fail them. Bumping it
+          # forward again would silently stop enforcing; leave it alone.
+          CUTOFF: '2026-08-20T00:00:00Z'
+        run: |
+          set -euo pipefail
+
+          cutoff_epoch=$(date -u -d "$CUTOFF" +%s)
+          fail=0
+          checked=0
+
+          # Fetch first, into a file, so a failed API call fails the check.
+          # Reading straight from `< <(gh api ...)` would swallow the error:
+          # the loop sees no input, checked stays 0, and the job reports "no
+          # commits required a sign-off" and exits 0. A required check that
+          # passes when it could not run is worse than no check at all.
+          if ! gh api "repos/$REPO/pulls/$PR/commits" --paginate \
+            --jq '.[] | [.sha, (.parents | length | tostring), .commit.author.name, .commit.author.email, .commit.author.date, (.commit.message | @base64)] | @tsv' \
+            > commits.tsv; then
+            echo "FAIL  could not list the commits on this PR — refusing to pass without checking"
+            exit 1
+          fi
+
+          # A PR always has at least one commit, so an empty list means the
+          # query returned nothing useful rather than that there is nothing
+          # to check.
+          if [ ! -s commits.tsv ]; then
+            echo "FAIL  the commit list came back empty — refusing to pass without checking"
+            exit 1
+          fi
+
+          # The PR commits endpoint tops out at 250 commits even with
+          # --paginate. A PR that large needs splitting for review reasons
+          # well before the DCO check becomes the binding constraint.
+          while IFS=$'\t' read -r sha parents name email authored msg_b64; do
+            if [ "$parents" -gt 1 ]; then
+              echo "skip  ${sha:0:8}  merge commit"
+              continue
+            fi
+
+            if [ "$(date -u -d "$authored" +%s)" -lt "$cutoff_epoch" ]; then
+              echo "skip  ${sha:0:8}  authored $authored, predates DCO adoption"
+              continue
+            fi
+
+            if printf '%s' "$email" | grep -qiE '(\[bot\]@users\.noreply\.github\.com|@stepsecurity\.io)$'; then
+              echo "skip  ${sha:0:8}  bot ($email)"
+              continue
+            fi
+
+            checked=$((checked + 1))
+            expected="Signed-off-by: $name <$email>"
+
+            if printf '%s' "$msg_b64" | base64 -d | tr -d '\r' | grep -qixF "$expected"; then
+              echo "ok    ${sha:0:8}  $expected"
+            else
+              echo "FAIL  ${sha:0:8}  no Signed-off-by matching the author"
+              echo "                  expected: $expected"
+              fail=1
+            fi
+          done < commits.tsv
+
+          if [ "$fail" -ne 0 ]; then
+            cat <<'REMEDY'
+
+          ────────────────────────────────────────────────────────────────
+          One or more commits are missing a sign-off.
+
+          The sign-off certifies that you wrote the code and have the right
+          to submit it under Bindery's MIT license. Full text: ./DCO
+
+          Set your identity to match your commits, then add the trailer:
+
+            git config user.name  "Your Name"
+            git config user.email "you@example.com"
+
+            # one commit
+            git commit -s --amend --no-edit
+
+            # several commits
+            git rebase --signoff origin/main
+
+            git push --force-with-lease
+
+          Sign new work as you go with `git commit -s`.
+          ────────────────────────────────────────────────────────────────
+          REMEDY
+            exit 1
+          fi
+
+          echo
+          if [ "$checked" -eq 0 ]; then
+            echo "No commits required a sign-off."
+          else
+            echo "All $checked commit(s) signed off."
+          fi
