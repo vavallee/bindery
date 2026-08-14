@@ -3,6 +3,3 @@
 
 ### Fixed
 - **Hybrid v1/v2 magnet links are no longer refused** — a magnet listing its `urn:btmh:` topic before `urn:btih:` read as having no infohash at all, so rTorrent refused the grab outright and qBittorrent could not recover the hash from an "already present" reply. Every `xt` topic is now examined.
-
-### Security
-- **A crafted `.torrent` can no longer crash Bindery** — the bencode walk that derives an infohash recursed once per nesting level with no limit, so a deeply nested file served by a hostile or compromised indexer overflowed the goroutine stack. That kills the whole process rather than raising a recoverable error, and the grab then retries into a restart loop. Nesting is now capped and over-deep input is rejected cleanly. Affects the qBittorrent "already present" path in earlier releases as well.

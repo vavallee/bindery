@@ -105,3 +105,38 @@ func TestCategoriesToPoll(t *testing.T) {
 		})
 	}
 }
+
+// TestFormatForCategory covers the partial inverse used by the importer's
+// already-in-library guard (#1885): a category only reveals a download's format
+// when the per-media-type split is actually configured, and every other case
+// must answer "unknown" rather than guess.
+func TestFormatForCategory(t *testing.T) {
+	split := &models.DownloadClient{Category: "books", CategoryAudiobook: "audiobooks"}
+	tests := []struct {
+		name     string
+		client   *models.DownloadClient
+		category string
+		want     string
+	}{
+		{"audiobook category", split, "audiobooks", models.MediaTypeAudiobook},
+		{"ebook category", split, "books", models.MediaTypeEbook},
+		{"case-insensitive match", split, "AudioBooks", models.MediaTypeAudiobook},
+		{"surrounding whitespace", split, " books ", models.MediaTypeEbook},
+		{"foreign category (cross-seed) is unknown", split, "linux-isos", ""},
+		{"empty category is unknown", split, "", ""},
+		{"no split configured: category says nothing", &models.DownloadClient{Category: "books"}, "books", ""},
+		{"split equals category: says nothing", &models.DownloadClient{Category: "books", CategoryAudiobook: "books"}, "books", ""},
+		{
+			"unset ebook category cannot claim the empty category",
+			&models.DownloadClient{Category: "", CategoryAudiobook: "audiobooks"}, "", "",
+		},
+		{"nil client", nil, "audiobooks", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := FormatForCategory(tc.client, tc.category); got != tc.want {
+				t.Errorf("FormatForCategory(%q) = %q, want %q", tc.category, got, tc.want)
+			}
+		})
+	}
+}

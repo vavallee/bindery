@@ -711,6 +711,88 @@ describe('SettingsPage', () => {
     expect(screen.queryByText('settings.general.scanNoFilesWarning')).not.toBeInTheDocument()
   })
 
+  it('names the parsed author instead of blaming the catalogue when no author matched', async () => {
+    // #1958: the catalogue hint sent a user author-refreshing for two weeks
+    // while their real problem was the file's tags. When every unmatched file
+    // reports author_not_in_library, the hint must name the parsed author and
+    // the old advice must not be shown.
+    vi.mocked(api.libraryScanStatus).mockResolvedValue({
+      ran_at: new Date().toISOString(),
+      files_found: 1,
+      reconciled: 0,
+      unmatched: 1,
+      library_dir: '/books',
+      scanned_paths: ['/books'],
+      no_files_found: false,
+      unmatched_files: [{
+        path: '/books/Álvaro Enrigue/You Dreamed of Empires/You Dreamed of Empires.m4b',
+        parsed_title: 'You Dreamed of Empires',
+        parsed_author: 'Álvaro Enrigue, Natasha Wimmer - translator, Gabriel Porras',
+        reason: 'author_not_in_library',
+      }],
+    })
+
+    renderSettings()
+
+    expect(await screen.findByText('settings.general.lastScan')).toBeInTheDocument()
+    expect(screen.getByText('settings.general.scanUnmatchedAuthorUnknown')).toBeInTheDocument()
+    expect(screen.queryByText('settings.general.scanAllUnmatchedHint')).not.toBeInTheDocument()
+    // The per-file diagnosis is rendered alongside the parsed values.
+    expect(screen.getByText('settings.general.scanReason.author_not_in_library')).toBeInTheDocument()
+  })
+
+  it('does not generalise the author hint from a truncated unmatched sample', async () => {
+    // The scanner caps unmatched_files at 1000 entries. every() over that sample
+    // proves nothing about the other 4000, so the specific "your authors don't
+    // match" hint must fall back to the generic advice when the list is capped.
+    vi.mocked(api.libraryScanStatus).mockResolvedValue({
+      ran_at: new Date().toISOString(),
+      files_found: 5000,
+      reconciled: 0,
+      unmatched: 5000,
+      library_dir: '/books',
+      scanned_paths: ['/books'],
+      no_files_found: false,
+      unmatched_files: [{
+        path: '/books/Becky Chambers/A Psalm for the Wild-Built.epub',
+        parsed_title: 'A Psalm for the Wild-Built',
+        parsed_author: 'Becky Chambers',
+        reason: 'author_not_in_library',
+      }],
+    })
+
+    renderSettings()
+
+    expect(await screen.findByText('settings.general.lastScan')).toBeInTheDocument()
+    expect(screen.getByText('settings.general.scanAllUnmatchedHint')).toBeInTheDocument()
+    expect(screen.queryByText('settings.general.scanUnmatchedAuthorUnknown')).not.toBeInTheDocument()
+  })
+
+  it('keeps the catalogue hint when the author matched but has no candidate books', async () => {
+    // The original advice is right for #875's case, so a no_candidate_books
+    // diagnosis must still produce it — the fix narrows the message, it doesn't
+    // replace it.
+    vi.mocked(api.libraryScanStatus).mockResolvedValue({
+      ran_at: new Date().toISOString(),
+      files_found: 2,
+      reconciled: 0,
+      unmatched: 2,
+      library_dir: '/books',
+      scanned_paths: ['/books'],
+      no_files_found: false,
+      unmatched_files: [
+        { path: '/books/Andy Weir/Project Hail Mary.epub', parsed_title: 'Project Hail Mary', parsed_author: 'Andy Weir', reason: 'no_candidate_books' },
+        { path: '/books/Andy Weir/The Martian.epub', parsed_title: 'The Martian', parsed_author: 'Andy Weir', reason: 'author_not_in_library' },
+      ],
+    })
+
+    renderSettings()
+
+    expect(await screen.findByText('settings.general.lastScan')).toBeInTheDocument()
+    expect(screen.getByText('settings.general.scanAllUnmatchedHint')).toBeInTheDocument()
+    expect(screen.queryByText('settings.general.scanUnmatchedAuthorUnknown')).not.toBeInTheDocument()
+  })
+
   it('soft-navigates to Root Folders from the Default library location link', async () => {
     // The "Default library location" section is now an informational pointer to
     // the Root Folders tab. The link must switch tabs in place (soft nav) rather

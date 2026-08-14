@@ -57,15 +57,26 @@ func TestFromTorrentFile(t *testing.T) {
 // goroutine stack overflowed. That is runtime.throw, not a panic: no recover()
 // catches it, the process dies, and the grab retries into a crash loop.
 //
-// The payload here is deliberately tiny — a few kilobytes past the cap is
-// enough to prove the guard fires, and asserting a clean "" return is the whole
-// point. Without the cap this returns "" too, so the sibling depth-boundary
-// checks below are what actually pin the guard.
+// The payload here is deliberately tiny — a few levels past the cap is enough
+// to prove the guard fires, so the test costs microseconds instead of
+// allocating tens of megabytes.
 func TestFromTorrentFile_DeeplyNestedIsRefusedNotFatal(t *testing.T) {
-	const nesting = 5000
-	payload := "d4:info" + strings.Repeat("l", nesting) + strings.Repeat("e", nesting) + "e"
+	const nesting = maxBencodeDepth + 10
+
+	// d4:junk<nesting × 'l'><nesting × 'e'>4:info<valid info dict>e
+	//
+	// The junk value must sit BEFORE the info dict: bencodeMemberSpan returns
+	// as soon as it finds "info", so a deep value placed after it is never
+	// walked and the assertion would pass vacuously. Placing it first forces
+	// the walk to skip over the nesting to reach info, which is exactly the
+	// recursion being bounded. The info dict that follows is well-formed and
+	// yields sampleInfoHash, so a build without the cap returns that hash —
+	// the refusal below can only come from the depth check.
+	payload := "d4:junk" +
+		strings.Repeat("l", nesting) + strings.Repeat("e", nesting) +
+		"4:info" + sampleInfoDict + "e"
 	if got := FromTorrentFile([]byte(payload)); got != "" {
-		t.Fatalf("got %q, want empty string for over-deep nesting", got)
+		t.Fatalf("expected refusal past the %d-level depth cap, got hash %q", maxBencodeDepth, got)
 	}
 
 	// Pin the boundary directly on the walker so the guard cannot be silently
