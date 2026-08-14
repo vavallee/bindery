@@ -10,7 +10,6 @@ import (
 
 	"github.com/vavallee/bindery/internal/downloader/rtorrent"
 	"github.com/vavallee/bindery/internal/models"
-	"github.com/vavallee/bindery/internal/pathmap"
 )
 
 // RtorrentStatus renders one rTorrent torrent as the client-specific status
@@ -22,8 +21,17 @@ import (
 // clients produce, and prefixes a non-empty message with "error: " so
 // LiveStatusIsError classifies it the way it classifies a Transmission
 // errorString.
+//
+// d.message only counts as an error while the torrent is still incomplete.
+// rTorrent also parks benign tracker chatter there — "Tracker: [Failure reason
+// ...]" is routine on a healthy, fully-downloaded torrent that is simply seeding
+// to an unhappy tracker — and flagging that would paint the queue row red and
+// trip api.LiveStatusIsError's "error" substring match on a download that has
+// nothing wrong with it. This matches the two sibling call sites:
+// importer.checkRtorrentDownloads (`!t.Complete && msg != ""`) and
+// GetStalledIDs (`t.Message != "" && !t.Complete`).
 func RtorrentStatus(t rtorrent.Torrent) string {
-	if msg := strings.TrimSpace(t.Message); msg != "" {
+	if msg := strings.TrimSpace(t.Message); msg != "" && !t.Complete {
 		return "error: " + msg
 	}
 	switch {
@@ -51,23 +59,23 @@ func RtorrentStatus(t rtorrent.Torrent) string {
 // files alone and logs why. Erasing the torrent still proceeds: the user asked
 // for it gone from the client, and failing the whole removal because a remote
 // path was not visible would strand the download row.
-func removeRtorrentDownload(ctx context.Context, client *models.DownloadClient, hash string, deleteFiles bool) error {
+func removeRtorrentDownload(ctx context.Context, client *models.DownloadClient, hash string, deleteFiles bool, globalRemap string) error {
 	rt := RtorrentFor(client)
 	if deleteFiles {
-		deleteRtorrentData(ctx, rt, client, hash)
+		deleteRtorrentData(ctx, rt, client, hash, globalRemap)
 	}
 	return rt.RemoveTorrent(ctx, hash)
 }
 
 // deleteRtorrentData resolves the torrent's on-disk payload and removes it.
-func deleteRtorrentData(ctx context.Context, rt *rtorrent.Client, client *models.DownloadClient, hash string) {
+func deleteRtorrentData(ctx context.Context, rt *rtorrent.Client, client *models.DownloadClient, hash, globalRemap string) {
 	basePath, err := rt.BasePath(ctx, hash)
 	if err != nil {
 		slog.Warn("rtorrent: could not resolve the torrent's data path — the torrent will be removed but its files are left on disk",
 			"hash", hash, "error", err)
 		return
 	}
-	localPath, reason := resolveRtorrentDataPath(client, basePath)
+	localPath, reason := resolveRtorrentDataPath(client, basePath, globalRemap)
 	if localPath == "" {
 		slog.Warn("rtorrent: refusing to delete the torrent's data — the torrent will be removed but its files are left on disk",
 			"hash", hash, "client_path", basePath, "reason", reason)
@@ -89,14 +97,21 @@ func deleteRtorrentData(ctx context.Context, rt *rtorrent.Client, client *models
 // chose. A misconfigured rTorrent, a path remap that collapses to a mount
 // root, or an rTorrent that reports a relative path must all end in "leave it
 // alone", not in a recursive delete of something else.
-func resolveRtorrentDataPath(client *models.DownloadClient, basePath string) (string, string) {
+//
+// The remap resolution deliberately matches remapClientPath and the importer's
+// Scanner.remapDownloadClientPath: the client's own PathRemap first, and the
+// global BINDERY_DOWNLOAD_PATH_REMAP when that leaves the path untouched.
+// Skipping the global fallback here would give an operator who configures one
+// global remap and no per-client remap working imports and a passing Test
+// button, then a "not visible to Bindery" refusal on remove-with-data alone.
+func resolveRtorrentDataPath(client *models.DownloadClient, basePath, globalRemap string) (string, string) {
 	raw := strings.TrimSpace(basePath)
 	if raw == "" {
 		// A magnet that never resolved metadata, or a closed item after an
 		// rTorrent restart. There is nothing to point at.
 		return "", "rTorrent reported no base path for the torrent"
 	}
-	local := filepath.Clean(pathmap.Parse(client.PathRemap).Apply(raw))
+	local := filepath.Clean(remapClientPath(client, raw, globalRemap))
 	if !filepath.IsAbs(local) {
 		return "", fmt.Sprintf("resolved path %q is not absolute", local)
 	}
@@ -116,6 +131,20 @@ func resolveRtorrentDataPath(client *models.DownloadClient, basePath string) (st
 		// or (if it were followed) delete something entirely outside the
 		// download tree. Neither is what the user asked for.
 		return "", fmt.Sprintf("resolved path %q is a symlink", local)
+	}
+	// The Lstat above only inspects the leaf. A symlinked *parent* component
+	// passes both it and the depth guard, and os.RemoveAll walks through it —
+	// so "/downloads/books" where "books" is fine but "downloads" points at
+	// "/" would delete outside the download tree entirely. Requiring the fully
+	// resolved path to equal the path we are about to remove rules out a
+	// symlink anywhere in the chain, which is the containment property the
+	// depth guard alone cannot give.
+	resolved, err := filepath.EvalSymlinks(local)
+	if err != nil {
+		return "", fmt.Sprintf("resolved path %q could not be fully resolved on Bindery's filesystem", local)
+	}
+	if resolved != local {
+		return "", fmt.Sprintf("resolved path %q reaches %q through a symlinked parent directory", local, resolved)
 	}
 	return local, ""
 }

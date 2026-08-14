@@ -99,17 +99,24 @@ func TestParseSCGIURLBase(t *testing.T) {
 		nilOK   bool
 		wantErr bool
 	}{
-		"empty is HTTP":         {"", "box", 8080, "", "", true, false},
-		"path is HTTP":          {"/RPC2", "box", 8080, "", "", true, false},
-		"ruTorrent path":        {"/plugins/rpc/rpc.php", "box", 8080, "", "", true, false},
-		"scgi:// uses host":     {"scgi://", "box", 5000, "tcp", "box:5000", false, false},
-		"bare scgi uses host":   {"scgi", "box", 5000, "tcp", "box:5000", false, false},
-		"scgi: uses host":       {"scgi:", "box", 5000, "tcp", "box:5000", false, false},
-		"case insensitive":      {"SCGI://", "box", 5000, "tcp", "box:5000", false, false},
-		"explicit address":      {"scgi://127.0.0.1:5000", "box", 8080, "tcp", "127.0.0.1:5000", false, false},
-		"unix socket":           {"scgi:///var/run/rtorrent/rpc.sock", "box", 8080, "unix", "/var/run/rtorrent/rpc.sock", false, false},
-		"whitespace tolerated":  {"  scgi://  ", "box", 5000, "tcp", "box:5000", false, false},
-		"address without port":  {"scgi://justahost", "box", 8080, "", "", false, true},
+		"empty is HTTP":        {"", "box", 8080, "", "", true, false},
+		"path is HTTP":         {"/RPC2", "box", 8080, "", "", true, false},
+		"ruTorrent path":       {"/plugins/rpc/rpc.php", "box", 8080, "", "", true, false},
+		"scgi:// uses host":    {"scgi://", "box", 5000, "tcp", "box:5000", false, false},
+		"bare scgi uses host":  {"scgi", "box", 5000, "tcp", "box:5000", false, false},
+		"scgi: uses host":      {"scgi:", "box", 5000, "tcp", "box:5000", false, false},
+		"case insensitive":     {"SCGI://", "box", 5000, "tcp", "box:5000", false, false},
+		"explicit address":     {"scgi://127.0.0.1:5000", "box", 8080, "tcp", "127.0.0.1:5000", false, false},
+		"unix socket":          {"scgi:///var/run/rtorrent/rpc.sock", "box", 8080, "unix", "/var/run/rtorrent/rpc.sock", false, false},
+		"whitespace tolerated": {"  scgi://  ", "box", 5000, "tcp", "box:5000", false, false},
+		"address without port": {"scgi://justahost", "box", 8080, "", "", false, true},
+		// net.SplitHostPort accepts an empty half, so these used to save
+		// cleanly and then fail at dial time with a bare OS error instead of
+		// here with a message that says what to fix.
+		"empty port":            {"scgi://myhost:", "box", 8080, "", "", false, true},
+		"empty host":            {"scgi://:5000", "box", 8080, "", "", false, true},
+		"non-numeric port":      {"scgi://myhost:rpc", "box", 8080, "", "", false, true},
+		"out-of-range port":     {"scgi://myhost:70000", "box", 8080, "", "", false, true},
 		"scgi with no host":     {"scgi://", "", 5000, "", "", false, true},
 		"scgi with bad port":    {"scgi://", "box", 0, "", "", false, true},
 		"scgi-ish path is HTTP": {"/scgi", "box", 8080, "", "", true, false},
@@ -137,6 +144,13 @@ func TestParseSCGIURLBase(t *testing.T) {
 			}
 			if got.network != tc.network || got.address != tc.address {
 				t.Fatalf("got %s://%s, want %s://%s", got.network, got.address, tc.network, tc.address)
+			}
+			// roundTrip computes its read deadline as time.Now().Add(timeout);
+			// a zero timeout puts the deadline in the past and every read fails
+			// instantly. New fills it in, so a dialer built straight from the
+			// parser must carry a usable default rather than relying on that.
+			if got.timeout <= 0 {
+				t.Fatalf("dialer must carry a non-zero default timeout, got %v", got.timeout)
 			}
 		})
 	}

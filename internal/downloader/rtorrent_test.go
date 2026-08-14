@@ -180,12 +180,12 @@ func TestSendDownload_Rtorrent(t *testing.T) {
 		t.Fatal("magnet was not submitted with load.start")
 	}
 	body := stub.allBodies()
-	if !strings.Contains(body, "d.custom1.set=books") {
+	if !strings.Contains(body, "d.custom1.set=&#34;books&#34;") {
 		t.Errorf("label command missing from request: %s", body)
 	}
 	// The download directory must be sent in rTorrent's namespace, i.e. the
 	// PathRemap applied in reverse.
-	if !strings.Contains(body, "d.directory.set=/seedbox/downloads") {
+	if !strings.Contains(body, "d.directory.set=&#34;/seedbox/downloads&#34;") {
 		t.Errorf("download directory not inverse-remapped: %s", body)
 	}
 }
@@ -194,7 +194,7 @@ func TestRemoveDownload_Rtorrent(t *testing.T) {
 	t.Run("erases the torrent", func(t *testing.T) {
 		stub := newRtorrentStub(t, "1", "")
 		hash := rtorrentTestHash
-		err := RemoveDownload(context.Background(), stub.client(t, 105), &models.Download{TorrentID: &hash}, false)
+		err := RemoveDownload(context.Background(), stub.client(t, 105), &models.Download{TorrentID: &hash}, false, "")
 		if err != nil {
 			t.Fatalf("RemoveDownload: %v", err)
 		}
@@ -208,7 +208,7 @@ func TestRemoveDownload_Rtorrent(t *testing.T) {
 
 	t.Run("nil torrent id is a no-op", func(t *testing.T) {
 		stub := newRtorrentStub(t, "1", "")
-		if err := RemoveDownload(context.Background(), stub.client(t, 106), &models.Download{}, true); err != nil {
+		if err := RemoveDownload(context.Background(), stub.client(t, 106), &models.Download{}, true, ""); err != nil {
 			t.Fatalf("RemoveDownload: %v", err)
 		}
 		if stub.sawMethod("d.erase") {
@@ -229,7 +229,7 @@ func TestRemoveDownload_Rtorrent(t *testing.T) {
 		client.PathRemap = "/seedbox/downloads:" + root
 
 		hash := rtorrentTestHash
-		if err := RemoveDownload(context.Background(), client, &models.Download{TorrentID: &hash}, true); err != nil {
+		if err := RemoveDownload(context.Background(), client, &models.Download{TorrentID: &hash}, true, ""); err != nil {
 			t.Fatalf("RemoveDownload: %v", err)
 		}
 		if _, err := os.Stat(payload); !os.IsNotExist(err) {
@@ -244,7 +244,7 @@ func TestRemoveDownload_Rtorrent(t *testing.T) {
 		// A seedbox Bindery cannot see must not strand the download row.
 		stub := newRtorrentStub(t, "1", "")
 		hash := rtorrentTestHash
-		if err := RemoveDownload(context.Background(), stub.client(t, 108), &models.Download{TorrentID: &hash}, true); err != nil {
+		if err := RemoveDownload(context.Background(), stub.client(t, 108), &models.Download{TorrentID: &hash}, true, ""); err != nil {
 			t.Fatalf("RemoveDownload: %v", err)
 		}
 		if !stub.sawMethod("d.erase") {
@@ -311,9 +311,22 @@ func TestRtorrentStatus(t *testing.T) {
 		// d.message is rTorrent's error slot; it must classify as an error so the
 		// queue view flags it the way it flags a Transmission errorString.
 		"message":           {rtorrent.Torrent{Message: "Tracker: unregistered torrent"}, "error: Tracker: unregistered torrent", true},
-		"message wins":      {rtorrent.Torrent{Complete: true, Message: "hash check failed"}, "error: hash check failed", true},
 		"blank message":     {rtorrent.Torrent{IsActive: true, Message: "   "}, "downloading", false},
 		"complete but idle": {rtorrent.Torrent{Complete: true}, "seeding", false},
+		// d.message only counts as an error while the torrent is incomplete.
+		// rTorrent parks routine tracker chatter there on healthy, fully
+		// downloaded torrents, and treating that as an error painted a seeding
+		// row red and tripped LiveStatusIsError's "error" substring match. The
+		// importer's poller and GetStalledIDs both already qualify on
+		// !Complete; this is the third call site agreeing with them.
+		"complete with tracker chatter": {
+			rtorrent.Torrent{Complete: true, IsActive: true, Message: "Tracker: [Failure reason \"Torrent not registered with this tracker\"]"},
+			"seeding", false,
+		},
+		"incomplete with a real failure": {
+			rtorrent.Torrent{Message: "hash check failed"},
+			"error: hash check failed", true,
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -331,7 +344,13 @@ func TestRtorrentStatus(t *testing.T) {
 // resolveRtorrentDataPath is the only place Bindery deletes a tree at a path a
 // remote service chose, so every guard gets an explicit negative case.
 func TestResolveRtorrentDataPath(t *testing.T) {
-	root := t.TempDir()
+	// Resolve the temp root up front: some platforms hand back a path that is
+	// itself reached through a symlink (/tmp → /private/tmp), and the guard
+	// under test deliberately refuses any symlinked component.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	payload := filepath.Join(root, "downloads", "The Hobbit")
 	if err := os.MkdirAll(payload, 0o755); err != nil {
 		t.Fatal(err)
@@ -339,7 +358,7 @@ func TestResolveRtorrentDataPath(t *testing.T) {
 
 	t.Run("visible payload resolves", func(t *testing.T) {
 		client := &models.DownloadClient{}
-		got, reason := resolveRtorrentDataPath(client, payload)
+		got, reason := resolveRtorrentDataPath(client, payload, "")
 		if got != payload {
 			t.Fatalf("got %q (%s), want %q", got, reason, payload)
 		}
@@ -348,9 +367,56 @@ func TestResolveRtorrentDataPath(t *testing.T) {
 	t.Run("path remap is applied", func(t *testing.T) {
 		// rTorrent writes to /seedbox/... ; Bindery mounts it under the temp root.
 		client := &models.DownloadClient{PathRemap: "/seedbox:" + filepath.Join(root, "downloads")}
-		got, reason := resolveRtorrentDataPath(client, "/seedbox/The Hobbit")
+		got, reason := resolveRtorrentDataPath(client, "/seedbox/The Hobbit", "")
 		if got != payload {
 			t.Fatalf("got %q (%s), want %q", got, reason, payload)
+		}
+	})
+
+	// An operator with one global BINDERY_DOWNLOAD_PATH_REMAP and no per-client
+	// remap had working imports and a passing Test button, then a "not visible
+	// to Bindery" refusal on remove-with-data alone, because this was the one
+	// translation site that skipped the global fallback.
+	t.Run("global remap is applied when the client has none", func(t *testing.T) {
+		client := &models.DownloadClient{}
+		got, reason := resolveRtorrentDataPath(client, "/seedbox/The Hobbit", "/seedbox:"+filepath.Join(root, "downloads"))
+		if got != payload {
+			t.Fatalf("got %q (%s), want %q", got, reason, payload)
+		}
+	})
+
+	// Same precedence as remapClientPath and the importer: the client's own
+	// remap wins, and the global remap is only consulted when it did not match.
+	t.Run("client remap takes precedence over the global remap", func(t *testing.T) {
+		client := &models.DownloadClient{PathRemap: "/seedbox:" + filepath.Join(root, "downloads")}
+		got, reason := resolveRtorrentDataPath(client, "/seedbox/The Hobbit", "/seedbox:/somewhere/else")
+		if got != payload {
+			t.Fatalf("got %q (%s), want %q", got, reason, payload)
+		}
+	})
+
+	// A symlinked *parent* passed the leaf Lstat and the depth guard, and
+	// os.RemoveAll follows it — so a remap landing on a directory whose parent
+	// points elsewhere would delete outside the download tree entirely.
+	t.Run("symlinked parent directory is refused", func(t *testing.T) {
+		outside := filepath.Join(root, "outside")
+		if err := os.MkdirAll(filepath.Join(outside, "Book"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		linkedParent := filepath.Join(root, "downloads", "via-link")
+		if err := os.Symlink(outside, linkedParent); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		through := filepath.Join(linkedParent, "Book")
+		if _, err := os.Lstat(through); err != nil {
+			t.Fatalf("fixture setup: %v", err)
+		}
+		got, reason := resolveRtorrentDataPath(&models.DownloadClient{}, through, "")
+		if got != "" {
+			t.Fatalf("expected refusal for a symlinked parent, got %q", got)
+		}
+		if reason == "" {
+			t.Fatal("a refusal must explain itself")
 		}
 	})
 
@@ -360,7 +426,7 @@ func TestResolveRtorrentDataPath(t *testing.T) {
 			t.Skipf("symlinks unavailable: %v", err)
 		}
 		client := &models.DownloadClient{}
-		got, reason := resolveRtorrentDataPath(client, link)
+		got, reason := resolveRtorrentDataPath(client, link, "")
 		if got != "" {
 			t.Fatalf("expected refusal, got %q", got)
 		}
@@ -370,23 +436,26 @@ func TestResolveRtorrentDataPath(t *testing.T) {
 	})
 
 	negatives := map[string]struct {
-		client   *models.DownloadClient
-		basePath string
+		client      *models.DownloadClient
+		basePath    string
+		globalRemap string
 	}{
-		"empty base path": {&models.DownloadClient{}, ""},
-		"whitespace only": {&models.DownloadClient{}, "   "},
-		"relative path":   {&models.DownloadClient{}, "downloads/Book"},
+		"empty base path": {&models.DownloadClient{}, "", ""},
+		"whitespace only": {&models.DownloadClient{}, "   ", ""},
+		"relative path":   {&models.DownloadClient{}, "downloads/Book", ""},
 		// A remap that collapses the payload onto a mount root would delete
 		// every other download on the next removal.
-		"filesystem root":      {&models.DownloadClient{}, "/"},
-		"top-level directory":  {&models.DownloadClient{}, "/downloads"},
-		"remapped to one seg":  {&models.DownloadClient{PathRemap: "/seedbox/downloads/Book:/data"}, "/seedbox/downloads/Book"},
-		"not visible locally":  {&models.DownloadClient{}, filepath.Join(root, "downloads", "missing")},
-		"parent not traversed": {&models.DownloadClient{}, filepath.Join(root, "nope", "Book")},
+		"filesystem root":      {&models.DownloadClient{}, "/", ""},
+		"top-level directory":  {&models.DownloadClient{}, "/downloads", ""},
+		"remapped to one seg":  {&models.DownloadClient{PathRemap: "/seedbox/downloads/Book:/data"}, "/seedbox/downloads/Book", ""},
+		"not visible locally":  {&models.DownloadClient{}, filepath.Join(root, "downloads", "missing"), ""},
+		"parent not traversed": {&models.DownloadClient{}, filepath.Join(root, "nope", "Book"), ""},
+		// The global remap must not rescue a path onto a mount root either.
+		"global remap to one seg": {&models.DownloadClient{}, "/seedbox/downloads/Book", "/seedbox/downloads/Book:/data"},
 	}
 	for name, tc := range negatives {
 		t.Run(name, func(t *testing.T) {
-			got, reason := resolveRtorrentDataPath(tc.client, tc.basePath)
+			got, reason := resolveRtorrentDataPath(tc.client, tc.basePath, tc.globalRemap)
 			if got != "" {
 				t.Fatalf("expected refusal for %q, got %q", tc.basePath, got)
 			}

@@ -219,7 +219,16 @@ func torrentSavePath(client *models.DownloadClient, opts SendOptions) string {
 	return pathmap.Parse(client.PathRemap).ApplyInverse(localPath)
 }
 
-func RemoveDownload(ctx context.Context, client *models.DownloadClient, dl *models.Download, deleteFiles bool) error {
+// RemoveDownload removes a download from its client, optionally taking the data
+// with it.
+//
+// globalRemap is the BINDERY_DOWNLOAD_PATH_REMAP fallback. Only rTorrent reads
+// it: every other client deletes the data itself and never tells Bindery a path,
+// whereas rTorrent has no delete-with-data command, so Bindery has to resolve
+// the payload on its own filesystem first — and it must resolve it exactly the
+// way the importer and the Test button do, client remap first with the global
+// remap as fallback. Pass "" when there is no global remap configured.
+func RemoveDownload(ctx context.Context, client *models.DownloadClient, dl *models.Download, deleteFiles bool, globalRemap string) error {
 	switch client.Type {
 	case "transmission":
 		if dl.TorrentID == nil || *dl.TorrentID == "" {
@@ -247,7 +256,7 @@ func RemoveDownload(ctx context.Context, client *models.DownloadClient, dl *mode
 		if dl.TorrentID == nil || *dl.TorrentID == "" {
 			return nil
 		}
-		return removeRtorrentDownload(ctx, client, *dl.TorrentID, deleteFiles)
+		return removeRtorrentDownload(ctx, client, *dl.TorrentID, deleteFiles, globalRemap)
 	case "nzbget":
 		if dl.SABnzbdNzoID == nil || *dl.SABnzbdNzoID == "" {
 			return nil

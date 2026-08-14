@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // ---------------------------------------------------------------- test rig
@@ -412,6 +413,28 @@ func TestGetTorrents_Fault(t *testing.T) {
 	}
 }
 
+// TestSnippet_TruncatesOnRuneBoundary guards the non-200 body echo. The result
+// is persisted on the download row and travels into history and webhook
+// payloads, so a fixed byte slice that lands mid-rune plants a replacement
+// character in all three.
+func TestSnippet_TruncatesOnRuneBoundary(t *testing.T) {
+	// 128 three-byte runes = 384 bytes; byte 256 falls inside a rune.
+	body := []byte(strings.Repeat("→", 128))
+	got := snippet(body)
+	if len(got) > 256 {
+		t.Fatalf("snippet must not exceed 256 bytes, got %d", len(got))
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("snippet cut mid-rune: %q", got)
+	}
+	if strings.ContainsRune(got, utf8.RuneError) {
+		t.Fatalf("snippet contains a replacement character: %q", got)
+	}
+	if short := snippet([]byte("  plain  ")); short != "plain" {
+		t.Fatalf("short bodies pass through trimmed, got %q", short)
+	}
+}
+
 // ---------------------------------------------------------------- AddTorrent
 
 const (
@@ -458,12 +481,49 @@ func TestAddTorrent_Magnet(t *testing.T) {
 	if args[1] != sampleMag {
 		t.Errorf("magnet arg: got %q", args[1])
 	}
-	// The label goes on percent-encoded, matching ruTorrent's own convention.
-	if args[2] != "d.custom1.set=sci%20fi" {
+	// The label goes on percent-encoded, matching ruTorrent's own convention,
+	// and quoted because rTorrent parses these trailing arguments as commands.
+	if args[2] != `d.custom1.set="sci%20fi"` {
 		t.Errorf("label command: got %q", args[2])
 	}
-	if args[3] != "d.directory.set=/downloads/books" {
+	if args[3] != `d.directory.set="/downloads/books"` {
 		t.Errorf("directory command: got %q", args[3])
+	}
+}
+
+// TestAddTorrent_CommandArgsAreQuoted pins the quoting on load.*'s trailing
+// arguments.
+//
+// They are not data: rTorrent parses each one as a command and splits its
+// argument list on commas, and url.PathEscape escapes neither "," nor "=".
+// Unquoted, `d.directory.set=/downloads/Doe, John/Book` set the directory to
+// "/downloads/Doe" and passed " John/Book" as a second argument, so the torrent
+// landed somewhere Bindery never looks. An author-named path with a comma in it
+// is not exotic. ruTorrent's own addtorrent.php quotes the directory the same
+// way.
+func TestAddTorrent_CommandArgsAreQuoted(t *testing.T) {
+	f := newFakeRtorrent(t, map[string]func(recordedCall) string{
+		"load.start": func(recordedCall) string { return intResponse(0) },
+		"d.hash":     presentAfterLoad,
+	})
+	c := newTestClient(t, f.URL)
+
+	if _, err := c.AddTorrent(context.Background(), sampleMag, "sci,fi", `/downloads/Doe, John\Books`, nil); err != nil {
+		t.Fatalf("AddTorrent: %v", err)
+	}
+	args := f.callsTo("load.start")[0].Args
+	if len(args) != 4 {
+		t.Fatalf("load.start args: got %v", args)
+	}
+	// url.PathEscape already turns a comma into %2C, so the label was never the
+	// exposed half — it is quoted for consistency with the directory.
+	if args[2] != `d.custom1.set="sci%2Cfi"` {
+		t.Errorf("label command: got %q, want the value wrapped in quotes", args[2])
+	}
+	// The backslash is escaped inside the quotes, which is what rTorrent's
+	// parser unescapes back to a single character.
+	if want := `d.directory.set="/downloads/Doe, John\\Books"`; args[3] != want {
+		t.Errorf("directory command: got %q, want %q", args[3], want)
 	}
 }
 

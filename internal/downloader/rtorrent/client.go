@@ -7,7 +7,11 @@
 //     and every seedbox panel front rTorrent's socket with nginx or lighttpd
 //     and expose an XML-RPC endpoint (/RPC2, or /plugins/rpc/rpc.php under
 //     ruTorrent). This path reuses Bindery's existing download-client
-//     plumbing: base URL, basic auth, TLS, SSRF validation, guarded redirects.
+//     plumbing: base URL, basic auth, TLS, and guarded redirects. The endpoint
+//     itself is SSRF-validated when the client is saved
+//     (httpsec.ValidateOutboundURL in the API handler); per-call, the guard is
+//     validateRequestTarget, which pins every request and every redirect hop to
+//     the exact configured scheme/host/path. Same posture as Transmission.
 //   - SCGI, rTorrent's native listener (see scgi.go). For a plain rTorrent
 //     with no web server in front of it. It carries no credentials and no TLS
 //     — that is the protocol, not a gap here — so the listener must not be
@@ -32,6 +36,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/vavallee/bindery/internal/downloader/infohash"
 	"github.com/vavallee/bindery/internal/downloader/nethint"
@@ -255,17 +260,31 @@ func (c *Client) GetTorrents(ctx context.Context, labels ...string) ([]Torrent, 
 		}
 	}
 
-	rows := v.rows()
+	rows, droppedShape := v.rows()
 	out := make([]Torrent, 0, len(rows))
+	droppedRows := 0
 	for i := range rows {
 		t, ok := torrentFromRow(rows[i])
 		if !ok {
+			droppedRows++
 			continue
 		}
 		if !matchesLabel(t.Label, want) {
 			continue
 		}
 		out = append(out, t)
+	}
+	// Dropping rows is the correct behaviour — a short or hash-less row means
+	// the column order no longer matches multicallFields, and decoding it
+	// anyway would attribute one torrent's size to another's hash. Dropping
+	// them *silently* is not: if a future rTorrent changes the reply shape,
+	// every torrent vanishes from the poll, the importer's
+	// blockStaleImportFailures treats the session as authoritative and
+	// terminally blocks every import_failed download, and nothing anywhere
+	// says why.
+	if droppedShape > 0 || droppedRows > 0 {
+		slog.Warn("rtorrent: ignored unusable rows in the d.multicall2 reply — Bindery will not see those torrents; if this is every torrent, rTorrent's reply shape has changed",
+			"not_an_array", droppedShape, "short_or_hashless", droppedRows, "usable", len(rows)-droppedRows)
 	}
 	return out, nil
 }
@@ -333,6 +352,39 @@ func decodeLabel(raw string) string {
 	return decoded
 }
 
+// quoteCommandArg renders a value for the right-hand side of a command string
+// passed to load.start / load.raw_start, e.g. `d.directory.set=<value>`.
+//
+// Those trailing arguments are not data: rTorrent parses each one as a command
+// and splits its argument list on commas, so a download directory containing a
+// comma ("/media/Author, Name/") silently becomes two arguments and the
+// directory is set to the fragment before the comma. Wrapping the value in
+// double quotes is exactly how ruTorrent's own addtorrent.php passes a
+// directory, and rTorrent's parser unescapes \" and \\ inside the quotes.
+//
+// Quoting unconditionally rather than only when a comma is present keeps one
+// code path under test instead of two.
+func quoteCommandArg(v string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	return `"` + replacer.Replace(v) + `"`
+}
+
+// redactedSource renders the grabbed URL for a log line with any indexer apikey
+// stripped and the length bounded — a magnet URI carries a full tracker list
+// and would otherwise dominate the log.
+func redactedSource(raw string) string {
+	s := httpsec.RedactSecrets(strings.TrimSpace(raw))
+	const maxLen = 120
+	if len(s) <= maxLen {
+		return s
+	}
+	cut := maxLen
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
+}
+
 // AddTorrent submits a magnet link or torrent URL to rTorrent and returns the
 // torrent's lower-case hex infohash.
 //
@@ -356,16 +408,20 @@ func decodeLabel(raw string) string {
 // is logged and skipped rather than silently appearing to work.
 func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, label, directory string, seedRatio *float64) (string, error) {
 	if seedRatio != nil {
-		slog.Warn("rtorrent: per-indexer seed-ratio override ignored — rTorrent has no per-torrent ratio limit over XML-RPC; configure a ratio group in .rtorrent.rc instead",
-			"ratio", *seedRatio)
+		// Named so the line is actionable on its own: "ratio" alone left an
+		// operator with several indexers and several clients no way to tell
+		// which grab it referred to. A Prowlarr sync can also set a ratio the
+		// user never chose, so the message says where to look.
+		slog.Warn("rtorrent: per-indexer seed-ratio override ignored — rTorrent has no per-torrent ratio limit over XML-RPC; configure a ratio group in .rtorrent.rc instead, or clear the seed ratio on the indexer (Settings → Indexers) to stop this warning",
+			"ratio", *seedRatio, "client", c.baseURL, "label", label, "source", redactedSource(magnetOrURL))
 	}
 
 	commands := make([]arg, 0, 2)
 	if l := strings.TrimSpace(label); l != "" {
-		commands = append(commands, "d.custom1.set="+encodeLabel(l))
+		commands = append(commands, "d.custom1.set="+quoteCommandArg(encodeLabel(l)))
 	}
 	if d := strings.TrimSpace(directory); d != "" {
-		commands = append(commands, "d.directory.set="+d)
+		commands = append(commands, "d.directory.set="+quoteCommandArg(d))
 	}
 
 	var (
@@ -501,18 +557,28 @@ func (c *Client) Files(ctx context.Context, hash string) ([]File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("f.multicall: %w", err)
 	}
-	rows := v.rows()
+	rows, droppedShape := v.rows()
 	out := make([]File, 0, len(rows))
+	droppedRows := 0
 	for i := range rows {
 		if len(rows[i]) < 2 {
+			droppedRows++
 			continue
 		}
 		name := strings.TrimSpace(rows[i][0].stringValue())
 		if name == "" {
+			droppedRows++
 			continue
 		}
 		size, _ := rows[i][1].int64Value()
 		out = append(out, File{Name: name, Size: size})
+	}
+	if droppedShape > 0 || droppedRows > 0 {
+		// An incomplete file list makes the importer fall back to a directory
+		// walk rather than fail, so this is less severe than the multicall2
+		// case — but it still silently changes which files get imported.
+		slog.Warn("rtorrent: ignored unusable rows in the f.multicall reply — the torrent's file list may be incomplete",
+			"hash", hash, "not_an_array", droppedShape, "short_or_unnamed", droppedRows, "usable", len(out))
 	}
 	return out, nil
 }
@@ -653,12 +719,22 @@ func readRPCBody(r io.Reader) ([]byte, error) {
 	return body, nil
 }
 
+// snippet renders the head of a non-200 body for an error message that gets
+// persisted on the download row. It truncates on a rune boundary: slicing a
+// UTF-8 string at a fixed byte offset can cut a multi-byte character in half,
+// and the resulting replacement character then travels into the DB, the history
+// entry and any webhook payload.
 func snippet(body []byte) string {
+	const maxSnippet = 256
 	s := strings.TrimSpace(string(body))
-	if len(s) > 256 {
-		return s[:256]
+	if len(s) <= maxSnippet {
+		return s
 	}
-	return s
+	cut := maxSnippet
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
 }
 
 func (c *Client) validateRequestTarget(target *url.URL) error {

@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/xml"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -72,9 +73,22 @@ func encodeValue(b *strings.Builder, a arg) error {
 		}
 		b.WriteString(`</string></value>`)
 	case int:
-		b.WriteString(`<value><i8>` + strconv.Itoa(v) + `</i8></value>`)
+		// <i4> is core XML-RPC; <i8> is an xmlrpc-c extension. rTorrent's own
+		// library accepts both, but anything else that might sit in front of it
+		// (a proxy, a test double, another XML-RPC implementation) is only
+		// guaranteed the core tags, so an int that fits in 32 bits goes out as
+		// <i4>. The decode side accepts <int>, <i4> and <i8> either way.
+		if v >= math.MinInt32 && v <= math.MaxInt32 {
+			b.WriteString(`<value><i4>` + strconv.Itoa(v) + `</i4></value>`)
+		} else {
+			b.WriteString(`<value><i8>` + strconv.Itoa(v) + `</i8></value>`)
+		}
 	case int64:
-		b.WriteString(`<value><i8>` + strconv.FormatInt(v, 10) + `</i8></value>`)
+		if v >= math.MinInt32 && v <= math.MaxInt32 {
+			b.WriteString(`<value><i4>` + strconv.FormatInt(v, 10) + `</i4></value>`)
+		} else {
+			b.WriteString(`<value><i8>` + strconv.FormatInt(v, 10) + `</i8></value>`)
+		}
 	case bool:
 		bit := "0"
 		if v {
@@ -247,17 +261,25 @@ func (v *xmlValue) boolValue() bool {
 // nil so callers see "no torrents" rather than a decode error — rTorrent
 // answers an empty view with an empty <array>, and some proxies normalise that
 // to an untyped empty value.
-func (v *xmlValue) rows() [][]xmlValue {
+//
+// dropped counts entries that were not themselves arrays. Callers log it rather
+// than ignoring it: a shape change that turns every row into a non-array makes
+// the whole session look empty, and an empty poll routes into
+// blockStaleImportFailures, which terminally blocks any download sitting in
+// import_failed. A silent drop there costs the user their downloads with no
+// trace of why.
+func (v *xmlValue) rows() (out [][]xmlValue, dropped int) {
 	if v == nil || v.Array == nil {
-		return nil
+		return nil, 0
 	}
-	out := make([][]xmlValue, 0, len(v.Array.Values))
+	out = make([][]xmlValue, 0, len(v.Array.Values))
 	for i := range v.Array.Values {
 		row := v.Array.Values[i]
 		if row.Array == nil {
+			dropped++
 			continue
 		}
 		out = append(out, row.Array.Values)
 	}
-	return out
+	return out, dropped
 }

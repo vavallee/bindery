@@ -140,8 +140,13 @@ front of it. Put one of these in URL Base:
 | `scgi://127.0.0.1:5000` | That explicit address, ignoring Host/Port |
 | `scgi:///var/run/rtorrent/rpc.sock` | That `scgi_local` unix socket (bind-mount it into the Bindery container) |
 
+Host and Port are still required by the form even for the unix-socket and
+explicit-address spellings, which ignore them. Put anything valid there
+(`localhost` / `8080`) and the socket path in URL Base.
+
 > **SCGI has no authentication and no TLS** — that is the protocol, not a
-> Bindery limitation. Username and password are ignored on this transport.
+> Bindery limitation. Username, password and Use SSL are ignored on this
+> transport, and the client form says so once you type an `scgi://` URL Base.
 > Keep the listener bound to loopback or a unix socket; anything that can
 > reach it can run arbitrary rTorrent commands.
 
@@ -151,8 +156,11 @@ Two rTorrent-specific limits, both from the protocol rather than Bindery:
   limit over XML-RPC; configure a ratio group in `.rtorrent.rc` instead.
 - **Removing a download with its data** deletes the files from *Bindery's*
   side, because rTorrent's `d.erase` deliberately leaves the payload on disk.
-  That needs the path remap below to be correct; if Bindery can't see the
-  files it removes the torrent and leaves the data, and says so in the log.
+  That needs a path remap that resolves — either the client's own, or the
+  global `BINDERY_DOWNLOAD_PATH_REMAP` — and Bindery refuses to delete
+  anything reached through a symlink, or a path that resolves to a mount
+  root. If it can't see the files it removes the torrent, leaves the data,
+  and says why in the log.
 
 Seedbox installs almost always need a **download-client path remap** — see the
 Test button's warning, which names the exact path it could not read.

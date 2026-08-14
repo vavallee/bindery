@@ -71,7 +71,7 @@ func TestEncodeMethodCall(t *testing.T) {
 		}
 		want := `<?xml version="1.0"?><methodCall><methodName>d.custom1.set</methodName><params>` +
 			`<param><value><string>ABC</string></value></param>` +
-			`<param><value><i8>7</i8></value></param>` +
+			`<param><value><i4>7</i4></value></param>` +
 			`<param><value><boolean>1</boolean></value></param>` +
 			`</params></methodCall>`
 		if string(got) != want {
@@ -178,7 +178,10 @@ func TestRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decodeMethodResponse: %v", err)
 	}
-	rows := v.rows()
+	rows, dropped := v.rows()
+	if dropped != 0 {
+		t.Fatalf("a well-formed multicall reply should drop nothing, got %d", dropped)
+	}
 	if len(rows) != 2 {
 		t.Fatalf("rows: got %d, want 2", len(rows))
 	}
@@ -196,8 +199,19 @@ func TestRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode empty multicall: %v", err)
 	}
-	if got := empty.rows(); len(got) != 0 {
-		t.Fatalf("empty view should decode to zero rows, got %d", len(got))
+	if got, dropped := empty.rows(); len(got) != 0 || dropped != 0 {
+		t.Fatalf("empty view should decode to zero rows and drop nothing, got %d rows / %d dropped", len(got), dropped)
+	}
+
+	// A reply whose entries are not themselves arrays is the shape-drift case:
+	// the rows are unusable, and the count is what the caller logs so the
+	// operator is not left with a silently empty poll.
+	skewed, err := decodeMethodResponse([]byte(`<methodResponse><params><param><value><array><data><value><string>not-a-row</string></value><value><string>nor-this</string></value></data></array></value></param></params></methodResponse>`))
+	if err != nil {
+		t.Fatalf("decode skewed multicall: %v", err)
+	}
+	if got, dropped := skewed.rows(); len(got) != 0 || dropped != 2 {
+		t.Fatalf("non-array entries should be reported as dropped, got %d rows / %d dropped", len(got), dropped)
 	}
 }
 

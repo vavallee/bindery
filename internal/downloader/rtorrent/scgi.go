@@ -49,9 +49,17 @@ func (d *scgiDialer) String() string {
 const maxSCGIResponseBytes = maxRPCResponseBytes
 
 func (d *scgiDialer) roundTrip(ctx context.Context, payload []byte) ([]byte, error) {
+	// A zero timeout would make the SetDeadline below land in the past and fail
+	// every read instantly. parseSCGIURLBase and New both fill it in, so this
+	// only catches a dialer built some other way — but "silently broken
+	// transport" is a bad failure mode to leave available.
+	timeout := d.timeout
+	if timeout <= 0 {
+		timeout = rpcTimeout
+	}
 	dial := d.dial
 	if dial == nil {
-		dialer := &net.Dialer{Timeout: d.timeout}
+		dialer := &net.Dialer{Timeout: timeout}
 		dial = dialer.DialContext
 	}
 	conn, err := dial(ctx, d.network, d.address)
@@ -62,7 +70,7 @@ func (d *scgiDialer) roundTrip(ctx context.Context, payload []byte) ([]byte, err
 
 	// Honour both the caller's deadline and the client timeout, whichever
 	// lands first; a socket read has no other cancellation path.
-	deadline := time.Now().Add(d.timeout)
+	deadline := time.Now().Add(timeout)
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
 		deadline = ctxDeadline
 	}
@@ -171,15 +179,25 @@ func parseSCGIURLBase(urlBase, host string, port int) (*scgiDialer, error) {
 		if port <= 0 || port > 65535 {
 			return nil, fmt.Errorf("invalid rTorrent SCGI port %d", port)
 		}
-		return &scgiDialer{network: "tcp", address: net.JoinHostPort(host, strconv.Itoa(port))}, nil
+		return &scgiDialer{network: "tcp", address: net.JoinHostPort(host, strconv.Itoa(port)), timeout: rpcTimeout}, nil
 	case strings.HasPrefix(rest, "/"):
 		// scgi:///path/to/socket — an absolute path is a unix socket.
-		return &scgiDialer{network: "unix", address: rest}, nil
+		return &scgiDialer{network: "unix", address: rest, timeout: rpcTimeout}, nil
 	default:
 		// scgi://host:port
-		if _, _, err := net.SplitHostPort(rest); err != nil {
+		addrHost, addrPort, err := net.SplitHostPort(rest)
+		if err != nil {
 			return nil, fmt.Errorf("rTorrent SCGI address %q must be host:port or an absolute socket path", rest)
 		}
-		return &scgiDialer{network: "tcp", address: rest}, nil
+		// SplitHostPort accepts "myhost:" and ":5000" — an empty half is not a
+		// usable address, but it saves cleanly and then fails at dial time with
+		// an OS error instead of here with a message that says what to fix.
+		if strings.TrimSpace(addrHost) == "" || strings.TrimSpace(addrPort) == "" {
+			return nil, fmt.Errorf("rTorrent SCGI address %q must be host:port or an absolute socket path", rest)
+		}
+		if n, perr := strconv.Atoi(addrPort); perr != nil || n <= 0 || n > 65535 {
+			return nil, fmt.Errorf("rTorrent SCGI address %q has an invalid port", rest)
+		}
+		return &scgiDialer{network: "tcp", address: rest, timeout: rpcTimeout}, nil
 	}
 }
