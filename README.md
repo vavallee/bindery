@@ -328,6 +328,8 @@ To report a vulnerability, follow the process in **[SECURITY.md](SECURITY.md)**.
 
 Bindery sends one anonymous ping per day to [api.getbindery.dev](https://api.getbindery.dev) so the maintainer can count active installs and spot widespread breakage. The payload contains a random `install_id` (generated on first run), the binary `version`, `os`, `arch`, and deploy method (kubernetes/docker/binary); a `features` section of counts and booleans describing which subsystems are configured (never names, URLs, or values); and an `errors` section with the number of ERROR/WARN log entries over the last 24 hours plus the five most frequent error messages. The error messages are the fixed, developer-written log message strings only (truncated to 120 characters) — log details (attrs) such as titles, paths, URLs, or usernames are never sent. No hostnames, IP addresses, library contents, or personal data. The response carries the latest published version, which powers the in-app update badge (header and Settings → About). Opt out with `telemetry.enabled: false` in **Settings → General**, or `BINDERY_TELEMETRY_DISABLED=true` before first run — either switch disables the entire ping, including the error counters and the update badge (a disabled ping means the app has no way to learn a newer version exists).
 
+Retention, the legal basis, how IP addresses are handled, and how to have an install row deleted are in **[PRIVACY.md](PRIVACY.md)**.
+
 ## Contributing
 
 PRs, issues, and feedback welcome. See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the dev setup, the full local check suite, and the PR flow. Tracked feature work lives in **[docs/ROADMAP.md](docs/ROADMAP.md)** — open an issue before starting anything substantial.
