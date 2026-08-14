@@ -95,6 +95,7 @@ type QueueHandler struct {
 	notif                *notifier.Notifier
 	downloadDir          string
 	audiobookDownloadDir string
+	downloadPathRemap    string
 }
 
 func NewQueueHandler(downloads *db.DownloadRepo, clients *db.DownloadClientRepo, books *db.BookRepo, history *db.HistoryRepo) *QueueHandler {
@@ -134,6 +135,17 @@ func (h *QueueHandler) resolveSeedRatio(ctx context.Context, indexerID *int64) *
 func (h *QueueHandler) WithStoragePaths(downloadDir, audiobookDownloadDir string) *QueueHandler {
 	h.downloadDir = downloadDir
 	h.audiobookDownloadDir = audiobookDownloadDir
+	return h
+}
+
+// WithDownloadPathRemap attaches the global BINDERY_DOWNLOAD_PATH_REMAP.
+//
+// Only "remove with data" on an rTorrent client reads it — rTorrent has no
+// delete-with-data command, so Bindery deletes the payload itself and has to
+// translate rTorrent's path the same way the importer does. Leaving it unset
+// simply falls back to the client's own PathRemap.
+func (h *QueueHandler) WithDownloadPathRemap(remap string) *QueueHandler {
+	h.downloadPathRemap = remap
 	return h
 }
 
@@ -782,7 +794,7 @@ func protocolLabel(protocol string) string {
 // missing protocol.
 func protocolClientSuggestions(protocol string) string {
 	if protocol == "torrent" {
-		return "qBittorrent/Transmission/Deluge"
+		return "qBittorrent/Transmission/Deluge/rTorrent"
 	}
 	return "SABnzbd/NZBGet"
 }
@@ -1014,7 +1026,7 @@ func (h *QueueHandler) removeQueueItem(ctx context.Context, target *models.Downl
 	if target.DownloadClientID != nil {
 		client, err := h.clients.GetByID(ctx, *target.DownloadClientID)
 		if err == nil && client != nil {
-			if err := downloader.RemoveDownload(ctx, client, target, deleteFiles); err != nil {
+			if err := downloader.RemoveDownload(ctx, client, target, deleteFiles, h.downloadPathRemap); err != nil {
 				slog.Warn("failed to remove download from client", "download_id", target.ID, "client_id", client.ID, "error", err)
 			}
 		} else if err != nil {

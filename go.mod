@@ -6,7 +6,6 @@ toolchain go1.26.6
 
 require (
 	github.com/coreos/go-oidc/v3 v3.20.0
-	github.com/creditx/go-fuzzywuzzy v0.0.0-20190710081230-e795b6c0d97a
 	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
 	github.com/go-chi/chi/v5 v5.3.1
 	github.com/google/uuid v1.6.0

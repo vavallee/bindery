@@ -1102,6 +1102,89 @@ func TestDownloadClientRepoGetEnabledByProtocol(t *testing.T) {
 	}
 }
 
+// TestDownloadClientRepoGetEnabledByProtocol_AllTypes pins the protocol→type
+// mapping for every supported client. A new client type that is wired
+// everywhere else but missing from these queries is never selected for a grab,
+// and the failure looks like "no enabled torrent download client configured"
+// with a perfectly healthy client sitting in the list.
+func TestDownloadClientRepoGetEnabledByProtocol_AllTypes(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	repo := NewDownloadClientRepo(database)
+
+	wantTorrent := map[string]bool{"qbittorrent": true, "transmission": true, "deluge": true, "rtorrent": true}
+	wantUsenet := map[string]bool{"sabnzbd": true, "nzbget": true}
+
+	port := 1
+	for _, set := range []map[string]bool{wantTorrent, wantUsenet} {
+		for clientType := range set {
+			port++
+			if err := repo.Create(ctx, &models.DownloadClient{
+				Name: clientType, Type: clientType, Host: "h", Port: port, Enabled: true, Priority: 1,
+			}); err != nil {
+				t.Fatalf("create %s: %v", clientType, err)
+			}
+		}
+	}
+
+	for protocol, want := range map[string]map[string]bool{"torrent": wantTorrent, "usenet": wantUsenet} {
+		got, err := repo.GetEnabledByProtocol(ctx, protocol)
+		if err != nil {
+			t.Fatalf("%s: %v", protocol, err)
+		}
+		seen := make(map[string]bool, len(got))
+		for _, c := range got {
+			seen[c.Type] = true
+		}
+		if len(seen) != len(want) {
+			t.Fatalf("%s: got types %v, want %v", protocol, seen, want)
+		}
+		for clientType := range want {
+			if !seen[clientType] {
+				t.Errorf("%s protocol did not select the %q client", protocol, clientType)
+			}
+		}
+	}
+}
+
+// rTorrent authenticates with HTTP basic auth, so both username and password
+// must survive a round trip. The legacy url_base/api_key credential migration
+// only applies to qBittorrent and Transmission rows and must not touch it.
+func TestDownloadClientRepoRtorrentCredentials(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	repo := NewDownloadClientRepo(database)
+
+	c := &models.DownloadClient{
+		Name: "rt", Type: "rtorrent", Host: "seedbox", Port: 443, UseSSL: true,
+		URLBase: "/plugins/rpc/rpc.php", Username: "user", Password: "secret", Enabled: true,
+	}
+	if err := repo.Create(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.GetByID(ctx, c.ID)
+	if err != nil || got == nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Username != "user" || got.Password != "secret" {
+		t.Errorf("credentials: got user=%q pass=%q", got.Username, got.Password)
+	}
+	if got.URLBase != "/plugins/rpc/rpc.php" {
+		t.Errorf("url base was rewritten: got %q", got.URLBase)
+	}
+}
+
 // Regression for https://github.com/vavallee/bindery/issues/8 — deleting an
 // author failed with SQLITE_CONSTRAINT_FOREIGNKEY (787) because the
 // `downloads` table had bare `REFERENCES books(id)` (NO ACTION) and blocked

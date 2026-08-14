@@ -68,6 +68,7 @@ Test patterns (`db.OpenMemory`, `httptest`, `vitest` + `@testing-library/react`)
 - **CHANGELOG.md** is authored at release time only — see the **`tag-release`** skill. Don't add `[Unreleased]` entries during feature work; CI only validates that a `## [vX.Y.Z]` section exists at tag time.
 - **Helm `values.yaml`** image digest is auto-bumped by CI with `[skip ci]`. Don't hand-edit the digest.
 - **Secrets in source are blocked** by gitleaks + GitHub Push Protection. Use the SQLite-backed settings store (configured at runtime) for any credential — see `internal/auth` and `internal/config`.
+- **New dependencies need a licence check first.** Bindery is MIT and statically links everything, so a GPL/AGPL/SSPL/BUSL module makes the shipped binary undistributable under our own licence. Read the actual `LICENSE` in the module cache, not the ecosystem's reputation — both Go FuzzyWuzzy ports are GPL-3.0, and one shipped in MIT binaries for months (#1988). Don't copy dependency choices from the *arr projects; they are GPL-3.0 and the same choice is safe for them.
 - **The frontend talks to the backend over `/api/v1` only** (plus the `*arr-compatible `/api/queue` and `/opds/`). Auth rules per route live in `internal/api/auth.go`.
 
 ## Working on a feature — lifecycle

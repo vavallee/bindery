@@ -9,7 +9,6 @@ import (
 	"strings"
 	"unicode"
 
-	fuzzy "github.com/creditx/go-fuzzywuzzy"
 	"github.com/vavallee/bindery/internal/indexer"
 	"golang.org/x/text/unicode/norm"
 )
@@ -70,10 +69,10 @@ func TitleScore(a, b string) int {
 		return 0
 	}
 	return max(
-		safeFuzzyScore(func(a, b string) int { return fuzzy.TokenSetRatio(a, b) }, cleanA, cleanB),
-		safeFuzzyScore(func(a, b string) int { return fuzzy.TokenSortRatio(a, b) }, cleanA, cleanB),
-		safeFuzzyScore(fuzzy.Ratio, cleanA, cleanB),
-		safeFuzzyScore(fuzzy.PartialRatio, cleanA, cleanB),
+		safeFuzzyScore(tokenSetRatio, cleanA, cleanB),
+		safeFuzzyScore(tokenSortRatio, cleanA, cleanB),
+		safeFuzzyScore(ratio, cleanA, cleanB),
+		safeFuzzyScore(partialRatio, cleanA, cleanB),
 	)
 }
 

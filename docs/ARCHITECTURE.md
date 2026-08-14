@@ -10,7 +10,7 @@ Bindery is a single Go binary with the React frontend embedded via `go:embed`. T
          │
          ▼
 ┌────────────────────────────┐
-│         Bindery            │──► SABnzbd / NZBGet / qBittorrent / Transmission / Deluge
+│         Bindery            │──► SABnzbd / NZBGet / qBittorrent / Transmission / Deluge / rTorrent
 │  Go backend + React SPA    │──► /books/ library  (and optional /audiobooks/ root)
 │  SQLite (WAL mode)         │──► Webhook notifications
 └────────────────────────────┘
@@ -46,7 +46,7 @@ The `internal/` tree is organised by domain, not by layer:
 | `metadata` | OpenLibrary, Google Books, Hardcover, DNB, Audnex, Audible — fetchers and unifying interfaces. |
 | `indexer` | Newznab/Torznab clients, query builder, four-tier fallback, per-indexer query deduplication, result deduplication, ranking. |
 | `decision` | Quality profiles, language filter, custom formats, delay profiles, blocklist consultation. |
-| `downloader` | SABnzbd, NZBGet, qBittorrent, Transmission, Deluge clients (queue/history polling, submission, deletion). |
+| `downloader` | SABnzbd, NZBGet, qBittorrent, Transmission, Deluge, rTorrent clients (queue/history polling, submission, deletion). |
 | `importer` | NZO-ID matching, Move/Copy/Hardlink semantics, naming-token expansion, cross-FS-safe moves. |
 | `scheduler` | Cron loops for auto-grab, refresh, recommendations, cleanup. |
 | `recommender` | Discover engine — taste profile, candidate filters, multi-source signals. |

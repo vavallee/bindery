@@ -25,7 +25,8 @@ const (
 	PathNotVisible = "warning"
 	// PathUnknown means the client type does not expose a completed-downloads
 	// path Bindery can introspect (SABnzbd, Transmission, Deluge), so the Test
-	// stays connection-only with no regression.
+	// stays connection-only with no regression. rTorrent does expose one
+	// (directory.default) and is checked.
 	PathUnknown = "unknown"
 )
 
@@ -61,12 +62,31 @@ func CheckCompletedPathVisibility(ctx context.Context, client *models.DownloadCl
 		return qbittorrentPathVisibility(ctx, client, downloadDir, audiobookDownloadDir, globalRemap)
 	case "nzbget":
 		return nzbgetPathVisibility(ctx, client, globalRemap)
+	case "rtorrent":
+		return rtorrentPathVisibility(ctx, client, downloadDir, audiobookDownloadDir, globalRemap)
 	default:
 		// SABnzbd's complete dir requires get_config (not introspected here),
 		// and Transmission/Deluge resolve a download dir per-torrent rather than
 		// a static completed folder. Skip gracefully.
 		return PathVisibility{Status: PathUnknown}
 	}
+}
+
+// rtorrentPathVisibility checks Bindery can read where rTorrent lands completed
+// files. Unlike Transmission and Deluge, rTorrent exposes a single global
+// default download directory (directory.default), so there is a concrete path
+// to stat — which matters because rTorrent is very often on a seedbox, i.e. the
+// exact remote-instance case #1182 was filed for.
+func rtorrentPathVisibility(ctx context.Context, client *models.DownloadClient, downloadDir, audiobookDownloadDir, globalRemap string) PathVisibility {
+	rt := RtorrentFor(client)
+	defaultDir, err := rt.DefaultDirectory(ctx)
+	if err != nil || strings.TrimSpace(defaultDir) == "" {
+		// Connection already passed; treat an introspection failure as "can't
+		// tell" rather than a path warning, to avoid false alarms.
+		return PathVisibility{Status: PathUnknown}
+	}
+	expected := ExpectedDownloadDirForClient(client, models.MediaTypeEbook, downloadDir, audiobookDownloadDir)
+	return statRemappedPath(client, defaultDir, expected, globalRemap)
 }
 
 func qbittorrentPathVisibility(ctx context.Context, client *models.DownloadClient, downloadDir, audiobookDownloadDir, globalRemap string) PathVisibility {
