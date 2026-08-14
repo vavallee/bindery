@@ -895,10 +895,10 @@ func scoreResult(r newznab.SearchResult, c MatchCriteria) float64 {
 	// — knock it way down so correct-type results with weaker quality still
 	// win. Neutral (unknown) formats aren't penalised either way.
 	if c.MediaType != "" && quality != "unknown" {
-		if c.MediaType == models.MediaTypeAudiobook && !isAudiobookFormat(quality) {
+		if c.MediaType == models.MediaTypeAudiobook && !IsAudiobookFormat(quality) {
 			score -= 500
 		}
-		if c.MediaType == models.MediaTypeEbook && isAudiobookFormat(quality) {
+		if c.MediaType == models.MediaTypeEbook && IsAudiobookFormat(quality) {
 			score -= 500
 		}
 	}
@@ -957,9 +957,10 @@ func scoreResult(r newznab.SearchResult, c MatchCriteria) float64 {
 	return score
 }
 
-// isAudiobookFormat returns true if the format token is one of the
-// recognised audio container types.
-func isAudiobookFormat(format string) bool {
+// IsAudiobookFormat reports whether the format token names an audio container.
+// Exported so the importer can classify a download's release format without
+// keeping its own copy of the token lists (they drifted).
+func IsAudiobookFormat(format string) bool {
 	switch format {
 	case "m4b", "m4a", "mp3", "flac", "ogg":
 		return true

@@ -22,6 +22,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
@@ -728,34 +729,71 @@ func (s *Scanner) alreadyImportedFormat(ctx context.Context, book *models.Book, 
 	return false
 }
 
-// audioReleaseTokens and ebookReleaseTokens map the format token a release
-// title carries (parsed at grab time into Download.Quality by
-// indexer.ParseRelease) onto a media type. Duplicated from the indexer package
-// rather than imported so the importer stays free of indexer internals; keep in
-// sync with indexer.formatTokens / indexer.isAudiobookFormat.
-var (
-	audioReleaseTokens = map[string]bool{
-		"m4b": true, "m4a": true, "mp3": true, "flac": true, "ogg": true,
-		"opus": true, "aac": true,
+// formatForRelease resolves the media type a grabbed release is for from its
+// title and the format token parsed at grab time, or "" when the release does
+// not say — including when it says BOTH.
+//
+// It deliberately does not trust Download.Quality on its own.
+// indexer.ParseRelease sets Quality to the first match in its formatTokens
+// order, and that order lists every ebook container ahead of every audio one,
+// so an audiobook titled "… (Unabridged) M4B + PDF booklet" — an audio file
+// plus the publisher's PDF booklet, an entirely ordinary shape — arrives with
+// Quality "pdf". Consulting the EBOOK slot for that download and closing it out
+// as imported is #1885 with the formats swapped, which is the bug this resolver
+// exists to prevent.
+//
+// A release naming containers of BOTH kinds is settled by whether it also
+// carries an audiobook marker (unabridged/abridged, an Audible ASIN, or the
+// word audiobook/audible). "M4B + PDF" with "(Unabridged)" is an audiobook
+// with the publisher's booklet, not an ebook and not a coin toss. Without such
+// a marker it stays unknown, and the caller's contract for "" is to decline the
+// short-circuit — the safe direction (see isBookAlreadyImported).
+func formatForRelease(dl *models.Download) string {
+	if dl == nil {
+		return ""
 	}
-	ebookReleaseTokens = map[string]bool{
-		"epub": true, "azw3": true, "azw": true, "mobi": true, "pdf": true,
-		"djvu": true, "cbr": true, "cbz": true, "fb2": true, "lit": true,
-		"rtf": true, "txt": true,
+	var audiobook, ebook bool
+	mark := func(mediaType string) {
+		switch mediaType {
+		case models.MediaTypeAudiobook:
+			audiobook = true
+		case models.MediaTypeEbook:
+			ebook = true
+		}
 	}
-)
-
-// formatForReleaseToken maps a release format token ("epub", "m4b", …) to a
-// media type, or "" when the token is empty or unrecognised.
-func formatForReleaseToken(token string) string {
-	switch t := strings.ToLower(strings.TrimSpace(token)); {
-	case audioReleaseTokens[t]:
+	for _, token := range indexer.ReleaseFormats(dl.Title) {
+		mark(indexer.MediaTypeForFormat(token))
+	}
+	// Quality is normally one of the title's own tokens, but it is what a grab
+	// recorded and a title can be edited or absent, so it still counts.
+	mark(indexer.MediaTypeForFormat(dl.Quality))
+	switch {
+	case audiobook && !ebook:
 		return models.MediaTypeAudiobook
-	case ebookReleaseTokens[t]:
+	case ebook && !audiobook:
 		return models.MediaTypeEbook
+	case audiobook && ebook && audiobookMarked(dl.Title):
+		return models.MediaTypeAudiobook
 	default:
 		return ""
 	}
+}
+
+// audiobookMarked reports whether a release title advertises itself as an
+// audiobook independently of its container tokens. Only used to break the tie
+// when a title names both an audio and an ebook container, which in practice
+// means an audiobook shipped with its PDF booklet.
+func audiobookMarked(title string) bool {
+	p := indexer.ParseRelease(title)
+	if p.Unabridged || p.Abridged || p.ASIN != "" {
+		return true
+	}
+	for _, marker := range []string{"audiobook", "audible"} {
+		if indexer.WordBoundaryRegex(marker).MatchString(p.Normalized) {
+			return true
+		}
+	}
+	return false
 }
 
 // downloadFormat resolves which format SLOT of the book a download is working
@@ -767,12 +805,15 @@ func formatForReleaseToken(token string) string {
 //  2. the book's own media type when the book is monitored for a SINGLE format
 //     — a download attached to an ebook-only book can only fill its ebook slot,
 //     whatever tokens the release title happens to carry;
-//  3. the format token parsed from the release title at grab time
-//     (Download.Quality, e.g. "epub" / "m4b"), which is the only per-download
-//     signal available for a media_type=both book.
+//  3. the release itself — its title and the format token parsed from it at
+//     grab time — which is the only per-download signal available for a
+//     media_type=both book. See formatForRelease: a release naming both an
+//     audio and an ebook container answers "unknown", not "whichever token the
+//     parser happened to keep".
 //
-// A dual-format book whose release title carried no usable token resolves to
-// "" — callers MUST treat that as "unknown", never as "either format" (#1885).
+// A dual-format book whose release names no usable format, or names both,
+// resolves to "" — callers MUST treat that as "unknown", never as "either
+// format" (#1885).
 func downloadFormat(dl *models.Download, book *models.Book, formatHint string) string {
 	if formatHint == models.MediaTypeEbook || formatHint == models.MediaTypeAudiobook {
 		return formatHint
@@ -783,10 +824,7 @@ func downloadFormat(dl *models.Download, book *models.Book, formatHint string) s
 			return book.MediaType
 		}
 	}
-	if dl != nil {
-		return formatForReleaseToken(dl.Quality)
-	}
-	return ""
+	return formatForRelease(dl)
 }
 
 // isBookAlreadyImported reports whether the book linked to dl already has an
@@ -803,12 +841,27 @@ func downloadFormat(dl *models.Download, book *models.Book, formatHint string) s
 // separate pipelines, so an import of one format must never satisfy a pending
 // download of the other. The download's format is resolved by downloadFormat;
 // only that format's slot is consulted. When the format cannot be determined —
-// a media_type=both book whose release title carried no format token — this
-// returns false rather than accepting either format. Being wrong in that
-// direction costs a bounded retry cycle ending in a visible StateImportBlocked;
-// being wrong the other way silently marks a still-downloading grab as imported
-// and abandons the format with no signal to the operator, which is exactly what
-// #1885 reported (an audiobook import closing out the pending ebook).
+// a media_type=both book whose release names no format, or names one of each —
+// this returns false rather than accepting either.
+//
+// That asymmetry is deliberate, and it is not free: declining sends the
+// download down the ordinary no-book-files path into StateImportFailed. It is
+// still the right side to err on. Being wrong the other way silently marks a
+// still-downloading grab as imported and abandons the format with no signal to
+// the operator at all, which is exactly what #1885 reported (an audiobook
+// import closing out the pending ebook). Being wrong THIS way is bounded and
+// visible: the download either imports when its files land, or reaches
+// StateImportBlocked — via the retry budget if attempts keep failing, or via
+// the skip limit if its files never appear (#1884) — where the queue shows the
+// reason, Retry import is offered, and the release can be grabbed again.
+//
+// Note that the unknown case is not exotic. The #769 shape this guard exists
+// for (a re-grabbed torrent whose files a prior import already moved) reaches
+// here from the qBittorrent pollers with no format hint, and since #1884 drops
+// client-listed files that are not on this host, an emptied file list is the
+// ordinary way in. A dual-format book therefore leans on the release tokens
+// alone — which is why formatForRelease reads the whole title rather than the
+// single token the parser kept.
 func (s *Scanner) isBookAlreadyImported(ctx context.Context, dl *models.Download, formatHint string) bool {
 	if dl.BookID == nil {
 		return false

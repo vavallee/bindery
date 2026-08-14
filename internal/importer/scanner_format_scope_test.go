@@ -179,6 +179,85 @@ func TestTryImportInternal_AudiobookImportDoesNotCloseEbookGrab(t *testing.T) {
 	}
 }
 
+// TestTryImportInternal_EbookImportDoesNotCloseAudiobookGrab is #1885 with the
+// formats swapped, which the format resolver made reachable on its own.
+//
+// indexer.ParseRelease records the FIRST token in its formatTokens order, and
+// that order lists every ebook container ahead of every audio one. An audiobook
+// shipped with the publisher's PDF booklet — "(Unabridged) [M4B + PDF]", an
+// entirely ordinary release shape — is therefore grabbed with Quality "pdf". If
+// the resolver takes that at face value on a media_type=both book whose ebook is
+// already on disk, the audiobook grab consults the EBOOK slot, finds it filled,
+// and closes itself out as imported while its torrent is still downloading.
+func TestTryImportInternal_EbookImportDoesNotCloseAudiobookGrab(t *testing.T) {
+	for _, title := range []string{
+		"We Who Wrestle with God (Unabridged) [M4B + PDF]",
+		"We Who Wrestle with God - Unabridged M4B/PDF booklet-SEEDPOOL",
+	} {
+		t.Run(title, func(t *testing.T) {
+			libraryDir := t.TempDir()
+			audiobookDir := t.TempDir()
+			s, book, dlRepo, bookRepo, ctx := dualFormatFixture(t, libraryDir, audiobookDir)
+
+			// The ebook is already imported and on disk.
+			libEpub := filepath.Join(libraryDir, "we-who-wrestle-with-god.epub")
+			if err := os.WriteFile(libEpub, []byte("epub-in-library"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := bookRepo.AddBookFile(ctx, book.ID, models.MediaTypeEbook, libEpub); err != nil {
+				t.Fatal(err)
+			}
+
+			// The audiobook grab: still downloading, so its download path holds
+			// no book files at retry time. Quality is what ParseRelease keeps.
+			audioDL := &models.Download{
+				GUID:             "guid-1885-swapped",
+				Title:            title,
+				BookID:           &book.ID,
+				Status:           models.StateImportFailed,
+				ImportRetryCount: 1,
+				Quality:          "pdf",
+			}
+			if err := dlRepo.Create(ctx, audioDL); err != nil {
+				t.Fatal(err)
+			}
+
+			s.tryImportInternal(ctx, audioDL, t.TempDir(), "", "", "", nil, nil)
+
+			got, err := dlRepo.GetByGUID(ctx, audioDL.GUID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Status == models.StateImported {
+				t.Errorf("#1885 (formats swapped): audiobook download marked %q because the EBOOK is in the "+
+					"library — the release's first parsed token was the PDF booklet, not its M4B", models.StateImported)
+			}
+			if got.Status != models.StateImportFailed {
+				t.Errorf("audiobook download status = %q, want %q (retryable no-book-files failure)",
+					got.Status, models.StateImportFailed)
+			}
+
+			files, err := bookRepo.ListFiles(ctx, book.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range files {
+				if f.Format == models.MediaTypeAudiobook {
+					t.Errorf("an audiobook file was recorded at %q — nothing was ever imported", f.Path)
+				}
+			}
+			refreshed, err := bookRepo.GetByID(ctx, book.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !refreshed.NeedsAudiobook() {
+				t.Errorf("book no longer needs an audiobook (status=%q audiobookFilePath=%q) — the audiobook "+
+					"slot must stay wanted", refreshed.Status, refreshed.AudiobookFilePath)
+			}
+		})
+	}
+}
+
 // TestTryImportInternal_FormatScopedShortCircuitStillFires is the counterweight
 // to the test above: narrowing the already-in-library check to the download's
 // own format must not disarm the #769 guard it exists for. A re-grabbed ebook
@@ -364,6 +443,48 @@ func TestDownloadFormat(t *testing.T) {
 		{"dual-format with no token is unknown", &models.Download{}, both, "", "",
 			"#1885: unknown must never be read as 'either format'"},
 		{"unrecognised token is unknown", &models.Download{Quality: "web-dl"}, both, "", "", ""},
+		// The release-token tier reads the whole title, not just the token
+		// ParseRelease kept. Its formatTokens order puts every ebook container
+		// ahead of every audio one, so these titles all arrive with an EBOOK
+		// Quality — and consulting the ebook slot for an audiobook grab is
+		// #1885 with the formats swapped.
+		{
+			"audiobook with a PDF booklet is not an ebook",
+			&models.Download{Title: "Bob the Drag Queen - Harriet Tubman Live in Concert (Unabridged) [M4B + PDF]", Quality: "pdf"},
+			both, "", models.MediaTypeAudiobook,
+			"the M4B in the title outranks the parser's first-token pick",
+		},
+		{
+			"audiobook with a PDF booklet, slash-separated",
+			&models.Download{Title: "Andy Weir - Project Hail Mary (Unabridged) M4B/PDF booklet-SEEDPOOL", Quality: "pdf"},
+			both, "", models.MediaTypeAudiobook, "",
+		},
+		{
+			"an ebook bundle stays an ebook",
+			&models.Download{Title: "Andy Weir - Project Hail Mary (retail) [EPUB+MOBI+AZW3]", Quality: "epub"},
+			both, "", models.MediaTypeEbook, "several ebook containers are still one slot",
+		},
+		{
+			"a title naming both kinds with nothing to break the tie is unknown",
+			&models.Download{Title: "Andy Weir - Project Hail Mary [EPUB + MP3]", Quality: "epub"},
+			both, "", "",
+			"neither slot may be closed out on a release that could be filling either",
+		},
+		{
+			"the word audiobook breaks the tie",
+			&models.Download{Title: "Andy Weir - Project Hail Mary (audiobook) [MP3 + EPUB]", Quality: "epub"},
+			both, "", models.MediaTypeAudiobook, "",
+		},
+		{
+			"an Audible ASIN breaks the tie",
+			&models.Download{Title: "Andy Weir - Project Hail Mary B08G9PRS1K [M4B, PDF]", Quality: "pdf"},
+			both, "", models.MediaTypeAudiobook, "",
+		},
+		{
+			"the recorded quality still counts when the title says nothing",
+			&models.Download{Title: "Andy Weir - Project Hail Mary-SEEDPOOL", Quality: "m4b"},
+			both, "", models.MediaTypeAudiobook, "",
+		},
 		{"garbage hint is ignored", &models.Download{Quality: "epub"}, both, "both", models.MediaTypeEbook, ""},
 		{"nil book and no signals", &models.Download{}, nil, "", "", ""},
 		{"nil download", nil, both, "", "", ""},
