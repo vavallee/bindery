@@ -15,7 +15,8 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
   const { t } = useTranslation()
   if (!sync) return null
 
-  const skipped = sync.skippedLanguage + sync.skippedJunk + sync.skippedMediaType
+  const notAccepted = sync.skippedNotAccepted ?? 0
+  const skipped = sync.skippedLanguage + sync.skippedJunk + sync.skippedMediaType + notAccepted
   // A sync that dropped nothing has nothing to explain; the book list already
   // says what happened.
   if (skipped <= 0) return null
@@ -71,6 +72,18 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
             {t('authorDetail.lastSync.mediaType', {
               count: sync.skippedMediaType,
               defaultValue: '{{count}} skipped as the wrong format for your default media type',
+            })}
+          </li>
+        )}
+        {/* A refresh only adds books for an author you monitor and have set to
+            take new items (#1815). Saying so here is the difference between
+            "the refresh is broken" and "it did what I configured". */}
+        {notAccepted > 0 && (
+          <li>
+            {t('authorDetail.lastSync.notAccepted', {
+              count: notAccepted,
+              defaultValue:
+                '{{count}} not added, because this author is not taking newly discovered books — the author is unmonitored, or "Monitor newly discovered books" is set to don’t add them. Books already in your library were still refreshed.',
             })}
           </li>
         )}

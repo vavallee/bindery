@@ -850,6 +850,26 @@ describe('AuthorDetailPage — last sync outcome', () => {
     )
   })
 
+  // #1815: a refresh of an author who isn't taking new books adds nothing, and
+  // "nothing happened" reads as a broken refresh unless the page says why.
+  it('explains the works a refresh declined to add', async () => {
+    renderAuthorDetailPage([makeBook({ id: 1, title: 'The Book I Imported', status: 'imported' })], 'grid', {
+      lastSync: {
+        completedAt: '2026-08-11T12:00:00Z',
+        total: 84,
+        added: 0,
+        skippedLanguage: 0,
+        skippedJunk: 0,
+        skippedMediaType: 0,
+        skippedNotAccepted: 83,
+      },
+    })
+
+    const notice = await screen.findByTestId('author-sync-notice')
+    expect(notice).toHaveTextContent('83 not added, because this author is not taking newly discovered books')
+    expect(notice).toHaveTextContent(/Books already in your library were still refreshed/)
+  })
+
   it('stays silent when the last refresh skipped nothing', async () => {
     renderAuthorDetailPage([makeBook({ id: 1, title: 'Only Book', status: 'imported' })], 'grid', {
       lastSync: {

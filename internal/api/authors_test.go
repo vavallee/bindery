@@ -5143,9 +5143,14 @@ func monitorNewItemsFixture(t *testing.T, monitorNewItems string, initial bool) 
 	return got
 }
 
-// With MonitorNewItems=none, a refresh discovering new works creates them
-// unmonitored — the #1348 trap (refresh mass-monitoring a back-catalogue
+// With MonitorNewItems=none, a refresh that does discover new works creates
+// them unmonitored — the #1348 trap (refresh mass-monitoring a back-catalogue
 // under monitor-mode 'all') is defused.
+//
+// The fixture's author has no books yet, which is the one case where a refresh
+// still populates an author who isn't taking new items (see
+// TestRefreshAuthorBooks_EmptyAuthorStillPopulates). Once the author owns
+// books, #1815's rule applies first and the works aren't created at all.
 func TestRefreshAuthorBooks_MonitorNewItemsNone_CreatesUnmonitored(t *testing.T) {
 	got := monitorNewItemsFixture(t, models.AuthorMonitorNewItemsNone, false)
 	if got.Monitored {
@@ -5172,6 +5177,390 @@ func TestFetchAuthorBooks_InitialSyncIgnoresMonitorNewItems(t *testing.T) {
 	if !got.Monitored {
 		t.Error("initial sync must honour monitor-mode 'all' even with monitorNewItems=none")
 	}
+}
+
+// ── #1815: a refresh must not import a back catalogue ───────────────────────
+
+// refreshDiscoveryFixture builds an author who already owns one book and runs
+// a metadata refresh against a provider offering that book plus three works
+// the library has never seen. It returns every book under the author
+// afterwards, plus the owned row re-read from the DB.
+//
+// The owned work is offered back with a cover the local row lacks, so a caller
+// can tell the two halves of "refresh" apart: updating the metadata of books
+// you have (must always happen) versus inserting books you don't (the part
+// monitoring governs).
+func refreshDiscoveryFixture(t *testing.T, author *models.Author, withOwnedBook bool) ([]models.Book, *models.Book, *models.AuthorSyncSummary) {
+	t.Helper()
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	if withOwnedBook {
+		owned := &models.Book{
+			ForeignID: "OL-OWNED", AuthorID: author.ID, Title: "The Book I Imported",
+			SortTitle: "the book i imported", Language: "eng", Status: models.BookStatusImported,
+			Genres: []string{}, MetadataProvider: "openlibrary",
+		}
+		if err := bookRepo.Create(ctx, owned); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	works := []models.Book{
+		// The book the user already has, now with the cover art they were
+		// refreshing to get.
+		{ForeignID: "OL-OWNED", Title: "The Book I Imported", SortTitle: "the book i imported",
+			Language: "eng", Status: models.BookStatusWanted, Genres: []string{},
+			ImageURL: "https://covers.example/owned.jpg", MetadataProvider: "openlibrary"},
+	}
+	for _, title := range []string{"Back Catalogue One", "Back Catalogue Two", "Back Catalogue Three"} {
+		works = append(works, models.Book{
+			ForeignID: "OL-" + strings.ReplaceAll(title, " ", ""), Title: title,
+			SortTitle: strings.ToLower(title), Language: "eng", Status: models.BookStatusWanted,
+			Genres: []string{}, MetadataProvider: "openlibrary",
+		})
+	}
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(&stubMetaProvider{works: works}), nil, profileRepo, &searcherSpy{})
+	h.RefreshAuthorBooks(author, false, "")
+
+	books, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned, err := bookRepo.GetByForeignID(ctx, "OL-OWNED")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return books, owned, h.syncSummaries.get(author.ID)
+}
+
+// TestRefreshAuthorBooks_UnmonitoredAuthorImportsNothing is the #1815 repro:
+// author unmonitored, monitor mode None, click "Refresh metadata" (the bulk
+// action) — and the author's entire back catalogue arrived as new book rows.
+// The reporter's actual goal was cover art on books they had already imported,
+// so the refresh must still do that half of the job.
+func TestRefreshAuthorBooks_UnmonitoredAuthorImportsNothing(t *testing.T) {
+	books, owned, summary := refreshDiscoveryFixture(t, &models.Author{
+		ForeignID: "OL-UNMONITORED", Name: "Unmonitored Author", SortName: "Author, Unmonitored",
+		MetadataProvider: "openlibrary", Monitored: false,
+		MonitorMode: models.AuthorMonitorModeNone, MonitorNewItems: models.AuthorMonitorNewItemsAll,
+	}, true)
+
+	if len(books) != 1 {
+		t.Fatalf("refresh of an unmonitored author added books: %d rows, want 1: %+v", len(books), bookTitles(books))
+	}
+	if owned == nil || owned.ImageURL != "https://covers.example/owned.jpg" {
+		t.Errorf("refresh must still update the books the user has; cover = %q", owned.ImageURL)
+	}
+	// "The refresh added nothing" has to say why, or it reads as a broken
+	// refresh — the author page's sync notice renders this count (#1889).
+	if summary == nil || summary.SkippedNotAccepted != 3 {
+		t.Errorf("sync summary should report the 3 works it declined to add, got %+v", summary)
+	}
+}
+
+// The importers (ABS, Calibre) stamp MonitorNewItems=none on every author they
+// create, which is how the #1815 reporter's authors were configured. "None"
+// now means the refresh doesn't add the works at all — before, it added them
+// unmonitored, which is still a library that grew by hundreds of rows nobody
+// asked for.
+func TestRefreshAuthorBooks_MonitorNewItemsNoneImportsNothing(t *testing.T) {
+	books, _, _ := refreshDiscoveryFixture(t, &models.Author{
+		ForeignID: "OL-NEWITEMS-NONE", Name: "Imported Author", SortName: "Author, Imported",
+		MetadataProvider: "openlibrary", Monitored: true,
+		MonitorMode: models.AuthorMonitorModeAll, MonitorNewItems: models.AuthorMonitorNewItemsNone,
+	}, true)
+
+	if len(books) != 1 {
+		t.Fatalf("refresh under monitorNewItems=none added books: %d rows, want 1: %+v", len(books), bookTitles(books))
+	}
+}
+
+// The legitimate flow must survive: an author you monitor and have set to take
+// new items is one you asked Bindery to follow, so a refresh still discovers
+// their new work and monitors it per the mode.
+func TestRefreshAuthorBooks_MonitoredAuthorStillDiscovers(t *testing.T) {
+	books, _, _ := refreshDiscoveryFixture(t, &models.Author{
+		ForeignID: "OL-MONITORED", Name: "Followed Author", SortName: "Author, Followed",
+		MetadataProvider: "openlibrary", Monitored: true,
+		MonitorMode: models.AuthorMonitorModeAll, MonitorNewItems: models.AuthorMonitorNewItemsAll,
+	}, true)
+
+	if len(books) != 4 {
+		t.Fatalf("refresh of a monitored author should discover the catalogue: %d rows, want 4: %+v", len(books), bookTitles(books))
+	}
+	for _, b := range books {
+		if b.ForeignID != "OL-OWNED" && !b.Monitored {
+			t.Errorf("%q should be monitored under monitor-mode 'all'", b.Title)
+		}
+	}
+}
+
+// The empty-author carve-out: bulk "refresh" and "Refresh all authors" exist
+// partly to populate authors that arrived with no catalogue (plain-name CSV
+// rows, an add whose initial sync failed). An author with zero books can't be
+// surprised by gaining some, so discovery still runs there.
+func TestRefreshAuthorBooks_EmptyAuthorStillPopulates(t *testing.T) {
+	books, _, _ := refreshDiscoveryFixture(t, &models.Author{
+		ForeignID: "OL-EMPTY", Name: "Empty Author", SortName: "Author, Empty",
+		MetadataProvider: "openlibrary", Monitored: false,
+		MonitorMode: models.AuthorMonitorModeNone, MonitorNewItems: models.AuthorMonitorNewItemsNone,
+	}, false)
+
+	if len(books) != 4 {
+		t.Fatalf("refresh of an author with no books should populate it: %d rows, want 4: %+v", len(books), bookTitles(books))
+	}
+	for _, b := range books {
+		if b.Monitored {
+			t.Errorf("%q must not be monitored: the author is unmonitored and in monitor mode 'none'", b.Title)
+		}
+	}
+}
+
+// bookTitles renders a book slice for failure messages.
+// ── #1815: the two ways an "empty" author isn't actually empty ──────────────
+
+// emptiedAuthorFixture stands up an author who is NOT accepting newly
+// discovered books, lets the caller shape their (possibly zero) book rows, and
+// then runs a metadata refresh against a provider offering a four-work
+// catalogue. It returns every book row afterwards, excluded ones included.
+//
+// The provider's catalogue deliberately reuses the seeded titles so the tests
+// can pin the title-dedup path as well as the foreign-id one.
+func emptiedAuthorFixture(t *testing.T, seed func(ctx context.Context, authorRepo *db.AuthorRepo, bookRepo *db.BookRepo, author *models.Author)) []models.Book {
+	t.Helper()
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID: "OL-EMPTIED", Name: "Emptied Author", SortName: "Author, Emptied",
+		MetadataProvider: "openlibrary", Monitored: false,
+		MonitorMode: models.AuthorMonitorModeNone, MonitorNewItems: models.AuthorMonitorNewItemsNone,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	if seed != nil {
+		seed(ctx, authorRepo, bookRepo, author)
+	}
+
+	works := make([]models.Book, 0, 4)
+	for _, title := range []string{"Back Catalogue One", "Back Catalogue Two", "Back Catalogue Three", "Back Catalogue Four"} {
+		works = append(works, models.Book{
+			ForeignID: "OL-" + strings.ReplaceAll(title, " ", ""), Title: title,
+			SortTitle: strings.ToLower(title), Language: "eng", Status: models.BookStatusWanted,
+			Genres: []string{}, MetadataProvider: "openlibrary",
+		})
+	}
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil,
+		metadata.NewAggregator(&stubMetaProvider{name: "openlibrary", works: works}), nil, profileRepo, &searcherSpy{})
+	h.RefreshAuthorBooks(author, false, "")
+
+	books, err := bookRepo.ListByAuthorIncludingExcluded(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return books
+}
+
+// The delete-all loophole. The zero-books carve-out exists so an author who
+// arrived without a catalogue still gets one, but "no books" was also the state
+// a user reached by bulk-deleting an unmonitored author's catalogue — which is
+// the cleanup this feature's own troubleshooting text recommends. The next
+// bulk "Refresh metadata" then re-imported the whole bibliography.
+//
+// authors.catalogue_populated_at is what separates the two. Stamped once, when
+// a sync first creates books; never cleared.
+func TestRefreshAuthorBooks_DeletedCatalogueIsNotReimported(t *testing.T) {
+	books := emptiedAuthorFixture(t, func(ctx context.Context, authorRepo *db.AuthorRepo, _ *db.BookRepo, author *models.Author) {
+		// The author was populated at some point in the past and the user has
+		// since deleted every row.
+		if err := authorRepo.MarkCataloguePopulated(ctx, author.ID, time.Now().UTC().Add(-24*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	if len(books) != 0 {
+		t.Fatalf("refresh re-imported a catalogue the user deleted: %d rows: %v", len(books), bookTitles(books))
+	}
+}
+
+// The exclude-all loophole. ListByAuthor filters `excluded = 0`, so an author
+// whose every book is excluded read as an author with no books, the carve-out
+// fired, and discovery ran. Exact foreign-id matches were contained by the
+// global GetByForeignID lookup, but a work whose local row carries a different
+// id — a calibre: stub, a re-ided provider work — was created afresh under the
+// title the exclusion covered.
+func TestRefreshAuthorBooks_ExcludedCatalogueIsNotReimported(t *testing.T) {
+	books := emptiedAuthorFixture(t, func(ctx context.Context, _ *db.AuthorRepo, bookRepo *db.BookRepo, author *models.Author) {
+		// Same title as a work the provider offers, under a different foreign
+		// id — the calibre-stub shape, which the foreign-id lookup can't catch.
+		excluded := &models.Book{
+			ForeignID: "calibre:book:9", AuthorID: author.ID, Title: "Back Catalogue One",
+			SortTitle: "back catalogue one", Language: "eng", Status: models.BookStatusWanted,
+			Genres: []string{}, MetadataProvider: "calibre",
+		}
+		if err := bookRepo.Create(ctx, excluded); err != nil {
+			t.Fatal(err)
+		}
+		if err := bookRepo.SetExcluded(ctx, excluded.ID, true); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	if len(books) != 1 {
+		t.Fatalf("refresh treated an all-excluded author as empty and repopulated it: %d rows: %v",
+			len(books), bookTitles(books))
+	}
+	if !books[0].Excluded || books[0].ForeignID != "calibre:book:9" {
+		t.Errorf("the excluded row was replaced rather than left alone: %+v", books[0])
+	}
+}
+
+// An excluded book must stay excluded even for an author who IS accepting new
+// work — the exclusion is about the book, not the author's monitoring. The
+// title-dedup map is built from the non-excluded rows, so without the separate
+// excluded-title veto this recreates the book under the provider's id.
+func TestRefreshAuthorBooks_ExcludedTitleNotRecreatedForAMonitoredAuthor(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID: "OL-MONITORED-EXCL", Name: "Followed Author", SortName: "Author, Followed",
+		MetadataProvider: "openlibrary", Monitored: true,
+		MonitorMode: models.AuthorMonitorModeAll, MonitorNewItems: models.AuthorMonitorNewItemsAll,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	excluded := &models.Book{
+		ForeignID: "calibre:book:3", AuthorID: author.ID, Title: "Back Catalogue One",
+		SortTitle: "back catalogue one", Language: "eng", Status: models.BookStatusWanted,
+		Genres: []string{}, MetadataProvider: "calibre",
+	}
+	if err := bookRepo.Create(ctx, excluded); err != nil {
+		t.Fatal(err)
+	}
+	if err := bookRepo.SetExcluded(ctx, excluded.ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	works := []models.Book{
+		{ForeignID: "OL-BackCatalogueOne", Title: "Back Catalogue One", SortTitle: "back catalogue one",
+			Language: "eng", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+		{ForeignID: "OL-BackCatalogueTwo", Title: "Back Catalogue Two", SortTitle: "back catalogue two",
+			Language: "eng", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+	}
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil,
+		metadata.NewAggregator(&stubMetaProvider{name: "openlibrary", works: works}), nil, profileRepo, &searcherSpy{})
+	h.RefreshAuthorBooks(author, false, "")
+
+	live, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(live) != 1 || live[0].Title != "Back Catalogue Two" {
+		t.Fatalf("an excluded title was recreated: %v", bookTitles(live))
+	}
+}
+
+// End to end, without the test seeding the marker itself: the carve-out
+// populates a never-seen author, the user deletes the lot, and the next
+// refresh leaves it deleted. This is the loop the troubleshooting text sends
+// people around, so it has to close.
+func TestRefreshAuthorBooks_PopulateThenDeleteAllStaysDeleted(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID: "OL-ROUNDTRIP", Name: "Round Trip", SortName: "Trip, Round",
+		MetadataProvider: "openlibrary", Monitored: false,
+		MonitorMode: models.AuthorMonitorModeNone, MonitorNewItems: models.AuthorMonitorNewItemsNone,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	works := []models.Book{
+		{ForeignID: "OL-W1", Title: "Work One", SortTitle: "work one", Language: "eng",
+			Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+		{ForeignID: "OL-W2", Title: "Work Two", SortTitle: "work two", Language: "eng",
+			Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"},
+	}
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil,
+		metadata.NewAggregator(&stubMetaProvider{name: "openlibrary", works: works}), nil, profileRepo, &searcherSpy{})
+
+	// 1. The repair the carve-out exists for: an author with no catalogue gets one.
+	h.RefreshAuthorBooks(author, false, "")
+	populated, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(populated) != 2 {
+		t.Fatalf("the never-populated author was not repaired: %v", bookTitles(populated))
+	}
+
+	// 2. The user bulk-deletes the clutter, exactly as the user guide says to.
+	for _, b := range populated {
+		if err := bookRepo.Delete(ctx, b.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 3. The next bulk refresh must not undo that.
+	h.RefreshAuthorBooks(author, false, "")
+	after, err := bookRepo.ListByAuthorIncludingExcluded(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 0 {
+		t.Fatalf("the refresh re-imported the catalogue the user just deleted: %v", bookTitles(after))
+	}
+}
+
+func bookTitles(books []models.Book) []string {
+	titles := make([]string, 0, len(books))
+	for _, b := range books {
+		titles = append(titles, b.Title)
+	}
+	return titles
 }
 
 // ── #1559: author deleted while the catalogue sync goroutine is running ─────
@@ -5227,7 +5616,7 @@ func TestFetchAuthorBooks_AuthorDeletedDuringFetch_AbortsWithoutFKBurst(t *testi
 	}
 
 	logs := captureSlog(t)
-	h.fetchAuthorBooks(&snapshot, false, models.MediaTypeEbook, true)
+	h.fetchAuthorBooks(&snapshot, catalogueSyncOptions{mediaType: models.MediaTypeEbook, discovery: true})
 
 	if got := logs.String(); strings.Contains(got, "failed to create book") {
 		t.Errorf("sync against deleted author emitted per-book create failures:\n%s", got)
@@ -5374,6 +5763,301 @@ func TestAddBook_DirectInsertRejectsUnusableTitle(t *testing.T) {
 				t.Fatalf("unusable title %q must not be inserted, got %d row(s): %q", tc.title, len(rows), rows[0].Title)
 			}
 		})
+	}
+}
+
+// ── #1816: adding one book must add one book ────────────────────────────────
+
+// addBookBackCatalogueStub is the provider for the two tests below: the author
+// endpoint knows the picked work and three others, which is the shape of the
+// report ("War of the Worlds" by H. G. Wells, whose OL catalogue runs to
+// hundreds of works).
+func addBookBackCatalogueStub(directInsertFails bool) *stubMetaProvider {
+	picked := models.Book{
+		ForeignID: "OL27482W", Title: "The War of the Worlds", SortTitle: "the war of the worlds",
+		Language: "eng", Status: models.BookStatusWanted, Genres: []string{},
+		MetadataProvider: "openlibrary",
+	}
+	works := []models.Book{picked}
+	for _, title := range []string{"The Time Machine", "The Invisible Man", "The Island of Doctor Moreau"} {
+		works = append(works, models.Book{
+			ForeignID: "OL-" + strings.ReplaceAll(title, " ", ""), Title: title,
+			SortTitle: strings.ToLower(title), Language: "eng", Status: models.BookStatusWanted,
+			Genres: []string{}, MetadataProvider: "openlibrary",
+		})
+	}
+	stub := &stubMetaProvider{name: "openlibrary", works: works}
+	if directInsertFails {
+		stub.getBookErrByID = map[string]error{"OL27482W": errors.New("openlibrary: upstream 502")}
+	} else {
+		stub.getBookByID = map[string]*models.Book{"OL27482W": &picked}
+	}
+	return stub
+}
+
+// TestAddBook_DoesNotImportTheAuthorsBackCatalogue is the #1816 repro:
+// Authors → Add Book → pick one title by an author who isn't in the library
+// yet, and the author's entire bibliography arrived alongside it ("my
+// collection just went from 75 imported books to over 500"). The reporter's
+// comparison is the right one — adding a film to Radarr does not import the
+// director's filmography.
+func TestAddBook_DoesNotImportTheAuthorsBackCatalogue(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	// Hold the direct fetch of the picked book open, so the author row exists
+	// with NO books while a catalogue sync would be running — the live
+	// ordering (GetBook is a network call; the reporter's flood landed two
+	// minutes after the add) and the one where a back-catalogue import is
+	// unopposed. Anything a speculative sync inserts lands inside this window.
+	stub := addBookBackCatalogueStub(false)
+	entered := make(chan struct{}, 1)
+	gate := make(chan struct{})
+	stub.getBookEntered, stub.getBookGate = entered, gate
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil,
+		metadata.NewAggregator(stub), nil, profileRepo, nil)
+
+	body, _ := json.Marshal(map[string]any{
+		"foreignBookId":   "OL27482W",
+		"foreignAuthorId": "OL39307A",
+		"authorName":      "H. G. Wells",
+	})
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.AddBook(rec, httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body)))
+	}()
+
+	<-entered
+	time.Sleep(250 * time.Millisecond) // window for a catalogue sync to land rows
+	close(gate)
+	<-done
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	author, err := authorRepo.GetByForeignID(ctx, "OL39307A")
+	if err != nil || author == nil {
+		t.Fatalf("author not created: err=%v author=%v", err, author)
+	}
+
+	books, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("adding one book created %d rows, want 1: %v", len(books), bookTitles(books))
+	}
+	if books[0].ForeignID != "OL27482W" {
+		t.Errorf("wrong book created: %q (%s)", books[0].Title, books[0].ForeignID)
+	}
+}
+
+// The direct insert can still fail — a provider 502 on the book endpoint is
+// #1612's case — and the request then falls back to the author works endpoint.
+// That fallback must create the picked work and nothing else: it is the path
+// that used to be a full catalogue sync.
+func TestAddBook_WorksFallbackCreatesOnlyTheRequestedBook(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID: "OL39307A", Name: "H. G. Wells", SortName: "Wells, H. G.",
+		MetadataProvider: "openlibrary", Monitored: true,
+		MonitorMode: models.AuthorMonitorModeAll,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil,
+		metadata.NewAggregator(addBookBackCatalogueStub(true)), nil, profileRepo, nil)
+
+	body, _ := json.Marshal(map[string]any{
+		"foreignBookId":   "OL27482W",
+		"foreignAuthorId": "OL39307A",
+		"authorName":      "H. G. Wells",
+	})
+	rec := httptest.NewRecorder()
+	h.AddBook(rec, httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body)))
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 via the works fallback, got %d: %s", rec.Code, rec.Body.String())
+	}
+	books, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("fallback created %d rows, want 1: %v", len(books), bookTitles(books))
+	}
+	if books[0].ForeignID != "OL27482W" {
+		t.Errorf("wrong book created: %q (%s)", books[0].Title, books[0].ForeignID)
+	}
+}
+
+// The single-work fallback stands in for AddBook's direct insert, and #1612
+// settled what that means: "an explicit add of one specific work must not be
+// vetoed by catalogue-sync heuristics". Routing it through the create loop put
+// the strict media-type clamp and the allowed-languages filter back in front of
+// it — with a single-format default and strict on, an explicitly-picked
+// audiobook is dropped by the clamp; a work whose language falls outside the
+// profile is dropped by the filter. Either way the poll spends 15s, returns
+// 404 "try again shortly", and the orphan cleanup deletes the author the
+// request just created: precisely the failure #1612 was filed for.
+func TestAddBook_WorksFallbackIgnoresCatalogueFilters(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	// Strict policy on, single-format (ebook) default: the clamp is armed.
+	if err := settingsRepo.Set(ctx, SettingDefaultMediaType, models.MediaTypeEbook); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingsRepo.Set(ctx, SettingDefaultMediaTypeStrict, "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	author := &models.Author{
+		ForeignID: "OL39307A", Name: "H. G. Wells", SortName: "Wells, H. G.",
+		MetadataProvider: "openlibrary", Monitored: true,
+		MonitorMode: models.AuthorMonitorModeAll,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	// The picked work carries no format of its own — the request's audiobook
+	// choice is what makes it the wrong format under the clamp — and a language
+	// the default profile does not allow. Both filters would drop it.
+	picked := models.Book{
+		ForeignID: "OL27482W", Title: "La Guerre des mondes", SortTitle: "la guerre des mondes",
+		Language: "fre", Status: models.BookStatusWanted,
+		Genres: []string{}, MetadataProvider: "openlibrary",
+	}
+	stub := &stubMetaProvider{name: "openlibrary", works: []models.Book{picked}}
+	stub.getBookErrByID = map[string]error{"OL27482W": errors.New("openlibrary: upstream 502")}
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil,
+		metadata.NewAggregator(stub), settingsRepo, profileRepo, nil)
+
+	body, _ := json.Marshal(map[string]any{
+		"foreignBookId":   "OL27482W",
+		"foreignAuthorId": "OL39307A",
+		"authorName":      "H. G. Wells",
+		"mediaType":       models.MediaTypeAudiobook,
+	})
+	rec := httptest.NewRecorder()
+	h.AddBook(rec, httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body)))
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 via the works fallback, got %d: %s", rec.Code, rec.Body.String())
+	}
+	books, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("fallback created %d rows, want 1: %v", len(books), bookTitles(books))
+	}
+	// The request's explicit choice is still what the row ends up with.
+	if books[0].MediaType != models.MediaTypeAudiobook {
+		t.Errorf("created book mediaType = %q, want the requested audiobook", books[0].MediaType)
+	}
+}
+
+// A single-work run must leave the author itself alone. It now fires for
+// authors that already existed (the old speculative sync only ran for
+// just-created ones), so a provider 502 on one Add Book would otherwise
+// rewrite the author's profile fields and overwrite the author page's
+// last-sync numbers with "1 work, 1 added" — hiding a real catalogue sync's
+// skip notice behind an accounting of a single book.
+func TestAddBook_WorksFallbackLeavesTheAuthorAlone(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID: "OL39307A", Name: "H. G. Wells", SortName: "Wells, H. G.",
+		Description: "The description the user curated", MetadataProvider: "openlibrary",
+		Monitored: true, MonitorMode: models.AuthorMonitorModeAll,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	stub := addBookBackCatalogueStub(true)
+	// The provider would happily overwrite the author's profile if asked.
+	stub.author = &models.Author{
+		ForeignID: "OL39307A", Name: "H. G. Wells", SortName: "Wells, H. G.",
+		Description: "Provider blurb", ImageURL: "https://covers.example/wells.jpg",
+		MetadataProvider: "openlibrary",
+	}
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil,
+		metadata.NewAggregator(stub), nil, profileRepo, nil)
+	// A real catalogue sync ran earlier and reported works it filtered out.
+	h.syncSummaries.record(author.ID, models.AuthorSyncSummary{
+		CompletedAt: time.Now().UTC().Add(-time.Hour), Total: 40, Added: 12, SkippedLanguage: 28,
+	})
+
+	body, _ := json.Marshal(map[string]any{
+		"foreignBookId":   "OL27482W",
+		"foreignAuthorId": "OL39307A",
+		"authorName":      "H. G. Wells",
+	})
+	rec := httptest.NewRecorder()
+	h.AddBook(rec, httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if got := h.syncSummaries.get(author.ID); got == nil || got.Total != 40 || got.SkippedLanguage != 28 {
+		t.Errorf("the one-book fallback overwrote the author's last-sync summary: %+v", got)
+	}
+	stored, err := authorRepo.GetByID(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Description != "The description the user curated" || stored.ImageURL != "" {
+		t.Errorf("the one-book fallback rewrote the author profile: %+v", stored)
 	}
 }
 
