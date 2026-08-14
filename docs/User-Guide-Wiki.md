@@ -222,10 +222,14 @@ to the records. Things worth knowing before you judge the results:
 - Unmatched files are listed after the scan, each with the reason it missed:
   the parsed author isn't in your library (fix the file's tags or folder name),
   the author matched but has no book waiting for a file (populate that author's
-  catalogue), or no title matched. Use **Manual Import** to resolve the rest by
-  hand.
+  catalogue), no title matched, or no title could be read from the file at all
+  (rename it). Use **Manual Import** to resolve the rest by hand.
 - A folder holding both an ebook and an audiobook for the same book attaches
   both in a single scan — one file per format, so a second scan is not needed.
+- A PDF, TXT, RTF or CBZ sitting in a folder that also holds audio is treated as
+  an **audiobook supplement** (the companion PDF Audible-style releases ship)
+  and is not attached as the book's ebook. The same file in a folder with no
+  audio in it is treated as an ebook as usual.
 
 ## Metadata: where book data comes from
 

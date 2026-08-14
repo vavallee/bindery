@@ -10,8 +10,8 @@ export const libraryApi = {
     unmatched: number
     tag_read_failed?: number
     // reason is the scanner's per-file diagnostic (#1958): 'author_not_in_library',
-    // 'no_candidate_books' or 'no_title_match'. Optional — older cached scan
-    // results were written before it existed.
+    // 'no_candidate_books', 'no_title_match' or 'no_title_parsed'. Optional —
+    // older cached scan results were written before it existed.
     unmatched_files?: Array<{ path: string; parsed_title: string; parsed_author: string; reason?: string }>
     // Additive (feat/library-scan-visibility): the resolved roots the scan
     // walked and an explicit zero-files signal. Optional so older cached scan

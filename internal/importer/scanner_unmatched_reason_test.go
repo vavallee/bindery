@@ -124,6 +124,35 @@ func TestScanLibrary_UnmatchedReasonNoTitleMatch(t *testing.T) {
 	}
 }
 
+// TestScanLibrary_UnmatchedReasonNoTitleParsed covers the fourth case: nothing
+// in the path parsed as a title, so the title tier never ran. Reporting
+// no_title_match here told the user "no book by that author matched this title"
+// about a file that had no title to match — the fix is to rename the file, and
+// the reason has to say that.
+func TestScanLibrary_UnmatchedReasonNoTitleParsed(t *testing.T) {
+	s, _, books, authors, settings, libraryDir, ctx := unmatchedFixture(t)
+
+	author := &models.Author{ForeignID: "ol:weir", Name: "Andy Weir", SortName: "Weir, Andy", Monitored: true, MetadataProvider: "openlibrary"}
+	if err := authors.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{
+		ForeignID: "ol:phm", AuthorID: author.ID, Title: "Project Hail Mary", SortTitle: "project hail mary",
+		Status: models.BookStatusWanted, Monitored: true, AnyEditionOK: true,
+		MediaType: models.MediaTypeEbook, MetadataProvider: "openlibrary",
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	// A name that is nothing but a stripped parenthetical year parses to an
+	// empty title, which is exactly the shape a release dump leaves behind.
+	got := scanOneUnmatched(t, s, settings, ctx, libraryDir, "Andy Weir", "(2021).epub")
+	if got.Reason != unmatchedReasonNoTitleParsed {
+		t.Errorf("reason = %q, want %q", got.Reason, unmatchedReasonNoTitleParsed)
+	}
+}
+
 // TestScanLibrary_UnmatchedReasonUsesTheAuthorFallback ties #1958 back to
 // #1956: a contributor-list tag whose author IS in the library must not be
 // reported as "author not in library" just because the raw tag string can't

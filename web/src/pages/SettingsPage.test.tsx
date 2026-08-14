@@ -741,6 +741,33 @@ describe('SettingsPage', () => {
     expect(screen.getByText('settings.general.scanReason.author_not_in_library')).toBeInTheDocument()
   })
 
+  it('does not generalise the author hint from a truncated unmatched sample', async () => {
+    // The scanner caps unmatched_files at 1000 entries. every() over that sample
+    // proves nothing about the other 4000, so the specific "your authors don't
+    // match" hint must fall back to the generic advice when the list is capped.
+    vi.mocked(api.libraryScanStatus).mockResolvedValue({
+      ran_at: new Date().toISOString(),
+      files_found: 5000,
+      reconciled: 0,
+      unmatched: 5000,
+      library_dir: '/books',
+      scanned_paths: ['/books'],
+      no_files_found: false,
+      unmatched_files: [{
+        path: '/books/Becky Chambers/A Psalm for the Wild-Built.epub',
+        parsed_title: 'A Psalm for the Wild-Built',
+        parsed_author: 'Becky Chambers',
+        reason: 'author_not_in_library',
+      }],
+    })
+
+    renderSettings()
+
+    expect(await screen.findByText('settings.general.lastScan')).toBeInTheDocument()
+    expect(screen.getByText('settings.general.scanAllUnmatchedHint')).toBeInTheDocument()
+    expect(screen.queryByText('settings.general.scanUnmatchedAuthorUnknown')).not.toBeInTheDocument()
+  })
+
   it('keeps the catalogue hint when the author matched but has no candidate books', async () => {
     // The original advice is right for #875's case, so a no_candidate_books
     // diagnosis must still produce it — the fix narrows the message, it doesn't

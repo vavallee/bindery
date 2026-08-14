@@ -79,11 +79,16 @@ func TestScanLibrary_DualFormatFolderAttachesBothInOnePass(t *testing.T) {
 	}
 }
 
-// TestScanLibrary_SameFormatFilesStillClaimOnce keeps the hazard the guard was
-// written for covered: two files of the SAME format that both fuzzy-match one
-// book must not both attach, because the second AddBookFile would overwrite the
-// first (last write wins). Only the (book, format) pair is claimed — not the
-// book — so this is the assertion that stops the #1957 fix from going too far.
+// TestScanLibrary_SameFormatFilesStillClaimOnce pins the scanner's matching
+// POLICY: two files of the SAME format that both fuzzy-match one book must not
+// both attach. Nothing would be corrupted if they did — BookFileRepo.Add is
+// INSERT OR IGNORE, book_files is UNIQUE on path alone, and migration 028 exists
+// so multi-file downloads are all recorded, so the second file would simply
+// append a row. The reason to refuse is that the title tier is a guess at
+// JW >= 0.85: hanging every near-miss off one book hides the mistake inside the
+// book's file list, where Unmatched would have shown it. Only the (book, format)
+// pair is claimed — not the book — so this is the assertion that stops the
+// #1957 fix from going too far.
 func TestScanLibrary_SameFormatFilesStillClaimOnce(t *testing.T) {
 	s, books, dir, book, ctx := dualFormatFixture(t)
 
@@ -133,6 +138,84 @@ func TestScanLibrary_EbookNextToTrackedAudiobook(t *testing.T) {
 	got := bookFileFormats(t, books, ctx, book.ID)
 	if got[models.MediaTypeEbook] != filepath.Clean(epub) {
 		t.Fatalf("epub beside a tracked audiobook was not reconciled: %v", got)
+	}
+}
+
+// TestScanLibrary_AudiobookSupplementPDFNotAttachedAsEbook covers the cost of
+// narrowing the parent-directory absorption to audio files: an audiobook release
+// routinely ships a companion PDF, which carries an ebook extension and so
+// reaches the matching tiers as an "ebook". The book is a 'both' book whose
+// audiobook is already attached and whose ebook is missing, which
+// isReconcileCandidate deliberately treats as a candidate (#1148), and the PDF's
+// title fuzzy-matches at 1.0 — so the book would end up claiming a chapter PDF
+// as its ebook edition.
+func TestScanLibrary_AudiobookSupplementPDFNotAttachedAsEbook(t *testing.T) {
+	s, books, dir, book, ctx := dualFormatFixture(t)
+
+	m4b := filepath.Join(dir, "Project Hail Mary.m4b")
+	if err := os.WriteFile(m4b, buildID3v23("Project Hail Mary", "Andy Weir", ""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.AddBookFile(ctx, book.ID, models.MediaTypeAudiobook, m4b); err != nil {
+		t.Fatal(err)
+	}
+	pdf := filepath.Join(dir, "Project Hail Mary.pdf")
+	if err := os.WriteFile(pdf, []byte("%PDF-1.4 companion"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s.ScanLibrary(ctx)
+
+	got := bookFileFormats(t, books, ctx, book.ID)
+	if p, ok := got[models.MediaTypeEbook]; ok {
+		t.Fatalf("audiobook supplement attached as the book's ebook: %q", p)
+	}
+}
+
+// TestScanLibrary_AudiobookSupplementInSamePassNotAttached is the same hazard
+// without a prior scan: the m4b and its companion PDF arrive together, the m4b
+// claims the audiobook slot, and the per-format claim leaves the ebook slot
+// open for the PDF. Folder context, not walk order, is what has to reject it.
+func TestScanLibrary_AudiobookSupplementInSamePassNotAttached(t *testing.T) {
+	s, books, dir, book, ctx := dualFormatFixture(t)
+
+	m4b := filepath.Join(dir, "Project Hail Mary.m4b")
+	if err := os.WriteFile(m4b, buildID3v23("Project Hail Mary", "Andy Weir", ""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pdf := filepath.Join(dir, "Project Hail Mary.pdf")
+	if err := os.WriteFile(pdf, []byte("%PDF-1.4 companion"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s.ScanLibrary(ctx)
+
+	got := bookFileFormats(t, books, ctx, book.ID)
+	if got[models.MediaTypeAudiobook] != filepath.Clean(m4b) {
+		t.Errorf("audiobook file = %q, want %q", got[models.MediaTypeAudiobook], m4b)
+	}
+	if p, ok := got[models.MediaTypeEbook]; ok {
+		t.Errorf("audiobook supplement attached as the book's ebook: %q", p)
+	}
+}
+
+// TestScanLibrary_PDFWithoutAudioStillReconciles is the other side of the
+// supplement rule: a PDF is only a supplement when audio shares its folder. A
+// PDF-only library is a legitimate ebook library and must keep reconciling —
+// rejecting .pdf as an ebook outright would have broken it.
+func TestScanLibrary_PDFWithoutAudioStillReconciles(t *testing.T) {
+	s, books, dir, book, ctx := dualFormatFixture(t)
+
+	pdf := filepath.Join(dir, "Project Hail Mary.pdf")
+	if err := os.WriteFile(pdf, []byte("%PDF-1.4 the book"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s.ScanLibrary(ctx)
+
+	got := bookFileFormats(t, books, ctx, book.ID)
+	if got[models.MediaTypeEbook] != filepath.Clean(pdf) {
+		t.Fatalf("PDF in an audio-free folder was not reconciled: %v", got)
 	}
 }
 

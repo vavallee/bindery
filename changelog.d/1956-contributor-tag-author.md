@@ -8,4 +8,5 @@
   contributor list, so the file returned to Unmatched on every scan. The tag is
   still preferred when it matches, but it no longer destroys the folder author
   — when the tag matches nobody, the scan falls back to the folder author and
-  then to the first credited contributor.
+  then to the credited names in the list — every one of them that matches an
+  author you have, so a book catalogued under the second name is still found.

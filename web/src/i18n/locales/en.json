@@ -758,8 +758,13 @@
       "scanReason": {
         "author_not_in_library": "Parsed author isn't in your library",
         "no_candidate_books": "Author matched, but has no book waiting for a file",
-        "no_title_match": "No book by that author matched this title"
+        "no_title_match": "No book by that author matched this title",
+        "no_title_parsed": "No title could be read from this file's name or tags"
       },
+      "scanUnmatchedPath": "Path",
+      "scanUnmatchedParsedTitle": "Parsed Title",
+      "scanUnmatchedParsedAuthor": "Parsed Author",
+      "scanUnmatchedWhy": "Why",
       "opds": "OPDS Feed",
       "opdsFeedUrl": "OPDS Feed URL",
       "opdsHint": "Use this URL in KOReader, Moon+ Reader, or any OPDS client. Authenticate with your API key as the password (leave the username blank or use any value).",

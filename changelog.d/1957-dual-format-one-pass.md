@@ -7,4 +7,7 @@
   book files are stored anyway. Two files of the *same* format still can't both
   claim one book. An ebook sitting next to an already-attached audiobook is no
   longer skipped as "already tracked" either — that shortcut now only absorbs
-  the audiobook's own sibling tracks.
+  the audiobook's own sibling tracks, plus the supplement files an audiobook
+  release ships (a companion PDF, liner notes, a stray `.txt`), which are never
+  attached as the book's ebook edition. A PDF in a folder with no audio in it is
+  still an ebook.

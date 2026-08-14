@@ -513,8 +513,13 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                     // file's parsed author matches NO author in the library,
                     // refreshing an author cannot help — name the parsed author
                     // instead, which is the evidence to act on (#1958).
+                    // unmatched_files is a sample capped at 1000 by the scanner;
+                    // every() over it says nothing about the rest, so a run with
+                    // 5000 unmatched files whose first 1000 happen to share a
+                    // reason must not claim the diagnosis holds library-wide.
                     const files = lastScan.unmatched_files ?? []
-                    if (files.length === 0 || !files.every(f => f.reason === 'author_not_in_library')) {
+                    const truncated = files.length < lastScan.unmatched
+                    if (truncated || files.length === 0 || !files.every(f => f.reason === 'author_not_in_library')) {
                       return t('settings.general.scanAllUnmatchedHint')
                     }
                     const authors = Array.from(new Set(files.map(f => f.parsed_author).filter(Boolean)))
@@ -533,10 +538,10 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                     <table className="w-full text-xs">
                       <thead className="sticky top-0 bg-slate-100 dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800">
                         <tr>
-                          <th className="text-left p-2 font-medium">Path</th>
-                          <th className="text-left p-2 font-medium">Parsed Title</th>
-                          <th className="text-left p-2 font-medium">Parsed Author</th>
-                          <th className="text-left p-2 font-medium">Why</th>
+                          <th className="text-left p-2 font-medium">{t('settings.general.scanUnmatchedPath')}</th>
+                          <th className="text-left p-2 font-medium">{t('settings.general.scanUnmatchedParsedTitle')}</th>
+                          <th className="text-left p-2 font-medium">{t('settings.general.scanUnmatchedParsedAuthor')}</th>
+                          <th className="text-left p-2 font-medium">{t('settings.general.scanUnmatchedWhy')}</th>
                         </tr>
                       </thead>
                       <tbody>
