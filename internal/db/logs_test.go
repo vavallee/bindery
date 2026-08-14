@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"log/slog"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -324,4 +325,83 @@ func TestLogRepo_ErrorSummary(t *testing.T) {
 			t.Errorf("tie-break ordering wrong: %v", top)
 		}
 	})
+}
+
+// TestLogRepo_KeysetCursorSurvivesConcurrentInsert is why the export pages by
+// cursor instead of OFFSET. The DB log writer is asynchronous, so a record
+// stamped inside the window can be INSERTed between two pages of a walk; with
+// OFFSET that shifts every later page and repeats a row, and retention pruning
+// mid-walk skips rows the same way. Resuming from the last row read is immune.
+func TestLogRepo_KeysetCursorSurvivesConcurrentInsert(t *testing.T) {
+	repo, cleanup := openLogDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	for i := 4; i >= 1; i-- {
+		insertEntry(t, repo, now.Add(-time.Duration(i)*time.Second), "INFO", "scheduler", "entry-"+strconv.Itoa(i))
+	}
+
+	page1, err := repo.Query(ctx, LogFilter{Limit: 2})
+	if err != nil {
+		t.Fatalf("page 1: %v", err)
+	}
+	if len(page1) != 2 || page1[0].Message != "entry-1" || page1[1].Message != "entry-2" {
+		t.Fatalf("page 1 = %v, want the two newest rows", messages(page1))
+	}
+
+	// A log line written while the export is streaming.
+	insertEntry(t, repo, now, "INFO", "scheduler", "arrived-mid-walk")
+
+	last := page1[len(page1)-1]
+	page2, err := repo.Query(ctx, LogFilter{Limit: 2, BeforeTS: last.TS, BeforeID: last.ID})
+	if err != nil {
+		t.Fatalf("page 2: %v", err)
+	}
+	if len(page2) != 2 || page2[0].Message != "entry-3" || page2[1].Message != "entry-4" {
+		t.Fatalf("cursor page 2 = %v, want entry-3, entry-4", messages(page2))
+	}
+
+	// The OFFSET equivalent is what this replaced: with a row inserted mid-walk
+	// it re-reads one the caller already has.
+	offsetPage2, err := repo.Query(ctx, LogFilter{Limit: 2, Offset: 2})
+	if err != nil {
+		t.Fatalf("offset page 2: %v", err)
+	}
+	t.Logf("offset paging returned %v after page 1 %v", messages(offsetPage2), messages(page1))
+}
+
+// TestLogRepo_QueryOrdersTiesById pins the ORDER BY tiebreaker. Several records
+// routinely share a ts, and a walk over a same-timestamp run needs a total
+// order or it can repeat or skip rows between pages.
+func TestLogRepo_QueryOrdersTiesById(t *testing.T) {
+	repo, cleanup := openLogDB(t)
+	defer cleanup()
+
+	ts := time.Now().UTC().Truncate(time.Second)
+	for i := 1; i <= 5; i++ {
+		insertEntry(t, repo, ts, "INFO", "scheduler", "entry-"+strconv.Itoa(i))
+	}
+
+	entries, err := repo.Query(context.Background(), LogFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(entries) != 5 {
+		t.Fatalf("got %d entries, want 5", len(entries))
+	}
+	for i := 1; i < len(entries); i++ {
+		if entries[i-1].ID <= entries[i].ID {
+			t.Fatalf("rows sharing a ts are not ordered by id DESC: %v", messages(entries))
+		}
+	}
+}
+
+// messages renders entry messages for failure output.
+func messages(entries []LogEntry) []string {
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.Message)
+	}
+	return out
 }

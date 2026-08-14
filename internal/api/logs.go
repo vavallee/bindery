@@ -176,25 +176,40 @@ func (h *LogHandler) Export(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = bw.flush() }()
 
 	if h.logs == nil {
-		// Ring-buffer fallback (no persistent store attached).
+		// Ring-buffer fallback (no persistent store attached). Ring.Snapshot
+		// filters on level and limit ONLY — component, q, from and to are not
+		// applied — so the header must describe what actually happened rather
+		// than echoing the request. This file is meant to be pasted into public
+		// issues; a header claiming "component=downloader" over a dump of the
+		// whole buffer would send a maintainer chasing the wrong process.
 		entries := h.ring.Snapshot(f.Level, maxRows)
-		bw.header(f, maxRows, "in-memory ring buffer")
+		bw.header(ringFilter(f), maxRows, "in-memory ring buffer (no persistent log store)")
+		if ignored := ignoredRingFilters(f); ignored != "" {
+			bw.printf("# NOT applied (unsupported without a persistent log store): %s\n", ignored)
+		}
+		bw.str("# order: oldest first\n")
+		bw.str("#\n")
 		for _, e := range entries {
 			bw.line(e.Time, e.Level, "", e.Msg, e.Attrs)
 		}
 		bw.printf("# %d entries\n", len(entries))
+		if len(entries) >= maxRows {
+			bw.printf("# hit the %d-entry limit — older buffered entries were not written\n", maxRows)
+		}
 		return
 	}
 
-	// Pin the upper bound of the window before paging. Query orders by ts
-	// DESC, so without a fixed ceiling a log line written mid-export would
-	// shift every later page by one row and duplicate entries in the file.
+	// Pin the upper bound of the window before paging so a line written
+	// mid-export can't enter the result set halfway through the walk.
+	explicitRange := !f.FromTS.IsZero() || !f.ToTS.IsZero()
 	if f.ToTS.IsZero() {
 		f.ToTS = time.Now().UTC()
 	}
-	// Same last-hour default as List, so an unfiltered export matches the
-	// unfiltered table rather than silently dumping the full retention window.
-	if f.FromTS.IsZero() {
+	// Same last-hour default as List — and on the same condition: only when
+	// NEITHER bound was given. List leaves a to-only range unbounded below, so
+	// deriving from=to-1h here produced a file covering one hour of the window
+	// the table on screen was showing in full (#1903).
+	if !explicitRange {
 		f.FromTS = f.ToTS.Add(-time.Hour)
 	}
 	bw.header(f, maxRows, "")
@@ -204,7 +219,6 @@ func (h *LogHandler) Export(w http.ResponseWriter, r *http.Request) {
 	written := 0
 	for written < maxRows {
 		page.Limit = min(logExportPageSize, maxRows-written)
-		page.Offset = f.Offset + written
 
 		entries, err := h.logs.Query(r.Context(), page)
 		if err != nil {
@@ -221,6 +235,16 @@ func (h *LogHandler) Export(w http.ResponseWriter, r *http.Request) {
 		if len(entries) < page.Limit {
 			break
 		}
+		// Walk by keyset, not OFFSET: the DB log writer is asynchronous, so a
+		// record stamped inside the window can be INSERTed after an earlier page
+		// was read and shift every later offset, repeating a row; pruning
+		// mid-export skips rows the same way. Resuming from the last row read
+		// is immune to both, and it is a linear index walk rather than
+		// re-scanning and discarding `written` rows per page.
+		last := entries[len(entries)-1]
+		page.BeforeTS = last.TS
+		page.BeforeID = last.ID
+		page.Offset = 0
 		if err := bw.flush(); err != nil {
 			return
 		}
@@ -231,8 +255,39 @@ func (h *LogHandler) Export(w http.ResponseWriter, r *http.Request) {
 
 	bw.printf("# %d entries\n", written)
 	if written >= maxRows {
-		bw.printf("# reached the %d-entry export cap — there may be more; narrow the level, component, search or date range to reach them\n", maxRows)
+		if r.URL.Query().Get("limit") != "" {
+			// The ceiling was the caller's own limit param, so don't dress it
+			// up as a system cap the way the server-imposed one is.
+			bw.printf("# stopped at the requested limit of %d entries — there may be more\n", maxRows)
+		} else {
+			bw.printf("# reached the %d-entry export cap — there may be more; narrow the level, component, search or date range to reach them\n", maxRows)
+		}
 	}
+}
+
+// ringFilter strips the filter fields Ring.Snapshot does not implement, so the
+// export header describes the file that was actually produced.
+func ringFilter(f db.LogFilter) db.LogFilter {
+	return db.LogFilter{Level: f.Level, HasLevel: f.HasLevel, Limit: f.Limit}
+}
+
+// ignoredRingFilters names the requested filters the ring-buffer path silently
+// drops, for the warning line above the entries.
+func ignoredRingFilters(f db.LogFilter) string {
+	var parts []string
+	if f.Component != "" {
+		parts = append(parts, "component")
+	}
+	if f.Q != "" {
+		parts = append(parts, "q")
+	}
+	if !f.FromTS.IsZero() {
+		parts = append(parts, "from")
+	}
+	if !f.ToTS.IsZero() {
+		parts = append(parts, "to")
+	}
+	return strings.Join(parts, ", ")
 }
 
 // exportWriter is the plain-text sink for Export. Per-write errors are dropped
@@ -299,12 +354,20 @@ func describeLogFilter(f db.LogFilter) string {
 // one entry is always one line (greppable, and a multi-line stack trace can't
 // forge a fake record), and attrs are sorted so two exports of the same rows
 // diff cleanly.
+//
+// EVERY part of the line goes through exportValue — level, component, attr keys
+// and attr values, not just the message. All of them are code-supplied today
+// (see db.LogHandler), so this is not an attacker-reachable escape; it is the
+// promise the endpoint makes. A component carrying a newline would otherwise
+// forge log lines in a file destined for a public issue, and an unquoted key
+// containing a space or '=' would break the key=value parse for whoever greps
+// it.
 func (e *exportWriter) line(ts time.Time, level, component, msg string, fields map[string]string) {
 	e.str(ts.UTC().Format("2006-01-02T15:04:05.000Z"))
 	e.b(' ')
-	e.str(level)
+	e.str(exportValue(level))
 	if component != "" {
-		e.str(" [" + component + "]")
+		e.str(" [" + exportValue(component) + "]")
 	}
 	e.b(' ')
 	e.str(exportValue(msg))
@@ -316,18 +379,22 @@ func (e *exportWriter) line(ts time.Time, level, component, msg string, fields m
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			v := exportValue(fields[k])
 			e.b(' ')
-			e.str(k)
+			e.str(exportToken(exportValue(k)))
 			e.b('=')
-			if strings.ContainsAny(v, " \t=\"") {
-				e.str(strconv.Quote(v))
-			} else {
-				e.str(v)
-			}
+			e.str(exportToken(exportValue(fields[k])))
 		}
 	}
 	e.b('\n')
+}
+
+// exportToken quotes a key or value that would otherwise break the key=value
+// shape of a log line.
+func exportToken(s string) string {
+	if s == "" || strings.ContainsAny(s, " \t=\"") {
+		return strconv.Quote(s)
+	}
+	return s
 }
 
 // exportValue prepares a message or attr value for the text export: secrets

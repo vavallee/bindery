@@ -30,6 +30,20 @@ type LogFilter struct {
 	Q         string
 	Limit     int
 	Offset    int
+
+	// BeforeTS/BeforeID are the keyset cursor: when BeforeID is non-zero the
+	// query returns only rows ordered strictly after (BeforeTS, BeforeID) in the
+	// result's own ts DESC, id DESC order. Pass the last row of the previous
+	// page to walk a large result set.
+	//
+	// OFFSET paging can't do that safely here. The DB log writer is async
+	// (db.LogHandler pushes to a channel and a drain goroutine INSERTs), so a
+	// record stamped inside the window can land after page 1 was read, shift
+	// every later offset by one and repeat a row; retention pruning mid-walk
+	// shifts the other way and skips rows. A cursor is also a linear walk of the
+	// ts index instead of re-scanning and discarding OFFSET rows per page.
+	BeforeTS time.Time
+	BeforeID int64
 }
 
 // LogRepo reads and writes the logs table.
@@ -84,6 +98,10 @@ func (r *LogRepo) Query(ctx context.Context, f LogFilter) ([]LogEntry, error) {
 		pattern := "%" + escapeLike(f.Q) + "%"
 		args = append(args, pattern, pattern)
 	}
+	if f.BeforeID > 0 {
+		conds = append(conds, "(ts < ? OR (ts = ? AND id < ?))")
+		args = append(args, f.BeforeTS.UTC(), f.BeforeTS.UTC(), f.BeforeID)
+	}
 
 	where := ""
 	if len(conds) > 0 {
@@ -98,8 +116,12 @@ func (r *LogRepo) Query(ctx context.Context, f LogFilter) ([]LogEntry, error) {
 
 	//nolint:gosec // where clause is built from static strings + parameterised placeholders
 	rows, err := r.db.QueryContext(ctx,
+		// id DESC is the tiebreaker: several records routinely share a ts (the
+		// column is second-resolution for some writers), and without it SQLite
+		// may return them in a different order per page, so an OFFSET or cursor
+		// walk could repeat or skip rows inside a same-timestamp run.
 		`SELECT id, ts, level, component, message, fields FROM logs`+where+
-			` ORDER BY ts DESC LIMIT ? OFFSET ?`,
+			` ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`,
 		args...,
 	)
 	if err != nil {

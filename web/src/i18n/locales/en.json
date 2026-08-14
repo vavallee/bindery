@@ -674,7 +674,7 @@
       "clearFilters": "Clear filters",
       "download": "Download",
       "downloadHint": "Download the entries matching the current filters as a text file",
-      "downloadNote": "Download saves the entries matching the current filters as a plain-text file (up to 50,000) you can attach to a bug report.",
+      "downloadNote": "Download saves the entries matching the filters the table is showing as a plain-text file you can attach to a bug report. Large exports are capped; the file says so in its footer when that happens.",
       "page": "Page {{page}}"
     },
     "general": {

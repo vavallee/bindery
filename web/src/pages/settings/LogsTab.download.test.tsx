@@ -55,6 +55,7 @@ describe('LogsTab log download (#1903)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'ERROR' }))
     fireEvent.change(screen.getByPlaceholderText('settings.logs.componentPlaceholder'), { target: { value: 'importer' } })
     fireEvent.change(screen.getByPlaceholderText('settings.logs.searchPlaceholder'), { target: { value: 'hardlink' } })
+    fireEvent.click(screen.getByText('common.search'))
 
     await waitFor(() => {
       const href = downloadLink().getAttribute('href') ?? ''
@@ -62,6 +63,37 @@ describe('LogsTab log download (#1903)', () => {
       expect(href).toContain('component=importer')
       expect(href).toContain('q=hardlink')
     })
+  })
+
+  it('exports what the table is showing, not what has only been typed', async () => {
+    // The table refetches on Search / a level pill / the 5s poll, so a filter
+    // that has only been typed is not on screen yet. Building the href from the
+    // live inputs handed the user a file filtered differently from the rows
+    // they were looking at.
+    render(<LogsTab />)
+    await waitFor(() => expect(api.getLogs).toHaveBeenCalled())
+
+    fireEvent.change(screen.getByPlaceholderText('settings.logs.componentPlaceholder'), { target: { value: 'importer' } })
+
+    expect(downloadLink().getAttribute('href')).not.toContain('component=importer')
+
+    fireEvent.click(screen.getByText('common.search'))
+    await waitFor(() => expect(downloadLink().getAttribute('href')).toContain('component=importer'))
+  })
+
+  it('applies the level the pill just set, not the previous one', async () => {
+    // fetchLogs closes over the state from before setLogFilter, so clicking a
+    // pill used to fetch — and advertise — the previously selected level.
+    render(<LogsTab />)
+    await waitFor(() => expect(api.getLogs).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByRole('button', { name: 'WARN' }))
+    await waitFor(() => expect(api.getLogs).toHaveBeenCalledWith(expect.objectContaining({ level: 'warn' })))
+
+    vi.mocked(api.getLogs).mockClear()
+    fireEvent.click(screen.getByRole('button', { name: 'ERROR' }))
+    await waitFor(() => expect(api.getLogs).toHaveBeenCalledWith(expect.objectContaining({ level: 'error' })))
+    expect(downloadLink().getAttribute('href')).toContain('level=error')
   })
 
   it('sends the date range as RFC3339 to both the list and the export', async () => {
@@ -73,11 +105,10 @@ describe('LogsTab log download (#1903)', () => {
     fireEvent.change(screen.getByLabelText('settings.logs.from'), { target: { value: '2026-08-12T14:03' } })
     const expected = new Date('2026-08-12T14:03').toISOString()
 
-    await waitFor(() => expect(downloadLink().getAttribute('href')).toContain(`from=${encodeURIComponent(expected)}`))
-
     vi.mocked(api.getLogs).mockClear()
     fireEvent.click(screen.getByText('common.search'))
     await waitFor(() => expect(api.getLogs).toHaveBeenCalledWith(expect.objectContaining({ from: expected })))
+    expect(downloadLink().getAttribute('href')).toContain(`from=${encodeURIComponent(expected)}`)
   })
 
   it('states the export cap next to the log output', async () => {

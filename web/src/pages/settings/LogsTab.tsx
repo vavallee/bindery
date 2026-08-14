@@ -67,9 +67,16 @@ export default function LogsTab() {
     q: logSearch || undefined,
   })
 
-  const fetchLogs = (page = 0) => {
+  // appliedFilters is the filter set the CURRENT table contents were fetched
+  // with. The download link is built from it, not from the live inputs: typing
+  // a component and clicking Download without pressing Search used to produce a
+  // file filtered differently from the screen (#1903).
+  const [appliedFilters, setAppliedFilters] = useState<LogQuery>({})
+
+  const fetchLogs = (page = 0, params: LogQuery = filterParams()) => {
+    setAppliedFilters(params)
     api.getLogs({
-      ...filterParams(),
+      ...params,
       limit: logPageSize,
       offset: page * logPageSize,
     }).then(entries => {
@@ -149,7 +156,10 @@ export default function LogsTab() {
           {(['all', 'debug', 'info', 'warn', 'error'] as const).map(f => (
             <button
               key={f}
-              onClick={() => { setLogFilter(f); fetchLogs(0) }}
+              // The level goes in explicitly: fetchLogs closes over the state
+              // from before setLogFilter, so it would otherwise fetch (and
+              // advertise) the previously selected level.
+              onClick={() => { setLogFilter(f); fetchLogs(0, { ...filterParams(), level: f !== 'all' ? f : undefined }) }}
               className={`px-2.5 py-1 rounded font-medium transition-colors ${logFilter === f
                 ? f === 'error' ? 'bg-red-600 text-white'
                   : f === 'warn' ? 'bg-amber-500 text-white'
@@ -243,7 +253,7 @@ export default function LogsTab() {
         <button
           onClick={() => {
             setLogFrom(''); setLogTo(''); setLogComponent(''); setLogSearch(''); setLogFilter('all')
-            setTimeout(() => fetchLogs(0), 0)
+            fetchLogs(0, {})
           }}
           className="px-2 py-1 rounded border border-slate-300 dark:border-zinc-700 text-slate-500 dark:text-zinc-500 text-xs"
         >
@@ -253,7 +263,7 @@ export default function LogsTab() {
             the session cookie authenticates it and the server supplies the
             timestamped filename, so there is nothing to do in JS. */}
         <a
-          href={api.logExportURL(filterParams())}
+          href={api.logExportURL(appliedFilters)}
           download
           data-testid="download-logs"
           title={t('settings.logs.downloadHint')}

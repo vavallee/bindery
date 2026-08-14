@@ -191,7 +191,10 @@ func TestLogExport_EscapesNewlines(t *testing.T) {
 }
 
 // TestLogExport_CapIsAnnounced — truncation is allowed, silent truncation is
-// not: the footer has to say the cap was hit and how to get the rest.
+// not: the footer has to say the ceiling was hit and how to get the rest. A
+// ceiling the CALLER asked for is reported as their own limit; only the
+// server's logExportMaxRows is called a cap, because "reached the 2-entry
+// export cap" reads like a system limit when the 2 came from the request.
 func TestLogExport_CapIsAnnounced(t *testing.T) {
 	h, _, repo := logHandlerWithDB(t)
 	now := time.Now().UTC()
@@ -207,8 +210,8 @@ func TestLogExport_CapIsAnnounced(t *testing.T) {
 	if !strings.Contains(body, "# 2 entries") {
 		t.Errorf("missing entry-count footer:\n%s", body)
 	}
-	if !strings.Contains(body, "reached the 2-entry export cap") {
-		t.Errorf("cap not announced in the footer:\n%s", body)
+	if !strings.Contains(body, "stopped at the requested limit of 2 entries") {
+		t.Errorf("requested limit not announced in the footer:\n%s", body)
 	}
 
 	// Under the cap: count reported, no truncation notice.
@@ -268,5 +271,103 @@ func TestLogExport_RingFallback(t *testing.T) {
 	}
 	if !strings.Contains(entries[0], "book=42") {
 		t.Errorf("ring attrs missing: %q", entries[0])
+	}
+}
+
+// TestLogExport_ToOnlyRangeMatchesTheTable is the divergence the export exists
+// to avoid. List defaults to the last hour only when NEITHER bound is given, so
+// a to-only request shows an unbounded-below table; Export used to derive
+// from=to-1h whenever from was empty and hand the user a file covering one hour
+// of what they were looking at. The header disclosed it, but the point of the
+// endpoint is that the file IS the screen.
+func TestLogExport_ToOnlyRangeMatchesTheTable(t *testing.T) {
+	h, _, repo := logHandlerWithDB(t)
+	now := time.Now().UTC()
+	insertDBEntry(t, repo, now.Add(-3*time.Hour), "INFO", "scheduler", "old-entry")
+	insertDBEntry(t, repo, now.Add(-10*time.Minute), "INFO", "scheduler", "recent-entry")
+
+	rec, entries := exportBody(t, h, "?to="+url.QueryEscape(now.Format(time.RFC3339)))
+
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries, want both rows the to-only table showed:\n%s", len(entries), rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "old-entry") {
+		t.Errorf("the row before to-1h was dropped:\n%s", rec.Body.String())
+	}
+	// No lower bound was requested, so none may be invented in the header.
+	if strings.Contains(rec.Body.String(), "from=") {
+		t.Errorf("header advertises a from bound the caller never set:\n%s", rec.Body.String())
+	}
+}
+
+// TestLogExport_RedactsEveryPartOfTheLine — the endpoint promises that what
+// reaches the file is escaped and redacted, not just the message and the attr
+// values. Level, component and attr KEYS are code-supplied today, so this is
+// the contract rather than an attacker path: a component carrying a newline
+// would forge log lines in a file headed for a public issue, and a key holding
+// a space or '=' breaks the key=value parse for whoever greps it.
+func TestLogExport_RedactsEveryPartOfTheLine(t *testing.T) {
+	h, _, repo := logHandlerWithDB(t)
+	ts := time.Now().UTC()
+	insertDBEntryFields(t, repo, ts, "ERROR", "importer\n2026-01-01T00:00:00.000Z INFO [fake] forged", "boom",
+		map[string]string{"weird key": "value", "url": "https://x/api?apikey=SUPERSECRETVALUE1"})
+
+	_, entries := exportBody(t, h, "")
+
+	if len(entries) != 1 {
+		t.Fatalf("got %d lines, want 1 — a component newline forged a record: %v", len(entries), entries)
+	}
+	if strings.Contains(entries[0], "SUPERSECRETVALUE1") {
+		t.Errorf("attr value not redacted: %q", entries[0])
+	}
+	if !strings.Contains(entries[0], `"weird key"=`) {
+		t.Errorf("attr key with a space was not quoted: %q", entries[0])
+	}
+}
+
+// TestLogExport_KeysetSurvivesIdenticalTimestamps walks the export past a page
+// boundary with every row sharing one timestamp — the shape that breaks an
+// ORDER BY ts DESC with no tiebreaker. Rows must appear exactly once each.
+func TestLogExport_KeysetSurvivesIdenticalTimestamps(t *testing.T) {
+	h, _, repo := logHandlerWithDB(t)
+	ts := time.Now().UTC().Truncate(time.Second)
+	total := logExportPageSize + 200
+	for i := range total {
+		insertDBEntry(t, repo, ts, "INFO", "scheduler", "entry-"+strconv.Itoa(i))
+	}
+
+	_, entries := exportBody(t, h, "")
+
+	if len(entries) != total {
+		t.Fatalf("got %d entries, want %d", len(entries), total)
+	}
+	seen := make(map[string]bool, total)
+	for _, line := range entries {
+		msg := line[strings.LastIndex(line, " ")+1:]
+		if seen[msg] {
+			t.Fatalf("duplicate row across pages: %q", msg)
+		}
+		seen[msg] = true
+	}
+}
+
+// TestLogExport_RingHeaderDeclaresWhatItIgnored — Ring.Snapshot filters on
+// level and limit only. Echoing "component=downloader" over a dump of the whole
+// buffer sends whoever reads the pasted file chasing the wrong process.
+func TestLogExport_RingHeaderDeclaresWhatItIgnored(t *testing.T) {
+	h, ring := logHandlerFixture(t)
+	seedRecord(ring, slog.LevelError, "ring failure")
+
+	rec, _ := exportBody(t, h, "?component=downloader&q=hardlink&from=2026-01-01T00:00:00Z")
+	body := rec.Body.String()
+
+	if strings.Contains(body, "component=downloader") || strings.Contains(body, "q=hardlink") {
+		t.Errorf("ring export claims filters it never applied:\n%s", body)
+	}
+	if !strings.Contains(body, "NOT applied") || !strings.Contains(body, "component") {
+		t.Errorf("ring export doesn't declare the filters it dropped:\n%s", body)
+	}
+	if !strings.Contains(body, "# order: oldest first") {
+		t.Errorf("ring export doesn't declare its ordering:\n%s", body)
 	}
 }
