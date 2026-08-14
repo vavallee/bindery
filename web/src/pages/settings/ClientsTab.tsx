@@ -4,7 +4,7 @@ import { api, DownloadClient } from '../../api/client'
 import { inputCls } from './formStyles'
 import Toggle from './Toggle'
 import PathRemapField from './PathRemapField'
-import { downloadClientPathRemapHelp } from './helpers'
+import { downloadClientPathRemapHelp, rtorrentScgiIgnoredFields } from './helpers'
 import { dangerLink } from '../../components/buttons'
 
 // clients is owned by SettingsPage so it can be fetched eagerly on page mount
@@ -148,7 +148,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
   const [type, setType] = useState(client.type || 'sabnzbd')
   const [host, setHost] = useState(client.host)
   const [port, setPort] = useState(String(client.port))
-  const usesPassword = client.type === 'qbittorrent' || client.type === 'transmission' || client.type === 'nzbget' || client.type === 'deluge'
+  const usesPassword = client.type === 'qbittorrent' || client.type === 'transmission' || client.type === 'nzbget' || client.type === 'deluge' || client.type === 'rtorrent'
   const [credential, setCredential] = useState(usesPassword ? (client.password || '') : (client.apiKey || ''))
   const [username, setUsername] = useState(client.username || '')
   const [useSSL, setUseSSL] = useState(client.useSsl || false)
@@ -168,8 +168,14 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
     setUsername('')
   }
 
-  const isPasswordClient = (t: string) => t === 'qbittorrent' || t === 'transmission' || t === 'nzbget' || t === 'deluge'
-  const hasUsername = (t: string) => t === 'qbittorrent' || t === 'transmission' || t === 'nzbget'
+  const isPasswordClient = (t: string) => t === 'qbittorrent' || t === 'transmission' || t === 'nzbget' || t === 'deluge' || t === 'rtorrent'
+  // rTorrent authenticates with HTTP basic auth on the RPC endpoint, so it takes
+  // both a username and a password (Deluge's Web UI has a password only).
+  const hasUsername = (t: string) => t === 'qbittorrent' || t === 'transmission' || t === 'nzbget' || t === 'rtorrent'
+
+  // SCGI is rTorrent's own listener: no TLS, no auth. Say so where the choice
+  // is made rather than dropping the fields silently on save.
+  const scgiIgnored = rtorrentScgiIgnoredFields(type, urlBase, useSSL, username, credential)
 
   const buildData = () => isPasswordClient(type)
     ? { ...client, name, type, host, port: parseInt(port), username: hasUsername(type) ? username : '', password: credential, apiKey: '', category, categoryAudiobook: categoryAudiobook.trim(), pathRemap: pathRemap.trim(), useSsl: useSSL, urlBase: urlBase.trim() }
@@ -222,6 +228,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
             <option value="qbittorrent">qBittorrent</option>
             <option value="transmission">Transmission</option>
             <option value="deluge">Deluge</option>
+            <option value="rtorrent">rTorrent / ruTorrent</option>
           </select>
         </div>
       </div>
@@ -245,8 +252,15 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
       </div>
       <div>
         <label className={labelCls}>URL Base</label>
-        <input value={urlBase} onChange={e => setUrlBase(e.target.value)} placeholder="/sabnzbd" className={inputCls} />
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Optional path prefix for reverse proxy deployments (e.g. <code className="font-mono">/sabnzbd</code>). Leave blank for direct connections.</p>
+        <input value={urlBase} onChange={e => setUrlBase(e.target.value)} placeholder={type === 'rtorrent' ? '/RPC2' : '/sabnzbd'} className={inputCls} />
+        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{type === 'rtorrent'
+          ? t('settings.clients.rtorrentUrlBaseHelp')
+          : <>Optional path prefix for reverse proxy deployments (e.g. <code className="font-mono">/sabnzbd</code>). Leave blank for direct connections.</>}</p>
+        {scgiIgnored.length > 0 && (
+          <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+            {t('settings.clients.rtorrentScgiIgnoredHint', { fields: scgiIgnored.join(', ') })}
+          </p>
+        )}
       </div>
       {hasUsername(type) && (
         <div>
@@ -263,6 +277,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
         <input value={category} onChange={e => setCategory(e.target.value)} placeholder={type === 'transmission' ? '/downloads (leave blank for default)' : 'books'} className={inputCls} />
         {type === 'transmission' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Optional absolute path override. Leave blank to use Transmission's configured default download directory.</p>}
         {type === 'deluge' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Applied via the Deluge label plugin. Leave blank if the plugin is not installed.</p>}
+        {type === 'rtorrent' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.clients.rtorrentCategoryHelp')}</p>}
       </div>
       {type !== 'transmission' && (
         <div>
@@ -304,7 +319,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
 function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c: DownloadClient) => void }) {
   const { t } = useTranslation()
   const [name, setName] = useState('SABnzbd')
-  const [type, setType] = useState<'sabnzbd' | 'nzbget' | 'qbittorrent' | 'transmission' | 'deluge'>('sabnzbd')
+  const [type, setType] = useState<'sabnzbd' | 'nzbget' | 'qbittorrent' | 'transmission' | 'deluge' | 'rtorrent'>('sabnzbd')
   const [host, setHost] = useState('')
   const [port, setPort] = useState('8080')
   const [credential, setCredential] = useState('')
@@ -320,10 +335,16 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string; warn?: string } | null>(null)
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
-  const isPasswordClient = (t: string) => t === 'qbittorrent' || t === 'transmission' || t === 'nzbget' || t === 'deluge'
-  const hasUsername = (t: string) => t === 'qbittorrent' || t === 'transmission' || t === 'nzbget'
+  const isPasswordClient = (t: string) => t === 'qbittorrent' || t === 'transmission' || t === 'nzbget' || t === 'deluge' || t === 'rtorrent'
+  // rTorrent authenticates with HTTP basic auth on the RPC endpoint, so it takes
+  // both a username and a password (Deluge's Web UI has a password only).
+  const hasUsername = (t: string) => t === 'qbittorrent' || t === 'transmission' || t === 'nzbget' || t === 'rtorrent'
 
-  const handleTypeChange = (newType: 'sabnzbd' | 'nzbget' | 'qbittorrent' | 'transmission' | 'deluge') => {
+  // SCGI is rTorrent's own listener: no TLS, no auth. Say so where the choice
+  // is made rather than dropping the fields silently on save.
+  const scgiIgnored = rtorrentScgiIgnoredFields(type, urlBase, useSSL, username, credential)
+
+  const handleTypeChange = (newType: 'sabnzbd' | 'nzbget' | 'qbittorrent' | 'transmission' | 'deluge' | 'rtorrent') => {
     setType(newType)
     setCredential('')
     setUsername('')
@@ -345,6 +366,11 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
     if (newType === 'deluge') {
       setName('Deluge')
       setPort('8112')
+      return
+    }
+    if (newType === 'rtorrent') {
+      setName('rTorrent')
+      setPort('8080')
       return
     }
     setName('SABnzbd')
@@ -396,12 +422,13 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
         </div>
         <div className="w-40">
           <label className={labelCls}>Client Type</label>
-          <select value={type} onChange={e => handleTypeChange(e.target.value as 'sabnzbd' | 'nzbget' | 'qbittorrent' | 'transmission' | 'deluge')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600">
+          <select value={type} onChange={e => handleTypeChange(e.target.value as 'sabnzbd' | 'nzbget' | 'qbittorrent' | 'transmission' | 'deluge' | 'rtorrent')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600">
             <option value="sabnzbd">SABnzbd</option>
             <option value="nzbget">NZBGet</option>
             <option value="qbittorrent">qBittorrent</option>
             <option value="transmission">Transmission</option>
             <option value="deluge">Deluge</option>
+            <option value="rtorrent">rTorrent / ruTorrent</option>
           </select>
         </div>
       </div>
@@ -425,8 +452,15 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
       </div>
       <div>
         <label className={labelCls}>URL Base</label>
-        <input value={urlBase} onChange={e => setUrlBase(e.target.value)} placeholder="/sabnzbd" className={inputCls} />
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Optional path prefix for reverse proxy deployments (e.g. <code className="font-mono">/sabnzbd</code>). Leave blank for direct connections.</p>
+        <input value={urlBase} onChange={e => setUrlBase(e.target.value)} placeholder={type === 'rtorrent' ? '/RPC2' : '/sabnzbd'} className={inputCls} />
+        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{type === 'rtorrent'
+          ? t('settings.clients.rtorrentUrlBaseHelp')
+          : <>Optional path prefix for reverse proxy deployments (e.g. <code className="font-mono">/sabnzbd</code>). Leave blank for direct connections.</>}</p>
+        {scgiIgnored.length > 0 && (
+          <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+            {t('settings.clients.rtorrentScgiIgnoredHint', { fields: scgiIgnored.join(', ') })}
+          </p>
+        )}
       </div>
       {hasUsername(type) && (
         <div>
@@ -443,6 +477,7 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
         <input value={category} onChange={e => setCategory(e.target.value)} placeholder={type === 'transmission' ? '/downloads (leave blank for default)' : 'books'} className={inputCls} />
         {type === 'transmission' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Optional absolute path override. Leave blank to use Transmission's configured default download directory.</p>}
         {type === 'deluge' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Applied via the Deluge label plugin. Leave blank if the plugin is not installed.</p>}
+        {type === 'rtorrent' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.clients.rtorrentCategoryHelp')}</p>}
       </div>
       {type !== 'transmission' && (
         <div>

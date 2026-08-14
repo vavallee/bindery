@@ -94,11 +94,11 @@ Go to **Settings → Download Clients → Add**. Pick the **Client Type**:
 | Indexer protocol | Compatible download clients |
 |------------------|-----------------------------|
 | Newznab (Usenet) | SABnzbd, NZBGet |
-| Torznab (Torrent) | qBittorrent, Transmission, Deluge |
+| Torznab (Torrent) | qBittorrent, Transmission, Deluge, rTorrent / ruTorrent |
 
 > **The client's protocol must match your indexer.** A Usenet/NZB indexer
 > needs an NZB client (SABnzbd or NZBGet); a torrent indexer needs a torrent
-> client (qBittorrent, Transmission, or Deluge). If they don't match, grabs go
+> client (qBittorrent, Transmission, Deluge, or rTorrent). If they don't match, grabs go
 > nowhere. (Torznab indexers route grabs to the torrent client; newznab
 > indexers route to the NZB client.)
 
@@ -109,7 +109,61 @@ username/password for the others), and the **Category / Label** (default
 > **The category must already exist in the client.** Bindery does not create
 > it for you. Create the matching category/label in SABnzbd / NZBGet /
 > qBittorrent / Deluge first, or grabs will be misfiled or rejected.
-> (Transmission uses a download-directory path instead of a category.)
+> (Transmission uses a download-directory path instead of a category.
+> rTorrent applies the label itself via `d.custom1`, so nothing needs to
+> exist up front — leaving it blank makes Bindery poll every torrent.)
+
+### rTorrent / ruTorrent
+
+rTorrent speaks XML-RPC over two transports, and the **URL Base** field picks
+between them.
+
+**HTTP(S)** — the usual case, and how ruTorrent, Flood and every seedbox panel
+already expose rTorrent:
+
+| Field | Value |
+|---|---|
+| Host / Port | The web server in front of rTorrent (often the same one serving ruTorrent) |
+| URL Base | The **full RPC path**, not a prefix. Usually `/RPC2`; many ruTorrent installs use `/plugins/rpc/rpc.php`. Blank means `/RPC2`. |
+| Username / Password | HTTP basic auth on that endpoint, if your proxy requires it |
+| Category / Label | Written to `d.custom1`, the label ruTorrent shows in its sidebar |
+
+If **Test** reports "does not look like an rTorrent XML-RPC endpoint", the URL
+Base is pointing at the web UI rather than the RPC handler.
+
+**SCGI** — rTorrent's own listener, for a plain rTorrent with no web server in
+front of it. Put one of these in URL Base:
+
+| URL Base | Talks to |
+|---|---|
+| `scgi://` | The `scgi_port` on the Host and Port you configured above |
+| `scgi://127.0.0.1:5000` | That explicit address, ignoring Host/Port |
+| `scgi:///var/run/rtorrent/rpc.sock` | That `scgi_local` unix socket (bind-mount it into the Bindery container) |
+
+Host and Port are still required by the form even for the unix-socket and
+explicit-address spellings, which ignore them. Put anything valid there
+(`localhost` / `8080`) and the socket path in URL Base.
+
+> **SCGI has no authentication and no TLS** — that is the protocol, not a
+> Bindery limitation. Username, password and Use SSL are ignored on this
+> transport, and the client form says so once you type an `scgi://` URL Base.
+> Keep the listener bound to loopback or a unix socket; anything that can
+> reach it can run arbitrary rTorrent commands.
+
+Two rTorrent-specific limits, both from the protocol rather than Bindery:
+
+- **Per-indexer seed ratios are ignored.** rTorrent has no per-torrent ratio
+  limit over XML-RPC; configure a ratio group in `.rtorrent.rc` instead.
+- **Removing a download with its data** deletes the files from *Bindery's*
+  side, because rTorrent's `d.erase` deliberately leaves the payload on disk.
+  That needs a path remap that resolves — either the client's own, or the
+  global `BINDERY_DOWNLOAD_PATH_REMAP` — and Bindery refuses to delete
+  anything reached through a symlink, or a path that resolves to a mount
+  root. If it can't see the files it removes the torrent, leaves the data,
+  and says why in the log.
+
+Seedbox installs almost always need a **download-client path remap** — see the
+Test button's warning, which names the exact path it could not read.
 
 Use **Test** to confirm the connection.
 

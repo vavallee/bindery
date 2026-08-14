@@ -1055,7 +1055,7 @@ func (s *server) handleHome(w http.ResponseWriter, _ *http.Request) {
     <div class="feature"><div class="feature-dot"></div><span>No single point of failure for metadata — OpenLibrary, Google Books, Hardcover, DNB, Audnex, and Audible. Documented public APIs, zero scraping.</span></div>
     <div class="feature"><div class="feature-dot"></div><span>Bring your dead Readarr install with you — import <code>readarr.db</code> and your authors, indexers, download clients, and blocklist come across in one step.</span></div>
     <div class="feature"><div class="feature-dot"></div><span>Ebooks and audiobooks in independent slots — separate roots, narrator metadata, and multi-part audiobook handling.</span></div>
-    <div class="feature"><div class="feature-dot"></div><span>Usenet and torrents — SABnzbd, NZBGet, qBittorrent, Transmission, and Deluge.</span></div>
+    <div class="feature"><div class="feature-dot"></div><span>Usenet and torrents — SABnzbd, NZBGet, qBittorrent, Transmission, Deluge, and rTorrent.</span></div>
     <div class="feature"><div class="feature-dot"></div><span>Boring to run, by design — a single Go binary, SQLite, distroless image, Helm chart, ARM down to a Pi Zero.</span></div>
   </div>
   <div class="links">

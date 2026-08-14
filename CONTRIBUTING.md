@@ -83,6 +83,17 @@ Every push to `main` / `development` and every pull request runs through the ful
 | Helm chart | `charts/bindery/` rendered and image tag auto-bumped per merge | Image digest lands in `values.yaml` via CI commit (`[skip ci]`) |
 | Dependency pinning | `go.sum` (Go), `package-lock.json` (npm), `charts/bindery/Chart.yaml` (Helm) | All committed; `npm ci` refuses to install if the lockfile drifts |
 
+### Dependency licences
+
+Bindery is **MIT** and statically links its Go dependencies, so every module becomes part of a combined work we distribute as release binaries and a container image.
+
+- **Check the `LICENSE` of any new Go module or npm package before adding it**, in the module cache rather than by reputation.
+- **Copyleft licences — GPL, AGPL, SSPL, BUSL, CC-BY-NC — cannot be linked in.** There is no partial-use exemption under static linking.
+- Permissive (MIT, BSD, Apache-2.0, ISC, MPL-2.0) is fine. Apache-2.0 additionally requires shipping the dependency's `NOTICE`.
+- `THIRD_PARTY_LICENSES.md` is generated and **CI fails on drift** — regenerate it when dependencies change instead of editing it by hand.
+
+The trap worth knowing about: the *arr projects are GPL-3.0, so their dependency choices are safe for them and not for us. `github.com/creditx/go-fuzzywuzzy` (GPL-3.0) reached shipped MIT binaries this way, and the obvious alternative port carries the same licence.
+
 ### Credentials & secrets
 
 Bindery is deliberately **credential-free in source**. The CI pipeline enforces this:
