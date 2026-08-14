@@ -25,6 +25,29 @@ import (
 // recoverable" rather than a fatal error.
 var errBencode = errors.New("invalid bencode")
 
+// errBencodeTooDeep marks input that nests deeper than maxBencodeDepth. It is
+// a distinct sentinel purely so a test can assert the depth guard fired rather
+// than some other malformed-input path.
+var errBencodeTooDeep = errors.New("bencode nesting exceeds the maximum depth")
+
+// maxBencodeDepth caps how deeply bencodeSkipValue will descend into nested
+// lists and dictionaries.
+//
+// This is a hard availability guard, not a tidiness rule. The walk is fed bytes
+// an indexer chose: rTorrent's add path hashes every .torrent Bindery fetches,
+// and qBittorrent's 409 recovery does the same. A file consisting of nothing
+// but nested list markers ("d4:info" + N×"l" + N×"e" + "e") recurses once per
+// level, and at roughly 26 million levels — comfortably inside the 50 MiB
+// download cap — the goroutine stack overflows. A stack overflow is
+// runtime.throw, not a panic: no recover() catches it and the whole process
+// dies, so a hostile or compromised indexer could crash Bindery on every grab
+// retry.
+//
+// BEP 3 torrents nest three or four deep (dict → "info" → "files" → list →
+// dict → "path" → list). 64 leaves an order of magnitude of headroom for
+// non-standard extension keys while keeping the maximum stack depth trivial.
+const maxBencodeDepth = 64
+
 // FromTorrentFile computes a torrent's v1 infohash — the SHA-1 of the bencoded
 // "info" dictionary — from raw .torrent file bytes. It returns "" when data is
 // not a bencoded dictionary containing an "info" key.
@@ -42,20 +65,27 @@ func FromTorrentFile(data []byte) string {
 // verbatim. The result may be either 40-char hex or 32-char base32; call
 // Normalize when a canonical hex form is required. Returns "" for anything that
 // is not a magnet URI carrying an xt=urn:btih: topic.
+//
+// Every xt topic is examined, not just the first. A BitTorrent v1/v2 hybrid
+// magnet carries two — "urn:btmh:" (the v2 multihash) and "urn:btih:" — in
+// whichever order the indexer emitted them. Reading only the first would refuse
+// a perfectly downloadable release whenever btmh happened to come first.
 func FromMagnet(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "magnet" {
 		return ""
 	}
-	xt := u.Query().Get("xt")
-	if !strings.HasPrefix(strings.ToLower(xt), "urn:btih:") {
-		return ""
+	for _, xt := range u.Query()["xt"] {
+		if !strings.HasPrefix(strings.ToLower(xt), "urn:btih:") {
+			continue
+		}
+		h := strings.TrimSpace(xt[len("urn:btih:"):])
+		if h == "" {
+			continue
+		}
+		return strings.ToLower(h)
 	}
-	h := strings.TrimSpace(xt[len("urn:btih:"):])
-	if h == "" {
-		return ""
-	}
-	return strings.ToLower(h)
+	return ""
 }
 
 // Normalize canonicalises an infohash to 40 lower-case hex characters.
@@ -99,7 +129,7 @@ func bencodeMemberSpan(data []byte, key string) (start, end int, ok bool) {
 		if err != nil {
 			return 0, 0, false
 		}
-		valEnd, err := bencodeSkipValue(data, afterKey)
+		valEnd, err := bencodeSkipValue(data, afterKey, 0)
 		if err != nil {
 			return 0, 0, false
 		}
@@ -137,10 +167,15 @@ func bencodeReadString(data []byte, pos int) ([]byte, int, error) {
 }
 
 // bencodeSkipValue advances past one bencoded value of any type at pos and
-// returns the index immediately after it.
-func bencodeSkipValue(data []byte, pos int) (int, error) {
+// returns the index immediately after it. depth is the number of enclosing
+// lists and dictionaries; it is bounded by maxBencodeDepth so that untrusted
+// input cannot drive the recursion into a stack overflow.
+func bencodeSkipValue(data []byte, pos, depth int) (int, error) {
 	if pos >= len(data) {
 		return 0, errBencode
+	}
+	if depth > maxBencodeDepth {
+		return 0, errBencodeTooDeep
 	}
 	switch c := data[pos]; {
 	case c == 'i': // integer: i<digits>e
@@ -162,7 +197,7 @@ func bencodeSkipValue(data []byte, pos int) (int, error) {
 					return 0, err
 				}
 			}
-			if p, err = bencodeSkipValue(data, p); err != nil {
+			if p, err = bencodeSkipValue(data, p, depth+1); err != nil {
 				return 0, err
 			}
 		}
