@@ -19,6 +19,10 @@ export interface GeneralTabProps {
   onNavigate?: (tab: string) => void
 }
 
+// Preset values offered by the Hardcover sync-interval picker. Anything else in
+// the server's [1h, 168h] range is valid too and gets its own option appended.
+const HARDCOVER_SYNC_INTERVAL_PRESETS = ['1h', '3h', '6h', '12h', '24h', '48h', '168h']
+
 export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   const { t } = useTranslation()
   const { isAdmin } = useAuth()
@@ -151,6 +155,12 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       setScanningLibrary(false)
     }
   }
+
+  // The stored Hardcover sync interval need not be one of the presets below:
+  // the API accepts any duration in [1h, 168h]. Surface an out-of-list value as
+  // its own option rather than letting the select render blank (#1848).
+  const hardcoverSyncInterval = settings['hardcover.sync_interval'] ?? '24h'
+  const hardcoverSyncIntervalIsCustom = !HARDCOVER_SYNC_INTERVAL_PRESETS.includes(hardcoverSyncInterval)
 
   if (loading) return <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
 
@@ -588,7 +598,8 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               {t('settings.general.hardcoverSyncIntervalHint', 'How often Bindery re-syncs your enabled Hardcover import lists. Lower it if you curate a Hardcover list as your main way of adding books. Use Sync now on the Import tab for an immediate run.')}
             </p>
             <select
-              value={settings['hardcover.sync_interval'] ?? '24h'}
+              data-testid="hardcover-sync-interval"
+              value={hardcoverSyncInterval}
               onChange={async e => {
                 const next = e.target.value
                 setSettings(s => ({ ...s, 'hardcover.sync_interval': next }))
@@ -603,6 +614,13 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               <option value="24h">24 hours (default)</option>
               <option value="48h">48 hours</option>
               <option value="168h">7 days</option>
+              {/* The server accepts anything in [1h, 168h], so a value set via
+                  the API (36h, say) need not be one of the presets. Without an
+                  option to match it the select renders blank, which reads as
+                  "unset" while the scheduler is happily honouring it. */}
+              {hardcoverSyncIntervalIsCustom && (
+                <option value={hardcoverSyncInterval}>{hardcoverSyncInterval}</option>
+              )}
             </select>
             <p className="text-xs text-slate-500 dark:text-zinc-600 mt-1">
               {t('settings.general.searchIntervalRestart')}
