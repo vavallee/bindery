@@ -904,6 +904,17 @@ func TestFetchAuthorBooks_SkipsPartBooks(t *testing.T) {
 			t.Errorf("real single-book title %q should have been created, but was skipped", real)
 		}
 	}
+
+	summary := h.syncSummaries.get(author.ID)
+	if summary == nil {
+		t.Fatal("expected a recorded sync summary, got nil")
+	}
+	if want := 4; summary.SkippedPartBooks != want {
+		t.Errorf("summary.SkippedPartBooks = %d, want %d", summary.SkippedPartBooks, want)
+	}
+	if summary.SkippedTotal() < summary.SkippedPartBooks {
+		t.Errorf("summary.SkippedTotal() = %d should include SkippedPartBooks = %d", summary.SkippedTotal(), summary.SkippedPartBooks)
+	}
 }
 
 // TestFetchAuthorBooks_PartBooksKeptWhenSkipDisabled verifies the inverse of
@@ -943,6 +954,10 @@ func TestFetchAuthorBooks_PartBooksKeptWhenSkipDisabled(t *testing.T) {
 	if len(got) != len(partBookTestWorks()) {
 		t.Errorf("got %d books, want %d (SkipPartBooks defaults to false, nothing should be dropped)",
 			len(got), len(partBookTestWorks()))
+	}
+
+	if summary := h.syncSummaries.get(author.ID); summary != nil && summary.SkippedPartBooks != 0 {
+		t.Errorf("summary.SkippedPartBooks = %d, want 0 (filter is opt-in)", summary.SkippedPartBooks)
 	}
 }
 
