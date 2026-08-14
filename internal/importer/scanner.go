@@ -110,6 +110,14 @@ type Scanner struct {
 	// without re-exercising the staging machinery the per-client scanner
 	// tests already cover. Never set outside tests.
 	testImportHook func(dl *models.Download, downloadPath, clientType string, explicitFiles []string)
+
+	// importSkips counts consecutive declined import retries per download so a
+	// download whose files never appear cannot skip forever (#1884 follow-up).
+	// In-memory on purpose: it is poll bookkeeping, not durable state, and a
+	// restart simply re-starts the streak — the row is still StateImportFailed
+	// with its reason, so nothing is lost but the elapsed patience.
+	importSkipsMu sync.Mutex
+	importSkips   map[int64]importSkipState
 }
 
 // NewScanner creates an import scanner. downloadPathRemap is an optional
@@ -342,6 +350,26 @@ func (s *Scanner) WithSettings(sr *db.SettingsRepo) *Scanner {
 // 45-second window to clear before the download was terminally blocked.
 const importRetryLimit = 5
 
+// importSkipLimit bounds how many CONSECUTIVE poll cycles a StateImportFailed
+// download may decline its retry (importSourcePresent found nothing on this
+// host) before it is terminally blocked.
+//
+// This is the escape hatch for the trap the retry guard would otherwise create:
+// a skipped cycle costs no retry attempt, so a download whose files never
+// appear satisfies neither of blockStaleImportFailures' arms — the budget is
+// never spent, and the torrent is still in the client, so the source has not
+// vanished either. Without a bound it sits in StateImportFailed forever, which
+// no automatic path revisits and which the Grab 409 refuses to re-grab, so the
+// only way out is deleting the queue row.
+//
+// 120 cycles is ~30 minutes at the 15 s check-downloads cadence: long enough
+// for a slow move, a re-mounted share or an operator fixing PathRemap to
+// resolve itself with the import running unattended, short enough that a
+// genuinely gone payload reaches a state the user can act on the same session.
+// Blocking is not the end of the road — StateImportBlocked is re-grabbable
+// (regrabbableState) and Queue → Retry import re-arms the row.
+const importSkipLimit = 120
+
 // importSourcePresent reports whether there is anything on this host for an
 // import attempt to work with: at least one file from the download client's
 // authoritative per-torrent list, or — when no list was available — the
@@ -359,10 +387,17 @@ const importRetryLimit = 5
 //
 // Skipping the attempt leaves the row in StateImportFailed carrying the
 // message from the attempt that DID run, so the queue keeps showing the real
-// reason and picks the import back up the moment the files appear.
+// reason and picks the import back up the moment the files appear. Skipping
+// forever is not an option either — skipImportRetry bounds the streak.
+//
+// The per-file predicate is importableSourceFile, the SAME one
+// filterImportableFiles applies to the client's list. They must agree: when
+// this said "present" for an entry the filter drops (a symlink with a live
+// target passed os.Stat), every poll spent a retry attempt on a file list the
+// importer had already emptied.
 func importSourcePresent(downloadPath string, explicitFiles []string) bool {
 	for _, f := range explicitFiles {
-		if _, err := os.Stat(f); err == nil {
+		if importableSourceFile(f) {
 			return true
 		}
 	}
@@ -372,23 +407,105 @@ func importSourcePresent(downloadPath string, explicitFiles []string) bool {
 	if strings.TrimSpace(downloadPath) == "" {
 		return false
 	}
+	// The fallback is a directory to walk, not a file to import, so it is
+	// Stat'd rather than run through importableSourceFile: a symlinked
+	// download root is an ordinary deployment shape, and discoverBookFiles
+	// decides what inside it is importable.
 	_, err := os.Stat(downloadPath)
 	return err == nil
 }
 
-// skipImportRetry logs an import retry that was deliberately not attempted
+// importSkipState is one download's consecutive-skip streak, plus a snapshot of
+// the row fields that any outside change to the download would move. Skipping
+// deliberately writes nothing, so the snapshot is stable for as long as the
+// streak is genuinely untouched; a manual Queue → Retry import (which zeroes
+// import_retry_count and clears error_message), a real attempt, or a
+// match-to-book all change it and restart the count.
+type importSkipState struct {
+	count   int
+	retries int
+	errMsg  string
+}
+
+// recordImportSkip counts one skipped retry for dl and returns the length of
+// the current streak. See importSkipState for how a streak is reset.
+func (s *Scanner) recordImportSkip(dl *models.Download) int {
+	s.importSkipsMu.Lock()
+	defer s.importSkipsMu.Unlock()
+	if s.importSkips == nil {
+		s.importSkips = make(map[int64]importSkipState)
+	}
+	st, ok := s.importSkips[dl.ID]
+	if !ok || st.retries != dl.ImportRetryCount || st.errMsg != dl.ErrorMessage {
+		st = importSkipState{retries: dl.ImportRetryCount, errMsg: dl.ErrorMessage}
+	}
+	st.count++
+	s.importSkips[dl.ID] = st
+	return st.count
+}
+
+// clearImportSkips drops a download's streak.
+func (s *Scanner) clearImportSkips(id int64) {
+	s.importSkipsMu.Lock()
+	defer s.importSkipsMu.Unlock()
+	delete(s.importSkips, id)
+}
+
+// forgetImportSkipsExcept garbage-collects streaks for downloads that are no
+// longer waiting to import (imported, deleted, blocked, re-grabbed), so the map
+// cannot grow with the queue's history.
+func (s *Scanner) forgetImportSkipsExcept(stillFailing map[int64]bool) {
+	s.importSkipsMu.Lock()
+	defer s.importSkipsMu.Unlock()
+	for id := range s.importSkips {
+		if !stillFailing[id] {
+			delete(s.importSkips, id)
+		}
+	}
+}
+
+// importSourceGoneReason is the message a download is blocked with once its
+// skip streak runs out. It must not tell the user to wait: by the time it is
+// written, waiting is precisely what has already failed importSkipLimit times.
+func importSourceGoneReason(downloadPath string) string {
+	return fmt.Sprintf("the download client still reports this download as complete, but none of its files are on this host — checked %d times at %s and found nothing to import. Either the files were moved or deleted after the download finished, or the client's paths do not map into Bindery (set PathRemap on the download client). Fix that and use Retry import on the Queue page, or grab the release again from search.",
+		importSkipLimit, downloadPath)
+}
+
+// skipImportRetry records an import retry that was deliberately not attempted
 // because importSourcePresent found nothing on disk to import. The download is
-// left exactly as it was — still StateImportFailed, retry count untouched — so
-// no state is spent on a cycle that could not have succeeded (#1884).
+// normally left exactly as it was — still StateImportFailed, retry count
+// untouched — so no state is spent on a cycle that could not have succeeded
+// (#1884).
 //
-// Debug, not Warn: this fires on every 15 s poll for as long as the condition
-// lasts, and the condition is normal for a torrent that is still downloading
-// into a temp/incomplete directory. The reason the operator needs is already on
-// the download row (and in the queue) from the attempt that did run.
-func (s *Scanner) skipImportRetry(dl *models.Download, downloadPath string) {
+// Once the streak reaches importSkipLimit the download is instead blocked. The
+// retry guard alone left a download whose files never appear stuck in
+// StateImportFailed permanently: no attempt is ever counted, so
+// blockStaleImportFailures' retry-exhaustion arm never fires, and the torrent
+// is still in the client, so its vanished-source arm never fires either. That
+// row is invisible to every automatic path and the Grab 409 refused to re-grab
+// it, which is the same dead end #1884 set out to remove — just reached from
+// the other side. StateImportBlocked is terminal, legible in the queue, and
+// re-grabbable, so the user always has a move.
+//
+// Debug, not Warn, for the ordinary skip: it fires on every 15 s poll for as
+// long as the condition lasts. The reason the operator needs is already on the
+// download row (and in the queue) from the attempt that did run.
+func (s *Scanner) skipImportRetry(ctx context.Context, dl *models.Download, downloadPath string) {
+	skips := s.recordImportSkip(dl)
+	if skips >= importSkipLimit {
+		s.clearImportSkips(dl.ID)
+		reason := importSourceGoneReason(downloadPath)
+		slog.Warn("blocking import: the download's files never appeared",
+			"title", dl.Title, "download_id", dl.ID, "path", downloadPath,
+			"checks", skips, "reason", reason)
+		s.failImport(ctx, dl, models.StateImportBlocked, reason)
+		return
+	}
 	slog.Debug("import retry skipped: nothing to import at the download path yet — retry budget not spent",
 		"title", dl.Title, "download_id", dl.ID, "path", downloadPath,
-		"attempts_used", dl.ImportRetryCount, "limit", importRetryLimit)
+		"attempts_used", dl.ImportRetryCount, "limit", importRetryLimit,
+		"consecutive_skips", skips, "skip_limit", importSkipLimit)
 }
 
 // CheckDownloads polls all enabled download clients for status changes and
@@ -728,6 +845,17 @@ func (s *Scanner) blockStaleImportFailures(
 		slog.Warn("blockStaleImportFailures: failed to list downloads", "error", err)
 		return
 	}
+	// Every poller ends its cycle here with the full download list, which makes
+	// this the natural place to garbage-collect skip streaks: anything that is
+	// no longer StateImportFailed (imported, blocked, re-grabbed, deleted) will
+	// never be skipped again.
+	stillFailing := make(map[int64]bool)
+	for i := range allDownloads {
+		if allDownloads[i].Status == models.StateImportFailed {
+			stillFailing[allDownloads[i].ID] = true
+		}
+	}
+	s.forgetImportSkipsExcept(stillFailing)
 	for i := range allDownloads {
 		dl := allDownloads[i]
 		if dl.Status != models.StateImportFailed {

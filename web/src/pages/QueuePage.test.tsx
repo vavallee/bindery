@@ -506,6 +506,23 @@ describe('QueuePage manual match (#1589)', () => {
     expect(await screen.findByText('queue.matchImporting')).toBeInTheDocument()
   })
 
+  it('explains an import-failed row that carries no error message', async () => {
+    // Retry import clears error_message, so between the click and the next
+    // scanner check the row would otherwise show an "Import Failed" pill with
+    // nothing under it and no hint that anything is going to happen.
+    vi.mocked(api.listQueue).mockResolvedValue([makeQueueItem({
+      id: 12,
+      title: 'Re-armed Release',
+      status: 'importFailed',
+      errorMessage: '',
+    })])
+
+    renderQueuePage()
+
+    expect(await screen.findByText('Re-armed Release')).toBeInTheDocument()
+    expect(screen.getByText(/Queued for another import attempt/)).toBeInTheDocument()
+  })
+
   it('matches a download blocked after exhausting its retry budget', async () => {
     // "Stuck after three attempts": the scanner terminally blocked it, but the
     // files are still there — the match controls must render and work (#1589).

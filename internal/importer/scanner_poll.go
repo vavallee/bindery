@@ -59,7 +59,7 @@ func (s *Scanner) checkSABnzbdDownloads(ctx context.Context, client *models.Down
 				// Bug #7: retry a previously failed import.
 				localPath := s.remapDownloadClientPath(client, slot.Path)
 				if !importSourcePresent(localPath, nil) {
-					s.skipImportRetry(dl, localPath)
+					s.skipImportRetry(ctx, dl, localPath)
 					continue
 				}
 				slog.Info("retrying failed import", "title", dl.Title, "path", localPath,
@@ -129,7 +129,7 @@ func (s *Scanner) checkNZBGetDownloads(ctx context.Context, client *models.Downl
 				// Bug #7: retry a previously failed import.
 				localPath := s.remapDownloadClientPath(client, item.DestDir)
 				if !importSourcePresent(localPath, nil) {
-					s.skipImportRetry(dl, localPath)
+					s.skipImportRetry(ctx, dl, localPath)
 					continue
 				}
 				slog.Info("retrying failed import", "title", dl.Title, "path", localPath,
@@ -269,7 +269,7 @@ func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models
 			downloadPath := s.remapDownloadClientPath(client, torrent.DownloadDir)
 			bookFiles := s.transmissionFilesFor(ctx, trans, client, torrent)
 			if !importSourcePresent(downloadPath, bookFiles) {
-				s.skipImportRetry(&dl, downloadPath)
+				s.skipImportRetry(ctx, &dl, downloadPath)
 				continue
 			}
 			slog.Info("retrying failed import", "title", dl.Title, "path", downloadPath,
@@ -633,7 +633,7 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 			downloadPath := s.remapDownloadClientPath(client, rawPath)
 			bookFiles := s.qbittorrentFilesFor(ctx, qb, client, torrent)
 			if !importSourcePresent(downloadPath, bookFiles) {
-				s.skipImportRetry(&dl, downloadPath)
+				s.skipImportRetry(ctx, &dl, downloadPath)
 				continue
 			}
 			slog.Info("retrying failed import", "title", dl.Title, "path", downloadPath,
@@ -715,7 +715,7 @@ func (s *Scanner) checkDelugeDownloads(ctx context.Context, client *models.Downl
 		case isComplete && dl.Status == models.StateImportFailed && dl.ImportRetryCount < importRetryLimit:
 			downloadPath, bookFiles := s.delugeImportSources(ctx, dlc, client, t)
 			if !importSourcePresent(downloadPath, bookFiles) {
-				s.skipImportRetry(&dl, downloadPath)
+				s.skipImportRetry(ctx, &dl, downloadPath)
 				continue
 			}
 			slog.Info("retrying failed import", "title", dl.Title, "path", downloadPath,

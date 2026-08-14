@@ -24,13 +24,15 @@ That message lists three causes, because all three produce the same missing path
 2. **The files moved or were deleted since.** Common after deleting a book (or its files) from the UI while the torrent stays in the client, and after an import in `move` mode. Re-download, or point the client back at the files.
 3. **Bindery and the client see different filesystem roots.** This is the path-remap case: set a download-client path remap in **Settings → Download clients**, then use **Queue → Retry import**. See [Path remapping](./DEPLOYMENT.md#path-remapping-multi-container--multi-pod-setups) in `DEPLOYMENT.md`.
 
-Bindery does not spend import retry attempts while there is nothing at the path, so a download in this state is never terminally blocked just for waiting — it stays `importFailed` with the reason visible, and imports on its own as soon as the files appear.
+Bindery does not spend import retry attempts while there is nothing at the path, so a download in this state keeps its full retry budget for attempts that could actually work — it stays `importFailed` with the reason visible, and imports on its own as soon as the files appear.
+
+If the files never appear, it does not wait forever: after about 30 minutes of finding nothing (120 poll cycles) the download flips to `importBlocked` with a message naming the path it checked. From there you can **Retry import** once you've fixed the path, or grab the release again from search — a blocked entry no longer blocks a re-grab.
 
 ### "Already grabbed" when re-grabbing a release
 
 Clicking **Grab** on a release you already have a Queue entry for is refused with *already grabbed*, and the message now names the state that entry is in.
 
-- **`importFailed`** — the scanner is still retrying that download. Wait for it, or use **Queue → Retry import** to re-run the import against the files it already has.
+- **`importFailed`** — the scanner is still working on that download. Use **Queue → Retry import** to re-run the import against the files it already has, or remove the Queue entry if you want to grab the release fresh. If its files are simply not there, it turns into `importBlocked` (see above) and becomes re-grabbable on its own.
 - **`imported`** — you already have it.
 - **downloading / grabbed / importing** — it's in flight; check the Queue.
 - **`importBlocked`** — a re-grab is allowed and reuses the existing Queue row with a fresh retry budget. Use this when the original files are gone; use **Retry import** instead when they're still on disk.

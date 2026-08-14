@@ -247,19 +247,29 @@ func discoverBookFiles(downloadPath string, explicitFiles []string) []string {
 func filterImportableFiles(paths []string) []string {
 	out := paths[:0:0]
 	for _, p := range paths {
-		fi, err := os.Lstat(p)
-		if err != nil {
-			slog.Warn("skipping download-client file that is not present on this host",
-				"path", p, "error", err)
-			continue
-		}
-		if fi.Mode()&os.ModeSymlink != 0 {
-			slog.Warn("skipping symlinked file in download path", "path", p)
+		if !importableSourceFile(p) {
+			slog.Warn("skipping download-client file: not a regular file on this host (missing, unreadable, or a symlink)",
+				"path", p)
 			continue
 		}
 		out = append(out, p)
 	}
 	return out
+}
+
+// importableSourceFile is the single-path predicate behind
+// filterImportableFiles, factored out so importSourcePresent — which decides
+// whether spending a retry attempt on this file list is honest — applies
+// EXACTLY the same test. When the two disagreed (Stat vs Lstat), a symlink with
+// a live target counted as present for the retry guard and was dropped by the
+// filter, so every poll spent an attempt on a list the importer had already
+// emptied.
+func importableSourceFile(p string) bool {
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeSymlink == 0
 }
 
 // dropSettings reads the external-mode drop-folder configuration (#941).

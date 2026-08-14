@@ -74,7 +74,11 @@ func alreadyGrabbedDetail(status models.DownloadState) string {
 	case models.StateImported:
 		return "this release has already been imported"
 	case models.StateImportFailed:
-		return "its import is still being retried — wait for it to settle, or use Retry import on the Queue page"
+		// Deliberately does not say "wait": the scanner does keep retrying, but
+		// the user gets an action either way. A download whose files never turn
+		// up is blocked (and so re-grabbable) within importSkipLimit poll
+		// cycles rather than sitting here indefinitely.
+		return "its import failed and the scanner is still retrying it — use Retry import on the Queue page, or remove the queue entry to grab it again"
 	case models.StateImportExternal, models.StateImportHeld:
 		return "it is waiting to be picked up by your external import tool — see the Queue page"
 	default:

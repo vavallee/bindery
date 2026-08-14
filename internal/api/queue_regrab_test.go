@@ -51,15 +51,23 @@ func TestRegrabbableState(t *testing.T) {
 // queue state, so the message must name the situation and point somewhere.
 func TestAlreadyGrabbedDetail(t *testing.T) {
 	tests := []struct {
-		status models.DownloadState
-		want   []string
+		status  models.DownloadState
+		want    []string
+		notWant []string
 	}{
-		{models.StateImported, []string{"already been imported"}},
-		{models.StateImportFailed, []string{"retried", "Retry import"}},
-		{models.StateImportExternal, []string{"external import tool"}},
-		{models.StateImportHeld, []string{"external import tool"}},
-		{models.StateDownloading, []string{"already in the queue", "downloading"}},
-		{models.StateGrabbed, []string{"already in the queue", "grabbed"}},
+		{status: models.StateImported, want: []string{"already been imported"}},
+		{
+			status: models.StateImportFailed,
+			want:   []string{"retrying", "Retry import"},
+			// The message must offer an action rather than tell the user to
+			// wait: "wait for it to settle" was advice for an outcome that,
+			// before the skip limit, could never arrive.
+			notWant: []string{"wait"},
+		},
+		{status: models.StateImportExternal, want: []string{"external import tool"}},
+		{status: models.StateImportHeld, want: []string{"external import tool"}},
+		{status: models.StateDownloading, want: []string{"already in the queue", "downloading"}},
+		{status: models.StateGrabbed, want: []string{"already in the queue", "grabbed"}},
 	}
 	for _, tc := range tests {
 		t.Run(string(tc.status), func(t *testing.T) {
@@ -67,6 +75,11 @@ func TestAlreadyGrabbedDetail(t *testing.T) {
 			for _, want := range tc.want {
 				if !strings.Contains(got, want) {
 					t.Errorf("alreadyGrabbedDetail(%q) = %q, want it to mention %q", tc.status, got, want)
+				}
+			}
+			for _, notWant := range tc.notWant {
+				if strings.Contains(strings.ToLower(got), notWant) {
+					t.Errorf("alreadyGrabbedDetail(%q) = %q, must not mention %q", tc.status, got, notWant)
 				}
 			}
 		})

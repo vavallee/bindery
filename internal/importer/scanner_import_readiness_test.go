@@ -154,6 +154,10 @@ func TestImportSourcePresent(t *testing.T) {
 	}
 	absent := filepath.Join(dir, "gone.epub")
 	missingDir := filepath.Join(dir, "no-such-release")
+	liveSymlink := filepath.Join(dir, "linked.epub")
+	if err := os.Symlink(present, liveSymlink); err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		name          string
@@ -173,6 +177,13 @@ func TestImportSourcePresent(t *testing.T) {
 		{"no list, path absent", missingDir, nil, false},
 		{"no list, empty path", "", nil, false},
 		{"no list, whitespace path", "   ", nil, false},
+		// The guard and filterImportableFiles must apply the same predicate. A
+		// symlink with a live target passes os.Stat but is dropped by the
+		// filter, so calling it "present" spends a retry attempt on a file list
+		// the importer has already emptied — the full budget, one poll at a
+		// time, on a download nothing can import.
+		{"explicit symlink with a live target is not importable", dir, []string{liveSymlink}, false},
+		{"a real file alongside a symlink still counts", dir, []string{liveSymlink, present}, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -416,8 +427,13 @@ func TestCheckQbittorrentDownloads_TempPathDownloadIsNotImportedEarly(t *testing
 // qBittorrent still holds the torrent at 100% and still enumerates its one
 // file. The first import must fail with a message that describes what is
 // actually wrong, and every subsequent poll must decline to spend a retry
-// attempt on a condition retrying cannot influence — so the download is never
-// terminally blocked, and it imports the moment the file comes back.
+// attempt on a condition retrying cannot influence — so the retry budget is
+// still whole, and the download imports the moment the file comes back.
+//
+// Declining is not the same as ignoring: a streak that never ends is bounded by
+// importSkipLimit, which is what
+// TestCheckQbittorrentDownloads_MissingPayloadIsEventuallyBlocked pins. This
+// test stays well inside that bound.
 func TestCheckQbittorrentDownloads_MissingPayloadDoesNotExhaustRetries(t *testing.T) {
 	saveRoot := t.TempDir()
 	libraryDir := t.TempDir()
@@ -467,8 +483,8 @@ func TestCheckQbittorrentDownloads_MissingPayloadDoesNotExhaustRetries(t *testin
 			got.ImportRetryCount)
 	}
 	if got.Status == models.StateImportBlocked {
-		t.Fatalf("#1955 regression: download terminally blocked (%q) with the message %q — "+
-			"the files were simply not there", got.Status, got.ErrorMessage)
+		t.Fatalf("#1955 regression: download terminally blocked (%q) after only a handful of polls, "+
+			"with the message %q — the files were simply not there", got.Status, got.ErrorMessage)
 	}
 	if got.Status != models.StateImportFailed {
 		t.Fatalf("expected the download to stay retryable at %q, got %q", models.StateImportFailed, got.Status)
@@ -486,5 +502,107 @@ func TestCheckQbittorrentDownloads_MissingPayloadDoesNotExhaustRetries(t *testin
 	}
 	if got.ImportRetryCount != 1 {
 		t.Errorf("expected exactly the one real retry to be counted, got %d", got.ImportRetryCount)
+	}
+}
+
+// newPhantomPayloadFixture builds flaevers' shape (#1955): qBittorrent holds a
+// complete torrent and enumerates its single file, but nothing is on disk. It
+// returns the fixture and the path the client claims the file is at.
+func newPhantomPayloadFixture(t *testing.T) (*readinessFixture, string) {
+	t.Helper()
+	saveRoot := t.TempDir()
+	const hash = "9f2c0f1b7a1c4de0a2c5f0b9d3e7a41c8b6d5e20"
+	const fileName = "A.Readiness.Book.M4B-SEEDPOOL.m4b"
+
+	f := newReadinessFixture(t, t.TempDir(), t.TempDir(), models.MediaTypeAudiobook, hash)
+	m4b := filepath.Join(saveRoot, fileName)
+	f.qbit.set(map[string]any{
+		"hash":         hash,
+		"name":         fileName,
+		"state":        "stalledUP",
+		"progress":     1.0,
+		"size":         120000000,
+		"amount_left":  0,
+		"save_path":    saveRoot,
+		"content_path": m4b,
+	}, []map[string]any{{"name": fileName, "size": 120000000}})
+	return f, m4b
+}
+
+// TestCheckQbittorrentDownloads_MissingPayloadIsEventuallyBlocked closes the
+// trap the retry guard would otherwise create.
+//
+// A download whose files never appear satisfies neither arm of
+// blockStaleImportFailures: no attempt is ever counted, so the retry budget is
+// never exhausted, and the torrent is still in the client, so the source has
+// not vanished. Before importSkipLimit, such a row stayed StateImportFailed
+// forever — untouched by every automatic path, and refused by the Grab 409 with
+// "wait for it to settle", which nothing would ever do. The only escape was
+// deleting the queue row.
+//
+// It must instead reach a terminal, re-grabbable, legible state in bounded
+// time, without ever having spent a retry attempt on a poll that could not have
+// worked.
+func TestCheckQbittorrentDownloads_MissingPayloadIsEventuallyBlocked(t *testing.T) {
+	f, m4b := newPhantomPayloadFixture(t)
+
+	got := f.poll(t, 1)
+	if got.Status != models.StateImportFailed {
+		t.Fatalf("expected the first attempt to fail visibly, got %q", got.Status)
+	}
+
+	// One poll short of the limit the download is still retryable: the guard's
+	// real job (import it the moment the files turn up) is not cut short.
+	got = f.poll(t, importSkipLimit-1)
+	if got.Status != models.StateImportFailed {
+		t.Fatalf("expected the download to still be retryable after %d skipped polls, got %q (%q)",
+			importSkipLimit-1, got.Status, got.ErrorMessage)
+	}
+
+	got = f.poll(t, 1)
+	if got.Status != models.StateImportBlocked {
+		t.Fatalf("a download whose files never appear must reach a terminal state; after %d skipped "+
+			"polls it is still %q — nothing else will ever move this row, and Grab refuses to re-grab it",
+			importSkipLimit, got.Status)
+	}
+	if got.ImportRetryCount != 0 {
+		t.Errorf("#1884 regression: %d retry attempts spent on polls with nothing on disk to import",
+			got.ImportRetryCount)
+	}
+	for _, want := range []string{m4b, "Retry import", "grab the release again", "PathRemap"} {
+		if !strings.Contains(got.ErrorMessage, want) {
+			t.Errorf("the blocking message must be actionable; %q missing from %q", want, got.ErrorMessage)
+		}
+	}
+	if strings.Contains(strings.ToLower(got.ErrorMessage), "wait") {
+		t.Errorf("the blocking message must not tell the user to wait for something that will not "+
+			"happen: %q", got.ErrorMessage)
+	}
+}
+
+// TestCheckQbittorrentDownloads_ManualRetryResetsTheSkipStreak pins that Queue
+// → Retry import really is a way out and not a no-op.
+//
+// The streak is scanner-side bookkeeping and the retry is a database write, so
+// nothing connects them except the row snapshot recordImportSkip keeps. Without
+// that check, a row re-armed one poll before the limit would be blocked again
+// on the very next poll, and the button would appear to do nothing.
+func TestCheckQbittorrentDownloads_ManualRetryResetsTheSkipStreak(t *testing.T) {
+	f, _ := newPhantomPayloadFixture(t)
+
+	f.poll(t, 1)
+	got := f.poll(t, importSkipLimit-1)
+	if got.Status != models.StateImportFailed {
+		t.Fatalf("setup: expected %q one poll short of the limit, got %q", models.StateImportFailed, got.Status)
+	}
+
+	accepted, found, err := f.repo.ResetImportRetry(f.ctx, f.dl.ID)
+	if err != nil || !accepted || !found {
+		t.Fatalf("Retry import: accepted=%v found=%v err=%v", accepted, found, err)
+	}
+
+	if got = f.poll(t, importSkipLimit-1); got.Status == models.StateImportBlocked {
+		t.Fatalf("Retry import must restart the scanner's patience: the download was blocked again "+
+			"after %d polls (%q)", importSkipLimit-1, got.ErrorMessage)
 	}
 }

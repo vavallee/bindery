@@ -448,6 +448,14 @@ export default function QueuePage() {
                         ) : null
                       })()}
                     </div>
+                    {/* Retry import clears error_message, so a re-armed row would
+                        otherwise show an "Import Failed" pill with no explanation
+                        until the next scanner check writes a new one. */}
+                    {item.status === 'importFailed' && !item.errorMessage && (
+                      <div className="mt-1 text-xs text-slate-600 dark:text-zinc-400 bg-slate-200/60 dark:bg-zinc-800/60 rounded px-2 py-1">
+                        Queued for another import attempt — the scanner picks it up on its next check.
+                      </div>
+                    )}
                     {item.status === 'importBlocked' && !item.errorMessage && (
                       <div className="mt-1 text-xs text-slate-600 dark:text-zinc-400 bg-slate-200/60 dark:bg-zinc-800/60 rounded px-2 py-1">
                         Import blocked — manual intervention required (check library path permissions)
