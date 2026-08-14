@@ -4,6 +4,67 @@ All notable changes to Bindery are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com) and versions follow
 [Semantic Versioning](https://semver.org).
 
+## [v1.30.4] — 2026-08-13
+
+One fix, and it is the reason to upgrade straight away: v1.30.1 through v1.30.3
+could leave Bindery unable to start at all, on every restart, with no way back
+in.
+
+Migration 72 rebuilds two Calibre tables, and rebuilding a table in SQLite means
+turning foreign-key enforcement off for the duration — so the migration runner
+verifies referential integrity before it commits. That part is right. What was
+wrong is the scope of the check: it asked SQLite about the *entire database*
+rather than the two tables the migration had just rebuilt. Any orphaned row
+anywhere, including drift that predated the migration by months, failed it.
+
+That drift had a source. Until #1727, connection-pool replacements ran without
+`foreign_keys` set, so the `ON DELETE CASCADE` rules the schema declares quietly
+stopped firing on long-running instances and orphan rows accumulated. #1727
+stopped new drift but never cleaned up what had already collected, and migration
+72 is where the bill arrived. The unpleasant part is who it selected for: the
+longer an instance had been running, the more orphans it carried, and the more
+certain it was to fail. The oldest and largest libraries were the most exposed.
+
+Nobody lost data. The migration runs inside a transaction and rolled back every
+time, so affected databases are intact — they simply could not be opened by
+v1.30.1 or later. This release opens them, and adds two offline commands for
+inspecting and clearing the leftover drift on an instance that cannot start.
+
+### Fixed
+
+- **Bindery would not start after upgrading to v1.30.1–v1.30.3**
+  ([#1972](https://github.com/vavallee/bindery/issues/1972),
+  [#1974](https://github.com/vavallee/bindery/pull/1974)) — the instance exited
+  on every restart with `migration 72: foreign_key_check found N violation(s)`.
+  Migration 72's integrity check scanned the whole database instead of the two
+  Calibre tables it rebuilt, so orphan rows left over from the pre-#1727
+  foreign-key drift — accumulated long before that migration existed — aborted
+  the upgrade. Longer-running instances were the most likely to hit it. The
+  runner now compares per-table violation counts from before and after the
+  migration and fails only on violations the migration itself introduced;
+  pre-existing ones are logged with their table names and counts and no longer
+  stop the instance. A migration that genuinely corrupts what it rebuilds still
+  aborts and rolls back, as before.
+
+### Added
+
+- **`bindery db-check` and `bindery db-repair`**
+  ([#1972](https://github.com/vavallee/bindery/issues/1972)) — offline database
+  integrity tooling that runs without applying migrations, so it works on an
+  instance that cannot start. `db-check` lists every row whose foreign key points
+  at a missing parent and changes nothing; `db-repair --yes` replays the delete
+  rule the schema declares (`ON DELETE CASCADE` rows removed, `ON DELETE SET
+  NULL` references cleared, anything else skipped and reported) and prints what
+  it did. `--yes` is required; without it the command refuses and names the file
+  to back up. Also reachable as `BINDERY_DB_FK_CHECK=report|repair` for setups
+  where the container command cannot be edited. See
+  [Troubleshooting](docs/Troubleshooting-Wiki.md).
+
+  ```bash
+  docker run --rm -v bindery-config:/config ghcr.io/vavallee/bindery:latest db-check
+  docker run --rm -v bindery-config:/config ghcr.io/vavallee/bindery:latest db-repair --yes
+  ```
+
 ## [v1.30.3] — 2026-08-12
 
 Six fixes. Three of them are one story: a book's media type records what Bindery

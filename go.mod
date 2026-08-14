@@ -2,7 +2,7 @@ module github.com/vavallee/bindery
 
 go 1.25.11
 
-toolchain go1.26.5
+toolchain go1.26.6
 
 require (
 	github.com/coreos/go-oidc/v3 v3.20.0
