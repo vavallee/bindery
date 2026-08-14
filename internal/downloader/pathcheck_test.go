@@ -20,31 +20,46 @@ func TestCheckCompletedPathVisibility_Qbittorrent(t *testing.T) {
 	visible := t.TempDir()
 
 	tests := []struct {
-		name       string
-		categories string
-		pathRemap  string
-		wantStatus string
-		wantInMsg  string
+		name              string
+		categories        string
+		pathRemap         string
+		categoryAudiobook string
+		downloadDir       string
+		audiobookDir      string
+		wantStatus        string
+		wantInMsg         []string
 	}{
 		{
 			name:       "remapped path exists -> visible",
 			categories: `{"books":{"name":"books","savePath":"/remote/downloads"}}`,
 			pathRemap:  "/remote/downloads:" + visible,
 			wantStatus: PathVisible,
-			wantInMsg:  "can read",
+			wantInMsg:  []string{"can read"},
 		},
 		{
 			name:       "remapped path missing -> warning",
 			categories: `{"books":{"name":"books","savePath":"/remote/downloads"}}`,
 			pathRemap:  "/remote/downloads:" + filepath.Join(visible, "does-not-exist"),
 			wantStatus: PathNotVisible,
-			wantInMsg:  "can't read",
+			wantInMsg:  []string{"can't read", `the ebook download directory "/some/download/dir"`},
 		},
 		{
 			name:       "no remap, client path missing -> warning",
 			categories: `{"books":{"name":"books","savePath":"/totally/not/here/xyz"}}`,
 			wantStatus: PathNotVisible,
-			wantInMsg:  "path remap",
+			wantInMsg:  []string{"path remap", `the ebook download directory "/some/download/dir"`},
+		},
+		{
+			name:              "separate audiobook category includes both configured directories",
+			categories:        `{"books":{"name":"books","savePath":"/totally/not/here/xyz"}}`,
+			categoryAudiobook: "audiobooks",
+			downloadDir:       "/bindery/downloads/ebooks",
+			audiobookDir:      "/bindery/downloads/audiobooks",
+			wantStatus:        PathNotVisible,
+			wantInMsg: []string{
+				`the ebook download directory "/bindery/downloads/ebooks"`,
+				`the audiobook download directory "/bindery/downloads/audiobooks"`,
+			},
 		},
 		{
 			name:       "category not found -> unknown (no false alarm)",
@@ -71,20 +86,27 @@ func TestCheckCompletedPathVisibility_Qbittorrent(t *testing.T) {
 
 			host, port := serverHostPort(t, srv.URL)
 			client := &models.DownloadClient{
-				Type:      "qbittorrent",
-				Host:      host,
-				Port:      port,
-				Username:  "u",
-				Password:  "p",
-				Category:  "books",
-				PathRemap: tc.pathRemap,
+				Type:              "qbittorrent",
+				Host:              host,
+				Port:              port,
+				Username:          "u",
+				Password:          "p",
+				Category:          "books",
+				CategoryAudiobook: tc.categoryAudiobook,
+				PathRemap:         tc.pathRemap,
 			}
-			got := CheckCompletedPathVisibility(context.Background(), client, "/some/download/dir", "", "")
+			downloadDir := tc.downloadDir
+			if downloadDir == "" {
+				downloadDir = "/some/download/dir"
+			}
+			got := CheckCompletedPathVisibility(context.Background(), client, downloadDir, tc.audiobookDir, "")
 			if got.Status != tc.wantStatus {
 				t.Fatalf("status = %q, want %q; message=%s", got.Status, tc.wantStatus, got.Message)
 			}
-			if tc.wantInMsg != "" && !strings.Contains(got.Message, tc.wantInMsg) {
-				t.Fatalf("message %q does not contain %q", got.Message, tc.wantInMsg)
+			for _, want := range tc.wantInMsg {
+				if !strings.Contains(got.Message, want) {
+					t.Fatalf("message %q does not contain %q", got.Message, want)
+				}
 			}
 		})
 	}

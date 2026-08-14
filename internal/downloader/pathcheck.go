@@ -94,8 +94,29 @@ func qbittorrentPathVisibility(ctx context.Context, client *models.DownloadClien
 	if savePath == "" {
 		return PathVisibility{Status: PathUnknown}
 	}
-	expected := ExpectedDownloadDirForClient(client, models.MediaTypeEbook, downloadDir, audiobookDownloadDir)
+	expected := qbittorrentExpectedHint(client, downloadDir, audiobookDownloadDir)
 	return statRemappedPath(client, savePath, expected, globalRemap)
+}
+
+// qbittorrentExpectedHint describes the local directories Bindery is configured
+// to read for the categories this client serves. When audiobooks use a separate
+// category, include both media-specific directories so a failed visibility check
+// does not misleadingly point only at the ebook directory (#1984).
+func qbittorrentExpectedHint(client *models.DownloadClient, downloadDir, audiobookDownloadDir string) string {
+	ebookDir := strings.TrimSpace(ExpectedDownloadDirForClient(client, models.MediaTypeEbook, downloadDir, audiobookDownloadDir))
+	hints := make([]string, 0, 2)
+	if ebookDir != "" {
+		hints = append(hints, fmt.Sprintf("the ebook download directory %q", filepath.Clean(ebookDir)))
+	}
+
+	if strings.TrimSpace(client.CategoryAudiobook) != "" && strings.TrimSpace(client.CategoryAudiobook) != strings.TrimSpace(client.Category) {
+		audiobookDir := strings.TrimSpace(ExpectedDownloadDirForClient(client, models.MediaTypeAudiobook, downloadDir, audiobookDownloadDir))
+		if audiobookDir != "" {
+			hints = append(hints, fmt.Sprintf("the audiobook download directory %q", filepath.Clean(audiobookDir)))
+		}
+	}
+
+	return strings.Join(hints, " and ")
 }
 
 func nzbgetPathVisibility(ctx context.Context, client *models.DownloadClient, globalRemap string) PathVisibility {
@@ -123,8 +144,8 @@ func remapClientPath(client *models.DownloadClient, rawPath, globalRemap string)
 
 // statRemappedPath resolves a client-reported path via remapClientPath (client
 // PathRemap then global remap fallback) and os.Stats the result. expectedHint,
-// when non-empty, is included in the warning message as the directory Bindery
-// was configured to read from.
+// when non-empty, is included in the warning message as the configured local
+// directory description Bindery was expected to read from.
 func statRemappedPath(client *models.DownloadClient, clientPath, expectedHint, globalRemap string) PathVisibility {
 	localPath := filepath.Clean(remapClientPath(client, strings.TrimSpace(clientPath), globalRemap))
 	if localPath == "." || localPath == "" {
@@ -154,6 +175,9 @@ func statRemappedPath(client *models.DownloadClient, clientPath, expectedHint, g
 	msg := fmt.Sprintf("Connected, but Bindery can't read the client's completed-downloads folder at %q — %s.", localPath, hint)
 	if local := strings.TrimSpace(clientPath); local != "" && filepath.Clean(local) != localPath {
 		msg = fmt.Sprintf("Connected, but Bindery can't read the client's completed-downloads folder. The client writes to %q, which maps to %q inside Bindery, but that path does not exist — %s.", filepath.Clean(local), localPath, hint)
+	}
+	if expected := strings.TrimSpace(expectedHint); expected != "" {
+		msg += fmt.Sprintf(" Bindery is configured to read from %s.", expected)
 	}
 	return PathVisibility{Status: PathNotVisible, Message: msg, Path: localPath}
 }
