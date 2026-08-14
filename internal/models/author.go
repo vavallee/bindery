@@ -85,6 +85,12 @@ type AuthorSyncSummary struct {
 	SkippedLanguage  int `json:"skippedLanguage"`
 	SkippedJunk      int `json:"skippedJunk"`
 	SkippedMediaType int `json:"skippedMediaType"`
+	// SkippedNotAccepted is the number of works a refresh found but did not
+	// add because the author isn't taking newly-discovered books (unmonitored,
+	// or Monitor new items = None). Reported for the same reason as the rest:
+	// "the refresh added nothing" needs to say why, or it reads as a failure
+	// (#1815).
+	SkippedNotAccepted int `json:"skippedNotAccepted,omitempty"`
 	// AllowedLanguages is the language set the run actually applied, so the UI
 	// can name the setting that did the dropping rather than making the user
 	// guess which profile the author is on. Empty means "no language filter".
@@ -111,11 +117,19 @@ type AuthorSyncSkippedBook struct {
 
 // SkippedTotal is the number of provider works this sync dropped for any
 // reason. Zero means nothing was filtered out.
+//
+// It matches what the author page's sync notice counts — the question there is
+// "is there anything to explain?", and a refresh that declined to add 83 works
+// has plenty. It deliberately does NOT match the log-level gate in
+// fetchAuthorBooks, which excludes SkippedNotAccepted: a metadata filter
+// silently discarding a catalogue is surprising and logs at Warn, while the
+// discovery policy is something the user configured and already logged once.
+// Two questions, two counts.
 func (s *AuthorSyncSummary) SkippedTotal() int {
 	if s == nil {
 		return 0
 	}
-	return s.SkippedLanguage + s.SkippedJunk + s.SkippedMediaType
+	return s.SkippedLanguage + s.SkippedJunk + s.SkippedMediaType + s.SkippedNotAccepted
 }
 
 // AuthorProviderFromForeignID returns the metadata provider implied by a
