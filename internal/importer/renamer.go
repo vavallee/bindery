@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
@@ -1199,10 +1200,33 @@ func CopyDirCtx(ctx context.Context, src, dst string) error {
 	return copyDirPublicCtx(ctx, src, dst)
 }
 
-// maxPathComponentLen caps each sanitized path segment. Most filesystems limit
-// a single name to 255 bytes (NAME_MAX); 200 leaves room for the extension and
-// any uniqueness suffix the importer appends.
-const maxPathComponentLen = 200
+// maxPathComponentBytes caps each sanitized path segment. NAME_MAX is measured
+// in BYTES, not characters — 255 on ext4, XFS, btrfs and APFS — so a rune-based
+// cap let a non-ASCII title through at up to 4x the budget and the import died
+// with ENAMETOOLONG (#1982).
+//
+// The budget is 200 rather than 255 because sanitizePath does not sanitise a
+// finished filename: it sanitises one template *value* ({Title}, {Author}, …)
+// that is then substituted into a user-configurable naming template alongside
+// literal glue, before an extension and any " (2)" uniqueness suffix are
+// appended. A value capped at exactly NAME_MAX overflows the moment it becomes
+// part of a real name. 200 also keeps ASCII byte-for-byte identical to the old
+// 200-rune cap, so no existing library's paths change.
+const maxPathComponentBytes = 200
+
+// truncateUTF8 returns s limited to at most maxBytes bytes, cut on a rune
+// boundary so a multi-byte character is never split mid-encoding (which would
+// leave invalid UTF-8 in a filename and in the book_files path row).
+func truncateUTF8(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	end := maxBytes
+	for end > 0 && !utf8.RuneStart(s[end]) {
+		end--
+	}
+	return s[:end]
+}
 
 // pathCharReplacer neutralises characters that are problematic in file
 // paths. Shared by sanitizePath (full field sanitisation) and sanitizeInline
@@ -1251,10 +1275,10 @@ func sanitizePath(s string) string {
 		if p == "" || p == "." || p == ".." {
 			continue
 		}
-		// Cap each component (rune-safe) so an overlong metadata field can't
-		// produce an ENAMETOOLONG that fails the whole import.
-		if r := []rune(p); len(r) > maxPathComponentLen {
-			p = strings.TrimSpace(string(r[:maxPathComponentLen]))
+		// Cap each component by BYTES (rune-safe) so an overlong metadata field
+		// can't produce an ENAMETOOLONG that fails the whole import.
+		if len(p) > maxPathComponentBytes {
+			p = strings.TrimSpace(truncateUTF8(p, maxPathComponentBytes))
 		}
 		kept = append(kept, p)
 	}
