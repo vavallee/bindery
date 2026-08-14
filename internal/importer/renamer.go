@@ -275,13 +275,14 @@ func (r *Renamer) applyWithExtra(template string, author *models.Author, book *m
 func renderSegment(seg string, values map[string]string) string {
 	locs := templateGroupRe.FindAllStringSubmatchIndex(seg, -1)
 	if len(locs) == 0 {
-		return strings.TrimSpace(seg)
+		return strings.TrimSpace(truncateUTF8(strings.TrimSpace(seg), maxSegmentBytes))
 	}
 
 	// Split the segment into literals (len n+1) interleaved with group values
 	// (len n): lits[0] vals[0] lits[1] vals[1] ... vals[n-1] lits[n].
 	lits := make([]string, 0, len(locs)+1)
 	vals := make([]string, 0, len(locs))
+	shrinkable := make([]bool, 0, len(locs))
 	prev := 0
 	for _, m := range locs {
 		start, end := m[0], m[1]
@@ -292,6 +293,7 @@ func renderSegment(seg string, values map[string]string) string {
 			v = seg[start:end] // no known token in the group: keep it verbatim
 		}
 		vals = append(vals, v)
+		shrinkable = append(shrinkable, known)
 		prev = end
 	}
 	lits = append(lits, seg[prev:])
@@ -309,13 +311,76 @@ func renderSegment(seg string, values map[string]string) string {
 		lits[i+1] = ""
 	}
 
-	var b strings.Builder
-	for i, v := range vals {
-		b.WriteString(lits[i])
-		b.WriteString(v)
+	return strings.TrimSpace(composeCapped(lits, vals, shrinkable))
+}
+
+// composeCapped joins interleaved literals and group values into one path
+// segment, shrinking the values — never the literals — until the result fits
+// maxSegmentBytes.
+//
+// The invariant it exists to keep is that the LITERALS are structural. In the
+// default template "{Title} - {Author}.{ext}" the "." before the extension is
+// a literal and the " - " between the names is a literal; truncating the
+// composed string from the right would take the extension with it and leave a
+// file every downstream format check is blind to. Values carry the variable
+// text, so values are what gives.
+//
+// Shrinking is water-filling: find the largest per-value byte cap under which
+// the whole segment fits, then apply it. That takes the longest value down
+// first and leaves short ones alone, which is why {ext}, {Year} and {Part} —
+// substituted raw, outside sanitizePath's per-value cap — survive intact
+// without being special-cased by name.
+//
+// A group that referenced no known token is kept verbatim by the caller and
+// is marked not-shrinkable here: it is literal passthrough wearing braces.
+func composeCapped(lits, vals []string, shrinkable []bool) string {
+	join := func(vs []string) string {
+		var b strings.Builder
+		for i, v := range vs {
+			b.WriteString(lits[i])
+			b.WriteString(v)
+		}
+		b.WriteString(lits[len(lits)-1])
+		return b.String()
 	}
-	b.WriteString(lits[len(lits)-1])
-	return strings.TrimSpace(b.String())
+
+	full := join(vals)
+	if len(full) <= maxSegmentBytes {
+		return full
+	}
+
+	// Largest cap that fits, by bisection on the byte budget. lo always fits
+	// (every shrinkable value emptied); hi is the first known-too-long cap.
+	fits := func(budget int) (string, bool) {
+		capped := make([]string, len(vals))
+		for i, v := range vals {
+			if shrinkable[i] && len(v) > budget {
+				v = strings.TrimRight(truncateUTF8(v, budget), " ")
+			}
+			capped[i] = v
+		}
+		s := join(capped)
+		return s, len(s) <= maxSegmentBytes
+	}
+
+	best, ok := fits(0)
+	if !ok {
+		// The fixed parts alone overflow: a hand-edited template with a
+		// literal longer than the budget, or unknown-token passthrough. There
+		// is no structure left to protect, so a plain rune-safe cut is the
+		// only thing that still beats ENAMETOOLONG.
+		return truncateUTF8(best, maxSegmentBytes)
+	}
+	lo, hi := 0, maxSegmentBytes+1
+	for lo+1 < hi {
+		mid := (lo + hi) / 2
+		if s, ok := fits(mid); ok {
+			lo, best = mid, s
+		} else {
+			hi = mid
+		}
+	}
+	return best
 }
 
 // renderGroup renders the content of one "{...}" group. known=false means
@@ -1213,6 +1278,33 @@ func CopyDirCtx(ctx context.Context, src, dst string) error {
 // part of a real name. 200 also keeps ASCII byte-for-byte identical to the old
 // 200-rune cap, so no existing library's paths change.
 const maxPathComponentBytes = 200
+
+// maxSegmentBytes caps a COMPOSED path segment — one rendered template
+// segment, glue and extension included — where maxPathComponentBytes above
+// caps a single template VALUE substituted into it.
+//
+// The value cap alone is not enough, and the shipped default template proves
+// it with pure ASCII: "{Title} - {Author}.{ext}" with a title and an author
+// each at the 200-byte value cap renders 200 + 3 + 200 + 5 = 408 bytes, and
+// the create fails with ENAMETOOLONG well inside NAME_MAX's 255.
+//
+// Two things are appended to a segment after it is rendered, so the budget
+// reserves for both rather than assuming the rendered name is the final one:
+//
+//   - stagingPath prepends ".bindery-stage-<UnixNano>-" to the leaf, which is
+//     15 + 19 + 1 bytes (UnixNano stays 19 digits until the year 2262). Without
+//     this reservation a destination that is legal at 230 bytes fails during
+//     STAGING instead of at the final write, which is a confusing place to
+//     read ENAMETOOLONG.
+//   - UniqueDir appends " (2)".." (999)" on a collision, worst case 6 bytes.
+//     Without this reservation a name that just fits imports once and fails
+//     the second time the same title arrives.
+const (
+	nameMaxBytes       = 255 // ext4, XFS, btrfs, APFS — bytes, not runes
+	stagingPrefixBytes = len(".bindery-stage-") + 19 + 1
+	uniqueSuffixBytes  = len(" (999)")
+	maxSegmentBytes    = nameMaxBytes - stagingPrefixBytes - uniqueSuffixBytes
+)
 
 // truncateUTF8 returns s limited to at most maxBytes bytes, cut on a rune
 // boundary so a multi-byte character is never split mid-encoding (which would
