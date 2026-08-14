@@ -1,6 +1,11 @@
 package indexer
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/vavallee/bindery/internal/models"
+)
 
 func TestAuthorSurname(t *testing.T) {
 	cases := map[string]string{
@@ -107,6 +112,64 @@ func TestParseReleaseISBN(t *testing.T) {
 	p := ParseRelease("The.Sparrow.9780449912553.epub")
 	if p.ISBN != "9780449912553" {
 		t.Errorf("ISBN = %q, want 9780449912553", p.ISBN)
+	}
+}
+
+// TestReleaseFormats pins what ParsedRelease.Format cannot answer: which
+// containers a release actually names. Format keeps the first match in
+// formatTokens order, and that order lists every ebook container before every
+// audio one, so an audiobook with a PDF booklet reduces to "pdf" there.
+func TestReleaseFormats(t *testing.T) {
+	cases := []struct {
+		title string
+		want  []string
+	}{
+		{"Bob the Drag Queen - Harriet Tubman (Unabridged) [M4B + PDF]", []string{"pdf", "m4b"}},
+		{"Andy Weir - Project Hail Mary M4B/PDF booklet-SEEDPOOL", []string{"pdf", "m4b"}},
+		{"Andy Weir - Project Hail Mary [EPUB+MOBI+AZW3]", []string{"epub", "azw3", "mobi"}},
+		{"Andy Weir - Project Hail Mary.epub", []string{"epub"}},
+		{"Andy Weir - Project Hail Mary-SEEDPOOL", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.title, func(t *testing.T) {
+			got := ReleaseFormats(c.title)
+			if len(got) != len(c.want) {
+				t.Fatalf("ReleaseFormats(%q) = %v, want %v", c.title, got, c.want)
+			}
+			for i := range got {
+				if got[i] != c.want[i] {
+					t.Fatalf("ReleaseFormats(%q) = %v, want %v", c.title, got, c.want)
+				}
+			}
+		})
+	}
+}
+
+// TestMediaTypeForFormat asserts the mapping is total over formatTokens. The
+// importer used to keep its own copy of these lists, which drifted: it carried
+// "opus" and "aac", tokens ParseRelease can never produce, and would have
+// missed any token added here. Nothing may be a recognised release format and
+// belong to neither slot.
+func TestMediaTypeForFormat(t *testing.T) {
+	for _, token := range formatTokens {
+		mediaType := MediaTypeForFormat(token)
+		if mediaType != models.MediaTypeEbook && mediaType != models.MediaTypeAudiobook {
+			t.Errorf("MediaTypeForFormat(%q) = %q — every parseable format token must map to a slot",
+				token, mediaType)
+		}
+		if IsAudiobookFormat(token) != (mediaType == models.MediaTypeAudiobook) {
+			t.Errorf("MediaTypeForFormat(%q) = %q disagrees with IsAudiobookFormat(%q) = %v",
+				token, mediaType, token, IsAudiobookFormat(token))
+		}
+	}
+	for _, unknown := range []string{"", "  ", "web-dl", "opus", "aac", "flac ", "M4B"} {
+		want := ""
+		if strings.EqualFold(strings.TrimSpace(unknown), "m4b") || strings.EqualFold(strings.TrimSpace(unknown), "flac") {
+			want = models.MediaTypeAudiobook
+		}
+		if got := MediaTypeForFormat(unknown); got != want {
+			t.Errorf("MediaTypeForFormat(%q) = %q, want %q", unknown, got, want)
+		}
 	}
 }
 

@@ -2,10 +2,12 @@ package indexer
 
 import (
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
 )
 
@@ -179,7 +181,13 @@ func ParseRelease(title string) ParsedRelease {
 		p.ASIN = asin
 	}
 
-	// Format: first recognised format token in the normalized title
+	// Format: first recognised format token in the normalized title.
+	//
+	// "First" is in formatTokens order, NOT in the order the tokens appear in
+	// the title, and formatTokens lists every ebook container ahead of every
+	// audio one. A release carrying both — "… (Unabridged) M4B + PDF booklet" —
+	// therefore parses to "pdf". Callers that must know which MEDIA TYPE a
+	// release is for want ReleaseFormats, which reports all of them.
 	for _, f := range formatTokens {
 		if WordBoundaryRegex(f).MatchString(p.Normalized) {
 			p.Format = f
@@ -221,3 +229,39 @@ func AuthorSurname(author string) string {
 // IsArticle reports whether w is an English article/connective. Exported for
 // tests; consumers generally call sigWords which already filters these.
 func IsArticle(w string) bool { return articleSet[strings.ToLower(w)] }
+
+// ReleaseFormats returns every recognised format token in title, in
+// formatTokens order and without duplicates. ParsedRelease.Format keeps only
+// the first, which is enough for quality ranking but wrong for deciding what
+// KIND of release this is: a "… M4B + PDF" audiobook (an audio file plus a PDF
+// booklet) reduces to "pdf" there, so a caller asking "ebook or audiobook?"
+// gets "ebook" for an audiobook.
+func ReleaseFormats(title string) []string {
+	normalized := NormalizeRelease(title)
+	var out []string
+	for _, f := range formatTokens {
+		if WordBoundaryRegex(f).MatchString(normalized) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// MediaTypeForFormat maps a release format token ("epub", "m4b", …) to the
+// media type whose slot it belongs to, or "" when the token is empty or not a
+// format Bindery recognises.
+//
+// This is the single source of truth for the token → media-type mapping.
+// Duplicating the token lists elsewhere let them drift: a copy in the importer
+// listed "opus" and "aac", which ParseRelease can never produce, and any token
+// added here would have been invisible to it.
+func MediaTypeForFormat(token string) string {
+	t := strings.ToLower(strings.TrimSpace(token))
+	if !slices.Contains(formatTokens, t) {
+		return ""
+	}
+	if IsAudiobookFormat(t) {
+		return models.MediaTypeAudiobook
+	}
+	return models.MediaTypeEbook
+}
