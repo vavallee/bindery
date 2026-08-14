@@ -468,7 +468,7 @@ func TestRankResultsManyItemsOrdering(t *testing.T) {
 	})
 	// After ranking, a recognized audiobook format must be at the top
 	// (was getting buried under format-unknown NMR posts pre-fix).
-	if p := ParseRelease(results[0].Title); !isAudiobookFormat(p.Format) {
+	if p := ParseRelease(results[0].Title); !IsAudiobookFormat(p.Format) {
 		t.Errorf("top result should have an audiobook format, got %q (Format=%q)", results[0].Title, p.Format)
 	}
 	// The unabridged M4B should beat the abridged MP3.
@@ -1146,12 +1146,12 @@ func TestSearchBookUsesEachIndexersParentCategoryPreference(t *testing.T) {
 
 func TestIsAudiobookFormat(t *testing.T) {
 	for _, f := range []string{"m4b", "m4a", "mp3", "flac", "ogg"} {
-		if !isAudiobookFormat(f) {
+		if !IsAudiobookFormat(f) {
 			t.Errorf("%q should be an audiobook format", f)
 		}
 	}
 	for _, f := range []string{"epub", "mobi", "azw3", "pdf", ""} {
-		if isAudiobookFormat(f) {
+		if IsAudiobookFormat(f) {
 			t.Errorf("%q should NOT be an audiobook format", f)
 		}
 	}
