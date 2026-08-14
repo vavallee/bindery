@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -1068,5 +1069,164 @@ func TestListPageFiltered_TiedSortIsStableAcrossPages(t *testing.T) {
 		if !slices.Equal(paged, want) {
 			t.Errorf("sort %q paged 2-at-a-time = %v, want %v (a repeat or a gap here is a lost author)", sort, paged, want)
 		}
+	}
+}
+
+// The catalogue-populated marker is the discriminator the refresh discovery
+// policy needs (#1815): "this author has no books" cannot tell an import that
+// never landed a catalogue apart from a library the user emptied on purpose.
+func TestAuthorRepo_CataloguePopulatedMarker(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	repo := NewAuthorRepo(database)
+	a := &models.Author{ForeignID: "OL_POP_A", Name: "Populated Author", SortName: "Author, Populated"}
+	if err := repo.Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.CataloguePopulatedAt(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("read marker: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("a fresh author must read as never populated, got %v", got)
+	}
+
+	first := time.Now().UTC().Add(-48 * time.Hour).Truncate(time.Second)
+	if err := repo.MarkCataloguePopulated(ctx, a.ID, first); err != nil {
+		t.Fatalf("mark: %v", err)
+	}
+	got, err = repo.CataloguePopulatedAt(ctx, a.ID)
+	if err != nil || got == nil {
+		t.Fatalf("read marker after mark: err=%v got=%v", err, got)
+	}
+	if !got.Equal(first) {
+		t.Errorf("marker = %v, want %v", got, first)
+	}
+
+	// Write-once: a later sync must not move the stamp, or "populated once"
+	// degrades into "synced recently" and stops answering the question.
+	if err := repo.MarkCataloguePopulated(ctx, a.ID, time.Now().UTC()); err != nil {
+		t.Fatalf("second mark: %v", err)
+	}
+	got, err = repo.CataloguePopulatedAt(ctx, a.ID)
+	if err != nil || got == nil {
+		t.Fatalf("read marker after second mark: err=%v got=%v", err, got)
+	}
+	if !got.Equal(first) {
+		t.Errorf("marker moved on a later sync: %v, want %v", got, first)
+	}
+
+	// An author that no longer exists reads as never populated rather than
+	// erroring — the caller is a best-effort gate, not a lookup.
+	if got, err := repo.CataloguePopulatedAt(ctx, a.ID+9999); err != nil || got != nil {
+		t.Errorf("missing author: got=%v err=%v, want nil/nil", got, err)
+	}
+}
+
+// Creating a book marks its author, whoever created it. The marker has to mean
+// "this author has had books" rather than "a catalogue sync ran", or an author
+// populated by an ABS/Calibre import or a Hardcover list and then emptied by
+// hand still reads as never-populated and the next refresh re-imports the
+// bibliography (#1815). BookRepo.Create is the one place every creation path
+// goes through, which is why dedup_key is derived there too.
+func TestBookRepo_CreateMarksTheAuthorAsPopulated(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	authors := NewAuthorRepo(database)
+	books := NewBookRepo(database)
+
+	a := &models.Author{ForeignID: "OL_IMPORTED_A", Name: "Imported Author", SortName: "Author, Imported"}
+	if err := authors.Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := authors.CataloguePopulatedAt(ctx, a.ID); err != nil || got != nil {
+		t.Fatalf("author with no books: got=%v err=%v, want nil", got, err)
+	}
+
+	first := &models.Book{ForeignID: "OL_IB1", AuthorID: a.ID, Title: "First", SortTitle: "first"}
+	if err := books.Create(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	marked, err := authors.CataloguePopulatedAt(ctx, a.ID)
+	if err != nil || marked == nil {
+		t.Fatalf("creating a book did not mark the author: got=%v err=%v", marked, err)
+	}
+
+	// Still write-once through this path: a second book must not move it.
+	if err := books.Create(ctx, &models.Book{
+		ForeignID: "OL_IB2", AuthorID: a.ID, Title: "Second", SortTitle: "second",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	again, err := authors.CataloguePopulatedAt(ctx, a.ID)
+	if err != nil || again == nil {
+		t.Fatalf("read marker: got=%v err=%v", again, err)
+	}
+	if !again.Equal(*marked) {
+		t.Errorf("second book moved the marker: %v then %v", marked, again)
+	}
+
+	// Deleting every book leaves the marker standing — that is the whole point.
+	if err := books.Delete(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := authors.CataloguePopulatedAt(ctx, a.ID); err != nil || got == nil {
+		t.Errorf("deleting books cleared the marker: got=%v err=%v", got, err)
+	}
+}
+
+// Migration 075 backfills the marker for authors that already have books:
+// without it, every existing library would look never-populated for one
+// refresh, and an author whose catalogue the user had already deleted would be
+// re-imported once more before the marker started sticking.
+func TestMigration075_BackfillsAuthorsThatHaveBooks(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	authors := NewAuthorRepo(database)
+	books := NewBookRepo(database)
+
+	withBooks := &models.Author{ForeignID: "OL_HAS_BOOKS", Name: "Has Books", SortName: "Books, Has"}
+	if err := authors.Create(ctx, withBooks); err != nil {
+		t.Fatal(err)
+	}
+	without := &models.Author{ForeignID: "OL_NO_BOOKS", Name: "No Books", SortName: "Books, No"}
+	if err := authors.Create(ctx, without); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.Create(ctx, &models.Book{
+		ForeignID: "OL_B1", AuthorID: withBooks.ID, Title: "A Book", SortTitle: "a book",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-run the migration body against the now-populated DB: the rows above
+	// were created after migrate() ran, so this stands in for the upgrade.
+	if _, err := database.Exec(`UPDATE authors SET catalogue_populated_at = created_at
+		WHERE catalogue_populated_at IS NULL
+		  AND EXISTS (SELECT 1 FROM books WHERE books.author_id = authors.id)`); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+
+	if got, err := authors.CataloguePopulatedAt(ctx, withBooks.ID); err != nil || got == nil {
+		t.Errorf("author with books was not backfilled: got=%v err=%v", got, err)
+	}
+	if got, err := authors.CataloguePopulatedAt(ctx, without.ID); err != nil || got != nil {
+		t.Errorf("author with no books must stay unmarked: got=%v err=%v", got, err)
 	}
 }

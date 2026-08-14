@@ -254,9 +254,9 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                   className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
                 >
                   <option value="all">{t('monitorNewItems.all', 'Follow monitor mode')}</option>
-                  <option value="none">{t('monitorNewItems.none', 'Add as unmonitored')}</option>
+                  <option value="none">{t('monitorNewItems.none', 'Don’t add them')}</option>
                 </select>
-                <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('editAuthorModal.monitorNewItemsHint', 'Applies to books found by a metadata refresh after the author was added. "Add as unmonitored" stops a refresh from mass-monitoring the back-catalogue.')}</p>
+                <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('editAuthorModal.monitorNewItemsHint', 'Applies to books a metadata refresh finds after the author was added. “Don’t add them” keeps a refresh to the books you already have, instead of pulling in the back-catalogue. An unmonitored author never takes new books either way.')}</p>
               </div>
               {monitorMode === 'series' && (
                 <div className="mb-3">
