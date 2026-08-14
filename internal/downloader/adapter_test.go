@@ -792,7 +792,7 @@ func TestRemoveDownload_SABnzbd(t *testing.T) {
 	client := &models.DownloadClient{Type: "sabnzbd", Host: host, Port: port, APIKey: "k"}
 	nzoID := "nzo99"
 	dl := &models.Download{SABnzbdNzoID: &nzoID}
-	if err := RemoveDownload(context.Background(), client, dl, false); err != nil {
+	if err := RemoveDownload(context.Background(), client, dl, false, ""); err != nil {
 		t.Fatalf("RemoveDownload: %v", err)
 	}
 }
@@ -800,7 +800,7 @@ func TestRemoveDownload_SABnzbd(t *testing.T) {
 func TestRemoveDownload_SABnzbd_NilNzoID(t *testing.T) {
 	client := &models.DownloadClient{Type: "sabnzbd"}
 	dl := &models.Download{SABnzbdNzoID: nil}
-	if err := RemoveDownload(context.Background(), client, dl, false); err != nil {
+	if err := RemoveDownload(context.Background(), client, dl, false, ""); err != nil {
 		t.Fatalf("expected nil error for empty NzoID: %v", err)
 	}
 }
@@ -814,7 +814,7 @@ func TestRemoveDownload_Transmission(t *testing.T) {
 	client := &models.DownloadClient{Type: "transmission", Host: host, Port: port}
 	torrentID := "7"
 	dl := &models.Download{TorrentID: &torrentID}
-	if err := RemoveDownload(context.Background(), client, dl, false); err != nil {
+	if err := RemoveDownload(context.Background(), client, dl, false, ""); err != nil {
 		t.Fatalf("RemoveDownload: %v", err)
 	}
 }
@@ -822,7 +822,7 @@ func TestRemoveDownload_Transmission(t *testing.T) {
 func TestRemoveDownload_Transmission_NilID(t *testing.T) {
 	client := &models.DownloadClient{Type: "transmission"}
 	dl := &models.Download{TorrentID: nil}
-	if err := RemoveDownload(context.Background(), client, dl, false); err != nil {
+	if err := RemoveDownload(context.Background(), client, dl, false, ""); err != nil {
 		t.Fatalf("expected nil error for nil TorrentID: %v", err)
 	}
 }
@@ -831,7 +831,7 @@ func TestRemoveDownload_Transmission_InvalidID(t *testing.T) {
 	client := &models.DownloadClient{Type: "transmission"}
 	bad := "not-a-number"
 	dl := &models.Download{TorrentID: &bad}
-	if err := RemoveDownload(context.Background(), client, dl, false); err == nil {
+	if err := RemoveDownload(context.Background(), client, dl, false, ""); err == nil {
 		t.Fatal("expected error for non-numeric torrent ID")
 	}
 }
@@ -850,7 +850,7 @@ func TestRemoveDownload_Qbittorrent(t *testing.T) {
 	client := &models.DownloadClient{Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p"}
 	hash := "abc123"
 	dl := &models.Download{TorrentID: &hash}
-	if err := RemoveDownload(context.Background(), client, dl, true); err != nil {
+	if err := RemoveDownload(context.Background(), client, dl, true, ""); err != nil {
 		t.Fatalf("RemoveDownload: %v", err)
 	}
 }
@@ -858,7 +858,7 @@ func TestRemoveDownload_Qbittorrent(t *testing.T) {
 func TestRemoveDownload_Qbittorrent_NilID(t *testing.T) {
 	client := &models.DownloadClient{Type: "qbittorrent"}
 	dl := &models.Download{TorrentID: nil}
-	if err := RemoveDownload(context.Background(), client, dl, false); err != nil {
+	if err := RemoveDownload(context.Background(), client, dl, false, ""); err != nil {
 		t.Fatalf("expected nil error for nil TorrentID: %v", err)
 	}
 }

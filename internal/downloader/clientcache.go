@@ -1,5 +1,5 @@
 // Package downloader's clientCache pools long-lived downloader clients
-// (qBittorrent, Transmission, Deluge, NZBGet, SABnzbd) so the scanner's
+// (qBittorrent, Transmission, Deluge, rTorrent, NZBGet, SABnzbd) so the scanner's
 // 15-second poll cycle stops re-Login-ing every time. This was finding 10
 // of the Wave 3 deep audit: every poll cycle the scanner ran something
 // like qbittorrent.New(...), throwing away the SID cookie qBit had just
@@ -34,6 +34,7 @@ import (
 	"github.com/vavallee/bindery/internal/downloader/deluge"
 	"github.com/vavallee/bindery/internal/downloader/nzbget"
 	"github.com/vavallee/bindery/internal/downloader/qbittorrent"
+	"github.com/vavallee/bindery/internal/downloader/rtorrent"
 	"github.com/vavallee/bindery/internal/downloader/sabnzbd"
 	"github.com/vavallee/bindery/internal/downloader/transmission"
 	"github.com/vavallee/bindery/internal/models"
@@ -47,6 +48,7 @@ type cachedEntry struct {
 	qbittorrent  *qbittorrent.Client
 	transmission *transmission.Client
 	deluge       *deluge.Client
+	rtorrent     *rtorrent.Client
 	nzbget       *nzbget.Client
 	sabnzbd      *sabnzbd.Client
 }
@@ -230,6 +232,21 @@ func (c *ClientCache) DelugeFor(client *models.DownloadClient) *deluge.Client {
 		)}
 	})
 	return e.deluge
+}
+
+// RtorrentFor returns the cached rTorrent client.
+func RtorrentFor(c *models.DownloadClient) *rtorrent.Client {
+	return defaultCache.RtorrentFor(c)
+}
+
+// RtorrentFor is the method form.
+func (c *ClientCache) RtorrentFor(client *models.DownloadClient) *rtorrent.Client {
+	e := c.lookupOrBuild(client, func() *cachedEntry {
+		return &cachedEntry{rtorrent: rtorrent.New(
+			client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL,
+		)}
+	})
+	return e.rtorrent
 }
 
 // NzbgetFor returns the cached NZBGet client.

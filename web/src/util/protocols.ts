@@ -4,7 +4,7 @@ import type { DownloadClient } from '../api/downloadclients'
 // Protocol matching between indexers and download clients. A Newznab
 // indexer yields NZBs that only a usenet client (SABnzbd, NZBGet) can
 // take; a Torznab indexer yields torrents that only a torrent client
-// (qBittorrent, Transmission, Deluge) can take. The rule was documented
+// (qBittorrent, Transmission, Deluge, rTorrent) can take. The rule was documented
 // only in QUICKSTART.md step 4 — users discovered it when their first
 // grab failed. Mirrors the backend: indexer/searcher.go protocolForType
 // and downloader/adapter.go IsTorrentClient/ProtocolForClient.
@@ -15,7 +15,7 @@ export function indexerProtocol(type: string): Protocol {
   return type === 'torznab' ? 'torrent' : 'usenet'
 }
 
-const TORRENT_CLIENTS = new Set(['transmission', 'qbittorrent', 'deluge'])
+const TORRENT_CLIENTS = new Set(['transmission', 'qbittorrent', 'deluge', 'rtorrent'])
 
 export function clientProtocol(type: string): Protocol {
   return TORRENT_CLIENTS.has(type) ? 'torrent' : 'usenet'

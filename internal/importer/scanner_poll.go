@@ -13,6 +13,7 @@ import (
 	"github.com/vavallee/bindery/internal/downloader/deluge"
 	"github.com/vavallee/bindery/internal/downloader/nzbget"
 	"github.com/vavallee/bindery/internal/downloader/qbittorrent"
+	"github.com/vavallee/bindery/internal/downloader/rtorrent"
 	"github.com/vavallee/bindery/internal/downloader/sabnzbd"
 	"github.com/vavallee/bindery/internal/downloader/transmission"
 	"github.com/vavallee/bindery/internal/models"
@@ -699,6 +700,141 @@ func (s *Scanner) tryImportDeluge(ctx context.Context, dl *models.Download, down
 	s.tryImportInternal(ctx, dl, downloadPath, "deluge", safeRemoteID(dl.TorrentID), "", nil, explicitFiles)
 }
 
+// checkRtorrentDownloads polls rTorrent for status changes.
+//
+// The listing is deliberately unfiltered. rTorrent's d.multicall2 returns every
+// torrent in one call regardless, and tracked downloads are matched by the hash
+// stored in dl.TorrentID — so filtering by label here would buy nothing and
+// cost correctness: a torrent whose label was edited in ruTorrent would look
+// vanished, and blockStaleImportFailures below would terminally block it. Same
+// reasoning as the Deluge poller.
+//
+// Completion is d.complete, rTorrent's own "all data present" flag, rather than
+// a byte comparison: rTorrent sets it after the final hash check passes, which
+// is exactly the moment the files are safe to import.
+func (s *Scanner) checkRtorrentDownloads(ctx context.Context, client *models.DownloadClient) {
+	rt := downloader.RtorrentFor(client)
+	torrents, err := rt.GetTorrents(ctx)
+	if err != nil {
+		// Warn, not Debug: a poller that silently fails leaves every grab stuck
+		// at "downloading" with no visible cause (the #1019 failure mode).
+		slog.Warn("download poll: failed to fetch rTorrent torrents — downloads will not be imported",
+			"client", client.Name, "error", err)
+		return
+	}
+
+	byHash := make(map[string]rtorrent.Torrent, len(torrents))
+	for _, t := range torrents {
+		byHash[strings.ToLower(t.Hash)] = t
+	}
+
+	allDownloads, err := s.downloads.List(ctx)
+	if err != nil {
+		slog.Warn("download poll: failed to list downloads", "client", client.Name, "error", err)
+		return
+	}
+
+	seenSourceIDs := make(map[int64]bool)
+	for _, dl := range allDownloads {
+		if dl.DownloadClientID == nil || *dl.DownloadClientID != client.ID || dl.TorrentID == nil {
+			continue
+		}
+		t, ok := byHash[strings.ToLower(*dl.TorrentID)]
+		if !ok {
+			continue
+		}
+		seenSourceIDs[dl.ID] = true
+		if dl.Status == models.StateImported || dl.Status == models.StateFailed {
+			continue
+		}
+
+		// d.message is rTorrent's per-torrent error slot. It also carries benign
+		// tracker chatter on a healthy torrent, so it only counts as a failure
+		// while the torrent is still incomplete — a seeding torrent with a
+		// grumpy tracker has nothing wrong with its files.
+		isFailed := !t.Complete && strings.TrimSpace(t.Message) != ""
+
+		switch {
+		case t.Complete && (dl.Status == models.StateDownloading || dl.Status == models.StateGrabbed):
+			downloadPath, bookFiles := s.rtorrentImportSources(ctx, rt, client, t)
+			slog.Info("download completed", "title", dl.Title, "path", downloadPath, "files", len(bookFiles))
+			s.updateDownloadStatus(ctx, dl.ID, models.StateCompleted)
+			s.tryImportRtorrent(ctx, &dl, downloadPath, bookFiles)
+		case t.Complete && dl.Status == models.StateImportFailed && dl.ImportRetryCount < importRetryLimit:
+			downloadPath, bookFiles := s.rtorrentImportSources(ctx, rt, client, t)
+			slog.Info("retrying failed import", "title", dl.Title, "path", downloadPath,
+				"attempt", dl.ImportRetryCount+1, "limit", importRetryLimit, "files", len(bookFiles))
+			if err := s.downloads.IncrementImportRetryCount(ctx, dl.ID); err != nil {
+				slog.Warn("failed to increment import retry count", "download_id", dl.ID, "error", err)
+			}
+			s.tryImportRtorrent(ctx, &dl, downloadPath, bookFiles)
+		case isFailed && dl.Status != models.StateFailed:
+			slog.Warn("download failed", "title", dl.Title, "message", t.Message)
+			s.markDownloadFailed(ctx, &dl, "Torrent failed in rTorrent: "+t.Message)
+		}
+	}
+
+	// The unfiltered "main" view holds every torrent, so a missing entry
+	// definitively means the source is gone — terminally block stale import
+	// failures (issue #706 finding 4), same as the other torrent pollers.
+	s.blockStaleImportFailures(ctx, seenSourceIDs, true, func(d models.Download) bool {
+		return d.DownloadClientID != nil && *d.DownloadClientID == client.ID
+	})
+}
+
+// rtorrentImportSources resolves the per-torrent download path and the
+// authoritative book-file list for a completed rTorrent torrent.
+//
+// d.base_path is the torrent's own file or directory, which is what the
+// fallback directory walk must be pointed at; d.directory is the parent the
+// f.multicall file names are relative to, so it is the join base. For a
+// multi-file torrent rTorrent reports the same value for both.
+func (s *Scanner) rtorrentImportSources(ctx context.Context, rt *rtorrent.Client, client *models.DownloadClient, t rtorrent.Torrent) (string, []string) {
+	basePath := strings.TrimSpace(t.BasePath)
+	if basePath == "" {
+		// Closed items after an rTorrent restart report an empty base path;
+		// reconstruct it the way rTorrent would have.
+		basePath = filepath.Join(strings.TrimSpace(t.Directory), t.Name)
+	}
+	downloadPath := s.remapDownloadClientPath(client, basePath)
+	return downloadPath, s.rtorrentFilesFor(ctx, rt, client, t)
+}
+
+// rtorrentFilesFor asks rTorrent for the torrent's file list and returns the
+// absolute Bindery-side book-file paths, or nil (caller falls back to a
+// directory walk of downloadPath) when the directory is unknown or the RPC
+// fails. See transmissionFilesFor / delugeFilesFor for the same contract.
+func (s *Scanner) rtorrentFilesFor(ctx context.Context, rt *rtorrent.Client, client *models.DownloadClient, t rtorrent.Torrent) []string {
+	directory := strings.TrimSpace(t.Directory)
+	if directory == "" {
+		slog.Warn("import: rTorrent returned no directory for torrent, falling back to directory walk",
+			"title", t.Name, "hash", t.Hash)
+		return nil
+	}
+	files, err := rt.Files(ctx, t.Hash)
+	if err != nil {
+		slog.Warn("import: rTorrent f.multicall failed, falling back to directory walk (issue #903 fallback)",
+			"title", t.Name, "hash", t.Hash, "error", err)
+		return nil
+	}
+	if len(files) == 0 {
+		slog.Warn("import: rTorrent reported no files for torrent yet, falling back to directory walk",
+			"title", t.Name, "hash", t.Hash)
+		return nil
+	}
+	conv := make([]torrentFile, 0, len(files))
+	for _, f := range files {
+		conv = append(conv, torrentFile{Name: f.Name, Size: f.Size})
+	}
+	return s.resolveTorrentFiles(client, directory, conv)
+}
+
+// tryImportRtorrent attempts to import a completed rTorrent download. See
+// tryImportTransmission for the semantics of explicitFiles.
+func (s *Scanner) tryImportRtorrent(ctx context.Context, dl *models.Download, downloadPath string, explicitFiles []string) {
+	s.tryImportInternal(ctx, dl, downloadPath, "rtorrent", safeRemoteID(dl.TorrentID), "", nil, explicitFiles)
+}
+
 // tryImportSABnzbd attempts to import a completed SABnzbd download into the library.
 // sab is used to clear the SABnzbd history entry once bindery has taken
 // ownership of the files; nzoID is the history slot's NZO identifier.
@@ -733,7 +869,7 @@ func (s *Scanner) tryImportQbittorrent(ctx context.Context, dl *models.Download,
 }
 
 // torrentFile is the minimal shape resolveTorrentFiles consumes; it matches
-// transmission.File / qbittorrent.File / deluge.File without taking a
+// transmission.File / qbittorrent.File / deluge.File / rtorrent.File without taking a
 // dependency on any of them. Each downloader's File type is converted to
 // []torrentFile at the call site.
 type torrentFile struct {

@@ -356,6 +356,8 @@ func (s *Scanner) CheckDownloads(ctx context.Context) {
 			s.checkQbittorrentDownloads(ctx, client)
 		case "deluge":
 			s.checkDelugeDownloads(ctx, client)
+		case "rtorrent":
+			s.checkRtorrentDownloads(ctx, client)
 		case "nzbget":
 			s.checkNZBGetDownloads(ctx, client)
 		case "sabnzbd":

@@ -19,6 +19,36 @@ const downloadClientSelectColumns = `
 	id, name, type, host, port, api_key, use_ssl, url_base, username, password,
 	category, category_audiobook, path_remap, priority, enabled, created_at, updated_at`
 
+// torrentClientTypes and usenetClientTypes are the download-client types each
+// protocol can be served by. They back the protocol-scoped queries below; a new
+// client type has to be added here or it will never be picked for a grab even
+// though the rest of the stack supports it.
+var (
+	torrentClientTypes = []string{"qbittorrent", "transmission", "deluge", "rtorrent"}
+	usenetClientTypes  = []string{"sabnzbd", "nzbget"}
+)
+
+// clientTypesForProtocol returns the SQL placeholder list and bound arguments
+// for the given protocol. Anything that is not "torrent" is usenet, matching
+// selectClient's default.
+//
+// The returned string is only ever "?" repeated — the type names themselves are
+// bound as query arguments and never interpolated — so splicing it into the
+// statement carries no injection surface. It replaces the previous hardcoded
+// "IN (?, ?, ?)" lists, which silently dropped any client type added to one
+// place and not the other.
+func clientTypesForProtocol(protocol string) (string, []any) {
+	types := usenetClientTypes
+	if protocol == "torrent" {
+		types = torrentClientTypes
+	}
+	args := make([]any, 0, len(types))
+	for _, t := range types {
+		args = append(args, t)
+	}
+	return strings.TrimSuffix(strings.Repeat("?, ", len(types)), ", "), args
+}
+
 func isCredentialClient(clientType string) bool {
 	return clientType == "qbittorrent" || clientType == "transmission"
 }
@@ -68,8 +98,10 @@ func hydrateClientCredentials(c *models.DownloadClient) {
 		if legacyCredentialURLBase(c.Username, c.URLBase, c.APIKey) {
 			c.URLBase = ""
 		}
-	case "nzbget", "deluge":
+	case "nzbget", "deluge", "rtorrent":
 		// These clients use username/password directly — preserve as stored.
+		// (Deluge only has a password; rTorrent authenticates with HTTP basic
+		// auth on the RPC endpoint, so both fields are meaningful.)
 	default:
 		// SABnzbd authenticates via api_key, not username/password.
 		c.Username = ""
@@ -198,22 +230,13 @@ func (r *DownloadClientRepo) GetFirstEnabled(ctx context.Context) (*models.Downl
 func (r *DownloadClientRepo) GetFirstEnabledByProtocol(ctx context.Context, protocol string) (*models.DownloadClient, error) {
 	var c models.DownloadClient
 	var enabled, useSSL int
-	var err error
-	if protocol == "torrent" {
-		err = r.db.QueryRowContext(ctx, `
-			SELECT `+downloadClientSelectColumns+`
-			FROM download_clients WHERE enabled=1 AND type IN (?, ?, ?) ORDER BY priority LIMIT 1`, "qbittorrent", "transmission", "deluge").
-			Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
-				&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.CategoryAudiobook, &c.PathRemap, &c.Priority,
-				&enabled, &c.CreatedAt, &c.UpdatedAt)
-	} else {
-		err = r.db.QueryRowContext(ctx, `
-			SELECT `+downloadClientSelectColumns+`
-			FROM download_clients WHERE enabled=1 AND type IN (?, ?) ORDER BY priority LIMIT 1`, "sabnzbd", "nzbget").
-			Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
-				&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.CategoryAudiobook, &c.PathRemap, &c.Priority,
-				&enabled, &c.CreatedAt, &c.UpdatedAt)
-	}
+	placeholders, args := clientTypesForProtocol(protocol)
+	err := r.db.QueryRowContext(ctx, `
+		SELECT `+downloadClientSelectColumns+`
+		FROM download_clients WHERE enabled=1 AND type IN (`+placeholders+`) ORDER BY priority LIMIT 1`, args...).
+		Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
+			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.CategoryAudiobook, &c.PathRemap, &c.Priority,
+			&enabled, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
@@ -230,19 +253,10 @@ func (r *DownloadClientRepo) GetFirstEnabledByProtocol(ctx context.Context, prot
 // ordered by priority. Used when multiple clients of the same type exist and
 // the caller needs to pick the best one by category.
 func (r *DownloadClientRepo) GetEnabledByProtocol(ctx context.Context, protocol string) ([]models.DownloadClient, error) {
-	var (
-		rows *sql.Rows
-		err  error
-	)
-	if protocol == "torrent" {
-		rows, err = r.db.QueryContext(ctx, `
-			SELECT `+downloadClientSelectColumns+`
-			FROM download_clients WHERE enabled=1 AND type IN (?, ?, ?) ORDER BY priority`, "qbittorrent", "transmission", "deluge")
-	} else {
-		rows, err = r.db.QueryContext(ctx, `
-			SELECT `+downloadClientSelectColumns+`
-			FROM download_clients WHERE enabled=1 AND type IN (?, ?) ORDER BY priority`, "sabnzbd", "nzbget")
-	}
+	placeholders, args := clientTypesForProtocol(protocol)
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT `+downloadClientSelectColumns+`
+		FROM download_clients WHERE enabled=1 AND type IN (`+placeholders+`) ORDER BY priority`, args...) // #nosec G202 -- placeholders is a generated "?, ?, …" list; the client types are bound arguments
 	if err != nil {
 		return nil, err
 	}

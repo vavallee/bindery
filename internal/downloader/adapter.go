@@ -1,5 +1,6 @@
 // Package downloader provides a unified interface for dispatching download
-// requests to different download clients (SABnzbd, NZBGet, Transmission, qBittorrent, Deluge).
+// requests to different download clients (SABnzbd, NZBGet, Transmission,
+// qBittorrent, Deluge, rTorrent).
 package downloader
 
 import (
@@ -56,7 +57,8 @@ type SendOptions struct {
 }
 
 func IsTorrentClient(clientType string) bool {
-	return clientType == "transmission" || clientType == "qbittorrent" || clientType == "deluge"
+	return clientType == "transmission" || clientType == "qbittorrent" ||
+		clientType == "deluge" || clientType == "rtorrent"
 }
 
 // IsNZBGetClient reports whether the given client type is NZBGet.
@@ -82,6 +84,9 @@ func TestClient(ctx context.Context, client *models.DownloadClient) error {
 	case "deluge":
 		dl := DelugeFor(client)
 		return dl.Test(ctx)
+	case "rtorrent":
+		rt := RtorrentFor(client)
+		return rt.Test(ctx)
 	case "nzbget":
 		ng := NzbgetFor(client)
 		if err := ng.Test(ctx); err != nil {
@@ -134,7 +139,7 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		return result, nil
 	case "qbittorrent":
 		qb := QbittorrentFor(client)
-		savePath := qbitSavePath(client, opts)
+		savePath := torrentSavePath(client, opts)
 		hash, err := qb.AddTorrent(ctx, sourceURL, ResolveCategory(client, opts.MediaType), savePath)
 		if err != nil {
 			return nil, err
@@ -166,6 +171,21 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		}
 		result.RemoteID = hash
 		return result, nil
+	case "rtorrent":
+		rt := RtorrentFor(client)
+		// Category is the ruTorrent label (d.custom1); the download directory
+		// comes from Bindery's configured download dir run back through the
+		// client's PathRemap, same as qBittorrent's savePath.
+		hash, err := rt.AddTorrent(ctx, sourceURL, ResolveCategory(client, opts.MediaType), torrentSavePath(client, opts), opts.SeedRatio)
+		if err != nil {
+			return nil, err
+		}
+		hash = strings.ToLower(strings.TrimSpace(hash))
+		if hash == "" {
+			return nil, fmt.Errorf("downloader accepted request but did not return a trackable torrent ID")
+		}
+		result.RemoteID = hash
+		return result, nil
 	case "nzbget":
 		ng := NzbgetFor(client)
 		nzbID, err := ng.Add(ctx, sourceURL, title, ResolveCategory(client, opts.MediaType), 0)
@@ -188,7 +208,10 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 	}
 }
 
-func qbitSavePath(client *models.DownloadClient, opts SendOptions) string {
+// torrentSavePath renders Bindery's target download directory in the download
+// client's own filesystem namespace by running it back through the client's
+// PathRemap. Shared by qBittorrent (savePath) and rTorrent (d.directory.set).
+func torrentSavePath(client *models.DownloadClient, opts SendOptions) string {
 	localPath := TargetDownloadDir(opts.MediaType, opts.DownloadDir, opts.AudiobookDownloadDir)
 	if strings.TrimSpace(localPath) == "" {
 		return ""
@@ -196,7 +219,16 @@ func qbitSavePath(client *models.DownloadClient, opts SendOptions) string {
 	return pathmap.Parse(client.PathRemap).ApplyInverse(localPath)
 }
 
-func RemoveDownload(ctx context.Context, client *models.DownloadClient, dl *models.Download, deleteFiles bool) error {
+// RemoveDownload removes a download from its client, optionally taking the data
+// with it.
+//
+// globalRemap is the BINDERY_DOWNLOAD_PATH_REMAP fallback. Only rTorrent reads
+// it: every other client deletes the data itself and never tells Bindery a path,
+// whereas rTorrent has no delete-with-data command, so Bindery has to resolve
+// the payload on its own filesystem first — and it must resolve it exactly the
+// way the importer and the Test button do, client remap first with the global
+// remap as fallback. Pass "" when there is no global remap configured.
+func RemoveDownload(ctx context.Context, client *models.DownloadClient, dl *models.Download, deleteFiles bool, globalRemap string) error {
 	switch client.Type {
 	case "transmission":
 		if dl.TorrentID == nil || *dl.TorrentID == "" {
@@ -220,6 +252,11 @@ func RemoveDownload(ctx context.Context, client *models.DownloadClient, dl *mode
 		}
 		delugeClient := DelugeFor(client)
 		return delugeClient.RemoveTorrent(ctx, *dl.TorrentID, deleteFiles)
+	case "rtorrent":
+		if dl.TorrentID == nil || *dl.TorrentID == "" {
+			return nil
+		}
+		return removeRtorrentDownload(ctx, client, *dl.TorrentID, deleteFiles, globalRemap)
 	case "nzbget":
 		if dl.SABnzbdNzoID == nil || *dl.SABnzbdNzoID == "" {
 			return nil
@@ -293,6 +330,25 @@ func GetStalledIDs(ctx context.Context, client *models.DownloadClient) (map[stri
 		for h, t := range torrents {
 			if strings.ToLower(t.State) == "error" {
 				out[h] = true
+			}
+		}
+		return out, true, nil
+	case "rtorrent":
+		rt := RtorrentFor(client)
+		// One multicall covers every label this client may have grabbed under;
+		// rTorrent has no server-side filter, so the extra label costs nothing.
+		torrents, err := rt.GetTorrents(ctx, CategoriesToPoll(client)...)
+		if err != nil {
+			return nil, true, err
+		}
+		out := make(map[string]bool, len(torrents))
+		for _, t := range torrents {
+			// rTorrent has no stall state. d.message is its per-torrent error
+			// slot — a tracker rejection or a failed hash check lands there and
+			// the torrent then sits inactive, which is the shape the stall
+			// detector exists to surface.
+			if t.Message != "" && !t.Complete {
+				out[t.Hash] = true
 			}
 		}
 		return out, true, nil
@@ -402,6 +458,26 @@ func getTorrentLiveStatuses(ctx context.Context, client *models.DownloadClient) 
 				Size:       t.TotalSize,
 				SizeLeft:   maxInt64(t.TotalSize-t.TotalDone, 0),
 				Status:     t.State,
+			}
+		}
+		return out, nil
+	}
+
+	if client.Type == "rtorrent" {
+		rt := RtorrentFor(client)
+		torrents, err := rt.GetTorrents(ctx, CategoriesToPoll(client)...)
+		if err != nil {
+			return nil, err
+		}
+		out := make(map[string]LiveStatus, len(torrents))
+		for _, t := range torrents {
+			out[t.Hash] = LiveStatus{
+				Percentage: fmt.Sprintf("%.1f", t.Progress()),
+				TimeLeft:   etaToTimeLeft(t.ETA()),
+				Speed:      bytesPerSecondToString(t.DownRate),
+				Size:       t.SizeBytes,
+				SizeLeft:   t.LeftBytes,
+				Status:     RtorrentStatus(t),
 			}
 		}
 		return out, nil
