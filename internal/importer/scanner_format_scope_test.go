@@ -14,10 +14,10 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
-// dualFormatFixture builds an in-memory Scanner with a real author and a
+// formatScopeFixture builds an in-memory Scanner with a real author and a
 // media_type=both book that is Wanted in BOTH slots, plus separate ebook and
 // audiobook library roots.
-func dualFormatFixture(t *testing.T, libraryDir, audiobookDir string) (
+func formatScopeFixture(t *testing.T, libraryDir, audiobookDir string) (
 	s *Scanner,
 	book *models.Book,
 	dlRepo *db.DownloadRepo,
@@ -90,7 +90,7 @@ func TestTryImportInternal_AudiobookImportDoesNotCloseEbookGrab(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			libraryDir := t.TempDir()
 			audiobookDir := t.TempDir()
-			s, book, dlRepo, bookRepo, ctx := dualFormatFixture(t, libraryDir, audiobookDir)
+			s, book, dlRepo, bookRepo, ctx := formatScopeFixture(t, libraryDir, audiobookDir)
 
 			// 17:42:19 — the audiobook grab lands a real m4b in its download dir.
 			audioDownloadDir := t.TempDir()
@@ -197,7 +197,7 @@ func TestTryImportInternal_EbookImportDoesNotCloseAudiobookGrab(t *testing.T) {
 		t.Run(title, func(t *testing.T) {
 			libraryDir := t.TempDir()
 			audiobookDir := t.TempDir()
-			s, book, dlRepo, bookRepo, ctx := dualFormatFixture(t, libraryDir, audiobookDir)
+			s, book, dlRepo, bookRepo, ctx := formatScopeFixture(t, libraryDir, audiobookDir)
 
 			// The ebook is already imported and on disk.
 			libEpub := filepath.Join(libraryDir, "we-who-wrestle-with-god.epub")
@@ -266,7 +266,7 @@ func TestTryImportInternal_EbookImportDoesNotCloseAudiobookGrab(t *testing.T) {
 func TestTryImportInternal_FormatScopedShortCircuitStillFires(t *testing.T) {
 	libraryDir := t.TempDir()
 	audiobookDir := t.TempDir()
-	s, book, dlRepo, bookRepo, ctx := dualFormatFixture(t, libraryDir, audiobookDir)
+	s, book, dlRepo, bookRepo, ctx := formatScopeFixture(t, libraryDir, audiobookDir)
 
 	libEpub := filepath.Join(libraryDir, "we-who-wrestle-with-god.epub")
 	if err := os.WriteFile(libEpub, []byte("epub-in-library"), 0o644); err != nil {
