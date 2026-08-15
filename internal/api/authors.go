@@ -116,6 +116,17 @@ var leadingArticleForOmnibusCheckRe = regexp.MustCompile(`(?i)^(?:the|an?)\s+`)
 // after only a leading article before) the very start of the title, which
 // this excludes. Confirmed against real maintainer-reported false positives
 // (vavallee, PR #1968 review).
+//
+// Known residual gap, documented rather than chased further: this assumes
+// real non-bundle usage always leads and real bundle-descriptor usage always
+// trails. Two real books break that — "The New Turing Omnibus" and "Thrown
+// under the omnibus" both use "omnibus" metaphorically/idiomatically in a
+// trailing position, so they're still wrongly caught. The real distinguishing
+// signal (does this book actually bundle other separately-catalogued works)
+// isn't recoverable from title text alone for a bare keyword the way it is
+// for the slash-joined case (pruneAuthorWorkRedundantTitles can check named
+// segments against known titles). Hardcover's IsCompilation classification
+// gets both right when configured; left for the maintainer to weigh in on.
 func hasNonLeadingOmnibus(title string) bool {
 	if !omnibusWordRe.MatchString(title) {
 		return false

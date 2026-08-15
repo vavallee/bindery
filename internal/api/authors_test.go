@@ -828,6 +828,24 @@ func TestIsPartBookTitle(t *testing.T) {
 		// indistinguishable by title text alone from a real anthology
 		// bundle. See isPartBookTitle's doc comment.
 		{"The Anti-Christ / Ecce Homo / Twilight of the Idols", true},
+		// Known residual, not fixed: hasNonLeadingOmnibus assumes real
+		// non-bundle usage of "omnibus" always leads the title ("The Omnibus
+		// of Crime") and real bundle-descriptor usage always trails it ("The
+		// Dune Omnibus"). Both real books below break that assumption —
+		// "omnibus" trails but is used metaphorically/idiomatically, not to
+		// describe a bundle of separately-catalogued works — so they're
+		// wrongly caught. Left as a documented gap for the maintainer to
+		// weigh in on (PR #1968) rather than chased further: the real
+		// distinguishing signal ("does this book actually bundle other
+		// separately-catalogued works") isn't recoverable from title text
+		// alone for a bare keyword the way it is for the slash-joined case
+		// (pruneAuthorWorkRedundantTitles can check named segments against
+		// known titles; a bare word names nothing to check). Hardcover's
+		// IsCompilation classification (pruneAuthorWorkCompilations) gets
+		// both of these right when configured; this gap only bites
+		// OpenLibrary-only installs.
+		{"The New Turing Omnibus", true},   // A.K. Dewdney's real standalone CS survey book.
+		{"Thrown under the omnibus", true}, // P.J. O'Rourke's real standalone essay collection; "omnibus" = bus pun.
 		{"Leviathan Wakes", false},
 		{"Abaddon's Gate", false},
 		{"The Butcher of Anderson Station", false},
