@@ -130,6 +130,50 @@ func (h *QueueHandler) resolveSeedRatio(ctx context.Context, indexerID *int64) *
 	return idx.SeedRatio
 }
 
+// signNZBURL restores the indexer apikey that the search and queue responses
+// strip out of a download URL, so the grab reaches the indexer authenticated.
+//
+// The web UI sends the release's indexer id back on grab, which names the
+// credential directly. API clients post only {guid, nzbUrl} — nothing carries
+// the id — so with no id (or one that no longer resolves) the key is taken from
+// the configured indexer whose host matches the URL: only an indexer on that
+// host could have produced it, and SignDownloadURLFor's host guard keeps the
+// credential from travelling anywhere else. Several indexers on one host (the
+// usual Prowlarr layout) are usable while they agree on the key; when they
+// disagree there is nothing to choose between them and the URL is left alone.
+//
+// Returns rawURL unchanged when it already carries an apikey (scheduler and
+// retry paths), when no indexer matches its host, or when there is no indexer
+// repo attached.
+func (h *QueueHandler) signNZBURL(ctx context.Context, rawURL string, indexerID *int64) string {
+	if h.indexers == nil || rawURL == "" {
+		return rawURL
+	}
+	if indexerID != nil {
+		if idx, err := h.indexers.GetByID(ctx, *indexerID); err == nil && idx != nil {
+			return newznab.SignDownloadURLFor(rawURL, idx.URL, idx.APIKey)
+		}
+	}
+	idxs, err := h.indexers.List(ctx)
+	if err != nil {
+		return rawURL
+	}
+	signed := rawURL
+	for _, idx := range idxs {
+		candidate := newznab.SignDownloadURLFor(rawURL, idx.URL, idx.APIKey)
+		if candidate == rawURL {
+			continue
+		}
+		if signed != rawURL && candidate != signed {
+			slog.Warn("cannot restore indexer apikey: several indexers share the download URL host with different keys",
+				"url", newznab.RedactDownloadURL(rawURL))
+			return rawURL
+		}
+		signed = candidate
+	}
+	return signed
+}
+
 // WithStoragePaths attaches the process-level download roots used when sending
 // torrent clients an explicit save path.
 func (h *QueueHandler) WithStoragePaths(downloadDir, audiobookDownloadDir string) *QueueHandler {
@@ -861,12 +905,7 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	// hands back an apikey-less download URL plus the indexer id; sign it
 	// server-side here. No-op when the URL already carries a key (scheduler /
 	// retry paths) or its host does not match the indexer.
-	nzbURL := req.NZBURL
-	if indexerID != nil && h.indexers != nil {
-		if idx, err := h.indexers.GetByID(ctx, *indexerID); err == nil && idx != nil {
-			nzbURL = newznab.SignDownloadURLFor(req.NZBURL, idx.URL, idx.APIKey)
-		}
-	}
+	nzbURL := h.signNZBURL(ctx, req.NZBURL, indexerID)
 	dl := &models.Download{
 		GUID:             req.GUID,
 		BookID:           bookID,
