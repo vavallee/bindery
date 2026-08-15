@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/db"
@@ -121,5 +123,130 @@ func TestSignNZBURL(t *testing.T) {
 	// The explicit indexer id still resolves it.
 	if got := h.signNZBURL(ctx, dl, &first.ID); got != signed {
 		t.Errorf("ambiguous host with indexer id: got %q, want %q", got, signed)
+	}
+}
+
+// leakedAPIKey is deliberately distinctive: when one of the assertions below
+// trips, the failure message points at the indexer credential itself rather
+// than at an anonymous "unexpected substring".
+const leakedAPIKey = "SECRET-APIKEY-MUST-NOT-LEAK"
+
+// assertNoIndexerAPIKey fails when the credential appears anywhere in a
+// response body. It checks the raw bytes rather than a decoded nzbUrl field on
+// purpose: a handler that grows a second field carrying the same URL, or embeds
+// the download record inside a new envelope, is caught by this just the same.
+func assertNoIndexerAPIKey(t *testing.T, surface string, body []byte) {
+	t.Helper()
+	if strings.Contains(string(body), leakedAPIKey) {
+		t.Errorf("%s leaked the indexer apikey to the caller: %s", surface, body)
+	}
+}
+
+// TestQueueGrab_ResponseAndListNeverCarryIndexerAPIKey pins the security
+// boundary the signing fallback sits on. signNZBURL puts the shared indexer
+// apikey back onto the download URL so the download client can fetch the NZB,
+// and the URL is persisted in that form — but the indexer apikey is an
+// admin-only setting, while the queue is readable by the non-admin user who
+// owns the download. So nothing that travels back out to an HTTP caller may
+// carry it.
+//
+// The grab here goes through the new fallback (no indexerId in the request
+// body), so it asserts the signing happened — the indexer only answers 200 to
+// an authenticated fetch — and then that neither the grab response nor the
+// queue listing echoes the key back. The stored row is checked too, to show the
+// redaction is a response-shaping step and has not quietly undone the fix.
+func TestQueueGrab_ResponseAndListNeverCarryIndexerAPIKey(t *testing.T) {
+	defer httpsec.AllowLoopbackForTests()()
+
+	var signedFetch atomic.Bool
+	indexerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("apikey") != leakedAPIKey {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		signedFetch.Store(true)
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><nzb></nzb>`))
+	}))
+	defer indexerSrv.Close()
+
+	sab := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": true, "nzo_ids": []string{"nzo-1"}})
+	}))
+	defer sab.Close()
+
+	h, database, downloads, clients, _, ctx := queueFixture(t)
+	host, port := testServerHostPort(t, sab.URL)
+	if err := clients.Create(ctx, &models.DownloadClient{
+		Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true,
+	}); err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	indexers := db.NewIndexerRepo(database)
+	if err := indexers.Create(ctx, &models.Indexer{
+		Name: "prowlarr", Type: "newznab", URL: indexerSrv.URL + "/3/api", APIKey: leakedAPIKey, Enabled: true,
+	}); err != nil {
+		t.Fatalf("create indexer: %v", err)
+	}
+	h.WithIndexers(indexers)
+
+	// No indexerId: the request an API client (script, curl) actually sends, so
+	// the apikey can only come from signNZBURL's host-match fallback.
+	unsigned := indexerSrv.URL + "/3/download?file=Lee+Child&link=abc"
+	body := bytes.NewBufferString(`{"guid":"guid-redact","title":"One Shot","nzbUrl":"` + unsigned + `"}`)
+	rec := httptest.NewRecorder()
+	h.Grab(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/grab", body))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !signedFetch.Load() {
+		t.Fatal("indexer never saw an authenticated fetch: the URL was not signed, so this test would pass vacuously")
+	}
+
+	// 1. The grab response itself — the surface this PR newly puts a signed URL
+	//    behind, and the one the review asked about.
+	assertNoIndexerAPIKey(t, "grab response", rec.Body.Bytes())
+	var grabbed models.Download
+	if err := json.Unmarshal(rec.Body.Bytes(), &grabbed); err != nil {
+		t.Fatalf("decode grab response: %v (body=%s)", err, rec.Body.String())
+	}
+	if grabbed.NZBURL != unsigned {
+		t.Errorf("grab response nzbUrl = %q, want the redacted form %q", grabbed.NZBURL, unsigned)
+	}
+
+	// 2. The queue listing, which the owning non-admin user polls every few
+	//    seconds.
+	listRec := httptest.NewRecorder()
+	h.List(listRec, httptest.NewRequest(http.MethodGet, "/api/v1/queue", nil))
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 from list, got %d: %s", listRec.Code, listRec.Body.String())
+	}
+	assertNoIndexerAPIKey(t, "queue listing", listRec.Body.Bytes())
+	var listed queueListResponse
+	if err := json.Unmarshal(listRec.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode queue list: %v (body=%s)", err, listRec.Body.String())
+	}
+	found := false
+	for _, item := range listed.Items {
+		if item.GUID == "guid-redact" {
+			found = true
+			if item.NZBURL != unsigned {
+				t.Errorf("queue listing nzbUrl = %q, want the redacted form %q", item.NZBURL, unsigned)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("grabbed download missing from the queue listing, so the redaction assertion proved nothing: %s", listRec.Body.String())
+	}
+
+	// 3. The stored row must still hold the signed URL — retries and the
+	//    importer re-send it, and redacting it at rest would trade this leak for
+	//    the 401 the PR set out to fix.
+	stored, err := downloads.GetByGUID(ctx, "guid-redact")
+	if err != nil || stored == nil {
+		t.Fatalf("read back stored download: %v", err)
+	}
+	if !strings.Contains(stored.NZBURL, leakedAPIKey) {
+		t.Errorf("stored nzbUrl = %q, want it to keep the apikey for retries", stored.NZBURL)
 	}
 }

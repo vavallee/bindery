@@ -979,6 +979,15 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	if h.notif != nil {
 		h.notif.Send(ctx, notifier.EventGrabbed, map[string]any{"title": req.Title, "size": req.Size})
 	}
+	// Strip the apikey back off before the record leaves this function. The row
+	// in the DB and the URL handed to the download client keep the credential;
+	// what callers get back must not, because every caller of grab() writes the
+	// returned record straight into an HTTP response (QueueHandler.Grab,
+	// PendingHandler.Grab) and the indexer apikey is an admin-only setting.
+	// Redacting here rather than at each writeJSON keeps a handler added later
+	// alongside these from reintroducing the leak by simply echoing the record,
+	// and makes the grab response agree with List, which redacts the same field.
+	dl.NZBURL = newznab.RedactDownloadURL(dl.NZBURL)
 	return dl, nil
 }
 
