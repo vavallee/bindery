@@ -867,6 +867,15 @@ func TestFetchAuthorBooks_SkipsMissingDate(t *testing.T) {
 	if summary.SkippedTotal() < summary.SkippedMissingDate {
 		t.Errorf("summary.SkippedTotal() = %d should include SkippedMissingDate = %d", summary.SkippedTotal(), summary.SkippedMissingDate)
 	}
+	sampleTitles := make(map[string]bool, len(summary.SkippedMissingDateSample))
+	for _, b := range summary.SkippedMissingDateSample {
+		sampleTitles[b.Title] = true
+	}
+	for _, undated := range []string{"Undated Work One", "Undated Work Two"} {
+		if !sampleTitles[undated] {
+			t.Errorf("expected %q in summary.SkippedMissingDateSample, got %+v", undated, summary.SkippedMissingDateSample)
+		}
+	}
 }
 
 // TestFetchAuthorBooks_MissingDateKeptWhenSkipDisabled verifies the inverse

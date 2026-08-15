@@ -1831,6 +1831,12 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// the titles and their language codes that tell them whether the profile
 	// is set the way they meant.
 	var skippedLangSample []models.AuthorSyncSkippedBook
+	// The first few date-rejected works, same reasoning and cap as
+	// skippedLangSample (#1889 established the pattern; requested again for
+	// this filter specifically in PR review, vavallee): a bare count doesn't
+	// say which books vanished, and Debug logs aren't reachable in a
+	// rootless container.
+	var skippedMissingDateSample []models.AuthorSyncSkippedBook
 	for _, b := range books {
 		b.AuthorID = author.ID
 		// Apply the caller-provided default media type when the provider
@@ -1887,6 +1893,9 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		// so this is a straight presence check, not a fetch.
 		if skipMissingDate && b.ReleaseDate == nil {
 			skippedMissingDate++
+			if len(skippedMissingDateSample) < authorSyncSkippedSampleLimit {
+				skippedMissingDateSample = append(skippedMissingDateSample, models.AuthorSyncSkippedBook{Title: b.Title})
+			}
 			slog.Debug("skipping work with no release date", "title", b.Title, "foreignId", b.ForeignID)
 			continue
 		}
@@ -2125,17 +2134,18 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// just ones that dropped something: "nothing was filtered out" is the
 	// answer to "where are my books?" as often as a count is.
 	summary := models.AuthorSyncSummary{
-		CompletedAt:           time.Now().UTC(),
-		Total:                 len(books),
-		Added:                 added,
-		SkippedLanguage:       skippedLang,
-		SkippedJunk:           skippedJunk,
-		SkippedMediaType:      skippedMediaType,
-		SkippedNotAccepted:    skippedNotAccepted,
-		SkippedMissingDate:    skippedMissingDate,
-		AllowedLanguages:      allowedLangs,
-		UnknownLanguageFail:   unknownFail,
-		SkippedLanguageSample: skippedLangSample,
+		CompletedAt:              time.Now().UTC(),
+		Total:                    len(books),
+		Added:                    added,
+		SkippedLanguage:          skippedLang,
+		SkippedJunk:              skippedJunk,
+		SkippedMediaType:         skippedMediaType,
+		SkippedNotAccepted:       skippedNotAccepted,
+		SkippedMissingDate:       skippedMissingDate,
+		SkippedMissingDateSample: skippedMissingDateSample,
+		AllowedLanguages:         allowedLangs,
+		UnknownLanguageFail:      unknownFail,
+		SkippedLanguageSample:    skippedLangSample,
 	}
 	h.syncSummaries.record(author.ID, summary)
 
