@@ -91,8 +91,16 @@ export default function MetadataTab() {
                 : t('settings.general.metadataProviderHardcoverNoToken', 'Hardcover — requires an API token (Settings → API Keys)')}
             </option>
           </select>
+          {/* The generic restartRequired string used to sit here, but it did not
+              say what a user flipping this selector actually needs to know: the
+              provider is resolved once at boot (cmd/bindery/main.go), and even
+              after a restart the catalogue source is chosen per author from
+              their stored foreign ID, so authors already in the library keep
+              their existing provider. Without both halves the predictable
+              outcome is flip → see no change → flip back. #1771 tracks making
+              the aggregator live-reconfigurable, which retires the first half. */}
           <p className="text-xs text-slate-500 dark:text-zinc-600 mt-1">
-            {t('settings.general.restartRequired')}
+            {t('settings.general.metadataProviderRestartHint', 'Takes effect after the next Bindery restart — the provider is wired at startup, so nothing changes until then. Authors already in your library stay linked to the provider they were added from; the new primary applies to authors you add afterwards. To move an existing author, use "Link metadata" on their page.')}
           </p>
         </div>
 

@@ -809,6 +809,7 @@
       "metadataProviderDnb": "DNB — Deutsche Nationalbibliothek (German/DACH)",
       "metadataProviderHardcover": "Hardcover (curated catalogue)",
       "metadataProviderHardcoverNoToken": "Hardcover — requires an API token (Settings → API Keys)",
+      "metadataProviderRestartHint": "Takes effect after the next Bindery restart — the provider is wired at startup, so nothing changes until then. Authors already in your library stay linked to the provider they were added from; the new primary applies to authors you add afterwards. To move an existing author, use \"Link metadata\" on their page.",
       "defaultLibraryLocation": "Default library location",
       "defaultLibraryLocationHint": "Manage root folders and the default library location in the Root Folders tab.",
       "defaultLibraryLocationLink": "Manage in Root Folders →",

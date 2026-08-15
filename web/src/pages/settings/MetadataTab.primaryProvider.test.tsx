@@ -94,4 +94,21 @@ describe('Primary metadata provider selector', () => {
     const select = await primaryProviderSelect()
     await waitFor(() => expect(select.value).toBe('dnb'))
   })
+
+  // The selector is wired at boot (cmd/bindery/main.go), and even after a
+  // restart the catalogue provider is resolved per author from the ID they are
+  // already linked to. Both facts have to be on screen: without the first a
+  // user flips the setting and sees nothing happen, and without the second they
+  // restart, still see their existing authors unchanged, and conclude it is
+  // broken. #1771 tracks making the aggregator live-reconfigurable.
+  it('explains that the change needs a restart and leaves existing authors alone', async () => {
+    seedStatus(true)
+    render(<MetadataTab />)
+    const select = await primaryProviderSelect()
+
+    const hint = select.parentElement!.querySelector('select ~ p')
+    expect(hint).not.toBeNull()
+    expect(hint!.textContent).toMatch(/restart/i)
+    expect(hint!.textContent).toMatch(/already in your library/i)
+  })
 })
