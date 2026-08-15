@@ -48,6 +48,19 @@ feed through `/opds/images`, which are the same handler and the same
 your instance, and Hardcover is contacted once per cover per 30-day cache
 entry.
 
+**Hardcover can be the primary provider, not only an enricher.** Setting
+`metadata.primary_provider` to `hardcover` (the default is `openlibrary`) makes
+Hardcover the source that *defines* an author's catalogue rather than one that
+supplements OpenLibrary's. This does not move the line drawn above: titles,
+authors, series, editions, publishers, narrators, descriptions, and covers are
+facts about books either way, and facts are permitted for personal and
+professional projects alike. What changes is proportion. In primary mode
+substantially more of a library is Hardcover-derived, so for a professional
+deployment the two obligations above stop being marginal and start covering
+most of the catalogue — in particular the aggregated-ratings exclusion, because
+`average_rating` and `ratings_count` arrive on the same records as the facts
+that are fine to keep.
+
 > The Hardcover Terms of Service page is unedited template boilerplate whose
 > governing-law, arbitration, and liability clauses are literal blanks, and
 > whose §5 read literally would prohibit the API use its own documentation
