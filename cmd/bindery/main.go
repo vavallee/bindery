@@ -260,47 +260,61 @@ func main() {
 	olClient := openlibrary.New()
 	dnbClient := dnb.New()
 
-	// Determine primary provider from settings (default: openlibrary).
-	// When metadata.primary_provider = "dnb", DNB is promoted to primary and
-	// OpenLibrary is added as an enricher instead. This is the recommended
-	// choice for German/Austrian/Swiss catalogues where OpenLibrary coverage
-	// is too thin for German-language books.
-	var primaryProvider metadata.Provider = olClient
-	if s, _ := settingsRepo.Get(context.Background(), api.SettingMetadataPrimaryProvider); s != nil && s.Value == "dnb" {
-		primaryProvider = dnbClient
-		slog.Info("metadata primary provider: dnb")
-	} else {
-		slog.Info("metadata primary provider: openlibrary")
-	}
-
-	var enrichers []metadata.Provider
-	if apiKey := googleBooksAPIKey(context.Background(), settingsRepo); apiKey != "" {
-		enrichers = append(enrichers, googlebooks.New(apiKey))
-		slog.Info("google books enrichment enabled")
-	}
 	hcClient := hardcover.New().WithTokenSource(func(ctx context.Context) string {
 		return api.GetHardcoverAPIToken(ctx, settingsRepo)
 	})
-	// The enricher is registered whether or not a token is set: the token is
-	// read live per request through WithTokenSource, so configuring one later
-	// takes effect without a restart. Only the log line is conditional, so it
-	// no longer claims enrichment is running when every call will short-circuit
-	// as unconfigured (#2075).
-	enrichers = append(enrichers, hcClient)
-	if api.GetHardcoverAPIToken(context.Background(), settingsRepo) != "" {
-		slog.Info("hardcover enrichment enabled")
-	} else {
-		slog.Info("hardcover enrichment idle: no api token configured")
-	}
 
-	// Add the non-primary provider as enricher so metadata is always
-	// cross-checked regardless of which provider is primary.
-	if primaryProvider == olClient {
-		enrichers = append(enrichers, dnbClient)
-		slog.Info("dnb enrichment enabled")
-	} else {
+	// Determine primary provider from settings (default: openlibrary). The
+	// primary decides what an author's catalogue looks like; every other
+	// provider is added as an enricher so metadata is still cross-checked.
+	//
+	// - "dnb" is the recommended choice for German/Austrian/Swiss catalogues,
+	//   where OpenLibrary coverage is too thin for German-language books.
+	// - "hardcover" trades breadth for a cleaner, editorially curated
+	//   catalogue: no translation editions masquerading as separate works, no
+	//   omnibus bundles, no non-book merchandise rows (#2040).
+	configuredPrimary := ""
+	if s, _ := settingsRepo.Get(ctxBoot, api.SettingMetadataPrimaryProvider); s != nil {
+		configuredPrimary = s.Value
+	}
+	primaryName := resolveMetadataPrimaryProvider(configuredPrimary, api.GetHardcoverAPIToken(ctxBoot, settingsRepo) != "")
+	var primaryProvider metadata.Provider
+	switch primaryName {
+	case "dnb":
+		primaryProvider = dnbClient
+	case "hardcover":
+		primaryProvider = hcClient
+	default:
+		primaryProvider = olClient
+	}
+	slog.Info("metadata primary provider", "provider", primaryName)
+
+	var enrichers []metadata.Provider
+	if apiKey := googleBooksAPIKey(ctxBoot, settingsRepo); apiKey != "" {
+		enrichers = append(enrichers, googlebooks.New(apiKey))
+		slog.Info("google books enrichment enabled")
+	}
+	// Every provider that isn't primary becomes an enricher.
+	if primaryName != "hardcover" {
+		// The enricher is registered whether or not a token is set: the token
+		// is read live per request through WithTokenSource, so configuring one
+		// later takes effect without a restart. Only the log line is
+		// conditional, so it no longer claims enrichment is running when every
+		// call will short-circuit as unconfigured (#2075).
+		enrichers = append(enrichers, hcClient)
+		if api.GetHardcoverAPIToken(ctxBoot, settingsRepo) != "" {
+			slog.Info("hardcover enrichment enabled")
+		} else {
+			slog.Info("hardcover enrichment idle: no api token configured")
+		}
+	}
+	if primaryName != "openlibrary" {
 		enrichers = append(enrichers, olClient)
 		slog.Info("openlibrary enrichment enabled")
+	}
+	if primaryName != "dnb" {
+		enrichers = append(enrichers, dnbClient)
+		slog.Info("dnb enrichment enabled")
 	}
 
 	metaAgg := metadata.NewAggregator(primaryProvider, enrichers...)

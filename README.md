@@ -138,9 +138,9 @@ Clean-room Go rewrite, modern React UI, MIT-licensed, actively developed.
 
 | Source | Auth | Used for |
 |--------|------|----------|
-| [OpenLibrary](https://openlibrary.org) | None | Primary: authors, books, editions, covers, ISBN |
+| [OpenLibrary](https://openlibrary.org) | None | Default primary: authors, books, editions, covers, ISBN |
 | [Google Books](https://developers.google.com/books) | API key (free) | Enrichment: descriptions, ratings |
-| [Hardcover.app](https://hardcover.app) | API token (free) | Search enrichment + community ratings, series, wishlist. Token required for **all** queries — without it Hardcover is silently skipped ([troubleshooting](docs/Troubleshooting-Wiki.md#a-book-is-on-hardcoverapp-but-doesnt-show-up-in-add-book--add-author-search)) |
+| [Hardcover.app](https://hardcover.app) | API token (free) | Search enrichment + community ratings, series, wishlist; can be promoted to **primary** for a curated, translation-free catalogue. Token required for **all** queries — without it Hardcover is silently skipped ([troubleshooting](docs/Troubleshooting-Wiki.md#a-book-is-on-hardcoverapp-but-doesnt-show-up-in-add-book--add-author-search)) |
 | [DNB](https://www.dnb.de/) | None (public SRU) | German-language descriptions, language, year, publisher; can be promoted to **primary** |
 | [Audnex](https://api.audnex.us) | None | Audiobook narrator, duration, cover by ASIN |
 | [Audible](https://audible.com) | None | Supplemental audiobook author lookup — pulls ASINs OL/Hardcover miss |
@@ -254,7 +254,7 @@ Bindery is a single Go binary (chi router, distroless container) with the React 
     ▲                    ▲
     │                    │
 OpenLibrary      Google Books, Hardcover.app, DNB, Audnex, Audible
- (primary)                 (enrichers)
+(default primary)          (enrichers)
 ```
 
 Component breakdown, package layout, concurrency model, and design rationale are in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.

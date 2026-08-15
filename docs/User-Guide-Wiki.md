@@ -247,13 +247,23 @@ to the records. Things worth knowing before you judge the results:
 - **OpenLibrary** is the default primary provider — it decides what an
   author's catalogue looks like. It is community data: expect occasional
   duplicates, language mix-ups, and box-set entries. The "primary" selector
-  (Settings → Metadata Profiles → Library Defaults) offers OpenLibrary or
-  **DNB** (German National Library) only.
-- **Hardcover** is an *enricher*, not a primary — it improves search results,
+  (Settings → Metadata Profiles → Library Defaults) offers OpenLibrary,
+  **DNB** (German National Library), and **Hardcover**.
+- **Hardcover** is an enricher by default — it improves search results,
   ratings, and series data, and powers import lists and the Discover wishlist
   row. **Without an API token (Settings → API Keys) Hardcover is silently
   skipped everywhere.** The free token is the single highest-value config for
   metadata quality.
+
+  It can also be promoted to *primary*, which is worth doing if OpenLibrary
+  refreshes bury your wanted list in translations and box sets. Hardcover's
+  catalogue is editorially curated: refreshing a prolific author typically
+  yields only the English-language works, without the translated editions,
+  omnibus bundles, alternate-title duplicates, and non-book merchandise rows
+  OpenLibrary returns as separate works. The trade-off is a thinner long tail
+  — obscure, self-published, and very old titles are more likely to be missing
+  — and the API token becomes load-bearing rather than optional, so the
+  selector stays disabled until you save one.
 - **Google Books** (free API key) and **Audnexus/Audible** (audiobook
   narrator, duration, by ASIN) enrich further.
 

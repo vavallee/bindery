@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -447,8 +448,10 @@ func TestSettings_DefaultLibraryRootFolderID(t *testing.T) {
 	}
 }
 
-// TestSettings_MetadataPrimaryProvider validates that only "openlibrary", "dnb",
-// and "" (empty = default) are accepted, and that unknown values are rejected.
+// TestSettings_MetadataPrimaryProvider validates that only "openlibrary",
+// "dnb", "hardcover", and "" (empty = default) are accepted, and that unknown
+// values are rejected. "hardcover" additionally needs a stored API token — see
+// TestSettings_MetadataPrimaryProviderHardcoverRequiresToken.
 func TestSettings_MetadataPrimaryProvider(t *testing.T) {
 	cases := []struct {
 		value  string
@@ -457,12 +460,17 @@ func TestSettings_MetadataPrimaryProvider(t *testing.T) {
 		{"", true},
 		{"openlibrary", true},
 		{"dnb", true},
-		{"hardcover", false},
+		{"hardcover", true},
 		{"googlebooks", false},
 		{"unknown", false},
 	}
 	for _, tc := range cases {
-		h, _, _ := settingsFixture(t)
+		h, repo, ctx := settingsFixture(t)
+		// A token is a precondition for hardcover, not the subject of this
+		// table; the missing-token path has its own test.
+		if err := repo.Set(ctx, SettingHardcoverAPIToken, "hc-test-token"); err != nil {
+			t.Fatal(err)
+		}
 		body := bytes.NewBufferString(`{"value":"` + tc.value + `"}`)
 		req := withKey(httptest.NewRequest(http.MethodPut, "/api/v1/settings/"+SettingMetadataPrimaryProvider, body), SettingMetadataPrimaryProvider)
 		rec := httptest.NewRecorder()
@@ -474,6 +482,90 @@ func TestSettings_MetadataPrimaryProvider(t *testing.T) {
 			t.Errorf("value %q: expected 400, got %d", tc.value, rec.Code)
 		}
 	}
+}
+
+// TestSettings_MetadataPrimaryProviderDefaultsToOpenLibrary pins the opt-in
+// contract: a fresh install has no stored value, and everything downstream
+// treats that as OpenLibrary. Selecting a provider must never be implicit.
+func TestSettings_MetadataPrimaryProviderDefaultsToOpenLibrary(t *testing.T) {
+	_, repo, ctx := settingsFixture(t)
+	s, err := repo.Get(ctx, SettingMetadataPrimaryProvider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s != nil && s.Value != "" {
+		t.Fatalf("fresh install has metadata.primary_provider = %q, want unset", s.Value)
+	}
+	if !IsMetadataPrimaryProviderValid("") {
+		t.Fatal("empty metadata.primary_provider must stay valid (it means openlibrary)")
+	}
+	if MetadataPrimaryProviders[0] != "openlibrary" {
+		t.Fatalf("MetadataPrimaryProviders[0] = %q, want openlibrary as the default", MetadataPrimaryProviders[0])
+	}
+}
+
+// TestSettings_MetadataPrimaryProviderHardcoverRequiresToken covers the guard
+// that keeps a tokenless instance from selecting Hardcover as primary: every
+// Hardcover GraphQL query is authenticated, so the setting would break all
+// metadata lookups rather than degrade.
+func TestSettings_MetadataPrimaryProviderHardcoverRequiresToken(t *testing.T) {
+	put := func(t *testing.T, h *SettingsHandler, key, value string) *httptest.ResponseRecorder {
+		t.Helper()
+		body := bytes.NewBufferString(`{"value":` + mustJSON(value) + `}`)
+		req := withKey(httptest.NewRequest(http.MethodPut, "/api/v1/settings/"+key, body), key)
+		rec := httptest.NewRecorder()
+		h.Set(rec, req)
+		return rec
+	}
+
+	t.Run("rejected without a token", func(t *testing.T) {
+		h, repo, ctx := settingsFixture(t)
+		rec := put(t, h, SettingMetadataPrimaryProvider, "hardcover")
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 without a Hardcover token, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "Hardcover API token") {
+			t.Errorf("error should name the missing token, got %s", rec.Body.String())
+		}
+		// The rejected value must not have been stored.
+		if s, _ := repo.Get(ctx, SettingMetadataPrimaryProvider); s != nil && s.Value == "hardcover" {
+			t.Error("rejected value was persisted anyway")
+		}
+	})
+
+	t.Run("accepted once a token exists", func(t *testing.T) {
+		h, repo, ctx := settingsFixture(t)
+		if rec := put(t, h, SettingHardcoverAPIToken, "hc-test-token"); rec.Code != http.StatusOK {
+			t.Fatalf("storing the token: got %d: %s", rec.Code, rec.Body.String())
+		}
+		if rec := put(t, h, SettingMetadataPrimaryProvider, "hardcover"); rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 with a token stored, got %d: %s", rec.Code, rec.Body.String())
+		}
+		s, _ := repo.Get(ctx, SettingMetadataPrimaryProvider)
+		if s == nil || s.Value != "hardcover" {
+			t.Fatalf("stored value = %+v, want hardcover", s)
+		}
+	})
+
+	t.Run("token cannot be cleared while hardcover is primary", func(t *testing.T) {
+		h, repo, ctx := settingsFixture(t)
+		if err := repo.Set(ctx, SettingHardcoverAPIToken, "hc-test-token"); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.Set(ctx, SettingMetadataPrimaryProvider, "hardcover"); err != nil {
+			t.Fatal(err)
+		}
+		if rec := put(t, h, SettingHardcoverAPIToken, ""); rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 clearing the token while hardcover is primary, got %d: %s", rec.Code, rec.Body.String())
+		}
+		// Switching away first must unblock it.
+		if rec := put(t, h, SettingMetadataPrimaryProvider, "openlibrary"); rec.Code != http.StatusOK {
+			t.Fatalf("switching provider: got %d: %s", rec.Code, rec.Body.String())
+		}
+		if rec := put(t, h, SettingHardcoverAPIToken, ""); rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 clearing the token after switching away, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
 }
 
 // TestSettings_ImportDropValidation covers the three drop-folder handoff keys

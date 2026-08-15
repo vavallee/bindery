@@ -55,9 +55,34 @@ const SettingDefaultLibraryRootFolderID = "library.defaultRootFolderId"
 
 // SettingMetadataPrimaryProvider is the KV key that selects the primary
 // metadata provider used for author/book search and lookup. Valid values are
-// "openlibrary" (default) and "dnb". Empty or unset falls back to
+// "openlibrary" (default), "dnb", and "hardcover". Empty or unset falls back to
 // "openlibrary" for backwards compatibility.
+//
+// "hardcover" requires a Hardcover API token (SettingHardcoverAPIToken) —
+// every Hardcover GraphQL query is authenticated, including search — so the
+// setting is rejected while no token is stored, and the boot-time wiring in
+// cmd/bindery falls back to OpenLibrary with a warning if the token is later
+// removed.
 const SettingMetadataPrimaryProvider = "metadata.primary_provider"
+
+// MetadataPrimaryProviders lists the accepted values of
+// SettingMetadataPrimaryProvider, in the order the UI presents them. The first
+// entry is the default used when the setting is empty or unset.
+var MetadataPrimaryProviders = []string{"openlibrary", "dnb", "hardcover"}
+
+// IsMetadataPrimaryProviderValid reports whether value names a provider that
+// may be promoted to primary. The empty string is valid and means "default".
+func IsMetadataPrimaryProviderValid(value string) bool {
+	if value == "" {
+		return true
+	}
+	for _, p := range MetadataPrimaryProviders {
+		if value == p {
+			return true
+		}
+	}
+	return false
+}
 
 // Drop-folder handoff settings (#941). When import.mode is "external" and a
 // drop folder is configured, bindery renames the finished download into that
@@ -252,6 +277,10 @@ func (h *SettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	if err := h.validateSettingDependencies(r.Context(), key, value); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	if err := h.settings.Set(r.Context(), key, value); err != nil {
 		writeServerError(w, r, err)
 		return
@@ -266,6 +295,38 @@ func (h *SettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s)
+}
+
+// validateSettingDependencies rejects values that are well-formed on their own
+// but invalid given the rest of the stored configuration. validateSettingValue
+// is deliberately pure (it is reused by tests and by callers without a repo),
+// so cross-setting rules live here where the settings repo is in hand.
+func (h *SettingsHandler) validateSettingDependencies(ctx context.Context, key, value string) error {
+	switch key {
+	case SettingMetadataPrimaryProvider:
+		if value != "hardcover" {
+			return nil
+		}
+		// Hardcover authenticates every GraphQL query, search included: an
+		// unauthenticated request returns "Unable to verify token". Promoting
+		// it to primary without a token would make every author/book lookup
+		// fail, so refuse the setting instead of storing a config that cannot
+		// work.
+		if GetHardcoverAPIToken(ctx, h.settings) == "" {
+			return fmt.Errorf("metadata.primary_provider %q requires a Hardcover API token — add one under Settings → API Keys first", value)
+		}
+	case SettingHardcoverAPIToken:
+		// Same rule from the other side: clearing the token while Hardcover is
+		// the primary provider would leave the instance with a provider that
+		// errors on every lookup.
+		if value != "" {
+			return nil
+		}
+		if s, _ := h.settings.Get(ctx, SettingMetadataPrimaryProvider); s != nil && s.Value == "hardcover" {
+			return fmt.Errorf("hardcover.api_token cannot be cleared while metadata.primary_provider is %q — switch the primary provider first", s.Value)
+		}
+	}
+	return nil
 }
 
 func normalizeSettingValue(key, value string) string {
@@ -523,14 +584,10 @@ func validateSettingValue(key, value string) error {
 		}
 	case SettingMetadataPrimaryProvider:
 		// Empty falls back to "openlibrary"; non-empty must be a known provider.
-		if value == "" {
-			return nil
-		}
-		switch value {
-		case "openlibrary", "dnb":
-			return nil
-		default:
-			return fmt.Errorf("metadata.primary_provider %q is not one of: openlibrary, dnb", value)
+		// The "hardcover" value additionally requires a stored API token, which
+		// this pure validator can't see — Set() enforces that separately.
+		if !IsMetadataPrimaryProviderValid(value) {
+			return fmt.Errorf("metadata.primary_provider %q is not one of: %s", value, strings.Join(MetadataPrimaryProviders, ", "))
 		}
 	case SettingCalibrePushPathRemap:
 		if value == "" {

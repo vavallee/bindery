@@ -41,6 +41,11 @@ export default function MetadataTab() {
   const [editing, setEditing] = useState<MetadataProfile | null>(null)
   const [creating, setCreating] = useState(false)
   const [settings, setSettings] = useState<Record<string, string>>({})
+  // Hardcover authenticates every GraphQL query, so it can only be the primary
+  // provider once a token is stored. The token itself is a secret setting and
+  // never comes back from listSettings — /system/status reports whether one
+  // exists.
+  const [hardcoverTokenConfigured, setHardcoverTokenConfigured] = useState(false)
 
   const reload = () => api.listMetadataProfiles().then(setProfiles).catch(console.error)
 
@@ -51,6 +56,7 @@ export default function MetadataTab() {
       list.forEach(s => { map[s.key] = s.value })
       setSettings(map)
     }).catch(console.error)
+    api.status().then(s => setHardcoverTokenConfigured(s.hardcoverTokenConfigured)).catch(console.error)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
@@ -66,7 +72,7 @@ export default function MetadataTab() {
             {t('settings.general.metadataProviderLabel', 'Primary metadata provider')}
           </label>
           <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
-            {t('settings.general.metadataProviderHint', 'Selects the source used for author and book search. DNB (Deutsche Nationalbibliothek) is recommended for German, Austrian, and Swiss catalogues — it covers German-language publications since 1913 where OpenLibrary coverage is thin. OpenLibrary remains the default for other regions. The non-primary provider is always used as an enricher.')}
+            {t('settings.general.metadataProviderHint', 'Selects the source used for author and book search, and decides what an author\'s catalogue looks like. DNB (Deutsche Nationalbibliothek) is recommended for German, Austrian, and Swiss catalogues — it covers German-language publications since 1913 where OpenLibrary coverage is thin. Hardcover is a curated catalogue: fewer translation editions, omnibus bundles, and non-book entries than OpenLibrary, at the cost of a thinner long tail. OpenLibrary remains the default. Whichever you pick, the other providers are still used as enrichers.')}
           </p>
           <select
             value={settings['metadata.primary_provider'] ?? 'openlibrary'}
@@ -79,6 +85,11 @@ export default function MetadataTab() {
           >
             <option value="openlibrary">{t('settings.general.metadataProviderOpenlibrary', 'OpenLibrary (default)')}</option>
             <option value="dnb">{t('settings.general.metadataProviderDnb', 'DNB — Deutsche Nationalbibliothek (German/DACH)')}</option>
+            <option value="hardcover" disabled={!hardcoverTokenConfigured}>
+              {hardcoverTokenConfigured
+                ? t('settings.general.metadataProviderHardcover', 'Hardcover (curated catalogue)')
+                : t('settings.general.metadataProviderHardcoverNoToken', 'Hardcover — requires an API token (Settings → API Keys)')}
+            </option>
           </select>
           <p className="text-xs text-slate-500 dark:text-zinc-600 mt-1">
             {t('settings.general.restartRequired')}
