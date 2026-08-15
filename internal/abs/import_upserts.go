@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
 )
@@ -563,17 +564,33 @@ func (i *Importer) lookupUpstreamBook(ctx context.Context, author *models.Author
 	if err != nil {
 		return nil, "", false, err
 	}
+	// Title match against the provider's works. indexer.CompareTitles rather
+	// than raw key equality: the canonical key no longer truncates at ": ", so
+	// an ABS "Pandora's Star: A Novel [Unabridged]" and a provider
+	// "Pandora's Star" hold different keys while still being one work (#2042).
+	// Exact matches shadow subtitle-divergent ones, so a near-miss can never
+	// make an otherwise unambiguous lookup ambiguous.
 	var match *models.Book
-	key := normalizeTitle(item.Title)
+	var exactMatches, nearMatches []*models.Book
 	for idx := range works {
-		if normalizeTitle(works[idx].Title) != key {
-			continue
+		switch indexer.CompareTitles(item.Title, works[idx].Title) {
+		case indexer.TitlesSame:
+			work := works[idx]
+			exactMatches = append(exactMatches, &work)
+		case indexer.TitlesNeedCorroboration:
+			work := works[idx]
+			nearMatches = append(nearMatches, &work)
 		}
-		if match != nil {
-			return nil, "", true, nil
-		}
-		copy := works[idx]
-		match = &copy
+	}
+	candidates := exactMatches
+	if len(candidates) == 0 {
+		candidates = nearMatches
+	}
+	if len(candidates) > 1 {
+		return nil, "", true, nil
+	}
+	if len(candidates) == 1 {
+		match = candidates[0]
 	}
 	if match == nil {
 		return nil, "", false, nil

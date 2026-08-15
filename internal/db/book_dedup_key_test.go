@@ -141,8 +141,9 @@ func TestBookRepo_FindByAuthorAndDedupKey_EmptyKeyAndWrongAuthor(t *testing.T) {
 }
 
 // TestBookRepo_FindAllByAuthorAndDedupKey_Ambiguous proves the ABS importer's
-// ambiguity signal: two rows under one author sharing a canonical key are both
-// returned so the caller can route to review instead of guessing.
+// ambiguity signal: two rows under one author that both describe the looked-up
+// work are returned together so the caller routes to review instead of
+// guessing.
 func TestBookRepo_FindAllByAuthorAndDedupKey_Ambiguous(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {
@@ -155,15 +156,121 @@ func TestBookRepo_FindAllByAuthorAndDedupKey_Ambiguous(t *testing.T) {
 	bookRepo := NewBookRepo(database)
 	a := mkAuthor(t, authorRepo, ctx, "OL-AM-A")
 
-	_ = mkBook(t, bookRepo, ctx, a.ID, "OL-AM-1", "Foundation", "wanted")
-	_ = mkBook(t, bookRepo, ctx, a.ID, "OL-AM-2", "Foundation: The Empire", "wanted")
+	// Two rows for one work that already duplicate each other: the punctuation
+	// fold makes them share a canonical key, so neither can be preferred.
+	_ = mkBook(t, bookRepo, ctx, a.ID, "OL-AM-1", "Poseidon's Arrow", "wanted")
+	_ = mkBook(t, bookRepo, ctx, a.ID, "OL-AM-2", "Poseidons Arrow", "imported")
 
-	all, err := bookRepo.FindAllByAuthorAndDedupKey(ctx, a.ID, "foundation")
+	all, err := bookRepo.FindAllByAuthorAndDedupKey(ctx, a.ID, "Poseidon’s Arrow")
 	if err != nil {
 		t.Fatalf("FindAllByAuthorAndDedupKey: %v", err)
 	}
 	if len(all) != 2 {
 		t.Fatalf("expected 2 ambiguous rows, got %d", len(all))
+	}
+}
+
+// TestBookRepo_DedupCandidates_ExactMatchShadowsSubtitleVariant pins the
+// preference rule from #2042: a row whose title matches exactly is not made
+// ambiguous by a sibling that merely shares its main title. Before the rule,
+// "Foundation" and "Foundation: The Empire" both collapsed to the key
+// "foundation" and every lookup for either was ambiguous.
+func TestBookRepo_DedupCandidates_ExactMatchShadowsSubtitleVariant(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+
+	authorRepo := NewAuthorRepo(database)
+	bookRepo := NewBookRepo(database)
+	a := mkAuthor(t, authorRepo, ctx, "OL-SH-A")
+
+	plain := mkBook(t, bookRepo, ctx, a.ID, "OL-SH-1", "Foundation", "wanted")
+	_ = mkBook(t, bookRepo, ctx, a.ID, "OL-SH-2", "Foundation: The Empire", "wanted")
+
+	all, err := bookRepo.FindAllByAuthorAndDedupKey(ctx, a.ID, "Foundation")
+	if err != nil {
+		t.Fatalf("FindAllByAuthorAndDedupKey: %v", err)
+	}
+	if len(all) != 1 || all[0].ID != plain.ID {
+		t.Fatalf("exact match must shadow the subtitle variant, got %d rows %+v", len(all), all)
+	}
+}
+
+// TestBookRepo_DedupCandidates_DistinctSubtitlesNeverMerge is the #2042 false
+// positive. Two named instalments that share a main title are different books
+// and must never be returned for one another, however the lookup is spelled.
+func TestBookRepo_DedupCandidates_DistinctSubtitlesNeverMerge(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+
+	authorRepo := NewAuthorRepo(database)
+	bookRepo := NewBookRepo(database)
+	a := mkAuthor(t, authorRepo, ctx, "OL-SW-A")
+
+	hope := mkBook(t, bookRepo, ctx, a.ID, "OL-SW-1", "Star Wars: A New Hope", "imported")
+
+	got, err := bookRepo.FindByAuthorAndDedupKey(ctx, a.ID, "Star Wars: The Empire Strikes Back")
+	if err != nil {
+		t.Fatalf("FindByAuthorAndDedupKey: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("distinct instalments must not match: got %q for %q", got.Title, "Star Wars: The Empire Strikes Back")
+	}
+
+	// The row is still findable by its own title.
+	got, err = bookRepo.FindByAuthorAndDedupKey(ctx, a.ID, "Star Wars: A New Hope")
+	if err != nil {
+		t.Fatalf("FindByAuthorAndDedupKey: %v", err)
+	}
+	if got == nil || got.ID != hope.ID {
+		t.Fatalf("self lookup failed: %+v", got)
+	}
+}
+
+// TestBookRepo_DedupCandidates_PunctuationDivergenceBinds is the #2042 false
+// negative, end to end through the repo: the shapes that produced duplicate
+// `wanted` rows next to `imported` ones in production must now bind.
+func TestBookRepo_DedupCandidates_PunctuationDivergenceBinds(t *testing.T) {
+	cases := []struct {
+		name   string
+		stored string
+		lookup string
+	}{
+		{"apostrophe vs none", "Poseidon's Arrow", "Poseidons Arrow"},
+		{"smart apostrophe vs none", "Poseidon’s Arrow", "Poseidons Arrow"},
+		{"colon vs no colon", "Journey of the Pharaohs: Numa Files #17", "Journey of the Pharaohs Numa Files #17"},
+		{"one-sided subtitle", "The Eye of the World: Book One of The Wheel of Time", "The Eye of the World"},
+		{"one-sided subtitle reversed", "The Midnight Line", "The Midnight Line: A Jack Reacher Novel"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			database, err := OpenMemory()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			ctx := context.Background()
+
+			authorRepo := NewAuthorRepo(database)
+			bookRepo := NewBookRepo(database)
+			a := mkAuthor(t, authorRepo, ctx, "OL-PD-"+tc.name)
+			b := mkBook(t, bookRepo, ctx, a.ID, "OL-PD-B-"+tc.name, tc.stored, "imported")
+
+			got, err := bookRepo.FindByAuthorAndDedupKey(ctx, a.ID, tc.lookup)
+			if err != nil {
+				t.Fatalf("FindByAuthorAndDedupKey: %v", err)
+			}
+			if got == nil || got.ID != b.ID {
+				t.Fatalf("stored %q not found via lookup %q (got %+v)", tc.stored, tc.lookup, got)
+			}
+		})
 	}
 }
 

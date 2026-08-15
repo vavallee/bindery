@@ -363,6 +363,23 @@ func backfillAuthorSortKeys(database *sql.DB) error {
 // risky (file ownership, edition links, provenance) and is left as a follow-up.
 // Writing keys is safe: at worst two pre-existing dupes now share a key, which
 // only makes future imports bind to one of them instead of creating a third.
+//
+// #2042 changed the normalizer, so the first boot after that upgrade rewrites
+// most rows. Two shapes are worth knowing about, and neither needs a migration
+// because the key is derived from books.title, which is untouched:
+//
+//   - Rows that duplicate each other today ("Poseidon's Arrow" beside
+//     "Poseidons Arrow") converge onto ONE key. They stay two rows — this
+//     function does not merge — but the ABS importer now sees them as an
+//     ambiguous pair and routes to review rather than compounding the problem,
+//     and no further duplicate is created for that work.
+//   - Rows the old truncating key wrongly merged ("Star Wars: A New Hope" and
+//     "…The Empire Strikes Back" both keyed "star wars") separate onto distinct
+//     keys. That is the correction, not a regression: they were always distinct
+//     books, and the shared key is what let an import bind one onto the other.
+//
+// Repairing libraries already duplicated by the old key is a separate piece of
+// work; the fix here stops new duplicates being created.
 func backfillBookDedupKeys(database *sql.DB) error {
 	type pending struct {
 		id  int64

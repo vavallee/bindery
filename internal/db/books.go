@@ -855,14 +855,11 @@ func (r *BookRepo) FindByAuthorAndTitle(ctx context.Context, authorID int64, tit
 // an author into one. A row whose stored dedup_key is still NULL/empty
 // (pre-backfill) likewise cannot match a non-empty computed key, so it is never
 // falsely merged.
+//
+// When several rows qualify, an exact-key match is returned in preference to a
+// subtitle-divergent one; see dedupCandidates.
 func (r *BookRepo) FindByAuthorAndDedupKey(ctx context.Context, authorID int64, title string) (*models.Book, error) {
-	key := indexer.CanonicalDedupKey(title)
-	if key == "" {
-		return nil, nil
-	}
-	books, err := r.query(ctx,
-		bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE author_id = ? AND books.dedup_key = ?",
-		[]any{authorID, key})
+	books, err := r.dedupCandidates(ctx, authorID, title)
 	if err != nil {
 		return nil, err
 	}
@@ -872,18 +869,78 @@ func (r *BookRepo) FindByAuthorAndDedupKey(ctx context.Context, authorID int64, 
 	return &books[0], nil
 }
 
-// FindAllByAuthorAndDedupKey returns every book under authorID matching the
-// canonical key for `title`. The ABS importer uses it to detect the *ambiguous*
-// case (more than one local row shares the key) and route to review instead of
+// FindAllByAuthorAndDedupKey returns every book under authorID that describes
+// the same work as `title`. The ABS importer uses it to detect the *ambiguous*
+// case (more than one local row qualifies) and route to review instead of
 // guessing which row to bind.
 func (r *BookRepo) FindAllByAuthorAndDedupKey(ctx context.Context, authorID int64, title string) ([]models.Book, error) {
+	return r.dedupCandidates(ctx, authorID, title)
+}
+
+// dedupCandidates is the shared two-tier work-identity lookup behind both
+// FindByAuthorAndDedupKey and FindAllByAuthorAndDedupKey (#2042).
+//
+// The stored dedup_key is lossless — it never truncates a subtitle — so an
+// equality probe alone would miss the very real case where one source spells
+// out a subtitle the other drops ("Mistborn: The Final Empire" from Calibre vs
+// "Mistborn" from an audiobook shelf). Candidates are therefore gathered on
+// three index-friendly predicates against books(author_id, dedup_key):
+//
+//  1. dedup_key = <canonical key>   — the same work, spelled the same way;
+//  2. dedup_key = <main-title key>  — the stored row dropped the subtitle;
+//  3. dedup_key in [main+" ", main+"!") — the stored row carries a subtitle
+//     this title omits. The bound is a prefix range rather than a LIKE so
+//     SQLite uses the index; '!' is the byte after ' ', and keys are
+//     space-normalized, so the range is exactly "main followed by more words".
+//
+// Predicates 2 and 3 are deliberately over-inclusive — "The Eye of the World"
+// prefix-matches "The Eye of the World War". Every candidate is therefore
+// re-adjudicated in Go by indexer.CompareTitles against the stored title, and
+// anything it calls TitlesDifferent is dropped. That is what stops the old
+// truncating key from merging "Star Wars: A New Hope" onto "Star Wars: The
+// Empire Strikes Back".
+//
+// Exact (TitlesSame) matches shadow TitlesNeedCorroboration ones: if any row is
+// an unambiguous match, the weaker candidates are not returned at all. This
+// keeps the ABS ambiguity check honest — one exact match plus one
+// subtitle-divergent near-miss is not an ambiguous pair.
+//
+// Callers that reach the TitlesNeedCorroboration tier are choosing to bind on a
+// one-sided subtitle. The ABS importer corroborates with series name and
+// sequence before accepting (see findBookByNormalizedTitle); callers without a
+// corroborating signal (Calibre, the API add-book path) accept it, which
+// preserves the pre-#2042 behaviour for that case — it is overwhelmingly one
+// work whose publisher subtitle one source omitted.
+func (r *BookRepo) dedupCandidates(ctx context.Context, authorID int64, title string) ([]models.Book, error) {
 	key := indexer.CanonicalDedupKey(title)
 	if key == "" {
 		return nil, nil
 	}
-	return r.query(ctx,
-		bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE author_id = ? AND books.dedup_key = ?",
-		[]any{authorID, key})
+	mainKey := indexer.MainTitleKey(title)
+	if mainKey == "" {
+		mainKey = key
+	}
+	books, err := r.query(ctx,
+		bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+
+			" WHERE author_id = ? AND (books.dedup_key = ? OR books.dedup_key = ?"+
+			" OR (books.dedup_key >= ? AND books.dedup_key < ?))",
+		[]any{authorID, key, mainKey, mainKey + " ", mainKey + "!"})
+	if err != nil {
+		return nil, err
+	}
+	var exact, corroborate []models.Book
+	for i := range books {
+		switch indexer.CompareTitles(title, books[i].Title) {
+		case indexer.TitlesSame:
+			exact = append(exact, books[i])
+		case indexer.TitlesNeedCorroboration:
+			corroborate = append(corroborate, books[i])
+		}
+	}
+	if len(exact) > 0 {
+		return exact, nil
+	}
+	return corroborate, nil
 }
 
 // SetExcluded toggles the excluded flag on a book.

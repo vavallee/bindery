@@ -19,14 +19,19 @@ func TestNormalizeTitleForDedup(t *testing.T) {
 			want: "dune",
 		},
 		{
-			name: "smart curly quote folded",
+			name: "smart curly apostrophe deleted",
 			in:   "Ender’s Game",
-			want: "ender's game",
+			want: "enders game",
 		},
 		{
-			name: "em-dash folded to hyphen",
+			name: "ascii apostrophe deleted",
+			in:   "Ender's Game",
+			want: "enders game",
+		},
+		{
+			name: "em-dash becomes a separator",
 			in:   "Title — Subtitle",
-			want: "title - subtitle",
+			want: "title subtitle",
 		},
 		{
 			name: "leading and trailing whitespace stripped",
@@ -60,19 +65,26 @@ func TestNormalizeTitleForDedup(t *testing.T) {
 			want: "die stille ist ein geraeusch",
 		},
 		{
-			name: "post-colon subtitle stripped",
+			// #2042: the key no longer truncates. Truncating discarded
+			// exactly the words that tell two instalments apart.
+			name: "post-colon subtitle retained",
 			in:   "Carl's Doomsday Scenario: Dungeon Crawler Carl, Book 2",
-			want: "carl's doomsday scenario",
+			want: "carls doomsday scenario dungeon crawler carl book 2",
 		},
 		{
 			name: "title without colon unchanged",
 			in:   "Carl's Doomsday Scenario",
-			want: "carl's doomsday scenario",
+			want: "carls doomsday scenario",
 		},
 		{
-			name: "colon without trailing whitespace preserved",
+			name: "compact colon is a separator too",
 			in:   "foo:bar",
-			want: "foo:bar",
+			want: "foo bar",
+		},
+		{
+			name: "hash and colon fold to the same spacing",
+			in:   "Journey of the Pharaohs: Numa Files #17",
+			want: "journey of the pharaohs numa files 17",
 		},
 	}
 	for _, tc := range cases {
@@ -96,7 +108,7 @@ func TestCanonicalDedupKey(t *testing.T) {
 	}{
 		{"The Eye of the World [Unabridged]", "the eye of the world"},
 		{"The Eye of the World", "the eye of the world"},
-		{"Mistborn: The Final Empire", "mistborn"},
+		{"Mistborn: The Final Empire", "mistborn the final empire"},
 		{"Mistborn", "mistborn"},
 		{"Dune (Unabridged) [Audiobook]", "dune"},
 		{"Die Straße", "die strasse"},
@@ -114,10 +126,11 @@ func TestCanonicalDedupKey(t *testing.T) {
 // titles for the same work, in either order, produce the same key.
 func TestCanonicalDedupKey_Symmetric(t *testing.T) {
 	pairs := [][2]string{
-		{"Mistborn: The Final Empire", "Mistborn"},
 		{"The Eye of the World [Unabridged]", "the eye of the world"},
 		{"Dune (Unabridged)", "Dune [Audiobook]"},
-		{"Die Straße: Ein Roman", "Die Strasse"},
+		{"Die Straße: Ein Roman", "Die Strasse: Ein Roman"},
+		{"Poseidon's Arrow", "Poseidons Arrow"},
+		{"Journey of the Pharaohs: Numa Files #17", "Journey of the Pharaohs Numa Files #17"},
 	}
 	for _, p := range pairs {
 		if a, b := CanonicalDedupKey(p[0]), CanonicalDedupKey(p[1]); a != b {
@@ -134,7 +147,7 @@ func TestNormalizeTitleForDedup_Symmetric(t *testing.T) {
 		{"Dune (Unabridged)", "Dune"},
 		{"  Moby Dick  ", "Moby Dick"},
 		{"Öde Wälder (German Edition)", "Öde Wälder"},
-		{"Carl's Doomsday Scenario", "Carl's Doomsday Scenario: Dungeon Crawler Carl, Book 2"},
+		{"Carl's Doomsday Scenario", "Carl’s Doomsday Scenario"},
 	}
 	for _, pair := range pairs {
 		k1 := NormalizeTitleForDedup(pair[0])

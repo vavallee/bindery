@@ -1695,10 +1695,10 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// from it rather than merged in: the seenTitles branches UPDATE the row
 	// they match (dual-format upgrades, calibre-stub adoption, ratings), and an
 	// excluded row is one the user wants left alone, not quietly upgraded.
-	excludedKeys := make(map[string]struct{})
+	excludedKeys := indexer.NewTitleIndex[struct{}]()
 	for i := range allBooks {
 		if allBooks[i].Excluded {
-			excludedKeys[indexer.CanonicalDedupKey(allBooks[i].Title)] = struct{}{}
+			excludedKeys.Add(allBooks[i].Title, struct{}{})
 			continue
 		}
 		existingBooks = append(existingBooks, allBooks[i])
@@ -1710,9 +1710,16 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// "X [Unabridged]" did not match OpenLibrary's "X" here — a second row was
 	// created, and both then carried the same books.dedup_key, violating the
 	// invariant from the inside (#1648).
-	seenTitles := make(map[string]*models.Book)
+	//
+	// indexer.TitleIndex, not a plain map: since #2042 the canonical key no
+	// longer truncates at ": ", so a stored "Mistborn: The Final Empire" and a
+	// provider "Mistborn" hash differently. The index probes the main-title
+	// bucket too and adjudicates with indexer.CompareTitles, so subtitle-only
+	// divergence still matches while "Star Wars: A New Hope" no longer matches
+	// "Star Wars: The Empire Strikes Back".
+	seenTitles := indexer.NewTitleIndex[*models.Book]()
 	for i := range existingBooks {
-		seenTitles[indexer.CanonicalDedupKey(existingBooks[i].Title)] = &existingBooks[i]
+		seenTitles.Add(existingBooks[i].Title, &existingBooks[i])
 	}
 
 	// Discovery policy (#1815). A refresh may always UPDATE the books the
@@ -1953,8 +1960,7 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		//     behaviour — preserves the pre-#442 upgrade path).
 		//   • A duplicate that carries the same media_type as the existing row is
 		//     truly redundant and is silently skipped (no format gain).
-		dedupKey := indexer.CanonicalDedupKey(b.Title) // must match how seenTitles was keyed
-		if existing := seenTitles[dedupKey]; existing != nil {
+		if existing, seen := seenTitles.Lookup(b.Title); seen && existing != nil {
 			hydrateExistingFromMatchedHardcover := false
 			switch {
 			case strings.HasPrefix(existing.ForeignID, "calibre:"):
@@ -2013,7 +2019,7 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		// work whose local row carries a different one — a calibre: stub, a
 		// re-ided provider work — would otherwise be created afresh as a
 		// title the exclusion was meant to cover (#1815).
-		if _, excluded := excludedKeys[dedupKey]; excluded {
+		if _, excluded := excludedKeys.Lookup(b.Title); excluded {
 			skippedExcluded++
 			slog.Debug("skipping newly-discovered work: an excluded book under this author has the same title",
 				"title", b.Title, "foreignId", b.ForeignID, "author", author.Name)
@@ -2025,7 +2031,7 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 				"title", b.Title, "foreignId", b.ForeignID, "author", author.Name)
 			continue
 		}
-		seenTitles[dedupKey] = &b
+		seenTitles.Add(b.Title, &b)
 
 		// Tenancy (#1457): a new book inherits its author's owner so per-user
 		// scoping sees the sync's output. NULL-owned authors stay NULL-owned.

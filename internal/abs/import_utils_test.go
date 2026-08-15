@@ -3,6 +3,8 @@ package abs
 import (
 	"strings"
 	"testing"
+
+	"github.com/vavallee/bindery/internal/indexer"
 )
 
 func TestNormalizeLibraryIDsPrependsLegacyPrimary(t *testing.T) {
@@ -31,7 +33,9 @@ func TestNormalizeTitle_StripsABSEditionNoise(t *testing.T) {
 		{"trailing hash series parenthetical", "Leviathan Wakes (The Expanse #1)", "leviathan wakes"},
 		{"square-bracket unabridged tag", "The Eye of the World [Unabridged]", "the eye of the world"},
 		{"square-bracket dramatized tag", "The Way of Kings [Dramatized Adaptation]", "the way of kings"},
-		{"colon novel subtitle and bracket tag", "Pandora's Star: A Novel [Unabridged]", "pandora's star"},
+		{"apostrophe deleted, not spaced", "Pandora's Star", "pandoras star"},
+		{"subtitle retained, bracket tag stripped", "Pandora's Star: A Novel [Unabridged]", "pandoras star a novel"},
+		{"colon and no-colon spellings agree", "Journey of the Pharaohs: Numa Files #17", "journey of the pharaohs numa files 17"},
 		{"stacked bracket tags", "Dune [Unabridged] [2021]", "dune"},
 		{"paren edition then bracket tag", "Mistborn (Unabridged) [Audiobook]", "mistborn"},
 	}
@@ -54,7 +58,7 @@ func TestNormalizeTitle_MatchesNoisyABSTitleToCleanProviderTitle(t *testing.T) {
 
 	pairs := [][2]string{
 		{"The Eye of the World (The Wheel of Time, Book 1)", "The Eye of the World"},
-		{"Pandora's Star: A Novel [Unabridged]", "Pandora's Star"},
+		{"Pandora's Star [Unabridged]", "Pandora’s Star"},
 		{"Leviathan Wakes (The Expanse #1)", "Leviathan Wakes"},
 		{"The Way of Kings [Unabridged]", "The Way of Kings"},
 		{"Project Hail Mary [Unabridged]", "Project Hail Mary"},
@@ -66,6 +70,26 @@ func TestNormalizeTitle_MatchesNoisyABSTitleToCleanProviderTitle(t *testing.T) {
 			t.Errorf("titles must share a dedup key:\n  ABS      %q -> %q\n  provider %q -> %q",
 				pair[0], absKey, pair[1], providerKey)
 		}
+	}
+}
+
+// TestNormalizeTitle_OneSidedSubtitleIsACandidateNotAKey records the #2042
+// division of labour. A subtitle one source spells out and the other drops no
+// longer produces the same key — the key stopped truncating, because
+// truncating is what merged "Star Wars: A New Hope" onto "…The Empire Strikes
+// Back". The pair is still matched, one level up, by indexer.CompareTitles.
+func TestNormalizeTitle_OneSidedSubtitleIsACandidateNotAKey(t *testing.T) {
+	t.Parallel()
+
+	const noisy, clean = "Pandora's Star: A Novel [Unabridged]", "Pandora's Star"
+	if normalizeTitle(noisy) == normalizeTitle(clean) {
+		t.Errorf("key must not truncate the subtitle: both sides folded to %q", normalizeTitle(noisy))
+	}
+	if got := indexer.CompareTitles(noisy, clean); got != indexer.TitlesNeedCorroboration {
+		t.Errorf("CompareTitles(%q, %q) = %v, want needs-corroboration", noisy, clean, got)
+	}
+	if got := indexer.CompareTitles(clean, noisy); got != indexer.TitlesNeedCorroboration {
+		t.Errorf("CompareTitles is not symmetric: %v", got)
 	}
 }
 
