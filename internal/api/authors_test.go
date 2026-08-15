@@ -975,8 +975,11 @@ func TestFetchAuthorBooks_SkipsPartBooks(t *testing.T) {
 	for _, b := range summary.SkippedPartBooksSample {
 		sampleTitles[b.Title] = true
 	}
+	// "Expanse Hardcover Boxed Set : ..." is deliberately absent here: the
+	// aggregator-level collection prune (#1780) catches it before this
+	// filter ever sees it (same reason SkippedPartBooks's count is 3, not
+	// 4, above), so it can't appear in this filter's own sample either.
 	for _, junk := range []string{
-		"Expanse Hardcover Boxed Set : Leviathan Wakes, Caliban's War, Abaddon's Gate",
 		"Expanse Series, Collection Set of 3 Books. Leviathan Wakes, Caliban's War, Abaddon's Gate",
 		"Leviathan Falls - Carton of 10 Signed Copies",
 		"The Martian / Artemis / Project Hail Mary",
