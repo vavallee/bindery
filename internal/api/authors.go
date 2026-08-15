@@ -50,21 +50,64 @@ const authorAutoSearchConcurrency = 4
 // title-text heuristic rather than an OL work-type field because OpenLibrary
 // does not reliably distinguish "part"/omnibus works from regular ones in its
 // API response.
+// omnibus is deliberately NOT in this alternation — see hasNonLeadingOmnibus,
+// which applies it with an additional leading-word exclusion the rest of
+// these keyword checks don't need.
+//
+// The two slash branches require actual whitespace around every "/" ("\s+"
+// either side, not "\s*"). Real anthology naming is always spaced ("Title A
+// / Title B"); an unspaced slash is far more often a title using "/" as its
+// own punctuation (a two-character-choice title like "He/She/It", or
+// "Rock/Paper/Scissors") than a bundle. Confirmed against real
+// maintainer-reported false positives (vavallee, PR #1968 review).
 var partBookTitleRe = regexp.MustCompile(`(?i:` +
 	`\bbox\s*set\b` +
 	`|\bboxed\s*set\b` +
+	`|\bboxed\b` + // bare "(Boxed)" — real OL titles drop "set" entirely, e.g. "4 Vol. (Boxed)"
 	`|\bcollection\s*set\b` +
 	`|\bcollection\s+of\s+\d` +
-	`|\bomnibus\b` +
 	`|\bcarton\s+of\s+\d+\s+signed\s+cop` +
 	`|\bbooks?\s+\d+\s*-\s*\d+\b` +
+	`|\b\d+\s*(?:books?|vol(?:ume)?s?)\s+set\b` + // "3 Books Set", "5 Volumes Set"
+	`|\[[^\]]*\b(?:collection|set|boxed)\b[^\]]*\]` + // bracket notation: "[collection/set]"
 	`)` +
-	`|(?:[^/]+/){2,}[^/]+`) // "Title A / Title B / Title C" multi-title anthology naming
+	`|(?:[^/]+\s+/\s+){2,}[^/]+` + // "Title A / Title B / Title C" multi-title anthology naming
+	`|\([^()]+\s+/\s+[^()]+\)\s*$`) // "Prefix (Title A / Title B)" — 2-title anthology naming inside parens
+
+// omnibusWordRe and leadingArticleForOmnibusCheckRe back hasNonLeadingOmnibus.
+var omnibusWordRe = regexp.MustCompile(`(?i)\bomnibus\b`)
+var leadingArticleForOmnibusCheckRe = regexp.MustCompile(`(?i)^(?:the|an?)\s+`)
+
+// hasNonLeadingOmnibus reports whether "omnibus" appears in title as a
+// description of a bundle rather than as the title's own subject. Real
+// compilation titles put "omnibus" after the name of what's bundled ("The
+// Dune Omnibus", "The Silmarillion Omnibus"); a single real book can also use
+// "Omnibus" as its own proper-noun title ("The Omnibus of Crime", a genuine
+// Dorothy Sayers volume) or as a publisher's brand name leading the title
+// ("Omnibus Press Presents..."). Both shapes put "omnibus" at (or immediately
+// after only a leading article before) the very start of the title, which
+// this excludes. Confirmed against real maintainer-reported false positives
+// (vavallee, PR #1968 review).
+func hasNonLeadingOmnibus(title string) bool {
+	if !omnibusWordRe.MatchString(title) {
+		return false
+	}
+	stripped := leadingArticleForOmnibusCheckRe.ReplaceAllString(strings.TrimSpace(title), "")
+	return !strings.HasPrefix(strings.ToLower(stripped), "omnibus")
+}
 
 // isPartBookTitle reports whether title looks like a box set, omnibus, or
-// carton rather than a single book. See partBookTitleRe.
+// carton rather than a single book. See partBookTitleRe and
+// hasNonLeadingOmnibus.
+//
+// Known residual false positive, not fixed here: a genuine single-volume
+// edition bundling several distinct classic works under one title, spaced
+// and 3+ segments, e.g. the Penguin Nietzsche edition "The Anti-Christ / Ecce
+// Homo / Twilight of the Idols" — indistinguishable by title text alone from
+// a real anthology bundle, and the maintainer's own suggested fix (spaces +
+// 3+ segments) does not clear it either, since it already satisfies both.
 func isPartBookTitle(title string) bool {
-	return partBookTitleRe.MatchString(title)
+	return partBookTitleRe.MatchString(title) || hasNonLeadingOmnibus(title)
 }
 
 type AuthorHandler struct {

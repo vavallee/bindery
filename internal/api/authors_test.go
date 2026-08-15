@@ -797,6 +797,27 @@ func TestIsPartBookTitle(t *testing.T) {
 		{"The Silmarillion Omnibus", true},
 		{"Books 1-3", true},
 		{"The Martian / Artemis / Project Hail Mary", true},
+		{"J.R.R. Tolkien-4 Vol. (Boxed)", true},
+		{"Skyward Series 3 Books Set", true},
+		{"The Hobbit & The Lord of the Rings [collection/set]", true},
+		{"Novels (Fellowship of the Ring / Hobbit)", true},
+		{"Forever (Heart's Victory / Rules of the Game)", true},
+		// Real maintainer-reported false positives (vavallee, PR #1968
+		// review) — all five are genuine single books the pre-fix regex
+		// wrongly caught. "The Omnibus of Crime" and "Omnibus Press
+		// Presents..." use "Omnibus" as their own subject/imprint, not to
+		// describe a bundle (see hasNonLeadingOmnibus). "He/She/It" and
+		// "Rock/Paper/Scissors" use "/" as the title's own punctuation with
+		// no surrounding spaces, unlike real anthology naming.
+		{"The Omnibus of Crime", false},
+		{"Omnibus Press Presents...", false},
+		{"He/She/It", false},
+		{"Rock/Paper/Scissors", false},
+		// Known residual, not fixed: a genuine single-volume edition
+		// bundling several distinct classic works, spaced and 3+ segments —
+		// indistinguishable by title text alone from a real anthology
+		// bundle. See isPartBookTitle's doc comment.
+		{"The Anti-Christ / Ecce Homo / Twilight of the Idols", true},
 		{"Leviathan Wakes", false},
 		{"Abaddon's Gate", false},
 		{"The Butcher of Anderson Station", false},

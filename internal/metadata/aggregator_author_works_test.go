@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -263,6 +264,88 @@ func TestAggregator_GetAuthorWorksForAuthor_PrunesTechnicalSameNameCollision(t *
 		if !titles[want] {
 			t.Fatalf("expected %q to remain, got %+v", want, got)
 		}
+	}
+}
+
+// TestAggregator_GetAuthorWorksForAuthor_PrunesSelfReferentialSubjectWorks
+// verifies pruneAuthorWorkSelfReference against real OpenLibrary titles and
+// subjects pulled from J.R.R. Tolkien's actual author-works catalogue during
+// PR validation: companion guides, art books, and a biography that
+// OpenLibrary's author-works endpoint credits Tolkien as "author" on despite
+// being written about him, not by him — because OpenLibrary's author-role
+// data has no way to distinguish the two (verified empirically: a companion
+// guide's authors array is structurally identical to a real novel's). Real
+// single- and co-authored Tolkien works with no such subject signal must
+// still pass through unfiltered.
+func TestAggregator_GetAuthorWorksForAuthor_PrunesSelfReferentialSubjectWorks(t *testing.T) {
+	primary := &mockWorksProvider{
+		mockProvider: mockProvider{name: "ol", authorWorks: []models.Book{
+			{ForeignID: "OL26329568W", Title: "J. R. R. Tolkien Companion and Guide : Volume 2", MetadataProvider: "openlibrary",
+				Genres: []string{"Tolkien, j, r. r. (john ronald ruel), 1892-1973", "Authors, english", "Authors, biography"}},
+			{ForeignID: "OL21034216W", Title: "Art of the Hobbit", MetadataProvider: "openlibrary",
+				Genres: []string{"Tolkien, j, r. r. (john ronald ruel), 1892-1973", "Illustrations"}},
+			{ForeignID: "OL39015AW", Title: "J. R. R. Tolkien", MetadataProvider: "openlibrary",
+				Genres: []string{"Tolkien, j, r. r. (john ronald ruel), 1892-1973", "Authors, english", "Authors, biography"}},
+			{ForeignID: "OL26320AW1", Title: "The Silmarillion", MetadataProvider: "openlibrary",
+				Genres: []string{"Fiction, fantasy, general", "Middle Earth (Imaginary place)"}},
+			{ForeignID: "OL26320AW2", Title: "The Hobbit", MetadataProvider: "openlibrary",
+				Genres: []string{"Fiction, fantasy, general"}},
+		}},
+	}
+	agg := &Aggregator{
+		primary: primary,
+		cache:   newTTLCache(time.Minute),
+	}
+
+	got, err := agg.GetAuthorWorksForAuthor(context.Background(), models.Author{
+		ForeignID: "OL26320A", Name: "J.R.R. Tolkien", SortName: "Tolkien, J.R.R.",
+	})
+	if err != nil {
+		t.Fatalf("GetAuthorWorksForAuthor: %v", err)
+	}
+	titles := map[string]bool{}
+	for _, b := range got {
+		titles[b.Title] = true
+	}
+	for _, junk := range []string{
+		"J. R. R. Tolkien Companion and Guide : Volume 2",
+		"Art of the Hobbit",
+		"J. R. R. Tolkien",
+	} {
+		if titles[junk] {
+			t.Errorf("self-referential subject work %q should have been pruned, got %+v", junk, got)
+		}
+	}
+	for _, want := range []string{"The Silmarillion", "The Hobbit"} {
+		if !titles[want] {
+			t.Errorf("expected %q to remain, got %+v", want, got)
+		}
+	}
+}
+
+// TestAggregator_GetAuthorWorksForAuthor_SelfReferenceCheckDisabledWithoutSortName
+// verifies pruneAuthorWorkSelfReference no-ops rather than false-positiving
+// when the author record has no usable SortName (e.g. an unresolved comma,
+// or empty) — a malformed or absent surname must never cause the check to
+// prune arbitrary subject text via an empty-string prefix match.
+func TestAggregator_GetAuthorWorksForAuthor_SelfReferenceCheckDisabledWithoutSortName(t *testing.T) {
+	primary := &mockWorksProvider{
+		mockProvider: mockProvider{name: "ol", authorWorks: []models.Book{
+			{ForeignID: "OL1W", Title: "Some Book", MetadataProvider: "openlibrary",
+				Genres: []string{"Tolkien, j, r. r. (john ronald ruel), 1892-1973"}},
+		}},
+	}
+	agg := &Aggregator{
+		primary: primary,
+		cache:   newTTLCache(time.Minute),
+	}
+
+	got, err := agg.GetAuthorWorksForAuthor(context.Background(), models.Author{ForeignID: "OL26320A", Name: "J.R.R. Tolkien"})
+	if err != nil {
+		t.Fatalf("GetAuthorWorksForAuthor: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected the work to survive when SortName is unset, got %+v", got)
 	}
 }
 
@@ -578,6 +661,69 @@ func TestAggregator_GetAuthorWorks_FillsMissingCoversFromPrimary(t *testing.T) {
 	}
 	if want := "https://covers.openlibrary.org/b/id/42-L.jpg"; got[1].ImageURL != want {
 		t.Errorf("cover-less work: want %q, got %q", want, got[1].ImageURL)
+	}
+}
+
+// TestPruneAuthorWorkRedundantTitles_FragmentSplitOfWholeWork covers
+// OpenLibrary listing one printed volume of a larger work as its own record
+// (real title from a live Tolkien sync) when the whole work is also present
+// under its own title — the split records should drop, leaving the whole.
+func TestPruneAuthorWorkRedundantTitles_FragmentSplitOfWholeWork(t *testing.T) {
+	books := []models.Book{
+		{ForeignID: "OL1W", Title: "The Silmarillion"},
+		{ForeignID: "OL2W", Title: "The Silmarillion. 1/?"},
+		{ForeignID: "OL3W", Title: "The Silmarillion. 2/3"},
+		{ForeignID: "OL4W", Title: "The Silmarillion. 3/3"},
+		{ForeignID: "OL5W", Title: "The Way of Kings, Part One"},
+		{ForeignID: "OL6W", Title: "The Way of Kings, Part Two"},
+	}
+	got := pruneAuthorWorkRedundantTitles(books)
+	// The three Silmarillion fragments collapse into the whole-work entry;
+	// the Way of Kings parts survive since no whole-work entry exists for
+	// them to be a redundant split of.
+	if len(got) != 3 {
+		t.Fatalf("expected 3 works to survive (whole Silmarillion + both Way of Kings parts), got %d: %+v", len(got), got)
+	}
+	for _, b := range got {
+		if strings.HasPrefix(b.Title, "The Silmarillion.") {
+			t.Fatalf("Silmarillion fragment split should have been dropped once the whole work is present: %+v", got)
+		}
+	}
+}
+
+// TestPruneAuthorWorkRedundantTitles_KeepsFragmentsWithoutWholeWork verifies
+// a trilogy with no standalone whole-work or omnibus entry keeps its
+// per-volume rows — the fragment marker alone is not enough to drop a title.
+func TestPruneAuthorWorkRedundantTitles_KeepsFragmentsWithoutWholeWork(t *testing.T) {
+	books := []models.Book{
+		{ForeignID: "OL1W", Title: "The Way of Kings, Part One"},
+		{ForeignID: "OL2W", Title: "The Way of Kings, Part Two"},
+	}
+	got := pruneAuthorWorkRedundantTitles(books)
+	if len(got) != 2 {
+		t.Fatalf("expected both parts to survive with no whole-work entry present, got %d: %+v", len(got), got)
+	}
+}
+
+// TestPruneAuthorWorkRedundantTitles_SlashJoinedOmnibus covers OpenLibrary
+// bundling several already-listed titles into one record's title field
+// (real titles from live Tolkien/Nora Roberts syncs). The joined record
+// should only drop when every segment is independently present.
+func TestPruneAuthorWorkRedundantTitles_SlashJoinedOmnibus(t *testing.T) {
+	books := []models.Book{
+		{ForeignID: "OL1W", Title: "The Fellowship of the Ring"},
+		{ForeignID: "OL2W", Title: "The Hobbit"},
+		{ForeignID: "OL3W", Title: "Novels (Fellowship of the Ring / Hobbit)"},
+		{ForeignID: "OL4W", Title: "Forever (Heart's Victory / Rules of the Game)"},
+	}
+	got := pruneAuthorWorkRedundantTitles(books)
+	if len(got) != 3 {
+		t.Fatalf("expected the fully-known joined record to drop and the partially-known one to survive, got %d: %+v", len(got), got)
+	}
+	for _, b := range got {
+		if b.Title == "Novels (Fellowship of the Ring / Hobbit)" {
+			t.Fatalf("joined record whose segments are both already listed should have been dropped: %+v", got)
+		}
 	}
 }
 
