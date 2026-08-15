@@ -958,7 +958,14 @@ func TestFetchAuthorBooks_SkipsPartBooks(t *testing.T) {
 	if summary == nil {
 		t.Fatal("expected a recorded sync summary, got nil")
 	}
-	if want := 4; summary.SkippedPartBooks != want {
+	// want is 3, not 4: "Expanse Hardcover Boxed Set : ..." matches the
+	// "boxed set" keyword in textutil.LooksLikeCollectionTitle (#1780) and is
+	// pruned unconditionally at the aggregator level, before this filter ever
+	// sees it — so it's absent from the input list, not counted as a
+	// SkipPartBooks drop. The other three titles (comma-separated "Collection
+	// Set", "Carton of ... Signed Copies", slash-separated) aren't caught by
+	// that keyword list and still reach this filter.
+	if want := 3; summary.SkippedPartBooks != want {
 		t.Errorf("summary.SkippedPartBooks = %d, want %d", summary.SkippedPartBooks, want)
 	}
 	if summary.SkippedTotal() < summary.SkippedPartBooks {
@@ -1014,9 +1021,14 @@ func TestFetchAuthorBooks_PartBooksKeptWhenSkipDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != len(partBookTestWorks()) {
-		t.Errorf("got %d books, want %d (SkipPartBooks defaults to false, nothing should be dropped)",
-			len(got), len(partBookTestWorks()))
+	// want is len(partBookTestWorks())-1, not the full count: the
+	// aggregator-level compilation prune (#1780, textutil.LooksLikeCollectionTitle)
+	// runs unconditionally regardless of SkipPartBooks, and "Expanse Hardcover
+	// Boxed Set : ..." matches its "boxed set" keyword. SkipPartBooks being
+	// off only means the other three part-book-shaped titles pass through.
+	if want := len(partBookTestWorks()) - 1; len(got) != want {
+		t.Errorf("got %d books, want %d (SkipPartBooks defaults to false, but the unconditional collection-title prune still drops the boxed-set title)",
+			len(got), want)
 	}
 
 	if summary := h.syncSummaries.get(author.ID); summary != nil && summary.SkippedPartBooks != 0 {
