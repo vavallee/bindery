@@ -104,6 +104,43 @@ type AuthorSyncSummary struct {
 	// author payload. Enough to recognise whether the profile is set the way
 	// the user meant.
 	SkippedLanguageSample []AuthorSyncSkippedBook `json:"skippedLanguageSample,omitempty"`
+
+	// The five fields below back the metadata-profile filters wired into
+	// author sync by PRs #1968, #2005, #2006, #2007, and #2008. Landed here
+	// first (#1889-shaped review feedback, vavallee) so those PRs rebase onto
+	// fields and UI that already exist rather than each adding — and each
+	// needing rebased around the others adding — the same summary/notice
+	// plumbing independently. Every count has a matching *Sample, same
+	// reasoning as SkippedLanguageSample: a bare count doesn't say which
+	// books vanished, and Debug logs aren't reachable in a rootless
+	// container.
+
+	// SkippedPartBooks is the number of works dropped as box sets, omnibuses,
+	// signed-copy cartons, or slash-separated anthologies by the metadata
+	// profile's SkipPartBooks setting.
+	SkippedPartBooks       int                     `json:"skippedPartBooks,omitempty"`
+	SkippedPartBooksSample []AuthorSyncSkippedBook `json:"skippedPartBooksSample,omitempty"`
+	// SkippedMissingDate is the number of works dropped because they carried
+	// no release date and the metadata profile's SkipMissingDate setting is
+	// enabled.
+	SkippedMissingDate       int                     `json:"skippedMissingDate,omitempty"`
+	SkippedMissingDateSample []AuthorSyncSkippedBook `json:"skippedMissingDateSample,omitempty"`
+	// SkippedMinPopularity is the number of works dropped because their
+	// RatingsCount fell below the metadata profile's MinPopularity floor.
+	// A work that hasn't released yet is exempt.
+	SkippedMinPopularity       int                     `json:"skippedMinPopularity,omitempty"`
+	SkippedMinPopularitySample []AuthorSyncSkippedBook `json:"skippedMinPopularitySample,omitempty"`
+	// SkippedMinPages is the number of works dropped because every edition
+	// with a known page count fell below the metadata profile's MinPages
+	// floor. A work whose editions report no page count at all is treated as
+	// unknown, not zero, and passes through unfiltered.
+	SkippedMinPages       int                     `json:"skippedMinPages,omitempty"`
+	SkippedMinPagesSample []AuthorSyncSkippedBook `json:"skippedMinPagesSample,omitempty"`
+	// SkippedMissingISBN is the number of works dropped because none of
+	// their editions carried an ISBN-13 or ISBN-10, with the metadata
+	// profile's SkipMissingISBN setting enabled.
+	SkippedMissingISBN       int                     `json:"skippedMissingIsbn,omitempty"`
+	SkippedMissingISBNSample []AuthorSyncSkippedBook `json:"skippedMissingIsbnSample,omitempty"`
 }
 
 // AuthorSyncSkippedBook is one dropped work, named so the user can tell a
@@ -129,7 +166,8 @@ func (s *AuthorSyncSummary) SkippedTotal() int {
 	if s == nil {
 		return 0
 	}
-	return s.SkippedLanguage + s.SkippedJunk + s.SkippedMediaType + s.SkippedNotAccepted
+	return s.SkippedLanguage + s.SkippedJunk + s.SkippedMediaType + s.SkippedNotAccepted +
+		s.SkippedPartBooks + s.SkippedMissingDate + s.SkippedMinPopularity + s.SkippedMinPages + s.SkippedMissingISBN
 }
 
 // AuthorProviderFromForeignID returns the metadata provider implied by a

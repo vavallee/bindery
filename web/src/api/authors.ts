@@ -57,6 +57,20 @@ export interface AuthorSyncSummary {
   unknownLanguageFail?: boolean
   // The first few dropped titles, capped server-side.
   skippedLanguageSample?: AuthorSyncSkippedBook[]
+
+  // The five fields below back the metadata-profile filters wired into
+  // author sync by PRs #1968, #2005, #2006, #2007, and #2008. Landed here
+  // first so those PRs rebase onto a type and notice that already exist.
+  skippedPartBooks?: number
+  skippedPartBooksSample?: AuthorSyncSkippedBook[]
+  skippedMissingDate?: number
+  skippedMissingDateSample?: AuthorSyncSkippedBook[]
+  skippedMinPopularity?: number
+  skippedMinPopularitySample?: AuthorSyncSkippedBook[]
+  skippedMinPages?: number
+  skippedMinPagesSample?: AuthorSyncSkippedBook[]
+  skippedMissingIsbn?: number
+  skippedMissingIsbnSample?: AuthorSyncSkippedBook[]
 }
 
 export interface AuthorSyncSkippedBook {
