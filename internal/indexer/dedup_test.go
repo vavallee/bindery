@@ -139,6 +139,58 @@ func TestCanonicalDedupKey_Symmetric(t *testing.T) {
 	}
 }
 
+// TestCanonicalDedupKey_PunctuationDivergenceIsNotFolded pins a KNOWN
+// LIMITATION rather than a desired behaviour, so that fixing it is a
+// deliberate act with a failing test to update rather than a silent change.
+//
+// Two providers describing the same work can disagree about punctuation, and
+// CanonicalDedupKey folds neither disagreement:
+//
+//   - Apostrophes survive normalization. NormalizeQueryTitle folds the smart
+//     apostrophe U+2019 to ASCII "'", but never removes it, so a provider that
+//     writes "Poseidons Arrow" and one that writes "Poseidon's Arrow" produce
+//     different keys.
+//   - stripSubtitle is one-sided. It truncates at the first ": " but does
+//     nothing to a title that expresses the same subtitle without the colon,
+//     so "X: Sub" collapses to "x" while "X Sub" stays whole — the two can
+//     never meet.
+//
+// Observed on a production 1.31.0 library (one author, 173 rows across
+// calibre/openlibrary/hardcover) as exactly two duplicate pairs, one of each
+// shape. Both pairs paired an imported Calibre row against a provider row,
+// which is why this is filed as a provider-agnostic normalization defect and
+// not as a property of any one provider being primary. The harm is not a
+// cosmetic double entry: the duplicate is created with status "wanted" beside
+// an "imported" row, so the search-wanted job re-acquires an owned book.
+//
+// Fixing it means changing the key every consumer of CanonicalDedupKey shares
+// (books.dedup_key, seriesmatch, the recommender's ownership keys, ABS
+// cross-source binding), so it is tracked separately. See #2042.
+func TestCanonicalDedupKey_PunctuationDivergenceIsNotFolded(t *testing.T) {
+	knownUnfolded := []struct {
+		a, b string
+		why  string
+	}{
+		{"Poseidons Arrow", "Poseidon's Arrow", "apostrophe is preserved, not stripped"},
+		{"Ender's Game", "Enders Game", "apostrophe is preserved, not stripped"},
+		{
+			"Journey of the Pharaohs Numa Files #17",
+			"Journey of the Pharaohs: Numa Files #17",
+			"stripSubtitle truncates only the colonised form",
+		},
+		{"Star Wars A New Hope", "Star Wars: A New Hope", "stripSubtitle truncates only the colonised form"},
+	}
+	for _, tc := range knownUnfolded {
+		ka, kb := CanonicalDedupKey(tc.a), CanonicalDedupKey(tc.b)
+		if ka == kb {
+			t.Errorf("CanonicalDedupKey now folds %q and %q to %q (%s).\n"+
+				"This is an IMPROVEMENT, not a regression: the normalizer was hardened. "+
+				"Remove this pair from the known-limitation list and add it to "+
+				"TestCanonicalDedupKey_Symmetric instead.", tc.a, tc.b, ka, tc.why)
+		}
+	}
+}
+
 func TestNormalizeTitleForDedup_Symmetric(t *testing.T) {
 	// Both the raw provider form and the trailing-stripped form must map to
 	// the same key — this is the core dedup invariant.
