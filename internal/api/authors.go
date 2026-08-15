@@ -63,16 +63,44 @@ const authorAutoSearchConcurrency = 4
 var partBookTitleRe = regexp.MustCompile(`(?i:` +
 	`\bbox\s*set\b` +
 	`|\bboxed\s*set\b` +
-	`|\bboxed\b` + // bare "(Boxed)" — real OL titles drop "set" entirely, e.g. "4 Vol. (Boxed)"
+	`|\(\s*boxed\s*\)` + // parenthesized bare "(Boxed)" — real OL titles drop "set" entirely, e.g. "4 Vol. (Boxed)".
+	// Deliberately NOT a bare \bboxed\b: that would also match "boxed" used
+	// as an ordinary word in a real title, which the parenthesized form
+	// this was ported from never does.
 	`|\bcollection\s*set\b` +
 	`|\bcollection\s+of\s+\d` +
 	`|\bcarton\s+of\s+\d+\s+signed\s+cop` +
 	`|\bbooks?\s+\d+\s*-\s*\d+\b` +
 	`|\b\d+\s*(?:books?|vol(?:ume)?s?)\s+set\b` + // "3 Books Set", "5 Volumes Set"
-	`|\[[^\]]*\b(?:collection|set|boxed)\b[^\]]*\]` + // bracket notation: "[collection/set]"
 	`)` +
 	`|(?:[^/]+\s+/\s+){2,}[^/]+` + // "Title A / Title B / Title C" multi-title anthology naming
 	`|\([^()]+\s+/\s+[^()]+\)\s*$`) // "Prefix (Title A / Title B)" — 2-title anthology naming inside parens
+
+// bracketContentRe extracts the content of each bracketed span in a title,
+// for hasJoinedBundleBracket.
+var bracketContentRe = regexp.MustCompile(`\[([^\]]*)\]`)
+
+// hasJoinedBundleBracket reports whether title has a bracketed annotation
+// naming a bundle, e.g. "The Hobbit & The Lord of the Rings [collection/set]".
+// Requires the bracket content to contain BOTH a "/" AND one of
+// collection/set/boxed — not just any one of those words alone, which a
+// real single book's bracketed edition/provenance note could plausibly also
+// contain for an unrelated reason (e.g. "[Author's Personal Collection]",
+// "[Set in Wartime London]"). The joined-pair shape ("X/Y") is what was
+// actually observed on real OpenLibrary bundle records; a lone keyword
+// wasn't.
+func hasJoinedBundleBracket(title string) bool {
+	for _, m := range bracketContentRe.FindAllStringSubmatch(title, -1) {
+		content := strings.ToLower(m[1])
+		if !strings.Contains(content, "/") {
+			continue
+		}
+		if strings.Contains(content, "collection") || strings.Contains(content, "set") || strings.Contains(content, "boxed") {
+			return true
+		}
+	}
+	return false
+}
 
 // omnibusWordRe and leadingArticleForOmnibusCheckRe back hasNonLeadingOmnibus.
 var omnibusWordRe = regexp.MustCompile(`(?i)\bomnibus\b`)
@@ -107,7 +135,7 @@ func hasNonLeadingOmnibus(title string) bool {
 // a real anthology bundle, and the maintainer's own suggested fix (spaces +
 // 3+ segments) does not clear it either, since it already satisfies both.
 func isPartBookTitle(title string) bool {
-	return partBookTitleRe.MatchString(title) || hasNonLeadingOmnibus(title)
+	return partBookTitleRe.MatchString(title) || hasNonLeadingOmnibus(title) || hasJoinedBundleBracket(title)
 }
 
 type AuthorHandler struct {

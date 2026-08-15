@@ -813,6 +813,16 @@ func TestIsPartBookTitle(t *testing.T) {
 		{"Omnibus Press Presents...", false},
 		{"He/She/It", false},
 		{"Rock/Paper/Scissors", false},
+		// Narrowed on review: a bare "boxed" or a single keyword anywhere
+		// inside brackets is broader than the real patterns that motivated
+		// them ("(Boxed)" in parens; "[collection/set]" as a joined pair).
+		// "Boxed In" and the "[Set in ...]" case genuinely false-positived
+		// under the pre-narrowing regex (confirmed); "[51 stories]" was
+		// already safe and is kept as a sanity check on bracket notation
+		// that doesn't contain any of the keywords at all.
+		{"Boxed In", false},
+		{"Collected Short Stories [51 stories]", false},
+		{"A Novel [Set in Wartime London]", false},
 		// Known residual, not fixed: a genuine single-volume edition
 		// bundling several distinct classic works, spaced and 3+ segments —
 		// indistinguishable by title text alone from a real anthology
