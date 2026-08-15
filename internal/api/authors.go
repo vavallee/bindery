@@ -1945,6 +1945,10 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// the titles and their language codes that tell them whether the profile
 	// is set the way they meant.
 	var skippedLangSample []models.AuthorSyncSkippedBook
+	// The first few part-book-rejected works, same reasoning and cap as
+	// skippedLangSample (#1889 established the pattern; requested again for
+	// this filter specifically in PR review, vavallee).
+	var skippedPartBooksSample []models.AuthorSyncSkippedBook
 	for _, b := range books {
 		b.AuthorID = author.ID
 		// Apply the caller-provided default media type when the provider
@@ -2001,6 +2005,9 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		// passed every filter above unchanged (see partBookTitleRe).
 		if skipPartBooks && isPartBookTitle(b.Title) {
 			skippedPartBooks++
+			if len(skippedPartBooksSample) < authorSyncSkippedSampleLimit {
+				skippedPartBooksSample = append(skippedPartBooksSample, models.AuthorSyncSkippedBook{Title: b.Title})
+			}
 			slog.Debug("skipping part-book/box-set title", "title", b.Title, "foreignId", b.ForeignID)
 			continue
 		}
@@ -2239,17 +2246,18 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// just ones that dropped something: "nothing was filtered out" is the
 	// answer to "where are my books?" as often as a count is.
 	summary := models.AuthorSyncSummary{
-		CompletedAt:           time.Now().UTC(),
-		Total:                 len(books),
-		Added:                 added,
-		SkippedLanguage:       skippedLang,
-		SkippedJunk:           skippedJunk,
-		SkippedMediaType:      skippedMediaType,
-		SkippedNotAccepted:    skippedNotAccepted,
-		SkippedPartBooks:      skippedPartBooks,
-		AllowedLanguages:      allowedLangs,
-		UnknownLanguageFail:   unknownFail,
-		SkippedLanguageSample: skippedLangSample,
+		CompletedAt:            time.Now().UTC(),
+		Total:                  len(books),
+		Added:                  added,
+		SkippedLanguage:        skippedLang,
+		SkippedJunk:            skippedJunk,
+		SkippedMediaType:       skippedMediaType,
+		SkippedNotAccepted:     skippedNotAccepted,
+		SkippedPartBooks:       skippedPartBooks,
+		SkippedPartBooksSample: skippedPartBooksSample,
+		AllowedLanguages:       allowedLangs,
+		UnknownLanguageFail:    unknownFail,
+		SkippedLanguageSample:  skippedLangSample,
 	}
 	h.syncSummaries.record(author.ID, summary)
 

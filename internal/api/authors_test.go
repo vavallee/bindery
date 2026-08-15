@@ -964,6 +964,20 @@ func TestFetchAuthorBooks_SkipsPartBooks(t *testing.T) {
 	if summary.SkippedTotal() < summary.SkippedPartBooks {
 		t.Errorf("summary.SkippedTotal() = %d should include SkippedPartBooks = %d", summary.SkippedTotal(), summary.SkippedPartBooks)
 	}
+	sampleTitles := make(map[string]bool, len(summary.SkippedPartBooksSample))
+	for _, b := range summary.SkippedPartBooksSample {
+		sampleTitles[b.Title] = true
+	}
+	for _, junk := range []string{
+		"Expanse Hardcover Boxed Set : Leviathan Wakes, Caliban's War, Abaddon's Gate",
+		"Expanse Series, Collection Set of 3 Books. Leviathan Wakes, Caliban's War, Abaddon's Gate",
+		"Leviathan Falls - Carton of 10 Signed Copies",
+		"The Martian / Artemis / Project Hail Mary",
+	} {
+		if !sampleTitles[junk] {
+			t.Errorf("expected %q in summary.SkippedPartBooksSample, got %+v", junk, summary.SkippedPartBooksSample)
+		}
+	}
 }
 
 // TestFetchAuthorBooks_PartBooksKeptWhenSkipDisabled verifies the inverse of
