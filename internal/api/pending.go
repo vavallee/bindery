@@ -8,6 +8,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -47,6 +48,12 @@ func (h *PendingHandler) List(w http.ResponseWriter, r *http.Request) {
 	out := make([]pendingItem, len(items))
 	bookIDs := make([]int64, 0, len(items))
 	for i, it := range items {
+		// The stored release blob is the raw indexer SearchResult, whose nzbUrl
+		// the newznab client signed with the indexer apikey. The queue and
+		// search responses strip that credential before it reaches a client
+		// (it is an admin-only setting); this list has to do the same. The DB
+		// copy keeps the key so force-grab can still re-send the signed URL.
+		it.ReleaseJSON = redactReleaseJSON(it.ReleaseJSON)
 		out[i] = pendingItem{PendingRelease: it}
 		if it.BookID != 0 {
 			bookIDs = append(bookIDs, it.BookID)
@@ -63,6 +70,35 @@ func (h *PendingHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// redactReleaseJSON removes the indexer apikey from the nzbUrl inside a stored
+// pending-release blob. The blob is decoded into a generic map rather than into
+// newznab.SearchResult so that a field the struct does not know about survives
+// the round-trip; anything that fails to decode is returned untouched, since a
+// blob we cannot parse is also one we cannot vouch for editing.
+func redactReleaseJSON(raw string) string {
+	if raw == "" {
+		return raw
+	}
+	var release map[string]any
+	if err := json.Unmarshal([]byte(raw), &release); err != nil {
+		return raw
+	}
+	rawURL, ok := release["nzbUrl"].(string)
+	if !ok {
+		return raw
+	}
+	redacted := newznab.RedactDownloadURL(rawURL)
+	if redacted == rawURL {
+		return raw
+	}
+	release["nzbUrl"] = redacted
+	out, err := json.Marshal(release)
+	if err != nil {
+		return raw
+	}
+	return string(out)
 }
 
 func (h *PendingHandler) listForCaller(r *http.Request) ([]models.PendingRelease, error) {

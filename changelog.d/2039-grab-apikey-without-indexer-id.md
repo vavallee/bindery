@@ -17,3 +17,8 @@
   been signed, so a non-admin who grabbed a release read the key straight out of
   the reply. Indexer credentials are admin-only settings. The stored row keeps
   the key, so retries still reach the indexer authenticated.
+- **The pending releases list no longer exposes the indexer apikey** (#2039) —
+  a release held back by a delay profile is stored as the raw indexer result,
+  whose `nzbUrl` was already signed, and `GET /api/v1/pending` returned that
+  blob verbatim in `releaseJson`. It is redacted now. The stored blob keeps the
+  key so force-grab still re-sends a signed URL.

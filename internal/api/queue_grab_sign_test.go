@@ -250,3 +250,70 @@ func TestQueueGrab_ResponseAndListNeverCarryIndexerAPIKey(t *testing.T) {
 		t.Errorf("stored nzbUrl = %q, want it to keep the apikey for retries", stored.NZBURL)
 	}
 }
+
+// TestPendingList_RedactsIndexerAPIKey covers the sibling surface the audit for
+// the review turned up: the scheduler stores a delay-rejected release as the
+// raw indexer SearchResult, whose nzbUrl the newznab client had already signed,
+// and the pending list handed that blob back to the caller verbatim.
+func TestPendingList_RedactsIndexerAPIKey(t *testing.T) {
+	h, database, _, _, _, ctx := queueFixture(t)
+	books := db.NewBookRepo(database)
+	authors := db.NewAuthorRepo(database)
+	a := &models.Author{ForeignID: "OL-A", Name: "Lee Child", SortName: "child lee", MetadataProvider: "openlibrary"}
+	if err := authors.Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	b := &models.Book{
+		ForeignID: "OL-B", AuthorID: a.ID, Title: "One Shot", SortTitle: "one shot",
+		Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+
+	signed := "http://prowlarr:9696/3/download?apikey=" + leakedAPIKey + "&link=abc"
+	pending := db.NewPendingReleaseRepo(database)
+	if err := pending.Upsert(ctx, &models.PendingRelease{
+		BookID: b.ID, MediaType: models.MediaTypeEbook, Title: "One Shot", GUID: "guid-pending",
+		Protocol: "usenet", Reason: "delay",
+		ReleaseJSON: `{"guid":"guid-pending","title":"One Shot","nzbUrl":"` + signed + `","size":123}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ph := NewPendingHandler(pending, h, db.NewDownloadRepo(database), books)
+	rec := httptest.NewRecorder()
+	ph.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/pending", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	assertNoIndexerAPIKey(t, "pending listing", rec.Body.Bytes())
+
+	// The entry must survive redaction intact — dropping releaseJson would also
+	// pass the assertion above while breaking the UI.
+	var got []pendingItem
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode pending list: %v (body=%s)", err, rec.Body.String())
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 pending release, got %d", len(got))
+	}
+	var release map[string]any
+	if err := json.Unmarshal([]byte(got[0].ReleaseJSON), &release); err != nil {
+		t.Fatalf("decode releaseJson: %v", err)
+	}
+	if release["nzbUrl"] != "http://prowlarr:9696/3/download?link=abc" {
+		t.Errorf("releaseJson nzbUrl = %v, want the redacted form", release["nzbUrl"])
+	}
+	if release["guid"] != "guid-pending" || release["title"] != "One Shot" {
+		t.Errorf("redaction dropped fields from the release blob: %v", release)
+	}
+	// The stored blob keeps the key: force-grab re-sends this URL.
+	stored, err := pending.List(ctx)
+	if err != nil || len(stored) != 1 {
+		t.Fatalf("read back pending: %v", err)
+	}
+	if !strings.Contains(stored[0].ReleaseJSON, leakedAPIKey) {
+		t.Errorf("stored releaseJson lost the apikey, breaking force-grab: %s", stored[0].ReleaseJSON)
+	}
+}
