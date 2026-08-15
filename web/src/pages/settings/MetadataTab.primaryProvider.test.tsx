@@ -53,9 +53,7 @@ beforeEach(() => {
   seedStatus(false)
   vi.mocked(api.listMetadataProfiles).mockResolvedValue([])
   vi.mocked(api.setSetting).mockReset()
-  vi.mocked(api.setSetting).mockResolvedValue({ key: '', value: '' } as Awaited<
-    ReturnType<typeof api.setSetting>
-  >)
+  vi.mocked(api.setSetting).mockResolvedValue(undefined)
 })
 
 // #2040 — Hardcover may be promoted from enricher to primary, but only when an
