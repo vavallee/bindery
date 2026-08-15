@@ -1415,13 +1415,11 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 		// ties an exact match ("Abaddon's Gate") at the same score —
 		// first-match-wins let the omnibus silently win that tie and get
 		// linked to a slot it doesn't actually satisfy, leaving the real
-		// book unmatched. Break ties by title-length closeness to the
-		// incoming title instead: an omnibus is always much longer than
-		// the single book it happens to contain, so this reliably prefers
-		// the real book without changing TitleScore itself (Audiobookshelf
-		// import depends on its current behavior elsewhere).
+		// book unmatched. Break ties with titleTiebreakWins rather than raw
+		// length-closeness — see its doc comment for why length alone gets
+		// the inverted case backwards.
 		if best == nil || score > bestScore ||
-			(score == bestScore && titleLengthCloser(existing.Title, best.Title, incomingTitle)) {
+			(score == bestScore && titleTiebreakWins(existing.Title, best.Title, incomingTitle)) {
 			bestScore = score
 			best = existing
 		}
@@ -1558,13 +1556,79 @@ func hardcoverAuthorFallbackID(name string) string {
 	return "hc-author:" + key
 }
 
+// titleTiebreakWins reports whether candidate should replace current as the
+// best TitleScore-tied match for target. Checked in priority order, each
+// tier only consulted when the previous one doesn't distinguish the two:
+//
+//  1. Exact match after CleanTitle wins outright — nothing else needed.
+//  2. A whole-word prefix/suffix match on the cleaned titles: the shape a
+//     real book plus an appended or prepended series/volume qualifier takes
+//     ("The Way of Kings" + ": The Stormlight Archive, Book One"), as
+//     opposed to a coincidental partial overlap anywhere in the middle of an
+//     unrelated title.
+//  3. seriesmatch.Ratio, TitleScore's non-substring-friendly component:
+//     PartialRatio/TokenSetRatio inflate any substring overlap to 100
+//     regardless of surrounding text, which is the whole reason two
+//     candidates can tie here in the first place.
+//  4. Title-length closeness to target, as an absolute last resort.
+//
+// Tier 2 exists because tier 3 alone does not reliably win the case it looks
+// like it should: a short, wrong candidate can score a HIGHER plain Ratio
+// against a short target than a long, correct candidate carrying a real
+// suffix does, since the extra (correct) characters in the suffix dilute the
+// proportion of matching content. Verified empirically — for target "The Way
+// of Kings" against "Kings" and "The Way of Kings: The Stormlight Archive,
+// Book One" (the maintainer's own counter-example, PR #1969 review),
+// Ratio scores 59 and 51 respectively: Ratio alone would pick the wrong one.
+// Tier 2 catches this shape directly instead of hoping a similarity score
+// does, and tier 3 is left as the fallback for candidates that tie even on
+// boundary-match (e.g. neither is a clean prefix/suffix of the target).
+func titleTiebreakWins(candidate, current, target string) bool {
+	candidateClean := seriesmatch.CleanTitle(candidate)
+	currentClean := seriesmatch.CleanTitle(current)
+	targetClean := seriesmatch.CleanTitle(target)
+
+	if candidateClean != currentClean {
+		if candidateClean == targetClean {
+			return true
+		}
+		if currentClean == targetClean {
+			return false
+		}
+	}
+
+	candidateBoundary := titleBoundaryMatch(candidateClean, targetClean)
+	currentBoundary := titleBoundaryMatch(currentClean, targetClean)
+	if candidateBoundary != currentBoundary {
+		return candidateBoundary
+	}
+
+	candidateRatio := seriesmatch.Ratio(candidateClean, targetClean)
+	currentRatio := seriesmatch.Ratio(currentClean, targetClean)
+	if candidateRatio != currentRatio {
+		return candidateRatio > currentRatio
+	}
+
+	return titleLengthCloser(candidate, current, target)
+}
+
+// titleBoundaryMatch reports whether targetClean appears as a whole-word
+// prefix or suffix of candidateClean — candidateClean is targetClean plus a
+// qualifier appended or prepended at a word boundary, not merely containing
+// targetClean's words somewhere in the middle. Both arguments must already
+// be CleanTitle-normalized.
+func titleBoundaryMatch(candidateClean, targetClean string) bool {
+	if targetClean == "" || candidateClean == targetClean {
+		return false // equality is handled by the caller's own tier
+	}
+	return strings.HasPrefix(candidateClean, targetClean+" ") ||
+		strings.HasSuffix(candidateClean, " "+targetClean)
+}
+
 // titleLengthCloser reports whether candidate's title length is closer to
-// target's length than current's is. Used to break TitleScore ties in
-// ensureHardcoverCatalogBook: when a box-set/omnibus title and a real
-// single-book title score identically (TitleScore's substring-aware
-// components don't penalize surrounding text), the omnibus is reliably the
-// longer of the two, so preferring length-closeness to the target picks the
-// real book.
+// target's length than current's is. Last-resort tiebreak in
+// titleTiebreakWins, kept for the rare case two candidates tie on every
+// earlier tier too.
 func titleLengthCloser(candidate, current, target string) bool {
 	targetLen := len([]rune(target))
 	candidateDiff := absInt(len([]rune(candidate)) - targetLen)

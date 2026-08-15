@@ -85,6 +85,17 @@ func safeFuzzyScore(score func(string, string) int, a, b string) (value int) {
 	return score(a, b)
 }
 
+// Ratio scores whole-string similarity between two already-cleaned titles,
+// unlike TitleScore's PartialRatio/TokenSetRatio components, which score a
+// substring match as a perfect 100 regardless of how much surrounding text
+// the longer string carries. Exported so callers that need TitleScore's raw
+// non-substring-friendly component — e.g. breaking a tie between two
+// candidates that both score 100 on TitleScore — don't need their own
+// fuzzy-matcher import; the dependency stays encapsulated here.
+func Ratio(a, b string) int {
+	return safeFuzzyScore(ratio, a, b)
+}
+
 func CleanTitle(title string) string {
 	title = norm.NFC.String(strings.TrimSpace(title))
 	title = strings.ToLower(title)

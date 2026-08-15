@@ -1798,6 +1798,103 @@ func TestSeriesFillPrefersExactTitleOverOmnibusOnScoreTie(t *testing.T) {
 	}
 }
 
+// TestSeriesFillPrefersSuffixedRealTitleOverShorterUnrelatedTitle covers the
+// inverted shape of TestSeriesFillPrefersExactTitleOverOmnibusOnScoreTie
+// (maintainer review, PR #1969): a naive length-closeness tiebreak assumes
+// the wrong candidate is always the LONGER one (an omnibus containing the
+// target as a substring), but a real local title routinely carries its own
+// appended qualifier from Calibre/ABS scanning ("The Way of Kings: The
+// Stormlight Archive, Book One") and can end up longer than a short,
+// unrelated title ("Kings") that merely shares a word with the target. Both
+// tie at TitleScore 100 against target "The Way of Kings"; length-closeness
+// alone would pick "Kings" (closer in length to the target) over the real
+// match.
+func TestSeriesFillPrefersSuffixedRealTitleOverShorterUnrelatedTitle(t *testing.T) {
+	catalog := stormlightCatalog()
+	searcher := newMockBookSearcher()
+	h, seriesRepo, authorRepo, bookRepo := seriesFixtureWithProvider(t, &stubSeriesProvider{
+		catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
+	}, searcher)
+	ctx := context.Background()
+	series := &models.Series{ForeignID: "ol-series:stormlight", Title: "The Stormlight Archive"}
+	if err := seriesRepo.Create(ctx, series); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.UpsertHardcoverLink(ctx, &models.SeriesHardcoverLink{
+		SeriesID:            series.ID,
+		HardcoverSeriesID:   catalog.ForeignID,
+		HardcoverProviderID: catalog.ProviderID,
+		HardcoverTitle:      catalog.Title,
+		HardcoverAuthorName: catalog.AuthorName,
+		HardcoverBookCount:  catalog.BookCount,
+		Confidence:          1,
+		LinkedBy:            "manual",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	author := &models.Author{
+		ForeignID:        "ol:brandon-sanderson",
+		Name:             "Brandon Sanderson",
+		SortName:         "Sanderson, Brandon",
+		MetadataProvider: "openlibrary",
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	// Created first so it has the lower ID, matching the real repro's
+	// iteration order — first-match-wins would pick this one.
+	unrelated := &models.Book{
+		ForeignID:        "ol:kings",
+		AuthorID:         author.ID,
+		Title:            "Kings",
+		SortTitle:        "kings",
+		Status:           models.BookStatusWanted,
+		Genres:           []string{},
+		MetadataProvider: "openlibrary",
+	}
+	if err := bookRepo.Create(ctx, unrelated); err != nil {
+		t.Fatal(err)
+	}
+	suffixedRealMatch := &models.Book{
+		ForeignID:        "ol:the-way-of-kings-suffixed",
+		AuthorID:         author.ID,
+		Title:            "The Way of Kings: The Stormlight Archive, Book One",
+		SortTitle:        "the way of kings the stormlight archive book one",
+		Status:           models.BookStatusWanted,
+		Genres:           []string{},
+		MetadataProvider: "openlibrary",
+	}
+	if err := bookRepo.Create(ctx, suffixedRealMatch); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.Fill(rec, withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/series/1/fill", nil), "id", strconv.FormatInt(series.ID, 10)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var response map[string]int
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response["queued"] != 1 {
+		t.Fatalf("expected exactly one queued book, got %+v", response)
+	}
+	queued := searcher.waitForCall(t, time.Second)
+	if queued.ID != suffixedRealMatch.ID {
+		t.Fatalf("expected the suffixed real match (id=%d) to be queued, got id=%d title=%q",
+			suffixedRealMatch.ID, queued.ID, queued.Title)
+	}
+
+	books, err := seriesRepo.ListBooksInSeries(ctx, series.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 1 || books[0].ID != suffixedRealMatch.ID {
+		t.Fatalf("expected only the suffixed real match linked to the series, got %+v", books)
+	}
+}
+
 func TestSeriesFillSkipsExcludedHardcoverForeignIDMatch(t *testing.T) {
 	catalog := stormlightCatalog()
 	searcher := newMockBookSearcher()
