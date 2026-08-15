@@ -649,6 +649,112 @@ func TestScanLibrary_AudiobookMatchesByEmbeddedTitleAuthor(t *testing.T) {
 	}
 }
 
+// TestScanLibrary_AudiobookASINMatchUsesAudiobookRoot is a regression test
+// for #2033. When BINDERY_AUDIOBOOK_DIR differs from the ebook library dir,
+// the ASIN reconcile tier must check the file against the audiobook root
+// (effectiveAudiobookDir), not the ebook root (effectiveLibraryDir). Before
+// the fix, a correctly ASIN-tagged audiobook living under the audiobook root
+// was rejected as "outside library root" because the ebook root was checked
+// instead.
+func TestScanLibrary_AudiobookASINMatchUsesAudiobookRoot(t *testing.T) {
+	libDir := t.TempDir()       // ebook root — deliberately unrelated
+	audiobookDir := t.TempDir() // BINDERY_AUDIOBOOK_DIR
+
+	abDir := filepath.Join(audiobookDir, "Audible Download")
+	if err := os.MkdirAll(abDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	audioPath := filepath.Join(abDir, "part1.mp3")
+	if err := os.WriteFile(audioPath, buildID3v23("The Way of Kings", "Brandon Sanderson", "B003P2WO5E"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	books := db.NewBookRepo(database)
+	authors := db.NewAuthorRepo(database)
+	s := NewScanner(db.NewDownloadRepo(database), db.NewDownloadClientRepo(database),
+		books, authors, db.NewHistoryRepo(database), libDir, audiobookDir, "", "", "")
+	ctx := context.Background()
+
+	author := &models.Author{ForeignID: "OLA-asin-root", Name: "Brandon Sanderson", SortName: "Sanderson, Brandon"}
+	if err := authors.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{
+		ForeignID: "OLB-asin-root", AuthorID: author.ID,
+		Title: "The Way of Kings", ASIN: "B003P2WO5E",
+		Status: models.BookStatusWanted,
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	s.ScanLibrary(ctx)
+
+	got, err := books.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AudiobookFilePath != audioPath {
+		t.Errorf("expected ASIN-matched audiobook FilePath=%q, got AudiobookFilePath=%q (audiobook root ignored, #2033)",
+			audioPath, got.AudiobookFilePath)
+	}
+}
+
+// TestScanLibrary_AudiobookTitleMatchUsesAudiobookRoot is a regression test
+// for #2033, covering the fuzzy title+author reconcile tier: a well-tagged
+// audiobook with no ASIN, living under BINDERY_AUDIOBOOK_DIR, must reconcile
+// via title match without being rejected for sitting outside the ebook root.
+func TestScanLibrary_AudiobookTitleMatchUsesAudiobookRoot(t *testing.T) {
+	libDir := t.TempDir()
+	audiobookDir := t.TempDir()
+
+	audioPath := filepath.Join(audiobookDir, "opaque.mp3")
+	if err := os.WriteFile(audioPath, buildID3v23("Mistborn", "Brandon Sanderson", ""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	books := db.NewBookRepo(database)
+	authors := db.NewAuthorRepo(database)
+	s := NewScanner(db.NewDownloadRepo(database), db.NewDownloadClientRepo(database),
+		books, authors, db.NewHistoryRepo(database), libDir, audiobookDir, "", "", "")
+	ctx := context.Background()
+
+	author := &models.Author{ForeignID: "OLA-title-root", Name: "Brandon Sanderson", SortName: "Sanderson, Brandon"}
+	if err := authors.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{
+		ForeignID: "OLB-title-root", AuthorID: author.ID,
+		Title: "Mistborn", Status: models.BookStatusWanted,
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	s.ScanLibrary(ctx)
+
+	got, err := books.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AudiobookFilePath != audioPath {
+		t.Errorf("expected title-matched audiobook FilePath=%q, got AudiobookFilePath=%q (audiobook root ignored, #2033)",
+			audioPath, got.AudiobookFilePath)
+	}
+}
+
 // TestScanLibrary_AudiobookTagReadFailureFallsBack — when an audio file's
 // tags cannot be read (truncated / unrecognised), the scan must fall back
 // to filename parsing rather than crashing or skipping the file entirely.

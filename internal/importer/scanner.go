@@ -259,6 +259,20 @@ func (s *Scanner) effectiveAudiobookDir(ctx context.Context, author *models.Auth
 	return s.audiobookDir
 }
 
+// effectiveRootForFormat picks the correct root (ebook or audiobook) to
+// gate a reconcile match against, based on the detected format of the file
+// being matched. Reconcile tiers used to always check effectiveLibraryDir
+// (the ebook root), which silently rejected correctly-placed audiobook
+// files whenever BINDERY_AUDIOBOOK_DIR differed from the ebook root (#2033)
+// — the same class of bug already fixed for the import-placement path
+// under #421.
+func (s *Scanner) effectiveRootForFormat(ctx context.Context, author *models.Author, detectedFmt string) string {
+	if detectedFmt == models.MediaTypeAudiobook {
+		return s.effectiveAudiobookDir(ctx, author)
+	}
+	return s.effectiveLibraryDir(ctx, author)
+}
+
 // WithCalibre attaches the Calibre integration. The mode resolver is consulted
 // on every import so the operator can switch modes in the UI without restarting.
 func (s *Scanner) WithCalibre(mode func() calibre.Mode, adder calibreAdder) *Scanner {
@@ -2599,7 +2613,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		}
 		// File must live under the candidate book's effective library root to
 		// prevent cross-author mismapping after delete+rescan (#343).
-		effDir := s.effectiveLibraryDir(ctx, authorMap[b.AuthorID])
+		effDir := s.effectiveRootForFormat(ctx, authorMap[b.AuthorID], detectedFmt)
 		if !pathUnderDir(path, effDir) {
 			slog.Debug("library scan: title+author match rejected (outside library root)",
 				"title", b.Title, "path", path, "root", effDir)
@@ -2718,7 +2732,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 					continue
 				}
 				// File must live under the candidate book's effective library root.
-				effDir := s.effectiveLibraryDir(ctx, authorMap[b.AuthorID])
+				effDir := s.effectiveRootForFormat(ctx, authorMap[b.AuthorID], detectedFmt)
 				if !pathUnderDir(path, effDir) {
 					slog.Debug("library scan: ASIN match rejected (outside library root)",
 						"asin", parsed.ASIN, "path", path, "root", effDir)
@@ -2778,7 +2792,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 				slog.Warn("library scan: series position lookup error",
 					"series", parsed.Series, "position", parsed.SeriesNumber, "error", seriesErr)
 			} else if book != nil && !reconciledBooks[bookFormatClaim{book.ID, detectedFmt}] {
-				effDir := s.effectiveLibraryDir(ctx, authorMap[book.AuthorID])
+				effDir := s.effectiveRootForFormat(ctx, authorMap[book.AuthorID], detectedFmt)
 				if pathUnderDir(path, effDir) {
 					if err := s.books.AddBookFile(ctx, book.ID, detectedFmt, path); err != nil {
 						slog.Error("library scan: failed to update book via series match", "id", book.ID, "error", err)
