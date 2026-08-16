@@ -230,24 +230,27 @@ func TestAggregator_GetAuthorWorksForAuthor_PrunesCompilations(t *testing.T) {
 	}
 }
 
-// TestAggregator_GetAuthorWorksForAuthor_PrunesCollectionTitlesWithoutEnricher
-// verifies #1780: an OpenLibrary-only setup with no enrichers configured
-// (no Hardcover token, the default) still prunes box-set/omnibus titles from
-// an author's catalogue, using the title heuristic instead of an enricher's
-// compilation classification.
-func TestAggregator_GetAuthorWorksForAuthor_PrunesCollectionTitlesWithoutEnricher(t *testing.T) {
+// TestAggregator_GetAuthorWorksForAuthor_LeavesTitleShapedCollectionsForFetchAuthorBooks
+// pins the #1968 review outcome: pruneAuthorWorkCompilations no longer runs
+// a title-shape heuristic of its own (an earlier version did, to cover
+// installs with no enricher configured — #1780). A box-set-shaped title with
+// no enricher-sourced compilation signal now passes through the aggregator
+// unpruned; internal/api's fetchAuthorBooks is solely responsible for
+// dropping it, gated on the profile's SkipPartBooks setting via
+// isPartBookTitle, and reports what it drops via AuthorSyncSummary — visibility
+// this aggregator-level function had no way to provide.
+func TestAggregator_GetAuthorWorksForAuthor_LeavesTitleShapedCollectionsForFetchAuthorBooks(t *testing.T) {
 	primary := &mockWorksProvider{
 		mockProvider: mockProvider{name: "ol", authorWorks: []models.Book{
 			{ForeignID: "OL1W", Title: "The Fellowship of the Ring", MetadataProvider: "openlibrary"},
 			{ForeignID: "OL2W", Title: "The Lord of the Rings 3 Books Box Set By J. R. R. Tolkien", MetadataProvider: "openlibrary"},
-			{ForeignID: "OL3W", Title: "The Complete History of Middle-Earth", MetadataProvider: "openlibrary"},
 			{ForeignID: "OL4W", Title: "The Two Towers", MetadataProvider: "openlibrary"},
 		}},
 	}
 	agg := &Aggregator{
 		primary: primary,
 		// No enrichers: this is the default OpenLibrary-only setup #1780 was
-		// filed against.
+		// originally filed against.
 		cache: newTTLCache(time.Minute),
 	}
 
@@ -259,18 +262,13 @@ func TestAggregator_GetAuthorWorksForAuthor_PrunesCollectionTitlesWithoutEnriche
 	for _, b := range got {
 		titles[b.Title] = true
 	}
-	for _, junk := range []string{"The Lord of the Rings 3 Books Box Set By J. R. R. Tolkien", "The Complete History of Middle-Earth"} {
-		if titles[junk] {
-			t.Errorf("collection-titled work %q should have been pruned without an enricher, got: %v", junk, got)
-		}
-	}
-	for _, want := range []string{"The Fellowship of the Ring", "The Two Towers"} {
+	for _, want := range []string{"The Fellowship of the Ring", "The Lord of the Rings 3 Books Box Set By J. R. R. Tolkien", "The Two Towers"} {
 		if !titles[want] {
-			t.Errorf("expected real single-book title %q to remain, got: %v", want, titles)
+			t.Errorf("expected %q to pass through the aggregator unpruned (no enricher-sourced compilation signal), got: %v", want, titles)
 		}
 	}
-	if len(got) != 2 {
-		t.Fatalf("expected 2 works after pruning the two collection titles, got %d: %+v", len(got), got)
+	if len(got) != 3 {
+		t.Fatalf("expected all 3 works to pass through, got %d: %+v", len(got), got)
 	}
 }
 

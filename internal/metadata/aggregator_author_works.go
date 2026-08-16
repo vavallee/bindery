@@ -10,7 +10,6 @@ import (
 	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/models"
-	"github.com/vavallee/bindery/internal/textutil"
 )
 
 type worksProvider interface {
@@ -173,23 +172,22 @@ func (a *Aggregator) authorWorksByNameProviders() []authorWorksByNameProvider {
 	return providers
 }
 
-// pruneAuthorWorkCompilations drops works that are box sets, omnibuses, or
-// other bundles rather than a single book: works whose normalized title
-// matches one an enricher flagged as a compilation, any book still carrying
-// the compilation flag directly, or a work whose title itself looks like a
-// collection per textutil.LooksLikeCollectionTitle. The title heuristic
-// runs regardless of whether an enricher is configured -- primary-provider
-// works (OpenLibrary) carry no compilation signal of their own, so an
-// enricher's classification used to be the only way to catch these, which
-// meant a default OpenLibrary-only install (no Hardcover token) got no
-// pruning at all (#1780). The title check is intentionally broad and
-// accepts some false positives (see textutil.LooksLikeCollectionTitle).
-// Note this also removes the work from single-foreign-ID add
-// (fetchAuthorBooks's onlyForeignID trims the list this function already
-// produced, so a false-positive-pruned title isn't reachable that way
-// either) -- a real single book caught by the heuristic needs a different
-// import path (manual/ISBN/file import) rather than "add this specific
-// author-works entry". The filter is in place and order-preserving.
+// pruneAuthorWorkCompilations drops works an enricher classified as a
+// compilation: works whose normalized title matches one flagged via
+// compilationTitles, or any book still carrying the compilation flag
+// directly. Deliberately does NOT run a title-shape heuristic of its own —
+// #1780/#1968 review history: an earlier version of this function also
+// pruned any work whose title merely looked like a box set/omnibus
+// (textutil.LooksLikeCollectionTitle), to cover installs with no enricher
+// configured. That ran unconditionally with no way to turn it off and no
+// count surfaced anywhere, and it duplicated a second, broader heuristic
+// alongside authors.go's own isPartBookTitle — "two heuristics for one
+// concept at two layers is how they drift" (vavallee, PR review). Removed
+// in favor of relying entirely on isPartBookTitle's SkipPartBooks-gated
+// filter in fetchAuthorBooks, which already runs against every provider's
+// works (not just OpenLibrary), is opt-in, and already reports what it
+// drops via AuthorSyncSummary.SkippedPartBooks/SkippedPartBooksSample — the
+// visibility this function had no way to provide on its own.
 func pruneAuthorWorkCompilations(books []models.Book, compilationTitles map[string]struct{}) []models.Book {
 	filtered := books[:0]
 	for _, b := range books {
@@ -197,11 +195,6 @@ func pruneAuthorWorkCompilations(books []models.Book, compilationTitles map[stri
 			continue
 		}
 		if _, ok := compilationTitles[authorWorkMergeKey(b.Title)]; ok {
-			continue
-		}
-		if textutil.LooksLikeCollectionTitle(b.Title) {
-			slog.Debug("pruning collection-titled work with no enricher-sourced compilation signal",
-				"title", b.Title, "foreignId", b.ForeignID)
 			continue
 		}
 		filtered = append(filtered, b)
