@@ -70,7 +70,9 @@ var partBookTitleRe = regexp.MustCompile(`(?i:` +
 	`|\bcollection\s*set\b` +
 	`|\bcollection\s+of\s+\d` +
 	`|\bcarton\s+of\s+\d+\s+signed\s+cop` +
-	`|\bbooks?\s+\d+\s*-\s*\d+\b` +
+	`|\bbooks?\s+\d+\s*-\s*\d+\b` + // "Books 1-3". Known low-risk residual: could also
+	// match a real single volume a publisher numbered like "Book 1-2" — not observed,
+	// and the setting is opt-in, but noted per review rather than left a surprise.
 	`|\b\d+\s*(?:books?|vol(?:ume)?s?)\s+set\b` + // "3 Books Set", "5 Volumes Set"
 	`)` +
 	`|(?:[^/]+\s+/\s+){2,}[^/]+` + // "Title A / Title B / Title C" multi-title anthology naming
@@ -1999,11 +2001,22 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 			continue
 		}
 
+		// Hoisted above the profile filters below (rather than left at its
+		// original position just before the update branch) so a filter that
+		// fires after this point can exempt a book the user already owns.
+		// Without this, a filtered-but-owned book never reaches the update
+		// branch: it keeps its files, but silently stops getting rating,
+		// genre and cover updates, and is reported as "skipped" on every
+		// subsequent sync even though the user is looking at it in their
+		// library (vavallee, PR review). SkipPartBooks screens works out of
+		// discovery — it must not also stop maintaining ones already accepted.
+		existing, _ := h.books.GetByForeignID(ctx, b.ForeignID)
+
 		// Filter box-set/omnibus/carton "works" when the author's metadata
 		// profile has SkipPartBooks enabled. These are real OL records for a
 		// bundle of other books, not a book of their own, and previously
 		// passed every filter above unchanged (see partBookTitleRe).
-		if skipPartBooks && isPartBookTitle(b.Title) {
+		if existing == nil && skipPartBooks && isPartBookTitle(b.Title) {
 			skippedPartBooks++
 			if len(skippedPartBooksSample) < authorSyncSkippedSampleLimit {
 				skippedPartBooksSample = append(skippedPartBooksSample, models.AuthorSyncSkippedBook{Title: b.Title})
@@ -2050,7 +2063,8 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 
 		// Update ratings + genres on existing books, then skip further
 		// processing (we don't want to overwrite user state like status).
-		existing, _ := h.books.GetByForeignID(ctx, b.ForeignID)
+		// existing was resolved above, before the profile filters, so an
+		// owned book that trips one of them still reaches this branch.
 		if existing != nil {
 			changed := false
 			// GetByForeignID matches globally (foreign_id is UNIQUE across all

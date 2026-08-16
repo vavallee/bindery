@@ -1024,6 +1024,76 @@ func TestFetchAuthorBooks_PartBooksKeptWhenSkipDisabled(t *testing.T) {
 	}
 }
 
+// TestFetchAuthorBooks_SkipPartBooksExemptsAlreadyTrackedBook verifies that
+// SkipPartBooks does not stop maintaining a book the user already owns: a
+// part-book-titled work that is already in the library must keep receiving
+// updates (ratings here) and must not be counted as skipped, even though a
+// fresh candidate with the same title would be filtered out (vavallee, PR
+// review — filtering screens works out of discovery, it must not also stop
+// maintaining ones already accepted).
+func TestFetchAuthorBooks_SkipPartBooksExemptsAlreadyTrackedBook(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	profile, err := profileRepo.GetByID(ctx, models.DefaultMetadataProfileID)
+	if err != nil || profile == nil {
+		t.Fatalf("GetByID(default profile) failed: %v", err)
+	}
+	profile.SkipPartBooks = true
+	if err := profileRepo.Update(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	author := &models.Author{
+		ForeignID: "OL912A", Name: "Part-Book Author Three", SortName: "Author, Part-Book Three",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	owned := &models.Book{
+		ForeignID: "OL913W", Title: "Leviathan Falls - Carton of 10 Signed Copies", SortTitle: "leviathan falls - carton of 10 signed copies",
+		AuthorID: author.ID, Language: "eng", Status: models.BookStatusWanted,
+		MediaType: models.MediaTypeEbook, MetadataProvider: "openlibrary",
+	}
+	if err := bookRepo.Create(ctx, owned); err != nil {
+		t.Fatal(err)
+	}
+
+	agg := metadata.NewAggregator(&stubMetaProvider{works: []models.Book{
+		{ForeignID: "OL913W", Title: "Leviathan Falls - Carton of 10 Signed Copies", SortTitle: "leviathan falls - carton of 10 signed copies",
+			Language: "eng", MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary",
+			AverageRating: 4.2, RatingsCount: 250},
+	}})
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	updated, err := bookRepo.GetByForeignID(ctx, "OL913W")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated == nil {
+		t.Fatal("already-tracked part-book title was deleted, want it kept")
+	}
+	if updated.RatingsCount != 250 {
+		t.Errorf("RatingsCount = %d, want 250 (already-tracked book should still receive updates)", updated.RatingsCount)
+	}
+
+	if summary := h.syncSummaries.get(author.ID); summary != nil && summary.SkippedPartBooks != 0 {
+		t.Errorf("summary.SkippedPartBooks = %d, want 0 (already-tracked book must not be counted as skipped)", summary.SkippedPartBooks)
+	}
+}
+
 // stubLibraryFinder is a mock LibraryFinder that returns a fixed path for
 // a specific title and "" for everything else.
 type stubLibraryFinder struct {
