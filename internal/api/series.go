@@ -1404,7 +1404,16 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 			continue
 		}
 		if existing.Excluded {
-			blockedByExcludedTitle = true
+			// Only meaningful when nothing has matched yet — the caller
+			// returns via the best!=nil branch below without ever
+			// consulting this flag, so setting it once a real best exists
+			// would be dead state, reachable now that the loop scans every
+			// candidate instead of stopping at the first match (vavallee,
+			// PR review). Guarding the set keeps that invariant true by
+			// construction rather than by the caller's branch order.
+			if best == nil {
+				blockedByExcludedTitle = true
+			}
 			continue
 		}
 		// Keep the best match seen so far, not the first one over the
