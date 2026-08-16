@@ -2383,6 +2383,18 @@ func TestMigrate_RepairsLegacyMissingExcludedColumn(t *testing.T) {
 	t.Fatal("books.excluded was not restored")
 }
 
+func TestEnsureBooksExcludedColumn_IsIdempotent(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatalf("open memory db: %v", err)
+	}
+	defer database.Close()
+
+	if err := ensureBooksExcludedColumn(database); err != nil {
+		t.Fatalf("ensure existing excluded column: %v", err)
+	}
+}
+
 func sortEntriesForTest(entries []os.DirEntry) {
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Name() < entries[j].Name()
