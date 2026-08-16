@@ -1,0 +1,2 @@
+### Fixed
+- **Author sync now honors `minPopularity`** — the metadata profile setting previously had no effect during cataloging (only the field was persisted, nothing consumed it, per #1980). Works whose ratings count falls below the configured floor are now filtered out of author sync/refresh, with an exemption for works that haven't released yet (they can't have accumulated ratings). `AuthorSyncSummary` gains a `skippedMinPopularity` count alongside the existing skipped-language/junk/media-type counters so drops stay visible.

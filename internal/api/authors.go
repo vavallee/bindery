@@ -1641,6 +1641,7 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// default) and parse its allowed_languages CSV. Nil means "no filter".
 	allowedLangs, unknownFail := h.resolveAllowedLanguages(ctx, author)
 	skipMissingDate := h.resolveSkipMissingDate(ctx, author)
+	minPopularity := h.resolveMinPopularity(ctx, author)
 
 	// OpenLibrary works carry no work-level language; the search enricher only
 	// backfills it for indexed works, so a tail of works (often translations)
@@ -1825,18 +1826,19 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// skippedExcluded is logged but deliberately kept out of AuthorSyncSummary:
 	// the author page's notice explains works the user did NOT expect to lose,
 	// and a book they excluded by hand is not one of them.
-	var added, skippedLang, skippedJunk, skippedMediaType, skippedNotAccepted, skippedExcluded, skippedMissingDate int
+	var added, skippedLang, skippedJunk, skippedMediaType, skippedNotAccepted, skippedExcluded int
+	var skippedMissingDate, skippedMinPopularity int
 	// Names of the first few language-rejected works, reported to the user
 	// alongside the count (#1889): "65 books skipped" is alarming, but it is
 	// the titles and their language codes that tell them whether the profile
 	// is set the way they meant.
 	var skippedLangSample []models.AuthorSyncSkippedBook
-	// The first few date-rejected works, same reasoning and cap as
-	// skippedLangSample (#1889 established the pattern; requested again for
-	// this filter specifically in PR review, vavallee): a bare count doesn't
-	// say which books vanished, and Debug logs aren't reachable in a
-	// rootless container.
-	var skippedMissingDateSample []models.AuthorSyncSkippedBook
+	// The first few works each profile filter rejected, same reasoning and cap
+	// as skippedLangSample (#1889 established the pattern; requested again for
+	// these filters specifically in PR review, vavallee): a bare count doesn't
+	// say which books vanished, and Debug logs aren't reachable in a rootless
+	// container.
+	var skippedMissingDateSample, skippedMinPopularitySample []models.AuthorSyncSkippedBook
 	for _, b := range books {
 		b.AuthorID = author.ID
 		// Apply the caller-provided default media type when the provider
@@ -1894,8 +1896,8 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		// branch: it keeps its files, but silently stops getting rating,
 		// genre and cover updates, and is reported as "skipped" on every
 		// subsequent sync even though the user is looking at it in their
-		// library (vavallee, PR review). SkipMissingDate screens works out
-		// of discovery — it must not also stop maintaining ones already
+		// library (vavallee, PR review). The profile filters screen works out
+		// of discovery — they must not also stop maintaining ones already
 		// accepted.
 		existing, _ := h.books.GetByForeignID(ctx, b.ForeignID)
 
@@ -1909,6 +1911,33 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 				skippedMissingDateSample = append(skippedMissingDateSample, models.AuthorSyncSkippedBook{Title: b.Title})
 			}
 			slog.Debug("skipping work with no release date", "title", b.Title, "foreignId", b.ForeignID)
+			continue
+		}
+
+		// Filter works whose RatingsCount falls below the metadata profile's
+		// MinPopularity floor. A work that hasn't released yet is exempt — it
+		// can't have accumulated ratings, so judging it by a rating count
+		// would only ever penalize forthcoming books, never the intended
+		// "low-interest backlist noise" target.
+		//
+		// hasRatingSignal distinguishes "confirmed unpopular" from "unknown":
+		// RatingsCount is not something OpenLibrary reliably supplies (it
+		// arrives via the Hardcover supplement in mergeAuthorWorks), so on an
+		// install with no Hardcover token — or for any work Hardcover
+		// doesn't know — RatingsCount is 0 because nobody told us, not
+		// because the work has zero ratings. AverageRating==0 alongside it
+		// is indistinguishable from missing data, so a work with no rating
+		// signal at all is treated as unknown and passes, mirroring how
+		// MinPages treats a work with no page data as unknown rather than
+		// zero (vavallee, PR review).
+		hasRatingSignal := b.RatingsCount > 0 || b.AverageRating > 0
+		if existing == nil && minPopularity > 0 && hasRatingSignal && b.RatingsCount < minPopularity &&
+			(b.ReleaseDate == nil || !b.ReleaseDate.After(time.Now())) {
+			skippedMinPopularity++
+			if len(skippedMinPopularitySample) < authorSyncSkippedSampleLimit {
+				skippedMinPopularitySample = append(skippedMinPopularitySample, models.AuthorSyncSkippedBook{Title: b.Title})
+			}
+			slog.Debug("skipping below-popularity-floor work", "title", b.Title, "ratingsCount", b.RatingsCount, "minPopularity", minPopularity)
 			continue
 		}
 
@@ -2147,18 +2176,20 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// just ones that dropped something: "nothing was filtered out" is the
 	// answer to "where are my books?" as often as a count is.
 	summary := models.AuthorSyncSummary{
-		CompletedAt:              time.Now().UTC(),
-		Total:                    len(books),
-		Added:                    added,
-		SkippedLanguage:          skippedLang,
-		SkippedJunk:              skippedJunk,
-		SkippedMediaType:         skippedMediaType,
-		SkippedNotAccepted:       skippedNotAccepted,
-		SkippedMissingDate:       skippedMissingDate,
-		SkippedMissingDateSample: skippedMissingDateSample,
-		AllowedLanguages:         allowedLangs,
-		UnknownLanguageFail:      unknownFail,
-		SkippedLanguageSample:    skippedLangSample,
+		CompletedAt:                time.Now().UTC(),
+		Total:                      len(books),
+		Added:                      added,
+		SkippedLanguage:            skippedLang,
+		SkippedJunk:                skippedJunk,
+		SkippedMediaType:           skippedMediaType,
+		SkippedNotAccepted:         skippedNotAccepted,
+		SkippedMissingDate:         skippedMissingDate,
+		SkippedMissingDateSample:   skippedMissingDateSample,
+		SkippedMinPopularity:       skippedMinPopularity,
+		SkippedMinPopularitySample: skippedMinPopularitySample,
+		AllowedLanguages:           allowedLangs,
+		UnknownLanguageFail:        unknownFail,
+		SkippedLanguageSample:      skippedLangSample,
 	}
 	h.syncSummaries.record(author.ID, summary)
 
@@ -2170,14 +2201,14 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		"author", author.Name, "added", added,
 		"skipped_language", skippedLang, "skipped_junk", skippedJunk, "skipped_media_type", skippedMediaType,
 		"skipped_not_accepted", skippedNotAccepted, "skipped_excluded", skippedExcluded,
-		"skipped_missing_date", skippedMissingDate,
+		"skipped_missing_date", skippedMissingDate, "skipped_min_popularity", skippedMinPopularity,
 		"total", len(books),
 	}
 	// The metadata filters dropping works is the surprising case and stays at
 	// Warn. The discovery-policy skip is not: the user configured it, the run
 	// already said so once at Info above, and a "Refresh all authors" pass
 	// over an ABS-imported library would otherwise emit one Warn per author.
-	if skippedLang+skippedJunk+skippedMediaType+skippedMissingDate > 0 {
+	if skippedLang+skippedJunk+skippedMediaType+skippedMissingDate+skippedMinPopularity > 0 {
 		slog.Warn("author books synced", logArgs...)
 		return
 	}
@@ -3144,4 +3175,21 @@ func (h *AuthorHandler) resolveSkipMissingDate(ctx context.Context, author *mode
 		return false
 	}
 	return p.SkipMissingDate
+}
+
+// resolveMinPopularity returns the author's effective metadata profile's
+// MinPopularity floor. Zero (the field's default) means "no filter" —
+// matches the profile settings UI, which renders 0 as "none". Defaults to
+// zero on any lookup failure, so an unresolvable profile never causes
+// unexpected catalogue loss.
+func (h *AuthorHandler) resolveMinPopularity(ctx context.Context, author *models.Author) int {
+	id := models.DefaultMetadataProfileID
+	if author.MetadataProfileID != nil {
+		id = *author.MetadataProfileID
+	}
+	p, err := h.profiles.GetByID(ctx, id)
+	if err != nil || p == nil {
+		return 0
+	}
+	return p.MinPopularity
 }

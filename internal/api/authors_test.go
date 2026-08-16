@@ -6630,3 +6630,227 @@ func TestFetchAuthorBooks_UsesOneLibrarySnapshotForTheLoop(t *testing.T) {
 		t.Errorf("missing book unexpectedly got a file path %q", missing.FilePath)
 	}
 }
+
+// minPopularityTestWorks returns a fixed mix of works exercising the
+// MinPopularity floor: a well-rated book, a poorly-rated book, and an
+// unreleased book with zero ratings that should be exempt from the floor
+// rather than penalized for not having existed long enough to be rated.
+func minPopularityTestWorks() []models.Book {
+	past := time.Date(2019, 6, 15, 0, 0, 0, 0, time.UTC)
+	future := time.Now().UTC().AddDate(1, 0, 0)
+	return []models.Book{
+		// AverageRating must be set alongside RatingsCount: the author-works
+		// merge (internal/metadata/aggregator_author_works.go, #807) only
+		// carries RatingsCount across when AverageRating is also nonzero, to
+		// keep the (average, count) pair from two different sources. A
+		// count-only fixture would silently end up RatingsCount=0 after
+		// merge and not actually exercise the floor check.
+		{ForeignID: "OL940W", Title: "Popular Book", SortTitle: "popular book", Language: "eng",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary",
+			ReleaseDate: &past, AverageRating: 4.5, RatingsCount: 500},
+		{ForeignID: "OL941W", Title: "Unpopular Book", SortTitle: "unpopular book", Language: "eng",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary",
+			ReleaseDate: &past, AverageRating: 3.0, RatingsCount: 10},
+		{ForeignID: "OL942W", Title: "Forthcoming Book", SortTitle: "forthcoming book", Language: "eng",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary",
+			ReleaseDate: &future, RatingsCount: 0},
+		// Already released, but RatingsCount and AverageRating are both zero
+		// because no source (e.g. no Hardcover token configured) ever
+		// supplied a rating — not because the work has zero ratings. Must
+		// pass the floor as unknown, not fail it as unpopular.
+		{ForeignID: "OL943W", Title: "No Rating Data Book", SortTitle: "no rating data book", Language: "eng",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary",
+			ReleaseDate: &past, RatingsCount: 0, AverageRating: 0},
+	}
+}
+
+// TestFetchAuthorBooks_SkipsBelowMinPopularity verifies that once a metadata
+// profile's MinPopularity is set, works whose RatingsCount falls below the
+// floor are dropped, while works that meet the floor and unreleased works
+// with no ratings yet (exempt) still come through, with the drop reflected
+// in the SkippedMinPopularity/SkippedTotal summary counters.
+func TestFetchAuthorBooks_SkipsBelowMinPopularity(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	profile, err := profileRepo.GetByID(ctx, models.DefaultMetadataProfileID)
+	if err != nil || profile == nil {
+		t.Fatalf("GetByID(default profile) failed: %v", err)
+	}
+	profile.MinPopularity = 100
+	if err := profileRepo.Update(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	author := &models.Author{
+		ForeignID: "OL950A", Name: "Popularity Author", SortName: "Author, Popularity",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	agg := metadata.NewAggregator(&stubMetaProvider{works: minPopularityTestWorks()})
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	got, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTitle := make(map[string]bool, len(got))
+	for _, b := range got {
+		byTitle[b.Title] = true
+	}
+
+	if byTitle["Unpopular Book"] {
+		t.Error("work below the popularity floor should have been skipped, but was created")
+	}
+	for _, want := range []string{"Popular Book", "Forthcoming Book", "No Rating Data Book"} {
+		if !byTitle[want] {
+			t.Errorf("work %q should have been created, but was skipped", want)
+		}
+	}
+
+	summary := h.syncSummaries.get(author.ID)
+	if summary == nil {
+		t.Fatal("expected a recorded sync summary, got nil")
+	}
+	if want := 1; summary.SkippedMinPopularity != want {
+		t.Errorf("summary.SkippedMinPopularity = %d, want %d", summary.SkippedMinPopularity, want)
+	}
+	if summary.SkippedTotal() < summary.SkippedMinPopularity {
+		t.Errorf("summary.SkippedTotal() = %d should include SkippedMinPopularity = %d", summary.SkippedTotal(), summary.SkippedMinPopularity)
+	}
+	sampleTitles := make(map[string]bool, len(summary.SkippedMinPopularitySample))
+	for _, b := range summary.SkippedMinPopularitySample {
+		sampleTitles[b.Title] = true
+	}
+	if !sampleTitles["Unpopular Book"] {
+		t.Errorf("expected %q in summary.SkippedMinPopularitySample, got %+v", "Unpopular Book", summary.SkippedMinPopularitySample)
+	}
+}
+
+// TestFetchAuthorBooks_MinPopularityKeptWhenZero verifies the inverse of
+// TestFetchAuthorBooks_SkipsBelowMinPopularity: with MinPopularity left at
+// its default (0, "none" in the UI), no work is dropped by rating count —
+// the filter is opt-in, not a behavior change for profiles that never touch
+// the setting.
+func TestFetchAuthorBooks_MinPopularityKeptWhenZero(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID: "OL951A", Name: "Popularity Author Two", SortName: "Author, Popularity Two",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	agg := metadata.NewAggregator(&stubMetaProvider{works: minPopularityTestWorks()})
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	got, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(minPopularityTestWorks()) {
+		t.Errorf("got %d books, want %d (MinPopularity defaults to 0/none, nothing should be dropped)",
+			len(got), len(minPopularityTestWorks()))
+	}
+
+	if summary := h.syncSummaries.get(author.ID); summary != nil && summary.SkippedMinPopularity != 0 {
+		t.Errorf("summary.SkippedMinPopularity = %d, want 0 (filter is opt-in)", summary.SkippedMinPopularity)
+	}
+}
+
+// TestFetchAuthorBooks_MinPopularityExemptsAlreadyTrackedBook verifies that
+// MinPopularity does not stop maintaining a book the user already owns: a
+// below-floor work that is already in the library must keep receiving
+// updates and must not be counted as skipped, even though a fresh candidate
+// with the same low rating would be filtered out (vavallee, PR review —
+// filtering screens works out of discovery, it must not also stop
+// maintaining ones already accepted).
+func TestFetchAuthorBooks_MinPopularityExemptsAlreadyTrackedBook(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	profile, err := profileRepo.GetByID(ctx, models.DefaultMetadataProfileID)
+	if err != nil || profile == nil {
+		t.Fatalf("GetByID(default profile) failed: %v", err)
+	}
+	profile.MinPopularity = 100
+	if err := profileRepo.Update(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	author := &models.Author{
+		ForeignID: "OL952A", Name: "Popularity Author Three", SortName: "Author, Popularity Three",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	past := time.Date(2019, 6, 15, 0, 0, 0, 0, time.UTC)
+	owned := &models.Book{
+		ForeignID: "OL944W", Title: "Owned Unpopular Book", SortTitle: "owned unpopular book",
+		AuthorID: author.ID, Language: "eng", Status: models.BookStatusWanted,
+		MediaType: models.MediaTypeEbook, MetadataProvider: "openlibrary",
+	}
+	if err := bookRepo.Create(ctx, owned); err != nil {
+		t.Fatal(err)
+	}
+
+	agg := metadata.NewAggregator(&stubMetaProvider{works: []models.Book{
+		{ForeignID: "OL944W", Title: "Owned Unpopular Book", SortTitle: "owned unpopular book",
+			Language: "eng", MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary",
+			ReleaseDate: &past, AverageRating: 3.0, RatingsCount: 10},
+	}})
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	updated, err := bookRepo.GetByForeignID(ctx, "OL944W")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated == nil {
+		t.Fatal("already-tracked below-floor work was deleted, want it kept")
+	}
+	if updated.RatingsCount != 10 {
+		t.Errorf("RatingsCount = %d, want 10 (already-tracked book should still receive updates)", updated.RatingsCount)
+	}
+
+	if summary := h.syncSummaries.get(author.ID); summary != nil && summary.SkippedMinPopularity != 0 {
+		t.Errorf("summary.SkippedMinPopularity = %d, want 0 (already-tracked book must not be counted as skipped)", summary.SkippedMinPopularity)
+	}
+}
