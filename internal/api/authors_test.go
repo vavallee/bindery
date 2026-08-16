@@ -4759,6 +4759,141 @@ func TestCanUpgradeToBoth(t *testing.T) {
 	}
 }
 
+// TestApplyAuthorMajorityLanguageFallback covers the fallback in isolation:
+// a strongly-dominant language backfills blank works, a genuinely mixed
+// batch is left alone, and too few resolved works to judge from is also
+// left alone.
+func TestApplyAuthorMajorityLanguageFallback(t *testing.T) {
+	t.Run("backfills blank works when one language dominates", func(t *testing.T) {
+		books := []models.Book{
+			{ForeignID: "1", Language: "eng"},
+			{ForeignID: "2", Language: "eng"},
+			{ForeignID: "3", Language: "eng"},
+			{ForeignID: "4", Language: "eng"},
+			{ForeignID: "5", Language: ""}, // unresolved: should be backfilled
+			{ForeignID: "6", Language: ""}, // unresolved: should be backfilled
+		}
+		applyAuthorMajorityLanguageFallback(books)
+		for _, b := range books {
+			if b.Language != "eng" {
+				t.Errorf("book %s: Language = %q, want eng", b.ForeignID, b.Language)
+			}
+		}
+	})
+
+	t.Run("leaves a genuinely mixed-language batch alone", func(t *testing.T) {
+		books := []models.Book{
+			{ForeignID: "1", Language: "eng"},
+			{ForeignID: "2", Language: "eng"},
+			{ForeignID: "3", Language: "fre"},
+			{ForeignID: "4", Language: "ger"},
+			{ForeignID: "5", Language: ""},
+		}
+		applyAuthorMajorityLanguageFallback(books)
+		if books[4].Language != "" {
+			t.Errorf("Language = %q, want unchanged (empty) — no language clears the dominance threshold", books[4].Language)
+		}
+	})
+
+	t.Run("leaves blank works alone when too few works are resolved to judge from", func(t *testing.T) {
+		books := []models.Book{
+			{ForeignID: "1", Language: "eng"},
+			{ForeignID: "2", Language: "eng"},
+			{ForeignID: "3", Language: ""},
+		}
+		applyAuthorMajorityLanguageFallback(books)
+		if books[2].Language != "" {
+			t.Errorf("Language = %q, want unchanged (empty) — only 2 resolved works is below the minimum sample", books[2].Language)
+		}
+	})
+
+	t.Run("no-op when nothing is resolved yet", func(t *testing.T) {
+		books := []models.Book{
+			{ForeignID: "1", Language: ""},
+			{ForeignID: "2", Language: ""},
+		}
+		applyAuthorMajorityLanguageFallback(books)
+		for _, b := range books {
+			if b.Language != "" {
+				t.Errorf("book %s: Language = %q, want unchanged (empty)", b.ForeignID, b.Language)
+			}
+		}
+	})
+}
+
+// TestFetchAuthorBooks_MajorityLanguageFallbackRescuesUnresolvedWork covers
+// the real-world bug this fallback fixes: a strict "English Only" profile
+// (UnknownLanguageBehavior=fail) was rejecting genuinely-English works
+// whose language OpenLibrary's edition data simply never resolved, because
+// unresolved and confirmed-foreign were indistinguishable to the filter.
+// Most of this author's other works resolving to English is now enough to
+// rescue the unresolved one instead of dropping it.
+func TestFetchAuthorBooks_MajorityLanguageFallbackRescuesUnresolvedWork(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	profile, err := profileRepo.GetByID(ctx, models.DefaultMetadataProfileID)
+	if err != nil || profile == nil {
+		t.Fatalf("GetByID(default profile) failed: %v", err)
+	}
+	profile.AllowedLanguages = "eng"
+	profile.UnknownLanguageBehavior = models.UnknownLanguageFail
+	if err := profileRepo.Update(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	author := &models.Author{
+		ForeignID: "OL990A", Name: "Language Fallback Author", SortName: "Author, Language Fallback",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	works := []models.Book{
+		{ForeignID: "OL991W", Title: "Resolved English One", SortTitle: "resolved english one", Language: "eng",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary"},
+		{ForeignID: "OL992W", Title: "Resolved English Two", SortTitle: "resolved english two", Language: "eng",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary"},
+		{ForeignID: "OL993W", Title: "Resolved English Three", SortTitle: "resolved english three", Language: "eng",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary"},
+		// No sampled edition reported a language for this one (a real,
+		// common OpenLibrary data gap) — the stub provider doesn't
+		// implement the edition-sample backfill, so this stays blank
+		// exactly as it would when that backfill genuinely can't resolve it.
+		{ForeignID: "OL994W", Title: "Unresolved Language Work", SortTitle: "unresolved language work", Language: "",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary"},
+	}
+	agg := metadata.NewAggregator(&stubMetaProvider{works: works})
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	got, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTitle := make(map[string]bool, len(got))
+	for _, b := range got {
+		byTitle[b.Title] = true
+	}
+	if !byTitle["Unresolved Language Work"] {
+		t.Error("work with no resolved language should have been rescued by the majority-language fallback, but was skipped")
+	}
+
+	if summary := h.syncSummaries.get(author.ID); summary != nil && summary.SkippedLanguage != 0 {
+		t.Errorf("summary.SkippedLanguage = %d, want 0 (the unresolved work should have been rescued, not skipped)", summary.SkippedLanguage)
+	}
+}
+
 // TestDeleteAuthor_PathContainment_RejectsOutsideRoots is the author-side
 // Wave 1 / Bundle B guard. When the delete-files sweep walks a book whose
 // file_path is outside every configured root, the on-disk file is left

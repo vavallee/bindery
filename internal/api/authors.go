@@ -1652,6 +1652,24 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		langSampled = h.meta.FillMissingAuthorWorkLanguages(ctx, books)
 	}
 
+	// Author-batch majority-language fallback: FillMissingAuthorWorkLanguages
+	// above only resolves a language when at least one sampled edition
+	// carries OpenLibrary's `languages` field, which is a common data gap,
+	// not a rare one — a work can be genuinely English and still have zero
+	// sampled editions reporting a language. When that happens, most authors
+	// write predominantly (or exclusively) in one language, so assign the
+	// language already resolved for most of this author's OTHER works in the
+	// same batch rather than leaving it blank. This is pure in-memory
+	// bookkeeping over books already fetched — no new provider round-trips —
+	// gated the same as the edition-sample backfill above so an "any
+	// language" profile never pays for it. A strict-language profile is then
+	// judging a real, resolved language for these works instead of an
+	// OpenLibrary metadata gap it has no way to tell apart from an actual
+	// foreign-language book.
+	if len(allowedLangs) > 0 {
+		applyAuthorMajorityLanguageFallback(books)
+	}
+
 	// Everything above can take minutes for a prolific author (works fetch,
 	// Audible supplement, language sampling), and this goroutine holds only a
 	// snapshot of the author row. By now the row may be gone: AddBook's
@@ -3020,4 +3038,52 @@ func (h *AuthorHandler) resolveAllowedLanguages(ctx context.Context, author *mod
 		return []string{"eng"}, false
 	}
 	return models.ParseAllowedLanguages(p.AllowedLanguages), p.UnknownLanguageBehavior == models.UnknownLanguageFail
+}
+
+// authorMajorityLanguageMinSample is the minimum number of already-resolved
+// works required before applying the majority fallback at all — one or two
+// data points aren't enough to confidently label the rest of a batch, no
+// matter how uniform they happen to be.
+const authorMajorityLanguageMinSample = 3
+
+// authorMajorityLanguageThreshold is how dominant a single language must be
+// among a batch's resolved works before it's applied to unresolved ones.
+// High enough that a genuinely mixed-language author (translations,
+// multiple original languages) isn't force-tagged into one language.
+const authorMajorityLanguageThreshold = 0.9
+
+// applyAuthorMajorityLanguageFallback assigns each still-blank-Language book
+// in books the majority language already resolved among the rest of the
+// batch, when that majority clears authorMajorityLanguageThreshold over at
+// least authorMajorityLanguageMinSample resolved works. Mutates books in
+// place. A no-op when too few works have a resolved language yet, or when
+// no single language dominates strongly enough to trust.
+func applyAuthorMajorityLanguageFallback(books []models.Book) {
+	counts := make(map[string]int, 4)
+	resolved := 0
+	for _, b := range books {
+		if b.Language == "" {
+			continue
+		}
+		counts[b.Language]++
+		resolved++
+	}
+	if resolved < authorMajorityLanguageMinSample {
+		return
+	}
+	var majorityLang string
+	var majorityCount int
+	for lang, count := range counts {
+		if count > majorityCount {
+			majorityLang, majorityCount = lang, count
+		}
+	}
+	if float64(majorityCount)/float64(resolved) < authorMajorityLanguageThreshold {
+		return
+	}
+	for i := range books {
+		if books[i].Language == "" {
+			books[i].Language = majorityLang
+		}
+	}
 }
