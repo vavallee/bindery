@@ -922,6 +922,76 @@ func TestFetchAuthorBooks_MissingDateKeptWhenSkipDisabled(t *testing.T) {
 	}
 }
 
+// TestFetchAuthorBooks_SkipMissingDateExemptsAlreadyTrackedBook verifies that
+// SkipMissingDate does not stop maintaining a book the user already owns: an
+// undated work that is already in the library must keep receiving updates
+// (ratings here) and must not be counted as skipped, even though a fresh
+// candidate with no release date would be filtered out (vavallee, PR review
+// — filtering screens works out of discovery, it must not also stop
+// maintaining ones already accepted).
+func TestFetchAuthorBooks_SkipMissingDateExemptsAlreadyTrackedBook(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	profile, err := profileRepo.GetByID(ctx, models.DefaultMetadataProfileID)
+	if err != nil || profile == nil {
+		t.Fatalf("GetByID(default profile) failed: %v", err)
+	}
+	profile.SkipMissingDate = true
+	if err := profileRepo.Update(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	author := &models.Author{
+		ForeignID: "OL932A", Name: "Missing-Date Author Three", SortName: "Author, Missing-Date Three",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	owned := &models.Book{
+		ForeignID: "OL933W", Title: "Undated Owned Work", SortTitle: "undated owned work",
+		AuthorID: author.ID, Language: "eng", Status: models.BookStatusWanted,
+		MediaType: models.MediaTypeEbook, MetadataProvider: "openlibrary",
+	}
+	if err := bookRepo.Create(ctx, owned); err != nil {
+		t.Fatal(err)
+	}
+
+	agg := metadata.NewAggregator(&stubMetaProvider{works: []models.Book{
+		{ForeignID: "OL933W", Title: "Undated Owned Work", SortTitle: "undated owned work",
+			Language: "eng", MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary",
+			AverageRating: 4.2, RatingsCount: 250},
+	}})
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	updated, err := bookRepo.GetByForeignID(ctx, "OL933W")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated == nil {
+		t.Fatal("already-tracked undated work was deleted, want it kept")
+	}
+	if updated.RatingsCount != 250 {
+		t.Errorf("RatingsCount = %d, want 250 (already-tracked book should still receive updates)", updated.RatingsCount)
+	}
+
+	if summary := h.syncSummaries.get(author.ID); summary != nil && summary.SkippedMissingDate != 0 {
+		t.Errorf("summary.SkippedMissingDate = %d, want 0 (already-tracked book must not be counted as skipped)", summary.SkippedMissingDate)
+	}
+}
+
 // stubLibraryFinder is a mock LibraryFinder that returns a fixed path for
 // a specific title and "" for everything else.
 type stubLibraryFinder struct {

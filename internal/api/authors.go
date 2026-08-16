@@ -1887,11 +1887,23 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 			continue
 		}
 
+		// Hoisted above the profile filters below (rather than left at its
+		// original position just before the update branch) so a filter that
+		// fires after this point can exempt a book the user already owns.
+		// Without this, a filtered-but-owned book never reaches the update
+		// branch: it keeps its files, but silently stops getting rating,
+		// genre and cover updates, and is reported as "skipped" on every
+		// subsequent sync even though the user is looking at it in their
+		// library (vavallee, PR review). SkipMissingDate screens works out
+		// of discovery — it must not also stop maintaining ones already
+		// accepted.
+		existing, _ := h.books.GetByForeignID(ctx, b.ForeignID)
+
 		// Filter works with no release date when the author's metadata profile
 		// has SkipMissingDate enabled. ReleaseDate is already merged in from
 		// the provider's work data by this point (aggregator_author_works.go),
 		// so this is a straight presence check, not a fetch.
-		if skipMissingDate && b.ReleaseDate == nil {
+		if existing == nil && skipMissingDate && b.ReleaseDate == nil {
 			skippedMissingDate++
 			if len(skippedMissingDateSample) < authorSyncSkippedSampleLimit {
 				skippedMissingDateSample = append(skippedMissingDateSample, models.AuthorSyncSkippedBook{Title: b.Title})
@@ -1938,7 +1950,8 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 
 		// Update ratings + genres on existing books, then skip further
 		// processing (we don't want to overwrite user state like status).
-		existing, _ := h.books.GetByForeignID(ctx, b.ForeignID)
+		// existing was resolved above, before the profile filters, so an
+		// owned book that trips one of them still reaches this branch.
 		if existing != nil {
 			changed := false
 			// GetByForeignID matches globally (foreign_id is UNIQUE across all
