@@ -162,6 +162,11 @@ type AuthorSyncSkippedBook struct {
 // silently discarding a catalogue is surprising and logs at Warn, while the
 // discovery policy is something the user configured and already logged once.
 // Two questions, two counts.
+//
+// web/src/components/AuthorSyncNotice.tsx computes its own "{{count}} of
+// {{total}} works" heading sum independently in TypeScript rather than
+// reading this value over the wire — the two have to be kept in step by
+// hand. Adding a Skipped* field here means adding it to that sum too.
 func (s *AuthorSyncSummary) SkippedTotal() int {
 	if s == nil {
 		return 0

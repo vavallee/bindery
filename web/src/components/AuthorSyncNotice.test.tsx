@@ -120,4 +120,44 @@ describe('AuthorSyncNotice', () => {
     expect(screen.getByTestId('author-sync-notice')).toBeInTheDocument()
     expect(screen.getByText(/2 skipped as untitled provider records/)).toBeInTheDocument()
   })
+
+  // vavallee, PR review: merging six per-filter samples (5 each) with no cap
+  // of its own could print up to 30 titles on one line, and a naive
+  // .slice(0, 5) on the concatenation would let language — listed first —
+  // crowd out every other filter's example. Both need covering: the total
+  // must stay bounded, and a filter later in the list must still get a slot.
+  it('caps the merged examples line at 5 and round-robins across filters', () => {
+    renderNotice(
+      summary({
+        skippedLanguage: 3,
+        skippedLanguageSample: [
+          { title: 'Lang A', language: 'fre' },
+          { title: 'Lang B', language: 'fre' },
+          { title: 'Lang C', language: 'fre' },
+        ],
+        skippedPartBooks: 1,
+        skippedPartBooksSample: [{ title: 'Part Book A', language: '' }],
+        skippedMissingDate: 1,
+        skippedMissingDateSample: [{ title: 'Undated A', language: '' }],
+        skippedMinPopularity: 1,
+        skippedMinPopularitySample: [{ title: 'Unpopular A', language: '' }],
+        skippedMinPages: 1,
+        skippedMinPagesSample: [{ title: 'Short A', language: '' }],
+        skippedMissingIsbn: 1,
+        skippedMissingIsbnSample: [{ title: 'No ISBN A', language: '' }],
+      }),
+    )
+    const examples = screen.getByText(/For example:/)
+    const titles = examples.textContent!.split('For example:')[1].split(', ')
+    expect(titles).toHaveLength(5)
+    // One from each non-language filter must appear despite language having
+    // 3 candidates and being listed first — round-robin, not a head slice.
+    for (const want of ['Part Book A', 'Undated A', 'Unpopular A', 'Short A']) {
+      expect(examples.textContent).toContain(want)
+    }
+    // Only the round's worth of language examples fit before the cap — with
+    // 5 non-language sources also contributing one each in round 0, only one
+    // language slot remains in round 0 and the cap is hit before round 1.
+    expect(examples.textContent).not.toContain('Lang C')
+  })
 })

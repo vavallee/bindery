@@ -2,6 +2,34 @@ import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import type { AuthorSyncSummary } from '../api/client'
 
+// authorSyncSampleLimit mirrors the server's per-filter cap
+// (authorSyncSkippedSampleLimit, internal/api/author_sync_summary.go) — that
+// constant bounds each individual Skipped*Sample array so the notice's "for
+// example" line stays readable, but merging six of those arrays multiplies
+// it by six. This is the merged notice's own cap, applied once here.
+const authorSyncSampleLimit = 5
+
+// roundRobinSample interleaves one title from each non-empty source per
+// round rather than draining sources in order, so a strict profile that
+// trips several filters doesn't have the first source (language) silently
+// crowd out every other filter's example — the point of the sample is
+// showing which filter ate a book, not just that one did.
+function roundRobinSample(sources: string[][], limit: number): string[] {
+  const sample: string[] = []
+  for (let round = 0; sample.length < limit; round++) {
+    let addedAny = false
+    for (const source of sources) {
+      if (sample.length >= limit) break
+      if (round < source.length) {
+        sample.push(source[round])
+        addedAny = true
+      }
+    }
+    if (!addedAny) break
+  }
+  return sample
+}
+
 // The catalogue sync's filters used to drop books in silence: one Debug log
 // line per rejected work and a single Info summary at the end, nothing in the
 // API and nothing on the page. A reporter lost 65 books from one author to the
@@ -41,19 +69,26 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
   // One combined "for example" line built from whichever filters dropped
   // something, same shape as the original language-only sample — a bare
   // count doesn't say which books vanished, and Debug logs aren't reachable
-  // in a rootless container.
-  const sample = [
-    ...(sync.skippedLanguageSample ?? []).map(b =>
-      b.language
-        ? `${b.title} (${b.language})`
-        : t('authorDetail.lastSync.sampleUnknownLanguage', '{{title}} (no language)', { title: b.title }),
-    ),
-    ...(sync.skippedPartBooksSample ?? []).map(b => b.title),
-    ...(sync.skippedMissingDateSample ?? []).map(b => b.title),
-    ...(sync.skippedMinPopularitySample ?? []).map(b => b.title),
-    ...(sync.skippedMinPagesSample ?? []).map(b => b.title),
-    ...(sync.skippedMissingIsbnSample ?? []).map(b => b.title),
-  ]
+  // in a rootless container. Capped and round-robined across sources
+  // (authorSyncSampleLimit) rather than concatenated: six per-filter
+  // samples of 5 each would otherwise print up to 30 titles on one line,
+  // and a plain concatenation would let language (listed first) crowd out
+  // every other filter's example.
+  const sample = roundRobinSample(
+    [
+      (sync.skippedLanguageSample ?? []).map(b =>
+        b.language
+          ? `${b.title} (${b.language})`
+          : t('authorDetail.lastSync.sampleUnknownLanguage', '{{title}} (no language)', { title: b.title }),
+      ),
+      (sync.skippedPartBooksSample ?? []).map(b => b.title),
+      (sync.skippedMissingDateSample ?? []).map(b => b.title),
+      (sync.skippedMinPopularitySample ?? []).map(b => b.title),
+      (sync.skippedMinPagesSample ?? []).map(b => b.title),
+      (sync.skippedMissingIsbnSample ?? []).map(b => b.title),
+    ],
+    authorSyncSampleLimit,
+  )
 
   return (
     <div
