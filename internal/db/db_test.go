@@ -2342,6 +2342,47 @@ func TestReconcileMigrationVersionsLeavesFreshDB(t *testing.T) {
 	}
 }
 
+// TestMigrate_RepairsLegacyMissingExcludedColumn covers the ambiguous legacy
+// marker state from #1932: migration 014 is marked applied even though the
+// old positional runner skipped its SQL. The 010 no-op means marker-only
+// reconciliation cannot identify this state, so migrate repairs the schema.
+func TestMigrate_RepairsLegacyMissingExcludedColumn(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatalf("open memory db: %v", err)
+	}
+	defer database.Close()
+
+	if _, err := database.Exec("ALTER TABLE books DROP COLUMN excluded"); err != nil {
+		t.Fatalf("simulate legacy missing column: %v", err)
+	}
+
+	if err := migrate(database); err != nil {
+		t.Fatalf("migrate repair: %v", err)
+	}
+
+	rows, err := database.Query("PRAGMA table_info(books)")
+	if err != nil {
+		t.Fatalf("inspect repaired books schema: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			t.Fatalf("scan repaired books column: %v", err)
+		}
+		if name == "excluded" {
+			return
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate repaired books schema: %v", err)
+	}
+	t.Fatal("books.excluded was not restored")
+}
+
 func sortEntriesForTest(entries []os.DirEntry) {
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Name() < entries[j].Name()

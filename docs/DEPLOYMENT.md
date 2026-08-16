@@ -453,6 +453,14 @@ Where the orphans come from: before [#1727](https://github.com/vavallee/bindery/
 
 ## Upgrading
 
+### Legacy migration-marker repair
+
+Some databases written by an older positional migration runner can report every
+migration as applied while missing `books.excluded`. On startup, Bindery now
+checks the live schema and restores that additive column automatically. Take a
+normal SQLite backup before upgrading; no manual SQL is required for this
+specific repair.
+
 ### ABS import deployment note
 
 **Schema:** ABS import uses migrations `029` through `033`. They create five ABS tables: `abs_import_runs`, `abs_provenance`, `abs_metadata_conflicts`, `abs_import_run_entities`, and `abs_review_queue`. Migration `031` also adds `dry_run`, `source_config_json`, and `checkpoint_json` to `abs_import_runs`; migration `033` is currently a no-op compatibility migration. Take a normal SQLite backup before upgrading, then let Bindery apply the migrations on startup.

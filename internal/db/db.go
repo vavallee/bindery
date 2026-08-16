@@ -266,6 +266,15 @@ func migrate(database *sql.DB) error {
 		slog.Info("applied migration", "version", v, "file", entry.Name())
 	}
 
+	// Older index-based migration runners could mark migration 014 as applied
+	// while applying the next file in the sorted list instead. The later 010
+	// no-op makes that marker set look filename-valid, so version reconciliation
+	// cannot distinguish it safely. Repair the affected column directly; this
+	// is idempotent and avoids rewriting ambiguous historical markers (#1932).
+	if err := ensureBooksExcludedColumn(database); err != nil {
+		return fmt.Errorf("repair legacy books.excluded column: %w", err)
+	}
+
 	// Post-migration Go-side backfill. Migration 051's SQL backfill is a coarse
 	// approximation of indexer.CanonicalDedupKey (SQLite cannot run the Go
 	// normalizer); recompute the exact key for any row whose stored key is
@@ -284,6 +293,39 @@ func migrate(database *sql.DB) error {
 		return fmt.Errorf("backfill author sort keys: %w", err)
 	}
 
+	return nil
+}
+
+// ensureBooksExcludedColumn restores the column migration 014 introduced when
+// an old positional migration runner recorded its version without applying its
+// SQL. It deliberately checks the live schema instead of schema_migrations:
+// the marker alone is ambiguous after the 010 no-op filled the former gap.
+func ensureBooksExcludedColumn(database *sql.DB) error {
+	rows, err := database.Query("PRAGMA table_info(books)")
+	if err != nil {
+		return fmt.Errorf("inspect books columns: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return fmt.Errorf("scan books column: %w", err)
+		}
+		if name == "excluded" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate books columns: %w", err)
+	}
+
+	if _, err := database.Exec("ALTER TABLE books ADD COLUMN excluded INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("add books.excluded: %w", err)
+	}
+	slog.Warn("repaired missing books.excluded column from legacy migration history")
 	return nil
 }
 
