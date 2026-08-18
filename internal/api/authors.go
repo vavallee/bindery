@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -1642,6 +1643,18 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	allowedLangs, unknownFail := h.resolveAllowedLanguages(ctx, author)
 	skipMissingDate := h.resolveSkipMissingDate(ctx, author)
 	minPopularity := h.resolveMinPopularity(ctx, author)
+	minPages, skipMissingISBN := h.resolveEditionFilters(ctx, author)
+	// Both minPages>0 and skipMissingISBN require a real edition lookup per
+	// candidate work (page count and ISBN live on Edition, not Book, and
+	// aren't populated until an edition fetch runs). Gate the fetch on
+	// whether either setting is actually on, so an author whose profile
+	// touches neither pays no extra provider round-trips. FillMissingAuthorWorkLanguages
+	// below follows the same gating principle (skip the round-trip when the
+	// profile doesn't need it) but is a single batched call, not a
+	// per-candidate one — see the prefetch below for the batching equivalent
+	// for editions (#1929 tracks per-book serial provider calls as a known
+	// author-sync perf problem; this avoids adding another one).
+	needsEditionPreview := minPages > 0 || skipMissingISBN
 
 	// OpenLibrary works carry no work-level language; the search enricher only
 	// backfills it for indexed works, so a tail of works (often translations)
@@ -1827,18 +1840,25 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// the author page's notice explains works the user did NOT expect to lose,
 	// and a book they excluded by hand is not one of them.
 	var added, skippedLang, skippedJunk, skippedMediaType, skippedNotAccepted, skippedExcluded int
-	var skippedMissingDate, skippedMinPopularity int
+	var skippedMissingDate, skippedMinPopularity, skippedMinPages, skippedMissingISBN int
 	// Names of the first few language-rejected works, reported to the user
 	// alongside the count (#1889): "65 books skipped" is alarming, but it is
 	// the titles and their language codes that tell them whether the profile
 	// is set the way they meant.
 	var skippedLangSample []models.AuthorSyncSkippedBook
-	// The first few works each profile filter rejected, same reasoning and cap
-	// as skippedLangSample (#1889 established the pattern; requested again for
-	// these filters specifically in PR review, vavallee): a bare count doesn't
-	// say which books vanished, and Debug logs aren't reachable in a rootless
-	// container.
+	// The first few page-count- and ISBN-rejected works, same reasoning and
+	// cap as skippedLangSample (#1889 established the pattern; requested
+	// again for these filters specifically in PR review, vavallee).
 	var skippedMissingDateSample, skippedMinPopularitySample []models.AuthorSyncSkippedBook
+	var skippedMinPagesSample, skippedMissingISBNSample []models.AuthorSyncSkippedBook
+	// candidates accumulates every work that survives the free (in-memory)
+	// filters below and would otherwise reach the MinPages/SkipMissingISBN
+	// check. Splitting the loop here lets the edition lookups those two
+	// filters need be batched with bounded concurrency instead of firing one
+	// serial provider round-trip per candidate inside the loop below (#1929
+	// tracks per-book serial provider calls during author sync as a known
+	// perf problem; this avoids adding another instance of it).
+	candidates := make([]models.Book, 0, len(books))
 	for _, b := range books {
 		b.AuthorID = author.ID
 		// Apply the caller-provided default media type when the provider
@@ -1889,16 +1909,62 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 			continue
 		}
 
-		// Hoisted above the profile filters below (rather than left at its
-		// original position just before the update branch) so a filter that
-		// fires after this point can exempt a book the user already owns.
-		// Without this, a filtered-but-owned book never reaches the update
-		// branch: it keeps its files, but silently stops getting rating,
-		// genre and cover updates, and is reported as "skipped" on every
-		// subsequent sync even though the user is looking at it in their
-		// library (vavallee, PR review). The profile filters screen works out
-		// of discovery — they must not also stop maintaining ones already
-		// accepted.
+		// Filter by the author's metadata-profile allowed_languages.
+		// Books whose language is unknown honor the profile's
+		// unknown_language_behavior (pass by default; see #232).
+		//
+		// Exempt on a single-work run, and this is the exact case #1612 was
+		// filed for: a heavily-translated work whose edition-sampled language
+		// falls outside the profile became permanently un-addable, because the
+		// only path that could create it kept refusing to.
+		if !singleWork && !models.IsLanguageAllowed(b.Language, allowedLangs, unknownFail) {
+			skippedLang++
+			if len(skippedLangSample) < authorSyncSkippedSampleLimit {
+				skippedLangSample = append(skippedLangSample, models.AuthorSyncSkippedBook{Title: b.Title, Language: b.Language})
+			}
+			slog.Debug("skipping non-allowed-language book", "title", b.Title, "language", b.Language, "allowed", allowedLangs, "edition_sampled", langSampled)
+			continue
+		}
+
+		candidates = append(candidates, b)
+	}
+
+	// Prefetch editions for every surviving candidate with bounded
+	// concurrency (same cap as the auto-search fan-out below) rather than
+	// fetching one at a time inside the loop that follows. Only runs when a
+	// profile setting actually needs edition data, so an author whose
+	// profile touches neither MinPages nor SkipMissingISBN triggers no
+	// extra provider round-trips at all. A candidate missing from the map
+	// means its lookup failed (network error, provider outage) — the loop
+	// below treats that the same as "not enforcing for this work" a live
+	// per-item call would have, so a transient failure never drops a book.
+	var editionsByForeignID map[string][]models.Edition
+	if needsEditionPreview && len(candidates) > 0 {
+		editionsByForeignID = make(map[string][]models.Edition, len(candidates))
+		var mu sync.Mutex
+		concurrency.RunBounded(ctx, candidates, authorAutoSearchConcurrency, func(ctx context.Context, b models.Book) {
+			editions, err := h.meta.GetEditions(ctx, b.ForeignID)
+			if err != nil {
+				slog.Debug("edition lookup failed while checking MinPages/SkipMissingISBN; not enforcing for this work",
+					"title", b.Title, "foreignId", b.ForeignID, "error", err)
+				return
+			}
+			mu.Lock()
+			editionsByForeignID[b.ForeignID] = editions
+			mu.Unlock()
+		})
+	}
+
+	for _, b := range candidates {
+		// Hoisted here, before the edition-gated filters below, so a filter
+		// that fires after this point can exempt a book the user already
+		// owns. Without this, a filtered-but-owned book never reaches the
+		// update branch: it keeps its files, but silently stops getting
+		// rating, genre and cover updates, and is reported as "skipped" on
+		// every subsequent sync even though the user is looking at it in
+		// their library (vavallee, PR review). MinPages/SkipMissingISBN
+		// screen works out of discovery — they must not also stop
+		// maintaining ones already accepted.
 		existing, _ := h.books.GetByForeignID(ctx, b.ForeignID)
 
 		// Filter works with no release date when the author's metadata profile
@@ -1941,22 +2007,48 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 			continue
 		}
 
-		// Filter by the author's metadata-profile allowed_languages.
-		// Books whose language is unknown honor the profile's
-		// unknown_language_behavior (pass by default; see #232).
+		// MinPages / SkipMissingISBN both need edition data (page count and
+		// ISBN live on Edition, not Book) fetched in the prefetch pass above.
+		// A book with no entry in editionsByForeignID is either not gated by
+		// either setting (needsEditionPreview was false) or its lookup
+		// failed — both cases fall through unfiltered.
 		//
-		// Exempt on a single-work run, and this is the exact case #1612 was
-		// filed for: a heavily-translated work whose edition-sampled language
-		// falls outside the profile became permanently un-addable, because the
-		// only path that could create it kept refusing to.
-		if !singleWork && !models.IsLanguageAllowed(b.Language, allowedLangs, unknownFail) {
-			skippedLang++
-			if len(skippedLangSample) < authorSyncSkippedSampleLimit {
-				skippedLangSample = append(skippedLangSample, models.AuthorSyncSkippedBook{Title: b.Title, Language: b.Language})
+		// The two filters read a missing/empty edition list differently, and
+		// deliberately so, not by oversight:
+		//   - MinPages treats "no edition reports a page count" as unknown,
+		//     not zero, and lets the work through (see passesMinPagesFilter).
+		//     A size floor shouldn't penalize a work the provider simply
+		//     hasn't indexed a page count for yet.
+		//   - SkipMissingISBN treats "zero editions returned" as missing,
+		//     and drops the work. Unlike a page count, there is nothing
+		//     partial about "we found no editions to check" for an
+		//     identifier-presence gate — it's the strongest available
+		//     signal that no ISBN can be confirmed. This matches Chaptarr's
+		//     own behavior for the same case: its identifier filter runs
+		//     per-edition, and a book with zero editions fails the same
+		//     `Editions.Any()` check a book whose editions were all
+		//     filtered out for lacking an identifier would.
+		if existing == nil {
+			if editions, ok := editionsByForeignID[b.ForeignID]; ok {
+				if skipMissingISBN && !anyEditionHasISBN(editions) {
+					skippedMissingISBN++
+					if len(skippedMissingISBNSample) < authorSyncSkippedSampleLimit {
+						skippedMissingISBNSample = append(skippedMissingISBNSample, models.AuthorSyncSkippedBook{Title: b.Title})
+					}
+					slog.Debug("skipping work with no ISBN on any edition", "title", b.Title, "foreignId", b.ForeignID)
+					continue
+				}
+				if minPages > 0 && !passesMinPagesFilter(editions, minPages) {
+					skippedMinPages++
+					if len(skippedMinPagesSample) < authorSyncSkippedSampleLimit {
+						skippedMinPagesSample = append(skippedMinPagesSample, models.AuthorSyncSkippedBook{Title: b.Title})
+					}
+					slog.Debug("skipping work below the minimum page count", "title", b.Title, "foreignId", b.ForeignID, "minPages", minPages)
+					continue
+				}
 			}
-			slog.Debug("skipping non-allowed-language book", "title", b.Title, "language", b.Language, "allowed", allowedLangs, "edition_sampled", langSampled)
-			continue
 		}
+
 		b.Monitored = shouldMonitorBookForAuthor(author, b, latestKeys, today)
 		// Series mode short-circuit: if the upstream provider already says
 		// this book is in one of the user's pinned series, monitor it on
@@ -1979,8 +2071,8 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 
 		// Update ratings + genres on existing books, then skip further
 		// processing (we don't want to overwrite user state like status).
-		// existing was resolved above, before the profile filters, so an
-		// owned book that trips one of them still reaches this branch.
+		// existing was resolved above, before the edition-gated filters, so
+		// an owned book that trips one of them still reaches this branch.
 		if existing != nil {
 			changed := false
 			// GetByForeignID matches globally (foreign_id is UNIQUE across all
@@ -2187,6 +2279,10 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		SkippedMissingDateSample:   skippedMissingDateSample,
 		SkippedMinPopularity:       skippedMinPopularity,
 		SkippedMinPopularitySample: skippedMinPopularitySample,
+		SkippedMinPages:            skippedMinPages,
+		SkippedMinPagesSample:      skippedMinPagesSample,
+		SkippedMissingISBN:         skippedMissingISBN,
+		SkippedMissingISBNSample:   skippedMissingISBNSample,
 		AllowedLanguages:           allowedLangs,
 		UnknownLanguageFail:        unknownFail,
 		SkippedLanguageSample:      skippedLangSample,
@@ -2202,13 +2298,15 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		"skipped_language", skippedLang, "skipped_junk", skippedJunk, "skipped_media_type", skippedMediaType,
 		"skipped_not_accepted", skippedNotAccepted, "skipped_excluded", skippedExcluded,
 		"skipped_missing_date", skippedMissingDate, "skipped_min_popularity", skippedMinPopularity,
+		"skipped_min_pages", skippedMinPages, "skipped_missing_isbn", skippedMissingISBN,
 		"total", len(books),
 	}
 	// The metadata filters dropping works is the surprising case and stays at
 	// Warn. The discovery-policy skip is not: the user configured it, the run
 	// already said so once at Info above, and a "Refresh all authors" pass
 	// over an ABS-imported library would otherwise emit one Warn per author.
-	if skippedLang+skippedJunk+skippedMediaType+skippedMissingDate+skippedMinPopularity > 0 {
+	if skippedLang+skippedJunk+skippedMediaType+skippedMissingDate+skippedMinPopularity+
+		skippedMinPages+skippedMissingISBN > 0 {
 		slog.Warn("author books synced", logArgs...)
 		return
 	}
@@ -3192,4 +3290,59 @@ func (h *AuthorHandler) resolveMinPopularity(ctx context.Context, author *models
 		return 0
 	}
 	return p.MinPopularity
+}
+
+// resolveEditionFilters returns the author's effective metadata profile's
+// MinPages floor and SkipMissingISBN setting. Combined into one lookup
+// because both gate the same per-candidate edition prefetch in
+// fetchAuthorBooks. Defaults to "no filter" (0, false) on any lookup
+// failure, so an unresolvable profile never causes unexpected catalogue
+// loss.
+func (h *AuthorHandler) resolveEditionFilters(ctx context.Context, author *models.Author) (minPages int, skipMissingISBN bool) {
+	id := models.DefaultMetadataProfileID
+	if author.MetadataProfileID != nil {
+		id = *author.MetadataProfileID
+	}
+	p, err := h.profiles.GetByID(ctx, id)
+	if err != nil || p == nil {
+		return 0, false
+	}
+	return p.MinPages, p.SkipMissingISBN
+}
+
+// anyEditionHasISBN reports whether any edition carries an ISBN-13 or
+// ISBN-10. Returns false for a nil or empty slice — a work with no editions
+// to check has no ISBN to confirm.
+func anyEditionHasISBN(editions []models.Edition) bool {
+	for _, e := range editions {
+		if e.ISBN13 != nil && strings.TrimSpace(*e.ISBN13) != "" {
+			return true
+		}
+		if e.ISBN10 != nil && strings.TrimSpace(*e.ISBN10) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// passesMinPagesFilter reports whether a work satisfies the profile's
+// MinPages floor. Mirrors Chaptarr's semantics: an edition meeting the
+// floor passes the work, but if no edition reports a page count at all,
+// that's treated as unknown rather than zero and passes through
+// unfiltered — a work with no page data is not the same as a work with no
+// pages. (Named to read as "did this pass the filter", not "does the work
+// have enough pages" — the unknown-data case makes those two questions
+// have different answers.)
+func passesMinPagesFilter(editions []models.Edition, minPages int) bool {
+	anyReported := false
+	for _, e := range editions {
+		if e.NumPages == nil || *e.NumPages <= 0 {
+			continue
+		}
+		anyReported = true
+		if *e.NumPages >= minPages {
+			return true
+		}
+	}
+	return !anyReported
 }

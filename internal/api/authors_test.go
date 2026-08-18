@@ -101,6 +101,12 @@ type stubMetaProvider struct {
 	name string
 	// editionsByBook lets tests exercise metadata edition hydration.
 	editionsByBook map[string][]models.Edition
+	// editionCallsMu guards editionCalls: fetchAuthorBooks's MinPages/
+	// SkipMissingISBN edition prefetch calls GetEditions concurrently
+	// (bounded via concurrency.RunBounded), unlike every other caller of
+	// this stub method, which is serial. Same shape as #1924 (guard mock
+	// call recorders against concurrent fan-out) for a different stub.
+	editionCallsMu sync.Mutex
 	editionCalls   []string
 	// authorWorksByName lets tests act as an author-scoped supplemental
 	// provider such as Hardcover.
@@ -148,7 +154,9 @@ func (p *stubMetaProvider) GetBook(_ context.Context, fid string) (*models.Book,
 	return nil, nil
 }
 func (p *stubMetaProvider) GetEditions(_ context.Context, fid string) ([]models.Edition, error) {
+	p.editionCallsMu.Lock()
 	p.editionCalls = append(p.editionCalls, fid)
+	p.editionCallsMu.Unlock()
 	if p.editionsByBook != nil {
 		return p.editionsByBook[fid], nil
 	}
@@ -6852,5 +6860,442 @@ func TestFetchAuthorBooks_MinPopularityExemptsAlreadyTrackedBook(t *testing.T) {
 
 	if summary := h.syncSummaries.get(author.ID); summary != nil && summary.SkippedMinPopularity != 0 {
 		t.Errorf("summary.SkippedMinPopularity = %d, want 0 (already-tracked book must not be counted as skipped)", summary.SkippedMinPopularity)
+	}
+}
+
+// intPtr is strPtr's counterpart (queue_test.go) for the *int fields on
+// models.Edition.
+func intPtr(v int) *int { return &v }
+
+// minPagesTestWorks returns a fixed mix of works exercising the MinPages
+// floor: a short book, a long book, and a book whose only edition reports no
+// page count at all (should be treated as unknown, not zero, and pass).
+func minPagesTestWorks() ([]models.Book, map[string][]models.Edition) {
+	works := []models.Book{
+		{ForeignID: "OL960W", Title: "Short Book", SortTitle: "short book", Language: "eng",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary"},
+		{ForeignID: "OL961W", Title: "Long Book", SortTitle: "long book", Language: "eng",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary"},
+		{ForeignID: "OL962W", Title: "Unknown-Pages Book", SortTitle: "unknown-pages book", Language: "eng",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary"},
+	}
+	editions := map[string][]models.Edition{
+		"OL960W": {{ForeignID: "OLED960", NumPages: intPtr(50)}},
+		"OL961W": {{ForeignID: "OLED961", NumPages: intPtr(350)}},
+		"OL962W": {{ForeignID: "OLED962"}}, // NumPages nil: no page data reported
+	}
+	return works, editions
+}
+
+// TestFetchAuthorBooks_SkipsBelowMinPages verifies that once a metadata
+// profile's MinPages is set, works whose editions all fall below the floor
+// are dropped, while works meeting the floor and works with no page data at
+// all (treated as unknown, not zero) still come through.
+func TestFetchAuthorBooks_SkipsBelowMinPages(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	profile, err := profileRepo.GetByID(ctx, models.DefaultMetadataProfileID)
+	if err != nil || profile == nil {
+		t.Fatalf("GetByID(default profile) failed: %v", err)
+	}
+	profile.MinPages = 200
+	if err := profileRepo.Update(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	author := &models.Author{
+		ForeignID: "OL980A", Name: "Pages Author", SortName: "Author, Pages",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	works, editions := minPagesTestWorks()
+	agg := metadata.NewAggregator(&stubMetaProvider{works: works, editionsByBook: editions})
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	got, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTitle := make(map[string]bool, len(got))
+	for _, b := range got {
+		byTitle[b.Title] = true
+	}
+
+	if byTitle["Short Book"] {
+		t.Error("work below the page-count floor should have been skipped, but was created")
+	}
+	for _, want := range []string{"Long Book", "Unknown-Pages Book"} {
+		if !byTitle[want] {
+			t.Errorf("work %q should have been created, but was skipped", want)
+		}
+	}
+
+	summary := h.syncSummaries.get(author.ID)
+	if summary == nil {
+		t.Fatal("expected a recorded sync summary, got nil")
+	}
+	if want := 1; summary.SkippedMinPages != want {
+		t.Errorf("summary.SkippedMinPages = %d, want %d", summary.SkippedMinPages, want)
+	}
+	if summary.SkippedTotal() < summary.SkippedMinPages {
+		t.Errorf("summary.SkippedTotal() = %d should include SkippedMinPages = %d", summary.SkippedTotal(), summary.SkippedMinPages)
+	}
+	minPagesSampleTitles := make(map[string]bool, len(summary.SkippedMinPagesSample))
+	for _, b := range summary.SkippedMinPagesSample {
+		minPagesSampleTitles[b.Title] = true
+	}
+	if !minPagesSampleTitles["Short Book"] {
+		t.Errorf("expected %q in summary.SkippedMinPagesSample, got %+v", "Short Book", summary.SkippedMinPagesSample)
+	}
+}
+
+// TestFetchAuthorBooks_MinPagesKeptWhenZero verifies the inverse of
+// TestFetchAuthorBooks_SkipsBelowMinPages: with MinPages left at its default
+// (0), no work is dropped by page count, and no edition lookup is even
+// attempted — the filter is opt-in and its cost is opt-in too.
+func TestFetchAuthorBooks_MinPagesKeptWhenZero(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID: "OL981A", Name: "Pages Author Two", SortName: "Author, Pages Two",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	works, editions := minPagesTestWorks()
+	provider := &stubMetaProvider{works: works, editionsByBook: editions}
+	agg := metadata.NewAggregator(provider)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	got, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(works) {
+		t.Errorf("got %d books, want %d (MinPages defaults to 0, nothing should be dropped)", len(got), len(works))
+	}
+	if len(provider.editionCalls) != 0 {
+		t.Errorf("expected no edition lookups when MinPages is 0 and SkipMissingISBN is false, got %d", len(provider.editionCalls))
+	}
+
+	if summary := h.syncSummaries.get(author.ID); summary != nil && summary.SkippedMinPages != 0 {
+		t.Errorf("summary.SkippedMinPages = %d, want 0 (filter is opt-in)", summary.SkippedMinPages)
+	}
+}
+
+// TestFetchAuthorBooks_EditionLookupSkipsFreeFilterRejects verifies that the
+// edition prefetch only runs for works surviving the free (in-memory)
+// filters ahead of it — a junk-title work and a wrong-language work should
+// never trigger a GetEditions call, even though MinPages is configured and
+// would otherwise gate one for every work in the list. This is the ordering
+// the original inline-per-item check relied on ("every free check gets a
+// chance to reject the work first"); the batched prefetch has to preserve
+// it, not just preserve the final pass/fail outcome.
+func TestFetchAuthorBooks_EditionLookupSkipsFreeFilterRejects(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	profile, err := profileRepo.GetByID(ctx, models.DefaultMetadataProfileID)
+	if err != nil || profile == nil {
+		t.Fatalf("GetByID(default profile) failed: %v", err)
+	}
+	profile.MinPages = 200
+	profile.AllowedLanguages = "eng"
+	if err := profileRepo.Update(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	author := &models.Author{
+		ForeignID: "OL984A", Name: "Free Filter Author", SortName: "Author, Free Filter",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	works := []models.Book{
+		{ForeignID: "", Title: "", SortTitle: "", Language: "eng", // junk: empty title
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary"},
+		{ForeignID: "OL986W", Title: "Roman de Test", SortTitle: "roman de test", Language: "fre", // wrong language
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary"},
+		{ForeignID: "OL987W", Title: "Real Candidate", SortTitle: "real candidate", Language: "eng",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary"},
+	}
+	editions := map[string][]models.Edition{
+		"OL987W": {{ForeignID: "OLED987", NumPages: intPtr(300)}},
+	}
+	provider := &stubMetaProvider{works: works, editionsByBook: editions}
+	agg := metadata.NewAggregator(provider)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	if len(provider.editionCalls) != 1 || provider.editionCalls[0] != "OL987W" {
+		t.Errorf("expected exactly one edition lookup for the real candidate (OL987W), got %v", provider.editionCalls)
+	}
+
+	got, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTitle := make(map[string]bool, len(got))
+	for _, b := range got {
+		byTitle[b.Title] = true
+	}
+	if !byTitle["Real Candidate"] {
+		t.Error("Real Candidate should have been created (meets the page-count floor), but was skipped")
+	}
+	if byTitle["Roman de Test"] {
+		t.Error("wrong-language work should have been skipped by the language filter, not created")
+	}
+}
+
+// missingISBNTestWorks returns a fixed mix of works exercising
+// SkipMissingISBN: a work with a real ISBN, a work whose only edition has no
+// ISBN, and a work with no edition data at all (also counts as missing).
+func missingISBNTestWorks() ([]models.Book, map[string][]models.Edition) {
+	works := []models.Book{
+		{ForeignID: "OL970W", Title: "Has ISBN Book", SortTitle: "has isbn book", Language: "eng",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary"},
+		{ForeignID: "OL971W", Title: "No ISBN Book", SortTitle: "no isbn book", Language: "eng",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary"},
+		{ForeignID: "OL972W", Title: "No Editions Book", SortTitle: "no editions book", Language: "eng",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary"},
+	}
+	editions := map[string][]models.Edition{
+		"OL970W": {{ForeignID: "OLED970", ISBN13: strPtr("9780000000001")}},
+		"OL971W": {{ForeignID: "OLED971", NumPages: intPtr(300)}}, // has data, but no ISBN
+		// OL972W intentionally absent: provider returns no editions at all.
+	}
+	return works, editions
+}
+
+// TestFetchAuthorBooks_SkipsMissingISBN verifies that once a metadata
+// profile's SkipMissingISBN is enabled, works with no ISBN on any edition
+// are dropped (whether they have other edition data or none at all), while
+// works carrying a real ISBN still come through.
+func TestFetchAuthorBooks_SkipsMissingISBN(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	profile, err := profileRepo.GetByID(ctx, models.DefaultMetadataProfileID)
+	if err != nil || profile == nil {
+		t.Fatalf("GetByID(default profile) failed: %v", err)
+	}
+	profile.SkipMissingISBN = true
+	if err := profileRepo.Update(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	author := &models.Author{
+		ForeignID: "OL982A", Name: "ISBN Author", SortName: "Author, ISBN",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	works, editions := missingISBNTestWorks()
+	agg := metadata.NewAggregator(&stubMetaProvider{works: works, editionsByBook: editions})
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	got, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTitle := make(map[string]bool, len(got))
+	for _, b := range got {
+		byTitle[b.Title] = true
+	}
+
+	for _, junk := range []string{"No ISBN Book", "No Editions Book"} {
+		if byTitle[junk] {
+			t.Errorf("work %q with no ISBN should have been skipped, but was created", junk)
+		}
+	}
+	if !byTitle["Has ISBN Book"] {
+		t.Error("work with a real ISBN should have been created, but was skipped")
+	}
+
+	summary := h.syncSummaries.get(author.ID)
+	if summary == nil {
+		t.Fatal("expected a recorded sync summary, got nil")
+	}
+	if want := 2; summary.SkippedMissingISBN != want {
+		t.Errorf("summary.SkippedMissingISBN = %d, want %d", summary.SkippedMissingISBN, want)
+	}
+	if summary.SkippedTotal() < summary.SkippedMissingISBN {
+		t.Errorf("summary.SkippedTotal() = %d should include SkippedMissingISBN = %d", summary.SkippedTotal(), summary.SkippedMissingISBN)
+	}
+	isbnSampleTitles := make(map[string]bool, len(summary.SkippedMissingISBNSample))
+	for _, b := range summary.SkippedMissingISBNSample {
+		isbnSampleTitles[b.Title] = true
+	}
+	for _, want := range []string{"No ISBN Book", "No Editions Book"} {
+		if !isbnSampleTitles[want] {
+			t.Errorf("expected %q in summary.SkippedMissingISBNSample, got %+v", want, summary.SkippedMissingISBNSample)
+		}
+	}
+}
+
+// TestFetchAuthorBooks_MissingISBNKeptWhenDisabled verifies the inverse of
+// TestFetchAuthorBooks_SkipsMissingISBN: with SkipMissingISBN left at its
+// default (false), works with no ISBN are still cataloged exactly as before
+// this change.
+func TestFetchAuthorBooks_MissingISBNKeptWhenDisabled(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID: "OL983A", Name: "ISBN Author Two", SortName: "Author, ISBN Two",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	works, editions := missingISBNTestWorks()
+	agg := metadata.NewAggregator(&stubMetaProvider{works: works, editionsByBook: editions})
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	got, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(works) {
+		t.Errorf("got %d books, want %d (SkipMissingISBN defaults to false, nothing should be dropped)", len(got), len(works))
+	}
+
+	if summary := h.syncSummaries.get(author.ID); summary != nil && summary.SkippedMissingISBN != 0 {
+		t.Errorf("summary.SkippedMissingISBN = %d, want 0 (filter is opt-in)", summary.SkippedMissingISBN)
+	}
+}
+
+// TestFetchAuthorBooks_SkipMissingISBNExemptsAlreadyTrackedBook verifies
+// that SkipMissingISBN does not stop maintaining a book the user already
+// owns: a work with no ISBN on any edition that is already in the library
+// must keep receiving updates and must not be counted as skipped, even
+// though a fresh candidate with no ISBN would be filtered out (vavallee, PR
+// review — filtering screens works out of discovery, it must not also stop
+// maintaining ones already accepted).
+func TestFetchAuthorBooks_SkipMissingISBNExemptsAlreadyTrackedBook(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	profile, err := profileRepo.GetByID(ctx, models.DefaultMetadataProfileID)
+	if err != nil || profile == nil {
+		t.Fatalf("GetByID(default profile) failed: %v", err)
+	}
+	profile.SkipMissingISBN = true
+	if err := profileRepo.Update(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	author := &models.Author{
+		ForeignID: "OL985A", Name: "ISBN Author Three", SortName: "Author, ISBN Three",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	owned := &models.Book{
+		ForeignID: "OL973W", Title: "Owned No-ISBN Book", SortTitle: "owned no-isbn book",
+		AuthorID: author.ID, Language: "eng", Status: models.BookStatusWanted,
+		MediaType: models.MediaTypeEbook, MetadataProvider: "openlibrary",
+	}
+	if err := bookRepo.Create(ctx, owned); err != nil {
+		t.Fatal(err)
+	}
+
+	works := []models.Book{
+		{ForeignID: "OL973W", Title: "Owned No-ISBN Book", SortTitle: "owned no-isbn book", Language: "eng",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary",
+			AverageRating: 4.2, RatingsCount: 250},
+	}
+	editions := map[string][]models.Edition{
+		"OL973W": {{ForeignID: "OLED973", NumPages: intPtr(300)}}, // has data, but no ISBN
+	}
+	agg := metadata.NewAggregator(&stubMetaProvider{works: works, editionsByBook: editions})
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	updated, err := bookRepo.GetByForeignID(ctx, "OL973W")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated == nil {
+		t.Fatal("already-tracked no-ISBN work was deleted, want it kept")
+	}
+	if updated.RatingsCount != 250 {
+		t.Errorf("RatingsCount = %d, want 250 (already-tracked book should still receive updates)", updated.RatingsCount)
+	}
+
+	if summary := h.syncSummaries.get(author.ID); summary != nil && summary.SkippedMissingISBN != 0 {
+		t.Errorf("summary.SkippedMissingISBN = %d, want 0 (already-tracked book must not be counted as skipped)", summary.SkippedMissingISBN)
 	}
 }
