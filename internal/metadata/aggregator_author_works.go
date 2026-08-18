@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"regexp"
 	"strings"
 
 	"github.com/vavallee/bindery/internal/concurrency"
@@ -119,7 +120,9 @@ func (a *Aggregator) GetAuthorWorksForAuthor(ctx context.Context, author models.
 		}
 	}
 	books = pruneAuthorWorkCompilations(books, compilationTitles)
+	books = pruneAuthorWorkRedundantTitles(books)
 	books = pruneAuthorWorkSubjectOutliers(books)
+	books = pruneAuthorWorkSelfReference(books, author)
 
 	a.enrichMissingAuthorWorkCovers(ctx, books)
 	if supplementsComplete {
@@ -189,6 +192,110 @@ func pruneAuthorWorkCompilations(books []models.Book, compilationTitles map[stri
 	return filtered
 }
 
+// fragmentSuffixRe matches a trailing "part of a whole" marker OpenLibrary
+// sometimes appends to a work's title when it lists one printed volume of a
+// larger work as its own record: "The Silmarillion. 1/?", "... 2/3",
+// "The Way of Kings, Part One" / "... Part Two", "..., Book 1 of 3".
+var fragmentSuffixRe = regexp.MustCompile(`(?i)` +
+	`(?:[,.]\s*|\s+)\(?(?:part|pt\.?|book)\s+(?:one|two|three|four|five|six|seven|eight|nine|ten|i{1,3}|iv|v|vi{0,3}|\d+)(?:\s+of\s+\d+)?\)?\s*$` +
+	`|(?:[,.]\s*|\s+)\d+\s*/\s*[\d?]+\s*$`)
+
+// slashJoinedGroupRe matches a trailing parenthetical listing two or more
+// "/"-separated titles, e.g. "Novels (Fellowship of the Ring / Hobbit)" or
+// "Forever (Heart's Victory / Rules of the Game)" — an OpenLibrary omnibus
+// record naming its own contents rather than a title in its own right.
+var slashJoinedGroupRe = regexp.MustCompile(`\(([^()]+/[^()]+)\)\s*$`)
+
+// leadingArticleRe strips a leading "The"/"A"/"An" for the sole purpose of
+// matching a fragment or omnibus-segment title against a standalone title
+// elsewhere in the same author's list ("Hobbit" segment vs. "The Hobbit"
+// core entry). Not used for the general merge key: two distinct books can
+// differ by exactly a leading article ("A Study in Scarlet"), so folding
+// articles together globally would risk a false merge.
+var leadingArticleRe = regexp.MustCompile(`(?i)^(?:the|an?)\s+`)
+
+func articleInsensitiveTitleKey(title string) string {
+	key := authorWorkMergeKey(title)
+	return leadingArticleRe.ReplaceAllString(key, "")
+}
+
+// pruneAuthorWorkRedundantTitles drops two shapes of duplicate noise that
+// survive authorWorkMergeKey because the duplicate never shares an exact
+// normalized title with the work it duplicates:
+//
+//   - Fragment splits: a whole work is also present in the list under its
+//     own title, and this record is a "part N of M" split of that same
+//     work (see fragmentSuffixRe).
+//   - Slash-joined omnibus records: every "/"-segment inside a trailing
+//     parenthetical already matches a standalone title elsewhere in the
+//     list (see slashJoinedGroupRe), so the joined record adds nothing.
+//
+// Both checks require the whole/segment titles to genuinely be present
+// elsewhere in the same list, so a trilogy with no standalone omnibus or
+// whole-work edition keeps its per-volume entries untouched.
+func pruneAuthorWorkRedundantTitles(books []models.Book) []models.Book {
+	if len(books) < 2 {
+		return books
+	}
+
+	known := make(map[string]struct{}, len(books))
+	for _, b := range books {
+		if k := articleInsensitiveTitleKey(b.Title); k != "" {
+			known[k] = struct{}{}
+		}
+	}
+
+	filtered := books[:0]
+	for _, b := range books {
+		if loc := fragmentSuffixRe.FindStringIndex(b.Title); loc != nil {
+			base := articleInsensitiveTitleKey(b.Title[:loc[0]])
+			if _, ok := known[base]; ok && base != "" {
+				continue
+			}
+		}
+		if segments, ok := slashJoinedSegments(b.Title); ok {
+			if allSegmentsKnown(segments, known) {
+				continue
+			}
+		}
+		filtered = append(filtered, b)
+	}
+	return filtered
+}
+
+func slashJoinedSegments(title string) ([]string, bool) {
+	m := slashJoinedGroupRe.FindStringSubmatch(title)
+	if m == nil {
+		return nil, false
+	}
+	parts := strings.Split(m[1], "/")
+	if len(parts) < 2 {
+		return nil, false
+	}
+	segments := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			return nil, false
+		}
+		segments = append(segments, p)
+	}
+	return segments, true
+}
+
+func allSegmentsKnown(segments []string, known map[string]struct{}) bool {
+	for _, seg := range segments {
+		key := articleInsensitiveTitleKey(seg)
+		if key == "" {
+			return false
+		}
+		if _, ok := known[key]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // pruneAuthorWorkSubjectOutliers drops obvious same-name-author collisions from
 // primary-provider author work lists. OpenLibrary occasionally groups unrelated
 // people who share a name; when a catalog is overwhelmingly fiction/juvenile
@@ -206,6 +313,70 @@ func pruneAuthorWorkSubjectOutliers(books []models.Book) []models.Book {
 		filtered = append(filtered, b)
 	}
 	return filtered
+}
+
+// pruneAuthorWorkSelfReference drops works whose subjects list credits them
+// as being *about* the author rather than *by* them — a companion guide, art
+// book, or biography that OpenLibrary nonetheless links to the author's
+// works list. OpenLibrary carries no role field distinguishing "author" from
+// "subject" on a work record (verified empirically: a companion guide's
+// authors array is structurally identical to a real novel's), so the only
+// provider-native signal available is that these secondary works are
+// commonly subject-tagged with the author's own Library-of-Congress name
+// authority string, e.g. "Tolkien, j, r. r. (john ronald ruel), 1892-1973".
+//
+// Deliberately conservative to avoid false-positiving on a legitimately
+// self-titled work (e.g. a memoir): requires both the "Surname, " prefix
+// match against the author's own catalogued surname AND a four-digit year
+// elsewhere in the same subject string, since LoC personal-name authority
+// subjects for a deceased or dated author almost always carry birth/death
+// years in that shape, while an unrelated subject starting with the same
+// surname token essentially never does.
+func pruneAuthorWorkSelfReference(books []models.Book, author models.Author) []models.Book {
+	surname := authorSurnameForSelfReferenceCheck(author.SortName)
+	if surname == "" {
+		return books
+	}
+	filtered := books[:0]
+	for _, b := range books {
+		if isSelfReferentialSubjectWork(b, surname) {
+			slog.Debug("pruning work whose subjects describe the author rather than crediting their own writing",
+				"title", b.Title, "foreignId", b.ForeignID, "author", author.Name)
+			continue
+		}
+		filtered = append(filtered, b)
+	}
+	return filtered
+}
+
+// authorSurnameForSelfReferenceCheck extracts the surname from an
+// OpenLibrary-style "Surname, Given Names" sort name. Returns "" (disabling
+// the check) for anything shorter than 3 characters or with no comma, since
+// a short or malformed surname token risks matching unrelated subjects.
+func authorSurnameForSelfReferenceCheck(sortName string) string {
+	idx := strings.Index(sortName, ",")
+	if idx < 0 {
+		return ""
+	}
+	surname := strings.ToLower(strings.TrimSpace(sortName[:idx]))
+	if len(surname) < 3 {
+		return ""
+	}
+	return surname
+}
+
+// yearInSubjectRe matches a bare four-digit year, the shape LoC personal-name
+// authority subjects use for birth/death dates (e.g. "1892-1973", "1892-").
+var yearInSubjectRe = regexp.MustCompile(`\b\d{4}\b`)
+
+func isSelfReferentialSubjectWork(book models.Book, surname string) bool {
+	for _, genre := range book.Genres {
+		g := strings.ToLower(strings.TrimSpace(genre))
+		if strings.HasPrefix(g, surname+",") && yearInSubjectRe.MatchString(g) {
+			return true
+		}
+	}
+	return false
 }
 
 func fictionCatalogSignalCount(books []models.Book) int {
@@ -325,7 +496,12 @@ func mergeAuthorWorks(primary, supplemental []models.Book) []models.Book {
 }
 
 func authorWorkMergeKey(title string) string {
-	key := indexer.NormalizeTitleForDedup(title)
+	// CanonicalDedupKey (vs. plain NormalizeTitleForDedup) also strips
+	// bracket suffixes, so a primary-provider title like "The Book of Lost
+	// Tales [1/2]" now matches a bracket-free supplemental/compilation
+	// title for the same work instead of missing the merge over the
+	// suffix alone.
+	key := indexer.CanonicalDedupKey(title)
 	if key != "" {
 		return key
 	}

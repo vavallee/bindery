@@ -552,6 +552,18 @@ var olNoiseSubjects = []string{
 	"film adaptations",
 	"television adaptations",
 	"screenplays",
+	// "history and criticism" is the LoC subject phrase OL attaches to
+	// secondary works (companion guides, art books, critical studies) about
+	// an author rather than by them — distinct from "literary criticism" /
+	// "criticism and interpretation" above, which use different word order
+	// and were confirmed (via a real author's catalogue) not to substring-match
+	// it.
+	"history and criticism",
+	// "authors, biography" is OL's subject tag for a biography written about
+	// an author. Deliberately not bare "biography": that substring also
+	// appears inside "autobiography", which is legitimately self-authored
+	// and must not be filtered.
+	"authors, biography",
 }
 
 // olNoiseTitleFragments are case-insensitive substrings in a work title that

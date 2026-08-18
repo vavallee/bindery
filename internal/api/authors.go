@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -35,6 +36,121 @@ var (
 )
 
 const authorAutoSearchConcurrency = 4
+
+// partBookTitleRe matches OpenLibrary work titles that describe a box set,
+// omnibus, signed-copy carton, or slash-separated multi-title anthology
+// rather than a single book. These "works" are real OL records, so they pass
+// every other filter (title is non-empty, language is set, media type
+// matches) and land in the wanted list indistinguishable from a real book,
+// which is what the (until now unused) SkipPartBooks profile setting always
+// implied it screened out.
+//
+// Ported from the interim external workaround (denoise_author.py) once it
+// was confirmed empirically, over several authors, that these patterns catch
+// the box-set noise without false-positiving on legitimate titles. Kept as a
+// title-text heuristic rather than an OL work-type field because OpenLibrary
+// does not reliably distinguish "part"/omnibus works from regular ones in its
+// API response.
+// omnibus is deliberately NOT in this alternation — see hasNonLeadingOmnibus,
+// which applies it with an additional leading-word exclusion the rest of
+// these keyword checks don't need.
+//
+// The two slash branches require actual whitespace around every "/" ("\s+"
+// either side, not "\s*"). Real anthology naming is always spaced ("Title A
+// / Title B"); an unspaced slash is far more often a title using "/" as its
+// own punctuation (a two-character-choice title like "He/She/It", or
+// "Rock/Paper/Scissors") than a bundle. Confirmed against real
+// maintainer-reported false positives (vavallee, PR #1968 review).
+var partBookTitleRe = regexp.MustCompile(`(?i:` +
+	`\bbox\s*set\b` +
+	`|\bboxed\s*set\b` +
+	`|\(\s*boxed\s*\)` + // parenthesized bare "(Boxed)" — real OL titles drop "set" entirely, e.g. "4 Vol. (Boxed)".
+	// Deliberately NOT a bare \bboxed\b: that would also match "boxed" used
+	// as an ordinary word in a real title, which the parenthesized form
+	// this was ported from never does.
+	`|\bcollection\s*set\b` +
+	`|\bcollection\s+of\s+\d` +
+	`|\bcarton\s+of\s+\d+\s+signed\s+cop` +
+	`|\bbooks?\s+\d+\s*-\s*\d+\b` + // "Books 1-3". Known low-risk residual: could also
+	// match a real single volume a publisher numbered like "Book 1-2" — not observed,
+	// and the setting is opt-in, but noted per review rather than left a surprise.
+	`|\b\d+\s*(?:books?|vol(?:ume)?s?)\s+set\b` + // "3 Books Set", "5 Volumes Set"
+	`)` +
+	`|(?:[^/]+\s+/\s+){2,}[^/]+` + // "Title A / Title B / Title C" multi-title anthology naming
+	`|\([^()]+\s+/\s+[^()]+\)\s*$`) // "Prefix (Title A / Title B)" — 2-title anthology naming inside parens
+
+// bracketContentRe extracts the content of each bracketed span in a title,
+// for hasJoinedBundleBracket.
+var bracketContentRe = regexp.MustCompile(`\[([^\]]*)\]`)
+
+// hasJoinedBundleBracket reports whether title has a bracketed annotation
+// naming a bundle, e.g. "The Hobbit & The Lord of the Rings [collection/set]".
+// Requires the bracket content to contain BOTH a "/" AND one of
+// collection/set/boxed — not just any one of those words alone, which a
+// real single book's bracketed edition/provenance note could plausibly also
+// contain for an unrelated reason (e.g. "[Author's Personal Collection]",
+// "[Set in Wartime London]"). The joined-pair shape ("X/Y") is what was
+// actually observed on real OpenLibrary bundle records; a lone keyword
+// wasn't.
+func hasJoinedBundleBracket(title string) bool {
+	for _, m := range bracketContentRe.FindAllStringSubmatch(title, -1) {
+		content := strings.ToLower(m[1])
+		if !strings.Contains(content, "/") {
+			continue
+		}
+		if strings.Contains(content, "collection") || strings.Contains(content, "set") || strings.Contains(content, "boxed") {
+			return true
+		}
+	}
+	return false
+}
+
+// omnibusWordRe and leadingArticleForOmnibusCheckRe back hasNonLeadingOmnibus.
+var omnibusWordRe = regexp.MustCompile(`(?i)\bomnibus\b`)
+var leadingArticleForOmnibusCheckRe = regexp.MustCompile(`(?i)^(?:the|an?)\s+`)
+
+// hasNonLeadingOmnibus reports whether "omnibus" appears in title as a
+// description of a bundle rather than as the title's own subject. Real
+// compilation titles put "omnibus" after the name of what's bundled ("The
+// Dune Omnibus", "The Silmarillion Omnibus"); a single real book can also use
+// "Omnibus" as its own proper-noun title ("The Omnibus of Crime", a genuine
+// Dorothy Sayers volume) or as a publisher's brand name leading the title
+// ("Omnibus Press Presents..."). Both shapes put "omnibus" at (or immediately
+// after only a leading article before) the very start of the title, which
+// this excludes. Confirmed against real maintainer-reported false positives
+// (vavallee, PR #1968 review).
+//
+// Known residual gap, documented rather than chased further: this assumes
+// real non-bundle usage always leads and real bundle-descriptor usage always
+// trails. Two real books break that — "The New Turing Omnibus" and "Thrown
+// under the omnibus" both use "omnibus" metaphorically/idiomatically in a
+// trailing position, so they're still wrongly caught. The real distinguishing
+// signal (does this book actually bundle other separately-catalogued works)
+// isn't recoverable from title text alone for a bare keyword the way it is
+// for the slash-joined case (pruneAuthorWorkRedundantTitles can check named
+// segments against known titles). Hardcover's IsCompilation classification
+// gets both right when configured; left for the maintainer to weigh in on.
+func hasNonLeadingOmnibus(title string) bool {
+	if !omnibusWordRe.MatchString(title) {
+		return false
+	}
+	stripped := leadingArticleForOmnibusCheckRe.ReplaceAllString(strings.TrimSpace(title), "")
+	return !strings.HasPrefix(strings.ToLower(stripped), "omnibus")
+}
+
+// isPartBookTitle reports whether title looks like a box set, omnibus, or
+// carton rather than a single book. See partBookTitleRe and
+// hasNonLeadingOmnibus.
+//
+// Known residual false positive, not fixed here: a genuine single-volume
+// edition bundling several distinct classic works under one title, spaced
+// and 3+ segments, e.g. the Penguin Nietzsche edition "The Anti-Christ / Ecce
+// Homo / Twilight of the Idols" — indistinguishable by title text alone from
+// a real anthology bundle, and the maintainer's own suggested fix (spaces +
+// 3+ segments) does not clear it either, since it already satisfies both.
+func isPartBookTitle(title string) bool {
+	return partBookTitleRe.MatchString(title) || hasNonLeadingOmnibus(title) || hasJoinedBundleBracket(title)
+}
 
 type AuthorHandler struct {
 	authors                     *db.AuthorRepo
@@ -1641,6 +1757,7 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// Resolve the author's metadata profile (falling back to the seeded
 	// default) and parse its allowed_languages CSV. Nil means "no filter".
 	allowedLangs, unknownFail := h.resolveAllowedLanguages(ctx, author)
+	skipPartBooks := h.resolveSkipPartBooks(ctx, author)
 	skipMissingDate := h.resolveSkipMissingDate(ctx, author)
 	minPopularity := h.resolveMinPopularity(ctx, author)
 	minPages, skipMissingISBN := h.resolveEditionFilters(ctx, author)
@@ -1840,7 +1957,7 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// the author page's notice explains works the user did NOT expect to lose,
 	// and a book they excluded by hand is not one of them.
 	var added, skippedLang, skippedJunk, skippedMediaType, skippedNotAccepted, skippedExcluded int
-	var skippedMissingDate, skippedMinPopularity, skippedMinPages, skippedMissingISBN int
+	var skippedPartBooks, skippedMissingDate, skippedMinPopularity, skippedMinPages, skippedMissingISBN int
 	// Names of the first few language-rejected works, reported to the user
 	// alongside the count (#1889): "65 books skipped" is alarming, but it is
 	// the titles and their language codes that tell them whether the profile
@@ -1849,7 +1966,8 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// The first few page-count- and ISBN-rejected works, same reasoning and
 	// cap as skippedLangSample (#1889 established the pattern; requested
 	// again for these filters specifically in PR review, vavallee).
-	var skippedMissingDateSample, skippedMinPopularitySample []models.AuthorSyncSkippedBook
+	var skippedPartBooksSample, skippedMissingDateSample []models.AuthorSyncSkippedBook
+	var skippedMinPopularitySample []models.AuthorSyncSkippedBook
 	var skippedMinPagesSample, skippedMissingISBNSample []models.AuthorSyncSkippedBook
 	// candidates accumulates every work that survives the free (in-memory)
 	// filters below and would otherwise reach the MinPages/SkipMissingISBN
@@ -1967,6 +2085,19 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		// maintaining ones already accepted.
 		existing, _ := h.books.GetByForeignID(ctx, b.ForeignID)
 
+		// Filter box-set/omnibus/carton "works" when the author's metadata
+		// profile has SkipPartBooks enabled. These are real OL records for a
+		// bundle of other books, not a book of their own, and previously
+		// passed every filter above unchanged (see partBookTitleRe).
+		if existing == nil && skipPartBooks && isPartBookTitle(b.Title) {
+			skippedPartBooks++
+			if len(skippedPartBooksSample) < authorSyncSkippedSampleLimit {
+				skippedPartBooksSample = append(skippedPartBooksSample, models.AuthorSyncSkippedBook{Title: b.Title})
+			}
+			slog.Debug("skipping part-book/box-set title", "title", b.Title, "foreignId", b.ForeignID)
+			continue
+		}
+
 		// Filter works with no release date when the author's metadata profile
 		// has SkipMissingDate enabled. ReleaseDate is already merged in from
 		// the provider's work data by this point (aggregator_author_works.go),
@@ -2071,8 +2202,8 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 
 		// Update ratings + genres on existing books, then skip further
 		// processing (we don't want to overwrite user state like status).
-		// existing was resolved above, before the edition-gated filters, so
-		// an owned book that trips one of them still reaches this branch.
+		// existing was resolved above, before the profile filters, so an
+		// owned book that trips one of them still reaches this branch.
 		if existing != nil {
 			changed := false
 			// GetByForeignID matches globally (foreign_id is UNIQUE across all
@@ -2275,6 +2406,8 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		SkippedJunk:                skippedJunk,
 		SkippedMediaType:           skippedMediaType,
 		SkippedNotAccepted:         skippedNotAccepted,
+		SkippedPartBooks:           skippedPartBooks,
+		SkippedPartBooksSample:     skippedPartBooksSample,
 		SkippedMissingDate:         skippedMissingDate,
 		SkippedMissingDateSample:   skippedMissingDateSample,
 		SkippedMinPopularity:       skippedMinPopularity,
@@ -2297,6 +2430,7 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		"author", author.Name, "added", added,
 		"skipped_language", skippedLang, "skipped_junk", skippedJunk, "skipped_media_type", skippedMediaType,
 		"skipped_not_accepted", skippedNotAccepted, "skipped_excluded", skippedExcluded,
+		"skipped_part_books", skippedPartBooks,
 		"skipped_missing_date", skippedMissingDate, "skipped_min_popularity", skippedMinPopularity,
 		"skipped_min_pages", skippedMinPages, "skipped_missing_isbn", skippedMissingISBN,
 		"total", len(books),
@@ -2305,8 +2439,8 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// Warn. The discovery-policy skip is not: the user configured it, the run
 	// already said so once at Info above, and a "Refresh all authors" pass
 	// over an ABS-imported library would otherwise emit one Warn per author.
-	if skippedLang+skippedJunk+skippedMediaType+skippedMissingDate+skippedMinPopularity+
-		skippedMinPages+skippedMissingISBN > 0 {
+	if skippedLang+skippedJunk+skippedMediaType+skippedPartBooks+skippedMissingDate+
+		skippedMinPopularity+skippedMinPages+skippedMissingISBN > 0 {
 		slog.Warn("author books synced", logArgs...)
 		return
 	}
@@ -3345,4 +3479,20 @@ func passesMinPagesFilter(editions []models.Edition, minPages int) bool {
 		}
 	}
 	return !anyReported
+}
+
+// resolveSkipPartBooks returns the author's effective metadata profile's
+// SkipPartBooks setting. Defaults to false (matches the setting's prior
+// no-op behavior) on any lookup failure, so an unresolvable profile never
+// turns into unexpected catalogue loss.
+func (h *AuthorHandler) resolveSkipPartBooks(ctx context.Context, author *models.Author) bool {
+	id := models.DefaultMetadataProfileID
+	if author.MetadataProfileID != nil {
+		id = *author.MetadataProfileID
+	}
+	p, err := h.profiles.GetByID(ctx, id)
+	if err != nil || p == nil {
+		return false
+	}
+	return p.SkipPartBooks
 }

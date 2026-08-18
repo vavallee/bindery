@@ -7299,3 +7299,317 @@ func TestFetchAuthorBooks_SkipMissingISBNExemptsAlreadyTrackedBook(t *testing.T)
 		t.Errorf("summary.SkippedMissingISBN = %d, want 0 (already-tracked book must not be counted as skipped)", summary.SkippedMissingISBN)
 	}
 }
+
+// TestIsPartBookTitle is a fast, DB-free check of partBookTitleRe against
+// every noise pattern denoise_author.py was built to catch (confirmed
+// against real OpenLibrary titles pulled during development) plus the
+// false-positive traps ("Catch 22", "Fahrenheit 451") that motivated
+// excluding a bare trailing number from the pattern set.
+func TestIsPartBookTitle(t *testing.T) {
+	cases := []struct {
+		title string
+		want  bool
+	}{
+		{"Expanse Hardcover Boxed Set : Leviathan Wakes, Caliban's War, Abaddon's Gate", true},
+		{"Expanse Series, Collection Set of 3 Books. Leviathan Wakes, Caliban's War, Abaddon's Gate", true},
+		{"Leviathan Falls - Carton of 10 Signed Copies", true},
+		{"Memory's Legion - Carton of 10 Signed Copies", true},
+		{"The Silmarillion Omnibus", true},
+		{"Books 1-3", true},
+		{"The Martian / Artemis / Project Hail Mary", true},
+		{"J.R.R. Tolkien-4 Vol. (Boxed)", true},
+		{"Skyward Series 3 Books Set", true},
+		{"The Hobbit & The Lord of the Rings [collection/set]", true},
+		{"Novels (Fellowship of the Ring / Hobbit)", true},
+		{"Forever (Heart's Victory / Rules of the Game)", true},
+		// Real maintainer-reported false positives (vavallee, PR #1968
+		// review) — all five are genuine single books the pre-fix regex
+		// wrongly caught. "The Omnibus of Crime" and "Omnibus Press
+		// Presents..." use "Omnibus" as their own subject/imprint, not to
+		// describe a bundle (see hasNonLeadingOmnibus). "He/She/It" and
+		// "Rock/Paper/Scissors" use "/" as the title's own punctuation with
+		// no surrounding spaces, unlike real anthology naming.
+		{"The Omnibus of Crime", false},
+		{"Omnibus Press Presents...", false},
+		{"He/She/It", false},
+		{"Rock/Paper/Scissors", false},
+		// Narrowed on review: a bare "boxed" or a single keyword anywhere
+		// inside brackets is broader than the real patterns that motivated
+		// them ("(Boxed)" in parens; "[collection/set]" as a joined pair).
+		// "Boxed In" and the "[Set in ...]" case genuinely false-positived
+		// under the pre-narrowing regex (confirmed); "[51 stories]" was
+		// already safe and is kept as a sanity check on bracket notation
+		// that doesn't contain any of the keywords at all.
+		{"Boxed In", false},
+		{"Collected Short Stories [51 stories]", false},
+		{"A Novel [Set in Wartime London]", false},
+		// Known residual, not fixed: a genuine single-volume edition
+		// bundling several distinct classic works, spaced and 3+ segments —
+		// indistinguishable by title text alone from a real anthology
+		// bundle. See isPartBookTitle's doc comment.
+		{"The Anti-Christ / Ecce Homo / Twilight of the Idols", true},
+		// Known residual, not fixed: hasNonLeadingOmnibus assumes real
+		// non-bundle usage of "omnibus" always leads the title ("The Omnibus
+		// of Crime") and real bundle-descriptor usage always trails it ("The
+		// Dune Omnibus"). Both real books below break that assumption —
+		// "omnibus" trails but is used metaphorically/idiomatically, not to
+		// describe a bundle of separately-catalogued works — so they're
+		// wrongly caught. Left as a documented gap for the maintainer to
+		// weigh in on (PR #1968) rather than chased further: the real
+		// distinguishing signal ("does this book actually bundle other
+		// separately-catalogued works") isn't recoverable from title text
+		// alone for a bare keyword the way it is for the slash-joined case
+		// (pruneAuthorWorkRedundantTitles can check named segments against
+		// known titles; a bare word names nothing to check). Hardcover's
+		// IsCompilation classification (pruneAuthorWorkCompilations) gets
+		// both of these right when configured; this gap only bites
+		// OpenLibrary-only installs.
+		{"The New Turing Omnibus", true},   // A.K. Dewdney's real standalone CS survey book.
+		{"Thrown under the omnibus", true}, // P.J. O'Rourke's real standalone essay collection; "omnibus" = bus pun.
+		{"Leviathan Wakes", false},
+		{"Abaddon's Gate", false},
+		{"The Butcher of Anderson Station", false},
+		{"Caliban's War", false},
+		{"Catch 22", false},
+		{"Fahrenheit 451", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := isPartBookTitle(c.title); got != c.want {
+			t.Errorf("isPartBookTitle(%q) = %v, want %v", c.title, got, c.want)
+		}
+	}
+}
+
+// partBookTestWorks returns a fixed mix of box-set/omnibus/carton titles
+// (which SkipPartBooks should drop) alongside real single-book titles that
+// happen to share substrings with the noise (a bare "Abaddon's Gate" next to
+// a box set whose title contains "Abaddon's Gate" as a substring) so a
+// regression that over-matches real titles would be caught, not just one
+// that under-matches junk.
+func partBookTestWorks() []models.Book {
+	titles := []string{
+		"Expanse Hardcover Boxed Set : Leviathan Wakes, Caliban's War, Abaddon's Gate",
+		"Expanse Series, Collection Set of 3 Books. Leviathan Wakes, Caliban's War, Abaddon's Gate",
+		"Leviathan Falls - Carton of 10 Signed Copies",
+		"The Martian / Artemis / Project Hail Mary",
+		"Leviathan Wakes",
+		"Abaddon's Gate",
+		"Catch 22",
+	}
+	works := make([]models.Book, len(titles))
+	for i, title := range titles {
+		works[i] = models.Book{
+			ForeignID: fmt.Sprintf("OL9%02dW", i), Title: title, SortTitle: strings.ToLower(title),
+			Language: "eng", MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted,
+			MetadataProvider: "openlibrary",
+		}
+	}
+	return works
+}
+
+// TestFetchAuthorBooks_SkipsPartBooks verifies that once a metadata profile's
+// SkipPartBooks is enabled, box-set/omnibus/carton/anthology "works" are
+// dropped from author sync (matching skipPartBooks's name for the first
+// time — see partBookTitleRe), while real single-book titles that merely
+// share a substring with the junk (e.g. "Abaddon's Gate" appearing inside a
+// box-set title) still come through, and titles that resemble the pattern
+// only by coincidence (e.g. "Catch 22") are unaffected.
+func TestFetchAuthorBooks_SkipsPartBooks(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	profile, err := profileRepo.GetByID(ctx, models.DefaultMetadataProfileID)
+	if err != nil || profile == nil {
+		t.Fatalf("GetByID(default profile) failed: %v", err)
+	}
+	profile.SkipPartBooks = true
+	if err := profileRepo.Update(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	author := &models.Author{
+		ForeignID: "OL910A", Name: "Part-Book Author", SortName: "Author, Part-Book",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	agg := metadata.NewAggregator(&stubMetaProvider{works: partBookTestWorks()})
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	got, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTitle := make(map[string]bool, len(got))
+	for _, b := range got {
+		byTitle[b.Title] = true
+	}
+
+	for _, junk := range []string{
+		"Expanse Hardcover Boxed Set : Leviathan Wakes, Caliban's War, Abaddon's Gate",
+		"Expanse Series, Collection Set of 3 Books. Leviathan Wakes, Caliban's War, Abaddon's Gate",
+		"Leviathan Falls - Carton of 10 Signed Copies",
+		"The Martian / Artemis / Project Hail Mary",
+	} {
+		if byTitle[junk] {
+			t.Errorf("part-book title %q should have been skipped, but was created", junk)
+		}
+	}
+	for _, real := range []string{"Leviathan Wakes", "Abaddon's Gate", "Catch 22"} {
+		if !byTitle[real] {
+			t.Errorf("real single-book title %q should have been created, but was skipped", real)
+		}
+	}
+
+	summary := h.syncSummaries.get(author.ID)
+	if summary == nil {
+		t.Fatal("expected a recorded sync summary, got nil")
+	}
+	if want := 4; summary.SkippedPartBooks != want {
+		t.Errorf("summary.SkippedPartBooks = %d, want %d", summary.SkippedPartBooks, want)
+	}
+	if summary.SkippedTotal() < summary.SkippedPartBooks {
+		t.Errorf("summary.SkippedTotal() = %d should include SkippedPartBooks = %d", summary.SkippedTotal(), summary.SkippedPartBooks)
+	}
+	sampleTitles := make(map[string]bool, len(summary.SkippedPartBooksSample))
+	for _, b := range summary.SkippedPartBooksSample {
+		sampleTitles[b.Title] = true
+	}
+	for _, junk := range []string{
+		"Expanse Hardcover Boxed Set : Leviathan Wakes, Caliban's War, Abaddon's Gate",
+		"Expanse Series, Collection Set of 3 Books. Leviathan Wakes, Caliban's War, Abaddon's Gate",
+		"Leviathan Falls - Carton of 10 Signed Copies",
+		"The Martian / Artemis / Project Hail Mary",
+	} {
+		if !sampleTitles[junk] {
+			t.Errorf("expected %q in summary.SkippedPartBooksSample, got %+v", junk, summary.SkippedPartBooksSample)
+		}
+	}
+}
+
+// TestFetchAuthorBooks_PartBooksKeptWhenSkipDisabled verifies the inverse of
+// TestFetchAuthorBooks_SkipsPartBooks: with SkipPartBooks left at its default
+// (false), box-set/omnibus titles are still cataloged exactly as before this
+// change — the filter is opt-in, not a behavior change for profiles that
+// never touch the setting.
+func TestFetchAuthorBooks_PartBooksKeptWhenSkipDisabled(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID: "OL911A", Name: "Part-Book Author Two", SortName: "Author, Part-Book Two",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	agg := metadata.NewAggregator(&stubMetaProvider{works: partBookTestWorks()})
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	got, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(partBookTestWorks()) {
+		t.Errorf("got %d books, want %d (SkipPartBooks defaults to false, nothing should be dropped)",
+			len(got), len(partBookTestWorks()))
+	}
+
+	if summary := h.syncSummaries.get(author.ID); summary != nil && summary.SkippedPartBooks != 0 {
+		t.Errorf("summary.SkippedPartBooks = %d, want 0 (filter is opt-in)", summary.SkippedPartBooks)
+	}
+}
+
+// TestFetchAuthorBooks_SkipPartBooksExemptsAlreadyTrackedBook verifies that
+// SkipPartBooks does not stop maintaining a book the user already owns: a
+// part-book-titled work that is already in the library must keep receiving
+// updates (ratings here) and must not be counted as skipped, even though a
+// fresh candidate with the same title would be filtered out (vavallee, PR
+// review — filtering screens works out of discovery, it must not also stop
+// maintaining ones already accepted).
+func TestFetchAuthorBooks_SkipPartBooksExemptsAlreadyTrackedBook(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	profile, err := profileRepo.GetByID(ctx, models.DefaultMetadataProfileID)
+	if err != nil || profile == nil {
+		t.Fatalf("GetByID(default profile) failed: %v", err)
+	}
+	profile.SkipPartBooks = true
+	if err := profileRepo.Update(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	author := &models.Author{
+		ForeignID: "OL912A", Name: "Part-Book Author Three", SortName: "Author, Part-Book Three",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	owned := &models.Book{
+		ForeignID: "OL913W", Title: "Leviathan Falls - Carton of 10 Signed Copies", SortTitle: "leviathan falls - carton of 10 signed copies",
+		AuthorID: author.ID, Language: "eng", Status: models.BookStatusWanted,
+		MediaType: models.MediaTypeEbook, MetadataProvider: "openlibrary",
+	}
+	if err := bookRepo.Create(ctx, owned); err != nil {
+		t.Fatal(err)
+	}
+
+	agg := metadata.NewAggregator(&stubMetaProvider{works: []models.Book{
+		{ForeignID: "OL913W", Title: "Leviathan Falls - Carton of 10 Signed Copies", SortTitle: "leviathan falls - carton of 10 signed copies",
+			Language: "eng", MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, MetadataProvider: "openlibrary",
+			AverageRating: 4.2, RatingsCount: 250},
+	}})
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	updated, err := bookRepo.GetByForeignID(ctx, "OL913W")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated == nil {
+		t.Fatal("already-tracked part-book title was deleted, want it kept")
+	}
+	if updated.RatingsCount != 250 {
+		t.Errorf("RatingsCount = %d, want 250 (already-tracked book should still receive updates)", updated.RatingsCount)
+	}
+
+	if summary := h.syncSummaries.get(author.ID); summary != nil && summary.SkippedPartBooks != 0 {
+		t.Errorf("summary.SkippedPartBooks = %d, want 0 (already-tracked book must not be counted as skipped)", summary.SkippedPartBooks)
+	}
+}
