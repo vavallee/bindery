@@ -134,8 +134,8 @@ func TestPrimaryFlipToHardcover_DoesNotDuplicateOpenLibraryLibrary(t *testing.T)
 	}
 }
 
-// TestRelinkedAuthorDedupsByTitleExceptPunctuationDivergence covers the case
-// that IS exposed to title dedup, and documents the limit of that protection.
+// TestRelinkedAuthorDedupsByTitle covers the case that IS exposed to title
+// dedup, including the punctuation divergence between the two providers.
 //
 // A global primary flip leaves author.ForeignID alone. The per-author relink
 // endpoint (POST /api/v1/author/{id}/relink-upstream) rewrites it, so the next
@@ -143,15 +143,12 @@ func TestPrimaryFlipToHardcover_DoesNotDuplicateOpenLibraryLibrary(t *testing.T)
 // id that matches no existing row by foreign ID. Reconciliation then rests
 // entirely on indexer.CanonicalDedupKey.
 //
-// That mostly works — identical titles collapse onto the existing row and are
-// upgraded in place. It fails where the two providers punctuate differently,
-// because CanonicalDedupKey folds neither apostrophes nor a subtitle expressed
-// without its colon. Tracked as #2042; the normalizer is shared by every
-// importer, so hardening it is out of scope for a change to a settings enum.
-//
-// This test asserts the CURRENT behaviour, including the defect, so that a fix
-// arrives with a failing test to update rather than silently.
-func TestRelinkedAuthorDedupsByTitleExceptPunctuationDivergence(t *testing.T) {
+// This test originally asserted that the two punctuation-divergent pairs
+// duplicated, because CanonicalDedupKey folded neither apostrophes nor a
+// subtitle expressed without its colon (#2042). That fix has since landed in
+// #2043, so all three pairs now collapse onto the seeded row and the relink
+// path no longer needs a caveat about punctuation.
+func TestRelinkedAuthorDedupsByTitle(t *testing.T) {
 	database, err := db.OpenMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -164,11 +161,11 @@ func TestRelinkedAuthorDedupsByTitleExceptPunctuationDivergence(t *testing.T) {
 	ctx := context.Background()
 
 	seeds := []olSeed{
-		// Identical punctuation on both sides — must dedup.
+		// Identical punctuation on both sides.
 		{"OL911W", "Raise the Titanic"},
-		// Hardcover drops the apostrophe — will NOT dedup (#2042).
+		// Hardcover drops the apostrophe; folded since #2043.
 		{"OL912W", "Poseidon's Arrow"},
-		// Hardcover drops the subtitle colon — will NOT dedup (#2042).
+		// Hardcover drops the subtitle colon; folded since #2043.
 		{"OL913W", "Journey of the Pharaohs: Numa Files #17"},
 	}
 	// The relink has already happened: the author now carries a Hardcover ID
@@ -199,34 +196,28 @@ func TestRelinkedAuthorDedupsByTitleExceptPunctuationDivergence(t *testing.T) {
 		byTitle[b.Title]++
 	}
 
-	// The cleanly-matching title must not have produced a second row.
-	if n := byTitle["Raise the Titanic"]; n != 1 {
-		t.Errorf("identical titles failed to dedup: %q appears %d times, want 1", "Raise the Titanic", n)
-	}
-
-	// The two punctuation-divergent works currently DO duplicate. Asserting it
-	// keeps the cost of #2042 visible and measurable rather than anecdotal.
-	divergent := [][2]string{
+	// Every incoming work must land on its seeded row: the identical title by
+	// plain equality, and the two punctuation-divergent ones through the
+	// apostrophe folding and colon handling added in #2043.
+	deduped := [][2]string{
+		{"Raise the Titanic", "Raise the Titanic"},
 		{"Poseidon's Arrow", "Poseidons Arrow"},
 		{"Journey of the Pharaohs: Numa Files #17", "Journey of the Pharaohs Numa Files #17"},
 	}
-	for _, pair := range divergent {
+	for _, pair := range deduped {
 		seeded, incoming := pair[0], pair[1]
-		if byTitle[seeded] == 1 && byTitle[incoming] == 0 {
-			t.Errorf("%q and %q now dedup onto one row. This is the #2042 fix landing: "+
-				"move this pair into the deduped assertions above.", seeded, incoming)
-			continue
+		if byTitle[seeded] != 1 {
+			t.Errorf("seeded title %q appears %d times, want 1", seeded, byTitle[seeded])
 		}
-		if byTitle[seeded] != 1 || byTitle[incoming] != 1 {
-			t.Errorf("unexpected row layout for %q/%q: seeded=%d incoming=%d",
-				seeded, incoming, byTitle[seeded], byTitle[incoming])
+		if seeded != incoming && byTitle[incoming] != 0 {
+			t.Errorf("%q failed to dedup onto %q: the incoming spelling kept its own row", incoming, seeded)
 		}
 	}
 
-	if len(books) != 5 {
+	if len(books) != 3 {
 		for _, b := range books {
 			t.Logf("  %-45q %s", b.Title, b.ForeignID)
 		}
-		t.Fatalf("expected 5 rows (3 seeded + 2 punctuation-divergent duplicates), got %d", len(books))
+		t.Fatalf("expected 3 rows (every incoming work deduped onto its seed), got %d", len(books))
 	}
 }

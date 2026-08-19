@@ -51,6 +51,9 @@ func TestCanonicalDedupKey_FoldsPunctuationDivergence(t *testing.T) {
 		{"Poseidon’s Arrow", "Poseidon's Arrow"},
 		{"Journey of the Pharaohs: Numa Files #17", "Journey of the Pharaohs Numa Files #17"},
 		{"Journey of the Pharaohs: Numa Files #17", "Journey of the Pharaohs — Numa Files 17"},
+		// Carried over from #2040's known-limitation list, which #2043 fixed.
+		{"Ender's Game", "Enders Game"},
+		{"Star Wars: A New Hope", "Star Wars A New Hope"},
 	}
 	for _, p := range pairs {
 		a, b := CanonicalDedupKey(p[0]), CanonicalDedupKey(p[1])
