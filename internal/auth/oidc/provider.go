@@ -125,6 +125,12 @@ type entry struct {
 	cfg      ProviderConfig
 	verifier *gooidc.IDTokenVerifier
 	endpoint oauth2.Endpoint
+	// provider is retained past discovery so Exchange can reach the IdP's
+	// userinfo endpoint. Several IdPs (Authelia, Okta and Auth0 among them)
+	// keep `groups` and `preferred_username` out of the ID token by default
+	// and serve them only from userinfo, so an ID-token-only reader sees no
+	// groups at all (#2097).
+	provider *gooidc.Provider
 }
 
 type failedEntry struct {
@@ -216,7 +222,7 @@ func (m *Manager) buildEntry(ctx context.Context, cfg ProviderConfig) (*entry, e
 		return nil, fmt.Errorf("oidc discovery for %q: %w", cfg.Issuer, err)
 	}
 	verifier := p.Verifier(&gooidc.Config{ClientID: cfg.ClientID})
-	return &entry{cfg: cfg, verifier: verifier, endpoint: p.Endpoint()}, nil
+	return &entry{cfg: cfg, verifier: verifier, endpoint: p.Endpoint(), provider: p}, nil
 }
 
 // EnsureLoaded attempts on-demand re-discovery for a provider that is in the
@@ -413,6 +419,22 @@ func (m *Manager) Exchange(ctx context.Context, redirectBase, id, code, nonce, c
 	if err := idToken.Claims(&raw); err != nil {
 		raw = nil
 	}
+
+	// Merge the userinfo claim set underneath the ID token's. The ID token is
+	// signed and nonce-bound, so where both carry a claim the ID token wins;
+	// userinfo only fills gaps. This is what makes group mapping work against
+	// an IdP that does not put `groups` in the ID token (#2097).
+	raw = mergeUserinfo(ctx, e, token, idToken.Subject, raw)
+	if claims.PreferredUsername == "" {
+		claims.PreferredUsername, _ = raw["preferred_username"].(string)
+	}
+	if claims.Email == "" {
+		claims.Email, _ = raw["email"].(string)
+	}
+	if claims.Name == "" {
+		claims.Name, _ = raw["name"].(string)
+	}
+
 	return &Claims{
 		Sub:               claims.Sub,
 		Issuer:            idToken.Issuer,
@@ -423,6 +445,64 @@ func (m *Manager) Exchange(ctx context.Context, redirectBase, id, code, nonce, c
 		Groups:            GroupClaimValues(raw, "groups"),
 		Raw:               raw,
 	}, nil
+}
+
+// mergeUserinfo fetches the provider's userinfo document and returns idClaims
+// with any claim it did not already carry filled in from userinfo. Returns
+// idClaims untouched on any failure: userinfo is an enrichment, and an IdP
+// that does not serve it (or serves it as a signed JWT this client cannot
+// read) must not break a login whose ID token already verified.
+//
+// The userinfo `sub` is checked against the ID token's before anything is
+// merged, per OIDC Core 1.0 section 5.3.2. Without that check a provider that
+// mixed up sessions could hand back another user's groups, and Bindery would
+// treat them as this user's.
+func mergeUserinfo(ctx context.Context, e *entry, token *oauth2.Token, idSub string, idClaims map[string]any) map[string]any {
+	if e == nil || e.provider == nil || token == nil {
+		return idClaims
+	}
+	info, err := e.provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
+	if err != nil {
+		// Debug, not warn: an IdP with no userinfo endpoint is a supported
+		// configuration and this path runs on every single login.
+		slog.Debug("oidc: userinfo fetch failed, using id_token claims only",
+			"provider", e.cfg.ID, "error", err)
+		return idClaims
+	}
+	if info.Subject != idSub {
+		slog.Warn("oidc: userinfo subject does not match the id_token subject, ignoring userinfo",
+			"provider", e.cfg.ID)
+		return idClaims
+	}
+	var extra map[string]any
+	if err := info.Claims(&extra); err != nil || extra == nil {
+		return idClaims
+	}
+	if idClaims == nil {
+		idClaims = make(map[string]any, len(extra))
+	}
+	for k, v := range extra {
+		if _, ok := idClaims[k]; !ok {
+			idClaims[k] = v
+		}
+	}
+	return idClaims
+}
+
+// GroupClaimPresent reports whether the named claim exists in the claim set at
+// all, independently of whether it names any group.
+//
+// The distinction matters because absent and empty are not the same evidence.
+// A claim that is present and does not list the admin group is the IdP saying
+// "not an admin"; a claim that is missing entirely usually means the IdP was
+// never configured to send it, and acting on that as though it were a denial
+// is how an operator loses their own admin rights (#2097).
+func GroupClaimPresent(raw map[string]any, claimName string) bool {
+	if raw == nil || claimName == "" {
+		return false
+	}
+	v, ok := raw[claimName]
+	return ok && v != nil
 }
 
 // GroupClaimValues extracts a group list from the named claim in a decoded

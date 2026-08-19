@@ -33,6 +33,12 @@ type fakeIDP struct {
 	kid    string
 	// claims is the claim set baked into the ID token returned by /token.
 	claims map[string]any
+	// userinfo, when non-nil, makes the IdP advertise and serve a userinfo
+	// endpoint returning this claim set. Several real IdPs (Authelia, Okta,
+	// Auth0) keep `groups` out of the ID token and serve it only here, which
+	// is the shape #2097 is about. nil means "no userinfo endpoint", which is
+	// also a supported configuration.
+	userinfo map[string]any
 }
 
 func newFakeIDP(t *testing.T) *fakeIDP {
@@ -47,12 +53,28 @@ func newFakeIDP(t *testing.T) *fakeIDP {
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		base := "http://" + r.Host
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		doc := map[string]any{
 			"issuer":                 base,
 			"authorization_endpoint": base + "/authorize",
 			"token_endpoint":         base + "/token",
 			"jwks_uri":               base + "/jwks",
-		})
+		}
+		if idp.userinfo != nil {
+			doc["userinfo_endpoint"] = base + "/userinfo"
+		}
+		_ = json.NewEncoder(w).Encode(doc)
+	})
+	mux.HandleFunc("/userinfo", func(w http.ResponseWriter, r *http.Request) {
+		if idp.userinfo == nil {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer fake-access-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(idp.userinfo)
 	})
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

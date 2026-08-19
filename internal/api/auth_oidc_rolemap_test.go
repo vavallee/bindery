@@ -163,10 +163,17 @@ func TestCallback_GroupClaim_DemoteOnAbsence(t *testing.T) {
 	}
 }
 
-// TestCallback_GroupClaim_DemoteWhenClaimMissingEntirely verifies that when the
-// group claim is absent altogether, an existing admin is demoted (fail-safe:
-// absence of the group, not presence of a deny signal).
-func TestCallback_GroupClaim_DemoteWhenClaimMissingEntirely(t *testing.T) {
+// TestCallback_GroupClaim_MissingClaimLeavesRoleAlone verifies that a group
+// claim absent from both the ID token and userinfo leaves the existing role
+// untouched rather than demoting (#2097).
+//
+// This inverts what the code did until #2097. Absent and present-but-empty are
+// different evidence: a claim the IdP never sends says nothing about this
+// user's membership, and treating it as a denial took an operator's own admin
+// rights away on their next login. With local auth disabled that locked them
+// out of their own instance, because the last-admin demotion guard is
+// deliberately bypassed on this path.
+func TestCallback_GroupClaim_MissingClaimLeavesRoleAlone(t *testing.T) {
 	idp := newFakeIDP(t)
 	idp.claims = map[string]any{
 		"sub": "g-noclaim", "nonce": "test-nonce", "preferred_username": "gn",
@@ -187,8 +194,37 @@ func TestCallback_GroupClaim_DemoteWhenClaimMissingEntirely(t *testing.T) {
 	if err != nil || u == nil {
 		t.Fatalf("lookup: u=%v err=%v", u, err)
 	}
+	if u.Role != "admin" {
+		t.Errorf("Role=%q, want admin (claim absent entirely, so nothing is known about membership)", u.Role)
+	}
+}
+
+// TestCallback_GroupClaim_EmptyClaimStillDemotes pins the other half of the
+// distinction: a claim the IdP *does* send, listing no groups, is the IdP
+// saying this user is in nothing, and demotion is correct.
+func TestCallback_GroupClaim_EmptyClaimStillDemotes(t *testing.T) {
+	idp := newFakeIDP(t)
+	idp.claims = map[string]any{
+		"sub": "g-emptyclaim", "nonce": "test-nonce", "preferred_username": "ge",
+		"groups": []string{},
+	}
+	h, users, ctx := newCallbackTestHandler(t, idp, nil, false)
+	h.WithOIDCAdminGroup("bindery-admin")
+
+	seeded, err := users.GetOrCreateByOIDC(ctx, idp.server.URL, "g-emptyclaim", "ge", "", "", "admin")
+	if err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+
+	if rec := doCallback(t, h); rec.Code != http.StatusFound {
+		t.Fatalf("status=%d, want 302; body=%s", rec.Code, rec.Body.String())
+	}
+	u, err := users.GetByID(ctx, seeded.ID)
+	if err != nil || u == nil {
+		t.Fatalf("lookup: u=%v err=%v", u, err)
+	}
 	if u.Role != "user" {
-		t.Errorf("Role=%q, want user (no group claim → demote)", u.Role)
+		t.Errorf("Role=%q, want user (claim present and lists no groups)", u.Role)
 	}
 }
 
@@ -347,5 +383,107 @@ func TestCallback_PromoteFirstOIDC_SkippedWhenAdminExists(t *testing.T) {
 	}
 	if u.Role != "user" {
 		t.Errorf("Role=%q, want user (admin already exists → no fallback)", u.Role)
+	}
+}
+
+// TestCallback_GroupClaim_PromoteFromUserinfo is the #2097 regression: an IdP
+// that keeps `groups` out of the ID token and serves it only from userinfo.
+// This is Authelia's default shape, and Okta's and Auth0's, and before the fix
+// Bindery read the ID token alone, saw no groups, and demoted the user.
+func TestCallback_GroupClaim_PromoteFromUserinfo(t *testing.T) {
+	idp := newFakeIDP(t)
+	idp.claims = map[string]any{
+		"sub": "g-userinfo", "nonce": "test-nonce",
+		// no groups and no preferred_username in the id_token, as Authelia
+		// ships by default without a claims policy
+	}
+	idp.userinfo = map[string]any{
+		"sub":                "g-userinfo",
+		"preferred_username": "abbie",
+		"groups":             []string{"media_admin", "media_viewer"},
+	}
+	h, users, ctx := newCallbackTestHandler(t, idp, nil, false)
+	h.WithOIDCAdminGroup("media_admin")
+
+	seeded, err := users.GetOrCreateByOIDC(ctx, idp.server.URL, "g-userinfo", "", "", "", "user")
+	if err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
+	if rec := doCallback(t, h); rec.Code != http.StatusFound {
+		t.Fatalf("status=%d, want 302; body=%s", rec.Code, rec.Body.String())
+	}
+	u, err := users.GetByID(ctx, seeded.ID)
+	if err != nil || u == nil {
+		t.Fatalf("lookup: u=%v err=%v", u, err)
+	}
+	if u.Role != "admin" {
+		t.Errorf("Role=%q, want admin (media_admin is in the userinfo groups claim)", u.Role)
+	}
+}
+
+// TestCallback_Userinfo_SubjectMismatchIgnored covers OIDC Core 1.0 section
+// 5.3.2. A userinfo document whose subject is not the ID token's subject must
+// be discarded outright: merging it would let a provider that mixed up
+// sessions hand one user another user's groups, and the group claim is what
+// decides admin.
+func TestCallback_Userinfo_SubjectMismatchIgnored(t *testing.T) {
+	idp := newFakeIDP(t)
+	idp.claims = map[string]any{
+		"sub": "g-mismatch", "nonce": "test-nonce", "preferred_username": "gm",
+	}
+	idp.userinfo = map[string]any{
+		"sub":    "somebody-else",
+		"groups": []string{"bindery-admin"},
+	}
+	h, users, ctx := newCallbackTestHandler(t, idp, nil, false)
+	h.WithOIDCAdminGroup("bindery-admin")
+
+	seeded, err := users.GetOrCreateByOIDC(ctx, idp.server.URL, "g-mismatch", "gm", "", "", "user")
+	if err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
+	if rec := doCallback(t, h); rec.Code != http.StatusFound {
+		t.Fatalf("status=%d, want 302; body=%s", rec.Code, rec.Body.String())
+	}
+	u, err := users.GetByID(ctx, seeded.ID)
+	if err != nil || u == nil {
+		t.Fatalf("lookup: u=%v err=%v", u, err)
+	}
+	if u.Role != "user" {
+		t.Errorf("Role=%q, want user (mismatched userinfo subject must be discarded, not merged)", u.Role)
+	}
+}
+
+// TestCallback_Userinfo_DoesNotOverrideIDToken pins precedence. The ID token is
+// signed and nonce-bound; userinfo only fills gaps.
+func TestCallback_Userinfo_DoesNotOverrideIDToken(t *testing.T) {
+	idp := newFakeIDP(t)
+	idp.claims = map[string]any{
+		"sub": "g-precedence", "nonce": "test-nonce", "preferred_username": "gp",
+		"groups": []string{"readers"},
+	}
+	idp.userinfo = map[string]any{
+		"sub":    "g-precedence",
+		"groups": []string{"bindery-admin"},
+	}
+	h, users, ctx := newCallbackTestHandler(t, idp, nil, false)
+	h.WithOIDCAdminGroup("bindery-admin")
+
+	seeded, err := users.GetOrCreateByOIDC(ctx, idp.server.URL, "g-precedence", "gp", "", "", "user")
+	if err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
+	if rec := doCallback(t, h); rec.Code != http.StatusFound {
+		t.Fatalf("status=%d, want 302; body=%s", rec.Code, rec.Body.String())
+	}
+	u, err := users.GetByID(ctx, seeded.ID)
+	if err != nil || u == nil {
+		t.Fatalf("lookup: u=%v err=%v", u, err)
+	}
+	if u.Role != "user" {
+		t.Errorf("Role=%q, want user (the id_token groups claim wins over userinfo)", u.Role)
 	}
 }

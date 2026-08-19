@@ -23,8 +23,8 @@ Sessions are issued using the same HMAC-signed cookie as password login. OIDC si
 | `BINDERY_OIDC_AUTO_PROVISION` | `true` | Set to `false` to require that OIDC users already exist in Bindery's database. First-time OIDC logins from unknown `(issuer, sub)` pairs return 403 instead of creating an account. |
 | `BINDERY_OIDC_EMAIL_LINK` | `false` | Set to `true` to link an unknown OIDC identity to an existing Bindery account if the email address matches. Runs before the auto-provision check. Useful for migrating from local accounts to OIDC without losing history. |
 | `BINDERY_OIDC_DEFAULT_ROLE` | `user` | Role assigned to a freshly auto-provisioned OIDC user. Valid values: `user`, `admin`. Any other value falls back to `user`. Set to `admin` for single-admin homelab deployments to skip the manual promotion step. |
-| `BINDERY_OIDC_ADMIN_GROUP` | _(unset)_ | When set, makes the IdP authoritative for the admin role. On **every** login, the user is promoted to `admin` if this group is present in the group claim and demoted to `user` if absent. See [Group-based role mapping](#group-based-role-mapping). |
-| `BINDERY_OIDC_GROUP_CLAIM` | `groups` | ID-token claim path Bindery reads the user's groups from — used for both `BINDERY_OIDC_ADMIN_GROUP` role mapping and the per-provider `allowed_groups` login filter. Override for IdPs that put groups under a non-standard claim (e.g. `roles`). |
+| `BINDERY_OIDC_ADMIN_GROUP` | _(unset)_ | When set, makes the IdP authoritative for the admin role. On **every** login, the user is promoted to `admin` if this group is listed in the group claim and demoted to `user` if it is not. If the claim is missing altogether the role is left unchanged. See [Group-based role mapping](#group-based-role-mapping). |
+| `BINDERY_OIDC_GROUP_CLAIM` | `groups` | Claim path Bindery reads the user's groups from, looked up in the ID token first and then the userinfo document — used for both `BINDERY_OIDC_ADMIN_GROUP` role mapping and the per-provider `allowed_groups` login filter. Override for IdPs that put groups under a non-standard claim (e.g. `roles`). |
 | `BINDERY_ALLOW_LAN_OIDC` | _(off)_ | Set to `true`/`1` to disable the SSRF guard on the OIDC discovery probe, allowing LAN / loopback / private-range issuer URLs. Restores the historical behaviour where any issuer URL an admin types is fetched verbatim. Only enable when your OIDC provider runs on the Bindery host or a trusted private network. |
 
 ## Redirect URL construction
@@ -137,10 +137,15 @@ BINDERY_OIDC_ADMIN_GROUP=bindery-admin
 BINDERY_OIDC_GROUP_CLAIM=groups
 ```
 
-When `BINDERY_OIDC_ADMIN_GROUP` is set, the **IdP becomes authoritative for the admin role**. On every login Bindery reads the configured group claim from the ID token and:
+When `BINDERY_OIDC_ADMIN_GROUP` is set, the **IdP becomes authoritative for the admin role**. On every login Bindery reads the configured group claim and:
 
-- promotes the user to `admin` if the group is present, or
-- demotes the user to `user` if the group is absent.
+- promotes the user to `admin` if the group is listed in the claim,
+- demotes the user to `user` if the claim is present and does not list it, or
+- **leaves the role exactly as it is** if the claim is missing altogether.
+
+That last case is the important one. A claim the IdP never sends says nothing about whether this user is an admin, so acting on it as a denial would take your own admin rights away the next time you logged in. Bindery logs `oidc: group claim absent, leaving role unchanged` instead — if you see that line, the IdP is not sending the claim and role mapping is doing nothing at all.
+
+Bindery looks for the claim in the ID token first, then in the **userinfo document**. Several IdPs, Authelia and Okta and Auth0 among them, do not put `groups` in the ID token by default and serve it only from userinfo; requesting the `groups` scope is often not enough on its own. Where a claim appears in both, the ID token wins, because it is signed and bound to the login nonce. A userinfo document whose `sub` does not match the ID token's is discarded entirely.
 
 `BINDERY_OIDC_GROUP_CLAIM` (default `groups`) selects the claim path; override it for IdPs that emit groups under a different name.
 
@@ -273,6 +278,24 @@ identity_providers:
           - profile
           - groups
 ```
+
+Authelia serves `groups` and `preferred_username` from its userinfo endpoint but does not put them in the ID token unless you say so. Bindery reads userinfo too, so the config above is enough. If you would rather have the claims in the ID token as well, add a claims policy (Authelia 4.39+; check your version's docs, the key moved between releases):
+
+```yaml
+identity_providers:
+  oidc:
+    claims_policies:
+      bindery:
+        id_token:
+          - groups
+          - preferred_username
+    clients:
+      - client_id: bindery
+        claims_policy: 'bindery'
+        # ...rest of the client config unchanged
+```
+
+Without either the userinfo lookup or this policy, `allowed_groups` rejects every login and `BINDERY_OIDC_ADMIN_GROUP` can never promote anyone.
 
 Bindery provider config:
 

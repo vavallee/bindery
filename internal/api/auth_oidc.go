@@ -303,15 +303,28 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	if cfg, ok := h.mgr.ProviderConfig(providerID); ok && len(cfg.AllowedGroups) > 0 {
 		userGroups := oidc.GroupClaimValues(claims.Raw, h.oidcGroupClaim)
 		if !oidc.GroupsAllowed(cfg.AllowedGroups, userGroups) {
+			// Absent and present-but-unmatched are both rejections here, since
+			// this policy is fail-closed on purpose, but they call for
+			// different fixes and the operator has to be told which one they
+			// are looking at (#2097).
+			present := oidc.GroupClaimPresent(claims.Raw, h.oidcGroupClaim)
 			slog.Warn("oidc: login rejected by AllowedGroups policy",
 				"provider", providerID, // #nosec -- providerID validated by oidcProviderIDRe at handler entry
 				"sub", sanitizeLog(claims.Sub),
+				"claim_present", present,
 				"user_groups", len(userGroups),
 				"allowed_groups", strings.Join(cfg.AllowedGroups, ","),
 			)
+			if !present {
+				writeErr(w, http.StatusForbidden,
+					"access denied: the identity provider did not send a \""+h.oidcGroupClaim+"\" claim "+
+						"in either the id_token or userinfo, so group membership cannot be checked "+
+						"(add the claim to the provider's scope or claim mapping)")
+				return
+			}
 			writeErr(w, http.StatusForbidden,
 				"access denied: your account is not a member of an allowed group for this provider "+
-					"(check the provider's allowed_groups setting and that the IdP is sending a 'groups' claim)")
+					"(check the provider's allowed_groups setting)")
 			return
 		}
 	}
@@ -390,20 +403,35 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	// overrides any role set via PUT /api/v1/auth/users/{id}/role for OIDC users.
 	if h.oidcAdminGroup != "" {
 		groups := oidc.GroupClaimValues(claims.Raw, h.oidcGroupClaim)
-		want := "user"
-		if oidc.ContainsGroup(groups, h.oidcAdminGroup) {
-			want = "admin"
-		}
-		if user.Role != want {
-			if err := h.users.SetRoleUnguarded(ctx, user.ID, want); err != nil {
-				slog.Error("oidc: group-claim role sync failed", "error", err, "user_id", user.ID)
-				writeErr(w, http.StatusInternalServerError, "role sync failed")
-				return
+		// An absent claim is not a denial. Both the ID token and userinfo were
+		// checked by now, so a claim still missing here means the IdP was never
+		// configured to send it — not that this user is outside the admin
+		// group. Demoting on that evidence takes an operator's own admin rights
+		// away on their next login, and with local auth disabled locks them out
+		// of their instance entirely (#2097). Leave the role alone and say why.
+		if !oidc.GroupClaimPresent(claims.Raw, h.oidcGroupClaim) {
+			slog.Warn("oidc: group claim absent, leaving role unchanged",
+				"provider", providerID, // #nosec -- providerID validated by oidcProviderIDRe at handler entry
+				"sub", sanitizeLog(claims.Sub),
+				"group_claim", h.oidcGroupClaim,
+				"admin_group", h.oidcAdminGroup,
+				"hint", "the IdP is not sending this claim in the id_token or userinfo; check the scope and claim mapping")
+		} else {
+			want := "user"
+			if oidc.ContainsGroup(groups, h.oidcAdminGroup) {
+				want = "admin"
 			}
-			slog.Info("oidc: synced role from group claim",
-				"username", user.Username, "from", user.Role, "to", want,
-				"admin_group", h.oidcAdminGroup, "group_claim", h.oidcGroupClaim)
-			user.Role = want
+			if user.Role != want {
+				if err := h.users.SetRoleUnguarded(ctx, user.ID, want); err != nil {
+					slog.Error("oidc: group-claim role sync failed", "error", err, "user_id", user.ID)
+					writeErr(w, http.StatusInternalServerError, "role sync failed")
+					return
+				}
+				slog.Info("oidc: synced role from group claim",
+					"username", user.Username, "from", user.Role, "to", want,
+					"admin_group", h.oidcAdminGroup, "group_claim", h.oidcGroupClaim)
+				user.Role = want
+			}
 		}
 	}
 
