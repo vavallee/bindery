@@ -59,10 +59,10 @@ does ship is the failure that matters.
 | [github.com/prometheus/procfs](https://github.com/prometheus/procfs/blob/v0.21.1/LICENSE) | v0.21.1 | Apache-2.0 | yes |
 | [github.com/remyoudompheng/bigfft](https://github.com/remyoudompheng/bigfft/blob/24d4a6f8daec/LICENSE) | v0.0.0-20230129092748-24d4a6f8daec | BSD-3-Clause | — |
 | [github.com/robfig/cron/v3](https://github.com/robfig/cron/blob/v3.0.1/LICENSE) | v3.0.1 | MIT | — |
-| [golang.org/x/crypto](https://cs.opensource.google/go/x/crypto/+/v0.54.0:LICENSE) | v0.54.0 | BSD-3-Clause | — |
+| [golang.org/x/crypto](https://cs.opensource.google/go/x/crypto/+/v0.55.0:LICENSE) | v0.55.0 | BSD-3-Clause | — |
 | [golang.org/x/oauth2](https://cs.opensource.google/go/x/oauth2/+/v0.36.0:LICENSE) | v0.36.0 | BSD-3-Clause | — |
 | [golang.org/x/sys](https://cs.opensource.google/go/x/sys/+/v0.47.0:LICENSE) | v0.47.0 | BSD-3-Clause | — |
-| [golang.org/x/text](https://cs.opensource.google/go/x/text/+/v0.40.0:LICENSE) | v0.40.0 | BSD-3-Clause | — |
+| [golang.org/x/text](https://cs.opensource.google/go/x/text/+/v0.41.0:LICENSE) | v0.41.0 | BSD-3-Clause | — |
 | [google.golang.org/protobuf](https://github.com/protocolbuffers/protobuf-go/blob/v1.36.11/LICENSE) | v1.36.11 | BSD-3-Clause | — |
 | [modernc.org/libc](https://gitlab.com/cznic/libc/-/blob/v1.74.4/LICENSE) | v1.74.4 | BSD-3-Clause | — |
 | [modernc.org/mathutil](https://gitlab.com/cznic/mathutil/-/blob/v1.7.1/LICENSE) | v1.7.1 | BSD-3-Clause | — |
@@ -1022,15 +1022,15 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### 10. BSD-3-Clause — golang.org/x/crypto@v0.54.0 (LICENSE)
+### 10. BSD-3-Clause — golang.org/x/crypto@v0.55.0 (LICENSE)
 
 <details>
 <summary>Applies to 4 dependencies</summary>
 
-- golang.org/x/crypto@v0.54.0 (LICENSE)
+- golang.org/x/crypto@v0.55.0 (LICENSE)
 - golang.org/x/oauth2@v0.36.0 (LICENSE)
 - golang.org/x/sys@v0.47.0 (LICENSE)
-- golang.org/x/text@v0.40.0 (LICENSE)
+- golang.org/x/text@v0.41.0 (LICENSE)
 
 </details>
 
