@@ -392,6 +392,31 @@ func (r *AuthorRepo) Create(ctx context.Context, a *models.Author) error {
 func (r *AuthorRepo) CreateForUser(ctx context.Context, a *models.Author, ownerUserID int64) error {
 	now := time.Now().UTC()
 	normalizeAuthorMonitorDefaults(a)
+	// Stamp the default metadata profile when the caller left it unset (#1803).
+	//
+	// Six author-creation paths reached this insert with a nil profile: ABS
+	// import (twice), the Calibre importer, the Goodreads migration, the CSV
+	// importer, and Hardcover list sync before #1783 stamped it there by hand.
+	// Migration 071 backfilled the NULLs those had already produced, but a
+	// one-shot cleanup in front of an ongoing leak just means the next import
+	// starts refilling it, so the stamp belongs at the single point they all
+	// funnel through rather than in each of them.
+	//
+	// Deliberately here and not in normalizeAuthorMonitorDefaults, which also
+	// runs on Update and on scan. Doing it on scan would make a NULL row report
+	// a profile it does not have, which hides the leak instead of closing it.
+	//
+	// This is currently invisible: ResolveAuthorMetadataProfile and its two
+	// sibling readers all fall back to DefaultMetadataProfileID already, so
+	// filtering behaviour is unchanged either way. That is exactly why it would
+	// rot quietly, until a fourth reader arrives without the fallback. The
+	// column is a bare INTEGER with no REFERENCES clause, so an id pointing at
+	// a profile the user has since deleted stores fine and every reader still
+	// falls back, the same as NULL does today.
+	if a != nil && a.MetadataProfileID == nil {
+		id := models.DefaultMetadataProfileID
+		a.MetadataProfileID = &id
+	}
 	var ownerArg any
 	if ownerUserID != 0 {
 		ownerArg = ownerUserID
