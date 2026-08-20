@@ -328,6 +328,10 @@ func (c *Client) GetBook(ctx context.Context, foreignID string) (*models.Book, e
 			rating
 			default_audio_edition_id
 			default_ebook_edition_id
+			book_series(order_by: { position: asc }) {
+				position
+				series { id name }
+			}
 			contributions {
 				contribution
 				author { id name slug }
@@ -346,6 +350,10 @@ func (c *Client) GetBook(ctx context.Context, foreignID string) (*models.Book, e
 			rating
 			default_audio_edition_id
 			default_ebook_edition_id
+			book_series(order_by: { position: asc }) {
+				position
+				series { id name }
+			}
 			contributions {
 				contribution
 				author { id name slug }
@@ -500,6 +508,10 @@ func (c *Client) GetBookByISBN(ctx context.Context, isbn string) (*models.Book, 
 				rating
 				default_audio_edition_id
 				default_ebook_edition_id
+				book_series(order_by: { position: asc }) {
+					position
+					series { id name }
+				}
 				contributions {
 					contribution
 					author { id name slug }

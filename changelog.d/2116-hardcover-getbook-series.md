@@ -1,0 +1,2 @@
+### Fixed
+- **Adding a second volume of a series did nothing** (#2116) — with Hardcover as the metadata provider, adding a book whose main title matched a volume already in the library was silently collapsed onto that volume. The Add button flickered and no book appeared, with no error. Bindery has a guard for exactly this case, comparing the two volumes' series positions, but the query that fetches a single book never asked Hardcover for its series, so the guard had nothing to compare and always let the merge through. The same field was missing from the ISBN lookup.
