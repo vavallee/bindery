@@ -44,6 +44,9 @@ func NormalizeBaseURL(raw string) (string, error) {
 		return "", fmt.Errorf("base_url %q: %w", raw, err)
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
+		if isSchemeless(u) {
+			return "", fmt.Errorf("base_url %q is missing a scheme: write it as %q, or https:// if Audiobookshelf is behind TLS", raw, "http://"+raw)
+		}
 		return "", fmt.Errorf("base_url %q must use http or https", raw)
 	}
 	if u.Host == "" {
@@ -57,6 +60,46 @@ func NormalizeBaseURL(raw string) (string, error) {
 		u.Path = ""
 	}
 	return u.String(), nil
+}
+
+// isSchemeless reports whether raw was a bare host rather than a URL carrying an
+// unsupported scheme, so the caller can say "you left off http://" instead of
+// "that scheme is not allowed".
+//
+// The distinction matters because of how url.Parse reads a host:port pair with
+// no scheme. "audiobookshelf:13378" parses as Scheme "audiobookshelf" with
+// Opaque "13378", so the scheme check rejects it with a complaint about the
+// scheme for input whose only visible novelty is the port. A user reading that
+// reasonably concludes the port was refused and retries without it, landing on
+// port 80 and a connection to the wrong service entirely (#2056).
+//
+// Deliberately does not repair the value. Choosing http over https on the
+// user's behalf is a security relevant guess, so this names the corrected
+// string and lets them confirm it.
+func isSchemeless(u *url.URL) bool {
+	// "audiobookshelf" or "audiobookshelf/abs": no scheme at all.
+	if u.Scheme == "" {
+		return true
+	}
+	// "audiobookshelf:13378": the port became the opaque part and no host was
+	// found. Digits only, so a real unsupported scheme ("ftp://host") is not
+	// caught here.
+	if u.Host == "" && u.Opaque != "" && isAllDigits(u.Opaque) {
+		return true
+	}
+	return false
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // ValidateBaseURLSecure layers an SSRF policy check on top of NormalizeBaseURL.

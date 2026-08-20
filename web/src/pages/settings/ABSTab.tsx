@@ -612,7 +612,7 @@ function AudiobookshelfSection() {
             <input
               value={draft.baseUrl}
               onChange={e => setDraft(prev => ({ ...prev, baseUrl: e.target.value }))}
-              placeholder="https://abs.example.com"
+              placeholder="http://audiobookshelf:13378"
               className={inputCls}
             />
           </div>

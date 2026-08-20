@@ -1,0 +1,2 @@
+### Fixed
+- **Audiobookshelf base URL rejected a port with an error about the scheme** (#2056) — typing `audiobookshelf:13378`, the natural form when everything runs under Compose on one host, produced "must use http or https". Go reads a scheme-less `host:port` as a scheme, so the complaint pointed at the wrong half of the input, and the obvious next move was to drop the port and land on port 80. Ports were always supported. The error now says the scheme is missing and prints the exact value to use, and the field's placeholder shows Audiobookshelf's default port.
