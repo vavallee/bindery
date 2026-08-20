@@ -4,6 +4,12 @@
 # identically — a classifier bump would otherwise look like dependency drift.
 GO_LICENSES_VERSION ?= v1.6.0
 
+# Pinned to the same revision the CI govulncheck job installs
+# (.github/workflows/ci.yml). `make check` claims to run what the gating CI
+# checks run, so it has to resolve the same vulnerability database tooling;
+# @latest would let a local run disagree with CI in either direction.
+GOVULNCHECK_VERSION ?= d1f380186385b4f64e00313f31743df8e4b89a77
+
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 DATE    ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -45,6 +51,7 @@ check: ## Run everything the gating CI checks run (do this before opening a PR)
 	go build ./...
 	go vet ./...
 	golangci-lint run ./...
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 	go test -race -timeout=30m ./cmd/... ./internal/...
 	cd web && npm ci && npm run typecheck && npm run lint && npm run build && npm test
 

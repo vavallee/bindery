@@ -5,6 +5,9 @@
 /bindery.txt
 /reply.txt
 /e.log
+/err.log
+/magazine-feature-prompt.txt
+/ui-browser-test-prompt.txt
 # Personal, gitignored ops notes
 CLAUDE.local.md
 *.dll
