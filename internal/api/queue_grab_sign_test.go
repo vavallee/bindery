@@ -79,24 +79,24 @@ func TestSignNZBURL(t *testing.T) {
 	const dl = "http://prowlarr:9696/3/download?file=Lee+Child&link=abc"
 	const signed = "http://prowlarr:9696/3/download?apikey=SECRET&file=Lee+Child&link=abc"
 
-	if got := h.signNZBURL(ctx, dl, &first.ID); got != signed {
+	if got, _ := h.signNZBURL(ctx, dl, &first.ID); got != signed {
 		t.Errorf("with indexer id: got %q, want %q", got, signed)
 	}
-	if got := h.signNZBURL(ctx, dl, nil); got != signed {
+	if got, _ := h.signNZBURL(ctx, dl, nil); got != signed {
 		t.Errorf("without indexer id: got %q, want %q", got, signed)
 	}
 	// A stale id must not lose the key either: the host match still resolves it.
 	stale := int64(9999)
-	if got := h.signNZBURL(ctx, dl, &stale); got != signed {
+	if got, _ := h.signNZBURL(ctx, dl, &stale); got != signed {
 		t.Errorf("stale indexer id: got %q, want %q", got, signed)
 	}
 	// Already signed (scheduler / retry paths) and direct-from-uploader links on
 	// a foreign host are both returned untouched.
-	if got := h.signNZBURL(ctx, signed, nil); got != signed {
+	if got, _ := h.signNZBURL(ctx, signed, nil); got != signed {
 		t.Errorf("already signed: got %q, want it unchanged", got)
 	}
 	const foreign = "http://uploader.example.com/dl?id=abc"
-	if got := h.signNZBURL(ctx, foreign, nil); got != foreign {
+	if got, _ := h.signNZBURL(ctx, foreign, nil); got != foreign {
 		t.Errorf("foreign host: got %q, want it unchanged", got)
 	}
 
@@ -106,7 +106,7 @@ func TestSignNZBURL(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create indexer: %v", err)
 	}
-	if got := h.signNZBURL(ctx, dl, nil); got != signed {
+	if got, _ := h.signNZBURL(ctx, dl, nil); got != signed {
 		t.Errorf("two indexers, one key: got %q, want %q", got, signed)
 	}
 
@@ -117,11 +117,11 @@ func TestSignNZBURL(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create indexer: %v", err)
 	}
-	if got := h.signNZBURL(ctx, dl, nil); got != dl {
+	if got, _ := h.signNZBURL(ctx, dl, nil); got != dl {
 		t.Errorf("ambiguous host: got %q, want it unchanged", got)
 	}
 	// The explicit indexer id still resolves it.
-	if got := h.signNZBURL(ctx, dl, &first.ID); got != signed {
+	if got, _ := h.signNZBURL(ctx, dl, &first.ID); got != signed {
 		t.Errorf("ambiguous host with indexer id: got %q, want %q", got, signed)
 	}
 }

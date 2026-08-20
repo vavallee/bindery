@@ -145,20 +145,30 @@ func (h *QueueHandler) resolveSeedRatio(ctx context.Context, indexerID *int64) *
 // Returns rawURL unchanged when it already carries an apikey (scheduler and
 // retry paths), when no indexer matches its host, or when there is no indexer
 // repo attached.
-func (h *QueueHandler) signNZBURL(ctx context.Context, rawURL string, indexerID *int64) string {
+//
+// The second return is the indexer the host match resolved, and it is non-nil
+// only on that path. It exists because the caller needs to record WHICH indexer
+// produced the release, not just reach it: the download row's IndexerID drives
+// queue attribution and the per-indexer seed-ratio override, and both were
+// silently lost for exactly the callers this fallback serves (#2053). It stays
+// nil when the caller's own id resolved, since that id already stands, and when
+// several indexers on the host disagree, since nothing was chosen.
+func (h *QueueHandler) signNZBURL(ctx context.Context, rawURL string, indexerID *int64) (string, *int64) {
 	if h.indexers == nil || rawURL == "" {
-		return rawURL
+		return rawURL, nil
 	}
 	if indexerID != nil {
 		if idx, err := h.indexers.GetByID(ctx, *indexerID); err == nil && idx != nil {
-			return newznab.SignDownloadURLFor(rawURL, idx.URL, idx.APIKey)
+			return newznab.SignDownloadURLFor(rawURL, idx.URL, idx.APIKey), nil
 		}
 	}
 	idxs, err := h.indexers.List(ctx)
 	if err != nil {
-		return rawURL
+		return rawURL, nil
 	}
 	signed := rawURL
+	var matched *int64
+	matches := 0
 	for _, idx := range idxs {
 		candidate := newznab.SignDownloadURLFor(rawURL, idx.URL, idx.APIKey)
 		if candidate == rawURL {
@@ -167,11 +177,24 @@ func (h *QueueHandler) signNZBURL(ctx context.Context, rawURL string, indexerID 
 		if signed != rawURL && candidate != signed {
 			slog.Warn("cannot restore indexer apikey: several indexers share the download URL host with different keys",
 				"url", newznab.RedactDownloadURL(rawURL))
-			return rawURL
+			return rawURL, nil
 		}
 		signed = candidate
+		matched = &idx.ID
+		matches++
 	}
-	return signed
+	if signed == rawURL {
+		return rawURL, nil
+	}
+	// Attribution needs exactly one candidate. Two indexers on the host sharing
+	// a key still sign unambiguously, but they are two different rows with two
+	// different seed-ratio overrides, so picking whichever came last out of
+	// List would be a guess wearing an answer's clothes. Sign, attribute
+	// nothing.
+	if matches != 1 {
+		return signed, nil
+	}
+	return signed, matched
 }
 
 // WithStoragePaths attaches the process-level download roots used when sending
@@ -905,7 +928,14 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	// hands back an apikey-less download URL plus the indexer id; sign it
 	// server-side here. No-op when the URL already carries a key (scheduler /
 	// retry paths) or its host does not match the indexer.
-	nzbURL := h.signNZBURL(ctx, req.NZBURL, indexerID)
+	nzbURL, hostMatched := h.signNZBURL(ctx, req.NZBURL, indexerID)
+	// The host-match fallback knows which indexer signed the URL, so record it.
+	// Without this the row keeps a nil (or dangling) IndexerID for precisely the
+	// API callers the fallback exists for, and both the queue's indexer
+	// attribution and resolveSeedRatio's per-indexer override are lost (#2053).
+	if hostMatched != nil {
+		indexerID = hostMatched
+	}
 	dl := &models.Download{
 		GUID:             req.GUID,
 		BookID:           bookID,
