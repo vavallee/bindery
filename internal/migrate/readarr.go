@@ -256,9 +256,10 @@ func importReadarrDownloadClients(ctx context.Context, src *sql.DB, repo *db.Dow
 			continue
 		}
 
-		t := "sabnzbd"
-		if strings.Contains(strings.ToLower(impl), "qbittorrent") {
-			t = "qbittorrent"
+		t, ok := downloadClientTypeFor(impl)
+		if !ok {
+			res.fail(name, fmt.Sprintf("download client type %q is not supported by Bindery; add it manually in Settings", impl))
+			continue
 		}
 
 		cat := s.Category
@@ -286,6 +287,53 @@ func importReadarrDownloadClients(ctx context.Context, src *sql.DB, repo *db.Dow
 		res.AddedNames = append(res.AddedNames, name)
 	}
 	return rows.Err()
+}
+
+// readarrClientImplementations maps a Readarr download client Implementation to
+// the Bindery client type, matched as a lowercase substring so a decorated or
+// version-renamed class name still resolves.
+//
+// Order matters only in that every needle must be unambiguous against the
+// others. "rtorrent" does not appear inside "torrentblackhole", and "sabnzbd"
+// and "nzbget" do not overlap, so no entry can shadow another.
+var readarrClientImplementations = []struct {
+	needle string
+	typ    string
+}{
+	{"qbittorrent", "qbittorrent"},
+	{"rtorrent", "rtorrent"},
+	{"transmission", "transmission"},
+	{"deluge", "deluge"},
+	{"nzbget", "nzbget"},
+	{"sabnzbd", "sabnzbd"},
+}
+
+// downloadClientTypeFor resolves a Readarr Implementation string to a Bindery
+// download client type, reporting false when Bindery has no equivalent.
+//
+// It used to default to "sabnzbd" for anything that was not qBittorrent, so a
+// Readarr install on Transmission, Deluge, NZBGet or rTorrent imported as a
+// SABnzbd client pointed at the right host and port with the wrong type. The
+// row saved, appeared in the list, and then every grab against it failed: the
+// protocol predicate said usenet and the API shape was wrong. Nothing in the
+// migration result said the type had been guessed, which made a wrong answer
+// indistinguishable from a right one (#1983).
+//
+// Readarr also ships clients Bindery does not implement at all (NZBVortex, the
+// blackhole variants, Download Station, Flood, Hadouken, Aria2). Those are
+// reported as failures so they show up in the migration result, rather than
+// being silently turned into a SABnzbd client that cannot work.
+func downloadClientTypeFor(impl string) (string, bool) {
+	lower := strings.ToLower(strings.TrimSpace(impl))
+	if lower == "" {
+		return "", false
+	}
+	for _, m := range readarrClientImplementations {
+		if strings.Contains(lower, m.needle) {
+			return m.typ, true
+		}
+	}
+	return "", false
 }
 
 func importReadarrBlocklist(ctx context.Context, src *sql.DB, repo *db.BlocklistRepo, res *Result) error {
