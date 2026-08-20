@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -223,6 +224,9 @@ func TestImportCSVAuthors_NilReader(t *testing.T) {
 }
 
 func TestImportCSVAuthors_HappyPath(t *testing.T) {
+	catalogueFetchPaceInterval = 0
+	t.Cleanup(func() { catalogueFetchPaceInterval = 3 * time.Second })
+
 	database := newTestDB(t)
 	repo := db.NewAuthorRepo(database)
 
@@ -518,5 +522,116 @@ func TestImportCSVAuthors_GetAuthorFallback(t *testing.T) {
 	}
 	if res.Added != 1 {
 		t.Fatalf("Added=%d want 1 (failures: %v)", res.Added, res.Failures)
+	}
+}
+
+// TestImportCSVAuthors_CatalogueFetchIsBounded proves the catalogue-fetch
+// fan-out is capped at catalogueFetchConcurrency in-flight callbacks rather
+// than firing one unbounded goroutine per newly-added author. Before this,
+// `go onCatalogueFetch(full)` inside the row loop meant an N-author CSV fired
+// N simultaneous OpenLibrary fetches with nothing to bound them (#2075).
+func TestImportCSVAuthors_CatalogueFetchIsBounded(t *testing.T) {
+	catalogueFetchPaceInterval = 0
+	t.Cleanup(func() { catalogueFetchPaceInterval = 3 * time.Second })
+
+	database := newTestDB(t)
+	repo := db.NewAuthorRepo(database)
+	agg := metadata.NewAggregator(&stubProvider{
+		searchAuthorsFn: func(_ context.Context, q string) ([]models.Author, error) {
+			return []models.Author{{Name: q, SortName: q, ForeignID: "OL-" + q}}, nil
+		},
+	})
+
+	const authorCount = catalogueFetchConcurrency * 2
+
+	var inFlight, maxInFlight int32
+	var wg sync.WaitGroup
+	wg.Add(authorCount)
+	release := make(chan struct{})
+	onCatalogueFetch := func(*models.Author) {
+		defer wg.Done()
+		cur := atomic.AddInt32(&inFlight, 1)
+		for {
+			m := atomic.LoadInt32(&maxInFlight)
+			if cur <= m || atomic.CompareAndSwapInt32(&maxInFlight, m, cur) {
+				break
+			}
+		}
+		<-release // hold this slot open so a would-be-unbounded fan-out shows itself
+		atomic.AddInt32(&inFlight, -1)
+	}
+
+	var input strings.Builder
+	for i := 0; i < authorCount; i++ {
+		fmt.Fprintf(&input, "Author %d\n", i)
+	}
+
+	res, err := ImportCSVAuthors(context.Background(), strings.NewReader(input.String()), repo, nil, agg, onCatalogueFetch)
+	if err != nil {
+		t.Fatalf("ImportCSVAuthors: %v", err)
+	}
+	if res.Added != authorCount {
+		t.Fatalf("Added=%d want %d (failures: %v)", res.Added, authorCount, res.Failures)
+	}
+
+	// Give the fan-out time to launch everything it's going to launch, then
+	// check the high-water mark before releasing the held callbacks.
+	time.Sleep(200 * time.Millisecond)
+	if got := atomic.LoadInt32(&inFlight); got > catalogueFetchConcurrency {
+		close(release)
+		t.Fatalf("in-flight callbacks = %d, want <= %d (catalogueFetchConcurrency)", got, catalogueFetchConcurrency)
+	}
+	close(release)
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("not all catalogue-fetch callbacks completed")
+	}
+	if max := atomic.LoadInt32(&maxInFlight); max > catalogueFetchConcurrency || max == 0 {
+		t.Fatalf("max in-flight = %d, want in (0, %d]", max, catalogueFetchConcurrency)
+	}
+}
+
+// TestImportCSVAuthors_CatalogueFetchSurvivesCallerContextCancellation proves
+// the catalogue-fetch fan-out is detached from the ctx passed to
+// ImportCSVAuthors. The real caller is an HTTP handler: it writes the
+// response and returns as soon as ImportCSVAuthors does, and net/http cancels
+// r.Context() shortly after — a multi-author import can still be fetching
+// catalogues at that point, same as ReadarrImporter.Start.
+func TestImportCSVAuthors_CatalogueFetchSurvivesCallerContextCancellation(t *testing.T) {
+	catalogueFetchPaceInterval = 0
+	t.Cleanup(func() { catalogueFetchPaceInterval = 3 * time.Second })
+
+	database := newTestDB(t)
+	repo := db.NewAuthorRepo(database)
+	agg := metadata.NewAggregator(&stubProvider{
+		searchAuthorsFn: func(_ context.Context, q string) ([]models.Author, error) {
+			return []models.Author{{Name: q, SortName: q, ForeignID: "OL-" + q}}, nil
+		},
+	})
+
+	done := make(chan struct{})
+	onCatalogueFetch := func(*models.Author) { close(done) }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	res, err := ImportCSVAuthors(ctx, strings.NewReader("Andy Weir\n"), repo, nil, agg, onCatalogueFetch)
+	if err != nil {
+		t.Fatalf("ImportCSVAuthors: %v", err)
+	}
+	if res.Added != 1 {
+		t.Fatalf("Added=%d want 1 (failures: %v)", res.Added, res.Failures)
+	}
+
+	// Simulate the HTTP handler returning and net/http cancelling the request
+	// context right after ImportCSVAuthors does.
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("catalogue-fetch callback never fired — fan-out was not detached from the caller's context")
 	}
 }

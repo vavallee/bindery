@@ -94,6 +94,8 @@ func importReadarrAuthors(ctx context.Context, src *sql.DB, repo *db.AuthorRepo,
 	}
 	defer rows.Close()
 
+	var newlyAdded []*models.Author
+
 	for rows.Next() {
 		var name string
 		var monitored bool
@@ -144,15 +146,25 @@ func importReadarrAuthors(ctx context.Context, src *sql.DB, repo *db.AuthorRepo,
 		}
 		res.Added++
 		res.AddedNames = append(res.AddedNames, full.Name)
-
-		// Bulk imports are safe by default: always populate the catalogue
-		// but never auto-grab. The user can trigger grabs manually from the
-		// Wanted page after the import completes.
-		if onSearchOnAdd != nil {
-			go onSearchOnAdd(full)
-		}
+		newlyAdded = append(newlyAdded, full)
 	}
-	return rows.Err()
+	rowsErr := rows.Err()
+
+	// Bulk imports are safe by default: always populate the catalogue but
+	// never auto-grab. The user can trigger grabs manually from the Wanted
+	// page after the import completes. See dispatchCatalogueFetch (csv.go)
+	// for the fan-out's bounding/pacing and why it's detached from ctx.
+	//
+	// Dispatched before checking rowsErr, not after: every author in
+	// newlyAdded was already successfully committed via repo.Create, whether
+	// or not a later row in the cursor failed. The old code fired
+	// `go onSearchOnAdd(full)` per-row as each author was created, so a
+	// cursor error partway through never stopped catalogue fetches for
+	// authors already added before it — returning early here on rowsErr
+	// without dispatching first would silently leave those authors with
+	// empty catalogues.
+	dispatchCatalogueFetch(ctx, newlyAdded, onSearchOnAdd)
+	return rowsErr
 }
 
 // readarrSettings is the minimal shape we pull out of Readarr's

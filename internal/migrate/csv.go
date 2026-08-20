@@ -13,11 +13,64 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"time"
 
+	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 )
+
+// catalogueFetchConcurrency bounds how many newly-imported authors' catalogue
+// fetches run at once, and catalogueFetchPaceInterval additionally throttles
+// how fast new ones start. A bulk CSV import used to fire one unbounded
+// goroutine per author (`go onCatalogueFetch(full)` with no cap at all), so a
+// 19-author CSV opened 19 simultaneous OpenLibrary (and, until #2075's other
+// fixes, Hardcover) fetches, and reliably tipped OpenLibrary into 429s that
+// cascaded into timeouts and connection refusals with nothing to back off.
+//
+// This bound is deliberately lower than the 4 used for other provider fan-out
+// (authorAutoSearchConcurrency, searchPaceInterval): each author's own
+// catalogue fetch already internally fans out up to
+// openlibrary.authorWorkSampleConcurrency (4) concurrent edition-sample
+// requests, so the two stack — at 4 authors here that's up to 16 concurrent
+// OpenLibrary requests in flight, not 4. 2 keeps the realistic worst case (up
+// to 8) meaningfully lower while still importing faster than one author at a
+// time.
+const catalogueFetchConcurrency = 2
+
+// catalogueFetchPaceInterval is a var, not a const, so tests can zero it out
+// (matching internal/api's searchPaceInterval convention) rather than waiting
+// out real pacing delays.
+var catalogueFetchPaceInterval = 3 * time.Second
+
+// dispatchCatalogueFetch fans newlyAdded out to onFetch — one call per
+// author — bounded to catalogueFetchConcurrency in flight and paced
+// catalogueFetchPaceInterval apart, via concurrency.RunBoundedPaced. Shared
+// by ImportCSVAuthors and importReadarrAuthors so the launch semantics (in
+// particular, dispatching before any later error is allowed to skip it — see
+// the caller in readarr.go) can't drift between the two independently.
+//
+// bgCtx uses context.WithoutCancel rather than ctx directly. This is not
+// working around anything the old `go onCatalogueFetch(full)`-style code was
+// exposed to — onFetch takes no ctx at all (it's ultimately
+// AuthorHandler.FetchAuthorBooks(author, false, ""), which manages its own
+// lifetime), so the caller's request context never reached it either way.
+// It's RunBoundedPaced itself that reads ctx, to gate its own dispatch loop
+// (the concurrency semaphore and the pacing wait). Passing the caller's
+// request ctx straight in would mean net/http cancelling it — which happens
+// shortly after ImportCSVAuthors/importReadarrAuthors return and the handler
+// writes its response — stops the loop from *launching* the rest of the
+// batch, silently leaving later authors in a large import with no catalogue
+// at all.
+func dispatchCatalogueFetch(ctx context.Context, newlyAdded []*models.Author, onFetch func(*models.Author)) {
+	if onFetch == nil || len(newlyAdded) == 0 {
+		return
+	}
+	bgCtx := context.WithoutCancel(ctx)
+	go concurrency.RunBoundedPaced(bgCtx, newlyAdded, catalogueFetchConcurrency, catalogueFetchPaceInterval,
+		func(_ context.Context, a *models.Author) { onFetch(a) })
+}
 
 // Result summarises an import run for UI/CLI display.
 type Result struct {
@@ -85,6 +138,8 @@ func ImportCSVAuthors(
 	}
 	res.Requested = len(rows)
 
+	var newlyAdded []*models.Author
+
 	for _, row := range rows {
 		name := row.name
 		if name == "" {
@@ -132,14 +187,13 @@ func ImportCSVAuthors(
 		}
 		res.Added++
 		res.AddedNames = append(res.AddedNames, full.Name)
-
-		// Always populate the catalogue for every newly-created author — the
-		// callback fetches metadata but never auto-grabs (see func doc). An
-		// empty catalogue would leave the library scan nothing to match against.
-		if onCatalogueFetch != nil {
-			go onCatalogueFetch(full)
-		}
+		newlyAdded = append(newlyAdded, full)
 	}
+
+	// Always populate the catalogue for every newly-created author — the
+	// callback fetches metadata but never auto-grabs (see func doc). An
+	// empty catalogue would leave the library scan nothing to match against.
+	dispatchCatalogueFetch(ctx, newlyAdded, onCatalogueFetch)
 
 	return res, nil
 }
