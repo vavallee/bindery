@@ -3,8 +3,13 @@ package migrate
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -386,5 +391,101 @@ func TestParseSettings_Roundtrip(t *testing.T) {
 	}
 	if len(got.Categories) != 3 || got.Categories[2] != 3 {
 		t.Errorf("categories off: %+v", got)
+	}
+}
+
+// TestImportReadarr_CatalogueFetchIsBoundedAndSurvivesCancellation covers the
+// same #2075 fan-out fix as the CSV importer's tests: importReadarrAuthors
+// used to fire `go onSearchOnAdd(full)` per author with no cap at all, and
+// used ctx directly rather than a detached context, so a large Readarr
+// library could storm OpenLibrary and also have its catalogue backfill cut
+// short by ImportReadarr's own caller cancelling ctx.
+func TestImportReadarr_CatalogueFetchIsBoundedAndSurvivesCancellation(t *testing.T) {
+	catalogueFetchPaceInterval = 0
+	t.Cleanup(func() { catalogueFetchPaceInterval = 3 * time.Second })
+
+	path := newReadarrDB(t)
+	src, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const authorCount = catalogueFetchConcurrency * 2
+	var metaRows, authorRows strings.Builder
+	for i := 0; i < authorCount; i++ {
+		if i > 0 {
+			metaRows.WriteString(",")
+			authorRows.WriteString(",")
+		}
+		fmt.Fprintf(&metaRows, "(%d, 'Author %d')", i+1, i)
+		fmt.Fprintf(&authorRows, "(1, %d)", i+1)
+	}
+	if _, err := src.Exec(`INSERT INTO AuthorMetadata (Id, Name) VALUES ` + metaRows.String()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := src.Exec(`INSERT INTO Authors (Monitored, AuthorMetadataId) VALUES ` + authorRows.String()); err != nil {
+		t.Fatal(err)
+	}
+	src.Close()
+
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	authorRepo := db.NewAuthorRepo(database)
+
+	agg := metadata.NewAggregator(&stubProvider{
+		searchAuthorsFn: func(_ context.Context, q string) ([]models.Author, error) {
+			return []models.Author{{Name: q, SortName: q, ForeignID: "OL-" + q}}, nil
+		},
+	})
+
+	var inFlight, maxInFlight int32
+	var wg sync.WaitGroup
+	wg.Add(authorCount)
+	release := make(chan struct{})
+	onSearchOnAdd := func(*models.Author) {
+		defer wg.Done()
+		cur := atomic.AddInt32(&inFlight, 1)
+		for {
+			m := atomic.LoadInt32(&maxInFlight)
+			if cur <= m || atomic.CompareAndSwapInt32(&maxInFlight, m, cur) {
+				break
+			}
+		}
+		<-release
+		atomic.AddInt32(&inFlight, -1)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	res, err := ImportReadarr(ctx, path, authorRepo, nil, nil, nil, nil, agg, onSearchOnAdd)
+	if err != nil {
+		t.Fatalf("ImportReadarr: %v", err)
+	}
+	if res.Authors.Added != authorCount {
+		t.Fatalf("Authors.Added=%d want %d (failures: %v)", res.Authors.Added, authorCount, res.Authors.Failures)
+	}
+
+	// Same simulated-handler-return-and-cancel as the CSV test: proves the
+	// fan-out survives the caller's context being cancelled right after
+	// ImportReadarr returns.
+	cancel()
+
+	time.Sleep(200 * time.Millisecond)
+	if got := atomic.LoadInt32(&inFlight); got > catalogueFetchConcurrency {
+		close(release)
+		t.Fatalf("in-flight callbacks = %d, want <= %d (catalogueFetchConcurrency)", got, catalogueFetchConcurrency)
+	}
+	close(release)
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("not all catalogue-fetch callbacks completed")
+	}
+	if max := atomic.LoadInt32(&maxInFlight); max > catalogueFetchConcurrency || max == 0 {
+		t.Fatalf("max in-flight = %d, want in (0, %d]", max, catalogueFetchConcurrency)
 	}
 }
