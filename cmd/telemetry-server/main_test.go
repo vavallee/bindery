@@ -271,6 +271,52 @@ func TestHandleStatsJSON(t *testing.T) {
 	}
 }
 
+// TestStatsTokenValid covers the constant time bearer check added for #2138.
+// The behaviour must be identical to the plain != it replaced, so these cases
+// pin the accept/reject boundary rather than trying to time the comparison.
+func TestStatsTokenValid(t *testing.T) {
+	s := newTestServer(t, "v1.9.5")
+	s.statsToken = "s3cret"
+
+	cases := []struct {
+		name   string
+		header string
+		want   bool
+	}{
+		{"exact match", "Bearer s3cret", true},
+		{"wrong token", "Bearer nope", false},
+		{"correct prefix only", "Bearer s3c", false},
+		{"token without scheme", "s3cret", false},
+		{"wrong scheme case", "bearer s3cret", false},
+		{"trailing byte", "Bearer s3cretx", false},
+		{"missing header", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+			if tc.header != "" {
+				req.Header.Set("Authorization", tc.header)
+			}
+			if got := s.statsTokenValid(req); got != tc.want {
+				t.Errorf("statsTokenValid(%q) = %v, want %v", tc.header, got, tc.want)
+			}
+		})
+	}
+
+	// An unconfigured token must never be satisfiable, including by a request
+	// that sends the bare scheme and an empty secret.
+	t.Run("unconfigured token rejects everything", func(t *testing.T) {
+		s.statsToken = ""
+		for _, header := range []string{"", "Bearer ", "Bearer "} {
+			req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+			req.Header.Set("Authorization", header)
+			if s.statsTokenValid(req) {
+				t.Errorf("empty statsToken accepted header %q", header)
+			}
+		}
+	})
+}
+
 func TestHandleBackup(t *testing.T) {
 	s := newTestServer(t, "v1.9.5")
 	s.statsToken = "secret"

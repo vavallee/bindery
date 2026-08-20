@@ -16,6 +16,7 @@ package main
 import (
 	"compress/gzip"
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
@@ -1676,12 +1677,28 @@ func (s *server) computeStats(ctx context.Context) (*statsData, error) {
 	return d, nil
 }
 
+// statsTokenValid reports whether the request carries the stats bearer token.
+// The comparison is constant time so the response latency does not reveal how
+// many leading bytes of a guess were right, which is what makes a token
+// recoverable one byte at a time. Matches how the main binary compares every
+// other secret (internal/auth/password.go, internal/auth/middleware.go,
+// internal/api/opds_auth.go). Callers must reject an empty s.statsToken before
+// calling this; both current callers do (#2138).
+func (s *server) statsTokenValid(r *http.Request) bool {
+	if s.statsToken == "" {
+		return false
+	}
+	got := r.Header.Get("Authorization")
+	want := "Bearer " + s.statsToken
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+}
+
 func (s *server) handleStats(w http.ResponseWriter, r *http.Request) {
 	if s.statsToken == "" {
 		http.Error(w, "stats endpoint not configured", http.StatusForbidden)
 		return
 	}
-	if r.Header.Get("Authorization") != "Bearer "+s.statsToken {
+	if !s.statsTokenValid(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -1934,7 +1951,7 @@ func (s *server) handleBackup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "backup endpoint not configured", http.StatusForbidden)
 		return
 	}
-	if r.Header.Get("Authorization") != "Bearer "+s.statsToken {
+	if !s.statsTokenValid(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}

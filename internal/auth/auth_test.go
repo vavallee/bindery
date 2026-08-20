@@ -233,6 +233,72 @@ func TestLoginLimiterExpiresOldEvents(t *testing.T) {
 	}
 }
 
+// TestLoginLimiterBoundsMapAcrossDistinctIPs is the regression test for #2137:
+// gc only ever expired the bucket for the IP being looked up, so an address
+// that failed once and never returned kept its entry for the life of the
+// process. A caller rotating source addresses grew the map without limit.
+//
+// Drive many distinct IPs, let the window elapse, then drive one more so a
+// sweep runs, and assert the stale buckets are gone rather than merely that
+// the limiter still rate-limits.
+func TestLoginLimiterBoundsMapAcrossDistinctIPs(t *testing.T) {
+	const window = 10 * time.Millisecond
+	const distinct = 5000
+	lim := NewLoginLimiter(5, window)
+
+	for i := 0; i < distinct; i++ {
+		lim.Record(fmt.Sprintf("10.0.%d.%d", i/256, i%256))
+	}
+	lim.mu.Lock()
+	grown := len(lim.events)
+	lim.mu.Unlock()
+	if grown < distinct/2 {
+		t.Fatalf("setup: expected the map to hold the recorded IPs, got %d of %d", grown, distinct)
+	}
+
+	// Age every recorded event out, then touch the limiter once so a sweep runs.
+	time.Sleep(2 * window)
+	lim.Allow("192.0.2.1")
+
+	lim.mu.Lock()
+	remaining := len(lim.events)
+	lim.mu.Unlock()
+
+	// Only the address used to trigger the sweep may survive, and Allow does
+	// not record anything, so the map should be empty.
+	if remaining > 1 {
+		t.Fatalf("expired buckets were not swept: %d entries remain after %d distinct IPs aged out", remaining, distinct)
+	}
+}
+
+// TestLoginLimiterSweepKeepsLiveBuckets guards the other direction: the sweep
+// added for #2137 must not drop an address that is still inside its window,
+// which would hand an attacker a free reset by simply waiting.
+func TestLoginLimiterSweepKeepsLiveBuckets(t *testing.T) {
+	const window = 40 * time.Millisecond
+	lim := NewLoginLimiter(2, window)
+	const victim = "203.0.113.7"
+
+	lim.Record(victim)
+	lim.Record(victim)
+	if lim.Allow(victim) {
+		t.Fatal("setup: victim should be blocked after filling the bucket")
+	}
+
+	// Force a sweep to become due without letting the victim's events expire.
+	lim.mu.Lock()
+	lim.lastSweep = time.Now().Add(-2 * window)
+	lim.mu.Unlock()
+
+	if lim.Allow("198.51.100.4") {
+		// Unrelated address is allowed; the call exists to trigger the sweep.
+		_ = 0
+	}
+	if lim.Allow(victim) {
+		t.Fatal("sweep cleared a bucket that was still inside its window")
+	}
+}
+
 // --- middleware integration --------------------------------------------------
 
 type fakeProvider struct {
