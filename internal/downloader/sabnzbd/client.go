@@ -155,7 +155,10 @@ func (c *Client) AddURL(ctx context.Context, nzbURL, title, category string, pri
 		return nil, fmt.Errorf("add nzb: %w", err)
 	}
 	if !resp.Status {
-		return nil, fmt.Errorf("SABnzbd rejected download")
+		if detail := strings.TrimSpace(resp.Error); detail != "" {
+			return nil, fmt.Errorf("SABnzbd rejected download: %s", detail)
+		}
+		return nil, fmt.Errorf("SABnzbd rejected download (SABnzbd gave no reason)")
 	}
 	return &resp, nil
 }

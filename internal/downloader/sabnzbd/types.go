@@ -1,9 +1,17 @@
 package sabnzbd
 
 // AddURLResponse is returned when adding an NZB by URL.
+//
+// Error carries SAB's own explanation when Status is false. SAB answers a
+// refused mode=addfile with {"status": false, "error": "..."}, and dropping it
+// left the grab failing as a bare "SABnzbd rejected download": the one
+// component in the chain that behaved correctly, named without saying what it
+// objected to. SAB then purges the uploaded file before its own backup step,
+// so by the time anyone looks the bytes that would explain it are gone.
 type AddURLResponse struct {
 	Status bool     `json:"status"`
 	NzoIDs []string `json:"nzo_ids"`
+	Error  string   `json:"error"`
 }
 
 // QueueResponse is the SABnzbd queue status.

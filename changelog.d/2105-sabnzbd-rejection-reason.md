@@ -1,0 +1,2 @@
+### Fixed
+- **"SABnzbd rejected download" never said why** — SAB replies to a refused upload with its own explanation, and Bindery decoded only the success flag and threw the reason away. Since SAB deletes the uploaded file before its own backup step, that reply was the last place the explanation existed. The reason now reaches the queue and the history entry, and a SAB that refuses without one says so rather than leaving a message that reads as truncated.
