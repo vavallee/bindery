@@ -166,6 +166,8 @@
     "searchPlaceholder": "Search authors...",
     "sortAZ": "A–Z",
     "sortZA": "Z–A",
+    "sortFirstNameAZ": "First name A–Z",
+    "sortFirstNameZA": "First name Z–A",
     "sortRecent": "Recent",
     "filterMonitored": "Monitored:",
     "filterAll": "All",
