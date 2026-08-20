@@ -290,3 +290,46 @@ func filterRelevantDebug(results []newznab.SearchResult, title, author string, a
 	}
 	return filtered, dropped
 }
+
+// SearchBookWithOutcomes is SearchBook plus a per-indexer account of what
+// happened, for callers that act without a human watching (#1936).
+//
+// SearchBook returns results and nothing else, so a failing indexer is
+// indistinguishable from one that answered with nothing. Auto-grab reads that
+// as "no releases exist" and picks the best of whatever the surviving indexers
+// returned, with no record that part of the pool was never asked.
+//
+// This is a projection of SearchBookWithDebug rather than a third search
+// implementation: the per-indexer records it already collects are exactly what
+// is needed, they were just being kept for the interactive panel only.
+func (s *Searcher) SearchBookWithOutcomes(ctx context.Context, indexers []models.Indexer, c MatchCriteria) ([]newznab.SearchResult, []IndexerDebug) {
+	results, dbg := s.SearchBookWithDebug(ctx, indexers, c)
+	if dbg == nil {
+		return results, nil
+	}
+	return results, dbg.Indexers
+}
+
+// HardFailures returns the indexers that were asked and refused or failed to
+// answer. Indexers skipped before being contacted (disabled, or benched by the
+// #1934 cooldown) are excluded: nothing was attempted, so nothing failed.
+func HardFailures(outcomes []IndexerDebug) []IndexerDebug {
+	var failed []IndexerDebug
+	for _, o := range outcomes {
+		if !o.Skipped && o.Error != "" {
+			failed = append(failed, o)
+		}
+	}
+	return failed
+}
+
+// Attempted counts the indexers a search actually reached out to.
+func Attempted(outcomes []IndexerDebug) int {
+	n := 0
+	for _, o := range outcomes {
+		if !o.Skipped {
+			n++
+		}
+	}
+	return n
+}
