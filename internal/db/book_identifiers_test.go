@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -227,5 +228,55 @@ func TestBookProviderFromForeignID(t *testing.T) {
 		if got := models.BookProviderFromForeignID(id); got != want {
 			t.Errorf("BookProviderFromForeignID(%q) = %q, want %q", id, got, want)
 		}
+	}
+}
+
+// TestBookIdentifiers_Delete detaches one id without touching the book or its
+// other identities.
+func TestBookIdentifiers_Delete(t *testing.T) {
+	books, a := bookIdentityFixture(t)
+	ctx := context.Background()
+
+	b := newBook("hc:volume-1", "Volume 1", a.ID)
+	if err := books.Create(ctx, b); err != nil {
+		t.Fatalf("create book: %v", err)
+	}
+	if err := books.UpsertBookIdentifier(ctx, b.ID, "OL1W"); err != nil {
+		t.Fatalf("attach OL id: %v", err)
+	}
+
+	if err := books.DeleteBookIdentifier(ctx, b.ID, "OL1W"); err != nil {
+		t.Fatalf("delete identifier: %v", err)
+	}
+	if got, _ := books.GetByAnyForeignID(ctx, "OL1W"); got != nil {
+		t.Error("the detached id still resolves")
+	}
+	if got, _ := books.GetByAnyForeignID(ctx, "hc:volume-1"); got == nil || got.ID != b.ID {
+		t.Error("detaching one id disturbed the book's primary identity")
+	}
+
+	// A no-op delete is not an error: callers should not have to check first.
+	if err := books.DeleteBookIdentifier(ctx, b.ID, "OL-never-attached"); err != nil {
+		t.Errorf("deleting an unattached id returned %v, want nil", err)
+	}
+	if err := books.DeleteBookIdentifier(ctx, 0, "OL1W"); err != nil {
+		t.Errorf("deleting with no book id returned %v, want nil", err)
+	}
+}
+
+// TestBookIdentifierConflictError_Message: the conflict names both the id and
+// the row that already owns it, because "already belongs to another book" on
+// its own is not actionable in a log.
+func TestBookIdentifierConflictError_Message(t *testing.T) {
+	err := &BookIdentifierConflictError{ForeignID: "hc:volume-1", BookID: 42}
+	msg := err.Error()
+	for _, want := range []string{"hc:volume-1", "42"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message %q does not mention %q", msg, want)
+		}
+	}
+	var nilErr *BookIdentifierConflictError
+	if nilErr.Error() != ErrBookIdentifierConflict.Error() {
+		t.Errorf("nil receiver message = %q, want the sentinel's", nilErr.Error())
 	}
 }
