@@ -1,7 +1,9 @@
 package calibre
 
 import (
+	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -141,3 +143,64 @@ func TestIdentifierArgs_CleansAndSortsIdentifiers(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// TestCoverFetchClientCheckRedirect covers the redirect policy on the shared
+// cover client. MaterializeCover validates the URL it is given, but a cover
+// host can answer with a 302 to somewhere else entirely, so the redirect hook
+// is the control that stops a public cover URL being used to reach a private
+// address. It had no test.
+func TestCoverFetchClientCheckRedirect(t *testing.T) {
+	if coverFetchClient.CheckRedirect == nil {
+		t.Fatal("cover client has no CheckRedirect hook")
+	}
+
+	newReq := func(rawURL string) *http.Request {
+		req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+		if err != nil {
+			t.Fatalf("build request for %q: %v", rawURL, err)
+		}
+		return req
+	}
+
+	// Every URL below uses an IP literal. ValidateOutboundURL resolves
+	// hostnames, so a name here would make the test depend on DNS and fail
+	// wherever lookups are unavailable.
+	const publicHost = "https://93.184.216.34/a.jpg"
+
+	t.Run("allows a public redirect", func(t *testing.T) {
+		if err := coverFetchClient.CheckRedirect(newReq(publicHost), nil); err != nil {
+			t.Errorf("public redirect rejected: %v", err)
+		}
+	})
+
+	t.Run("blocks a redirect to a private address", func(t *testing.T) {
+		for _, target := range []string{
+			"http://127.0.0.1/a.jpg",
+			"http://169.254.169.254/latest/meta-data/",
+			"http://10.0.0.5/a.jpg",
+		} {
+			err := coverFetchClient.CheckRedirect(newReq(target), nil)
+			if err == nil {
+				t.Errorf("redirect to %s was allowed", target)
+				continue
+			}
+			if !strings.Contains(err.Error(), "redirect blocked") {
+				t.Errorf("redirect to %s: error = %v, want it to name the block", target, err)
+			}
+		}
+	})
+
+	t.Run("caps the redirect chain", func(t *testing.T) {
+		via := make([]*http.Request, 5)
+		for i := range via {
+			via[i] = newReq(publicHost)
+		}
+		err := coverFetchClient.CheckRedirect(newReq(publicHost), via)
+		if err == nil {
+			t.Fatal("a 5 hop chain was allowed to continue")
+		}
+		if !strings.Contains(err.Error(), "too many redirects") {
+			t.Errorf("error = %v, want it to name the hop limit", err)
+		}
+	})
+}
