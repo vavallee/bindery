@@ -122,7 +122,7 @@ export default function MetadataTab() {
                 <span>
                   {t('settings.general.strictMediaTypeLabel', 'Restrict new books to this media type')}
                   <span className="block text-xs text-slate-600 dark:text-zinc-500">
-                    {t('settings.general.strictMediaTypeHint', 'Skip catalogue books available only in the other format, and narrow dual-format books to this one. Prevents monitoring books you can never grab.')}
+                    {t('settings.general.strictMediaTypeHint', 'Skip catalogue books available only in the other format, and narrow dual-format books to this one. Prevents monitoring books you can never grab. Governs catalogue population only: a book you add yourself is always created in the format you picked.')}
                   </span>
                 </span>
               </label>

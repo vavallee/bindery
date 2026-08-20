@@ -3112,6 +3112,21 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 3b. Say so when this add went past the strict media-type policy (#1759).
+	//
+	// The policy is a catalogue-population rule, not a veto on what the user
+	// may own: the direct insert above never consults it, and the single-work
+	// fallback is exempt by #1612's rule that "an explicit add of one specific
+	// work must not be vetoed by catalogue-sync heuristics". Both of those are
+	// deliberate, because silently refusing an explicit user action is the
+	// worse of the two failures.
+	//
+	// What was missing is that it happened invisibly, so a user who turned the
+	// setting on to stop un-grabbable rows appearing had no way to learn that
+	// their own add was the exception. The setting's help text now says the
+	// same thing, which is the half most people will actually see.
+	h.logStrictMediaTypeBypass(ctx, book)
+
 	// 4. Optionally trigger an indexer search. Use the process-lifecycle
 	// context so the search goroutine is cancelled on shutdown rather than
 	// running against context.Background(). See #846.
@@ -3120,6 +3135,36 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, book)
+}
+
+// logStrictMediaTypeBypass records an explicit add that the strict media-type
+// policy would have excluded from a catalogue sync.
+//
+// Fires only when the policy is on AND pinned to one format, which is the
+// condition under which fetchAuthorBooks narrows a dual-format work or skips a
+// single-format one. A default of "both" clamps nothing, so there is nothing to
+// bypass and nothing to say.
+func (h *AuthorHandler) logStrictMediaTypeBypass(ctx context.Context, book *models.Book) {
+	if !h.strictMediaTypeBypassed(ctx, book) {
+		return
+	}
+	slog.Info("added a book the strict media-type default would have excluded from a catalogue sync; an explicit add is not vetoed by it",
+		"title", book.Title, "bookMediaType", book.MediaType, "default", h.resolveDefaultMediaType(ctx))
+}
+
+// strictMediaTypeBypassed is logStrictMediaTypeBypass's condition, split out so
+// the decision can be asserted directly rather than by capturing log output.
+func (h *AuthorHandler) strictMediaTypeBypassed(ctx context.Context, book *models.Book) bool {
+	if book == nil || !h.resolveDefaultMediaTypeStrict(ctx) {
+		return false
+	}
+	def := h.resolveDefaultMediaType(ctx)
+	// Only a single-format default clamps anything, so only that can be
+	// bypassed. "both" narrows nothing and skips nothing.
+	if def != models.MediaTypeEbook && def != models.MediaTypeAudiobook {
+		return false
+	}
+	return book.MediaType != def
 }
 
 // cleanupOrphanIfNoBooks deletes the given author iff (a) the book add

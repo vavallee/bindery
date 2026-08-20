@@ -1,0 +1,2 @@
+### Fixed
+- **Strict media type never said it was letting explicit adds through** (#1759) — the setting skips catalogue books in the wrong format and narrows dual-format ones, but a book you add yourself has always been created in the format you picked, on both add paths. That is deliberate, since silently refusing something you explicitly asked for is worse than the row it prevents, but nothing said so anywhere. The setting's help text now states the boundary, and an add that goes past the policy is logged instead of passing unremarked.

@@ -32,6 +32,14 @@ const SettingDefaultMediaType = "default.media_type"
 // default.media_type at add/refresh time so single-format users stop
 // accumulating un-grabbable rows; any other value (or unset) leaves the
 // historical mixed-catalogue behaviour untouched.
+//
+// It governs catalogue POPULATION only. A book the user adds explicitly is
+// created in the format they picked whichever way this is set: AddBook's
+// direct insert never consults it, and the single-work catalogue fallback is
+// exempt under #1612's rule that an explicit add of one specific work must not
+// be vetoed by catalogue-sync heuristics. Silently refusing an explicit user
+// action is the worse of the two failures, so the add is honoured and logged
+// rather than blocked (#1759).
 const SettingDefaultMediaTypeStrict = "default.media_type_strict"
 
 // SettingAuthorDefaultMonitorMode controls which newly discovered books are
