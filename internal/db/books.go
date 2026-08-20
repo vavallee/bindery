@@ -527,6 +527,29 @@ func (r *BookRepo) Create(ctx context.Context, b *models.Book) error {
 	b.CreatedAt = now
 	b.UpdatedAt = now
 
+	// Record the identities this book is known by (#1705). The primary id is
+	// always attached; HardcoverForeignID is attached too when the aggregator
+	// matched this work against a Hardcover book, which is the case that
+	// otherwise gets minted a second time when the author is later relinked to
+	// a different provider.
+	//
+	// Hung off Create for the same reason dedup_key and the catalogue marker
+	// are: every book-creation path flows through here, so an importer, a list
+	// sync and a manual add all record identity the same way.
+	//
+	// Best effort. A book that exists matters more than its identity map, and
+	// a conflict means another row already claims that id, which is a real
+	// condition to surface rather than resolve by force.
+	for _, identity := range []string{b.ForeignID, b.HardcoverForeignID} {
+		if strings.TrimSpace(identity) == "" {
+			continue
+		}
+		if ierr := r.upsertBookIdentifierTx(ctx, r.db, b.ID, identity, now); ierr != nil {
+			slog.Warn("could not record book identifier on create",
+				"bookId", b.ID, "foreignId", identity, "error", ierr)
+		}
+	}
+
 	// Record that this author has had a catalogue, for the refresh discovery
 	// policy (#1815, migration 075). Hung off Create for the same reason
 	// dedup_key is: every book-creation path flows through here, so the marker

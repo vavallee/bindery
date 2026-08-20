@@ -496,6 +496,19 @@ func (i *Importer) mergeUpstreamBook(ctx context.Context, cfg ImportConfig, item
 			result.Messages = append(result.Messages, "book relink skipped: upstream book already exists locally")
 			full = nil
 		} else {
+			// Keep the ABS id this row was created with before overwriting it
+			// (#1691, on top of #1705's identity table). Once ForeignID becomes
+			// the upstream id, the abs: key that step 2 of the match ladder
+			// looks for is gone, so a provenance miss drops straight to the
+			// title path, and a title path that has just been invalidated by a
+			// rename in ABS mints a duplicate. Recording the old id keeps that
+			// second lookup able to find the row.
+			if previous := strings.TrimSpace(book.ForeignID); previous != "" {
+				if ierr := i.books.UpsertBookIdentifier(ctx, book.ID, previous); ierr != nil {
+					slog.Warn("could not preserve the ABS book identifier across a relink",
+						"bookId", book.ID, "foreignId", previous, "error", ierr)
+				}
+			}
 			book.ForeignID = full.ForeignID
 			if full.MetadataProvider != "" {
 				book.MetadataProvider = full.MetadataProvider
@@ -645,7 +658,12 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 	}
 
 	fid := absForeignID("book", item.LibraryID, externalID)
-	if existing, err := i.books.GetByForeignID(ctx, fid); err != nil {
+	// GetByAnyForeignID rather than GetByForeignID: once mergeUpstreamBook has
+	// relinked a row to its upstream id, this abs: key only survives as a
+	// recorded identifier (#1691, using #1705's table). Without that, the only
+	// remaining fallback is the normalized title, which a rename in ABS has
+	// just invalidated, which is how a retitle mints a duplicate.
+	if existing, err := i.books.GetByAnyForeignID(ctx, fid); err != nil {
 		return nil, false, false, metadataMergeResult{}, err
 	} else if existing != nil {
 		if !cfg.DryRun {
