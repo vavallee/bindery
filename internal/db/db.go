@@ -163,7 +163,37 @@ func annotateCantOpen(dbPath string, err error) error {
 // (see the driver's package docs), which is the only placement that survives
 // replacement. journal_mode stays in setPragmas below because WAL is persisted
 // in the database file itself, so it does not need re-applying per connection.
-const connectionPragmaDSN = "?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
+//
+// synchronous, temp_store and cache_size are connection state for the same
+// reason foreign_keys is, so they belong here rather than in setPragmas:
+//
+//   - synchronous(1) is NORMAL. Turning on WAL does not change this default,
+//     so every commit was still paying an fsync under FULL. NORMAL is the
+//     setting SQLite documents as the correct companion to WAL. The trade is
+//     real and worth stating: an OS crash or power loss can lose the most
+//     recent committed transactions that have not been checkpointed yet. It
+//     cannot corrupt the database, and an application crash loses nothing,
+//     because WAL recovery replays the log either way. For a library manager
+//     that rewrites rows on every scan, import and download poll, losing the
+//     last few seconds of status updates to a power cut is a much smaller cost
+//     than an fsync per commit for the life of the process.
+//   - temp_store(2) is MEMORY, so the ORDER BY and GROUP BY spills the
+//     paginated list queries produce stay off disk.
+//   - cache_size(-16000) is 16 MB, negative meaning KiB rather than pages.
+//     The default is 2 MB, which is small for the JOINs the book and author
+//     list endpoints run. SetMaxOpenConns(1) means this is 16 MB in total, not
+//     per pooled connection, so it stays modest enough for a Raspberry Pi.
+//
+// None of the three carries integrity semantics. That is deliberate: widening
+// an integrity check beyond what a change actually touched is the shape of
+// #1972, where migration 072 ran foreign_key_check across the whole database,
+// found pre-existing orphans it had not created, and put instances in a
+// restart loop. These are connection tuning only.
+const connectionPragmaDSN = "?_pragma=foreign_keys(1)" +
+	"&_pragma=busy_timeout(5000)" +
+	"&_pragma=synchronous(1)" +
+	"&_pragma=temp_store(2)" +
+	"&_pragma=cache_size(-16000)"
 
 func setPragmas(db *sql.DB) error {
 	pragmas := []string{
