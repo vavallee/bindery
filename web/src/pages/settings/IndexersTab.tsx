@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, Indexer, IndexerTestResult, ProwlarrInstance } from '../../api/client'
+// client.ts re-exports types only, so the helper comes from its own module.
+import { indexerNeedsAttention } from '../../api/indexers'
 import { inputCls } from './formStyles'
 import { parseCats, parsePriority } from './helpers'
 import Toggle from './Toggle'
@@ -206,6 +208,30 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
                   )}
                 </div>
               </div>
+              {/* Stored health from the last real search (#1935). Unlike the
+                  Test result below it survives a reload, so a suspended
+                  account or a revoked key is visible without anyone pressing
+                  anything. A rate limit is deliberately amber rather than red:
+                  it clears on its own and the indexer is already benched for
+                  it (#1934). */}
+              {idx.lastError && (
+                <div
+                  role="status"
+                  className={`mt-2 px-3 py-2 rounded text-xs flex items-center gap-2 ${
+                    indexerNeedsAttention(idx)
+                      ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'
+                      : 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
+                  }`}
+                >
+                  <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${indexerNeedsAttention(idx) ? 'bg-red-500' : 'bg-amber-500'}`} />
+                  <span>
+                    {indexerNeedsAttention(idx)
+                      ? t('settings.indexers.healthAuthFail', { error: idx.lastError })
+                      : t('settings.indexers.healthFail', { error: idx.lastError })}
+                    {idx.lastFailureAt ? ` (${new Date(idx.lastFailureAt).toLocaleString()})` : ''}
+                  </span>
+                </div>
+              )}
               {indexerTestResults[idx.id] && !indexerTestResults[idx.id].testing && (() => {
                 const r = indexerTestResults[idx.id]
                 const warn = r.ok && r.searchResults === 0

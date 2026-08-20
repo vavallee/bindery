@@ -548,7 +548,9 @@
         "seedRatioHint": "Per-indexer seed-ratio limit applied to torrents grabbed from this indexer (qBittorrent, Transmission, Deluge). Leave blank to use the download client's global rule, or check Unlimited to seed forever. Ignored for Usenet, and for rTorrent, which has no per-torrent ratio limit — configure a ratio group in .rtorrent.rc instead.",
         "freeleechOnly": "Only auto-grab freeleech releases",
         "freeleechOnlyHint": "Automatic grabs from this indexer are limited to freeleech releases; anything else is held in the Pending queue for manual approval. Interactive search still shows everything. For private trackers where ratio matters — leave off for public trackers and Usenet."
-      }
+      },
+      "healthAuthFail": "This indexer rejected the last search and will keep rejecting until someone fixes it: {{error}}",
+      "healthFail": "Last search failed: {{error}}"
     },
     "prowlarr": {
       "heading": "Prowlarr",

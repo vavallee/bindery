@@ -83,7 +83,19 @@ func normalizeEventPayload(eventType string, payload map[string]interface{}) map
 			body = msg
 		}
 	case EventHealth:
+		// EventHealth covers both halves of "a configured service stopped
+		// working": download clients (#849) and indexers (#1935). They are the
+		// same event to a user's notification rules, so they share the enum and
+		// the payload says which one this is.
 		title = "Download Client Unhealthy"
+		if name, ok := payload["indexerName"].(string); ok {
+			title = "Indexer Unhealthy"
+			if name != "" {
+				title = "Indexer Unhealthy: " + name
+			}
+		} else if _, ok := payload["indexerId"]; ok {
+			title = "Indexer Unhealthy"
+		}
 		if body = msg; body == "" {
 			body = status
 		}

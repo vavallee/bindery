@@ -34,9 +34,32 @@ type Indexer struct {
 	// (#1065) can auto-populate the ratio without clobbering an explicit user
 	// choice. See the SeedRatioSource* constants. The empty string means "unset"
 	// and is eligible for Prowlarr auto-population.
-	SeedRatioSource string    `json:"seedRatioSource,omitempty"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	SeedRatioSource string `json:"seedRatioSource,omitempty"`
+	// Search health, written by the searcher rather than by the user (#1935).
+	// All four are nil on an indexer that has never been searched.
+	//
+	// LastError is the message from the most recent failed search, cleared on
+	// the next success, so a non-nil value means "the last thing we heard from
+	// this indexer was a refusal". LastErrorCode is the Newznab code when the
+	// indexer itself rejected us (1xx needs a human, 5xx clears on its own) and
+	// nil for a transport-level failure.
+	LastError     *string    `json:"lastError,omitempty"`
+	LastErrorCode *int       `json:"lastErrorCode,omitempty"`
+	LastFailureAt *time.Time `json:"lastFailureAt,omitempty"`
+	LastSuccessAt *time.Time `json:"lastSuccessAt,omitempty"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
+}
+
+// NeedsAttention reports whether the last search against this indexer failed
+// with something only a human can fix: Newznab's 1xx range (100 bad
+// credentials, 101 account suspended, 102 VPN forbidden). A 5xx rate limit and
+// a transport error both clear on their own and are deliberately excluded.
+func (i Indexer) NeedsAttention() bool {
+	if i.LastError == nil || i.LastErrorCode == nil {
+		return false
+	}
+	return *i.LastErrorCode >= 100 && *i.LastErrorCode <= 199
 }
 
 // Provenance values for Indexer.SeedRatioSource.
