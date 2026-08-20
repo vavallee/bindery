@@ -1032,7 +1032,6 @@ func TestListPageFiltered_ColumnHeaderSorts(t *testing.T) {
 	}
 }
 
-
 // TestListPageFiltered_NameSort covers the display-name sort keys (#2102):
 // "name-az"/"name-za" order by name_sort_key — authorSortKey folded from
 // `name` — so the list reads first-name order and accented first names sort
