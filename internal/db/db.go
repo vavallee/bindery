@@ -330,19 +330,21 @@ func ensureBooksExcludedColumn(database *sql.DB) error {
 }
 
 // backfillAuthorSortKeys recomputes authors.sort_key for every row whose stored
-// value differs from authorSortKey(sort_name). It runs on every startup after
+// value differs from authorSortKey(sort_name) — and likewise name_sort_key
+// against authorSortKey(name) (migration 079, #2102). It runs on every startup after
 // migrations so legacy rows created before migration 058 (which leaves sort_key
 // empty) get a correct accent-folded key, and a future change to the folder
 // re-canonicalizes existing rows on the next boot.
 func backfillAuthorSortKeys(database *sql.DB) error {
 	type pending struct {
-		id  int64
-		key string
+		id      int64
+		key     string
+		nameKey string
 	}
 	// Read phase in its own scope so the cursor closes before the write tx opens
 	// — holding a read cursor across Begin() risks "database is locked" on SQLite.
 	updates, err := func() ([]pending, error) {
-		rows, err := database.Query("SELECT id, sort_name, COALESCE(sort_key, '') FROM authors")
+		rows, err := database.Query("SELECT id, name, sort_name, COALESCE(sort_key, ''), COALESCE(name_sort_key, '') FROM authors")
 		if err != nil {
 			return nil, fmt.Errorf("read authors for sort_key backfill: %w", err)
 		}
@@ -350,12 +352,13 @@ func backfillAuthorSortKeys(database *sql.DB) error {
 		var out []pending
 		for rows.Next() {
 			var id int64
-			var sortName, stored string
-			if err := rows.Scan(&id, &sortName, &stored); err != nil {
+			var name, sortName, stored, storedName string
+			if err := rows.Scan(&id, &name, &sortName, &stored, &storedName); err != nil {
 				return nil, fmt.Errorf("scan author for sort_key backfill: %w", err)
 			}
-			if want := authorSortKey(sortName); want != stored {
-				out = append(out, pending{id: id, key: want})
+			want, wantName := authorSortKey(sortName), authorSortKey(name)
+			if want != stored || wantName != storedName {
+				out = append(out, pending{id: id, key: want, nameKey: wantName})
 			}
 		}
 		if err := rows.Err(); err != nil {
@@ -374,14 +377,14 @@ func backfillAuthorSortKeys(database *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("begin sort_key backfill tx: %w", err)
 	}
-	stmt, err := tx.Prepare("UPDATE authors SET sort_key = ? WHERE id = ?")
+	stmt, err := tx.Prepare("UPDATE authors SET sort_key = ?, name_sort_key = ? WHERE id = ?")
 	if err != nil {
 		_ = tx.Rollback()
 		return fmt.Errorf("prepare sort_key backfill: %w", err)
 	}
 	defer stmt.Close()
 	for _, u := range updates {
-		if _, err := stmt.Exec(u.key, u.id); err != nil {
+		if _, err := stmt.Exec(u.key, u.nameKey, u.id); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("update sort_key for author %d: %w", u.id, err)
 		}

@@ -19,6 +19,7 @@ import Switch from '../components/Switch'
 // the column-header sorts (#1349), whitelisted server-side by authorSortOrder.
 type SortMode =
   | 'az' | 'za'
+  | 'name-az' | 'name-za'
   | 'recent'
   | 'books-asc' | 'books-desc'
   | 'rating-asc' | 'rating-desc'
@@ -393,6 +394,8 @@ export default function AuthorsPage() {
         <div className="flex gap-1">
           <button onClick={() => setSort('az')} className={sortBtnCls(sort === 'az')}>{t('authors.sortAZ')}</button>
           <button onClick={() => setSort('za')} className={sortBtnCls(sort === 'za')}>{t('authors.sortZA')}</button>
+          <button onClick={() => setSort('name-az')} className={sortBtnCls(sort === 'name-az')}>{t('authors.sortFirstNameAZ')}</button>
+          <button onClick={() => setSort('name-za')} className={sortBtnCls(sort === 'name-za')}>{t('authors.sortFirstNameZA')}</button>
           <button onClick={() => setSort('recent')} className={sortBtnCls(sort === 'recent')}>{t('authors.sortRecent')}</button>
         </div>
       </div>

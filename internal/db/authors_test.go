@@ -1032,6 +1032,63 @@ func TestListPageFiltered_ColumnHeaderSorts(t *testing.T) {
 	}
 }
 
+// TestListPageFiltered_NameSort covers the display-name sort keys (#2102):
+// "name-az"/"name-za" order by name_sort_key — authorSortKey folded from
+// `name` — so the list reads first-name order and accented first names sort
+// in place, exactly as #1347 fixed for the sort_name key.
+func TestListPageFiltered_NameSort(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	authors := NewAuthorRepo(database)
+
+	// "Alice Baker" breaks the accidental symmetry between surname order and
+	// reversed first-name order: without her, the za expectation coincides with
+	// the unknown-key fallback and cannot prove the key is actually applied.
+	for _, a := range []struct{ name, sortName string }{
+		{"Andy Weir", "Weir, Andy"},
+		{"Alice Baker", "Baker, Alice"},
+		{"Bernard Cornwell", "Cornwell, Bernard"},
+		{"Ángel Ruiz", "Ruiz, Ángel"},
+	} {
+		if err := authors.Create(ctx, &models.Author{ForeignID: "OL_" + a.name, Name: a.name, SortName: a.sortName}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	names := func(sort string) []string {
+		t.Helper()
+		page, _, err := authors.ListPageFiltered(ctx, AuthorListFilter{Sort: sort}, 50, 0)
+		if err != nil {
+			t.Fatalf("sort %q: %v", sort, err)
+		}
+		out := make([]string, 0, len(page))
+		for _, a := range page {
+			out = append(out, a.Name)
+		}
+		return out
+	}
+
+	for _, tc := range []struct {
+		sort string
+		want []string
+	}{
+		// Default key: surname-first via sort_key(sort_name).
+		{"az", []string{"Alice Baker", "Bernard Cornwell", "Ángel Ruiz", "Andy Weir"}},
+		// Display-name keys: "Ángel" folds to "angel", between "andy" and "bernard".
+		{"name-az", []string{"Alice Baker", "Andy Weir", "Ángel Ruiz", "Bernard Cornwell"}},
+		{"name-za", []string{"Bernard Cornwell", "Ángel Ruiz", "Andy Weir", "Alice Baker"}},
+	} {
+		if got := names(tc.sort); !slices.Equal(got, tc.want) {
+			t.Errorf("sort %q = %v, want %v", tc.sort, got, tc.want)
+		}
+	}
+}
+
 // TestListPageFiltered_TiedSortIsStableAcrossPages guards the tiebreaker on the
 // new sorts. Book counts and the monitored flag are heavily non-unique; without
 // a stable secondary key SQLite may return ties in any order, and a paginated

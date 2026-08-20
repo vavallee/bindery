@@ -113,6 +113,7 @@ type AuthorListFilter struct {
 	// Monitored, when non-nil, restricts to authors with that monitored flag.
 	Monitored *bool
 	// Sort is one of "az" (sort_name asc, default), "za" (sort_name desc),
+	// "name-az"/"name-za" (display-name asc/desc, #2102),
 	// "recent" (created_at desc), or one of the column-header sorts added for
 	// #1349: "books-asc"/"books-desc", "rating-asc"/"rating-desc",
 	// "monitored-asc"/"monitored-desc". Unknown values fall back to "az".
@@ -156,6 +157,13 @@ func authorSortOrder(sort string) string {
 		return "monitored ASC, sort_key ASC"
 	case "monitored-desc":
 		return "monitored DESC, sort_key ASC"
+	// Display-name ordering (#2102): name_sort_key is the sibling of sort_key,
+	// folded from `name` instead of sort_name (migration 079), so "Andy Weir"
+	// sorts under A rather than W and accented first names stay in place.
+	case "name-az":
+		return "name_sort_key ASC, name COLLATE NOCASE ASC"
+	case "name-za":
+		return "name_sort_key DESC, name COLLATE NOCASE DESC"
 	default:
 		return "sort_key ASC, sort_name COLLATE NOCASE ASC"
 	}
@@ -428,12 +436,12 @@ func (r *AuthorRepo) CreateForUser(ctx context.Context, a *models.Author, ownerU
 	defer func() { _ = tx.Rollback() }()
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO authors (foreign_id, name, sort_name, sort_key, description, image_url, disambiguation,
+		INSERT INTO authors (foreign_id, name, sort_name, sort_key, name_sort_key, description, image_url, disambiguation,
 		                     ratings_count, average_rating, monitored, quality_profile_id, metadata_profile_id, root_folder_id,
 		                     audiobook_root_folder_id, monitor_mode, monitor_latest_count, monitor_new_items, metadata_provider, owner_user_id,
 		                     created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.ForeignID, a.Name, a.SortName, authorSortKey(a.SortName), a.Description, a.ImageURL, a.Disambiguation,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ForeignID, a.Name, a.SortName, authorSortKey(a.SortName), authorSortKey(a.Name), a.Description, a.ImageURL, a.Disambiguation,
 		a.RatingsCount, a.AverageRating, a.Monitored, a.QualityProfileID, a.MetadataProfileID, a.RootFolderID,
 		a.AudiobookRootFolderID, a.MonitorMode, a.MonitorLatestCount, a.MonitorNewItems, a.MetadataProvider, ownerArg, timeValueArg(now), timeValueArg(now))
 	if err != nil {
@@ -634,6 +642,7 @@ func (r *AuthorRepo) UpgradeSyntheticDNB(ctx context.Context, currentForeignID s
 			    name              = COALESCE(NULLIF(?, ''), name),
 		    sort_name         = COALESCE(NULLIF(?, ''), sort_name),
 		    sort_key          = CASE WHEN ? != '' THEN ? ELSE sort_key END,
+		    name_sort_key     = CASE WHEN ? != '' THEN ? ELSE name_sort_key END,
 		    description       = CASE WHEN ? != '' THEN ? ELSE description END,
 		    image_url         = CASE WHEN ? != '' THEN ? ELSE image_url END,
 		    disambiguation    = CASE WHEN ? != '' THEN ? ELSE disambiguation END,
@@ -644,6 +653,7 @@ func (r *AuthorRepo) UpgradeSyntheticDNB(ctx context.Context, currentForeignID s
 		target.Name,                                     // name = COALESCE(NULLIF(?,''), name)
 		target.SortName,                                 // sort_name = COALESCE(NULLIF(?,''), sort_name)
 		target.SortName, authorSortKey(target.SortName), // sort_key CASE WHEN ?!='' THEN ? ELSE sort_key
+		target.Name, authorSortKey(target.Name), // name_sort_key CASE WHEN ?!='' THEN ? ELSE name_sort_key
 		target.Description, target.Description, // description CASE WHEN ? != '' THEN ?
 		target.ImageURL, target.ImageURL, // image_url
 		target.Disambiguation, target.Disambiguation, // disambiguation
@@ -706,12 +716,12 @@ func (r *AuthorRepo) Update(ctx context.Context, a *models.Author) error {
 
 func (r *AuthorRepo) update(ctx context.Context, exec dbExecutor, a *models.Author, now time.Time) error {
 	_, err := exec.ExecContext(ctx, `
-		UPDATE authors SET foreign_id=?, name=?, sort_name=?, sort_key=?, description=?, image_url=?, disambiguation=?,
+		UPDATE authors SET foreign_id=?, name=?, sort_name=?, sort_key=?, name_sort_key=?, description=?, image_url=?, disambiguation=?,
 		                   ratings_count=?, average_rating=?, monitored=?, quality_profile_id=?,
 		                   metadata_profile_id=?, root_folder_id=?, audiobook_root_folder_id=?, monitor_mode=?,
 		                   monitor_latest_count=?, monitor_new_items=?, metadata_provider=?, last_metadata_refresh_at=?, updated_at=?
 		WHERE id=?`,
-		a.ForeignID, a.Name, a.SortName, authorSortKey(a.SortName), a.Description, a.ImageURL, a.Disambiguation,
+		a.ForeignID, a.Name, a.SortName, authorSortKey(a.SortName), authorSortKey(a.Name), a.Description, a.ImageURL, a.Disambiguation,
 		a.RatingsCount, a.AverageRating, a.Monitored, a.QualityProfileID,
 		a.MetadataProfileID, a.RootFolderID, a.AudiobookRootFolderID, a.MonitorMode,
 		a.MonitorLatestCount, a.MonitorNewItems, a.MetadataProvider, timeArg(a.LastMetadataRefreshAt), timeValueArg(now), a.ID)
