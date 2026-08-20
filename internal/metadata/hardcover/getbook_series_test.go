@@ -132,3 +132,36 @@ func TestGetBookByISBN_RequestsSeries(t *testing.T) {
 		t.Fatalf("SeriesRefs = %d, want 1", len(book.SeriesRefs))
 	}
 }
+
+// TestGetAuthorWorksByName_RequestsSeries covers the same omission on the
+// author-catalogue supplement. Works fetched by author name arrived with
+// SeriesRefs nil, so a Hardcover-supplemented catalogue produced books with no
+// series membership at all, and an author on "series" monitor mode never saw
+// its pinned-series short circuit fire for them.
+//
+// The query-text assertion carries weight here beyond regression cover: the
+// comment above this query records that requesting a field the `books` type
+// lacks makes Hardcover reject the WHOLE query, taking the entire supplement
+// down with it. book_series is valid on `books`, which lists.go selects through
+// list_books { book { ... } }, and this pins that it is actually asked for.
+func TestGetAuthorWorksByName_RequestsSeries(t *testing.T) {
+	t.Parallel()
+	c, tr := newSeriesResponseClient(t, bookWithSeriesGQL)
+
+	books, err := c.GetAuthorWorksByName(context.Background(), "Bruce Sentar")
+	if err != nil {
+		t.Fatalf("GetAuthorWorksByName: %v", err)
+	}
+	if len(tr.queries) == 0 || !strings.Contains(tr.queries[0], "book_series") {
+		t.Fatalf("author-works query does not select book_series:\n%v", tr.queries)
+	}
+	if len(books) == 0 {
+		t.Fatal("no books returned")
+	}
+	if len(books[0].SeriesRefs) != 1 {
+		t.Fatalf("SeriesRefs = %d, want 1", len(books[0].SeriesRefs))
+	}
+	if books[0].SeriesRefs[0].Title != "Legendary Rule" {
+		t.Errorf("series Title = %q, want %q", books[0].SeriesRefs[0].Title, "Legendary Rule")
+	}
+}

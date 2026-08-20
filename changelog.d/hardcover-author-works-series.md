@@ -1,0 +1,2 @@
+### Fixed
+- **Hardcover-supplemented author catalogues had no series information** — works Bindery pulls from Hardcover to fill out an author's bibliography arrived with no series membership, so those books were never linked into a series and an author set to monitor a specific series never picked them up. They now carry the series and volume number Hardcover holds. Existing books gain their series links on the next author refresh.

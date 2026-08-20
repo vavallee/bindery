@@ -226,6 +226,10 @@ func (c *Client) GetAuthorWorksByName(ctx context.Context, authorName string) ([
 			audio_seconds
 			default_audio_edition_id
 			default_ebook_edition_id
+			book_series(order_by: { position: asc }) {
+				position
+				series { id name }
+			}
 			contributions {
 				contribution
 				author { id name slug }
