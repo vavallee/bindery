@@ -331,7 +331,7 @@ func ensureBooksExcludedColumn(database *sql.DB) error {
 
 // backfillAuthorSortKeys recomputes authors.sort_key for every row whose stored
 // value differs from authorSortKey(sort_name) — and likewise name_sort_key
-// against authorSortKey(name) (migration 076, #2102). It runs on every startup after
+// against authorSortKey(name) (migration 079, #2102). It runs on every startup after
 // migrations so legacy rows created before migration 058 (which leaves sort_key
 // empty) get a correct accent-folded key, and a future change to the folder
 // re-canonicalizes existing rows on the next boot.

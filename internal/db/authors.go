@@ -158,7 +158,7 @@ func authorSortOrder(sort string) string {
 	case "monitored-desc":
 		return "monitored DESC, sort_key ASC"
 	// Display-name ordering (#2102): name_sort_key is the sibling of sort_key,
-	// folded from `name` instead of sort_name (migration 076), so "Andy Weir"
+	// folded from `name` instead of sort_name (migration 079), so "Andy Weir"
 	// sorts under A rather than W and accented first names stay in place.
 	case "name-az":
 		return "name_sort_key ASC, name COLLATE NOCASE ASC"
