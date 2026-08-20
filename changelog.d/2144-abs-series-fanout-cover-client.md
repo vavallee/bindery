@@ -1,0 +1,3 @@
+### Changed
+- **Audiobookshelf imports fetch Hardcover series catalogs concurrently** (#2144). A search returns up to five candidate series and each one's catalog was fetched only after the previous had returned, so a book whose series were not yet cached cost five sequential round trips. Most noticeable on the first import of a library, which is when the fewest series are cached.
+- **Calibre cover downloads reuse one HTTP client** (#2144). Each cover fetch built its own client, so two covers from the same host could not share a connection. Affects the first import of a library, before the on disk cover cache is warm.

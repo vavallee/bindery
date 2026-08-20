@@ -6,11 +6,34 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 
+	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/seriesmatch"
 	"github.com/vavallee/bindery/internal/textutil"
+)
+
+const (
+	// hardcoverSeriesCatalogConcurrency bounds the catalog fan-out per book.
+	// A search returns at most five results and a book rarely has more than
+	// two usable series queries, so four in flight covers the realistic worst
+	// case without turning one import into a burst against Hardcover.
+	hardcoverSeriesCatalogConcurrency = 4
+
+	// Bounded but deliberately NOT paced. RunBoundedPaced gates every launch
+	// on a wall-clock interval, and the aggregator caches series catalogs
+	// (internal/metadata/aggregator_series.go), so a paced fan-out would
+	// pay that interval even when the call is about to be served from cache. A
+	// real library reuses the same series across many books, so cache hits are
+	// the common case here, and pacing would tax the whole import for a
+	// burst risk that the bound above already covers.
+	//
+	// A cap is still meaningful: matchHardcoverSeries is called once per item,
+	// serially, from Importer.importItem (importer.go:670), so this bound is
+	// the ceiling on concurrent Hardcover calls for the whole import, not a
+	// per-book burst on top of other work.
 )
 
 type hardcoverSeriesQuery struct {
@@ -41,7 +64,25 @@ func (i *Importer) matchHardcoverSeries(ctx context.Context, cfg ImportConfig, r
 	if author != nil && strings.TrimSpace(author.Name) != "" {
 		authorName = strings.TrimSpace(author.Name)
 	}
-	candidates := make(map[string]hardcoverSeriesCandidate)
+	// Search first, collecting every (query, result) pair, then fetch the
+	// catalogs those results point at concurrently, then score. Splitting the
+	// three phases buys two things over the nested loop this replaces.
+	//
+	// The catalog fetches stop being serial. Each one is an outbound Hardcover
+	// call, and there are up to five per query, so a cold cache used to mean
+	// five round trips end to end for every book an import touches.
+	//
+	// Collecting unique ForeignIDs before fetching also stops the same series
+	// being requested once per query that returned it, which happens routinely
+	// when a book carries both an ABS series name and an alternate spelling.
+	// That is tidiness rather than a saving: the aggregator already caches by
+	// ForeignID, so the repeat never reached the network. It does mean the
+	// fan-out width reflects real work instead of duplicates.
+	type pendingCandidate struct {
+		query  hardcoverSeriesQuery
+		result metadata.SeriesSearchResult
+	}
+	var pending []pendingCandidate
 	for _, query := range queries {
 		results, err := i.meta.SearchSeries(ctx, query.Title, 5)
 		if err != nil {
@@ -49,22 +90,53 @@ func (i *Importer) matchHardcoverSeries(ctx context.Context, cfg ImportConfig, r
 			continue
 		}
 		for _, result := range results {
-			catalog, err := i.meta.GetSeriesCatalog(ctx, result.ForeignID)
+			pending = append(pending, pendingCandidate{query: query, result: result})
+		}
+	}
+
+	wanted := make([]string, 0, len(pending))
+	seenSeries := make(map[string]struct{}, len(pending))
+	for _, p := range pending {
+		if _, ok := seenSeries[p.result.ForeignID]; ok {
+			continue
+		}
+		seenSeries[p.result.ForeignID] = struct{}{}
+		wanted = append(wanted, p.result.ForeignID)
+	}
+
+	var catalogMu sync.Mutex
+	catalogs := make(map[string]*metadata.SeriesCatalog, len(wanted))
+	concurrency.RunBounded(ctx, wanted, hardcoverSeriesCatalogConcurrency,
+		func(ctx context.Context, foreignID string) {
+			catalog, err := i.meta.GetSeriesCatalog(ctx, foreignID)
 			if err != nil {
-				slog.Warn("abs import: hardcover series catalog failed", "itemID", item.ItemID, "series", result.ForeignID, "error", err)
-				continue
+				slog.Warn("abs import: hardcover series catalog failed", "itemID", item.ItemID, "series", foreignID, "error", err)
+				return
 			}
 			if catalog == nil {
-				continue
+				return
 			}
-			candidate, ok := evaluateHardcoverSeriesCandidate(query, authorName, item, result, catalog)
-			if !ok {
-				continue
-			}
-			key := catalog.ForeignID
-			if existing, exists := candidates[key]; !exists || candidate.Score > existing.Score {
-				candidates[key] = candidate
-			}
+			catalogMu.Lock()
+			catalogs[foreignID] = catalog
+			catalogMu.Unlock()
+		})
+
+	// Score in the original query-then-result order so the highest-score-wins
+	// tie-break below resolves exactly as it did serially. The fan-out above
+	// only changes when the catalogs are fetched, never which one is picked.
+	candidates := make(map[string]hardcoverSeriesCandidate)
+	for _, p := range pending {
+		catalog := catalogs[p.result.ForeignID]
+		if catalog == nil {
+			continue
+		}
+		candidate, ok := evaluateHardcoverSeriesCandidate(p.query, authorName, item, p.result, catalog)
+		if !ok {
+			continue
+		}
+		key := catalog.ForeignID
+		if existing, exists := candidates[key]; !exists || candidate.Score > existing.Score {
+			candidates[key] = candidate
 		}
 	}
 	selected, ambiguous := selectHardcoverSeriesCandidate(candidates)

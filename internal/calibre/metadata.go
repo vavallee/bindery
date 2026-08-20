@@ -264,6 +264,29 @@ func FormatPublishedDate(t *time.Time) string {
 	return t.UTC().Format("2006-01-02")
 }
 
+// coverFetchClient is shared across cover downloads. It used to be built
+// inline on every call, which meant a fresh Transport and therefore a fresh
+// connection pool per cover: no keep-alive reuse between two covers from the
+// same host, which is the normal case when importing a Calibre library. Every
+// other outbound client in the codebase is built once in a constructor and
+// reused; this was the one exception.
+//
+// The disk cache in findExistingCover suppresses repeat fetches of the same
+// URL, so this only shows up on the first import of a library, which is
+// exactly when there are the most covers to fetch.
+var coverFetchClient = &http.Client{
+	Timeout: 15 * time.Second,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if err := httpsec.ValidateOutboundURL(req.URL.String(), httpsec.PolicyStrict); err != nil {
+			return fmt.Errorf("redirect blocked: %w", err)
+		}
+		if len(via) >= 5 {
+			return fmt.Errorf("too many redirects")
+		}
+		return nil
+	},
+}
+
 // MaterializeCover fetches an external cover into cacheDir and returns a local
 // path Calibre can consume. It validates outbound URLs to avoid SSRF and keeps
 // failures non-fatal for callers.
@@ -281,23 +304,11 @@ func MaterializeCover(ctx context.Context, cacheDir, rawURL string) (string, err
 		return existing, nil
 	}
 
-	client := &http.Client{
-		Timeout: 15 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if err := httpsec.ValidateOutboundURL(req.URL.String(), httpsec.PolicyStrict); err != nil {
-				return fmt.Errorf("redirect blocked: %w", err)
-			}
-			if len(via) >= 5 {
-				return fmt.Errorf("too many redirects")
-			}
-			return nil
-		},
-	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return "", err
 	}
-	resp, err := client.Do(req)
+	resp, err := coverFetchClient.Do(req)
 	if err != nil {
 		return "", err
 	}

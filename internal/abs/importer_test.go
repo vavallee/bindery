@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -855,6 +856,16 @@ type stubABSMetadataProvider struct {
 	catalogs             map[string]*metadata.SeriesCatalog
 	searchSeriesCalls    int
 	searchAuthorsCalls   int
+
+	// catalogMu guards catalogCalls: GetSeriesCatalog is fanned out
+	// concurrently by matchHardcoverSeries, so the counter is written from
+	// several goroutines at once.
+	catalogMu    sync.Mutex
+	catalogCalls map[string]int
+
+	// onCatalog, when set, runs inside GetSeriesCatalog. Used to observe how
+	// many catalog fetches are in flight at once.
+	onCatalog func()
 }
 
 func (p *stubABSMetadataProvider) Name() string { return "stub" }
@@ -907,10 +918,28 @@ func (p *stubABSMetadataProvider) SearchSeries(_ context.Context, query string, 
 	return results, nil
 }
 func (p *stubABSMetadataProvider) GetSeriesCatalog(_ context.Context, foreignID string) (*metadata.SeriesCatalog, error) {
+	p.catalogMu.Lock()
+	if p.catalogCalls == nil {
+		p.catalogCalls = map[string]int{}
+	}
+	p.catalogCalls[foreignID]++
+	hook := p.onCatalog
+	p.catalogMu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	if p.catalogs == nil {
 		return nil, nil
 	}
 	return p.catalogs[foreignID], nil
+}
+
+// catalogCallCount reports how many times GetSeriesCatalog was asked for one
+// series, safely against the concurrent fan-out.
+func (p *stubABSMetadataProvider) catalogCallCount(foreignID string) int {
+	p.catalogMu.Lock()
+	defer p.catalogMu.Unlock()
+	return p.catalogCalls[foreignID]
 }
 
 func TestImporter_NormalizedAuthorMatchLinksExistingAuthor(t *testing.T) {
@@ -3230,6 +3259,110 @@ func TestImporter_HardcoverSeriesLinksExistingCatalogBookWithRollback(t *testing
 	}
 	if link != nil {
 		t.Fatalf("series membership provenance after rollback = %+v, want nil", link)
+	}
+}
+
+// TestImporter_HardcoverSeriesCatalogFetchesOverlap asserts the catalog
+// lookups actually run concurrently. Before this, matchHardcoverSeries fetched
+// each search result's catalog one after another, so a cold cache meant up to
+// five sequential Hardcover round trips for every book an import touched.
+//
+// The test observes overlap directly rather than timing the run: each stubbed
+// fetch parks until a second one has started, so it can only complete if the
+// fan-out is real. Against the serial implementation the first fetch waits
+// alone, hits its timeout, and maxInFlight stays at 1.
+func TestImporter_HardcoverSeriesCatalogFetchesOverlap(t *testing.T) {
+	t.Parallel()
+
+	importer, _, _, _, _, _, _, _, _, _ := newABSImporterFixture(t)
+	enableHardcoverSeriesMatching(t, importer)
+	item := sampleABSItem()
+	item.ItemID = "li-all-systems-red"
+	item.Title = "All Systems Red"
+	item.Authors = []NormalizedAuthor{{ID: "author-martha-wells", Name: "Martha Wells"}}
+	item.Series = []NormalizedSeries{{Name: "The Murderbot Diaries", Sequence: "1"}}
+
+	// Three distinct series, so three distinct catalog fetches. Distinct IDs
+	// matter: the aggregator caches by ForeignID, so repeats would never reach
+	// the stub at all.
+	var results []metadata.SeriesSearchResult
+	catalogs := map[string]*metadata.SeriesCatalog{}
+	for _, id := range []string{"hc-series:200", "hc-series:201", "hc-series:202"} {
+		results = append(results, metadata.SeriesSearchResult{
+			ForeignID: id, ProviderID: id, Title: "The Murderbot Diaries", AuthorName: "Martha Wells",
+		})
+		catalogs[id] = &metadata.SeriesCatalog{
+			ForeignID: id, ProviderID: id, Title: "The Murderbot Diaries", AuthorName: "Martha Wells",
+			Books: []metadata.SeriesCatalogBook{{
+				ForeignID: "hc:all-systems-red-" + id,
+				Title:     "All Systems Red",
+				Position:  "1",
+				Book: models.Book{
+					ForeignID:        "hc:all-systems-red-" + id,
+					Title:            "All Systems Red",
+					MetadataProvider: providerHardcover,
+					Author:           &models.Author{Name: "Martha Wells"},
+				},
+			}},
+		}
+	}
+
+	var mu sync.Mutex
+	var inFlight, maxInFlight int
+	overlapped := make(chan struct{})
+	var once sync.Once
+
+	provider := &stubABSMetadataProvider{
+		series:   map[string][]metadata.SeriesSearchResult{"The Murderbot Diaries": results},
+		catalogs: catalogs,
+	}
+	provider.onCatalog = func() {
+		mu.Lock()
+		inFlight++
+		if inFlight > maxInFlight {
+			maxInFlight = inFlight
+		}
+		reached := inFlight >= 2
+		mu.Unlock()
+
+		if reached {
+			once.Do(func() { close(overlapped) })
+		}
+		// Park until another fetch joins. The timeout keeps a serial
+		// implementation from hanging the suite; it just fails instead.
+		select {
+		case <-overlapped:
+		case <-time.After(2 * time.Second):
+		}
+
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+	}
+
+	importer.WithMetadata(metadata.NewAggregator(provider))
+	importer.enumerateFn = func(ctx context.Context, libraryID string, fn func(context.Context, NormalizedLibraryItem) error) (EnumerationStats, error) {
+		if err := fn(ctx, item); err != nil {
+			return EnumerationStats{}, err
+		}
+		return EnumerationStats{PagesScanned: 1, ItemsSeen: 1, ItemsNormalized: 1}, nil
+	}
+	if _, err := importer.Run(context.Background(), ImportConfig{
+		SourceID:  DefaultSourceID,
+		BaseURL:   "https://abs.example.com",
+		APIKey:    "secret",
+		LibraryID: item.LibraryID,
+		Label:     "Shelf",
+		Enabled:   true,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	mu.Lock()
+	peak := maxInFlight
+	mu.Unlock()
+	if peak < 2 {
+		t.Errorf("peak concurrent catalog fetches = %d, want at least 2: the fan-out is running serially", peak)
 	}
 }
 
