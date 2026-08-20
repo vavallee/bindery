@@ -460,6 +460,19 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 	// user has since changed on the author.
 	qualityProfileID := il.QualityProfileID
 
+	// Root folder to stamp on every author this sync creates. Same shape as the
+	// quality profile above and the same defect: models.ImportList.RootFolderID
+	// is persisted and settable from the per-list picker, and the syncer never
+	// read it, so a list configured with a root folder produced authors with
+	// none (#1864). Create-only for the same reason, so a re-synced list never
+	// overwrites a root folder the user has since changed on the author.
+	//
+	// No fallback when the list configures none, for the reason #1781
+	// established for quality profiles: root folders are owner-scoped, so
+	// stamping a "default" row from a background job can hand one user's
+	// storage to another user's authors on a tenanted install.
+	rootFolderID := il.RootFolderID
+
 	// Index existing authors by normalized name so a Hardcover author already in
 	// the library under a different provider's foreign id (e.g. an OpenLibrary
 	// author imported via ABS) is reused instead of duplicated (#1223).
@@ -517,7 +530,7 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		}
 
 		// Look up or create the author
-		authorID, err := s.ensureAuthor(ctx, &book, nameIndex, ownerID, qualityProfileID)
+		authorID, err := s.ensureAuthor(ctx, &book, nameIndex, ownerID, qualityProfileID, rootFolderID)
 		if err != nil {
 			slog.Warn("failed to ensure author for book", "title", book.Title, "error", err)
 			countStat(func(st *SyncStats) { st.Failed++ })
@@ -678,7 +691,7 @@ func uniqueAuthorByName(index map[string][]models.Author, name string) *models.A
 // none configured) are stamped only on a freshly created author; a reused
 // existing author keeps whatever owner and profile it already had, so a list
 // never silently reassigns another user's — or a shared/global — author.
-func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book, nameIndex map[string][]models.Author, ownerID int64, qualityProfileID *int64) (int64, error) {
+func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book, nameIndex map[string][]models.Author, ownerID int64, qualityProfileID, rootFolderID *int64) (int64, error) {
 	if book.Author == nil {
 		return 0, fmt.Errorf("book %q has no author metadata", book.Title)
 	}
@@ -743,6 +756,13 @@ func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book, nameIn
 	if qualityProfileID != nil {
 		id := *qualityProfileID
 		author.QualityProfileID = &id
+	}
+
+	// Same copy-by-value rule as the quality profile: one pointer is shared
+	// across every author in the sync, and each row must own its field.
+	if rootFolderID != nil {
+		id := *rootFolderID
+		author.RootFolderID = &id
 	}
 
 	if err := s.authors.CreateForUser(ctx, author, ownerID); err != nil {

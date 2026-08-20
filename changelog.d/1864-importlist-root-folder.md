@@ -1,0 +1,2 @@
+### Fixed
+- **Import lists ignored their root folder** (#1864) — the per-list root folder picker saved its value and the Hardcover list syncer never read it, so authors created by a list landed with no root folder at all. Same defect as the quality profile in #1781, one field over. A list with no root folder configured still leaves the author's unset rather than guessing at a default, because root folders belong to a user and picking one for somebody else's authors is worse than leaving it empty.
