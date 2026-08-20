@@ -238,11 +238,14 @@ func TestLoginLimiterExpiresOldEvents(t *testing.T) {
 // that failed once and never returned kept its entry for the life of the
 // process. A caller rotating source addresses grew the map without limit.
 //
-// Drive many distinct IPs, let the window elapse, then drive one more so a
-// sweep runs, and assert the stale buckets are gone rather than merely that
-// the limiter still rate-limits.
+// Deliberately free of sleeps and wall-clock races. The window is an hour, so
+// no sweep can fire while the addresses are being recorded, and the events are
+// then aged out by rewriting their timestamps rather than by waiting. An
+// earlier version used a 10ms window and a sleep, which failed under -race on
+// a slow runner because the record loop outlived the window and swept its own
+// setup away.
 func TestLoginLimiterBoundsMapAcrossDistinctIPs(t *testing.T) {
-	const window = 10 * time.Millisecond
+	const window = time.Hour
 	const distinct = 5000
 	lim := NewLoginLimiter(5, window)
 
@@ -252,30 +255,36 @@ func TestLoginLimiterBoundsMapAcrossDistinctIPs(t *testing.T) {
 	lim.mu.Lock()
 	grown := len(lim.events)
 	lim.mu.Unlock()
-	if grown < distinct/2 {
-		t.Fatalf("setup: expected the map to hold the recorded IPs, got %d of %d", grown, distinct)
+	if grown != distinct {
+		t.Fatalf("setup: map holds %d buckets, want %d; nothing should expire inside a one hour window", grown, distinct)
 	}
 
-	// Age every recorded event out, then touch the limiter once so a sweep runs.
-	time.Sleep(2 * window)
+	// Age every recorded event out, and make a sweep due, without sleeping.
+	lim.mu.Lock()
+	stale := time.Now().Add(-2 * window)
+	for ip := range lim.events {
+		lim.events[ip] = []time.Time{stale}
+	}
+	lim.lastSweep = stale
+	lim.mu.Unlock()
+
+	// Allow does not record anything, so nothing should survive the sweep it
+	// triggers, including the address used to trigger it.
 	lim.Allow("192.0.2.1")
 
 	lim.mu.Lock()
 	remaining := len(lim.events)
 	lim.mu.Unlock()
-
-	// Only the address used to trigger the sweep may survive, and Allow does
-	// not record anything, so the map should be empty.
-	if remaining > 1 {
-		t.Fatalf("expired buckets were not swept: %d entries remain after %d distinct IPs aged out", remaining, distinct)
+	if remaining != 0 {
+		t.Errorf("expired buckets were not swept: %d of %d entries remain", remaining, distinct)
 	}
 }
 
 // TestLoginLimiterSweepKeepsLiveBuckets guards the other direction: the sweep
 // added for #2137 must not drop an address that is still inside its window,
-// which would hand an attacker a free reset by simply waiting.
+// which would hand an attacker a free reset by simply waiting for one.
 func TestLoginLimiterSweepKeepsLiveBuckets(t *testing.T) {
-	const window = 40 * time.Millisecond
+	const window = time.Hour
 	lim := NewLoginLimiter(2, window)
 	const victim = "203.0.113.7"
 
@@ -285,17 +294,17 @@ func TestLoginLimiterSweepKeepsLiveBuckets(t *testing.T) {
 		t.Fatal("setup: victim should be blocked after filling the bucket")
 	}
 
-	// Force a sweep to become due without letting the victim's events expire.
+	// Make a sweep due while leaving the victim's events well inside the
+	// window, so the only thing under test is whether the sweep respects them.
 	lim.mu.Lock()
 	lim.lastSweep = time.Now().Add(-2 * window)
 	lim.mu.Unlock()
 
-	if lim.Allow("198.51.100.4") {
-		// Unrelated address is allowed; the call exists to trigger the sweep.
-		_ = 0
-	}
+	// An unrelated address, purely to trigger the sweep.
+	lim.Allow("198.51.100.4")
+
 	if lim.Allow(victim) {
-		t.Fatal("sweep cleared a bucket that was still inside its window")
+		t.Error("sweep cleared a bucket that was still inside its window")
 	}
 }
 
