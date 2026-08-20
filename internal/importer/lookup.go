@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
 )
@@ -95,6 +96,10 @@ func (s *Scanner) LookupBatch(ctx context.Context, paths []string) ([]LookupResu
 //
 // root is the folder the scan was pointed at; it anchors the layout author
 // derivation. Results are aligned with the input paths.
+//
+// Units are matched concurrently (lookupBatchConcurrency). A canceled ctx
+// aborts the whole batch with an error rather than returning a slice whose
+// tail was never matched.
 func (s *Scanner) LookupBatchLayout(ctx context.Context, root string, paths []string) ([]LookupResult, error) {
 	books, err := s.books.List(ctx)
 	if err != nil {
@@ -109,11 +114,43 @@ func (s *Scanner) LookupBatchLayout(ctx context.Context, root string, paths []st
 		authorNames[a.ID] = a.Name
 	}
 	results := make([]LookupResult, len(paths))
-	for i, p := range paths {
-		results[i] = lookupUnit(root, p, books, authorNames)
+	// lookupUnit is filesystem-bound, not CPU-bound: per unit it stats the
+	// path, opens and parses the EPUB container, then stats again to detect
+	// the format. Run sequentially that was ~213 ms per unit on a library
+	// over a network mount, so a 1000-unit scan took 213 s and the response
+	// died against the 120 s server WriteTimeout mid-encode, so the scan
+	// never returned anything to the UI at all (#1638).
+	//
+	// Safe to parallelise because lookupUnit only reads: books and
+	// authorNames are loaded once above and never written, results are
+	// written by distinct index, and nothing on the path (ParseFilename,
+	// authorTitleFromLayout, firstEpubIn, ReadEpubMetadata, detectUnitFormat)
+	// keeps package-level state.
+	idx := make([]int, len(paths))
+	for i := range paths {
+		idx[i] = i
+	}
+	concurrency.RunBounded(ctx, idx, lookupBatchConcurrency, func(_ context.Context, i int) {
+		results[i] = lookupUnit(root, paths[i], books, authorNames)
+	})
+	// RunBounded stops launching on cancellation, which would leave the tail
+	// of results as zero-value LookupResults, a Match of "" that is neither
+	// confident, ambiguous nor none and would render as a silently empty row
+	// in the wizard. Fail the whole batch instead.
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("lookup batch: %w", err)
 	}
 	return results, nil
 }
+
+// lookupBatchConcurrency bounds LookupBatchLayout's per-unit fan-out.
+//
+// The work is I/O, so this is not sized from CPU count. 8 recovers most of
+// the serial cost on the network and spinning storage where the problem
+// actually shows up, without the queue-depth thrash a much larger number
+// causes on an SMB or NFS mount, where going wider can be slower than going
+// narrow.
+const lookupBatchConcurrency = 8
 
 // lookupUnit matches one bulk-import unit against the pre-loaded catalogue using
 // the embedded-metadata → folder-layout → filename precedence described on

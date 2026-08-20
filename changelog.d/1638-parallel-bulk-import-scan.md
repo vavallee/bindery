@@ -1,0 +1,2 @@
+### Fixed
+- **Bulk folder import scan timed out and returned nothing** (#1638) — the scan matched each file against the catalogue one at a time, and each one costs three separate filesystem reads. On a library over network or spinning storage that ran to roughly 213 ms per file, so a 1000 file scan took over three minutes, outlived the server's write timeout, and the response died mid encode. The page sat there and then retried straight back into the same wall. Matching now runs up to eight files at once, which brings that same scan under half a minute.
