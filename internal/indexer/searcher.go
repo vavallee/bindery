@@ -47,6 +47,12 @@ type Searcher struct {
 	// rate-limit rejection, so we stop asking until the deadline they gave
 	// us passes (#1934). The zero value is ready to use.
 	cooldowns indexerCooldowns
+
+	// health persists whether each indexer answered its last search, so a
+	// suspended account or a revoked key is visible in Settings instead of
+	// only in an interactive search panel (#1935). nil disables recording,
+	// which is what every caller that has not been wired up gets.
+	health *indexerHealth
 }
 
 // NewSearcher creates a new multi-indexer searcher.
@@ -268,9 +274,11 @@ func (s *Searcher) SearchBook(ctx context.Context, indexers []models.Indexer, c 
 			hits, err := client.BookSearch(ctx, c.Title, c.Author, cats)
 			if err != nil {
 				s.noteIndexerError(idx, err)
+				s.health.recordFailure(ctx, idx, err)
 				slog.Warn("indexer search failed", "indexer", idx.Name, "error", err)
 				return
 			}
+			s.noteIndexerSuccess(ctx, idx)
 
 			protocol := protocolForType(idx.Type)
 			for i := range hits {
@@ -338,9 +346,11 @@ func (s *Searcher) SearchQuery(ctx context.Context, indexers []models.Indexer, q
 			hits, err := client.Search(ctx, query, idx.Categories)
 			if err != nil {
 				s.noteIndexerError(idx, err)
+				s.health.recordFailure(ctx, idx, err)
 				slog.Warn("indexer search failed", "indexer", idx.Name, "error", err)
 				return
 			}
+			s.noteIndexerSuccess(ctx, idx)
 
 			protocol := protocolForType(idx.Type)
 			for i := range hits {

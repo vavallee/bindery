@@ -142,12 +142,14 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 			if err != nil {
 				entry.Error = err.Error()
 				s.noteIndexerError(idx, err)
+				s.health.recordFailure(ctx, idx, err)
 				slog.Warn("indexer search failed", "indexer", idx.Name, "error", err)
 				mu.Lock()
 				perIdx = append(perIdx, entry)
 				mu.Unlock()
 				return
 			}
+			s.noteIndexerSuccess(ctx, idx)
 
 			protocol := protocolForType(idx.Type)
 			for i := range hits {

@@ -23,6 +23,24 @@ export interface Indexer {
   // releases are held in the Pending queue for manual approval instead of
   // being grabbed automatically. Interactive search is unaffected.
   freeleechOnly?: boolean
+  // Search health, written by the backend rather than the user (#1935). All
+  // four are absent on an indexer that has never been searched. lastError is
+  // cleared on the next successful search, so a present value means the last
+  // thing this indexer said was a refusal. lastErrorCode is the Newznab code
+  // when the indexer itself rejected us: 1xx (100 bad credentials, 101 account
+  // suspended, 102 VPN forbidden) needs a human, 5xx is a rate limit that
+  // clears on its own, and absent means a transport failure.
+  lastError?: string | null
+  lastErrorCode?: number | null
+  lastFailureAt?: string | null
+  lastSuccessAt?: string | null
+}
+
+// indexerNeedsAttention reports whether an indexer's last search failed with
+// something only a human can fix. Mirrors models.Indexer.NeedsAttention.
+export function indexerNeedsAttention(idx: Indexer): boolean {
+  if (!idx.lastError || idx.lastErrorCode == null) return false
+  return idx.lastErrorCode >= 100 && idx.lastErrorCode <= 199
 }
 
 export interface IndexerTestResult {
