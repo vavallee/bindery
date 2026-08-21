@@ -41,6 +41,25 @@ type bookSearcher interface {
 	SearchBook(ctx context.Context, indexers []models.Indexer, c indexer.MatchCriteria) []newznab.SearchResult
 }
 
+// outcomeSearcher is the optional capability of reporting what each indexer
+// did, not just what came back (#1936). *indexer.Searcher implements it; the
+// scheduler falls back to plain SearchBook when it is absent, which keeps every
+// stub that only implements Searcher working.
+//
+// Same optional-interface shape as librarySnapshotter in internal/api/helpers.go.
+type outcomeSearcher interface {
+	SearchBookWithOutcomes(ctx context.Context, indexers []models.Indexer, c indexer.MatchCriteria) ([]newznab.SearchResult, []indexer.IndexerDebug)
+}
+
+// searchBookWithOutcomes runs the search, reporting per-indexer outcomes when
+// the searcher can supply them.
+func (s *Scheduler) searchBookWithOutcomes(ctx context.Context, idxs []models.Indexer, crit indexer.MatchCriteria) ([]newznab.SearchResult, []indexer.IndexerDebug) {
+	if os, ok := s.searcher.(outcomeSearcher); ok {
+		return os.SearchBookWithOutcomes(ctx, idxs, crit)
+	}
+	return s.searcher.SearchBook(ctx, idxs, crit), nil
+}
+
 // RecommendationEngine is the narrow interface the scheduler calls to
 // regenerate recommendations. *recommender.Engine satisfies it.
 type RecommendationEngine interface {
@@ -650,7 +669,24 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		}
 	}
 
-	results := s.searcher.SearchBook(ctx, idxs, crit)
+	results, outcomes := s.searchBookWithOutcomes(ctx, idxs, crit)
+	// An indexer that failed contributed zero results and is otherwise
+	// indistinguishable from one that answered with nothing, so a grab decided
+	// on a shrunken pool used to leave no trace at all. Recording only: what
+	// gets grabbed is unchanged (#1936, option 1).
+	failedIndexers := indexer.HardFailures(outcomes)
+	attemptedIndexers := indexer.Attempted(outcomes)
+	if len(failedIndexers) > 0 {
+		names := make([]string, 0, len(failedIndexers))
+		for _, f := range failedIndexers {
+			names = append(names, f.IndexerName)
+		}
+		slog.Info("searching with an incomplete indexer pool",
+			"book", book.Title,
+			"failed", len(failedIndexers),
+			"attempted", attemptedIndexers,
+			"indexers", strings.Join(names, ", "))
+	}
 	// Author profile takes precedence over the global preferred-language
 	// setting, mirroring the interactive SearchBook endpoint (Discussion
 	// #1572: auto-grab previously ignored the profile entirely).
@@ -819,14 +855,19 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	// the only path that produces zero history rows. Surfaced via a user
 	// report from ThatGuyHere in Discord, 2026-05-30.
 	if s.history != nil {
-		data, _ := json.Marshal(map[string]any{
+		payload := map[string]any{
 			"guid":      best.GUID,
 			"author":    authorName,
 			"indexer":   best.IndexerName,
 			"protocol":  best.Protocol,
 			"size":      best.Size,
 			"mediaType": mediaType,
-		})
+		}
+		// Record when this grab was decided on an incomplete pool, so "why did
+		// it pick that release" is answerable after the fact rather than being
+		// a question with no evidence either way (#1936).
+		describeIndexerFailures(payload, failedIndexers, attemptedIndexers)
+		data, _ := json.Marshal(payload)
 		_ = s.history.Create(ctx, &models.HistoryEvent{
 			BookID:      &book.ID,
 			EventType:   models.HistoryEventGrabbed,
@@ -1217,4 +1258,34 @@ func (s *Scheduler) handleStalledDownload(ctx context.Context, dl *models.Downlo
 		defer s.bgWg.Done()
 		s.SearchAndGrabBook(ctx, *book)
 	}()
+}
+
+// describeIndexerFailures annotates a grab's history payload with the part of
+// the indexer pool that never answered (#1936).
+//
+// A failing indexer returns zero results and is otherwise indistinguishable
+// from one that genuinely had nothing, so a grab decided on a shrunken pool
+// used to leave no evidence at all: no history row, no field on the download,
+// nothing above debug in the log. If the better release was on one of the
+// indexers that failed, it simply was not grabbed and nothing said why.
+//
+// This is deliberately a record and not a policy. What gets grabbed is
+// unchanged; whether to defer a marginal grab when part of the pool is down is
+// a separate decision worth making on purpose rather than as a side effect.
+//
+// A healthy pool adds no keys at all, so the common case stays clean.
+func describeIndexerFailures(payload map[string]any, failed []indexer.IndexerDebug, attempted int) {
+	if len(failed) == 0 {
+		return
+	}
+	details := make([]map[string]any, 0, len(failed))
+	for _, f := range failed {
+		details = append(details, map[string]any{
+			"indexerId":   f.IndexerID,
+			"indexerName": f.IndexerName,
+			"error":       f.Error,
+		})
+	}
+	payload["indexersFailed"] = fmt.Sprintf("%d of %d", len(failed), attempted)
+	payload["indexerFailures"] = details
 }
