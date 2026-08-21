@@ -433,3 +433,139 @@ func TestNewDialContext_BlocksRFC1918UnderStrict(t *testing.T) {
 		t.Errorf("expected 'private network' in error, got: %v", err)
 	}
 }
+
+// dialTestHost is any name; the resolver is stubbed, so it never leaves the
+// process.
+const dialTestHost = "indexer.test"
+
+// stubResolver makes NewDialContext resolve every hostname to addrs for the
+// lifetime of the test. There is no way to make a real DNS name resolve to a
+// chosen pair of addresses from a unit test, which is the only reason the
+// resolver is a package var at all.
+func stubResolver(t *testing.T, ips ...string) {
+	t.Helper()
+	addrs := make([]net.IPAddr, 0, len(ips))
+	for _, ip := range ips {
+		parsed := net.ParseIP(ip)
+		if parsed == nil {
+			t.Fatalf("bad test IP %q", ip)
+		}
+		addrs = append(addrs, net.IPAddr{IP: parsed})
+	}
+	prev := resolveIPAddr
+	resolveIPAddr = func(_ context.Context, _ string) ([]net.IPAddr, error) { return addrs, nil }
+	t.Cleanup(func() { resolveIPAddr = prev })
+}
+
+// listenLoopback starts a TCP listener on the given loopback IP and returns
+// its port. 127.0.0.0/8 is entirely local on Linux, so a sibling address like
+// 127.0.0.2 gives a fast, deterministic connection refusal on the same port.
+func listenLoopback(t *testing.T, ip string) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", ip+":0")
+	if err != nil {
+		t.Skipf("cannot listen on %s: %v", ip, err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("split listener addr: %v", err)
+	}
+	return port
+}
+
+// TestNewDialContext_FallsBackWhenFirstAddressIsUnreachable is #2156: the
+// dialer validated every resolved address and then used only the first one, so
+// a host that also resolved to a working address failed anyway. That is what a
+// dual-stack indexer host does on an IPv4-only container network, where the
+// AAAA address is an instant ENETUNREACH.
+func TestNewDialContext_FallsBackWhenFirstAddressIsUnreachable(t *testing.T) {
+	defer AllowLoopbackForTests()()
+	port := listenLoopback(t, "127.0.0.1")
+	stubResolver(t, "127.0.0.2", "127.0.0.1")
+
+	conn, err := NewDialContext(PolicyLAN)(context.Background(), "tcp", dialTestHost+":"+port)
+	if err != nil {
+		t.Fatalf("dial should have fallen back to the reachable address: %v", err)
+	}
+	defer conn.Close()
+	if got := conn.RemoteAddr().String(); !strings.HasPrefix(got, "127.0.0.1:") {
+		t.Errorf("connected to %s, want the reachable 127.0.0.1 address", got)
+	}
+}
+
+// The first working address wins and the rest are left alone.
+func TestNewDialContext_UsesTheFirstAddressThatConnects(t *testing.T) {
+	defer AllowLoopbackForTests()()
+	port := listenLoopback(t, "127.0.0.1")
+	stubResolver(t, "127.0.0.1", "127.0.0.2")
+
+	conn, err := NewDialContext(PolicyLAN)(context.Background(), "tcp", dialTestHost+":"+port)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	if got := conn.RemoteAddr().String(); !strings.HasPrefix(got, "127.0.0.1:") {
+		t.Errorf("connected to %s, want 127.0.0.1", got)
+	}
+}
+
+// When nothing connects the error has to say so, and carry the last cause —
+// swallowing it would trade one unhelpful failure for another.
+func TestNewDialContext_ReportsWhenNoAddressConnects(t *testing.T) {
+	defer AllowLoopbackForTests()()
+	port := listenLoopback(t, "127.0.0.1") // taken, then released by Cleanup order
+	stubResolver(t, "127.0.0.2", "127.0.0.3")
+
+	_, err := NewDialContext(PolicyLAN)(context.Background(), "tcp", dialTestHost+":"+port)
+	if err == nil {
+		t.Fatal("expected the dial to fail when no address connects")
+	}
+	msg := err.Error()
+	for _, want := range []string{dialTestHost, "no address could be reached", "tried 2"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error missing %q: %s", want, msg)
+		}
+	}
+}
+
+// The fallback must not weaken the fail-closed rule the function exists for: a
+// single forbidden address still refuses the whole dial, rather than the loop
+// quietly skipping it and connecting to the allowed one.
+func TestNewDialContext_ForbiddenAddressStillRefusesTheWholeDial(t *testing.T) {
+	stubResolver(t, "93.184.216.34", "127.0.0.1")
+
+	_, err := NewDialContext(PolicyStrict)(context.Background(), "tcp", dialTestHost+":80")
+	if err == nil {
+		t.Fatal("a forbidden address among the results must refuse the dial")
+	}
+	if !strings.Contains(err.Error(), "loopback") {
+		t.Errorf("expected the loopback rejection, got: %v", err)
+	}
+}
+
+// A cancelled context stops the loop instead of walking every remaining
+// address to produce the same error N times.
+func TestNewDialContext_StopsOnContextCancellation(t *testing.T) {
+	defer AllowLoopbackForTests()()
+	stubResolver(t, "127.0.0.2", "127.0.0.3")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := NewDialContext(PolicyLAN)(ctx, "tcp", dialTestHost+":9")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "tried 1") {
+		t.Errorf("a cancelled context should stop after the first attempt, got: %v", err)
+	}
+}
