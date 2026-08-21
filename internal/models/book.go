@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // SeriesRef carries series membership for a book returned by a metadata
 // provider. Not persisted in the books table — used during ingestion to
@@ -177,3 +180,38 @@ const (
 	// the book's aggregate status flips to "imported" only when both are on disk.
 	MediaTypeBoth = "both"
 )
+
+// BookIdentifier maps one metadata provider's id to a Bindery book row.
+//
+// books.foreign_id stays the primary identity; this records every other id the
+// same book is known by, so a work fetched from a second provider resolves to
+// the row that already exists instead of creating a parallel one (#1705).
+type BookIdentifier struct {
+	BookID    int64     `json:"bookId"`
+	Provider  string    `json:"provider"`
+	ForeignID string    `json:"foreignBookId"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// BookProviderFromForeignID returns the metadata provider implied by a Bindery
+// book foreign ID. IDs without a known prefix are treated as OpenLibrary,
+// matching the long-standing books.foreign_id convention and the classification
+// migration 078 backfills with.
+func BookProviderFromForeignID(foreignID string) string {
+	foreignID = strings.TrimSpace(strings.ToLower(foreignID))
+	switch {
+	case strings.HasPrefix(foreignID, "gb:"):
+		return "googlebooks"
+	case strings.HasPrefix(foreignID, "hc:"):
+		return "hardcover"
+	case strings.HasPrefix(foreignID, "dnb:"):
+		return "dnb"
+	case strings.HasPrefix(foreignID, "calibre:"):
+		return "calibre"
+	case strings.HasPrefix(foreignID, "abs:"):
+		return "audiobookshelf"
+	default:
+		return "openlibrary"
+	}
+}

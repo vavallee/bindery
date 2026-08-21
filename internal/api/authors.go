@@ -2083,7 +2083,21 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		// their library (vavallee, PR review). MinPages/SkipMissingISBN
 		// screen works out of discovery — they must not also stop
 		// maintaining ones already accepted.
-		existing, _ := h.books.GetByForeignID(ctx, b.ForeignID)
+		// Resolve by every id this fetch knows the work by, not just the
+		// primary column (#1705).
+		//
+		// The reported case: books created from Hardcover, then the author is
+		// relinked to OpenLibrary and refreshed. The incoming work now carries
+		// an OpenLibrary id that no existing row has ever held, so an exact
+		// lookup on it misses and a second row is minted for a volume already
+		// in the library.
+		//
+		// What connects them is HardcoverForeignID. mergeAuthorWorks joins the
+		// two providers' catalogues in memory before any of this, so the
+		// OpenLibrary work arrives already carrying the Hardcover id of the
+		// same book, and that id is exactly what the existing row was created
+		// with. Probing it turns a cross-provider duplicate into a match.
+		existing := h.resolveExistingBook(ctx, b.ForeignID, b.HardcoverForeignID)
 
 		// Filter box-set/omnibus/carton "works" when the author's metadata
 		// profile has SkipPartBooks enabled. These are real OL records for a
@@ -2248,6 +2262,10 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 					slog.Warn("authors: update during dedup", "error", err, "book_id", existing.ID)
 				}
 			}
+			// Attach whatever ids this fetch knows the book by, so the next
+			// sync from either provider resolves it exactly rather than
+			// relying on a title comparison (#1705).
+			h.recordBookIdentities(ctx, existing, b.ForeignID, b.HardcoverForeignID)
 			continue
 		}
 
@@ -2306,6 +2324,12 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 				}
 				hydrateExistingFromMatchedHardcover = existing.WantsAudiobook()
 			}
+			// A title match is a guess that just paid off. Recording the
+			// incoming ids turns it into an exact match next time, which
+			// matters most for the case that produced this branch: the same
+			// volume seen through two providers whose titles agree today and
+			// may not after either side edits one (#1705).
+			h.recordBookIdentities(ctx, existing, b.ForeignID, b.HardcoverForeignID)
 			if hydrateExistingFromMatchedHardcover {
 				h.hydrateMatchedHardcoverEditions(ctx, existing, b.HardcoverForeignID)
 			}
@@ -3540,4 +3564,61 @@ func (h *AuthorHandler) resolveSkipPartBooks(ctx context.Context, author *models
 		return false
 	}
 	return p.SkipPartBooks
+}
+
+// recordBookIdentities attaches the provider ids a fetch knows a book by, so a
+// later sync from any of those providers resolves this row instead of creating
+// a second one (#1705).
+//
+// Best effort and deliberately non-destructive. A conflict means a different
+// book row already claims that id, which happens when the catalogue holds two
+// rows for what upstream considers one work: the pre-existing duplicates this
+// change stops being created, plus genuine mistakes. Re-pointing the id would
+// move a book's identity out from under whoever is looking at it, so the
+// conflict is logged and both rows are left as they are.
+func (h *AuthorHandler) recordBookIdentities(ctx context.Context, book *models.Book, ids ...string) {
+	if book == nil || book.ID == 0 || h.books == nil {
+		return
+	}
+	for _, id := range ids {
+		if strings.TrimSpace(id) == "" {
+			continue
+		}
+		if err := h.books.UpsertBookIdentifier(ctx, book.ID, id); err != nil {
+			if errors.Is(err, db.ErrBookIdentifierConflict) {
+				slog.Debug("book identifier already belongs to another book",
+					"bookId", book.ID, "title", book.Title, "foreignId", id, "error", err)
+				continue
+			}
+			slog.Warn("could not record book identifier",
+				"bookId", book.ID, "title", book.Title, "foreignId", id, "error", err)
+		}
+	}
+}
+
+// resolveExistingBook finds the book row a fetched work already corresponds to,
+// trying each id the fetch knows it by in turn (#1705).
+//
+// Order matters: the work's own foreign id is the identity it would be created
+// with, so it is checked first and a hit there needs no further lookups. The
+// supplemental provider id is the cross-provider link, and is what finds a row
+// created from the other provider entirely.
+func (h *AuthorHandler) resolveExistingBook(ctx context.Context, ids ...string) *models.Book {
+	if h.books == nil {
+		return nil
+	}
+	for _, id := range ids {
+		if strings.TrimSpace(id) == "" {
+			continue
+		}
+		existing, err := h.books.GetByAnyForeignID(ctx, id)
+		if err != nil {
+			slog.Debug("book identity lookup failed", "foreignId", id, "error", err)
+			continue
+		}
+		if existing != nil {
+			return existing
+		}
+	}
+	return nil
 }
