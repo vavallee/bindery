@@ -249,17 +249,33 @@ func (h *AuthorHandler) enhancedHardcoverEnabled(ctx context.Context) bool {
 	return HardcoverFeatureStateFor(ctx, h.settings, h.enhancedHardcoverEnvEnabled).EnhancedHardcoverAPI
 }
 
-func (h *AuthorHandler) hydrateHardcoverEditions(ctx context.Context, book *models.Book) {
-	h.hydrateHardcoverEditionsFrom(ctx, book, "")
+// editionTarget names the single Hardcover edition lookup a hydration attempt
+// would make. ViaProvider distinguishes the two fetchers the hydrate path picks
+// between, because they are separate provider calls even when the id matches.
+type editionTarget struct {
+	ForeignID   string
+	ViaProvider bool
 }
 
-func (h *AuthorHandler) hydrateMatchedHardcoverEditions(ctx context.Context, book *models.Book, hardcoverForeignID string) {
-	h.hydrateHardcoverEditionsFrom(ctx, book, hardcoverForeignID)
+// cacheKey is the editionPrefetch map key. The fetcher is part of it: an
+// unqualified GetEditions and a Hardcover-scoped GetEditionsFromProvider are
+// different calls, so a result from one must not answer for the other.
+func (t editionTarget) cacheKey() string {
+	if t.ViaProvider {
+		return "p:" + t.ForeignID
+	}
+	return "g:" + t.ForeignID
 }
 
-func (h *AuthorHandler) hydrateHardcoverEditionsFrom(ctx context.Context, book *models.Book, hardcoverForeignID string) {
+// resolveEditionTarget reports which edition lookup hydrating this book would
+// perform, and whether it would hydrate at all.
+//
+// It is the single source of truth for that decision, shared by the hydrate
+// path and by the prefetch that fills its cache, so the two cannot drift into
+// disagreeing about which id gets fetched.
+func (h *AuthorHandler) resolveEditionTarget(ctx context.Context, book *models.Book, hardcoverForeignID string) (editionTarget, bool) {
 	if book == nil || h.editions == nil {
-		return
+		return editionTarget{}, false
 	}
 	hardcoverForeignID = strings.TrimSpace(hardcoverForeignID)
 	if hardcoverForeignID == "" && !bookhydrate.IsHardcoverBook(book, book.MetadataProvider) {
@@ -267,12 +283,88 @@ func (h *AuthorHandler) hydrateHardcoverEditionsFrom(ctx context.Context, book *
 	}
 	if hardcoverForeignID != "" {
 		if !strings.HasPrefix(hardcoverForeignID, "hc:") || !h.enhancedHardcoverEnabled(ctx) {
-			return
+			return editionTarget{}, false
 		}
+		return editionTarget{ForeignID: hardcoverForeignID, ViaProvider: true}, true
+	}
+	// The unqualified path fetches against the book's own id, and
+	// bookhydrate drops anything that is not recognisably Hardcover.
+	id := strings.TrimSpace(book.ForeignID)
+	if id == "" || !bookhydrate.IsHardcoverBook(book, book.MetadataProvider) {
+		return editionTarget{}, false
+	}
+	return editionTarget{ForeignID: id}, true
+}
+
+// editionPrefetch holds editions fetched ahead of the sync loop so hydration
+// inside the loop does not pay a serial provider round trip per book (#1929).
+//
+// A miss is not an error: the caller falls back to the live call it would have
+// made anyway. That keeps the prefetch a pure optimisation, so if it ever
+// predicts the wrong set of books the result is a slower sync rather than a
+// wrong one.
+type editionPrefetch struct {
+	mu sync.Mutex
+	by map[string][]models.Edition
+}
+
+func newEditionPrefetch() *editionPrefetch {
+	return &editionPrefetch{by: make(map[string][]models.Edition)}
+}
+
+func (c *editionPrefetch) store(key string, editions []models.Edition) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.by[key] = editions
+	c.mu.Unlock()
+}
+
+func (c *editionPrefetch) lookup(key string) ([]models.Edition, bool) {
+	if c == nil {
+		return nil, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	editions, ok := c.by[key]
+	return editions, ok
+}
+
+// wrap returns live with the cache consulted first.
+func (c *editionPrefetch) wrap(target editionTarget, live bookhydrate.EditionFetcher) bookhydrate.EditionFetcher {
+	if c == nil || live == nil {
+		return live
+	}
+	key := target.cacheKey()
+	return func(ctx context.Context, foreignID string) ([]models.Edition, error) {
+		// Guard against bookhydrate resolving a different id than the one this
+		// cache entry was fetched for; on any mismatch, go live.
+		if foreignID == target.ForeignID {
+			if editions, ok := c.lookup(key); ok {
+				return editions, nil
+			}
+		}
+		return live(ctx, foreignID)
+	}
+}
+
+func (h *AuthorHandler) hydrateHardcoverEditions(ctx context.Context, book *models.Book, cache *editionPrefetch) {
+	h.hydrateHardcoverEditionsFrom(ctx, book, "", cache)
+}
+
+func (h *AuthorHandler) hydrateMatchedHardcoverEditions(ctx context.Context, book *models.Book, hardcoverForeignID string, cache *editionPrefetch) {
+	h.hydrateHardcoverEditionsFrom(ctx, book, hardcoverForeignID, cache)
+}
+
+func (h *AuthorHandler) hydrateHardcoverEditionsFrom(ctx context.Context, book *models.Book, hardcoverForeignID string, cache *editionPrefetch) {
+	target, ok := h.resolveEditionTarget(ctx, book, hardcoverForeignID)
+	if !ok {
+		return
 	}
 	fetcher := h.editionFetcher
 	if fetcher == nil && h.meta != nil {
-		if hardcoverForeignID != "" {
+		if target.ViaProvider {
 			fetcher = func(ctx context.Context, foreignID string) ([]models.Edition, error) {
 				return h.meta.GetEditionsFromProvider(ctx, "hardcover", foreignID)
 			}
@@ -280,15 +372,75 @@ func (h *AuthorHandler) hydrateHardcoverEditionsFrom(ctx context.Context, book *
 			fetcher = h.meta.GetEditions
 		}
 	}
+	providerForeignID := ""
+	if target.ViaProvider {
+		providerForeignID = target.ForeignID
+	}
 	bookhydrate.HydrateHardcoverEditions(ctx, bookhydrate.Options{
 		Book:              book,
 		Provider:          book.MetadataProvider,
-		ProviderForeignID: hardcoverForeignID,
+		ProviderForeignID: providerForeignID,
 		Editions:          h.editions,
 		Books:             h.books,
-		FetchEditions:     fetcher,
+		FetchEditions:     cache.wrap(target, fetcher),
 		Enricher:          h.meta,
 	})
+}
+
+// prefetchHardcoverEditions fills a cache with the edition lookups the sync loop
+// is about to make, running them a few at a time instead of one after another.
+//
+// Before this, edition hydration was the last per-created-book provider call
+// left in the loop after #1930 removed the library walk: a 65 work author paid
+// 65 sequential Hardcover round trips, each one waiting on the last.
+//
+// Which books hydrate is decided inside the loop, so this predicts the set from
+// the same resolver the loop uses and accepts being wrong: an id fetched here
+// that turns out not to be needed costs one call, and one the loop needs that
+// is missing here falls through to the live call. Only books the loop would
+// actually create are considered, so a refresh that adds nothing still fetches
+// nothing.
+func (h *AuthorHandler) prefetchHardcoverEditions(ctx context.Context, targets []editionTarget, seeded map[string][]models.Edition) *editionPrefetch {
+	cache := newEditionPrefetch()
+	for key, editions := range seeded {
+		cache.store(key, editions)
+	}
+	pending := make([]editionTarget, 0, len(targets))
+	seen := make(map[string]struct{}, len(targets))
+	for _, t := range targets {
+		key := t.cacheKey()
+		if _, ok := cache.lookup(key); ok {
+			continue // already fetched for the MinPages/SkipMissingISBN pass
+		}
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		pending = append(pending, t)
+	}
+	if len(pending) == 0 || h.meta == nil {
+		return cache
+	}
+	concurrency.RunBounded(ctx, pending, authorAutoSearchConcurrency, func(ctx context.Context, t editionTarget) {
+		var (
+			editions []models.Edition
+			err      error
+		)
+		if t.ViaProvider {
+			editions, err = h.meta.GetEditionsFromProvider(ctx, "hardcover", t.ForeignID)
+		} else {
+			editions, err = h.meta.GetEditions(ctx, t.ForeignID)
+		}
+		if err != nil {
+			// Leave it out of the cache. Hydration will retry live and log
+			// there, so a transient failure here changes nothing but timing.
+			slog.Debug("edition prefetch failed; hydration will fetch it live",
+				"foreignId", t.ForeignID, "viaProvider", t.ViaProvider, "error", err)
+			return
+		}
+		cache.store(t.cacheKey(), editions)
+	})
+	return cache
 }
 
 // authorListResponse is the paginated wrapper returned by List. Replaces the
@@ -1934,6 +2086,10 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	}
 
 	searchQueue := make([]models.Book, 0)
+	// createdBooks collects the books this sync creates so their edition
+	// hydration and on-disk check run as one batched pass afterwards rather
+	// than a serial provider round trip per book (#1929).
+	createdBooks := make([]models.Book, 0)
 	autoSearchEnabled := autoSearch && h.searcher != nil && author.Monitored && h.isAutoGrabEnabled(ctx)
 
 	// One library snapshot for the whole create loop (#1888, #1929). The loop
@@ -2307,7 +2463,7 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 				hydrateExistingFromMatchedHardcover = existing.WantsAudiobook()
 			}
 			if hydrateExistingFromMatchedHardcover {
-				h.hydrateMatchedHardcoverEditions(ctx, existing, b.HardcoverForeignID)
+				h.hydrateMatchedHardcoverEditions(ctx, existing, b.HardcoverForeignID, nil)
 			}
 			continue
 		}
@@ -2368,8 +2524,38 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 			slog.Warn("failed to create book", "title", b.Title, "error", err)
 			continue
 		}
-		h.hydrateHardcoverEditions(ctx, &b)
+		// Hydration and the on-disk check happen in the pass below, once the
+		// whole created set is known, so their provider calls can be made a
+		// few at a time instead of one per book in sequence (#1929).
+		createdBooks = append(createdBooks, b)
 		added++
+	}
+
+	// Fetch the editions the pass below is about to hydrate with. This is the
+	// last per-created-book provider round trip left in the sync after #1930
+	// removed the library walk: on a 65 work author it was 65 calls, each
+	// waiting on the one before it. A refresh that creates nothing queues
+	// nothing and so still fetches nothing.
+	createdTargets := make([]editionTarget, 0, len(createdBooks))
+	for i := range createdBooks {
+		if target, ok := h.resolveEditionTarget(ctx, &createdBooks[i], ""); ok {
+			createdTargets = append(createdTargets, target)
+		}
+	}
+	seededEditions := make(map[string][]models.Edition, len(editionsByForeignID))
+	for foreignID, editions := range editionsByForeignID {
+		// The MinPages/SkipMissingISBN pass fetched these unqualified, which
+		// is the same call the unqualified hydrate path makes.
+		seededEditions[editionTarget{ForeignID: foreignID}.cacheKey()] = editions
+	}
+	editionCache := h.prefetchHardcoverEditions(ctx, createdTargets, seededEditions)
+
+	for i := range createdBooks {
+		b := createdBooks[i]
+		// Order within a book is unchanged: hydration can widen MediaType and
+		// promote an ASIN, and the on-disk lookup below matches on media type,
+		// so it has to see the hydrated value.
+		h.hydrateHardcoverEditions(ctx, &b, editionCache)
 
 		if fileFound := handleNewWantedBook(ctx, h.books, h.series, finder, b, author.Name); fileFound {
 			continue // don't auto-search for a book we already have
@@ -3037,7 +3223,7 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 						"foreignBookId", req.ForeignBookID, "error", err)
 				}
 			} else {
-				h.hydrateHardcoverEditions(ctx, primary)
+				h.hydrateHardcoverEditions(ctx, primary, nil)
 				// Same post-create work every other creation path does
 				// (recommendations.go, series.go): check the library for a
 				// file we already have and link the book into its series.
@@ -3364,7 +3550,7 @@ func (h *AuthorHandler) adoptDirectInsertMatch(ctx context.Context, match, prima
 			"foreignBookId", foreignID, "bookId", match.ID, "error", err)
 		return
 	}
-	h.hydrateHardcoverEditions(ctx, match)
+	h.hydrateHardcoverEditions(ctx, match, nil)
 }
 
 func canUpgradeToBoth(existingMediaType, incomingMediaType string) bool {
