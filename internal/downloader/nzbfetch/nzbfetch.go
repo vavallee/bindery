@@ -3,7 +3,9 @@
 // the bytes to the client; when that fetch fails the raw response body is
 // often a newznab XML error blob that is unreadable in logs and gives the
 // operator no hint about what to change. This package turns the failure into
-// a structured, actionable error message (issue #1404).
+// a structured, actionable error message (issue #1404), and decides which of
+// those failures are worth another attempt before the grab is given up on
+// (issue #2157).
 package nzbfetch
 
 import (

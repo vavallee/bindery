@@ -131,7 +131,12 @@ func categoryMismatchError(missing, have []string) error {
 // retry countdown rather than producing a clear rejection. This mirrors the
 // fix the NZBGet client got — see internal/downloader/nzbget/client.go's Add.
 func (c *Client) AddURL(ctx context.Context, nzbURL, title, category string, priority int) (*AddURLResponse, error) {
-	content, err := c.fetchNZBContent(ctx, nzbURL)
+	// Retried, because one flaky GET should not fail the grab permanently and
+	// leave the book back on Wanted with nothing to try it again (#2157). Only
+	// the fetch: a repeated upload to the download client risks a duplicate job.
+	content, err := nzbfetch.Retry(ctx, func(ctx context.Context) ([]byte, error) {
+		return c.fetchNZBContent(ctx, nzbURL)
+	})
 	if err != nil {
 		return nil, err
 	}
