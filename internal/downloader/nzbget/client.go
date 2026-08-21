@@ -233,7 +233,12 @@ func categoryMismatchError(missing, have []string) error {
 //
 // The priority parameter maps to NZBGet priorities: 0=normal, 100=high, -100=low.
 func (c *Client) Add(ctx context.Context, nzbURL, name, category string, priority int) (int, error) {
-	content, err := c.fetchNZBContent(ctx, nzbURL)
+	// Retried, because one flaky GET should not fail the grab permanently and
+	// leave the book back on Wanted with nothing to try it again (#2157). Only
+	// the fetch: a repeated upload to the download client risks a duplicate job.
+	content, err := nzbfetch.Retry(ctx, func(ctx context.Context) ([]byte, error) {
+		return c.fetchNZBContent(ctx, nzbURL)
+	})
 	if err != nil {
 		return 0, err
 	}
