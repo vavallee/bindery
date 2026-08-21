@@ -1080,3 +1080,67 @@ func TestFetchNZB_DialGuardBlocksLoopback(t *testing.T) {
 		t.Fatalf("expected a 'not allowed' SSRF rejection, got: %v", err)
 	}
 }
+
+// TestAdd_NonNZBBodyIsRejectedBeforeNZBGet guards #2105 on the NZBGet side.
+// An indexer answering a refused grab with HTTP 200 and an error page must be
+// caught at the fetch step; forwarding the page makes NZBGet reject it and the
+// failure then reads as the download client's fault.
+func TestAdd_NonNZBBodyIsRejectedBeforeNZBGet(t *testing.T) {
+	indexerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte("\n\n\nYou have reached your download limit for today.\n"))
+	}))
+	defer indexerSrv.Close()
+
+	nzbgetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("NZBGet must not be called when the indexer returned a non-NZB body")
+		json.NewEncoder(w).Encode(appendResponse{Result: 1})
+	}))
+	defer nzbgetSrv.Close()
+
+	host, port := serverHostPort(t, nzbgetSrv.URL)
+	c := New(host, port, "", "", "", false)
+	allowNZBFetch(c)
+
+	_, err := c.Add(context.Background(), indexerSrv.URL+"/getnzb/abc", "Book", "books", 0)
+	if err == nil {
+		t.Fatal("expected the grab to fail")
+	}
+	for _, want := range []string{"not an NZB", "HTTP 200", "reached your download limit"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %q:\n%s", want, err.Error())
+		}
+	}
+}
+
+// TestAdd_BodyReadFailureNamesTheIndexerFetch is the NZBGet half of the #2105
+// reporting fix: fetchNZBContent returned io.ReadAll's error unwrapped, so a
+// failure part-way through the body arrived with no indication of what was
+// being read.
+func TestAdd_BodyReadFailureNamesTheIndexerFetch(t *testing.T) {
+	indexerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Promise more than we deliver, then return: net/http closes the
+		// connection and the client's body read fails short.
+		w.Header().Set("Content-Length", "99999")
+		w.Write([]byte(`<?xml version="1.0"?><nzb>`))
+	}))
+	defer indexerSrv.Close()
+
+	nzbgetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("NZBGet append must not be called when the NZB body could not be read")
+		json.NewEncoder(w).Encode(appendResponse{Result: 1})
+	}))
+	defer nzbgetSrv.Close()
+
+	host, port := serverHostPort(t, nzbgetSrv.URL)
+	c := New(host, port, "", "", "", false)
+	allowNZBFetch(c)
+
+	_, err := c.Add(context.Background(), indexerSrv.URL+"/getnzb/abc", "Book", "books", 0)
+	if err == nil {
+		t.Fatal("expected the grab to fail")
+	}
+	if !strings.Contains(err.Error(), "fetch nzb from indexer") {
+		t.Errorf("a body-read failure must name the indexer fetch:\n%s", err.Error())
+	}
+}

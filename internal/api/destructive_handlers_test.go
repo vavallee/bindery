@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -323,6 +324,15 @@ func TestPendingGrab_DispatchesDownloadAndClearsPending(t *testing.T) {
 
 	addCalls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// This one server plays both halves of the grab: the indexer that
+		// serves the NZB and the SAB that receives it. The indexer half has to
+		// serve a real NZB, because the fetch now rejects a body that isn't
+		// one before the download client ever sees it (#2105).
+		if strings.HasSuffix(r.URL.Path, ".nzb") {
+			w.Header().Set("Content-Type", "application/x-nzb")
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><nzb xmlns="http://www.newzbin.com/DTD/2003/nzb"></nzb>`))
+			return
+		}
 		if r.URL.Query().Get("mode") == "addfile" {
 			addCalls++
 		}
