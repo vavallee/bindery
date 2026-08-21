@@ -42,7 +42,9 @@ an arbitrary release is unreliable. The escape hatches:
 - **Search Indexers** (the magnifier icon in the header) — free-text search
   across all your indexers; any result can be grabbed.
 - **Manual Import** (`/import`) — point it at a folder of files you already
-  have and match them to books.
+  have and match them to books. A file with no catalogue match gets a metadata
+  search on its row, which creates the book (and its author, if new) and links
+  the file to it, so an unmatched file is no longer a dead end.
 
 Both still end by attaching a file to a catalogue record.
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
+import { resolveBookQuery } from '../api/booklookup'
 import type { BatchImportItem, BatchImportResult, Book, ScanItem } from '../api/client'
 import { btn, btnSize } from '../components/buttons'
 
@@ -9,12 +10,11 @@ import { btn, btnSize } from '../components/buttons'
 // confidence, and lets the user resolve each one before importing:
 //   - confident: a preselected catalogue match, deselectable and overridable;
 //   - ambiguous: a candidate picker over the returned catalogue candidates;
-//   - none: a search box to bind the unit to an EXISTING catalogue book.
+//   - none: a search box to bind the unit to an EXISTING catalogue book, plus
+//     a metadata search that creates the book (and its author) when the library
+//     has no row to bind to (#1719).
 // Resolved units are imported (per-unit or in bulk) through the batch endpoint,
 // which reports per-item success/failure.
-//
-// OUT OF SCOPE (follow-up): creating a brand-new book/author from file metadata.
-// `none` units resolve to an existing catalogue book only.
 
 const MATCH_ORDER: ScanItem['match'][] = ['confident', 'ambiguous', 'none']
 
@@ -166,7 +166,7 @@ export default function ManualImportPage() {
           {t('manualImport.title', 'Manual Import')}
         </h2>
         <p className="mt-1 text-sm text-slate-600 dark:text-zinc-400">
-          {t('manualImport.description', 'Scan a folder of files already on disk, match each book to your library, and import them. Matching is against books already in your library.')}
+          {t('manualImport.description', 'Scan a folder of files already on disk, match each book to your library, and import them. A file with no match can be added from a metadata search.')}
         </p>
       </div>
 
@@ -348,12 +348,19 @@ function ImportRow({ item, row, result, importing, onPick, onToggle, onFormat, o
               </fieldset>
             )}
 
-            {/* None / override: search the existing catalogue */}
+            {/* None / override: search the existing catalogue, or add the book
+                from provider metadata when the library has nothing to bind to. */}
             {((item.match === 'none' && !chosen) || overriding) && (
-              <BookPicker
-                onPick={b => { onPick(b); setOverriding(false) }}
-                onCancel={overriding ? () => setOverriding(false) : undefined}
-              />
+              <>
+                <BookPicker
+                  onPick={b => { onPick(b); setOverriding(false) }}
+                  onCancel={overriding ? () => setOverriding(false) : undefined}
+                />
+                <CatalogueAdder
+                  item={item}
+                  onAdded={b => { onPick(b); setOverriding(false) }}
+                />
+              </>
             )}
           </div>
         </div>
@@ -393,9 +400,10 @@ function ImportRow({ item, row, result, importing, onPick, onToggle, onFormat, o
 }
 
 // BookPicker is a debounced search over the EXISTING catalogue (reuses the same
-// /book?search= endpoint FixMatchModal uses). It resolves a `none` unit — or an
-// override on a matched one — to a book already in the library. Creating a new
-// book from metadata is a deferred follow-up and deliberately not offered here.
+// /book?search= endpoint FixMatchModal uses). It resolves a `none` unit, or an
+// override on a matched one, to a book already in the library. A unit whose
+// book is not in the library at all is CatalogueAdder's job, rendered directly
+// below this picker.
 function BookPicker({ onPick, onCancel }: { onPick: (b: Book) => void; onCancel?: () => void }) {
   const { t } = useTranslation()
   const [term, setTerm] = useState('')
@@ -448,7 +456,7 @@ function BookPicker({ onPick, onCancel }: { onPick: (b: Book) => void; onCancel?
         {loading && <p className="py-2 text-xs text-slate-500 dark:text-zinc-500">{t('common.loading', 'Loading...')}</p>}
         {!loading && term.trim().length >= 2 && results.length === 0 && (
           <p className="py-2 text-xs text-slate-500 dark:text-zinc-500">
-            {t('manualImport.noResults', 'No matching books in your library. Add the book first, then rescan.')}
+            {t('manualImport.noResults', 'No matching books in your library. Search metadata below to add it.')}
           </p>
         )}
         {results.map(b => (
@@ -464,6 +472,146 @@ function BookPicker({ onPick, onCancel }: { onPick: (b: Book) => void; onCancel?
             )}
           </button>
         ))}
+      </div>
+    </div>
+  )
+}
+
+// CatalogueAdder resolves the case BookPicker cannot: the file is for a book
+// that is not in the library at all, so there is no row to bind it to (#1719).
+// It searches provider metadata (the same ISBN / ASIN / free-text dispatch the
+// Add Book modal uses) and creates the picked result through POST /author/book,
+// which creates the author too when it is new. The created book is handed back
+// so the unit resolves like any other and imports through the existing batch
+// call.
+//
+// searchOnAdd is deliberately false: the user is importing a file they already
+// have, so kicking off an indexer search for it would grab a second copy.
+function CatalogueAdder({ item, onAdded }: { item: ScanItem; onAdded: (b: Book) => void }) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  // Prefilled from what the scan already read out of the file, so the user is
+  // correcting a query rather than retyping one.
+  const [term, setTerm] = useState(() => [item.parsedTitle, item.parsedAuthor].filter(Boolean).join(' '))
+  const [results, setResults] = useState<Book[]>([])
+  const [searching, setSearching] = useState(false)
+  const [searched, setSearched] = useState(false)
+  const [adding, setAdding] = useState('')
+  const [error, setError] = useState('')
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="text-xs text-slate-500 dark:text-zinc-400 hover:underline"
+      >
+        {t('manualImport.metadataOpen', 'Not in your library? Search metadata')}
+      </button>
+    )
+  }
+
+  const search = async () => {
+    const q = term.trim()
+    if (!q) return
+    setSearching(true)
+    setError('')
+    try {
+      setResults(await resolveBookQuery(q))
+      setSearched(true)
+    } catch (e) {
+      setResults([])
+      setError(e instanceof Error ? e.message : 'Metadata search failed')
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  const add = async (b: Book) => {
+    if (!b.foreignBookId || !b.author?.authorName) return
+    setAdding(b.foreignBookId)
+    setError('')
+    try {
+      const created = await api.addBook({
+        foreignBookId: b.foreignBookId,
+        // May be empty (e.g. a Google Books or DNB result carries a name but no
+        // author id); the backend resolves the author by name in that case.
+        foreignAuthorId: b.author.foreignAuthorId ?? '',
+        authorName: b.author.authorName,
+        searchOnAdd: false,
+      })
+      onAdded(created)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not add the book')
+    } finally {
+      setAdding('')
+    }
+  }
+
+  return (
+    <div className="rounded border border-slate-200 dark:border-zinc-800 p-2">
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={term}
+          onChange={e => setTerm(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') search() }}
+          placeholder={t('manualImport.metadataPlaceholder', 'Title, author, ISBN, or ASIN')}
+          aria-label={t('manualImport.metadataLabel', 'Search metadata')}
+          className="flex-1 px-2 py-1 rounded border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-xs"
+        />
+        <button
+          type="button"
+          onClick={search}
+          disabled={searching || !term.trim()}
+          className={`${btn.secondary} ${btnSize.sm}`}
+        >
+          {searching ? t('manualImport.metadataSearching', 'Searching…') : t('manualImport.metadataSearch', 'Search')}
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="text-xs text-slate-500 dark:text-zinc-400 hover:underline"
+        >
+          {t('common.cancel', 'Cancel')}
+        </button>
+      </div>
+      <p className="mt-1 text-[11px] text-slate-500 dark:text-zinc-500">
+        {t('manualImport.metadataHint', 'Adds the book to your library and links this file to it. No indexer search is started.')}
+      </p>
+      {error && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{error}</p>}
+      <div className="mt-2 max-h-48 overflow-y-auto divide-y divide-slate-100 dark:divide-zinc-800">
+        {!searching && searched && results.length === 0 && !error && (
+          <p className="py-2 text-xs text-slate-500 dark:text-zinc-500">
+            {t('manualImport.metadataNoResults', 'No metadata results for that search.')}
+          </p>
+        )}
+        {results.map(b => {
+          // An author NAME is enough; the backend resolves a missing author id.
+          // Without one there is nothing to create the book under.
+          const canAdd = Boolean(b.author?.authorName)
+          return (
+            <div key={b.foreignBookId || b.title} className="flex items-center gap-2 py-1.5">
+              <div className="min-w-0 flex-1">
+                <span className="text-xs font-medium text-slate-900 dark:text-white">{b.title}</span>
+                {b.author?.authorName && (
+                  <span className="text-[11px] text-slate-500 dark:text-zinc-500"> · {b.author.authorName}</span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => add(b)}
+                disabled={!canAdd || adding !== ''}
+                title={canAdd ? undefined : t('manualImport.metadataAuthorMissing', 'Author name missing on this result')}
+                className={`${btn.secondary} ${btnSize.sm} flex-shrink-0`}
+              >
+                {adding === b.foreignBookId
+                  ? t('manualImport.metadataAdding', 'Adding…')
+                  : t('manualImport.metadataAdd', 'Add and use')}
+              </button>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

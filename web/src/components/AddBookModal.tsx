@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, Book } from '../api/client'
+import { resolveBookQuery } from '../api/booklookup'
 
 interface Props {
   onClose: () => void
@@ -27,21 +28,9 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
     setSearchError(null)
     setAddError(null)
     try {
-      // ISBN lookup takes priority when the query looks like an ISBN.
-      if (/^97[89]\d{10}$|^\d{9}[\dX]$/.test(q.replace(/[-\s]/g, ''))) {
-        const book = await api.lookupISBN(q.replace(/[-\s]/g, ''))
-        setResults([book])
-      } else if (/^B[0-9A-Z]{9}$/i.test(q)) {
-        // ASIN (Audible/Amazon) lookup — a 10-char token starting with B.
-        // Checked after ISBN; the two patterns don't overlap.
-        const book = await api.lookupASIN(q.toUpperCase())
-        setResults([book])
-      } else {
-        const books = await api.searchBooks(q)
-        // Guard against a `null` body (e.g. an empty search the backend
-        // encoded as `null` instead of `[]`) so the render's `.map()` can't crash.
-        setResults(books ?? [])
-      }
+      // ISBN / ASIN / free-text dispatch lives in resolveBookQuery so Manual
+      // Import's metadata search accepts exactly the same inputs.
+      setResults(await resolveBookQuery(q))
     } catch (err) {
       setSearchError(err instanceof Error ? err.message : t('addBookModal.searchFailed'))
       setResults([])
