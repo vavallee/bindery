@@ -22,6 +22,8 @@ import (
 
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/decision"
+	"github.com/vavallee/bindery/internal/importer/formatsniff"
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/models"
@@ -83,6 +85,11 @@ type Scanner struct {
 	calibreMode          func() calibre.Mode
 	calibreCoverCacheDir string
 	settings             *db.SettingsRepo
+	// qualityProfiles and blocklist back the post-download format check
+	// (#1782). Both nil disables it entirely, which is what every caller that
+	// has not been wired up gets.
+	qualityProfiles      *db.QualityProfileRepo
+	blocklist            *db.BlocklistRepo
 	libraryDir           string
 	audiobookDir         string
 	audiobookDownloadDir string
@@ -313,6 +320,59 @@ func (s *Scanner) WithABSNotifier(n absNotifier, libraryIDsFn func() []string) *
 func (s *Scanner) WithNotifier(n eventNotifier) *Scanner {
 	s.notif = n
 	return s
+}
+
+// WithFormatEnforcement wires the repos the post-download format check needs
+// (#1782). Without it the check does not run and imports behave exactly as
+// before, which is what keeps every existing test and unwired caller working.
+func (s *Scanner) WithFormatEnforcement(profiles *db.QualityProfileRepo, blocklist *db.BlocklistRepo) *Scanner {
+	s.qualityProfiles = profiles
+	s.blocklist = blocklist
+	return s
+}
+
+// allowedFormat reports whether format passes the author's quality profile,
+// and the rejection reason when it does not.
+//
+// An empty format means the file could not be identified, which is passed for
+// the same reason decision.QualityAllowed passes an unparseable release name:
+// the filter can only speak to formats it can actually see, and rejecting on
+// ignorance would block legitimate books.
+func (s *Scanner) allowedFormat(ctx context.Context, author *models.Author, format string) (bool, string) {
+	if s.qualityProfiles == nil || author == nil || format == "" {
+		return true, ""
+	}
+	profile := db.ResolveAuthorQualityProfile(ctx, s.qualityProfiles, author)
+	if profile == nil {
+		return true, ""
+	}
+	return decision.QualityAllowed{Profile: profile}.IsSatisfiedBy(
+		decision.Release{Format: format}, models.Book{})
+}
+
+// blocklistRejectedRelease records a format-rejected release so the next search
+// does not grab the same file again.
+//
+// Without this the rejection is a loop: the book stays wanted, the next scan
+// finds the same release, grabs it, downloads it, and rejects it again. The
+// blocklist is the only thing that makes a rejection stick, and it is also why
+// this must stay narrow: it fires on a format the user explicitly disallowed,
+// never on a transient import failure.
+func (s *Scanner) blocklistRejectedRelease(ctx context.Context, dl *models.Download, reason string) {
+	if s.blocklist == nil || dl == nil || strings.TrimSpace(dl.GUID) == "" {
+		return
+	}
+	entry := &models.BlocklistEntry{
+		BookID:    dl.BookID,
+		GUID:      dl.GUID,
+		Title:     dl.Title,
+		IndexerID: dl.IndexerID,
+		Reason:    reason,
+	}
+	if err := s.blocklist.Create(ctx, entry); err != nil {
+		slog.Warn("could not blocklist a format-rejected release; it may be grabbed again",
+			"guid", dl.GUID, "title", dl.Title, "error", err)
+	}
 }
 
 // notify is a nil-safe Send wrapper. Keeps every call site a one-liner without
@@ -1297,6 +1357,30 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		detectedFormat = formatHint
 	}
 
+	// Post-download format enforcement (#1782).
+	//
+	// decision.QualityAllowed runs once, at grab time, against the release
+	// *name*, and deliberately passes anything whose title carries no
+	// recognisable format token. Nothing downstream ever re-checked, so the
+	// case that filter admits it cannot judge is exactly the case that arrived
+	// unchecked: the reported reproduction landed with no extension at all,
+	// was a MOBI, the active profile disallowed mobi, and it imported anyway.
+	//
+	// Now there is a real file to look at. An explicit formatHint is the
+	// override throughout, on the same principle as the video guard below: a
+	// human declared the format, so their call wins.
+	if formatHint == "" && len(bookFiles) > 0 {
+		if reject, reason := s.rejectedDownloadFormat(ctx, author, bookFiles); reject {
+			// Record the path first so the queue's "Match to book" action can
+			// still force this in, then blocklist so the next scan does not
+			// grab the identical release and repeat the whole cycle.
+			s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
+			s.blocklistRejectedRelease(ctx, dl, reason)
+			s.failImport(ctx, dl, models.StateImportBlocked, reason)
+			return
+		}
+	}
+
 	// Audiobook path: place the entire download directory as a unit so
 	// multi-part m4b/mp3 files, cover art, and cue sheets stay together.
 	if detectedFormat == models.MediaTypeAudiobook {
@@ -1579,6 +1663,19 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			parsed := ParseFilename(srcFile)
 			slog.Info("unmatched import", "title", parsed.Title, "author", parsed.Author, "file", srcFile)
 			continue
+		}
+
+		// Skip a file the quality profile disallows, so a mixed download
+		// imports the format the user allowed and leaves the rest (#1782).
+		// A download where EVERY file is disallowed never reaches this loop:
+		// the gate above blocks and blocklists it, because that is the case
+		// where importing anything would mean importing something unwanted.
+		if formatHint == "" {
+			if ok, reason := s.allowedFormat(ctx, author, formatsniff.Detect(srcFile)); !ok {
+				slog.Info("skipping a file the quality profile disallows",
+					"file", srcFile, "reason", reason)
+				continue
+			}
 		}
 
 		// Read the embedded EPUB language while the source is still present
@@ -3051,4 +3148,37 @@ func (s *Scanner) writeScanResultWithError(ctx context.Context, filesFound, reco
 	if err := s.settings.Set(ctx, "library.lastScan", payload); err != nil {
 		slog.Warn("library scan: failed to persist scan result", "error", err)
 	}
+}
+
+// rejectedDownloadFormat reports whether every candidate file in a download is
+// a format the author's quality profile disallows, and why.
+//
+// All-or-nothing on purpose. A mixed download, an epub next to a disallowed
+// pdf, should import the file the user allowed rather than be blocked whole;
+// the per-file skip in the ebook loop handles that. This gate is for the case
+// where importing anything at all would mean importing something the user
+// explicitly said they did not want, which is also the only case where
+// blocklisting the release is the right answer.
+//
+// Files whose format cannot be identified count as allowed, mirroring
+// QualityAllowed's own behaviour on an unparseable release name.
+func (s *Scanner) rejectedDownloadFormat(ctx context.Context, author *models.Author, files []string) (bool, string) {
+	if s.qualityProfiles == nil || author == nil || len(files) == 0 {
+		return false, ""
+	}
+	var firstReason string
+	for _, f := range files {
+		format := formatsniff.Detect(f)
+		ok, reason := s.allowedFormat(ctx, author, format)
+		if ok {
+			return false, ""
+		}
+		if firstReason == "" {
+			firstReason = reason
+		}
+	}
+	if firstReason == "" {
+		return false, ""
+	}
+	return true, firstReason + ". Not imported. Use manual import to override, or allow the format in the quality profile."
 }

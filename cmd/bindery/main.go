@@ -341,6 +341,10 @@ func main() {
 		cfg.DownloadPathRemap,
 	)
 	importScanner.WithNotifier(notif)
+	// Re-check the actual downloaded file against the author's quality profile
+	// before importing it, and blocklist a release rejected that way so the
+	// next search does not grab it again (#1782).
+	importScanner.WithFormatEnforcement(qualityProfileRepo, blocklistRepo)
 	importScanner.WithJobs(bgJobs) // drain manual scans on shutdown (#1458)
 
 	// Grimmory push pipeline (#826). Config is loaded live per push, so the
