@@ -22,6 +22,11 @@ vi.mock('../api/client', () => ({
     scanFolder: vi.fn(),
     batchImport: vi.fn(),
     listBooks: vi.fn(),
+    // Reached through resolveBookQuery / CatalogueAdder (#1719).
+    searchBooks: vi.fn(),
+    lookupISBN: vi.fn(),
+    lookupASIN: vi.fn(),
+    addBook: vi.fn(),
   },
 }))
 
@@ -32,6 +37,9 @@ import ManualImportPage from './ManualImportPage'
 const mockScan = api.scanFolder as ReturnType<typeof vi.fn>
 const mockBatch = api.batchImport as ReturnType<typeof vi.fn>
 const mockListBooks = api.listBooks as ReturnType<typeof vi.fn>
+const mockSearchBooks = api.searchBooks as ReturnType<typeof vi.fn>
+const mockLookupISBN = api.lookupISBN as ReturnType<typeof vi.fn>
+const mockAddBook = api.addBook as ReturnType<typeof vi.fn>
 
 function scanResult(): FolderScanResponse {
   return {
@@ -174,5 +182,78 @@ describe('ManualImportPage', () => {
     expect(mockBatch).toHaveBeenCalledWith(
       expect.arrayContaining([{ path: '/dl/Orphan', bookId: 99, format: 'audiobook' }]),
     )
+  })
+
+  it('creates an unmatched unit\'s book from a metadata search and imports against it', async () => {
+    await scan()
+
+    // The metadata search is offered only on the unresolved `none` unit.
+    fireEvent.click(screen.getByText('manualImport.metadataOpen'))
+
+    // Prefilled from what the scan parsed out of the file, so the user edits a
+    // query instead of retyping one.
+    const term = screen.getByPlaceholderText('manualImport.metadataPlaceholder') as HTMLInputElement
+    expect(term.value).toBe('Orphan')
+
+    mockSearchBooks.mockResolvedValue([
+      { foreignBookId: 'OL1W', title: 'Orphan Works', author: { authorName: 'A. Writer', foreignAuthorId: 'OL9A' } },
+    ])
+    fireEvent.click(screen.getByText('manualImport.metadataSearch'))
+    await screen.findByText('Orphan Works')
+
+    mockAddBook.mockResolvedValue({ id: 77, title: 'Orphan Works', author: { authorName: 'A. Writer' } })
+    fireEvent.click(screen.getByText('manualImport.metadataAdd'))
+    await waitFor(() => expect(mockAddBook).toHaveBeenCalledTimes(1))
+
+    // searchOnAdd MUST be false: the file is already on disk, so searching
+    // indexers for it would grab a second copy.
+    expect(mockAddBook).toHaveBeenCalledWith({
+      foreignBookId: 'OL1W',
+      foreignAuthorId: 'OL9A',
+      authorName: 'A. Writer',
+      searchOnAdd: false,
+    })
+
+    // The created book resolves the unit, which now imports like any other.
+    expect(screen.getByText(/manualImport\.importSelected count=2/)).toBeInTheDocument()
+    mockBatch.mockResolvedValue({
+      accepted: 2, failed: 0,
+      results: [
+        { path: '/dl/Confident Book', accepted: true, downloadId: 5 },
+        { path: '/dl/Orphan', accepted: true, downloadId: 7 },
+      ],
+    })
+    fireEvent.click(screen.getByText(/manualImport\.importSelected count=2/))
+    await waitFor(() => expect(mockBatch).toHaveBeenCalledTimes(1))
+    expect(mockBatch).toHaveBeenCalledWith(
+      expect.arrayContaining([{ path: '/dl/Orphan', bookId: 77, format: 'audiobook' }]),
+    )
+  })
+
+  it('routes an ISBN query to the lookup endpoint rather than the term search', async () => {
+    await scan()
+    fireEvent.click(screen.getByText('manualImport.metadataOpen'))
+    fireEvent.change(screen.getByPlaceholderText('manualImport.metadataPlaceholder'), {
+      target: { value: '978-0-441-47812-5' },
+    })
+    mockLookupISBN.mockResolvedValue({ foreignBookId: 'OL2W', title: 'Dune', author: { authorName: 'Frank Herbert' } })
+    fireEvent.click(screen.getByText('manualImport.metadataSearch'))
+
+    await screen.findByText('Dune')
+    expect(mockLookupISBN).toHaveBeenCalledWith('9780441478125')
+    expect(mockSearchBooks).not.toHaveBeenCalled()
+  })
+
+  it('refuses to add a metadata result that carries no author name', async () => {
+    await scan()
+    fireEvent.click(screen.getByText('manualImport.metadataOpen'))
+    mockSearchBooks.mockResolvedValue([{ foreignBookId: 'OL3W', title: 'Authorless', author: undefined }])
+    fireEvent.click(screen.getByText('manualImport.metadataSearch'))
+
+    await screen.findByText('Authorless')
+    const addBtn = screen.getByText('manualImport.metadataAdd') as HTMLButtonElement
+    expect(addBtn.disabled).toBe(true)
+    fireEvent.click(addBtn)
+    expect(mockAddBook).not.toHaveBeenCalled()
   })
 })
