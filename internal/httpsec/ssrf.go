@@ -240,6 +240,12 @@ func ValidateIP(ip net.IP, policy Policy) error {
 	return checkIP(ip, policy)
 }
 
+// resolveIPAddr is the resolver NewDialContext uses. It is a package var only
+// so a test can present a controlled pair of addresses: there is no way to make
+// a real DNS name resolve to a chosen A/AAAA pair from a unit test. Never
+// reassigned in production.
+var resolveIPAddr = net.DefaultResolver.LookupIPAddr
+
 // NewDialContext returns a DialContext function that wraps net.Dialer and
 // re-validates every resolved IP against policy before completing the TCP
 // connection. This prevents DNS-rebinding attacks where a hostname initially
@@ -269,7 +275,7 @@ func NewDialContext(policy Policy) func(ctx context.Context, network, addr strin
 		// handing control to the kernel's connect(2). This is the per-request
 		// re-validation that defeats DNS rebinding: the OS may have cached an
 		// old (allowed) IP while DNS now points at a private address.
-		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		ips, err := resolveIPAddr(ctx, host)
 		if err != nil {
 			return nil, fmt.Errorf("dial: dns lookup %q: %w", host, err)
 		}
@@ -287,8 +293,40 @@ func NewDialContext(policy Policy) func(ctx context.Context, network, addr strin
 			}
 		}
 
-		// All resolved IPs passed; dial using the first one (standard behaviour).
-		return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+		// All resolved addresses passed the policy, so try them in order until
+		// one connects. net.Dialer does this itself — Happy Eyeballs included —
+		// when it is handed a hostname, but resolving here to defeat DNS
+		// rebinding takes that away, so the fallback has to be reintroduced
+		// explicitly. Using ips[0] alone made an unreachable first address a
+		// hard failure even when a working one was resolved beside it, which is
+		// what a dual-stack host looks like from an IPv4-only container network:
+		// the AAAA address is an immediate ENETUNREACH (#2156).
+		//
+		// Sequential, in the order the resolver returned. That order is already
+		// RFC 6724-sorted, so the address the system considers best is still
+		// tried first; this only stops the others from being ignored. An
+		// address that blackholes rather than refusing still consumes the
+		// caller's deadline before the next is tried — recovering the staggered
+		// dial for that case needs Happy Eyeballs proper, which is a bigger
+		// change than the bug warrants.
+		var (
+			lastErr   error
+			attempted int
+		)
+		for _, ia := range ips {
+			attempted++
+			conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ia.IP.String(), port))
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+			// A cancelled or expired context will fail every remaining address
+			// the same way; stop rather than restating it once per address.
+			if ctx.Err() != nil {
+				break
+			}
+		}
+		return nil, fmt.Errorf("dial %s: no address could be reached (tried %d of %d resolved): %w", host, attempted, len(ips), lastErr)
 	}
 }
 
