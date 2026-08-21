@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -127,15 +128,66 @@ func (h *UserManagementHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 // Delete removes a user (admin-only). Cannot delete the last admin.
-// DELETE /api/v1/auth/users/:id
+// DELETE /api/v1/auth/users/:id[?strategy=reassign|purge][&reassignTo=<id>]
+//
+// A user who owns rows cannot be deleted without saying what happens to them
+// (#1899). Called without a strategy on such a user, this answers 409 with the
+// per-table counts so the caller can put a real choice in front of the admin:
+//
+//	{"error": "...", "counts": {"authors": 12, "books": 240, ...}}
+//
+// Re-issue the same request with strategy=reassign (reassignTo omitted means
+// global, visible to every user) or strategy=purge to carry it out. A user who
+// owns nothing deletes on the first call.
 func (h *UserManagementHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := h.users.Delete(r.Context(), id); err != nil {
+
+	strategy := db.UserDeleteStrategy(r.URL.Query().Get("strategy"))
+	if strategy == "" {
+		counts, err := h.users.OwnedRows(r.Context(), id)
+		if err != nil {
+			writeServerError(w, r, err)
+			return
+		}
+		if counts.Total() > 0 {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":  "this user owns library data; choose what happens to it",
+				"counts": counts,
+			})
+			return
+		}
+		// Nothing to inherit, so the strategies are equivalent. Reassign is the
+		// non-destructive one.
+		strategy = db.ReassignOwnedRows
+	}
+
+	plan := db.UserDeletePlan{Strategy: strategy}
+	if raw := r.URL.Query().Get("reassignTo"); raw != "" {
+		to, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid reassignTo")
+			return
+		}
+		plan.ReassignTo = &to
+	}
+
+	switch err := h.users.Delete(r.Context(), id, plan); {
+	case err == nil:
+	case errors.Is(err, db.ErrLastAdmin),
+		errors.Is(err, db.ErrUnknownDeleteStrategy),
+		errors.Is(err, db.ErrReassignToSelf),
+		errors.Is(err, db.ErrReassignTargetMissing):
 		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	case errors.Is(err, db.ErrUserStillReferenced):
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	default:
+		writeServerError(w, r, err)
 		return
 	}
 	writeOK(w, map[string]any{"ok": true})

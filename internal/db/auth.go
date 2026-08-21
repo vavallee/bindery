@@ -251,12 +251,173 @@ func (r *UserRepo) List(ctx context.Context) ([]User, error) {
 	return users, rows.Err()
 }
 
-// Delete removes a user by id. Returns an error if trying to delete the last admin.
+// Errors returned by Delete when the caller's plan cannot be carried out.
+var (
+	// ErrLastAdmin is returned when deleting a user would leave the install
+	// with no admin account.
+	ErrLastAdmin = errors.New("cannot delete the last admin user")
+	// ErrUnknownDeleteStrategy is returned when the caller did not pick what
+	// should happen to the user's rows. There is deliberately no default.
+	ErrUnknownDeleteStrategy = errors.New("unknown user delete strategy")
+	// ErrReassignToSelf is returned when the inheritor is the user being
+	// deleted.
+	ErrReassignToSelf = errors.New("cannot reassign a user's rows to that same user")
+	// ErrReassignTargetMissing is returned when the chosen inheritor does not
+	// exist.
+	ErrReassignTargetMissing = errors.New("reassign target user does not exist")
+	// ErrUserStillReferenced is returned when rows outside the tables this
+	// package knows about still point at the user, so the delete was rejected
+	// by a foreign key. It means a new users(id) reference was added without
+	// teaching Delete about it.
+	ErrUserStillReferenced = errors.New("rows still reference this user")
+)
+
+// UserDeleteStrategy says what happens to the rows a user owns when that user
+// is deleted (#1899).
 //
-// The last-admin guard (COUNT check + DELETE) runs inside a single transaction
-// to prevent a TOCTOU race where two concurrent callers both pass the count
-// check and both proceed, leaving zero admins.
-func (r *UserRepo) Delete(ctx context.Context, id int64) error {
+// There is no default on purpose. Nulling the owner publishes a private library
+// to every other account on the install, and purging destroys it; picking
+// either one silently is a decision the admin should be making, not this
+// package.
+type UserDeleteStrategy string
+
+const (
+	// ReassignOwnedRows hands the user's rows to another account, or makes
+	// them global (owner NULL, visible to everyone) when ReassignTo is nil.
+	// NULL as "shared with all users" is the meaning migration 039 established
+	// and every per-user query in this package follows.
+	ReassignOwnedRows UserDeleteStrategy = "reassign"
+	// PurgeOwnedRows deletes the user's rows along with the user.
+	PurgeOwnedRows UserDeleteStrategy = "purge"
+)
+
+// UserDeletePlan is the caller's answer to "what happens to this user's
+// library". ReassignTo is only read under ReassignOwnedRows, where nil means
+// global.
+type UserDeletePlan struct {
+	Strategy   UserDeleteStrategy
+	ReassignTo *int64
+}
+
+// ownerTables are the tables whose owner_user_id names the user who owns the
+// row. Migration 025 added the first six, 065 added import_lists. None of them
+// declare an ON DELETE clause, and foreign keys are enforced on every
+// connection (connectionPragmaDSN), so rows here reject a bare user delete
+// rather than orphaning the way they did before #1727.
+//
+// These names are compile-time constants interpolated into SQL below; nothing
+// user-supplied ever reaches that path.
+var ownerTables = []string{
+	"authors",
+	"books",
+	"quality_profiles",
+	"metadata_profiles",
+	"downloads",
+	"root_folders",
+	"import_lists",
+}
+
+// purgeOrder deletes the child side before the parent so a purge does not lean
+// on cascade ordering. authors comes after books because books.author_id is
+// ON DELETE CASCADE: removing an author takes every book still hanging off it,
+// including one another user owns. That is inherent in removing the author, and
+// it is part of why purge is a deliberate choice rather than the default.
+var purgeOrder = []string{
+	"downloads",
+	"books",
+	"authors",
+	"quality_profiles",
+	"metadata_profiles",
+	"root_folders",
+	"import_lists",
+}
+
+// perUserStateTables hold rows scoped to one account that no other account can
+// act on: a recommendation is scored against one user's taste and a dismissal
+// only suppresses rows in that user's feed. Migration 015 declares these
+// user_id columns without a foreign key, so they never block a delete; they
+// would just accumulate as rows no session can read or clear, which is the
+// stranded state migration 069 had to repair. Cleared under either strategy.
+var perUserStateTables = []string{
+	"recommendations",
+	"recommendation_dismissals",
+	"recommendation_author_exclusions",
+}
+
+// UserOwnedRows counts the rows that point at a user through a foreign key to
+// users(id). Any non-zero field blocks a bare DELETE, so this is what the API
+// shows an admin before asking them to choose a strategy.
+type UserOwnedRows struct {
+	Authors          int `json:"authors"`
+	Books            int `json:"books"`
+	QualityProfiles  int `json:"qualityProfiles"`
+	MetadataProfiles int `json:"metadataProfiles"`
+	Downloads        int `json:"downloads"`
+	RootFolders      int `json:"rootFolders"`
+	ImportLists      int `json:"importLists"`
+	// Blocklist counts rows attributing a blocklist entry to this user. It is
+	// reported for transparency but never reassigned or purged; see Delete.
+	Blocklist int `json:"blocklist"`
+}
+
+// Total reports how many rows in all counted tables belong to the user.
+func (c UserOwnedRows) Total() int {
+	return c.Authors + c.Books + c.QualityProfiles + c.MetadataProfiles +
+		c.Downloads + c.RootFolders + c.ImportLists + c.Blocklist
+}
+
+// OwnedRows counts every row that references the user. A zero Total means the
+// account never used the app and can be deleted under any strategy.
+func (r *UserRepo) OwnedRows(ctx context.Context, id int64) (UserOwnedRows, error) {
+	var c UserOwnedRows
+	into := map[string]*int{
+		"authors":           &c.Authors,
+		"books":             &c.Books,
+		"quality_profiles":  &c.QualityProfiles,
+		"metadata_profiles": &c.MetadataProfiles,
+		"downloads":         &c.Downloads,
+		"root_folders":      &c.RootFolders,
+		"import_lists":      &c.ImportLists,
+	}
+	for _, t := range ownerTables {
+		// #nosec G201 -- t comes from ownerTables, a package-level literal
+		// slice; no caller-supplied value reaches this string.
+		q := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE owner_user_id = ?", t)
+		if err := r.db.QueryRowContext(ctx, q, id).Scan(into[t]); err != nil {
+			return c, fmt.Errorf("count %s: %w", t, err)
+		}
+	}
+	if err := r.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM blocklist WHERE created_by_user_id = ?", id,
+	).Scan(&c.Blocklist); err != nil {
+		return c, fmt.Errorf("count blocklist: %w", err)
+	}
+	return c, nil
+}
+
+// Delete removes a user and resolves what happens to the rows they own,
+// according to plan.
+//
+// Before #1899 this was a bare DELETE, which meant any account that had ever
+// added an author, added a book, started a download or created a profile could
+// not be deleted at all: those tables carry a foreign key to users(id) with no
+// ON DELETE clause, so SQLite's default NO ACTION rejected the statement once
+// #1727 turned enforcement on per connection. In practice the delete button
+// worked only on accounts nobody had used.
+//
+// The last-admin guard and every write run inside one transaction, so a
+// concurrent mutation cannot slip between the count check and the delete, and a
+// failure part way through leaves the user and their rows exactly as they were.
+func (r *UserRepo) Delete(ctx context.Context, id int64, plan UserDeletePlan) error {
+	switch plan.Strategy {
+	case ReassignOwnedRows, PurgeOwnedRows:
+	default:
+		return fmt.Errorf("%w: %q", ErrUnknownDeleteStrategy, plan.Strategy)
+	}
+	if plan.Strategy == ReassignOwnedRows && plan.ReassignTo != nil && *plan.ReassignTo == id {
+		return ErrReassignToSelf
+	}
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -273,7 +434,7 @@ func (r *UserRepo) Delete(ctx context.Context, id int64) error {
 	}
 
 	if targetRole == "admin" {
-		// Guard: refuse to delete the last admin — count other admins while
+		// Guard: refuse to delete the last admin. Count other admins while
 		// still inside the transaction so no concurrent mutation can sneak in.
 		var adminCount int
 		if err := tx.QueryRowContext(ctx,
@@ -282,12 +443,73 @@ func (r *UserRepo) Delete(ctx context.Context, id int64) error {
 			return fmt.Errorf("check admin count: %w", err)
 		}
 		if adminCount == 0 {
-			return fmt.Errorf("cannot delete the last admin user")
+			return ErrLastAdmin
+		}
+	}
+
+	if plan.Strategy == ReassignOwnedRows && plan.ReassignTo != nil {
+		var n int
+		if err := tx.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM users WHERE id=?", *plan.ReassignTo,
+		).Scan(&n); err != nil {
+			return fmt.Errorf("check reassign target: %w", err)
+		}
+		if n == 0 {
+			return ErrReassignTargetMissing
+		}
+	}
+
+	if plan.Strategy == PurgeOwnedRows {
+		for _, t := range purgeOrder {
+			// #nosec G201 -- t comes from purgeOrder, a package-level literal
+			// slice; no caller-supplied value reaches this string.
+			q := fmt.Sprintf("DELETE FROM %s WHERE owner_user_id = ?", t)
+			if _, err := tx.ExecContext(ctx, q, id); err != nil {
+				return fmt.Errorf("purge %s: %w", t, err)
+			}
+		}
+	} else {
+		// A nil ReassignTo binds as NULL, which is this schema's "global".
+		for _, t := range ownerTables {
+			// #nosec G201 -- t comes from ownerTables, a package-level literal
+			// slice; no caller-supplied value reaches this string.
+			q := fmt.Sprintf("UPDATE %s SET owner_user_id = ? WHERE owner_user_id = ?", t)
+			if _, err := tx.ExecContext(ctx, q, plan.ReassignTo, id); err != nil {
+				return fmt.Errorf("reassign %s: %w", t, err)
+			}
+		}
+	}
+
+	// Blocklist attribution is an audit trail, not ownership. Migration 050
+	// records which user promoted an entry and treats NULL as "unknown origin",
+	// which is honestly what a departed user's entries are. The blocklist stays
+	// global either way, so the entry itself survives both strategies and only
+	// the attribution is cleared: a release that was broken for one user is
+	// still broken for everyone, and purging it would make the next scan re-pay
+	// the cost of a grab already known to fail.
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE blocklist SET created_by_user_id = NULL WHERE created_by_user_id = ?", id,
+	); err != nil {
+		return fmt.Errorf("clear blocklist attribution: %w", err)
+	}
+
+	for _, t := range perUserStateTables {
+		// #nosec G201 -- t comes from perUserStateTables, a package-level
+		// literal slice; no caller-supplied value reaches this string.
+		q := fmt.Sprintf("DELETE FROM %s WHERE user_id = ?", t)
+		if _, err := tx.ExecContext(ctx, q, id); err != nil {
+			return fmt.Errorf("clear %s: %w", t, err)
 		}
 	}
 
 	if _, err := tx.ExecContext(ctx, "DELETE FROM users WHERE id=?", id); err != nil {
-		return err
+		if isForeignKeyViolation(err) {
+			// Everything this package knows about has been handled above, so a
+			// foreign key rejection here means a new users(id) reference was
+			// added without adding it to ownerTables.
+			return fmt.Errorf("%w: %w", ErrUserStillReferenced, err)
+		}
+		return fmt.Errorf("delete user: %w", err)
 	}
 	return tx.Commit()
 }

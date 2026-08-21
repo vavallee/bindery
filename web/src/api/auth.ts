@@ -47,6 +47,25 @@ export interface OidcProviderConfig {
   scopes: string[]
 }
 
+// UserOwnedRows counts the rows that reference a user, as returned in the 409
+// body when a delete needs a decision. Keys match internal/db.UserOwnedRows.
+export type UserOwnedRows = {
+  authors: number
+  books: number
+  qualityProfiles: number
+  metadataProfiles: number
+  downloads: number
+  rootFolders: number
+  importLists: number
+  blocklist: number
+}
+
+// UserDeletePlan says what happens to a deleted user's rows. `reassign` with no
+// reassignTo makes them global.
+export type UserDeletePlan =
+  | { strategy: 'reassign'; reassignTo?: number | null }
+  | { strategy: 'purge' }
+
 export const authApi = {
   // Auth
   authStatus: () => request<AuthStatus>('/auth/status'),
@@ -112,7 +131,23 @@ export const authApi = {
   listUsers: () => request<ManagedUser[]>('/auth/users'),
   createUser: (username: string, password: string, role: string) =>
     request<ManagedUser>('/auth/users', { method: 'POST', body: JSON.stringify({ username, password, role }) }),
-  deleteUser: (id: number) => request<{ ok: boolean }>(`/auth/users/${id}`, { method: 'DELETE' }),
+  // Delete a user. Called with no plan on a user who owns library data, the
+  // backend answers 409 with an ApiError whose body carries `counts` (see
+  // UserOwnedRows) rather than deleting anything, so the caller can ask the
+  // admin what should happen to it (#1899). Re-issue with a plan to carry it
+  // out; a user who owns nothing deletes on the first call.
+  deleteUser: (id: number, plan?: UserDeletePlan) => {
+    const qs = new URLSearchParams()
+    if (plan) {
+      qs.set('strategy', plan.strategy)
+      // Omitting reassignTo means global: owned by nobody, visible to everyone.
+      if (plan.strategy === 'reassign' && plan.reassignTo != null) {
+        qs.set('reassignTo', String(plan.reassignTo))
+      }
+    }
+    const suffix = qs.toString() ? `?${qs}` : ''
+    return request<{ ok: boolean }>(`/auth/users/${id}${suffix}`, { method: 'DELETE' })
+  },
   setUserRole: (id: number, role: string) =>
     request<{ ok: boolean }>(`/auth/users/${id}/role`, { method: 'PUT', body: JSON.stringify({ role }) }),
   resetUserPassword: (id: number, password: string) =>

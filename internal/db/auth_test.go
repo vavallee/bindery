@@ -87,7 +87,7 @@ func TestDeleteLastAdmin(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = repo.Delete(ctx, admin.ID)
+	err = repo.Delete(ctx, admin.ID, UserDeletePlan{Strategy: ReassignOwnedRows})
 	if err == nil {
 		t.Fatal("expected error when deleting last admin, got nil")
 		return
@@ -122,7 +122,7 @@ func TestDeleteLastAdmin_TwoAdmins(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := repo.Delete(ctx, a.ID); err != nil {
+	if err := repo.Delete(ctx, a.ID, UserDeletePlan{Strategy: ReassignOwnedRows}); err != nil {
 		t.Errorf("expected success deleting one of two admins: %v", err)
 	}
 }

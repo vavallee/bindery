@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, ManagedUser } from '../api/client'
+import { api, ManagedUser, UserOwnedRows, UserDeletePlan } from '../api/client'
+import { ApiError } from '../api/core'
+import DeleteUserDialog from './DeleteUserDialog'
 import { useAuth } from '../auth/AuthContext'
 
 const inputCls = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600'
@@ -18,6 +20,10 @@ export default function UsersPage() {
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
   const [, setResetError] = useState<Record<number, string>>({})
+  // Set when a delete came back 409 because the user owns library data. Holds
+  // the user and the counts the backend reported, which drives the dialog.
+  const [pendingDelete, setPendingDelete] = useState<{ user: ManagedUser; counts: UserOwnedRows } | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
 
   useEffect(() => {
     document.title = 'Users · Bindery'
@@ -49,13 +55,36 @@ export default function UsersPage() {
     }
   }
 
+  // First pass: ask the backend to delete. A user who owns nothing goes
+  // straight away; one who owns library data comes back 409 with the counts,
+  // and that opens the dialog rather than failing (#1899).
   async function handleDelete(u: ManagedUser) {
     if (!confirm(t('users.deleteConfirm', { username: u.username }))) return
+    setError('')
     try {
       await api.deleteUser(u.id)
       setUsers(prev => prev.filter(x => x.id !== u.id))
     } catch (e: unknown) {
+      if (e instanceof ApiError && e.status === 409 && e.body?.counts) {
+        setPendingDelete({ user: u, counts: e.body.counts as UserOwnedRows })
+        return
+      }
       setError(e instanceof Error ? e.message : t('users.deleteFail'))
+    }
+  }
+
+  // Second pass: the admin has chosen what happens to the library.
+  async function executeDelete(u: ManagedUser, plan: UserDeletePlan) {
+    setDeleteBusy(true)
+    setError('')
+    try {
+      await api.deleteUser(u.id, plan)
+      setUsers(prev => prev.filter(x => x.id !== u.id))
+      setPendingDelete(null)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : t('users.deleteFail'))
+    } finally {
+      setDeleteBusy(false)
     }
   }
 
@@ -91,6 +120,17 @@ export default function UsersPage() {
   return (
     <div className="space-y-8 max-w-2xl">
       <h1 className="text-2xl font-bold">{t('users.title')}</h1>
+
+      {pendingDelete && (
+        <DeleteUserDialog
+          user={pendingDelete.user}
+          counts={pendingDelete.counts}
+          users={users}
+          busy={deleteBusy}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={plan => executeDelete(pendingDelete.user, plan)}
+        />
+      )}
 
       {loading && <p className="text-sm text-slate-500 dark:text-zinc-500">{t('common.loading')}</p>}
       {error && <p className="text-sm text-red-500">{error}</p>}

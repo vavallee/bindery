@@ -124,7 +124,7 @@ func TestMultiUser_DataIsolation(t *testing.T) {
 	}
 
 	// Cannot delete last admin.
-	if err := users.Delete(ctx, u1.ID); err == nil {
+	if err := users.Delete(ctx, u1.ID, db.UserDeletePlan{Strategy: db.ReassignOwnedRows}); err == nil {
 		t.Error("should not be able to delete the last admin user")
 	}
 
