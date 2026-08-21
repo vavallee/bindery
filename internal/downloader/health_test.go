@@ -103,7 +103,7 @@ func TestCheckDownloadClientHealth_QBittorrentCategoryPath(t *testing.T) {
 				Category:  "books",
 				PathRemap: tc.pathRemap,
 			}
-			got := CheckDownloadClientHealth(context.Background(), client, expected, "")
+			got := CheckDownloadClientHealth(context.Background(), client, expected, "", "")
 			if got.Status != tc.wantStatus {
 				t.Fatalf("status = %q, want %q; message=%s", got.Status, tc.wantStatus, got.Message)
 			}
@@ -193,7 +193,7 @@ func TestCheckDownloadClientHealth_QBittorrentAudiobookCategory(t *testing.T) {
 				CategoryAudiobook: "audiobooks",
 				PathRemap:         "/media/downloads:" + ebookDir + ",/media/audio-downloads:" + audioDir,
 			}
-			got := CheckDownloadClientHealth(context.Background(), client, ebookDir, audioDir)
+			got := CheckDownloadClientHealth(context.Background(), client, ebookDir, audioDir, "")
 			if got.Status != tc.wantStatus {
 				t.Fatalf("status = %q, want %q; message=%s", got.Status, tc.wantStatus, got.Message)
 			}
@@ -251,7 +251,7 @@ func TestQbittorrentCategoryPath_DetectsCaseMismatch(t *testing.T) {
 		// No PathRemap — qbSavePath already sits under configuredDir
 		// textually, so pathIsAtOrUnder passes and the stat check fires.
 	}
-	got := CheckDownloadClientHealth(context.Background(), client, configuredDir, "")
+	got := CheckDownloadClientHealth(context.Background(), client, configuredDir, "", "")
 	if got.Status != HealthError {
 		t.Fatalf("status = %q, want %q; message=%s", got.Status, HealthError, got.Message)
 	}
@@ -292,7 +292,7 @@ func TestQbittorrentCategoryPath_MismatchMessageGuidesUserToPathRemap(t *testing
 		Password: "p",
 		Category: "library",
 	}
-	got := CheckDownloadClientHealth(context.Background(), client, "/downloads", "")
+	got := CheckDownloadClientHealth(context.Background(), client, "/downloads", "", "")
 	if got.Status != HealthError {
 		t.Fatalf("status = %q, want %q; message=%s", got.Status, HealthError, got.Message)
 	}

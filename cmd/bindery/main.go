@@ -329,6 +329,11 @@ func main() {
 	// auto-grab / import / download-failure events never reached webhooks.
 	notif := notifier.New(notificationRepo)
 
+	// Download-client health store. Constructed here rather than next to the
+	// handlers because the scheduler registers its periodic re-probe during
+	// Start(), which runs before that point (#2029).
+	downloadHealth := downloader.NewHealthStore().WithNotifier(notif)
+
 	// Indexer searcher
 	idxSearcher := indexer.NewSearcher()
 
@@ -471,6 +476,7 @@ func main() {
 	sched.WithDelayProfiles(delayProfileRepo)
 	sched.WithPendingReleases(pendingReleaseRepo)
 	sched.WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir)
+	sched.WithDownloadClientHealth(downloadHealth, cfg.DownloadPathRemap)
 	sched.WithNotifier(notif)
 	// Register the Calibre importer as the 24-hour sync job. The scheduler
 	// only fires the job when the syncer is non-nil, so no guard needed here.
@@ -575,9 +581,8 @@ func main() {
 		WithAliases(authorAliasRepo).
 		WithQualityProfiles(qualityProfileRepo).
 		WithEditions(editionRepo)
-	downloadHealth := downloader.NewHealthStore().WithNotifier(notif)
 	if clients, err := dlClientRepo.List(ctxBoot); err == nil {
-		downloader.RefreshDownloadClientHealthAsync(context.Background(), bgJobs, downloadHealth, clients, cfg.DownloadDir, cfg.AudiobookDownloadDir)
+		downloader.RefreshDownloadClientHealthAsync(context.Background(), bgJobs, downloadHealth, clients, cfg.DownloadDir, cfg.AudiobookDownloadDir, cfg.DownloadPathRemap)
 	} else {
 		slog.Warn("download client startup health check skipped", "error", err)
 	}

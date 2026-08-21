@@ -104,8 +104,17 @@ export default function ClientsTab({ clients, setClients }: Props) {
                   )}
                 </div>
               </div>
-              {c.type === 'qbittorrent' && c.health?.status === 'error' && (
+              {/* Stored health for every client type, not just qBittorrent
+                  (#2029). "unknown" means the client exposes no completed path
+                  to introspect, which is worth saying plainly but is not an
+                  error, so it renders muted rather than red. */}
+              {c.health?.status === 'error' && (
                 <div className="mt-1 px-3 py-2 bg-red-100 text-red-800 dark:bg-red-950/30 dark:text-red-300 border border-red-300 dark:border-red-900 rounded text-xs">
+                  {c.health.message}
+                </div>
+              )}
+              {c.health?.status === 'unknown' && c.health.message && (
+                <div className="mt-1 px-3 py-2 bg-slate-100 text-slate-600 dark:bg-zinc-800/50 dark:text-zinc-400 border border-slate-200 dark:border-zinc-700 rounded text-xs">
                   {c.health.message}
                 </div>
               )}

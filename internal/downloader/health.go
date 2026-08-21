@@ -19,6 +19,15 @@ const (
 	HealthOK       = "ok"
 	HealthChecking = "checking"
 	HealthError    = "error"
+	// HealthUnknown means Bindery could not determine whether this client's
+	// completed downloads are readable, because the client type exposes no
+	// completed path to introspect (SABnzbd, Transmission, Deluge).
+	//
+	// It exists so those clients stop being reported as HealthOK. Claiming a
+	// check passed when no check ran is what let "the client is fine and
+	// nothing ever imports" go unexplained for so long (#2029); "we could not
+	// check" is honest, and it is not an error either.
+	HealthUnknown = "unknown"
 )
 
 // eventNotifier publishes a webhook event for a downstream notification
@@ -119,7 +128,7 @@ func (s *HealthStore) Attach(client *models.DownloadClient) {
 }
 
 func CheckingHealth() models.DownloadClientHealth {
-	return models.DownloadClientHealth{Status: HealthChecking, Message: "Checking qBittorrent category path"}
+	return models.DownloadClientHealth{Status: HealthChecking, Message: "Checking download client paths"}
 }
 
 // RefreshDownloadClientHealthAsync fans out one health probe per enabled
@@ -128,20 +137,20 @@ func CheckingHealth() models.DownloadClientHealth {
 // on process shutdown (#1458); the group's context is used as the parent, so
 // parent is ignored in that path. When g is nil (tests, non-wired callers) it
 // falls back to an untracked goroutine derived from parent.
-func RefreshDownloadClientHealthAsync(parent context.Context, g *jobs.Group, store *HealthStore, clients []models.DownloadClient, downloadDir, audiobookDownloadDir string) {
+func RefreshDownloadClientHealthAsync(parent context.Context, g *jobs.Group, store *HealthStore, clients []models.DownloadClient, downloadDir, audiobookDownloadDir, globalRemap string) {
 	if store == nil {
 		return
 	}
 	for i := range clients {
 		client := clients[i]
-		if !client.Enabled || client.Type != "qbittorrent" {
+		if !client.Enabled {
 			continue
 		}
 		store.Set(client.ID, CheckingHealth())
 		probe := func(base context.Context) {
 			ctx, cancel := context.WithTimeout(base, 15*time.Second)
 			defer cancel()
-			store.Set(client.ID, CheckDownloadClientHealth(ctx, &client, downloadDir, audiobookDownloadDir))
+			store.Set(client.ID, CheckDownloadClientHealth(ctx, &client, downloadDir, audiobookDownloadDir, globalRemap))
 		}
 		if g != nil {
 			g.Go("download-health-refresh", probe)
@@ -151,11 +160,49 @@ func RefreshDownloadClientHealthAsync(parent context.Context, g *jobs.Group, sto
 	}
 }
 
-func CheckDownloadClientHealth(ctx context.Context, client *models.DownloadClient, downloadDir, audiobookDownloadDir string) models.DownloadClientHealth {
-	if client == nil || client.Type != "qbittorrent" {
-		return models.DownloadClientHealth{Status: HealthOK, Message: "Download client path check not required"}
+// CheckDownloadClientHealth reports whether Bindery can read the files this
+// client writes when a download completes.
+//
+// Until #2029 this answered HealthOK with "Download client path check not
+// required" for every type except qBittorrent. That was not true: NZBGet and
+// rTorrent both expose a completed path and CheckCompletedPathVisibility has
+// introspected them since #1182. Five of six client types therefore stored a
+// pass for a check that never ran, which is the mechanism behind the most
+// common support shape, where the connection tests fine, the client accepts
+// grabs, and nothing ever imports.
+//
+// qBittorrent keeps its own richer check because it validates both the ebook
+// and audiobook categories rather than a single path. Everything else goes
+// through the shared visibility check, and a type that genuinely cannot be
+// introspected now answers HealthUnknown rather than a fabricated OK.
+func CheckDownloadClientHealth(ctx context.Context, client *models.DownloadClient, downloadDir, audiobookDownloadDir, globalRemap string) models.DownloadClientHealth {
+	if client == nil {
+		return models.DownloadClientHealth{Status: HealthUnknown, Message: "No download client to check"}
 	}
-	return checkQbittorrentCategoryPath(ctx, client, downloadDir, audiobookDownloadDir)
+	if client.Type == "qbittorrent" {
+		return checkQbittorrentCategoryPath(ctx, client, downloadDir, audiobookDownloadDir)
+	}
+
+	vis := CheckCompletedPathVisibility(ctx, client, downloadDir, audiobookDownloadDir, globalRemap)
+	switch vis.Status {
+	case PathVisible:
+		msg := "Bindery can read this client's completed downloads"
+		if vis.Path != "" {
+			msg = fmt.Sprintf("Bindery can read this client's completed downloads at %s", vis.Path)
+		}
+		return models.DownloadClientHealth{Status: HealthOK, Message: msg}
+	case PathNotVisible:
+		msg := vis.Message
+		if msg == "" {
+			msg = "Bindery cannot read this client's completed downloads, so nothing will import"
+		}
+		return models.DownloadClientHealth{Status: HealthError, Message: msg}
+	default:
+		return models.DownloadClientHealth{
+			Status:  HealthUnknown,
+			Message: fmt.Sprintf("Bindery cannot check where %s puts completed downloads, so imports are unverified", client.Type),
+		}
+	}
 }
 
 // ExpectedDownloadDirForClient returns the local download directory Bindery

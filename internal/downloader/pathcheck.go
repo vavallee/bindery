@@ -61,7 +61,7 @@ func CheckCompletedPathVisibility(ctx context.Context, client *models.DownloadCl
 	case "qbittorrent":
 		return qbittorrentPathVisibility(ctx, client, downloadDir, audiobookDownloadDir, globalRemap)
 	case "nzbget":
-		return nzbgetPathVisibility(ctx, client, globalRemap)
+		return nzbgetPathVisibility(ctx, client, downloadDir, audiobookDownloadDir, globalRemap)
 	case "rtorrent":
 		return rtorrentPathVisibility(ctx, client, downloadDir, audiobookDownloadDir, globalRemap)
 	default:
@@ -85,8 +85,11 @@ func rtorrentPathVisibility(ctx context.Context, client *models.DownloadClient, 
 		// tell" rather than a path warning, to avoid false alarms.
 		return PathVisibility{Status: PathUnknown}
 	}
-	expected := ExpectedDownloadDirForClient(client, models.MediaTypeEbook, downloadDir, audiobookDownloadDir)
-	return statRemappedPath(client, defaultDir, expected, globalRemap)
+	// rTorrent has one global default directory, so both media types land in
+	// the same place; the hint still names both configured directories when the
+	// client serves audiobooks separately, rather than pointing only at the
+	// ebook one (#1984, the half left over from #1993).
+	return statRemappedPath(client, defaultDir, clientExpectedHint(client, downloadDir, audiobookDownloadDir), globalRemap)
 }
 
 func qbittorrentPathVisibility(ctx context.Context, client *models.DownloadClient, downloadDir, audiobookDownloadDir, globalRemap string) PathVisibility {
@@ -114,15 +117,18 @@ func qbittorrentPathVisibility(ctx context.Context, client *models.DownloadClien
 	if savePath == "" {
 		return PathVisibility{Status: PathUnknown}
 	}
-	expected := qbittorrentExpectedHint(client, downloadDir, audiobookDownloadDir)
+	expected := clientExpectedHint(client, downloadDir, audiobookDownloadDir)
 	return statRemappedPath(client, savePath, expected, globalRemap)
 }
 
-// qbittorrentExpectedHint describes the local directories Bindery is configured
-// to read for the categories this client serves. When audiobooks use a separate
-// category, include both media-specific directories so a failed visibility check
-// does not misleadingly point only at the ebook directory (#1984).
-func qbittorrentExpectedHint(client *models.DownloadClient, downloadDir, audiobookDownloadDir string) string {
+// clientExpectedHint describes the local directories Bindery is configured to
+// read for the categories this client serves. When audiobooks use a separate
+// category, include both media-specific directories so a failed visibility
+// check does not misleadingly point only at the ebook directory (#1984).
+//
+// Named for clients generally rather than qBittorrent because every
+// introspectable type wants the same sentence in its failure message.
+func clientExpectedHint(client *models.DownloadClient, downloadDir, audiobookDownloadDir string) string {
 	ebookDir := strings.TrimSpace(ExpectedDownloadDirForClient(client, models.MediaTypeEbook, downloadDir, audiobookDownloadDir))
 	hints := make([]string, 0, 2)
 	if ebookDir != "" {
@@ -139,13 +145,13 @@ func qbittorrentExpectedHint(client *models.DownloadClient, downloadDir, audiobo
 	return strings.Join(hints, " and ")
 }
 
-func nzbgetPathVisibility(ctx context.Context, client *models.DownloadClient, globalRemap string) PathVisibility {
+func nzbgetPathVisibility(ctx context.Context, client *models.DownloadClient, downloadDir, audiobookDownloadDir, globalRemap string) PathVisibility {
 	ng := NzbgetFor(client)
 	completeDir, err := ng.CompletedDir(ctx, client.Category)
 	if err != nil || strings.TrimSpace(completeDir) == "" {
 		return PathVisibility{Status: PathUnknown}
 	}
-	return statRemappedPath(client, completeDir, "", globalRemap)
+	return statRemappedPath(client, completeDir, clientExpectedHint(client, downloadDir, audiobookDownloadDir), globalRemap)
 }
 
 // remapClientPath resolves a client-reported path the same way the importer does

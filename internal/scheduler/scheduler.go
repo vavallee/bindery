@@ -189,6 +189,10 @@ type Scheduler struct {
 	logRetainDays        int             // 0 = use default (14)
 	downloadDir          string
 	audiobookDownloadDir string
+	// downloadHealth and downloadPathRemap back the periodic client-health
+	// probe (#2029). nil store means the job is not registered.
+	downloadHealth    *downloader.HealthStore
+	downloadPathRemap string
 }
 
 const scheduledWantedSearchConcurrency = 2
@@ -285,6 +289,34 @@ func (s *Scheduler) WithMetadataProfiles(profiles *db.MetadataProfileRepo) {
 // before Start.
 func (s *Scheduler) WithEditions(editions *db.EditionRepo) {
 	s.editions = editions
+}
+
+// WithDownloadClientHealth attaches the health store and the global path remap
+// so client health can be re-probed on a schedule (#2029). Without it the
+// periodic job is not registered and health stays what it was at boot.
+func (s *Scheduler) WithDownloadClientHealth(store *downloader.HealthStore, globalRemap string) {
+	s.downloadHealth = store
+	s.downloadPathRemap = globalRemap
+}
+
+// refreshDownloadClientHealth re-probes every enabled download client.
+//
+// Health used to be written only when a client was created, updated, or
+// explicitly tested, so a client that was healthy at setup and broke afterwards
+// (a seedbox remount, a rotated password, a container that moved) stayed green
+// until somebody pressed Test on a hunch. The information was always available;
+// nothing was asking for it.
+func (s *Scheduler) refreshDownloadClientHealth(ctx context.Context) {
+	if s.downloadHealth == nil || s.clients == nil {
+		return
+	}
+	clients, err := s.clients.List(ctx)
+	if err != nil {
+		slog.Warn("failed to list download clients for health refresh", "error", err)
+		return
+	}
+	downloader.RefreshDownloadClientHealthAsync(ctx, nil, s.downloadHealth, clients,
+		s.downloadDir, s.audiobookDownloadDir, s.downloadPathRemap)
 }
 
 // WithStoragePaths attaches the process-level download roots used when sending
@@ -397,6 +429,20 @@ func (s *Scheduler) Start() {
 		slog.Debug("job: check stalled downloads")
 		s.checkStalledDownloads(s.ctx())
 	}))
+
+	// Re-probe download-client health every 15 minutes. Health was previously
+	// only written at boot and on create/update/test, so a client that broke
+	// after setup stayed green indefinitely (#2029). 15 minutes is frequent
+	// enough that a broken mount is noticed within a download's lifetime, and
+	// rare enough that it is not hammering remote clients. HealthStore.Set
+	// edge-triggers the notification, so a persistent failure still notifies
+	// once rather than every cycle.
+	if s.downloadHealth != nil {
+		s.cron.AddFunc("@every 15m", runJob("download-client-health", func() {
+			slog.Debug("job: refresh download client health")
+			s.refreshDownloadClientHealth(s.ctx())
+		}))
+	}
 
 	// Search for wanted books on a configurable interval (default 12h).
 	// Read the setting once at Start() — a restart is required to apply changes.

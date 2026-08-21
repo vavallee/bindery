@@ -22,7 +22,11 @@ export interface DownloadClient {
 }
 
 export interface DownloadClientHealth {
-  status: 'ok' | 'checking' | 'error'
+  // 'unknown' means the client type exposes no completed-downloads path
+  // Bindery can introspect (SABnzbd, Transmission, Deluge), so imports are
+  // unverified rather than known-good. Before #2029 those types stored a
+  // fabricated 'ok'.
+  status: 'ok' | 'checking' | 'error' | 'unknown'
   message: string
 }
 

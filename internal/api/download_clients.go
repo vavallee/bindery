@@ -315,7 +315,7 @@ func (h *DownloadClientHandler) refreshClientHealthAsync(client models.DownloadC
 	if h.health == nil {
 		return
 	}
-	if client.Type != "qbittorrent" || !client.Enabled {
+	if !client.Enabled {
 		h.health.Delete(client.ID)
 		return
 	}
@@ -326,7 +326,7 @@ func (h *DownloadClientHandler) refreshClientHealthAsync(client models.DownloadC
 		// the (still live but no-longer-served) health store.
 		ctx, cancel := context.WithTimeout(h.bgCtx(), 15*time.Second)
 		defer cancel()
-		h.health.Set(client.ID, downloader.CheckDownloadClientHealth(ctx, &client, h.downloadDir, h.audiobookDownloadDir))
+		h.health.Set(client.ID, downloader.CheckDownloadClientHealth(ctx, &client, h.downloadDir, h.audiobookDownloadDir, h.downloadPathRemap))
 	}()
 }
 
@@ -334,11 +334,11 @@ func (h *DownloadClientHandler) refreshClientHealth(ctx context.Context, client 
 	if h.health == nil || client == nil {
 		return nil
 	}
-	if client.Type != "qbittorrent" || !client.Enabled {
+	if !client.Enabled {
 		h.health.Delete(client.ID)
 		return nil
 	}
-	health := downloader.CheckDownloadClientHealth(ctx, client, h.downloadDir, h.audiobookDownloadDir)
+	health := downloader.CheckDownloadClientHealth(ctx, client, h.downloadDir, h.audiobookDownloadDir, h.downloadPathRemap)
 	h.health.Set(client.ID, health)
 	return &health
 }
