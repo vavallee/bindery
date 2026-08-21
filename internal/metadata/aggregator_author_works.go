@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/vavallee/bindery/internal/concurrency"
@@ -50,6 +51,38 @@ type authorWorksByNameProvider interface {
 	GetAuthorWorksByName(ctx context.Context, authorName string) ([]models.Book, error)
 }
 
+// authorWorksByIdentityProvider is the optional capability of selecting an
+// author's works by that provider's own author id, rather than by name (#1734).
+//
+// Name matching cannot separate two real people who publish under the same
+// name, so it merges their catalogues: one author picks up the other's books
+// and every metadata refresh re-applies the mistake. Once the row is linked to
+// a specific upstream author there is a better identity available, and this is
+// how a provider offers to use it.
+type authorWorksByIdentityProvider interface {
+	Name() string
+	GetAuthorWorksByIdentity(ctx context.Context, providerAuthorID string) ([]models.Book, error)
+}
+
+// authorWorksSupplement fetches one provider's supplemental catalogue for an
+// author, preferring identity over name whenever both are available.
+//
+// Falling back to the name query when an identity lookup returns nothing would
+// defeat the point: the name query is what merges same-named authors, so
+// widening to it at the moment the caller has a precise identity would
+// reintroduce exactly the bug this avoids. An identity that finds nothing means
+// the author genuinely has no works there.
+func (a *Aggregator) authorWorksSupplement(ctx context.Context, provider authorWorksByNameProvider, author models.Author, authorName string) ([]models.Book, error) {
+	if ip, ok := provider.(authorWorksByIdentityProvider); ok {
+		if id, known := author.ProviderIdentity(provider.Name()); known {
+			slog.Debug("author works supplement by identity",
+				"provider", provider.Name(), "author", authorName, "identity", id)
+			return ip.GetAuthorWorksByIdentity(ctx, id)
+		}
+	}
+	return provider.GetAuthorWorksByName(ctx, authorName)
+}
+
 // GetAuthorWorks fetches all works by an author using the dedicated primary
 // provider endpoint. It retains the legacy foreign-ID-only behavior for tests
 // and existing callers; author ingestion should use GetAuthorWorksForAuthor so
@@ -73,7 +106,11 @@ func (a *Aggregator) GetAuthorWorks(ctx context.Context, authorForeignID string)
 // merges any author-scoped supplemental catalogs from enrichers before falling
 // back to per-title cover enrichment for remaining gaps.
 func (a *Aggregator) GetAuthorWorksForAuthor(ctx context.Context, author models.Author) ([]models.Book, error) {
-	key := "authorworks-author:" + author.ForeignID + ":" + strings.ToLower(strings.TrimSpace(author.Name))
+	// The identity is part of the key: a relink changes which upstream author
+	// the supplements query without changing ForeignID or Name in every case,
+	// and serving the pre-relink answer would hide the fix (#1734).
+	key := "authorworks-author:" + author.ForeignID + ":" +
+		strings.ToLower(strings.TrimSpace(author.Name)) + ":" + authorIdentityCacheKey(author)
 	if cached, ok := a.cache.get(key); ok {
 		return cloneBooks(cached.([]models.Book)), nil
 	}
@@ -88,7 +125,7 @@ func (a *Aggregator) GetAuthorWorksForAuthor(ctx context.Context, author models.
 	compilationTitles := map[string]struct{}{}
 	if authorName != "" {
 		for _, provider := range a.authorWorksByNameProviders() {
-			supplemental, err := provider.GetAuthorWorksByName(ctx, authorName)
+			supplemental, err := a.authorWorksSupplement(ctx, provider, author, authorName)
 			if err != nil {
 				supplementsComplete = false
 				if errors.Is(err, ErrProviderNotConfigured) {
@@ -557,4 +594,22 @@ func hardcoverForeignIDForAuthorWork(book models.Book) string {
 		return id
 	}
 	return ""
+}
+
+// authorIdentityCacheKey renders an author's known provider identities in a
+// stable order so they can take part in a cache key.
+func authorIdentityCacheKey(author models.Author) string {
+	if len(author.ProviderIdentifiers) == 0 {
+		return ""
+	}
+	providers := make([]string, 0, len(author.ProviderIdentifiers))
+	for p := range author.ProviderIdentifiers {
+		providers = append(providers, p)
+	}
+	sort.Strings(providers)
+	parts := make([]string, 0, len(providers))
+	for _, p := range providers {
+		parts = append(parts, p+"="+author.ProviderIdentifiers[p])
+	}
+	return strings.Join(parts, ",")
 }

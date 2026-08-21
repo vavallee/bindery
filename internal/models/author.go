@@ -39,8 +39,18 @@ type Author struct {
 	AudiobookRootFolderID *int64     `json:"audiobookRootFolderId"`
 	MetadataProvider      string     `json:"metadataProvider"`
 	LastMetadataRefreshAt *time.Time `json:"lastMetadataRefreshAt"`
-	CreatedAt             time.Time  `json:"createdAt"`
-	UpdatedAt             time.Time  `json:"updatedAt"`
+
+	// ProviderIdentifiers carries the author_identifiers rows for this author,
+	// keyed by provider, so a caller that has already loaded them can hand the
+	// metadata layer the identity it needs without giving it database access.
+	//
+	// Transport-only, like Book.ProviderISBNs: there is no column, nothing
+	// persists it, and a zero value simply means "the caller did not look
+	// them up". Populated by the author sync so supplemental providers can
+	// query by identity rather than by name (#1734).
+	ProviderIdentifiers map[string]string `json:"-"`
+	CreatedAt           time.Time         `json:"createdAt"`
+	UpdatedAt           time.Time         `json:"updatedAt"`
 
 	// OwnerUserID is the per-user ownership column added in migration 025.
 	// Zero means "no recorded owner" (legacy pre-backfill rows or rows
@@ -290,4 +300,33 @@ type AuthorIdentifier struct {
 	ForeignID string    `json:"foreignAuthorId"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// ProviderIdentity returns this author's foreign id for the named provider, and
+// whether one is known.
+//
+// The primary ForeignID wins when it already belongs to that provider;
+// otherwise it comes from the author_identifiers rows the caller loaded into
+// ProviderIdentifiers. A relink moves the primary id to the new provider and
+// keeps the old one as an identifier, so both places are worth checking
+// (#1734).
+func (a Author) ProviderIdentity(provider string) (string, bool) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		return "", false
+	}
+	if AuthorProviderFromForeignID(a.ForeignID) == provider {
+		if id := strings.TrimSpace(a.ForeignID); id != "" {
+			return id, true
+		}
+	}
+	for p, id := range a.ProviderIdentifiers {
+		if strings.ToLower(strings.TrimSpace(p)) != provider {
+			continue
+		}
+		if id = strings.TrimSpace(id); id != "" {
+			return id, true
+		}
+	}
+	return "", false
 }

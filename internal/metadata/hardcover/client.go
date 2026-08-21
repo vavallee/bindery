@@ -182,61 +182,61 @@ func (c *Client) SearchBooks(ctx context.Context, query string) ([]models.Book, 
 // page-sized batches. It requires a configured API token because Hardcover's
 // schema endpoints are token-backed in production; an unconfigured client
 // returns no supplemental results.
-func (c *Client) GetAuthorWorksByName(ctx context.Context, authorName string) ([]models.Book, error) {
-	authorName = strings.TrimSpace(authorName)
-	if authorName == "" {
-		return nil, nil
-	}
-	if c.authorizationToken(ctx) == "" {
-		return nil, metadata.ErrProviderNotConfigured
-	}
+// authorWorksProjection is the field set every author-works query returns.
+//
+// NB: do NOT select `language` here. It is an *edition* field; the `books`
+// type has no `language`, so requesting it makes Hardcover reject the whole
+// query ("field 'language' not found in type: 'books'", validation-failed)
+// and the entire author-works supplement fails (#1036-adjacent report). A
+// book's language can only be derived by traversing to a default edition;
+// until that's added, supplemental books carry no language.
+const authorWorksProjection = `
+		id
+		title
+		subtitle
+		slug
+		description
+		image { url }
+		release_year
+		ratings_count
+		rating
+		users_count
+		compilation
+		audio_seconds
+		default_audio_edition_id
+		default_ebook_edition_id
+		book_series(order_by: { position: asc }) {
+			position
+			series { id name }
+		}
+		contributions {
+			contribution
+			author { id name slug }
+		}`
 
-	// NB: do NOT select `language` here. It is an *edition* field; the `books`
-	// type has no `language`, so requesting it makes Hardcover reject the whole
-	// query ("field 'language' not found in type: 'books'", validation-failed)
-	// and the entire author-works supplement fails (#1036-adjacent report). A
-	// book's language can only be derived by traversing to a default edition;
-	// until that's added, supplemental books carry no language.
-	//
-	// The contributions predicate must also pin the *role*: matching on name
-	// alone returned every book the person touched in any capacity, so a
-	// narrator's or translator's credits were imported as their own works and
-	// re-broke manual corrections on every metadata refresh (#1733).
-	gql := `query GetAuthorWorksByName($author: String!, $limit: Int!, $offset: Int!) {
+// authorWorksQuery builds a paged author-works query around an author
+// predicate. The contributions predicate always pins the *role* as well:
+// matching on the author alone returned every book the person touched in any
+// capacity, so a narrator's or translator's credits were imported as their own
+// works and re-broke manual corrections on every metadata refresh (#1733).
+func authorWorksQuery(name, authorPredicate, authorVarDecl string) string {
+	return `query ` + name + `(` + authorVarDecl + `, $limit: Int!, $offset: Int!) {
 		books(
 			where: {
 				canonical_id: {_is_null: true},
-				contributions: {author: {name: {_eq: $author}}, ` + authorContributionFilter + `}
+				contributions: {author: {` + authorPredicate + `}, ` + authorContributionFilter + `}
 			},
 			limit: $limit,
 			offset: $offset,
 			order_by: {users_count: desc}
-		) {
-			id
-			title
-			subtitle
-			slug
-			description
-			image { url }
-			release_year
-			ratings_count
-			rating
-			users_count
-			compilation
-			audio_seconds
-			default_audio_edition_id
-			default_ebook_edition_id
-			book_series(order_by: { position: asc }) {
-				position
-				series { id name }
-			}
-			contributions {
-				contribution
-				author { id name slug }
-			}
+		) {` + authorWorksProjection + `
 		}
 	}`
+}
 
+// fetchAuthorWorks runs a paged author-works query with the supplied predicate
+// variables.
+func (c *Client) fetchAuthorWorks(ctx context.Context, gql string, vars map[string]any) ([]models.Book, error) {
 	books := make([]models.Book, 0, authorWorksPageSize)
 	for offset := 0; offset < authorWorksMaxBooks; offset += authorWorksPageSize {
 		var resp struct {
@@ -244,11 +244,13 @@ func (c *Client) GetAuthorWorksByName(ctx context.Context, authorName string) ([
 				Books []hcBook `json:"books"`
 			} `json:"data"`
 		}
-		if err := c.query(ctx, gql, map[string]any{
-			"author": authorName,
-			"limit":  authorWorksPageSize,
-			"offset": offset,
-		}, &resp); err != nil {
+		page := make(map[string]any, len(vars)+2)
+		for k, v := range vars {
+			page[k] = v
+		}
+		page["limit"] = authorWorksPageSize
+		page["offset"] = offset
+		if err := c.query(ctx, gql, page, &resp); err != nil {
 			return nil, fmt.Errorf("hardcover get author works: %w", err)
 		}
 		for _, b := range resp.Data.Books {
@@ -259,6 +261,73 @@ func (c *Client) GetAuthorWorksByName(ctx context.Context, authorName string) ([
 		}
 	}
 	return books, nil
+}
+
+// GetAuthorWorksByName selects works by author *name*.
+//
+// Two different people publishing under the same name are indistinguishable to
+// this query, so it merges them (#1734: two authors both publishing as "J.A.
+// Andrews", one of whom picked up ~44 books that were not theirs). It is
+// correct only where no better identity exists yet, which is the initial
+// resolve step, where a human or a confidence score is about to pick which
+// Hardcover author was meant. Once an author row carries a Hardcover identity,
+// callers should use GetAuthorWorksByIdentity instead.
+func (c *Client) GetAuthorWorksByName(ctx context.Context, authorName string) ([]models.Book, error) {
+	authorName = strings.TrimSpace(authorName)
+	if authorName == "" {
+		return nil, nil
+	}
+	if c.authorizationToken(ctx) == "" {
+		return nil, metadata.ErrProviderNotConfigured
+	}
+	gql := authorWorksQuery("GetAuthorWorksByName", "name: {_eq: $author}", "$author: String!")
+	return c.fetchAuthorWorks(ctx, gql, map[string]any{"author": authorName})
+}
+
+// GetAuthorWorksByIdentity selects works by the Hardcover author the row is
+// actually linked to, rather than by name (#1734).
+//
+// foreignID is an "hc:"-prefixed identity or the bare slug. The slug lookup is
+// preferred and a primary-key lookup is only tried when the slug matches
+// nothing, because a purely numeric value is ambiguous: it may be a numeric
+// slug, or the DB-id fallback toAuthor emits when the slug is empty. That is
+// the same ordering GetAuthor uses, and for the same reason (#1256).
+//
+// A slug that resolves to no author returns no works rather than falling back
+// to a name search. Silently widening to the query this exists to avoid would
+// re-merge the identities at exactly the moment the caller asked not to.
+func (c *Client) GetAuthorWorksByIdentity(ctx context.Context, foreignID string) ([]models.Book, error) {
+	id := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(foreignID), idPrefix))
+	if id == "" {
+		return nil, nil
+	}
+	if c.authorizationToken(ctx) == "" {
+		return nil, metadata.ErrProviderNotConfigured
+	}
+
+	slugGQL := authorWorksQuery("GetAuthorWorksBySlug", "slug: {_eq: $slug}", "$slug: String!")
+	books, err := c.fetchAuthorWorks(ctx, slugGQL, map[string]any{"slug": id})
+	if err != nil || len(books) > 0 {
+		return books, err
+	}
+
+	// An author with a real slug and genuinely no works is indistinguishable
+	// here from a numeric id that is not a slug, so try the id form when the
+	// value could be one. Costs one extra query in the empty case.
+	numericID, ok := hardcoverNumericID(id)
+	if !ok {
+		return books, nil
+	}
+	idGQL := authorWorksQuery("GetAuthorWorksByID", "id: {_eq: $authorId}", "$authorId: Int!")
+	return c.fetchAuthorWorks(ctx, idGQL, map[string]any{"authorId": numericID})
+}
+
+// GetAuthorWorks satisfies the aggregator's worksProvider capability, so an
+// author whose primary identity is already Hardcover gets a real author-works
+// query instead of falling through to SearchBooks, which is another name-shaped
+// lookup with the same same-name merging problem (#1734).
+func (c *Client) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, error) {
+	return c.GetAuthorWorksByIdentity(ctx, authorForeignID)
 }
 
 func (c *Client) GetAuthor(ctx context.Context, foreignID string) (*models.Author, error) {

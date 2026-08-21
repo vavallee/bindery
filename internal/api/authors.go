@@ -1715,6 +1715,13 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 		h.refreshAuthorProfile(ctx, author)
 	}
 
+	// Load the author's secondary provider identities so supplemental
+	// providers can query by identity rather than by name. Without this a
+	// Hardcover supplement selects works by name, which cannot separate two
+	// real people publishing under the same one and merges their catalogues
+	// (#1734). Best effort: a failure here costs precision, not the sync.
+	h.attachProviderIdentifiers(ctx, author)
+
 	// Use the dedicated author works endpoint for accurate results, with
 	// author-scoped supplemental providers when available.
 	books, err := h.meta.GetAuthorWorksForAuthor(ctx, *author)
@@ -3540,4 +3547,41 @@ func (h *AuthorHandler) resolveSkipPartBooks(ctx context.Context, author *models
 		return false
 	}
 	return p.SkipPartBooks
+}
+
+// attachProviderIdentifiers populates author.ProviderIdentifiers from the
+// author_identifiers table.
+//
+// The field is transport-only: it exists so the metadata layer can resolve
+// "which upstream author is this row actually linked to" without being handed a
+// database. A relink moves the primary foreign id to the new provider and keeps
+// the previous one as an identifier, so an author can legitimately hold several
+// at once (#1734).
+func (h *AuthorHandler) attachProviderIdentifiers(ctx context.Context, author *models.Author) {
+	if author == nil || h.authors == nil || author.ID == 0 {
+		return
+	}
+	ids, err := h.authors.ListAuthorIdentifiers(ctx, author.ID)
+	if err != nil {
+		slog.Debug("could not load author identifiers; supplements will match by name",
+			"author", author.Name, "authorId", author.ID, "error", err)
+		return
+	}
+	if len(ids) == 0 {
+		return
+	}
+	out := make(map[string]string, len(ids))
+	for _, id := range ids {
+		if id.Provider == "" || id.ForeignID == "" {
+			continue
+		}
+		// First one wins. Several ids for one provider means the row absorbed
+		// more than one upstream identity, which is the merge #1734 describes;
+		// picking either is better than the name query that caused it, and the
+		// relink-upstream candidates flow is how it gets untangled properly.
+		if _, seen := out[id.Provider]; !seen {
+			out[id.Provider] = id.ForeignID
+		}
+	}
+	author.ProviderIdentifiers = out
 }
