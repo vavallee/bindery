@@ -326,7 +326,18 @@ func (c *Client) fetchNZBContent(ctx context.Context, nzbURL string) ([]byte, er
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, nzbfetch.MaxErrorBody))
 		return nil, nzbfetch.Error(nzbURL, resp, body)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, 50<<20)) // 50 MB cap
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 50<<20)) // 50 MB cap
+	if err != nil {
+		return nil, fmt.Errorf("fetch nzb from indexer: %w", err)
+	}
+	// A 200 is not proof the indexer sent an NZB: a refused, expired or
+	// rate-limited grab often comes back as an error page with a success
+	// status. Forwarding that to the download client makes the client reject
+	// it, and the grab then fails under the client's name (#2105).
+	if err := nzbfetch.ValidateNZB(nzbURL, resp, body); err != nil {
+		return nil, err
+	}
+	return body, nil
 }
 
 // GetQueue returns the active download groups from NZBGet.

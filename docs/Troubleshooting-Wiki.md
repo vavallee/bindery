@@ -107,6 +107,33 @@ There is **no user-side workaround**:
 
 **Fix:** the indexer has to add Bindery to its approved applications. For NZBFinder that request is underway (#1425 tracks it) — if you're a member there, asking them too genuinely helps. For other whitelisting indexers, point them at Bindery's stable User-Agent (`bindery/<version>`) and the request pattern (standard newznab caps/search/download on the user's own API key, same as Readarr).
 
+## Grab fails with "SABnzbd rejected download" and the book goes back to Wanted
+
+The grab fails immediately and the book returns to **Wanted**. On Bindery **1.32.0 and earlier** the error named the download client:
+
+```
+SABnzbd rejected download
+```
+
+while SABnzbd's own log — on the far side of the integration — said the file it was handed wasn't XML at all:
+
+```
+Invalid NZB file <release>.nzb, skipping (error: syntax error: line 4, column 0)
+```
+
+SABnzbd is right and it is not the culprit. Bindery fetches the NZB from the indexer itself and hands the download client the bytes, so what the client rejected is a response the **indexer** got wrong. Indexers land here by answering a refused, expired or rate-limited grab with an error page under HTTP 200 instead of a 4xx — a 4xx would have been reported against the indexer all along.
+
+The same shape reaches NZBGet; both usenet clients share the fetch path.
+
+**Fix:** upgrade to the current release. Bindery now checks that the fetched body is an NZB before the download client sees it, and reports what actually arrived:
+
+```
+fetch nzb: the indexer returned HTTP 200 with a body that is not an NZB:
+You have reached your download limit for today.
+```
+
+Then act on the snippet — a spent download quota or an expired grab token is the common case, so wait it out or grab from another indexer; an HTML login or challenge page means the indexer session or API key needs attention. On an older release there is nothing to read: SABnzbd purges an invalid NZB before its own backup step, so the bytes are gone by the time you look.
+
 ## "Could not reach the metadata provider" / OpenLibrary timeout
 
 ```
