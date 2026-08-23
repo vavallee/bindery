@@ -1,7 +1,10 @@
 package prowlarr
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -582,5 +585,187 @@ func assertCategoryIDs(t *testing.T, got, want []int) {
 		if got[i] != want[i] {
 			t.Fatalf("categories = %v, want %v", got, want)
 		}
+	}
+}
+
+func TestFetchIndexers_IgnoresNonBookApplicationScopes(t *testing.T) {
+	// Issue #2170: Mylar syncs 7030 (Books/Comics) and Lidarr syncs the music
+	// 3xxx range. Both fall inside the book/audiobook Newznab ranges, so the
+	// category-range test alone accepted them as book scopes and produced
+	// categories = [3010,3030,3040,3050,7030] for an indexer that advertises
+	// 7020. Neither application syncs books, so neither may contribute a
+	// scope, and the indexer's own capabilities must be used instead.
+	indexerBody := `[
+		{
+			"id":2,
+			"name":"NzbPlanet",
+			"protocol":"usenet",
+			"supportsSearch":true,
+			"categories":null,
+			"capabilities":{
+				"categories":[
+					{"id":3000,"name":"Audio","subCategories":[
+						{"id":3010,"name":"Audio/MP3"},
+						{"id":3030,"name":"Audio/Audiobook"},
+						{"id":3040,"name":"Audio/Lossless"},
+						{"id":3050,"name":"Audio/Other"}
+					]},
+					{"id":7000,"name":"Books","subCategories":[
+						{"id":7020,"name":"Books/EBook"},
+						{"id":7030,"name":"Books/Comics"}
+					]}
+				]
+			}
+		}
+	]`
+	applicationsBody := `[
+		{
+			"enable":true,
+			"implementation":"Mylar",
+			"syncLevel":"fullSync",
+			"fields":[{"name":"syncCategories","value":[7030]}]
+		},
+		{
+			"enable":true,
+			"implementation":"Lidarr",
+			"syncLevel":"fullSync",
+			"fields":[{"name":"syncCategories","value":[3000,3010,3030,3040,3050,3060]}]
+		},
+		{
+			"enable":true,
+			"implementation":"Sonarr",
+			"syncLevel":"fullSync",
+			"fields":[{"name":"syncCategories","value":[5000,5030]}]
+		}
+	]`
+	srv := prowlarrClientStub(t, indexerBody, applicationsBody)
+	defer srv.Close()
+
+	infos, err := New(srv.URL, "key").FetchIndexers(context.Background())
+	if err != nil {
+		t.Fatalf("FetchIndexers: %v", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 info, got %d", len(infos))
+	}
+	assertCategoryIDs(t, infos[0].Categories, []int{3000, 3010, 3030, 3040, 3050, 7000, 7020, 7030})
+}
+
+func TestFetchIndexers_KeepsBookApplicationScopes(t *testing.T) {
+	// The other half of #2170: a Readarr or LazyLibrarian application still
+	// scopes the category list, so the fix does not degrade into "always use
+	// capabilities".
+	indexerBody := `[
+		{
+			"id":2,
+			"name":"NzbPlanet",
+			"protocol":"usenet",
+			"supportsSearch":true,
+			"categories":null,
+			"capabilities":{
+				"categories":[
+					{"id":3000,"name":"Audio","subCategories":[{"id":3030,"name":"Audio/Audiobook"}]},
+					{"id":7000,"name":"Books","subCategories":[
+						{"id":7020,"name":"Books/EBook"},
+						{"id":7030,"name":"Books/Comics"}
+					]}
+				]
+			}
+		}
+	]`
+	applicationsBody := `[
+		{
+			"enable":true,
+			"implementation":"Mylar",
+			"syncLevel":"fullSync",
+			"fields":[{"name":"syncCategories","value":[7030]}]
+		},
+		{
+			"enable":true,
+			"implementation":"Readarr",
+			"syncLevel":"fullSync",
+			"fields":[{"name":"syncCategories","value":[7020,3030]}]
+		}
+	]`
+	srv := prowlarrClientStub(t, indexerBody, applicationsBody)
+	defer srv.Close()
+
+	infos, err := New(srv.URL, "key").FetchIndexers(context.Background())
+	if err != nil {
+		t.Fatalf("FetchIndexers: %v", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 info, got %d", len(infos))
+	}
+	assertCategoryIDs(t, infos[0].Categories, []int{7020, 3030})
+}
+
+func TestIsBookApplication(t *testing.T) {
+	cases := map[string]bool{
+		"Readarr":       true,
+		"readarr":       true,
+		"LazyLibrarian": true,
+		"Mylar":         false,
+		"Lidarr":        false,
+		"Radarr":        false,
+		"Sonarr":        false,
+		"Whisparr":      false,
+		// An absent implementation cannot be classified, so the older
+		// category-range behaviour is kept rather than dropping the scope.
+		"": true,
+	}
+	for impl, want := range cases {
+		if got := isBookApplication(impl); got != want {
+			t.Errorf("isBookApplication(%q) = %v, want %v", impl, got, want)
+		}
+	}
+}
+
+func TestWarnIfEbookCategoryMissing(t *testing.T) {
+	// remoteIndexer's Capabilities is an anonymous struct, so build the
+	// fixtures the way the client does: by decoding Prowlarr's JSON.
+	decode := func(body string) remoteIndexer {
+		t.Helper()
+		var ri remoteIndexer
+		if err := json.Unmarshal([]byte(body), &ri); err != nil {
+			t.Fatalf("decode fixture: %v", err)
+		}
+		return ri
+	}
+	ebookCapable := decode(`{"name":"NzbPlanet","capabilities":{"categories":[
+		{"id":7000,"name":"Books","subCategories":[
+			{"id":7020,"name":"Books/EBook"},
+			{"id":7030,"name":"Books/Comics"}
+		]}
+	]}}`)
+	comicsOnly := decode(`{"name":"ComicTracker","capabilities":{"categories":[
+		{"id":7030,"name":"Books/Comics"}
+	]}}`)
+
+	tests := []struct {
+		name    string
+		indexer remoteIndexer
+		cats    []int
+		want    bool
+	}{
+		{"book range without an ebook category", ebookCapable, []int{7030}, true},
+		{"ebook category present", ebookCapable, []int{7020, 7030}, false},
+		{"audiobook only", ebookCapable, []int{3030}, false},
+		{"no categories at all", ebookCapable, nil, false},
+		{"indexer serves no ebooks either", comicsOnly, []int{7030}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+			defer slog.SetDefault(prev)
+
+			warnIfEbookCategoryMissing(tt.indexer, tt.cats)
+
+			if got := strings.Contains(buf.String(), "no registered application syncs"); got != tt.want {
+				t.Fatalf("warned = %v, want %v (log: %q)", got, tt.want, buf.String())
+			}
+		})
 	}
 }

@@ -135,6 +135,15 @@ You have reached your download limit for today.
 ```
 
 Then act on the snippet — a spent download quota or an expired grab token is the common case, so wait it out or grab from another indexer; an HTML login or challenge page means the indexer session or API key needs attention. On an older release there is nothing to read: SABnzbd purges an invalid NZB before its own backup step, so the bytes are gone by the time you look.
+## Ebook searches on Prowlarr-synced indexers return zero results
+
+Audiobook searches work, indexer tests pass, and running the same query inside Prowlarr returns releases, but every ebook search in Bindery finds nothing. Open **Settings → Indexers** and look at the synced indexer's **Categories**: if it lists `7030` (Books/Comics) and no `7020` (Books/EBook), this is the cause. Every ebook query goes out as `cat=7030`, which is where comics live, not ebooks.
+
+Prowlarr's indexer API does not report a per-indexer category list, so Bindery derives one from the **Sync Categories** of the applications registered in Prowlarr. In 1.32.1 and earlier, any application whose sync categories fell in the Newznab book (7xxx) or audio (3xxx) ranges counted, which meant **Mylar** contributed its comics category `7030` and **Lidarr** contributed the music 3xxx range. A Mylar-shaped scope is the damaging one: it leaves the ebook category list non-empty but wrong, which suppresses both the fallback to the indexer's own capabilities and the search-time `7020` default.
+
+**Fix:** upgrade. Bindery now takes application scopes only from Readarr and LazyLibrarian, the two Prowlarr applications that actually sync books. With neither registered, the indexer's own advertised categories are used, which is what standalone Prowlarr users already got. Bindery also logs a WARN at sync time when an indexer advertises an ebook category that no registered application syncs.
+
+On an older version, the workaround is the per-indexer **Include parent categories** toggle, which widens the ebook query to `7000,7030` and does return the 7020 releases at the cost of a broader audiobook query. Editing the indexer's categories by hand does not survive the next sync, which rewrites them.
 
 ## "Could not reach the metadata provider" / OpenLibrary timeout
 

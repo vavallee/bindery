@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -97,10 +98,15 @@ type remoteCategory struct {
 }
 
 type remoteApplication struct {
-	Enable    bool          `json:"enable"`
-	SyncLevel string        `json:"syncLevel"`
-	Tags      []int         `json:"tags"`
-	Fields    []remoteField `json:"fields"`
+	Enable bool `json:"enable"`
+	// Implementation is Prowlarr's provider type name for the application
+	// ("Readarr", "LazyLibrarian", "Mylar", "Lidarr", ...). It comes from
+	// ProviderResource and is what distinguishes an app that syncs ebooks
+	// from one that merely uses a category in the same Newznab range.
+	Implementation string        `json:"implementation"`
+	SyncLevel      string        `json:"syncLevel"`
+	Tags           []int         `json:"tags"`
+	Fields         []remoteField `json:"fields"`
 }
 
 type remoteField struct {
@@ -157,6 +163,7 @@ func (c *Client) FetchIndexers(ctx context.Context) ([]IndexerInfo, error) {
 		cats := categoryIDs(ri.Categories)
 		if len(cats) == 0 {
 			cats = categoriesFromApplicationScopes(ri, scopes)
+			warnIfEbookCategoryMissing(ri, cats)
 		}
 		// Issue #763: when Prowlarr has no book-scoped application registered
 		// there is no app signal to scope capability categories against. Most
@@ -207,6 +214,9 @@ func (c *Client) fetchApplicationCategoryScopes(ctx context.Context) ([]applicat
 		if !app.Enable || strings.EqualFold(app.SyncLevel, "disabled") {
 			continue
 		}
+		if !isBookApplication(app.Implementation) {
+			continue
+		}
 		cats := app.syncCategories()
 		if !hasBookOrAudiobookCategory(cats) {
 			continue
@@ -238,6 +248,31 @@ func isBookOrAudiobookCategory(category int) bool {
 	return (category >= 7000 && category < 8000) || (category >= 3000 && category < 4000)
 }
 
+// bookApplicationImplementations lists the Prowlarr application types whose
+// syncCategories describe books. Everything else is excluded from the scope
+// set even when its categories fall in the book or audiobook Newznab ranges:
+// Mylar syncs 7030 (Books/Comics) and Lidarr syncs 3000-3060 (music), and
+// adopting those as Bindery's ebook and audiobook categories sends every
+// search to the wrong bucket. Mylar is the damaging case, because a 7030-only
+// scope leaves the ebook category list non-empty and wrong, which suppresses
+// both the capability fallback here and the [7020] fallback in
+// filterCategoriesForMedia, so every ebook search returns nothing (#2170).
+var bookApplicationImplementations = map[string]bool{
+	"readarr":       true,
+	"lazylibrarian": true,
+}
+
+// isBookApplication reports whether a Prowlarr application's implementation is
+// one that syncs books. An empty implementation means the field was not
+// reported, in which case the caller keeps the older category-range behaviour
+// rather than dropping a scope it cannot classify.
+func isBookApplication(implementation string) bool {
+	if implementation == "" {
+		return true
+	}
+	return bookApplicationImplementations[strings.ToLower(implementation)]
+}
+
 func hasBookOrAudiobookCategory(categories []int) bool {
 	for _, cat := range categories {
 		if isBookOrAudiobookCategory(cat) {
@@ -260,6 +295,42 @@ func bookCapabilityCategories(indexer remoteIndexer) []int {
 		}
 	}
 	return out
+}
+
+// hasEbookCategory reports whether a category list contains a Books/EBook
+// subcategory (7020-7029). Localised ebook IDs such as 7120 are deliberately
+// not counted: this is only used to decide whether to warn, and the warning
+// is guarded on the indexer advertising 7020-class ebooks itself.
+func hasEbookCategory(categories []int) bool {
+	for _, cat := range categories {
+		if cat/10 == 702 {
+			return true
+		}
+	}
+	return false
+}
+
+// warnIfEbookCategoryMissing reports the #2170 shape: the application scopes
+// gave the indexer a book-range category list that carries no Books/EBook
+// entry even though the indexer advertises one. Every ebook search then goes
+// out on the wrong category and returns nothing, with no other symptom, so
+// say so once per sync rather than leaving it silent.
+func warnIfEbookCategoryMissing(indexer remoteIndexer, cats []int) {
+	if len(cats) == 0 || hasEbookCategory(cats) {
+		return
+	}
+	inBookRange := false
+	for _, cat := range cats {
+		if cat >= 7000 && cat < 8000 {
+			inBookRange = true
+			break
+		}
+	}
+	if !inBookRange || !hasEbookCategory(categoryIDs(indexer.Capabilities.Categories)) {
+		return
+	}
+	slog.Warn("prowlarr sync: indexer advertises an ebook category that no registered application syncs; ebook searches will use the categories below and may return nothing",
+		"indexer", indexer.Name, "categories", cats)
 }
 
 func categoryIDs(categories []remoteCategory) []int {
