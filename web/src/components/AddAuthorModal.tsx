@@ -75,9 +75,25 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
       // without the user having to pick one.
       if (ps.length > 0) setProfileId(ps[0].id)
     }).catch(console.error)
-    api.listRootFolders().then(rfs => {
+    // Seed the root-folder picker from the install default rather than from
+    // list position (#2166). The value here is posted as an explicit
+    // per-author rootFolderId, and the scanner resolves an author's own
+    // root_folder_id ahead of library.defaultRootFolderId — so seeding from
+    // rfs[0] did not merely preselect the wrong entry, it made the setting
+    // unreachable for every author added through this dialog. Invisible until
+    // a second root folder exists, which is how it reached #2165: adding
+    // /downloads as a root put it first in the list.
+    Promise.all([
+      api.listRootFolders(),
+      api.getSetting('library.defaultRootFolderId').catch(() => null),
+    ]).then(([rfs, defaultSetting]) => {
       setRootFolders(rfs)
-      if (rfs.length > 0) setRootFolderId(rfs[0].id)
+      if (rfs.length === 0) return
+      const defaultId = Number(defaultSetting?.value)
+      // Fall back to the first folder when the setting is unset, unparseable,
+      // or still names a root folder that has since been deleted.
+      const preferred = rfs.find(rf => rf.id === defaultId)
+      setRootFolderId(preferred ? preferred.id : rfs[0].id)
     }).catch(console.error)
     // Seed the media-type dropdown with the global default setting so the
     // user only has to override it when they want something different.

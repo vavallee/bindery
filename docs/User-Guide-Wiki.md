@@ -188,6 +188,12 @@ the book, places the file per your import mode and naming template, and marks
 the book **In Library**. Ebooks land under the author's root folder (falling
 back to the default root folder, then `BINDERY_LIBRARY_DIR`); audiobooks have
 their own destination chain (`BINDERY_AUDIOBOOK_DIR`, per-author override).
+Every author added through the UI gets a root folder written on the author
+itself, seeded from the default you set in Settings, so changing that default
+later moves only authors you have not created yet. In 1.32.1 and earlier the
+dialog seeded from the first root folder in the list instead of from the
+setting, which made the setting unreachable for authors added that way (#2166);
+correct one from the author's own edit dialog.
 After import, Bindery fans out to whatever integrations you enabled: Calibre,
 a CWA ingest folder, Grimmory's BookDrop, an Audiobookshelf library scan,
 webhooks.

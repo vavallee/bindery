@@ -494,4 +494,68 @@ describe('AddAuthorModal — search error handling', () => {
     expect(screen.queryByRole('button', { name: /hidden result/i })).not.toBeInTheDocument()
     expect(screen.queryByText(/could not reach/i)).not.toBeInTheDocument()
   })
+
+  // #2166: the picker used to seed from rfs[0], and that value is posted as an
+  // explicit per-author rootFolderId, which the scanner resolves ahead of
+  // library.defaultRootFolderId — so the install default was unreachable for
+  // every author added here.
+  describe('root folder seeding (#2166)', () => {
+    const roots = [
+      { id: 7, path: '/downloads', freeSpace: 0, createdAt: '2026-08-01T00:00:00Z' },
+      { id: 9, path: '/books', freeSpace: 0, createdAt: '2026-08-01T00:00:00Z' },
+    ]
+
+    function settingsWithDefaultRoot(value: string | null) {
+      return vi.fn().mockImplementation((key: string) => {
+        if (key === 'library.defaultRootFolderId') {
+          return value === null
+            ? Promise.reject(new Error('HTTP 404'))
+            : Promise.resolve({ key, value })
+        }
+        if (key === 'default.media_type') return Promise.resolve({ key, value: 'ebook' })
+        return Promise.reject(new Error('HTTP 404'))
+      })
+    }
+
+    async function addTolkien() {
+      vi.mocked(api.searchAuthors).mockResolvedValue([author({
+        id: 0,
+        foreignAuthorId: 'OL26320A',
+        authorName: 'J.R.R. Tolkien',
+        sortName: 'Tolkien, J.R.R.',
+      })])
+      render(<AddAuthorModal onClose={vi.fn()} onAdded={vi.fn()} />)
+      fireEvent.change(screen.getByPlaceholderText('Search by author name...'), {
+        target: { value: 'tolkien' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
+      await waitFor(() => expect(screen.getByText('J.R.R. Tolkien')).toBeInTheDocument())
+      fireEvent.click(screen.getByRole('button', { name: 'Select' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
+      await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
+      return vi.mocked(api.addAuthor).mock.calls[0][0]
+    }
+
+    it('posts the configured default root folder, not the first in the list', async () => {
+      vi.mocked(api.listRootFolders).mockResolvedValue(roots)
+      vi.mocked(api.getSetting).mockImplementation(settingsWithDefaultRoot('9'))
+
+      expect(await addTolkien()).toEqual(expect.objectContaining({ rootFolderId: 9 }))
+    })
+
+    it('falls back to the first root folder when no default is set', async () => {
+      vi.mocked(api.listRootFolders).mockResolvedValue(roots)
+      vi.mocked(api.getSetting).mockImplementation(settingsWithDefaultRoot(null))
+
+      expect(await addTolkien()).toEqual(expect.objectContaining({ rootFolderId: 7 }))
+    })
+
+    it('falls back to the first root folder when the default names a deleted folder', async () => {
+      vi.mocked(api.listRootFolders).mockResolvedValue(roots)
+      vi.mocked(api.getSetting).mockImplementation(settingsWithDefaultRoot('404'))
+
+      expect(await addTolkien()).toEqual(expect.objectContaining({ rootFolderId: 7 }))
+    })
+  })
+
 })
