@@ -4859,3 +4859,94 @@ func TestImporter_Rollback_NilReposAreSafe(t *testing.T) {
 		t.Fatal("RollbackPreview with nil repositories returned nil error, want unavailable error")
 	}
 }
+
+// TestImporter_ItemWithoutFilesDoesNotWidenAnImportedBook is #2169. An ABS
+// library listing that omits an item's files, with the per-item detail fetch
+// skipped or failed, used to read as an audiobook: deriveMediaType's fallback.
+// Merging that into a book already holding its ebook widened it to "both",
+// which made the status derivation find an audiobook missing and put an
+// imported book back to wanted, with its ebook still attached and still on
+// disk. The reporter had 23 of 51 rows in that state, and re-importing repeated
+// the demotion rather than repairing it.
+func TestImporter_ItemWithoutFilesDoesNotWidenAnImportedBook(t *testing.T) {
+	t.Parallel()
+
+	importer, _, bookRepo, _, _, _, _, _, _, _ := newABSImporterFixture(t)
+	storageRoot := t.TempDir()
+	libraryDir := filepath.Join(storageRoot, "books")
+	audiobookDir := filepath.Join(storageRoot, "audiobooks")
+	if err := os.MkdirAll(audiobookDir, 0o755); err != nil {
+		t.Fatalf("mkdir audiobook dir: %v", err)
+	}
+	ebookPath := filepath.Join(libraryDir, "Andy Weir", "Project Hail Mary.epub")
+	if err := os.MkdirAll(filepath.Dir(ebookPath), 0o755); err != nil {
+		t.Fatalf("mkdir ebook dir: %v", err)
+	}
+	if err := os.WriteFile(ebookPath, []byte("ebook"), 0o644); err != nil {
+		t.Fatalf("write ebook: %v", err)
+	}
+	importer.WithStoragePaths(libraryDir, audiobookDir, nil)
+
+	// First run: an ebook-only item, imported and reconciled against the file.
+	first := sampleABSItem()
+	first.AudioFiles = nil
+	first.Path = ""
+	first.EbookPath = ebookPath
+	first.Narrators = nil
+	first.DurationSeconds = 0
+	runSingleABSImport(t, importer, first)
+
+	books, err := bookRepo.ListIncludingExcluded(context.Background())
+	if err != nil {
+		t.Fatalf("ListIncludingExcluded: %v", err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("books = %d, want 1", len(books))
+	}
+	if books[0].MediaType != models.MediaTypeEbook || books[0].Status != models.BookStatusImported {
+		t.Fatalf("after first run: mediaType=%q status=%q, want ebook/imported", books[0].MediaType, books[0].Status)
+	}
+
+	// Second run: the same item, this time with no files exposed at all.
+	second := first
+	second.EbookPath = ""
+	second.EbookINO = ""
+	runSingleABSImport(t, importer, second)
+
+	books, err = bookRepo.ListIncludingExcluded(context.Background())
+	if err != nil {
+		t.Fatalf("ListIncludingExcluded: %v", err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("books = %d, want 1", len(books))
+	}
+	if books[0].MediaType != models.MediaTypeEbook {
+		t.Errorf("mediaType = %q, want ebook — an item with no files must not widen the book", books[0].MediaType)
+	}
+	if books[0].Status != models.BookStatusImported {
+		t.Errorf("status = %q, want imported — the ebook is still on disk and still attached", books[0].Status)
+	}
+	if books[0].EbookFilePath != ebookPath {
+		t.Errorf("ebook path = %q, want %q", books[0].EbookFilePath, ebookPath)
+	}
+
+	// Third run: the item's files are visible again, so the ebook path is
+	// re-registered. This is where the widening became visible to the user —
+	// re-registering re-derives the status, which found the "audiobook" the
+	// second run invented to be missing and demoted the book to wanted.
+	runSingleABSImport(t, importer, first)
+
+	books, err = bookRepo.ListIncludingExcluded(context.Background())
+	if err != nil {
+		t.Fatalf("ListIncludingExcluded: %v", err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("books = %d, want 1", len(books))
+	}
+	if books[0].Status != models.BookStatusImported {
+		t.Errorf("after re-registering the ebook: status = %q, want imported", books[0].Status)
+	}
+	if books[0].MediaType != models.MediaTypeEbook {
+		t.Errorf("after re-registering the ebook: mediaType = %q, want ebook", books[0].MediaType)
+	}
+}

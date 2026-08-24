@@ -120,6 +120,16 @@ Important applied fields:
 - ASIN
 - media type
 
+Media type is merged, and the merge only widens: an item exposing an epub next to
+its audio files makes the book dual-format, and nothing narrows it back. Only the
+formats an item actually exposes take part in that merge. ABS's library listing
+sometimes omits an item's files, and the per-item detail fetch that would fill
+them in can be skipped or fail; such an item says nothing about format, so it is
+ignored here rather than read as an audiobook. Reading it as one used to widen an
+ebook-only book to `both`, and because status is derived from the formats still
+missing, the book was then demoted from imported back to wanted while its ebook
+sat on disk and attached (#2169).
+
 The importer distinguishes an *unmatched* item from an *ambiguous* one. When the local matcher finds nothing close, the item is unmatched: the book is created directly (step 4 above) and `enrichBook` performs a confidence-gated upstream lookup. Only an *ambiguous* match — a close-but-uncertain local candidate — is parked in the review queue rather than guessed. The same distinction applies to author resolution.
 
 ### Series

@@ -836,7 +836,10 @@ func (i *Importer) upsertManualBook(ctx context.Context, cfg ImportConfig, runID
 }
 
 func (i *Importer) applyABSFormatFields(book *models.Book, item NormalizedLibraryItem) {
-	if mediaType := deriveMediaType(item); mediaType != "" {
+	// observedMediaType, not deriveMediaType: this book already exists, and a
+	// merge only ever widens. An item whose files we were never told about must
+	// not read as an audiobook the book then permanently wants (#2169).
+	if mediaType := observedMediaType(item); mediaType != "" {
 		book.MediaType = mergeMediaType(book.MediaType, mediaType)
 	}
 	if narrator := joinNarrators(item.Narrators); narrator != "" {
@@ -988,7 +991,8 @@ func (i *Importer) applyBookFields(ctx context.Context, book *models.Book, autho
 	if asin := strings.TrimSpace(item.ASIN); asin != "" {
 		book.ASIN = asin
 	}
-	book.MediaType = mergeMediaType(book.MediaType, deriveMediaType(item))
+	// observedMediaType, not deriveMediaType — see applyABSFormatFields (#2169).
+	book.MediaType = mergeMediaType(book.MediaType, observedMediaType(item))
 	book.Monitored = true
 	if book.Status == "" {
 		book.Status = models.BookStatusWanted

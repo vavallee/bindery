@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/vavallee/bindery/internal/indexer"
+	"github.com/vavallee/bindery/internal/models"
 )
 
 func TestNormalizeLibraryIDsPrependsLegacyPrimary(t *testing.T) {
@@ -189,5 +190,66 @@ func TestMergeLibraryItem_CarriesLibraryFiles(t *testing.T) {
 	merged := MergeLibraryItem(listItem, LibraryItem{ID: "li_4"})
 	if len(merged.LibraryFiles) != 1 || merged.LibraryFiles[0].INO != "ino_epub" {
 		t.Fatalf("merged.LibraryFiles = %+v, want the list item's entry carried over", merged.LibraryFiles)
+	}
+}
+
+// TestObservedMediaType_UnknownWhenTheItemExposesNoFiles is the distinction
+// #2169 turned on: deriveMediaType has to answer with something for a book it
+// is creating, but a book that already exists must only be merged with formats
+// the item genuinely exposes, because the merge only ever widens.
+func TestObservedMediaType_UnknownWhenTheItemExposesNoFiles(t *testing.T) {
+	cases := []struct {
+		name         string
+		item         NormalizedLibraryItem
+		wantObserved string
+		wantDerived  string
+	}{
+		{
+			name:         "no files at all",
+			item:         NormalizedLibraryItem{Title: "Blaze Wyndham"},
+			wantObserved: "",
+			wantDerived:  models.MediaTypeAudiobook,
+		},
+		{
+			name:         "ebook only",
+			item:         NormalizedLibraryItem{EbookPath: "/books/a.epub"},
+			wantObserved: models.MediaTypeEbook,
+			wantDerived:  models.MediaTypeEbook,
+		},
+		{
+			name:         "audio only",
+			item:         NormalizedLibraryItem{AudioFiles: []NormalizedAudioFile{{Path: "/audio/a.m4b"}}},
+			wantObserved: models.MediaTypeAudiobook,
+			wantDerived:  models.MediaTypeAudiobook,
+		},
+		{
+			name: "both",
+			item: NormalizedLibraryItem{
+				EbookPath:  "/books/a.epub",
+				AudioFiles: []NormalizedAudioFile{{Path: "/audio/a.m4b"}},
+			},
+			wantObserved: models.MediaTypeBoth,
+			wantDerived:  models.MediaTypeBoth,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := observedMediaType(tc.item); got != tc.wantObserved {
+				t.Errorf("observedMediaType = %q, want %q", got, tc.wantObserved)
+			}
+			if got := deriveMediaType(tc.item); got != tc.wantDerived {
+				t.Errorf("deriveMediaType = %q, want %q", got, tc.wantDerived)
+			}
+		})
+	}
+}
+
+// An unknown media type must leave an existing book's own type alone, which is
+// what makes observedMediaType safe to feed straight into the merge.
+func TestMergeMediaType_UnknownPreservesTheExistingType(t *testing.T) {
+	for _, current := range []string{models.MediaTypeEbook, models.MediaTypeAudiobook, models.MediaTypeBoth} {
+		if got := mergeMediaType(current, ""); got != current {
+			t.Errorf("mergeMediaType(%q, \"\") = %q, want %q", current, got, current)
+		}
 	}
 }

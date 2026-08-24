@@ -39,6 +39,8 @@ Bindery does not just create a shell entry with a title. It imports the ABS meta
 
 If an ABS field has no Bindery equivalent, it may not be stored. This importer is broad, but it is not a raw mirror of every ABS field.
 
+A book's media type only ever widens: import an item that has both an epub and audio files and the book becomes dual-format for good. An item that exposes no files at all is left out of that decision, because ABS sometimes lists an item without its files and Bindery cannot tell "audiobook" from "not told yet". In 1.32.1 and earlier such an item was counted as an audiobook, which quietly made ebook-only books dual-format and sent them back to Wanted at the next import even though the ebook was there (#2169). Upgrading stops it happening again but does not repair rows already widened. To fix one, set its media type back to the format you actually want (`PUT /api/v1/book/{id}` with `{"mediaType":"ebook"}`, or the media-type control on the book) — Bindery re-derives the status from that and returns the book to Imported on its own. Setting the status alone does not hold, because the next time a file is registered the derivation runs again and demotes it.
+
 ## Import Quality Matters
 
 Import quality depends heavily on ABS metadata quality.

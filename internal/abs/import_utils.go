@@ -50,7 +50,35 @@ func parseABSDate(dateStr, yearStr string) *time.Time {
 	return nil
 }
 
+// deriveMediaType is the media type to stamp on a book this item is creating.
+// An item exposing no files at all still has to be given one, and ABS is an
+// audiobook-first application, so audiobook is the fallback.
+//
+// Do not use this to update a book that already exists — see observedMediaType.
 func deriveMediaType(item NormalizedLibraryItem) string {
+	if observed := observedMediaType(item); observed != "" {
+		return observed
+	}
+	return models.MediaTypeAudiobook
+}
+
+// observedMediaType reports the formats this item actually exposes, and "" when
+// it exposes none.
+//
+// The distinction from deriveMediaType matters when merging into a book that
+// already exists, because mergeMediaType only ever widens: ebook + audiobook is
+// both, and nothing narrows it again. An item arrives with no files whenever
+// ABS's library listing omits them and the per-item detail fetch was skipped or
+// failed (LibraryItem.DetailFetchReasons calls that case "missing audio files"),
+// which is a gap in what we were told, not an audiobook.
+//
+// Reading it as one cost the #2169 reporter 23 of 51 rows: the first run
+// imported the ebook and set the book to imported; a later run saw the same
+// item without its files, widened the book to both, and re-registering the same
+// ebook path then ran the status derivation again — which now found an
+// audiobook missing and put the book back to wanted, with its ebook still on
+// disk and still attached. Re-importing repeats it rather than repairing it.
+func observedMediaType(item NormalizedLibraryItem) string {
 	hasAudio := len(item.AudioFiles) > 0
 	hasEbook := strings.TrimSpace(item.EbookPath) != ""
 	switch {
@@ -61,7 +89,7 @@ func deriveMediaType(item NormalizedLibraryItem) string {
 	case hasAudio:
 		return models.MediaTypeAudiobook
 	default:
-		return models.MediaTypeAudiobook
+		return ""
 	}
 }
 
