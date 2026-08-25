@@ -607,3 +607,60 @@ func TestCalibreFormatMediaType(t *testing.T) {
 		}
 	}
 }
+
+// A format Calibre reports with no resolved path is skipped rather than
+// tracked as an empty string, and a book with no formats at all tracks
+// nothing without failing the import.
+func TestImporter_SkipsFormatsWithoutAPath(t *testing.T) {
+	imp, fr, _, bookRepo, _, _, _ := newImporterFixture(t)
+
+	withBlank := sampleCalibreBook(1, "Book One", "Alice Author")
+	withBlank.Formats = append(withBlank.Formats, CalibreFormat{Format: "MOBI", FileName: "book"})
+	noFormats := sampleCalibreBook(2, "Book Two", "Alice Author")
+	noFormats.Formats = nil
+	fr.books = []CalibreBook{withBlank, noFormats}
+
+	stats, err := imp.Run(context.Background(), "/lib")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if stats.BooksAdded != 2 {
+		t.Fatalf("booksAdded = %d, want 2 (a pathless format must not fail the import)", stats.BooksAdded)
+	}
+
+	books, err := bookRepo.ListIncludingExcluded(context.Background())
+	if err != nil {
+		t.Fatalf("list books: %v", err)
+	}
+	byTitle := map[string]int64{}
+	for _, b := range books {
+		byTitle[b.Title] = b.ID
+	}
+	one, err := bookRepo.ListFiles(context.Background(), byTitle["Book One"])
+	if err != nil {
+		t.Fatalf("list files: %v", err)
+	}
+	if len(one) != 1 || one[0].Path != filepath.Join("/lib", "Book One.epub") {
+		t.Errorf("Book One tracked files = %+v, want only the epub", one)
+	}
+	two, err := bookRepo.ListFiles(context.Background(), byTitle["Book Two"])
+	if err != nil {
+		t.Fatalf("list files: %v", err)
+	}
+	if len(two) != 0 {
+		t.Errorf("Book Two tracked files = %+v, want none", two)
+	}
+}
+
+// registerBookFiles is defensive about a book it cannot track against; the
+// guard is cheap and the import must not panic on a partially built row.
+func TestImporter_RegisterBookFilesIgnoresUnusableBooks(t *testing.T) {
+	imp, _, _, _, _, _, _ := newImporterFixture(t)
+	cb := sampleCalibreBook(1, "Book One", "Alice Author")
+
+	imp.registerBookFiles(context.Background(), nil, cb)
+	imp.registerBookFiles(context.Background(), &models.Book{ID: 0}, cb)
+
+	noRepo := &Importer{}
+	noRepo.registerBookFiles(context.Background(), &models.Book{ID: 1}, cb)
+}
