@@ -95,3 +95,35 @@ func TestBothFullySatisfied(t *testing.T) {
 		t.Error("NeedsAudiobook should be false when AudiobookFilePath is set")
 	}
 }
+
+// TestBook_HasFileForCurrentFormat is the gate the author refresh uses to
+// decide whether a book is the user's already (#2096). A dual-format book
+// counts as owned only when both halves are on disk, because the whole point
+// of the gate is "do not invent a want", and a book still missing one format
+// already has one.
+func TestBook_HasFileForCurrentFormat(t *testing.T) {
+	cases := []struct {
+		name string
+		book Book
+		want bool
+	}{
+		{"ebook with a file", Book{MediaType: MediaTypeEbook, EbookFilePath: "/b/a.epub"}, true},
+		{"ebook with only the legacy column", Book{MediaType: MediaTypeEbook, FilePath: "/b/a.epub"}, true},
+		{"ebook with nothing", Book{MediaType: MediaTypeEbook}, false},
+		{"ebook holding only an audiobook path", Book{MediaType: MediaTypeEbook, AudiobookFilePath: "/b/a.m4b"}, false},
+		{"audiobook with a file", Book{MediaType: MediaTypeAudiobook, AudiobookFilePath: "/b/a.m4b"}, true},
+		{"audiobook with only the legacy column", Book{MediaType: MediaTypeAudiobook, FilePath: "/b/a.m4b"}, true},
+		{"audiobook with nothing", Book{MediaType: MediaTypeAudiobook}, false},
+		{"both with both files", Book{MediaType: MediaTypeBoth, EbookFilePath: "/b/a.epub", AudiobookFilePath: "/b/a.m4b"}, true},
+		{"both with only the ebook", Book{MediaType: MediaTypeBoth, EbookFilePath: "/b/a.epub"}, false},
+		{"both with only the audiobook", Book{MediaType: MediaTypeBoth, AudiobookFilePath: "/b/a.m4b"}, false},
+		{"no media type at all", Book{EbookFilePath: "/b/a.epub"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.book.HasFileForCurrentFormat(); got != tc.want {
+				t.Errorf("HasFileForCurrentFormat() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
