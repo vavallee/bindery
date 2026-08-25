@@ -2281,6 +2281,21 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 				} else if existing.WantsAudiobook() {
 					hydrateExistingFromMatchedHardcover = true
 				}
+			case canUpgradeToBoth(existing.MediaType, b.MediaType) && existing.HasFileForCurrentFormat():
+				// The merge below exists to avoid a second row for one Work, which
+				// is a real problem for a book nobody has yet. It is the wrong
+				// answer for a book the user already owns: widening it invents a
+				// want for a format they never asked for, and because status is
+				// derived from the formats still missing, the book drops out of
+				// Imported and back onto the Wanted list with its file untouched
+				// on disk. One reporter's routine refresh flipped 29 owned books
+				// in a single run, some of them added two months earlier (#2096).
+				//
+				// Deliberately not gated on a locked field: mediaType is not in
+				// LockableBookFields, and a gate the user has to arm in advance
+				// does nothing for a library this has already rewritten.
+				slog.Info("keeping the format of a book already on disk; the catalogue lists the other format but nobody asked for it",
+					"title", existing.Title, "bookId", existing.ID, "mediaType", existing.MediaType, "foreignId", b.ForeignID)
 			case canUpgradeToBoth(existing.MediaType, b.MediaType):
 				// One Work is ebook, the other is audiobook — merge into a single
 				// dual-format row instead of creating a second book entry.

@@ -344,6 +344,15 @@ own lifecycle). Set the book to *Ebook* on the Books page, or set the default
 media type — and optionally the "restrict new books" flag — in Settings →
 Metadata Profiles → Library Defaults.
 
+How it got to *Both* without you asking is worth knowing if you are on an older
+release. An author refresh merges two catalogue records for one work into a
+single dual-format row, so that one book does not become two, and up to 1.32.1
+it did that even to books already on disk. One reporter had a routine refresh
+flip 29 owned books in a single run. It no longer touches the format of a book
+that already has its file (#2096); a book nobody has yet still merges, which is
+what the merge is for. Books already widened keep their media type, so set those
+back by hand and the status follows.
+
 **Hardlinks "don't work".**
 Rule 5 — separate mounts. One shared parent mount, then `auto` or `hardlink`
 mode.

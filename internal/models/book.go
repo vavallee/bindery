@@ -148,6 +148,24 @@ func (b *Book) WantsAudiobook() bool {
 	return b.MediaType == MediaTypeAudiobook || b.MediaType == MediaTypeBoth
 }
 
+// HasFileForCurrentFormat reports whether the book already holds a file for the
+// format it is currently set to, i.e. the user owns it as it stands.
+//
+// The legacy FilePath column counts, because a book imported before the
+// book_files migration and not yet re-imported carries its path there and is
+// no less owned for it.
+func (b *Book) HasFileForCurrentFormat() bool {
+	switch b.MediaType {
+	case MediaTypeEbook:
+		return b.EbookFilePath != "" || b.FilePath != ""
+	case MediaTypeAudiobook:
+		return b.AudiobookFilePath != "" || b.FilePath != ""
+	case MediaTypeBoth:
+		return b.EbookFilePath != "" && b.AudiobookFilePath != ""
+	}
+	return false
+}
+
 // NeedsEbook reports whether the ebook format is monitored but not yet on disk.
 func (b *Book) NeedsEbook() bool {
 	return b.WantsEbook() && b.EbookFilePath == ""

@@ -7613,3 +7613,135 @@ func TestFetchAuthorBooks_SkipPartBooksExemptsAlreadyTrackedBook(t *testing.T) {
 		t.Errorf("summary.SkippedPartBooks = %d, want 0 (already-tracked book must not be counted as skipped)", summary.SkippedPartBooks)
 	}
 }
+
+// TestFetchAuthorBooks_DoesNotWidenAnOwnedBook is #2096. The dedup merge above
+// exists so one Work does not become two rows, which is a real problem for a
+// book nobody has yet. Applied to a book already on disk it invented a want for
+// a format the user never asked for, and since status is derived from the
+// formats still missing, the book dropped out of Imported and back onto the
+// Wanted list with its file untouched. One reporter's routine refresh flipped
+// 29 owned books in a single run, some added two months earlier.
+func TestFetchAuthorBooks_DoesNotWidenAnOwnedBook(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+
+	ctx := context.Background()
+	author := &models.Author{
+		ForeignID: "OL49A", Name: "Brooke Averick", SortName: "Averick, Brooke",
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	owned := &models.Book{
+		ForeignID: "OL2001W", AuthorID: author.ID, Title: "Phoebe Berman's Gonna Lose It",
+		SortTitle: "phoebe bermans gonna lose it", Language: "eng",
+		MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted,
+		Genres: []string{}, Monitored: true, MetadataProvider: "openlibrary",
+	}
+	if err := bookRepo.Create(ctx, owned); err != nil {
+		t.Fatal(err)
+	}
+	if err := bookRepo.SetFormatFilePath(ctx, owned.ID, models.MediaTypeEbook, "/books/Brooke Averick/Phoebe.epub"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := bookRepo.GetByID(ctx, owned.ID)
+	if err != nil || before == nil {
+		t.Fatalf("reload owned book: %v", err)
+	}
+	if before.Status != models.BookStatusImported {
+		t.Fatalf("precondition: owned book status = %q, want imported", before.Status)
+	}
+
+	// The refresh finds the same work listed as an audiobook by another
+	// provider. Nothing new is added; the question is only what happens to the
+	// row that is already there.
+	stub := &stubMetaProvider{
+		works: []models.Book{{
+			ForeignID: "audible:B0FQ11QZP7", Title: "Phoebe Berman's Gonna Lose It",
+			SortTitle: "phoebe bermans gonna lose it", Language: "eng",
+			MediaType: models.MediaTypeAudiobook, Status: models.BookStatusWanted,
+			Genres: []string{}, MetadataProvider: "openlibrary",
+		}},
+	}
+	agg := metadata.NewAggregator(stub)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, nil, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, "")
+
+	books, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("books = %d, want 1", len(books))
+	}
+	if books[0].MediaType != models.MediaTypeEbook {
+		t.Errorf("mediaType = %q, want ebook — a refresh must not change the format of a book already on disk", books[0].MediaType)
+	}
+	if books[0].Status != models.BookStatusImported {
+		t.Errorf("status = %q, want imported — the ebook is still there", books[0].Status)
+	}
+}
+
+// The merge itself must survive: a book nobody owns yet is exactly what it is
+// for, and this is the #442 behaviour the gate must not break.
+func TestFetchAuthorBooks_StillWidensAnUnownedBook(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+
+	ctx := context.Background()
+	author := &models.Author{
+		ForeignID: "OL50A", Name: "Wanted Only", SortName: "Only, Wanted",
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	wanted := &models.Book{
+		ForeignID: "OL3001W", AuthorID: author.ID, Title: "Not Yet Mine",
+		SortTitle: "not yet mine", Language: "eng",
+		MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted,
+		Genres: []string{}, Monitored: true, MetadataProvider: "openlibrary",
+	}
+	if err := bookRepo.Create(ctx, wanted); err != nil {
+		t.Fatal(err)
+	}
+
+	stub := &stubMetaProvider{
+		works: []models.Book{{
+			ForeignID: "OL3002W", Title: "Not Yet Mine",
+			SortTitle: "not yet mine", Language: "eng",
+			MediaType: models.MediaTypeAudiobook, Status: models.BookStatusWanted,
+			Genres: []string{}, MetadataProvider: "openlibrary",
+		}},
+	}
+	agg := metadata.NewAggregator(stub)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, nil, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, "")
+
+	books, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("books = %d, want 1 (the merge must still prevent a second row)", len(books))
+	}
+	if books[0].MediaType != models.MediaTypeBoth {
+		t.Errorf("mediaType = %q, want both — an unowned book still merges", books[0].MediaType)
+	}
+}
