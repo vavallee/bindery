@@ -374,6 +374,15 @@ func (i *Importer) importOne(ctx context.Context, runID int64, cb CalibreBook, s
 		}
 	}
 
+	// Track the files themselves, not just the editions (#1635). The import
+	// used to leave book_files untouched, so a Calibre-managed book had its
+	// path recorded only in the legacy books.file_path column, or nowhere at
+	// all on the freshly-created path. Anything reading tracked files saw a
+	// book with none, and there was no supported way to re-point a stale row
+	// for a Calibre library: a folder scan fights the Calibre-shaped layout,
+	// and manual-import/match needs a downloadId a Calibre book never has.
+	i.registerBookFiles(ctx, book.row, cb)
+
 	// Series persistence (#905). Calibre's books_series_link plus series
 	// table is read by the cursor as cb.Series; we propagate the membership
 	// into Bindery's series + series_books shape so the Wanted / detail /
@@ -381,6 +390,62 @@ func (i *Importer) importOne(ctx context.Context, runID int64, cb CalibreBook, s
 	// series repo is wired (test fixtures) or no series was on the row.
 	if i.series != nil && cb.Series != nil && cb.Series.Name != "" {
 		i.attachBookToSeries(ctx, runID, book.row, cb.Series, stats)
+	}
+}
+
+// calibreAudioFormats are the Calibre format names that make a file an
+// audiobook rather than an ebook. Calibre records a format as an uppercase
+// extension ("EPUB", "M4B"), so this is an extension test in Calibre's own
+// spelling.
+//
+// Deliberately a local copy of internal/importer's audio extension set rather
+// than a shared helper: internal/importer already imports this package, so
+// depending on it here would be a cycle.
+var calibreAudioFormats = map[string]bool{
+	"MP3": true, "M4A": true, "M4B": true, "AAC": true,
+	"FLAC": true, "OGG": true, "OPUS": true,
+}
+
+// calibreFormatMediaType classifies one Calibre format as the media type
+// book_files stores it under.
+func calibreFormatMediaType(format string) string {
+	if calibreAudioFormats[strings.ToUpper(strings.TrimSpace(format))] {
+		return models.MediaTypeAudiobook
+	}
+	return models.MediaTypeEbook
+}
+
+// registerBookFiles records the on-disk path of each format Calibre reports
+// against the book, so the tracked path and the path the UI derives cannot
+// drift apart (#1635).
+//
+// One row per format, not just the first. Calibre is the authority on what a
+// book has, and an EPUB alongside an M4B is two formats of one book rather
+// than a choice between them; registering only the first would leave the
+// audiobook untracked on exactly the libraries most likely to hold both.
+//
+// AddBookFile is INSERT OR IGNORE on a globally unique path, so re-running an
+// import is a no-op and a path another book already owns is left alone rather
+// than stolen. A file that has MOVED inside the Calibre library appends the
+// new row beside the old one; which of the two the book then renders is
+// decided by the file-tracking rules in #2186, not here.
+//
+// Failures are logged and never abort the import: the book and its metadata
+// are already committed, and losing the whole row over a file-tracking write
+// would be a worse outcome than an untracked path.
+func (i *Importer) registerBookFiles(ctx context.Context, book *models.Book, cb CalibreBook) {
+	if i.books == nil || book == nil || book.ID == 0 {
+		return
+	}
+	for _, f := range cb.Formats {
+		path := strings.TrimSpace(f.AbsolutePath)
+		if path == "" {
+			continue
+		}
+		if err := i.books.SetFormatFilePath(ctx, book.ID, calibreFormatMediaType(f.Format), path); err != nil {
+			slog.Warn("calibre import: could not track book file",
+				"calibre_id", cb.CalibreID, "book_id", book.ID, "format", f.Format, "path", path, "error", err)
+		}
 	}
 }
 

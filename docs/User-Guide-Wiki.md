@@ -223,7 +223,11 @@ to the records. Things worth knowing before you judge the results:
 - Library imports create **records only** — no covers, no descriptions, no
   files. Run **Refresh metadata** on authors to fill in covers and details,
   and the scan to attach files. "Fresh import looks empty" is expected, not
-  broken.
+  broken. The Calibre library import is the exception on the files half: it
+  reads the path of every format from `metadata.db` and tracks it directly, so
+  those books arrive with their files already attached and do not need a scan
+  to find them (#1635). In 1.32.1 and earlier it recorded nothing, which left
+  a Calibre-managed book looking imported while Bindery tracked no file for it.
 - The scan only matches files whose **author already exists** in Bindery, by
   normalised name — `B. Sanderson/` on disk won't match a "Brandon Sanderson"
   author row.
