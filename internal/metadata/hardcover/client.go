@@ -192,12 +192,10 @@ func (c *Client) SearchBooks(ctx context.Context, query string) ([]models.Book, 
 // returns no supplemental results.
 // authorWorksProjection is the field set every author-works query returns.
 //
-// NB: do NOT select `language` here. It is an *edition* field; the `books`
-// type has no `language`, so requesting it makes Hardcover reject the whole
-// query ("field 'language' not found in type: 'books'", validation-failed)
-// and the entire author-works supplement fails (#1036-adjacent report). A
-// book's language can only be derived by traversing to a default edition;
-// until that's added, supplemental books carry no language.
+// NB: do not select `language` directly here. It is an *edition* field; the
+// `books` type has no `language`, so requesting it makes Hardcover reject the
+// whole query ("field 'language' not found in type: 'books'",
+// validation-failed). Derive it through the default-edition relations instead.
 const authorWorksProjection = `
 		id
 		title
@@ -213,6 +211,8 @@ const authorWorksProjection = `
 		audio_seconds
 		default_audio_edition_id
 		default_ebook_edition_id
+		default_ebook_edition { language { language } }
+		default_audio_edition { language { language } }
 		book_series(order_by: { position: asc }) {
 			position
 			series { id name }

@@ -664,11 +664,16 @@ func TestGetAuthorWorksByName_WithToken(t *testing.T) {
 				t.Fatalf("query did not request Hardcover field %q: %s", field, req.Query)
 			}
 		}
-		// Regression: `language` is an edition field, not a `books` field.
-		// Requesting it makes Hardcover reject the whole query
-		// (validation-failed) and the author-works supplement fails entirely.
-		if strings.Contains(req.Query, "language") {
-			t.Fatalf("author-works query must not request the invalid books.language field: %s", req.Query)
+		// #2241: language belongs to editions, not books. Selecting both
+		// default-edition relations keeps the query valid and prevents strict
+		// unknown-language profiles from dropping every Hardcover work.
+		for _, relation := range []string{
+			"default_ebook_edition { language { language } }",
+			"default_audio_edition { language { language } }",
+		} {
+			if !strings.Contains(req.Query, relation) {
+				t.Fatalf("author-works query does not request %q: %s", relation, req.Query)
+			}
 		}
 		gotVars = req.Variables
 		data := map[string]interface{}{
@@ -684,6 +689,9 @@ func TestGetAuthorWorksByName_WithToken(t *testing.T) {
 					"rating":        4.5,
 					"users_count":   2000,
 					"audio_seconds": 7200,
+					"default_ebook_edition": map[string]interface{}{
+						"language": map[string]interface{}{"language": "English"},
+					},
 					"contributions": []map[string]interface{}{
 						{"author": map[string]interface{}{"id": 1, "name": "Frank Herbert", "slug": "frank-herbert"}},
 					},
@@ -697,6 +705,9 @@ func TestGetAuthorWorksByName_WithToken(t *testing.T) {
 					"rating":        4.2,
 					"users_count":   100,
 					"compilation":   true,
+					"default_audio_edition": map[string]interface{}{
+						"language": map[string]interface{}{"language": "Spanish"},
+					},
 					"contributions": []map[string]interface{}{
 						{"author": map[string]interface{}{"id": 1, "name": "Frank Herbert", "slug": "frank-herbert"}},
 					},
@@ -738,16 +749,18 @@ func TestGetAuthorWorksByName_WithToken(t *testing.T) {
 	if book.MediaType != "" {
 		t.Fatalf("MediaType = %q, want empty author import default", book.MediaType)
 	}
-	// #889 originally selected books.language to drive the allowed_languages
-	// filter, but that field doesn't exist on Hardcover's `books` type and made
-	// the whole query fail. With it removed, supplemental books carry no
-	// language until it's derived from a default edition (follow-up); the filter
-	// treats them as "unknown language: pass", which is the pre-#889 behaviour.
-	if book.Language != "" {
-		t.Errorf("author-works book Language = %q, want empty (not fetched at books level)", book.Language)
+	if book.Language != "eng" {
+		t.Errorf("author-works book Language = %q, want eng from default ebook edition", book.Language)
 	}
-	if books[1].Language != "" {
-		t.Errorf("author-works book[1] Language = %q, want empty", books[1].Language)
+	if books[1].Language != "spa" {
+		t.Errorf("author-works book[1] Language = %q, want spa from default audio edition", books[1].Language)
+	}
+	allowed := []string{"eng"}
+	if !models.IsLanguageAllowed(book.Language, allowed, true) {
+		t.Error("English author work was rejected by a strict unknown-language profile (#2241)")
+	}
+	if models.IsLanguageAllowed(books[1].Language, allowed, true) {
+		t.Error("Spanish author work passed an English-only strict profile")
 	}
 }
 
