@@ -3,7 +3,7 @@ name: bindery
 description: Automated book download manager for Usenet and Torrents
 type: application
 version: 0.9.12
-appVersion: "1.33.0"
+appVersion: "1.33.1"
 home: https://github.com/vavallee/bindery
 sources:
   - https://github.com/vavallee/bindery
