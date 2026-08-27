@@ -986,6 +986,38 @@ func TestGetAuthorWorks_HTTP_PaginatesPastFirstPage(t *testing.T) {
 	}
 }
 
+func TestGetAuthorWorksSnapshot_HTTP_ReportsInterruptedPaginationAsPartial(t *testing.T) {
+	worksHandler := func(r *http.Request) string {
+		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+		if offset > 0 {
+			return `{broken`
+		}
+		entries := make([]authorWorkEntry, 0, authorWorksPageSize)
+		for i := 0; i < authorWorksPageSize; i++ {
+			entries = append(entries, authorWorkEntry{
+				Key:   "/works/OL" + strconv.Itoa(i) + "W",
+				Title: "Book " + strconv.Itoa(i),
+			})
+		}
+		return jsonStr(authorWorksResponse{Size: authorWorksPageSize + 1, Entries: entries})
+	}
+	c := newClientWithPaths(t, map[string]interface{}{
+		"/authors/OL123A/works.json": worksHandler,
+		"/search.json":               jsonStr(searchRespForAuthor{}),
+	})
+
+	books, complete, err := c.GetAuthorWorksSnapshot(context.Background(), "OL123A")
+	if err != nil {
+		t.Fatalf("GetAuthorWorksSnapshot: %v", err)
+	}
+	if complete {
+		t.Fatal("interrupted pagination was reported as complete")
+	}
+	if len(books) != authorWorksPageSize {
+		t.Fatalf("expected usable first page of %d books, got %d", authorWorksPageSize, len(books))
+	}
+}
+
 // Works present only in the search index (when /authors/{id}/works is empty)
 // are still returned as a fallback — the search enrichment source stands on
 // its own when the works endpoint returns nothing.

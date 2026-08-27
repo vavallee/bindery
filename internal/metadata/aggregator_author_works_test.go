@@ -539,6 +539,49 @@ func TestAggregator_GetAuthorWorksForAuthor_ContinuesWhenSupplementFails(t *test
 	}
 }
 
+func TestAggregator_GetAuthorWorksSnapshotForAuthor_IncludesSupplementsAndReportsFailures(t *testing.T) {
+	primary := &mockWorksProvider{
+		mockProvider: mockProvider{name: "ol", authorWorks: []models.Book{
+			{ForeignID: "OL1W", Title: "Dune", MetadataProvider: "openlibrary"},
+		}},
+	}
+	hardcover := &mockAuthorWorksByNameProvider{
+		mockProvider: mockProvider{name: "hardcover"},
+		authorWorksByName: []models.Book{
+			{ForeignID: "hc:children-of-dune", Title: "Children of Dune", MetadataProvider: "hardcover"},
+		},
+	}
+	agg := newTestAggregator(primary, hardcover)
+	author := models.Author{ForeignID: "OL123A", Name: "Frank Herbert"}
+
+	snapshot, err := agg.GetAuthorWorksSnapshotForAuthor(context.Background(), author)
+	if err != nil {
+		t.Fatalf("GetAuthorWorksSnapshotForAuthor: %v", err)
+	}
+	if !snapshot.Complete || len(snapshot.Books) != 2 || snapshot.Books[1].ForeignID != "hc:children-of-dune" {
+		t.Fatalf("complete merged snapshot = %+v", snapshot)
+	}
+
+	hardcover.authorWorksByName = nil
+	hardcover.authorWorksByNameErr = errors.New("hardcover unavailable")
+	snapshot, err = agg.GetAuthorWorksSnapshotForAuthor(context.Background(), author)
+	if err != nil {
+		t.Fatalf("GetAuthorWorksSnapshotForAuthor after failure: %v", err)
+	}
+	if snapshot.Complete {
+		t.Fatalf("configured supplement failure was reported complete: %+v", snapshot)
+	}
+
+	hardcover.authorWorksByNameErr = ErrProviderNotConfigured
+	snapshot, err = agg.GetAuthorWorksSnapshotForAuthor(context.Background(), author)
+	if err != nil {
+		t.Fatalf("GetAuthorWorksSnapshotForAuthor while disabled: %v", err)
+	}
+	if !snapshot.Complete {
+		t.Fatalf("disabled supplement made the active catalogue partial: %+v", snapshot)
+	}
+}
+
 func TestAggregator_GetAuthorWorksForAuthor_DoesNotCacheUnconfiguredSupplement(t *testing.T) {
 	primary := &mockWorksProvider{
 		mockProvider: mockProvider{name: "ol", authorWorks: []models.Book{

@@ -39,6 +39,10 @@ GET    /api/v1/author/{id}                        author detail
 PUT    /api/v1/author/{id}                        update monitored / metadata profile
 DELETE /api/v1/author/{id}                        remove (with optional file delete)
 POST   /api/v1/author/{id}/refresh                re-pull works from OpenLibrary
+GET    /api/v1/author/{id}/catalogue-reconciliation
+                                                    preview stale metadata-only Wanted rows
+POST   /api/v1/author/{id}/catalogue-reconciliation
+                                                    recheck and remove selected preview rows
 GET    /api/v1/author/{id}/relink-upstream/candidates
                                                     search metadata candidates for manual relink
 POST   /api/v1/author/{id}/relink-upstream        re-bind to a different foreign ID
@@ -86,6 +90,22 @@ instead of silent:
 ```
 
 The field is absent when the providers match or no primary is configured.
+
+Catalogue reconciliation is deliberately separate from refresh. The GET route
+queries the current primary provider without using its cached author catalogue
+and returns `candidates`, a reason-count summary, protection counts, and
+`providerComplete`. A partial provider result never treats absence as a reason
+to remove a row. The POST route accepts the IDs from the preview:
+
+```json
+{ "bookIds": [12, 19] }
+```
+
+The server recomputes the preview and deletes only IDs that are still
+candidates and still match the database-level guard: same author, status
+`wanted`, not excluded, no legacy file-path columns, and no `book_files` rows.
+It returns an `applied` summary with `requested`, `deleted`, and `skipped`.
+Neither route removes files from disk.
 
 `POST /api/v1/author/{id}/relink-upstream` may be called without a body for
 automatic upstream matching. Manual relink can send:

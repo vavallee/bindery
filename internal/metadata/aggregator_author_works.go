@@ -3,6 +3,7 @@ package metadata
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"regexp"
 	"sort"
@@ -15,6 +16,70 @@ import (
 
 type worksProvider interface {
 	GetAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, error)
+}
+
+// authorWorksSnapshotProvider is the optional, stronger form of
+// worksProvider used by destructive catalogue reconciliation. Providers with
+// multiple best-effort upstream calls can report that the returned slice is
+// partial even when at least one call succeeded.
+type authorWorksSnapshotProvider interface {
+	GetAuthorWorksSnapshot(ctx context.Context, authorForeignID string) ([]models.Book, bool, error)
+}
+
+// AuthorWorksSnapshot is a fresh primary-provider catalogue read. Complete is
+// false when the provider returned usable but partial data; callers must not
+// infer that a missing work was removed upstream in that case.
+type AuthorWorksSnapshot struct {
+	Books    []models.Book
+	Provider string
+	Complete bool
+}
+
+// GetPrimaryAuthorWorksSnapshot bypasses the metadata cache and queries only
+// the provider identified by authorForeignID. It exists for explicit catalogue
+// reconciliation: stale cached data or a failed supplemental enricher is not a
+// safe basis for deleting local rows.
+func (a *Aggregator) GetPrimaryAuthorWorksSnapshot(ctx context.Context, authorForeignID string) (AuthorWorksSnapshot, error) {
+	provider := a.providerForForeignID(authorForeignID)
+	if provider == nil {
+		return AuthorWorksSnapshot{}, errors.New("metadata provider is not available for this author")
+	}
+	name := normalizedProviderName(provider.Name())
+	if sp, ok := provider.(authorWorksSnapshotProvider); ok {
+		books, complete, err := sp.GetAuthorWorksSnapshot(ctx, authorForeignID)
+		if err != nil {
+			return AuthorWorksSnapshot{}, err
+		}
+		return AuthorWorksSnapshot{Books: books, Provider: name, Complete: complete}, nil
+	}
+	wp, ok := provider.(worksProvider)
+	if !ok {
+		return AuthorWorksSnapshot{}, fmt.Errorf("metadata provider %s cannot enumerate author works", name)
+	}
+	books, err := wp.GetAuthorWorks(ctx, authorForeignID)
+	if err != nil {
+		return AuthorWorksSnapshot{}, err
+	}
+	// DNB currently caps an author lookup at 50 records. The data is useful for
+	// exact profile matches, but absence from it is never authoritative.
+	complete := name != "dnb"
+	return AuthorWorksSnapshot{Books: books, Provider: name, Complete: complete}, nil
+}
+
+// GetAuthorWorksSnapshotForAuthor returns the same effective primary-plus-
+// supplement catalogue used by a normal author refresh, but without using the
+// author-works cache. A configured supplement failure makes the snapshot
+// partial; a supplement that is not configured is disabled and therefore does
+// not make the active catalogue indeterminate.
+func (a *Aggregator) GetAuthorWorksSnapshotForAuthor(ctx context.Context, author models.Author) (AuthorWorksSnapshot, error) {
+	snapshot, err := a.GetPrimaryAuthorWorksSnapshot(ctx, author.ForeignID)
+	if err != nil {
+		return AuthorWorksSnapshot{}, err
+	}
+	books, supplementsComplete, _ := a.mergeAuthorWorksSupplements(ctx, snapshot.Books, author)
+	snapshot.Books = books
+	snapshot.Complete = snapshot.Complete && supplementsComplete
+	return snapshot, nil
 }
 
 // workLanguageFiller is the optional capability a provider implements when it
@@ -120,17 +185,29 @@ func (a *Aggregator) GetAuthorWorksForAuthor(ctx context.Context, author models.
 		return nil, err
 	}
 
+	books, _, cacheable := a.mergeAuthorWorksSupplements(ctx, books, author)
+
+	a.enrichMissingAuthorWorkCovers(ctx, books)
+	if cacheable {
+		a.cache.set(key, cloneBooks(books))
+	}
+	return books, nil
+}
+
+func (a *Aggregator) mergeAuthorWorksSupplements(ctx context.Context, books []models.Book, author models.Author) ([]models.Book, bool, bool) {
 	authorName := strings.TrimSpace(author.Name)
-	supplementsComplete := true
+	complete := true
+	cacheable := true
 	compilationTitles := map[string]struct{}{}
 	if authorName != "" {
 		for _, provider := range a.authorWorksByNameProviders() {
 			supplemental, err := a.authorWorksSupplement(ctx, provider, author, authorName)
 			if err != nil {
-				supplementsComplete = false
+				cacheable = false
 				if errors.Is(err, ErrProviderNotConfigured) {
 					continue
 				}
+				complete = false
 				slog.Warn("author works supplement failed", "provider", provider.Name(), "author", authorName, "error", err)
 				continue
 			}
@@ -161,12 +238,7 @@ func (a *Aggregator) GetAuthorWorksForAuthor(ctx context.Context, author models.
 	books = pruneAuthorWorkRedundantTitles(books)
 	books = pruneAuthorWorkSubjectOutliers(books)
 	books = pruneAuthorWorkSelfReference(books, author)
-
-	a.enrichMissingAuthorWorkCovers(ctx, books)
-	if supplementsComplete {
-		a.cache.set(key, cloneBooks(books))
-	}
-	return books, nil
+	return books, complete, cacheable
 }
 
 func (a *Aggregator) rawPrimaryAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, error) {

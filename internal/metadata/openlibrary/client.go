@@ -299,22 +299,33 @@ func (c *Client) GetBook(ctx context.Context, foreignID string) (*models.Book, e
 // Both upstream calls are best-effort: as long as one returns, we proceed —
 // the other's failure is logged.
 func (c *Client) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, error) {
+	books, _, err := c.GetAuthorWorksSnapshot(ctx, authorForeignID)
+	return books, err
+}
+
+// GetAuthorWorksSnapshot is the reconciliation-aware form of GetAuthorWorks.
+// OpenLibrary's works and search endpoints are intentionally best-effort for a
+// normal refresh, but a successful half-result must not be treated as proof
+// that absent local books are stale.
+func (c *Client) GetAuthorWorksSnapshot(ctx context.Context, authorForeignID string) ([]models.Book, bool, error) {
 	var (
-		primary    []authorWorkEntry
-		primaryErr error
-		enrichment []models.Book
-		enrichErr  error
-		wg         sync.WaitGroup
+		primary         []authorWorkEntry
+		primaryComplete bool
+		primaryErr      error
+		enrichment      []models.Book
+		enrichComplete  bool
+		enrichErr       error
+		wg              sync.WaitGroup
 	)
 
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		primary, primaryErr = c.authorWorksBackfill(ctx, authorForeignID)
+		primary, primaryComplete, primaryErr = c.authorWorksBackfill(ctx, authorForeignID)
 	}()
 	go func() {
 		defer wg.Done()
-		enrichment, enrichErr = c.searchAuthorWorks(ctx, authorForeignID)
+		enrichment, enrichComplete, enrichErr = c.searchAuthorWorks(ctx, authorForeignID)
 	}()
 	wg.Wait()
 
@@ -325,7 +336,7 @@ func (c *Client) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]
 		slog.Debug("openlibrary: author search enrichment failed", "author", authorForeignID, "error", enrichErr)
 	}
 	if primaryErr != nil && enrichErr != nil {
-		return nil, fmt.Errorf("get author works %s: primary=%w enrichment=%w", authorForeignID, primaryErr, enrichErr)
+		return nil, false, fmt.Errorf("get author works %s: primary=%w enrichment=%w", authorForeignID, primaryErr, enrichErr)
 	}
 
 	// Build enrichment index: workID → search result for fast lookup.
@@ -413,7 +424,7 @@ func (c *Client) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]
 		books = append(books, e)
 	}
 
-	return books, nil
+	return books, primaryErr == nil && enrichErr == nil && primaryComplete && enrichComplete, nil
 }
 
 // searchAuthorWorks queries the OL search endpoint for all works by the given
@@ -425,11 +436,13 @@ func (c *Client) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]
 // Uses /search.json (FastAPI-backed JSON API). /search without .json is the
 // HTML web-UI path still served by Solr, which returns HTTP 500
 // "DEPRECATED ENDPOINT ACCESSED" for API consumers (issue #462).
-func (c *Client) searchAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, error) {
+func (c *Client) searchAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, bool, error) {
+	const resultLimit = 200
 	u := fmt.Sprintf("%s/search.json?author_key=%s&fields=key,title,language,edition_count,first_publish_year,cover_i,isbn,subject,ratings_count,ratings_average,author_key&limit=200",
 		baseURL, authorForeignID)
 	var resp struct {
-		Docs []struct {
+		NumFound int `json:"numFound"`
+		Docs     []struct {
 			Key              string   `json:"key"`
 			Title            string   `json:"title"`
 			Language         []string `json:"language"`
@@ -444,7 +457,7 @@ func (c *Client) searchAuthorWorks(ctx context.Context, authorForeignID string) 
 		} `json:"docs"`
 	}
 	if err := c.getJSON(ctx, u, &resp); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	books := make([]models.Book, 0, len(resp.Docs))
 	for _, doc := range resp.Docs {
@@ -475,7 +488,8 @@ func (c *Client) searchAuthorWorks(ctx context.Context, authorForeignID string) 
 		}
 		books = append(books, b)
 	}
-	return books, nil
+	complete := len(resp.Docs) < resultLimit || (resp.NumFound > 0 && len(resp.Docs) >= resp.NumFound)
+	return books, complete, nil
 }
 
 // authorWorksBackfill fetches the author's works list from OpenLibrary's
@@ -489,15 +503,16 @@ func (c *Client) searchAuthorWorks(ctx context.Context, authorForeignID string) 
 // hard cap of 100 books on prolific authors). We now page through until the
 // catalogue is exhausted, bounded by authorWorksMaxFetch to keep pathological
 // or maliciously large responses from running away.
-func (c *Client) authorWorksBackfill(ctx context.Context, authorForeignID string) ([]authorWorkEntry, error) {
+func (c *Client) authorWorksBackfill(ctx context.Context, authorForeignID string) ([]authorWorkEntry, bool, error) {
 	var entries []authorWorkEntry
+	complete := false
 	for offset := 0; offset < authorWorksMaxFetch; offset += authorWorksPageSize {
 		u := fmt.Sprintf("%s/authors/%s/works.json?limit=%d&offset=%d",
 			baseURL, authorForeignID, authorWorksPageSize, offset)
 		var resp authorWorksResponse
 		if err := c.getJSON(ctx, u, &resp); err != nil {
 			if offset == 0 {
-				return nil, err
+				return nil, false, err
 			}
 			// A later page failing shouldn't discard the works already
 			// collected — return what we have and let enrichment fill gaps.
@@ -509,16 +524,26 @@ func (c *Client) authorWorksBackfill(ctx context.Context, authorForeignID string
 		// Stop on a short page (end of list) or once we've collected the
 		// advertised total. Size is omitted (0) by older/partial responses,
 		// in which case the short-page check is the authoritative terminator.
-		if len(resp.Entries) < authorWorksPageSize ||
-			(resp.Size > 0 && len(entries) >= resp.Size) {
+		if resp.Size > 0 {
+			if len(entries) >= resp.Size {
+				complete = true
+				break
+			}
+			if len(resp.Entries) < authorWorksPageSize {
+				// The provider advertised more works than it returned. Keep the
+				// usable page, but do not make absence authoritative.
+				break
+			}
+		} else if len(resp.Entries) < authorWorksPageSize {
+			complete = true
 			break
 		}
 	}
-	if len(entries) >= authorWorksMaxFetch {
+	if !complete && len(entries) >= authorWorksMaxFetch {
 		slog.Warn("openlibrary: author works hit pagination cap; catalogue may be truncated",
 			"author", authorForeignID, "cap", authorWorksMaxFetch)
 	}
-	return entries, nil
+	return entries, complete, nil
 }
 
 // pickPreferredLanguage returns "eng" if present in the list, otherwise the

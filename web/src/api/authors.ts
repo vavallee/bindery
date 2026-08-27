@@ -116,6 +116,49 @@ export interface MergeAuthorsResult {
   TargetUpdated: boolean
 }
 
+export type CatalogueReconciliationReason =
+  | 'provider_changed'
+  | 'not_in_current_catalogue'
+  | 'language_not_allowed'
+  | 'part_book'
+  | 'missing_release_date'
+  | 'below_minimum_popularity'
+  | 'below_minimum_pages'
+  | 'missing_isbn'
+  | 'catalogue_filter'
+
+export interface CatalogueReconciliationCandidate {
+  bookId: number
+  title: string
+  metadataProvider: string
+  reason: CatalogueReconciliationReason
+}
+
+export interface CatalogueReconciliationSummary {
+  total: number
+  candidates: number
+  kept: number
+  protected: number
+  protectedFiles: number
+  protectedImported: number
+  protectedStatus: number
+  protectedExcluded: number
+  indeterminate: number
+  reasons: Partial<Record<CatalogueReconciliationReason, number>>
+}
+
+export interface CatalogueReconciliation {
+  authorId: number
+  authorName: string
+  provider: string
+  providerComplete: boolean
+  profileName: string
+  warning?: string
+  candidates: CatalogueReconciliationCandidate[]
+  summary: CatalogueReconciliationSummary
+  applied?: { requested: number; deleted: number; skipped: number }
+}
+
 export type MediaType = 'ebook' | 'audiobook' | 'both'
 export type AuthorMonitorMode = 'all' | 'future' | 'latest' | 'none' | 'series'
 export type MonitorNewItems = 'all' | 'none'
@@ -191,6 +234,13 @@ export const authorsApi = {
   deleteAuthor: (id: number, deleteFiles = false) =>
     request<void>(`/author/${id}${deleteFiles ? '?deleteFiles=true' : ''}`, { method: 'DELETE' }),
   refreshAuthor: (id: number) => request<void>(`/author/${id}/refresh`, { method: 'POST' }),
+  previewAuthorCatalogueReconciliation: (id: number) =>
+    request<CatalogueReconciliation>(`/author/${id}/catalogue-reconciliation`),
+  applyAuthorCatalogueReconciliation: (id: number, bookIds: number[]) =>
+    request<CatalogueReconciliation>(`/author/${id}/catalogue-reconciliation`, {
+      method: 'POST',
+      body: JSON.stringify({ bookIds }),
+    }),
   searchAuthorLinkCandidates: (id: number, term: string) =>
     request<Author[]>(`/author/${id}/relink-upstream/candidates?term=${encodeURIComponent(term)}`),
   relinkAuthorUpstream: (id: number, candidate?: RelinkAuthorCandidate) =>

@@ -1121,6 +1121,48 @@ func (r *BookRepo) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
+// DeleteMetadataOnlyWantedByIDs removes the requested books only while they
+// are still safe catalogue-only Wanted rows for authorID. The predicates are
+// intentionally repeated at deletion time so an import or scanner that adds a
+// file after a reconciliation preview wins the race and protects the row.
+func (r *BookRepo) DeleteMetadataOnlyWantedByIDs(ctx context.Context, authorID int64, ids []int64) (int64, error) {
+	if authorID <= 0 || len(ids) == 0 {
+		return 0, nil
+	}
+	placeholders := make([]string, 0, len(ids))
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, authorID)
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	if len(placeholders) == 0 {
+		return 0, nil
+	}
+	result, err := r.exec.ExecContext(ctx, `
+		DELETE FROM books
+		WHERE author_id = ?
+		  AND id IN (`+strings.Join(placeholders, ",")+`)
+		  AND status = ?
+		  AND excluded = 0
+		  AND COALESCE(file_path, '') = ''
+		  AND COALESCE(ebook_file_path, '') = ''
+		  AND COALESCE(audiobook_file_path, '') = ''
+		  AND NOT EXISTS (SELECT 1 FROM book_files bf WHERE bf.book_id = books.id)`,
+		append(args, models.BookStatusWanted)...)
+	if err != nil {
+		return 0, fmt.Errorf("delete metadata-only wanted books: %w", err)
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count deleted metadata-only wanted books: %w", err)
+	}
+	return deleted, nil
+}
+
 func (r *BookRepo) query(ctx context.Context, q string, args []any) ([]models.Book, error) {
 	var rows *sql.Rows
 	var err error

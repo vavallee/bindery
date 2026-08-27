@@ -118,6 +118,7 @@ Clean-room Go rewrite, modern React UI, MIT-licensed, actively developed.
 - Series support with position tracking, edition tracking (format / ISBN / publisher / page count), Calendar view of upcoming releases, and multiple library roots.
 - Library scan with four-tier matching: ASIN → title + author → series name + position → fuzzy title. Honours librarian sort-suffix form (`Title, The`) and series-annotated filenames (`[Mistborn, Book 1]`).
 - Author aliases (`RR Haywood` / `R.R. Haywood` / `R R Haywood` merge into one canonical row), and metadata re-bind to correct a wrong match without delete-and-re-add.
+- Explicit author-catalogue reconciliation with a selectable preview: remove chosen stale metadata-only Wanted rows after changing provider or metadata profile while always protecting imported books and every row with a tracked file.
 
 **Search & downloads**
 - Newznab + Torznab indexers queried in parallel, deduplicated, then composite-ranked by format quality, edition tags (RETAIL / UNABRIDGED / ABRIDGED), year match, grab count, size, and ISBN exact-match bonus.

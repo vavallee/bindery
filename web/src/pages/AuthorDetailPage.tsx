@@ -19,6 +19,7 @@ import CoverPlaceholder from '../components/CoverPlaceholder'
 import MoreMenu from '../components/MoreMenu'
 import Section from '../components/Section'
 import AuthorSyncNotice from '../components/AuthorSyncNotice'
+import CatalogueReconciliationModal from '../components/CatalogueReconciliationModal'
 
 type MediaFilter = '' | 'ebook' | 'audiobook'
 // 'excluded' folds in what used to be a separate "Show excluded" checkbox. It
@@ -80,6 +81,7 @@ export default function AuthorDetailPage() {
   const [showEdit, setShowEdit] = useState(false)
   const [showRename, setShowRename] = useState(false)
   const [showMetadataLink, setShowMetadataLink] = useState(false)
+  const [showCatalogueReconciliation, setShowCatalogueReconciliation] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Bulk multi-select state (#791). Selection is keyed by book.id and
@@ -791,6 +793,11 @@ export default function AuthorDetailPage() {
                   ? [{ label: metadataLinkLabel, onSelect: () => setShowMetadataLink(true) }]
                   : []),
                 {
+                  label: t('authorDetail.actions.reconcileCatalogue', 'Reconcile catalogue…'),
+                  title: t('authorDetail.actions.reconcileCatalogueHint', 'Preview stale metadata-only Wanted rows before removing them'),
+                  onSelect: () => setShowCatalogueReconciliation(true),
+                },
+                {
                   label: t('authorDetail.actions.delete', 'Delete'),
                   danger: true,
                   onSelect: handleDelete,
@@ -854,6 +861,15 @@ export default function AuthorDetailPage() {
               .then(([a, bs]) => { setAuthor(a); setBooks(bs) })
               .catch(console.error)
           }}
+        />
+      )}
+
+      {showCatalogueReconciliation && (
+        <CatalogueReconciliationModal
+          authorId={author.id}
+          authorName={author.authorName}
+          onClose={() => setShowCatalogueReconciliation(false)}
+          onApplied={reloadBooks}
         />
       )}
 

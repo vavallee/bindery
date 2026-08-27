@@ -890,6 +890,8 @@ func main() {
 		r.Put("/author/{id}/genres", authorHandler.ApplyGenres)
 		r.Delete("/author/{id}", authorHandler.Delete)
 		r.Post("/author/{id}/refresh", authorHandler.Refresh)
+		r.Get("/author/{id}/catalogue-reconciliation", authorHandler.PreviewCatalogueReconciliation)
+		r.Post("/author/{id}/catalogue-reconciliation", authorHandler.ApplyCatalogueReconciliation)
 		r.Get("/author/{id}/relink-upstream/candidates", authorHandler.RelinkCandidates)
 		r.Post("/author/{id}/relink-upstream", authorHandler.RelinkUpstream)
 		r.Get("/author/{id}/series", authorHandler.ListSeries)

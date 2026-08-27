@@ -274,6 +274,8 @@
       "renameFilesHint": "Move this author’s files to match the current naming template",
       "merge": "Merge…",
       "mergeHint": "Merge another author into this one",
+      "reconcileCatalogue": "Reconcile catalogue…",
+      "reconcileCatalogueHint": "Preview stale metadata-only Wanted rows before removing them",
       "delete": "Delete"
     },
     "filters": {
@@ -291,6 +293,36 @@
       "status_imported": "Imported",
       "status_skipped": "Skipped",
       "status_excluded": "Excluded"
+    }
+  },
+  "catalogueReconciliation": {
+    "title": "Reconcile catalogue",
+    "description": "Compare {{author}}’s metadata-only Wanted rows with the current provider and metadata profile.",
+    "loading": "Checking the current provider catalogue…",
+    "previewFailed": "Preview failed",
+    "applyFailed": "Reconciliation failed",
+    "remove": "Safe to remove",
+    "protected": "Protected",
+    "kept": "Still accepted",
+    "context": "Provider: {{provider}} · Profile: {{profile}}",
+    "safeguards": "Files are never deleted. Protected: {{files}} file-bearing, {{imported}} imported, {{status}} other-status, and {{excluded}} excluded row(s). Apply rechecks every safeguard.",
+    "indeterminate": "{{count}} row(s) were kept because provider or profile evidence was incomplete.",
+    "partialWarning": "The provider returned a partial catalogue. Missing works are protected; only explicit profile rejections can be removed.",
+    "applied": "Removed {{deleted}} row(s). {{skipped}} were skipped because they were no longer eligible.",
+    "clean": "No metadata-only Wanted rows need reconciliation.",
+    "selectCandidate": "Select {{title}}",
+    "applying": "Rechecking and removing…",
+    "apply": "Remove {{count}} stale row(s)",
+    "reasons": {
+      "provider_changed": "From the previous metadata provider",
+      "not_in_current_catalogue": "No longer in the current provider catalogue",
+      "language_not_allowed": "Rejected by the language filter",
+      "part_book": "Rejected as a box set or part-book",
+      "missing_release_date": "Rejected because the release date is missing",
+      "below_minimum_popularity": "Below the minimum popularity",
+      "below_minimum_pages": "Below the minimum page count",
+      "missing_isbn": "No edition has an ISBN",
+      "catalogue_filter": "Rejected by the catalogue filter"
     }
   },
   "books": {

@@ -361,6 +361,19 @@ no books at all is populated, which is how bulk **Refresh metadata** repairs
 an import that landed an author but no catalogue.) When a refresh declines to
 add works, the author page says how many and why.
 
+Changing a provider or tightening a metadata profile does not silently delete
+old catalogue rows during refresh. To apply the new catalogue rules to an
+author's existing rows, open the author, choose **More → Reconcile catalogue…**,
+and review the preview. Every candidate starts selected; clear any row you do
+not want to remove before applying. Apply removes only selected metadata-only
+rows whose status is still Wanted. Imported books, excluded books, books in
+another active status, and any row with `filePath`, `ebookFilePath`,
+`audiobookFilePath`, or a tracked `book_files` entry are protected. No files
+are deleted. Apply fetches the provider again and rechecks the database
+safeguards, so a row that gained a file or changed status after preview is
+skipped. If the provider returns a partial catalogue, missing works are kept
+rather than guessed stale.
+
 ## What Bindery deliberately does not do
 
 Knowing the edges saves time:
