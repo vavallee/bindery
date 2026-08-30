@@ -2,6 +2,7 @@
   "common": {
     "loading": "Loading...",
     "viewOnSource": "View on {{source}} ↗",
+    "links": "Links",
     "gridView": "Grid view",
     "tableView": "Table view",
     "cancel": "Cancel",

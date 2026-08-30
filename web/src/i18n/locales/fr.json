@@ -1,6 +1,7 @@
 {
   "common": {
     "loading": "Chargement...",
+    "links": "Liens",
     "cancel": "Annuler",
     "delete": "Supprimer",
     "edit": "Modifier",

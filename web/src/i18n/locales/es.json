@@ -1,6 +1,7 @@
 {
   "common": {
     "loading": "Cargando...",
+    "links": "Enlaces",
     "cancel": "Cancelar",
     "delete": "Eliminar",
     "edit": "Editar",

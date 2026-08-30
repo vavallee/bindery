@@ -4,10 +4,8 @@
 // internal/metadata/aggregator_providers.go and models.AuthorProviderFromForeignID.
 //
 // We only emit a link when the public URL can be constructed reliably from the
-// stored ID. OpenLibrary (bare OL keys) and Google Books (gb:) qualify;
-// Hardcover (hc:), DNB (dnb:), Calibre and Audiobookshelf do not — their stored
-// IDs don't map to a stable public page — so those return null rather than risk
-// a dead link.
+// stored ID. Calibre and Audiobookshelf IDs are local to those systems, so they
+// return null rather than risk a dead link.
 
 export type MetadataSourceLink = { url: string; label: string }
 
@@ -23,6 +21,19 @@ export function metadataSourceLink(
     // Google Books has no canonical author page; only books map cleanly.
     if (kind !== 'book' || !vol) return null
     return { url: `https://books.google.com/books?id=${encodeURIComponent(vol)}`, label: 'Google Books' }
+  }
+
+  if (kind === 'book' && id.startsWith('hc:')) {
+    const value = id.slice(3).trim()
+    if (!/^[a-z0-9][a-z0-9-]*$/i.test(value)) return null
+    const path = /^\d+$/.test(value) ? `book/${value}` : `books/${encodeURIComponent(value)}`
+    return { url: `https://hardcover.app/${path}`, label: 'Hardcover' }
+  }
+
+  if (kind === 'book' && id.startsWith('dnb:')) {
+    const controlNumber = id.slice(4).trim()
+    if (!/^\d+$/.test(controlNumber)) return null
+    return { url: `https://d-nb.info/${controlNumber}`, label: 'DNB' }
   }
 
   // No reliable public URL for these providers.

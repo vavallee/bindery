@@ -8,6 +8,7 @@ vi.mock('react-i18next', () => ({
       if (key === 'addBookModal.selectBook') return `Select ${options?.title ?? ''}`
       if (key === 'addBookModal.coverAlt') return `${options?.title ?? ''} cover`
       if (key === 'addBookModal.showMoreIdentifiers') return `Show ${options?.count ?? 0} more identifiers`
+      if (key === 'common.viewOnSource') return `View on ${options?.source ?? ''} ↗`
       return ({
       'addBookModal.title': 'Add Book',
       'addBookModal.description': 'Search by title, ISBN, or ASIN to add a specific book to your wanted list.',
@@ -37,6 +38,7 @@ vi.mock('react-i18next', () => ({
       'addBookModal.adding': 'Adding...',
       'addBookModal.addFailed': 'Failed to add book',
       'common.search': 'Search',
+      'common.links': 'Links',
       'common.add': 'Add',
       'common.cancel': 'Cancel',
       'common.noResults': 'No results found',
@@ -266,6 +268,11 @@ describe('AddBookModal — confirmation step (#1227)', () => {
     expect(cover.className).toContain('w-28')
     expect(screen.getByText('9780441172719')).toBeInTheDocument()
     expect(screen.getByText('Show 2 more identifiers')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Links' })).toBeInTheDocument()
+    const sourceLink = screen.getByRole('link', { name: 'View on OpenLibrary ↗' })
+    expect(sourceLink).toHaveAttribute('href', 'https://openlibrary.org/works/OL1W')
+    expect(sourceLink).toHaveAttribute('target', '_blank')
+    expect(sourceLink).toHaveAttribute('rel', 'noopener noreferrer')
     expect(screen.getByLabelText('Format to add')).toBeInTheDocument()
     expect(screen.getByText('Search indexers after adding')).toBeInTheDocument()
 
@@ -274,6 +281,24 @@ describe('AddBookModal — confirmation step (#1227)', () => {
     expect(screen.getByPlaceholderText(/Title, ISBN, or ASIN/i)).toHaveValue('Dune')
     expect(screen.getByRole('button', { name: 'Select Dune' })).toBeInTheDocument()
     expect(screen.queryByLabelText('Format to add')).not.toBeInTheDocument()
+  })
+
+  it('hides Links when the result has no trustworthy upstream URL', async () => {
+    vi.mocked(api.searchBooks).mockResolvedValue([{
+      foreignBookId: 'abs:local-item',
+      metadataProvider: 'audiobookshelf',
+      title: 'Local audiobook',
+    }] as never)
+
+    render(<AddBookModal onClose={onClose} onAdded={onAdded} />)
+    fireEvent.change(screen.getByPlaceholderText(/Title, ISBN, or ASIN/i), {
+      target: { value: 'Local audiobook' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
+    await screen.findByText('Local audiobook')
+    fireEvent.click(screen.getByRole('button', { name: 'Select Local audiobook' }))
+
+    expect(screen.queryByRole('button', { name: 'Links' })).not.toBeInTheDocument()
   })
 })
 

@@ -1,6 +1,7 @@
 {
   "common": {
     "loading": "Memuat...",
+    "links": "Tautan",
     "cancel": "Batal",
     "delete": "Hapus",
     "edit": "Ubah",
