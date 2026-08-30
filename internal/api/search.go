@@ -24,10 +24,15 @@ type bookSearchResult struct {
 	ISBNs []string `json:"isbns,omitempty"`
 }
 
+const maxBookSearchISBNs = 100
+
 func newBookSearchResult(book models.Book, queriedISBN string) bookSearchResult {
-	isbns := make([]string, 0, len(book.ProviderISBNs)+len(book.Editions)*2+1)
-	seen := make(map[string]bool)
+	isbns := make([]string, 0, maxBookSearchISBNs)
+	seen := make(map[string]bool, maxBookSearchISBNs)
 	add := func(raw string) {
+		if len(isbns) >= maxBookSearchISBNs {
+			return
+		}
 		normalized := isbnutil.Normalize(raw)
 		if isbnutil.ToISBN13(normalized) == "" || seen[normalized] {
 			return

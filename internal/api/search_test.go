@@ -163,6 +163,22 @@ func TestSearchBooksIncludesNormalizedProviderISBNs(t *testing.T) {
 	}
 }
 
+func TestBookSearchResultCapsISBNsAndKeepsQueryFirst(t *testing.T) {
+	providerISBNs := make([]string, maxBookSearchISBNs+5)
+	for i := range providerISBNs {
+		providerISBNs[i] = fmt.Sprintf("978%010d", i)
+	}
+
+	const queriedISBN = "9789999999999"
+	got := newBookSearchResult(models.Book{ProviderISBNs: providerISBNs}, queriedISBN)
+	if len(got.ISBNs) != maxBookSearchISBNs {
+		t.Fatalf("len(isbns) = %d, want cap %d", len(got.ISBNs), maxBookSearchISBNs)
+	}
+	if got.ISBNs[0] != queriedISBN {
+		t.Fatalf("first ISBN = %q, want queried ISBN %q", got.ISBNs[0], queriedISBN)
+	}
+}
+
 // TestSearchBooksEmptyIsArray guards against the nil-slice bug from #1188: a
 // provider that succeeds but returns no rows must serialize as `[]`, not `null`,
 // or the Add Book modal crashes calling `.map()` on a null body.
