@@ -518,7 +518,6 @@
     "identifiersHint": "Pengidentifikasi yang dilaporkan oleh sumber metadata.",
     "showMoreIdentifiers_one": "Tampilkan {{count}} pengidentifikasi lainnya",
     "showMoreIdentifiers_other": "Tampilkan {{count}} pengidentifikasi lainnya",
-    "added": "Ditambahkan",
     "adding": "Menambahkan...",
     "addFailed": "Gagal menambah buku"
   },
