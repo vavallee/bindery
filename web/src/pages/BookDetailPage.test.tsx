@@ -1061,7 +1061,7 @@ describe('BookDetailPage metadata source (#1707)', () => {
     )
   })
 
-  it('renders a Hardcover-bound book with no link rather than a broken one', async () => {
+  it('links a Hardcover numeric id through its stable redirect route', async () => {
     vi.mocked(api.getBook).mockResolvedValue(
       makeBook({ foreignBookId: 'hc:12345', metadataProvider: 'hardcover' }),
     )
@@ -1069,7 +1069,10 @@ describe('BookDetailPage metadata source (#1707)', () => {
 
     const list = await screen.findByTestId('metadata-source-list')
     expect(within(list).getByText('hc:12345')).toBeInTheDocument()
-    expect(within(list).queryByRole('link')).not.toBeInTheDocument()
+    expect(within(list).getByRole('link', { name: /View on Hardcover/ })).toHaveAttribute(
+      'href',
+      'https://hardcover.app/book/12345',
+    )
   })
 
   // The identity map from #1705 is what makes "which record am I looking at"
@@ -1108,5 +1111,66 @@ describe('BookDetailPage metadata source (#1707)', () => {
     expect(within(rows[1]).getByText('Hardcover')).toBeInTheDocument()
     expect(within(rows[1]).getByText('hc:12345')).toBeInTheDocument()
     expect(within(rows[1]).queryByText('Current')).not.toBeInTheDocument()
+  })
+
+  it('shows trustworthy upstream links in an accessible hover and focus menu', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(
+      makeBook({
+        foreignBookId: 'OL27448W',
+        metadataProvider: 'openlibrary',
+        identifiers: [
+          {
+            bookId: 42,
+            provider: 'hardcover',
+            foreignBookId: 'hc:project-hail-mary',
+            createdAt: '2026-01-01T00:00:00Z',
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+          {
+            bookId: 42,
+            provider: 'dnb',
+            foreignBookId: 'dnb:1234567890',
+            createdAt: '2026-01-01T00:00:00Z',
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+          {
+            bookId: 42,
+            provider: 'audiobookshelf',
+            foreignBookId: 'abs:local-item',
+            createdAt: '2026-01-01T00:00:00Z',
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+        ],
+      }),
+    )
+    renderBookDetailPage()
+
+    expect(await screen.findByRole('button', { name: 'Links' })).toHaveAttribute('aria-haspopup', 'true')
+    const menu = screen.getByTestId('book-links-menu')
+    expect(menu.className).toContain('group-hover:visible')
+    const links = within(menu).getAllByRole('link')
+    expect(links).toHaveLength(3)
+    expect(within(menu).getByRole('link', { name: /View on OpenLibrary/ })).toHaveAttribute(
+      'href',
+      'https://openlibrary.org/works/OL27448W',
+    )
+    expect(within(menu).getByRole('link', { name: /View on Hardcover/ })).toHaveAttribute(
+      'href',
+      'https://hardcover.app/books/project-hail-mary',
+    )
+    const dnb = within(menu).getByRole('link', { name: /View on DNB/ })
+    expect(dnb).toHaveAttribute('href', 'https://d-nb.info/1234567890')
+    expect(dnb).toHaveAttribute('target', '_blank')
+    expect(dnb).toHaveAttribute('rel', 'noopener noreferrer')
+  })
+
+  it('hides the Links control when no trustworthy upstream URL exists', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(
+      makeBook({ foreignBookId: 'abs:local-item', metadataProvider: 'audiobookshelf' }),
+    )
+    renderBookDetailPage()
+
+    await screen.findByTestId('metadata-source-list')
+    expect(screen.queryByRole('button', { name: 'Links' })).not.toBeInTheDocument()
   })
 })
