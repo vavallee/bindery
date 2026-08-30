@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, Book } from '../api/client'
 import { resolveBookQuery } from '../api/booklookup'
-import { providerDisplayName, providerFromBookForeignId } from '../util/metadataSource'
+import { metadataSourceLink, providerDisplayName, providerFromBookForeignId } from '../util/metadataSource'
+import MetadataLinksMenu from './MetadataLinksMenu'
 
 interface Props {
   onClose: () => void
@@ -82,6 +83,7 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
     ? providerDisplayName(selectedBook.metadataProvider || providerFromBookForeignId(selectedBook.foreignBookId))
     : ''
   const selectedISBNs = selectedBook?.isbns ?? []
+  const selectedSourceLink = selectedBook ? metadataSourceLink(selectedBook.foreignBookId, 'book') : null
   const visibleISBNs = selectedISBNs.slice(0, 3)
   const remainingISBNs = selectedISBNs.slice(3)
 
@@ -193,7 +195,10 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
                   </>}
                   {selectedProvider && <>
                     <dt className="text-fg-muted">{t('addBookModal.source')}</dt>
-                    <dd>{selectedProvider}</dd>
+                    <dd className="flex items-center gap-2">
+                      <span>{selectedProvider}</span>
+                      {selectedSourceLink && <MetadataLinksMenu links={[selectedSourceLink]} />}
+                    </dd>
                   </>}
                   <dt className="text-fg-muted">{t('addBookModal.providerId')}</dt>
                   <dd className="font-mono break-all">{selectedBook.foreignBookId}</dd>

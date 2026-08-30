@@ -1,6 +1,7 @@
 {
   "common": {
     "loading": "Naglo-load...",
+    "links": "Mga link",
     "cancel": "Kanselahin",
     "delete": "Tanggalin",
     "edit": "I-edit",
