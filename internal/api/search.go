@@ -7,12 +7,49 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 )
 
 type SearchHandler struct {
 	meta *metadata.Aggregator
+}
+
+// bookSearchResult exposes transient provider identifiers without adding them
+// to every Book response. ProviderISBNs exists only while metadata is being
+// searched; persisted books load their identifiers from the editions table.
+type bookSearchResult struct {
+	models.Book
+	ISBNs []string `json:"isbns,omitempty"`
+}
+
+func newBookSearchResult(book models.Book, queriedISBN string) bookSearchResult {
+	isbns := make([]string, 0, len(book.ProviderISBNs)+len(book.Editions)*2+1)
+	seen := make(map[string]bool)
+	add := func(raw string) {
+		normalized := isbnutil.Normalize(raw)
+		if isbnutil.ToISBN13(normalized) == "" || seen[normalized] {
+			return
+		}
+		seen[normalized] = true
+		isbns = append(isbns, normalized)
+	}
+
+	add(queriedISBN)
+	for _, isbn := range book.ProviderISBNs {
+		add(isbn)
+	}
+	for _, edition := range book.Editions {
+		if edition.ISBN13 != nil {
+			add(*edition.ISBN13)
+		}
+		if edition.ISBN10 != nil {
+			add(*edition.ISBN10)
+		}
+	}
+
+	return bookSearchResult{Book: book, ISBNs: isbns}
 }
 
 func NewSearchHandler(meta *metadata.Aggregator) *SearchHandler {
@@ -67,7 +104,11 @@ func (h *SearchHandler) SearchBooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, books)
+	results := make([]bookSearchResult, len(books))
+	for i := range books {
+		results[i] = newBookSearchResult(books[i], "")
+	}
+	writeJSON(w, http.StatusOK, results)
 }
 
 // Lookup resolves a single book by a stable identifier passed as a query
@@ -101,7 +142,7 @@ func (h *SearchHandler) lookupByISBN(w http.ResponseWriter, r *http.Request, isb
 		return
 	}
 
-	writeJSON(w, http.StatusOK, book)
+	writeJSON(w, http.StatusOK, newBookSearchResult(*book, isbn))
 }
 
 func (h *SearchHandler) lookupByASIN(w http.ResponseWriter, r *http.Request, asin string) {
@@ -126,7 +167,7 @@ func (h *SearchHandler) lookupByASIN(w http.ResponseWriter, r *http.Request, asi
 	}
 	book.MediaType = models.MediaTypeAudiobook
 
-	writeJSON(w, http.StatusOK, book)
+	writeJSON(w, http.StatusOK, newBookSearchResult(*book, ""))
 }
 
 // writeServerError logs the underlying error server-side (with request

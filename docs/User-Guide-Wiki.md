@@ -136,7 +136,7 @@ monitored.
 | Entry point | What it creates |
 |---|---|
 | **Authors → Add Author** | The author **plus their full catalogue** (up to ~100 titles), monitored per the monitor mode you pick |
-| **Authors → Add Book** (title/ISBN/ASIN) | One book, and only that book, silently creating its author if needed |
+| **Books → Add Book** (also available from Authors; title/ISBN/ASIN) | One book, and only that book, silently creating its author if needed. Select a search result to review its cover and identifiers before confirming |
 | **Discover → Add to Wanted** | One recommended book |
 | **Series → Fill gaps** | The missing books of a linked series, wanted + monitored |
 | **Import lists** (Settings → Import, Hardcover reading lists) | Every list item, re-synced on the Hardcover list sync interval (Settings → General, 24h by default). Whether the items are also marked wanted is the per-list **Download books from this list** checkbox: on (the default) creates them monitored and queues downloads; off catalogues them unmonitored, so you can browse a Want to Read shelf in Bindery and fetch books one at a time. Authors created by a list never pull their back-catalogue in — only the listed books are added. **Sync now** starts the sync in the background and the row reports its progress, so a large shelf isn't cut short by a request timeout |
