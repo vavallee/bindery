@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { MetadataSourceLink } from '../util/metadataSource'
 
@@ -11,13 +12,24 @@ function ExternalLinkIcon({ className = '' }: { className?: string }) {
 
 export default function MetadataLinksMenu({ links }: { links: MetadataSourceLink[] }) {
   const { t } = useTranslation()
+  const [hovered, setHovered] = useState(false)
+  const [focusWithin, setFocusWithin] = useState(false)
   if (links.length === 0) return null
 
   return (
-    <div className="group relative inline-flex">
+    <div
+      className="group relative inline-flex"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={() => setFocusWithin(true)}
+      onBlur={event => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node)) setFocusWithin(false)
+      }}
+    >
       <button
         type="button"
         aria-haspopup="true"
+        aria-expanded={hovered || focusWithin}
         className="inline-flex items-center gap-1 rounded border border-slate-300 dark:border-zinc-700 bg-slate-100 dark:bg-zinc-800 px-2 py-1 font-medium text-slate-600 dark:text-zinc-300 hover:border-slate-400 dark:hover:border-zinc-600 hover:text-slate-900 dark:hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
       >
         <ExternalLinkIcon className="w-3.5 h-3.5" />
