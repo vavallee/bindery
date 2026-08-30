@@ -520,7 +520,6 @@
     "identifiersHint": "Mga identifier na iniulat ng pinagmulan ng metadata.",
     "showMoreIdentifiers_one": "Ipakita ang {{count}} pang identifier",
     "showMoreIdentifiers_other": "Ipakita ang {{count}} pang identifier",
-    "added": "Naidagdag",
     "adding": "Idinadagdag...",
     "addFailed": "Nabigong idagdag ang libro"
   },

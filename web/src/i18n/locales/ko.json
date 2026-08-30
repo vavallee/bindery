@@ -794,7 +794,6 @@
     "identifiersHint": "메타데이터 출처에서 제공한 식별자입니다.",
     "showMoreIdentifiers_one": "식별자 {{count}}개 더 보기",
     "showMoreIdentifiers_other": "식별자 {{count}}개 더 보기",
-    "added": "추가됨",
     "adding": "추가 중...",
     "addFailed": "도서 추가 실패"
   },

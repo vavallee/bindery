@@ -486,7 +486,6 @@
     "identifiersHint": "Identifiants signalés par la source de métadonnées.",
     "showMoreIdentifiers_one": "Afficher {{count}} identifiant supplémentaire",
     "showMoreIdentifiers_other": "Afficher {{count}} identifiants supplémentaires",
-    "added": "Ajouté",
     "adding": "Ajout en cours...",
     "addFailed": "Échec de l'ajout du livre"
   },

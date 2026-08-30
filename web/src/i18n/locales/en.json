@@ -1098,7 +1098,6 @@
     "identifiersHint": "Identifiers reported by the metadata source.",
     "showMoreIdentifiers_one": "Show {{count}} more identifier",
     "showMoreIdentifiers_other": "Show {{count}} more identifiers",
-    "added": "Added",
     "adding": "Adding...",
     "addFailed": "Failed to add book"
   },

@@ -484,7 +484,6 @@
     "identifiersHint": "Identificaties gemeld door de metadatabron.",
     "showMoreIdentifiers_one": "Nog {{count}} identificatie tonen",
     "showMoreIdentifiers_other": "Nog {{count}} identificaties tonen",
-    "added": "Toegevoegd",
     "adding": "Toevoegen...",
     "addFailed": "Boek toevoegen mislukt"
   },
