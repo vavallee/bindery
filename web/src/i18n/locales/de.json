@@ -482,7 +482,6 @@
     "identifiersHint": "Von der Metadatenquelle gemeldete Kennungen.",
     "showMoreIdentifiers_one": "Noch {{count}} Kennung anzeigen",
     "showMoreIdentifiers_other": "Noch {{count}} Kennungen anzeigen",
-    "added": "Hinzugefügt",
     "adding": "Wird hinzugefügt...",
     "addFailed": "Buch konnte nicht hinzugefügt werden"
   },

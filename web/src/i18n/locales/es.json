@@ -524,7 +524,6 @@
     "identifiersHint": "Identificadores proporcionados por la fuente de metadatos.",
     "showMoreIdentifiers_one": "Mostrar {{count}} identificador más",
     "showMoreIdentifiers_other": "Mostrar {{count}} identificadores más",
-    "added": "Añadido",
     "adding": "Añadiendo...",
     "addFailed": "Error al añadir el libro"
   },
