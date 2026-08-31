@@ -732,3 +732,14 @@ func TestTryImportInternal_MergeRollbackDoesNotDeleteEbook(t *testing.T) {
 		})
 	}
 }
+
+// TestExistingEbookDir_NilBook covers the documented guard: a download with no
+// book attached has no folder to merge into, so the caller must fall through
+// to ordinary placement rather than dereferencing nil.
+func TestExistingEbookDir_NilBook(t *testing.T) {
+	sharedDir := t.TempDir()
+	s, _, _, _, _, _, ctx := sharedFormatFixture(t, sharedDir)
+	if dir, ok := s.existingEbookDir(ctx, nil); ok || dir != "" {
+		t.Errorf("existingEbookDir(nil) = (%q, %v), want (\"\", false)", dir, ok)
+	}
+}
