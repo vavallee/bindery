@@ -389,7 +389,12 @@ func (s *Scanner) notify(ctx context.Context, eventType string, payload map[stri
 // download title so the webhook still carries a meaningful "title". Path is
 // optional ("" omits it from the payload) — the ebook path varies per file in
 // a multi-format bundle so emitting one of them would be misleading.
-func importedPayload(book *models.Book, dl *models.Download, format, path string) map[string]interface{} {
+// skippedFiles is non-empty only for a shared-folder merge (#1959) that
+// declined to overwrite one or more same-named files already present from
+// the book's other format — surfaced here so a webhook/notifier consumer
+// sees it alongside the normal import event instead of it only reaching a
+// log line.
+func importedPayload(book *models.Book, dl *models.Download, format, path string, skippedFiles []string) map[string]interface{} {
 	title := ""
 	if book != nil {
 		title = book.Title
@@ -403,6 +408,9 @@ func importedPayload(book *models.Book, dl *models.Download, format, path string
 	}
 	if path != "" {
 		p["path"] = path
+	}
+	if len(skippedFiles) > 0 {
+		p["skippedFiles"] = skippedFiles
 	}
 	return p
 }
@@ -988,6 +996,44 @@ func (s *Scanner) alreadyImportedFormat(ctx context.Context, book *models.Book, 
 	return false
 }
 
+// existingEbookDir returns the directory holding this book's
+// already-imported, still-on-disk ebook, if it has one.
+//
+// An ebook book_files row stores the file itself (the .epub/.mobi/…), so
+// the book's folder is its parent — unlike an audiobook row, which stores
+// the destination directory directly because audiobooks are placed as a
+// folder unit.
+//
+// Used to recognise that a freshly computed audiobook destination is the
+// folder this book already occupies via its ebook — the shared-folder
+// layout, the default when BINDERY_AUDIOBOOK_DIR is unset — so the import
+// merges into it rather than being split off by UniqueDir's collision
+// disambiguation, which cannot tell "same book, other format" from a
+// genuine clash with an unrelated book (#1959).
+//
+// A row whose file is gone from disk is ignored: there is nothing to merge
+// into, so the caller should place the audiobook normally.
+func (s *Scanner) existingEbookDir(ctx context.Context, book *models.Book) (string, bool) {
+	if book == nil {
+		return "", false
+	}
+	files, err := s.books.ListFiles(ctx, book.ID)
+	if err != nil {
+		slog.Warn("shared-folder check: failed to list book files", "bookID", book.ID, "error", err)
+		return "", false
+	}
+	for _, f := range files {
+		if f.Format != models.MediaTypeEbook {
+			continue
+		}
+		if _, statErr := os.Stat(f.Path); statErr != nil {
+			continue
+		}
+		return filepath.Clean(filepath.Dir(f.Path)), true
+	}
+	return "", false
+}
+
 // formatForRelease resolves the media type a grabbed release is for from its
 // title and the format token parsed at grab time, or "" when the release does
 // not say — including when it says BOTH.
@@ -1467,6 +1513,16 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			return
 		}
 		destDir := UniqueDir(audiobookDest)
+		// Set by the plain whole-folder placement branch below when it
+		// merges into the book's existing shared folder (#1959), so the
+		// skips it declined to overwrite can be surfaced on the import's
+		// History entry and notification rather than only in a log line.
+		var mergeSkippedFiles []string
+		// Whether the placement below merged into the book's own existing
+		// folder rather than a folder of its own. Consulted by the
+		// post-placement rollback, which must not treat a shared folder as
+		// this import's to delete.
+		var mergedIntoExistingFolder bool
 		// Choose hardlink-vs-copy (when auto) against the audiobook root the
 		// files actually land under, not s.libraryDir — they can be on
 		// different mounts and a cross-device hardlink would hard-fail (#1254).
@@ -1611,6 +1667,39 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 							slog.Warn("flatten: could not remove source after move-mode flatten", "src", audiobookSource, "error", rmErr)
 						}
 					}
+				} else if existingDir, merging := s.existingEbookDir(ctx, book); merging && filepath.Clean(audiobookDest) == existingDir {
+					// Shared-folder layout (#1959): this book's ebook already
+					// occupies exactly the folder the audiobook destination
+					// resolves to, so the collision UniqueDir disambiguated
+					// above is this same book, not an unrelated one. Merge
+					// into that folder instead, undoing the " (2)" suffix.
+					//
+					// Deliberately scoped to this branch. The flatten paths
+					// above cannot take a pre-existing destDir: they document
+					// and rely on having created it themselves, and remove it
+					// wholesale (os.RemoveAll) to roll back any error — which
+					// against a shared folder would delete the ebook sitting
+					// in it. They keep the historical UniqueDir behaviour, so
+					// a library using an audiobook naming template or
+					// multi-disc flattening still splits into "Title (2)"
+					// until flatten's rollback is reworked to only remove what
+					// it placed.
+					destDir = existingDir
+					mergedIntoExistingFolder = true
+					slog.Info("merging audiobook into the book's existing shared folder",
+						"title", book.Title, "bookID", book.ID, "dst", destDir, "mode", mode)
+					switch mode {
+					case "hardlink":
+						mergeSkippedFiles, dirErr = HardlinkDirMerge(audiobookSource, destDir)
+					case "copy":
+						mergeSkippedFiles, dirErr = CopyDirMergeCtx(importCtx, audiobookSource, destDir)
+					default:
+						mergeSkippedFiles, dirErr = MoveDirMergeCtx(importCtx, audiobookSource, destDir)
+					}
+					if len(mergeSkippedFiles) > 0 {
+						slog.Warn("audiobook merge skipped same-named file(s) already present in the shared folder",
+							"title", book.Title, "bookID", book.ID, "dst", destDir, "skipped", mergeSkippedFiles)
+					}
 				} else {
 					switch mode {
 					case "hardlink":
@@ -1670,13 +1759,24 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				// just-placed destination and let the import retry cleanly.
 				// move already consumed the source, so keep the placed folder
 				// and point the user at it rather than deleting their only copy.
-				if mode == "copy" || mode == "hardlink" {
+				switch {
+				case mergedIntoExistingFolder:
+					// destDir is the book's own folder, shared with the
+					// already-imported ebook, so the copy/hardlink rollback
+					// below would delete that ebook. A merge never unwinds —
+					// the same invariant CopyDirMergeCtx and friends
+					// document — and it does not need to: the placed files
+					// stay put and a retry is idempotent, because the merge
+					// skips whatever is already there.
+					s.failImport(ctx, dl, models.StateImportBlocked,
+						fmt.Sprintf("audiobook merged into %s but could not be recorded (%v); the files are preserved there — retry the import to record them", destDir, setErr))
+				case mode == "copy" || mode == "hardlink":
 					if rmErr := os.RemoveAll(destDir); rmErr != nil {
 						slog.Warn("failed to remove audiobook destination after DB error", "dst", destDir, "error", rmErr)
 					}
 					s.failImport(ctx, dl, models.StateImportBlocked,
 						fmt.Sprintf("audiobook placed but could not be recorded (%v) — retry the import", setErr))
-				} else {
+				default:
 					s.failImport(ctx, dl, models.StateImportBlocked,
 						fmt.Sprintf("audiobook moved to %s but could not be recorded (%v); the files are preserved there — retry the import to record them", destDir, setErr))
 				}
@@ -1694,8 +1794,12 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		s.pushToCalibre(ctx, book, author, edition, seriesTitle, seriesNum, destDir)
 		s.pushToABS(ctx)
 
-		s.createHistoryEvent(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, map[string]string{"path": destDir, "format": models.MediaTypeAudiobook})
-		s.notify(ctx, notifierEventBookImported, importedPayload(book, dl, models.MediaTypeAudiobook, destDir))
+		historyMeta := map[string]string{"path": destDir, "format": models.MediaTypeAudiobook}
+		if len(mergeSkippedFiles) > 0 {
+			historyMeta["skippedFiles"] = strings.Join(mergeSkippedFiles, ", ")
+		}
+		s.createHistoryEvent(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, historyMeta)
+		s.notify(ctx, notifierEventBookImported, importedPayload(book, dl, models.MediaTypeAudiobook, destDir, mergeSkippedFiles))
 		if cleanupFunc != nil {
 			if err := cleanupFunc(); err != nil {
 				slog.Warn("cleanup failed", cleanupWarnAttrs(cleanupClientType, cleanupRemoteID, err)...)
@@ -1899,7 +2003,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// One bookImported notification per download (not per file): a
 		// multi-format ebook bundle (epub + mobi + pdf) is conceptually one
 		// import event from the user's perspective.
-		s.notify(ctx, notifierEventBookImported, importedPayload(book, dl, models.MediaTypeEbook, ""))
+		s.notify(ctx, notifierEventBookImported, importedPayload(book, dl, models.MediaTypeEbook, "", nil))
 
 		// For "move" mode bindery has no further use for the source files. The
 		// download folder may, however, be a path shared with sibling torrents

@@ -679,6 +679,39 @@ func moveDirCtx(ctx context.Context, src, dst string) error {
 	return os.RemoveAll(src)
 }
 
+// MoveDirMergeCtx is moveDirCtx's merge-aware sibling — see CopyDirMergeCtx
+// for the shared rationale. The os.Rename fast path is not attempted at all:
+// renaming a directory onto an existing non-empty one fails on essentially
+// every filesystem rather than merging, so a merge always takes the
+// recursive-copy-then-remove route.
+//
+// Unlike MoveDirCtx, src is only removed when nothing was skipped. If any
+// file was skipped (a same-named file already existed at the destination),
+// that file's only copy still lives in src — deleting src wholesale would
+// destroy it. src is left in place for a human to reconcile manually, and
+// the skipped list is returned so the caller can surface it rather than
+// leaving it silent.
+func MoveDirMergeCtx(ctx context.Context, src, dst string) (skipped []string, err error) {
+	info, err := os.Stat(src)
+	if err != nil {
+		return nil, fmt.Errorf("stat source dir: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("source is not a directory: %s", src)
+	}
+	if err := checkDestNotInsideSource("move", src, dst); err != nil {
+		return nil, err
+	}
+	skipped, err = mergeCopyDirContext(ctx, src, dst)
+	if err != nil {
+		return skipped, fmt.Errorf("copy dir: %w", err)
+	}
+	if len(skipped) > 0 {
+		return skipped, nil
+	}
+	return skipped, os.RemoveAll(src)
+}
+
 // CopyFile copies src to dst without removing the source. It is the "copy"
 // import mode counterpart to MoveFile. The source is left intact so that
 // torrent clients continue seeding from the original download location.
@@ -770,6 +803,121 @@ func copyDirPublicCtx(ctx context.Context, src, dst string) error {
 	return nil
 }
 
+// CopyDirMergeCtx is CopyDirCtx's merge-aware sibling: instead of refusing
+// when dst already exists, it merges src's contents into it, skipping (never
+// overwriting) any file that already exists at the corresponding destination
+// path, and returns the relative paths of any skipped files.
+//
+// Only call this when the caller has already verified dst is legitimately
+// this same book's own folder via its other format (the shared-folder
+// layout, #1959) — not for the general "destination already exists" case,
+// which stays a hard refusal via CopyDirCtx everywhere else. A skip is a
+// silent-by-filesystem-standards event, so the caller is expected to surface
+// the returned list (History/notifications) rather than let it disappear.
+//
+// NOTE for future edits: unlike CopyDirCtx/HardlinkDir/moveDirCtx, none of
+// the *Merge functions roll back by removing dst on error, and they must
+// not be "tidied up" to match their siblings. Those siblings own the
+// destination they created, so wiping it is safe; a merge destination is
+// pre-existing and holds the book's other format, so an os.RemoveAll(dst)
+// here would delete a file the user already had. The cost is that a failed
+// or cancelled merge can leave partially-placed files in dst — accepted
+// deliberately, and self-correcting: a retry re-runs the merge and skips
+// whatever already landed.
+func CopyDirMergeCtx(ctx context.Context, src, dst string) (skipped []string, err error) {
+	info, err := os.Stat(src)
+	if err != nil {
+		return nil, fmt.Errorf("stat source dir: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("source is not a directory: %s", src)
+	}
+	if err := checkDestNotInsideSource("copy", src, dst); err != nil {
+		return nil, err
+	}
+	return mergeCopyDirContext(ctx, src, dst)
+}
+
+// mergeCopyDirContext is copyDirContext's merge-aware sibling — see
+// CopyDirMergeCtx. dst is created if absent and reused as-is if present.
+func mergeCopyDirContext(ctx context.Context, srcDir, dstDir string) (skipped []string, err error) {
+	if dirContains(srcDir, dstDir) {
+		return nil, fmt.Errorf("%w: %s is inside %s", ErrDestInsideSource, dstDir, srcDir)
+	}
+	if err := os.MkdirAll(dstDir, 0o750); err != nil {
+		return nil, err
+	}
+	srcRoot, err := os.OpenRoot(srcDir)
+	if err != nil {
+		return nil, fmt.Errorf("open source root: %w", err)
+	}
+	defer func() { _ = srcRoot.Close() }()
+
+	dstRoot, err := os.OpenRoot(dstDir)
+	if err != nil {
+		return nil, fmt.Errorf("open dest root: %w", err)
+	}
+	defer func() { _ = dstRoot.Close() }()
+
+	acc := &mergeSkipTracker{}
+	if err := mergeCopyDirRooted(ctx, srcRoot, dstRoot, ".", acc); err != nil {
+		return acc.skipped, err
+	}
+	return acc.skipped, nil
+}
+
+// mergeSkipTracker accumulates the relative paths of files a merge walk
+// declined to overwrite because a same-named file already existed at the
+// destination (e.g. both an ebook and audiobook folder independently
+// carrying their own cover.jpg).
+type mergeSkipTracker struct {
+	skipped []string
+}
+
+func mergeCopyDirRooted(ctx context.Context, srcRoot, dstRoot *os.Root, rel string, acc *mergeSkipTracker) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f, err := srcRoot.Open(rel)
+	if err != nil {
+		return err
+	}
+	entries, err := f.ReadDir(-1)
+	f.Close()
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		child := filepath.Join(rel, e.Name())
+		if !e.Type().IsRegular() && !e.IsDir() {
+			continue // skip symlinks and other non-regular entries
+		}
+		if e.Type().IsRegular() && isDownloadArtifact(e.Name()) {
+			continue // receipts/repair files never enter the library (#1542)
+		}
+		if e.IsDir() {
+			if err := dstRoot.Mkdir(child, 0o750); err != nil && !os.IsExist(err) {
+				return err
+			}
+			if err := mergeCopyDirRooted(ctx, srcRoot, dstRoot, child, acc); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, statErr := dstRoot.Stat(child); statErr == nil {
+			acc.skipped = append(acc.skipped, child)
+			continue
+		}
+		if err := copyFileRooted(srcRoot, dstRoot, child); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // HardlinkDir mirrors a directory tree from src into dst by hard-linking every
 // regular file. Directory entries are created normally. Both trees must be on
 // the same filesystem — no fallback is attempted on cross-filesystem failure.
@@ -808,6 +956,92 @@ func HardlinkDir(src, dst string) error {
 	if err := hardlinkDirRooted(srcRoot, dstRoot, "."); err != nil {
 		_ = os.RemoveAll(dst)
 		return err
+	}
+	return nil
+}
+
+// HardlinkDirMerge is HardlinkDir's merge-aware sibling — see
+// CopyDirMergeCtx for the shared rationale and the same "only when the
+// caller has already verified dst is this book's own folder" caveat. dst is
+// created if absent and reused as-is if present; a same-named file already
+// at the destination is skipped (not overwritten, not re-linked), and its
+// relative path is returned.
+func HardlinkDirMerge(src, dst string) (skipped []string, err error) {
+	info, err := os.Stat(src)
+	if err != nil {
+		return nil, fmt.Errorf("stat source dir: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("source is not a directory: %s", src)
+	}
+	if err := checkDestNotInsideSource("hardlink", src, dst); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(dst, 0o750); err != nil {
+		return nil, fmt.Errorf("create dest dir: %w", err)
+	}
+
+	srcRoot, err := os.OpenRoot(src)
+	if err != nil {
+		return nil, fmt.Errorf("open source root: %w", err)
+	}
+	defer func() { _ = srcRoot.Close() }()
+
+	dstRoot, err := os.OpenRoot(dst)
+	if err != nil {
+		return nil, fmt.Errorf("open dest root: %w", err)
+	}
+	defer func() { _ = dstRoot.Close() }()
+
+	acc := &mergeSkipTracker{}
+	if err := mergeHardlinkDirRooted(srcRoot, dstRoot, ".", acc); err != nil {
+		return acc.skipped, err
+	}
+	return acc.skipped, nil
+}
+
+func mergeHardlinkDirRooted(srcRoot, dstRoot *os.Root, rel string, acc *mergeSkipTracker) error {
+	f, err := srcRoot.Open(rel)
+	if err != nil {
+		return err
+	}
+	entries, err := f.ReadDir(-1)
+	f.Close()
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		child := filepath.Join(rel, e.Name())
+		if !e.Type().IsRegular() && !e.IsDir() {
+			continue // skip symlinks
+		}
+		if e.Type().IsRegular() && isDownloadArtifact(e.Name()) {
+			continue // receipts/repair files never enter the library (#1542)
+		}
+		if e.IsDir() {
+			if err := dstRoot.Mkdir(child, 0o750); err != nil && !os.IsExist(err) {
+				return err
+			}
+			if err := mergeHardlinkDirRooted(srcRoot, dstRoot, child, acc); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, statErr := dstRoot.Stat(child); statErr == nil {
+			acc.skipped = append(acc.skipped, child)
+			continue
+		}
+		srcPath := filepath.Join(srcRoot.Name(), child)
+		dstPath := filepath.Join(dstRoot.Name(), child)
+		if err := osLink(srcPath, dstPath); err != nil {
+			if crossDeviceErr(err) {
+				if cerr := copyFileRooted(srcRoot, dstRoot, child); cerr != nil {
+					return fmt.Errorf("hardlink cross-device copy fallback %q → %q: %w", srcPath, dstPath, cerr)
+				}
+				continue
+			}
+			return linkError(srcPath, dstPath, err)
+		}
 	}
 	return nil
 }
