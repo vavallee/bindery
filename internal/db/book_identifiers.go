@@ -103,6 +103,36 @@ func (r *BookRepo) ListBookIdentifiers(ctx context.Context, bookID int64) ([]mod
 	return out, rows.Err()
 }
 
+// ListBookIdentifiersByAuthor returns every provider id attached to the
+// author's books, grouped by book id. The author-scoped query keeps callers
+// from issuing one identifier lookup per book without growing an unbounded
+// IN clause for prolific authors.
+func (r *BookRepo) ListBookIdentifiersByAuthor(ctx context.Context, authorID int64) (map[int64][]models.BookIdentifier, error) {
+	rows, err := r.exec.QueryContext(ctx, `
+		SELECT bi.book_id, bi.provider, bi.foreign_id, bi.created_at, bi.updated_at
+		FROM book_identifiers bi
+		JOIN books b ON b.id = bi.book_id
+		WHERE b.author_id = ?
+		ORDER BY bi.book_id, bi.provider, bi.foreign_id`, authorID)
+	if err != nil {
+		return nil, fmt.Errorf("list book identifiers for author %d: %w", authorID, err)
+	}
+	defer rows.Close()
+	out := make(map[int64][]models.BookIdentifier)
+	for rows.Next() {
+		var identifier models.BookIdentifier
+		if err := rows.Scan(&identifier.BookID, &identifier.Provider, &identifier.ForeignID,
+			&identifier.CreatedAt, &identifier.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan book identifier for author %d: %w", authorID, err)
+		}
+		out[identifier.BookID] = append(out[identifier.BookID], identifier)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read book identifiers for author %d: %w", authorID, err)
+	}
+	return out, nil
+}
+
 // UpsertBookIdentifier attaches foreignID to bookID.
 //
 // Returns a *BookIdentifierConflictError when the id already belongs to a

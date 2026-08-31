@@ -189,6 +189,58 @@ func TestBookIdentifiers_ReattachingToTheSameBookIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestBookIdentifiers_ListByAuthorGroupsIdentifiersInOneQuery(t *testing.T) {
+	books, author := bookIdentityFixture(t)
+	ctx := context.Background()
+
+	first := newBook("hc:volume-1", "Volume 1", author.ID)
+	second := newBook("hc:volume-2", "Volume 2", author.ID)
+	for _, book := range []*models.Book{first, second} {
+		if err := books.Create(ctx, book); err != nil {
+			t.Fatalf("create %q: %v", book.Title, err)
+		}
+	}
+	if err := books.UpsertBookIdentifier(ctx, first.ID, "OL1W"); err != nil {
+		t.Fatalf("attach first alias: %v", err)
+	}
+	if err := books.UpsertBookIdentifier(ctx, second.ID, "OL2W"); err != nil {
+		t.Fatalf("attach second alias: %v", err)
+	}
+
+	otherAuthor := &models.Author{ForeignID: "OL2A", Name: "Other Author", SortName: "Author, Other"}
+	if err := NewAuthorRepo(books.db).Create(ctx, otherAuthor); err != nil {
+		t.Fatalf("create other author: %v", err)
+	}
+	otherBook := newBook("hc:other", "Other Book", otherAuthor.ID)
+	if err := books.Create(ctx, otherBook); err != nil {
+		t.Fatalf("create other book: %v", err)
+	}
+
+	got, err := books.ListBookIdentifiersByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatalf("list identifiers by author: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("identifier groups = %+v, want two books", got)
+	}
+	for _, book := range []*models.Book{first, second} {
+		if len(got[book.ID]) != 2 {
+			t.Errorf("identifiers for %q = %+v, want primary plus alias", book.Title, got[book.ID])
+		}
+	}
+	if _, ok := got[otherBook.ID]; ok {
+		t.Errorf("other author's identifiers leaked into result: %+v", got[otherBook.ID])
+	}
+
+	empty, err := books.ListBookIdentifiersByAuthor(ctx, author.ID+999)
+	if err != nil {
+		t.Fatalf("list missing author identifiers: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("missing author identifiers = %+v, want empty map", empty)
+	}
+}
+
 // TestBookIdentifiers_DeletingABookClearsItsIdentifiers: the FK cascade is what
 // stops a dead id permanently blocking the same book being re-added, which is
 // the failure migration 068 had to repair for authors.

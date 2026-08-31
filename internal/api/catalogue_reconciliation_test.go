@@ -275,6 +275,54 @@ func TestPreviewCatalogueReconciliation_PartialProviderNeverUsesAbsence(t *testi
 	}
 }
 
+func TestPreviewCatalogueReconciliation_RejectedEmptyIDDoesNotMatchLocalBook(t *testing.T) {
+	provider := &partialSnapshotProvider{
+		stubMetaProvider: stubMetaProvider{name: "hardcover", works: []models.Book{
+			{ForeignID: "", Title: "Rejected Provider Work", Language: "spa", MetadataProvider: "hardcover"},
+		}},
+		complete: false,
+	}
+	f := newReconciliationFixture(t, provider)
+	local := f.createBook(t, "", "Unrelated Local Book", "hardcover", models.BookStatusWanted)
+
+	got, err := f.handler.buildCatalogueReconciliation(context.Background(), f.author)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Candidates) != 0 {
+		t.Fatalf("candidates = %+v, want empty-id local book protected by partial snapshot", got.Candidates)
+	}
+	if got.Summary.Kept != 1 || got.Summary.Indeterminate != 1 {
+		t.Fatalf("summary = %+v, want unrelated local book kept as indeterminate", got.Summary)
+	}
+	if book, err := f.books.GetByID(context.Background(), local.ID); err != nil || book == nil {
+		t.Fatalf("local book missing after preview: book=%+v err=%v", book, err)
+	}
+}
+
+func TestPreviewCatalogueReconciliation_AcceptedEmptyIDDoesNotKeepLocalBook(t *testing.T) {
+	provider := &partialSnapshotProvider{
+		stubMetaProvider: stubMetaProvider{name: "hardcover", works: []models.Book{
+			{ForeignID: "", Title: "Accepted Provider Work", Language: "eng", MetadataProvider: "hardcover"},
+		}},
+		complete: true,
+	}
+	f := newReconciliationFixture(t, provider)
+	local := f.createBook(t, "", "Unrelated Local Book", "hardcover", models.BookStatusWanted)
+
+	got, err := f.handler.buildCatalogueReconciliation(context.Background(), f.author)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Candidates) != 1 || got.Candidates[0].BookID != local.ID ||
+		got.Candidates[0].Reason != reconcileReasonNotInCatalogue {
+		t.Fatalf("candidates = %+v, want unrelated local book missing from current catalogue", got.Candidates)
+	}
+	if got.Summary.Kept != 0 {
+		t.Fatalf("kept = %d, want 0", got.Summary.Kept)
+	}
+}
+
 func TestPreviewCatalogueReconciliation_InvalidID(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h := &AuthorHandler{}
@@ -380,12 +428,12 @@ func TestCatalogueReconciliation_ReportsDependencyAndStorageErrors(t *testing.T)
 
 	t.Run("identifier query failure", func(t *testing.T) {
 		f := newReconciliationFixture(t, &stubMetaProvider{name: "hardcover"})
-		book := f.createBook(t, "hc:gone", "Gone", "hardcover", models.BookStatusWanted)
+		f.createBook(t, "hc:gone", "Gone", "hardcover", models.BookStatusWanted)
 		if _, err := f.database.ExecContext(context.Background(), "DROP TABLE book_identifiers"); err != nil {
 			t.Fatal(err)
 		}
 		_, err := f.handler.buildCatalogueReconciliation(context.Background(), f.author)
-		if err == nil || !strings.Contains(err.Error(), "list identifiers for book "+strconv.FormatInt(book.ID, 10)) {
+		if err == nil || !strings.Contains(err.Error(), "list identifiers for author "+strconv.FormatInt(f.author.ID, 10)) {
 			t.Fatalf("error = %v, want identifier context", err)
 		}
 	})

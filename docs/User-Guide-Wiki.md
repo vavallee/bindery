@@ -372,7 +372,10 @@ another active status, and any row with `filePath`, `ebookFilePath`,
 are deleted. Apply fetches the provider again and rechecks the database
 safeguards, so a row that gained a file or changed status after preview is
 skipped. If the provider returns a partial catalogue, missing works are kept
-rather than guessed stale.
+rather than guessed stale. OpenLibrary's `searchAuthorWorks` lookup currently
+requests at most 200 works (`limit=200`), so authors with more than 200 works
+remain marked partial: the warning may stay visible, and reconciliation will
+not remove their `not_in_current_catalogue` rows.
 
 ## What Bindery deliberately does not do
 

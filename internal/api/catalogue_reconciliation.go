@@ -267,15 +267,21 @@ func (h *AuthorHandler) buildCatalogueReconciliation(ctx context.Context, author
 	for _, work := range works {
 		reason, indeterminate := reconciliationRejectReason(work, normalizedAuthor, profile, editions[work.ForeignID])
 		if reason == "" {
-			acceptedIDs[work.ForeignID] = struct{}{}
+			if strings.TrimSpace(work.ForeignID) != "" {
+				acceptedIDs[work.ForeignID] = struct{}{}
+			}
 			acceptedTitles.Add(work.Title, struct{}{})
 			if indeterminate {
-				indeterminateIDs[work.ForeignID] = struct{}{}
+				if strings.TrimSpace(work.ForeignID) != "" {
+					indeterminateIDs[work.ForeignID] = struct{}{}
+				}
 				indeterminateTitles.Add(work.Title, struct{}{})
 			}
 			continue
 		}
-		rejectedIDs[work.ForeignID] = reason
+		if strings.TrimSpace(work.ForeignID) != "" {
+			rejectedIDs[work.ForeignID] = reason
+		}
 		if key := indexer.CanonicalDedupKey(work.Title); key != "" {
 			rejectedTitles[key] = reason
 		}
@@ -284,6 +290,10 @@ func (h *AuthorHandler) buildCatalogueReconciliation(ctx context.Context, author
 	localBooks, err := h.books.ListByAuthorIncludingExcluded(ctx, author.ID)
 	if err != nil {
 		return CatalogueReconciliation{}, fmt.Errorf("list local author catalogue: %w", err)
+	}
+	identifiersByBookID, err := h.books.ListBookIdentifiersByAuthor(ctx, author.ID)
+	if err != nil {
+		return CatalogueReconciliation{}, fmt.Errorf("list identifiers for author %d: %w", author.ID, err)
 	}
 	result := CatalogueReconciliation{
 		AuthorID:         author.ID,
@@ -329,14 +339,15 @@ func (h *AuthorHandler) buildCatalogueReconciliation(ctx context.Context, author
 			continue
 		}
 
-		identifiers, err := h.books.ListBookIdentifiers(ctx, book.ID)
-		if err != nil {
-			return CatalogueReconciliation{}, fmt.Errorf("list identifiers for book %d: %w", book.ID, err)
-		}
+		identifiers := identifiersByBookID[book.ID]
 		ids := make([]string, 0, len(identifiers)+1)
-		ids = append(ids, book.ForeignID)
+		if strings.TrimSpace(book.ForeignID) != "" {
+			ids = append(ids, book.ForeignID)
+		}
 		for _, identifier := range identifiers {
-			ids = append(ids, identifier.ForeignID)
+			if strings.TrimSpace(identifier.ForeignID) != "" {
+				ids = append(ids, identifier.ForeignID)
+			}
 		}
 		if anyReconciliationIDAccepted(ids, acceptedIDs) {
 			result.Summary.Kept++
