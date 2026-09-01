@@ -55,6 +55,7 @@ export default function BooksPage() {
   const [bulkBusy, setBulkBusy] = useState(false)
   const [showAddBook, setShowAddBook] = useState(false)
   const selectAllRef = useRef<HTMLInputElement>(null)
+  const loadRequestRef = useRef(0)
 
   const monitoredParam = monitoredFilter === 'monitored' ? true : monitoredFilter === 'unmonitored' ? false : undefined
 
@@ -67,6 +68,7 @@ export default function BooksPage() {
   // and sort are all applied by the API so a library with >100 books is fully
   // reachable (issue #1010). load() refetches the current page after mutations.
   const load = useCallback(() => {
+    const request = ++loadRequestRef.current
     setLoading(true)
     api.listBooks({
       limit: pageSize,
@@ -76,9 +78,15 @@ export default function BooksPage() {
       mediaType: mediaFilter || undefined,
       monitored: monitoredParam,
       sort,
-    }).then(({ items, total }) => { setBooks(items); setTotal(total) })
+    }).then(({ items, total }) => {
+      if (request !== loadRequestRef.current) return
+      setBooks(items)
+      setTotal(total)
+    })
       .catch(console.error)
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (request === loadRequestRef.current) setLoading(false)
+      })
   }, [page, pageSize, debouncedSearch, statusFilter, mediaFilter, monitoredParam, sort])
 
   useEffect(() => { load() }, [load])
