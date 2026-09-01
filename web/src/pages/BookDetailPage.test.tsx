@@ -1072,7 +1072,7 @@ describe('BookDetailPage metadata source (#1707)', () => {
     expect(within(rows[1]).queryByText('Current')).not.toBeInTheDocument()
   })
 
-  it('shows trustworthy upstream links in an accessible hover and focus menu', async () => {
+  it('shows trustworthy upstream links in an operable disclosure', async () => {
     vi.mocked(api.getBook).mockResolvedValue(
       makeBook({
         foreignBookId: 'OL27448W',
@@ -1105,16 +1105,26 @@ describe('BookDetailPage metadata source (#1707)', () => {
     renderBookDetailPage()
 
     const trigger = await screen.findByRole('button', { name: 'Links' })
-    expect(trigger).toHaveAttribute('aria-haspopup', 'true')
+    expect(trigger).not.toHaveAttribute('aria-haspopup')
+    expect(trigger).toHaveAttribute('aria-controls')
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
     fireEvent.mouseEnter(trigger.parentElement!)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(trigger)
+    fireEvent.mouseLeave(trigger.parentElement!)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.mouseEnter(trigger.parentElement!)
+    fireEvent.click(trigger)
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
     fireEvent.mouseLeave(trigger.parentElement!)
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
     fireEvent.focus(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(trigger)
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
     const menu = screen.getByTestId('book-links-menu')
-    expect(menu.className).toContain('group-hover:visible')
+    expect(trigger).toHaveAttribute('aria-controls', menu.id)
+    expect(menu).not.toHaveAttribute('hidden')
     const links = within(menu).getAllByRole('link')
     expect(links).toHaveLength(3)
     expect(within(menu).getByRole('link', { name: /View on OpenLibrary/ })).toHaveAttribute(
@@ -1129,6 +1139,10 @@ describe('BookDetailPage metadata source (#1707)', () => {
     expect(dnb).toHaveAttribute('href', 'https://d-nb.info/1234567890')
     expect(dnb).toHaveAttribute('target', '_blank')
     expect(dnb).toHaveAttribute('rel', 'noopener noreferrer')
+    fireEvent.keyDown(dnb, { key: 'Escape' })
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(menu).toHaveAttribute('hidden')
+    expect(trigger).toHaveFocus()
   })
 
   it('hides the Links control when no trustworthy upstream URL exists', async () => {

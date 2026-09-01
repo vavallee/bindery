@@ -262,11 +262,12 @@ describe('AddBookModal — confirmation step (#1227)', () => {
     await screen.findByText('Dune')
     fireEvent.click(screen.getByRole('button', { name: 'Select Dune' }))
 
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Dune' })).toHaveFocus())
     const cover = screen.getByRole('img', { name: 'Dune cover' })
     expect(cover.className).toContain('w-28')
     expect(screen.getByText('9780441172719')).toBeInTheDocument()
     expect(screen.getByText('Show 2 more identifiers')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Links' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Links' }))
     const sourceLink = screen.getByRole('link', { name: 'View on OpenLibrary ↗' })
     expect(sourceLink).toHaveAttribute('href', 'https://openlibrary.org/works/OL1W')
     expect(sourceLink).toHaveAttribute('target', '_blank')

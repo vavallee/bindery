@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, Book } from '../api/client'
 import { resolveBookQuery } from '../api/booklookup'
@@ -20,8 +20,13 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
   const [addError, setAddError] = useState<string | null>(null)
   const [adding, setAdding] = useState<string | null>(null)
   const [searchOnAdd, setSearchOnAdd] = useState(true)
+  const confirmationHeadingRef = useRef<HTMLHeadingElement>(null)
   // '' = keep the provider's media type / the default.media_type setting.
   const [mediaType, setMediaType] = useState('')
+
+  useEffect(() => {
+    if (selectedBook) confirmationHeadingRef.current?.focus()
+  }, [selectedBook])
 
   const search = async () => {
     const q = query.trim()
@@ -178,7 +183,7 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
                 </div>
               )}
               <div className="min-w-0 flex-1">
-                <h4 className="font-semibold leading-snug break-words">{selectedBook.title}</h4>
+                <h4 ref={confirmationHeadingRef} tabIndex={-1} className="rounded-sm font-semibold leading-snug break-words focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">{selectedBook.title}</h4>
                 {selectedBook.author?.authorName && <p className="mt-1 text-sm text-fg-muted">{selectedBook.author.authorName}</p>}
                 <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
                   {selectedBook.releaseDate && <>

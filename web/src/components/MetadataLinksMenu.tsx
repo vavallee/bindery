@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { MetadataSourceLink } from '../util/metadataSource'
 
@@ -13,31 +13,45 @@ function ExternalLinkIcon({ className = '' }: { className?: string }) {
 export default function MetadataLinksMenu({ links }: { links: MetadataSourceLink[] }) {
   const { t } = useTranslation()
   const [hovered, setHovered] = useState(false)
-  const [focusWithin, setFocusWithin] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelId = useId()
+  const open = hovered || expanded
   if (links.length === 0) return null
 
   return (
     <div
-      className="group relative inline-flex"
+      className="relative inline-flex"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      onFocus={() => setFocusWithin(true)}
       onBlur={event => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node)) setFocusWithin(false)
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setExpanded(false)
+      }}
+      onKeyDown={event => {
+        if (event.key === 'Escape' && open) {
+          event.preventDefault()
+          setHovered(false)
+          setExpanded(false)
+          triggerRef.current?.focus()
+        }
       }}
     >
       <button
+        ref={triggerRef}
         type="button"
-        aria-haspopup="true"
-        aria-expanded={hovered || focusWithin}
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => setExpanded(value => !value)}
         className="inline-flex items-center gap-1 rounded border border-slate-300 dark:border-zinc-700 bg-slate-100 dark:bg-zinc-800 px-2 py-1 font-medium text-slate-600 dark:text-zinc-300 hover:border-slate-400 dark:hover:border-zinc-600 hover:text-slate-900 dark:hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
       >
         <ExternalLinkIcon className="w-3.5 h-3.5" />
         {t('common.links')}
       </button>
       <div
+        id={panelId}
         data-testid="book-links-menu"
-        className="pointer-events-none invisible absolute left-0 top-full z-20 min-w-40 pt-1 opacity-0 transition-opacity duration-150 motion-reduce:transition-none group-hover:pointer-events-auto group-hover:visible group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:visible group-focus-within:opacity-100"
+        hidden={!open}
+        className="absolute left-0 top-full z-20 min-w-40 pt-1"
       >
         <div className="overflow-hidden rounded-md border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 py-1 shadow-lg">
           {links.map(link => (
