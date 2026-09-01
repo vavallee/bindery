@@ -351,7 +351,7 @@ Which of those a given book actually came from is on the book page, under
 **Metadata source**. It names the provider, shows the identifier the book is
 bound to with a copy button, and lists any other provider ids the same book is
 known by. That is the thing to check before deciding a book needs re-binding,
-and the id is what to quote in a bug report. Hover or focus **Links** while
+and the id is what to quote in a bug report. Hover or activate **Links** while
 confirming an Add Book result or in the book header to open trustworthy
 upstream pages for OpenLibrary, Google Books, Hardcover, and DNB records.
 Calibre and Audiobookshelf ids remain visible only under **Metadata source**

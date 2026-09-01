@@ -1,6 +1,7 @@
 {
   "common": {
     "loading": "Cargando...",
+    "viewOnSource": "Ver en {{source}} ↗",
     "links": "Enlaces",
     "cancel": "Cancelar",
     "delete": "Eliminar",

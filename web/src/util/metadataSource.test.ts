@@ -27,19 +27,28 @@ describe('metadataSourceLink', () => {
     expect(metadataSourceLink('gb:zyTCAlFPjgYC', 'author')).toBeNull()
   })
 
-  it('links Hardcover book slugs and numeric ids', () => {
+  it('links unambiguous Hardcover book slugs', () => {
     expect(metadataSourceLink('hc:project-hail-mary', 'book')).toEqual({
       url: 'https://hardcover.app/books/project-hail-mary',
       label: 'Hardcover',
     })
-    expect(metadataSourceLink('hc:12345', 'book')).toEqual({
-      url: 'https://hardcover.app/book/12345',
+    expect(metadataSourceLink('HC:project-hail-mary', 'book')).toEqual({
+      url: 'https://hardcover.app/books/project-hail-mary',
       label: 'Hardcover',
     })
   })
 
+  it('hides ambiguous numeric Hardcover identifiers', () => {
+    expect(metadataSourceLink('hc:1984', 'book')).toBeNull()
+    expect(metadataSourceLink('hc:12345', 'book')).toBeNull()
+  })
+
   it('links DNB book control numbers', () => {
     expect(metadataSourceLink('dnb:123456789', 'book')).toEqual({
+      url: 'https://d-nb.info/123456789',
+      label: 'DNB',
+    })
+    expect(metadataSourceLink('DNB:123456789', 'book')).toEqual({
       url: 'https://d-nb.info/123456789',
       label: 'DNB',
     })

@@ -15,29 +15,31 @@ export function metadataSourceLink(
 ): MetadataSourceLink | null {
   const id = (foreignId ?? '').trim()
   if (!id) return null
+  const lowerID = id.toLowerCase()
 
-  if (id.startsWith('gb:')) {
+  if (lowerID.startsWith('gb:')) {
     const vol = id.slice(3).trim()
     // Google Books has no canonical author page; only books map cleanly.
     if (kind !== 'book' || !vol) return null
     return { url: `https://books.google.com/books?id=${encodeURIComponent(vol)}`, label: 'Google Books' }
   }
 
-  if (kind === 'book' && id.startsWith('hc:')) {
+  if (kind === 'book' && lowerID.startsWith('hc:')) {
     const value = id.slice(3).trim()
-    if (!/^[a-z0-9][a-z0-9-]*$/i.test(value)) return null
-    const path = /^\d+$/.test(value) ? `book/${value}` : `books/${encodeURIComponent(value)}`
-    return { url: `https://hardcover.app/${path}`, label: 'Hardcover' }
+    // Numeric values are ambiguous: Hardcover permits numeric slugs and also
+    // uses numeric database ids as a fallback when a book has no slug.
+    if (!/^[a-z0-9][a-z0-9-]*$/i.test(value) || /^\d+$/.test(value)) return null
+    return { url: `https://hardcover.app/books/${encodeURIComponent(value)}`, label: 'Hardcover' }
   }
 
-  if (kind === 'book' && id.startsWith('dnb:')) {
+  if (kind === 'book' && lowerID.startsWith('dnb:')) {
     const controlNumber = id.slice(4).trim()
     if (!/^\d+$/.test(controlNumber)) return null
     return { url: `https://d-nb.info/${controlNumber}`, label: 'DNB' }
   }
 
   // No reliable public URL for these providers.
-  if (id.startsWith('hc:') || id.startsWith('dnb:') || id.startsWith('abs:') || id.startsWith('calibre:')) {
+  if (lowerID.startsWith('hc:') || lowerID.startsWith('dnb:') || lowerID.startsWith('abs:') || lowerID.startsWith('calibre:')) {
     return null
   }
 

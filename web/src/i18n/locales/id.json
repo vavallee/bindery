@@ -1,6 +1,7 @@
 {
   "common": {
     "loading": "Memuat...",
+    "viewOnSource": "Lihat di {{source}} ↗",
     "links": "Tautan",
     "cancel": "Batal",
     "delete": "Hapus",
