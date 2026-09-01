@@ -1,6 +1,7 @@
 {
   "common": {
     "loading": "Naglo-load...",
+    "viewOnSource": "Tingnan sa {{source}} ↗",
     "links": "Mga link",
     "cancel": "Kanselahin",
     "delete": "Tanggalin",

@@ -1061,7 +1061,7 @@ describe('BookDetailPage metadata source (#1707)', () => {
     )
   })
 
-  it('links a Hardcover numeric id through its stable redirect route', async () => {
+  it('keeps an ambiguous numeric Hardcover id visible without linking it', async () => {
     vi.mocked(api.getBook).mockResolvedValue(
       makeBook({ foreignBookId: 'hc:12345', metadataProvider: 'hardcover' }),
     )
@@ -1069,10 +1069,7 @@ describe('BookDetailPage metadata source (#1707)', () => {
 
     const list = await screen.findByTestId('metadata-source-list')
     expect(within(list).getByText('hc:12345')).toBeInTheDocument()
-    expect(within(list).getByRole('link', { name: /View on Hardcover/ })).toHaveAttribute(
-      'href',
-      'https://hardcover.app/book/12345',
-    )
+    expect(screen.queryByRole('button', { name: 'Links' })).not.toBeInTheDocument()
   })
 
   // The identity map from #1705 is what makes "which record am I looking at"
