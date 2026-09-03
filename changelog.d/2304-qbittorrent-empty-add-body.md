@@ -1,2 +1,0 @@
-### Fixed
-- **qBittorrent-API download clients that return an empty add response are no longer treated as failures** (#2304) — rdt-client and other emulators answer `POST /torrents/add` with HTTP 200 and no body, where qBittorrent itself writes `Ok.`. Bindery read the empty body as a rejection and marked every grab failed with `add torrent failed:` and no message, while the torrent was in fact accepted, downloaded to completion, and then sat there unimported. An empty body on a 200 is now an accept; a non-empty rejection body such as `Fails.` still fails the grab.
