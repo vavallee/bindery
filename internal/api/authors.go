@@ -2766,7 +2766,7 @@ func runBookSearches(ctx context.Context, searcher BookSearcher, books []models.
 	// once as slots free up (#1515); shares the package pace with the bulk
 	// "search all" and series-fill fan-outs.
 	concurrency.RunBoundedPaced(ctx, books, maxConcurrent, searchPaceInterval, func(ctx context.Context, book models.Book) {
-		searcher.SearchAndGrabBook(ctx, book)
+		searcher.SearchAndGrabBook(indexer.WithSearchOrigin(ctx, indexer.OriginAuthor), book)
 	})
 }
 
@@ -3365,7 +3365,7 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	// context so the search goroutine is cancelled on shutdown rather than
 	// running against context.Background(). See #846.
 	if req.SearchOnAdd && h.searcher != nil {
-		go h.searcher.SearchAndGrabBook(h.bgCtx(), *book) // #nosec G118 -- intentional: search must outlive the request
+		go h.searcher.SearchAndGrabBook(indexer.WithSearchOrigin(h.bgCtx(), indexer.OriginAuthor), *book) // #nosec G118 -- intentional: search must outlive the request
 	}
 
 	writeJSON(w, http.StatusCreated, book)

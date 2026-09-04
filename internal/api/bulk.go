@@ -11,6 +11,7 @@ import (
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -372,7 +373,7 @@ func (h *BulkHandler) fanOutSearches(books []models.Book) {
 	}
 	bgCtx := h.bgCtx()
 	go concurrency.RunBoundedPaced(bgCtx, books, bulkSearchConcurrency, searchPaceInterval, func(ctx context.Context, b models.Book) {
-		h.searcher.SearchAndGrabBook(ctx, b)
+		h.searcher.SearchAndGrabBook(indexer.WithSearchOrigin(ctx, indexer.OriginBulk), b)
 	})
 }
 

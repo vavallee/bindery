@@ -690,15 +690,40 @@ func freeleechOnlyIndexerIDs(idxs []models.Indexer) map[int64]bool {
 // searchAndGrabFormat searches for and grabs a specific format of a book.
 // mediaType must be MediaTypeEbook or MediaTypeAudiobook.
 func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, mediaType string) {
+	// #2154: a search that found nothing used to log nothing at all, so "the
+	// sweep never ran" and "the sweep ran and found nothing" were
+	// indistinguishable from the outside. Every return path below now leaves
+	// exactly one INFO line. The counters are filled in as the search
+	// progresses, so a path that returns early leaves them at zero, which is
+	// the honest reading of how far it got.
+	started := time.Now()
+	outcome := "aborted"
+	var indexerCount, rawResults, afterFilters, approved int
+	defer func() {
+		slog.Info("book search finished",
+			"origin", string(indexer.SearchOriginFrom(ctx)),
+			"book", book.Title,
+			"book_id", book.ID,
+			"format", mediaType,
+			"indexers", indexerCount,
+			"raw_results", rawResults,
+			"after_filters", afterFilters,
+			"approved", approved,
+			"outcome", outcome,
+			"elapsed_ms", time.Since(started).Milliseconds())
+	}()
+
 	var idxs []models.Indexer
 	if s.indexers != nil {
 		var err error
 		idxs, err = s.indexers.List(ctx)
 		if err != nil {
 			slog.Error("SearchAndGrabBook: failed to list indexers", "error", err)
+			outcome = "indexer list failed"
 			return
 		}
 	}
+	indexerCount = len(idxs)
 
 	lang := ""
 	if s.settings != nil {
@@ -749,6 +774,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	}
 
 	results, outcomes := s.searchBookWithOutcomes(ctx, idxs, crit)
+	rawResults = len(results)
 	// An indexer that failed contributed zero results and is otherwise
 	// indistinguishable from one that answered with nothing, so a grab decided
 	// on a shrunken pool used to leave no trace at all. Recording only: what
@@ -774,6 +800,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	} else {
 		results = indexer.FilterByLanguage(results, lang)
 	}
+	afterFilters = len(results)
 
 	var specs []decision.Specification
 	if s.blocklist != nil {
@@ -857,13 +884,20 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		// Re-evaluate any existing pending releases for this book/format with the current age.
 		best = s.checkPendingReleases(ctx, book, mediaType, dm)
 		if best == nil {
+			if rawResults == 0 {
+				outcome = "no results"
+			} else {
+				outcome = "nothing approved"
+			}
 			return
 		}
 	}
+	approved = 1
 
 	candidates, err := s.clients.GetEnabledByProtocol(ctx, best.Protocol)
 	if err != nil {
 		slog.Error("SearchAndGrabBook: failed to list download clients", "protocol", best.Protocol, "error", err)
+		outcome = "download client lookup failed"
 		return
 	}
 	client := db.PickClientForMediaType(candidates, mediaType)
@@ -872,7 +906,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	// as a torrent, and report "hash could not be determined"), and vice versa.
 	if client == nil {
 		slog.Warn("SearchAndGrabBook: no enabled download client for protocol", "book", book.Title, "protocol", best.Protocol)
-
+		outcome = "no download client for protocol"
 		return
 	}
 
@@ -890,9 +924,11 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	existing, err := s.downloads.GetByGUID(ctx, best.GUID)
 	if err != nil {
 		slog.Warn("failed to check existing download", "guid", best.GUID, "error", err)
+		outcome = "duplicate check failed"
 		return
 	}
 	if existing != nil {
+		outcome = "already grabbed"
 		return
 	}
 
@@ -912,6 +948,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 
 	if err := s.downloads.Create(ctx, dl); err != nil {
 		slog.Error("SearchAndGrabBook: failed to create download record", "error", err)
+		outcome = "download record failed"
 		return
 	}
 
@@ -926,6 +963,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		if setErr := s.downloads.SetError(ctx, dl.ID, err.Error()); setErr != nil {
 			slog.Warn("failed to persist download error", "download_id", dl.ID, "error", setErr)
 		}
+		outcome = "send to downloader failed"
 		return
 	}
 	if sendRes.RemoteID != "" {
@@ -943,6 +981,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	if err := s.downloads.UpdateStatus(ctx, dl.ID, models.StateDownloading); err != nil {
 		slog.Warn("failed to update download status", "download_id", dl.ID, "status", models.StateDownloading, "error", err)
 	}
+	outcome = "grabbed"
 	slog.Info("sent to downloader", "client", client.Type, "title", best.Title)
 	// Record history for the auto-grab. Without this the History tab is
 	// empty for every scheduler-initiated grab (manual grabs via the queue
@@ -1088,7 +1127,7 @@ func (s *Scheduler) searchWanted() {
 		return
 	}
 	concurrency.RunBoundedPaced(ctx, searchQueue, scheduledWantedSearchConcurrency, searchPaceInterval, func(ctx context.Context, book models.Book) {
-		s.SearchAndGrabBook(ctx, book)
+		s.SearchAndGrabBook(indexer.WithSearchOrigin(ctx, indexer.OriginScheduled), book)
 	})
 }
 
@@ -1357,7 +1396,7 @@ func (s *Scheduler) handleStalledDownload(ctx context.Context, dl *models.Downlo
 	s.bgWg.Add(1)
 	go func() {
 		defer s.bgWg.Done()
-		s.SearchAndGrabBook(ctx, *book)
+		s.SearchAndGrabBook(indexer.WithSearchOrigin(ctx, indexer.OriginRequeue), *book)
 	}()
 }
 

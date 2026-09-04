@@ -19,6 +19,7 @@ import (
 	"github.com/vavallee/bindery/internal/bookhydrate"
 	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/seriesmatch"
@@ -555,7 +556,7 @@ func (h *SeriesHandler) fanOutSeriesSearches(ctx context.Context, books []models
 	// there is nothing on the request ctx that the search needs.
 	bgCtx := h.bgCtx()
 	go concurrency.RunBoundedPaced(bgCtx, books, seriesFillSearchConcurrency, searchPaceInterval, func(ctx context.Context, b models.Book) {
-		h.searcher.SearchAndGrabBook(ctx, b)
+		h.searcher.SearchAndGrabBook(indexer.WithSearchOrigin(ctx, indexer.OriginSeriesFill), b)
 	})
 }
 

@@ -1,0 +1,2 @@
+### Added
+- **Every automatic search now logs when it finishes** (#2154) — a scheduled sweep, a bulk search or a series fill that found nothing used to log nothing at all, so "the search never ran" and "the search ran and found nothing" looked identical from the log. Each one now emits a single INFO line naming what started it, the book and format, how many indexers were queried, how many results came back, how many survived filtering, and how long it took. Thanks to SturmB for the report.
