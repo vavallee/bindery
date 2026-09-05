@@ -264,7 +264,24 @@ func matchHardcoverCatalogBook(item NormalizedLibraryItem, sequence string, book
 		if sequence != "" && !positionMatched {
 			continue
 		}
-		score := shelfarrTitleScore(item.Title, firstNonEmpty(book.Title, book.Book.Title))
+		candidateTitle := firstNonEmpty(book.Title, book.Book.Title)
+		// With no sequence there is no position filter, so every volume in the
+		// catalog is scored against the item title and the volume numbers are
+		// the only thing separating them (#2347). The 88 threshold below sits
+		// under the 93-100 band that sibling volumes of one series score
+		// against each other, so all of them clear it, and PartialRatio hands
+		// "X Vol. 13" a perfect 100 against "X Vol. 1". The matches==1 tie
+		// guard at the bottom does not catch that: the wrong volume wins
+		// outright rather than tying.
+		//
+		// Only on the no-sequence path. When a sequence is present the
+		// position filter has already narrowed the candidates on harder
+		// evidence, and vetoing there would drop a legitimate match whose
+		// catalog title spells a different volume marker than the item does.
+		if sequence == "" && seriesmatch.DifferentVolumes(item.Title, candidateTitle) {
+			continue
+		}
+		score := shelfarrTitleScore(item.Title, candidateTitle)
 		threshold := 88
 		if positionMatched {
 			threshold = 70
