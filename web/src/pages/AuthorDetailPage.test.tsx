@@ -334,6 +334,23 @@ describe('AuthorDetailPage', () => {
     }))
   })
 
+  it('shows find-better metadata for linked authors with a full record, not just sparse ones', async () => {
+    renderAuthorDetailPage([], 'grid', {
+      foreignAuthorId: 'OL13200512A',
+      authorName: 'Emilia Jae',
+      sortName: 'Jae, Emilia',
+      metadataProvider: 'openlibrary',
+      description: 'Fantasy author of the Shades of Magic series.',
+      imageUrl: 'https://example.com/emilia.jpg',
+      disambiguation: 'Fantasy author, not the botanist',
+      ratingsCount: 128,
+      averageRating: 4.4,
+    })
+
+    fireEvent.click(await screen.findByRole('button', { name: /More/ }))
+    expect(await screen.findByRole('menuitem', { name: 'Find better metadata' })).toBeInTheDocument()
+  })
+
   it('opens link metadata from the query string once and removes the trigger param', async () => {
     const locations: string[] = []
     renderAuthorDetailPage([], 'grid', {
