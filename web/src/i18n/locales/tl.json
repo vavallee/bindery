@@ -145,8 +145,6 @@
     "mediaBoth": "📖🎧 Pareho",
     "deleteConfirm": "Tanggalin ang {{count}} (na) libro?",
     "statusWanted": "Hinahangad",
-    "statusDownloading": "Dina-download",
-    "statusDownloaded": "Na-download",
     "statusImported": "Nasa Library",
     "statusSkipped": "Nilaktawan",
     "audioLabel": "🎧 Audio",
@@ -612,8 +610,6 @@
     "deleteBookConfirm": "Delete book + files",
     "status": {
       "wanted": "Wanted",
-      "downloading": "Downloading",
-      "downloaded": "Downloaded",
       "imported": "Imported",
       "skipped": "Skipped"
     },

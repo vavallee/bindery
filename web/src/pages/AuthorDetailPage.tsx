@@ -27,20 +27,18 @@ type MediaFilter = '' | 'ebook' | 'audiobook'
 // is a status like any other from the user's point of view, and as a checkbox
 // sitting outside the chip groups it read as belonging to whichever group it
 // happened to wrap next to.
-type StatusFilter = '' | 'wanted' | 'downloading' | 'downloaded' | 'imported' | 'skipped' | 'excluded'
+type StatusFilter = '' | 'wanted' | 'imported' | 'skipped' | 'excluded'
 type PublishedFilter = '' | 'released' | 'upcoming'
 type DateSort = 'none' | 'asc' | 'desc'
 
 const STATUS_FILTERS: readonly StatusFilter[] = [
-  '', 'wanted', 'downloading', 'downloaded', 'imported', 'skipped', 'excluded',
+  '', 'wanted', 'imported', 'skipped', 'excluded',
 ] as const
 
 // English fallbacks for the status options, used as t()'s default value so a
 // locale missing these keys still renders words rather than key names.
 const STATUS_FALLBACK: Record<Exclude<StatusFilter, ''>, string> = {
   wanted: 'Wanted',
-  downloading: 'Downloading',
-  downloaded: 'Downloaded',
   imported: 'Imported',
   skipped: 'Skipped',
   excluded: 'Excluded',
@@ -941,8 +939,8 @@ export default function AuthorDetailPage() {
         {/* Three selects on one line, replacing three labelled chip groups
             totalling ten buttons plus an ml-auto "Select all" that wrapped to a
             second row and read as if it belonged to the Published group. The
-            selects also expose `downloading` and `skipped`, which have been in
-            StatusFilter all along but were never offered. */}
+            selects also expose `skipped`, which has been in StatusFilter all
+            along but was never offered. */}
         {books.length > 0 && (
           <div className="flex flex-wrap items-center gap-3 mb-4">
             <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-zinc-500">

@@ -197,8 +197,6 @@
     "mediaBoth": "📖🎧 둘 다",
     "deleteConfirm": "도서 {{count}}권을 삭제하시겠습니까?",
     "statusWanted": "찾는 중",
-    "statusDownloading": "다운로드 중",
-    "statusDownloaded": "다운로드 완료",
     "statusImported": "라이브러리에 있음",
     "statusSkipped": "건너뜀",
     "audioLabel": "🎧 오디오",
@@ -875,8 +873,6 @@
   },
   "bookStatus": {
     "wanted": "찾는 중",
-    "downloading": "다운로드 중",
-    "downloaded": "다운로드됨",
     "imported": "가져옴",
     "skipped": "건너뜀",
     "notMonitored": "모니터링 안 함"
@@ -940,8 +936,6 @@
     "deleteBookConfirm": "도서 + 파일 삭제",
     "status": {
       "wanted": "찾는 중",
-      "downloading": "다운로드 중",
-      "downloaded": "다운로드됨",
       "imported": "가져옴",
       "skipped": "건너뜀"
     },

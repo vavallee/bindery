@@ -557,7 +557,7 @@ describe('BookDetailPage — search', () => {
     let resolveGrab: (download: Download) => void = () => {}
     vi.mocked(api.getBook)
       .mockResolvedValueOnce(makeBook())
-      .mockResolvedValueOnce(makeBook({ status: 'downloading' }))
+      .mockResolvedValueOnce(makeBook({ status: 'wanted' }))
     vi.mocked(api.listHistory)
       .mockResolvedValueOnce({ items: [], total: 0, limit: 100, offset: 0 })
       .mockResolvedValueOnce({ items: [makeHistory({ sourceTitle: 'Grab refreshed history' })], total: 1, limit: 100, offset: 0 })
@@ -843,55 +843,13 @@ describe('BookDetailPage — danger zone', () => {
   })
 })
 
-describe('BookDetailPage — live import polling (#1161)', () => {
-  it('refreshes the book and surfaces the file when an import completes, without a reload', async () => {
-    vi.useFakeTimers()
-    try {
-      const downloading = makeBook({ status: 'downloading', mediaType: 'audiobook', audiobookFilePath: '' })
-      const imported = makeBook({ status: 'imported', mediaType: 'audiobook', audiobookFilePath: '/lib/leviathan.m4b' })
-      vi.mocked(api.getBook).mockResolvedValueOnce(downloading).mockResolvedValue(imported)
-
-      renderBookDetailPage()
-
-      // Initial load: downloading, no file on disk yet.
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(0)
-      })
-      expect(vi.mocked(api.getBook).mock.calls.length).toBe(1)
-      expect(screen.queryByText('/lib/leviathan.m4b')).not.toBeInTheDocument()
-
-      // The background import finishes; the 5s poll picks it up live.
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(5000)
-      })
-      expect(vi.mocked(api.getBook).mock.calls.length).toBeGreaterThan(1)
-      expect(screen.getByText('/lib/leviathan.m4b')).toBeInTheDocument()
-
-      // Once the book settles (imported), polling stops — no further fetches.
-      const settledCalls = vi.mocked(api.getBook).mock.calls.length
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(15000)
-      })
-      expect(vi.mocked(api.getBook).mock.calls.length).toBe(settledCalls)
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('does not poll a settled (wanted) book', async () => {
-    vi.useFakeTimers()
-    try {
-      vi.mocked(api.getBook).mockResolvedValue(makeBook({ status: 'wanted' }))
-      renderBookDetailPage()
-      await vi.advanceTimersByTimeAsync(0)
-      const initial = vi.mocked(api.getBook).mock.calls.length
-      await vi.advanceTimersByTimeAsync(15000)
-      expect(vi.mocked(api.getBook).mock.calls.length).toBe(initial)
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-})
+// The #1161 live import poll used to sit here: a 5s interval on the book
+// detail page, armed while book.status was 'downloading' or 'downloaded'.
+// Those statuses were removed in #2374 because nothing in Bindery ever wrote
+// them, which means the poll never armed on a real install and these tests
+// passed only on a mocked status the server could not produce. The effect and
+// its tests are gone; re-adding live refresh needs a signal that actually
+// exists, such as an open queue row for the book.
 
 // Regression guard for the File card's two-column grid.
 //

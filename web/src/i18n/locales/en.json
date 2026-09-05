@@ -290,8 +290,6 @@
       "released": "Released",
       "upcoming": "Upcoming",
       "status_wanted": "Wanted",
-      "status_downloading": "Downloading",
-      "status_downloaded": "Downloaded",
       "status_imported": "Imported",
       "status_skipped": "Skipped",
       "status_excluded": "Excluded"
@@ -364,8 +362,6 @@
     "mediaBoth": "📖🎧 Both",
     "deleteConfirm": "Delete {{count}} book(s)?",
     "statusWanted": "Wanted",
-    "statusDownloading": "Downloading",
-    "statusDownloaded": "Downloaded",
     "statusImported": "In Library",
     "statusSkipped": "Skipped",
     "audioLabel": "🎧 Audio",
@@ -1205,8 +1201,6 @@
   },
   "bookStatus": {
     "wanted": "Wanted",
-    "downloading": "Downloading",
-    "downloaded": "Downloaded",
     "imported": "Imported",
     "skipped": "Skipped",
     "notMonitored": "Not monitored"
@@ -1332,8 +1326,6 @@
     "deleteBookConfirm": "Delete book + files",
     "status": {
       "wanted": "Wanted",
-      "downloading": "Downloading",
-      "downloaded": "Downloaded",
       "imported": "Imported",
       "skipped": "Skipped"
     },

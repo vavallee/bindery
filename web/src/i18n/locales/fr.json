@@ -126,8 +126,6 @@
     "download": "Télécharger",
     "deleteConfirm": "Supprimer {{count}} livre(s) ?",
     "statusWanted": "Recherché",
-    "statusDownloading": "Téléchargement",
-    "statusDownloaded": "Téléchargé",
     "statusImported": "En bibliothèque",
     "statusSkipped": "Ignoré",
     "audioLabel": "🎧 Audio",
@@ -588,8 +586,6 @@
     "deleteBookConfirm": "Delete book + files",
     "status": {
       "wanted": "Wanted",
-      "downloading": "Downloading",
-      "downloaded": "Downloaded",
       "imported": "Imported",
       "skipped": "Skipped"
     },

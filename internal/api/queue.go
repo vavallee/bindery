@@ -1142,11 +1142,18 @@ func (o queueRemoveOptions) validate() error {
 
 // removeQueueItem removes one download from the local DB, and from its client
 // unless opts.RemoveFromClient is false. The downloaded data stays on disk
-// unless opts.DeleteFiles is set. A downloading/downloaded book is reset to
-// wanted so it doesn't look stuck. When opts.UnmonitorBook is true the linked
+// unless opts.DeleteFiles is set. When opts.UnmonitorBook is true the linked
 // book is also unmonitored, so the scheduler's wanted-search loop won't
-// immediately re-grab it — the key to making a bulk "clear the queue" actually
+// immediately re-grab it, the key to making a bulk "clear the queue" actually
 // stick after an accidental mass import (#Daize).
+//
+// The book's status is deliberately not touched. It never encoded the download
+// at all: a book with a grab in flight is still 'wanted' and monitored, and an
+// already-imported one is 'imported' because a file is on disk, so there is no
+// stuck state here to reset. Dropping the queue row therefore leaves exactly
+// the state the next wanted sweep should act on, and the only thing a user can
+// ask to change is the monitored flag (#2374). Pinned by
+// TestRemoveQueueItemLeavesBookState.
 //
 // Everything other than the client call runs either way: the point of
 // RemoveFromClient=false is to forget the download, not to pretend it never
@@ -1163,24 +1170,18 @@ func (h *QueueHandler) removeQueueItem(ctx context.Context, target *models.Downl
 		}
 	}
 
-	if target.BookID != nil {
+	// Unmonitoring is the only reason to touch the book, so the load happens
+	// only when it was asked for. A bulk clear fans out six at a time against a
+	// single-connection pool, and a read per item that can never write is pure
+	// contention.
+	if opts.UnmonitorBook && target.BookID != nil {
 		book, err := h.books.GetByID(ctx, *target.BookID)
 		if err != nil {
 			slog.Warn("failed to load book for download delete", "download_id", target.ID, "book_id", *target.BookID, "error", err)
-		} else if book != nil {
-			changed := false
-			if book.Status == models.BookStatusDownloading || book.Status == models.BookStatusDownloaded {
-				book.Status = models.BookStatusWanted
-				changed = true
-			}
-			if opts.UnmonitorBook && book.Monitored {
-				book.Monitored = false
-				changed = true
-			}
-			if changed {
-				if err := h.books.Update(ctx, book); err != nil {
-					slog.Warn("failed to update book after download delete", "download_id", target.ID, "book_id", book.ID, "error", err)
-				}
+		} else if book != nil && book.Monitored {
+			book.Monitored = false
+			if err := h.books.Update(ctx, book); err != nil {
+				slog.Warn("failed to update book after download delete", "download_id", target.ID, "book_id", book.ID, "error", err)
 			}
 		}
 	}

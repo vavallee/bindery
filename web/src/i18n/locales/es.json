@@ -145,8 +145,6 @@
     "mediaBoth": "📖🎧 Ambos",
     "deleteConfirm": "¿Eliminar {{count}} libro(s)?",
     "statusWanted": "Buscado",
-    "statusDownloading": "Descargando",
-    "statusDownloaded": "Descargado",
     "statusImported": "En biblioteca",
     "statusSkipped": "Omitido",
     "audioLabel": "🎧 Audio",
@@ -618,8 +616,6 @@
     "deleteBookConfirm": "Delete book + files",
     "status": {
       "wanted": "Wanted",
-      "downloading": "Downloading",
-      "downloaded": "Downloaded",
       "imported": "Imported",
       "skipped": "Skipped"
     },

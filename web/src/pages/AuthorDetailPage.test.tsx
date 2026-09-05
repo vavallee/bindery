@@ -434,7 +434,7 @@ describe('AuthorDetailPage', () => {
         makeBook({
           id: 102,
           title: 'Snapshot',
-          status: 'downloaded',
+          status: 'skipped',
           mediaType: 'audiobook',
           releaseDate: '2023-10-10',
         }),
@@ -475,12 +475,12 @@ describe('AuthorDetailPage', () => {
     expect(firefightCells[4]).toHaveTextContent('Wanted')
 
     const snapshotCells = within(rowForTitle('Snapshot')).getAllByRole('cell')
-    expect(snapshotCells[1]).toHaveTextContent('Downloaded')
+    expect(snapshotCells[1]).toHaveTextContent('Skipped')
     expect(snapshotCells[1]).toHaveTextContent('🎧 Audiobook')
     expect(snapshotCells[1]).toHaveTextContent('2023')
     expect(snapshotCells[2]).toHaveTextContent('2023')
     expect(snapshotCells[3]).toHaveTextContent('🎧 Audiobook')
-    expect(snapshotCells[4]).toHaveTextContent('Downloaded')
+    expect(snapshotCells[4]).toHaveTextContent('Skipped')
 
     const dualFormatCells = within(rowForTitle('Dual Format')).getAllByRole('cell')
     expect(dualFormatCells[1]).toHaveTextContent('Imported')
@@ -756,26 +756,28 @@ describe('AuthorDetailPage — toolbar and stats', () => {
     vi.mocked(api.listAuthorSeries).mockResolvedValue([])
   })
 
-  it('offers every StatusFilter value, including the two the chips never exposed', async () => {
+  it('offers every StatusFilter value, including the one the chips never exposed', async () => {
     renderAuthorDetailPage([makeBook({ id: 1, title: 'A', status: 'imported' })])
     const select = await screen.findByLabelText('Status')
     const values = within(select).getAllByRole('option').map(o => (o as HTMLOptionElement).value)
-    // downloading and skipped have been in the StatusFilter type all along but
-    // the chip row only ever offered wanted/downloaded/imported.
-    expect(values).toEqual(['', 'wanted', 'downloading', 'downloaded', 'imported', 'skipped', 'excluded'])
+    // skipped has been in the StatusFilter type all along but the chip row only
+    // ever offered wanted/imported. 'downloading' and 'downloaded' were offered
+    // here too until #2374 removed them: no book could ever hold either value,
+    // so both options filtered to an empty list on every library.
+    expect(values).toEqual(['', 'wanted', 'imported', 'skipped', 'excluded'])
   })
 
-  it('filters to downloading, a status the chips never offered', async () => {
+  it('filters to skipped, a status the chips never offered', async () => {
     renderAuthorDetailPage([
-      makeBook({ id: 1, title: 'Grabbing Book', status: 'downloading' }),
+      makeBook({ id: 1, title: 'Passed Book', status: 'skipped' }),
       makeBook({ id: 2, title: 'Shelved Book', status: 'imported' }),
     ])
     // Grid cards draw the title twice for a coverless book — once in the card
     // heading and once inside the aria-hidden CoverPlaceholder — so query the
     // heading rather than the raw text.
-    await screen.findByRole('heading', { name: 'Grabbing Book' })
-    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'downloading' } })
-    expect(screen.getByRole('heading', { name: 'Grabbing Book' })).toBeInTheDocument()
+    await screen.findByRole('heading', { name: 'Passed Book' })
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'skipped' } })
+    expect(screen.getByRole('heading', { name: 'Passed Book' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Shelved Book' })).toBeNull()
   })
 

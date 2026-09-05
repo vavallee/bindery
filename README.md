@@ -113,7 +113,7 @@ Clean-room Go rewrite, modern React UI, MIT-licensed, actively developed.
 ## Features
 
 **Library management**
-- Author monitoring via OpenLibrary's author-works endpoint, configurable author monitor modes for all/future/latest/none defaults, per-book monitor toggles, and a `wanted → downloading → downloaded → imported` workflow.
+- Author monitoring via OpenLibrary's author-works endpoint, configurable author monitor modes for all/future/latest/none defaults, per-book monitor toggles, and a `wanted → imported` workflow with live download progress on the Queue page.
 - Dual-format books — each title holds an ebook *and* an audiobook in independent slots, with separate search, grab, and import pipelines, and the audiobook side moves multi-part `.m4b` / `.mp3` folders as one unit.
 - Series support with position tracking, edition tracking (format / ISBN / publisher / page count), Calendar view of upcoming releases, and multiple library roots.
 - Library scan with four-tier matching: ASIN → title + author → series name + position → fuzzy title. Honours librarian sort-suffix form (`Title, The`) and series-annotated filenames (`[Mistborn, Book 1]`).

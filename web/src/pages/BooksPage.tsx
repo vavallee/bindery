@@ -25,8 +25,6 @@ type MonitoredFilter = '' | 'monitored' | 'unmonitored'
 // statusLabel is populated at render time from t() — see BooksPage
 const statusLabelKeys: Record<string, string> = {
   wanted: 'books.statusWanted',
-  downloading: 'books.statusDownloading',
-  downloaded: 'books.statusDownloaded',
   imported: 'books.statusImported',
   skipped: 'books.statusSkipped',
 }
@@ -201,7 +199,7 @@ export default function BooksPage() {
           className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600 placeholder-slate-400 dark:placeholder-zinc-600"
         />
         <div className="flex gap-1 flex-wrap">
-          {(['', 'wanted', 'downloading', 'imported', 'skipped'] as const).map(s => (
+          {(['', 'wanted', 'imported', 'skipped'] as const).map(s => (
             <button
               key={s}
               onClick={() => setStatusFilter(s)}

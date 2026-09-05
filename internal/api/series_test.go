@@ -1142,7 +1142,7 @@ func TestBuildHardcoverDiffEnrichesMissingWithOwnedLibraryBook(t *testing.T) {
 			AuthorID:  author.ID,
 			Title:     title,
 			SortTitle: title,
-			Status:    models.BookStatusDownloaded,
+			Status:    models.BookStatusWanted,
 			Genres:    []string{},
 		}
 		if err := bookRepo.Create(ctx, book); err != nil {
