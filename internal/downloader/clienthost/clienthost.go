@@ -100,6 +100,25 @@ func Authority(host string, port int) string {
 	return net.JoinHostPort(Unbracket(strings.TrimSpace(host)), strconv.Itoa(port))
 }
 
+// URL renders the base URL a download client would be reached on from the
+// three fields the connection is stored as, so a caller holding a Host, a Port
+// and a Use SSL flag can hand a single string to httpsec.ValidateOutboundURL.
+//
+// A zero port falls back to 8080. Nothing here builds a request that is
+// actually sent, and the SSRF check reads only the scheme and the host, so the
+// fallback exists to keep the string parseable rather than to guess a real
+// port.
+func URL(host string, port int, ssl bool) string {
+	scheme := "http"
+	if ssl {
+		scheme = "https"
+	}
+	if port == 0 {
+		port = 8080
+	}
+	return fmt.Sprintf("%s://%s/", scheme, Authority(host, port))
+}
+
 // Unbracket strips the brackets from an IPv6 literal, leaving every other
 // host untouched.
 func Unbracket(host string) string {
