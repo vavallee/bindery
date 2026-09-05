@@ -336,6 +336,45 @@ func (c *Client) BookSearch(ctx context.Context, title, author string, categorie
 	return results, nil
 }
 
+// BookSearchFallback performs the two generic text queries that are most
+// useful for an alternate title: "surname title", then title alone. The
+// primary title has already consumed the full structured four-tier cascade,
+// so keeping this path to two requests bounds the extra load caused by a
+// bilingual or edition-title fallback.
+func (c *Client) BookSearchFallback(ctx context.Context, title, author string, categories []int) ([]SearchResult, error) {
+	title = primaryTitleForQuery(title)
+	if !hasSearchableText(title) {
+		return nil, nil
+	}
+	title = TransliterateQuery(title)
+	author = TransliterateQuery(norm.NFC.String(author))
+
+	terms := make([]string, 0, 2)
+	if surname := authorSurname(author); surname != "" {
+		terms = append(terms, strings.TrimSpace(surname+" "+title))
+	}
+	terms = append(terms, title)
+
+	var earliest []SearchResult
+	for i, term := range terms {
+		results, err := c.Search(ctx, term, categories)
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			continue
+		}
+		if earliest == nil {
+			earliest = results
+		}
+		if titleHasRelevantResult(title, results) {
+			slog.Debug("indexer alternate-title query matched", "tier", i+1, "title", title, "count", len(results))
+			return results, nil
+		}
+	}
+	return earliest, nil
+}
+
 // bookSearchTiers runs the four-tier query cascade for one spelling of the
 // title/author and returns the first tier that yields results plausibly about
 // the requested book (empty if none do). BookSearch calls it with the

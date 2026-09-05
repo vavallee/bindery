@@ -182,6 +182,11 @@ export function SearchResultsSection({
       <div className="min-w-0 mr-3">
         <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
           {fmt && <MediaBadge type={fmt} />}
+          {r.manualOnly && (
+            <span className="px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 font-medium">
+              manual fallback
+            </span>
+          )}
           <span className="truncate text-slate-800 dark:text-zinc-200">{r.title}</span>
         </div>
         <span className="text-slate-500 dark:text-zinc-500 truncate block">

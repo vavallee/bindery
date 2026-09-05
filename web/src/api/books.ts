@@ -69,6 +69,8 @@ export interface SearchResult {
   pubDate: string
   protocol: string   // "usenet" or "torrent"
   language?: string  // ISO 639-1 from newznab:attr language (when present)
+  matchedTitle?: string // normalized title candidate that produced this result
+  manualOnly?: boolean  // found through an interactive-only language fallback
   mediaType?: string // "ebook" or "audiobook"; set for dual-format book searches
   approved?: boolean
   rejection?: string
@@ -76,6 +78,7 @@ export interface SearchResult {
 
 export interface SearchQueryDebug {
   title?: string
+  titleCandidates?: TitleCandidateDebug[]
   author?: string
   year?: number
   isbn?: string
@@ -85,6 +88,12 @@ export interface SearchQueryDebug {
   freeText?: string
 }
 
+export interface TitleCandidateDebug {
+  title: string
+  language?: string
+  manualOnly?: boolean
+}
+
 export interface IndexerDebug {
   indexerId: number
   indexerName: string
@@ -92,6 +101,7 @@ export interface IndexerDebug {
   skipped?: boolean
   skipReason?: string
   categories?: number[]
+  attemptedTitles?: string[]
   resultCount: number
   durationMs: number
   error?: string

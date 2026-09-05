@@ -70,6 +70,11 @@ export default function SearchDebugPanel({ debug, resultCount, defaultOpen }: Pr
             <h4 className="font-semibold text-slate-700 dark:text-zinc-300 mb-1">Query</h4>
             <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-slate-600 dark:text-zinc-400">
               {debug.query?.title && <><span>title</span><span className="font-mono">{debug.query.title}</span></>}
+              {debug.query?.titleCandidates && debug.query.titleCandidates.length > 0 && (
+                <><span>titleCandidates</span><span className="font-mono">
+                  {debug.query.titleCandidates.map(c => `${c.title}${c.language ? ` [${c.language}]` : ''}${c.manualOnly ? ' (manual only)' : ''}`).join(' → ')}
+                </span></>
+              )}
               {debug.query?.author && <><span>author</span><span className="font-mono">{debug.query.author}</span></>}
               {debug.query?.mediaType && <><span>mediaType</span><span className="font-mono">{debug.query.mediaType}</span></>}
               {debug.query?.year ? <><span>year</span><span className="font-mono">{debug.query.year}</span></> : null}
@@ -109,6 +114,11 @@ export default function SearchDebugPanel({ debug, resultCount, defaultOpen }: Pr
                     {ix.categories && ix.categories.length > 0 && (
                       <div className="text-slate-500 dark:text-zinc-500 font-mono">
                         categories: {ix.categories.join(', ')}
+                      </div>
+                    )}
+                    {ix.attemptedTitles && ix.attemptedTitles.length > 0 && (
+                      <div className="text-slate-500 dark:text-zinc-500 font-mono break-words">
+                        titles: {ix.attemptedTitles.join(' → ')}
                       </div>
                     )}
                   </div>

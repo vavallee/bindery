@@ -25,28 +25,30 @@ type SearchDebug struct {
 
 // SearchQueryDebug is the effective criteria sent into the searcher.
 type SearchQueryDebug struct {
-	Title            string   `json:"title,omitempty"`
-	Author           string   `json:"author,omitempty"`
-	Year             int      `json:"year,omitempty"`
-	ISBN             string   `json:"isbn,omitempty"`
-	ASIN             string   `json:"asin,omitempty"`
-	MediaType        string   `json:"mediaType,omitempty"`
-	AllowedLanguages []string `json:"allowedLanguages,omitempty"`
-	FreeText         string   `json:"freeText,omitempty"`
+	Title            string           `json:"title,omitempty"`
+	TitleCandidates  []TitleCandidate `json:"titleCandidates,omitempty"`
+	Author           string           `json:"author,omitempty"`
+	Year             int              `json:"year,omitempty"`
+	ISBN             string           `json:"isbn,omitempty"`
+	ASIN             string           `json:"asin,omitempty"`
+	MediaType        string           `json:"mediaType,omitempty"`
+	AllowedLanguages []string         `json:"allowedLanguages,omitempty"`
+	FreeText         string           `json:"freeText,omitempty"`
 }
 
 // IndexerDebug describes what happened for a single indexer: whether it was
 // contacted, the categories sent, how many results came back, and any error.
 type IndexerDebug struct {
-	IndexerID   int64  `json:"indexerId"`
-	IndexerName string `json:"indexerName"`
-	Enabled     bool   `json:"enabled"`
-	Skipped     bool   `json:"skipped,omitempty"`
-	SkipReason  string `json:"skipReason,omitempty"`
-	Categories  []int  `json:"categories,omitempty"`
-	ResultCount int    `json:"resultCount"`
-	DurationMs  int64  `json:"durationMs"`
-	Error       string `json:"error,omitempty"`
+	IndexerID       int64    `json:"indexerId"`
+	IndexerName     string   `json:"indexerName"`
+	Enabled         bool     `json:"enabled"`
+	Skipped         bool     `json:"skipped,omitempty"`
+	SkipReason      string   `json:"skipReason,omitempty"`
+	Categories      []int    `json:"categories,omitempty"`
+	AttemptedTitles []string `json:"attemptedTitles,omitempty"`
+	ResultCount     int      `json:"resultCount"`
+	DurationMs      int64    `json:"durationMs"`
+	Error           string   `json:"error,omitempty"`
 }
 
 // PipelineDebug counts how results flowed through each filter stage in the
@@ -84,6 +86,7 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 		StartedAt: time.Now(),
 		Query: SearchQueryDebug{
 			Title:            c.Title,
+			TitleCandidates:  effectiveTitleCandidates(c),
 			Author:           c.Author,
 			Year:             c.Year,
 			ISBN:             c.ISBN,
@@ -137,7 +140,8 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 			cats := filterCategoriesForMedia(idx.Categories, c.MediaType, idx.IncludeParentCategories)
 			entry.Categories = cats
 
-			hits, err := client.BookSearch(ctx, c.Title, c.Author, cats)
+			hits, attempted, err := s.searchIndexerBook(ctx, client, c, cats)
+			entry.AttemptedTitles = attempted
 			entry.DurationMs = time.Since(start).Milliseconds()
 			if err != nil {
 				entry.Error = err.Error()
@@ -195,7 +199,7 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 	results = filterNonBookContent(results)
 	dbg.Pipeline.AfterNonBookContent = len(results)
 
-	results, relFilters := filterRelevantDebug(results, c.Title, c.Author, c.AuthorAliases)
+	results, relFilters := filterRelevantForCriteriaDebug(results, c)
 	dbg.Filters = append(dbg.Filters, relFilters...)
 	dbg.Pipeline.AfterRelevance = len(results)
 
@@ -203,6 +207,24 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 
 	dbg.DurationMs = time.Since(dbg.StartedAt).Milliseconds()
 	return results, dbg
+}
+
+// filterRelevantForCriteriaDebug is the instrumented counterpart of
+// filterRelevantForCriteria. Each rejection is explained against the title
+// candidate that actually produced the result.
+func filterRelevantForCriteriaDebug(results []newznab.SearchResult, c MatchCriteria) ([]newznab.SearchResult, []FilterDebug) {
+	filtered := make([]newznab.SearchResult, 0, len(results))
+	var dropped []FilterDebug
+	for _, result := range results {
+		title := result.MatchedTitle
+		if title == "" {
+			title = c.Title
+		}
+		kept, filters := filterRelevantDebug([]newznab.SearchResult{result}, title, c.Author, c.AuthorAliases)
+		filtered = append(filtered, kept...)
+		dropped = append(dropped, filters...)
+	}
+	return filtered, dropped
 }
 
 // filterUsenetJunkDebug is filterUsenetJunk instrumented to record which

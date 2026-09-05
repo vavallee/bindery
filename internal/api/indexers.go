@@ -434,23 +434,27 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	crit := indexer.MatchCriteria{
-		Title:            book.Title,
-		Author:           authorName,
-		MediaType:        book.MediaType,
-		ASIN:             book.ASIN,
-		AllowedLanguages: allowedLangs,
-		AuthorAliases:    authorAliases,
+		Title:               book.Title,
+		AllowManualFallback: true,
+		Author:              authorName,
+		MediaType:           book.MediaType,
+		ASIN:                book.ASIN,
+		AllowedLanguages:    allowedLangs,
+		AuthorAliases:       authorAliases,
 	}
 	if book.ReleaseDate != nil {
 		crit.Year = book.ReleaseDate.Year()
 	}
+	var bookEditions []models.Edition
 	if h.editions != nil {
 		if eds, err := h.editions.ListByBook(r.Context(), book.ID); err != nil {
 			slog.Warn("failed to load editions for search ISBN", "book_id", book.ID, "error", err)
 		} else {
+			bookEditions = eds
 			crit.ISBN = indexer.CriteriaISBN(book, eds)
 		}
 	}
+	crit.TitleCandidates = indexer.BuildTitleCandidates(*book, bookEditions, allowedLangs)
 
 	// For dual-format books (media_type='both'), run one search per format so
 	// each uses its own category tree (7xxx for ebooks, 3xxx for audiobooks).
@@ -523,7 +527,7 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 	beforeLang := len(results)
 	filterDesc := ""
 	if len(allowedLangs) > 0 {
-		results = indexer.FilterByAllowedLanguages(results, allowedLangs)
+		results = indexer.FilterByAllowedLanguagesInteractive(results, allowedLangs)
 		filterDesc = "allowed=" + strings.Join(allowedLangs, ",")
 	} else if s, _ := h.settings.Get(r.Context(), "search.preferredLanguage"); s != nil {
 		results = indexer.FilterByLanguage(results, s.Value)
