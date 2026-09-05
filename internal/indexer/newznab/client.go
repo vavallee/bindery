@@ -100,6 +100,13 @@ var (
 	transportBuildCount atomic.Int64
 )
 
+// maxResponseBytes caps how much of an indexer response the client will read.
+// A Torznab feed is the largest thing on this path and 32 MiB is generous for
+// one; it was already the literal fetchXML used, and Probe's caps decode now
+// shares it rather than reading off the socket uncapped (#2357). A var so
+// tests can lower it instead of serving 32 MiB.
+var maxResponseBytes int64 = 32 << 20
+
 func sharedTransportInstance() *http.Transport {
 	sharedTransportOnce.Do(func() {
 		transportBuildCount.Add(1)
@@ -694,7 +701,11 @@ func (c *Client) Probe(ctx context.Context) ProbeResult {
 	}
 
 	var caps capsResponse
-	if err := xml.NewDecoder(resp.Body).Decode(&caps); err != nil {
+	// Capped like fetchXML below: a caps document is a few KiB in practice, so
+	// the same 32 MiB ceiling the feed path uses is generous here, and without
+	// it only the client timeout bounded what a hostile host could stream into
+	// the decoder (#2357).
+	if err := xml.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&caps); err != nil {
 		result.Error = fmt.Sprintf("parse caps: %v", err)
 		return result
 	}
@@ -840,7 +851,7 @@ func (c *Client) fetchXML(ctx context.Context, rawURL string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("read indexer response: %w", err)
 	}
