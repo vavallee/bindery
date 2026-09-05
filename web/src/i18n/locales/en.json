@@ -45,7 +45,11 @@
     "saveError": "Error",
     "more": "More",
     "confirm": "Confirm",
-    "confirmTitle": "Are you sure?"
+    "confirmTitle": "Are you sure?",
+    "moreActions": "More",
+    "filters": "Filters",
+    "sort": "Sort",
+    "clearFilter": "Clear filter"
   },
   "monitorMode": {
     "all": "All books",
@@ -73,6 +77,11 @@
     "settings": "Settings",
     "users": "Users",
     "updateAvailable": "Update available"
+  },
+  "notFound": {
+    "title": "Page not found",
+    "body": "There is nothing at {{path}}.",
+    "home": "Go to Authors"
   },
   "manualImport": {
     "title": "Manual Import",
@@ -211,7 +220,9 @@
     "bulkSetMonitorModeApply": "Apply monitor mode",
     "bulkSetMonitorModeFailed": "Bulk monitor mode update failed",
     "bulkSetMonitorModePartial": "Monitor mode was not updated for author {{id}}: {{error}}",
-    "sortByColumn": "Sort by {{column}}"
+    "sortByColumn": "Sort by {{column}}",
+    "moreActionsFor": "More actions for {{name}}",
+    "refreshMetadata": "Refresh metadata"
   },
   "authorDetail": {
     "description": {
@@ -1135,7 +1146,8 @@
       "disabled": "Recommendations are disabled. Enable them in Settings to start discovering new books.",
       "coldStart": "Add more books to unlock personalized genre recommendations.",
       "goToSettings": "Go to Settings"
-    }
+    },
+    "moreActionsFor": "More actions for {{title}}"
   },
   "gettingStarted": {
     "title": "Getting started",
@@ -1159,7 +1171,9 @@
     "client": "Add a download client",
     "author": "Add an author",
     "grab": "Grab a book",
-    "import": "First book imported"
+    "import": "First book imported",
+    "progress": "{{done}} of {{total}} steps done",
+    "next": "Next:"
   },
   "protocolMismatch": {
     "torrent": "A Torznab indexer is enabled but no torrent download client (qBittorrent, Transmission, Deluge, rTorrent) is — its releases can be found but never downloaded.",

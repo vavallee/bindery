@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import ViewToggle from '../components/ViewToggle'
 import { bookStatusBadge } from '../components/bookStatus'
+import FilterPopover, { FilterGroup } from '../components/FilterPopover'
 import BookStatusLegend from '../components/BookStatusLegend'
 import { useView } from '../components/useView'
 import GettingStartedGuidance from '../components/GettingStartedGuidance'
@@ -54,6 +55,10 @@ export default function BooksPage() {
   const selectAllRef = useRef<HTMLInputElement>(null)
 
   const monitoredParam = monitoredFilter === 'monitored' ? true : monitoredFilter === 'unmonitored' ? false : undefined
+
+  // Shown on the Filters trigger so an applied filter is visible without
+  // opening it. Status is not counted: it has its own row and is never hidden.
+  const activeFilterCount = [mediaFilter, monitoredFilter].filter(Boolean).length
   const { page, pageSize, paginationProps, reset } = useServerPagination(total, 50, 'books')
 
   // Server-side list: page, page size, search, status, media type, monitored,
@@ -137,9 +142,6 @@ export default function BooksPage() {
   const statusBtnCls = (active: boolean) =>
     `px-3 py-1 rounded-md text-xs font-medium transition-colors ${active ? 'bg-slate-300 dark:bg-zinc-700 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'}`
 
-  const sortBtnCls = (active: boolean) =>
-    `px-3 py-1 rounded-md text-xs font-medium transition-colors ${active ? 'bg-slate-300 dark:bg-zinc-700 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/50 dark:hover:bg-zinc-800/50'}`
-
   // Clicking a column header sorts by that column: first click ascending, a
   // second click on the same column flips to descending (mirrors the sort
   // buttons, which use the same whitelisted keys the backend accepts).
@@ -211,25 +213,77 @@ export default function BooksPage() {
         </div>
       </div>
 
-      <div className="flex gap-1 mb-4 flex-wrap">
-        <span className="text-xs text-slate-600 dark:text-zinc-500 mr-1 self-center">{t('books.sortLabel')}</span>
-        <button onClick={() => setSort('title-az')} className={sortBtnCls(sort === 'title-az')}>{t('books.sortTitleAZ')}</button>
-        <button onClick={() => setSort('title-za')} className={sortBtnCls(sort === 'title-za')}>{t('books.sortTitleZA')}</button>
-        <button onClick={() => setSort('date-new')} className={sortBtnCls(sort === 'date-new')}>{t('books.sortNewest')}</button>
-        <button onClick={() => setSort('date-old')} className={sortBtnCls(sort === 'date-old')}>{t('books.sortOldest')}</button>
+      {/* Sort and the secondary facets live behind two disclosures rather than
+          a second wrapping row of pills. Status stays out in the open above:
+          it is the one people change constantly, and burying it would trade
+          tidiness for the thing this page is for.
 
-        <span className="text-xs text-slate-600 dark:text-zinc-500 mx-2 self-center">{t('books.typeLabel')}</span>
-        <button onClick={() => setMediaFilter('')} className={sortBtnCls(mediaFilter === '')}>{t('common.all')}</button>
-        <button onClick={() => setMediaFilter('ebook')} className={sortBtnCls(mediaFilter === 'ebook')}>📖 {t('common.ebook')}</button>
-        <button onClick={() => setMediaFilter('audiobook')} className={sortBtnCls(mediaFilter === 'audiobook')}>🎧 {t('common.audiobook')}</button>
-        {/* The Ebook/Audiobook filters deliberately include dual-format books,
-            so neither one isolates them; this does. */}
-        <button onClick={() => setMediaFilter('both')} className={sortBtnCls(mediaFilter === 'both')}>📖🎧 {t('common.both')}</button>
+          In table view the sort control is dropped entirely, because the column
+          headers already sort and offering both invites them to disagree. */}
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        {view === 'grid' && (
+          <FilterPopover label={t('common.sort', 'Sort')} ariaLabel={t('books.sortLabel')}>
+            <FilterGroup
+              label={t('books.sortLabel')}
+              value={sort}
+              onChange={setSort}
+              options={[
+                { value: 'title-az' as const, label: t('books.sortTitleAZ') },
+                { value: 'title-za' as const, label: t('books.sortTitleZA') },
+                { value: 'date-new' as const, label: t('books.sortNewest') },
+                { value: 'date-old' as const, label: t('books.sortOldest') },
+              ]}
+            />
+          </FilterPopover>
+        )}
 
-        <span className="text-xs text-slate-600 dark:text-zinc-500 mx-2 self-center">{t('books.filterMonitored', 'Monitored:')}</span>
-        <button onClick={() => setMonitoredFilter('')} className={sortBtnCls(monitoredFilter === '')}>{t('books.filterAll', 'All')}</button>
-        <button onClick={() => setMonitoredFilter('monitored')} className={sortBtnCls(monitoredFilter === 'monitored')}>{t('books.filterMonitoredOnly', 'Monitored')}</button>
-        <button onClick={() => setMonitoredFilter('unmonitored')} className={sortBtnCls(monitoredFilter === 'unmonitored')}>{t('books.filterUnmonitored', 'Unmonitored')}</button>
+        <FilterPopover label={t('common.filters', 'Filters')} activeCount={activeFilterCount}>
+          <FilterGroup
+            label={t('books.typeLabel')}
+            value={mediaFilter}
+            onChange={setMediaFilter}
+            options={[
+              { value: '' as const, label: t('common.all') },
+              { value: 'ebook' as const, label: `📖 ${t('common.ebook')}`, ariaLabel: t('common.ebook') },
+              { value: 'audiobook' as const, label: `🎧 ${t('common.audiobook')}`, ariaLabel: t('common.audiobook') },
+              // The Ebook/Audiobook filters deliberately include dual-format
+              // books, so neither one isolates them; this does.
+              { value: 'both' as const, label: `📖🎧 ${t('common.both')}`, ariaLabel: t('common.both') },
+            ]}
+          />
+          <FilterGroup
+            label={t('books.filterMonitored', 'Monitored:')}
+            value={monitoredFilter}
+            onChange={setMonitoredFilter}
+            options={[
+              { value: '' as const, label: t('books.filterAll', 'All') },
+              { value: 'monitored' as const, label: t('books.filterMonitoredOnly', 'Monitored') },
+              { value: 'unmonitored' as const, label: t('books.filterUnmonitored', 'Unmonitored') },
+            ]}
+          />
+        </FilterPopover>
+
+        {/* An applied filter is never only visible inside the popover. */}
+        {mediaFilter && (
+          <button
+            onClick={() => setMediaFilter('')}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-200 dark:bg-zinc-800 text-xs text-slate-700 dark:text-zinc-300 hover:bg-slate-300 dark:hover:bg-zinc-700"
+          >
+            {t(`common.${mediaFilter}`)}
+            <span aria-hidden="true">✕</span>
+            <span className="sr-only">{t('common.clearFilter', 'Clear filter')}</span>
+          </button>
+        )}
+        {monitoredFilter && (
+          <button
+            onClick={() => setMonitoredFilter('')}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-200 dark:bg-zinc-800 text-xs text-slate-700 dark:text-zinc-300 hover:bg-slate-300 dark:hover:bg-zinc-700"
+          >
+            {monitoredFilter === 'monitored' ? t('books.filterMonitoredOnly', 'Monitored') : t('books.filterUnmonitored', 'Unmonitored')}
+            <span aria-hidden="true">✕</span>
+            <span className="sr-only">{t('common.clearFilter', 'Clear filter')}</span>
+          </button>
+        )}
       </div>
 
       <BookStatusLegend />

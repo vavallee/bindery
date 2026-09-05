@@ -8,6 +8,8 @@ import AddBookModal from '../components/AddBookModal'
 import MergeAuthorsModal from '../components/MergeAuthorsModal'
 import SeriesNameModal from '../components/SeriesNameModal'
 import BulkActionBar from '../components/BulkActionBar'
+import FilterPopover, { FilterGroup } from '../components/FilterPopover'
+import MoreMenu from '../components/MoreMenu'
 import Pagination from '../components/Pagination'
 import { useServerPagination } from '../components/usePagination'
 import ViewToggle from '../components/ViewToggle'
@@ -305,9 +307,6 @@ export default function AuthorsPage() {
     navigate('/series', { state: { seriesId: series.id } })
   }
 
-  const sortBtnCls = (active: boolean) =>
-    `px-3 py-1 rounded-md text-xs font-medium transition-colors ${active ? 'bg-slate-300 dark:bg-zinc-700 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/50 dark:hover:bg-zinc-800/50'}`
-
   // Column-header sorting, mirroring BooksPage: first click ascending, a second
   // click on the same column flips to descending. Both keys are whitelisted
   // server-side, so an unknown value can only ever fall back to the name sort.
@@ -334,6 +333,13 @@ export default function AuthorsPage() {
       </th>
     )
   }
+
+  // Only OpenLibrary supplies an author-level rating, and only for authors it
+  // resolved by search rather than by direct id. Hardcover and DNB supply none
+  // at all, so for those libraries the column was a full column of em dashes.
+  // Drop it when this page has nothing to put in it, rather than removing it
+  // outright and costing OpenLibrary users a real sort key.
+  const anyRating = authors.some(a => a.averageRating > 0)
 
   return (
     <div className={selectedIds.size > 0 ? 'pb-16' : ''}>
@@ -408,21 +414,55 @@ export default function AuthorsPage() {
           placeholder={t('authors.searchPlaceholder')}
           className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600 placeholder-slate-400 dark:placeholder-zinc-600"
         />
-        <div className="flex gap-1">
-          <button onClick={() => setSort('az')} className={sortBtnCls(sort === 'az')}>{t('authors.sortAZ')}</button>
-          <button onClick={() => setSort('za')} className={sortBtnCls(sort === 'za')}>{t('authors.sortZA')}</button>
-          <button onClick={() => setSort('name-az')} className={sortBtnCls(sort === 'name-az')}>{t('authors.sortFirstNameAZ')}</button>
-          <button onClick={() => setSort('name-za')} className={sortBtnCls(sort === 'name-za')}>{t('authors.sortFirstNameZA')}</button>
-          <button onClick={() => setSort('recent')} className={sortBtnCls(sort === 'recent')}>{t('authors.sortRecent')}</button>
-        </div>
       </div>
 
-      {/* Monitored filter chips */}
-      <div className="flex gap-1 mb-6 flex-wrap">
-        <span className="text-xs text-slate-600 dark:text-zinc-500 mr-1 self-center">{t('authors.filterMonitored')}</span>
-        <button onClick={() => setMonitoredFilter('')} className={sortBtnCls(monitoredFilter === '')}>{t('authors.filterAll')}</button>
-        <button onClick={() => setMonitoredFilter('monitored')} className={sortBtnCls(monitoredFilter === 'monitored')}>{t('authors.filterMonitoredOnly')}</button>
-        <button onClick={() => setMonitoredFilter('unmonitored')} className={sortBtnCls(monitoredFilter === 'unmonitored')}>{t('authors.filterUnmonitored')}</button>
+      {/* Sort and the monitored facet behind two disclosures rather than five
+          sort pills plus a labelled filter row. The Filters trigger carries a
+          count and the applied value also renders as a removable chip, so a
+          filter that is on is never only visible inside the popover.
+
+          Table view drops the sort control: the column headers already sort. */}
+      <div className="flex items-center gap-2 mb-6 flex-wrap">
+        {view === 'grid' && (
+          <FilterPopover label={t('common.sort', 'Sort')}>
+            <FilterGroup
+              label={t('common.sort', 'Sort')}
+              value={sort}
+              onChange={setSort}
+              options={[
+                { value: 'az' as const, label: t('authors.sortAZ') },
+                { value: 'za' as const, label: t('authors.sortZA') },
+                { value: 'name-az' as const, label: t('authors.sortFirstNameAZ') },
+                { value: 'name-za' as const, label: t('authors.sortFirstNameZA') },
+                { value: 'recent' as const, label: t('authors.sortRecent') },
+              ]}
+            />
+          </FilterPopover>
+        )}
+
+        <FilterPopover label={t('common.filters', 'Filters')} activeCount={monitoredFilter ? 1 : 0}>
+          <FilterGroup
+            label={t('authors.filterMonitored')}
+            value={monitoredFilter}
+            onChange={setMonitoredFilter}
+            options={[
+              { value: '' as const, label: t('authors.filterAll') },
+              { value: 'monitored' as const, label: t('authors.filterMonitoredOnly') },
+              { value: 'unmonitored' as const, label: t('authors.filterUnmonitored') },
+            ]}
+          />
+        </FilterPopover>
+
+        {monitoredFilter && (
+          <button
+            onClick={() => setMonitoredFilter('')}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-200 dark:bg-zinc-800 text-xs text-slate-700 dark:text-zinc-300 hover:bg-slate-300 dark:hover:bg-zinc-700"
+          >
+            {monitoredFilter === 'monitored' ? t('authors.filterMonitoredOnly') : t('authors.filterUnmonitored')}
+            <span aria-hidden="true">✕</span>
+            <span className="sr-only">{t('common.clearFilter', 'Clear filter')}</span>
+          </button>
+        )}
       </div>
 
       <SetupChecklist />
@@ -456,7 +496,7 @@ export default function AuthorsPage() {
                   </th>
                   <SortableHeader label={t('authors.colName')} asc="az" desc="za" />
                   <SortableHeader label={t('authors.colBooks')} asc="books-asc" desc="books-desc" />
-                  <SortableHeader label={t('authors.colRating')} asc="rating-asc" desc="rating-desc" />
+                  {anyRating && <SortableHeader label={t('authors.colRating')} asc="rating-asc" desc="rating-desc" />}
                   <SortableHeader label={t('authors.colMonitored')} asc="monitored-asc" desc="monitored-desc" />
                   <th className="px-3 py-2" />
                 </tr>
@@ -489,9 +529,11 @@ export default function AuthorsPage() {
                       </Link>
                     </td>
                     <td className="px-3 py-2 text-slate-600 dark:text-zinc-400 whitespace-nowrap">{author.statistics?.bookCount ?? '—'}</td>
-                    <td className="px-3 py-2 text-slate-600 dark:text-zinc-400 whitespace-nowrap">
-                      {author.averageRating > 0 ? `★ ${author.averageRating.toFixed(2)}` : '—'}
-                    </td>
+                    {anyRating && (
+                      <td className="px-3 py-2 text-slate-600 dark:text-zinc-400 whitespace-nowrap">
+                        {author.averageRating > 0 ? `★ ${author.averageRating.toFixed(2)}` : '—'}
+                      </td>
+                    )}
                     <td className="px-3 py-2 whitespace-nowrap">
                       <Switch
                         checked={author.monitored}
@@ -500,18 +542,15 @@ export default function AuthorsPage() {
                       />
                     </td>
                     <td className="px-3 py-2 text-right whitespace-nowrap">
-                      <button
-                        onClick={() => api.refreshAuthor(author.id).then(load)}
-                        className={`${btn.ghost} ${btnSize.sm} mr-3`}
-                      >
-                        {t('common.refresh')}
-                      </button>
-                      <button
-                        onClick={() => handleDelete(author.id)}
-                        className={`${btn.danger} ${btnSize.sm}`}
-                      >
-                        {t('common.delete')}
-                      </button>
+                      <MoreMenu
+                        label={t('common.moreActions', 'More')}
+                        ariaLabel={t('authors.moreActionsFor', 'More actions for {{name}}', { name: author.authorName })}
+                        buttonClassName={`${btn.ghost} ${btnSize.sm}`}
+                        items={[
+                          { label: t('common.refresh'), onSelect: () => { api.refreshAuthor(author.id).then(load) } },
+                          { label: t('common.delete'), onSelect: () => handleDelete(author.id), danger: true },
+                        ]}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -558,21 +597,15 @@ export default function AuthorsPage() {
                 >
                   {author.monitored ? t('authors.monitored') : t('authors.unmonitored')}
                 </Switch>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => api.refreshAuthor(author.id).then(load)}
-                    className={`${btn.ghost} ${btnSize.sm}`}
-                    title="Refresh metadata"
-                  >
-                    {t('common.refresh')}
-                  </button>
-                  <button
-                    onClick={() => handleDelete(author.id)}
-                    className={`${btn.danger} ${btnSize.sm}`}
-                  >
-                    {t('common.delete')}
-                  </button>
-                </div>
+                <MoreMenu
+                  label={t('common.moreActions', 'More')}
+                  ariaLabel={t('authors.moreActionsFor', 'More actions for {{name}}', { name: author.authorName })}
+                  buttonClassName={`${btn.ghost} ${btnSize.sm}`}
+                  items={[
+                    { label: t('common.refresh'), onSelect: () => { api.refreshAuthor(author.id).then(load) }, title: t('authors.refreshMetadata', 'Refresh metadata') },
+                    { label: t('common.delete'), onSelect: () => handleDelete(author.id), danger: true },
+                  ]}
+                />
               </div>
             </div>
           ))}
