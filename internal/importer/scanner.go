@@ -2588,6 +2588,12 @@ func authorTitleFromLayout(path string, roots ...string) (author, title string, 
 // ErrAlreadyRunning / Grimmory syncer's ErrSyncAlreadyRunning pattern.
 var ErrScanAlreadyRunning = errors.New("library scan already running")
 
+// ErrShuttingDown is returned by StartScan when the scan could not be launched
+// because the process is already draining its background jobs. The single-flight
+// gate is released before it is returned, so a restarted process starts clean.
+// Matches hardcoverlistsyncer.ErrShuttingDown.
+var ErrShuttingDown = errors.New("server is shutting down")
+
 // StartScan launches a library scan in the background and returns
 // immediately. If a scan is already in flight it returns
 // ErrScanAlreadyRunning so callers (the manual-scan endpoint) can surface a
@@ -2603,10 +2609,18 @@ func (s *Scanner) StartScan(ctx context.Context) error {
 	// never-cancelled WithoutCancel(request) context. Fall back to an untracked
 	// goroutine for tests/non-wired callers (#1458).
 	if s.jobs != nil {
-		s.jobs.Go("library-scan", func(ctx context.Context) {
+		// Go is a documented no-op once the group has begun shutting down, and
+		// the single-flight gate is already claimed above. Ignoring the return
+		// left scanRunning true for the rest of the process's life and answered
+		// the manual-scan endpoint with success for a scan that never ran
+		// (#2372).
+		if !s.jobs.Go("library-scan", func(ctx context.Context) {
 			defer s.scanRunning.Store(false)
 			s.scanLibrary(ctx)
-		})
+		}) {
+			s.scanRunning.Store(false)
+			return ErrShuttingDown
+		}
 	} else {
 		go func() {
 			defer s.scanRunning.Store(false)

@@ -17,6 +17,7 @@ import (
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/importer"
+	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -35,10 +36,36 @@ type ManualImportHandler struct {
 	downloads *db.DownloadRepo
 	books     *db.BookRepo
 	roots     *LibraryRoots
+	// jobs tracks the batch-import and reassign goroutines so shutdown can
+	// drain them before the database closes (#1458, #2371). Optional: without
+	// it they run untracked, which is what tests and non-wired callers get.
+	jobs *jobs.Group
 }
 
 func NewManualImportHandler(scanner manualImportScanner, downloads *db.DownloadRepo, books *db.BookRepo) *ManualImportHandler {
 	return &ManualImportHandler{scanner: scanner, downloads: downloads, books: books}
+}
+
+// WithJobs registers the process-wide background-jobs group so the batch-import
+// fan-out and the reassign move are tracked and drained on shutdown before the
+// database closes, mirroring Scanner.WithJobs (#1458, #2371). Both move files
+// as well as writing rows, so a SIGTERM mid-flight leaves state on disk that
+// the DB does not describe.
+func (h *ManualImportHandler) WithJobs(g *jobs.Group) *ManualImportHandler {
+	h.jobs = g
+	return h
+}
+
+// goBackground runs fn as a tracked background job when a jobs group is wired,
+// and as a bare goroutine on fallbackCtx otherwise. It reports whether the work
+// was started: false means the group is already draining, which is the
+// documented Go contract callers must not ignore (#2372).
+func (h *ManualImportHandler) goBackground(name string, fallbackCtx context.Context, fn func(ctx context.Context)) bool {
+	if h.jobs != nil {
+		return h.jobs.Go(name, fn)
+	}
+	go fn(fallbackCtx)
+	return true
 }
 
 // WithRoots attaches the shared library-root containment checker. Both Lookup
@@ -218,10 +245,13 @@ func (h *ManualImportHandler) Reassign(w http.ResponseWriter, r *http.Request) {
 	// THIS import actually placed a new file for the target, rather than treating
 	// a pre-existing unrelated file as proof of a successful move (#1368).
 	preexisting := h.targetFilePaths(ctx, targetID)
-	go func() {
+	if !h.goBackground("manual-import-reassign", ctx, func(ctx context.Context) {
 		h.scanner.ImportFromPath(ctx, dl, path, req.Format)
 		h.removeStaleSource(ctx, path, targetID, preexisting)
-	}()
+	}) {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "server is shutting down"})
+		return
+	}
 	writeJSON(w, http.StatusAccepted, dl)
 }
 
@@ -561,8 +591,7 @@ func (h *ManualImportHandler) ImportBatch(w http.ResponseWriter, r *http.Request
 	}
 
 	if len(jobs) > 0 {
-		ctx := context.WithoutCancel(r.Context())
-		go func() {
+		started := h.goBackground("manual-batch-import", context.WithoutCancel(r.Context()), func(ctx context.Context) {
 			sem := make(chan struct{}, batchImportConcurrency)
 			var wg sync.WaitGroup
 			for _, j := range jobs {
@@ -575,7 +604,11 @@ func (h *ManualImportHandler) ImportBatch(w http.ResponseWriter, r *http.Request
 				}(j)
 			}
 			wg.Wait()
-		}()
+		})
+		if !started {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "server is shutting down"})
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusAccepted, resp)

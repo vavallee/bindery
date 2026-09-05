@@ -180,6 +180,30 @@ func TestABSImportHandler_StartAlreadyRunning(t *testing.T) {
 	}
 }
 
+// TestABSImportHandler_StartShuttingDown pins the answer for an import the jobs
+// group refused because the process is draining (#2372). 400 would blame the
+// request; nothing about it is wrong, it just arrived too late.
+func TestABSImportHandler_StartShuttingDown(t *testing.T) {
+	t.Parallel()
+
+	stub := &stubABSImporter{startErr: abs.ErrShuttingDown}
+	h := NewABSImportHandler(stub, func(context.Context) ABSStoredConfig {
+		return ABSStoredConfig{
+			BaseURL:   "https://abs.example.com",
+			APIKey:    "secret",
+			Label:     "Shelf",
+			LibraryID: "lib-books",
+			Enabled:   true,
+		}
+	})
+
+	rec := httptest.NewRecorder()
+	h.Start(rec, httptest.NewRequest(http.MethodPost, "/api/v1/abs/import", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
 func TestABSImportHandler_Status(t *testing.T) {
 	t.Parallel()
 
