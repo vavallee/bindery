@@ -45,7 +45,8 @@
     "saveError": "Error",
     "more": "More",
     "confirm": "Confirm",
-    "confirmTitle": "Are you sure?"
+    "confirmTitle": "Are you sure?",
+    "moreActions": "More"
   },
   "monitorMode": {
     "all": "All books",
@@ -216,7 +217,9 @@
     "bulkSetMonitorModeApply": "Apply monitor mode",
     "bulkSetMonitorModeFailed": "Bulk monitor mode update failed",
     "bulkSetMonitorModePartial": "Monitor mode was not updated for author {{id}}: {{error}}",
-    "sortByColumn": "Sort by {{column}}"
+    "sortByColumn": "Sort by {{column}}",
+    "moreActionsFor": "More actions for {{name}}",
+    "refreshMetadata": "Refresh metadata"
   },
   "authorDetail": {
     "description": {
@@ -1140,7 +1143,8 @@
       "disabled": "Recommendations are disabled. Enable them in Settings to start discovering new books.",
       "coldStart": "Add more books to unlock personalized genre recommendations.",
       "goToSettings": "Go to Settings"
-    }
+    },
+    "moreActionsFor": "More actions for {{title}}"
   },
   "gettingStarted": {
     "title": "Getting started",

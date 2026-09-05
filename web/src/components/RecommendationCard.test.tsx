@@ -5,12 +5,22 @@ import { Recommendation } from '../api/client'
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, opts?: Record<string, unknown>) => {
-      if (key === 'discover.dontSuggestAuthor') return `Don't suggest ${String(opts?.author ?? '')}`
-      return {
+    // Handles both i18next call shapes the components use: t(key, vars) and
+    // t(key, 'Inline default', vars). Returning the bare key for the second
+    // shape would make any component written that way look like it had a
+    // missing string.
+    t: (key: string, second?: unknown, third?: Record<string, unknown>) => {
+      const vars = (typeof second === 'string' ? third : second) as Record<string, unknown> | undefined
+      if (key === 'discover.dontSuggestAuthor') return `Don't suggest ${String(vars?.author ?? '')}`
+      const table: Record<string, string> = {
         'discover.addToWanted': 'Add to Wanted',
         'discover.dismiss': 'Dismiss',
-      }[key] ?? key
+      }
+      if (table[key]) return table[key]
+      if (typeof second !== 'string') return key
+      return vars
+        ? second.replace(/\{\{(\w+)\}\}/g, (_m, name: string) => String(vars[name] ?? ''))
+        : second
     },
   }),
 }))
@@ -110,41 +120,52 @@ describe('RecommendationCard — actions', () => {
     expect(onAdd).not.toHaveBeenCalled()
   })
 
-  it('"···" button opens the author exclusion dropdown', () => {
+  // The overflow menu is the shared MoreMenu now, not a hand-rolled dropdown,
+  // so these address it by its accessible name rather than by the "···" glyph.
+  // MoreMenu gives it the keyboard handling and focus return the local copy
+  // never had; what is asserted here is the behaviour the card still owns.
+  const openMenu = () => fireEvent.click(screen.getByRole('button', { name: /More actions for/ }))
+
+  it('the overflow menu opens the author exclusion item', () => {
     render(<RecommendationCard rec={baseRec} onDismiss={onDismiss} onAdd={onAdd} onExcludeAuthor={onExcludeAuthor} />)
     expect(screen.queryByText(/Don't suggest Jane Author/)).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: '···' }))
-    expect(screen.getByText("Don't suggest Jane Author")).toBeInTheDocument()
+    openMenu()
+    expect(screen.getByRole('menuitem', { name: "Don't suggest Jane Author" })).toBeInTheDocument()
   })
 
-  it('"···" button toggles dropdown closed on second click', () => {
+  it('the overflow menu closes on a second click of its trigger', () => {
     render(<RecommendationCard rec={baseRec} onDismiss={onDismiss} onAdd={onAdd} onExcludeAuthor={onExcludeAuthor} />)
-    const menuBtn = screen.getByRole('button', { name: '···' })
-    fireEvent.click(menuBtn)
-    fireEvent.click(menuBtn)
+    openMenu()
+    openMenu()
     expect(screen.queryByText(/Don't suggest/)).toBeNull()
   })
 
-  it('calls onExcludeAuthor and closes dropdown when "Don\'t suggest author" is clicked', () => {
+  it("calls onExcludeAuthor and closes when the exclusion item is chosen", () => {
     render(<RecommendationCard rec={baseRec} onDismiss={onDismiss} onAdd={onAdd} onExcludeAuthor={onExcludeAuthor} />)
-    fireEvent.click(screen.getByRole('button', { name: '···' }))
-    fireEvent.click(screen.getByText("Don't suggest Jane Author"))
+    openMenu()
+    fireEvent.click(screen.getByRole('menuitem', { name: "Don't suggest Jane Author" }))
     expect(onExcludeAuthor).toHaveBeenCalledWith('Jane Author')
     expect(screen.queryByText(/Don't suggest/)).toBeNull()
   })
 
-  it('closes the dropdown when clicking outside', () => {
+  it('closes when the pointer goes down outside it', () => {
     render(
       <div>
         <RecommendationCard rec={baseRec} onDismiss={onDismiss} onAdd={onAdd} onExcludeAuthor={onExcludeAuthor} />
         <div data-testid="outside">outside</div>
       </div>
     )
-    fireEvent.click(screen.getByRole('button', { name: '···' }))
-    expect(screen.getByText("Don't suggest Jane Author")).toBeInTheDocument()
+    openMenu()
+    expect(screen.getByRole('menuitem', { name: "Don't suggest Jane Author" })).toBeInTheDocument()
 
-    fireEvent.mouseDown(screen.getByTestId('outside'))
+    // MoreMenu listens on pointerdown rather than mousedown, matching native menus.
+    fireEvent.pointerDown(screen.getByTestId('outside'))
     expect(screen.queryByText(/Don't suggest/)).toBeNull()
+  })
+
+  it('gives each card a distinct accessible name for its menu', () => {
+    render(<RecommendationCard rec={baseRec} onDismiss={onDismiss} onAdd={onAdd} onExcludeAuthor={onExcludeAuthor} />)
+    expect(screen.getByRole('button', { name: 'More actions for Test Book' })).toBeInTheDocument()
   })
 })
 

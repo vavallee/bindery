@@ -27,6 +27,7 @@ vi.mock('../api/client', async importOriginal => {
       createSeries: vi.fn(),
       bulkActionAuthors: vi.fn(),
       bulkSetAuthorMonitorMode: vi.fn(),
+      refreshAuthor: vi.fn(),
     },
   }
 })
@@ -70,6 +71,7 @@ vi.mock('react-i18next', () => ({
         'common.unmonitor': 'Unmonitor',
         'common.search': 'Search',
         'common.delete': 'Delete',
+        'common.refresh': 'Refresh',
         'common.cancel': 'Cancel',
         'bulkActionBar.clear': 'Clear',
         'bulkActionBar.selected': 'Selected',
@@ -383,6 +385,66 @@ describe('AuthorsPage', () => {
     // checkmark is visible instead of white-on-white.
     expect(checkbox).toBeChecked()
     expect(checkbox.className).not.toContain('bg-white/80')
+  })
+})
+
+// Secondary row actions moved behind the shared MoreMenu so the row is not a
+// wall of buttons. The governing constraint is that decluttering must not cost
+// discoverability of a control people use: Refresh and Delete are rare and can
+// go behind a menu, the monitored toggle is not and must stay on the row.
+describe('AuthorsPage — row actions behind an overflow menu', () => {
+  beforeEach(() => {
+    vi.mocked(api.listAuthors).mockResolvedValue({
+      items: [
+        {
+          id: 7,
+          foreignAuthorId: 'OL7',
+          authorName: 'Andy Weir',
+          sortName: 'Weir, Andy',
+          description: '',
+          imageUrl: '',
+          disambiguation: '',
+          ratingsCount: 0,
+          averageRating: 0,
+          monitored: true,
+        },
+      ],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    })
+    vi.mocked(api.refreshAuthor).mockResolvedValue(undefined as never)
+  })
+
+  const renderPage = async () => {
+    render(<MemoryRouter><AuthorsPage /></MemoryRouter>)
+    await screen.findByText('Andy Weir')
+  }
+
+  it('keeps the monitored toggle visible without opening anything', async () => {
+    await renderPage()
+    expect(screen.getByRole('switch')).toBeInTheDocument()
+  })
+
+  it('hides refresh and delete until the menu is opened', async () => {
+    await renderPage()
+
+    expect(screen.queryByRole('menuitem', { name: 'Refresh' })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: 'Delete' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /More actions/ }))
+
+    expect(screen.getByRole('menuitem', { name: 'Refresh' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument()
+  })
+
+  it('still refreshes the author from the menu', async () => {
+    await renderPage()
+
+    fireEvent.click(screen.getByRole('button', { name: /More actions/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Refresh' }))
+
+    await waitFor(() => expect(api.refreshAuthor).toHaveBeenCalledWith(7))
   })
 })
 
