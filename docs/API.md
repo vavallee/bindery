@@ -129,7 +129,7 @@ entirely.
 ### Books
 
 ```
-GET    /api/v1/book?status=wanted                 filter by status (wanted, downloaded, …)
+GET    /api/v1/book?status=wanted                 filter by status (wanted, imported, skipped)
 POST   /api/v1/book/bulk                          bulk monitor / status flip
 GET    /api/v1/book/{id}                          book detail (with editions, history, formats)
 PUT    /api/v1/book/{id}                          update monitor / status / metadata

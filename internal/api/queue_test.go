@@ -431,37 +431,70 @@ func TestQueueDelete_NotFound(t *testing.T) {
 	}
 }
 
-func TestQueueDelete_FlipsBookToWanted(t *testing.T) {
-	h, database, downloads, _, books, ctx := queueFixture(t)
-	a := &models.Author{ForeignID: "OL1", Name: "X", SortName: "X", MetadataProvider: "openlibrary", Monitored: true}
-	if err := db.NewAuthorRepo(database).Create(ctx, a); err != nil {
-		t.Fatal(err)
-	}
-	b := &models.Book{
-		ForeignID: "B1", AuthorID: a.ID, Title: "T", SortTitle: "t",
-		Status: models.BookStatusDownloading, Genres: []string{},
-		MetadataProvider: "openlibrary", Monitored: true,
-	}
-	if err := books.Create(ctx, b); err != nil {
-		t.Fatal(err)
-	}
-	d := &models.Download{
-		GUID: "g", BookID: &b.ID, Title: "T",
-		Status: models.DownloadStatusDownloading, Protocol: "usenet",
-	}
-	if err := downloads.Create(ctx, d); err != nil {
-		t.Fatal(err)
-	}
+// TestRemoveQueueItemLeavesBookState pins what deleting a queue item does to
+// the linked book, which is: nothing to its status, ever (#2374).
+//
+// This used to be TestQueueDelete_FlipsBookToWanted, and it passed only because
+// the fixture hand-wrote a status ('downloading') that no Bindery code path can
+// produce. The real states a book can be in when its download row is deleted
+// are the three below, and none of them wants rewriting: a book with a grab in
+// flight is already 'wanted' and monitored, so the next sweep picks it up; an
+// imported book has a file on disk and must not be un-imported by a queue
+// tidy-up; and 'skipped' is a user decision. Monitored is the one field a user
+// can ask to change, via unmonitorBooks.
+func TestRemoveQueueItemLeavesBookState(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status string
+	}{
+		{"wanted book with a grab in flight", models.BookStatusWanted},
+		{"already imported book", models.BookStatusImported},
+		{"skipped book", models.BookStatusSkipped},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, database, downloads, _, books, ctx := queueFixture(t)
+			a := &models.Author{ForeignID: "OL1", Name: "X", SortName: "X", MetadataProvider: "openlibrary", Monitored: true}
+			if err := db.NewAuthorRepo(database).Create(ctx, a); err != nil {
+				t.Fatal(err)
+			}
+			b := &models.Book{
+				ForeignID: "B1", AuthorID: a.ID, Title: "T", SortTitle: "t",
+				Status: tc.status, Genres: []string{},
+				MetadataProvider: "openlibrary", Monitored: true,
+			}
+			if err := books.Create(ctx, b); err != nil {
+				t.Fatal(err)
+			}
+			d := &models.Download{
+				GUID: "g", BookID: &b.ID, Title: "T",
+				Status: models.DownloadStatusDownloading, Protocol: "usenet",
+			}
+			if err := downloads.Create(ctx, d); err != nil {
+				t.Fatal(err)
+			}
 
-	req := withURLParam(httptest.NewRequest(http.MethodDelete, "/api/v1/queue/"+strconv.FormatInt(d.ID, 10), nil), "id", strconv.FormatInt(d.ID, 10))
-	rec := httptest.NewRecorder()
-	h.Delete(rec, req)
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
-	}
-	got, _ := books.GetByID(ctx, b.ID)
-	if got.Status != models.BookStatusWanted {
-		t.Errorf("book status should flip to wanted, got %q", got.Status)
+			req := withURLParam(httptest.NewRequest(http.MethodDelete, "/api/v1/queue/"+strconv.FormatInt(d.ID, 10), nil), "id", strconv.FormatInt(d.ID, 10))
+			rec := httptest.NewRecorder()
+			h.Delete(rec, req)
+			if rec.Code != http.StatusNoContent {
+				t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+			}
+
+			got, err := books.GetByID(ctx, b.ID)
+			if err != nil || got == nil {
+				t.Fatalf("reload book: book=%+v err=%v", got, err)
+			}
+			if got.Status != tc.status {
+				t.Errorf("status = %q, want %q unchanged", got.Status, tc.status)
+			}
+			if !got.Monitored {
+				t.Errorf("book should stay monitored: a plain queue delete only forgets the download")
+			}
+			remaining, _ := downloads.List(ctx)
+			if len(remaining) != 0 {
+				t.Errorf("expected the download row gone, %d remain", len(remaining))
+			}
+		})
 	}
 }
 
@@ -480,7 +513,7 @@ func TestQueueBulkDelete_UnmonitorsBooks(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		b := &models.Book{
 			ForeignID: fmt.Sprintf("B%d", i), AuthorID: a.ID, Title: fmt.Sprintf("T%d", i), SortTitle: "t",
-			Status: models.BookStatusDownloading, Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+			Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
 		}
 		if err := books.Create(ctx, b); err != nil {
 			t.Fatal(err)
@@ -524,7 +557,7 @@ func TestQueueBulkDelete_UnmonitorsBooks(t *testing.T) {
 	if len(remaining) != 0 {
 		t.Errorf("expected all downloads removed, %d remain", len(remaining))
 	}
-	// Every linked book unmonitored and flipped off downloading.
+	// Every linked book unmonitored, and its status left alone.
 	for _, bid := range bookIDs {
 		got, _ := books.GetByID(ctx, bid)
 		if got == nil {
@@ -534,14 +567,14 @@ func TestQueueBulkDelete_UnmonitorsBooks(t *testing.T) {
 			t.Errorf("book %d still monitored, want unmonitored", bid)
 		}
 		if got.Status != models.BookStatusWanted {
-			t.Errorf("book %d status = %q, want wanted", bid, got.Status)
+			t.Errorf("book %d status = %q, want wanted (unchanged)", bid, got.Status)
 		}
 	}
 }
 
 // TestQueueBulkDelete_KeepsMonitoringByDefault confirms that without
-// unmonitorBooks the linked book stays monitored (only its downloading status
-// is reset), matching the single-item Delete behaviour.
+// unmonitorBooks the linked book is left entirely alone, matching the
+// single-item Delete behaviour.
 func TestQueueBulkDelete_KeepsMonitoringByDefault(t *testing.T) {
 	h, database, downloads, _, books, ctx := queueFixture(t)
 	a := &models.Author{ForeignID: "OL1", Name: "X", SortName: "X", MetadataProvider: "openlibrary", Monitored: true}
@@ -550,7 +583,7 @@ func TestQueueBulkDelete_KeepsMonitoringByDefault(t *testing.T) {
 	}
 	b := &models.Book{
 		ForeignID: "B1", AuthorID: a.ID, Title: "T", SortTitle: "t",
-		Status: models.BookStatusDownloading, Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+		Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
 	}
 	if err := books.Create(ctx, b); err != nil {
 		t.Fatal(err)
@@ -571,7 +604,7 @@ func TestQueueBulkDelete_KeepsMonitoringByDefault(t *testing.T) {
 		t.Errorf("book should stay monitored without unmonitorBooks")
 	}
 	if got.Status != models.BookStatusWanted {
-		t.Errorf("book status = %q, want wanted", got.Status)
+		t.Errorf("book status = %q, want wanted (unchanged)", got.Status)
 	}
 }
 
@@ -671,7 +704,7 @@ func TestQueueList_EnrichesBookAndAuthor(t *testing.T) {
 	}
 	b := &models.Book{
 		ForeignID: "OL-EARTHSEA", AuthorID: a.ID, Title: "A Wizard of Earthsea", SortTitle: "wizard of earthsea",
-		Status: models.BookStatusDownloading, Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+		Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
 	}
 	if err := books.Create(ctx, b); err != nil {
 		t.Fatal(err)
@@ -1220,7 +1253,7 @@ func TestQueueListArrCompatibleQbittorrentShape(t *testing.T) {
 	}
 	b := &models.Book{
 		ForeignID: "OLQBB", AuthorID: a.ID, Title: "Project Hail Mary", SortTitle: "project hail mary",
-		Status: models.BookStatusDownloading, Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+		Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
 	}
 	if err := books.Create(ctx, b); err != nil {
 		t.Fatal(err)

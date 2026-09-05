@@ -145,8 +145,6 @@
     "mediaBoth": "📖🎧 Keduanya",
     "deleteConfirm": "Hapus {{count}} buku?",
     "statusWanted": "Dicari",
-    "statusDownloading": "Mengunduh",
-    "statusDownloaded": "Terunduh",
     "statusImported": "Di Perpustakaan",
     "statusSkipped": "Dilewati",
     "audioLabel": "🎧 Audio",
@@ -620,8 +618,6 @@
     "deleteBookConfirm": "Delete book + files",
     "status": {
       "wanted": "Wanted",
-      "downloading": "Downloading",
-      "downloaded": "Downloaded",
       "imported": "Imported",
       "skipped": "Skipped"
     },

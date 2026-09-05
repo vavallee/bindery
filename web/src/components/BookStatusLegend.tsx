@@ -6,8 +6,6 @@ import { bookStatusBadge } from './bookStatus'
 // same AA-checked colours) instead of being a hand-maintained copy that drifts.
 const ENTRIES: Array<{ status: string; monitored: boolean }> = [
   { status: 'wanted', monitored: true },
-  { status: 'downloading', monitored: true },
-  { status: 'downloaded', monitored: true },
   { status: 'imported', monitored: true },
   { status: 'skipped', monitored: true },
   { status: 'wanted', monitored: false }, // resolves to "Not monitored"

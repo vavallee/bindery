@@ -26,9 +26,9 @@ describe('bookStatusBadge', () => {
       expect(imp.label).toBe('bookStatus.imported')
       expect(imp.colorClass).toContain('emerald')
 
-      const dl = bookStatusBadge('downloading', monitored, t)
-      expect(dl.label).toBe('bookStatus.downloading')
-      expect(dl.colorClass).toContain('blue')
+      const skip = bookStatusBadge('skipped', monitored, t)
+      expect(skip.label).toBe('bookStatus.skipped')
+      expect(skip.colorClass).toMatch(/slate|zinc/)
     }
   })
 
@@ -85,8 +85,8 @@ describe('bookStatusBadge contrast (WCAG AA)', () => {
   }
 
   const statuses: Array<[string, boolean]> = [
-    ['wanted', true], ['downloading', true], ['downloaded', true],
-    ['imported', true], ['skipped', true], ['wanted', false], // wanted+unmonitored = muted
+    ['wanted', true], ['imported', true], ['skipped', true],
+    ['wanted', false], // wanted+unmonitored = muted
   ]
 
   for (const [status, monitored] of statuses) {

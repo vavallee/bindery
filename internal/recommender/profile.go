@@ -80,7 +80,7 @@ func BuildProfile(
 	for _, b := range allBooks {
 		// Wanted counts as owned for suppression: recommending a book the
 		// user has already decided they want is never useful (#1726).
-		if b.Status == models.BookStatusDownloaded || b.Status == models.BookStatusImported || b.Status == models.BookStatusWanted {
+		if b.Status == models.BookStatusImported || b.Status == models.BookStatusWanted {
 			p.OwnedForeignIDs[b.ForeignID] = true
 			for _, key := range ownedWorkKeys(b.Title, p.AuthorNames[b.AuthorID]) {
 				p.OwnedWorkKeys[key] = true
