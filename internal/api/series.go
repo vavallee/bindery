@@ -166,10 +166,51 @@ func validateSeriesTitle(title string) (string, string) {
 	return title, ""
 }
 
+const (
+	seriesListDefaultLimit = 100
+	seriesListMaxLimit     = 500
+)
+
+// seriesListResponse is the paginated wrapper GET /series returns when the
+// caller asks for a page. Same shape as authorListResponse.
+type seriesListResponse struct {
+	Items  []models.Series `json:"items"`
+	Total  int             `json:"total"`
+	Limit  int             `json:"limit"`
+	Offset int             `json:"offset"`
+}
+
+// List returns the series collection with each series' linked books attached.
+//
+// Pagination is opt-in (#2345): pass limit and/or offset and the response is a
+// seriesListResponse envelope; pass neither and it stays the bare array it has
+// always been. Authors and books got the envelope unconditionally and that was
+// a breaking change for every client; there is no reason to repeat it here
+// when the only in-tree consumer (web/src/pages/SeriesPage.tsx) still wants
+// the whole collection. Switching that page to paged loads, and then making
+// the envelope the default, is the follow-up.
 func (h *SeriesHandler) List(w http.ResponseWriter, r *http.Request) {
 	// Owner-scoped books (#1457): a non-admin must not enumerate other
 	// users' titles through the series view. Series rows stay global.
-	series, err := h.series.ListWithBooksForUser(r.Context(), auth.ListScopeUserID(r.Context()))
+	userID := auth.ListScopeUserID(r.Context())
+
+	q := r.URL.Query()
+	paged := strings.TrimSpace(q.Get("limit")) != "" || strings.TrimSpace(q.Get("offset")) != ""
+	if !paged {
+		series, err := h.series.ListWithBooksForUser(r.Context(), userID)
+		if err != nil {
+			writeServerError(w, r, err)
+			return
+		}
+		if series == nil {
+			series = []models.Series{}
+		}
+		writeJSON(w, http.StatusOK, series)
+		return
+	}
+
+	limit, offset := parseLimitOffset(r, seriesListDefaultLimit, seriesListMaxLimit)
+	series, total, err := h.series.ListPageWithBooksForUser(r.Context(), userID, limit, offset)
 	if err != nil {
 		writeServerError(w, r, err)
 		return
@@ -177,7 +218,12 @@ func (h *SeriesHandler) List(w http.ResponseWriter, r *http.Request) {
 	if series == nil {
 		series = []models.Series{}
 	}
-	writeJSON(w, http.StatusOK, series)
+	writeJSON(w, http.StatusOK, seriesListResponse{
+		Items:  series,
+		Total:  total,
+		Limit:  limit,
+		Offset: offset,
+	})
 }
 
 func (h *SeriesHandler) Get(w http.ResponseWriter, r *http.Request) {
