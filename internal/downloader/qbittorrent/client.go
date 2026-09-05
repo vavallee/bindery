@@ -59,6 +59,16 @@ var hashPollTimeout = 30 * time.Second
 // uploading it to qBittorrent.
 var maxTorrentFileBytes int64 = 50 << 20
 
+// maxAPIResponseBytes caps a qBittorrent WebUI API reply. /api/v2/torrents/info
+// returns every torrent in one document, the same shape that made a 1 MiB cap
+// on Transmission's torrent-get too small for a 5000 torrent session (#1524),
+// so this matches the 64 MiB the Transmission and rTorrent clients settled on
+// afterwards. Before this the success path read the body with no cap at all
+// (#2357). readLimited turns an over-limit reply into a clear error rather
+// than a truncated document that fails to parse. A var, like
+// maxTorrentFileBytes, so tests can lower it instead of allocating 64 MiB.
+var maxAPIResponseBytes int64 = 64 << 20
+
 // Client interacts with the qBittorrent WebUI API v2.
 // Authentication is cookie-based: Login() obtains a SID cookie which is
 // stored in the embedded http.Client's cookie jar and sent automatically on
@@ -592,7 +602,7 @@ func (c *Client) fetchTorrentContent(ctx context.Context, rawURL string) (*fetch
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("indexer returned HTTP %d", resp.StatusCode)
 		}
-		data, err := readLimited(resp.Body, maxTorrentFileBytes)
+		data, err := readLimited(resp.Body, maxTorrentFileBytes, "torrent response")
 		if err != nil {
 			return nil, err
 		}
@@ -612,13 +622,18 @@ func (c *Client) validateTorrentFetchURL(raw string) error {
 	return c.validateTorrentURL(raw)
 }
 
-func readLimited(r io.Reader, maxBytes int64) ([]byte, error) {
+// readLimited reads at most maxBytes from r. Unlike a bare io.LimitReader it
+// reports an over-limit body as an explicit error instead of handing back a
+// truncated document that fails to parse further down (the failure mode of
+// #1524). what names the thing being read so the error says which read blew
+// the cap.
+func readLimited(r io.Reader, maxBytes int64, what string) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(r, maxBytes+1))
 	if err != nil {
 		return nil, err
 	}
 	if int64(len(data)) > maxBytes {
-		return nil, fmt.Errorf("torrent response exceeds %d bytes", maxBytes)
+		return nil, fmt.Errorf("%s exceeds %d bytes", what, maxBytes)
 	}
 	return data, nil
 }
@@ -857,7 +872,7 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 			body2, _ := io.ReadAll(io.LimitReader(resp2.Body, 512))
 			return nil, fmt.Errorf("HTTP %d: %s", resp2.StatusCode, string(body2))
 		}
-		return io.ReadAll(resp2.Body)
+		return readLimited(resp2.Body, maxAPIResponseBytes, "qBittorrent API response")
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -865,5 +880,5 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
-	return io.ReadAll(resp.Body)
+	return readLimited(resp.Body, maxAPIResponseBytes, "qBittorrent API response")
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -70,6 +71,9 @@ func (h *stubSensitiveHandler) ImportGoodreadsCommit(w http.ResponseWriter, _ *h
 }
 func (h *stubSensitiveHandler) Export(w http.ResponseWriter, _ *http.Request) {
 	h.record("export-logs", w)
+}
+func (h *stubSensitiveHandler) TestDiscovery(w http.ResponseWriter, _ *http.Request) {
+	h.record("oidc-test-discovery", w)
 }
 func (h *stubSensitiveHandler) GetLevel(w http.ResponseWriter, _ *http.Request) {
 	h.record("get-level", w)
@@ -150,6 +154,50 @@ func TestSystemLogRoutesAllowAdmin(t *testing.T) {
 				t.Fatalf("called = %v; want [%s]", h.called, tt.called)
 			}
 		})
+	}
+}
+
+// TestOIDCDiscoveryRouteRequiresAdmin locks in #2348: the OIDC discovery probe
+// was registered one block above the admin group, so a role=user session could
+// POST an arbitrary issuer URL and read back connection refused vs an HTTP
+// status vs a parse error vs a full discovery document — a host and port
+// oracle for the network the container sits on. An OPDS-only reader account
+// authenticates against the same user table, so it reached this too.
+func TestOIDCDiscoveryRouteRequiresAdmin(t *testing.T) {
+	h := &stubSensitiveHandler{}
+	router := chi.NewRouter()
+	registerOIDCDiscoveryRoutes(router, h)
+
+	req := httptest.NewRequest(http.MethodPost, "/auth/oidc/test-discovery", strings.NewReader(`{"issuer":"http://192.168.1.1:8080"}`))
+	req = req.WithContext(auth.WithUserRole(req.Context(), "user"))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d; want %d (RequireAdmin should reject role=user)", rec.Code, http.StatusForbidden)
+	}
+	if len(h.called) != 0 {
+		t.Fatalf("handler invoked for non-admin request: %v", h.called)
+	}
+}
+
+// TestOIDCDiscoveryRouteAllowsAdmin is the symmetry case: gating the probe
+// must not take the button away from the admin who configures OIDC.
+func TestOIDCDiscoveryRouteAllowsAdmin(t *testing.T) {
+	h := &stubSensitiveHandler{}
+	router := chi.NewRouter()
+	registerOIDCDiscoveryRoutes(router, h)
+
+	req := httptest.NewRequest(http.MethodPost, "/auth/oidc/test-discovery", strings.NewReader(`{"issuer":"https://idp.example.com"}`))
+	req = req.WithContext(auth.WithUserRole(req.Context(), "admin"))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d; want %d", rec.Code, http.StatusNoContent)
+	}
+	if len(h.called) != 1 || h.called[0] != "oidc-test-discovery" {
+		t.Fatalf("called = %v; want [oidc-test-discovery]", h.called)
 	}
 }
 

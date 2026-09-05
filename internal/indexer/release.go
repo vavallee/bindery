@@ -130,8 +130,12 @@ func phraseRegex(phrase []string) *regexp.Regexp {
 	// wordSep rather than \b/\W so non-ASCII words match (#1642). The inner
 	// separator stays a + run, matching the previous \W+ behaviour.
 	pattern := `(?i)(?:^|` + wordSep + `)` + strings.Join(parts, wordSep+`+`) + `(?:` + wordSep + `|$)`
-	re, _ := regexCache.LoadOrStore(pattern, regexp.MustCompile(pattern))
-	return re.(*regexp.Regexp)
+	if v, ok := regexCache.Load(pattern); ok {
+		return v.(*regexp.Regexp)
+	}
+	re := regexp.MustCompile(pattern)
+	regexCache.Store(pattern, re)
+	return re
 }
 
 // ContainsPhrase returns true if all words in phrase appear in haystack in the

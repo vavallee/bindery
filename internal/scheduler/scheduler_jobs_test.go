@@ -437,8 +437,8 @@ func TestWantedSearchQueue_SkipsInFlightGrabs(t *testing.T) {
 	queue := s.wantedSearchQueue(ctx)
 
 	got := make(map[int64]bool, len(queue))
-	for _, b := range queue {
-		got[b.ID] = true
+	for _, w := range queue {
+		got[w.book.ID] = true
 	}
 	if got[inFlight.ID] {
 		t.Errorf("book with a downloading grab was queued for re-search (double-grab bug)")
