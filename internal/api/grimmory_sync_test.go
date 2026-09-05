@@ -82,6 +82,20 @@ func TestGrimmorySyncStart_AlreadyRunningConflicts(t *testing.T) {
 	}
 }
 
+// TestGrimmorySyncStart_ShuttingDownReturns503 pins the answer for a sync the
+// jobs group refused because the process is draining (#2372). 500 would read as
+// a fault; nothing is broken, the request just arrived too late.
+func TestGrimmorySyncStart_ShuttingDownReturns503(t *testing.T) {
+	stub := &stubGrimmorySyncer{startErr: grimmory.ErrShuttingDown}
+	h := NewGrimmorySyncHandler(stub, readyGrimmoryCfg)
+
+	rec := httptest.NewRecorder()
+	h.Start(rec, httptest.NewRequest(http.MethodPost, "/api/v1/grimmory/sync", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+}
+
 func TestGrimmorySyncStatus(t *testing.T) {
 	stub := &stubGrimmorySyncer{progress: grimmory.SyncProgress{Running: true, Message: "pushing"}}
 	h := NewGrimmorySyncHandler(stub, readyGrimmoryCfg)

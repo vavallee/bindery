@@ -22,6 +22,7 @@ import (
 	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/indexer"
+	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/telemetry"
@@ -80,6 +81,11 @@ type AuthorHandler struct {
 	// context.Background() when not set; see #846 and recommendations.go.
 	lifetimeCtx context.Context
 
+	// jobs tracks the catalogue-sync goroutine so shutdown can drain it before
+	// the database closes (#1458, #2371). Optional: without it the sync runs as
+	// an untracked goroutine, which is what tests and non-wired callers get.
+	jobs *jobs.Group
+
 	// syncSummaries records what each catalogue sync added and dropped so the
 	// detail endpoint can report it instead of leaving the drops to a Debug
 	// log line nobody reads (#1889).
@@ -88,6 +94,17 @@ type AuthorHandler struct {
 
 func NewAuthorHandler(authors *db.AuthorRepo, aliases *db.AuthorAliasRepo, books *db.BookRepo, series *db.SeriesRepo, meta *metadata.Aggregator, settings *db.SettingsRepo, profiles *db.MetadataProfileRepo, searcher BookSearcher) *AuthorHandler {
 	return &AuthorHandler{authors: authors, aliases: aliases, books: books, series: series, meta: meta, settings: settings, profiles: profiles, searcher: searcher}
+}
+
+// WithJobs registers the process-wide background-jobs group so the async
+// catalogue sync an author add kicks off is tracked and drained on shutdown
+// before the database closes, mirroring Scanner.WithJobs (#1458, #2371).
+// Without it the sync is a bare goroutine that a SIGTERM cuts off mid-write,
+// leaving the author with a partial catalogue and "database is closed" in the
+// log.
+func (h *AuthorHandler) WithJobs(g *jobs.Group) *AuthorHandler {
+	h.jobs = g
+	return h
 }
 
 // WithFinder attaches a LibraryFinder to the handler. When set, FetchAuthorBooks
@@ -691,7 +708,23 @@ func (h *AuthorHandler) fetchAuthorBooksAsync(author *models.Author, opts catalo
 		return
 	}
 	snapshot := *author
-	go h.fetchAuthorBooks(&snapshot, opts)
+	// With a jobs group wired the sync runs on the shutdown-scoped context, so
+	// SIGTERM cancels and drains it before the DB closes rather than cutting it
+	// off mid-write. Fall back to an untracked goroutine for tests and
+	// non-wired callers, the same shape StartScan uses (#1458, #2371).
+	if h.jobs != nil {
+		if !h.jobs.Go("author-catalogue-sync", func(ctx context.Context) {
+			h.fetchAuthorBooks(ctx, &snapshot, opts)
+		}) {
+			// Go is a documented no-op once the group is shutting down. Nothing
+			// to roll back here (no running flag is published), but the drop is
+			// worth a line: the author was created and its catalogue was not.
+			slog.Warn("author catalogue sync not started: server is shutting down",
+				"author", snapshot.Name, "foreignId", snapshot.ForeignID)
+		}
+		return
+	}
+	go h.fetchAuthorBooks(h.bgCtx(), &snapshot, opts)
 }
 
 func (h *AuthorHandler) fetchAuthorForCreate(ctx context.Context, foreignID, fallbackName string) (*models.Author, error) {
@@ -1721,7 +1754,7 @@ func mergeAuthorProfileFields(author, upstream *models.Author) bool {
 // must use RefreshAuthorBooks instead so the author's MonitorNewItems policy
 // applies to later-discovered works (issue #1348).
 func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool, mediaType string) {
-	h.fetchAuthorBooks(author, catalogueSyncOptions{autoSearch: autoSearch, mediaType: mediaType})
+	h.fetchAuthorBooks(h.bgCtx(), author, catalogueSyncOptions{autoSearch: autoSearch, mediaType: mediaType})
 }
 
 // RefreshAuthorBooks is the discovery variant of FetchAuthorBooks used by the
@@ -1731,7 +1764,7 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 // for them (authorAcceptsDiscoveredBooks) — a refresh must never grow the
 // library behind the user's back (issues #1348, #1815).
 func (h *AuthorHandler) RefreshAuthorBooks(author *models.Author, autoSearch bool, mediaType string) {
-	h.fetchAuthorBooks(author, catalogueSyncOptions{autoSearch: autoSearch, mediaType: mediaType, discovery: true})
+	h.fetchAuthorBooks(h.bgCtx(), author, catalogueSyncOptions{autoSearch: autoSearch, mediaType: mediaType, discovery: true})
 }
 
 // authorAcceptsDiscoveredBooks reports whether a refresh-path catalogue sync
@@ -1788,7 +1821,9 @@ func (h *AuthorHandler) authorAwaitsFirstCatalogue(ctx context.Context, author *
 	return populatedAt == nil
 }
 
-func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSyncOptions) {
+// ctx is the background context the sync runs on: the jobs group's
+// shutdown-scoped one when the async path launched it, h.bgCtx() otherwise.
+func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Author, opts catalogueSyncOptions) {
 	autoSearch, mediaType, discovery := opts.autoSearch, opts.mediaType, opts.discovery
 	// singleWork: the caller picked one specific book and the direct insert
 	// couldn't produce it. This run exists only to create that one row, so it
@@ -1796,7 +1831,6 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// Calibre re-link, no sync summary — and it is exempt from the
 	// catalogue-sync heuristics that may veto a work (#1612).
 	singleWork := opts.onlyForeignID != ""
-	ctx := h.bgCtx()
 	slog.Info("fetching books for author", "author", author.Name, "foreignId", author.ForeignID)
 
 	// Calibre-imported authors carry a synthetic "calibre:author:N" foreign ID

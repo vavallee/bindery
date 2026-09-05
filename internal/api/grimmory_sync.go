@@ -65,6 +65,12 @@ func (h *GrimmorySyncHandler) Start(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, grimmory.ErrSyncAlreadyRunning):
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
+	case errors.Is(err, grimmory.ErrShuttingDown):
+		// The process is draining and refused to start new work. 503 rather
+		// than 500: nothing is broken, the request just arrived too late. Same
+		// answer the Hardcover list sync gives (#2372).
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+		return
 	case err != nil:
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return

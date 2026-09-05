@@ -608,7 +608,8 @@ func main() {
 		WithHardcoverFeatureSettings(settingsRepo, cfg.EnhancedHardcoverAPI).
 		WithEditionHydration(editionRepo).
 		WithRoots(libraryRoots).
-		WithLifetimeCtx(appCtx)
+		WithLifetimeCtx(appCtx).
+		WithJobs(bgJobs) // drain an in-flight author catalogue sync on shutdown (#2371)
 	authorAliasHandler := api.NewAuthorAliasHandler(authorRepo, authorAliasRepo)
 	bookHandler := api.NewBookHandler(bookRepo, metaAgg, historyRepo, sched).
 		WithSettings(settingsRepo).
@@ -646,7 +647,8 @@ func main() {
 	// download dirs) still gates the delete handlers.
 	importRoots := api.NewLibraryRoots(rootFolderRepo, cfg.LibraryDir, cfg.AudiobookDir, cfg.DownloadDir, cfg.AudiobookDownloadDir)
 	manualImportHandler := api.NewManualImportHandler(importScanner, downloadRepo, bookRepo).
-		WithRoots(importRoots)
+		WithRoots(importRoots).
+		WithJobs(bgJobs) // drain in-flight batch imports and reassigns on shutdown (#2371)
 	pendingHandler := api.NewPendingHandler(pendingReleaseRepo, queueHandler, downloadRepo, bookRepo)
 	reorganizeHandler := api.NewReorganizeHandler(importScanner)
 	importScanner.WithSettings(settingsRepo)

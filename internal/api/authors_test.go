@@ -6196,7 +6196,7 @@ func TestFetchAuthorBooks_AuthorDeletedDuringFetch_AbortsWithoutFKBurst(t *testi
 	}
 
 	logs := captureSlog(t)
-	h.fetchAuthorBooks(&snapshot, catalogueSyncOptions{mediaType: models.MediaTypeEbook, discovery: true})
+	h.fetchAuthorBooks(context.Background(), &snapshot, catalogueSyncOptions{mediaType: models.MediaTypeEbook, discovery: true})
 
 	if got := logs.String(); strings.Contains(got, "failed to create book") {
 		t.Errorf("sync against deleted author emitted per-book create failures:\n%s", got)

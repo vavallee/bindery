@@ -67,6 +67,12 @@ func (h *ABSImportHandler) Start(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, abs.ErrAlreadyRunning):
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
+	case errors.Is(err, abs.ErrShuttingDown):
+		// The process is draining and refused to start new work. 503 rather
+		// than 400: nothing about the request is wrong, it just arrived too
+		// late. Same answer the Hardcover list sync gives (#2372).
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+		return
 	case err != nil:
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return

@@ -119,11 +119,31 @@ func (s *Syncer) Start(ctx context.Context, cfg PushConfig) error {
 	// before the DB closes, instead of the never-cancelled WithoutCancel(request)
 	// context. Fall back to an untracked goroutine for tests/non-wired callers.
 	if s.jobs != nil {
-		s.jobs.Go("grimmory-sync", func(ctx context.Context) { s.run(ctx, cfg) })
-	} else {
-		go s.run(ctx, cfg)
+		// Go is a documented no-op once the group has begun shutting down. The
+		// gate and the Running progress snapshot are published above, so a
+		// dropped launch has to be undone here or Progress() keeps describing a
+		// sync that will never finish (#2372).
+		if !s.jobs.Go("grimmory-sync", func(ctx context.Context) { s.run(ctx, cfg) }) {
+			s.abandonStart(ErrShuttingDown)
+			return ErrShuttingDown
+		}
+		return nil
 	}
+	go s.run(ctx, cfg)
 	return nil
+}
+
+// abandonStart rolls back the running flag and progress snapshot Start
+// published, for a background sync that was never launched.
+func (s *Syncer) abandonStart(err error) {
+	now := time.Now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.running = false
+	s.progress.Running = false
+	s.progress.FinishedAt = &now
+	s.progress.Message = "sync not started"
+	s.progress.Error = err.Error()
 }
 
 func (s *Syncer) run(ctx context.Context, cfg PushConfig) {

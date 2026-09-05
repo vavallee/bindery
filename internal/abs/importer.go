@@ -19,6 +19,12 @@ import (
 
 var ErrAlreadyRunning = errors.New("abs import already running")
 
+// ErrShuttingDown is returned by Start when the import could not be launched
+// because the process is already draining its background jobs. The running flag
+// and progress snapshot are rolled back before it is returned, so a restarted
+// process starts clean. Matches hardcoverlistsyncer.ErrShuttingDown.
+var ErrShuttingDown = errors.New("server is shutting down")
+
 func NewImporter(
 	authors *db.AuthorRepo,
 	aliases *db.AuthorAliasRepo,
@@ -248,11 +254,31 @@ func (i *Importer) Start(ctx context.Context, cfg ImportConfig) error {
 	// nothing ever cancels. Fall back to an untracked goroutine otherwise so
 	// tests and non-wired callers keep the previous behaviour (#1458).
 	if i.jobs != nil {
-		i.jobs.Go("abs-import", func(ctx context.Context) { i.run(ctx, cfg) })
-	} else {
-		go i.run(ctx, cfg)
+		// Go is a documented no-op once the group has begun shutting down. The
+		// gate and the Running progress snapshot are published above, so a
+		// dropped launch has to be undone here or Progress() keeps describing
+		// an import that will never finish (#2372).
+		if !i.jobs.Go("abs-import", func(ctx context.Context) { i.run(ctx, cfg) }) {
+			i.abandonStart(ErrShuttingDown)
+			return ErrShuttingDown
+		}
+		return nil
 	}
+	go i.run(ctx, cfg)
 	return nil
+}
+
+// abandonStart rolls back the running flag and progress snapshot Start
+// published, for a background import that was never launched.
+func (i *Importer) abandonStart(err error) {
+	now := time.Now().UTC()
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.running = false
+	i.progress.Running = false
+	i.progress.FinishedAt = &now
+	i.progress.Error = err.Error()
+	i.progress.Message = "import not started"
 }
 
 func (i *Importer) Run(ctx context.Context, cfg ImportConfig) (*ImportStats, error) {
