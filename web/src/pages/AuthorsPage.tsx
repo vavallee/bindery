@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
+import { useConfirmDialog } from '../components/useConfirmDialog'
 import { api, Author, AuthorBulkMonitorMode, MediaType, MonitorNewItems, AuthorRefreshStatus } from '../api/client'
 import AddAuthorModal from '../components/AddAuthorModal'
 import AddBookModal from '../components/AddBookModal'
@@ -28,6 +29,7 @@ type MonitoredFilter = '' | 'monitored' | 'unmonitored'
 
 export default function AuthorsPage() {
   const { t } = useTranslation()
+  const { confirm, confirmDialog } = useConfirmDialog()
   const navigate = useNavigate()
   const [authors, setAuthors] = useState<Author[]>([])
   const [total, setTotal] = useState(0)
@@ -131,7 +133,11 @@ export default function AuthorsPage() {
 
   const handleRefreshAll = async () => {
     if (refreshing) return
-    if (!confirm(t('authors.refreshAllConfirm'))) return
+    if (!await confirm({
+      title: t('common.confirmTitle'),
+      body: t('authors.refreshAllConfirm'),
+      confirmLabel: t('common.refresh'),
+    })) return
     setRefreshing(true)
     setRefreshStatus(null)
     try {
@@ -157,7 +163,13 @@ export default function AuthorsPage() {
     const msg = withFiles > 0
       ? t('authors.deleteWithFilesConfirm', { total, withFiles })
       : t('authors.deleteConfirm')
-    if (!confirm(msg)) return
+    if (!await confirm({
+      title: t('common.confirmTitle'),
+      body: msg,
+      confirmLabel: t('common.delete'),
+      // Deleting files off disk is irreversible, so that variant is gated.
+      acknowledgeLabel: withFiles > 0 ? t('authorDetail.deleteFilesAcknowledge') : undefined,
+    })) return
     await api.deleteAuthor(id, withFiles > 0)
     load()
   }
@@ -205,7 +217,11 @@ export default function AuthorsPage() {
 
   const runBulk = async (action: Parameters<typeof api.bulkActionAuthors>[1]) => {
     if (selectedIds.size === 0) return
-    if (action === 'delete' && !confirm(t('authors.bulkDeleteConfirm', { count: selectedIds.size }))) return
+    if (action === 'delete' && !await confirm({
+      title: t('common.confirmTitle'),
+      body: t('authors.bulkDeleteConfirm', { count: selectedIds.size }),
+      confirmLabel: t('common.delete'),
+    })) return
     setBulkBusy(true)
     try {
       await api.bulkActionAuthors([...selectedIds], action)
@@ -225,7 +241,7 @@ export default function AuthorsPage() {
       mediaType: t(`mediaType.${mediaType}`, mediaType),
       defaultValue: `Set the media type for every book of {{count}} selected authors to {{mediaType}}? This rewrites existing book rows and may re-evaluate wanted/missing status.`,
     })
-    if (!confirm(confirmMsg)) return
+    if (!await confirm({ title: t('common.confirmTitle'), body: confirmMsg })) return
     setBulkBusy(true)
     try {
       await api.bulkActionAuthors([...selectedIds], 'set_media_type', mediaType)
@@ -321,6 +337,7 @@ export default function AuthorsPage() {
 
   return (
     <div className={selectedIds.size > 0 ? 'pb-16' : ''}>
+      {confirmDialog}
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-2xl font-bold">{t('authors.title')}</h2>
         <div className="flex items-center gap-2 flex-wrap justify-end">

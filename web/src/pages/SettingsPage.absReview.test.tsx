@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import SettingsPage from './SettingsPage'
 import { api } from '../api/client'
 import type { ABSReviewItem, Author, Book } from '../api/client'
+import { acceptConfirm, cancelConfirm, confirmDialog } from '../test-utils'
 
 vi.mock('../settings/AuthSettings', () => ({ default: () => <div data-testid="auth-settings" /> }))
 vi.mock('../components/ThemeToggle', () => ({ default: () => <button type="button">Theme</button> }))
@@ -293,37 +294,30 @@ describe('SettingsPage ABS review search', () => {
     const itemB = makeReviewItem({ id: 2, itemId: 'item-2', latestRunId: 42 })
     const itemC = makeReviewItem({ id: 3, itemId: 'item-3', latestRunId: 99 })
     vi.mocked(api.dismissAbsReviewRun).mockResolvedValue({ dismissed: 2 })
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
-    try {
-      await renderABSReview([itemA, itemB, itemC])
+    await renderABSReview([itemA, itemB, itemC])
 
-      const button = await screen.findAllByRole('button', { name: /Dismiss all from this run/ })
-      // Two groups (run 42 and run 99). Most-recent (99) renders first, so
-      // index 1 is the 42-group click target.
-      expect(button.length).toBe(2)
+    const button = await screen.findAllByRole('button', { name: /Dismiss all from this run/ })
+    // Two groups (run 42 and run 99). Most-recent (99) renders first, so
+    // index 1 is the 42-group click target.
+    expect(button.length).toBe(2)
 
-      fireEvent.click(button[1])
+    fireEvent.click(button[1])
+    await acceptConfirm()
 
-      await waitFor(() => {
-        expect(api.dismissAbsReviewRun).toHaveBeenCalledWith(42)
-      })
-      expect(confirmSpy).toHaveBeenCalled()
-    } finally {
-      confirmSpy.mockRestore()
-    }
+    await waitFor(() => {
+      expect(api.dismissAbsReviewRun).toHaveBeenCalledWith(42)
+    })
   })
 
   it('does nothing when the per-run dismiss confirmation is cancelled', async () => {
     const itemA = makeReviewItem({ id: 1, itemId: 'item-1', latestRunId: 42 })
     vi.mocked(api.dismissAbsReviewRun).mockResolvedValue({ dismissed: 1 })
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
-    try {
-      await renderABSReview([itemA])
-      const buttons = await screen.findAllByRole('button', { name: /Dismiss all from this run/ })
-      fireEvent.click(buttons[0])
-      expect(api.dismissAbsReviewRun).not.toHaveBeenCalled()
-    } finally {
-      confirmSpy.mockRestore()
-    }
+    await renderABSReview([itemA])
+    const buttons = await screen.findAllByRole('button', { name: /Dismiss all from this run/ })
+    fireEvent.click(buttons[0])
+    await cancelConfirm()
+
+    await waitFor(() => expect(confirmDialog()).not.toBeInTheDocument())
+    expect(api.dismissAbsReviewRun).not.toHaveBeenCalled()
   })
 })

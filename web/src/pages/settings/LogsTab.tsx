@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, LogEntry, LogQuery } from '../../api/client'
 import SaveButton from './SaveButton'
 import Toggle from './Toggle'
@@ -37,6 +38,7 @@ function formatRelativeTime(iso: string): string {
 
 export default function LogsTab() {
   const { t, i18n } = useTranslation()
+  const { confirm, confirmDialog } = useConfirmDialog()
   const [logEntries, setLogEntries] = useState<LogEntry[]>([])
   const [logLevel, setLogLevel] = useState<string>('info')
   const [logFilter, setLogFilter] = useState<string>('all')
@@ -114,7 +116,11 @@ export default function LogsTab() {
   }
 
   const handleDeleteBackup = async (filename: string) => {
-    if (!confirm(`Delete backup ${filename}?`)) return
+    if (!await confirm({
+      title: t('settings.logs.deleteBackupTitle'),
+      body: t('settings.logs.deleteBackupConfirm', { filename }),
+      confirmLabel: t('common.delete'),
+    })) return
     setDeletingBackup(filename)
     try {
       await api.deleteBackup(filename)
@@ -146,6 +152,7 @@ export default function LogsTab() {
 
   return (
     <div>
+      {confirmDialog}
       {/* Toolbar row 1: heading + level pills + runtime level + auto-refresh */}
       <div className="flex flex-wrap items-center gap-3 mb-3">
         <h3 className="text-lg font-semibold mr-auto">{t('settings.logs.heading')}</h3>

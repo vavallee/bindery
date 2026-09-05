@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
+import { useConfirmDialog } from '../components/useConfirmDialog'
 import { api, Author, AuthorAlias, Book, BookBulkAction, MediaType, Series } from '../api/client'
 import ViewToggle from '../components/ViewToggle'
 import { bookStatusBadge } from '../components/bookStatus'
@@ -69,6 +70,7 @@ export default function AuthorDetailPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const { t } = useTranslation()
+  const { confirm, confirmDialog } = useConfirmDialog()
   const authorId = Number(id)
 
   const [author, setAuthor] = useState<Author | null>(null)
@@ -261,10 +263,15 @@ export default function AuthorDetailPage() {
   const handleDelete = async () => {
     if (!author) return
     const withFiles = books.filter(b => b.filePath)
-    const msg = withFiles.length > 0
-      ? `Delete ${author.authorName}, all ${books.length} book(s), AND ${withFiles.length} file(s)/folder(s) on disk?\n\nThis cannot be undone.`
-      : `Delete ${author.authorName} and all ${books.length} book(s)?`
-    if (!confirm(msg)) return
+    if (!await confirm({
+      title: t('authorDetail.deleteTitle'),
+      body: withFiles.length > 0
+        ? t('authorDetail.deleteWithFilesConfirm', { author: author.authorName, count: books.length, withFiles: withFiles.length })
+        : t('authorDetail.deleteConfirm', { author: author.authorName, count: books.length }),
+      confirmLabel: t('common.delete'),
+      // Deleting files off disk is irreversible, so that variant is gated.
+      acknowledgeLabel: withFiles.length > 0 ? t('authorDetail.deleteFilesAcknowledge') : undefined,
+    })) return
     try {
       await api.deleteAuthor(author.id, withFiles.length > 0)
       navigate('/')
@@ -275,7 +282,11 @@ export default function AuthorDetailPage() {
 
   const handleDeleteAlias = async (alias: AuthorAlias) => {
     if (!author) return
-    if (!confirm(t('authorDetail.aliases.removeConfirm', { name: alias.name, author: author.authorName }))) return
+    if (!await confirm({
+      title: t('common.confirmTitle'),
+      body: t('authorDetail.aliases.removeConfirm', { name: alias.name, author: author.authorName }),
+      confirmLabel: t('common.remove'),
+    })) return
     setError(null)
     try {
       await api.deleteAuthorAlias(author.id, alias.id)
@@ -319,7 +330,7 @@ export default function AuthorDetailPage() {
   // so the user knows partial success happened without burying it.
   const runBulk = async (action: BookBulkAction, actionLabel: string, confirmMsg?: string, mediaType?: MediaType) => {
     if (selected.size === 0) return
-    if (confirmMsg && !confirm(confirmMsg)) return
+    if (confirmMsg && !await confirm({ title: t('common.confirmTitle'), body: confirmMsg })) return
     setBulkBusy(true)
     setError(null)
     try {
@@ -667,6 +678,7 @@ export default function AuthorDetailPage() {
   return (
     // One width shared with BookDetailPage — see the note there.
     <div className={`max-w-7xl ${selected.size > 0 ? 'pb-20' : ''}`}>
+      {confirmDialog}
       <div className="mb-4 flex items-center gap-3 text-sm">
         <button onClick={() => navigate(-1)} className="text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">← Back</button>
       </div>

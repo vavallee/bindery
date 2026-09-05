@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, BlocklistEntry } from '../../api/client'
 import Pagination from '../../components/Pagination'
 import { usePagination } from '../../components/usePagination'
@@ -14,6 +15,7 @@ function formatBlocklistDate(s: string) {
 
 export default function BlocklistTab() {
   const { t } = useTranslation()
+  const { confirm, confirmDialog } = useConfirmDialog()
   const [entries, setEntries] = useState<BlocklistEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -34,7 +36,11 @@ export default function BlocklistTab() {
 
   const handleBulkDelete = async () => {
     if (selected.size === 0) return
-    if (!confirm(t('blocklist.deleteConfirm', { count: selected.size }))) return
+    if (!await confirm({
+      title: t('common.confirmTitle'),
+      body: t('blocklist.deleteConfirm', { count: selected.size }),
+      confirmLabel: t('common.delete'),
+    })) return
     setDeleting(true)
     try {
       await api.bulkDeleteBlocklist(Array.from(selected))
@@ -70,6 +76,7 @@ export default function BlocklistTab() {
 
   return (
     <div>
+      {confirmDialog}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <h3 className="text-lg font-semibold">{t('blocklist.title')}</h3>
         <div className="flex items-center gap-3">

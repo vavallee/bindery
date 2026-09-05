@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router'
 import QueuePage, { MatchBookControl } from './QueuePage'
 import { summarizeError, ERROR_SUMMARY_LEN } from './queueError'
 import { api } from '../api/client'
+import { acceptConfirm } from '../test-utils'
 import type { Download, PendingRelease, QueueItem } from '../api/client'
 
 vi.mock('../api/client', async importOriginal => {
@@ -272,16 +273,14 @@ describe('QueuePage', () => {
       makeQueueItem({ id: 2, title: 'Bad A', status: 'importFailed', errorMessage: 'x' }),
       makeQueueItem({ id: 3, title: 'Bad B', status: 'failed', errorMessage: 'y' }),
     ])
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
-
     renderQueuePage()
     fireEvent.click(await screen.findByRole('button', { name: 'Clear all failed' }))
+    await acceptConfirm()
 
     await waitFor(() => expect(api.deleteFromQueue).toHaveBeenCalledWith(2, false))
     expect(api.deleteFromQueue).toHaveBeenCalledWith(3, false)
     // The healthy downloading item must NOT be cleared.
     expect(api.deleteFromQueue).not.toHaveBeenCalledWith(1, false)
-    confirmSpy.mockRestore()
   })
 
   it('bulk-removes arbitrarily selected items and unmonitors their books by default', async () => {
@@ -292,7 +291,6 @@ describe('QueuePage', () => {
         makeQueueItem({ id: 3, title: 'Keep', status: 'downloading' }),
       ])
       .mockResolvedValueOnce([])
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
 
     renderQueuePage()
 
@@ -302,11 +300,11 @@ describe('QueuePage', () => {
     fireEvent.click(within(b.closest('div')!.parentElement!).getByRole('checkbox'))
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove selected' }))
+    await acceptConfirm()
 
     // unmonitorBooks defaults ON (undo a mass import); deleteFiles defaults OFF.
     // The unselected "Keep" item is not touched.
     await waitFor(() => expect(api.bulkDeleteQueue).toHaveBeenCalledWith([1, 2], { deleteFiles: false, unmonitorBooks: true }))
-    confirmSpy.mockRestore()
   })
 
   it('select-all covers the whole queue and can also delete downloaded files', async () => {
@@ -314,7 +312,6 @@ describe('QueuePage', () => {
       makeQueueItem({ id: 1, title: 'A', status: 'downloading' }),
       makeQueueItem({ id: 2, title: 'B', status: 'downloading' }),
     ])
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
 
     renderQueuePage()
 
@@ -322,9 +319,9 @@ describe('QueuePage', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select all' }))
     fireEvent.click(screen.getByRole('checkbox', { name: 'Delete downloaded files' }))
     fireEvent.click(screen.getByRole('button', { name: 'Remove selected' }))
+    await acceptConfirm()
 
     await waitFor(() => expect(api.bulkDeleteQueue).toHaveBeenCalledWith([1, 2], { deleteFiles: true, unmonitorBooks: true }))
-    confirmSpy.mockRestore()
   })
 
   it('retries an import-failed queue item and reloads the queue', async () => {

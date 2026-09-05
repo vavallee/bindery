@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useConfirmDialog } from '../components/useConfirmDialog'
 import { api, ManagedUser, UserOwnedRows, UserDeletePlan } from '../api/client'
 import { ApiError } from '../api/core'
 import DeleteUserDialog from './DeleteUserDialog'
@@ -10,6 +11,7 @@ const btnCls = 'px-3 py-1.5 rounded text-sm font-medium transition-colors'
 
 export default function UsersPage() {
   const { t } = useTranslation()
+  const { confirm, confirmDialog } = useConfirmDialog()
   const { isAdmin, status } = useAuth()
   const [users, setUsers] = useState<ManagedUser[]>([])
   const [loading, setLoading] = useState(true)
@@ -59,7 +61,11 @@ export default function UsersPage() {
   // straight away; one who owns library data comes back 409 with the counts,
   // and that opens the dialog rather than failing (#1899).
   async function handleDelete(u: ManagedUser) {
-    if (!confirm(t('users.deleteConfirm', { username: u.username }))) return
+    if (!await confirm({
+      title: t('common.confirmTitle'),
+      body: t('users.deleteConfirm', { username: u.username }),
+      confirmLabel: t('common.delete'),
+    })) return
     setError('')
     try {
       await api.deleteUser(u.id)
@@ -119,6 +125,7 @@ export default function UsersPage() {
 
   return (
     <div className="space-y-8 max-w-2xl">
+      {confirmDialog}
       <h1 className="text-2xl font-bold">{t('users.title')}</h1>
 
       {pendingDelete && (

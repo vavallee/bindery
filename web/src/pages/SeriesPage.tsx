@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router'
+import { useTranslation } from 'react-i18next'
 import { api, MediaType, Series, SeriesHardcoverDiff, SeriesHardcoverDiffBook, SeriesHardcoverLink, SeriesHardcoverSearchResult, SystemStatus } from '../api/client'
 import { hardcoverSeriesUrl } from '../util/metadataSource'
 import AddSeriesBookModal from '../components/AddSeriesBookModal'
@@ -7,8 +8,11 @@ import HardcoverSeriesLinkModal from '../components/HardcoverSeriesLinkModal'
 import SeriesNameModal from '../components/SeriesNameModal'
 import { btn, btnSize } from '../components/buttons'
 import Switch from '../components/Switch'
+import { useConfirmDialog } from '../components/useConfirmDialog'
 
 export default function SeriesPage() {
+  const { t } = useTranslation()
+  const { confirm, confirmDialog } = useConfirmDialog()
   const location = useLocation()
   const [seriesList, setSeriesList] = useState<Series[]>([])
   const [loading, setLoading] = useState(true)
@@ -109,7 +113,11 @@ export default function SeriesPage() {
   }
 
   const deleteSeries = async (series: Series) => {
-    if (!confirm(`Delete "${series.title}" from Series? Linked books will stay in your library.`)) return
+    if (!await confirm({
+      title: t('series.deleteTitle'),
+      body: t('series.deleteConfirm', { title: series.title }),
+      confirmLabel: t('common.delete'),
+    })) return
     await api.deleteSeries(series.id)
     setSeriesList(prev => prev.filter(item => item.id !== series.id))
     setDiffs(prev => {
@@ -240,6 +248,7 @@ export default function SeriesPage() {
 
   return (
     <div>
+      {confirmDialog}
       <div className="flex items-center justify-between gap-3 flex-wrap mb-6">
         <h2 className="text-2xl font-bold">Series</h2>
         <div className="flex items-center gap-3">

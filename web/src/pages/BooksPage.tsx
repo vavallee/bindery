@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
+import { useConfirmDialog } from '../components/useConfirmDialog'
 import ViewToggle from '../components/ViewToggle'
 import { bookStatusBadge } from '../components/bookStatus'
 import BookStatusLegend from '../components/BookStatusLegend'
@@ -32,6 +33,7 @@ const statusLabelKeys: Record<string, string> = {
 
 export default function BooksPage() {
   const { t } = useTranslation()
+  const { confirm, confirmDialog } = useConfirmDialog()
   const [books, setBooks] = useState<Book[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -117,7 +119,11 @@ export default function BooksPage() {
 
   const runBulk = async (action: Parameters<typeof api.bulkActionBooks>[1], mediaType?: MediaType) => {
     if (selectedIds.size === 0) return
-    if (action === 'delete' && !confirm(t('books.deleteConfirm', { count: selectedIds.size }))) return
+    if (action === 'delete' && !await confirm({
+      title: t('common.confirmTitle'),
+      body: t('books.deleteConfirm', { count: selectedIds.size }),
+      confirmLabel: t('common.delete'),
+    })) return
     setBulkBusy(true)
     try {
       await api.bulkActionBooks([...selectedIds], action, mediaType)
@@ -176,6 +182,7 @@ export default function BooksPage() {
 
   return (
     <div className={selectedIds.size > 0 ? 'pb-16' : ''}>
+      {confirmDialog}
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-2xl font-bold">{t('books.title')}</h2>
         <div className="flex items-center gap-3">
