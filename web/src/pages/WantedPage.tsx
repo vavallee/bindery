@@ -7,6 +7,7 @@ import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
 import { safeHref } from '../util/safeHref'
+import { formatBytes } from '../util/format'
 
 // Shared grid template so the header row and every list row line up exactly.
 // columns: checkbox · cover · title+author · format · actions
@@ -179,12 +180,6 @@ export default function WantedPage() {
     } finally {
       setBulkBusy(false)
     }
-  }
-
-  const formatSize = (bytes: number) => {
-    if (bytes > 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB'
-    if (bytes > 1048576) return (bytes / 1048576).toFixed(1) + ' MB'
-    return (bytes / 1024).toFixed(0) + ' KB'
   }
 
   const checkboxCls = 'rounded border-slate-400 dark:border-zinc-600 text-emerald-600 focus:ring-emerald-500 focus:ring-offset-0'
@@ -374,7 +369,7 @@ export default function WantedPage() {
                         <div className="min-w-0 mr-3">
                           <span className="truncate block">{r.title}</span>
                           <span className="text-slate-600 dark:text-zinc-500 truncate block">
-                            {r.indexerName} &middot; {formatSize(r.size)} &middot; {r.grabs} grabs
+                            {r.indexerName} &middot; {formatBytes(r.size)} &middot; {r.grabs} grabs
                             {safeHref(r.infoUrl) && (
                               <>
                                 {' '}&middot;{' '}

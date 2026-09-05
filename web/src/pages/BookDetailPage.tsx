@@ -19,13 +19,7 @@ import { safeHref } from '../util/safeHref'
 import { metadataSourceLink, providerDisplayName, providerFromBookForeignId } from '../util/metadataSource'
 import FixMatchModal from '../components/FixMatchModal'
 import EditBookModal from '../components/EditBookModal'
-
-function formatSize(n: number): string {
-  if (!n || n <= 0) return ''
-  if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB'
-  if (n >= 1048576) return (n / 1048576).toFixed(0) + ' MB'
-  return (n / 1024).toFixed(0) + ' KB'
-}
+import { formatBytes } from '../util/format'
 
 function formatDuration(seconds?: number): string {
   if (!seconds || seconds <= 0) return ''
@@ -185,7 +179,7 @@ export function SearchResultsSection({
           <span className="truncate text-slate-800 dark:text-zinc-200">{r.title}</span>
         </div>
         <span className="text-slate-500 dark:text-zinc-500 truncate block">
-          {r.indexerName} · {formatSize(r.size)} · {r.grabs} grabs
+          {r.indexerName} · {formatBytes(r.size)} · {r.grabs} grabs
           {safeHref(r.infoUrl) && (
             <>
               {' · '}
@@ -851,7 +845,7 @@ export default function BookDetailPage() {
                             </code>
                             {!!row.sizeBytes && (
                               <span className="shrink-0 text-xs text-slate-400 dark:text-zinc-600">
-                                {formatSize(row.sizeBytes)}
+                                {formatBytes(row.sizeBytes)}
                               </span>
                             )}
                             <button

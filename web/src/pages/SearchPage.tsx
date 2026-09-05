@@ -2,13 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, isNoDownloadClientError, SearchResult } from '../api/client'
-
-function formatSize(n: number): string {
-  if (!n || n <= 0) return ''
-  if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB'
-  if (n >= 1048576) return (n / 1048576).toFixed(0) + ' MB'
-  return (n / 1024).toFixed(0) + ' KB'
-}
+import { formatBytes } from '../util/format'
 
 export default function SearchPage() {
   const { t } = useTranslation()
@@ -133,7 +127,7 @@ export default function SearchPage() {
                 <div className="min-w-0 mr-3">
                   <span className="truncate block text-slate-800 dark:text-zinc-200">{r.title}</span>
                   <span className="text-slate-500 dark:text-zinc-500 truncate block">
-                    {r.indexerName}{r.size ? ` · ${formatSize(r.size)}` : ''}{r.grabs ? ` · ${r.grabs} grabs` : ''}
+                    {r.indexerName}{r.size ? ` · ${formatBytes(r.size)}` : ''}{r.grabs ? ` · ${r.grabs} grabs` : ''}
                     {r.language && <span className="ml-2 uppercase">{r.language}</span>}
                   </span>
                 </div>

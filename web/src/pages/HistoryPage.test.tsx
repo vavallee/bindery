@@ -135,7 +135,8 @@ describe('HistoryPage', () => {
     expect(within(ebookRow).getByText('Grabbed')).toBeInTheDocument()
     expect(within(ebookRow).getByText('/library/Dune.epub')).toBeInTheDocument()
     expect(within(ebookRow).getByText('📖 Ebook')).toBeInTheDocument()
-    expect(within(ebookRow).getByText('1 MB')).toBeInTheDocument()
+    // One decimal from MB up, shared with Queue and Wanted since #2350.
+    expect(within(ebookRow).getByText('1.0 MB')).toBeInTheDocument()
 
     const audioRow = rowFor('Dune MP3')
     expect(within(audioRow).getByText('Download Failed')).toBeInTheDocument()
