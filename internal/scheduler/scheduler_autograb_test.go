@@ -125,14 +125,17 @@ func funcBody(t *testing.T, src, decl string) (body string, firstLine, lastLine 
 // is "there is exactly one place a grab is dispatched from and it checks the
 // switch". Two things have to stay true for that to keep holding:
 //
-//  1. SearchAndGrabBook consults autoGrabEnabled before it dispatches
+//  1. searchAndGrabFormats consults autoGrabEnabled before it dispatches
 //     anything, and
-//  2. nothing calls searchAndGrabFormat except SearchAndGrabBook, so no new
+//  2. nothing calls searchAndGrabFormat except searchAndGrabFormats, so no new
 //     dispatch site can route around the check.
 //
-// A new caller of SearchAndGrabBook needs no guard of its own and this guard
-// stays quiet. A new caller of searchAndGrabFormat, or a SearchAndGrabBook
-// that stops checking, fails here.
+// searchAndGrabFormats is where the check moved to when the wanted sweep gained
+// the ability to search a subset of a book's formats (#2365); SearchAndGrabBook
+// is now one of its callers rather than the chokepoint itself. A new caller of
+// either needs no guard of its own and this guard stays quiet. A new caller of
+// searchAndGrabFormat, or a searchAndGrabFormats that stops checking, fails
+// here.
 func TestAutoGrabChokepointHolds(t *testing.T) {
 	const mainFile = "scheduler.go"
 	raw, err := os.ReadFile(filepath.Join(schedulerSourceDir, mainFile))
@@ -141,18 +144,18 @@ func TestAutoGrabChokepointHolds(t *testing.T) {
 	}
 	src := string(raw)
 
-	body, first, last := funcBody(t, src, "func (s *Scheduler) SearchAndGrabBook(")
+	body, first, last := funcBody(t, src, "func (s *Scheduler) searchAndGrabFormats(")
 
 	checkAt := strings.Index(body, "s.autoGrabEnabled(ctx)")
 	if checkAt < 0 {
-		t.Fatalf("SearchAndGrabBook does not call s.autoGrabEnabled(ctx); the auto-grab kill switch (#2256) is only enforced there, so removing it un-guards every caller at once")
+		t.Fatalf("searchAndGrabFormats does not call s.autoGrabEnabled(ctx); the auto-grab kill switch (#2256) is only enforced there, so removing it un-guards every caller at once")
 	}
 	dispatchAt := strings.Index(body, "s.searchAndGrabFormat(")
 	if dispatchAt < 0 {
-		t.Fatal("SearchAndGrabBook no longer calls s.searchAndGrabFormat; update this drift guard to follow the new dispatch call")
+		t.Fatal("searchAndGrabFormats no longer calls s.searchAndGrabFormat; update this drift guard to follow the new dispatch call")
 	}
 	if checkAt > dispatchAt {
-		t.Fatal("SearchAndGrabBook dispatches a search before checking s.autoGrabEnabled(ctx); the check must gate the dispatch (#2256)")
+		t.Fatal("searchAndGrabFormats dispatches a search before checking s.autoGrabEnabled(ctx); the check must gate the dispatch (#2256)")
 	}
 
 	// autoGrabEnabled must actually read the switch it is named after.
@@ -185,9 +188,9 @@ func TestAutoGrabChokepointHolds(t *testing.T) {
 			}
 			lineNo := i + 1
 			if name == mainFile && lineNo >= first && lineNo <= last {
-				continue // inside SearchAndGrabBook, which is the guarded path
+				continue // inside searchAndGrabFormats, which is the guarded path
 			}
-			t.Errorf("%s:%d calls searchAndGrabFormat outside SearchAndGrabBook, bypassing the auto-grab kill switch (#2256). Dispatch through SearchAndGrabBook instead.", name, lineNo)
+			t.Errorf("%s:%d calls searchAndGrabFormat outside searchAndGrabFormats, bypassing the auto-grab kill switch (#2256). Dispatch through searchAndGrabFormats instead.", name, lineNo)
 		}
 	}
 }
