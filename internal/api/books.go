@@ -1376,15 +1376,12 @@ func authorNameAutoMatches(a, b string) bool {
 	return match.Kind == textutil.AuthorMatchExact || match.Kind == textutil.AuthorMatchFuzzyAuto
 }
 
+// metadataProviderFromForeignID names the provider a book's foreign ID belongs
+// to, for stamping books.metadata_provider. It delegates to models rather than
+// repeating the switch: this copy had drifted to four branches and was missing
+// "calibre:" and "abs:", so a Calibre or Audiobookshelf sourced book was
+// stamped "openlibrary", disagreeing with the value migration 078 backfills
+// (#2352).
 func metadataProviderFromForeignID(foreignID string) string {
-	switch {
-	case strings.HasPrefix(foreignID, "gb:"):
-		return "googlebooks"
-	case strings.HasPrefix(foreignID, "hc:"):
-		return "hardcover"
-	case strings.HasPrefix(foreignID, "dnb:"):
-		return "dnb"
-	default:
-		return "openlibrary"
-	}
+	return models.BookProviderFromForeignID(foreignID)
 }

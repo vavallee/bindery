@@ -62,3 +62,27 @@ func TestBookGet_ServesProviderAndIdentityMap(t *testing.T) {
 		t.Fatalf("identifiers = %+v, want the Hardcover id recorded", got.Identifiers)
 	}
 }
+
+// TestMetadataProviderFromForeignID is the #2352 regression guard for the
+// api-side copy of the prefix classifier. It had drifted to four branches, so
+// a Calibre or Audiobookshelf sourced book was stamped "openlibrary" and
+// disagreed with the value migration 078 backfills for the same id.
+func TestMetadataProviderFromForeignID(t *testing.T) {
+	cases := map[string]string{
+		"calibre:book:5":  "calibre",
+		"abs:book:abc":    "audiobookshelf",
+		"hc:way-of-kings": "hardcover",
+		"gb:zyTCAlFPjgYC": "googlebooks",
+		"dnb:118540238":   "dnb",
+		"OL27448W":        "openlibrary",
+		"":                "openlibrary",
+	}
+	for id, want := range cases {
+		if got := metadataProviderFromForeignID(id); got != want {
+			t.Errorf("metadataProviderFromForeignID(%q) = %q, want %q", id, got, want)
+		}
+		if got := models.BookProviderFromForeignID(id); got != want {
+			t.Errorf("models.BookProviderFromForeignID(%q) = %q, want %q", id, got, want)
+		}
+	}
+}
