@@ -238,6 +238,14 @@ func importReadarrIndexers(ctx context.Context, src *sql.DB, repo *db.IndexerRep
 			Categories: cats,
 			Enabled:    enableRss,
 		}
+		// Same SSRF check the Add Indexer form runs (#2349). A Readarr
+		// database is a file, not a form, so a row pointing at
+		// 169.254.169.254 would otherwise be created and then polled with
+		// whatever API key came with it.
+		if err := validateMigratedURL(idx.URL); err != nil {
+			res.fail(name, err.Error())
+			continue
+		}
 		if err := repo.Create(ctx, idx); err != nil {
 			res.fail(name, err.Error())
 			continue
@@ -300,6 +308,13 @@ func importReadarrDownloadClients(ctx context.Context, src *sql.DB, repo *db.Dow
 			Category: cat,
 			UseSSL:   s.UseSsl,
 			Enabled:  enable,
+		}
+		// Same SSRF check the Add Download Client form runs (#2349). The RPC
+		// clients have no dial-time guard of their own, so an unvalidated host
+		// here is polled with its credentials attached.
+		if err := validateMigratedURL(clienthost.URL(c.Host, c.Port, c.UseSSL)); err != nil {
+			res.fail(name, err.Error())
+			continue
 		}
 		if err := repo.Create(ctx, c); err != nil {
 			res.fail(name, err.Error())

@@ -13,6 +13,8 @@ Each imported author's catalogue is populated from metadata. Nothing is auto-gra
 
 The import dedupes by metadata id, so re-running it is safe: authors that already exist are skipped.
 
+An indexer or download client whose address Bindery will not call (link-local and cloud-metadata addresses) is reported as failed rather than imported, with the same message you would get typing it into the Add form.
+
 ## Two Readarr instances (separate ebook / audiobook)
 
 Bindery is a single instance. One author record covers ebook, audiobook, or both, set per author or per book.

@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net"
+	neturl "net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -14,6 +16,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -70,6 +73,30 @@ func newReadarrDB(t *testing.T) string {
 	return path
 }
 
+// stubMigratedURLValidator swaps validateMigratedURL for one that applies the
+// real httpsec policy to a resolved address without touching DNS. The fixture
+// databases use hosts like "sab.local" and "news.example.com", which no
+// resolver answers for, and validateMigratedURL fails closed on a lookup
+// failure — so without this the fixtures would exercise the error path for the
+// wrong reason. IP literals are still checked for real; every other host is
+// treated as if it resolved to a public address.
+func stubMigratedURLValidator(t *testing.T) {
+	t.Helper()
+	prev := validateMigratedURL
+	t.Cleanup(func() { validateMigratedURL = prev })
+	validateMigratedURL = func(raw string) error {
+		u, err := neturl.Parse(raw)
+		if err != nil {
+			return err
+		}
+		ip := net.ParseIP(u.Hostname())
+		if ip == nil {
+			ip = net.ParseIP("93.184.216.34")
+		}
+		return httpsec.ValidateIP(ip, httpsec.PolicyLANLoopback)
+	}
+}
+
 func TestImportReadarr_EmptyDBPath(t *testing.T) {
 	_, err := ImportReadarr(context.Background(), "", nil, nil, nil, nil, nil, nil, nil)
 	if err == nil {
@@ -87,6 +114,7 @@ func TestImportReadarr_BadPath(t *testing.T) {
 }
 
 func TestImportReadarr_HappyPath(t *testing.T) {
+	stubMigratedURLValidator(t)
 	path := newReadarrDB(t)
 
 	// Seed Readarr-shaped rows.
@@ -496,6 +524,7 @@ func TestImportReadarr_CatalogueFetchIsBoundedAndSurvivesCancellation(t *testing
 // under a Bindery banner. Failing the row names the client and the problem
 // while the operator is still looking at the migration report.
 func TestImportReadarrDownloadClients_MalformedHost(t *testing.T) {
+	stubMigratedURLValidator(t)
 	path := filepath.Join(t.TempDir(), "readarr.db")
 	src, err := sql.Open("sqlite", "file:"+path)
 	if err != nil {
@@ -536,4 +565,101 @@ func TestImportReadarrDownloadClients_MalformedHost(t *testing.T) {
 	if len(clients) != 1 || clients[0].Name != "Good" {
 		t.Fatalf("imported clients = %+v, want only Good", clients)
 	}
+}
+
+// TestImportReadarr_RejectsSSRFTargets covers #2349. A Readarr database is an
+// uploaded file, so its indexer and download client rows have never been past
+// the validation the Add forms run. A row pointing at the cloud-metadata
+// address must be reported failed and must not reach the database, or it gets
+// polled on a schedule with the credentials that came with it.
+//
+// This test deliberately does NOT stub validateMigratedURL: the hosts are IP
+// literals, which ValidateOutboundURL checks without touching DNS.
+func TestImportReadarr_RejectsSSRFTargets(t *testing.T) {
+	path := newReadarrDB(t)
+	src, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = src.Exec(`INSERT INTO Indexers (Name, Implementation, Settings, EnableRss) VALUES
+		('GoodIdx', 'Newznab', ?, 1),
+		('MetaIdx', 'Newznab', ?, 1)`,
+		`{"baseUrl":"http://93.184.216.34:9117/","apiKey":"abc"}`,
+		`{"baseUrl":"http://169.254.169.254/","apiKey":"abc"}`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = src.Exec(`INSERT INTO DownloadClients (Name, Implementation, Settings, Enable) VALUES
+		('GoodQBT', 'QBittorrent', ?, 1),
+		('MetaQBT', 'QBittorrent', ?, 1)`,
+		`{"host":"93.184.216.34","port":8080,"username":"u","password":"p"}`,
+		`{"host":"169.254.169.254","port":80,"username":"u","password":"p"}`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.Close()
+
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	indexerRepo := db.NewIndexerRepo(database)
+	clientRepo := db.NewDownloadClientRepo(database)
+	ctx := context.Background()
+
+	var idxRes Result
+	if err := importReadarrIndexers(ctx, mustOpenReadarr(t, path), indexerRepo, &idxRes); err != nil {
+		t.Fatalf("importReadarrIndexers: %v", err)
+	}
+	if idxRes.Added != 1 || idxRes.Errors != 1 {
+		t.Fatalf("indexers Added=%d Errors=%d, want 1 and 1 (%v)", idxRes.Added, idxRes.Errors, idxRes.Failures)
+	}
+	idxList, err := indexerRepo.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(idxList) != 1 || idxList[0].Name != "GoodIdx" {
+		t.Fatalf("imported indexers = %+v, want only GoodIdx", idxList)
+	}
+
+	var clientRes Result
+	if err := importReadarrDownloadClients(ctx, mustOpenReadarr(t, path), clientRepo, &clientRes); err != nil {
+		t.Fatalf("importReadarrDownloadClients: %v", err)
+	}
+	if clientRes.Added != 1 || clientRes.Errors != 1 {
+		t.Fatalf("clients Added=%d Errors=%d, want 1 and 1 (%v)", clientRes.Added, clientRes.Errors, clientRes.Failures)
+	}
+	clients, err := clientRepo.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(clients) != 1 || clients[0].Name != "GoodQBT" {
+		t.Fatalf("imported clients = %+v, want only GoodQBT", clients)
+	}
+
+	// The report has to name the row and say why, or the operator cannot tell
+	// a refused row from one that was never in the Readarr database.
+	if !strings.Contains(clientRes.Failures["MetaQBT"], "url not allowed") {
+		t.Errorf("MetaQBT failure = %q, want the SSRF refusal", clientRes.Failures["MetaQBT"])
+	}
+	if !strings.Contains(idxRes.Failures["MetaIdx"], "url not allowed") {
+		t.Errorf("MetaIdx failure = %q, want the SSRF refusal", idxRes.Failures["MetaIdx"])
+	}
+}
+
+// mustOpenReadarr reopens the fixture database. importReadarrIndexers and
+// importReadarrDownloadClients each take their own *sql.DB in the production
+// path, so the test hands each one a fresh handle rather than sharing a single
+// connection across two open cursors.
+func mustOpenReadarr(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	src, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	if err != nil {
+		t.Fatalf("open fixture: %v", err)
+	}
+	t.Cleanup(func() { src.Close() })
+	return src
 }

@@ -48,17 +48,11 @@ func applyHostToClient(w http.ResponseWriter, c *models.DownloadClient) bool {
 }
 
 // downloadClientURL assembles the effective URL that would be hit for a
-// download client, so httpsec.ValidateOutboundURL can check it.
+// download client, so httpsec.ValidateOutboundURL can check it. The assembly
+// lives in clienthost so the Readarr migration can run the same check on the
+// rows it creates without a second copy of the rules (#2349).
 func downloadClientURL(c *models.DownloadClient) string {
-	scheme := "http"
-	if c.UseSSL {
-		scheme = "https"
-	}
-	port := c.Port
-	if port == 0 {
-		port = 8080
-	}
-	return fmt.Sprintf("%s://%s/", scheme, clienthost.Authority(c.Host, port))
+	return clienthost.URL(c.Host, c.Port, c.UseSSL)
 }
 
 type DownloadClientHandler struct {
