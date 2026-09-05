@@ -392,6 +392,48 @@ describe('AuthorsPage', () => {
 // wall of buttons. The governing constraint is that decluttering must not cost
 // discoverability of a control people use: Refresh and Delete are rare and can
 // go behind a menu, the monitored toggle is not and must stay on the row.
+// Only OpenLibrary supplies author-level ratings, and only for authors it
+// resolved by search. A Hardcover or DNB library saw a full column of em
+// dashes. Hiding it outright would have cost OpenLibrary users a real sort
+// key, so it is conditional on the page having anything to show.
+describe('AuthorsPage — rating column', () => {
+  const authorWith = (averageRating: number) => ({
+    id: 7,
+    foreignAuthorId: 'OL7',
+    authorName: 'Andy Weir',
+    sortName: 'Weir, Andy',
+    description: '',
+    imageUrl: '',
+    disambiguation: '',
+    ratingsCount: averageRating > 0 ? 10 : 0,
+    averageRating,
+    monitored: true,
+  })
+
+  const renderTable = async (averageRating: number) => {
+    localStorage.setItem('bindery.view.authors', 'table')
+    vi.mocked(api.listAuthors).mockResolvedValue({
+      items: [authorWith(averageRating)],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    })
+    render(<MemoryRouter><AuthorsPage /></MemoryRouter>)
+    await screen.findByText('Andy Weir')
+  }
+
+  it('is hidden when no author on the page has a rating', async () => {
+    await renderTable(0)
+    expect(screen.queryByRole('columnheader', { name: /Rating/ })).toBeNull()
+  })
+
+  it('is shown when an author on the page has one', async () => {
+    await renderTable(4.25)
+    expect(screen.getByRole('columnheader', { name: /Rating/ })).toBeInTheDocument()
+    expect(screen.getByText('★ 4.25')).toBeInTheDocument()
+  })
+})
+
 describe('AuthorsPage — row actions behind an overflow menu', () => {
   beforeEach(() => {
     vi.mocked(api.listAuthors).mockResolvedValue({
