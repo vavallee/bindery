@@ -118,3 +118,27 @@ func TestRootFolderDelete(t *testing.T) {
 		t.Errorf("expected empty list after delete, got %d", len(list))
 	}
 }
+
+// TestRootFolderDelete_NonNumericID pins that a malformed {id} answers 400 and
+// not 404. Delete used to run `id, _ := strconv.ParseInt(...)`, which turns
+// "abc" into id 0 and reports "root folder not found" for a request that never
+// named a root folder at all (#2364).
+func TestRootFolderDelete_NonNumericID(t *testing.T) {
+	h := rootFolderFixture(t)
+
+	rec := httptest.NewRecorder()
+	req := withURLParam(httptest.NewRequest(http.MethodDelete, "/rootfolder/abc", nil), "id", "abc")
+
+	h.Delete(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a non-numeric id, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var out map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if out["error"] != "invalid id" {
+		t.Errorf("error = %q, want %q", out["error"], "invalid id")
+	}
+}
