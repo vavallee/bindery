@@ -3229,3 +3229,169 @@ func TestEnsureHardcoverLinkFromForeignIDKeepsAManualLink(t *testing.T) {
 		t.Fatalf("manual link was not preserved: %+v", link)
 	}
 }
+
+// datingSimCatalog is a 13-volume light-novel catalog in position order, the
+// shape that exposes #2343: every volume differs from every other by one digit
+// in an otherwise identical string.
+func datingSimCatalog() *metadata.SeriesCatalog {
+	author := &models.Author{
+		ForeignID:        "hc:yomu-mishima",
+		Name:             "Yomu Mishima",
+		SortName:         "Mishima, Yomu",
+		MetadataProvider: "hardcover",
+	}
+	books := make([]metadata.SeriesCatalogBook, 0, 13)
+	for i := 1; i <= 13; i++ {
+		title := fmt.Sprintf("Trapped in a Dating Sim Vol. %d", i)
+		foreignID := fmt.Sprintf("hc:dating-sim-vol-%d", i)
+		books = append(books, metadata.SeriesCatalogBook{
+			ForeignID:  foreignID,
+			ProviderID: strconv.Itoa(700 + i),
+			Title:      title,
+			Position:   strconv.Itoa(i),
+			Book: models.Book{
+				ForeignID:        foreignID,
+				Title:            title,
+				SortTitle:        title,
+				MetadataProvider: "hardcover",
+				Author:           author,
+			},
+		})
+	}
+	return &metadata.SeriesCatalog{
+		ForeignID:  "hc-series:7001",
+		ProviderID: "7001",
+		Title:      "Trapped in a Dating Sim",
+		AuthorName: "Yomu Mishima",
+		BookCount:  len(books),
+		Books:      books,
+	}
+}
+
+// localSeriesBook builds an unlinked local library book for the diff. The
+// foreign id is deliberately a Calibre-style synthetic one so it can never
+// foreign-ID-match a catalog entry, which is the situation the bug needs: an
+// imported book with no provider identity and no PositionInSeries.
+func localSeriesBook(id int64, title string) models.SeriesBook {
+	return models.SeriesBook{
+		BookID: id,
+		Book: &models.Book{
+			ID:        id,
+			ForeignID: fmt.Sprintf("calibre:book:%d", id),
+			Title:     title,
+			SortTitle: title,
+			Status:    models.BookStatusImported,
+		},
+	}
+}
+
+func diffForeignIDs(rows []seriesHardcoverDiffBook) []string {
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ForeignBookID)
+	}
+	return ids
+}
+
+// TestBuildHardcoverDiffKeepsVolumesApart is the #2343 regression guard for the
+// missing DifferentVolumes veto. Local "Vol. 13" scores a perfect 100 against
+// catalog "Vol. 1" because PartialRatio reads "vol 1" as a substring of
+// "vol 13", and index 0 wins the tie, so before the fix the diff reported
+// volume 1 as Present under volume 13's local title and left volume 13 in
+// Missing with an Add button that would refuse to add it.
+func TestBuildHardcoverDiffKeepsVolumesApart(t *testing.T) {
+	catalog := datingSimCatalog()
+	series := &models.Series{
+		ID:    1,
+		Title: "Trapped in a Dating Sim",
+		Books: []models.SeriesBook{localSeriesBook(1, "Trapped in a Dating Sim Vol. 13")},
+	}
+	link := &models.SeriesHardcoverLink{SeriesID: series.ID, HardcoverSeriesID: catalog.ForeignID}
+
+	diff := buildHardcoverDiff(context.Background(), nil, 0, series, link, catalog)
+
+	if len(diff.Present) != 1 {
+		t.Fatalf("Present = %v, want exactly one row", diffForeignIDs(diff.Present))
+	}
+	if diff.Present[0].ForeignBookID != "hc:dating-sim-vol-13" {
+		t.Fatalf("Present row = %q, want hc:dating-sim-vol-13", diff.Present[0].ForeignBookID)
+	}
+	if diff.Present[0].LocalBookID == nil || *diff.Present[0].LocalBookID != 1 {
+		t.Fatalf("Present row LocalBookID = %v, want 1", diff.Present[0].LocalBookID)
+	}
+	if len(diff.LocalOnly) != 0 {
+		t.Fatalf("LocalOnly = %+v, want empty", diff.LocalOnly)
+	}
+
+	missing := map[string]bool{}
+	for _, row := range diff.Missing {
+		missing[row.ForeignBookID] = true
+	}
+	if missing["hc:dating-sim-vol-13"] {
+		t.Fatalf("volume 13 is in the library but was reported Missing: %v", diffForeignIDs(diff.Missing))
+	}
+	for i := 1; i <= 12; i++ {
+		id := fmt.Sprintf("hc:dating-sim-vol-%d", i)
+		if !missing[id] {
+			t.Fatalf("volume %d is not in the library but is not Missing: %v", i, diffForeignIDs(diff.Missing))
+		}
+	}
+	if diff.MissingCount != 12 || diff.PresentCount != 1 {
+		t.Fatalf("counts = present %d / missing %d, want 1 / 12", diff.PresentCount, diff.MissingCount)
+	}
+}
+
+// TestBuildHardcoverDiffDoesNotDoubleClaimOneCatalogEntry is the #2343
+// regression guard for the missing exclusion set. Neither title carries a
+// volume marker, so DifferentVolumes cannot help here: both locals score 100
+// against catalog index 0 (PartialRatio again), and before the fix both
+// claimed it, which duplicated that row in Present, over-counted PresentCount
+// and pushed the second local's real catalog entry into Missing.
+func TestBuildHardcoverDiffDoesNotDoubleClaimOneCatalogEntry(t *testing.T) {
+	catalog := stormlightCatalog()
+	catalog.Books = append(catalog.Books, metadata.SeriesCatalogBook{
+		ForeignID:  "hc:the-way-of-kings-prime",
+		ProviderID: "104",
+		Title:      "The Way of Kings Prime",
+		Position:   "2",
+		Book: models.Book{
+			ForeignID: "hc:the-way-of-kings-prime",
+			Title:     "The Way of Kings Prime",
+			Author:    catalog.Books[0].Book.Author,
+		},
+	})
+	catalog.BookCount = len(catalog.Books)
+
+	series := &models.Series{
+		ID:    1,
+		Title: "The Stormlight Archive",
+		Books: []models.SeriesBook{
+			localSeriesBook(1, "The Way of Kings"),
+			localSeriesBook(2, "The Way of Kings Prime"),
+		},
+	}
+	link := &models.SeriesHardcoverLink{SeriesID: series.ID, HardcoverSeriesID: catalog.ForeignID}
+
+	diff := buildHardcoverDiff(context.Background(), nil, 0, series, link, catalog)
+
+	seen := map[string]int{}
+	for _, row := range diff.Present {
+		seen[row.ForeignBookID]++
+	}
+	for id, n := range seen {
+		if n > 1 {
+			t.Fatalf("catalog entry %q appears %d times in Present: %v", id, n, diffForeignIDs(diff.Present))
+		}
+	}
+	if len(diff.Present) != 2 || diff.PresentCount != 2 {
+		t.Fatalf("Present = %v (count %d), want both catalog entries once", diffForeignIDs(diff.Present), diff.PresentCount)
+	}
+	for _, row := range diff.Missing {
+		if row.ForeignBookID == "hc:the-way-of-kings-prime" {
+			t.Fatalf("the second local book's own catalog entry was reported Missing: %v", diffForeignIDs(diff.Missing))
+		}
+	}
+	if len(diff.Missing) != 0 {
+		t.Fatalf("Missing = %v, want empty", diffForeignIDs(diff.Missing))
+	}
+}

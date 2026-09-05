@@ -975,7 +975,7 @@ func hardcoverCandidateHasBookOverlap(series *models.Series, result seriesHardco
 		if local.Book == nil {
 			continue
 		}
-		if catalog != nil && bestCatalogMatch(local, catalog.Books).score >= 85 {
+		if catalog != nil && bestCatalogMatch(local, catalog.Books, nil).score >= 85 {
 			return true
 		}
 		for _, title := range result.Books {
@@ -1060,7 +1060,7 @@ func scoreHardcoverCandidate(series *models.Series, result seriesHardcoverSearch
 				continue
 			}
 			checked++
-			if bestCatalogMatch(local, catalog.Books).score >= 85 {
+			if bestCatalogMatch(local, catalog.Books, nil).score >= 85 {
 				matches++
 			}
 		}
@@ -1147,12 +1147,21 @@ func buildHardcoverDiff(ctx context.Context, books *db.BookRepo, userID int64, s
 		LocalOnly: []seriesHardcoverDiffBook{},
 		Uncertain: []seriesHardcoverDiffBook{},
 	}
+	// matchedCatalog doubles as the exclusion set for bestCatalogMatch: a
+	// catalog entry a previous local book already claimed is off the table for
+	// every later one (#2343). Without it two locals could resolve to the same
+	// index, which duplicated the row in Present, over-counted PresentCount,
+	// and pushed the second local's real catalog entry into Missing behind an
+	// Add button that ensureHardcoverCatalogBook's guards then refuse. A local
+	// whose best candidate is taken falls through to its next best, and to
+	// LocalOnly when it has none. First local seen wins the tie, matching the
+	// order this loop has always used.
 	matchedCatalog := make(map[int]struct{})
 	for _, local := range series.Books {
 		if local.Book == nil {
 			continue
 		}
-		match := bestCatalogMatch(local, catalog.Books)
+		match := bestCatalogMatch(local, catalog.Books, matchedCatalog)
 		localItem := localDiffBook(local)
 		if match.index < 0 {
 			diff.LocalOnly = append(diff.LocalOnly, localItem)
@@ -1192,18 +1201,45 @@ type catalogMatch struct {
 	foreignID bool
 }
 
-func bestCatalogMatch(local models.SeriesBook, books []metadata.SeriesCatalogBook) catalogMatch {
+// bestCatalogMatch picks the catalog entry a local series book corresponds to.
+// claimed holds the indices earlier local books already took; they are skipped
+// so one catalog entry cannot back two Present rows (#2343). Pass nil when
+// there is nothing to exclude.
+func bestCatalogMatch(local models.SeriesBook, books []metadata.SeriesCatalogBook, claimed map[int]struct{}) catalogMatch {
 	best := catalogMatch{index: -1}
 	if local.Book == nil {
 		return best
 	}
 	for i, candidate := range books {
+		if _, taken := claimed[i]; taken {
+			continue
+		}
+		candidateTitle := firstNonEmpty(candidate.Title, candidate.Book.Title)
 		foreignMatch := local.Book.ForeignID != "" && (local.Book.ForeignID == candidate.ForeignID || local.Book.ForeignID == candidate.Book.ForeignID)
 		score := 0
 		if foreignMatch {
 			score = 100
 		} else {
-			score = seriesmatch.TitleScore(local.Book.Title, firstNonEmpty(candidate.Title, candidate.Book.Title))
+			// Volume numbers veto the similarity score, the same way the add
+			// path at ensureHardcoverCatalogBook does (#1682). TitleScore
+			// cannot separate the volumes of a light novel or manga series:
+			// "… Vol. 1" against "… Vol. 13" scores 100 because PartialRatio
+			// reads "vol 1" as a substring of "vol 13". A local book imported
+			// from ABS or Calibre usually carries no PositionInSeries, so the
+			// SamePosition boost below never fires and nothing else separates
+			// them. Because `score > best.score` keeps the first index on a
+			// tie, the collapse runs toward the low volume: owning Vol. 13
+			// showed catalog Vol. 1 as Present carrying Vol. 13's local
+			// title, while Vol. 13 itself stayed in Missing (#2343). Only
+			// numbers that carry an earlier number as a digit prefix collide
+			// this way, 10 through 19 against 1, 21 against 2, and so on.
+			//
+			// Only on the title path. A foreign-ID match is an explicit
+			// identity and outranks any title heuristic.
+			if seriesmatch.DifferentVolumes(local.Book.Title, candidateTitle) {
+				continue
+			}
+			score = seriesmatch.TitleScore(local.Book.Title, candidateTitle)
 			if seriesmatch.SamePosition(local.PositionInSeries, candidate.Position) && score >= 70 {
 				score = max(score, 90)
 			}
