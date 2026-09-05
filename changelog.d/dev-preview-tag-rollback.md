@@ -1,0 +1,2 @@
+### Fixed
+- **A dev preview no longer rolls bindery-dev back to an ancient image while it builds** — the assembly rebuilt the `development` branch from `main`, which reset the image tag in `values-dev.yaml` to the stale placeholder main carries. ArgoCD deployed that, so every preview served a v1.2.0 container for the length of the image build, and kept serving it if the build failed. The live tag is now carried across the rebuild.
