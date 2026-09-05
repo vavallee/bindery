@@ -74,12 +74,86 @@ func (r *SeriesRepo) ListWithBooks(ctx context.Context) ([]models.Series, error)
 // used by the book and history lists. Series rows themselves are global —
 // one series can span books owned by different users.
 func (r *SeriesRepo) ListWithBooksForUser(ctx context.Context, userID int64) ([]models.Series, error) {
+	return r.listWithBooksForUser(ctx, userID, nil)
+}
+
+// ListPageWithBooksForUser is ListWithBooksForUser for one page of series,
+// ordered by title, plus the unpaginated total (#2345). GET /series used to
+// return every series with every linked book, which on a large library is a
+// response proportional to the whole catalogue.
+//
+// It runs as two queries rather than one windowed JOIN on purpose: LIMIT
+// applies to result rows, and the JOIN produces one row per book, so a single
+// query would cut a series in half at the page boundary. The first query picks
+// the page's series ids by title; the second is the same JOIN the unpaginated
+// path uses, restricted to those ids.
+//
+// Total counts series rows, which are global — one series can span books owned
+// by different users, and the unpaginated path returns every series row too,
+// so scoping the count would make it disagree with the rows it describes.
+func (r *SeriesRepo) ListPageWithBooksForUser(ctx context.Context, userID int64, limit, offset int) ([]models.Series, int, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	var total int
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM series").Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count series: %w", err)
+	}
+
+	ids, err := func() ([]int64, error) {
+		rows, err := r.db.QueryContext(ctx, "SELECT id FROM series ORDER BY title LIMIT ? OFFSET ?", limit, offset)
+		if err != nil {
+			return nil, fmt.Errorf("list series page ids: %w", err)
+		}
+		defer rows.Close()
+		var out []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan series page id: %w", err)
+			}
+			out = append(out, id)
+		}
+		return out, rows.Err()
+	}()
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(ids) == 0 {
+		return []models.Series{}, total, nil
+	}
+
+	series, err := r.listWithBooksForUser(ctx, userID, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	return series, total, nil
+}
+
+// listWithBooksForUser backs both the full list and one page of it. A nil
+// seriesIDs means every series; otherwise the JOIN is restricted to those ids,
+// in the same title order.
+func (r *SeriesRepo) listWithBooksForUser(ctx context.Context, userID int64, seriesIDs []int64) ([]models.Series, error) {
 	bookJoin := "LEFT JOIN books b ON b.id = sb.book_id"
 	args := []any{}
 	if userID != 0 {
 		bookJoin += " AND (b.owner_user_id = ? OR b.owner_user_id IS NULL)"
 		args = append(args, userID)
 	}
+	where := ""
+	if seriesIDs != nil {
+		placeholders := make([]string, len(seriesIDs))
+		for i, id := range seriesIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		where = " WHERE s.id IN (" + strings.Join(placeholders, ",") + ")"
+	}
+	//nolint:gosec // G202: the interpolated fragments are a fixed join clause and generated ? placeholders; every user value stays a bound arg
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT s.id, s.foreign_id, s.title, s.description, s.monitored, s.genre_override, s.created_at,
 		       sb.series_id, sb.book_id, sb.position_in_series, sb.primary_series,
@@ -87,7 +161,7 @@ func (r *SeriesRepo) ListWithBooksForUser(ctx context.Context, userID int64) ([]
 		       b.monitored, b.image_url, b.release_date, b.created_at, b.updated_at
 		FROM series s
 		LEFT JOIN series_books sb ON sb.series_id = s.id
-		`+bookJoin+`
+		`+bookJoin+where+`
 		ORDER BY s.title, CAST(NULLIF(sb.position_in_series, '') AS REAL), sb.position_in_series, b.sort_title`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list series with books: %w", err)
