@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -477,6 +478,60 @@ func TestSearchBook_RedactsIndexerAPIKey(t *testing.T) {
 	}
 	if len(resp.Results) != 1 || resp.Results[0].NZBURL != "https://idx.example.com/dl?id=eb1" {
 		t.Fatalf("nzbUrl not redacted as expected: %+v", resp.Results)
+	}
+}
+
+func TestSearchBookBuildsBilingualInteractiveCandidates(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	ctx := context.Background()
+	authorRepo := db.NewAuthorRepo(database)
+	author := &models.Author{ForeignID: "OL1A", Name: "Brandon Sanderson", SortName: "Sanderson, Brandon", MetadataProvider: "openlibrary", Monitored: true}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	bookRepo := db.NewBookRepo(database)
+	book := &models.Book{
+		Title:            "El imperio final / The Final Empire",
+		OriginalTitle:    "The Final Empire",
+		Language:         "spa",
+		ForeignID:        "OL1W",
+		AuthorID:         author.ID,
+		MediaType:        models.MediaTypeEbook,
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockIndexerSearcher{}
+	h := NewIndexerHandler(
+		db.NewIndexerRepo(database), bookRepo, authorRepo,
+		db.NewMetadataProfileRepo(database), mock,
+		db.NewSettingsRepo(database), db.NewBlocklistRepo(database),
+	)
+	rec := httptest.NewRecorder()
+	req := withURLParam(httptest.NewRequest(http.MethodGet, "/indexer/book/1/search", nil), "id", strconv.FormatInt(book.ID, 10))
+	h.SearchBook(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	criteria := mock.criteria()
+	if !criteria.AllowManualFallback {
+		t.Fatal("interactive search did not enable manual title fallbacks")
+	}
+	want := []indexer.TitleCandidate{
+		{Title: "El imperio final", Language: "spa"},
+		{Title: "The Final Empire", ManualOnly: true},
+	}
+	if !reflect.DeepEqual(criteria.TitleCandidates, want) {
+		t.Fatalf("title candidates = %#v, want %#v", criteria.TitleCandidates, want)
 	}
 }
 

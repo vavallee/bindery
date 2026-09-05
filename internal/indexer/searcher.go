@@ -73,14 +73,52 @@ func NewSearcher() *Searcher {
 // language outside the set are dropped). Recorded here so search debug
 // output shows which set was in force.
 type MatchCriteria struct {
-	Title            string
-	Author           string
-	Year             int
-	ISBN             string
-	ASIN             string   // for audiobook ASIN anchoring
-	MediaType        string   // models.MediaTypeEbook or models.MediaTypeAudiobook
-	AllowedLanguages []string // from author's MetadataProfile; empty = no filter
-	AuthorAliases    []string // alternate names (e.g. latin-script romanisations for non-latin authors)
+	Title               string
+	TitleCandidates     []TitleCandidate
+	AllowManualFallback bool
+	Author              string
+	Year                int
+	ISBN                string
+	ASIN                string   // for audiobook ASIN anchoring
+	MediaType           string   // models.MediaTypeEbook or models.MediaTypeAudiobook
+	AllowedLanguages    []string // from author's MetadataProfile; empty = no filter
+	AuthorAliases       []string // alternate names (e.g. latin-script romanisations for non-latin authors)
+}
+
+// searchIndexerBook runs the existing full four-tier cascade for the primary
+// title, then at most one two-tier fallback. A fallback is reached only when
+// the primary response contains no result that passes the precise relevance
+// filter; fixed category feeds therefore cannot suppress a useful alias.
+func (s *Searcher) searchIndexerBook(ctx context.Context, client *newznab.Client, c MatchCriteria, categories []int) ([]newznab.SearchResult, []string, error) {
+	candidates := effectiveTitleCandidates(c)
+	var (
+		allHits   []newznab.SearchResult
+		attempted []string
+	)
+	for i, candidate := range candidates {
+		attempted = append(attempted, candidate.Title)
+		var (
+			hits []newznab.SearchResult
+			err  error
+		)
+		if i == 0 {
+			hits, err = client.BookSearch(ctx, candidate.Title, c.Author, categories)
+		} else {
+			hits, err = client.BookSearchFallback(ctx, candidate.Title, c.Author, categories)
+		}
+		if err != nil {
+			return allHits, attempted, err
+		}
+		for j := range hits {
+			hits[j].MatchedTitle = candidate.Title
+			hits[j].ManualOnly = candidate.ManualOnly
+		}
+		allHits = append(allHits, hits...)
+		if len(filterRelevant(hits, candidate.Title, c.Author, c.AuthorAliases)) > 0 {
+			break
+		}
+	}
+	return allHits, attempted, nil
 }
 
 // CriteriaISBN picks the ISBN to put in MatchCriteria.ISBN for a book, given
@@ -271,7 +309,7 @@ func (s *Searcher) SearchBook(ctx context.Context, indexers []models.Indexer, c 
 
 			client := s.makeClient(idx.URL, idx.APIKey)
 			cats := filterCategoriesForMedia(idx.Categories, c.MediaType, idx.IncludeParentCategories)
-			hits, err := client.BookSearch(ctx, c.Title, c.Author, cats)
+			hits, _, err := s.searchIndexerBook(ctx, client, c, cats)
 			if err != nil {
 				s.noteIndexerError(idx, err)
 				s.health.recordFailure(ctx, idx, err)
@@ -301,9 +339,26 @@ func (s *Searcher) SearchBook(ctx context.Context, indexers []models.Indexer, c 
 	results = dedupe(results)
 	results = filterUsenetJunk(results)
 	results = filterNonBookContent(results)
-	results = filterRelevant(results, c.Title, c.Author, c.AuthorAliases)
+	results = filterRelevantForCriteria(results, c)
 	rankResults(results, c)
 	return results
+}
+
+// filterRelevantForCriteria evaluates each result against the title that
+// produced it. Legacy callers and tests that do not supply candidates retain
+// the original single-title behaviour.
+func filterRelevantForCriteria(results []newznab.SearchResult, c MatchCriteria) []newznab.SearchResult {
+	filtered := make([]newznab.SearchResult, 0, len(results))
+	for _, result := range results {
+		title := result.MatchedTitle
+		if title == "" {
+			title = c.Title
+		}
+		if len(filterRelevant([]newznab.SearchResult{result}, title, c.Author, c.AuthorAliases)) == 1 {
+			filtered = append(filtered, result)
+		}
+	}
+	return filtered
 }
 
 // SearchQuery performs a generic text search across all enabled indexers.
@@ -860,6 +915,12 @@ func dedupe(results []newznab.SearchResult) []newznab.SearchResult {
 		if key == "" {
 			key = r.Title + r.NZBURL
 		}
+		// The same release can be returned by a noisy primary-title query and
+		// then by the correct fallback. Keep both until relevance filtering so
+		// the primary copy cannot erase the fallback's query provenance.
+		if r.MatchedTitle != "" {
+			key += "\x00" + strings.ToLower(r.MatchedTitle)
+		}
 		if seen[key] {
 			continue
 		}
@@ -1195,6 +1256,9 @@ func FilterByAllowedLanguages(results []newznab.SearchResult, allowed []string) 
 	for _, r := range results {
 		norm := NormalizeRelease(r.Title)
 		ok := true
+		if language := normalizeLanguageCode(r.Language); language != "" && !set[language] {
+			ok = false
+		}
 		for _, code := range releaseLanguageCodes(norm) {
 			if !set[code] {
 				ok = false
@@ -1203,6 +1267,20 @@ func FilterByAllowedLanguages(results []newznab.SearchResult, allowed []string) 
 		}
 		if ok {
 			filtered = append(filtered, r)
+		}
+	}
+	return filtered
+}
+
+// FilterByAllowedLanguagesInteractive applies the profile language filter to
+// normal results while retaining original-language candidates that were
+// deliberately marked manual-only. Those candidates are never available to
+// the scheduler, but keeping them here gives a human the promised fallback.
+func FilterByAllowedLanguagesInteractive(results []newznab.SearchResult, allowed []string) []newznab.SearchResult {
+	filtered := make([]newznab.SearchResult, 0, len(results))
+	for _, result := range results {
+		if result.ManualOnly || len(FilterByAllowedLanguages([]newznab.SearchResult{result}, allowed)) == 1 {
+			filtered = append(filtered, result)
 		}
 	}
 	return filtered

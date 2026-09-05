@@ -2,16 +2,115 @@ package indexer
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/models"
 )
+
+func TestSearchBookWithDebugBilingualManualFallback(t *testing.T) {
+	var (
+		mu      sync.Mutex
+		queries []string
+	)
+	emptyRSS := `<?xml version="1.0"?><rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/"><channel><newznab:response offset="0" total="0"/></channel></rss>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		term := r.URL.Query().Get("q")
+		if term == "" {
+			term = r.URL.Query().Get("title")
+		}
+		mu.Lock()
+		queries = append(queries, term)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/xml")
+		if strings.Contains(strings.ToLower(term), "the final empire") {
+			_, _ = fmt.Fprint(w, `<?xml version="1.0"?><rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/"><channel><newznab:response offset="0" total="1"/><item><title>Brandon Sanderson - The Final Empire EPUB</title><guid>final-empire</guid><link>https://example.com/final-empire</link><enclosure url="https://example.com/final-empire.torrent" length="1048576" type="application/x-bittorrent"/><newznab:attr name="category" value="7020"/></item></channel></rss>`)
+			return
+		}
+		_, _ = fmt.Fprint(w, emptyRSS)
+	}))
+	defer srv.Close()
+
+	criteria := MatchCriteria{
+		Title:  "El imperio final / The Final Empire",
+		Author: "Brandon Sanderson",
+		TitleCandidates: []TitleCandidate{
+			{Title: "El imperio final", Language: "spa"},
+			{Title: "The Final Empire", Language: "eng", ManualOnly: true},
+		},
+		AllowManualFallback: true,
+		MediaType:           models.MediaTypeEbook,
+	}
+	indexers := []models.Indexer{{ID: 1, Name: "mock", URL: srv.URL, Type: "torznab", Enabled: true, Categories: []int{7020}}}
+	results, debug := newTestSearcher().SearchBookWithDebug(context.Background(), indexers, criteria)
+	if len(results) != 1 {
+		t.Fatalf("results = %#v, want one English manual fallback", results)
+	}
+	if results[0].MatchedTitle != "The Final Empire" || !results[0].ManualOnly {
+		t.Fatalf("fallback provenance = matched %q manual=%v", results[0].MatchedTitle, results[0].ManualOnly)
+	}
+	if debug == nil || len(debug.Indexers) != 1 {
+		t.Fatalf("debug = %#v, want one indexer outcome", debug)
+	}
+	wantAttempts := []string{"El imperio final", "The Final Empire"}
+	if !slices.Equal(debug.Indexers[0].AttemptedTitles, wantAttempts) {
+		t.Fatalf("attempted titles = %v, want %v", debug.Indexers[0].AttemptedTitles, wantAttempts)
+	}
+	mu.Lock()
+	gotQueries := append([]string(nil), queries...)
+	mu.Unlock()
+	if len(gotQueries) > 6 {
+		t.Fatalf("issued %d requests, want at most 6: %v", len(gotQueries), gotQueries)
+	}
+}
+
+func TestSearchBookDoesNotUseManualFallback(t *testing.T) {
+	var (
+		mu      sync.Mutex
+		queries []string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		term := r.URL.Query().Get("q")
+		if term == "" {
+			term = r.URL.Query().Get("title")
+		}
+		mu.Lock()
+		queries = append(queries, term)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = fmt.Fprint(w, `<?xml version="1.0"?><rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/"><channel><newznab:response offset="0" total="0"/></channel></rss>`)
+	}))
+	defer srv.Close()
+
+	criteria := MatchCriteria{
+		Title:  "El imperio final / The Final Empire",
+		Author: "Brandon Sanderson",
+		TitleCandidates: []TitleCandidate{
+			{Title: "El imperio final", Language: "spa"},
+			{Title: "The Final Empire", Language: "eng", ManualOnly: true},
+		},
+		MediaType: models.MediaTypeEbook,
+	}
+	indexers := []models.Indexer{{ID: 1, Name: "mock", URL: srv.URL, Type: "torznab", Enabled: true, Categories: []int{7020}}}
+	if results := newTestSearcher().SearchBook(context.Background(), indexers, criteria); len(results) != 0 {
+		t.Fatalf("automatic results = %#v, want none", results)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, query := range queries {
+		if strings.Contains(strings.ToLower(query), "the final empire") {
+			t.Fatalf("automatic search queried manual-only title: %v", queries)
+		}
+	}
+}
 
 // newTestSearcher returns a Searcher whose client factory bypasses the
 // SSRF-hardened DialContext so tests can target httptest servers on loopback.
@@ -658,6 +757,21 @@ func TestDedupeByGUID(t *testing.T) {
 	}
 	if got[0].GUID != "abc" || got[1].GUID != "def" {
 		t.Errorf("unexpected dedup order: %v", resultTitles(got))
+	}
+}
+
+func TestDedupeKeepsFallbackProvenanceUntilRelevanceFilter(t *testing.T) {
+	results := []newznab.SearchResult{
+		{GUID: "same", Title: "Brandon Sanderson - The Final Empire EPUB", MatchedTitle: "El imperio final"},
+		{GUID: "same", Title: "Brandon Sanderson - The Final Empire EPUB", MatchedTitle: "The Final Empire", ManualOnly: true},
+	}
+	got := dedupe(results)
+	if len(got) != 2 {
+		t.Fatalf("dedupe removed fallback provenance: %#v", got)
+	}
+	got = filterRelevantForCriteria(got, MatchCriteria{Title: "El imperio final / The Final Empire", Author: "Brandon Sanderson"})
+	if len(got) != 1 || got[0].MatchedTitle != "The Final Empire" || !got[0].ManualOnly {
+		t.Fatalf("relevance result = %#v, want only English manual fallback", got)
 	}
 }
 

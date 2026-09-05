@@ -141,4 +141,27 @@ describe('SearchDebugPanel', () => {
       expect(fallback.selectionEnd).toBe(expectedDebugJson.length)
     })
   })
+
+  it('shows normalized and attempted title candidates', () => {
+    const multilingual: SearchDebug = {
+      ...debug,
+      query: {
+        ...debug.query,
+        title: 'El imperio final / The Final Empire',
+        titleCandidates: [
+          { title: 'El imperio final', language: 'spa' },
+          { title: 'The Final Empire', language: 'eng', manualOnly: true },
+        ],
+      },
+      indexers: [{
+        ...debug.indexers[0],
+        attemptedTitles: ['El imperio final', 'The Final Empire'],
+      }],
+    }
+
+    render(<SearchDebugPanel debug={multilingual} resultCount={1} defaultOpen />)
+
+    expect(screen.getByText('El imperio final [spa] → The Final Empire [eng] (manual only)')).toBeInTheDocument()
+    expect(screen.getByText('titles: El imperio final → The Final Empire')).toBeInTheDocument()
+  })
 })

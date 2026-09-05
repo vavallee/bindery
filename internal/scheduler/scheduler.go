@@ -740,13 +740,16 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	if book.ReleaseDate != nil {
 		crit.Year = book.ReleaseDate.Year()
 	}
+	var bookEditions []models.Edition
 	if s.editions != nil {
 		if eds, err := s.editions.ListByBook(ctx, book.ID); err != nil {
 			slog.Warn("failed to load editions for search ISBN", "book_id", book.ID, "error", err)
 		} else {
+			bookEditions = eds
 			crit.ISBN = indexer.CriteriaISBN(&book, eds)
 		}
 	}
+	crit.TitleCandidates = indexer.BuildTitleCandidates(book, bookEditions, allowedLangs)
 
 	results, outcomes := s.searchBookWithOutcomes(ctx, idxs, crit)
 	// An indexer that failed contributed zero results and is otherwise
