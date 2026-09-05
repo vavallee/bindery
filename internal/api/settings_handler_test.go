@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -830,6 +831,232 @@ func TestValidateSettingValue_CalibrePushPathRemap(t *testing.T) {
 	for _, v := range []string{"/books", "/books:", ":/books", "/a:/b,broken"} {
 		if err := validateSettingValue(SettingCalibrePushPathRemap, v); err == nil {
 			t.Errorf("value %q should be rejected", v)
+		}
+	}
+}
+
+// adminReq / userReq stamp the role the auth middleware would have attached.
+// auth.RequireAdmin reads the same context value, so these are the two sides
+// of the gate that already guards PUT /setting/{key}.
+func adminReq(req *http.Request) *http.Request {
+	return req.WithContext(auth.WithUserRole(req.Context(), "admin"))
+}
+
+func userReq(req *http.Request) *http.Request {
+	return req.WithContext(auth.WithUserRole(req.Context(), "user"))
+}
+
+// adminOnlyPathFixture stores every filesystem-path setting the admin-only
+// classifier covers, keyed by setting name, with values distinctive enough
+// that a substring search over a response body proves nothing leaked.
+func adminOnlyPathFixture(t *testing.T, repo *db.SettingsRepo, ctx context.Context) map[string]string {
+	t.Helper()
+	paths := map[string]string{
+		SettingCalibreLibraryPath:   "/srv/hidden-calibre-library",
+		SettingCalibreBinaryPath:    "/opt/hidden-calibre/bin",
+		SettingImportDropFolder:     "/srv/hidden-drop-folder",
+		SettingCWAIngestPath:        "/srv/hidden-cwa-ingest",
+		SettingCalibrePushPathRemap: "/books:/mnt/hidden-remap",
+		SettingABSPathRemap:         "/abs:/mnt/hidden-abs-remap",
+		SettingLibraryLastScan:      `{"library_dir":"/srv/hidden-library-dir","unmatched_files":[{"path":"/srv/hidden-library-dir/x.epub"}]}`,
+	}
+	for k, v := range paths {
+		if err := repo.Set(ctx, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return paths
+}
+
+// TestSettings_AdminOnlyPathsHiddenFromNonAdmin pins #2361. GET /setting and
+// GET /setting/{key} are open to every authenticated role while
+// GET /system/storage is admin gated, so before this change an OPDS-only
+// reader account could ask a stock install where its Calibre library lives on
+// disk. The hiding reuses the shapes secrets already use, omitted from List
+// and 404 from Get, so no third response shape enters the API.
+func TestSettings_AdminOnlyPathsHiddenFromNonAdmin(t *testing.T) {
+	h, repo, ctx := settingsFixture(t)
+	paths := adminOnlyPathFixture(t, repo, ctx)
+	// A neighbouring non-path key on the same screens must stay readable, or
+	// the fix has quietly closed the whole Calibre tab to non-admins for no
+	// security gain.
+	if err := repo.Set(ctx, SettingCalibreEnabled, "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.List(rec, userReq(httptest.NewRequest(http.MethodGet, "/api/v1/setting", nil)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("List status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "hidden-") {
+		t.Errorf("List leaked a path value to a non-admin; body=%s", body)
+	}
+	for key := range paths {
+		if strings.Contains(body, `"key":"`+key+`"`) {
+			t.Errorf("List leaked admin-only key %q to a non-admin", key)
+		}
+	}
+	if !strings.Contains(body, SettingCalibreEnabled) {
+		t.Errorf("non-admin lost the non-path key %q: %s", SettingCalibreEnabled, body)
+	}
+
+	for key := range paths {
+		req := userReq(withKey(httptest.NewRequest(http.MethodGet, "/api/v1/setting/"+key, nil), key))
+		rec := httptest.NewRecorder()
+		h.Get(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("Get %q as non-admin = %d, want 404; body=%s", key, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// TestSettings_AdminSeesPathSettings is the other half: hiding the paths is
+// only correct if Settings still works for the operator who has to edit them.
+// The Calibre and General tabs render the stored value into an input, so an
+// admin must get the real string back from both List and Get.
+func TestSettings_AdminSeesPathSettings(t *testing.T) {
+	h, repo, ctx := settingsFixture(t)
+	paths := adminOnlyPathFixture(t, repo, ctx)
+
+	rec := httptest.NewRecorder()
+	h.List(rec, adminReq(httptest.NewRequest(http.MethodGet, "/api/v1/setting", nil)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("List status = %d", rec.Code)
+	}
+	var listed []models.Setting
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	seen := make(map[string]string, len(listed))
+	for _, s := range listed {
+		seen[s.Key] = s.Value
+	}
+	for key, value := range paths {
+		if seen[key] != value {
+			t.Errorf("List gave an admin %q = %q, want %q", key, seen[key], value)
+		}
+	}
+
+	for key, value := range paths {
+		req := adminReq(withKey(httptest.NewRequest(http.MethodGet, "/api/v1/setting/"+key, nil), key))
+		rec := httptest.NewRecorder()
+		h.Get(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Get %q as admin = %d, want 200; body=%s", key, rec.Code, rec.Body.String())
+		}
+		var got models.Setting
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Value != value {
+			t.Errorf("Get %q as admin = %q, want %q", key, got.Value, value)
+		}
+	}
+
+	// Secrets stay hidden from admins too: the read gate got stricter for
+	// non-admins, it did not get looser for anybody.
+	if err := repo.Set(ctx, SettingHardcoverAPIToken, "hc-token-value"); err != nil {
+		t.Fatal(err)
+	}
+	secretRec := httptest.NewRecorder()
+	h.Get(secretRec, adminReq(withKey(httptest.NewRequest(http.MethodGet, "/api/v1/setting/"+SettingHardcoverAPIToken, nil), SettingHardcoverAPIToken)))
+	if secretRec.Code != http.StatusNotFound {
+		t.Errorf("Get secret as admin = %d, want 404", secretRec.Code)
+	}
+}
+
+// TestSettings_AdminOnlyWriteStillRefusedForNonAdmin checks the gate this
+// change aligns the reads with is still doing its job. PUT and DELETE sit
+// behind auth.RequireAdmin in cmd/bindery, so a non-admin who can no longer
+// read a path cannot write one either.
+func TestSettings_AdminOnlyWriteStillRefusedForNonAdmin(t *testing.T) {
+	h, repo, ctx := settingsFixture(t)
+	if err := repo.Set(ctx, SettingImportDropFolder, "/srv/original-drop"); err != nil {
+		t.Fatal(err)
+	}
+	gated := auth.RequireAdmin(http.HandlerFunc(h.Set))
+
+	req := userReq(withKey(httptest.NewRequest(http.MethodPut, "/api/v1/setting/"+SettingImportDropFolder, bytes.NewBufferString(`{"value":"/srv/attacker-drop"}`)), SettingImportDropFolder))
+	rec := httptest.NewRecorder()
+	gated.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("PUT as non-admin = %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+	got, _ := repo.Get(ctx, SettingImportDropFolder)
+	if got == nil || got.Value != "/srv/original-drop" {
+		t.Fatalf("non-admin PUT changed the stored value: %+v", got)
+	}
+}
+
+// TestIsAdminOnlySetting_AgreesWithIsSecretSetting pins the two classifiers
+// against each other, which is the drift #2361 warns about: a key must not be
+// treated as a credential by one and as freely readable by the other. The
+// invariant is a strict superset, every secret is admin only, and
+// isAdminOnlySetting states it by delegating rather than by re-listing keys,
+// so this test is what fails if somebody ever removes that delegation.
+func TestIsAdminOnlySetting_AgreesWithIsSecretSetting(t *testing.T) {
+	secrets := []string{
+		SettingAuthAPIKey,
+		SettingAuthSessionSecret,
+		SettingAuthSessionSecretPrevious,
+		SettingAuthMode,
+		SettingOIDCProviders,
+		SettingABSAPIKey,
+		SettingHardcoverAPIToken,
+		SettingCalibrePluginAPIKey,
+		SettingGrimmoryAPIKey,
+		SettingGoogleBooksAPIKey,
+		LegacySettingGoogleBooksAPIKey,
+		// Pattern-matched rather than enumerated, so the delegation has to
+		// carry these too.
+		"some_new_provider.api_key",
+		"someprovider.apiKey",
+		"auth.oidc.future_field",
+		"db.password",
+	}
+	for _, key := range secrets {
+		if !isSecretSetting(key) {
+			t.Fatalf("fixture wrong: isSecretSetting(%q) = false", key)
+		}
+		if !isAdminOnlySetting(key) {
+			t.Errorf("isAdminOnlySetting(%q) = false but the key is a secret; the classifiers disagree", key)
+		}
+	}
+
+	// The filesystem paths are admin only without being secrets: an admin has
+	// to read them back to edit them, so they must not be swept into the
+	// stricter classifier by mistake.
+	for _, key := range []string{
+		SettingCalibreLibraryPath,
+		SettingCalibreBinaryPath,
+		SettingImportDropFolder,
+		SettingCWAIngestPath,
+		SettingCalibrePushPathRemap,
+		SettingABSPathRemap,
+		SettingLibraryLastScan,
+	} {
+		if isSecretSetting(key) {
+			t.Errorf("isSecretSetting(%q) = true; a path is admin-only, not write-only", key)
+		}
+		if !isAdminOnlySetting(key) {
+			t.Errorf("isAdminOnlySetting(%q) = false; want true", key)
+		}
+	}
+
+	// Ordinary settings stay readable by everyone. calibre.enabled and
+	// import.mode sit next to the path keys on the same screens and are the
+	// ones a too-broad classifier would take out with them.
+	for _, key := range []string{
+		SettingCalibreEnabled,
+		SettingImportMode,
+		SettingImportDropLayout,
+		SettingMetadataPrimaryProvider,
+		"ui.theme",
+	} {
+		if isAdminOnlySetting(key) {
+			t.Errorf("isAdminOnlySetting(%q) = true; want false", key)
 		}
 	}
 }
