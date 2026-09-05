@@ -43,7 +43,9 @@
     "clipboardTextLabel": "Text to copy",
     "saved": "Saved ✓",
     "saveError": "Error",
-    "more": "More"
+    "more": "More",
+    "confirm": "Confirm",
+    "confirmTitle": "Are you sure?"
   },
   "monitorMode": {
     "all": "All books",
@@ -293,7 +295,11 @@
       "status_imported": "Imported",
       "status_skipped": "Skipped",
       "status_excluded": "Excluded"
-    }
+    },
+    "deleteConfirm": "Delete {{author}} and all {{count}} book(s)?",
+    "deleteWithFilesConfirm": "Delete {{author}}, all {{count}} book(s), AND {{withFiles}} file(s) or folder(s) on disk?\n\nThis cannot be undone.",
+    "deleteTitle": "Delete author",
+    "deleteFilesAcknowledge": "I understand the files on disk will be deleted."
   },
   "catalogueReconciliation": {
     "title": "Reconcile catalogue",
@@ -466,6 +472,10 @@
       "importHeld": "Held for Pair",
       "importHeldHint": "Held until the paired format arrives. This book wants both an ebook and an audiobook, and both are imported together."
     }
+  },
+  "series": {
+    "deleteConfirm": "Delete \"{{title}}\" from Series? Linked books will stay in your library.",
+    "deleteTitle": "Remove series"
   },
   "importHints": {
     "heading": "Already have files on disk?",
@@ -752,7 +762,9 @@
       "download": "Download",
       "downloadHint": "Download the entries matching the current filters as a text file",
       "downloadNote": "Download saves the entries matching the filters the table is showing as a plain-text file you can attach to a bug report. Large exports are capped; the file says so in its footer when that happens.",
-      "page": "Page {{page}}"
+      "page": "Page {{page}}",
+      "deleteBackupConfirm": "Delete backup {{filename}}?",
+      "deleteBackupTitle": "Delete backup"
     },
     "general": {
       "appearance": "Appearance",
@@ -887,7 +899,12 @@
       "hardcoverSync": "Hardcover list sync",
       "hardcoverSyncIntervalLabel": "Hardcover list sync interval",
       "hardcoverSyncIntervalHint": "How often Bindery re-syncs your enabled Hardcover import lists. Lower it if you curate a Hardcover list as your main way of adding books. Use Sync now on the Import tab for an immediate run.",
-      "restartRequired": "Takes effect after the next Bindery restart."
+      "restartRequired": "Takes effect after the next Bindery restart.",
+      "regenerateApiKeyConfirm": "Regenerate the API key? Existing integrations using the old key will stop working.",
+      "regenerateApiKeyTitle": "Regenerate API key",
+      "rotateSessionSecretConfirm": "Rotate the session signing secret? Existing logins keep working during a rotation window via the previous secret; a second rotation closes that window.",
+      "rotateSessionSecretTitle": "Rotate session secret",
+      "rotateSessionSecretAcknowledge": "I understand a second rotation will sign everyone out."
     },
     "import": {
       "csvHeading": "CSV of author names",
@@ -1088,7 +1105,9 @@
     "removeLabel": "Remove",
     "mergeButton": "Merge",
     "merging": "Merging...",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "confirmBody": "Merge \"{{source}}\" into \"{{target}}\"?\n\n• {{count}} book(s) will be reparented.\n• \"{{source}}\" will be kept as an alias of \"{{target}}\".\n• This cannot be undone.",
+    "confirmAcknowledge": "I understand this cannot be undone."
   },
   "pagination": {
     "previous": "Previous",

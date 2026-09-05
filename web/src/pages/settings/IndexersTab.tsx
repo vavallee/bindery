@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, Indexer, IndexerTestResult, ProwlarrInstance } from '../../api/client'
 // client.ts re-exports types only, so the helper comes from its own module.
 import { indexerNeedsAttention } from '../../api/indexers'
@@ -132,6 +133,7 @@ interface Props {
 }
 
 export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, setProwlarrInstances }: Props) {
+  const { confirm, confirmDialog } = useConfirmDialog()
   const { t } = useTranslation()
   const [showAddProwlarr, setShowAddProwlarr] = useState(false)
   const [editingProwlarr, setEditingProwlarr] = useState<number | null>(null)
@@ -144,6 +146,7 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
 
   return (
     <div>
+      {confirmDialog}
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-lg font-semibold">{t('settings.indexers.heading')}</h3>
         <button onClick={() => setShowAddIndexer(true)} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium">
@@ -341,7 +344,11 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
                   </button>
                   <button
                     onClick={async () => {
-                      if (!confirm(t('settings.prowlarr.confirmDelete', { name: p.name }))) return
+                      if (!await confirm({
+                        title: t('common.confirmTitle'),
+                        body: t('settings.prowlarr.confirmDelete', { name: p.name }),
+                        confirmLabel: t('common.delete'),
+                      })) return
                       await api.deleteProwlarr(p.id)
                       setProwlarrInstances(prev => prev.filter(i => i.id !== p.id))
                       api.listIndexers().then(setIndexers).catch(console.error)

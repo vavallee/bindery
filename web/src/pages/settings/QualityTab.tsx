@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, QualityProfile } from '../../api/client'
 import { inputCls, labelCls } from './formStyles'
 import { dangerLink } from '../../components/buttons'
@@ -112,11 +113,16 @@ function ProfileRow({
   onDeleted: () => void
 }) {
   const { t } = useTranslation()
+  const { confirm, confirmDialog } = useConfirmDialog()
   const [deleting, setDeleting] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
   const handleDelete = async () => {
-    if (!confirm(t('settings.quality.deleteConfirm', { name: profile.name }))) return
+    if (!await confirm({
+      title: t('common.confirmTitle'),
+      body: t('settings.quality.deleteConfirm', { name: profile.name }),
+      confirmLabel: t('common.delete'),
+    })) return
     setErr(null)
     setDeleting(true)
     try {
@@ -131,6 +137,7 @@ function ProfileRow({
 
   return (
     <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+      {confirmDialog}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h4 className="font-medium text-sm">{profile.name}</h4>

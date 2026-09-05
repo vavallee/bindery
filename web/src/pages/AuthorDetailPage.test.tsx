@@ -6,6 +6,7 @@ import AuthorDetailPage from './AuthorDetailPage'
 import { api } from '../api/client'
 import type { Author, Book } from '../api/client'
 import '../i18n'
+import { acceptConfirm, cancelConfirm, confirmDialog } from '../test-utils'
 
 vi.mock('../api/client', async importOriginal => {
   const actual = await importOriginal<typeof import('../api/client')>()
@@ -386,7 +387,6 @@ describe('AuthorDetailPage', () => {
 
   it('removes an author alias after confirmation', async () => {
     vi.mocked(api.deleteAuthorAlias).mockResolvedValue()
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     renderAuthorDetailPage([], 'grid', {
       aliases: [{ id: 7, authorId: 42, name: 'Robert Jordan', createdAt: '2026-01-01T00:00:00Z' }],
     })
@@ -394,28 +394,31 @@ describe('AuthorDetailPage', () => {
     await screen.findByText('Robert Jordan')
     fireEvent.click(screen.getByRole('button', { name: 'Remove alias Robert Jordan' }))
 
+    // In-app modal since #2359, so the message is on screen rather than passed
+    // to window.confirm.
+    expect(await screen.findByText('Remove alias "Robert Jordan" from Brandon Sanderson?')).toBeInTheDocument()
+    await acceptConfirm()
+
     await waitFor(() => {
       expect(api.deleteAuthorAlias).toHaveBeenCalledWith(42, 7)
     })
     await waitFor(() => {
       expect(screen.queryByText('Robert Jordan')).not.toBeInTheDocument()
     })
-    expect(confirmSpy).toHaveBeenCalledWith('Remove alias "Robert Jordan" from Brandon Sanderson?')
-    confirmSpy.mockRestore()
   })
 
   it('keeps an author alias when removal is cancelled', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
     renderAuthorDetailPage([], 'grid', {
       aliases: [{ id: 8, authorId: 42, name: 'Pen Name', createdAt: '2026-01-01T00:00:00Z' }],
     })
 
     await screen.findByText('Pen Name')
     fireEvent.click(screen.getByRole('button', { name: 'Remove alias Pen Name' }))
+    await cancelConfirm()
 
+    await waitFor(() => expect(confirmDialog()).not.toBeInTheDocument())
     expect(api.deleteAuthorAlias).not.toHaveBeenCalled()
     expect(screen.getByText('Pen Name')).toBeInTheDocument()
-    confirmSpy.mockRestore()
   })
 
   it('keeps table metadata visible and repeats it in compact title rows', async () => {
@@ -509,15 +512,13 @@ describe('AuthorDetailPage', () => {
     fireEvent.click(within(row1).getByRole('checkbox'))
     fireEvent.click(within(row2).getByRole('checkbox'))
 
-    // Confirm dialog for exclude — auto-accept.
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const excludeBtn = await screen.findByRole('button', { name: 'Exclude' })
     fireEvent.click(excludeBtn)
+    await acceptConfirm()
 
     await waitFor(() => {
       expect(api.bulkActionBooks).toHaveBeenCalledWith([101, 102], 'exclude', undefined)
     })
-    confirmSpy.mockRestore()
   })
 
   // #2066: the author page's book list had no media-type bulk action at all,

@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, AuthConfig, AuthStatus, StorageDirStatus, StorageHealth } from '../../api/client'
 import AuthSettings from '../../settings/AuthSettings'
 import ThemeToggle from '../../components/ThemeToggle'
@@ -727,6 +728,7 @@ function StorageHealthBadge({ status, loading }: { status: StorageDirStatus | un
 
 function SecuritySection() {
   const { t } = useTranslation()
+  const { confirm, confirmDialog } = useConfirmDialog()
   const { status, refresh, isAdmin } = useAuth()
   const [cfg, setCfg] = useState<AuthConfig | null>(null)
   const [showKey, setShowKey] = useState(false)
@@ -746,7 +748,10 @@ function SecuritySection() {
   useEffect(() => { loadCfg() }, [])
 
   const regenerate = async () => {
-    if (!confirm('Regenerate the API key? Existing integrations using the old key will stop working.')) return
+    if (!await confirm({
+      title: t('settings.general.regenerateApiKeyTitle'),
+      body: t('settings.general.regenerateApiKeyConfirm'),
+    })) return
     setRegenerating(true)
     try {
       const r = await api.authRegenerateApiKey()
@@ -760,7 +765,11 @@ function SecuritySection() {
   }
 
   const rotateSessionSecret = async () => {
-    if (!confirm('Rotate the session signing secret? Existing logins keep working during a rotation window via the previous secret; a second rotation closes that window.')) return
+    if (!await confirm({
+      title: t('settings.general.rotateSessionSecretTitle'),
+      body: t('settings.general.rotateSessionSecretConfirm'),
+      acknowledgeLabel: t('settings.general.rotateSessionSecretAcknowledge'),
+    })) return
     setRotatingSecret(true)
     try {
       await api.authRotateSessionSecret()
@@ -796,6 +805,7 @@ function SecuritySection() {
 
   return (
     <section>
+      {confirmDialog}
       <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">Security</h3>
       <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-5">
         {isAdmin && (<>

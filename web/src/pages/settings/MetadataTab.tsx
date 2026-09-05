@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, AuthorMonitorMode, MetadataProfile } from '../../api/client'
 import { inputCls } from './formStyles'
 import { dangerLink } from '../../components/buttons'
@@ -51,6 +52,7 @@ function formatLanguageList(csv: string): string {
 
 export default function MetadataTab() {
   const { t } = useTranslation()
+  const { confirm, confirmDialog } = useConfirmDialog()
   const [profiles, setProfiles] = useState<MetadataProfile[]>([])
   const [editing, setEditing] = useState<MetadataProfile | null>(null)
   const [creating, setCreating] = useState(false)
@@ -75,6 +77,7 @@ export default function MetadataTab() {
 
   return (
     <div className="space-y-8">
+      {confirmDialog}
       {/* Library Defaults */}
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">Library Defaults</h3>
@@ -295,7 +298,11 @@ export default function MetadataTab() {
                       <button onClick={() => setEditing(p)} className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">{t('common.edit')}</button>
                       <button
                         onClick={async () => {
-                          if (!confirm(t('settings.metadata.deleteConfirm'))) return
+                          if (!await confirm({
+                            title: t('common.confirmTitle'),
+                            body: t('settings.metadata.deleteConfirm'),
+                            confirmLabel: t('common.delete'),
+                          })) return
                           await api.deleteMetadataProfile(p.id)
                           reload()
                         }}

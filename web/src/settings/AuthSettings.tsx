@@ -3,11 +3,13 @@ import { useTranslation } from 'react-i18next'
 import { api, BINDERY_BASE, OidcProvider, OidcProviderConfig } from '../api/client'
 import ClipboardManualFallback from '../components/ClipboardManualFallback'
 import { useClipboardCopy } from '../components/useClipboardCopy'
+import { useConfirmDialog } from '../components/useConfirmDialog'
 
 const inputCls = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600'
 
 export default function AuthSettings() {
   const { t } = useTranslation()
+  const { confirm, confirmDialog } = useConfirmDialog()
   // GET returns public shape only (no client_secret). We track display list
   // separately from the full configs we accumulate during add operations.
   const [displayed, setDisplayed] = useState<OidcProvider[]>([])
@@ -27,7 +29,11 @@ export default function AuthSettings() {
     ids.map(id => fullConfigs.get(id) ?? { id, name: displayed.find(p => p.id === id)?.name ?? id, issuer: '', client_id: '', client_secret: '', scopes: [] })
 
   const remove = async (id: string) => {
-    if (!confirm(t('settings.oidc.removeConfirm'))) return
+    if (!await confirm({
+      title: t('common.confirmTitle'),
+      body: t('settings.oidc.removeConfirm'),
+      confirmLabel: t('common.remove'),
+    })) return
     setSaving(true)
     setError('')
     try {
@@ -64,6 +70,7 @@ export default function AuthSettings() {
 
   return (
     <section>
+      {confirmDialog}
       <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">
         {t('settings.oidc.heading')}
       </h3>
