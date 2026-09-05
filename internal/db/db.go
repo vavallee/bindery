@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/vavallee/bindery/internal/indexer"
 
@@ -315,9 +316,11 @@ func migrate(database *sql.DB) error {
 	// Post-migration Go-side backfill. Migration 051's SQL backfill is a coarse
 	// approximation of indexer.CanonicalDedupKey (SQLite cannot run the Go
 	// normalizer); recompute the exact key for any row whose stored key is
-	// blank or no longer matches the canonical function (#940). Idempotent and
-	// cheap: a no-op once every row already holds the canonical key.
-	if err := backfillBookDedupKeys(database); err != nil {
+	// blank or no longer matches the canonical function (#940). Idempotent, but
+	// no longer free: it used to scan the whole books table on every boot just
+	// to conclude there was nothing to do, so it now runs only when the stored
+	// revision marker disagrees with the normalizer's own (#2346).
+	if err := runBackfillOnce(database, backfillRevKeyDedup, indexer.CanonicalDedupKeyRev, backfillBookDedupKeys); err != nil {
 		return fmt.Errorf("backfill book dedup keys: %w", err)
 	}
 
@@ -325,8 +328,9 @@ func migrate(database *sql.DB) error {
 	// column ships empty for existing rows. Populate it from sort_name with the
 	// Go folder (#1347). Idempotent: a no-op once every row holds its key, and it
 	// re-folds any row whose stored key drifts from authorSortKey (e.g. after a
-	// future change to the folding rules).
-	if err := backfillAuthorSortKeys(database); err != nil {
+	// change to the folding rules), which is what bumping authorSortKeyRev
+	// tells the marker gate to go and do.
+	if err := runBackfillOnce(database, backfillRevKeySortKeys, authorSortKeyRev, backfillAuthorSortKeys); err != nil {
 		return fmt.Errorf("backfill author sort keys: %w", err)
 	}
 
@@ -366,12 +370,85 @@ func ensureBooksExcludedColumn(database *sql.DB) error {
 	return nil
 }
 
+// Settings keys holding the normalizer revision each startup backfill last
+// ran at. See backfillRevisionCurrent.
+const (
+	backfillRevKeyDedup    = "backfill.dedup_key_rev"
+	backfillRevKeySortKeys = "backfill.sort_key_rev"
+)
+
+// backfillRevisionCurrent reports whether the stored marker for key already
+// equals want, i.e. whether the backfill that owns it can be skipped (#2346).
+//
+// It fails open on purpose: a missing row, an unreadable settings table, or a
+// value that does not parse all mean "run the backfill". The marker is a
+// shortcut, never a gate — a wrong answer here must cost a table scan, not
+// leave rows on a stale key. That is also why this is scoped to the exact
+// normalizer output it tracks rather than becoming a general "startup work
+// already done" flag: widening a startup check past what a change actually
+// touched is the shape of #1972, where migration 072's whole-database
+// foreign_key_check found pre-existing orphans and put instances in a restart
+// loop.
+//
+// A migration that rewrites books.title or authors.name / sort_name in bulk
+// must DELETE its marker row so the next boot recomputes; the derived key is
+// only as fresh as the column it comes from.
+func backfillRevisionCurrent(database *sql.DB, key string, want int) bool {
+	var raw string
+	if err := database.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&raw); err != nil {
+		return false
+	}
+	got, err := strconv.Atoi(strings.TrimSpace(raw))
+	return err == nil && got == want
+}
+
+// markBackfillRevision records that the backfill owning key has just run at
+// revision rev. A write failure is logged and swallowed: the only consequence
+// is that the next boot repeats the scan, which is the behaviour that shipped
+// before the marker existed.
+func markBackfillRevision(database *sql.DB, key string, rev int) {
+	_, err := database.Exec(`
+		INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+		key, strconv.Itoa(rev), time.Now().UTC())
+	if err != nil {
+		slog.Warn("could not record backfill revision marker", "key", key, "revision", rev, "error", err)
+	}
+}
+
+// runBackfillOnce runs fn unless its revision marker says the current
+// normalizer revision has already been applied, and records the marker after a
+// successful run (#2346).
+//
+// The gate lives here rather than inside each backfill so the backfills stay
+// what they were: unconditional, idempotent, directly callable functions that
+// bring every row in line with the current normalizer. That is what their tests
+// exercise, and what dropping a marker row falls back to.
+func runBackfillOnce(database *sql.DB, key string, rev int, fn func(*sql.DB) error) error {
+	if backfillRevisionCurrent(database, key, rev) {
+		return nil
+	}
+	if err := fn(database); err != nil {
+		return err
+	}
+	// After the work, never before: a marker written ahead of a failed run
+	// would skip the retry on the next boot.
+	markBackfillRevision(database, key, rev)
+	return nil
+}
+
 // backfillAuthorSortKeys recomputes authors.sort_key for every row whose stored
 // value differs from authorSortKey(sort_name) — and likewise name_sort_key
-// against authorSortKey(name) (migration 079, #2102). It runs on every startup after
-// migrations so legacy rows created before migration 058 (which leaves sort_key
-// empty) get a correct accent-folded key, and a future change to the folder
-// re-canonicalizes existing rows on the next boot.
+// against authorSortKey(name) (migration 079, #2102). It exists so legacy rows
+// created before migration 058 (which leaves sort_key empty) get a correct
+// accent-folded key, and so a change to the folder re-canonicalizes existing
+// rows on the next boot.
+//
+// It is unconditional and idempotent: every call brings every row in line with
+// the current folder. What changed in #2346 is how often it is called —
+// migrate() now gates it on the backfill.sort_key_rev marker, so the scan runs
+// on a first boot, on the boot after authorSortKeyRev is bumped, and never
+// otherwise. Deleting the marker row is always a safe way to force a recompute.
 func backfillAuthorSortKeys(database *sql.DB) error {
 	type pending struct {
 		id      int64
@@ -434,8 +511,7 @@ func backfillAuthorSortKeys(database *sql.DB) error {
 }
 
 // backfillBookDedupKeys recomputes books.dedup_key for every row whose stored
-// value differs from indexer.CanonicalDedupKey(title). It runs on every startup
-// after migrations so that:
+// value differs from indexer.CanonicalDedupKey(title). It exists so that:
 //   - legacy rows created before migration 051 get a correct key (the SQL
 //     backfill only produced a coarse lowercase/subtitle approximation);
 //   - a future change to the canonical normalizer re-canonicalizes existing
@@ -462,6 +538,13 @@ func backfillAuthorSortKeys(database *sql.DB) error {
 //
 // Repairing libraries already duplicated by the old key is a separate piece of
 // work; the fix here stops new duplicates being created.
+//
+// It is unconditional and idempotent: every call brings every row in line with
+// the current normalizer. What changed in #2346 is how often it is called —
+// migrate() now gates it on the backfill.dedup_key_rev marker, so the scan runs
+// on a first boot, on the boot after indexer.CanonicalDedupKeyRev is bumped,
+// and never otherwise. Deleting the marker row is always a safe way to force a
+// recompute.
 func backfillBookDedupKeys(database *sql.DB) error {
 	type pending struct {
 		id  int64
