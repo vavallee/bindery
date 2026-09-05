@@ -93,6 +93,31 @@ func NewOIDCHandler(mgr *oidc.Manager, users *db.UserRepo, settings *db.Settings
 	}
 }
 
+// flowSecret returns the key the OIDC flow cookie is signed with: the
+// install's current session secret, the same one the session cookie and the
+// CSRF token are derived from (#2362). The flow signature carries its own
+// domain-separation label, so sharing the key does not let a value from one
+// stand in for the other.
+//
+// The secrets live on AuthHandler, which is in this package, so nothing has to
+// be plumbed into internal/auth/oidc. Nil when no AuthHandler is attached,
+// which EncodeFlowState refuses rather than treating as "sign with nothing".
+func (h *OIDCHandler) flowSecret(ctx context.Context) []byte {
+	if h.auth == nil {
+		return nil
+	}
+	return h.auth.sessionSecret(ctx)
+}
+
+// flowSecrets returns the ordered verification candidates {current, previous},
+// so a login started just before a session-secret rotation still completes.
+func (h *OIDCHandler) flowSecrets(ctx context.Context) [][]byte {
+	if h.auth == nil {
+		return nil
+	}
+	return h.auth.sessionSecrets(ctx)
+}
+
 // WithBaseConfigured sets the baseConfigured flag, indicating that
 // BINDERY_OIDC_REDIRECT_BASE_URL was explicitly configured. When false,
 // GetRedirectBase signals the UI to display a warning that the callback URL
@@ -195,7 +220,7 @@ func (h *OIDCHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// redirectBase is round-tripped because the IdP requires the redirect_uri
 	// in the token exchange to match the one used in the authorize request,
 	// and we resolve it from the request rather than a static env var.
-	flowVal, err := oidc.EncodeFlowState(state, nonce, verifier, redirectBase)
+	flowVal, err := oidc.EncodeFlowState(h.flowSecret(r.Context()), providerID, state, nonce, verifier, redirectBase)
 	if err != nil {
 		writeServerError(w, r, err)
 		return
@@ -229,9 +254,17 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "missing flow cookie")
 		return
 	}
-	fs, err := oidc.DecodeFlowState(flowCookie.Value)
+	fs, err := oidc.DecodeFlowState(h.flowSecrets(ctx), providerID, flowCookie.Value)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid flow state: "+err.Error())
+		// The signature, the expiry and the provider binding are all server-side
+		// facts; the caller gets one message for all of them. The detail goes to
+		// the log, where an operator can tell an upgrade-in-flight cookie
+		// (ErrFlowStateUnsigned) apart from a tampered one.
+		slog.Warn("oidc callback: flow state rejected", // #nosec -- providerID validated by oidcProviderIDRe at handler entry
+			"provider", providerID,
+			"error", err,
+		)
+		writeErr(w, http.StatusBadRequest, "invalid flow state")
 		return
 	}
 

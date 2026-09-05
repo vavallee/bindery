@@ -58,6 +58,8 @@ The auto-derive path doesn't know about path prefixes — when Bindery is mounte
 
 The base URL Bindery resolves at `/login` is stored in the (HttpOnly, short-lived) flow cookie and replayed at `/callback`, so the `redirect_uri` in the token exchange always matches the value the IdP saw at the authorize request. If the proxy chain changes between the two hops (extremely unusual), the callback would still use the originally-resolved URL.
 
+The flow cookie is signed with the install's session secret and is bound to the provider the login was started for, so a cookie Bindery did not mint is refused and a flow started for one provider cannot be completed against another. Two consequences worth knowing: a login already in flight when you upgrade, or when you rotate the session secret twice in quick succession, fails once and works on retry; and an install with no session secret cannot start an OIDC login at all, which is the same condition that already stops it issuing sessions.
+
 For example, with `BINDERY_OIDC_REDIRECT_BASE_URL=https://bindery.example.com` and provider id `google`:
 
 ```
