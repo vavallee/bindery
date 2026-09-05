@@ -297,7 +297,7 @@ minute.
 
 - **Adding a second volume of a series did nothing** (#2116). The query that fetches a single book never asked Hardcover for its series, so the duplicate guard had nothing to compare and always let the merge through. The same field was missing from the ISBN lookup.
 
-- **Hardcover supplemented author catalogues had no series information** (#2121). Works pulled from Hardcover to fill out an author's bibliography arrived with no series membership, so those books were never linked into a series and an author set to monitor a specific series never picked them up. They now carry the series and volume number Hardcover holds. Existing books gain their links on the next author refresh.
+- **Hardcover supplemented author catalogues had no series information** (#2121). Works pulled from Hardcover to fill out an author's bibliography arrived with no series membership, so those books were never linked into a series and an author set to monitor a specific series never picked them up. They now carry the series and volume number Hardcover holds. Correction to this entry as first published: books already in your library do not gain their links on the next author refresh. A refresh only links series for books it creates, so an existing book keeps whatever series it already had. That gap is tracked as #2328.
 
 - **Readarr migration turned every non qBittorrent download client into SABnzbd** (#1983). All six client types Bindery supports are now mapped by name, and a Readarr client with no Bindery equivalent, such as NZBVortex or a blackhole, is reported as a skipped row instead of becoming a SABnzbd client that cannot work.
 
