@@ -407,27 +407,11 @@ func (h *AuthorHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthorHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+	author, ok := h.loadOwnedAuthor(w, r)
+	if !ok {
 		return
 	}
-
-	author, err := h.authors.GetByID(r.Context(), id)
-	if err != nil {
-		writeServerError(w, r, err)
-		return
-	}
-	if author == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
-		return
-	}
-	// Tier-1 cross-user IDOR guard (D1). Return 404 (not 403) on mismatch so
-	// non-owners cannot probe for the existence of another user's authors.
-	if !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
-		return
-	}
+	id := author.ID
 
 	// Attach books, owner-scoped (#1416): the embedded list must apply the
 	// same tenancy predicate as GET /book?authorId=, or a co-author book
@@ -469,22 +453,13 @@ func (h *AuthorHandler) Get(w http.ResponseWriter, r *http.Request) {
 // picker (#810) so the edit modal can render a checkbox list scoped to this
 // author rather than the global /series collection.
 func (h *AuthorHandler) ListSeries(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+	// The ownership check has to run before we list series belonging to the
+	// author, hence the load here rather than a bare parseID.
+	author, ok := h.loadOwnedAuthor(w, r)
+	if !ok {
 		return
 	}
-	// Tier-1 cross-user IDOR guard (D1). Look the author up so the ownership
-	// check runs before we list series belonging to it.
-	author, err := h.authors.GetByID(r.Context(), id)
-	if err != nil {
-		writeServerError(w, r, err)
-		return
-	}
-	if author == nil || !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
-		return
-	}
+	id := author.ID
 	if h.series == nil {
 		writeJSON(w, http.StatusOK, []models.Series{})
 		return
@@ -1001,20 +976,8 @@ func (h *AuthorHandler) recordAuthorRelinkAlias(ctx context.Context, author *mod
 }
 
 func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
-		return
-	}
-
-	author, err := h.authors.GetByID(r.Context(), id)
-	if err != nil || author == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
-		return
-	}
-	// Tier-1 cross-user IDOR guard (D1).
-	if !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
+	author, ok := h.loadOwnedAuthor(w, r)
+	if !ok {
 		return
 	}
 
@@ -1381,24 +1344,13 @@ func (h *AuthorHandler) RelinkCandidates(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+	// The load has to happen before any destructive work, so the ownership
+	// check runs first.
+	author, ok := h.loadOwnedAuthor(w, r)
+	if !ok {
 		return
 	}
-
-	// Tier-1 cross-user IDOR guard (D1). Look the author up so the ownership
-	// check can run before any destructive work; return 404 on mismatch or
-	// missing row so non-owners cannot probe for existence by status code.
-	author, err := h.authors.GetByID(r.Context(), id)
-	if err != nil {
-		writeServerError(w, r, err)
-		return
-	}
-	if author == nil || !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
-		return
-	}
+	id := author.ID
 
 	// Opt-in `?deleteFiles=true` sweeps every book's on-disk path after the
 	// DB delete. We must collect the paths *before* deleting the author —
@@ -1465,20 +1417,8 @@ func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthorHandler) Refresh(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
-		return
-	}
-
-	author, err := h.authors.GetByID(r.Context(), id)
-	if err != nil || author == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
-		return
-	}
-	// Tier-1 cross-user IDOR guard (D1).
-	if !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
+	author, ok := h.loadOwnedAuthor(w, r)
+	if !ok {
 		return
 	}
 

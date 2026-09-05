@@ -580,3 +580,57 @@ func TestDownloadClientURL_IPv6(t *testing.T) {
 		}
 	}
 }
+
+// TestDownloadClientHandlers_NonNumericID pins that a malformed {id} answers
+// 400 on every handler that takes one. All four used to run
+// `id, _ := strconv.ParseInt(...)`, so "abc" became id 0. Get/Update/Test then
+// reported "download client not found" for a request that never named a
+// client, and Delete was worse: it ran the repo delete, downloader.Evict(0) and
+// the health drop against id 0, then answered 204 No Content, so a typo in a
+// script reported success for a delete that deleted nothing (#2364).
+func TestDownloadClientHandlers_NonNumericID(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		method string
+		call   func(h *DownloadClientHandler, w http.ResponseWriter, r *http.Request)
+	}{
+		{"Get", http.MethodGet, (*DownloadClientHandler).Get},
+		{"Update", http.MethodPut, (*DownloadClientHandler).Update},
+		{"Delete", http.MethodDelete, (*DownloadClientHandler).Delete},
+		{"Test", http.MethodPost, (*DownloadClientHandler).Test},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, clients := downloadClientFixture(t)
+
+			// A real client at id 1, so a 404 here would mean the handler
+			// looked something up rather than rejecting the id.
+			existing := &models.DownloadClient{Name: "qbit", Type: "qbittorrent", Host: "127.0.0.1", Port: 8080, Category: "books"}
+			if err := clients.Create(context.Background(), existing); err != nil {
+				t.Fatalf("seed client: %v", err)
+			}
+
+			rec := httptest.NewRecorder()
+			req := withURLParam(httptest.NewRequest(tc.method, "/downloadclient/abc", bytes.NewBufferString(`{}`)), "id", "abc")
+
+			tc.call(h, rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400 for a non-numeric id, got %d: %s", rec.Code, rec.Body.String())
+			}
+			var out map[string]string
+			if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+				t.Fatalf("decode error body: %v", err)
+			}
+			if out["error"] != "invalid id" {
+				t.Errorf("error = %q, want %q", out["error"], "invalid id")
+			}
+
+			// The seeded client must still be there: a rejected id must not
+			// have reached the repo at all.
+			still, err := clients.GetByID(context.Background(), existing.ID)
+			if err != nil || still == nil {
+				t.Errorf("seeded client should survive a malformed-id request (err=%v)", err)
+			}
+		})
+	}
+}

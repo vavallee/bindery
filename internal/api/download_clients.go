@@ -7,11 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
-
-	"github.com/go-chi/chi/v5"
 
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/downloader"
@@ -142,7 +139,10 @@ func (h *DownloadClientHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DownloadClientHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r)
+	if !ok {
+		return
+	}
 	client, err := h.clients.GetByID(r.Context(), id)
 	if err != nil || client == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download client not found"})
@@ -190,7 +190,10 @@ func (h *DownloadClientHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DownloadClientHandler) Update(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r)
+	if !ok {
+		return
+	}
 	existing, err := h.clients.GetByID(r.Context(), id)
 	if err != nil || existing == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download client not found"})
@@ -350,7 +353,10 @@ func applyDownloadClientCredentials(c, existing *models.DownloadClient, raw map[
 }
 
 func (h *DownloadClientHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r)
+	if !ok {
+		return
+	}
 	if err := h.clients.Delete(r.Context(), id); err != nil {
 		writeServerError(w, r, err)
 		return
@@ -366,7 +372,10 @@ func (h *DownloadClientHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DownloadClientHandler) Test(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r)
+	if !ok {
+		return
+	}
 	client, err := h.clients.GetByID(r.Context(), id)
 	if err != nil || client == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download client not found"})
