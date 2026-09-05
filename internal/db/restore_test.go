@@ -176,10 +176,10 @@ func TestApplyPendingRestore_TruncatedDatabase(t *testing.T) {
 	}
 }
 
-// TestCheckSQLiteFile_ReadOnlyDoesNotCreate guards the DSN construction. The
-// driver drops query parameters unless the DSN is a file: URI, so a plain
-// "<path>?mode=ro" opens read-write with SQLITE_OPEN_CREATE and answers "ok"
-// for a file that does not exist.
+// TestCheckSQLiteFile_ReadOnlyDoesNotCreate covers the missing-file case. Note
+// that CheckSQLiteFile rejects a missing file at its os.Open header read,
+// before the DSN is built at all, so this test says nothing about the DSN
+// itself — TestSQLiteFileURI_IsReallyReadOnly is what pins that.
 func TestCheckSQLiteFile_ReadOnlyDoesNotCreate(t *testing.T) {
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "absent.db")
@@ -188,6 +188,67 @@ func TestCheckSQLiteFile_ReadOnlyDoesNotCreate(t *testing.T) {
 	}
 	if _, err := os.Stat(missing); !os.IsNotExist(err) {
 		t.Fatalf("CheckSQLiteFile created %q", missing)
+	}
+}
+
+// TestSQLiteFileURI_IsReallyReadOnly guards the DSN construction, which is easy
+// to "simplify" back into a plain "<path>?mode=ro" that silently does the wrong
+// thing. modernc.org/sqlite always calls sqlite3_open_v2 with
+// SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE and only forwards mode= to SQLite
+// when the DSN is a file: URI (it truncates a non-URI DSN at the first "?"
+// instead), so without the file: prefix the check would open the file it is
+// inspecting read-write and could recover or rewrite it.
+func TestSQLiteFileURI_IsReallyReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sound.db")
+	writeSQLiteFile(t, path, "live")
+
+	database, err := sql.Open("sqlite", sqliteFileURI(path, "mode=ro"))
+	if err != nil {
+		t.Fatalf("open read-only: %v", err)
+	}
+	defer func() { _ = database.Close() }()
+	database.SetMaxOpenConns(1)
+
+	if _, err := database.Exec(`INSERT INTO notes (body) VALUES ('should not land')`); err == nil {
+		t.Fatalf("wrote through a supposedly read-only handle; mode=ro was dropped")
+	}
+	if got := readNote(t, path); got != "live" {
+		t.Fatalf("file changed under the read-only check: %q", got)
+	}
+}
+
+// TestCheckSQLiteFile_AwkwardPath pins the percent-encoding half of
+// sqliteFileURI. "?", "#" and "%" are syntax to SQLite's URI parser, so a data
+// directory carrying any of them in its name would otherwise make the check
+// look at the wrong path (or fail to parse), and a valid backup would be parked
+// as .restore-failed on every start.
+func TestCheckSQLiteFile_AwkwardPath(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "bindery data #1 ?x %y")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Build the file at a plain path first: writeSQLiteFile opens a non-URI
+	// DSN and cannot itself cope with a "?" in the path.
+	seed := filepath.Join(base, "seed.db")
+	writeSQLiteFile(t, seed, "live")
+	path := filepath.Join(dir, "bindery.db")
+	if err := os.Rename(seed, path); err != nil {
+		t.Fatalf("rename into awkward dir: %v", err)
+	}
+
+	if err := CheckSQLiteFile(context.Background(), path); err != nil {
+		t.Fatalf("CheckSQLiteFile(%q) = %v", path, err)
+	}
+
+	// And a garbage file at an equally awkward path is still rejected.
+	bad := filepath.Join(dir, "bad.db")
+	if err := os.WriteFile(bad, []byte("not a database"), 0o600); err != nil {
+		t.Fatalf("write bad file: %v", err)
+	}
+	if err := CheckSQLiteFile(context.Background(), bad); err == nil {
+		t.Fatalf("CheckSQLiteFile accepted garbage at %q", bad)
 	}
 }
 
