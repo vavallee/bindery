@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -48,6 +49,14 @@ func (h *BlocklistHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 		IDs []int64 `json:"ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		// The body cap now applies to DELETE too (#2354). Report an
+		// over-limit body as 413 rather than folding it into "invalid
+		// request body", which reads as a client JSON bug.
+		var maxBytes *http.MaxBytesError
+		if errors.As(err, &maxBytes) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "request body too large"})
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}

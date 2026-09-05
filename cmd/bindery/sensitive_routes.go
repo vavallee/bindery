@@ -155,3 +155,26 @@ func registerDownloadClientRoutes(r chi.Router, h downloadClientRouteHandler) {
 		r.Post("/downloadclient/test", h.TestConfig)
 	})
 }
+
+// oidcDiscoveryRouteHandler is the surface registerOIDCDiscoveryRoutes needs.
+type oidcDiscoveryRouteHandler interface {
+	TestDiscovery(http.ResponseWriter, *http.Request)
+}
+
+// registerOIDCDiscoveryRoutes mounts POST /auth/oidc/test-discovery, which is
+// admin-only. The handler fetches an issuer URL supplied in the request body
+// from inside the container under PolicyLAN, so RFC1918 destinations are in
+// range, and it reports connection refused, an HTTP status, a parse failure
+// carrying the head of the body, and a full discovery document as
+// distinguishable outcomes. That is a host and port oracle for whatever
+// network Bindery sits on, and BINDERY_ALLOW_LAN_OIDC=1 widens it to loopback
+// and cloud metadata. It belonged with the other OIDC provider management
+// routes from the start (its own doc comment in internal/api/auth_oidc.go
+// already calls it "this admin probe") but the route line sat one block above
+// the admin group, so every authenticated role reached it (#2348).
+func registerOIDCDiscoveryRoutes(r chi.Router, h oidcDiscoveryRouteHandler) {
+	r.Group(func(r chi.Router) {
+		r.Use(auth.RequireAdmin)
+		r.Post("/auth/oidc/test-discovery", h.TestDiscovery)
+	})
+}

@@ -16,6 +16,30 @@ import (
 	"github.com/vavallee/bindery/internal/useragent"
 )
 
+// maxResponseBytes caps a Prowlarr API reply. GET /api/v1/indexer returns
+// every configured indexer with its full definition in one document, so the
+// cap has to be generous — the 1 MiB cap on Transmission's torrent-get was too
+// small for exactly this shape of response (#1524) — but it must exist: the
+// success path here read the body with no cap at all, so only the client
+// timeout bounded how much a misbehaving host could make Bindery hold (#2357).
+// 32 MiB matches the cap the newznab client uses on indexer feeds. A var so
+// tests can lower it instead of allocating 32 MiB.
+var maxResponseBytes int64 = 32 << 20
+
+// readCapped reads a Prowlarr response under maxResponseBytes. Unlike a bare
+// io.LimitReader it reports an over-limit body as an explicit error rather
+// than a truncated document that fails to decode (#1524).
+func readCapped(r io.Reader) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(r, maxResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > maxResponseBytes {
+		return nil, fmt.Errorf("prowlarr response exceeded %d bytes", maxResponseBytes)
+	}
+	return body, nil
+}
+
 // Client calls the Prowlarr HTTP API.
 type Client struct {
 	baseURL string
@@ -439,5 +463,5 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
-	return io.ReadAll(resp.Body)
+	return readCapped(resp.Body)
 }

@@ -298,6 +298,72 @@ func TestSettings_SecretLeakRegression(t *testing.T) {
 	}
 }
 
+// TestIsSecretSetting_GoogleBooksKey pins #2351. Both spellings of the Google
+// Books API key missed every rule isSecretSetting had: `googlebooks.apiKey` is
+// camelCase so it never matched the `.api_key` suffix, and
+// `google_books_api_key` has no dot before api_key so it missed that too.
+// Neither was in the explicit switch, so GET /setting handed the key to every
+// authenticated caller including OPDS-only reader accounts.
+func TestIsSecretSetting_GoogleBooksKey(t *testing.T) {
+	secret := []string{
+		SettingGoogleBooksAPIKey,       // googlebooks.apiKey
+		LegacySettingGoogleBooksAPIKey, // google_books_api_key
+		// The case-insensitive suffix rule added alongside them: the next key
+		// named this way must be denied without anyone remembering the switch.
+		"someprovider.apiKey",
+		"someprovider.APIToken",
+		"some_provider_api_key",
+	}
+	for _, key := range secret {
+		if !isSecretSetting(key) {
+			t.Errorf("isSecretSetting(%q) = false; want true", key)
+		}
+	}
+	// Adjacent keys that are not credentials must stay readable.
+	for _, key := range []string{"googlebooks.enabled", "metadata.primary_provider", "import.mode"} {
+		if isSecretSetting(key) {
+			t.Errorf("isSecretSetting(%q) = true; want false", key)
+		}
+	}
+}
+
+// TestSettings_GoogleBooksKeyIsWriteOnly is the other half of #2351: the API
+// Keys tab saves this key through the generic PUT, so classifying it as a
+// secret must hide it from reads without breaking the write.
+func TestSettings_GoogleBooksKeyIsWriteOnly(t *testing.T) {
+	h, repo, ctx := settingsFixture(t)
+	if err := repo.Set(ctx, SettingGoogleBooksAPIKey, "AIza-existing"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/setting", nil))
+	if bytes.Contains(rec.Body.Bytes(), []byte("AIza-existing")) {
+		t.Errorf("List leaked the Google Books key: %s", rec.Body.String())
+	}
+
+	getReq := withKey(httptest.NewRequest(http.MethodGet, "/api/v1/setting/"+SettingGoogleBooksAPIKey, nil), SettingGoogleBooksAPIKey)
+	getRec := httptest.NewRecorder()
+	h.Get(getRec, getReq)
+	if getRec.Code != http.StatusNotFound {
+		t.Errorf("Get on the Google Books key = %d; want 404", getRec.Code)
+	}
+
+	setReq := withKey(httptest.NewRequest(http.MethodPut, "/api/v1/setting/"+SettingGoogleBooksAPIKey, bytes.NewBufferString(`{"value":"AIza-rotated"}`)), SettingGoogleBooksAPIKey)
+	setRec := httptest.NewRecorder()
+	h.Set(setRec, setReq)
+	if setRec.Code != http.StatusOK {
+		t.Fatalf("Set on the Google Books key = %d; want 200 (still writable): %s", setRec.Code, setRec.Body.String())
+	}
+	if bytes.Contains(setRec.Body.Bytes(), []byte("AIza-rotated")) {
+		t.Errorf("Set echoed the Google Books key back: %s", setRec.Body.String())
+	}
+	stored, _ := repo.Get(ctx, SettingGoogleBooksAPIKey)
+	if stored == nil || stored.Value != "AIza-rotated" {
+		t.Fatalf("expected the rotated key persisted, got %+v", stored)
+	}
+}
+
 func TestSettings_GetABSSecretReturns404(t *testing.T) {
 	h, repo, ctx := settingsFixture(t)
 	if err := repo.Set(ctx, SettingABSAPIKey, "supersecret"); err != nil {

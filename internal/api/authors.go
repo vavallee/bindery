@@ -3484,6 +3484,17 @@ func (h *AuthorHandler) saveAlternateNames(ctx context.Context, author *models.A
 	if h.aliases == nil || len(author.AlternateNames) == 0 {
 		return
 	}
+	// These latin-script aliases exist only so a non-latin primary name can be
+	// reached by a latin release name (e.g. "Murakami" -> "村上春樹"). For a
+	// latin-script author every alternate name is just another latin name, and
+	// minting it as an alias would file unrelated real authors (a pen name, or a
+	// co-author credit) under this one. Only save them when the author's own name
+	// is non-latin, mirroring the read-side guard in aliasBindsAuthor
+	// (importer.go), which binds an unattributed latin alias only when the
+	// canonical name is non-latin.
+	if isAllASCII(author.Name) {
+		return
+	}
 	for _, name := range author.AlternateNames {
 		if !isAllASCII(name) {
 			continue

@@ -170,6 +170,17 @@ const SettingNamingAudiobookFileTemplate = "naming.audiobook_file_template"
 // (configuredImportMode) to avoid an import cycle; keep the literal in sync.
 const SettingImportMode = "import.mode"
 
+// SettingGoogleBooksAPIKey and LegacySettingGoogleBooksAPIKey are the two keys
+// the Google Books API key has been stored under. Neither matches the naming
+// convention isSecretSetting's patterns expect (camelCase in one, no dot
+// before api_key in the other), so both are enumerated explicitly. cmd/bindery
+// reads the key at startup through these constants so the two spellings cannot
+// drift apart from the filter again (#2351).
+const (
+	SettingGoogleBooksAPIKey       = "googlebooks.apiKey"   //nolint:gosec // settings key name, not a credential value
+	LegacySettingGoogleBooksAPIKey = "google_books_api_key" //nolint:gosec // settings key name, not a credential value
+)
+
 type SettingsHandler struct {
 	settings *db.SettingsRepo
 }
@@ -204,7 +215,9 @@ func isSecretSetting(key string) bool {
 		SettingABSAPIKey,
 		SettingHardcoverAPIToken,
 		SettingCalibrePluginAPIKey,
-		SettingGrimmoryAPIKey:
+		SettingGrimmoryAPIKey,
+		SettingGoogleBooksAPIKey,
+		LegacySettingGoogleBooksAPIKey:
 		return true
 	}
 	// 2. Defensive suffix/prefix patterns for keys that follow the bindery
@@ -220,6 +233,20 @@ func isSecretSetting(key string) bool {
 		strings.HasPrefix(key, "auth.oidc.") {
 		return true
 	}
+	// 3. Case-insensitive catch-all for the same idea. The patterns above are
+	//    anchored on the snake_case-with-a-dot convention, which is why
+	//    `googlebooks.apiKey` and `google_books_api_key` both slipped through
+	//    and shipped the Google Books key to every authenticated caller
+	//    (#2351). Folding the case and dropping the separator requirement
+	//    means the next key someone names apiKey / apitoken is denied by
+	//    default instead of leaking until an audit finds it.
+	lower := strings.ToLower(key)
+	if strings.HasSuffix(lower, "apikey") ||
+		strings.HasSuffix(lower, "api_key") ||
+		strings.HasSuffix(lower, "apitoken") ||
+		strings.HasSuffix(lower, "api_token") {
+		return true
+	}
 	return false
 }
 
@@ -229,9 +256,17 @@ func isSecretSetting(key string) bool {
 // the settings UI and that have no dedicated handler of their own. The ABS and
 // Grimmory keys are absent here on purpose: they're persisted by their own
 // connection-test handlers, not the generic PUT.
+//
+// The Google Books key is here for the same reason as the Hardcover token: the
+// API Keys tab writes it through the generic PUT, so classifying it as a
+// secret (#2351) has to leave the write path open or the field stops saving.
+// The read side is now hidden, so the input renders blank and a save rotates
+// the stored key, matching the Hardcover token's behaviour.
 func isWritableSecretSetting(key string) bool {
 	return key == SettingHardcoverAPIToken ||
-		key == SettingCalibrePluginAPIKey
+		key == SettingCalibrePluginAPIKey ||
+		key == SettingGoogleBooksAPIKey ||
+		key == LegacySettingGoogleBooksAPIKey
 }
 
 func (h *SettingsHandler) List(w http.ResponseWriter, r *http.Request) {

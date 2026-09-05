@@ -58,9 +58,13 @@ var (
 	date    = "unknown"
 )
 
+// Aliases for the two spellings the Google Books API key has been stored
+// under. They live in internal/api so isSecretSetting and this reader cannot
+// drift apart again: a copy here is what let the key stay readable through
+// GET /setting (#2351).
 const (
-	settingGoogleBooksAPIKey       = "googlebooks.apiKey"
-	legacySettingGoogleBooksAPIKey = "google_books_api_key"
+	settingGoogleBooksAPIKey       = api.SettingGoogleBooksAPIKey
+	legacySettingGoogleBooksAPIKey = api.LegacySettingGoogleBooksAPIKey
 )
 
 func main() {
@@ -858,7 +862,9 @@ func main() {
 		// OIDC — login/callback are unauthenticated; provider management requires auth.
 		r.Get("/auth/oidc/providers", oidcHandler.GetProviders)
 		r.Get("/auth/oidc/redirect-base", oidcHandler.GetRedirectBase)
-		r.Post("/auth/oidc/test-discovery", oidcHandler.TestDiscovery)
+		// The discovery probe is admin-only: it is an outbound fetch oracle
+		// against the container's own network (see registerOIDCDiscoveryRoutes).
+		registerOIDCDiscoveryRoutes(r, oidcHandler)
 		r.Get("/auth/oidc/{provider}/login", oidcHandler.Login)
 		r.Get("/auth/oidc/{provider}/callback", oidcHandler.Callback)
 		// Admin-only auth mutations.
@@ -1076,7 +1082,8 @@ func main() {
 		r.Put("/metadataprofile/{id}", metadataProfileHandler.Update)
 		r.Delete("/metadataprofile/{id}", metadataProfileHandler.Delete)
 
-		// Backups — Restore overwrites the live database, Delete removes
+		// Backups — Restore replaces the live database (staged now, swapped
+		// in by db.ApplyPendingRestore at the next start), Delete removes
 		// stored backups, and List leaks filenames containing timestamps that
 		// help an attacker target Restore. Admin-only across the whole
 		// surface.
