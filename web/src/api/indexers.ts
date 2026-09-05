@@ -28,6 +28,16 @@ export interface Indexer {
   // releases are held in the Pending queue for manual approval instead of
   // being grabbed automatically. Interactive search is unaffected.
   freeleechOnly?: boolean
+  // Cap on how many requests Bindery will send this indexer in a rolling 24
+  // hours (#2312). Omitted/null, and 0, all mean no cap. The unit is outbound
+  // requests rather than books: one book on one indexer costs between one and
+  // eight, depending on how far the query cascade falls through.
+  dailyQueryLimit?: number | null
+  // How much of dailyQueryLimit is spent, written by the backend rather than
+  // the user, and absent on an indexer with no cap. It lags the live tally by
+  // up to one flush interval, so it is a display figure and not the number the
+  // cap is enforced against.
+  dailyQueriesUsed?: number
   // Search health, written by the backend rather than the user (#1935). All
   // four are absent on an indexer that has never been searched. lastError is
   // cleared on the next successful search, so a present value means the last
@@ -46,6 +56,16 @@ export interface Indexer {
 export function indexerNeedsAttention(idx: Indexer): boolean {
   if (!idx.lastError || idx.lastErrorCode == null) return false
   return idx.lastErrorCode >= 100 && idx.lastErrorCode <= 199
+}
+
+// indexerQueryCap returns the configured cap and how much of it is spent, or
+// null when this indexer has no cap. Mirrors the backend's rule that a null or
+// non-positive limit means unlimited, so the row renders nothing rather than
+// "0 of 0".
+export function indexerQueryCap(idx: Indexer): { used: number; limit: number; reached: boolean } | null {
+  if (idx.dailyQueryLimit == null || idx.dailyQueryLimit <= 0) return null
+  const used = idx.dailyQueriesUsed ?? 0
+  return { used, limit: idx.dailyQueryLimit, reached: used >= idx.dailyQueryLimit }
 }
 
 export interface IndexerTestResult {

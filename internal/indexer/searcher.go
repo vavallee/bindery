@@ -53,6 +53,11 @@ type Searcher struct {
 	// only in an interactive search panel (#1935). nil disables recording,
 	// which is what every caller that has not been wired up gets.
 	health *indexerHealth
+
+	// quota enforces the per-indexer daily query cap, so one wanted sweep
+	// cannot spend a tracker's whole API allowance (#2312). nil disables the
+	// cap entirely, same as health.
+	quota *indexerQuota
 }
 
 // NewSearcher creates a new multi-indexer searcher.
@@ -265,14 +270,25 @@ func (s *Searcher) SearchBook(ctx context.Context, indexers []models.Indexer, c 
 			slog.Debug("skipping indexer in rate-limit cooldown", "indexer", idx.Name, "reason", reason)
 			continue
 		}
+		if reason, held := s.quotaHold(ctx, idx); held {
+			slog.Debug("skipping indexer at its daily query cap", "indexer", idx.Name, "reason", reason)
+			continue
+		}
 		wg.Add(1)
 		go func(idx models.Indexer) {
 			defer wg.Done()
+			defer s.flushQuota(ctx, idx, false)
 
 			client := s.makeClient(idx.URL, idx.APIKey)
 			cats := filterCategoriesForMedia(idx.Categories, c.MediaType, idx.IncludeParentCategories)
-			hits, err := client.BookSearch(ctx, c.Title, c.Author, cats)
+			qctx := newznab.WithQueryBudget(ctx, s.quotaBudget(idx))
+			hits, err := client.BookSearch(qctx, c.Title, c.Author, cats)
 			if err != nil {
+				if budgetExhausted(err) {
+					s.flushQuota(ctx, idx, true)
+					slog.Debug("indexer hit its daily query cap mid-search", "indexer", idx.Name)
+					return
+				}
 				s.noteIndexerError(idx, err)
 				s.health.recordFailure(ctx, idx, err)
 				slog.Warn("indexer search failed", "indexer", idx.Name, "error", err)
@@ -338,13 +354,24 @@ func (s *Searcher) SearchQuery(ctx context.Context, indexers []models.Indexer, q
 			slog.Debug("skipping indexer in rate-limit cooldown", "indexer", idx.Name, "reason", reason)
 			continue
 		}
+		if reason, held := s.quotaHold(ctx, idx); held {
+			slog.Debug("skipping indexer at its daily query cap", "indexer", idx.Name, "reason", reason)
+			continue
+		}
 		wg.Add(1)
 		go func(idx models.Indexer) {
 			defer wg.Done()
+			defer s.flushQuota(ctx, idx, false)
 
 			client := s.makeClient(idx.URL, idx.APIKey)
-			hits, err := client.Search(ctx, query, idx.Categories)
+			qctx := newznab.WithQueryBudget(ctx, s.quotaBudget(idx))
+			hits, err := client.Search(qctx, query, idx.Categories)
 			if err != nil {
+				if budgetExhausted(err) {
+					s.flushQuota(ctx, idx, true)
+					slog.Debug("indexer hit its daily query cap mid-search", "indexer", idx.Name)
+					return
+				}
 				s.noteIndexerError(idx, err)
 				s.health.recordFailure(ctx, idx, err)
 				slog.Warn("indexer search failed", "indexer", idx.Name, "error", err)

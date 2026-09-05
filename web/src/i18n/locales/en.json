@@ -612,8 +612,13 @@
         "seedRatioFromProwlarr": "Auto-filled from Prowlarr. Edit and save to override; Prowlarr won't change it again.",
         "seedRatioHint": "Per-indexer seed-ratio limit applied to torrents grabbed from this indexer (qBittorrent, Transmission, Deluge). Leave blank to use the download client's global rule, or check Unlimited to seed forever. Ignored for Usenet, and for rTorrent, which has no per-torrent ratio limit — configure a ratio group in .rtorrent.rc instead.",
         "freeleechOnly": "Only auto-grab freeleech releases",
-        "freeleechOnlyHint": "Automatic grabs from this indexer are limited to freeleech releases; anything else is held in the Pending queue for manual approval. Interactive search still shows everything. For private trackers where ratio matters — leave off for public trackers and Usenet."
+        "freeleechOnlyHint": "Automatic grabs from this indexer are limited to freeleech releases; anything else is held in the Pending queue for manual approval. Interactive search still shows everything. For private trackers where ratio matters — leave off for public trackers and Usenet.",
+        "dailyQueryLimit": "Daily query limit",
+        "dailyQueryLimitPlaceholder": "e.g. 1000",
+        "dailyQueryLimitHint": "Stop searching this indexer once it has been sent this many requests in the last 24 hours. Leave blank for no limit. Requests are counted in hourly blocks, so capacity comes back an hour at a time rather than all at once, and a block is only released after it is a full hour outside the window. The unit is requests, not books: one book costs between one and eight depending on how far the search has to fall back. Use it on trackers with a daily API allowance, so one scheduled sweep over a large library cannot spend the whole thing. The Test button is exempt and never counts."
       },
+      "quotaUsage": "{{used}} of {{limit}} queries in the last 24 hours",
+      "quotaReached": "Daily query limit of {{limit}} reached. This indexer is being skipped until the oldest hour of queries falls out of the window.",
       "healthAuthFail": "This indexer rejected the last search and will keep rejecting until someone fixes it: {{error}}",
       "healthFail": "Last search failed: {{error}}"
     },

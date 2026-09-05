@@ -380,7 +380,8 @@ func main() {
 	// search panel nobody opens unless they already suspect a problem (#1935).
 	idxSearcher := indexer.NewSearcher().
 		WithHealth(indexerRepo).
-		WithHealthNotifier(notif)
+		WithHealthNotifier(notif).
+		WithQuota(indexerRepo)
 
 	// Import scanner
 	namingTemplate := defaultNamingTemplate(settingsRepo)

@@ -390,8 +390,10 @@ func (c *Client) bookSearchTiers(ctx context.Context, queryTitle, author string,
 				// the caller can surface the real error rather than logging "0
 				// results". Network timeouts and context cancellations are also
 				// treated as hard stops: the indexer is unreachable for the
-				// duration of this search.
-				if IsHardIndexerError(err) || ctx.Err() != nil {
+				// duration of this search. So is an exhausted daily query
+				// budget (#2312) — the lower tiers would be refused too, and
+				// walking them just to be told no three more times is waste.
+				if IsHardIndexerError(err) || errors.Is(err, ErrQueryBudgetExhausted) || ctx.Err() != nil {
 					return nil, err
 				}
 				slog.Debug("indexer query tier fallthrough", "tier", 1, "error", err)
@@ -463,7 +465,7 @@ func (c *Client) bookSearchTiers(ctx context.Context, queryTitle, author string,
 	if surname != "" && !strings.EqualFold(surname, author) {
 		results, ok, err := textTier(2, surname+" "+queryTitle)
 		if err != nil {
-			if IsHardIndexerError(err) || ctx.Err() != nil {
+			if IsHardIndexerError(err) || errors.Is(err, ErrQueryBudgetExhausted) || ctx.Err() != nil {
 				return nil, err
 			}
 		} else if ok {
@@ -475,7 +477,7 @@ func (c *Client) bookSearchTiers(ctx context.Context, queryTitle, author string,
 	if author != "" {
 		results, ok, err := textTier(3, author+" "+queryTitle)
 		if err != nil {
-			if IsHardIndexerError(err) || ctx.Err() != nil {
+			if IsHardIndexerError(err) || errors.Is(err, ErrQueryBudgetExhausted) || ctx.Err() != nil {
 				return nil, err
 			}
 		} else if ok {
@@ -839,6 +841,16 @@ func (c *Client) getXMLCached(ctx context.Context, rawURL string, target interfa
 // translating an indexer-reported <error> document or a non-200 status into an
 // error. The caller unmarshals.
 func (c *Client) fetchXML(ctx context.Context, rawURL string) ([]byte, error) {
+	// The daily query cap is enforced here rather than at the top of the
+	// searcher's fan-out because one BookSearch can issue up to eight requests
+	// as it falls through the tier cascade and the transliteration retry. A
+	// check made once per search could therefore overshoot the cap by seven;
+	// checked here it cannot overshoot at all. Requests served from the query
+	// cache never reach this function and correctly cost nothing (#2312).
+	if b := budgetFrom(ctx); b != nil && !b.Take() {
+		return nil, ErrQueryBudgetExhausted
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, redactedErr(err)
