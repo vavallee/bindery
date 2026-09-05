@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/vavallee/bindery/internal/db"
 )
 
 // backupTestDB stands up a file-backed SQLite database in WAL mode and
@@ -273,5 +275,187 @@ func TestVacuumInto_Direct(t *testing.T) {
 	// Re-running into the same path must fail: SQLite refuses to overwrite.
 	if err := h.vacuumInto(context.Background(), weirdPath); err == nil {
 		t.Fatalf("expected error when destination exists")
+	}
+}
+
+// latestBackupName returns the single .db file the backup handler produced in
+// dataDir, failing the test if there is not exactly one.
+func latestBackupName(t *testing.T, dataDir string) string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(dataDir, "backups"))
+	if err != nil {
+		t.Fatalf("readdir backups: %v", err)
+	}
+	var name string
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".db") {
+			if name != "" {
+				t.Fatalf("expected one backup file, found %q and %q", name, e.Name())
+			}
+			name = e.Name()
+		}
+	}
+	if name == "" {
+		t.Fatalf("no backup file produced; entries=%v", entries)
+	}
+	return name
+}
+
+// noteBodies reads every notes row from database in id order.
+func noteBodies(t *testing.T, database *sql.DB) []string {
+	t.Helper()
+	rows, err := database.Query(`SELECT body FROM notes ORDER BY id`)
+	if err != nil {
+		t.Fatalf("select notes: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var bodies []string
+	for rows.Next() {
+		var b string
+		if err := rows.Scan(&b); err != nil {
+			t.Fatalf("scan note: %v", err)
+		}
+		bodies = append(bodies, b)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate notes: %v", err)
+	}
+	return bodies
+}
+
+// callRestore invokes the Restore handler for filename with the confirmation
+// header set. backupURLRequest (destructive_handlers_test.go) supplies the chi
+// route context the handler needs to resolve {filename}.
+func callRestore(t *testing.T, h *BackupHandler, filename string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := backupURLRequest(http.MethodPost, filename)
+	req.Header.Set("X-Confirm-Restore", "true")
+	h.Restore(rec, req)
+	return rec
+}
+
+// TestRestore_StagedSwapDropsPostBackupWALWrites is the end-to-end regression
+// test for the restore bug.
+//
+// The pre-fix handler copied the backup straight over the live database file
+// while this process still held the pool open in WAL mode. Row B, written
+// after the backup, was sitting in <db>-wal, and SQLite validates WAL frames
+// against the WAL header's salt rather than against the main file, so the
+// frame stayed valid and was checkpointed back over the restored pages. The
+// old code therefore left row B present after the restart, which is precisely
+// the assertion below.
+func TestRestore_StagedSwapDropsPostBackupWALWrites(t *testing.T) {
+	database, dbPath, dataDir := backupTestDB(t)
+
+	if _, err := database.Exec(`INSERT INTO notes (id, body) VALUES (1, 'row A')`); err != nil {
+		t.Fatalf("insert row A: %v", err)
+	}
+
+	h := NewBackupHandler(database, dbPath, dataDir)
+	if rec := callCreate(t, h); rec.Code != http.StatusCreated {
+		t.Fatalf("create: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	backupName := latestBackupName(t, dataDir)
+
+	// Row B lands after the snapshot, so it must not survive the restore.
+	if _, err := database.Exec(`INSERT INTO notes (id, body) VALUES (2, 'row B')`); err != nil {
+		t.Fatalf("insert row B: %v", err)
+	}
+	// It has to be in the WAL rather than the main file for this test to mean
+	// anything: that is the frame the old code replayed over the restore.
+	walInfo, err := os.Stat(dbPath + "-wal")
+	if err != nil {
+		t.Fatalf("stat wal sidecar: %v", err)
+	}
+	if walInfo.Size() == 0 {
+		t.Fatalf("expected a non-empty WAL sidecar after the post-backup write")
+	}
+
+	rec := callRestore(t, h, backupName)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("restore: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// The live database must not have been touched by the request itself.
+	var stillThere int
+	if err := database.QueryRow(`SELECT count(*) FROM notes`).Scan(&stillThere); err != nil {
+		t.Fatalf("query live db after restore: %v", err)
+	}
+	if stillThere != 2 {
+		t.Fatalf("live database changed under the running process: %d rows, want 2", stillThere)
+	}
+	if _, err := os.Stat(db.PendingRestorePath(dbPath)); err != nil {
+		t.Fatalf("expected a staged restore file: %v", err)
+	}
+
+	// Simulate the restart the response asks for.
+	if err := database.Close(); err != nil {
+		t.Fatalf("close pool: %v", err)
+	}
+	if err := db.ApplyPendingRestore(dbPath); err != nil {
+		t.Fatalf("ApplyPendingRestore: %v", err)
+	}
+
+	reopened, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer func() { _ = reopened.Close() }()
+	reopened.SetMaxOpenConns(1)
+
+	var integrity string
+	if err := reopened.QueryRow(`PRAGMA integrity_check`).Scan(&integrity); err != nil {
+		t.Fatalf("integrity_check after restore: %v", err)
+	}
+	if integrity != "ok" {
+		t.Fatalf("integrity_check after restore = %q, want %q", integrity, "ok")
+	}
+
+	bodies := noteBodies(t, reopened)
+	if len(bodies) != 1 || bodies[0] != "row A" {
+		t.Fatalf("after restore notes = %v, want exactly [row A] (row B was written after the backup and must not survive)", bodies)
+	}
+
+	// The staged file is consumed and the stale sidecars are gone, so a
+	// subsequent start cannot replay either.
+	if _, err := os.Stat(db.PendingRestorePath(dbPath)); !os.IsNotExist(err) {
+		t.Fatalf("expected the staged file to be consumed, stat err=%v", err)
+	}
+}
+
+// TestRestore_RefusesCorruptBackup: a backup that is not a sound SQLite
+// database must be rejected at the request, not staged for a restart to
+// discover, and must leave the live database alone.
+func TestRestore_RefusesCorruptBackup(t *testing.T) {
+	database, dbPath, dataDir := backupTestDB(t)
+	if _, err := database.Exec(`INSERT INTO notes (id, body) VALUES (1, 'row A')`); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	backupDir := filepath.Join(dataDir, "backups")
+	if err := os.MkdirAll(backupDir, 0o700); err != nil {
+		t.Fatalf("mkdir backups: %v", err)
+	}
+	const name = "bindery_20260101_000000_corrupt.db"
+	if err := os.WriteFile(filepath.Join(backupDir, name), []byte("not a database"), 0o600); err != nil {
+		t.Fatalf("write corrupt backup: %v", err)
+	}
+
+	h := NewBackupHandler(database, dbPath, dataDir)
+	rec := callRestore(t, h, name)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("restore of a corrupt backup: status=%d body=%s, want 400", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(db.PendingRestorePath(dbPath)); !os.IsNotExist(err) {
+		t.Fatalf("a rejected backup must not be staged, stat err=%v", err)
+	}
+
+	var body string
+	if err := database.QueryRow(`SELECT body FROM notes WHERE id=1`).Scan(&body); err != nil {
+		t.Fatalf("live db unreadable after a refused restore: %v", err)
+	}
+	if body != "row A" {
+		t.Fatalf("live db body = %q, want %q", body, "row A")
 	}
 }

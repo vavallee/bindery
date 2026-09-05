@@ -144,13 +144,14 @@ export default function ApiKeysTab() {
               <input
                 value={settings['googlebooks.apiKey'] ?? ''}
                 onChange={e => setSettings(s => ({ ...s, 'googlebooks.apiKey': e.target.value }))}
-                placeholder="AIza..."
+                placeholder={t('settings.general.googleBooksKeyHiddenPlaceholder', 'Saved key is hidden. Enter a new key to replace it.')}
                 type="password"
                 className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
               />
               <SaveButton
                 result={googleKeyResult}
                 saving={saving === 'googlebooks.apiKey'}
+                disabled={!(settings['googlebooks.apiKey'] ?? '').trim()}
                 onClick={() => googleKeySave(() => saveSetting('googlebooks.apiKey'))}
                 testId="save-googlebooks-key"
               />

@@ -32,6 +32,13 @@ const (
 	sruBase      = "https://services.dnb.de/sru/dnb"
 	idPrefix     = "dnb:"
 	recordSchema = "MARC21-xml"
+	// maxResponseBytes caps the SRU document handed to the XML decoder. The
+	// request bounds itself with maximumRecords so a well-behaved response is
+	// far under this; the cap is there because the decode read straight off
+	// the socket with no limit, leaving only the 15 s client timeout to bound
+	// what a misbehaving host could make Bindery hold (#2357). Same ceiling as
+	// the newznab XML path.
+	maxResponseBytes = 32 << 20
 )
 
 // Client implements metadata.Provider for DNB via the public SRU endpoint.
@@ -246,7 +253,7 @@ func (c *Client) sruQuery(ctx context.Context, cql string, maxRecords int) ([]ma
 	}
 
 	var result sruResponse
-	if err := xml.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := xml.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode SRU response: %w", err)
 	}
 

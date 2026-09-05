@@ -679,6 +679,38 @@ func TestProbe_InvalidXML(t *testing.T) {
 	}
 }
 
+// TestProbe_OversizedCapsBodyIsCapped covers #2357. Probe decoded the caps
+// document straight off the socket, so only the client timeout bounded what a
+// hostile indexer could stream into the XML decoder while fetchXML on the same
+// client capped at 32 MiB. The cap is lowered here rather than served 32 MiB.
+// A truncated document is a parse error, which is the outcome the probe
+// already reports for a malformed caps body, so the caller sees "parse caps"
+// rather than a hang.
+func TestProbe_OversizedCapsBodyIsCapped(t *testing.T) {
+	orig := maxResponseBytes
+	maxResponseBytes = 64
+	t.Cleanup(func() { maxResponseBytes = orig })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		// Valid XML, far past the cap. Uncapped this decodes cleanly.
+		_, _ = w.Write([]byte(`<caps><categories>` + strings.Repeat(`<category id="7020"/>`, 4096) + `</categories></caps>`))
+	}))
+	defer srv.Close()
+
+	c := testNew(srv.URL, "testkey")
+	result := c.Probe(context.Background())
+	if result.Error == "" {
+		t.Fatal("expected the over-limit caps body to fail rather than decode")
+	}
+	if !strings.Contains(result.Error, "parse caps") {
+		t.Errorf("expected a parse caps error, got %q", result.Error)
+	}
+	if result.Categories != 0 {
+		t.Errorf("expected no categories from a truncated document, got %d", result.Categories)
+	}
+}
+
 // TestProbe_NetworkError verifies that connection failures (server closed
 // before the call) populate Error and leave Status zero.
 func TestProbe_NetworkError(t *testing.T) {

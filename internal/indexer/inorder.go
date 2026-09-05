@@ -32,6 +32,10 @@ func inOrderRegex(seq []string) *regexp.Regexp {
 	// separator for the next word to assert on, which a bare `.*` would break.
 	gap := wordSep + `(?:.*` + wordSep + `)?`
 	pattern := `(?i)(?:^|` + wordSep + `)` + strings.Join(parts, gap) + `(?:` + wordSep + `|$)`
-	re, _ := regexCache.LoadOrStore(pattern, regexp.MustCompile(pattern))
-	return re.(*regexp.Regexp)
+	if v, ok := regexCache.Load(pattern); ok {
+		return v.(*regexp.Regexp)
+	}
+	re := regexp.MustCompile(pattern)
+	regexCache.Store(pattern, re)
+	return re
 }

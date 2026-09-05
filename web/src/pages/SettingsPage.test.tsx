@@ -1189,7 +1189,11 @@ describe('SettingsPage', () => {
     await openApiKeysTab()
     const apiKeys = sectionForHeading('settings.general.apiKeys')
 
-    fireEvent.change(apiKeys.getByPlaceholderText('AIza...'), { target: { value: 'AIza-test-key' } })
+    // The key is write-only (#2351), so the field is always empty on load and
+    // its placeholder says so rather than showing an example key.
+    const googleKeyInput = apiKeys.getByPlaceholderText('Saved key is hidden. Enter a new key to replace it.')
+    expect(apiKeys.getByTestId('save-googlebooks-key')).toBeDisabled()
+    fireEvent.change(googleKeyInput, { target: { value: 'AIza-test-key' } })
     fireEvent.click(apiKeys.getByRole('button', { name: 'common.save' }))
     await waitFor(() => {
       expect(api.setSetting).toHaveBeenCalledWith('googlebooks.apiKey', 'AIza-test-key')

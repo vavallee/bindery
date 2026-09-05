@@ -306,6 +306,9 @@ POST   /api/v1/notification                       create
 POST   /api/v1/notification/{id}/test             fire a test event
 
 POST   /api/v1/backup                             snapshot the SQLite database (optional {"label": "..."})
+GET    /api/v1/backup                             list stored backups
+DELETE /api/v1/backup/{filename}                  delete one backup
+POST   /api/v1/backup/{filename}/restore          stage a backup for the next restart (admin, X-Confirm-Restore: true)
 GET    /api/v1/system/status                      version, uptime, build info
 PUT    /api/v1/system/loglevel                    runtime log-level switch (debug/info/warn/error)
 GET    /api/v1/images?url=<encoded>               proxied + cached cover image (30-day TTL)
@@ -431,6 +434,21 @@ The label is sanitised server-side before it reaches the filename: only
 non-ASCII) collapses to `-`, and the result is capped at 40 characters. A label
 that sanitises to nothing — an all-CJK label, for example — is dropped and the
 snapshot keeps the plain timestamp name.
+
+**Restore a snapshot:**
+
+```bash
+curl -X POST -H "X-Api-Key: $KEY" -H 'X-Confirm-Restore: true' \
+  http://bindery:8787/api/v1/backup/bindery_20260101_120000_pre-upgrade.db/restore
+```
+
+Admin only, and the `X-Confirm-Restore: true` header is required. A `200` means
+the backup passed its integrity check and is staged, not that it is live:
+Bindery runs SQLite in WAL mode, so writing the running database out from under
+its own write-ahead log would replay stale pages over the restored ones.
+The file is copied to `<database>.restore-pending` and swapped in on the **next
+start**, so restart Bindery to finish the restore. A backup that is not a sound
+SQLite database is rejected with `400` and nothing is staged.
 
 **Fire a test webhook:**
 

@@ -92,6 +92,62 @@ func TestFetchIndexers_HappyPath(t *testing.T) {
 	}
 }
 
+// TestGet_OversizedResponseIsRejected covers #2357. The success path used a
+// bare io.ReadAll, so a configured Prowlarr that streamed until the client
+// timeout could make Bindery hold the whole thing. The cap is lowered here
+// rather than served 32 MiB; what matters is that going over is an error and
+// not a silently truncated document.
+func TestGet_OversizedResponseIsRejected(t *testing.T) {
+	orig := maxResponseBytes
+	maxResponseBytes = 16
+	t.Cleanup(func() { maxResponseBytes = orig })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":1,"name":"` + strings.Repeat("x", 4096) + `"}]`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "secret")
+	_, err := c.FetchIndexers(context.Background())
+	if err == nil {
+		t.Fatal("expected an error for an over-limit Prowlarr response")
+	}
+	if !strings.Contains(err.Error(), "exceeded") {
+		t.Errorf("expected the cap to be named in the error, got: %v", err)
+	}
+}
+
+// TestGet_ResponseAtTheCapStillDecodes is the boundary case: a body exactly at
+// the limit is valid, not an error. Reading maxResponseBytes+1 and comparing
+// on > is what makes that true.
+func TestGet_ResponseAtTheCapStillDecodes(t *testing.T) {
+	body := `[{"id":1,"name":"T","protocol":"torrent","supportsSearch":true,"categories":[{"id":7020}]}]`
+	orig := maxResponseBytes
+	maxResponseBytes = int64(len(body))
+	t.Cleanup(func() { maxResponseBytes = orig })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/indexer" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(body))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "secret")
+	infos, err := c.FetchIndexers(context.Background())
+	if err != nil {
+		t.Fatalf("a body exactly at the cap must decode: %v", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 indexer, got %d", len(infos))
+	}
+}
+
 func TestFetchIndexers_AppliesApplicationCategoryScopes(t *testing.T) {
 	indexerBody := `[
 		{

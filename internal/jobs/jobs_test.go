@@ -202,7 +202,7 @@ func TestGroup_RunIsTrackedAndWaitedOn(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var sawGroupCtx atomic.Bool
-	var returned atomic.Bool
+	returned := make(chan struct{})
 
 	go func() {
 		g.Run("sync-job", func(ctx context.Context) {
@@ -210,7 +210,7 @@ func TestGroup_RunIsTrackedAndWaitedOn(t *testing.T) {
 			close(started)
 			<-release
 		})
-		returned.Store(true)
+		close(returned)
 	}()
 	<-started
 
@@ -229,7 +229,13 @@ func TestGroup_RunIsTrackedAndWaitedOn(t *testing.T) {
 	if still := g.Shutdown(2 * time.Second); len(still) != 0 {
 		t.Fatalf("job did not release its tracking slot: %v", still)
 	}
-	if !returned.Load() {
+	// Wait for the caller to come back out of Run rather than sampling a flag.
+	// Run releases its tracking token from a defer, so the Shutdown above can
+	// return before the goroutine is scheduled to record that Run returned;
+	// reading a bool here raced that scheduling and failed at random (#2404).
+	select {
+	case <-returned:
+	case <-time.After(2 * time.Second):
 		t.Error("Run did not return after its job finished")
 	}
 }
