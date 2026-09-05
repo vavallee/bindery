@@ -46,7 +46,10 @@
     "more": "More",
     "confirm": "Confirm",
     "confirmTitle": "Are you sure?",
-    "moreActions": "More"
+    "moreActions": "More",
+    "filters": "Filters",
+    "sort": "Sort",
+    "clearFilter": "Clear filter"
   },
   "monitorMode": {
     "all": "All books",
