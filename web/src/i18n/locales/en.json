@@ -44,7 +44,10 @@
     "saved": "Saved ✓",
     "saveError": "Error",
     "more": "More",
-    "moreActions": "More"
+    "moreActions": "More",
+    "filters": "Filters",
+    "sort": "Sort",
+    "clearFilter": "Clear filter"
   },
   "monitorMode": {
     "all": "All books",
