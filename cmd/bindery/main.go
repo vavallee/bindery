@@ -270,6 +270,14 @@ func main() {
 	// the TCP peer is then the proxy's own private address.
 	auth.WarnIfLocalOnlyWithoutTrustedProxy(bootAuthMode, trustedCIDRs)
 
+	// Same shape, different assumption: an operator who added a second account
+	// through Settings has no way to learn that the two accounts share one
+	// library until they look at it. A count read failure is not worth a line
+	// of its own here; the rest of startup will report it soon enough.
+	if n, err := userRepo.Count(ctxBoot); err == nil {
+		auth.WarnIfMultiUserWithoutTenancy(n)
+	}
+
 	// Login rate limiter: thresholds are configurable via BINDERY_RATE_LIMIT_MAX_FAILURES
 	// and BINDERY_RATE_LIMIT_WINDOW_MINUTES; defaults match the original Sonarr-style posture.
 	loginLimiter := auth.NewLoginLimiter(cfg.RateLimitMaxFailures, time.Duration(cfg.RateLimitWindowMinutes)*time.Minute)
