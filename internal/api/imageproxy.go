@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vavallee/bindery/internal/httpsec"
@@ -23,6 +24,17 @@ const (
 	imageMaxBytes  = 10 * 1024 * 1024 // 10 MB
 	imageCacheMode = 0o640
 	imageDirMode   = 0o750
+
+	// imageCacheSizeTTL bounds how stale the memoised cache total may get when
+	// nothing else refreshes it. Between refreshes the number is kept exact by
+	// the incremental adjustment Serve makes after each cache write and by the
+	// full recount the daily eviction sweep does, so this TTL only catches
+	// changes made behind the handler's back (an operator deleting the cache
+	// directory, say). It is a ceiling on how often the walk can run, not a
+	// schedule: with /system/status polled from every page load (#2340) the
+	// difference between a walk per request and a walk per ten minutes is the
+	// whole point.
+	imageCacheSizeTTL = 10 * time.Minute
 )
 
 // ImageProxyHandler serves GET /api/v1/images?url=<encoded>.
@@ -34,6 +46,18 @@ type ImageProxyHandler struct {
 	cacheDir    string
 	client      *http.Client
 	validateURL func(string) error // defaults to httpsec.ValidateOutboundURL; overridable in tests
+
+	// sizeMu guards the memoised cache total below. It is held across the
+	// directory walk in refreshCacheSizeLocked on purpose: that serialises a
+	// recount against the incremental adjustments Serve makes, so a write
+	// landing mid-walk can never be counted twice or dropped, and concurrent
+	// /system/status callers wait on one walk instead of starting their own.
+	sizeMu sync.Mutex
+	// sizeBytes is the last known total of the on-disk image cache.
+	sizeBytes int64
+	// sizeAt is when sizeBytes was last recomputed from a full walk. Zero
+	// means never, which forces the first CacheSize call to seed it.
+	sizeAt time.Time
 }
 
 // NewImageProxyHandler creates a handler that caches images under
@@ -169,6 +193,13 @@ func (h *ImageProxyHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	// Write to cache (best-effort — a write failure is not fatal).
 	// Unique temp files prevent concurrent goroutines serving the same URL from
 	// clobbering each other mid-write before the atomic rename.
+	//
+	// priorBytes is measured before the writes so the memoised cache total can
+	// be adjusted by the real on-disk delta afterwards (#2340). Measuring both
+	// sides rather than adding len(body) keeps it right when this request is
+	// refreshing an expired entry instead of adding a new one, and when only
+	// one of the two writes succeeded.
+	priorBytes := cacheEntryBytes(imgFile, ctFile)
 	if mkErr := os.MkdirAll(filepath.Dir(imgFile), imageDirMode); mkErr == nil { // #nosec G301 G304 G703 -- path derived from sha256(url), not user input
 		if f, ferr := os.CreateTemp(filepath.Dir(imgFile), ".img-*"); ferr == nil { // #nosec G304
 			if _, werr := f.Write(body); werr == nil {
@@ -191,6 +222,7 @@ func (h *ImageProxyHandler) Serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	h.addCacheBytes(cacheEntryBytes(imgFile, ctFile) - priorBytes)
 
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Cache-Control", "public, max-age=2592000")
@@ -273,10 +305,42 @@ func (h *ImageProxyHandler) evictExpired() {
 		}
 		return nil
 	})
+	// Recount from scratch now that entries have been dropped. This sweep is
+	// the memo's periodic source of truth (#2340); a second walk here is free
+	// next to the eviction walk that just ran, and much simpler than trying to
+	// subtract the removed sizes (the .ct sidecars are deleted alongside their
+	// parent, so the walk's own DirEntry for them is already gone by the time
+	// it gets there).
+	h.sizeMu.Lock()
+	defer h.sizeMu.Unlock()
+	_, _ = h.refreshCacheSizeLocked()
 }
 
 // CacheSize returns the total bytes used by the image cache directory.
+//
+// The number is memoised (#2340). GET /system/status calls this on every
+// request and the frontend calls /system/status from the root shell plus four
+// pages, so the old unconditional walk cost two stats per cached cover (the
+// image and its .ct sidecar) on every page load. Now the walk runs at most
+// once per imageCacheSizeTTL; in between, Serve adjusts the total by the exact
+// delta it writes and the daily eviction sweep recounts from scratch.
 func (h *ImageProxyHandler) CacheSize() (int64, error) {
+	h.sizeMu.Lock()
+	defer h.sizeMu.Unlock()
+	if !h.sizeAt.IsZero() && time.Since(h.sizeAt) < imageCacheSizeTTL {
+		return h.sizeBytes, nil
+	}
+	return h.refreshCacheSizeLocked()
+}
+
+// refreshCacheSizeLocked walks the cache tree and replaces the memoised total.
+// Callers must hold sizeMu.
+//
+// A walk error (in practice: the cache directory does not exist yet) still
+// stamps sizeAt, so a fresh install does not re-walk a missing directory on
+// every status request. The first successful cache write seeds the total from
+// zero, which is correct because an absent directory holds nothing.
+func (h *ImageProxyHandler) refreshCacheSizeLocked() (int64, error) {
 	var total int64
 	err := filepath.WalkDir(h.cacheDir, func(_ string, d os.DirEntry, err error) error { // #nosec
 		if err != nil || d.IsDir() {
@@ -289,7 +353,41 @@ func (h *ImageProxyHandler) CacheSize() (int64, error) {
 		total += info.Size()
 		return nil
 	})
+	h.sizeBytes = total
+	h.sizeAt = time.Now()
 	return total, err
+}
+
+// addCacheBytes applies a signed delta to the memoised cache total. Called by
+// Serve after a cache write with the exact on-disk change, so the memo stays
+// accurate between full recounts. A no-op before the total has ever been
+// seeded is harmless: the seeding walk replaces whatever accumulated here.
+func (h *ImageProxyHandler) addCacheBytes(delta int64) {
+	if delta == 0 {
+		return
+	}
+	h.sizeMu.Lock()
+	defer h.sizeMu.Unlock()
+	h.sizeBytes += delta
+	if h.sizeBytes < 0 {
+		h.sizeBytes = 0
+	}
+}
+
+// cacheEntryBytes reports the bytes a single cache entry currently occupies on
+// disk (the image plus its .ct sidecar), and 0 when it is not cached. Two
+// stats, taken only on the cache-miss path that is already doing a network
+// fetch, which is what lets Serve compute an exact delta even when it is
+// overwriting an expired entry rather than adding a new one.
+func cacheEntryBytes(imgFile, ctFile string) int64 {
+	var n int64
+	if fi, err := os.Stat(imgFile); err == nil { // #nosec -- path derived from sha256(url), not user input
+		n += fi.Size()
+	}
+	if fi, err := os.Stat(ctFile); err == nil { // #nosec -- path derived from sha256(url), not user input
+		n += fi.Size()
+	}
+	return n
 }
 
 // imageProxyBase is the URL path prefix (BINDERY_URL_BASE, e.g. "/bindery")
