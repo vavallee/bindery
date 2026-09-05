@@ -90,6 +90,94 @@ func TestBuildTitleCandidatesUsesOneLocalizedEditionAlias(t *testing.T) {
 	}
 }
 
+func TestBuildTitleCandidatesFallsBackThroughMetadataSources(t *testing.T) {
+	tests := []struct {
+		name             string
+		book             models.Book
+		editions         []models.Edition
+		allowedLanguages []string
+		want             []TitleCandidate
+	}{
+		{
+			name:             "original title when display title is empty",
+			book:             models.Book{OriginalTitle: "Project Hail Mary", Language: "en"},
+			allowedLanguages: []string{"en"},
+			want:             []TitleCandidate{{Title: "Project Hail Mary", Language: "eng"}},
+		},
+		{
+			name:             "edition when book titles are empty",
+			book:             models.Book{},
+			editions:         []models.Edition{{ID: 21, Title: "Elantris", Language: "es"}},
+			allowedLanguages: []string{"es"},
+			want:             []TitleCandidate{{Title: "Elantris", Language: "spa"}},
+		},
+		{
+			name:             "original title as manual fallback",
+			book:             models.Book{Title: "El imperio final", OriginalTitle: "The Final Empire", Language: "spa"},
+			allowedLanguages: []string{"spa"},
+			want: []TitleCandidate{
+				{Title: "El imperio final", Language: "spa"},
+				{Title: "The Final Empire", ManualOnly: true},
+			},
+		},
+		{
+			name:             "out of language edition as manual fallback",
+			book:             models.Book{Title: "El imperio final", Language: "spa"},
+			editions:         []models.Edition{{ID: 22, Title: "The Final Empire", Language: "eng"}},
+			allowedLanguages: []string{"spa"},
+			want: []TitleCandidate{
+				{Title: "El imperio final", Language: "spa"},
+				{Title: "The Final Empire", Language: "eng", ManualOnly: true},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := BuildTitleCandidates(tt.book, tt.editions, tt.allowedLanguages); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("BuildTitleCandidates() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildTitleCandidatesRequiresLocalizedEvidenceToSplit(t *testing.T) {
+	title := "Left / Right"
+	got := BuildTitleCandidates(models.Book{Title: title, Language: "eng"}, nil, []string{"eng"})
+	if len(got) != 1 || got[0].Title != title {
+		t.Fatalf("BuildTitleCandidates() = %#v, want unsplit title", got)
+	}
+}
+
+func TestBuildTitleCandidatesRejectsPunctuationOnlyMetadata(t *testing.T) {
+	got := BuildTitleCandidates(
+		models.Book{Title: "---", OriginalTitle: "..."},
+		[]models.Edition{{Title: "()", Language: "spa"}},
+		[]string{"spa"},
+	)
+	if len(got) != 0 {
+		t.Fatalf("BuildTitleCandidates() = %#v, want no candidates", got)
+	}
+}
+
+func TestEffectiveTitleCandidatesUsesLegacyTitleAndBoundsCandidates(t *testing.T) {
+	legacy := effectiveTitleCandidates(MatchCriteria{Title: "  Dune  "})
+	if !reflect.DeepEqual(legacy, []TitleCandidate{{Title: "Dune"}}) {
+		t.Fatalf("legacy candidates = %#v", legacy)
+	}
+
+	bounded := effectiveTitleCandidates(MatchCriteria{TitleCandidates: []TitleCandidate{
+		{Title: ""},
+		{Title: "Dune"},
+		{Title: "Dune Messiah"},
+		{Title: "Children of Dune"},
+	}})
+	want := []TitleCandidate{{Title: "Dune"}, {Title: "Dune Messiah"}}
+	if !reflect.DeepEqual(bounded, want) {
+		t.Fatalf("bounded candidates = %#v, want %#v", bounded, want)
+	}
+}
+
 func TestInteractiveLanguageFilterKeepsManualFallback(t *testing.T) {
 	results := []newznab.SearchResult{
 		{Title: "El Imperio Final SPANISH EPUB", Language: "es"},
