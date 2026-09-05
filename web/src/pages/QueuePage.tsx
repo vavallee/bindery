@@ -7,6 +7,7 @@ import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
 import { summarizeError, ERROR_SUMMARY_LEN } from './queueError'
 import { btn, btnSize } from '../components/buttons'
+import { formatBytes } from '../util/format'
 import { downloadStatusBadge, isFailed, isMatchable, isRetryable } from '../components/downloadStatus'
 
 export default function QueuePage() {
@@ -255,12 +256,6 @@ export default function QueuePage() {
     }
   }
 
-  const formatSize = (bytes: number) => {
-    if (bytes > 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB'
-    if (bytes > 1048576) return (bytes / 1048576).toFixed(1) + ' MB'
-    return (bytes / 1024).toFixed(0) + ' KB'
-  }
-
   const formatRelativeTime = (timestamp: string): string => {
     const now = Date.now()
     const then = new Date(timestamp).getTime()
@@ -404,7 +399,7 @@ export default function QueuePage() {
                     <BookAuthorLink book={item.book} />
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs">
                       <DownloadStatusChip status={item.status} />
-                      <span className="text-slate-600 dark:text-zinc-500">{formatSize(item.size)}</span>
+                      <span className="text-slate-600 dark:text-zinc-500">{formatBytes(item.size)}</span>
                       {item.percentage && (
                         <span className="text-blue-400">{item.percentage}%</span>
                       )}
@@ -540,7 +535,7 @@ export default function QueuePage() {
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs">
                         <span className="text-amber-600 dark:text-amber-400">{item.reason}</span>
                         {item.size > 0 && (
-                          <span className="text-slate-500 dark:text-zinc-500">{formatSize(item.size)}</span>
+                          <span className="text-slate-500 dark:text-zinc-500">{formatBytes(item.size)}</span>
                         )}
                         {item.quality && (
                           <span className="text-slate-500 dark:text-zinc-500">{item.quality}</span>

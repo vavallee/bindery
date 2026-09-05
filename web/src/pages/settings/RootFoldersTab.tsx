@@ -2,15 +2,9 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, RootFolder } from '../../api/client'
 import { inputCls } from './formStyles'
+import { formatBytesZero } from '../../util/format'
 
 const DEFAULT_ROOT_FOLDER_KEY = 'library.defaultRootFolderId'
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(1024))
-  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
-}
 
 export default function RootFoldersTab() {
   const { t } = useTranslation()
@@ -66,7 +60,7 @@ export default function RootFoldersTab() {
                       </span>
                     )}
                   </p>
-                  <p className="text-xs text-slate-500 dark:text-zinc-500 mt-0.5">{t('settings.rootfolders.free', { size: formatBytes(rf.freeSpace) })}</p>
+                  <p className="text-xs text-slate-500 dark:text-zinc-500 mt-0.5">{t('settings.rootfolders.free', { size: formatBytesZero(rf.freeSpace) })}</p>
                 </div>
                 <button
                   onClick={async () => {

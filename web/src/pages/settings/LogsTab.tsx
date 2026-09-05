@@ -1,16 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, LogEntry, LogQuery } from '../../api/client'
+import { formatBytesZero } from '../../util/format'
 import SaveButton from './SaveButton'
 import Toggle from './Toggle'
 import { useSaveResult } from './useSaveResult'
-
-function formatBackupSize(bytes: number): string {
-  if (!bytes || bytes <= 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)))
-  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
-}
 
 // <input type="datetime-local"> produces "2026-08-12T14:03" — no zone, which
 // the API's RFC3339 parse rejects, so the range was silently ignored. The
@@ -427,7 +421,7 @@ export default function LogsTab() {
                   <li key={b.name} className="flex items-center justify-between text-xs text-slate-600 dark:text-zinc-400">
                     <span>
                       <span className="font-mono">{b.name}</span>
-                      <span className="ml-2 text-slate-500 dark:text-zinc-500">{formatBackupSize(b.size)} · {formatRelativeTime(b.modTime)}</span>
+                      <span className="ml-2 text-slate-500 dark:text-zinc-500">{formatBytesZero(b.size)} · {formatRelativeTime(b.modTime)}</span>
                     </span>
                     <button
                       onClick={() => handleDeleteBackup(b.name)}
