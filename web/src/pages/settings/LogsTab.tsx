@@ -4,6 +4,7 @@ import { api, LogEntry, LogQuery } from '../../api/client'
 import SaveButton from './SaveButton'
 import Toggle from './Toggle'
 import { useSaveResult } from './useSaveResult'
+import { usePolling } from '../../components/usePolling'
 
 function formatBackupSize(bytes: number): string {
   if (!bytes || bytes <= 0) return '0 B'
@@ -137,12 +138,11 @@ export default function LogsTab() {
     api.listBackups().then(setBackups).catch(console.error)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-refresh logs every 5 s while the toggle is on.
-  useEffect(() => {
-    if (!logAutoRefresh) return
-    const id = setInterval(() => { fetchLogs(logPage) }, 5000)
-    return () => clearInterval(id)
-  }, [logAutoRefresh, logPage, logFilter, logComponent, logFrom, logTo, logSearch]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Auto-refresh logs every 5 s while the toggle is on and the tab is visible
+  // (#2360). The filter state used to be listed as effect deps purely so the
+  // interval captured fresh values; usePolling holds the callback in a ref, so
+  // changing a filter no longer restarts the 5 s window.
+  usePolling(() => { fetchLogs(logPage) }, 5000, logAutoRefresh)
 
   return (
     <div>

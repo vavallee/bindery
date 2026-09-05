@@ -6,6 +6,7 @@ import BulkActionBar from '../components/BulkActionBar'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
+import { usePolling } from '../components/usePolling'
 import { safeHref } from '../util/safeHref'
 
 // Shared grid template so the header row and every list row line up exactly.
@@ -47,18 +48,26 @@ export default function WantedPage() {
     return () => { cancelled = true }
   }, [showExcluded])
 
+  // Set-state-after-unmount guard for the poll, which outlives any one effect.
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
+
   // Poll the wanted list so background auto-grabs (and books leaving as they
   // import) show up without a manual reload (#1161). Mirrors QueuePage's 5s
-  // poll. Pauses while the user is mid-interaction — a results panel is open or
-  // a grab/search is running — so the list doesn't reshuffle under them.
-  useEffect(() => {
-    let cancelled = false
-    const interval = setInterval(() => {
-      if (showResults !== null || grabbingGuid !== null || searchingId !== null) return
-      api.listWanted({ includeExcluded: showExcluded }).then(b => { if (!cancelled) setBooks(b) }).catch(() => {})
-    }, 5000)
-    return () => { cancelled = true; clearInterval(interval) }
-  }, [showExcluded, showResults, grabbingGuid, searchingId])
+  // poll. Skips a tick while the user is mid-interaction, a results panel open
+  // or a grab/search running, so the list doesn't reshuffle under them.
+  //
+  // That interaction state used to sit in the effect's deps, which tore the
+  // timer down and restarted the 5s window on every hover; usePolling holds the
+  // callback in a ref, so the timer survives and only the tick is skipped
+  // (#2360). It also pauses entirely while the tab is hidden.
+  usePolling(() => {
+    if (showResults !== null || grabbingGuid !== null || searchingId !== null) return
+    api.listWanted({ includeExcluded: showExcluded }).then(b => { if (mounted.current) setBooks(b) }).catch(() => {})
+  }, 5000)
 
   useEffect(() => {
     if (!toast) return

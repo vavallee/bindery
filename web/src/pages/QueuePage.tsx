@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, Book, PendingRelease, QueueItem } from '../api/client'
 import BookAuthorLink from '../components/BookAuthorLink'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
+import { usePolling } from '../components/usePolling'
 import { summarizeError, ERROR_SUMMARY_LEN } from './queueError'
 import { btn, btnSize } from '../components/buttons'
 import { downloadStatusBadge, isFailed, isMatchable, isRetryable } from '../components/downloadStatus'
@@ -31,36 +32,32 @@ export default function QueuePage() {
   const [bulkResult, setBulkResult] = useState<string | null>(null)
   const selectAllRef = useRef<HTMLInputElement>(null)
 
-  const load = () => {
+  // Guard against stale responses and set-state-after-unmount: `mounted` is
+  // checked before every setState and flipped on unmount, so a poll that
+  // resolves after a newer tick or after unmount is ignored. Mirrors
+  // AuthorsPage's poll guard.
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
+
+  const load = useCallback(() => {
     Promise.all([
       api.listQueue(),
       api.listPending(),
     ]).then(([q, p]) => {
+      if (!mounted.current) return
       setQueue(q)
       setPending(p)
-    }).catch(console.error).finally(() => setLoading(false))
-  }
-
-  // Guard against stale responses and set-state-after-unmount: a `cancelled`
-  // flag captured in the effect is checked before every setState and flipped in
-  // cleanup, so a poll that resolves after a newer tick or after unmount is
-  // ignored. Mirrors AuthorsPage's poll guard.
-  useEffect(() => {
-    let cancelled = false
-    const run = () => {
-      Promise.all([
-        api.listQueue(),
-        api.listPending(),
-      ]).then(([q, p]) => {
-        if (cancelled) return
-        setQueue(q)
-        setPending(p)
-      }).catch(console.error).finally(() => { if (!cancelled) setLoading(false) })
-    }
-    run()
-    const interval = setInterval(run, 5000)
-    return () => { cancelled = true; clearInterval(interval) }
+    }).catch(console.error).finally(() => { if (mounted.current) setLoading(false) })
   }, [])
+
+  useEffect(() => { load() }, [load])
+
+  // Poll while the tab is visible. usePolling pauses on document.hidden, so a
+  // queue left open in a background window stops asking (#2360).
+  usePolling(load, 5000)
 
   useEffect(() => {
     document.title = 'Queue · Bindery'
