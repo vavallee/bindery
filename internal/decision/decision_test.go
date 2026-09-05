@@ -198,64 +198,6 @@ func TestQualityAllowed_UnknownFormatTokenUsesTheWholeList(t *testing.T) {
 	}
 }
 
-// --- QualityCutoff ---
-
-func TestQualityCutoff_NilProfile(t *testing.T) {
-	s := decision.QualityCutoff{}
-	ok, _ := s.IsSatisfiedBy(release(), bookWithFile())
-	if !ok {
-		t.Fatal("nil profile should pass")
-	}
-}
-
-func TestQualityCutoff_NoFile(t *testing.T) {
-	s := decision.QualityCutoff{
-		Profile:        &models.QualityProfile{Cutoff: "epub", Items: []models.QualityItem{{Quality: "epub"}}},
-		CurrentQuality: "",
-	}
-	ok, _ := s.IsSatisfiedBy(release(), emptyBook())
-	if !ok {
-		t.Fatal("book with no file should pass")
-	}
-}
-
-func TestQualityCutoff_BelowCutoff(t *testing.T) {
-	s := decision.QualityCutoff{
-		Profile: &models.QualityProfile{
-			Cutoff: "epub",
-			Items: []models.QualityItem{
-				{Quality: "pdf"},
-				{Quality: "epub"},
-			},
-		},
-		CurrentQuality: "pdf",
-	}
-	ok, _ := s.IsSatisfiedBy(release(withFormat("epub")), bookWithFile())
-	if !ok {
-		t.Fatal("current quality below cutoff — should allow grab")
-	}
-}
-
-func TestQualityCutoff_AtCutoff(t *testing.T) {
-	s := decision.QualityCutoff{
-		Profile: &models.QualityProfile{
-			Cutoff: "epub",
-			Items: []models.QualityItem{
-				{Quality: "pdf"},
-				{Quality: "epub"},
-			},
-		},
-		CurrentQuality: "epub",
-	}
-	ok, reason := s.IsSatisfiedBy(release(withFormat("epub")), bookWithFile())
-	if ok {
-		t.Fatal("current quality at cutoff — should reject")
-	}
-	if reason == "" {
-		t.Fatal("should return reason")
-	}
-}
-
 // --- DelayProfileSpec ---
 
 func TestDelayProfileSpec_Nil(t *testing.T) {

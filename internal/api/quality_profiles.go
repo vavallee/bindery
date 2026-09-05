@@ -174,11 +174,19 @@ func formatInUseMessage(count int, names []string) string {
 // validateQualityProfile enforces the rules called out in the issue:
 //   - name non-empty
 //   - at least one allowed format
-//   - cutoff is among the allowed formats (i.e. an item with allowed=true)
 //   - no duplicate format names in the preference order
 //
-// The profile is normalised in place (trimmed name, lowercased format keys).
-// Returns "" when the profile is valid; otherwise a user-facing message.
+// Cutoff is deliberately not validated. It was mandatory and had to name an
+// allowed format until #2373, when the control was removed from Settings
+// because nothing in Bindery ever read the value. Keeping the old rules would
+// have made a stored profile unsavable the moment its cutoff format was
+// unticked, since there is no longer any UI that can correct the cutoff. The
+// field is still accepted, normalised and persisted so a third-party client
+// that sends one keeps working.
+//
+// The profile is normalised in place (trimmed name, lowercased format keys and
+// cutoff). Returns "" when the profile is valid; otherwise a user-facing
+// message.
 func validateQualityProfile(p *models.QualityProfile) string {
 	p.Name = strings.TrimSpace(p.Name)
 	if p.Name == "" {
@@ -189,12 +197,7 @@ func validateQualityProfile(p *models.QualityProfile) string {
 	}
 	seen := make(map[string]struct{}, len(p.Items))
 	var allowedCount int
-	cutoff := strings.ToLower(strings.TrimSpace(p.Cutoff))
-	p.Cutoff = cutoff
-	if cutoff == "" {
-		return "cutoff required"
-	}
-	var cutoffAllowed bool
+	p.Cutoff = strings.ToLower(strings.TrimSpace(p.Cutoff))
 	for i, it := range p.Items {
 		q := strings.ToLower(strings.TrimSpace(it.Quality))
 		if q == "" {
@@ -207,16 +210,10 @@ func validateQualityProfile(p *models.QualityProfile) string {
 		p.Items[i].Quality = q
 		if it.Allowed {
 			allowedCount++
-			if q == cutoff {
-				cutoffAllowed = true
-			}
 		}
 	}
 	if allowedCount == 0 {
 		return "at least one allowed format is required"
-	}
-	if !cutoffAllowed {
-		return "cutoff must be one of the allowed formats"
 	}
 	return ""
 }

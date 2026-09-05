@@ -117,13 +117,50 @@ func TestQualityProfileCreate_RequiresAllowedFormat(t *testing.T) {
 	}
 }
 
-func TestQualityProfileCreate_CutoffMustBeAllowed(t *testing.T) {
-	h, _, _, _ := qualityProfileFixture(t)
-	body := `{"name":"X","cutoff":"pdf","items":[{"quality":"pdf","allowed":false},{"quality":"epub","allowed":true}]}`
+// Cutoff stopped being validated in #2373 when the Settings control went away:
+// it is dead weight kept only so existing rows load and a third-party client
+// that still sends one is not rejected. A profile with no cutoff at all is what
+// the web UI now posts, and a cutoff naming an unticked format is what a client
+// written against the old rules can still post. Both must be accepted.
+func TestQualityProfileCreate_CutoffNotValidated(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"absent", `{"name":"No Cutoff","items":[{"quality":"epub","allowed":true}]}`},
+		{"not allowed", `{"name":"Odd Cutoff","cutoff":"pdf","items":[{"quality":"pdf","allowed":false},{"quality":"epub","allowed":true}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _, _, _ := qualityProfileFixture(t)
+			rec := httptest.NewRecorder()
+			h.Create(rec, httptest.NewRequest(http.MethodPost, "/api/v1/qualityprofile", bytes.NewBufferString(tc.body)))
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// The value a client does send is still persisted verbatim, which is the whole
+// point of keeping the column.
+func TestQualityProfileCreate_CutoffRoundTrips(t *testing.T) {
+	h, repo, _, ctx := qualityProfileFixture(t)
+	body := `{"name":"Kept","cutoff":" EPUB ","items":[{"quality":"epub","allowed":true}]}`
 	rec := httptest.NewRecorder()
 	h.Create(rec, httptest.NewRequest(http.MethodPost, "/api/v1/qualityprofile", bytes.NewBufferString(body)))
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400 when cutoff is not in allowed list, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var created models.QualityProfile
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.GetByID(ctx, created.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("GetByID: got=%v err=%v", stored, err)
+	}
+	if stored.Cutoff != "epub" {
+		t.Errorf("cutoff should be stored normalised, got %q", stored.Cutoff)
 	}
 }
 
@@ -197,7 +234,7 @@ func TestQualityProfileUpdate_RejectsInvalid(t *testing.T) {
 		t.Fatal(err)
 	}
 	idStr := strconv.FormatInt(p.ID, 10)
-	body := `{"name":"X","cutoff":"pdf","items":[{"quality":"epub","allowed":true}]}`
+	body := `{"name":"X","cutoff":"epub","items":[{"quality":"epub","allowed":false}]}`
 	rec := httptest.NewRecorder()
 	h.Update(rec, withURLParam(httptest.NewRequest(http.MethodPut, "/api/v1/qualityprofile/"+idStr, bytes.NewBufferString(body)), "id", idStr))
 	if rec.Code != http.StatusBadRequest {
