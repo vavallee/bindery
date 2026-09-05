@@ -1076,7 +1076,8 @@ func main() {
 		r.Put("/metadataprofile/{id}", metadataProfileHandler.Update)
 		r.Delete("/metadataprofile/{id}", metadataProfileHandler.Delete)
 
-		// Backups — Restore overwrites the live database, Delete removes
+		// Backups — Restore replaces the live database (staged now, swapped
+		// in by db.ApplyPendingRestore at the next start), Delete removes
 		// stored backups, and List leaks filenames containing timestamps that
 		// help an attacker target Restore. Admin-only across the whole
 		// surface.

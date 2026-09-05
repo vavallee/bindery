@@ -28,6 +28,13 @@ func Open(dbPath string) (*sql.DB, error) {
 	if err := preflight(dbPath); err != nil {
 		return nil, err
 	}
+	// A backup restore stages its file rather than overwriting the live
+	// database, so the swap happens here: before the pool exists and before
+	// there is a WAL that could replay over the restored pages. See
+	// restore.go for why the naive in-place copy is unsafe.
+	if err := ApplyPendingRestore(dbPath); err != nil {
+		return nil, err
+	}
 	db, err := sql.Open("sqlite", dbPath+connectionPragmaDSN)
 	if err != nil {
 		return nil, fmt.Errorf("open database %q: %w", dbPath, err)
