@@ -2791,7 +2791,7 @@ media type for Hardcover import lists. The one schema change
 (`import_lists.media_type`) is additive and defaults to the previous behaviour.
 
 ### Added
-- **Per-list media type for Hardcover import lists** (#1296, #1314) — a synced book took its format from Hardcover's edition availability, so separate "Audiobooks" and "Ebooks" lists produced identical media types (most works report both editions). Each import list now has an Auto / Ebook / Audiobook / Both selector that pins the format its books are created as. Applied on create only: the syncer skips books that already exist, so a book on two single-format lists is never auto-promoted to Both and a manually-set media type survives re-sync.
+- **Per-list media type for Hardcover import lists** (#1314) — a synced book took its format from Hardcover's edition availability, so separate "Audiobooks" and "Ebooks" lists produced identical media types (most works report both editions). Each import list now has an Auto / Ebook / Audiobook / Both selector that pins the format its books are created as. Applied on create only: the syncer skips books that already exist, so a book on two single-format lists is never auto-promoted to Both and a manually-set media type survives re-sync.
 
 ### Fixed
 - **Authors list sorts A–Z / Z–A case-insensitively** (#1312) — `sort_name` is stored case-preserving, so the default BINARY collation sorted all uppercase ahead of all lowercase and pushed lowercase-article names ("de Balzac") past "Z", which read as a jumble. The sort now uses `COLLATE NOCASE`, backed by a matching index (migration 055). Sorting by "recent" was unaffected.
@@ -2933,7 +2933,7 @@ Coverage backfill with no production behavior change: indexer ranker scoring ter
 
 ### Added
 
-- **`{Genre}` file-naming token** — organise your library into top-level genre folders (e.g. `{Genre}/{Author}/{Title}`). Genres are sourced from Hardcover's curated taxonomy when Hardcover is enabled; without it the token falls back to OpenLibrary's noisier subject data. New books pick up genres immediately; **refresh an author** to backfill genres onto books imported before this release.
+- **`{Genre}` file-naming token** — organise your library into top-level genre folders (e.g. `{Genre}/{Author}/{Title}`). Genres are sourced from Hardcover's curated taxonomy when Hardcover is enabled; without it the token falls back to OpenLibrary's noisier subject data. New books pick up genres immediately; with Hardcover enabled, **refresh an author** to backfill genres onto books imported before this release. The backfill only fills in genres for books Hardcover matched, so an OpenLibrary-only install gets genres on new books but not on existing ones.
 - **`{Token:default}` fallback syntax in naming templates** — any token can specify a fallback used when it renders empty, mirroring Calibre's `ifempty(...)`. For example `{Genre:Unsorted}/{Author}/{Title}` routes un-tagged books to an `Unsorted/` folder instead of dropping the folder level.
 
 ### Changed

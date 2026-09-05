@@ -932,13 +932,13 @@ func removeBookPathScoped(p, format string, ownedByOther func(string) bool) erro
 			if ownedByOther != nil && ownedByOther(sibling) {
 				continue
 			}
-			if rmErr := os.Remove(sibling); rmErr != nil && !os.IsNotExist(rmErr) { // #nosec G304 G703 -- parent + stem both from importer-sanitized DB row; #865 plans defense-in-depth root-check
+			if rmErr := os.Remove(sibling); rmErr != nil && !os.IsNotExist(rmErr) { // #nosec G304 G703 -- parent + stem both from importer-sanitized DB row; the defense-in-depth root check shipped in #865 and gates every caller in safeRemoveBookPath (path_safety.go)
 				slog.Warn("book delete: failed to remove sibling file", "path", sibling, "error", rmErr)
 			}
 		}
 	} else {
 		// ReadDir failed — fall back to deleting only the target file.
-		if err := os.Remove(p); err != nil { // #nosec G304 G703 -- p is from book_files row written by importer's sanitizePath; #865 plans defense-in-depth root-check
+		if err := os.Remove(p); err != nil { // #nosec G304 G703 -- p is from book_files row written by importer's sanitizePath; the defense-in-depth root check shipped in #865 and gates every caller in safeRemoveBookPath (path_safety.go)
 			return err
 		}
 	}
@@ -946,7 +946,7 @@ func removeBookPathScoped(p, format string, ownedByOther func(string) bool) erro
 	// Clean up parent directory if it is now empty.
 	remaining, err := os.ReadDir(parent)
 	if err == nil && len(remaining) == 0 {
-		_ = os.Remove(parent) // #nosec G304 G703 -- parent = filepath.Dir of importer-sanitized DB row; #865 plans defense-in-depth root-check
+		_ = os.Remove(parent) // #nosec G304 G703 -- parent = filepath.Dir of importer-sanitized DB row; the defense-in-depth root check shipped in #865 and gates every caller in safeRemoveBookPath (path_safety.go)
 	}
 	return nil
 }
@@ -988,7 +988,7 @@ func removeBookDirScoped(dir, format string, ownedByOther func(string) bool) err
 			kept++
 			return nil
 		}
-		if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) { // #nosec G304 G703 -- path is under an importer-sanitized DB row; #865 plans defense-in-depth root-check
+		if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) { // #nosec G304 G703 -- path is under an importer-sanitized DB row; the defense-in-depth root check shipped in #865 and gates every caller in safeRemoveBookPath (path_safety.go)
 			slog.Warn("book delete: failed to remove file in book folder", "path", path, "error", rmErr)
 			kept++
 		}
@@ -1015,7 +1015,7 @@ func removeBookDirScoped(dir, format string, ownedByOther func(string) bool) err
 			kept++
 			return nil
 		}
-		if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) { // #nosec G304 G703 -- path is under an importer-sanitized DB row; #865 plans defense-in-depth root-check
+		if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) { // #nosec G304 G703 -- path is under an importer-sanitized DB row; the defense-in-depth root check shipped in #865 and gates every caller in safeRemoveBookPath (path_safety.go)
 			slog.Warn("book delete: failed to remove sidecar in book folder", "path", path, "error", rmErr)
 			kept++
 		}
