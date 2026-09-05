@@ -109,44 +109,10 @@ func importReadarrAuthors(ctx context.Context, src *sql.DB, repo *db.AuthorRepo,
 		}
 		res.Requested++
 
-		matches, serr := agg.SearchAuthors(ctx, name)
-		if serr != nil {
-			res.fail(name, "metadata lookup failed: "+serr.Error())
+		full := resolveAndCreateAuthor(ctx, "readarr", name, monitored, repo, settings, agg, res)
+		if full == nil {
 			continue
 		}
-		if len(matches) == 0 {
-			res.fail(name, "no OpenLibrary match")
-			continue
-		}
-		top := matches[0]
-
-		if existing, _ := repo.GetByAnyForeignID(ctx, top.ForeignID); existing != nil {
-			res.Skipped++
-			continue
-		}
-
-		full, ferr := agg.GetAuthor(ctx, top.ForeignID)
-		if ferr != nil || full == nil {
-			full = &top
-		}
-		full.Monitored = monitored
-		full.MetadataProvider = "openlibrary"
-		// Readarr hands over a monitored flag but no monitor mode, so take the
-		// install-wide default rather than the column default "all" (#1666).
-		db.ApplyAuthorMonitorDefaults(ctx, settings, full)
-
-		if cerr := repo.Create(ctx, full); cerr != nil {
-			if isAuthorCreateConflict(cerr) {
-				if existing, _ := repo.GetByAnyForeignID(ctx, full.ForeignID); existing != nil {
-					res.Skipped++
-					continue
-				}
-			}
-			res.fail(name, cerr.Error())
-			continue
-		}
-		res.Added++
-		res.AddedNames = append(res.AddedNames, full.Name)
 		newlyAdded = append(newlyAdded, full)
 	}
 	rowsErr := rows.Err()
