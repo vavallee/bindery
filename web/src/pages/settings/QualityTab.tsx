@@ -32,8 +32,7 @@ interface EditorItem {
 }
 
 function defaultItems(): EditorItem[] {
-  // Worst → best for ebooks. The decision spec compares cutoff and current
-  // by index, so order matters: later = better.
+  // Worst → best for ebooks. The order records the user's stated preference.
   return DEFAULT_EBOOK_ITEMS.map(q => ({ quality: q, allowed: true }))
 }
 
@@ -134,17 +133,6 @@ function ProfileRow({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h4 className="font-medium text-sm">{profile.name}</h4>
-          <div className="flex flex-wrap items-center gap-3 mt-2 text-xs text-slate-600 dark:text-zinc-400">
-            <span>
-              {t('settings.quality.cutoff')}{' '}
-              <span className="text-slate-800 dark:text-zinc-200">{profile.cutoff}</span>
-            </span>
-            {profile.upgradeAllowed && (
-              <span className="text-emerald-600 dark:text-emerald-400">
-                {t('settings.quality.upgradesAllowed')}
-              </span>
-            )}
-          </div>
           {profile.items && profile.items.length > 0 && (
             <div className="mt-2">
               <p className="text-[10px] text-slate-500 dark:text-zinc-600 mb-1">Worst → best</p>
@@ -197,24 +185,9 @@ function QualityProfileForm({
 }) {
   const { t } = useTranslation()
   const [name, setName] = useState(profile?.name ?? '')
-  const [upgradeAllowed, setUpgradeAllowed] = useState(profile?.upgradeAllowed ?? true)
   const [items, setItems] = useState<EditorItem[]>(normalisedItems(profile?.items))
-  const [cutoff, setCutoff] = useState(profile?.cutoff ?? '')
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
-
-  // Cutoff must always be an allowed format. If the current cutoff isn't
-  // allowed (or empty), snap it to the highest-ranked allowed item.
-  useEffect(() => {
-    const allowed = items.filter(i => i.allowed).map(i => i.quality)
-    if (allowed.length === 0) {
-      if (cutoff !== '') setCutoff('')
-      return
-    }
-    if (!allowed.includes(cutoff)) {
-      setCutoff(allowed[allowed.length - 1])
-    }
-  }, [items, cutoff])
 
   const toggleAllowed = (quality: string) => {
     setItems(prev => {
@@ -261,24 +234,19 @@ function QualityProfileForm({
       setErr(t('settings.quality.errorNoAllowed'))
       return
     }
-    if (!cutoff) {
-      setErr(t('settings.quality.errorCutoffRequired'))
-      return
-    }
-    const allowed = items.filter(i => i.allowed).map(i => i.quality)
-    if (!allowed.includes(cutoff)) {
-      setErr(t('settings.quality.errorCutoffNotAllowed'))
-      return
-    }
     setSaving(true)
     try {
       const payload: Partial<QualityProfile> = {
         name: name.trim(),
-        upgradeAllowed,
-        cutoff,
         items,
       }
+      // cutoff and upgradeAllowed are no longer editable here (#2373): nothing
+      // in Bindery has ever read either one. The columns and the API fields
+      // stay, so an edit round-trips whatever the profile already held rather
+      // than blanking a value some other client may still be writing.
       if (profile) {
+        payload.cutoff = profile.cutoff
+        payload.upgradeAllowed = profile.upgradeAllowed
         await api.updateQualityProfile(profile.id, payload)
       } else {
         await api.addQualityProfile(payload)
@@ -388,36 +356,6 @@ function QualityProfileForm({
           </div>
         )}
       </div>
-
-      <div>
-        <label className={labelCls}>{t('settings.quality.formCutoff')}</label>
-        <select
-          value={cutoff}
-          onChange={e => setCutoff(e.target.value)}
-          className={inputCls}
-          disabled={items.filter(i => i.allowed).length === 0}
-        >
-          {items.filter(i => i.allowed).length === 0 && (
-            <option value="">{t('settings.quality.formCutoffNoOptions')}</option>
-          )}
-          {items.filter(i => i.allowed).map(i => (
-            <option key={i.quality} value={i.quality}>{i.quality}</option>
-          ))}
-        </select>
-        <p className="text-[11px] text-slate-500 dark:text-zinc-500 mt-2">
-          {t('settings.quality.formCutoffHint')}
-        </p>
-      </div>
-
-      <label className="flex items-center gap-2 cursor-pointer text-xs">
-        <input
-          type="checkbox"
-          checked={upgradeAllowed}
-          onChange={e => setUpgradeAllowed(e.target.checked)}
-          className="rounded border-slate-300 dark:border-zinc-700 text-emerald-600 focus:ring-emerald-500"
-        />
-        <span>{t('settings.quality.formUpgradeAllowed')}</span>
-      </label>
 
       {err && <p className="text-xs text-rose-600 dark:text-rose-400">{err}</p>}
 

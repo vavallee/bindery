@@ -181,7 +181,7 @@ you come back to it. Searches also fire when an author is added
 ("Search for books on add") and when a book flips to wanted.
 
 **Decision.** Each release is checked against your quality profile (allowed
-formats, cutoff), delay profile, blocklist, size limits, and language filter.
+formats), delay profile, blocklist, size limits, and language filter.
 On indexers marked *freeleech only*, non-freeleech releases are not discarded
 — they are parked as **pending** for manual approval.
 
