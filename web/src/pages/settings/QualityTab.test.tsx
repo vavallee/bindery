@@ -58,20 +58,28 @@ describe('QualityTab', () => {
     expect(screen.getByText('settings.quality.newProfile')).toBeInTheDocument()
   })
 
-  it('renders existing profiles with cutoff and format chips', async () => {
+  it('renders existing profiles as worst→best format chips', async () => {
     mockList.mockResolvedValueOnce([profile()])
     render(<QualityTab />)
     await waitFor(() => {
       expect(screen.getByText('Ebook Preferred')).toBeInTheDocument()
     })
-    // Each item is rendered as a worst→best ranked chip ("1. pdf"); "epub"
-    // also appears separately as the cutoff value, so match it loosely.
+    // Each item is rendered as a worst→best ranked chip ("1. pdf").
     expect(screen.getByText('1. pdf')).toBeInTheDocument()
     expect(screen.getByText('2. mobi')).toBeInTheDocument()
     expect(screen.getByText('3. epub')).toBeInTheDocument()
-    expect(screen.getAllByText('epub', { exact: false }).length).toBeGreaterThan(1)
-    // Cutoff label rendered.
-    expect(screen.getByText('settings.quality.cutoff', { exact: false })).toBeInTheDocument()
+  })
+
+  // #2373: cutoff and "upgrades allowed" were removed from the UI because
+  // nothing read either one. The row must not advertise them any more.
+  it('does not show a cutoff or an upgrades-allowed badge', async () => {
+    mockList.mockResolvedValueOnce([profile()])
+    render(<QualityTab />)
+    await waitFor(() => {
+      expect(screen.getByText('Ebook Preferred')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('settings.quality.cutoff', { exact: false })).not.toBeInTheDocument()
+    expect(screen.queryByText('settings.quality.upgradesAllowed')).not.toBeInTheDocument()
   })
 
   it('opens the editor form when "New Profile" is clicked', async () => {
@@ -82,7 +90,9 @@ describe('QualityTab', () => {
     // Form heading-equivalent: the name label appears in the form.
     expect(screen.getByText('settings.quality.formName')).toBeInTheDocument()
     expect(screen.getByText('settings.quality.formPreference')).toBeInTheDocument()
-    expect(screen.getByText('settings.quality.formCutoff')).toBeInTheDocument()
+    // No cutoff select and no upgrade checkbox since #2373.
+    expect(screen.queryByText('settings.quality.formCutoff')).not.toBeInTheDocument()
+    expect(screen.queryByText('settings.quality.formUpgradeAllowed')).not.toBeInTheDocument()
   })
 
   it('offers every release format the parser recognises (#1700)', async () => {
@@ -90,10 +100,9 @@ describe('QualityTab', () => {
     render(<QualityTab />)
     await waitFor(() => screen.getByText('settings.quality.newProfile'))
     fireEvent.click(screen.getByText('settings.quality.newProfile'))
-    // A new profile still seeds only the four mainstream ebook containers
-    // (each also appears as a cutoff <option>, hence getAllByText).
+    // A new profile still seeds only the four mainstream ebook containers.
     for (const seeded of ['pdf', 'mobi', 'epub', 'azw3']) {
-      expect(screen.getAllByText(seeded).length).toBeGreaterThanOrEqual(1)
+      expect(screen.getByText(seeded)).toBeInTheDocument()
     }
     // Everything else ParseRelease can emit is one "+ Add" chip away. Before
     // #1700 nine of these had no path into the allow-list at all.

@@ -1110,10 +1110,6 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	// shape mirrors the queue.go manual-grab Send so existing webhook
 	// templates keep working without modification; "author" is added because
 	// we have it here and it costs nothing.
-	//
-	// TODO(#849): when an upgrade-grab code path exists (the quality cutoff
-	// is currently used only to reject, not to trigger an upgrade re-grab),
-	// emit EventUpgrade here instead of EventGrabbed for upgrade grabs.
 	s.notify(ctx, notifierEventGrabbed, map[string]interface{}{
 		"title":  best.Title,
 		"size":   best.Size,
