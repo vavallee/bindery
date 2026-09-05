@@ -6,15 +6,22 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 ## [v1.34.0] — 2026-09-05
 
-**The second half of the audit, plus the two things Discord asked for.**
+**A tidier interface, the second half of the audit, and the two things Discord asked for.**
 
-Twenty three entries below, from thirty six merged pull requests. Most of them are
-the rest of the tree scan that produced v1.33.4: four more security fixes, a set
-of hot paths that were redoing work on every call, and two controls that had
-never done anything being taken out of the interface rather than left there
-promising behaviour that did not exist. The two features both came from reports:
-a daily query cap for private trackers, and a log line at the end of every
-automatic search so a silent sweep can be told apart from one that never ran.
+Twenty nine entries below, from thirty seven merged pull requests. The visible
+change is the first pass at decluttering the interface: the Authors and Books
+filter rows collapse into two menus, the rare per row actions move into an
+overflow menu, and the app stops flashing light before it turns dark. Nothing
+was taken away to achieve it; every option that was on those pill rows is still
+there, one click further in, and the Filters button says how many are applied.
+
+The rest is mostly the remainder of the tree scan that produced v1.33.4: four
+more security fixes, a set of hot paths that were redoing work on every call,
+and two controls that had never done anything being taken out of the interface
+rather than left there promising behaviour that did not exist. The two features
+both came from reports: a daily query cap for private trackers, and a log line
+at the end of every automatic search so a silent sweep can be told apart from
+one that never ran.
 
 Two removals change what the API accepts. If you drive Bindery from a script,
 read the Removed section before upgrading.
@@ -28,6 +35,10 @@ read the Removed section before upgrading.
 
 ### Changed
 
+- **The Authors and Books filter rows are two menus instead of two rows of pills** (#2427). Every option survives, including the monitored filter and the choice it remembers between visits. An applied filter shows twice over, as a count on the Filters button and as a chip beside it that clears it, so nothing is hidden by being one click in. In table view the Sort menu is gone entirely, because the column headers already sort.
+- **Refresh and Delete on an author row moved into a `⋯` menu** (#2427). The monitored toggle stays where it was, since that is the control people actually use. The Discover card's own hand rolled menu now uses the same component and gains the keyboard handling it never had.
+- **The setup checklist is a single strip** (#2427), naming the next step rather than boxing all five, and it stops showing once only one step is left.
+- **The Authors rating column is hidden when nothing on the page has a rating** (#2427). Only OpenLibrary supplies author level ratings, so for a Hardcover or DNB sourced library it was a column of dashes. It still appears, and still sorts, wherever there is data.
 - **Confirmation prompts are in app instead of browser dialogs** (#2359). Twenty two actions asked for confirmation through the browser's own dialog, which is unstyled, shows the origin in its title bar and cannot be translated. Four of them were hardcoded English that never reached the translation files at all. Every prompt now uses the in app dialog that book deletion already used, and the "I understand" checkbox is kept for the three that genuinely earn it rather than applied to all of them.
 - **Queue, Wanted and the Logs tab stop polling while the tab is hidden** (#2360). Each polled every five seconds whether or not anyone was looking, so a queue left open in a background window made roughly 1,400 requests an hour with nothing to show for them. Polling now pauses when the tab goes away and does one immediate refresh when it comes back, so returning to the tab shows current data rather than data up to an interval stale.
 - **Faster status reads, searches and wanted sweeps** (#2340, #2341, #2344, #2346, #2370, #2407). Several hot paths were redoing work on every call. `/system/status` walked the entire image cache with one stat per file, which a 10,000 book library pays twice per cover, on a request the web UI makes from the root shell and four separate pages; the total is now memoised and adjusted by the exact delta after each cache write. The search filter compiled the same regular expression once per release and threw all but the first away, so a 500 result search compiled it 500 times. The wanted sweep reloaded the indexer list, the whole blocklist, the delay profiles and the preferred language once per book instead of once per sweep, and made seven separate status queries where one does. And the two startup backfills, which exist so that a change to the name normaliser re canonicalises existing rows, scanned the whole books and authors tables on every boot rather than only the boot after such a change. None of this changes what Bindery does, only how much it costs. Installs upgrading to this run each backfill once more and then settle.
@@ -36,6 +47,8 @@ read the Removed section before upgrading.
 
 ### Fixed
 
+- **The app no longer flashes light before turning dark** (#2427). The theme class was applied from a React effect, which runs after the browser has already painted, so every route showed its light background for a frame first. It is now set before the first paint.
+- **A mistyped or shared URL says so instead of showing an empty page** (#2427). Any path the app did not recognise rendered the header and nav around nothing at all. `/settings/indexers` also works now: it redirects to the tab it names.
 - **A malformed id in a request no longer reports success for work that did not happen** (#2364). Five download client and root folder handlers parsed `{id}` and threw the error away, and a failed parse yields 0, so `GET /downloadclient/abc` looked up id 0 and answered "download client not found". A client that sent a bad id was told the resource does not exist. DELETE was worse: it ran the delete, the downloader eviction and the health drop against id 0 and then answered 204, so a typo in a script reported a successful delete that deleted nothing. All five now answer 400.
 - **A redeploy no longer cuts off an author sync or a manual import mid flight** (#2371, #2372). The author catalogue sync, the manual batch import and the reassign move ran on a context nothing cancelled or waited for, so a restart while one was running closed the database under it. The visible result was a half synced catalogue plus "database is closed" in the log, and on the import paths, files that had been moved with nothing in the database describing them. All three are now tracked and drained on shutdown the way a library scan already was.
 - **Grab history records which indexer the release came from** (#2368). It was recording the wrong id, so the history for a grab pointed at an indexer that had not supplied it.
