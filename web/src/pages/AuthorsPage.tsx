@@ -336,6 +336,13 @@ export default function AuthorsPage() {
     )
   }
 
+  // Only OpenLibrary supplies an author-level rating, and only for authors it
+  // resolved by search rather than by direct id. Hardcover and DNB supply none
+  // at all, so for those libraries the column was a full column of em dashes.
+  // Drop it when this page has nothing to put in it, rather than removing it
+  // outright and costing OpenLibrary users a real sort key.
+  const anyRating = authors.some(a => a.averageRating > 0)
+
   return (
     <div className={selectedIds.size > 0 ? 'pb-16' : ''}>
       {confirmDialog}
@@ -457,7 +464,7 @@ export default function AuthorsPage() {
                   </th>
                   <SortableHeader label={t('authors.colName')} asc="az" desc="za" />
                   <SortableHeader label={t('authors.colBooks')} asc="books-asc" desc="books-desc" />
-                  <SortableHeader label={t('authors.colRating')} asc="rating-asc" desc="rating-desc" />
+                  {anyRating && <SortableHeader label={t('authors.colRating')} asc="rating-asc" desc="rating-desc" />}
                   <SortableHeader label={t('authors.colMonitored')} asc="monitored-asc" desc="monitored-desc" />
                   <th className="px-3 py-2" />
                 </tr>
@@ -490,9 +497,11 @@ export default function AuthorsPage() {
                       </Link>
                     </td>
                     <td className="px-3 py-2 text-slate-600 dark:text-zinc-400 whitespace-nowrap">{author.statistics?.bookCount ?? '—'}</td>
-                    <td className="px-3 py-2 text-slate-600 dark:text-zinc-400 whitespace-nowrap">
-                      {author.averageRating > 0 ? `★ ${author.averageRating.toFixed(2)}` : '—'}
-                    </td>
+                    {anyRating && (
+                      <td className="px-3 py-2 text-slate-600 dark:text-zinc-400 whitespace-nowrap">
+                        {author.averageRating > 0 ? `★ ${author.averageRating.toFixed(2)}` : '—'}
+                      </td>
+                    )}
                     <td className="px-3 py-2 whitespace-nowrap">
                       <Switch
                         checked={author.monitored}

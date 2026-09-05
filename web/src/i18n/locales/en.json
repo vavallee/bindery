@@ -1168,7 +1168,9 @@
     "client": "Add a download client",
     "author": "Add an author",
     "grab": "Grab a book",
-    "import": "First book imported"
+    "import": "First book imported",
+    "progress": "{{done}} of {{total}} steps done",
+    "next": "Next:"
   },
   "protocolMismatch": {
     "torrent": "A Torznab indexer is enabled but no torrent download client (qBittorrent, Transmission, Deluge, rTorrent) is — its releases can be found but never downloaded.",
