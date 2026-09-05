@@ -52,6 +52,22 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git fetch origin main
+
+          # The image tag in values-dev.yaml is machine-owned state: deploy-dev
+          # writes the sha it just built into it, while main only ever carries a
+          # stale placeholder. Rebuilding development from main therefore reset
+          # the tag to that placeholder and ArgoCD deployed it, so every preview
+          # rolled bindery-dev back to an ancient image for the length of the
+          # image build, and left it there if the build failed. Carry the live
+          # tag across the rebuild. On the first run there is no development
+          # branch to read and main's value stands.
+          LIVE_TAG=""
+          if git fetch origin development 2>/dev/null; then
+            LIVE_TAG=$(git show origin/development:charts/bindery/values-dev.yaml 2>/dev/null \
+              | sed -n '/^image:/,/^[^[:space:]]/{s/^[[:space:]]*tag:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p;}' \
+              | head -1)
+          fi
+
           git checkout -B development origin/main
 
           # SECURITY: only merge PRs whose head lives in this same repo. A fork
@@ -74,6 +90,20 @@ jobs:
               SKIPPED+=("$n")
             fi
           done
+
+          # Put the live tag back before pushing so ArgoCD never sees the
+          # placeholder. deploy-dev overwrites it minutes later with the sha it
+          # builds from this very tree; until then dev keeps serving what it was
+          # already serving.
+          if [ -n "$LIVE_TAG" ]; then
+            sed -i '/^image:/,/^[^[:space:]]/ s|^\([[:space:]]*tag:[[:space:]]*\).*$|\1"'"$LIVE_TAG"'"|' charts/bindery/values-dev.yaml
+            grep -q "tag: \"$LIVE_TAG\"" charts/bindery/values-dev.yaml \
+              || { echo "::error::failed to restore the live dev image tag $LIVE_TAG"; exit 1; }
+            if ! git diff --quiet charts/bindery/values-dev.yaml; then
+              git add charts/bindery/values-dev.yaml
+              git commit -m "preview: keep the live dev image tag ${LIVE_TAG}"
+            fi
+          fi
 
           git push --force origin development
 
