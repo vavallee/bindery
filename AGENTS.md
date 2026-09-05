@@ -32,7 +32,8 @@ Use `make help` to discover targets. The ones agents need most:
 | Build binary (embeds web) | `make build` |
 | Run backend in dev | `make dev` |
 | Run frontend dev server | `make web-dev` (proxy to backend on `:8787`) |
-| Backend unit + integration tests | `make test` (race + coverage) |
+| Backend unit + integration tests | `make test` (coverage, no race — mirrors the CI gate) |
+| Race detector | `make test-race` (CI's six shards; `internal/api` cannot finish in one budget, #2293) |
 | Frontend tests | `make test-web` |
 | All linters | `make lint` |
 | Go-only / web-only lint | `make lint-go` / `make lint-web` |
