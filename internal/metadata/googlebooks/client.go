@@ -15,6 +15,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/textutil"
 	"github.com/vavallee/bindery/internal/useragent"
 )
 
@@ -169,12 +170,9 @@ func (c *Client) getJSON(ctx context.Context, rawURL string, target interface{})
 	return json.NewDecoder(resp.Body).Decode(target)
 }
 
+// sortName delegates to textutil.SortName, the same way the openlibrary and
+// hardcover clients do, so all three providers stamp the same sort form on an
+// author (#2363).
 func sortName(name string) string {
-	parts := strings.Fields(name)
-	if len(parts) < 2 {
-		return name
-	}
-	last := parts[len(parts)-1]
-	rest := strings.Join(parts[:len(parts)-1], " ")
-	return last + ", " + rest
+	return textutil.SortName(name)
 }

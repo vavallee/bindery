@@ -17,6 +17,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 // downloadArtifactExts are download-client receipt and repair files that ride
@@ -1641,14 +1642,14 @@ func sanitizePath(s string) string {
 	return strings.Join(kept, string(filepath.Separator))
 }
 
+// authorSortName backs the {SortAuthor} naming token, so its output becomes a
+// folder name on disk. It delegates to textutil.SortName: a private copy here
+// would mean the library layout and the author pages disagree the first time
+// that helper learns about particles ("van", "de", "von"). Any change to the
+// shared helper is a rename of every already-imported author folder, so it is
+// a decision that has to be made in one place (#2363).
 func authorSortName(name string) string {
-	parts := strings.Fields(name)
-	if len(parts) < 2 {
-		return name
-	}
-	last := parts[len(parts)-1]
-	rest := strings.Join(parts[:len(parts)-1], " ")
-	return last + ", " + rest
+	return textutil.SortName(name)
 }
 
 // DefaultNamingTemplate returns the default naming template for reference.

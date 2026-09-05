@@ -9,6 +9,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 // goodreadsResolvePacing is the minimum gap between provider lookups during a
@@ -368,14 +369,10 @@ func ensureGoodreadsAuthor(ctx context.Context, authors *db.AuthorRepo, settings
 
 // goodreadsSortName derives a "Last, First" sort name from a display name.
 // A single-word name (mononym or organisation) is returned unchanged.
+// Delegates to textutil.SortName so an imported author sorts identically to
+// one added any other way (#2363).
 func goodreadsSortName(name string) string {
-	parts := strings.Fields(name)
-	if len(parts) < 2 {
-		return name
-	}
-	last := parts[len(parts)-1]
-	rest := strings.Join(parts[:len(parts)-1], " ")
-	return last + ", " + rest
+	return textutil.SortName(name)
 }
 
 // summarisePreview fills the counts on a GoodreadsPreview from its rows.
