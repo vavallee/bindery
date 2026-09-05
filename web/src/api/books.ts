@@ -52,6 +52,8 @@ export interface Book {
   narrator?: string
   durationSeconds?: number
   asin?: string
+  // Transient ISBNs reported by metadata providers during search/lookup.
+  isbns?: string[]
   language?: string
   calibre_id?: number
   author?: Author

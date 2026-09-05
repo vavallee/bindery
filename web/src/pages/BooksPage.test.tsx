@@ -1,14 +1,15 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { MemoryRouter } from 'react-router'
 import BooksPage from './BooksPage'
 import { apiUrl, server } from '../test/msw'
-import type { Book } from '../api/client'
+import { api, type Book } from '../api/client'
 
-// BooksPage talks to the API through the real `api` client; we mock at the
-// network layer with MSW (the same setup api/client.test.ts uses) rather than
-// stubbing the client module, so the fetch/parse path is exercised end to end.
+// BooksPage talks to the API through the real `api` client. Most tests mock at
+// the network layer with MSW so the fetch/parse path is exercised end to end;
+// the stale-response regression spies on listBooks only to control completion
+// order precisely.
 //
 // i18n and Pagination are stubbed exactly like the other list-page tests
 // (WantedPage/QueuePage/AuthorsPage) so the assertions can target stable,
@@ -28,7 +29,7 @@ vi.mock('react-i18next', () => ({
         'books.typeLabel': 'Type:',
         'books.empty': 'No books in your library yet',
         'books.emptyHint':
-          'Add an author first — books are imported automatically when an author is monitored',
+          'Add a book directly, or add an author to monitor their catalogue.',
         'books.noMatch': 'No books match your search.',
         'books.statusWanted': 'Wanted',
         'books.statusDownloading': 'Downloading',
@@ -39,10 +40,29 @@ vi.mock('react-i18next', () => ({
         'books.colYear': 'Year',
         'books.colType': 'Type',
         'books.colStatus': 'Status',
+        'addBookModal.title': 'Add Book',
+        'addBookModal.description': 'Search by title, ISBN, or ASIN to add a specific book to your wanted list.',
+        'addBookModal.searchPlaceholder': 'Title, ISBN, or ASIN',
+        'addBookModal.searching': 'Searching...',
+        'addBookModal.select': 'Select',
+        'addBookModal.selectBook': `Select ${(options as Record<string, unknown> | undefined)?.title ?? ''}`,
+        'addBookModal.confirmAdd': 'Add book',
+        'addBookModal.backToResults': 'Back to results',
+        'addBookModal.noCover': 'No cover',
+        'addBookModal.format': 'Format',
+        'addBookModal.formatLabel': 'Format to add',
+        'addBookModal.formatHint': 'Choose which format to add',
+        'addBookModal.defaultFormat': 'Default',
+        'addBookModal.autoSearchLabel': 'Search indexers after adding',
+        'addBookModal.autoSearchHint': 'Try to grab the book automatically after adding it to wanted.',
+        'addBookModal.adding': 'Adding...',
         'common.all': 'All',
         'common.loading': 'Loading...',
         'common.ebook': 'Ebook',
         'common.audiobook': 'Audiobook',
+        'common.both': 'Both',
+        'common.search': 'Search',
+        'common.cancel': 'Cancel',
       }
       if (labels[key]) return labels[key]
       if (typeof options === 'string') return options
@@ -101,7 +121,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  vi.clearAllMocks()
+  vi.restoreAllMocks()
 })
 
 describe('BooksPage', () => {
@@ -148,7 +168,7 @@ describe('BooksPage', () => {
     ).toBeInTheDocument()
     expect(
       screen.getByText(
-        'Add an author first — books are imported automatically when an author is monitored',
+        'Add a book directly, or add an author to monitor their catalogue.',
       ),
     ).toBeInTheDocument()
     // The "no match" copy is for a filtered empty result, not a truly empty library.
@@ -177,6 +197,86 @@ describe('BooksPage', () => {
     expect(consoleError).toHaveBeenCalled()
 
     consoleError.mockRestore()
+  })
+
+  it('opens Add Book from the page and reloads after a successful add', async () => {
+    let listCalls = 0
+    server.use(
+      http.get(apiUrl('/book'), () => {
+        listCalls++
+        return HttpResponse.json({ items: [], total: 0, limit: 50, offset: 0 })
+      }),
+      http.get(apiUrl('/search/book'), () => HttpResponse.json([
+        makeBook({ id: 0, title: 'Dune', foreignBookId: 'OL1W' }),
+      ])),
+      http.post(apiUrl('/author/book'), () => HttpResponse.json(
+        makeBook({ id: 1, title: 'Dune', foreignBookId: 'OL1W' }),
+      )),
+    )
+
+    renderBooksPage()
+    await screen.findByText('No books in your library yet')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Book' }))
+    expect(screen.getByRole('dialog', { name: 'Add Book' })).toBeInTheDocument()
+
+    fireEvent.change(screen.getByPlaceholderText('Title, ISBN, or ASIN'), { target: { value: 'Dune' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+    await screen.findByText('Dune')
+    fireEvent.click(screen.getByRole('button', { name: 'Select Dune' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add book' }))
+
+    await waitFor(() => expect(listCalls).toBeGreaterThanOrEqual(2))
+    expect(screen.queryByRole('dialog', { name: 'Add Book' })).not.toBeInTheDocument()
+  })
+
+  it('ignores an older list response while the post-add refresh is pending', async () => {
+    let resolveInitial!: (page: Awaited<ReturnType<typeof api.listBooks>>) => void
+    let resolveRefresh!: (page: Awaited<ReturnType<typeof api.listBooks>>) => void
+    const initial = new Promise<Awaited<ReturnType<typeof api.listBooks>>>(resolve => {
+      resolveInitial = resolve
+    })
+    const refresh = new Promise<Awaited<ReturnType<typeof api.listBooks>>>(resolve => {
+      resolveRefresh = resolve
+    })
+    const addedBook = makeBook({ id: 1, title: 'Dune', foreignBookId: 'OL1W' })
+    const listBooks = vi.spyOn(api, 'listBooks')
+      .mockReturnValueOnce(initial)
+      .mockReturnValueOnce(refresh)
+    server.use(
+      http.get(apiUrl('/search/book'), () => HttpResponse.json([
+        makeBook({ id: 0, title: 'Dune', foreignBookId: 'OL1W' }),
+      ])),
+      http.post(apiUrl('/author/book'), () => HttpResponse.json(addedBook)),
+    )
+
+    renderBooksPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Add Book' }))
+    fireEvent.change(screen.getByPlaceholderText('Title, ISBN, or ASIN'), { target: { value: 'Dune' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+    await screen.findByText('Dune')
+    fireEvent.click(screen.getByRole('button', { name: 'Select Dune' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add book' }))
+
+    await waitFor(() => expect(listBooks).toHaveBeenCalledTimes(2))
+    expect(screen.getByText('Loading...')).toBeInTheDocument()
+
+    await act(async () => {
+      resolveInitial({
+        items: [makeBook({ id: 99, title: 'Stale result' })],
+        total: 1,
+        limit: 50,
+        offset: 0,
+      })
+    })
+    expect(screen.queryByRole('heading', { name: 'Stale result' })).not.toBeInTheDocument()
+    expect(screen.getByText('Loading...')).toBeInTheDocument()
+
+    await act(async () => {
+      resolveRefresh({ items: [addedBook], total: 1, limit: 50, offset: 0 })
+    })
+    expect(screen.getByRole('heading', { name: 'Dune' })).toBeInTheDocument()
+    expect(screen.queryByText('Loading...')).not.toBeInTheDocument()
   })
 })
 

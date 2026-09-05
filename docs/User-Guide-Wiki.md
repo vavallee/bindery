@@ -136,7 +136,7 @@ monitored.
 | Entry point | What it creates |
 |---|---|
 | **Authors → Add Author** | The author **plus their full catalogue** (up to ~100 titles), monitored per the monitor mode you pick |
-| **Authors → Add Book** (title/ISBN/ASIN) | One book, and only that book, silently creating its author if needed |
+| **Books → Add Book** (also available from Authors; title/ISBN/ASIN) | One book, and only that book, silently creating its author if needed. Select a search result to review its cover and identifiers before confirming |
 | **Discover → Add to Wanted** | One recommended book |
 | **Series → Fill gaps** | The missing books of a linked series, wanted + monitored |
 | **Import lists** (Settings → Import, Hardcover reading lists) | Every list item, re-synced on the Hardcover list sync interval (Settings → General, 24h by default). Whether the items are also marked wanted is the per-list **Download books from this list** checkbox: on (the default) creates them monitored and queues downloads; off catalogues them unmonitored, so you can browse a Want to Read shelf in Bindery and fetch books one at a time. Authors created by a list never pull their back-catalogue in — only the listed books are added. **Sync now** starts the sync in the background and the row reports its progress, so a large shelf isn't cut short by a request timeout |
@@ -329,10 +329,11 @@ Which of those a given book actually came from is on the book page, under
 **Metadata source**. It names the provider, shows the identifier the book is
 bound to with a copy button, and lists any other provider ids the same book is
 known by. That is the thing to check before deciding a book needs re-binding,
-and the id is what to quote in a bug report. Providers whose public page can be
-built from the stored id (OpenLibrary, Google Books) also get a link out;
-Hardcover, DNB, Calibre and Audiobookshelf ids show on their own, because their
-stored ids do not map to a stable public page.
+and the id is what to quote in a bug report. Hover or activate **Links** while
+confirming an Add Book result or in the book header to open trustworthy
+upstream pages for OpenLibrary, Google Books, Hardcover, and DNB records.
+Calibre and Audiobookshelf ids remain visible only under **Metadata source**
+because they do not map to stable public pages.
 
 When metadata is wrong, you have three levels of fix:
 

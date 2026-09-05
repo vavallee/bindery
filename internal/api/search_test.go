@@ -137,6 +137,48 @@ func TestSearchBooks(t *testing.T) {
 	}
 }
 
+func TestSearchBooksIncludesNormalizedProviderISBNs(t *testing.T) {
+	isbn13 := "978-0-441-17271-9"
+	isbn10 := "0-441-17271-7"
+	p := &stubProvider{books: []models.Book{{
+		Title:         "Dune",
+		ProviderISBNs: []string{isbn13, isbn13},
+		Editions:      []models.Edition{{ISBN13: &isbn13, ISBN10: &isbn10}},
+	}}}
+	h := NewSearchHandler(metadata.NewAggregator(p))
+
+	rec := httptest.NewRecorder()
+	h.SearchBooks(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search/book?term=dune", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var got []struct {
+		ISBNs []string `json:"isbns"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 1 || fmt.Sprint(got[0].ISBNs) != "[9780441172719 0441172717]" {
+		t.Fatalf("isbns = %v, want normalized and deduplicated ISBN-13/ISBN-10", got)
+	}
+}
+
+func TestBookSearchResultCapsISBNsAndKeepsQueryFirst(t *testing.T) {
+	providerISBNs := make([]string, maxBookSearchISBNs+5)
+	for i := range providerISBNs {
+		providerISBNs[i] = fmt.Sprintf("978%010d", i)
+	}
+
+	const queriedISBN = "9789999999999"
+	got := newBookSearchResult(models.Book{ProviderISBNs: providerISBNs}, queriedISBN)
+	if len(got.ISBNs) != maxBookSearchISBNs {
+		t.Fatalf("len(isbns) = %d, want cap %d", len(got.ISBNs), maxBookSearchISBNs)
+	}
+	if got.ISBNs[0] != queriedISBN {
+		t.Fatalf("first ISBN = %q, want queried ISBN %q", got.ISBNs[0], queriedISBN)
+	}
+}
+
 // TestSearchBooksEmptyIsArray guards against the nil-slice bug from #1188: a
 // provider that succeeds but returns no rows must serialize as `[]`, not `null`,
 // or the Add Book modal crashes calling `.map()` on a null body.
@@ -164,7 +206,11 @@ func TestSearchBooksEmptyIsArray(t *testing.T) {
 }
 
 func TestLookup_ISBN(t *testing.T) {
-	p := &stubProvider{byISBN: &models.Book{Title: "Hyperion", Description: "A long-enough description to skip the enrichment branch in the aggregator."}}
+	p := &stubProvider{byISBN: &models.Book{
+		Title:         "Hyperion",
+		Description:   "A long-enough description to skip the enrichment branch in the aggregator.",
+		ProviderISBNs: []string{"9780316769488"},
+	}}
 	h := NewSearchHandler(metadata.NewAggregator(p))
 
 	// Neither isbn nor asin → 400 naming both params.
@@ -184,6 +230,15 @@ func TestLookup_ISBN(t *testing.T) {
 	h.Lookup(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book/lookup?isbn=9780553283686", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var lookupResult struct {
+		ISBNs []string `json:"isbns"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&lookupResult); err != nil {
+		t.Fatalf("decode lookup response: %v", err)
+	}
+	if fmt.Sprint(lookupResult.ISBNs) != "[9780553283686 9780316769488]" {
+		t.Fatalf("lookup isbns = %v, want queried ISBN first", lookupResult.ISBNs)
 	}
 
 	// Not found — fresh aggregator so nothing is cached

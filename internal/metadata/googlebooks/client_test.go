@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -63,6 +64,11 @@ func TestSearchBooks_Success(t *testing.T) {
 					Description: "A science fiction novel.",
 					Categories:  []string{"Fiction"},
 					ImageLinks:  &imageLinks{Thumbnail: "http://books.google.com/cover1.jpg"},
+					IndustryIdentifiers: []industryID{
+						{Type: "ISBN_13", Identifier: "9780441172719"},
+						{Type: "OTHER", Identifier: "ignored"},
+						{Type: "ISBN_10", Identifier: "0441172717"},
+					},
 				},
 			},
 			{
@@ -98,6 +104,9 @@ func TestSearchBooks_Success(t *testing.T) {
 	}
 	if books[0].Author == nil || books[0].Author.Name != "Frank Herbert" {
 		t.Errorf("Author: %+v", books[0].Author)
+	}
+	if fmt.Sprint(books[0].ProviderISBNs) != "[9780441172719 0441172717]" {
+		t.Errorf("ProviderISBNs = %v", books[0].ProviderISBNs)
 	}
 }
 

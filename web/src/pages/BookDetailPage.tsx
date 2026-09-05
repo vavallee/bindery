@@ -19,6 +19,7 @@ import { safeHref } from '../util/safeHref'
 import { metadataSourceLink, providerDisplayName, providerFromBookForeignId } from '../util/metadataSource'
 import FixMatchModal from '../components/FixMatchModal'
 import EditBookModal from '../components/EditBookModal'
+import MetadataLinksMenu from '../components/MetadataLinksMenu'
 
 function formatSize(n: number): string {
   if (!n || n <= 0) return ''
@@ -562,6 +563,7 @@ export default function BookDetailPage() {
     }
     return rows
   })()
+  const sourceLinks = identityRows.flatMap(row => row.link ? [row.link] : [])
 
   // Display truth is the file inventory, never the declared media type.
   const rows = fileRows(book)
@@ -704,22 +706,12 @@ export default function BookDetailPage() {
                 </span>
               </span>
             ))}
-            {(() => {
-              const src = metadataSourceLink(book.foreignBookId, 'book')
-              return src ? (
-                <>
-                  <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
-                  <a
-                    href={src.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-emerald-600 dark:text-emerald-400 hover:underline"
-                  >
-                    {t('common.viewOnSource', { source: src.label, defaultValue: 'View on {{source}} ↗' })}
-                  </a>
-                </>
-              ) : null
-            })()}
+            {sourceLinks.length > 0 && (
+              <>
+                <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
+                <MetadataLinksMenu links={sourceLinks} />
+              </>
+            )}
           </div>
 
           {/* Clamped with show more/less, matching AuthorDetailPage. max-w-prose

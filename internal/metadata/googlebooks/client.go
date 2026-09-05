@@ -132,6 +132,11 @@ func (c *Client) volumeToBook(item volumeItem) models.Book {
 	if b.Genres == nil {
 		b.Genres = []string{}
 	}
+	for _, identifier := range vi.IndustryIdentifiers {
+		if identifier.Type == "ISBN_10" || identifier.Type == "ISBN_13" {
+			b.ProviderISBNs = append(b.ProviderISBNs, identifier.Identifier)
+		}
+	}
 	if vi.ImageLinks != nil && vi.ImageLinks.Thumbnail != "" {
 		b.ImageURL = strings.Replace(vi.ImageLinks.Thumbnail, "http://", "https://", 1)
 	}
