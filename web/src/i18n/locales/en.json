@@ -452,7 +452,20 @@
     "removeDeleteFiles": "Also delete downloaded files from disk",
     "removeDeleteFilesHint": "Deletes the data in the download client. For torrents this also stops seeding. Leave unchecked to keep the files.",
     "removeConfirm": "Remove",
-    "removeCancel": "Cancel"
+    "removeCancel": "Cancel",
+    "status": {
+      "downloading": "Downloading",
+      "completed": "Completed",
+      "importPending": "Import Pending",
+      "importing": "Importing",
+      "imported": "Imported",
+      "failed": "Failed",
+      "importBlocked": "Import Blocked",
+      "importExternal": "External Import",
+      "importExternalHint": "Handed off to the external import tool. Bindery is waiting for the external importer to place the file, so this row stays here until it does.",
+      "importHeld": "Held for Pair",
+      "importHeldHint": "Held until the paired format arrives. This book wants both an ebook and an audiobook, and both are imported together."
+    }
   },
   "importHints": {
     "heading": "Already have files on disk?",
