@@ -74,6 +74,11 @@
     "users": "Users",
     "updateAvailable": "Update available"
   },
+  "notFound": {
+    "title": "Page not found",
+    "body": "There is nothing at {{path}}.",
+    "home": "Go to Authors"
+  },
   "manualImport": {
     "title": "Manual Import",
     "description": "Scan a folder of files already on disk, match each book to your library, and import them. A file with no match can be added from a metadata search.",
