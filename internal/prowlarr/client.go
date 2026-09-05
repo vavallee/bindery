@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vavallee/bindery/internal/httpsec"
@@ -62,8 +63,54 @@ func NewWithTimeout(baseURL, apiKey string, timeout time.Duration) *Client {
 		// to the same Prowlarr/Jackett hosts. Without the proxy transport, a
 		// Prowlarr reachable only through the configured egress proxy fails on
 		// the sync/test path while indexer searches succeed (#proxy-bypass).
-		http: &http.Client{Timeout: timeout, Transport: httpsec.DefaultProxyTransport()},
+		http: &http.Client{Timeout: timeout, Transport: sharedGuardedTransport()},
 	}
+}
+
+var (
+	guardedTransportOnce   sync.Once
+	guardedTransportShared http.RoundTripper
+)
+
+// sharedGuardedTransport returns the process-wide Prowlarr transport, built
+// once so every client keeps sharing a single connection pool the way they did
+// when they all held httpsec.DefaultProxyTransport directly. A syncer builds a
+// client per run, and a pool per run is not something to trade for the dial
+// guard.
+//
+// Building it once is safe because ConfigureOutboundProxy runs at startup,
+// before any outbound client is constructed, so the proxy decision baked in
+// here is the final one.
+func sharedGuardedTransport() http.RoundTripper {
+	guardedTransportOnce.Do(func() { guardedTransportShared = guardedTransport() })
+	return guardedTransportShared
+}
+
+// guardedTransport mirrors the image proxy and notifier transports. On the
+// direct path it installs a per-dial SSRF re-validation, closing the DNS-rebind
+// TOCTOU between the up-front ValidateOutboundURL in the Prowlarr handlers
+// (internal/api/prowlarr.go) and the connect that actually happens (#2353).
+//
+// When an outbound proxy is configured the dial targets the operator-trusted
+// proxy rather than the Prowlarr host, so a per-dial check would re-validate
+// the proxy's own address and reject a LAN or loopback proxy. In that shape we
+// return the shared proxy transport unchanged and the up-front validation
+// carries the guard, which is all a rebind check could see past a proxy anyway.
+//
+// PolicyLANLoopback matches what the create and update handlers validate
+// against: a Prowlarr on the LAN, or on the Bindery host itself, is the normal
+// deployment.
+func guardedTransport() http.RoundTripper {
+	base := httpsec.DefaultProxyTransport()
+	if httpsec.ProxyFunc() != nil {
+		return base
+	}
+	if t, ok := base.(*http.Transport); ok {
+		c := t.Clone()
+		c.DialContext = httpsec.NewDialContext(httpsec.PolicyLANLoopback)
+		return c
+	}
+	return &http.Transport{DialContext: httpsec.NewDialContext(httpsec.PolicyLANLoopback)}
 }
 
 // remoteIndexer is the shape of each element in GET /api/v1/indexer.

@@ -46,6 +46,33 @@ func DiscoverMaxRedirects(n int) DiscoverOption {
 	}
 }
 
+// discoverTransport returns the RoundTripper the discovery client should use
+// under policy. It mirrors the image proxy and notifier transports: on the
+// direct path it clones the shared proxy transport and installs a per-dial
+// SSRF re-validation, and when an outbound proxy is configured it hands back
+// the shared transport unchanged, because the dial then targets the
+// operator-trusted proxy rather than the IdP and a per-dial check would reject
+// a LAN or loopback proxy.
+//
+// A nil policy returns nil, which http.Client reads as "use the default
+// transport". That is the documented no-guardrails mode DiscoverPolicy exists
+// to opt out of, used by in-process tests against httptest.NewServer.
+func discoverTransport(policy *httpsec.Policy) http.RoundTripper {
+	if policy == nil {
+		return nil
+	}
+	base := httpsec.DefaultProxyTransport()
+	if httpsec.ProxyFunc() != nil {
+		return base
+	}
+	if t, ok := base.(*http.Transport); ok {
+		c := t.Clone()
+		c.DialContext = httpsec.NewDialContext(*policy)
+		return c
+	}
+	return &http.Transport{DialContext: httpsec.NewDialContext(*policy)}
+}
+
 // DiscoveryDoc is the subset of the OIDC provider metadata document that the
 // Settings UI's "Test discovery" button surfaces. The fields here match the
 // OpenID Connect Discovery 1.0 spec (§4.2) — only the ones admins need to see
@@ -105,6 +132,13 @@ func Discover(ctx context.Context, issuer string, opts ...DiscoverOption) (*Disc
 
 	client := &http.Client{
 		Timeout: 8 * time.Second,
+		// Per-dial SSRF re-validation on the direct path (#2353). The up-front
+		// check in the handler and the per-hop check below both resolve the
+		// hostname; a name that answers with a public address for those and a
+		// private one for the connect would otherwise slip past both. Nil when
+		// no policy is installed, which is http.Client's "use the default
+		// transport" and keeps the in-process tests pointing at loopback.
+		Transport: discoverTransport(cfg.policy),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			// Cap hop count to prevent redirect-loop / blow-up abuse. Default
 			// 5 mirrors Go's stdlib default, but we set it explicitly so the

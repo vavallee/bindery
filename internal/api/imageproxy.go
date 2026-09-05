@@ -95,6 +95,32 @@ func imageProxyTransport() http.RoundTripper {
 	}
 }
 
+// allowedImageContentType reports whether a Content-Type may be proxied back
+// to the browser. It is "any image/* except SVG".
+//
+// SVG is the exception because it is a scripting document, not a picture:
+// /api/v1/images is same-origin with the app, so a proxied SVG is served from
+// Bindery's own origin. Today the CSP's script-src 'self' and the blanket
+// nosniff header (internal/api/securityheaders.go) mean an inline script in
+// one does not execute, so this is defence in depth rather than a live hole
+// (#2355) — but the whole point is that it stops depending on a CSP nobody
+// will remember to re-check the next time it is edited.
+//
+// Nothing legitimate is lost: cover art from every metadata provider is JPEG,
+// PNG or WebP.
+func allowedImageContentType(ct string) bool {
+	// Strip any parameters ("image/svg+xml; charset=utf-8") and normalise, so
+	// the refusal cannot be sidestepped with a charset or unusual casing.
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = ct[:i]
+	}
+	ct = strings.ToLower(strings.TrimSpace(ct))
+	if !strings.HasPrefix(ct, "image/") {
+		return false
+	}
+	return ct != "image/svg+xml" && ct != "image/svg"
+}
+
 // Serve handles GET /api/v1/images?url=<encoded-external-url>.
 func (h *ImageProxyHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	raw := r.URL.Query().Get("url")
@@ -121,6 +147,13 @@ func (h *ImageProxyHandler) Serve(w http.ResponseWriter, r *http.Request) {
 		ct, _ := os.ReadFile(ctFile) //nolint:gosec // #nosec -- path derived from sha256(url), not user input
 		if len(ct) == 0 {
 			ct = []byte("image/jpeg")
+		}
+		// Apply the same content-type rule the fetch path applies, so an entry
+		// cached before the svg refusal landed is not still served from disk
+		// for the rest of its 30-day TTL (#2355).
+		if !allowedImageContentType(string(ct)) {
+			http.Error(w, "upstream response is not an image", http.StatusBadGateway)
+			return
 		}
 		w.Header().Set("Content-Type", string(ct))
 		w.Header().Set("Cache-Control", "public, max-age=2592000")
@@ -151,7 +184,7 @@ func (h *ImageProxyHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ct := resp.Header.Get("Content-Type")
-	if !strings.HasPrefix(ct, "image/") {
+	if !allowedImageContentType(ct) {
 		http.Error(w, "upstream response is not an image", http.StatusBadGateway)
 		return
 	}
