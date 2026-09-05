@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -146,47 +145,10 @@ func ImportCSVAuthors(
 			continue
 		}
 
-		// Resolve via OpenLibrary. Top match wins.
-		matches, err := agg.SearchAuthors(ctx, name)
-		if err != nil {
-			slog.Warn("csv import: search failed", "name", name, "error", err)
-			res.fail(name, "metadata lookup failed: "+err.Error())
+		full := resolveAndCreateAuthor(ctx, "csv", name, row.monitored, authors, settings, agg, res)
+		if full == nil {
 			continue
 		}
-		if len(matches) == 0 {
-			res.fail(name, "no OpenLibrary match")
-			continue
-		}
-		top := matches[0]
-
-		// Skip if already present.
-		existing, _ := authors.GetByAnyForeignID(ctx, top.ForeignID)
-		if existing != nil {
-			res.Skipped++
-			continue
-		}
-
-		// Fetch full metadata (description, image) — soft-fail if it errors.
-		full, ferr := agg.GetAuthor(ctx, top.ForeignID)
-		if ferr != nil || full == nil {
-			full = &top
-		}
-		full.Monitored = row.monitored
-		full.MetadataProvider = "openlibrary"
-		db.ApplyAuthorMonitorDefaults(ctx, settings, full)
-
-		if err := authors.Create(ctx, full); err != nil {
-			if isAuthorCreateConflict(err) {
-				if existing, _ := authors.GetByAnyForeignID(ctx, full.ForeignID); existing != nil {
-					res.Skipped++
-					continue
-				}
-			}
-			res.fail(name, err.Error())
-			continue
-		}
-		res.Added++
-		res.AddedNames = append(res.AddedNames, full.Name)
 		newlyAdded = append(newlyAdded, full)
 	}
 
