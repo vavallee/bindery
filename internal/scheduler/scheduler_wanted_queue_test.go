@@ -181,6 +181,50 @@ func TestWantedSearchQueue_FormatOnDiskNotSearched(t *testing.T) {
 	}
 }
 
+// TestWantedSearchQueue_SingleFormatBookIgnoresReleaseTokens pins the
+// media-type precedence: a book monitored for one format has one slot, so any
+// live download for it blocks that book no matter what the release title says.
+//
+// Both titles below resolve to "ebook" through downloadMediaType while the
+// book is audiobook-only. The first names a PDF booklet and no audio
+// container; the second is Mary Karr's memoir "Lit", whose own title carries
+// the "lit" ebook token. Inferring from the release alone would leave the
+// audiobook slot looking free and grab a second copy of the release that is
+// already downloading.
+func TestWantedSearchQueue_SingleFormatBookIgnoresReleaseTokens(t *testing.T) {
+	cases := []struct {
+		name  string
+		title string
+		qual  string
+	}{
+		{"pdf booklet, no audio container", "Some Author - Audio Only (Unabridged) [64kbps] [PDF booklet]", "pdf"},
+		{"format token inside the book title", "Mary Karr - Lit A Memoir (Unabridged)", "lit"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newWantedQueueFixture(t)
+			book := f.book(tc.name, models.MediaTypeAudiobook)
+			dl := &models.Download{
+				GUID:     "guid-" + tc.name,
+				BookID:   &book.ID,
+				Title:    tc.title,
+				Quality:  tc.qual,
+				Status:   models.StateDownloading,
+				Protocol: "torrent",
+			}
+			if err := f.downloads.Create(f.ctx, dl); err != nil {
+				t.Fatalf("create download: %v", err)
+			}
+			if got := downloadMediaType(dl); got != models.MediaTypeEbook {
+				t.Fatalf("precondition: this case only bites when the release reads as an ebook, got %q", got)
+			}
+			if entry := entryFor(f.queue(), book.ID); entry != nil {
+				t.Errorf("audiobook-only book with its audiobook downloading was queued anyway: %v (duplicate grab)", entry.formats)
+			}
+		})
+	}
+}
+
 // TestSearchAndGrabFormats_SearchesOnlyGivenFormats verifies the sweep's format
 // narrowing actually reaches the indexer search, not just the queue entry.
 func TestSearchAndGrabFormats_SearchesOnlyGivenFormats(t *testing.T) {

@@ -1169,6 +1169,21 @@ func (s *Scheduler) wantedSearchQueue(ctx context.Context) []wantedSearch {
 			continue
 		}
 		held := inFlight[book.ID]
+		// A book monitored for a SINGLE format has only one slot a download can
+		// be filling, whatever container tokens the release title happens to
+		// carry, so the book's own media type settles it and inference is not
+		// consulted at all. This is the precedence importer.downloadFormat
+		// already applies to the same question (#1885). Without it an audiobook
+		// release that names a PDF booklet but no audio container ("(Unabridged)
+		// [64kbps] [PDF]") resolves to "ebook", the audiobook slot reads as
+		// free, and the sweep grabs a second copy of the release that is
+		// already downloading.
+		if book.MediaType == models.MediaTypeEbook || book.MediaType == models.MediaTypeAudiobook {
+			if len(held) > 0 {
+				slog.Debug("skipping wanted search: a grab is already in flight for this single-format book", "book", book.Title)
+				continue
+			}
+		}
 		// An unresolvable format blocks the whole book: guessing wrong here
 		// means grabbing a second release for a format that is already on its
 		// way, which is the bug the in-flight filter exists to prevent.
@@ -1232,6 +1247,12 @@ func (s *Scheduler) inFlightFormatsByBook(ctx context.Context) map[int64]map[str
 // caller block the whole book. The importer is deciding where a file it already
 // has should go; this is deciding whether to spend a grab, and a wrong guess
 // here buys a duplicate release.
+//
+// It reads the download alone and can still be wrong: an audiobook naming only
+// a PDF booklet, or a book whose own title contains a container token ("Lit"),
+// reads as an ebook. wantedSearchQueue therefore consults it only for a
+// media_type=both book, where the release is the sole per-download signal. For
+// a single-format book the book's own media type settles the slot.
 func downloadMediaType(dl *models.Download) string {
 	if dl == nil {
 		return ""
