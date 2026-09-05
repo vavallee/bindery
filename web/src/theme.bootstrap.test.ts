@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+// Vite's ?raw import rather than node:fs, so this needs no @types/node.
+// src/i18n/inlineDefaults.test.ts reads sources the same way.
+import html from '../index.html?raw'
 
 // index.html carries an inline script that sets the `dark` class before the
 // first paint. It exists because useTheme applies the class from an effect,
@@ -9,8 +10,6 @@ import { resolve } from 'node:path'
 // The bootstrap duplicates readInitial()'s rule by necessity: it runs before
 // any module has loaded, so it cannot import it. This test is the thing that
 // stops the two drifting, which is the whole risk of duplicating a rule.
-
-const html = readFileSync(resolve(__dirname, '../index.html'), 'utf8')
 
 function bootstrapSource(): string {
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1])
@@ -38,7 +37,6 @@ function runBootstrap(opts: { saved: string | null; prefersDark: boolean; storag
       return k === 'bindery.theme' ? opts.saved : null
     },
   }
-  // eslint-disable-next-line no-new-func
   new Function('document', 'window', 'localStorage', bootstrapSource())(documentStub, windowStub, localStorageStub)
   return isDark
 }
