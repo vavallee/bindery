@@ -8071,3 +8071,65 @@ func TestFetchAuthorBooks_StillWidensAnUnownedBook(t *testing.T) {
 		t.Errorf("mediaType = %q, want both — an unowned book still merges", books[0].MediaType)
 	}
 }
+
+// TestSaveAlternateNames_OnlyBindsNonLatinAuthor is the regression test for
+// #2268: saveAlternateNames minted every all-ASCII OpenLibrary alternate name
+// as an alias without checking the author's own name, so a latin-script author
+// (a pen name, or a two-author collaboration credit) had unrelated real
+// authors' names filed under it as aliases. Latin aliases must only be saved
+// when the author's primary name is non-latin, mirroring aliasBindsAuthor on
+// the read side.
+func TestSaveAlternateNames_OnlyBindsNonLatinAuthor(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	ctx := context.Background()
+	authorRepo := db.NewAuthorRepo(database)
+	aliasRepo := db.NewAuthorAliasRepo(database)
+	h := &AuthorHandler{authors: authorRepo, aliases: aliasRepo}
+
+	// A latin-script author (here a pen name) whose OpenLibrary "alternate
+	// names" are in fact other real authors. None of these may become aliases.
+	penName := &models.Author{
+		ForeignID:      "ol:kem-antilles",
+		Name:           "Kem Antilles",
+		SortName:       "Antilles, Kem",
+		AlternateNames: []string{"Kevin J. Anderson", "Rebecca Moesta"},
+	}
+	if err := authorRepo.Create(ctx, penName); err != nil {
+		t.Fatalf("create latin-script author: %v", err)
+	}
+	h.saveAlternateNames(ctx, penName)
+	if got, err := aliasRepo.ListByAuthor(ctx, penName.ID); err != nil {
+		t.Fatalf("list aliases for latin-script author: %v", err)
+	} else if len(got) != 0 {
+		t.Fatalf("latin-script author minted %d aliases, want 0: %+v", len(got), got)
+	}
+
+	// A non-latin author still gets its latin alternate names as aliases, so a
+	// latin release name can reach the non-latin primary name (the feature).
+	murakami := &models.Author{
+		ForeignID:      "ol:murakami",
+		Name:           "村上春樹",
+		SortName:       "村上春樹",
+		AlternateNames: []string{"Haruki Murakami", "Murakami"},
+	}
+	if err := authorRepo.Create(ctx, murakami); err != nil {
+		t.Fatalf("create non-latin author: %v", err)
+	}
+	h.saveAlternateNames(ctx, murakami)
+	got, err := aliasRepo.ListByAuthor(ctx, murakami.ID)
+	if err != nil {
+		t.Fatalf("list aliases for non-latin author: %v", err)
+	}
+	names := map[string]bool{}
+	for _, a := range got {
+		names[a.Name] = true
+	}
+	if len(got) != 2 || !names["Haruki Murakami"] || !names["Murakami"] {
+		t.Fatalf("non-latin author aliases = %+v, want exactly [Haruki Murakami, Murakami] (feature regressed)", got)
+	}
+}
