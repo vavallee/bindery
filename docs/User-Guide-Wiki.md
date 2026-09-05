@@ -180,6 +180,28 @@ still created and still marked wanted, so the Wanted page is complete when
 you come back to it. Searches also fire when an author is added
 ("Search for books on add") and when a book flips to wanted.
 
+**Daily query limits.** A sweep searches every wanted book against every
+enabled indexer back to back, so on a large library it can be thousands of
+requests in one burst. Private trackers with a daily API allowance do not
+appreciate that, and an allowance spent by Bindery is an allowance your other
+services cannot use. Set a **Daily query limit** on the indexer in Settings →
+Indexers and Bindery stops searching it once it has been sent that many requests
+in the last 24 hours, then picks up again as the oldest ones fall out of the
+window. Requests are counted in hourly blocks, so capacity returns an hour at a
+time rather than all at once, and a block is released once it is a full hour
+past the window: 1000 requests spent at 09:30 today free up at 10:00 tomorrow,
+not 09:30. Erring that way means the limit binds slightly early rather than
+slightly late, which is the safe direction when the allowance is not Bindery's
+to overspend. Leave it blank for no limit, which is what every indexer starts
+with. The number counts requests rather than books, because one book costs
+between one and eight depending on how far the search has to fall back from a
+structured query to a plain text one. The Indexers tab shows how much of the
+limit is spent, a capped indexer is listed as skipped with the reason in the
+search details panel, and the **Test** button is exempt so it still works when
+you are trying to diagnose a quiet indexer. Raising the search interval is not
+an alternative: it changes how often the burst happens, not how big one burst
+is.
+
 **Decision.** Each release is checked against your quality profile (allowed
 formats, cutoff), delay profile, blocklist, size limits, and language filter.
 On indexers marked *freeleech only*, non-freeleech releases are not discarded

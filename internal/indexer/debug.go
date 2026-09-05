@@ -127,19 +127,47 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 			mu.Unlock()
 			continue
 		}
+		// Same treatment for an indexer that has spent its daily query cap
+		// (#2312): reported as skipped with the reason rather than silently
+		// dropped, so the panel says why nothing came back from it.
+		if reason, held := s.quotaHold(ctx, idx); held {
+			entry.Skipped = true
+			entry.SkipReason = reason
+			mu.Lock()
+			perIdx = append(perIdx, entry)
+			mu.Unlock()
+			continue
+		}
 
 		wg.Add(1)
 		go func(idx models.Indexer, entry IndexerDebug) {
 			defer wg.Done()
+			defer s.flushQuota(ctx, idx, false)
 			start := time.Now()
 
 			client := s.makeClient(idx.URL, idx.APIKey)
 			cats := filterCategoriesForMedia(idx.Categories, c.MediaType, idx.IncludeParentCategories)
 			entry.Categories = cats
 
-			hits, err := client.BookSearch(ctx, c.Title, c.Author, cats)
+			qctx := newznab.WithQueryBudget(ctx, s.quotaBudget(idx))
+			hits, err := client.BookSearch(qctx, c.Title, c.Author, cats)
 			entry.DurationMs = time.Since(start).Milliseconds()
 			if err != nil {
+				// Running out of budget part way through the tier cascade is
+				// our own doing, not a refusal by the indexer, so it is
+				// recorded as a skip and kept away from the health store and
+				// the cooldown. HardFailures excludes skipped entries, which
+				// is what stops a capped indexer being counted against the
+				// grab as a failed one.
+				if budgetExhausted(err) {
+					s.flushQuota(ctx, idx, true)
+					entry.Skipped = true
+					entry.SkipReason = "daily query cap reached mid-search"
+					mu.Lock()
+					perIdx = append(perIdx, entry)
+					mu.Unlock()
+					return
+				}
 				entry.Error = err.Error()
 				s.noteIndexerError(idx, err)
 				s.health.recordFailure(ctx, idx, err)

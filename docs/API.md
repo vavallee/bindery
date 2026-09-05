@@ -172,6 +172,14 @@ POST   /api/v1/rootfolder                         add a new root
 DELETE /api/v1/rootfolder/{id}                    remove
 ```
 
+#### Per-indexer daily query cap
+
+`dailyQueryLimit` on an indexer caps how many requests Bindery will send it in a
+rolling 24 hours (#2312). Omitted, `null` and `0` all mean no cap. A negative
+value is rejected with 400. `GET /indexer` and `GET /indexer/{id}` also return
+`dailyQueriesUsed` on capped indexers, which is a display figure summed from the
+stored hourly buckets and lags the live tally by up to one flush interval.
+
 #### Indexer and Prowlarr API keys are write-only
 
 Indexer and Prowlarr responses never carry the stored credential. Every

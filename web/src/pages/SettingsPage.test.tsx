@@ -1420,6 +1420,7 @@ describe('SettingsPage', () => {
         enabled: true,
         seedRatio: null,
         freeleechOnly: false,
+        dailyQueryLimit: null,
       })
     })
     expect(await screen.findByText('SceneNZBs')).toBeInTheDocument()
@@ -1450,6 +1451,7 @@ describe('SettingsPage', () => {
         includeParentCategories: false,
         seedRatio: null,
         freeleechOnly: false,
+        dailyQueryLimit: null,
       })
     })
     expect(await screen.findByText('DrunkenSlug')).toBeInTheDocument()
@@ -1507,6 +1509,76 @@ describe('SettingsPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
     expect(screen.getByLabelText('settings.indexers.form.seedRatioUnlimited')).toBeChecked()
+  })
+
+  it('saves a per-indexer daily query limit', async () => {
+    const indexer = makeIndexer({ id: 21, name: 'CappedIdx' })
+    renderSettings({ indexers: [indexer] })
+    await openIndexersTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
+    fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.dailyQueryLimitPlaceholder'), { target: { value: '1000' } })
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
+
+    await waitFor(() => {
+      expect(api.updateIndexer).toHaveBeenCalledWith(21, expect.objectContaining({ dailyQueryLimit: 1000 }))
+    })
+  })
+
+  it('clears a daily query limit back to unlimited', async () => {
+    const indexer = makeIndexer({ id: 22, name: 'UncapMe', dailyQueryLimit: 500 })
+    renderSettings({ indexers: [indexer] })
+    await openIndexersTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
+    const field = screen.getByPlaceholderText('settings.indexers.form.dailyQueryLimitPlaceholder')
+    expect(field).toHaveValue(500)
+    fireEvent.change(field, { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
+
+    await waitFor(() => {
+      expect(api.updateIndexer).toHaveBeenCalledWith(22, expect.objectContaining({ dailyQueryLimit: null }))
+    })
+  })
+
+  it('shows daily query usage on a capped indexer, and says so once the cap is reached', async () => {
+    renderSettings({
+      indexers: [
+        makeIndexer({ id: 23, name: 'PartlySpent', dailyQueryLimit: 1000, dailyQueriesUsed: 412 }),
+        makeIndexer({ id: 24, name: 'FullySpent', dailyQueryLimit: 300, dailyQueriesUsed: 300 }),
+        makeIndexer({ id: 25, name: 'Uncapped' }),
+      ],
+    })
+    await openIndexersTab()
+
+    expect(await screen.findByText('settings.indexers.quotaUsage')).toBeInTheDocument()
+    // The i18n mock returns the key, so the interpolated numbers are not
+    // visible here. What is worth pinning is the styling difference: the
+    // reached row is amber, the partly spent one is not, because a capped
+    // indexer that looks idle is the failure this line exists to prevent.
+    const reached = screen.getByText('settings.indexers.quotaReached')
+    expect(reached.parentElement?.className).toContain('amber')
+    expect(screen.getByText('settings.indexers.quotaUsage').parentElement?.className).not.toContain('amber')
+    // One usage line and one reached line, so the uncapped indexer rendered
+    // neither rather than "0 of 0".
+    expect(screen.getAllByText(/settings\.indexers\.quota/)).toHaveLength(2)
+  })
+
+  it('rounds a fractional daily query limit down instead of silently keeping the old one', async () => {
+    const indexer = makeIndexer({ id: 26, name: 'FractionIdx', dailyQueryLimit: 500 })
+    renderSettings({ indexers: [indexer] })
+    await openIndexersTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
+    const field = screen.getByPlaceholderText('settings.indexers.form.dailyQueryLimitPlaceholder')
+    fireEvent.change(field, { target: { value: '1.5' } })
+    fireEvent.blur(field)
+    expect(field).toHaveValue(1)
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
+
+    await waitFor(() => {
+      expect(api.updateIndexer).toHaveBeenCalledWith(26, expect.objectContaining({ dailyQueryLimit: 1 }))
+    })
   })
 
   it('saves the freeleech-only auto-grab toggle', async () => {

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, Indexer, IndexerTestResult, ProwlarrInstance } from '../../api/client'
 // client.ts re-exports types only, so the helper comes from its own module.
-import { indexerNeedsAttention } from '../../api/indexers'
+import { indexerNeedsAttention, indexerQueryCap } from '../../api/indexers'
 import { inputCls } from './formStyles'
 import { parseCats, parsePriority } from './helpers'
 import Toggle from './Toggle'
@@ -87,6 +87,56 @@ function SeedRatioField({ value, onChange, source }: { value: number | null | un
         <p className="text-xs text-amber-600 dark:text-amber-500 mt-1">{t('settings.indexers.form.seedRatioFromProwlarr')}</p>
       )}
       <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.seedRatioHint')}</p>
+    </div>
+  )
+}
+
+// DailyQueryLimitField caps how many requests Bindery sends this indexer in a
+// rolling 24 hours (#2312). Blank means no cap, which is what every indexer had
+// before the field existed.
+//
+// It keeps a text mirror of the numeric input for the same reason
+// SeedRatioField does: parsing on every keystroke would clobber a partially
+// typed number.
+function DailyQueryLimitField({ value, onChange }: { value: number | null | undefined; onChange: (v: number | null) => void }) {
+  const { t } = useTranslation()
+  const [text, setText] = useState(value != null && value > 0 ? String(value) : '')
+
+  // A request is not divisible, so a typed 1.5 is rounded down rather than
+  // ignored. Ignoring it left the field showing 1.5 while the state still held
+  // the old value, and Save then wrote the old value with no feedback.
+  const handleText = (raw: string) => {
+    setText(raw)
+    if (raw.trim() === '') {
+      onChange(null)
+      return
+    }
+    const n = Number(raw)
+    if (Number.isFinite(n) && n >= 0) onChange(Math.floor(n))
+  }
+
+  // Settle the visible text onto what will actually be saved, so the field
+  // never disagrees with the value behind it.
+  const normalise = () => {
+    if (text.trim() === '') return
+    const n = Number(text)
+    if (Number.isFinite(n) && n >= 0) setText(String(Math.floor(n)))
+  }
+
+  return (
+    <div>
+      <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.indexers.form.dailyQueryLimit')}</label>
+      <input
+        type="number"
+        min="0"
+        step="1"
+        value={text}
+        onChange={e => handleText(e.target.value)}
+        onBlur={normalise}
+        placeholder={t('settings.indexers.form.dailyQueryLimitPlaceholder')}
+        className={inputCls}
+      />
+      <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.dailyQueryLimitHint')}</p>
     </div>
   )
 }
@@ -208,6 +258,32 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
                   )}
                 </div>
               </div>
+              {/* How much of the daily query cap is spent (#2312). Only
+                  rendered for indexers that have one, and amber once the cap
+                  is reached, because from that point Bindery is skipping the
+                  indexer entirely and the row should say so rather than look
+                  idle. */}
+              {(() => {
+                const cap = indexerQueryCap(idx)
+                if (!cap) return null
+                return (
+                  <div
+                    role="status"
+                    className={`mt-2 px-3 py-2 rounded text-xs flex items-center gap-2 ${
+                      cap.reached
+                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
+                        : 'text-slate-500 dark:text-zinc-500'
+                    }`}
+                  >
+                    {cap.reached && <span className="inline-block w-2 h-2 rounded-full flex-shrink-0 bg-amber-500" />}
+                    <span>
+                      {cap.reached
+                        ? t('settings.indexers.quotaReached', { limit: cap.limit })
+                        : t('settings.indexers.quotaUsage', { used: cap.used, limit: cap.limit })}
+                    </span>
+                  </div>
+                )
+              })()}
               {/* Stored health from the last real search (#1935). Unlike the
                   Test result below it survives a reload, so a suspended
                   account or a revoked key is visible without anyone pressing
@@ -394,12 +470,13 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
   const [priority, setPriority] = useState(String(indexer.priority ?? 0))
   const [seedRatio, setSeedRatio] = useState<number | null>(indexer.seedRatio ?? null)
   const [freeleechOnly, setFreeleechOnly] = useState(indexer.freeleechOnly ?? false)
+  const [dailyQueryLimit, setDailyQueryLimit] = useState<number | null>(indexer.dailyQueryLimit ?? null)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<IndexerTestResult | null>(null)
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const submit = async () => {
-    const payload: Partial<Indexer> = { ...indexer, name, type, url, categories: parseCats(categories), includeParentCategories, priority: parsePriority(priority), seedRatio, freeleechOnly }
+    const payload: Partial<Indexer> = { ...indexer, name, type, url, categories: parseCats(categories), includeParentCategories, priority: parsePriority(priority), seedRatio, freeleechOnly, dailyQueryLimit }
     delete payload.apiKey
     if (apiKey) payload.apiKey = apiKey
     const updated = await api.updateIndexer(indexer.id, payload)
@@ -464,6 +541,7 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
       </div>
       <SeedRatioField value={seedRatio} onChange={setSeedRatio} source={indexer.seedRatioSource} />
       <FreeleechOnlyField value={freeleechOnly} onChange={setFreeleechOnly} />
+      <DailyQueryLimitField value={dailyQueryLimit} onChange={setDailyQueryLimit} />
       {testResult && <IndexerTestResultBanner r={testResult} />}
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">{t('common.cancel')}</button>
@@ -485,12 +563,13 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
   const [priority, setPriority] = useState('0')
   const [seedRatio, setSeedRatio] = useState<number | null>(null)
   const [freeleechOnly, setFreeleechOnly] = useState(false)
+  const [dailyQueryLimit, setDailyQueryLimit] = useState<number | null>(null)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<IndexerTestResult | null>(null)
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const submit = async () => {
-    const idx = await api.addIndexer({ name, url, apiKey, type, categories: parseCats(categories), includeParentCategories, priority: parsePriority(priority), enabled: true, seedRatio, freeleechOnly })
+    const idx = await api.addIndexer({ name, url, apiKey, type, categories: parseCats(categories), includeParentCategories, priority: parsePriority(priority), enabled: true, seedRatio, freeleechOnly, dailyQueryLimit })
     onAdded(idx)
   }
 
@@ -544,6 +623,7 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
       </div>
       <SeedRatioField value={seedRatio} onChange={setSeedRatio} />
       <FreeleechOnlyField value={freeleechOnly} onChange={setFreeleechOnly} />
+      <DailyQueryLimitField value={dailyQueryLimit} onChange={setDailyQueryLimit} />
       {testResult && <IndexerTestResultBanner r={testResult} />}
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">{t('common.cancel')}</button>
