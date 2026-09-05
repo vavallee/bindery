@@ -806,6 +806,7 @@
       },
       "apiKeys": "External API Keys",
       "googleBooksKey": "Google Books API Key",
+      "googleBooksKeyHiddenPlaceholder": "Saved key is hidden. Enter a new key to replace it.",
       "storage": "Storage",
       "storageHint": "Paths Bindery reads from and writes to. Configure via environment variables (or your config file) before starting the container; the running process captures them at startup.",
       "downloadDir": "Download directory",
