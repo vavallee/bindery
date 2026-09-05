@@ -3447,6 +3447,10 @@ func (s *Scanner) writeScanError(ctx context.Context, message string) {
 
 // writeScanResult persists the scan summary to the settings table under
 // "library.lastScan" so the UI can surface the result without polling logs.
+// The key is written as a string literal to avoid an import cycle; it is
+// api.SettingLibraryLastScan on the read side, where the settings endpoints
+// reserve it for admins because the blob carries absolute paths (#2361). Keep
+// the two spellings in sync.
 func (s *Scanner) writeScanResult(ctx context.Context, filesFound, reconciled, unmatched, alreadyTracked, tagReadFailed int, unmatchedFiles []unmatchedFile) {
 	s.writeScanResultWithError(ctx, filesFound, reconciled, unmatched, alreadyTracked, tagReadFailed, unmatchedFiles, "")
 }

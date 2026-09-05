@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/vavallee/bindery/internal/abs"
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/httpsec"
@@ -132,6 +133,15 @@ const (
 	SettingImportDropPairGatingTimeoutHours = "import.drop_pair_gating_timeout_hours"
 )
 
+// SettingLibraryLastScan is the KV key holding the JSON summary of the most
+// recent library scan (#965). The blob carries library_dir, audiobook_dir,
+// scanned_paths and the absolute path of every unmatched file, so it is one of
+// the most path-dense values in the settings table and isAdminOnlySetting
+// reserves it. The scanner writes the key as a string literal to avoid an
+// import cycle; keep the literal in internal/importer in sync with this
+// constant.
+const SettingLibraryLastScan = "library.lastScan"
+
 // SettingSearchInterval is the KV key for the wanted-book search cadence.
 // Value is a Go duration string (e.g. "12h", "24h"). Empty or unset falls
 // back to the scheduler's defaultSearchInterval (12h). Takes effect on restart.
@@ -192,9 +202,14 @@ func NewSettingsHandler(settings *db.SettingsRepo) *SettingsHandler {
 // isSecretSetting reports whether a settings key holds sensitive material
 // that must not leak through the generic settings endpoints. Reads on
 // /api/v1/setting and /api/v1/setting/{key} are available to every
-// authenticated user (the dedicated /auth/* endpoints handle admin-only
-// secret config), so any new sensitive key must either be added to the
-// explicit list below or match one of the suffix/prefix patterns.
+// authenticated user for keys that isAdminOnlySetting does not reserve (the
+// dedicated /auth/* endpoints handle admin-only secret config), so any new
+// sensitive key must either be added to the explicit list below or match one
+// of the suffix/prefix patterns.
+//
+// This is the stricter of the two classifiers: a secret is withheld from
+// admins too. isAdminOnlySetting treats every secret as admin only, so adding
+// a key here also removes it from a non-admin's reach without a second edit.
 //
 // Design choice: hybrid allowlist-by-pattern + explicit denylist for one-offs.
 // A pure enumerated denylist drifts — every new `*.api_key`, `*.api_token`,
@@ -269,24 +284,105 @@ func isWritableSecretSetting(key string) bool {
 		key == LegacySettingGoogleBooksAPIKey
 }
 
+// isAdminOnlySetting reports whether a settings key may only be read by an
+// admin. It is the read-side counterpart of the auth.RequireAdmin gate that
+// already guards PUT and DELETE on /api/v1/setting/{key}: after #2361 an
+// account that cannot write one of these keys cannot read it either.
+//
+// Relationship to isSecretSetting, which #2361 warns must not drift out of
+// agreement with this function: every secret is admin only by construction,
+// because the first thing here is a delegation to isSecretSetting. The two
+// cannot disagree about whether a key is sensitive, only about how far the
+// hiding goes.
+//
+//   - A secret is hidden from everybody, admins included. Its value has no
+//     reason to travel back to a browser at all, so List omits it and Get 404s.
+//   - An admin only key is hidden from non admins by the same two shapes and
+//     returned intact to an admin, because the Settings screens that own these
+//     keys have to render the stored value for the operator to edit it.
+//
+// Boundary: server filesystem paths are in. GET /system/storage has been admin
+// gated since #1183 on the grounds that it "reveals server filesystem layout",
+// and these keys carry that same information class through an endpoint every
+// authenticated role could read, which is the asymmetry #2361 reports. An OPDS
+// only reader account could ask a stock install where its Calibre library
+// lives on disk.
+//
+// Deliberately out of scope for now: indexer and provider hostnames, and the
+// Audiobookshelf and Calibre plugin base URLs. They are a real disclosure too,
+// but a narrower and less actionable one than an absolute server path, and
+// widening the classifier to cover them wants its own pass over what a non
+// admin screen legitimately needs. #2361 tracks the wider question, including
+// the allowlist inversion that would settle it properly.
+func isAdminOnlySetting(key string) bool {
+	// Every secret is admin only. Stated as a delegation rather than by
+	// re-listing the keys so the two classifiers cannot drift apart: a key
+	// added to isSecretSetting is admin only the same day.
+	if isSecretSetting(key) {
+		return true
+	}
+	// Non secret keys whose values are absolute paths on the server, prefix
+	// maps built out of them, or a blob containing both. The issue names the
+	// first four; the two remaps and the scan summary are the same
+	// disclosure in a different shape and are included rather than left for
+	// the next audit to find.
+	//
+	// SettingLibraryLastScan is closed here only as far as this endpoint
+	// reaches: GET /api/v1/library/scan/status serves the same blob and is
+	// not admin gated. That is a separate endpoint with its own callers, so
+	// it is reported on #2361 rather than changed here.
+	switch key {
+	case SettingCalibreLibraryPath,
+		SettingCalibreBinaryPath,
+		SettingImportDropFolder,
+		SettingCWAIngestPath,
+		SettingCalibrePushPathRemap,
+		SettingABSPathRemap,
+		SettingLibraryLastScan:
+		return true
+	}
+	return false
+}
+
+// callerIsAdmin reports whether the request carries the admin role, read from
+// the same context value auth.RequireAdmin consults so the read gate and the
+// write gate can never diverge. API key and trusted local requests are stamped
+// admin by auth.Middleware, so machine to machine integrations keep seeing the
+// full settings list.
+func callerIsAdmin(r *http.Request) bool {
+	return auth.UserRoleFromContext(r.Context()) == "admin"
+}
+
 func (h *SettingsHandler) List(w http.ResponseWriter, r *http.Request) {
 	settings, err := h.settings.List(r.Context())
 	if err != nil {
 		writeServerError(w, r, err)
 		return
 	}
+	admin := callerIsAdmin(r)
 	filtered := make([]models.Setting, 0, len(settings))
 	for _, s := range settings {
-		if !isSecretSetting(s.Key) {
-			filtered = append(filtered, s)
+		// Secrets are dropped for everyone; admin only keys are dropped for
+		// non admins. Same omit-the-entry shape in both cases, so a caller
+		// cannot tell "hidden from you" from "never set" and no third
+		// response shape enters the API.
+		if isSecretSetting(s.Key) {
+			continue
 		}
+		if !admin && isAdminOnlySetting(s.Key) {
+			continue
+		}
+		filtered = append(filtered, s)
 	}
 	writeJSON(w, http.StatusOK, filtered)
 }
 
 func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	key := chi.URLParam(r, "key")
-	if isSecretSetting(key) {
+	// Mirrors List: a secret 404s for everyone, an admin only key 404s for a
+	// non admin. Matching the existing secret response rather than inventing
+	// an empty-value variant keeps the endpoint down to two outcomes.
+	if isSecretSetting(key) || (!callerIsAdmin(r) && isAdminOnlySetting(key)) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "setting not found"})
 		return
 	}
