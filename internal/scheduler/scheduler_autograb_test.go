@@ -136,6 +136,9 @@ func funcBody(t *testing.T, src, decl string) (body string, firstLine, lastLine 
 // either needs no guard of its own and this guard stays quiet. A new caller of
 // searchAndGrabFormat, or a searchAndGrabFormats that stops checking, fails
 // here.
+//
+// It also carries the per-sweep snapshot the wanted scan loads once (#2370),
+// which changes its signature but not the chokepoint property this guards.
 func TestAutoGrabChokepointHolds(t *testing.T) {
 	const mainFile = "scheduler.go"
 	raw, err := os.ReadFile(filepath.Join(schedulerSourceDir, mainFile))

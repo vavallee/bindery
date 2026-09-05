@@ -593,7 +593,7 @@ func (s *Scheduler) Stop() {
 // It is the same logic the 12-hour wanted-scan uses, promoted so on-add and
 // status-transition hooks can trigger a search without waiting for the next run.
 func (s *Scheduler) SearchAndGrabBook(ctx context.Context, book models.Book) {
-	s.searchAndGrabFormats(ctx, book, neededFormats(&book))
+	s.searchAndGrabFormats(ctx, book, neededFormats(&book), nil)
 }
 
 // neededFormats returns the media types a book still wants and does not have
@@ -613,7 +613,10 @@ func neededFormats(book *models.Book) []string {
 // searchAndGrabFormats runs the search for an explicit list of media types.
 // SearchAndGrabBook passes everything the book needs; the wanted sweep passes
 // only the formats that are not already being downloaded.
-func (s *Scheduler) searchAndGrabFormats(ctx context.Context, book models.Book, formats []string) {
+// The sweep snapshot is threaded through as well: sweep is nil for every
+// one-off caller, which makes each invariant load happen lazily exactly as it
+// used to (#2370).
+func (s *Scheduler) searchAndGrabFormats(ctx context.Context, book models.Book, formats []string, sweep *sweepContext) {
 	if len(formats) == 0 {
 		return
 	}
@@ -628,8 +631,133 @@ func (s *Scheduler) searchAndGrabFormats(ctx context.Context, book models.Book, 
 		return
 	}
 	for _, mediaType := range formats {
-		s.searchAndGrabFormat(ctx, book, mediaType)
+		s.searchAndGrabFormat(ctx, book, mediaType, sweep)
 	}
+}
+
+// sweepContext is a snapshot of the tables an automatic search reads that
+// cannot change while one sweep runs. searchWanted loads them once and hands
+// the same snapshot to every book, instead of every book reloading the indexer
+// list, the whole blocklist, the delay profiles and the preferred-language
+// setting for itself. The blocklist grows monotonically, so the old shape cost
+// O(wanted books x blocklist rows) of decoding per tick (#2370).
+//
+// A nil *sweepContext means "no sweep in progress": each value is loaded on
+// demand, which is what SearchAndGrabBook's other callers (the on-add hook, the
+// stall re-search, the API) get, and what keeps a one-off search reading fresh
+// state.
+type sweepContext struct {
+	indexers []models.Indexer
+	// blocklistLoaded distinguishes "the blocklist is empty" from "the
+	// blocklist could not be read", because only the first should still build
+	// the spec. Same distinction the per-book code made with its err check.
+	blocklist       []models.BlocklistEntry
+	blocklistLoaded bool
+	delayProfiles   []models.DelayProfile
+	preferredLang   string
+}
+
+// newSweepContext loads the sweep-invariant tables once. It returns nil when
+// the indexer list cannot be read, which drops the sweep back to the per-book
+// lazy path so each book reports (and fails on) the error the way it always
+// has, rather than the whole sweep silently searching no indexers.
+func (s *Scheduler) newSweepContext(ctx context.Context) *sweepContext {
+	sweep := &sweepContext{}
+	if s.indexers != nil {
+		idxs, err := s.indexers.List(ctx)
+		if err != nil {
+			slog.Error("wanted sweep: failed to list indexers, falling back to a per-book load", "error", err)
+			return nil
+		}
+		sweep.indexers = idxs
+	}
+	if s.blocklist != nil {
+		if entries, err := s.blocklist.List(ctx); err != nil {
+			slog.Warn("wanted sweep: failed to load the blocklist", "error", err)
+		} else {
+			sweep.blocklist = entries
+			sweep.blocklistLoaded = true
+		}
+	}
+	if s.delayProfiles != nil {
+		if profiles, err := s.delayProfiles.List(ctx); err != nil {
+			slog.Warn("wanted sweep: failed to load delay profiles", "error", err)
+		} else {
+			sweep.delayProfiles = profiles
+		}
+	}
+	sweep.preferredLang = s.loadPreferredLanguage(ctx)
+	return sweep
+}
+
+// sweepIndexers returns the indexer list for one search: the sweep snapshot
+// when there is one, a fresh load otherwise.
+func (s *Scheduler) sweepIndexers(ctx context.Context, sweep *sweepContext) ([]models.Indexer, error) {
+	if sweep != nil {
+		return sweep.indexers, nil
+	}
+	if s.indexers == nil {
+		return nil, nil
+	}
+	return s.indexers.List(ctx)
+}
+
+// sweepBlocklist returns the blocklist entries and whether they were readable.
+// A false second value means the blocklist spec must not be built, matching the
+// pre-snapshot behaviour of skipping the spec when the load errored.
+func (s *Scheduler) sweepBlocklist(ctx context.Context, sweep *sweepContext) ([]models.BlocklistEntry, bool) {
+	if sweep != nil {
+		return sweep.blocklist, sweep.blocklistLoaded
+	}
+	if s.blocklist == nil {
+		return nil, false
+	}
+	entries, err := s.blocklist.List(ctx)
+	if err != nil {
+		return nil, false
+	}
+	return entries, true
+}
+
+// sweepDelayProfiles returns the delay profiles for one search.
+func (s *Scheduler) sweepDelayProfiles(ctx context.Context, sweep *sweepContext) []models.DelayProfile {
+	if sweep != nil {
+		return sweep.delayProfiles
+	}
+	if s.delayProfiles == nil {
+		return nil
+	}
+	profiles, err := s.delayProfiles.List(ctx)
+	if err != nil {
+		return nil
+	}
+	return profiles
+}
+
+// sweepPreferredLanguage returns the search.preferredLanguage setting for one
+// search.
+func (s *Scheduler) sweepPreferredLanguage(ctx context.Context, sweep *sweepContext) string {
+	if sweep != nil {
+		return sweep.preferredLang
+	}
+	return s.loadPreferredLanguage(ctx)
+}
+
+// loadPreferredLanguage reads the global search.preferredLanguage setting,
+// falling back to "" (no filter) when it is unset or unreadable.
+func (s *Scheduler) loadPreferredLanguage(ctx context.Context) string {
+	if s.settings == nil {
+		return ""
+	}
+	langSetting, err := s.settings.Get(ctx, "search.preferredLanguage")
+	if err != nil {
+		slog.Warn("failed to load preferred search language", "error", err)
+		return ""
+	}
+	if langSetting == nil {
+		return ""
+	}
+	return langSetting.Value
 }
 
 // autoGrabEnabled reports whether the global autoGrab.enabled kill switch is
@@ -710,25 +838,14 @@ func freeleechOnlyIndexerIDs(idxs []models.Indexer) map[int64]bool {
 
 // searchAndGrabFormat searches for and grabs a specific format of a book.
 // mediaType must be MediaTypeEbook or MediaTypeAudiobook.
-func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, mediaType string) {
-	var idxs []models.Indexer
-	if s.indexers != nil {
-		var err error
-		idxs, err = s.indexers.List(ctx)
-		if err != nil {
-			slog.Error("SearchAndGrabBook: failed to list indexers", "error", err)
-			return
-		}
+func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, mediaType string, sweep *sweepContext) {
+	idxs, err := s.sweepIndexers(ctx, sweep)
+	if err != nil {
+		slog.Error("SearchAndGrabBook: failed to list indexers", "error", err)
+		return
 	}
 
-	lang := ""
-	if s.settings != nil {
-		if langSetting, err := s.settings.Get(ctx, "search.preferredLanguage"); err != nil {
-			slog.Warn("failed to load preferred search language", "error", err)
-		} else if langSetting != nil {
-			lang = langSetting.Value
-		}
-	}
+	lang := s.sweepPreferredLanguage(ctx, sweep)
 
 	authorName := ""
 	var authorAliases []string
@@ -797,10 +914,8 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	}
 
 	var specs []decision.Specification
-	if s.blocklist != nil {
-		if entries, err := s.blocklist.List(ctx); err == nil {
-			specs = append(specs, decision.NewBlocklistedSpec(entries))
-		}
+	if entries, ok := s.sweepBlocklist(ctx, sweep); ok {
+		specs = append(specs, decision.NewBlocklistedSpec(entries))
 	}
 	// Multi-book pack guard (#2276). A download row carries one BookID and the
 	// importer computes one destination from it, so an explicit "Books 1-4"
@@ -823,11 +938,9 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		specs = append(specs, decision.QualityAllowed{Profile: qualityProfile})
 	}
 	var delayProfile *models.DelayProfile
-	if s.delayProfiles != nil {
-		if profiles, err := s.delayProfiles.List(ctx); err == nil && len(profiles) > 0 {
-			delayProfile = &profiles[0]
-			specs = append(specs, decision.DelayProfileSpec{Profile: delayProfile})
-		}
+	if profiles := s.sweepDelayProfiles(ctx, sweep); len(profiles) > 0 {
+		delayProfile = &profiles[0]
+		specs = append(specs, decision.DelayProfileSpec{Profile: delayProfile})
 	}
 	// Per-indexer freeleech-only policy: releases that would cost download
 	// ratio on a flagged indexer are rejected here and parked in
@@ -1108,8 +1221,11 @@ func (s *Scheduler) searchWanted() {
 	if len(searchQueue) == 0 {
 		return
 	}
+	// Load the tables that cannot change during this sweep once, rather than
+	// once per book (#2370).
+	sweep := s.newSweepContext(ctx)
 	concurrency.RunBoundedPaced(ctx, searchQueue, scheduledWantedSearchConcurrency, searchPaceInterval, func(ctx context.Context, w wantedSearch) {
-		s.searchAndGrabFormats(ctx, w.book, w.formats)
+		s.searchAndGrabFormats(ctx, w.book, w.formats, sweep)
 	})
 }
 
@@ -1216,22 +1332,20 @@ func (s *Scheduler) inFlightFormatsByBook(ctx context.Context) map[int64]map[str
 	if s.downloads == nil {
 		return inFlight
 	}
-	for _, st := range inFlightDownloadStates {
-		active, derr := s.downloads.ListByStatus(ctx, st)
-		if derr != nil {
-			slog.Warn("failed to list in-flight downloads", "state", st, "error", derr)
+	// One query over all the in-flight states, not one per state (#2370).
+	active, derr := s.downloads.ListByStatuses(ctx, inFlightDownloadStates...)
+	if derr != nil {
+		slog.Warn("failed to list in-flight downloads", "error", derr)
+	}
+	for i := range active {
+		d := &active[i]
+		if d.BookID == nil {
 			continue
 		}
-		for i := range active {
-			d := &active[i]
-			if d.BookID == nil {
-				continue
-			}
-			if inFlight[*d.BookID] == nil {
-				inFlight[*d.BookID] = make(map[string]bool, 2)
-			}
-			inFlight[*d.BookID][downloadMediaType(d)] = true
+		if inFlight[*d.BookID] == nil {
+			inFlight[*d.BookID] = make(map[string]bool, 2)
 		}
+		inFlight[*d.BookID][downloadMediaType(d)] = true
 	}
 	return inFlight
 }

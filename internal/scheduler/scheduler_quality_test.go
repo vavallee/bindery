@@ -114,7 +114,7 @@ func TestSearchAndGrabFormat_RejectsDisallowedFormat(t *testing.T) {
 	ctx := context.Background()
 	s, downloads, book := qualityFixture(t, true, epubOnly(), "Quality.Book.2024.pdf")
 
-	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook)
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
 
 	rows, err := downloads.List(ctx)
 	if err != nil {
@@ -131,7 +131,7 @@ func TestSearchAndGrabFormat_GrabsAllowedFormat(t *testing.T) {
 	ctx := context.Background()
 	s, downloads, book := qualityFixture(t, true, epubOnly(), "Quality.Book.2024.epub")
 
-	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook)
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
 
 	rows, err := downloads.List(ctx)
 	if err != nil {
@@ -151,7 +151,7 @@ func TestSearchAndGrabFormat_PicksAllowedOverBetterRankedDisallowed(t *testing.T
 	s, downloads, book := qualityFixture(t, true, epubOnly(),
 		"Quality.Book.2024.azw3", "Quality.Book.2024.epub")
 
-	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook)
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
 
 	rows, err := downloads.List(ctx)
 	if err != nil {
@@ -174,7 +174,7 @@ func TestSearchAndGrabFormat_UntaggedReleasePasses(t *testing.T) {
 	ctx := context.Background()
 	s, downloads, book := qualityFixture(t, true, epubOnly(), "Quality Author - Quality Book (2024)")
 
-	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook)
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
 
 	rows, err := downloads.List(ctx)
 	if err != nil {
@@ -191,7 +191,7 @@ func TestSearchAndGrabFormat_NoProfileIsUnfiltered(t *testing.T) {
 	ctx := context.Background()
 	s, downloads, book := qualityFixture(t, false, nil, "Quality.Book.2024.pdf")
 
-	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook)
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
 
 	rows, err := downloads.List(ctx)
 	if err != nil {
@@ -209,7 +209,7 @@ func TestSearchAndGrabFormat_EmptyItemsIsUnfiltered(t *testing.T) {
 	ctx := context.Background()
 	s, downloads, book := qualityFixture(t, true, nil, "Quality.Book.2024.pdf")
 
-	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook)
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
 
 	rows, err := downloads.List(ctx)
 	if err != nil {
@@ -245,7 +245,7 @@ func TestSearchAndGrabFormat_AudiobookProfileDoesNotBlockEbookGrabs(t *testing.T
 	ctx := context.Background()
 	s, downloads, book := qualityFixture(t, true, audiobookOnly(), "Quality.Book.2024.epub")
 
-	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook)
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
 
 	rows, err := downloads.List(ctx)
 	if err != nil {
@@ -264,7 +264,7 @@ func TestSearchAndGrabFormat_AudiobookProfileStillFiltersAudiobooks(t *testing.T
 	ctx := context.Background()
 	s, downloads, book := qualityFixture(t, true, audiobookOnly(), "Quality.Book.2024.m4a")
 
-	s.searchAndGrabFormat(ctx, book, models.MediaTypeAudiobook)
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeAudiobook, nil)
 
 	rows, err := downloads.List(ctx)
 	if err != nil {

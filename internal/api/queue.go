@@ -1002,9 +1002,14 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	dl.Status = models.StateDownloading
 
 	h.recordHistory(ctx, models.HistoryEventGrabbed, req.Title, bookID, map[string]any{
-		"guid":      req.GUID,
-		"size":      req.Size,
-		"indexerId": req.IndexerID,
+		"guid": req.GUID,
+		"size": req.Size,
+		// The resolved id, not req.IndexerID: the signNZBURL host-match
+		// fallback above (#2053) fills it in for callers that omit it, and the
+		// download row already records the resolved value. Recording the
+		// request field instead left history with a null indexer for exactly
+		// the callers the fallback exists to serve (#2368).
+		"indexerId": indexerID,
 	})
 	if h.notif != nil {
 		h.notif.Send(ctx, notifier.EventGrabbed, map[string]any{"title": req.Title, "size": req.Size})

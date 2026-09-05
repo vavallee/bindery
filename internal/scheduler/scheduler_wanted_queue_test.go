@@ -232,7 +232,7 @@ func TestSearchAndGrabFormats_SearchesOnlyGivenFormats(t *testing.T) {
 	sched := &Scheduler{searcher: ss}
 
 	book := models.Book{Title: "The Martian", MediaType: models.MediaTypeBoth}
-	sched.searchAndGrabFormats(context.Background(), book, []string{models.MediaTypeAudiobook})
+	sched.searchAndGrabFormats(context.Background(), book, []string{models.MediaTypeAudiobook}, nil)
 
 	if n := int(ss.calls.Load()); n != 1 {
 		t.Fatalf("expected 1 search call, got %d", n)
