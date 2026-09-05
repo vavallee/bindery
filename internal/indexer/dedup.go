@@ -133,6 +133,18 @@ func CanonicalDedupKey(title string) string {
 	return NormalizeTitleForDedup(StripBracketSuffixes(strings.TrimSpace(title)))
 }
 
+// CanonicalDedupKeyRev is the revision of the normalizer above. The startup
+// backfill in internal/db records it after rewriting books.dedup_key and skips
+// its table scan while the stored value still matches, so the scan only runs
+// on the boot after this function's output changes (#2346).
+//
+// BUMP THIS whenever a change to CanonicalDedupKey, NormalizeTitleForDedup or
+// StripBracketSuffixes can produce a different key for the same title. Missing
+// a bump leaves existing rows on the old key with nothing to correct them,
+// which is the asymmetry #940 and #2042 were both about. Bumping when nothing
+// changed costs one extra table scan, so when in doubt, bump.
+const CanonicalDedupKeyRev = 1
+
 // MainTitleKey is the canonical key of the title with any ": subtitle" tail
 // removed. It is the BLOCKING key: two rows for the same work always share it,
 // including when one side spells out a subtitle the other drops. It is

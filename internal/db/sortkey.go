@@ -45,6 +45,18 @@ func authorSortKey(sortName string) string {
 	return folded
 }
 
+// authorSortKeyRev is the revision of the folder above. backfillAuthorSortKeys
+// records it after rewriting authors.sort_key and name_sort_key, and skips its
+// table scan while the stored value still matches, so the scan only runs on
+// the boot after this function's output changes (#2346).
+//
+// BUMP THIS whenever a change to authorSortKey, newAccentStripper or
+// textutil.FoldNonDecomposableLatin can produce a different key for the same
+// name. Missing a bump leaves existing rows folded by the old rules, which is
+// exactly the out-of-order Authors list #1347 was about. Bumping when nothing
+// changed costs one extra table scan, so when in doubt, bump.
+const authorSortKeyRev = 1
+
 // newAccentStripper builds a transformer that decomposes runes (NFD), removes
 // combining marks (Mn), then recomposes (NFC), folding precomposed accented
 // letters to their base. Constructed PER CALL: transform.Chain returns a
