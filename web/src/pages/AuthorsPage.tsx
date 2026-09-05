@@ -7,6 +7,7 @@ import AddBookModal from '../components/AddBookModal'
 import MergeAuthorsModal from '../components/MergeAuthorsModal'
 import SeriesNameModal from '../components/SeriesNameModal'
 import BulkActionBar from '../components/BulkActionBar'
+import MoreMenu from '../components/MoreMenu'
 import Pagination from '../components/Pagination'
 import { useServerPagination } from '../components/usePagination'
 import ViewToggle from '../components/ViewToggle'
@@ -483,18 +484,15 @@ export default function AuthorsPage() {
                       />
                     </td>
                     <td className="px-3 py-2 text-right whitespace-nowrap">
-                      <button
-                        onClick={() => api.refreshAuthor(author.id).then(load)}
-                        className={`${btn.ghost} ${btnSize.sm} mr-3`}
-                      >
-                        {t('common.refresh')}
-                      </button>
-                      <button
-                        onClick={() => handleDelete(author.id)}
-                        className={`${btn.danger} ${btnSize.sm}`}
-                      >
-                        {t('common.delete')}
-                      </button>
+                      <MoreMenu
+                        label={t('common.moreActions', 'More')}
+                        ariaLabel={t('authors.moreActionsFor', 'More actions for {{name}}', { name: author.authorName })}
+                        buttonClassName={`${btn.ghost} ${btnSize.sm}`}
+                        items={[
+                          { label: t('common.refresh'), onSelect: () => { api.refreshAuthor(author.id).then(load) } },
+                          { label: t('common.delete'), onSelect: () => handleDelete(author.id), danger: true },
+                        ]}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -541,21 +539,15 @@ export default function AuthorsPage() {
                 >
                   {author.monitored ? t('authors.monitored') : t('authors.unmonitored')}
                 </Switch>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => api.refreshAuthor(author.id).then(load)}
-                    className={`${btn.ghost} ${btnSize.sm}`}
-                    title="Refresh metadata"
-                  >
-                    {t('common.refresh')}
-                  </button>
-                  <button
-                    onClick={() => handleDelete(author.id)}
-                    className={`${btn.danger} ${btnSize.sm}`}
-                  >
-                    {t('common.delete')}
-                  </button>
-                </div>
+                <MoreMenu
+                  label={t('common.moreActions', 'More')}
+                  ariaLabel={t('authors.moreActionsFor', 'More actions for {{name}}', { name: author.authorName })}
+                  buttonClassName={`${btn.ghost} ${btnSize.sm}`}
+                  items={[
+                    { label: t('common.refresh'), onSelect: () => { api.refreshAuthor(author.id).then(load) }, title: t('authors.refreshMetadata', 'Refresh metadata') },
+                    { label: t('common.delete'), onSelect: () => handleDelete(author.id), danger: true },
+                  ]}
+                />
               </div>
             </div>
           ))}
