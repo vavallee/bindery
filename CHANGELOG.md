@@ -8,13 +8,13 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 **The second half of the audit, plus the two things Discord asked for.**
 
-Twenty seven changes. Most of them are the rest of the tree scan that produced
-v1.33.4: four more security fixes, a set of hot paths that were redoing work on
-every call, and two controls that had never done anything being taken out of the
-interface rather than left there promising behaviour that did not exist. The two
-features both came from reports: a daily query cap for private trackers, and a
-log line at the end of every automatic search so a silent sweep can be told apart
-from one that never ran.
+Twenty two entries below, from thirty six merged pull requests. Most of them are
+the rest of the tree scan that produced v1.33.4: four more security fixes, a set
+of hot paths that were redoing work on every call, and two controls that had
+never done anything being taken out of the interface rather than left there
+promising behaviour that did not exist. The two features both came from reports:
+a daily query cap for private trackers, and a log line at the end of every
+automatic search so a silent sweep can be told apart from one that never ran.
 
 Two removals change what the API accepts. If you drive Bindery from a script,
 read the Removed section before upgrading.
