@@ -2323,6 +2323,27 @@ func (s *Scanner) SnapshotFinder() *LibrarySnapshot {
 // spell the same title differently: "Enders Game" vs "Ender's Game", "Die
 // Hoehle" vs "Die Höhle", "Der Prozess" vs "Der Prozeß" (#1646). It runs AFTER
 // the comma-suffix inversion, which needs the comma the fold would remove.
+//
+// Why this is not indexer.CanonicalDedupKey, despite the #1648 consolidation
+// that exists so these alphabets stop drifting: the article handling above is
+// deliberate and specific to filesystem names. Library layouts really do carry
+// inverted articles as folder and file names, "Darker Shade of Magic, A" being
+// the case PR #517 was opened for, and Calibre's own sort-title convention
+// produces them by default. CanonicalDedupKey does neither the inversion nor
+// the strip, and must not: it is stored verbatim in books.dedup_key and
+// compared with =, so every side of every comparison has to compute it the
+// same way.
+//
+// That is also the constraint on this function. The output of normalizeTitle
+// MUST NOT be compared against a stored dedup_key, or used to look one up.
+// Stripping the article guarantees a miss on any title that starts with one:
+// "The Fragile Threads of Power" keys as "the fragile threads of power" in the
+// database and normalizes to "fragile threads of power" here. Every caller
+// today (scanner.go titleMatch and the scanBook precompute, lookup.go's exact
+// title check) compares two in-memory strings that it normalized itself, which
+// is the only safe shape. Reach for indexer.CanonicalDedupKey or
+// indexer.MainTitleKey when the other side of the comparison came out of the
+// database.
 func normalizeTitle(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	// Invert comma-suffix form: check ", an" before ", a" to avoid prefix collision.
