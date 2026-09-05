@@ -1227,8 +1227,12 @@ func bestCatalogMatch(local models.SeriesBook, books []metadata.SeriesCatalogBoo
 			// reads "vol 1" as a substring of "vol 13". A local book imported
 			// from ABS or Calibre usually carries no PositionInSeries, so the
 			// SamePosition boost below never fires and nothing else separates
-			// them, which showed the last volume as Present under volume 1's
-			// title and dropped it out of Missing entirely (#2343).
+			// them. Because `score > best.score` keeps the first index on a
+			// tie, the collapse runs toward the low volume: owning Vol. 13
+			// showed catalog Vol. 1 as Present carrying Vol. 13's local
+			// title, while Vol. 13 itself stayed in Missing (#2343). Only
+			// numbers that carry an earlier number as a digit prefix collide
+			// this way, 10 through 19 against 1, 21 against 2, and so on.
 			//
 			// Only on the title path. A foreign-ID match is an explicit
 			// identity and outranks any title heuristic.
