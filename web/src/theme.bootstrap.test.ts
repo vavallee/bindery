@@ -11,11 +11,17 @@ import html from '../index.html?raw'
 // any module has loaded, so it cannot import it. This test is the thing that
 // stops the two drifting, which is the whole risk of duplicating a rule.
 
+const START = '/* theme-bootstrap:start */'
+const END = '/* theme-bootstrap:end */'
+
 function bootstrapSource(): string {
-  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1])
-  const found = scripts.find(s => s.includes('bindery.theme'))
-  if (!found) throw new Error('no inline theme bootstrap found in index.html')
-  return found
+  // Sliced between the two markers rather than matched with an HTML-ish
+  // regexp: the markers are an explicit contract with index.html and there is
+  // no tag parsing to get wrong.
+  const from = html.indexOf(START)
+  const to = html.indexOf(END)
+  if (from < 0 || to < from) throw new Error('no theme bootstrap markers found in index.html')
+  return html.slice(from + START.length, to)
 }
 
 /** Runs the real bootstrap source against a fake document and returns the resulting class state. */

@@ -13,13 +13,16 @@
       // for a frame before flipping (index.css sets html.dark's background).
       // Kept as a plain inline script on purpose: a module script is deferred
       // and would run too late to help. web/src/theme.bootstrap.test.ts asserts
-      // this stays in agreement with readInitial().
+      // this stays in agreement with readInitial(), and slices the source out
+      // of this file between the two markers below, so keep them.
+      /* theme-bootstrap:start */
       try {
         var saved = null
         try { saved = localStorage.getItem('bindery.theme') } catch (e) { /* storage blocked */ }
         var dark = saved === 'dark' || (saved !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches)
         document.documentElement.classList.toggle('dark', dark)
       } catch (e) { /* leave the light default in place */ }
+      /* theme-bootstrap:end */
     </script>
   </head>
   <body>
