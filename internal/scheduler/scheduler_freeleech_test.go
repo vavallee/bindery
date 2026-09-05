@@ -94,7 +94,7 @@ func TestSearchAndGrabFormat_HoldsNonFreeleechForApproval(t *testing.T) {
 		Protocol: "torrent", DownloadVolumeFactor: ratio(1),
 	}})
 
-	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook)
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
 
 	rows, err := downloads.List(ctx)
 	if err != nil {
@@ -126,7 +126,7 @@ func TestSearchAndGrabFormat_GrabsFreeleech(t *testing.T) {
 		Protocol: "torrent", DownloadVolumeFactor: ratio(0),
 	}})
 
-	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook)
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
 
 	rows, err := downloads.List(ctx)
 	if err != nil {
@@ -151,7 +151,7 @@ func TestSearchAndGrabFormat_PolicyOffGrabsNonFreeleech(t *testing.T) {
 		Protocol: "torrent", DownloadVolumeFactor: ratio(1),
 	}})
 
-	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook)
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
 
 	rows, err := downloads.List(ctx)
 	if err != nil {
@@ -173,9 +173,9 @@ func TestSearchAndGrabFormat_HeldReleaseStaysHeldOnResweep(t *testing.T) {
 		Protocol: "torrent", DownloadVolumeFactor: ratio(1),
 	}})
 
-	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook)
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
 	// Second sweep: the pending entry is re-evaluated with the same specs.
-	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook)
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
 
 	rows, err := downloads.List(ctx)
 	if err != nil {
