@@ -469,12 +469,10 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Status != nil {
 		switch *req.Status {
-		case models.BookStatusWanted, models.BookStatusDownloading,
-			models.BookStatusDownloaded, models.BookStatusImported,
-			models.BookStatusSkipped:
+		case models.BookStatusWanted, models.BookStatusImported, models.BookStatusSkipped:
 			book.Status = *req.Status
 		default:
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "status must be one of 'wanted', 'downloading', 'downloaded', 'imported', 'skipped'"})
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "status must be one of 'wanted', 'imported', 'skipped'"})
 			return
 		}
 	}

@@ -272,9 +272,9 @@ func TestGenerateAuthorNew_SkipsNonWantedStatus(t *testing.T) {
 	b := &models.Book{
 		ForeignID:        "OLDOWN",
 		AuthorID:         a.ID,
-		Title:            "Downloaded",
-		SortTitle:        "Downloaded",
-		Status:           models.BookStatusDownloaded,
+		Title:            "Imported",
+		SortTitle:        "Imported",
+		Status:           models.BookStatusImported,
 		MetadataProvider: "openlibrary",
 		Monitored:        true,
 	}

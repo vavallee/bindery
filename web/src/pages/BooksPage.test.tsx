@@ -31,7 +31,6 @@ vi.mock('react-i18next', () => ({
           'Add an author first — books are imported automatically when an author is monitored',
         'books.noMatch': 'No books match your search.',
         'books.statusWanted': 'Wanted',
-        'books.statusDownloading': 'Downloading',
         'books.statusImported': 'Imported',
         'books.statusSkipped': 'Skipped',
         'books.colTitle': 'Title',

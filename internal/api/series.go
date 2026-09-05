@@ -562,14 +562,18 @@ func (h *SeriesHandler) fanOutSeriesSearches(ctx context.Context, books []models
 // queueSeriesBook marks a series book wanted+monitored and returns the
 // reloaded book (the second return value) so the caller can hand it to a
 // bounded indexer fan-out. The boolean reports whether the book was newly
-// queued (false for already-satisfied / in-flight books, which are
-// skipped without touching the DB and without scheduling a search).
+// queued (false for already-satisfied books, which are skipped without
+// touching the DB and without scheduling a search).
 func (h *SeriesHandler) queueSeriesBook(ctx context.Context, b models.Book) (bool, models.Book, error) {
-	// Only act on books that are not already satisfied or in flight. Re-queuing
-	// a book that is downloading or downloaded would reset it to wanted and fire
-	// a second grab for a download already underway.
-	switch b.Status {
-	case models.BookStatusImported, models.BookStatusDownloading, models.BookStatusDownloaded:
+	// Only act on books that are not already satisfied. A book with a grab
+	// already in flight is not distinguishable here: it reads as 'wanted' like
+	// any other unsatisfied book, because download progress lives in the
+	// downloads table and never on books.status (#2374). This has always been
+	// the real behaviour; the status test that claimed to catch in-flight books
+	// could never match. SearchAndGrabBook does not dedupe either, only the
+	// scheduler's wanted sweep does (#2365), so a series fill on a book that is
+	// already downloading can still grab a second release.
+	if b.Status == models.BookStatusImported {
 		return false, models.Book{}, nil
 	}
 	if err := h.books.MarkWantedMonitored(ctx, b.ID); err != nil {

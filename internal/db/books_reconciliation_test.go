@@ -50,11 +50,11 @@ func TestDeleteMetadataOnlyWantedByIDs_RechecksEverySafetyGuard(t *testing.T) {
 	if err := repo.SetExcluded(ctx, excluded.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	downloading := create("OL-downloading", "Downloading", models.BookStatusDownloading)
+	skipped := create("OL-skipped", "Skipped", models.BookStatusSkipped)
 
 	ids := []int64{
 		plain.ID, imported.ID, legacyFile.ID, legacyEbook.ID, legacyAudiobook.ID,
-		trackedFile.ID, excluded.ID, downloading.ID,
+		trackedFile.ID, excluded.ID, skipped.ID,
 	}
 	deleted, err := repo.DeleteMetadataOnlyWantedByIDs(ctx, author.ID, ids)
 	if err != nil {
@@ -67,7 +67,7 @@ func TestDeleteMetadataOnlyWantedByIDs_RechecksEverySafetyGuard(t *testing.T) {
 		t.Fatalf("plain metadata-only Wanted row survived: book=%+v err=%v", got, err)
 	}
 	for _, protected := range []*models.Book{
-		imported, legacyFile, legacyEbook, legacyAudiobook, trackedFile, excluded, downloading,
+		imported, legacyFile, legacyEbook, legacyAudiobook, trackedFile, excluded, skipped,
 	} {
 		if got, err := repo.GetByID(ctx, protected.ID); err != nil || got == nil {
 			t.Errorf("protected book %q was deleted: book=%+v err=%v", protected.Title, got, err)
