@@ -292,3 +292,41 @@ func TestUniqueDir(t *testing.T) {
 		t.Errorf("second collision: got %q want %q", got, want)
 	}
 }
+
+// TestRenamerSortAuthorFolderUnchanged pins the on-disk shape of the
+// {SortAuthor} naming token. authorSortName now delegates to
+// textutil.SortName (#2363); this asserts that delegation did not move a
+// single byte of an existing library's folder names.
+//
+// "Ursula K. Le Guin" is the interesting case: the naive last-token flip
+// produces "Guin, Ursula K. Le", which is wrong as a sort name and right as
+// a regression pin. Every library imported before #2363 has that folder on
+// disk, so a future particle-aware SortName has to be treated as a rename
+// migration rather than a display fix, and this test is what fails first.
+func TestRenamerSortAuthorFolderUnchanged(t *testing.T) {
+	r := NewRenamer("{SortAuthor}/{Title}.{ext}")
+
+	cases := []struct {
+		name string
+		want string
+	}{
+		{"Ursula K. Le Guin", "Guin, Ursula K. Le"},
+		{"Brandon Sanderson", "Sanderson, Brandon"},
+		{"Homer", "Homer"},
+		{"Vincent van Gogh", "Gogh, Vincent van"},
+	}
+
+	for _, tc := range cases {
+		author := &models.Author{Name: tc.name}
+		book := &models.Book{Title: "A Book"}
+
+		got, err := r.DestPath("/lib", author, book, "", "", "in.epub")
+		if err != nil {
+			t.Fatalf("DestPath(%q): %v", tc.name, err)
+		}
+		want := filepath.Join("/lib", tc.want, "A Book.epub")
+		if got != want {
+			t.Errorf("author %q:\n got  %q\n want %q", tc.name, got, want)
+		}
+	}
+}

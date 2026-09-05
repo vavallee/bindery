@@ -1036,16 +1036,10 @@ func firstNonEmpty(a ...string) string {
 }
 
 // sortNameFromFull converts "First Last" → "Last, First" as a last-resort
-// sort key when Calibre doesn't supply one. Matches the helper used
-// elsewhere in the API layer (api.sortName).
+// sort key when Calibre doesn't supply one. Delegates to textutil.SortName so
+// this file cannot drift from every other sort-name producer (#2363).
 func sortNameFromFull(name string) string {
-	fields := strings.Fields(name)
-	if len(fields) < 2 {
-		return name
-	}
-	last := fields[len(fields)-1]
-	rest := strings.Join(fields[:len(fields)-1], " ")
-	return last + ", " + rest
+	return textutil.SortName(name)
 }
 
 func ptrStringIfNonEmpty(s string) *string {
