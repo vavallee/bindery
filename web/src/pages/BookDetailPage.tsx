@@ -7,6 +7,7 @@ import CoverPlaceholder from '../components/CoverPlaceholder'
 import MarkdownDescription from '../components/MarkdownDescription'
 import MoreMenu from '../components/MoreMenu'
 import Section from '../components/Section'
+import Switch from '../components/Switch'
 import { btn, btnSize } from '../components/buttons'
 import MediaBadge from '../components/MediaBadge'
 import { bookStatusBadge } from '../components/bookStatus'
@@ -624,6 +625,17 @@ export default function BookDetailPage() {
                 </span>
               )
             })()}
+            {/* The badge only reports monitoring; changing it meant going back
+                to the Books list and using the bulk action (#2417). No state
+                text next to the switch — the badge already carries it, and the
+                label matches the list's Monitor / Unmonitor wording. */}
+            <Switch
+              checked={book.monitored}
+              onChange={() => saveField({ monitored: !book.monitored })}
+              label={book.monitored ? t('common.unmonitor') : t('common.monitor')}
+              disabled={saving}
+              className="px-1"
+            />
             {book.excluded && (
               <span className="inline-flex items-center px-2 py-0.5 rounded font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">
                 {t('bookDetail.excludedBadge')}
