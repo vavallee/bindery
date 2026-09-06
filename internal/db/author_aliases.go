@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -67,48 +68,121 @@ func (r *AuthorAliasRepo) List(ctx context.Context) ([]models.AuthorAlias, error
 	return out, rows.Err()
 }
 
-// LookupByName returns the canonical author id for the given name, or nil if
-// no alias matches. The comparison is case-insensitive and trimmed so the
-// caller doesn't need to normalise before calling.
-func (r *AuthorAliasRepo) LookupByName(ctx context.Context, name string) (*int64, error) {
-	normalized := strings.TrimSpace(name)
-	if normalized == "" {
+// findAliasesByIdentity returns every alias row whose name is the SAME PERSON
+// as name under the author-identity alphabet (textutil.NormalizeAuthorName,
+// alphabet 2 in internal/textutil/fold.go), oldest row first.
+//
+// The comparison happens in Go, on rows the database hands back unfiltered,
+// for the reason spelled out on AuthorRepo.GetByDNBSyntheticName (#1647): the
+// predicate this replaces was `LOWER(name) = LOWER(?)`, and SQLite's LOWER()
+// folds the 26 ASCII letters and nothing else — in LOWER, in COLLATE NOCASE
+// and in LIKE alike (sqlite.org/datatype3.html). An alias stored as
+// "östergaard" was therefore invisible to a lookup for "Östergaard", and a
+// name arriving decomposed (macOS, and several providers) was invisible to the
+// composed spelling of itself. That is the identity half of #1660; #2447 fixed
+// the search half.
+//
+// It deliberately does NOT narrow the scan with the search_key column #2447
+// added. search_key holds textutil.FoldForSearch, a lossy RECALL key, and
+// using it as a blocking key is only sound if identity-equality IMPLIES
+// search-key equality. It does not: NormalizeAuthorName strips every combining
+// mark, while FoldForSearch is script-aware and keeps the marks that are part
+// of the letter, so "ハード"/"ハート", "Толстой"/"Толстои" and the Hebrew and
+// Arabic pairs are one identity under two search keys. Filtering on it would
+// silently drop true matches — see
+// normdrift.TestSearchKeyIsNotAnAuthorIdentityBlockingKey, which owns the
+// counterexamples. Nothing else in the schema is a sound blocking key either,
+// so this is a table scan; the alias table is small (one row per merged-away
+// name) and no hot path reaches it.
+func findAliasesByIdentity(ctx context.Context, exec dbExecutor, name string) ([]models.AuthorAlias, error) {
+	key := textutil.NormalizeAuthorName(name)
+	if key == "" {
 		return nil, nil
 	}
-	var id int64
-	row := r.db.QueryRowContext(ctx,
-		"SELECT author_id FROM author_aliases WHERE LOWER(name) = LOWER(?)", normalized)
-	err := row.Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
+	rows, err := exec.QueryContext(ctx, `
+		SELECT id, author_id, name, COALESCE(source_ol_id, ''), created_at
+		FROM author_aliases ORDER BY id`)
 	if err != nil {
-		return nil, fmt.Errorf("lookup alias %q: %w", normalized, err)
+		return nil, fmt.Errorf("scan aliases for %q: %w", name, err)
 	}
+	defer rows.Close()
+
+	var out []models.AuthorAlias
+	for rows.Next() {
+		var a models.AuthorAlias
+		if err := rows.Scan(&a.ID, &a.AuthorID, &a.Name, &a.SourceOLID, &a.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan alias: %w", err)
+		}
+		if textutil.NormalizeAuthorName(a.Name) == key {
+			out = append(out, a)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("scan aliases for %q: %w", name, err)
+	}
+	return out, nil
+}
+
+// resolveAliasByIdentity picks the single alias row that identifies name, or
+// nil when nothing matches OR when the matching rows point at two different
+// authors.
+//
+// Returning nil for an ambiguous match is the deliberate part. The rows are
+// evidence that some name identifies one person; when they disagree about
+// which person, there is no answer, and picking whichever row the query
+// planner returned first would bind a book or an import to an author chosen by
+// row order. Create refuses to build that state (see createTx), so it can only
+// arrive from rows written before this check existed, or from a Merge that
+// carried one in — the warning below is how an operator finds them.
+//
+// Among rows that DO agree, an exact-spelling match wins over a folded one and
+// the oldest row wins otherwise, so repeated lookups are stable.
+func resolveAliasByIdentity(ctx context.Context, exec dbExecutor, name string) (*models.AuthorAlias, error) {
+	matches, err := findAliasesByIdentity(ctx, exec, name)
+	if err != nil || len(matches) == 0 {
+		return nil, err
+	}
+	best := &matches[0]
+	for i := range matches {
+		if matches[i].AuthorID != best.AuthorID {
+			slog.Warn("author alias is ambiguous: the same name identifies two authors, so the lookup is refusing to guess",
+				"name", name, "alias", matches[i].Name, "authorID", matches[i].AuthorID,
+				"otherAlias", best.Name, "otherAuthorID", best.AuthorID)
+			return nil, nil
+		}
+		if matches[i].Name == name && best.Name != name {
+			best = &matches[i]
+		}
+	}
+	out := *best
+	return &out, nil
+}
+
+// LookupByName returns the canonical author id for the given name, or nil if
+// no alias matches. The comparison is trimmed and folded through the
+// author-identity alphabet, so the caller doesn't need to normalise before
+// calling: case, punctuation, accents and Unicode form are all handled.
+// Returns nil when the name matches aliases belonging to two different
+// authors (see resolveAliasByIdentity).
+func (r *AuthorAliasRepo) LookupByName(ctx context.Context, name string) (*int64, error) {
+	alias, err := r.GetByName(ctx, name)
+	if err != nil || alias == nil {
+		return nil, err
+	}
+	id := alias.AuthorID
 	return &id, nil
 }
 
 // GetByName returns the whole alias row for the given name, or nil when no
-// alias matches. Same comparison as LookupByName (case-insensitive, trimmed);
-// callers that must weigh an alias's provenance before trusting it need
-// source_ol_id, which LookupByName throws away.
+// alias matches. Same comparison as LookupByName; callers that must weigh an
+// alias's provenance before trusting it need source_ol_id, which LookupByName
+// throws away.
 func (r *AuthorAliasRepo) GetByName(ctx context.Context, name string) (*models.AuthorAlias, error) {
 	normalized := strings.TrimSpace(name)
 	if normalized == "" {
 		return nil, nil
 	}
-	var a models.AuthorAlias
-	row := r.db.QueryRowContext(ctx, `
-		SELECT id, author_id, name, COALESCE(source_ol_id, ''), created_at
-		FROM author_aliases WHERE LOWER(name) = LOWER(?)`, normalized)
-	err := row.Scan(&a.ID, &a.AuthorID, &a.Name, &a.SourceOLID, &a.CreatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get alias %q: %w", normalized, err)
-	}
-	return &a, nil
+	return resolveAliasByIdentity(ctx, r.db, normalized)
 }
 
 // Create inserts an alias row. Idempotent on `name` — a duplicate name for
@@ -125,6 +199,22 @@ func (r *AuthorAliasRepo) createTx(ctx context.Context, exec dbExecutor, a *mode
 	if name == "" {
 		return fmt.Errorf("alias name required")
 	}
+
+	// Look first, insert second. The check used to run only AFTER an
+	// `INSERT OR IGNORE` was ignored, which meant it only ever fired on a
+	// byte-identical name: `name` is UNIQUE under the default BINARY
+	// collation, so "Östergaard" and "östergaard" inserted happily as two
+	// rows and could point at two different authors, which is precisely the
+	// ambiguity the refusal below exists to prevent. Folding the check
+	// through the identity alphabet closes that (#1660).
+	existing, err := findAliasesByIdentity(ctx, exec, name)
+	if err != nil {
+		return fmt.Errorf("create alias %q: %w", name, err)
+	}
+	if bound, err := bindExistingAlias(a, name, existing); err != nil || bound {
+		return err
+	}
+
 	result, err := exec.ExecContext(ctx, `
 		INSERT OR IGNORE INTO author_aliases (author_id, name, search_key, source_ol_id, created_at)
 		VALUES (?, ?, ?, NULLIF(?, ''), ?)`,
@@ -146,19 +236,51 @@ func (r *AuthorAliasRepo) createTx(ctx context.Context, exec dbExecutor, a *mode
 		a.CreatedAt = now
 		return nil
 	}
-	// Row existed — confirm it points at the same author. If not, the caller
-	// is asking us to reassign an alias without going through Merge, which
-	// silently breaks LookupByName for the previous owner.
-	var existingAuthor int64
-	row := exec.QueryRowContext(ctx, "SELECT id, author_id, created_at FROM author_aliases WHERE LOWER(name) = LOWER(?)", name)
-	if err := row.Scan(&a.ID, &existingAuthor, &a.CreatedAt); err != nil {
+	// Ignored despite the check above: another writer inserted the same name
+	// between the two statements. Re-read and apply the same rules.
+	existing, err = findAliasesByIdentity(ctx, exec, name)
+	if err != nil {
 		return fmt.Errorf("read existing alias %q: %w", name, err)
 	}
-	if existingAuthor != a.AuthorID {
-		return fmt.Errorf("alias %q already points at author %d (refusing to reassign to %d)", name, existingAuthor, a.AuthorID)
+	if bound, err := bindExistingAlias(a, name, existing); err != nil || bound {
+		return err
 	}
-	a.Name = name
-	return nil
+	return fmt.Errorf("read existing alias %q: insert was ignored but no row matches", name)
+}
+
+// bindExistingAlias decides what an already-present alias means for a Create.
+// It reports whether a was bound to one of the existing rows (making the
+// Create a no-op), and errors when any of them points at a different author.
+//
+// The refusal is deliberate and predates this change: reassigning an alias
+// outside Merge silently breaks every lookup for its previous owner. What is
+// new is that it now fires on a name that merely IDENTIFIES the same person
+// rather than only on a byte-identical one.
+//
+// A same-author row that is spelled differently is NOT a no-op: it falls
+// through to the insert. The alias table doubles as the register of spellings
+// an indexer might use — the names go out as MatchCriteria.AuthorAliases, and
+// release matching (alphabet 1) expands umlauts where identity strips them, so
+// "Jorg Muller" earns its own row next to "Jörg Müller". Only an exact repeat
+// of a name already on file is idempotent, as before.
+func bindExistingAlias(a *models.AuthorAlias, name string, existing []models.AuthorAlias) (bool, error) {
+	var same *models.AuthorAlias
+	for i := range existing {
+		if existing[i].AuthorID != a.AuthorID {
+			return false, fmt.Errorf("alias %q already points at author %d (refusing to reassign to %d)",
+				name, existing[i].AuthorID, a.AuthorID)
+		}
+		if existing[i].Name == name && same == nil {
+			same = &existing[i]
+		}
+	}
+	if same == nil {
+		return false, nil
+	}
+	a.ID = same.ID
+	a.Name = same.Name
+	a.CreatedAt = same.CreatedAt
+	return true, nil
 }
 
 // Delete removes a single alias row by id.
@@ -252,22 +374,19 @@ func (r *AuthorAliasRepo) Merge(ctx context.Context, sourceID, targetID int64, o
 		return nil, fmt.Errorf("count reparented books: %w", err)
 	}
 
-	// Migrate existing aliases on source to target. Because `name` is UNIQUE,
-	// a collision with a pre-existing alias on target would 2067 us; use
-	// INSERT OR IGNORE semantics via a conditional update.
-	migrateRes, err := tx.ExecContext(ctx, `
-		UPDATE author_aliases SET author_id = ?
-		WHERE author_id = ?
-		  AND NOT EXISTS (
-		    SELECT 1 FROM author_aliases existing
-		    WHERE LOWER(existing.name) = LOWER(author_aliases.name)
-		      AND existing.author_id = ?
-		  )`, targetID, sourceID, targetID)
-	if err != nil {
-		return nil, fmt.Errorf("migrate aliases: %w", err)
-	}
-	if result.AliasesMigrated, err = migrateRes.RowsAffected(); err != nil {
-		return nil, fmt.Errorf("count migrated aliases: %w", err)
+	// Migrate existing aliases on source to target, skipping any name target
+	// already carries. Because `name` is UNIQUE, a collision with a
+	// pre-existing alias on target would 2067 us; and a name target already
+	// holds is already represented, so moving it would leave two rows saying
+	// the same thing.
+	//
+	// The skip used to be a `LOWER(existing.name) = LOWER(...)` subquery,
+	// which folds ASCII only, so a source alias "östergaard" was migrated on
+	// top of target's "Östergaard" and the pair then made every lookup for
+	// that name ambiguous. The comparison now runs in Go through the identity
+	// alphabet, for the reason given on findAliasesByIdentity (#1660).
+	if result.AliasesMigrated, err = migrateAliases(ctx, tx, sourceID, targetID); err != nil {
+		return nil, err
 	}
 
 	// Drop any source aliases that collided with an existing target alias —
@@ -319,6 +438,69 @@ func (r *AuthorAliasRepo) Merge(ctx context.Context, sourceID, targetID int64, o
 		return nil, fmt.Errorf("commit merge: %w", err)
 	}
 	return result, nil
+}
+
+// migrateAliases repoints source's alias rows at target, skipping the ones
+// whose name already identifies the same person as an alias target holds.
+// Returns the number of rows moved. Skipped rows are left for Merge's
+// subsequent blanket delete of source's aliases.
+func migrateAliases(ctx context.Context, tx *sql.Tx, sourceID, targetID int64) (int64, error) {
+	targetAliases, err := listAliasIdentities(ctx, tx, targetID)
+	if err != nil {
+		return 0, fmt.Errorf("migrate aliases: %w", err)
+	}
+	held := make(map[string]struct{}, len(targetAliases))
+	for _, alias := range targetAliases {
+		held[alias.key] = struct{}{}
+	}
+
+	candidates, err := listAliasIdentities(ctx, tx, sourceID)
+	if err != nil {
+		return 0, fmt.Errorf("migrate aliases: %w", err)
+	}
+
+	var migrated int64
+	for _, c := range candidates {
+		// A key already held by target — or by an earlier row in this same
+		// loop, so two source spellings of one name do not both land.
+		if _, dup := held[c.key]; dup {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE author_aliases SET author_id = ? WHERE id = ?", targetID, c.id); err != nil {
+			return 0, fmt.Errorf("migrate aliases: %w", err)
+		}
+		held[c.key] = struct{}{}
+		migrated++
+	}
+	return migrated, nil
+}
+
+// aliasIdentity is an alias row reduced to what the merge needs: its id and
+// the identity key its name folds onto.
+type aliasIdentity struct {
+	id  int64
+	key string
+}
+
+// listAliasIdentities returns authorID's alias rows, oldest first.
+func listAliasIdentities(ctx context.Context, exec dbExecutor, authorID int64) ([]aliasIdentity, error) {
+	rows, err := exec.QueryContext(ctx,
+		"SELECT id, name FROM author_aliases WHERE author_id = ? ORDER BY id", authorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []aliasIdentity
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		out = append(out, aliasIdentity{id: id, key: textutil.NormalizeAuthorName(name)})
+	}
+	return out, rows.Err()
 }
 
 // insertMergeAlias records the source author's name (and optionally its
