@@ -303,7 +303,8 @@ func main() {
 	if s, _ := settingsRepo.Get(ctxBoot, api.SettingMetadataPrimaryProvider); s != nil {
 		configuredPrimary = s.Value
 	}
-	primaryName := resolveMetadataPrimaryProvider(configuredPrimary, api.GetHardcoverAPIToken(ctxBoot, settingsRepo) != "")
+	hardcoverTokenConfigured := api.GetHardcoverAPIToken(ctxBoot, settingsRepo) != ""
+	primaryName := resolveMetadataPrimaryProvider(configuredPrimary, hardcoverTokenConfigured, !cfg.DisableOpenLibrary)
 	var primaryProvider metadata.Provider
 	switch primaryName {
 	case "dnb":
@@ -334,9 +335,11 @@ func main() {
 			slog.Info("hardcover enrichment idle: no api token configured")
 		}
 	}
-	if primaryName != "openlibrary" {
+	if !cfg.DisableOpenLibrary && primaryName != "openlibrary" {
 		enrichers = append(enrichers, olClient)
 		slog.Info("openlibrary enrichment enabled")
+	} else if cfg.DisableOpenLibrary {
+		slog.Info("openlibrary disabled by configuration")
 	}
 	if primaryName != "dnb" {
 		enrichers = append(enrichers, dnbClient)
