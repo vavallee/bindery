@@ -1,5 +1,5 @@
 image:
-  tag: "1.2.0"
+  tag: "sha-a3e793d"
 
 # Log-rate alerting (#1085): page Discord when bindery-dev accumulates
 # WARN/ERROR log entries, so the dev instance acts as a live canary instead
