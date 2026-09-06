@@ -1644,10 +1644,14 @@ func sanitizePath(s string) string {
 
 // authorSortName backs the {SortAuthor} naming token, so its output becomes a
 // folder name on disk. It delegates to textutil.SortName: a private copy here
-// would mean the library layout and the author pages disagree the first time
-// that helper learns about particles ("van", "de", "von"). Any change to the
-// shared helper is a rename of every already-imported author folder, so it is
-// a decision that has to be made in one place (#2363).
+// would mean the library layout and the author pages disagree about the same
+// person, which is what #2363 closed.
+//
+// That helper has since learned about particles, which is the rename #2363
+// anticipated. The decision taken was that new imports use the corrected form
+// and existing folders move only when the user runs a reorganize, the same way
+// every other file move here works. Nothing renames automatically on upgrade.
+// TestRenamerSortAuthorFolder carries the reasoning.
 func authorSortName(name string) string {
 	return textutil.SortName(name)
 }

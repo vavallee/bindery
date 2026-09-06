@@ -25,8 +25,15 @@ func TestLookupAuthorMatch(t *testing.T) {
 		{"", "Nick Lane", false},
 		{"Nick Lane", "", false},
 		{"Andy Weir", "Nick Lane", false},
-		// JaroWinkler fuzzy: slight misspelling still matches
+		// Fuzzy: slight misspelling still matches
 		{"Nck Lane", "Nick Lane", true},
+		// A surname on its own, which the old raw-Jaro-Winkler fallback scored
+		// 0.5758 and refused. It is the commonest thing a release name carries.
+		{"Tolkien", "J.R.R. Tolkien", true},
+		// Two different people who share a forename. The old fallback scored
+		// this 0.8250 and corroborated the download against the wrong book.
+		{"Jane Doe", "Jane Smith", false},
+		{"Christopher Ross", "Christopher Rose", false},
 	}
 	for _, tc := range cases {
 		got := lookupAuthorMatch(tc.parsed, tc.catalogue)

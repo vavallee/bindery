@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -27,7 +26,6 @@ const (
 	reconcileReasonLanguage        = "language_not_allowed"
 	reconcileReasonPartBook        = "part_book"
 	reconcileReasonMissingDate     = "missing_release_date"
-	reconcileReasonPopularity      = "below_minimum_popularity"
 	reconcileReasonPages           = "below_minimum_pages"
 	reconcileReasonISBN            = "missing_isbn"
 	reconcileReasonCatalogueFilter = "catalogue_filter"
@@ -178,7 +176,6 @@ type reconciliationProfile struct {
 	unknownFail     bool
 	skipPartBooks   bool
 	skipMissingDate bool
-	minPopularity   int
 	minPages        int
 	skipMissingISBN bool
 }
@@ -204,7 +201,6 @@ func (h *AuthorHandler) reconciliationProfile(ctx context.Context, author *model
 		unknownFail:     profile.UnknownLanguageBehavior == models.UnknownLanguageFail,
 		skipPartBooks:   profile.SkipPartBooks,
 		skipMissingDate: profile.SkipMissingDate,
-		minPopularity:   profile.MinPopularity,
 		minPages:        profile.MinPages,
 		skipMissingISBN: profile.SkipMissingISBN,
 	}, nil
@@ -417,11 +413,6 @@ func reconciliationRejectReason(work models.Book, normalizedAuthor string, profi
 	}
 	if profile.skipMissingDate && work.ReleaseDate == nil {
 		return reconcileReasonMissingDate, false
-	}
-	hasRatingSignal := work.RatingsCount > 0 || work.AverageRating > 0
-	if profile.minPopularity > 0 && hasRatingSignal && work.RatingsCount < profile.minPopularity &&
-		(work.ReleaseDate == nil || !work.ReleaseDate.After(time.Now())) {
-		return reconcileReasonPopularity, false
 	}
 	if profile.minPages > 0 || profile.skipMissingISBN {
 		if !evidence.known {

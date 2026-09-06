@@ -1402,7 +1402,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// EPUB metadata (reliable) over the release filename (which encodes
 	// author/title/series in inconsistent orders) — issue #1014.
 	if book == nil {
-		if b, a := s.matchBookForDownload(ctx, bookFiles); b != nil {
+		if b, a := s.matchBookForDownload(ctx, bookFiles, dl.Title); b != nil {
 			book = b
 			author = a
 			edition = s.resolveCalibreEdition(ctx, dl, book)
@@ -2372,8 +2372,13 @@ var titleStopwords = map[string]bool{
 	"and": true, "in": true, "to": true, "for": true,
 }
 
-// titleSigTokens returns the significant (2+ char, non-stopword) tokens of a
-// title, reduced through the shared title-comparison alphabet.
+// titleSigTokens returns the significant (long enough, non-stopword) tokens of
+// a title, reduced through the shared title-comparison alphabet.
+//
+// The floor is two BYTES of UTF-8, not two characters, and like the three-byte
+// one in newznab.SigWords that is deliberate: it scales the character
+// requirement by how much a script packs into a character. Do not rewrite it as
+// a rune count; see SigWords for what that would break.
 //
 // This used to keep only [a-z0-9] and treat every other rune as a separator,
 // which quietly destroyed non-ASCII titles: "Die Höhle" tokenised to

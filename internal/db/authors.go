@@ -126,6 +126,18 @@ func escapeLike(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
+// authorSearchRank returns the ORDER BY prefix that ranks a search result set,
+// and the values its placeholders bind. See searchrank.go for the tiers.
+//
+// The name column alone is ranked. An author matched only through an alias
+// therefore lands in the weakest tier, below everyone matched on the name they
+// are filed under — the alias is why they are in the result set at all (#1176),
+// not evidence that they are the best answer.
+func authorSearchRank(folded string) (string, []any) {
+	return searchRankClause("authors.search_key") + "length(authors.search_key), ",
+		searchRankArgs(folded, 1)
+}
+
 // authorSortOrder maps a whitelisted sort key to a fixed ORDER BY clause. The
 // value never contains user input, so it is safe to interpolate.
 //
@@ -200,13 +212,30 @@ func (r *AuthorRepo) ListPageFiltered(ctx context.Context, f AuthorListFilter, l
 		conds = append(conds, "(owner_user_id = ? OR owner_user_id IS NULL)")
 		args = append(args, f.UserID)
 	}
-	if s := strings.TrimSpace(f.Search); s != "" {
+	searchOrder, rankArgs := "", []any(nil)
+	if folded := textutil.FoldForSearch(f.Search); folded != "" {
+		// A query that folds to nothing (all punctuation, or an emoji) leaves
+		// the filter off and returns the whole list, where matching the raw
+		// text used to return nothing. That is the honest answer: the fold is
+		// what defines a searchable character here, so "???" carries no search
+		// terms at all rather than being a term that matches no row.
 		// Match the canonical name OR any of the author's aliases (#1176), so
 		// searching a pen name / AKA (e.g. "Cassandra Clare" stored as an alias
 		// of Holly Black) still surfaces the author that owns it.
-		like := "%" + escapeLike(s) + "%"
-		conds = append(conds, "(name LIKE ? ESCAPE '\\' COLLATE NOCASE OR id IN (SELECT author_id FROM author_aliases WHERE name LIKE ? ESCAPE '\\' COLLATE NOCASE))")
-		args = append(args, like, like)
+		//
+		// Both sides are folded by textutil.FoldForSearch. The previous
+		// `LIKE ? COLLATE NOCASE` against the raw name folded ASCII only, so
+		// "ostergaard" never found "Østergaard" (#1660) — the search half of
+		// the limitation migration 058 already worked around for ordering.
+		//
+		// One clause per token: every word the user typed must appear, in the
+		// name or in one alias.
+		for _, tok := range strings.Fields(folded) {
+			like := "%" + escapeLike(tok) + "%"
+			conds = append(conds, "(authors.search_key LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM author_aliases al WHERE al.author_id = authors.id AND al.search_key LIKE ? ESCAPE '\\'))")
+			args = append(args, like, like)
+		}
+		searchOrder, rankArgs = authorSearchRank(folded)
 	}
 	if f.Monitored != nil {
 		conds = append(conds, "monitored = ?")
@@ -242,10 +271,12 @@ func (r *AuthorRepo) ListPageFiltered(ctx context.Context, f AuthorListFilter, l
 
 	//nolint:gosec // query is built only from static columns, a parameterised WHERE, and a whitelisted ORDER BY (authorSortOrder); all user values are bound via args
 	listQuery := "SELECT " + authorSelectCols + ", " + bookCountExpr + " FROM authors" + where +
-		" ORDER BY " + authorSortOrder(f.Sort) + " LIMIT ? OFFSET ?"
+		" ORDER BY " + searchOrder + authorSortOrder(f.Sort) + " LIMIT ? OFFSET ?"
 	// Order matters: the subquery's placeholder sits in the SELECT list, ahead
-	// of every WHERE placeholder.
-	pageArgs := append(append(append([]any{}, selectArgs...), args...), limit, offset)
+	// of every WHERE placeholder, and the ranking placeholders sit in ORDER BY,
+	// which the parser reaches last. The count query has neither, so it takes
+	// args alone.
+	pageArgs := append(append(append(append([]any{}, selectArgs...), args...), rankArgs...), limit, offset)
 
 	rows, err := r.db.QueryContext(ctx, listQuery, pageArgs...)
 	if err != nil {
@@ -436,12 +467,12 @@ func (r *AuthorRepo) CreateForUser(ctx context.Context, a *models.Author, ownerU
 	defer func() { _ = tx.Rollback() }()
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO authors (foreign_id, name, sort_name, sort_key, name_sort_key, description, image_url, disambiguation,
+		INSERT INTO authors (foreign_id, name, sort_name, sort_key, name_sort_key, search_key, description, image_url, disambiguation,
 		                     ratings_count, average_rating, monitored, quality_profile_id, metadata_profile_id, root_folder_id,
 		                     audiobook_root_folder_id, monitor_mode, monitor_latest_count, monitor_new_items, metadata_provider, owner_user_id,
 		                     created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.ForeignID, a.Name, a.SortName, authorSortKey(a.SortName), authorSortKey(a.Name), a.Description, a.ImageURL, a.Disambiguation,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ForeignID, a.Name, a.SortName, authorSortKey(a.SortName), authorSortKey(a.Name), textutil.FoldForSearch(a.Name), a.Description, a.ImageURL, a.Disambiguation,
 		a.RatingsCount, a.AverageRating, a.Monitored, a.QualityProfileID, a.MetadataProfileID, a.RootFolderID,
 		a.AudiobookRootFolderID, a.MonitorMode, a.MonitorLatestCount, a.MonitorNewItems, a.MetadataProvider, ownerArg, timeValueArg(now), timeValueArg(now))
 	if err != nil {
@@ -643,6 +674,7 @@ func (r *AuthorRepo) UpgradeSyntheticDNB(ctx context.Context, currentForeignID s
 		    sort_name         = COALESCE(NULLIF(?, ''), sort_name),
 		    sort_key          = CASE WHEN ? != '' THEN ? ELSE sort_key END,
 		    name_sort_key     = CASE WHEN ? != '' THEN ? ELSE name_sort_key END,
+		    search_key        = CASE WHEN ? != '' THEN ? ELSE search_key END,
 		    description       = CASE WHEN ? != '' THEN ? ELSE description END,
 		    image_url         = CASE WHEN ? != '' THEN ? ELSE image_url END,
 		    disambiguation    = CASE WHEN ? != '' THEN ? ELSE disambiguation END,
@@ -654,6 +686,7 @@ func (r *AuthorRepo) UpgradeSyntheticDNB(ctx context.Context, currentForeignID s
 		target.SortName,                                 // sort_name = COALESCE(NULLIF(?,''), sort_name)
 		target.SortName, authorSortKey(target.SortName), // sort_key CASE WHEN ?!='' THEN ? ELSE sort_key
 		target.Name, authorSortKey(target.Name), // name_sort_key CASE WHEN ?!='' THEN ? ELSE name_sort_key
+		target.Name, textutil.FoldForSearch(target.Name), // search_key CASE WHEN ?!='' THEN ? ELSE search_key
 		target.Description, target.Description, // description CASE WHEN ? != '' THEN ?
 		target.ImageURL, target.ImageURL, // image_url
 		target.Disambiguation, target.Disambiguation, // disambiguation
@@ -716,12 +749,12 @@ func (r *AuthorRepo) Update(ctx context.Context, a *models.Author) error {
 
 func (r *AuthorRepo) update(ctx context.Context, exec dbExecutor, a *models.Author, now time.Time) error {
 	_, err := exec.ExecContext(ctx, `
-		UPDATE authors SET foreign_id=?, name=?, sort_name=?, sort_key=?, name_sort_key=?, description=?, image_url=?, disambiguation=?,
+		UPDATE authors SET foreign_id=?, name=?, sort_name=?, sort_key=?, name_sort_key=?, search_key=?, description=?, image_url=?, disambiguation=?,
 		                   ratings_count=?, average_rating=?, monitored=?, quality_profile_id=?,
 		                   metadata_profile_id=?, root_folder_id=?, audiobook_root_folder_id=?, monitor_mode=?,
 		                   monitor_latest_count=?, monitor_new_items=?, metadata_provider=?, last_metadata_refresh_at=?, updated_at=?
 		WHERE id=?`,
-		a.ForeignID, a.Name, a.SortName, authorSortKey(a.SortName), authorSortKey(a.Name), a.Description, a.ImageURL, a.Disambiguation,
+		a.ForeignID, a.Name, a.SortName, authorSortKey(a.SortName), authorSortKey(a.Name), textutil.FoldForSearch(a.Name), a.Description, a.ImageURL, a.Disambiguation,
 		a.RatingsCount, a.AverageRating, a.Monitored, a.QualityProfileID,
 		a.MetadataProfileID, a.RootFolderID, a.AudiobookRootFolderID, a.MonitorMode,
 		a.MonitorLatestCount, a.MonitorNewItems, a.MetadataProvider, timeArg(a.LastMetadataRefreshAt), timeValueArg(now), a.ID)

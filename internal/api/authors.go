@@ -1870,7 +1870,6 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	allowedLangs, unknownFail := h.resolveAllowedLanguages(ctx, author)
 	skipPartBooks := h.resolveSkipPartBooks(ctx, author)
 	skipMissingDate := h.resolveSkipMissingDate(ctx, author)
-	minPopularity := h.resolveMinPopularity(ctx, author)
 	minPages, skipMissingISBN := h.resolveEditionFilters(ctx, author)
 	// Both minPages>0 and skipMissingISBN require a real edition lookup per
 	// candidate work (page count and ISBN live on Edition, not Book, and
@@ -2068,11 +2067,18 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// (or audiobook-only) user never accumulates rows they can't grab.
 	strictMediaType := h.resolveDefaultMediaTypeStrict(ctx)
 
-	// skippedExcluded is logged but deliberately kept out of AuthorSyncSummary:
-	// the author page's notice explains works the user did NOT expect to lose,
-	// and a book they excluded by hand is not one of them.
-	var added, skippedLang, skippedJunk, skippedMediaType, skippedNotAccepted, skippedExcluded int
-	var skippedPartBooks, skippedMissingDate, skippedMinPopularity, skippedMinPages, skippedMissingISBN int
+	// skippedExcluded is carried in AuthorSyncSummary but not rendered by the
+	// notice: the notice explains works the user did NOT expect to lose, and a
+	// book they excluded by hand is not one of them. It is still reported so
+	// Total reconciles (#2449).
+	//
+	// matched and failed are the two outcomes that had no counter at all until
+	// #2449. matched is the ordinary "this work is already a book" path and on
+	// an established author it is most of the run; failed is a create that lost
+	// the write. Both were invisible, which made Total minus everything else
+	// look like a hole.
+	var added, matched, failed, skippedLang, skippedJunk, skippedMediaType, skippedNotAccepted, skippedExcluded int
+	var skippedPartBooks, skippedMissingDate, skippedMinPages, skippedMissingISBN int
 	// Names of the first few language-rejected works, reported to the user
 	// alongside the count (#1889): "65 books skipped" is alarming, but it is
 	// the titles and their language codes that tell them whether the profile
@@ -2082,7 +2088,6 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// cap as skippedLangSample (#1889 established the pattern; requested
 	// again for these filters specifically in PR review, vavallee).
 	var skippedPartBooksSample, skippedMissingDateSample []models.AuthorSyncSkippedBook
-	var skippedMinPopularitySample []models.AuthorSyncSkippedBook
 	var skippedMinPagesSample, skippedMissingISBNSample []models.AuthorSyncSkippedBook
 	// candidates accumulates every work that survives the free (in-memory)
 	// filters below and would otherwise reach the MinPages/SkipMissingISBN
@@ -2240,33 +2245,6 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 			continue
 		}
 
-		// Filter works whose RatingsCount falls below the metadata profile's
-		// MinPopularity floor. A work that hasn't released yet is exempt — it
-		// can't have accumulated ratings, so judging it by a rating count
-		// would only ever penalize forthcoming books, never the intended
-		// "low-interest backlist noise" target.
-		//
-		// hasRatingSignal distinguishes "confirmed unpopular" from "unknown":
-		// RatingsCount is not something OpenLibrary reliably supplies (it
-		// arrives via the Hardcover supplement in mergeAuthorWorks), so on an
-		// install with no Hardcover token — or for any work Hardcover
-		// doesn't know — RatingsCount is 0 because nobody told us, not
-		// because the work has zero ratings. AverageRating==0 alongside it
-		// is indistinguishable from missing data, so a work with no rating
-		// signal at all is treated as unknown and passes, mirroring how
-		// MinPages treats a work with no page data as unknown rather than
-		// zero (vavallee, PR review).
-		hasRatingSignal := b.RatingsCount > 0 || b.AverageRating > 0
-		if existing == nil && minPopularity > 0 && hasRatingSignal && b.RatingsCount < minPopularity &&
-			(b.ReleaseDate == nil || !b.ReleaseDate.After(time.Now())) {
-			skippedMinPopularity++
-			if len(skippedMinPopularitySample) < authorSyncSkippedSampleLimit {
-				skippedMinPopularitySample = append(skippedMinPopularitySample, models.AuthorSyncSkippedBook{Title: b.Title})
-			}
-			slog.Debug("skipping below-popularity-floor work", "title", b.Title, "ratingsCount", b.RatingsCount, "minPopularity", minPopularity)
-			continue
-		}
-
 		// MinPages / SkipMissingISBN both need edition data (page count and
 		// ISBN live on Edition, not Book) fetched in the prefetch pass above.
 		// A book with no entry in editionsByForeignID is either not gated by
@@ -2381,6 +2359,7 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 			// sync from either provider resolves it exactly rather than
 			// relying on a title comparison (#1705).
 			h.recordBookIdentities(ctx, existing, b.ForeignID, b.HardcoverForeignID)
+			matched++
 			continue
 		}
 
@@ -2463,6 +2442,11 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 			if hydrateExistingFromMatchedHardcover {
 				h.hydrateMatchedHardcoverEditions(ctx, existing, b.HardcoverForeignID, nil)
 			}
+			// Same bucket as the id-resolved branch above. From the user's side
+			// there is no difference worth a separate number: the work is in
+			// their library, Bindery found it, and it did not need creating.
+			// Which of the two lookups got there is an implementation detail.
+			matched++
 			continue
 		}
 		// Everything from here on CREATES a book the library does not have.
@@ -2505,6 +2489,9 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 						slog.Warn("authors: re-link after unique conflict", "error", uerr, "book_id", raced.ID)
 					}
 				}
+				// A losing race still ends with the book present, so this is a
+				// match and not a failure.
+				matched++
 				continue
 			}
 			// A FOREIGN KEY failure here almost always means the author row
@@ -2520,6 +2507,7 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 				}
 			}
 			slog.Warn("failed to create book", "title", b.Title, "error", err)
+			failed++
 			continue
 		}
 		// Hydration and the on-disk check happen in the pass below, once the
@@ -2583,26 +2571,27 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// just ones that dropped something: "nothing was filtered out" is the
 	// answer to "where are my books?" as often as a count is.
 	summary := models.AuthorSyncSummary{
-		CompletedAt:                time.Now().UTC(),
-		Total:                      len(books),
-		Added:                      added,
-		SkippedLanguage:            skippedLang,
-		SkippedJunk:                skippedJunk,
-		SkippedMediaType:           skippedMediaType,
-		SkippedNotAccepted:         skippedNotAccepted,
-		SkippedPartBooks:           skippedPartBooks,
-		SkippedPartBooksSample:     skippedPartBooksSample,
-		SkippedMissingDate:         skippedMissingDate,
-		SkippedMissingDateSample:   skippedMissingDateSample,
-		SkippedMinPopularity:       skippedMinPopularity,
-		SkippedMinPopularitySample: skippedMinPopularitySample,
-		SkippedMinPages:            skippedMinPages,
-		SkippedMinPagesSample:      skippedMinPagesSample,
-		SkippedMissingISBN:         skippedMissingISBN,
-		SkippedMissingISBNSample:   skippedMissingISBNSample,
-		AllowedLanguages:           allowedLangs,
-		UnknownLanguageFail:        unknownFail,
-		SkippedLanguageSample:      skippedLangSample,
+		CompletedAt:              time.Now().UTC(),
+		Total:                    len(books),
+		Added:                    added,
+		Matched:                  matched,
+		Failed:                   failed,
+		SkippedExcluded:          skippedExcluded,
+		SkippedLanguage:          skippedLang,
+		SkippedJunk:              skippedJunk,
+		SkippedMediaType:         skippedMediaType,
+		SkippedNotAccepted:       skippedNotAccepted,
+		SkippedPartBooks:         skippedPartBooks,
+		SkippedPartBooksSample:   skippedPartBooksSample,
+		SkippedMissingDate:       skippedMissingDate,
+		SkippedMissingDateSample: skippedMissingDateSample,
+		SkippedMinPages:          skippedMinPages,
+		SkippedMinPagesSample:    skippedMinPagesSample,
+		SkippedMissingISBN:       skippedMissingISBN,
+		SkippedMissingISBNSample: skippedMissingISBNSample,
+		AllowedLanguages:         allowedLangs,
+		UnknownLanguageFail:      unknownFail,
+		SkippedLanguageSample:    skippedLangSample,
 	}
 	h.syncSummaries.record(author.ID, summary)
 
@@ -2611,11 +2600,11 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// and Info is the default level the in-app log view captures — a reporter
 	// running rootless couldn't reach the Debug per-book lines at all.
 	logArgs := []any{
-		"author", author.Name, "added", added,
+		"author", author.Name, "added", added, "matched", matched, "failed", failed,
 		"skipped_language", skippedLang, "skipped_junk", skippedJunk, "skipped_media_type", skippedMediaType,
 		"skipped_not_accepted", skippedNotAccepted, "skipped_excluded", skippedExcluded,
 		"skipped_part_books", skippedPartBooks,
-		"skipped_missing_date", skippedMissingDate, "skipped_min_popularity", skippedMinPopularity,
+		"skipped_missing_date", skippedMissingDate,
 		"skipped_min_pages", skippedMinPages, "skipped_missing_isbn", skippedMissingISBN,
 		"total", len(books),
 	}
@@ -2623,8 +2612,12 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// Warn. The discovery-policy skip is not: the user configured it, the run
 	// already said so once at Info above, and a "Refresh all authors" pass
 	// over an ABS-imported library would otherwise emit one Warn per author.
-	if skippedLang+skippedJunk+skippedMediaType+skippedPartBooks+skippedMissingDate+
-		skippedMinPopularity+skippedMinPages+skippedMissingISBN > 0 {
+	//
+	// failed joins the Warn side, and it is the strongest member of the set: a
+	// filter dropping a work is a setting doing its job, while a create that
+	// lost its write is the run failing at the thing it exists to do.
+	if failed+skippedLang+skippedJunk+skippedMediaType+skippedPartBooks+skippedMissingDate+
+		skippedMinPages+skippedMissingISBN > 0 {
 		slog.Warn("author books synced", logArgs...)
 		return
 	}
@@ -3462,15 +3455,11 @@ func (h *AuthorHandler) saveAlternateNames(ctx context.Context, author *models.A
 	// reached by a latin release name (e.g. "Murakami" -> "村上春樹"). For a
 	// latin-script author every alternate name is just another latin name, and
 	// minting it as an alias would file unrelated real authors (a pen name, or a
-	// co-author credit) under this one. Only save them when the author's own name
-	// is non-latin, mirroring the read-side guard in aliasBindsAuthor
-	// (importer.go), which binds an unattributed latin alias only when the
-	// canonical name is non-latin.
-	if isAllASCII(author.Name) {
-		return
-	}
+	// co-author credit) under this one. textutil.LatinAliasBinds is the shared
+	// rule: the same test the Calibre importer applies when it reads an
+	// unattributed alias back, and the search path when it expands one (#2419).
 	for _, name := range author.AlternateNames {
-		if !isAllASCII(name) {
+		if !textutil.LatinAliasBinds(author.Name, name) {
 			continue
 		}
 		alias := &models.AuthorAlias{AuthorID: author.ID, Name: name}
@@ -3478,16 +3467,6 @@ func (h *AuthorHandler) saveAlternateNames(ctx context.Context, author *models.A
 			slog.Debug("saveAlternateNames: could not save alias", "name", name, "authorId", author.ID, "error", err)
 		}
 	}
-}
-
-// isAllASCII returns true when every byte of s is a 7-bit ASCII character.
-func isAllASCII(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] > 127 {
-			return false
-		}
-	}
-	return true
 }
 
 // canUpgradeToBoth reports whether combining existingMediaType and
@@ -3671,23 +3650,6 @@ func (h *AuthorHandler) resolveSkipMissingDate(ctx context.Context, author *mode
 		return false
 	}
 	return p.SkipMissingDate
-}
-
-// resolveMinPopularity returns the author's effective metadata profile's
-// MinPopularity floor. Zero (the field's default) means "no filter" —
-// matches the profile settings UI, which renders 0 as "none". Defaults to
-// zero on any lookup failure, so an unresolvable profile never causes
-// unexpected catalogue loss.
-func (h *AuthorHandler) resolveMinPopularity(ctx context.Context, author *models.Author) int {
-	id := models.DefaultMetadataProfileID
-	if author.MetadataProfileID != nil {
-		id = *author.MetadataProfileID
-	}
-	p, err := h.profiles.GetByID(ctx, id)
-	if err != nil || p == nil {
-		return 0
-	}
-	return p.MinPopularity
 }
 
 // resolveEditionFilters returns the author's effective metadata profile's

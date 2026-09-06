@@ -139,7 +139,7 @@ PUT    /api/v1/book/{id}/exclude                  exclude from future searches
 POST   /api/v1/book/{id}/rebind                   re-link to a different metadata record
 POST   /api/v1/book/{id}/enrich-audiobook         pull narrator/duration/cover from Audnex
 POST   /api/v1/book/{id}/search                   manual indexer search
-GET    /api/v1/book/{id}/file                     download the imported file (auth required; `?format=ebook|audiobook` picks the format on dual-format books)
+GET    /api/v1/book/{id}/file                     download the imported file (auth required; `?path=…` serves one specific tracked file, for a book holding several of a format; `?format=ebook|audiobook` picks the format on dual-format books; `?path=` wins when both are sent)
 ```
 
 ### Search & discovery
@@ -343,6 +343,46 @@ server root (e.g. `https://ntfy.sh`). Bindery then POSTs the JSON body with a
 `topic` field to the root, which ntfy renders natively. Without a topic it POSTs
 to the URL as-is, so a topic URL would show the raw JSON — use the topic field
 or ntfy message-templating headers (`X-Title`, `X-Message`) instead.
+
+### Settings
+
+```
+GET    /api/v1/setting                            list stored settings
+GET    /api/v1/setting/{key}                      read one stored setting
+PUT    /api/v1/setting/{key}                      write one setting (admin), body {"value": "..."}
+DELETE /api/v1/setting/{key}                      delete one setting (admin)
+GET    /api/v1/settings/descriptors               describe every key Bindery knows (admin)
+```
+
+Secrets (`*.api_key`, `*.api_token`, `auth.*`, and the rest of
+`isSecretSetting`) never appear in a list or a read, and settings whose value is
+a server filesystem path are returned to admins only.
+
+**`PUT` refuses a key Bindery does not know**, with `400` and the key named.
+Before this, an unrecognised key was stored and then read by nothing, so a typo
+such as `serch.interval` saved, reported success and silently did nothing
+forever. Reads and deletes are unchanged, so a row written by a different build
+is still listed and can still be removed.
+
+`GET /api/v1/settings/descriptors` is the list of keys that will be accepted. It
+carries no stored values, only the shape of each key:
+
+| Field | Meaning |
+|-------|---------|
+| `key` | the settings key |
+| `type` | `string` \| `bool` \| `int` \| `duration` \| `enum` |
+| `default` | what Bindery behaves as if the key held when it is unset |
+| `values` | accepted values, for `enum` keys |
+| `min`, `max` | bounds, for `int` and `duration` keys |
+| `description` | one line explaining what the key does |
+| `restartRequired` | `true` when the key is read once at startup, so a change is stored now and takes effect at the next restart |
+| `state` | `active` (something reads it), `internal` (Bindery writes it as its own bookkeeping, not a knob), `inert` (accepted and stored and read by nothing) |
+| `secret` | the value is never returned, not even to an admin |
+| `adminOnly` | only an admin may read the value |
+| `writable` | `PUT /api/v1/setting/{key}` accepts this key |
+
+A key marked `inert` is kept so existing rows and existing clients keep working.
+Do not offer it as a control: nothing will happen.
 
 ### Auth and users (admin)
 

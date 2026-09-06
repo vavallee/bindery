@@ -1014,6 +1014,11 @@ func main() {
 		r.Get("/setting/{key}", settingsHandler.Get)
 		r.Group(func(r chi.Router) {
 			r.Use(auth.RequireAdmin)
+			// The descriptor registry: key names, types, defaults and
+			// descriptions, never stored values. Admin only for the same
+			// reason the mutations are, and see SettingsHandler.Descriptors
+			// for why the path is plural.
+			r.Get("/settings/descriptors", settingsHandler.Descriptors)
 			r.Put("/setting/{key}", settingsHandler.Set)
 			r.Delete("/setting/{key}", settingsHandler.Delete)
 			r.Post("/hardcover/test", settingsHandler.TestHardcover)

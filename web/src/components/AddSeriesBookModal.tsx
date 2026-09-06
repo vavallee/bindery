@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { api, Author, Book, Series } from '../api/client'
+import { foldedIncludes } from '../util/foldForSearch'
 
 interface Props {
   series: Series
@@ -46,12 +47,14 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
   }, [authors])
 
   const availableBooks = useMemo(() => {
-    const q = query.trim().toLowerCase()
+    const q = query.trim()
     return books.filter(book => {
       if (linkedBookIds.has(book.id)) return false
       if (!q) return true
       const authorName = book.author?.authorName || authorNames.get(book.authorId) || ''
-      return book.title.toLowerCase().includes(q) || authorName.toLowerCase().includes(q)
+      // Folded, so an accented title is reachable from an unaccented query and
+      // this picker agrees with the search box that led the user here (#1660).
+      return foldedIncludes(book.title, q) || foldedIncludes(authorName, q)
     })
   }, [authorNames, books, linkedBookIds, query])
 

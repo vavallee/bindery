@@ -755,10 +755,16 @@ func (i *Importer) findAuthorByName(ctx context.Context, name string) (*models.A
 // the names themselves say the same person, which is what an alias table is
 // for.
 //
-// The one unattributed shape that still binds is a latin-script alias on a
-// non-latin canonical name: that is exactly what the add-author flow's
-// saveAlternateNames writes so "Murakami" on a release can reach "村上春樹",
-// and the two names can never look alike to a matcher.
+// The unattributed shapes that still bind are the two grounds in
+// textutil.LatinAliasBinds, shared with the write path and the search path so
+// the copies cannot drift apart again (#2419): a latin-script alias on a
+// non-latin canonical name (what the add-author flow's saveAlternateNames
+// writes, so "Murakami" on a release can reach "村上春樹"), and an alias that is
+// the same name spelled differently ("Jo Nesbo" for "Jo Nesbø").
+//
+// The AuthorMatchExact half of that second ground overlaps the tier check
+// below, which is harmless: this site keeps its own check because it also
+// admits AuthorMatchFuzzyAuto, which the shared rule deliberately does not.
 //
 // This mirrors the ABS importer's trustedAuthorAlias, which the Calibre path
 // never had.
@@ -778,17 +784,7 @@ func aliasBindsAuthor(alias models.AuthorAlias, canonical *models.Author) bool {
 	if kind := textutil.MatchAuthorName(alias.Name, canonical.Name).Kind; kind == textutil.AuthorMatchExact || kind == textutil.AuthorMatchFuzzyAuto {
 		return true
 	}
-	return !isAllASCII(canonical.Name) && isAllASCII(alias.Name)
-}
-
-// isAllASCII reports whether every byte of s is a 7-bit ASCII character.
-func isAllASCII(s string) bool {
-	for idx := 0; idx < len(s); idx++ {
-		if s[idx] > 127 {
-			return false
-		}
-	}
-	return true
+	return textutil.LatinAliasBinds(canonical.Name, alias.Name)
 }
 
 // bookUpsertResult carries whether a book row was newly created and

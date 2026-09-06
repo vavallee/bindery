@@ -49,7 +49,10 @@
     "moreActions": "More",
     "filters": "Filters",
     "sort": "Sort",
-    "clearFilter": "Clear filter"
+    "clearFilter": "Clear filter",
+    "dismiss": "Dismiss",
+    "showDetails": "Show details",
+    "hideDetails": "Hide details"
   },
   "monitorMode": {
     "all": "All books",
@@ -249,6 +252,9 @@
     },
     "lastSync": {
       "heading": "Last refresh skipped {{count}} of this author’s {{total}} works",
+      "headingFailedOnly": "Last refresh could not save {{count}} of this author’s {{total}} works",
+      "accounting": "{{added}} added, {{matched}} already in your library.",
+      "failed": "{{count}} could not be saved. This is an error rather than a filter, so the details are in Settings, then Logs.",
       "language": "{{count}} skipped by the language filter (allowed: {{languages}})",
       "unknownFail": "Works the metadata provider reported no language for were skipped too, because this author’s metadata profile is set to reject unknown languages.",
       "junk": "{{count}} skipped as untitled provider records",
@@ -256,7 +262,6 @@
       "notAccepted": "{{count}} not added, because this author is not taking newly discovered books — the author is unmonitored, or \"Monitor newly discovered books\" is set to don’t add them. Books already in your library were still refreshed.",
       "partBooks": "{{count}} skipped as box sets, omnibuses, or other multi-book bundles",
       "missingDate": "{{count}} skipped for having no release date",
-      "minPopularity": "{{count}} skipped for falling below the minimum popularity floor",
       "minPages": "{{count}} skipped for falling below the minimum page count",
       "missingIsbn": "{{count}} skipped for having no ISBN on any edition",
       "examples": "For example: {{titles}}",
@@ -334,7 +339,6 @@
       "language_not_allowed": "Rejected by the language filter",
       "part_book": "Rejected as a box set or part-book",
       "missing_release_date": "Rejected because the release date is missing",
-      "below_minimum_popularity": "Below the minimum popularity",
       "below_minimum_pages": "Below the minimum page count",
       "missing_isbn": "No edition has an ISBN",
       "catalogue_filter": "Rejected by the catalogue filter"
@@ -715,7 +719,6 @@
       "newProfile": "+ New Profile",
       "empty": "No metadata profiles configured.",
       "description": "Books in languages outside the profile's allowed list are filtered out when an author is added or refreshed. Leave the list empty to accept any language.",
-      "minPopularity": "Min popularity:",
       "minPages": "Min pages:",
       "languages": "Languages:",
       "skipMissingDate": "Skip missing date",
@@ -730,7 +733,6 @@
       "formUnknownLanguagePass": "Pass — import anyway (default)",
       "formUnknownLanguageFail": "Fail — skip the book",
       "formUnknownLanguageHint": "Some metadata sources (notably OpenLibrary) omit the language on some works. Pass imports them silently; Fail rejects them with a log entry.",
-      "formMinPopularity": "Min popularity",
       "formMinPages": "Min pages",
       "formSkipMissingDate": "Skip missing release date",
       "formSkipMissingIsbn": "Skip missing ISBN",
@@ -1256,7 +1258,8 @@
     "rowMore": "More actions for {{name}}",
     "deleteFiles": "Delete files",
     "deleteFilesAcknowledge": "I understand these files will be removed from disk",
-    "downloadFormatHint": "Download this format",
+    "downloadFileHint": "Download this file",
+    "downloadNamed": "Download {{name}}",
     "deleteFilesTitle": "Delete {{format}} files",
     "deleteFilesBody": "Permanently delete {{count}} file(s) from disk:",
     "deleteFilesConfirm": "Delete from disk",
