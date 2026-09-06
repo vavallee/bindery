@@ -39,8 +39,11 @@ const APOSTROPHES = /['’‘`ʼ]/gu
 const MIDDLE_DOT = /・/gu
 // Marks are stripped only where they are diacritics. A kana dakuten changes the
 // letter and a Devanagari vowel sign is a spacing mark that is part of the word,
-// so a blanket \p{M} strip would merge unrelated titles.
-const LATIN_GREEK_MARKS = /(?<=[\p{Script=Latin}\p{Script=Greek}])\p{M}+/gu
+// so a blanket \p{M} strip would merge unrelated titles. Mn only, matching the
+// Go stripLatinGreekMarks: \p{M} also covers Mc and Me, which that function
+// keeps, so the wider class made the two sides disagree on a spacing mark
+// sitting after a Latin letter.
+const LATIN_GREEK_MARKS = /(?<=[\p{Script=Latin}\p{Script=Greek}])\p{Mn}+/gu
 // Everything that is not a letter, a number or a mark is a separator. Marks are
 // word characters here for the reason directly above.
 const SEPARATORS = /[^\p{L}\p{N}\p{M}]+/gu
@@ -49,8 +52,12 @@ export function foldForSearch(value: string | undefined | null): string {
   const input = (value ?? '').trim()
   if (input === '') return ''
   let s = input.normalize('NFKC').toLowerCase()
-  s = s.replace(NON_DECOMPOSABLE_RE, ch => NON_DECOMPOSABLE[ch] ?? ch)
+  // Marks first, table second, matching the Go order. The table keys on the
+  // bare letters, and a precomposed ǣ or ǿ only becomes one of them once NFD
+  // has dropped its macron or acute. The other way round, "Ǣlfric" folded to
+  // "ælfric" while "Ælfric" folded to "aelfric".
   s = s.normalize('NFD').replace(LATIN_GREEK_MARKS, '').normalize('NFC')
+  s = s.replace(NON_DECOMPOSABLE_RE, ch => NON_DECOMPOSABLE[ch] ?? ch)
   s = s.replace(APOSTROPHES, '').replace(MIDDLE_DOT, '')
   s = s.replace(/&/gu, ' and ')
   return s.replace(SEPARATORS, ' ').trim()

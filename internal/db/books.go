@@ -186,13 +186,15 @@ func (r *BookRepo) ListByUser(ctx context.Context, userID int64) ([]models.Book,
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY books.sort_key, sort_title", args)
 }
 
-// ListPage returns one page of the visible-books list, ordered by sort_title,
+// ListPage returns one page of the visible-books list in bookTitleOrder,
 // alongside the total row count that matches the same filter. limit must be
 // positive; offset is clamped at 0. When userID is 0 the query is unscoped
 // (matches List); otherwise it matches ListByUser's scope predicate.
 //
-// The sort_title order is backed by idx_books_sort_title (migration 048) so
-// large libraries no longer pay a full in-memory sort per page request.
+// The order is backed by idx_books_sort_key (migration 083) so large libraries
+// no longer pay a full in-memory sort per page request. It used to order on
+// the raw sort_title, backed by idx_books_sort_title (048); that index is
+// still the tiebreaker's support.
 func (r *BookRepo) ListPage(ctx context.Context, userID int64, limit, offset int) ([]models.Book, int, error) {
 	if limit <= 0 {
 		limit = 50
@@ -217,7 +219,7 @@ func (r *BookRepo) ListPage(ctx context.Context, userID int64, limit, offset int
 }
 
 // BookListFilter narrows ListPageFiltered. The zero value (with UserID 0)
-// selects every non-excluded book in sort_title order — identical to ListPage.
+// selects every non-excluded book in bookTitleOrder — identical to ListPage.
 type BookListFilter struct {
 	UserID int64 // 0 = unscoped; otherwise owner_user_id = UserID OR owner_user_id IS NULL
 	// Search is a case-insensitive substring match on the book title OR its
@@ -246,11 +248,6 @@ type BookListFilter struct {
 	ReleaseBefore string
 }
 
-// bookSortOrder maps a whitelisted sort key to a fixed ORDER BY clause. Never
-// contains user input, so safe to interpolate. NULL release dates / author
-// names sort last in every order (matching the old client-side comparator).
-// sort_title is the stable tiebreaker for the non-title sorts so equal keys
-// (same author, media type, or status) keep a deterministic page order.
 // bookSearchRank returns the ORDER BY prefix that ranks a search result set,
 // and the values its placeholders bind. See searchrank.go for the tiers.
 //
@@ -279,6 +276,11 @@ const (
 	bookTitleOrderDesc = "books.sort_key DESC, sort_title DESC"
 )
 
+// bookSortOrder maps a whitelisted sort key to a fixed ORDER BY clause. Never
+// contains user input, so safe to interpolate. NULL release dates / author
+// names sort last in every order (matching the old client-side comparator).
+// sort_title is the stable tiebreaker for the non-title sorts so equal keys
+// (same author, media type, or status) keep a deterministic page order.
 func bookSortOrder(sort string) string {
 	switch sort {
 	case "title-za":
@@ -320,6 +322,11 @@ func (r *BookRepo) ListPageFiltered(ctx context.Context, f BookListFilter, limit
 	where, args := QueryScopeForIncludingNull("books.owner_user_id", "WHERE excluded = 0", f.UserID)
 	searchOrder, rankArgs := "", []any(nil)
 	if folded := textutil.FoldForSearch(f.Search); folded != "" {
+		// A query that folds to nothing (all punctuation, or an emoji) leaves
+		// the filter off and returns the whole list, where matching the raw
+		// text used to return nothing. That is the honest answer: the fold is
+		// what defines a searchable character here, so "???" carries no search
+		// terms at all rather than being a term that matches no row.
 		// Match the folded key, not the raw text. `LIKE ? COLLATE NOCASE`
 		// against books.title folded the 26 ASCII letters and nothing else, so
 		// "muller" never found "Müller" and a decomposed query never found a

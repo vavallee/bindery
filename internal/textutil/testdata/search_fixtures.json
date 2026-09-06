@@ -253,5 +253,59 @@
   "want": "ハード",
   "issue": "1645",
   "note": "dakuten kept: ハード is not ハート"
+ },
+ {
+  "input": "Ǣlfric's Lives of Saints",
+  "want": "aelfrics lives of saints",
+  "issue": "2447",
+  "note": "AE with macron (U+01E2). Reaches the non-decomposable table only after NFD drops the macron; folding the table first left the ligature standing, so this was unreachable from the commoner Aelfric spelling."
+ },
+ {
+  "input": "Ælfric's Lives of Saints",
+  "want": "aelfrics lives of saints",
+  "issue": "2447",
+  "note": "The bare ligature. Must land on the same key as the macron form above."
+ },
+ {
+  "input": "ǣ",
+  "want": "ae",
+  "issue": "2447",
+  "note": "U+01E3"
+ },
+ {
+  "input": "Ǣ",
+  "want": "ae",
+  "issue": "2447",
+  "note": "U+01E2"
+ },
+ {
+  "input": "ǽ",
+  "want": "ae",
+  "issue": "2447",
+  "note": "U+01FD, AE with acute"
+ },
+ {
+  "input": "Ǽ",
+  "want": "ae",
+  "issue": "2447",
+  "note": "U+01FC"
+ },
+ {
+  "input": "ǿ",
+  "want": "o",
+  "issue": "2447",
+  "note": "U+01FF, o slash with acute"
+ },
+ {
+  "input": "Ǿ",
+  "want": "o",
+  "issue": "2447",
+  "note": "U+01FE"
+ },
+ {
+  "input": "Nesbǿ, Jo",
+  "want": "nesbo jo",
+  "issue": "2447",
+  "note": "The accented slashed o has to reach the same key as the plain one in the Nesbo fixtures."
  }
 ]

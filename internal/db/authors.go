@@ -214,6 +214,11 @@ func (r *AuthorRepo) ListPageFiltered(ctx context.Context, f AuthorListFilter, l
 	}
 	searchOrder, rankArgs := "", []any(nil)
 	if folded := textutil.FoldForSearch(f.Search); folded != "" {
+		// A query that folds to nothing (all punctuation, or an emoji) leaves
+		// the filter off and returns the whole list, where matching the raw
+		// text used to return nothing. That is the honest answer: the fold is
+		// what defines a searchable character here, so "???" carries no search
+		// terms at all rather than being a term that matches no row.
 		// Match the canonical name OR any of the author's aliases (#1176), so
 		// searching a pen name / AKA (e.g. "Cassandra Clare" stored as an alias
 		// of Holly Black) still surfaces the author that owns it.

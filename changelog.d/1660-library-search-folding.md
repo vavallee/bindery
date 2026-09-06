@@ -4,3 +4,6 @@
 ### Changed
 - **Search results are ranked rather than alphabetical** (#1660) — an exact title or author match comes first, then titles starting with what you typed, then whole-word matches, then everything else, with shorter titles preferred within a tier. Searching `the hobbit` lists *The Hobbit* above *The Hobbit: Illustrated Edition*, and searching `thor` lists Brad Thor above Thornton Wilder.
 - **The Books A–Z list sorts accented titles in place** (#1347) — *Ödland*, *Ångström* and *Łódź* sorted after *Zebra* because ordering used the raw title. The Authors list was fixed in v1.23.1; the Books list now uses the same accent-folded key. Existing libraries fill the new keys once on the first start after upgrading.
+
+### Fixed
+- **Old English and Old Norse spellings now fold onto one search key** (#1660) — the accent-folding step ran before the step that maps letters like `æ` and `ø` to ASCII, so a name written *Ǣlfric* and the same name written *Ælfric* produced two keys that could not find each other, and *Ǣlfric* still sorted after Z in the A–Z list. Six letters were affected (ǣ ǽ ǿ and their capitals). A series whose title contains one of them is re-identified once on the next metadata refresh.

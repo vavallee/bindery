@@ -307,6 +307,12 @@ var adversarialSearchInputs = []string{
 	"कमला",          // Devanagari spacing vowel sign (Mc)
 	"Foundation & Empire",
 	"Q&A",
+	// The precomposed forms of the letters the non-decomposable table exists
+	// for. These reach the table only after NFD strips their accent, so a fold
+	// that runs the table first leaves the ligature standing and stops being
+	// idempotent. That is exactly what TestFoldsAreIdempotent asserts, and the
+	// corpus had no input that could catch it (#2447).
+	"Ǣlfric", "Ælfric", "ǽ", "Ǿ", "Nesbǿ",
 }
 
 // adversarialLanguageCodes is the corpus for the language alphabet: every

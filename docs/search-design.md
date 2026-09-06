@@ -116,6 +116,34 @@ Two traps are worth naming because they were both live in draft code:
 Recomposing with NFC at the end matters for Hangul, which NFD decomposes into
 conjoining jamo that would never meet a composed syllable from a provider.
 
+### Strip marks before folding the non-decomposable letters
+
+`FoldNonDecomposableLatin` maps the Latin letters that NFD cannot take apart
+(`ß æ ø œ ł đ ı þ ð`) onto an ASCII approximation. It keys on the bare letters,
+so it must run **after** mark stripping, never before.
+
+A precomposed `ǣ` (U+01E3, ae with macron) decomposes to `æ` plus a combining
+macron. Fold the table first and the macron is still attached, the table does
+not recognise the letter, and the ligature survives to the end. The result is
+two unreachable spellings of one name:
+
+| input | table first (wrong) | marks first (right) |
+|---|---|---|
+| `Ǣlfric` | `ælfric` | `aelfric` |
+| `Ælfric` | `aelfric` | `aelfric` |
+| `Nesbǿ` | `nesbø` | `nesbo` |
+| `Nesbø` | `nesbo` | `nesbo` |
+
+It also makes the fold non-idempotent, since folding the output again finally
+reaches the table. Six code points are affected: U+01E2, U+01E3, U+01FC, U+01FD,
+U+01FE, U+01FF. The same ordering applies in `FoldForSlug`, in `db.authorSortKey`
+(where the ligature went on sorting after Z, the very bug `sort_key` exists to
+fix) and in the TypeScript port.
+
+`internal/normdrift` asserts idempotency over a shared corpus, which is what
+catches this; the corpus has to contain a precomposed form for the assertion to
+mean anything.
+
 ### `&` expands here and nowhere else
 
 `Foundation & Empire` and `Foundation and Empire` should be one search. But

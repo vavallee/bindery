@@ -192,8 +192,19 @@ func FoldForSlug(s string) string {
 	}
 	s = strings.ToLower(s)
 	s = greekFinalSigma.Replace(s)
-	s = FoldNonDecomposableLatin(s)
-	return stripLatinGreekMarks(s)
+	// Marks first, table second, for the reason given in FoldForSearch: the
+	// table keys on the bare æ ø œ ł ß, and a precomposed ǣ ǽ ǿ only becomes
+	// one of them once NFD has dropped its accent. Run the other way round,
+	// this function was not idempotent (ǣ went to æ, and æ to ae), which is a
+	// defect in a function whose whole contract is a stable identity.
+	//
+	// This does change the slug for a title containing one of those six code
+	// points, and seriesSlug builds a stored series ForeignID from it, so such
+	// a series re-keys once. The set is Old English and Old Norse scholarly
+	// orthography and the alternative was leaving an identity function that
+	// gives two answers for one name.
+	s = stripLatinGreekMarks(s)
+	return FoldNonDecomposableLatin(s)
 }
 
 // stripLatinGreekMarks removes the combining marks that sit on a Latin or Greek
@@ -316,8 +327,16 @@ func FoldForSearch(s string) string {
 	}
 	s = norm.NFKC.String(s)
 	s = foldCase(s)
-	s = FoldNonDecomposableLatin(s)
+	// Marks first, table second. The table keys on the bare letters (æ ø œ ł
+	// ß), and a precomposed form like ǣ (U+01E3, ae with macron) only becomes
+	// one of them after NFD decomposition drops the macron. Running the table
+	// first meant ǣ, ǽ and ǿ never reached it: "Ǣlfric" folded to "ælfric"
+	// while the commoner spelling "Ælfric" folded to "aelfric", so the two
+	// were mutually unreachable, and FoldForSearch was not idempotent on those
+	// six code points. The table's own outputs are ASCII, so it has nothing
+	// left to strip afterwards and the order costs nothing.
 	s = stripLatinGreekMarks(s)
+	s = FoldNonDecomposableLatin(s)
 	s = cyrillicYoFolder.Replace(s)
 	s = norm.NFC.String(s)
 	s = strings.Map(func(r rune) rune {

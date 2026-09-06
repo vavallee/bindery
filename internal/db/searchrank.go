@@ -1,6 +1,9 @@
 package db
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // This file holds the tiered ordering shared by the Books and Authors search
 // (#1660). Both lists match a folded query against a folded key column with
@@ -90,10 +93,10 @@ func searchRankClause(columns ...string) string {
 		b.WriteString(" WHEN ")
 		b.WriteString(strings.Join(tests, " OR "))
 		b.WriteString(" THEN ")
-		b.WriteString(string(rune('0' + tier)))
+		b.WriteString(strconv.Itoa(tier))
 	}
 	b.WriteString(" ELSE ")
-	b.WriteString(string(rune('0' + searchRankTiers)))
+	b.WriteString(strconv.Itoa(searchRankTiers))
 	b.WriteString(" END, ")
 	return b.String()
 }

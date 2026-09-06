@@ -35,7 +35,11 @@ func authorSortKey(sortName string) string {
 		return ""
 	}
 	s = strings.ToLower(s)
-	s = textutil.FoldNonDecomposableLatin(s)
+	// Marks first, table second, in that order for the reason spelled out in
+	// textutil.FoldForSearch: the table keys on the bare æ ø œ ł ß, and a
+	// precomposed ǣ or ǿ only becomes one of those once NFD has dropped its
+	// macron or acute. Run the other way round, "Ǣlfric" kept its ligature and
+	// went on sorting after Z, which is the #1347 bug this key exists to fix.
 	stripper := accentStrippers.Get().(transform.Transformer)
 	defer accentStrippers.Put(stripper)
 	folded, _, err := transform.String(stripper, s)
@@ -43,9 +47,9 @@ func authorSortKey(sortName string) string {
 		// transform only errors on malformed input we can't normalize; fall
 		// back to the lowercased+replaced form rather than dropping the row to
 		// an empty key (which would sort it to the very top).
-		return s
+		return textutil.FoldNonDecomposableLatin(s)
 	}
-	return folded
+	return textutil.FoldNonDecomposableLatin(folded)
 }
 
 // authorSortKeyRev is the revision of the folder above. backfillAuthorSortKeys
@@ -58,7 +62,10 @@ func authorSortKey(sortName string) string {
 // name. Missing a bump leaves existing rows folded by the old rules, which is
 // exactly the out-of-order Authors list #1347 was about. Bumping when nothing
 // changed costs one extra table scan, so when in doubt, bump.
-const authorSortKeyRev = 1
+// Revision 2 swapped the order of the two folding steps above, which changed
+// the key for ǣ ǽ ǿ and their capitals. Existing rows hold revision 1 values,
+// so the bump is what makes the next boot repair them.
+const authorSortKeyRev = 2
 
 // accentStrippers hands out accent-stripping transformers one goroutine at a
 // time. transform.Chain returns a STATEFUL transformer whose Transform mutates
