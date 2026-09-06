@@ -216,7 +216,8 @@ describe('BooksPage', () => {
     renderBooksPage()
     await screen.findByText('No books in your library yet')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Add Book' }))
+    const addBookButton = screen.getByRole('button', { name: 'Add Book' })
+    fireEvent.click(addBookButton)
     expect(screen.getByRole('dialog', { name: 'Add Book' })).toBeInTheDocument()
 
     fireEvent.change(screen.getByPlaceholderText('Title, ISBN, or ASIN'), { target: { value: 'Dune' } })
@@ -227,6 +228,7 @@ describe('BooksPage', () => {
 
     await waitFor(() => expect(listCalls).toBeGreaterThanOrEqual(2))
     expect(screen.queryByRole('dialog', { name: 'Add Book' })).not.toBeInTheDocument()
+    await waitFor(() => expect(addBookButton).toHaveFocus())
   })
 
   it('ignores an older list response while the post-add refresh is pending', async () => {
