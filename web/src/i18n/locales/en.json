@@ -1264,7 +1264,7 @@
     "deleteFilesBody": "Permanently delete {{count}} file(s) from disk:",
     "deleteFilesConfirm": "Delete from disk",
     "deleteFilesSiblingNote": "Any sibling file with the same name in the same format is also removed.",
-    "deleteFilesStatusNote": "The book record stays and flips back to “wanted”.",
+    "deleteFilesStatusNote": "If this was the last file for a monitored format, an imported book returns to “wanted”.",
     "deleteAllFiles": {
       "button": "Delete all files",
       "hint": "Delete every file on this book, both formats"
@@ -1302,6 +1302,8 @@
     "excludeHint": "Exclude this book from searches and the Wanted page",
     "unexcludeHint": "Un-exclude this book from searches and the Wanted page",
     "deleteFile": "Delete file",
+    "deleteThisFile": "Delete this file",
+    "deleteThisFileHint": "Permanently delete only this file from disk",
     "deletingFile": "Deleting…",
     "fixMatch": {
       "button": "Fix match",
