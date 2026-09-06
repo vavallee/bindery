@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/vavallee/bindery/internal/telemetry"
 	"testing"
 	"time"
 
@@ -554,4 +556,37 @@ func contains(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// The registry missed all six telemetry funnel keys on its first pass. They
+// are written with SetIfAbsent straight on the settings repo, so refusing
+// unknown keys never touched them and no test noticed, but they are real rows
+// in the settings table and an Advanced tab reading this registry would have
+// told an operator that Bindery does not recognise its own bookkeeping.
+//
+// Referenced through the telemetry package's own exported constants rather
+// than as string literals, so renaming one there fails to compile here rather
+// than silently reopening the hole.
+func TestSettingDescriptorsCoverTelemetryFunnelKeys(t *testing.T) {
+	described := make(map[string]SettingDescriptor)
+	for _, d := range SettingDescriptors() {
+		described[d.Key] = d
+	}
+	for _, key := range []string{
+		telemetry.SettingInstallCreatedAt,
+		telemetry.SettingFirstIndexerAt,
+		telemetry.SettingFirstClientAt,
+		telemetry.SettingFirstAuthorAt,
+		telemetry.SettingFirstGrabAt,
+		telemetry.SettingFirstImportAt,
+	} {
+		d, ok := described[key]
+		if !ok {
+			t.Errorf("%s is written to the settings table but has no descriptor", key)
+			continue
+		}
+		if d.State != SettingStateInternal {
+			t.Errorf("%s state = %q, want %q: Bindery writes it, an operator does not", key, d.State, SettingStateInternal)
+		}
+	}
 }

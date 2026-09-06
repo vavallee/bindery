@@ -314,6 +314,44 @@ var settingDescriptors = []SettingDescriptor{
 		Description: "RFC3339 timestamp of the last Calibre library import, written by the importer and shown on the Calibre settings tab.",
 		State:       SettingStateInternal,
 	},
+	// The telemetry funnel anchors. internal/telemetry/funnel.go stamps each
+	// of these once with SetIfAbsent, straight on the settings repo, and the
+	// daily ping turns them into day offsets. They never pass through the
+	// write handler, so refusing unknown keys does not touch them, but they
+	// are real rows in the settings table: leaving them undescribed would
+	// have an Advanced tab tell an operator that Bindery does not recognise
+	// its own bookkeeping, which is the class of wrong answer this registry
+	// exists to remove.
+	{
+		Key: "telemetry.install_created_at", Type: SettingTypeString, Default: "",
+		Description: "RFC3339 timestamp the install ID was first generated. Anchors the day offsets in funnel telemetry.",
+		State:       SettingStateInternal,
+	},
+	{
+		Key: "funnel.first_indexer_at", Type: SettingTypeString, Default: "",
+		Description: "RFC3339 timestamp of the first indexer added, stamped once for funnel telemetry.",
+		State:       SettingStateInternal,
+	},
+	{
+		Key: "funnel.first_client_at", Type: SettingTypeString, Default: "",
+		Description: "RFC3339 timestamp of the first download client added, stamped once for funnel telemetry.",
+		State:       SettingStateInternal,
+	},
+	{
+		Key: "funnel.first_author_at", Type: SettingTypeString, Default: "",
+		Description: "RFC3339 timestamp of the first author added, stamped once for funnel telemetry.",
+		State:       SettingStateInternal,
+	},
+	{
+		Key: "funnel.first_grab_at", Type: SettingTypeString, Default: "",
+		Description: "RFC3339 timestamp of the first grab, derived from history on first sight and then pinned for funnel telemetry.",
+		State:       SettingStateInternal,
+	},
+	{
+		Key: "funnel.first_import_at", Type: SettingTypeString, Default: "",
+		Description: "RFC3339 timestamp of the first import, derived from history on first sight and then pinned for funnel telemetry.",
+		State:       SettingStateInternal,
+	},
 	{
 		Key: "calibre.drop_folder_path", Type: SettingTypeString, Default: "",
 		Description: "Watch directory for the Calibre drop folder mode that PR #207 removed. Migration 011 still seeds it empty on every install and nothing has read it since.",
