@@ -6,13 +6,89 @@ on:
     paths:
       - cmd/telemetry-server/**
       - .github/workflows/ping-server.yml
+  # On a PR the image is built but not pushed, purely to prove the build sha
+  # is still wired through. deploy/telemetry-server.yaml is deliberately not
+  # in the push filter above: the pin commit this workflow makes would
+  # retrigger it. It is safe here because a PR never pushes or pins.
+  pull_request:
+    paths:
+      - cmd/telemetry-server/**
+      - tools/pingdrift/**
+      - deploy/telemetry-server.yaml
+      - .github/workflows/ping-server.yml
+      - .github/workflows/ping-drift.yml
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  # The drift check is only as good as the stamping it reads. A typo in the
+  # -X path, or the ARG drifting out of the builder stage, leaves buildSHA on
+  # its "unknown" default: the image still builds, every Go test still
+  # passes, and the drift check goes permanently red for a reason that looks
+  # like a stale deploy. Nothing but an actual image build catches that, so
+  # this job does one and asserts the binary reports the sha it was given.
+  stamp:
+    name: build sha is stamped into the binary
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build with a sentinel BUILD_SHA
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: cmd/telemetry-server/Dockerfile
+          push: false
+          load: true
+          build-args: |
+            BUILD_SHA=stampcheck0123456789
+          tags: bindery-ping:stampcheck
+          cache-from: type=gha
+
+      - name: Assert the binary reports it
+        run: |
+          set -euo pipefail
+          SENTINEL=stampcheck0123456789
+
+          # distroless has no shell, so the binary comes out of the image
+          # rather than running inside it.
+          cid=$(docker create bindery-ping:stampcheck)
+          docker cp "$cid":/telemetry-server ./telemetry-server
+          docker rm "$cid" >/dev/null
+
+          # DB_PATH defaults to /data/telemetry.db, which does not exist on
+          # a runner, and the startup line is only reached after migrate
+          # succeeds. Point it at a temp file and bind a high port so this
+          # cannot collide with anything. The line is written before any
+          # network work, so a short timeout is enough and a non-zero exit
+          # from timeout is expected.
+          WORK=$(mktemp -d)
+          OUT=$(DB_PATH="${WORK}/telemetry.db" ADDR=127.0.0.1:18711 \
+            timeout 15 "${GITHUB_WORKSPACE}/telemetry-server" 2>&1 | head -5 || true)
+          echo "$OUT"
+
+          if ! printf '%s' "$OUT" | grep -q "build=${SENTINEL}"; then
+            echo "::error::the telemetry-server binary did not report build=${SENTINEL}. The -X main.buildSHA wiring in cmd/telemetry-server/Dockerfile is broken, so every image would ship the \"unknown\" default and the ping drift check would be meaningless."
+            exit 1
+          fi
+          echo "build sha stamping verified"
+
   build:
+    needs: stamp
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: write # move the image pin in deploy/telemetry-server.yaml

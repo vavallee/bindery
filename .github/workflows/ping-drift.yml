@@ -36,49 +36,19 @@ jobs:
           egress-policy: audit
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Compare
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.26.6"
+          cache: true
+
+      # The comparison lives in tools/pingdrift rather than inline here so it
+      # is unit-testable: the parser and deploy/telemetry-server.yaml are a
+      # pair, and a reformat of that file has to break a PR rather than turn
+      # this nightly job into a permanent red nobody reads.
+      - name: Compare the running build against the pin
         env:
-          STATS_TOKEN: ${{ secrets.TELEMETRY_STATS_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "${STATS_TOKEN:-}" ]; then
-            echo "::error::TELEMETRY_STATS_TOKEN secret is not set, cannot read the running build"
-            exit 1
-          fi
-
-          PINNED=$(sed -n 's|.*image: ghcr.io/[^/]*/bindery-ping:sha-\([0-9a-f]\{7,40\}\).*|\1|p' \
-            deploy/telemetry-server.yaml | head -1)
-          if [ -z "$PINNED" ]; then
-            echo "::error::could not read a sha- pinned bindery-ping image from deploy/telemetry-server.yaml"
-            exit 1
-          fi
-
-          BODY=$(curl -sS -m 20 --fail-with-body \
-            -H "Authorization: Bearer ${STATS_TOKEN}" \
-            https://api.getbindery.dev/api/stats) || {
-              echo "::error::could not reach https://api.getbindery.dev/api/stats"
-              exit 1
-            }
-          LIVE=$(printf '%s' "$BODY" | jq -r '.build_sha // ""')
-
-          echo "pinned in deploy/telemetry-server.yaml: ${PINNED}"
-          echo "reported by the running server:         ${LIVE:-<absent>}"
-
-          # A running build from before the stamping change reports nothing,
-          # or the "unknown" default. Either way it is by definition older
-          # than the pin that introduced the field, so it is drift.
-          if [ -z "$LIVE" ] || [ "$LIVE" = "unknown" ]; then
-            echo "::error::the running bindery-ping predates build stamping, so it is at least as old as that change. Deploy the pinned image: kubectl apply -f deploy/telemetry-server.yaml"
-            exit 1
-          fi
-
-          # The pin may be short or full length; compare on the shorter one.
-          N=${#PINNED}; [ "${#LIVE}" -lt "$N" ] && N=${#LIVE}
-          if [ "${PINNED:0:$N}" != "${LIVE:0:$N}" ]; then
-            echo "::error::bindery-ping is running ${LIVE} but deploy/telemetry-server.yaml pins ${PINNED}. Apply it: kubectl apply -f deploy/telemetry-server.yaml"
-            exit 1
-          fi
-
-          echo "in step"
+          TELEMETRY_STATS_TOKEN: ${{ secrets.TELEMETRY_STATS_TOKEN }}
+        run: go run ./tools/pingdrift
