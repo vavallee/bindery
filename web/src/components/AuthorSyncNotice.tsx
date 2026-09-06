@@ -49,6 +49,11 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
   const minPopularity = sync.skippedMinPopularity ?? 0
   const minPages = sync.skippedMinPages ?? 0
   const missingIsbn = sync.skippedMissingIsbn ?? 0
+  const failed = sync.failed ?? 0
+  // skippedExcluded is deliberately absent from this sum and from the list
+  // below. The user excluded that book on purpose, so it is not something the
+  // page owes them an explanation for. It is still in the payload, because
+  // total has to reconcile (#2449).
   const skipped =
     sync.skippedLanguage +
     sync.skippedJunk +
@@ -59,9 +64,11 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
     minPopularity +
     minPages +
     missingIsbn
-  // A sync that dropped nothing has nothing to explain; the book list already
-  // says what happened.
-  if (skipped <= 0) return null
+  // A sync that dropped nothing and lost nothing has nothing to explain; the
+  // book list already says what happened. A failed write is worth saying even
+  // when no filter fired, because it is the one outcome here that is a fault
+  // rather than a setting.
+  if (skipped <= 0 && failed <= 0) return null
 
   const languages = sync.allowedLanguages?.length
     ? sync.allowedLanguages.join(', ')
@@ -96,13 +103,41 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
       className="mb-4 px-3 py-2 rounded border text-sm border-amber-300 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200"
     >
       <div className="font-medium">
-        {t('authorDetail.lastSync.heading', {
-          count: skipped,
-          defaultValue: 'Last refresh skipped {{count}} of this author’s {{total}} works',
-          total: sync.total,
+        {skipped > 0
+          ? t('authorDetail.lastSync.heading', {
+              count: skipped,
+              defaultValue: 'Last refresh skipped {{count}} of this author’s {{total}} works',
+              total: sync.total,
+            })
+          : t('authorDetail.lastSync.headingFailedOnly', {
+              count: failed,
+              defaultValue: 'Last refresh could not save {{count}} of this author’s {{total}} works',
+              total: sync.total,
+            })}
+      </div>
+      {/* The sentence that makes the numbers add up. Without it the notice
+          reports a skip count against a total and leaves the reader to guess
+          at the gap, which reads as loss even when every one of those works
+          is on the shelf already (#2449). */}
+      <div className="mt-0.5">
+        {t('authorDetail.lastSync.accounting', {
+          defaultValue: '{{added}} added, {{matched}} already in your library.',
+          added: sync.added,
+          matched: sync.matched ?? 0,
         })}
       </div>
       <ul className="mt-1 list-disc list-inside space-y-0.5">
+        {/* First, because it is the only entry here that is a fault rather
+            than a setting the user chose. */}
+        {failed > 0 && (
+          <li>
+            {t('authorDetail.lastSync.failed', {
+              count: failed,
+              defaultValue:
+                '{{count}} could not be saved. This is an error rather than a filter, so the details are in Settings, then Logs.',
+            })}
+          </li>
+        )}
         {sync.skippedLanguage > 0 && (
           <li>
             {t('authorDetail.lastSync.language', {
