@@ -1192,6 +1192,58 @@ func TestManualImportScan_EnumeratesBookUnits(t *testing.T) {
 	}
 }
 
+func TestFileMatchesTracked_EdgeCases(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	trackedPath := filepath.Join(root, "tracked.epub")
+	otherPath := filepath.Join(root, "other.epub")
+	writeTestFile(t, trackedPath)
+	writeTestFile(t, otherPath)
+	trackedInfo, err := os.Stat(trackedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !fileMatchesTracked(trackedPath, []os.FileInfo{trackedInfo}) {
+		t.Fatal("tracked path should match its own file identity")
+	}
+	if fileMatchesTracked(otherPath, []os.FileInfo{trackedInfo}) {
+		t.Fatal("different file should not match tracked identity")
+	}
+	if fileMatchesTracked(filepath.Join(root, "missing.epub"), []os.FileInfo{trackedInfo}) {
+		t.Fatal("missing path should not match")
+	}
+}
+
+func TestDirectoryMatchesTracked_WalkError(t *testing.T) {
+	t.Parallel()
+	if directoryMatchesTracked(filepath.Join(t.TempDir(), "missing"), nil, nil) {
+		t.Fatal("unreadable or missing directory should not be considered tracked")
+	}
+}
+
+func TestBookHasImportedFormat_EdgeCases(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	present := filepath.Join(root, "book.epub")
+	missing := filepath.Join(root, "missing.epub")
+	writeTestFile(t, present)
+	book := &models.Book{ID: 1}
+
+	if bookHasImportedFormat(nil, models.MediaTypeEbook, nil) {
+		t.Fatal("nil book should not report an imported format")
+	}
+	if bookHasImportedFormat(book, models.MediaTypeEbook, []models.BookFile{{Format: models.MediaTypeAudiobook, Path: present}}) {
+		t.Fatal("different format should not count")
+	}
+	if bookHasImportedFormat(book, models.MediaTypeEbook, []models.BookFile{{Format: models.MediaTypeEbook, Path: missing}}) {
+		t.Fatal("missing file should not count as imported")
+	}
+	if !bookHasImportedFormat(book, models.MediaTypeEbook, []models.BookFile{{Format: models.MediaTypeEbook, Path: present}}) {
+		t.Fatal("present file should count as imported")
+	}
+}
+
 func TestDirectoryMatchesTracked(t *testing.T) {
 	root := t.TempDir()
 	trackedPath := filepath.Join(root, "tracked.epub")
