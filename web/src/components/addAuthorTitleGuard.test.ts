@@ -130,3 +130,70 @@ describe('splitAuthorSearchResults', () => {
     expect(split.hidden).toEqual([])
   })
 })
+
+// The guard compares three strings that come from two providers plus the user's
+// keyboard, so it is the shape of comparison that fails when the two sides fold
+// differently. Its normalizer used to be a private copy — the only NFKC fold in
+// the project, with no Go counterpart; it now delegates to the shared
+// foldForSearch, which additionally folds accents and deletes apostrophes.
+describe('splitAuthorSearchResults folds the way the search box does', () => {
+  const shakespeare = makeAuthor({
+    foreignAuthorId: 'OL_SHAKESPEARE_A',
+    authorName: 'William Shakespeare',
+  })
+
+  it('hides a title-shaped result when the query differs by case', () => {
+    const candidate = makeAuthor({
+      foreignAuthorId: 'OL_BAD_TITLE_A',
+      authorName: 'Romeo and Juliet',
+      disambiguation: 'William Shakespeare',
+    })
+    const book = makeBook({ title: 'Romeo and Juliet', author: shakespeare })
+
+    const split = splitAuthorSearchResults([candidate], [book], 'ROMEO AND JULIET')
+
+    expect(split.hidden).toEqual([candidate])
+  })
+
+  it('hides it across apostrophe spellings', () => {
+    const candidate = makeAuthor({
+      foreignAuthorId: 'OL_ENDER_A',
+      authorName: "Ender's Game",
+      disambiguation: 'Orson Scott Card',
+    })
+    const card = makeAuthor({ foreignAuthorId: 'OL_CARD_A', authorName: 'Orson Scott Card' })
+    const book = makeBook({ title: 'Ender’s Game', author: card })
+
+    const split = splitAuthorSearchResults([candidate], [book], "Ender's Game")
+
+    expect(split.hidden).toEqual([candidate])
+  })
+
+  it('hides it across accented spellings, which the previous ASCII fold could not', () => {
+    const candidate = makeAuthor({
+      foreignAuthorId: 'OL_MUERTE_A',
+      authorName: 'Muerte Súbita',
+      disambiguation: 'Alvaro Enrigue',
+    })
+    const enrigue = makeAuthor({ foreignAuthorId: 'OL_ENRIGUE_A', authorName: 'Álvaro Enrigue' })
+    const book = makeBook({ title: 'Muerte Subita', author: enrigue })
+
+    const split = splitAuthorSearchResults([candidate], [book], 'Muerte Súbita')
+
+    expect(split.hidden).toEqual([candidate])
+  })
+
+  it('still hides nothing when the titles genuinely differ', () => {
+    const candidate = makeAuthor({
+      foreignAuthorId: 'OL_HAMLET_A',
+      authorName: 'Hamlet',
+      disambiguation: 'William Shakespeare',
+    })
+    const book = makeBook({ title: 'Romeo and Juliet', author: shakespeare })
+
+    const split = splitAuthorSearchResults([candidate], [book], 'Hamlet')
+
+    expect(split.visible).toEqual([candidate])
+    expect(split.hidden).toEqual([])
+  })
+})
