@@ -157,3 +157,53 @@ func TestNormalizeTitleForDedup_Symmetric(t *testing.T) {
 		}
 	}
 }
+
+// TestNormalizeTitleForDedupExpandsAmpersand pins the ampersand as a spelling
+// of "and" rather than as punctuation. Providers disagree about which form to
+// send for the same book, and as a separator the two spellings produced
+// "foundation empire" and "foundation and empire", which could never meet.
+func TestNormalizeTitleForDedupExpandsAmpersand(t *testing.T) {
+	pairs := [][2]string{
+		{"Foundation & Empire", "Foundation and Empire"},
+		{"Sense & Sensibility", "Sense and Sensibility"},
+		{"Q&A", "Q and A"},
+		{"Crime & Punishment: A Novel", "Crime and Punishment: A Novel"},
+	}
+	for _, p := range pairs {
+		got, want := NormalizeTitleForDedup(p[0]), NormalizeTitleForDedup(p[1])
+		if got != want {
+			t.Errorf("NormalizeTitleForDedup(%q) = %q, NormalizeTitleForDedup(%q) = %q; the two spellings must produce one key",
+				p[0], got, p[1], want)
+		}
+	}
+
+	// The expansion must not weld its neighbours together, which is what a bare
+	// deletion would have done: "Q&A" has to become three tokens, not "qa".
+	if got := NormalizeTitleForDedup("Q&A"); got != "q and a" {
+		t.Errorf("NormalizeTitleForDedup(%q) = %q, want %q", "Q&A", got, "q and a")
+	}
+
+	// And a title with no ampersand is untouched, so the change cannot move a
+	// key it has no business moving.
+	if got := NormalizeTitleForDedup("The Hobbit"); got != "the hobbit" {
+		t.Errorf("NormalizeTitleForDedup(%q) = %q, want %q", "The Hobbit", got, "the hobbit")
+	}
+}
+
+// TestFoldPunctuationUsesTheSharedApostropheSet guards the delegation to
+// textutil.IsApostrophe. The two sets were identical when this file stopped
+// keeping its own copy, and the point of the delegation is that they cannot
+// drift apart again.
+func TestFoldPunctuationUsesTheSharedApostropheSet(t *testing.T) {
+	for _, spelling := range []string{
+		"Poseidon's Arrow",  // ASCII
+		"Poseidon’s Arrow", // right single quotation mark
+		"Poseidon‘s Arrow", // left single quotation mark
+		"Poseidon`s Arrow",  // backtick
+		"Poseidonʼs Arrow", // modifier letter apostrophe
+	} {
+		if got := NormalizeTitleForDedup(spelling); got != "poseidons arrow" {
+			t.Errorf("NormalizeTitleForDedup(%q) = %q, want %q", spelling, got, "poseidons arrow")
+		}
+	}
+}
