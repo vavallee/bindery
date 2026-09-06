@@ -37,6 +37,21 @@ per human. That divergence is deliberate and is asserted by
 particular is a *recall* key: two distinct works may share a `search_key`, which
 only means both are offered to someone who typed either spelling.
 
+Everything that folds a string for comparison should reach one of these six.
+Two that did not, and what they cost:
+
+- `metadata.canonicalAuthorKey` kept only letters and digits. A combining mark
+  is neither, so a decomposed "José Saramago" was cut at the accent into
+  `jos e saramago` while the composed spelling gave `josé saramago` — two keys
+  for one person, on a path where providers and macOS routinely disagree about
+  which form to send. It now folds through alphabet 2, and `normdrift` holds it
+  to the same invariance as everything else.
+- `dnb.slug` kept only `[a-z0-9]`, so a name in any non-Latin script reduced to
+  the empty string and every Chinese, Cyrillic, Greek and Hebrew author shared
+  the single ForeignID `dnb:author:`. Its output is stored, so the ASCII path is
+  preserved byte-for-byte and only the empty case falls back to alphabet 4 — no
+  existing identifier moves.
+
 ## Decisions, and what they rest on
 
 ### Fold in Go, store the result, match with `LIKE`
