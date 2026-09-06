@@ -131,17 +131,20 @@ func TestSettings_DeleteSecretReturns403(t *testing.T) {
 
 // TestSettings_SetRoundTrip confirms the happy-path CRUD works for a
 // non-secret key.
+// TestSettings_SetRoundTrip uses a real registered key. It used to write
+// "ui.theme", which is not a setting Bindery has ever read, and that stopped
+// being writable once unknown keys started being refused.
 func TestSettings_SetRoundTrip(t *testing.T) {
 	h, repo, ctx := settingsFixture(t)
-	body := bytes.NewBufferString(`{"value":"dark"}`)
-	req := withKey(httptest.NewRequest(http.MethodPut, "/api/v1/settings/ui.theme", body), "ui.theme")
+	body := bytes.NewBufferString(`{"value":"de"}`)
+	req := withKey(httptest.NewRequest(http.MethodPut, "/api/v1/settings/search.preferredLanguage", body), "search.preferredLanguage")
 	rec := httptest.NewRecorder()
 	h.Set(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	got, _ := repo.Get(ctx, "ui.theme")
-	if got == nil || got.Value != "dark" {
+	got, _ := repo.Get(ctx, "search.preferredLanguage")
+	if got == nil || got.Value != "de" {
 		t.Errorf("value not persisted, got %v", got)
 	}
 }

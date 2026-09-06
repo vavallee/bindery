@@ -377,6 +377,25 @@ func (h *SettingsHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, filtered)
 }
 
+// Descriptors serves the settings registry: one entry per key Bindery knows
+// about, with its type, default, accepted values, a one line description,
+// whether a change needs a restart, and whether anything reads it at all. It
+// carries no stored values, only the shape of each key.
+//
+// Admin only, and mounted under the same auth.RequireAdmin group as PUT and
+// DELETE. Writing a setting is already admin only, so the registry is of no use
+// to an account that cannot act on it, and #2361 moved this surface towards
+// closing rather than opening. Widening it later is a one line change; narrowing
+// it after a release would break whoever started depending on it.
+//
+// The route is /settings/descriptors rather than /setting/descriptors so it
+// cannot shadow a key: a static segment under /setting/{key} would silently
+// make a key of that name unreadable, which is the same class of quiet failure
+// this registry exists to remove.
+func (h *SettingsHandler) Descriptors(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, SettingDescriptors())
+}
+
 func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	key := chi.URLParam(r, "key")
 	// Mirrors List: a secret 404s for everyone, an admin only key 404s for a
@@ -537,9 +556,24 @@ func (h *SettingsHandler) TestHardcover(w http.ResponseWriter, r *http.Request) 
 // validateSettingValue enforces per-key invariants on writes. We run this
 // inline with Set (rather than a separate middleware) because the settings
 // endpoint is the single place every non-auth key flows through and the
-// validations are both few and cheap. Keys not listed here pass through
-// unchanged — the settings table stays schema-less for anything else.
+// validations are both few and cheap.
+//
+// An unrecognised key is refused. It used to fall off the end of the switch and
+// be stored, which meant a typo like "serch.interval" saved, reported success,
+// and then did nothing forever with no way to tell it apart from a setting that
+// was working. Nothing in the tree writes an arbitrary key through this
+// endpoint: every caller in web/src sends a literal, and the internal writers
+// (the scheduler, the Audiobookshelf enumerator, telemetry, the Calibre
+// importer) go straight to the settings repo and never pass through here. Reads
+// and deletes are deliberately left alone, so a row an older or newer build
+// wrote is still listed and can still be removed.
+//
+// The switch below has no default case on purpose: the registry lookup above it
+// is the default, and adding a second one would only let the two disagree.
 func validateSettingValue(key, value string) error {
+	if !IsKnownSettingKey(key) {
+		return fmt.Errorf("unknown setting key %q: bindery does not read this key, so storing it would change nothing. GET /api/v1/settings/descriptors lists every key it knows", key)
+	}
 	switch key {
 	case SettingHardcoverAPIToken:
 		for _, r := range value {
