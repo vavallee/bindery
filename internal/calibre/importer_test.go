@@ -521,6 +521,55 @@ func TestImporter_TrustedAliasesStillResolve(t *testing.T) {
 	}
 }
 
+// TestAliasBindsAuthor_SharedLatinRule pins aliasBindsAuthor to the shared
+// textutil.LatinAliasBinds rule (#2419). The unattributed-alias branch used to
+// test for 7-bit ASCII, which made every accented latin name count as "another
+// script": an unattributed alias sitting beside "Jo Nesbø" bound to him, so a
+// Calibre credit for a completely different author was filed under Nesbø.
+func TestAliasBindsAuthor_SharedLatinRule(t *testing.T) {
+	cases := []struct {
+		name      string
+		canonical string
+		alias     models.AuthorAlias
+		want      bool
+	}{
+		{
+			// An accented latin name is latin script. An unattributed alias
+			// beside it says nothing; before #2419 this returned true.
+			name:      "accented latin canonical does not bind unrelated alias",
+			canonical: "Jo Nesbø", alias: models.AuthorAlias{Name: "Karin Fossum"}, want: false,
+		},
+		{
+			// A mixed-script name is non-latin on the full-name rule.
+			name:      "mixed-script canonical binds latin alias",
+			canonical: "村上 Haruki", alias: models.AuthorAlias{Name: "Haruki Murakami"}, want: true,
+		},
+		{
+			// An accented latin romanisation is still a latin alias; before
+			// #2419 the "ø" made it non-ASCII and it was refused.
+			name:      "accented latin alias binds non-latin canonical",
+			canonical: "村上春樹", alias: models.AuthorAlias{Name: "Haruki Murakamø"}, want: true,
+		},
+		{
+			name:      "plain latin canonical does not bind unrelated alias",
+			canonical: "Kem Antilles", alias: models.AuthorAlias{Name: "Rebecca Moesta"}, want: false,
+		},
+		{
+			// Provenance still wins regardless of script.
+			name:      "provenanced alias binds a latin canonical",
+			canonical: "Samuel Clemens", alias: models.AuthorAlias{Name: "Mark Twain", SourceOLID: "OL18319A"}, want: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			canonical := &models.Author{Name: tc.canonical}
+			if got := aliasBindsAuthor(tc.alias, canonical); got != tc.want {
+				t.Errorf("aliasBindsAuthor(%q, %q) = %v, want %v", tc.alias.Name, tc.canonical, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestImporter_AlreadyRunningRejected locks in the 409 contract — two
 // simultaneous clicks on the Import button should not race each other.
 func TestImporter_AlreadyRunningRejected(t *testing.T) {

@@ -17,6 +17,7 @@ import (
 	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 // searchBookTimeout is the outer deadline applied to a full SearchBook call.
@@ -792,24 +793,8 @@ func filterRelevant(results []newznab.SearchResult, title, author string, aliase
 	fullKws := newznab.SigWords(title)
 	primaryKws := newznab.SigWords(primaryTitle(title))
 	authorKws := newznab.SigWords(author)
-	surname := AuthorSurname(author)
 
-	// Build candidate author token sets. The primary set is from `author`. When
-	// the primary surname is non-ASCII (e.g. "春樹" for "村上春樹"), also
-	// include token sets from any latin-script aliases (e.g.
-	// "Haruki Murakami") so release names romanised by indexers are not
-	// incorrectly filtered out. Each token set is used independently: a
-	// release matching any one alias' tokens is accepted.
-	authorTokenSets := [][]string{authorTokens(author)}
-	if !isAllASCIILower(surname) {
-		for _, alias := range aliases {
-			if s := AuthorSurname(alias); s != "" && isAllASCIILower(s) {
-				if toks := authorTokens(alias); len(toks) > 0 {
-					authorTokenSets = append(authorTokenSets, toks)
-				}
-			}
-		}
-	}
+	authorTokenSets := latinAliasTokenSets(author, aliases)
 
 	tryMatch := func(n string, kws []string) bool {
 		for _, toks := range authorTokenSets {
@@ -848,16 +833,28 @@ func filterRelevant(results []newznab.SearchResult, title, author string, aliase
 	return filtered
 }
 
-// isAllASCIILower returns true when every byte in the lowercased s is 7-bit ASCII.
-// AuthorSurname already returns lowercase, so this is equivalent to checking
-// whether the surname string contains only ASCII characters.
-func isAllASCIILower(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] > 127 {
-			return false
+// latinAliasTokenSets builds the candidate author token sets used to anchor a
+// release against its author. The primary set is always `author` itself. When
+// the author's name is written in a non-latin script (e.g. "村上春樹"), the
+// token sets of any latin-script aliases (e.g. "Haruki Murakami") are added so
+// release names romanised by indexers are not filtered out. Each set is used
+// independently: a release matching any one alias' tokens is accepted.
+//
+// The decision of which aliases qualify is textutil.LatinAliasBinds, shared
+// with the alias write path and the Calibre import path. It used to be a
+// surname-only test here, which disagreed with the other two for any author
+// whose given name and surname are in different scripts (#2419).
+func latinAliasTokenSets(author string, aliases []string) [][]string {
+	sets := [][]string{authorTokens(author)}
+	for _, alias := range aliases {
+		if !textutil.LatinAliasBinds(author, alias) {
+			continue
+		}
+		if toks := authorTokens(alias); len(toks) > 0 {
+			sets = append(sets, toks)
 		}
 	}
-	return true
+	return sets
 }
 
 func sameKws(a, b []string) bool {

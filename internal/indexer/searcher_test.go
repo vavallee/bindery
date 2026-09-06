@@ -1411,6 +1411,73 @@ func TestFilterRelevantNonLatinAuthor(t *testing.T) {
 	}
 }
 
+// TestFilterRelevantMixedScriptAuthorExpandsAliases is the search-path half of
+// the fail-before evidence for #2419. The alias write path and the Calibre
+// import path both judged an author latin-or-not on the FULL name, while this
+// path judged it on the surname alone. "村上 Haruki" has a latin surname and a
+// non-latin full name, so aliases were saved for it and bound on import, then
+// silently ignored here — every romanised release for that author was dropped.
+func TestFilterRelevantMixedScriptAuthorExpandsAliases(t *testing.T) {
+	results := toResults(
+		"Haruki.Murakami.Norwegian.Wood.epub",
+		"Unrelated.Noise.epub",
+	)
+
+	// Surname "Haruki" is latin; the full name is not. The alias must expand.
+	got := filterRelevant(results, "Norwegian Wood", "村上 Haruki", []string{"Haruki Murakami"})
+	if !contains(got, "Haruki.Murakami.Norwegian.Wood.epub") {
+		t.Errorf("mixed-script author %q with alias %q: expected %q to pass; got %v",
+			"村上 Haruki", "Haruki Murakami", "Haruki.Murakami.Norwegian.Wood.epub", resultTitles(got))
+	}
+	if contains(got, "Unrelated.Noise.epub") {
+		t.Error("unrelated result should still be filtered out")
+	}
+}
+
+// TestFilterRelevantAccentedLatinAuthorUsesTransliteration is the regression
+// guard for the route #2419 must not break. The release alphabet transliterates
+// German umlauts and nothing else, so "Jo Nesbø" tokenises to ["nesbø"] and
+// never meets a scene release named "Jo.Nesbo.-.…". The ASCII alias is the only
+// path from that release to the author, so it has to keep binding even though
+// both names are latin script.
+func TestFilterRelevantAccentedLatinAuthorUsesTransliteration(t *testing.T) {
+	results := toResults(
+		"Jo.Nesbo.-.The.Snowman.2007.RETAIL.EPUB-GRP",
+		"Karin.Fossum.The.Snowman.epub",
+	)
+
+	// Without the alias the author anchor cannot be met at all: proves the
+	// alias is doing the work rather than the title carrying the match.
+	if got := filterRelevant(results, "The Snowman", "Jo Nesbø", nil); contains(got, "Jo.Nesbo.-.The.Snowman.2007.RETAIL.EPUB-GRP") {
+		t.Error("setup wrong: the transliterated release should not match without the alias")
+	}
+
+	got := filterRelevant(results, "The Snowman", "Jo Nesbø", []string{"Jo Nesbo"})
+	if !contains(got, "Jo.Nesbo.-.The.Snowman.2007.RETAIL.EPUB-GRP") {
+		t.Errorf("author %q with transliterated alias %q: expected %q to pass; got %v",
+			"Jo Nesbø", "Jo Nesbo", "Jo.Nesbo.-.The.Snowman.2007.RETAIL.EPUB-GRP", resultTitles(got))
+	}
+	// The alias widens the anchor to that one name, not to every latin name.
+	if contains(got, "Karin.Fossum.The.Snowman.epub") {
+		t.Errorf("a transliteration alias must not admit an unrelated author; got %v", resultTitles(got))
+	}
+}
+
+// TestFilterRelevantAccentedLatinAuthorIgnoresAliases is the other half of the
+// #2419 rule: an accented latin name is latin script, not "some other script",
+// so an unattributed alias sitting beside it is not evidence of identity and
+// must not widen the author anchor. Before #2419 the surname "nesbø" was
+// non-ASCII, so any alias row expanded and a co-author's releases passed.
+func TestFilterRelevantAccentedLatinAuthorIgnoresAliases(t *testing.T) {
+	results := toResults("Karin.Fossum.The.Caller.epub")
+
+	got := filterRelevant(results, "The Caller", "Jo Nesbø", []string{"Karin Fossum"})
+	if contains(got, "Karin.Fossum.The.Caller.epub") {
+		t.Errorf("latin-script author %q must not be anchored by unattributed alias %q; got %v",
+			"Jo Nesbø", "Karin Fossum", resultTitles(got))
+	}
+}
+
 // TestFilterRelevantCoAuthorSurnameOverlap is the regression test for #563:
 // when the monitored author shares a surname with a co-author of an unrelated
 // release, the surname-only token check used to leak the co-author's work into
