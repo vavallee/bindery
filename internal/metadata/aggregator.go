@@ -702,8 +702,14 @@ func searchBookSeen(b models.Book, seenISBN, seenTA map[string]bool) bool {
 
 // titleAuthorKey builds a normalized "title|author" dedup key, or "" when the
 // title is empty (in which case the caller falls back to ISBN-only dedup).
+//
+// The title half uses FoldForTitleMatch, not FoldForSearch. This is an
+// identity: a collision here DROPS a provider's result from the list the user
+// picks from, so the recall alphabet is the wrong tool. FoldForSearch is lossy
+// by design (NFKC, & to "and", apostrophes and the katakana middle dot
+// deleted) and its own doc comment says never to compare identities with it.
 func titleAuthorKey(b models.Book) string {
-	title := textutil.FoldForSearch(b.Title)
+	title := textutil.FoldForTitleMatch(b.Title)
 	if title == "" {
 		return ""
 	}
