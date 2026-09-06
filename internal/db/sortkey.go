@@ -74,3 +74,30 @@ func newAccentStripper() transform.Transformer {
 // The Latin letters NFD leaves intact (ø, ł, æ, ß, …) are folded by
 // textutil.FoldNonDecomposableLatin, which is shared so this table and the
 // author-identity fold cannot drift apart (#1648).
+
+// bookSortKey derives the ordering key for the Books A–Z list from a book's
+// sort_title, falling back to its title when sort_title was never populated
+// (the metadata providers all set it, but the Calibre, Audiobookshelf and CSV
+// import paths create rows without one).
+//
+// It is authorSortKey applied to a title rather than a name: the problem is
+// identical (#1347), only the column differs. Ordering on the raw sort_title
+// left any title beginning with a non-ASCII letter — "Ödland", "Ångström",
+// "Łódź" — sorting after "Z", because COLLATE NOCASE folds ASCII and nothing
+// else. Lossy and ORDERING-ONLY; the human-facing value remains sort_title.
+func bookSortKey(sortTitle, title string) string {
+	if s := strings.TrimSpace(sortTitle); s != "" {
+		return authorSortKey(s)
+	}
+	return authorSortKey(title)
+}
+
+// bookSortKeyRev is the revision of bookSortKey, gating backfillBookSortKeys the
+// way authorSortKeyRev gates the author pass (#2346). It is separate from
+// authorSortKeyRev even though the two folders share an implementation today,
+// so that a change aimed at one list cannot force a needless rescan of the
+// other table — and so that whichever one is being changed is the one that has
+// to be bumped.
+//
+// BUMP THIS whenever bookSortKey's output can change for the same title.
+const bookSortKeyRev = 1

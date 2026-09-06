@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/indexer"
+	"github.com/vavallee/bindery/internal/textutil"
 
 	_ "modernc.org/sqlite"
 )
@@ -334,6 +335,22 @@ func migrate(database *sql.DB) error {
 		return fmt.Errorf("backfill author sort keys: %w", err)
 	}
 
+	// Migration 083's books.sort_key is the same story as 058's authors.sort_key
+	// one table over: SQLite ships the column empty because it cannot fold, and
+	// the Books A–Z list needs it populated to stop sorting "Ödland" after "Z"
+	// (#1347 was only ever fixed for Authors).
+	if err := runBackfillOnce(database, backfillRevKeyBookSortKeys, bookSortKeyRev, backfillBookSortKeys); err != nil {
+		return fmt.Errorf("backfill book sort keys: %w", err)
+	}
+
+	// Migration 083's three search_key columns, likewise. Until these hold a
+	// key the search box matches nothing at all, so this is not an optimisation
+	// that can be deferred — it is what makes the feature work on an existing
+	// library (#1660).
+	if err := runBackfillOnce(database, backfillRevKeySearchKeys, textutil.FoldForSearchRev, backfillSearchKeys); err != nil {
+		return fmt.Errorf("backfill search keys: %w", err)
+	}
+
 	return nil
 }
 
@@ -373,8 +390,10 @@ func ensureBooksExcludedColumn(database *sql.DB) error {
 // Settings keys holding the normalizer revision each startup backfill last
 // ran at. See backfillRevisionCurrent.
 const (
-	backfillRevKeyDedup    = "backfill.dedup_key_rev"
-	backfillRevKeySortKeys = "backfill.sort_key_rev"
+	backfillRevKeyDedup        = "backfill.dedup_key_rev"
+	backfillRevKeySortKeys     = "backfill.sort_key_rev"
+	backfillRevKeyBookSortKeys = "backfill.book_sort_key_rev"
+	backfillRevKeySearchKeys   = "backfill.search_key_rev"
 )
 
 // backfillRevisionCurrent reports whether the stored marker for key already
@@ -953,4 +972,163 @@ func multiuserPreFlight(database *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// backfillBookSortKeys recomputes books.sort_key for every row whose stored
+// value differs from bookSortKey(sort_title, title). Migration 083 adds the
+// column empty because SQLite cannot accent-fold, so without this pass the
+// Books A–Z list would order every existing row under the empty string.
+//
+// Unconditional and idempotent, like its author-side sibling: migrate() gates
+// how often it is called on the backfill.book_sort_key_rev marker, and deleting
+// that row is always a safe way to force a recompute.
+func backfillBookSortKeys(database *sql.DB) error {
+	type pending struct {
+		id  int64
+		key string
+	}
+	// Read phase in its own scope so the cursor closes before the write tx
+	// opens — holding a read cursor across Begin() risks "database is locked".
+	updates, err := func() ([]pending, error) {
+		rows, err := database.Query("SELECT id, title, COALESCE(sort_title, ''), COALESCE(sort_key, '') FROM books")
+		if err != nil {
+			return nil, fmt.Errorf("read books for sort_key backfill: %w", err)
+		}
+		defer rows.Close()
+		var out []pending
+		for rows.Next() {
+			var id int64
+			var title, sortTitle, stored string
+			if err := rows.Scan(&id, &title, &sortTitle, &stored); err != nil {
+				return nil, fmt.Errorf("scan book for sort_key backfill: %w", err)
+			}
+			if want := bookSortKey(sortTitle, title); want != stored {
+				out = append(out, pending{id: id, key: want})
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate books for sort_key backfill: %w", err)
+		}
+		return out, nil
+	}()
+	if err != nil {
+		return err
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+
+	tx, err := database.Begin()
+	if err != nil {
+		return fmt.Errorf("begin book sort_key backfill tx: %w", err)
+	}
+	stmt, err := tx.Prepare("UPDATE books SET sort_key = ? WHERE id = ?")
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("prepare book sort_key backfill: %w", err)
+	}
+	defer stmt.Close()
+	for _, u := range updates {
+		if _, err := stmt.Exec(u.key, u.id); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("update sort_key for book %d: %w", u.id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit book sort_key backfill: %w", err)
+	}
+	slog.Info("backfilled book sort keys", "rows", len(updates))
+	return nil
+}
+
+// backfillSearchKeys populates the three columns migration 083 adds for the
+// library search box: books.search_key, authors.search_key and
+// author_aliases.search_key, each folded from the text the box used to match
+// with `LIKE ? COLLATE NOCASE` (#1660).
+//
+// All three are folded by the SAME function the query folder uses. That is the
+// whole point of the column: the failure this replaces was not that LIKE is
+// slow, it was that the row and the query were reduced through different
+// alphabets — SQLite's ASCII-only case fold on one side and nothing at all on
+// the other — so "Müller" and "muller" could never meet.
+//
+// Unconditional and idempotent; migrate() gates it on backfill.search_key_rev
+// against textutil.FoldForSearchRev, so it runs on the first boot after the
+// upgrade, again after that constant is bumped, and never otherwise.
+func backfillSearchKeys(database *sql.DB) error {
+	// Table and column names are compile-time constants from this file, never
+	// user input, so interpolating them is safe; only the values are bound.
+	for _, target := range []struct{ table, source string }{
+		{"books", "title"},
+		{"authors", "name"},
+		{"author_aliases", "name"},
+	} {
+		n, err := backfillFoldedSearchColumn(database, target.table, target.source)
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			slog.Info("backfilled search keys", "table", target.table, "rows", n)
+		}
+	}
+	return nil
+}
+
+// backfillFoldedSearchColumn rewrites <table>.search_key from <table>.<source>
+// for every row where the two disagree, and reports how many rows it touched.
+func backfillFoldedSearchColumn(database *sql.DB, table, source string) (int, error) {
+	type pending struct {
+		id  int64
+		key string
+	}
+	updates, err := func() ([]pending, error) {
+		rows, err := database.Query(fmt.Sprintf(
+			"SELECT id, COALESCE(%s, ''), COALESCE(search_key, '') FROM %s", source, table))
+		if err != nil {
+			return nil, fmt.Errorf("read %s for search_key backfill: %w", table, err)
+		}
+		defer rows.Close()
+		var out []pending
+		for rows.Next() {
+			var id int64
+			var text, stored string
+			if err := rows.Scan(&id, &text, &stored); err != nil {
+				return nil, fmt.Errorf("scan %s for search_key backfill: %w", table, err)
+			}
+			if want := textutil.FoldForSearch(text); want != stored {
+				out = append(out, pending{id: id, key: want})
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate %s for search_key backfill: %w", table, err)
+		}
+		return out, nil
+	}()
+	if err != nil {
+		return 0, err
+	}
+	if len(updates) == 0 {
+		return 0, nil
+	}
+
+	tx, err := database.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin %s search_key backfill tx: %w", table, err)
+	}
+	stmt, err := tx.Prepare(fmt.Sprintf("UPDATE %s SET search_key = ? WHERE id = ?", table))
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, fmt.Errorf("prepare %s search_key backfill: %w", table, err)
+	}
+	defer stmt.Close()
+	for _, u := range updates {
+		if _, err := stmt.Exec(u.key, u.id); err != nil {
+			_ = tx.Rollback()
+			return 0, fmt.Errorf("update search_key for %s %d: %w", table, u.id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit %s search_key backfill: %w", table, err)
+	}
+	return len(updates), nil
 }
