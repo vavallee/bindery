@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import AuthorSyncNotice from './AuthorSyncNotice'
 import type { AuthorSyncSummary } from '../api/client'
@@ -46,6 +46,14 @@ function summary(overrides: Partial<AuthorSyncSummary> = {}): AuthorSyncSummary 
   }
 }
 
+// The per-filter breakdown is behind the info alert's disclosure now: the
+// notice leads with the count and hands over the reasons on request. Every
+// assertion about a reason has to open it first, which is also the check that
+// it is still reachable.
+function openDetails() {
+  fireEvent.click(screen.getByRole('button', { name: 'Show details' }))
+}
+
 function renderNotice(sync?: AuthorSyncSummary) {
   return render(
     <MemoryRouter>
@@ -74,30 +82,35 @@ describe('AuthorSyncNotice', () => {
   it('renders when only skippedPartBooks is nonzero', () => {
     renderNotice(summary({ skippedPartBooks: 3 }))
     expect(screen.getByTestId('author-sync-notice')).toBeInTheDocument()
+    openDetails()
     expect(screen.getByText(/3 skipped as box sets, omnibuses/)).toBeInTheDocument()
   })
 
   it('renders when only skippedMissingDate is nonzero', () => {
     renderNotice(summary({ skippedMissingDate: 2 }))
     expect(screen.getByTestId('author-sync-notice')).toBeInTheDocument()
+    openDetails()
     expect(screen.getByText(/2 skipped for having no release date/)).toBeInTheDocument()
   })
 
   it('renders when only skippedMinPopularity is nonzero', () => {
     renderNotice(summary({ skippedMinPopularity: 4 }))
     expect(screen.getByTestId('author-sync-notice')).toBeInTheDocument()
+    openDetails()
     expect(screen.getByText(/4 skipped for falling below the minimum popularity floor/)).toBeInTheDocument()
   })
 
   it('renders when only skippedMinPages is nonzero', () => {
     renderNotice(summary({ skippedMinPages: 1 }))
     expect(screen.getByTestId('author-sync-notice')).toBeInTheDocument()
+    openDetails()
     expect(screen.getByText(/1 skipped for falling below the minimum page count/)).toBeInTheDocument()
   })
 
   it('renders when only skippedMissingIsbn is nonzero', () => {
     renderNotice(summary({ skippedMissingIsbn: 5 }))
     expect(screen.getByTestId('author-sync-notice')).toBeInTheDocument()
+    openDetails()
     expect(screen.getByText(/5 skipped for having no ISBN on any edition/)).toBeInTheDocument()
   })
 
@@ -110,6 +123,7 @@ describe('AuthorSyncNotice', () => {
         skippedMissingIsbnSample: [{ title: 'No ISBN Book', language: '' }],
       }),
     )
+    openDetails()
     const examples = screen.getByText(/For example:/)
     expect(examples.textContent).toContain('Boxed Set: Foo')
     expect(examples.textContent).toContain('No ISBN Book')
@@ -118,6 +132,7 @@ describe('AuthorSyncNotice', () => {
   it('still renders on the original four reasons (regression)', () => {
     renderNotice(summary({ skippedJunk: 2 }))
     expect(screen.getByTestId('author-sync-notice')).toBeInTheDocument()
+    openDetails()
     expect(screen.getByText(/2 skipped as untitled provider records/)).toBeInTheDocument()
   })
 
@@ -126,6 +141,31 @@ describe('AuthorSyncNotice', () => {
   // .slice(0, 5) on the concatenation would let language — listed first —
   // crowd out every other filter's example. Both need covering: the total
   // must stay bounded, and a filter later in the list must still get a slot.
+  // The notice describes a filter doing exactly what it was configured to do,
+  // so it must not wear the same amber a broken indexer wears. Asserting on
+  // the absence of amber is the only way this stays true, since a future
+  // refactor could reintroduce it without breaking a text assertion.
+  it('renders in the neutral info tier, not amber', () => {
+    renderNotice(summary({ skippedLanguage: 4 }))
+    const el = screen.getByTestId('author-sync-notice')
+    expect(el.className).not.toContain('amber')
+    expect(el.className).toContain('bg-slate-100')
+    expect(el.className).toContain('dark:bg-zinc-900')
+  })
+
+  it('leads with the count and keeps the settings link on screen unopened', () => {
+    renderNotice(summary({ skippedLanguage: 4 }))
+    expect(screen.getByText(/Last refresh skipped 4 of this author/)).toBeInTheDocument()
+    expect(screen.getByText('Metadata profile settings')).toBeInTheDocument()
+    expect(screen.queryByText(/skipped by the language filter/)).not.toBeInTheDocument()
+  })
+
+  it('can be dismissed', () => {
+    renderNotice(summary({ skippedLanguage: 4 }))
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    expect(screen.queryByTestId('author-sync-notice')).not.toBeInTheDocument()
+  })
+
   it('caps the merged examples line at 5 and round-robins across filters', () => {
     renderNotice(
       summary({
@@ -147,6 +187,7 @@ describe('AuthorSyncNotice', () => {
         skippedMissingIsbnSample: [{ title: 'No ISBN A', language: '' }],
       }),
     )
+    openDetails()
     const examples = screen.getByText(/For example:/)
     const titles = examples.textContent!.split('For example:')[1].split(', ')
     expect(titles).toHaveLength(5)
