@@ -16,9 +16,10 @@ RUN CGO_ENABLED=0 go build -trimpath \
 # sufficient: no runtime sqlite package, no shell, minimal attack surface.
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:1c2c046bc09ed40fad370b599a0b1ae7987f55b01e247cf27a7c27cd97e5bbc7
 COPY --from=builder /telemetry-server /telemetry-server
-# Numeric non-root UID, matching runAsUser in deploy/telemetry-server.yaml.
+# Numeric non-root UID, matching runAsUser in the deployment (which lives in
+# the homelab repo at kubernetes/apps/default/bindery-ping).
 USER 1000:1000
 EXPOSE 8080
-# No HEALTHCHECK: distroless has no shell/curl, and deploy/telemetry-server.yaml
-# already defines a readinessProbe on /health.
+# No HEALTHCHECK: distroless has no shell/curl, and the deployment already
+# defines a readinessProbe on /health.
 ENTRYPOINT ["/telemetry-server"]
