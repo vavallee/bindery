@@ -1,2 +1,0 @@
-### Fixed
-- **An audiobook grabbed from the Search page can find its book again** (#2470). Searching from the Search page rather than a book's own page does not tie the download to a book, so the importer works out which one it is afterwards. It read the ebook's embedded metadata and the filenames inside the download, neither of which tells you anything about an audiobook made of track files, and it never read the release name you actually picked. It does now, and it checks the author agrees before matching, so a one word title cannot pull in the wrong book.
