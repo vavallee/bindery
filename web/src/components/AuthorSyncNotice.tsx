@@ -123,6 +123,12 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
         {t('authorDetail.lastSync.accounting', {
           defaultValue: '{{added}} added, {{matched}} already in your library.',
           added: sync.added,
+          // `?? 0` despite `matched` being required in AuthorSyncSummary. The
+          // type describes what a current server sends; this value is decoded
+          // from JSON, and `npm run dev` proxies to whatever backend is on
+          // :8787, which may predate the field. Rendering "undefined already in
+          // your library" would be a worse version of the exact bug this line
+          // was added to fix.
           matched: sync.matched ?? 0,
         })}
       </div>
