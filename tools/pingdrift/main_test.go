@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -241,5 +242,118 @@ func TestCheckStatsURL(t *testing.T) {
 func TestLiveBuildSHA_RefusesABadURLWithoutDialling(t *testing.T) {
 	if _, err := liveBuildSHA(context.Background(), "http://example.test/api/stats", "s3cret"); err == nil {
 		t.Error("liveBuildSHA accepted plain http to a remote host")
+	}
+}
+
+// run is the whole path the workflow takes, so it is worth exercising end to
+// end against a stub rather than leaving it as untested glue.
+func TestRun(t *testing.T) {
+	const pinned = "23586cd355e40700e2b60e8d9344ba4e2afd3cb3"
+
+	// writeManifest returns a path to a manifest pinning the given sha.
+	writeManifest := func(t *testing.T, sha string) string {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), "telemetry-server.yaml")
+		body := "        containers:\n          - name: ping\n            image: ghcr.io/vavallee/bindery-ping:sha-" + sha + "\n"
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatalf("write manifest: %v", err)
+		}
+		return p
+	}
+	// stub serves the given build_sha on any authorised request.
+	stub := func(t *testing.T, sha string) string {
+		t.Helper()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"build_sha": sha})
+		}))
+		t.Cleanup(srv.Close)
+		return srv.URL
+	}
+
+	t.Run("in step", func(t *testing.T) {
+		t.Setenv("PING_MANIFEST", writeManifest(t, pinned))
+		t.Setenv("PING_STATS_URL", stub(t, pinned))
+		t.Setenv("TELEMETRY_STATS_TOKEN", "s3cret")
+
+		var out strings.Builder
+		if err := run(context.Background(), &out); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		if !strings.Contains(out.String(), "in step") {
+			t.Errorf("output = %q, want it to say the deployment is in step", out.String())
+		}
+	})
+
+	t.Run("drift names the remedy", func(t *testing.T) {
+		manifest := writeManifest(t, pinned)
+		t.Setenv("PING_MANIFEST", manifest)
+		t.Setenv("PING_STATS_URL", stub(t, "d2aee75fb3c9e49e8639d7016e73c4533d1e5af6"))
+		t.Setenv("TELEMETRY_STATS_TOKEN", "s3cret")
+
+		var out strings.Builder
+		err := run(context.Background(), &out)
+		if err == nil {
+			t.Fatal("run = nil, want a drift error")
+		}
+		// The person reading a red nightly job needs the command, not just
+		// the fact. This is the whole value of the check.
+		if !strings.Contains(err.Error(), "kubectl apply -f "+manifest) {
+			t.Errorf("err = %v, want it to name the kubectl command and the manifest", err)
+		}
+	})
+
+	t.Run("an unstamped running build is drift", func(t *testing.T) {
+		t.Setenv("PING_MANIFEST", writeManifest(t, pinned))
+		t.Setenv("PING_STATS_URL", stub(t, "unknown"))
+		t.Setenv("TELEMETRY_STATS_TOKEN", "s3cret")
+
+		var out strings.Builder
+		if err := run(context.Background(), &out); err == nil {
+			t.Error("run = nil for a build reporting \"unknown\", want drift")
+		}
+	})
+
+	t.Run("a missing token is an error, not a pass", func(t *testing.T) {
+		t.Setenv("PING_MANIFEST", writeManifest(t, pinned))
+		t.Setenv("PING_STATS_URL", stub(t, pinned))
+		t.Setenv("TELEMETRY_STATS_TOKEN", "")
+
+		var out strings.Builder
+		err := run(context.Background(), &out)
+		if err == nil {
+			t.Fatal("run = nil with no token, want an error")
+		}
+		if !strings.Contains(err.Error(), "TELEMETRY_STATS_TOKEN") {
+			t.Errorf("err = %v, want it to name the missing variable", err)
+		}
+	})
+
+	t.Run("a missing manifest is an error", func(t *testing.T) {
+		t.Setenv("PING_MANIFEST", filepath.Join(t.TempDir(), "absent.yaml"))
+		t.Setenv("PING_STATS_URL", stub(t, pinned))
+		t.Setenv("TELEMETRY_STATS_TOKEN", "s3cret")
+
+		var out strings.Builder
+		if err := run(context.Background(), &out); err == nil {
+			t.Error("run = nil for a manifest that does not exist, want an error")
+		}
+	})
+
+	// The default is the real endpoint, so a test that forgets to set
+	// PING_STATS_URL must not reach out over the network.
+	t.Run("the default stats URL is the production endpoint", func(t *testing.T) {
+		t.Setenv("PING_STATS_URL", "")
+		if got := env("PING_STATS_URL", "https://api.getbindery.dev/api/stats"); got != "https://api.getbindery.dev/api/stats" {
+			t.Errorf("default = %q", got)
+		}
+	})
+}
+
+func TestOrPlaceholder(t *testing.T) {
+	if got := orPlaceholder(""); got != "<absent>" {
+		t.Errorf("orPlaceholder(\"\") = %q, want %q", got, "<absent>")
+	}
+	if got := orPlaceholder("abc1234"); got != "abc1234" {
+		t.Errorf("orPlaceholder(%q) = %q, want it unchanged", "abc1234", got)
 	}
 }

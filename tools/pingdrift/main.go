@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -155,41 +156,55 @@ func liveBuildSHA(ctx context.Context, statsURL, token string) (string, error) {
 	return body.BuildSHA, nil
 }
 
-func main() {
-	manifestPath := os.Getenv("PING_MANIFEST")
-	if manifestPath == "" {
-		manifestPath = "deploy/telemetry-server.yaml"
-	}
-	statsURL := os.Getenv("PING_STATS_URL")
-	if statsURL == "" {
-		statsURL = "https://api.getbindery.dev/api/stats"
-	}
+// run does the work and returns an error rather than exiting, so the whole
+// path is reachable from a test. main is the only part that cannot be, and
+// it is now three lines.
+func run(ctx context.Context, out io.Writer) error {
+	manifestPath := env("PING_MANIFEST", "deploy/telemetry-server.yaml")
+	statsURL := env("PING_STATS_URL", "https://api.getbindery.dev/api/stats")
 	token := os.Getenv("TELEMETRY_STATS_TOKEN")
 	if token == "" {
-		fail("TELEMETRY_STATS_TOKEN is not set, cannot read the running build")
+		return errors.New("TELEMETRY_STATS_TOKEN is not set, cannot read the running build")
 	}
 
-	raw, err := os.ReadFile(manifestPath) // #nosec G304 -- path is a repo file, operator supplied
+	raw, err := os.ReadFile(manifestPath) // #nosec G304 -- a repo file named by the operator, not by a request
 	if err != nil {
-		fail("read %s: %v", manifestPath, err)
+		return fmt.Errorf("read %s: %w", manifestPath, err)
 	}
 	pinned, err := pinnedImageSHA(raw)
 	if err != nil {
-		fail("%s: %v", manifestPath, err)
+		return fmt.Errorf("%s: %w", manifestPath, err)
 	}
 
-	live, err := liveBuildSHA(context.Background(), statsURL, token)
+	live, err := liveBuildSHA(ctx, statsURL, token)
 	if err != nil {
-		fail("%v", err)
+		return err
 	}
 
-	fmt.Printf("pinned in %s: %s\n", manifestPath, pinned)
-	fmt.Printf("running:     %s\n", orPlaceholder(live))
+	_, _ = fmt.Fprintf(out, "pinned in %s: %s\n", manifestPath, pinned)
+	_, _ = fmt.Fprintf(out, "running:     %s\n", orPlaceholder(live))
 
 	if err := compareSHA(pinned, live); err != nil {
-		fail("bindery-ping drift: %v. Deploy the pinned image: kubectl apply -f %s", err, manifestPath)
+		return fmt.Errorf("bindery-ping drift: %w. Deploy the pinned image: kubectl apply -f %s", err, manifestPath)
 	}
-	fmt.Println("in step")
+	_, _ = fmt.Fprintln(out, "in step")
+	return nil
+}
+
+func main() {
+	if err := run(context.Background(), os.Stdout); err != nil {
+		// A GitHub Actions error annotation, so the reason lands on the run
+		// summary rather than only in the log.
+		fmt.Printf("::error::%v\n", err)
+		os.Exit(1)
+	}
+}
+
+func env(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func orPlaceholder(s string) string {
@@ -197,10 +212,4 @@ func orPlaceholder(s string) string {
 		return "<absent>"
 	}
 	return s
-}
-
-// fail writes a GitHub Actions error annotation and exits non-zero.
-func fail(format string, args ...any) {
-	fmt.Printf("::error::"+format+"\n", args...)
-	os.Exit(1)
 }
