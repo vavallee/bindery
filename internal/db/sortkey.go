@@ -2,6 +2,7 @@ package db
 
 import (
 	"strings"
+	"sync"
 	"unicode"
 
 	"golang.org/x/text/runes"
@@ -35,7 +36,9 @@ func authorSortKey(sortName string) string {
 	}
 	s = strings.ToLower(s)
 	s = textutil.FoldNonDecomposableLatin(s)
-	folded, _, err := transform.String(newAccentStripper(), s)
+	stripper := accentStrippers.Get().(transform.Transformer)
+	defer accentStrippers.Put(stripper)
+	folded, _, err := transform.String(stripper, s)
 	if err != nil {
 		// transform only errors on malformed input we can't normalize; fall
 		// back to the lowercased+replaced form rather than dropping the row to
@@ -57,12 +60,21 @@ func authorSortKey(sortName string) string {
 // changed costs one extra table scan, so when in doubt, bump.
 const authorSortKeyRev = 1
 
+// accentStrippers hands out accent-stripping transformers one goroutine at a
+// time. transform.Chain returns a STATEFUL transformer whose Transform mutates
+// internal buffers, so a shared package-level instance panics under concurrent
+// author writes (#1374) — but a pool gives each caller sole possession, which
+// is all that rule requires.
+//
+// It was built per call until books started needing a sort key too (migration
+// 083), which put this on every book write as well as every author write. The
+// allocations stopped being noise; transform.String resets before it
+// transforms, so a pooled instance needs no cleanup.
+var accentStrippers = sync.Pool{New: func() any { return newAccentStripper() }}
+
 // newAccentStripper builds a transformer that decomposes runes (NFD), removes
 // combining marks (Mn), then recomposes (NFC), folding precomposed accented
-// letters to their base. Constructed PER CALL: transform.Chain returns a
-// stateful transformer whose Transform mutates internal buffers, so a shared
-// package-level instance panics under concurrent author writes (#1374). The
-// three small allocations are noise next to the DB write that follows.
+// letters to their base.
 func newAccentStripper() transform.Transformer {
 	return transform.Chain(
 		norm.NFD,

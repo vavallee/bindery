@@ -2,7 +2,9 @@ package textutil
 
 import (
 	"strings"
+	"sync"
 	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
@@ -305,14 +307,15 @@ var nonDecomposableFolder = strings.NewReplacer(
 // tokenisation policy, as with FoldForTitleMatch — only the character rewriting
 // is shared.
 func FoldForSearch(s string) string {
-	s = norm.NFKC.String(strings.TrimSpace(s))
+	s = strings.TrimSpace(s)
 	if s == "" {
 		return ""
 	}
-	// cases.Caser is stateful, so it is built per call for the same reason
-	// db.newAccentStripper is (#1374): sharing one instance across concurrent
-	// writes panics inside its buffers.
-	s = cases.Fold().String(s)
+	if isASCII(s) {
+		return foldASCIIForSearch(s)
+	}
+	s = norm.NFKC.String(s)
+	s = foldCase(s)
 	s = FoldNonDecomposableLatin(s)
 	s = stripLatinGreekMarks(s)
 	s = cyrillicYoFolder.Replace(s)
@@ -339,6 +342,81 @@ func FoldForSearch(s string) string {
 		return ' '
 	}, s)
 	return strings.Join(strings.Fields(mapped), " ")
+}
+
+// isASCII reports whether s is entirely 7-bit ASCII.
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
+}
+
+// foldASCIIForSearch is FoldForSearch for input that is already 7-bit ASCII,
+// which most of an English-language catalogue is. Every Unicode step in the
+// general path is provably the identity on ASCII — NFKC and NFC leave it alone,
+// case folding agrees with ToLower over A-Z, there are no marks to strip, and
+// no ASCII character appears in the non-decomposable table — so this shortcut
+// changes nothing except the cost, which matters because the general path runs
+// on every book and author write and again on every keystroke in the search box.
+//
+// TestFoldForSearchASCIIFastPathAgrees proves the equivalence over the fixture
+// corpus and an exhaustive sweep of ASCII, rather than asking a reader to take
+// the paragraph above on trust.
+func foldASCIIForSearch(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 8)
+	space := false
+	write := func(r byte) {
+		if space && b.Len() > 0 {
+			b.WriteByte(' ')
+		}
+		space = false
+		b.WriteByte(r)
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\'' || c == '`':
+			// Apostrophes are deleted, not separated, so "Poseidon's" meets
+			// "Poseidons". Deliberately not a separator and not a word char.
+		case c == '&':
+			// Expands to a word of its own, spaces on both sides.
+			if b.Len() > 0 {
+				b.WriteByte(' ')
+			}
+			b.WriteString("and")
+			space = true
+		case c >= 'A' && c <= 'Z':
+			write(c + ('a' - 'A'))
+		case (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'):
+			write(c)
+		default:
+			space = true
+		}
+	}
+	return b.String()
+}
+
+// foldCasers hands out Unicode case folders one goroutine at a time.
+//
+// A cases.Caser is stateful, so sharing one across goroutines corrupts its
+// buffers — the trap #1374 hit with a shared accent stripper. Building one per
+// call is the safe answer and was the first one here, but it is also the
+// expensive part of this function: it made FoldForSearch four times the cost of
+// FoldForTitleMatch, on a path that runs for every book and author write and
+// again for every keystroke in the search box. A pool keeps the safety property
+// (a Caser is only ever held by one goroutine) without paying to rebuild the
+// tables. Caser.String resets before it transforms, so a pooled instance needs
+// no cleanup on the way in or out.
+var foldCasers = sync.Pool{New: func() any { c := cases.Fold(); return &c }}
+
+func foldCase(s string) string {
+	c := foldCasers.Get().(*cases.Caser)
+	defer foldCasers.Put(c)
+	return c.String(s)
 }
 
 // FoldForSearchRev is the revision of FoldForSearch. db.backfillSearchKeys
