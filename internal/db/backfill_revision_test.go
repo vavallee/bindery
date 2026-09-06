@@ -379,3 +379,46 @@ func TestExistingDatabaseIsNotTreatedAsFresh(t *testing.T) {
 		t.Fatalf("isFreshDatabase after reopening the file = %v, %v; want false, nil", fresh, err)
 	}
 }
+
+// TestAuthorSortKeyRevisionBumpRepairsLigatureRows is the upgrade path for the
+// fold-ordering fix. An existing library holds sort_key values computed when
+// FoldNonDecomposableLatin still ran before mark stripping, so a name written
+// with U+01E2 kept its ligature and went on sorting after Z. The bump to
+// revision 2 is the whole mechanism that repairs them, and a stale marker has
+// to behave like a missing one for that to work.
+func TestAuthorSortKeyRevisionBumpRepairsLigatureRows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bindery.db")
+	ctx := context.Background()
+
+	database := openFileDB(t, path)
+	authors := NewAuthorRepo(database)
+	author := &models.Author{ForeignID: "OL-LIG-1", Name: "Ǣlfric of Eynsham", SortName: "Ǣlfric of Eynsham"}
+	if err := authors.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rewind the row and the marker to what revision 1 would have left behind.
+	const revOneKey = "ælfric of eynsham"
+	if _, err := database.Exec("UPDATE authors SET sort_key = ? WHERE id = ?", revOneKey, author.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("UPDATE settings SET value = '1' WHERE key = ?", backfillRevKeySortKeys); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened := openFileDB(t, path)
+	var got string
+	if err := reopened.QueryRow("SELECT sort_key FROM authors WHERE id = ?", author.ID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != "aelfric of eynsham" {
+		t.Errorf("sort_key after the revision bump = %q, want %q (the stale marker did not force the backfill)", got, "aelfric of eynsham")
+	}
+	// And the marker moved on, so the next boot pays nothing.
+	if v, ok := settingValue(t, reopened, backfillRevKeySortKeys); !ok || v != strconv.Itoa(authorSortKeyRev) {
+		t.Errorf("marker after the repair = %q (present %v), want %d", v, ok, authorSortKeyRev)
+	}
+}
