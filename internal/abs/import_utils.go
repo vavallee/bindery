@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/indexer"
+	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
 )
@@ -259,27 +260,31 @@ func cloneTimePtr(value *time.Time) *time.Time {
 }
 
 func isbn13Ptr(raw string) *string {
-	digits := isbnDigits(raw)
-	if len(digits) == 13 {
-		return &digits
+	if isbn13, _ := isbnutil.Extract(raw); isbn13 != "" {
+		return &isbn13
 	}
 	return nil
 }
 
 func isbn10Ptr(raw string) *string {
-	digits := isbnDigits(raw)
-	if len(digits) == 10 {
-		return &digits
+	if _, isbn10 := isbnutil.Extract(raw); isbn10 != "" {
+		return &isbn10
 	}
 	return nil
 }
 
-func isbnDigits(raw string) string {
-	var b strings.Builder
-	for _, r := range raw {
-		if r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		}
+// absLookupISBN reduces an Audiobookshelf item's ISBN field to the identifier
+// to look the book up upstream by, preferring the ISBN-13 form when the item
+// carries one.
+//
+// This used to keep only the digits, which silently destroyed every ISBN-10
+// ending in the 'X' check digit: "080442957X" became nine digits, matched
+// neither length, and the ISBN was dropped from the edition and never used for
+// the upstream lookup.
+func absLookupISBN(raw string) string {
+	isbn13, isbn10 := isbnutil.Extract(raw)
+	if isbn13 != "" {
+		return isbn13
 	}
-	return b.String()
+	return isbn10
 }

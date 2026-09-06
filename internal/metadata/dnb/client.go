@@ -24,6 +24,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/vavallee/bindery/internal/httpsec"
+	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
 	"github.com/vavallee/bindery/internal/useragent"
@@ -317,16 +318,13 @@ func recordToBook(rec marcRecord) *models.Book {
 	// add-book endpoint can use them for cross-provider author resolution
 	// when the DNB record has only an author name and no foreign author ID.
 	for _, raw := range rec.subfieldAll("020", "a") {
-		digits := stripISBNQualifier(raw)
-		if digits == "" {
-			continue
-		}
+		isbn13, isbn10 := stripISBNQualifier(raw)
 		ed := models.Edition{}
-		switch len(digits) {
-		case 13:
-			ed.ISBN13 = &digits
-		case 10:
-			ed.ISBN10 = &digits
+		switch {
+		case isbn13 != "":
+			ed.ISBN13 = &isbn13
+		case isbn10 != "":
+			ed.ISBN10 = &isbn10
 		default:
 			continue
 		}
@@ -336,24 +334,18 @@ func recordToBook(rec marcRecord) *models.Book {
 	return b
 }
 
-// stripISBNQualifier extracts the digit-run from a MARC 020 $a value. Real
-// values look like "9783499015717", "3-499-01571-X", or
-// "9783499015717 (pbk.)" — keep the digits (and a trailing X for ISBN-10
-// check digits), drop everything else.
-func stripISBNQualifier(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		} else if r == 'X' || r == 'x' {
-			// ISBN-10 check digit can be 'X' (value 10).
-			b.WriteRune('X')
-		} else if b.Len() > 0 && (r == ' ' || r == '(' || r == ',') {
-			// Stop at the first delimiter after digits — qualifier text follows.
-			break
-		}
-	}
-	return b.String()
+// stripISBNQualifier extracts the ISBN from a MARC 020 $a value and classifies
+// it. Real values look like "9783499015717", "3-499-01571-X", or
+// "9783499015717 (pbk.)" — the parenthesised qualifier naming the binding has
+// to be dropped without taking any digits inside it for part of the ISBN.
+//
+// The scanning is isbnutil's, shared with the EPUB OPF reader, so a book
+// catalogued by the DNB and the same book read out of an EPUB yield the same
+// identifier string. Delegating also fixed the limitation this function used to
+// document: it stopped at the first space, so a space-separated
+// "978 3 446 12345 6" came back as "978" and the ISBN was dropped.
+func stripISBNQualifier(s string) (isbn13, isbn10 string) {
+	return isbnutil.Extract(s)
 }
 
 // extractAuthor builds an Author from a MARC bib record. Lookup order:

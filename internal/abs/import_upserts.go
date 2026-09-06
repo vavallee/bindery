@@ -12,6 +12,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/indexer"
+	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
 )
@@ -564,7 +565,7 @@ func (i *Importer) mergeUpstreamBook(ctx context.Context, cfg ImportConfig, item
 }
 
 func (i *Importer) lookupUpstreamBook(ctx context.Context, author *models.Author, item NormalizedLibraryItem) (*models.Book, string, bool, error) {
-	if isbn := isbnDigits(item.ISBN); isbn != "" {
+	if isbn := absLookupISBN(item.ISBN); isbn != "" {
 		match, err := i.meta.GetBookByISBN(ctx, isbn)
 		if err != nil {
 			return nil, "", false, err
@@ -573,7 +574,7 @@ func (i *Importer) lookupUpstreamBook(ctx context.Context, author *models.Author
 			return match, "isbn", false, nil
 		}
 	}
-	if asin := strings.TrimSpace(item.ASIN); asin != "" {
+	if asin := isbnutil.NormalizeASIN(item.ASIN); asin != "" {
 		match, err := i.meta.GetCanonicalBookByASIN(ctx, asin)
 		if err != nil {
 			return nil, "", false, err
@@ -747,7 +748,7 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 			MediaType:        deriveMediaType(item),
 			Narrator:         joinNarrators(item.Narrators),
 			DurationSeconds:  int(math.Round(item.DurationSeconds)),
-			ASIN:             strings.TrimSpace(item.ASIN),
+			ASIN:             isbnutil.NormalizeASIN(item.ASIN),
 			MetadataProvider: providerAudiobookshelf,
 		}, matchedBy: "created"}, true, false, metadataMergeResult{}, nil
 	}
@@ -769,7 +770,7 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 		MediaType:        deriveMediaType(item),
 		Narrator:         joinNarrators(item.Narrators),
 		DurationSeconds:  int(math.Round(item.DurationSeconds)),
-		ASIN:             strings.TrimSpace(item.ASIN),
+		ASIN:             isbnutil.NormalizeASIN(item.ASIN),
 		MetadataProvider: providerAudiobookshelf,
 	}
 	if err := i.books.Create(ctx, book); err != nil {
@@ -825,7 +826,7 @@ func (i *Importer) upsertManualBook(ctx context.Context, cfg ImportConfig, runID
 		MediaType:        deriveMediaType(item),
 		Narrator:         joinNarrators(item.Narrators),
 		DurationSeconds:  int(math.Round(item.DurationSeconds)),
-		ASIN:             strings.TrimSpace(item.ASIN),
+		ASIN:             isbnutil.NormalizeASIN(item.ASIN),
 		MetadataProvider: "openlibrary",
 	}
 	if i.meta != nil && !cfg.DryRun {
@@ -878,7 +879,7 @@ func (i *Importer) applyABSFormatFields(book *models.Book, item NormalizedLibrar
 	if item.DurationSeconds > 0 {
 		book.DurationSeconds = int(math.Round(item.DurationSeconds))
 	}
-	if asin := strings.TrimSpace(item.ASIN); asin != "" {
+	if asin := isbnutil.NormalizeASIN(item.ASIN); asin != "" {
 		book.ASIN = asin
 	}
 	if lang := normalizeLanguage(item.Language); lang != "" && book.Language == "" {
@@ -1018,7 +1019,7 @@ func (i *Importer) applyBookFields(ctx context.Context, book *models.Book, autho
 	if item.DurationSeconds > 0 {
 		book.DurationSeconds = int(math.Round(item.DurationSeconds))
 	}
-	if asin := strings.TrimSpace(item.ASIN); asin != "" {
+	if asin := isbnutil.NormalizeASIN(item.ASIN); asin != "" {
 		book.ASIN = asin
 	}
 	// observedMediaType, not deriveMediaType — see applyABSFormatFields (#2169).
@@ -1298,7 +1299,7 @@ func (i *Importer) upsertEditions(ctx context.Context, cfg ImportConfig, runID, 
 			Title:       item.Title,
 			ISBN13:      isbn13Ptr(item.ISBN),
 			ISBN10:      isbn10Ptr(item.ISBN),
-			ASIN:        ptrString(strings.TrimSpace(item.ASIN)),
+			ASIN:        ptrString(isbnutil.NormalizeASIN(item.ASIN)),
 			Publisher:   strings.TrimSpace(item.Publisher),
 			PublishDate: parseABSDate(item.PublishedDate, item.PublishedYear),
 			Format:      strings.ToUpper(format),
