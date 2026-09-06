@@ -494,7 +494,18 @@ func lookupDetectFormat(path string) string {
 
 // lookupAuthorMatch returns true when parsed and catalogue author names refer
 // to the same person. It handles comma-inverted forms ("Lane, Nick" vs
-// "Nick Lane") and falls back to Jaro-Winkler similarity >= 0.80.
+// "Nick Lane") and falls back to textutil.MatchAuthorName.
+//
+// The fallback used to be a bare Jaro-Winkler >= 0.80 on the two raw strings,
+// which is far looser than anything else in the tree and loose in the
+// direction that hurts: "Jane Doe" against "Jane Smith" scores 0.8250, so a
+// download by one author corroborated a catalogue book by another. Any band
+// MatchAuthorName is willing to name — including ambiguous — is accepted here,
+// because this is corroboration between one file and one candidate book rather
+// than a choice between authors, and the title tier has already done the
+// choosing. That keeps the parsed-filename shapes binding: "N. Lane" and
+// "Nck Lane" both still reach "Nick Lane", and "Tolkien" now reaches
+// "J.R.R. Tolkien", which the 0.80 score never did.
 func lookupAuthorMatch(parsed, catalogue string) bool {
 	pNorm := strings.ToLower(strings.TrimSpace(parsed))
 	cNorm := strings.ToLower(strings.TrimSpace(catalogue))
@@ -510,15 +521,11 @@ func lookupAuthorMatch(parsed, catalogue string) bool {
 	if invertAuthorName(cNorm) == pNorm {
 		return true
 	}
-	// Exact-via-variants catches the pairs raw Jaro-Winkler scores far too low
-	// to reach 0.80: transliterated diacritics in particular, where
+	// MatchAuthorName also catches the pairs a raw Jaro-Winkler score is far
+	// too low to reach: transliterated diacritics in particular, where
 	// "Boell, Heinrich" against "Heinrich Böll" scores 0.441 because every
-	// character after the shared prefix differs. Strictly a widening — the
-	// score check below still runs. See internal/textutil/fold.go.
-	if textutil.MatchAuthorName(parsed, catalogue).Kind == textutil.AuthorMatchExact {
-		return true
-	}
-	return textutil.JaroWinkler(pNorm, cNorm) >= 0.80
+	// character after the shared prefix differs. See internal/textutil/fold.go.
+	return textutil.MatchAuthorName(parsed, catalogue).Kind != textutil.AuthorMatchNone
 }
 
 // invertAuthorName converts "Last, First" to "first last".
