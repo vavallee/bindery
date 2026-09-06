@@ -3,6 +3,7 @@ package indexer
 import (
 	"testing"
 
+	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/textutil"
 )
 
@@ -217,10 +218,15 @@ func TestFoldPunctuationUsesTheSharedApostropheSet(t *testing.T) {
 // that anyone setting out to "fix" the inconsistency finds the reason first.
 //
 // CanonicalDedupKey expands "&" to " and " because it answers "are these the
-// same book", and providers send both spellings for one book. FoldForTitleMatch
-// leaves it a separator because it feeds ContainsPhrase, which requires the
-// keywords contiguous: an injected "and" token would break every phrase hit on
-// a release named "Foundation.&.Empire".
+// same book", and providers send both spellings for one book.
+//
+// FoldForTitleMatch must not, and the reason is subtler than it first looks.
+// Both the phrase and the haystack fold through it, so expanding on both sides
+// would be symmetric and would cost nothing by itself. What breaks is that the
+// keyword side additionally drops "and" as a stop word and the haystack side
+// does not, while phraseRegex joins its parts with a separator run that no
+// letter may interrupt. TestAmpersandPhraseAsymmetry measures that rather than
+// arguing it.
 //
 // The two are safe only as long as no caller compares a key from one against a
 // key from the other. Nothing does today.
@@ -242,5 +248,50 @@ func TestDedupAndTitleMatchAlphabetsDifferOnAmpersand(t *testing.T) {
 	if dedup == match {
 		t.Errorf("the dedup and title-match alphabets agree on %q (%q); they are meant to differ, and a caller comparing across them would now silently pass",
 			title, dedup)
+	}
+}
+
+// TestAmpersandPhraseAsymmetry is the evidence behind the rule that alphabet 1
+// must not expand "&", and it is here because the obvious argument for that
+// rule is wrong. The phrase and the haystack both fold through
+// FoldForTitleMatch, so an expansion would be symmetric; symmetry is not what
+// saves the match.
+//
+// The asymmetry is the stop word list. SigWords drops "and" from the keywords
+// and nothing drops it from the haystack, so an expanded haystack gains a word
+// the phrase cannot account for, and phraseRegex admits only separators
+// between its parts.
+//
+// The second assertion records a live false negative that is nobody's
+// regression: a release spelling the word out is already missed today.
+func TestAmpersandPhraseAsymmetry(t *testing.T) {
+	kws := newznab.SigWords("Foundation & Empire")
+	if len(kws) != 2 || kws[0] != "foundation" || kws[1] != "empire" {
+		t.Fatalf(`SigWords("Foundation & Empire") = %q, want ["foundation" "empire"]; "and" is a stop word on this side and that is the whole point`, kws)
+	}
+	if got := newznab.SigWords("Foundation and Empire"); len(got) != 2 {
+		t.Errorf(`SigWords("Foundation and Empire") = %q, want two tokens; both spellings must reduce to the same phrase`, got)
+	}
+
+	// What the haystack looks like today, and what it would look like if
+	// alphabet 1 expanded the ampersand.
+	const today = "foundation empire 1952 retail epub grp"
+	const ifExpanded = "foundation and empire 1952 retail epub grp"
+
+	if got := NormalizeRelease("Foundation.&.Empire.1952.RETAIL.EPUB-GRP"); got != today {
+		t.Fatalf("NormalizeRelease = %q, want %q", got, today)
+	}
+	if !ContainsPhrase(today, kws) {
+		t.Error("the ampersand release stopped matching its own phrase; alphabet 1 must be leaving & as a separator")
+	}
+	if ContainsPhrase(ifExpanded, kws) {
+		t.Error(`an expanded haystack still matched [foundation empire]; if this ever passes, the stop word asymmetry is gone and alphabet 1 could expand "&" after all`)
+	}
+
+	// Live false negative, recorded so it is not mistaken for damage done by
+	// the dedup change. A release spelling the word out is missed regardless of
+	// which spelling the user asked for, because "and" interrupts the phrase.
+	if ContainsPhrase(ifExpanded, newznab.SigWords("Foundation and Empire")) {
+		t.Error("a release named \"Foundation and Empire\" now matches; if this passes, the miss recorded here has been fixed and this assertion should become the positive one")
 	}
 }

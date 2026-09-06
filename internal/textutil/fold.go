@@ -35,10 +35,16 @@ import (
 //     an ampersand EXPANDS to " and " here and is a SEPARATOR in (1). That is
 //     not an oversight to tidy up. Dedup asks "are these the same book", and
 //     providers send "Foundation & Empire" and "Foundation and Empire" for one
-//     book, so the two spellings must produce one key. Alphabet (1) feeds
-//     indexer.ContainsPhrase, which requires its keywords contiguous, and an
-//     injected "and" token would break every phrase hit on a release named
-//     "Foundation.&.Empire".
+//     book, so the two spellings must produce one key.
+//     Alphabet (1) must NOT expand, and the reason is an asymmetry rather than
+//     the fold. Both the phrase and the haystack fold through (1), so expanding
+//     on both sides would be symmetric and harmless on its own. What breaks is
+//     that the keyword side then drops "and" as a stop word (newznab.SigWords)
+//     and the haystack side does not, while indexer.phraseRegex joins its parts
+//     with a separator run that no letter may interrupt. Under expansion a
+//     release named "Foundation.&.Empire" folds to a haystack reading
+//     "foundation and empire" while its phrase stays [foundation, empire], and
+//     the "and" between them loses the hit.
 //     Nothing may compare a key from (1) against a key from (1a). Today
 //     nothing does: every caller stays inside one or the other. Before making
 //     them agree, read TestDedupAndTitleMatchAlphabetsDifferOnAmpersand, which
@@ -323,10 +329,12 @@ var nonDecomposableFolder = strings.NewReplacer(
 //	                         "ハリーポッター" (#1645).
 //	& → " and "              So "Foundation & Empire" meets "Foundation and
 //	                         Empire". Deliberately NOT done in FoldForTitleMatch:
-//	                         that alphabet feeds ContainsPhrase, which needs the
-//	                         keywords contiguous, and an injected "and" token
-//	                         would break every phrase hit on a release named
-//	                         "Foundation.&.Empire".
+//	                         its keyword side drops "and" as a stop word and its
+//	                         haystack side does not, so expanding there would
+//	                         leave an "and" sitting inside a phrase that no
+//	                         longer contains it, and ContainsPhrase requires the
+//	                         parts uninterrupted by any letter. See alphabet 1a
+//	                         in the header.
 //
 // The result is folded, single-space separated and trimmed. Callers own
 // tokenisation policy, as with FoldForTitleMatch — only the character rewriting
