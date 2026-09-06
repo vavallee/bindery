@@ -486,7 +486,7 @@ func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
 	for i, c := range cands {
 		paths[i] = c.path
 	}
-	trackedPaths, err := h.books.ListAllFilePaths(r.Context())
+	trackedPaths, err := h.books.ListAllBookFilePaths(r.Context())
 	if err != nil {
 		slog.Error("bulk folder import scan failed to load tracked files", "path", path, "error", err)
 		writeServerError(w, r, err)

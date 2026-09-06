@@ -1235,6 +1235,33 @@ func TestManualImportScan_SkipsAlreadyTrackedFiles(t *testing.T) {
 	}
 }
 
+func TestManualImportScan_TrackedFilesError(t *testing.T) {
+	t.Parallel()
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	books := db.NewBookRepo(database)
+	downloads := db.NewDownloadRepo(database)
+	h := NewManualImportHandler(&stubManualImportScanner{}, downloads, books)
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "book.epub"))
+	h.WithRoots(NewLibraryRoots(nil, root))
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.Scan(rec, scanRequest(root))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body = %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "database is closed") {
+		t.Errorf("body leaked database error: %q", rec.Body.String())
+	}
+}
+
 // TestManualImportScan_AllowsConfiguredRootItself reproduces #1373: pasting a
 // configured root ("/books") or an allow-listed download dir ("/downloads")
 // into bulk import must scan it, not 403. Before the fix, ResolveContained
