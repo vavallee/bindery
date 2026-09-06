@@ -272,6 +272,14 @@ func migrate(database *sql.DB) error {
 		return err
 	}
 
+	// Whether this database existed before this call. Read before the apply
+	// loop, because after it every version is recorded either way. See
+	// stampBackfillRevisions for what it is used for.
+	fresh, err := isFreshDatabase(database)
+	if err != nil {
+		return err
+	}
+
 	for _, entry := range entries {
 		v, err := migrationVersion(entry.Name())
 		if err != nil {
@@ -312,6 +320,22 @@ func migrate(database *sql.DB) error {
 	// is idempotent and avoids rewriting ambiguous historical markers (#1932).
 	if err := ensureBooksExcludedColumn(database); err != nil {
 		return fmt.Errorf("repair legacy books.excluded column: %w", err)
+	}
+
+	// A database created by this call has no legacy rows: every row written into
+	// it from here on goes through the repositories, which compute each derived
+	// key with the current normalizer. So the backfills have nothing to repair,
+	// and recording their revisions now is the same answer they would reach
+	// after four table scans of an empty schema.
+	//
+	// This is not a micro-optimisation. Every test in this package opens a fresh
+	// database, and the race-enabled suite runs within a couple of percent of
+	// its 15 minute timeout, so scans that can only ever find nothing are paid
+	// hundreds of times for no result. A fresh install pays them once for the
+	// same nothing.
+	if fresh {
+		stampBackfillRevisions(database)
+		return nil
 	}
 
 	// Post-migration Go-side backfill. Migration 051's SQL backfill is a coarse
@@ -1131,4 +1155,34 @@ func backfillFoldedSearchColumn(database *sql.DB, table, source string) (int, er
 		return 0, fmt.Errorf("commit %s search_key backfill: %w", table, err)
 	}
 	return len(updates), nil
+}
+
+// isFreshDatabase reports whether schema_migrations was empty when migrate()
+// began, i.e. whether this call is creating the database rather than opening an
+// existing one.
+//
+// It is deliberately conservative about what counts as fresh. A restored backup
+// or a downgraded install carries its migration history, so it answers false
+// and takes the full backfill path — which is the answer that matters, because
+// those are exactly the databases that can hold rows keyed by an older
+// normalizer.
+func isFreshDatabase(database *sql.DB) (bool, error) {
+	var applied int
+	if err := database.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&applied); err != nil {
+		return false, fmt.Errorf("count applied migrations: %w", err)
+	}
+	return applied == 0, nil
+}
+
+// stampBackfillRevisions records every backfill's current revision without
+// running it. Only safe on a database that has just been created; see the call
+// site in migrate.
+//
+// Failures are ignored for the same reason backfillRevisionCurrent fails open:
+// a missing marker costs a table scan on the next boot, never a stale key.
+func stampBackfillRevisions(database *sql.DB) {
+	markBackfillRevision(database, backfillRevKeyDedup, indexer.CanonicalDedupKeyRev)
+	markBackfillRevision(database, backfillRevKeySortKeys, authorSortKeyRev)
+	markBackfillRevision(database, backfillRevKeyBookSortKeys, bookSortKeyRev)
+	markBackfillRevision(database, backfillRevKeySearchKeys, textutil.FoldForSearchRev)
 }

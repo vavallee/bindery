@@ -330,3 +330,52 @@ func TestBackfillBookSortKeys_SkippedWhileRevisionMatches(t *testing.T) {
 		t.Errorf("books.sort_key = %q after the marker was dropped, want %q", key, want)
 	}
 }
+
+// TestFreshDatabaseStampsBackfillsWithoutScanning covers the short-circuit in
+// migrate(): a database created by the call that migrates it has no rows an
+// older normalizer could have written, so every backfill is recorded as current
+// without being run.
+//
+// The property under test is the one that makes the shortcut safe, not the
+// saving itself: the markers must land at exactly the revisions the backfills
+// would have reached, or the next boot silently skips a repair that was never
+// performed.
+func TestFreshDatabaseStampsBackfillsWithoutScanning(t *testing.T) {
+	database := openFileDB(t, filepath.Join(t.TempDir(), "bindery.db"))
+
+	for _, want := range []struct {
+		key string
+		rev int
+	}{
+		{backfillRevKeyDedup, indexer.CanonicalDedupKeyRev},
+		{backfillRevKeySortKeys, authorSortKeyRev},
+		{backfillRevKeyBookSortKeys, bookSortKeyRev},
+		{backfillRevKeySearchKeys, textutil.FoldForSearchRev},
+	} {
+		got, ok := settingValue(t, database, want.key)
+		if !ok || got != strconv.Itoa(want.rev) {
+			t.Errorf("%s after creating the database = %q (present %v), want %d", want.key, got, ok, want.rev)
+		}
+	}
+}
+
+// TestExistingDatabaseIsNotTreatedAsFresh is the guard on the other side of
+// that shortcut. A restored backup, a downgrade, or any second open carries its
+// migration history, so isFreshDatabase must answer false and let the backfills
+// run — those are exactly the files that can hold rows keyed by an older
+// normalizer.
+func TestExistingDatabaseIsNotTreatedAsFresh(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bindery.db")
+
+	database := openFileDB(t, path)
+	if fresh, err := isFreshDatabase(database); err != nil || fresh {
+		t.Fatalf("isFreshDatabase on an already-migrated handle = %v, %v; want false, nil", fresh, err)
+	}
+
+	// Reopening the file is the case that matters: migrate() runs again, and it
+	// must see the recorded history rather than an empty schema.
+	reopened := openFileDB(t, path)
+	if fresh, err := isFreshDatabase(reopened); err != nil || fresh {
+		t.Fatalf("isFreshDatabase after reopening the file = %v, %v; want false, nil", fresh, err)
+	}
+}
