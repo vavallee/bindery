@@ -1402,7 +1402,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// EPUB metadata (reliable) over the release filename (which encodes
 	// author/title/series in inconsistent orders) — issue #1014.
 	if book == nil {
-		if b, a := s.matchBookForDownload(ctx, bookFiles); b != nil {
+		if b, a := s.matchBookForDownload(ctx, bookFiles, dl.Title); b != nil {
 			book = b
 			author = a
 			edition = s.resolveCalibreEdition(ctx, dl, book)

@@ -373,11 +373,18 @@ func lookupWith(path string, books []models.Book, authors []models.Author) Looku
 // without a BookID, e.g. via the free-text Search page) with a catalogue book.
 // It prefers embedded EPUB metadata (dc:title/dc:creator) over the release
 // filename, since filenames encode author/title/series in inconsistent orders
-// and routinely mis-parse (issue #1014). Returns the book and its author only
-// on a single confident match; (nil, nil) when the catalogue has no
-// unambiguous match, so the caller still surfaces the unmatched failure rather
-// than importing against the wrong book.
-func (s *Scanner) matchBookForDownload(ctx context.Context, files []string) (*models.Book, *models.Author) {
+// and routinely mis-parse (issue #1014), and falls back to the release title
+// last. Returns the book and its author only on a single confident match;
+// (nil, nil) when the catalogue has no unambiguous match, so the caller still
+// surfaces the unmatched failure rather than importing against the wrong book.
+//
+// releaseTitle is dl.Title, the name the user actually saw and chose on the
+// search page. Until #2470 it was never consulted, which made an audiobook
+// grabbed from the free-text Search page unmatchable: tier 1 needs an EPUB an
+// MP3 does not have, and tier 2 reads the track filenames, which are
+// "01 - Chapter One.mp3". The failure then told the user to check the release
+// title, which was the one field nothing had looked at.
+func (s *Scanner) matchBookForDownload(ctx context.Context, files []string, releaseTitle string) (*models.Book, *models.Author) {
 	// Tier 1: embedded EPUB metadata.
 	for _, f := range files {
 		if !IsEpubFile(f) {
@@ -412,7 +419,108 @@ func (s *Scanner) matchBookForDownload(ctx context.Context, files []string) (*mo
 			return res.Book, a
 		}
 	}
+
+	// Tier 3: the release title. Last, so nothing that matches today changes
+	// behaviour; it only answers the case the first two cannot see.
+	if b, a := s.matchByReleaseTitle(ctx, releaseTitle); b != nil {
+		slog.Info("matched download via release title",
+			"release", releaseTitle, "bookID", b.ID, "book", b.Title)
+		return b, a
+	}
 	return nil, nil
+}
+
+// matchByReleaseTitle finds the single catalogue book a release name refers to.
+//
+// Deliberately NOT routed through Lookup, which is the obvious thing to try and
+// is wrong: Lookup runs ParseFilename, which treats its argument as a path, so
+// the "/" inside a "[ENG / MP3]" tag makes it keep only the last segment.
+//
+//	ParseFilename("The Kitchen God's Wife by Amy Tan [ENG / MP3]")
+//	    -> title "MP3]", author ""
+//	ParseFilename("Amy Tan - The Kitchen God's Wife")
+//	    -> title "Amy Tan", author "The Kitchen God's Wife"   (inverted)
+//
+// So the release name is compared whole, by the same token-overlap titleMatch
+// the rest of the importer uses.
+//
+// The author has to corroborate, and that requirement is the difference
+// between this being useful and being dangerous. titleMatch is generous by
+// design, so a one-word book title matches almost any release containing that
+// word:
+//
+//	titleMatch("The Kitchen God's Wife", release) == true    // the real book
+//	titleMatch("Wife",                   release) == true    // any book called "Wife"
+//
+// The "single confident match only" rule below catches that when both books
+// are in the library, since two matches means no match. It does nothing for a
+// library holding only the short one. Requiring every significant token of the
+// author's name to appear in the release name is what separates the two:
+// "Amy Tan" is in the release and the other author is not.
+func (s *Scanner) matchByReleaseTitle(ctx context.Context, releaseTitle string) (*models.Book, *models.Author) {
+	if strings.TrimSpace(releaseTitle) == "" {
+		return nil, nil
+	}
+	books, err := s.books.List(ctx)
+	if err != nil {
+		return nil, nil
+	}
+	authors, err := s.authors.List(ctx)
+	if err != nil {
+		return nil, nil
+	}
+	names := make(map[int64]string, len(authors))
+	byID := make(map[int64]models.Author, len(authors))
+	for _, a := range authors {
+		names[a.ID] = a.Name
+		byID[a.ID] = a
+	}
+
+	releaseTokens := make(map[string]bool)
+	for _, w := range titleSigTokens(releaseTitle) {
+		releaseTokens[w] = true
+	}
+
+	var matches []models.Book
+	for _, b := range books {
+		if !titleMatch(b.Title, releaseTitle) {
+			continue
+		}
+		if !releaseNamesAuthor(releaseTokens, names[b.AuthorID]) {
+			continue
+		}
+		matches = append(matches, b)
+	}
+	if len(matches) != 1 {
+		return nil, nil
+	}
+	book := matches[0]
+	author := byID[book.AuthorID]
+	return &book, &author
+}
+
+// releaseNamesAuthor reports whether every significant token of name appears in
+// the release name's token set.
+//
+// Subset rather than equality, because a release names the author however it
+// likes: "Amy Tan", "Tan, Amy", "by Amy Tan" and "Amy.Tan" all reduce to the
+// same tokens once titleSigTokens has run, and the release carries plenty of
+// other words besides. An author whose name reduces to no significant tokens
+// (a single short name, a non-Latin script the token floor rejects) cannot
+// corroborate anything, so it is answered false rather than true: the caller
+// then reports an unmatched download, which is recoverable by hand, instead of
+// importing against a book chosen on the title alone.
+func releaseNamesAuthor(releaseTokens map[string]bool, name string) bool {
+	tokens := titleSigTokens(name)
+	if len(tokens) == 0 {
+		return false
+	}
+	for _, w := range tokens {
+		if !releaseTokens[w] {
+			return false
+		}
+	}
+	return true
 }
 
 // matchByTitleAuthor finds the single catalogue book whose title matches and
