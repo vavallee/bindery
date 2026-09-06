@@ -269,10 +269,16 @@ func firstSpecificLanguage(languages []string) string {
 	return ""
 }
 
+// normalizeLanguageCode canonicalises a provider-reported language so it can be
+// compared with a metadata profile's allowed list.
+//
+// It delegates to models.NormalizeLanguageCode, which is the single ISO 639
+// source (#2463). The local table this used to consult held ten two-letter
+// codes and returned anything else unchanged, so a language outside those ten
+// failed to reconcile with itself: a profile allowing "swe" dropped a release
+// reported as "sv", "ger" dropped "deu", "por" dropped "pt-BR", and "eng"
+// dropped both "en-US" and "English". The shared function handles the region
+// and script subtag strip, the ISO 639-2 T-to-B pairs and the language names.
 func normalizeLanguageCode(language string) string {
-	language = strings.ToLower(strings.TrimSpace(language))
-	if alias, ok := iso639TwoLetterAliases[language]; ok {
-		return alias
-	}
-	return language
+	return models.NormalizeLanguageCode(language)
 }
