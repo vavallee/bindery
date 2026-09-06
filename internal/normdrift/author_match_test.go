@@ -12,6 +12,13 @@ import (
 // rewards most and what a short string has least room to contradict.
 var shortSurnames = []string{"Jones", "James", "Ross", "Rose", "Kelly", "Kelsy", "Rice", "Rich", "Hall", "Hale", "Lane", "Lang", "Bond", "Bonn"}
 
+// oldWholeNameAutoThreshold is the whole-name Jaro-Winkler auto-accept the
+// additive scorer replaced. It is written out here rather than read from
+// textutil, whose copy is deprecated and goes away next release: what this
+// test needs is the historical number the corpus below is measured against,
+// and that number stays 0.94 whatever happens to the constant.
+const oldWholeNameAutoThreshold = 0.94
+
 // longForenames are the other half of the trap: the longer the shared
 // forename, the more of the whole-name score it accounts for, so a pair that
 // disagrees only on a short surname scores higher the more of the name the two
@@ -40,7 +47,7 @@ func TestShortSurnamesNeverAutoMatchOnJWAlone(t *testing.T) {
 					t.Errorf("MatchAuthorName(%q, %q) = %v (jw %.4f), want no auto-match",
 						a, b, got.Kind, got.Score)
 				}
-				if got.Score >= textutil.AuthorMatchAutoThreshold {
+				if got.Score >= oldWholeNameAutoThreshold {
 					clearedOldThreshold++
 				}
 			}

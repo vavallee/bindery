@@ -282,11 +282,12 @@ const (
 
 // Deprecated: whole-name Jaro-Winkler thresholds. MatchAuthorName no longer
 // bands on a single score — see the weight table below — and a Kind is no
-// longer recoverable from a Score. They are kept for one release so that
-// out-of-tree callers still compile, and because internal/abs still uses
-// AuthorMatchAutoThreshold to rank provider search hits, where every candidate
-// has already passed the Kind gate and the score is only a tie-break. Compare
-// Kind, or Weight against AuthorMatchAutoWeight / AuthorMatchAmbiguousWeight.
+// longer recoverable from a Score: a pairing carried by an exact surname plus
+// compatible initials is FuzzyAuto at a whole-name score of 0.9040, and one
+// carried by a shared forename over a near-miss short surname is refused at
+// 0.9750. Nothing in the tree reads them any more; they are kept for one
+// release so that an out-of-tree caller still compiles. Compare Kind, or
+// Weight against AuthorMatchAutoWeight / AuthorMatchAmbiguousWeight.
 const (
 	AuthorMatchAutoThreshold    = 0.94
 	AuthorMatchAmbiguousMinimum = 0.88
