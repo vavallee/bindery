@@ -457,30 +457,24 @@ func directoryMatchesTracked(path string, tracked map[string]struct{}, trackedFi
 }
 
 // bookHasImportedFormat reports whether the matched book already has an
-// on-disk file or directory for format. Manual import's idempotency guard will
-// skip such a candidate, so presenting it in the scan only creates a row that
-// appears importable but can never change state.
-func bookHasImportedFormat(book *models.Book, format string) bool {
+// on-disk file or directory for format. Read book_files directly rather than
+// relying on the hydrated compatibility fields on models.Book: LookupBatchLayout
+// may receive a book value from a catalogue projection where those fields are
+// empty even though the tracking row exists. This must match the importer's
+// idempotency guard, or a copied manual-import source will keep reappearing.
+func bookHasImportedFormat(book *models.Book, format string, files []models.BookFile) bool {
 	if book == nil {
 		return false
 	}
-	var path string
-	switch format {
-	case models.MediaTypeAudiobook:
-		path = book.AudiobookFilePath
-	case models.MediaTypeEbook:
-		path = book.EbookFilePath
-		if path == "" {
-			path = book.FilePath
+	for _, file := range files {
+		if file.Format != format {
+			continue
 		}
-	default:
-		return false
+		if _, err := os.Stat(file.Path); err == nil {
+			return true
+		}
 	}
-	if path == "" {
-		return false
-	}
-	_, err := os.Stat(path)
-	return err == nil
+	return false
 }
 
 // ScanItem is one candidate book unit discovered under a folder during Scan.
@@ -615,8 +609,14 @@ func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
 	filteredCands = cands[:0]
 	filteredResults := results[:0]
 	for i, res := range results {
-		if res.Match == "confident" && bookHasImportedFormat(res.Book, res.DetectedFormat) {
-			continue
+		if res.Match == "confident" && res.Book != nil {
+			files, filesErr := h.books.ListFiles(r.Context(), res.Book.ID)
+			if filesErr != nil {
+				slog.Warn("bulk folder import scan could not verify matched book files; retaining candidate",
+					"bookID", res.Book.ID, "path", cands[i].path, "error", filesErr)
+			} else if bookHasImportedFormat(res.Book, res.DetectedFormat, files) {
+				continue
+			}
 		}
 		filteredCands = append(filteredCands, cands[i])
 		filteredResults = append(filteredResults, res)

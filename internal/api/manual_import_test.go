@@ -1279,6 +1279,52 @@ func TestManualImportScan_SkipsAlreadyTrackedFiles(t *testing.T) {
 	}
 }
 
+func TestManualImportScan_SkipsCopiedSourceForTrackedBook(t *testing.T) {
+	t.Parallel()
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	ctx := context.Background()
+	authors := db.NewAuthorRepo(database)
+	books := db.NewBookRepo(database)
+	downloads := db.NewDownloadRepo(database)
+	trackedBook := seedBook(t, authors, books, ctx)
+	root := t.TempDir()
+	source := filepath.Join(root, "Department Q", "7. A Department Q Novel - Caroline Waight, Jussi Adler-Olsen (2024).epub")
+	canonical := filepath.Join(root, "library", "Department Q.epub")
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(canonical), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, source)
+	writeTestFile(t, canonical)
+	if err := books.AddBookFile(ctx, trackedBook.ID, models.MediaTypeEbook, canonical); err != nil {
+		t.Fatalf("attach tracked file: %v", err)
+	}
+	stub := &stubManualImportScanner{lookupResult: importer.LookupResult{
+		Match: "confident", Book: trackedBook, DetectedFormat: models.MediaTypeEbook,
+	}}
+	h := NewManualImportHandler(stub, downloads, books).WithRoots(NewLibraryRoots(nil, root))
+
+	rec := httptest.NewRecorder()
+	h.Scan(rec, scanRequest(root))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+	var resp ScanResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Items) != 0 {
+		t.Fatalf("items = %+v, want copied source skipped because the matched format is already tracked", resp.Items)
+	}
+}
+
 func TestManualImportScan_TrackedFilesError(t *testing.T) {
 	t.Parallel()
 	database, err := db.OpenMemory()
