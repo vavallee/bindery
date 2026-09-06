@@ -12,6 +12,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 // timeArg formats a *time.Time argument for SQLite as RFC3339Nano (in UTC).
@@ -177,21 +178,23 @@ LEFT JOIN first_audiobook fa ON fa.book_id = books.id
 LEFT JOIN authors         au ON au.id = books.author_id`
 
 func (r *BookRepo) List(ctx context.Context) ([]models.Book, error) {
-	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE excluded = 0 ORDER BY sort_title", nil)
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE excluded = 0 ORDER BY books.sort_key, sort_title", nil)
 }
 
 func (r *BookRepo) ListByUser(ctx context.Context, userID int64) ([]models.Book, error) {
 	where, args := QueryScopeForIncludingNull("books.owner_user_id", "WHERE excluded = 0", userID)
-	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY sort_title", args)
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY books.sort_key, sort_title", args)
 }
 
-// ListPage returns one page of the visible-books list, ordered by sort_title,
+// ListPage returns one page of the visible-books list in bookTitleOrder,
 // alongside the total row count that matches the same filter. limit must be
 // positive; offset is clamped at 0. When userID is 0 the query is unscoped
 // (matches List); otherwise it matches ListByUser's scope predicate.
 //
-// The sort_title order is backed by idx_books_sort_title (migration 048) so
-// large libraries no longer pay a full in-memory sort per page request.
+// The order is backed by idx_books_sort_key (migration 083) so large libraries
+// no longer pay a full in-memory sort per page request. It used to order on
+// the raw sort_title, backed by idx_books_sort_title (048); that index is
+// still the tiebreaker's support.
 func (r *BookRepo) ListPage(ctx context.Context, userID int64, limit, offset int) ([]models.Book, int, error) {
 	if limit <= 0 {
 		limit = 50
@@ -205,7 +208,7 @@ func (r *BookRepo) ListPage(ctx context.Context, userID int64, limit, offset int
 		return nil, 0, err
 	}
 	q := bookCTE + " SELECT " + bookColumns + " FROM books " + bookJoins + " " + where +
-		" ORDER BY sort_title LIMIT ? OFFSET ?"
+		" ORDER BY books.sort_key, sort_title LIMIT ? OFFSET ?"
 	pageArgs := append([]any{}, args...)
 	pageArgs = append(pageArgs, limit, offset)
 	books, err := r.query(ctx, q, pageArgs)
@@ -216,7 +219,7 @@ func (r *BookRepo) ListPage(ctx context.Context, userID int64, limit, offset int
 }
 
 // BookListFilter narrows ListPageFiltered. The zero value (with UserID 0)
-// selects every non-excluded book in sort_title order — identical to ListPage.
+// selects every non-excluded book in bookTitleOrder — identical to ListPage.
 type BookListFilter struct {
 	UserID int64 // 0 = unscoped; otherwise owner_user_id = UserID OR owner_user_id IS NULL
 	// Search is a case-insensitive substring match on the book title OR its
@@ -245,6 +248,34 @@ type BookListFilter struct {
 	ReleaseBefore string
 }
 
+// bookSearchRank returns the ORDER BY prefix that ranks a search result set,
+// and the values its placeholders bind. See searchrank.go for the tiers.
+//
+// A book is ranked by its title or its author, whichever scores better, so
+// searching an author's name lists their books ahead of a book that merely
+// mentions the name in its title. Within a tier the shorter title wins, which
+// is what BM25's length normalisation does and for the same reason: "Dune"
+// should beat "Dune: The Graphic Novel" for the query "dune". The caller's
+// chosen sort decides after that, so the column-header sorts still work while a
+// search is active.
+func bookSearchRank(folded string) (string, []any) {
+	return searchRankClause("books.search_key", "COALESCE(au.search_key, '')") + "length(books.search_key), ",
+		searchRankArgs(folded, 2)
+}
+
+// bookTitleOrder is the A–Z ordering for every book list: the accent-folded
+// books.sort_key (migration 083) with sort_title as a stable tiebreaker when
+// two folded keys collide.
+//
+// Ordering on the raw sort_title left any title beginning with a non-ASCII
+// letter — "Ödland", "Ångström", "Łódź" — after "Z", because SQLite folds ASCII
+// and nothing else. That is #1347, which was fixed for the Authors list in
+// migration 058 and left standing here.
+const (
+	bookTitleOrder     = "books.sort_key ASC, sort_title ASC"
+	bookTitleOrderDesc = "books.sort_key DESC, sort_title DESC"
+)
+
 // bookSortOrder maps a whitelisted sort key to a fixed ORDER BY clause. Never
 // contains user input, so safe to interpolate. NULL release dates / author
 // names sort last in every order (matching the old client-side comparator).
@@ -253,25 +284,25 @@ type BookListFilter struct {
 func bookSortOrder(sort string) string {
 	switch sort {
 	case "title-za":
-		return "sort_title DESC"
+		return bookTitleOrderDesc
 	case "date-new":
 		return "release_date IS NULL, release_date DESC"
 	case "date-old":
 		return "release_date IS NULL, release_date ASC"
 	case "author-az":
-		return "au.sort_name IS NULL, au.sort_name COLLATE NOCASE ASC, sort_title ASC"
+		return "au.sort_name IS NULL, au.sort_key ASC, " + bookTitleOrder
 	case "author-za":
-		return "au.sort_name IS NULL, au.sort_name COLLATE NOCASE DESC, sort_title ASC"
+		return "au.sort_name IS NULL, au.sort_key DESC, " + bookTitleOrder
 	case "type-az":
-		return "books.media_type COLLATE NOCASE ASC, sort_title ASC"
+		return "books.media_type COLLATE NOCASE ASC, " + bookTitleOrder
 	case "type-za":
-		return "books.media_type COLLATE NOCASE DESC, sort_title ASC"
+		return "books.media_type COLLATE NOCASE DESC, " + bookTitleOrder
 	case "status-az":
-		return "books.status COLLATE NOCASE ASC, sort_title ASC"
+		return "books.status COLLATE NOCASE ASC, " + bookTitleOrder
 	case "status-za":
-		return "books.status COLLATE NOCASE DESC, sort_title ASC"
+		return "books.status COLLATE NOCASE DESC, " + bookTitleOrder
 	default:
-		return "sort_title ASC"
+		return bookTitleOrder
 	}
 }
 
@@ -289,10 +320,28 @@ func (r *BookRepo) ListPageFiltered(ctx context.Context, f BookListFilter, limit
 	}
 
 	where, args := QueryScopeForIncludingNull("books.owner_user_id", "WHERE excluded = 0", f.UserID)
-	if s := strings.TrimSpace(f.Search); s != "" {
-		where += " AND (books.title LIKE ? ESCAPE '\\' COLLATE NOCASE OR au.name LIKE ? ESCAPE '\\' COLLATE NOCASE)"
-		like := "%" + escapeLike(s) + "%"
-		args = append(args, like, like)
+	searchOrder, rankArgs := "", []any(nil)
+	if folded := textutil.FoldForSearch(f.Search); folded != "" {
+		// A query that folds to nothing (all punctuation, or an emoji) leaves
+		// the filter off and returns the whole list, where matching the raw
+		// text used to return nothing. That is the honest answer: the fold is
+		// what defines a searchable character here, so "???" carries no search
+		// terms at all rather than being a term that matches no row.
+		// Match the folded key, not the raw text. `LIKE ? COLLATE NOCASE`
+		// against books.title folded the 26 ASCII letters and nothing else, so
+		// "muller" never found "Müller" and a decomposed query never found a
+		// composed row (#1660). Both sides now pass through FoldForSearch.
+		//
+		// Every token must appear somewhere in the title or the author, which
+		// is the "words" rule Algolia and Meilisearch both use: it lets
+		// "hobbit tolkien" find the book without the two words being adjacent,
+		// while still requiring evidence for each word the user typed.
+		for _, tok := range strings.Fields(folded) {
+			like := "%" + escapeLike(tok) + "%"
+			where += " AND (books.search_key LIKE ? ESCAPE '\\' OR COALESCE(au.search_key, '') LIKE ? ESCAPE '\\')"
+			args = append(args, like, like)
+		}
+		searchOrder, rankArgs = bookSearchRank(folded)
 	}
 	if f.Status != "" {
 		where += " AND books.status = ?"
@@ -333,8 +382,11 @@ func (r *BookRepo) ListPageFiltered(ctx context.Context, f BookListFilter, limit
 		return nil, 0, err
 	}
 	q := bookCTE + " SELECT " + bookColumns + " FROM books " + bookJoins + " " + where +
-		" ORDER BY " + bookSortOrder(f.Sort) + " LIMIT ? OFFSET ?"
-	pageArgs := append(append([]any{}, args...), limit, offset)
+		" ORDER BY " + searchOrder + bookSortOrder(f.Sort) + " LIMIT ? OFFSET ?"
+	// The rank placeholders live in ORDER BY, which the parser reaches after
+	// WHERE, so their values follow the filter's. The count query above has no
+	// ORDER BY and therefore takes args alone.
+	pageArgs := append(append(append([]any{}, args...), rankArgs...), limit, offset)
 	books, err := r.query(ctx, q, pageArgs)
 	if err != nil {
 		return nil, 0, err
@@ -358,7 +410,7 @@ func (r *BookRepo) count(ctx context.Context, query string, args []any) (int, er
 
 // ListIncludingExcluded returns all books regardless of their excluded flag.
 func (r *BookRepo) ListIncludingExcluded(ctx context.Context) ([]models.Book, error) {
-	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" ORDER BY sort_title", nil)
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" ORDER BY books.sort_key, sort_title", nil)
 }
 
 func (r *BookRepo) ListByAuthor(ctx context.Context, authorID int64) ([]models.Book, error) {
@@ -376,17 +428,17 @@ func (r *BookRepo) ListByAuthorIncludingExcluded(ctx context.Context, authorID i
 }
 
 func (r *BookRepo) ListByStatus(ctx context.Context, status string) ([]models.Book, error) {
-	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE status = ? AND books.monitored = 1 AND excluded = 0 ORDER BY sort_title", []any{status})
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE status = ? AND books.monitored = 1 AND excluded = 0 ORDER BY books.sort_key, sort_title", []any{status})
 }
 
 func (r *BookRepo) ListByStatusAndUser(ctx context.Context, status string, userID int64) ([]models.Book, error) {
 	where, args := QueryScopeForIncludingNull("books.owner_user_id", "WHERE status = ? AND books.monitored = 1 AND excluded = 0", userID, status)
-	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY sort_title", args)
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY books.sort_key, sort_title", args)
 }
 
 // ListByStatusIncludingExcluded returns books with the given status regardless of excluded flag.
 func (r *BookRepo) ListByStatusIncludingExcluded(ctx context.Context, status string) ([]models.Book, error) {
-	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE status = ? AND books.monitored = 1 ORDER BY sort_title", []any{status})
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE status = ? AND books.monitored = 1 ORDER BY books.sort_key, sort_title", []any{status})
 }
 
 // ListByStatusIncludingExcludedAndUser is ListByStatusIncludingExcluded scoped
@@ -395,7 +447,7 @@ func (r *BookRepo) ListByStatusIncludingExcluded(ctx context.Context, status str
 // ListByStatusAndUser.
 func (r *BookRepo) ListByStatusIncludingExcludedAndUser(ctx context.Context, status string, userID int64) ([]models.Book, error) {
 	where, args := QueryScopeForIncludingNull("books.owner_user_id", "WHERE status = ? AND books.monitored = 1", userID, status)
-	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY sort_title", args)
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY books.sort_key, sort_title", args)
 }
 
 func (r *BookRepo) GetByID(ctx context.Context, id int64) (*models.Book, error) {
@@ -498,6 +550,11 @@ func (r *BookRepo) Create(ctx context.Context, b *models.Book) error {
 	// through Create, so deriving dedup_key here from the title with the single
 	// canonical normalizer guarantees Calibre, ABS, CWA and manual creates all
 	// write byte-identical keys for the same work.
+	//
+	// sort_key and search_key are derived at the same chokepoint and for the
+	// same reason (#1660). They are not caller-supplied: a row whose search_key
+	// was written by anything other than textutil.FoldForSearch is a row the
+	// search box cannot find, and it would fail silently.
 	b.DedupKey = indexer.CanonicalDedupKey(b.Title)
 
 	lockedJSON, err := json.Marshal(lockedOrEmpty(b.LockedFields))
@@ -519,13 +576,15 @@ func (r *BookRepo) Create(ctx context.Context, b *models.Book) error {
 		                   image_url, release_date, genres, average_rating, ratings_count,
 		                   monitored, status, any_edition_ok, selected_edition_id,
 		                   language, media_type, narrator, duration_seconds, asin,
-		                   metadata_provider, dedup_key, locked_fields, owner_user_id, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                   metadata_provider, dedup_key, sort_key, search_key, locked_fields,
+		                   owner_user_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		b.ForeignID, b.AuthorID, b.Title, b.SortTitle, b.OriginalTitle, b.Description,
 		b.ImageURL, timeArg(b.ReleaseDate), string(genresJSON), b.AverageRating, b.RatingsCount,
 		b.Monitored, b.Status, b.AnyEditionOK, b.SelectedEditionID,
 		b.Language, mediaType, b.Narrator, b.DurationSeconds, b.ASIN,
-		b.MetadataProvider, b.DedupKey, string(lockedJSON), ownerArg, timeValueArg(now), timeValueArg(now))
+		b.MetadataProvider, b.DedupKey, bookSortKey(b.SortTitle, b.Title), textutil.FoldForSearch(b.Title),
+		string(lockedJSON), ownerArg, timeValueArg(now), timeValueArg(now))
 	if err != nil {
 		return fmt.Errorf("create book: %w", err)
 	}
@@ -610,14 +669,16 @@ func (r *BookRepo) Update(ctx context.Context, b *models.Book) error {
 		                 release_date=?, genres=?, average_rating=?, ratings_count=?,
 		                 monitored=?, status=?, any_edition_ok=?, selected_edition_id=?,
 		                 file_path=?, language=?, media_type=?, narrator=?, duration_seconds=?, asin=?,
-		                 metadata_provider=?, dedup_key=?, locked_fields=?, last_metadata_refresh_at=?, updated_at=?,
+		                 metadata_provider=?, dedup_key=?, sort_key=?, search_key=?,
+		                 locked_fields=?, last_metadata_refresh_at=?, updated_at=?,
 		                 ebook_file_path=?, audiobook_file_path=?
 		WHERE id=?`,
 		b.ForeignID, b.AuthorID, b.Title, b.SortTitle, b.OriginalTitle, b.Description, b.ImageURL,
 		timeArg(b.ReleaseDate), string(genresJSON), b.AverageRating, b.RatingsCount,
 		b.Monitored, b.Status, b.AnyEditionOK, b.SelectedEditionID,
 		b.FilePath, b.Language, mediaType, b.Narrator, b.DurationSeconds, b.ASIN,
-		b.MetadataProvider, b.DedupKey, string(lockedJSON), timeArg(b.LastMetadataRefreshAt), timeValueArg(now),
+		b.MetadataProvider, b.DedupKey, bookSortKey(b.SortTitle, b.Title), textutil.FoldForSearch(b.Title),
+		string(lockedJSON), timeArg(b.LastMetadataRefreshAt), timeValueArg(now),
 		b.EbookFilePath, b.AudiobookFilePath, b.ID)
 	if err != nil {
 		return fmt.Errorf("update book %d: %w", b.ID, err)

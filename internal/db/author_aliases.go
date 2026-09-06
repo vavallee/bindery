@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 // AuthorAliasRepo owns the author_aliases table plus the cross-table Merge
@@ -125,9 +126,9 @@ func (r *AuthorAliasRepo) createTx(ctx context.Context, exec dbExecutor, a *mode
 		return fmt.Errorf("alias name required")
 	}
 	result, err := exec.ExecContext(ctx, `
-		INSERT OR IGNORE INTO author_aliases (author_id, name, source_ol_id, created_at)
-		VALUES (?, ?, NULLIF(?, ''), ?)`,
-		a.AuthorID, name, a.SourceOLID, now)
+		INSERT OR IGNORE INTO author_aliases (author_id, name, search_key, source_ol_id, created_at)
+		VALUES (?, ?, ?, NULLIF(?, ''), ?)`,
+		a.AuthorID, name, textutil.FoldForSearch(name), a.SourceOLID, now)
 	if err != nil {
 		return fmt.Errorf("create alias %q: %w", name, err)
 	}
@@ -329,9 +330,9 @@ func insertMergeAlias(ctx context.Context, tx *sql.Tx, targetID int64, name, for
 	}
 	now := time.Now().UTC()
 	res, err := tx.ExecContext(ctx, `
-		INSERT OR IGNORE INTO author_aliases (author_id, name, source_ol_id, created_at)
-		VALUES (?, ?, NULLIF(?, ''), ?)`,
-		targetID, name, foreignID, now)
+		INSERT OR IGNORE INTO author_aliases (author_id, name, search_key, source_ol_id, created_at)
+		VALUES (?, ?, ?, NULLIF(?, ''), ?)`,
+		targetID, name, textutil.FoldForSearch(name), foreignID, now)
 	if err != nil {
 		return false, err
 	}
