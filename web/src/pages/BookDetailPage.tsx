@@ -883,6 +883,14 @@ export default function BookDetailPage() {
                                   onSelect: () => setFixMatchRow(row),
                                 },
                                 {
+                                  label: t('bookDetail.deregister.button'),
+                                  title: row.tracked
+                                    ? t('bookDetail.deregister.hint')
+                                    : t('bookDetail.deregister.untracked'),
+                                  disabled: !row.tracked || deletingFile || deregistering || deletingBook,
+                                  onSelect: () => setDeregisterTarget(row),
+                                },
+                                {
                                   label: t('bookDetail.deleteThisFile', 'Delete this file'),
                                   title: t('bookDetail.deleteThisFileHint', 'Permanently delete only this file from disk'),
                                   danger: true,
@@ -891,14 +899,6 @@ export default function BookDetailPage() {
                                     singlePath: row.path,
                                     paths: [row.path],
                                   }),
-                                },
-                                {
-                                  label: t('bookDetail.deregister.button'),
-                                  title: row.tracked
-                                    ? t('bookDetail.deregister.hint')
-                                    : t('bookDetail.deregister.untracked'),
-                                  disabled: !row.tracked || deletingFile || deregistering || deletingBook,
-                                  onSelect: () => setDeregisterTarget(row),
                                 },
                               ]}
                             />
