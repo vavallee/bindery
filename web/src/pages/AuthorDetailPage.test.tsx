@@ -868,6 +868,10 @@ describe('AuthorDetailPage — last sync outcome', () => {
 
     const notice = await screen.findByTestId('author-sync-notice')
     expect(notice).toHaveTextContent('Last refresh skipped 65 of this author’s 66 works')
+    // The count leads; the reasons and the examples sit behind the info
+    // alert's disclosure. Opening it here is also the check that none of it
+    // was dropped when the notice stopped being an amber wall.
+    fireEvent.click(within(notice).getByRole('button', { name: 'Show details' }))
     expect(notice).toHaveTextContent('65 skipped by the language filter (allowed: eng)')
     // The unknown-language half of the filter is the part that surprises
     // people, so it is named rather than folded into the count.
@@ -898,6 +902,7 @@ describe('AuthorDetailPage — last sync outcome', () => {
     })
 
     const notice = await screen.findByTestId('author-sync-notice')
+    fireEvent.click(within(notice).getByRole('button', { name: 'Show details' }))
     expect(notice).toHaveTextContent('83 not added, because this author is not taking newly discovered books')
     expect(notice).toHaveTextContent(/Books already in your library were still refreshed/)
   })

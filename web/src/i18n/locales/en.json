@@ -49,7 +49,10 @@
     "moreActions": "More",
     "filters": "Filters",
     "sort": "Sort",
-    "clearFilter": "Clear filter"
+    "clearFilter": "Clear filter",
+    "dismiss": "Dismiss",
+    "showDetails": "Show details",
+    "hideDetails": "Hide details"
   },
   "monitorMode": {
     "all": "All books",

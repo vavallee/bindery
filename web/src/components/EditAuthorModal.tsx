@@ -279,8 +279,13 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                           />
                           <span className="flex-1">
                             <span className="font-medium">{s.title}</span>
+                            {/* A fact about the row, not a warning about it.
+                                It was amber on every unlinked series, which
+                                made a long list look alarming; the aggregate
+                                warning below is where the consequence lives
+                                and it stays amber. */}
                             {!s.hardcoverLink && (
-                              <span className="ml-2 text-xs text-amber-700 dark:text-amber-400">
+                              <span className="ml-2 text-xs text-slate-500 dark:text-zinc-500">
                                 {t('editAuthorModal.seriesNoHardcoverLink', '(no Hardcover link)')}
                               </span>
                             )}
