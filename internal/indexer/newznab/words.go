@@ -17,7 +17,18 @@ var stopWords = map[string]bool{
 	"as": true, "on": true, "be": true,
 }
 
-// SigWords returns the meaningful (non-stop, 3+ char) words from s.
+// SigWords returns the meaningful (non-stop, long enough) words from s.
+//
+// "Long enough" is three BYTES of UTF-8, not three characters, and that is
+// deliberate even though it reads like an oversight. The byte threshold scales
+// the character requirement by how much a script packs into one character:
+// three ASCII letters, two Cyrillic or Greek letters, or one CJK ideograph.
+// That matches how much a token actually narrows a search in each script.
+//
+// Do not "fix" this into a rune count. Requiring three runes drops "Мы"
+// (Zamyatin's We) to no significant tokens at all, and requiring one drops the
+// floor under single Cyrillic and Greek letters, which are as weak as single
+// English ones. TestSigWordsThresholdScalesWithScript pins the cases.
 //
 // Tokenisation is kept symmetric with NormalizeRelease
 // (internal/indexer/release.go): both strip apostrophes, transliterate German

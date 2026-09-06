@@ -147,3 +147,28 @@ func TestMatchAuthorNameStillRejectsDistinctAuthors(t *testing.T) {
 		}
 	}
 }
+
+// TestNormalizeAuthorNameFoldsCompatibilityForms covers the move from NFD to
+// NFKD. Providers and scraped catalogues carry full-width Latin and
+// typographic ligatures, which NFD leaves standing, so the same author keyed
+// two different ways depending on which source the record came from.
+func TestNormalizeAuthorNameFoldsCompatibilityForms(t *testing.T) {
+	cases := []struct{ full, plain string }{
+		{"Ｈａｒｕｋｉ　Ｍｕｒａｋａｍｉ", "Haruki Murakami"},
+		{"ﬁona ﬂeming", "fiona fleming"},
+		{"Ｊｏｒｇｅ Ｌｕｉｓ Ｂｏｒｇｅｓ", "Jorge Luis Borges"},
+	}
+	for _, c := range cases {
+		got, want := NormalizeAuthorName(c.full), NormalizeAuthorName(c.plain)
+		if got != want {
+			t.Errorf("NormalizeAuthorName(%q) = %q, NormalizeAuthorName(%q) = %q; compatibility forms must fold onto the plain spelling",
+				c.full, got, c.plain, want)
+		}
+	}
+
+	// The ordinary path is unchanged: this must stay a diacritic-stripping,
+	// lower-casing, space-collapsing key.
+	if got := NormalizeAuthorName("  Jörg   Müller  "); got != "jorg muller" {
+		t.Errorf("NormalizeAuthorName = %q, want %q", got, "jorg muller")
+	}
+}

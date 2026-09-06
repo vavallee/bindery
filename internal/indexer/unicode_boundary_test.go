@@ -173,3 +173,42 @@ func TestNonASCIISigWordsSurviveTokenization(t *testing.T) {
 		t.Errorf(`SigWords("Ölümün Sonu") = %v, want 2 tokens`, got)
 	}
 }
+
+// TestSigWordsThresholdScalesWithScript pins the byte threshold in SigWords,
+// which reads like a bug and is not one. Three bytes of UTF-8 means three
+// ASCII letters, two Cyrillic or Greek letters, or one CJK ideograph, which is
+// roughly how much each has to be worth before it narrows a search.
+//
+// This test exists because the obvious "fix" is to count runes, and both
+// obvious rune rules are worse than what is here. A three-rune floor empties
+// "Мы" (Zamyatin's We) of every significant token, so no release could match
+// it. A one-rune floor keeps single Cyrillic and Greek letters, which carry no
+// more than a single English letter and would make matching needlessly strict.
+func TestSigWordsThresholdScalesWithScript(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+		why  string
+	}{
+		{"三体", []string{"三体"}, "two Han characters are a whole title"},
+		{"刘慈欣", []string{"刘慈欣"}, "a three-character Chinese name"},
+		{"Мы", []string{"мы"}, "a real two-letter Cyrillic title; a three-rune floor would lose it"},
+		{"Война и мир", []string{"война", "мир"}, "the one-letter Cyrillic conjunction drops, as a one-letter English one would"},
+		{"ハリー・ポッター", []string{"ハリー", "ポッター"}, "the katakana middle dot separates"},
+		{"이방인", []string{"이방인"}, "Hangul"},
+		{"The Hobbit", []string{"hobbit"}, "ASCII stopword removed, three-letter floor applies"},
+	}
+	for _, c := range cases {
+		got := newznab.SigWords(c.in)
+		if len(got) != len(c.want) {
+			t.Errorf("SigWords(%q) = %q, want %q (%s)", c.in, got, c.want, c.why)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("SigWords(%q) = %q, want %q (%s)", c.in, got, c.want, c.why)
+				break
+			}
+		}
+	}
+}
