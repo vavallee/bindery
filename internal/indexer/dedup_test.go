@@ -1,6 +1,10 @@
 package indexer
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/vavallee/bindery/internal/textutil"
+)
 
 func TestNormalizeTitleForDedup(t *testing.T) {
 	cases := []struct {
@@ -205,5 +209,38 @@ func TestFoldPunctuationUsesTheSharedApostropheSet(t *testing.T) {
 		if got := NormalizeTitleForDedup(spelling); got != "poseidons arrow" {
 			t.Errorf("NormalizeTitleForDedup(%q) = %q, want %q", spelling, got, "poseidons arrow")
 		}
+	}
+}
+
+// TestDedupAndTitleMatchAlphabetsDifferOnAmpersand pins a deliberate
+// disagreement between two alphabets that otherwise look interchangeable, so
+// that anyone setting out to "fix" the inconsistency finds the reason first.
+//
+// CanonicalDedupKey expands "&" to " and " because it answers "are these the
+// same book", and providers send both spellings for one book. FoldForTitleMatch
+// leaves it a separator because it feeds ContainsPhrase, which requires the
+// keywords contiguous: an injected "and" token would break every phrase hit on
+// a release named "Foundation.&.Empire".
+//
+// The two are safe only as long as no caller compares a key from one against a
+// key from the other. Nothing does today.
+func TestDedupAndTitleMatchAlphabetsDifferOnAmpersand(t *testing.T) {
+	const title = "Foundation & Empire"
+
+	dedup := NormalizeTitleForDedup(title)
+	if dedup != "foundation and empire" {
+		t.Errorf("NormalizeTitleForDedup(%q) = %q, want %q — the dedup alphabet must expand the ampersand so both provider spellings share a key",
+			title, dedup, "foundation and empire")
+	}
+
+	match := textutil.FoldForTitleMatch(title)
+	if match != "foundation empire" {
+		t.Errorf("FoldForTitleMatch(%q) = %q, want %q — the match alphabet must leave the ampersand a separator, or ContainsPhrase stops finding \"Foundation.&.Empire\"",
+			title, match, "foundation empire")
+	}
+
+	if dedup == match {
+		t.Errorf("the dedup and title-match alphabets agree on %q (%q); they are meant to differ, and a caller comparing across them would now silently pass",
+			title, dedup)
 	}
 }

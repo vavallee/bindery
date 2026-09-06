@@ -30,6 +30,20 @@ import (
 //     Used by indexer.NormalizeRelease, newznab.SigWords, importer title
 //     matching. Producers and consumers of a title comparison MUST share it.
 //
+//  1a. EDITION DEDUP — indexer.CanonicalDedupKey / NormalizeTitleForDedup.
+//     Alphabet (1)'s sibling, and the one place the two deliberately DISAGREE:
+//     an ampersand EXPANDS to " and " here and is a SEPARATOR in (1). That is
+//     not an oversight to tidy up. Dedup asks "are these the same book", and
+//     providers send "Foundation & Empire" and "Foundation and Empire" for one
+//     book, so the two spellings must produce one key. Alphabet (1) feeds
+//     indexer.ContainsPhrase, which requires its keywords contiguous, and an
+//     injected "and" token would break every phrase hit on a release named
+//     "Foundation.&.Empire".
+//     Nothing may compare a key from (1) against a key from (1a). Today
+//     nothing does: every caller stays inside one or the other. Before making
+//     them agree, read TestDedupAndTitleMatchAlphabetsDifferOnAmpersand, which
+//     exists to explain why they do not.
+//
 //  2. AUTHOR IDENTITY — NormalizeAuthorName (author.go).
 //     Diacritics are STRIPPED (ö→o) rather than expanded, because author names
 //     arrive from providers in every romanisation and the goal is one identity
