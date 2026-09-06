@@ -76,7 +76,9 @@ Separately, every book is **monitored** or not. Monitored means "Bindery
 actively pursues this." The **Wanted page** — and the automatic search sweep —
 only covers books that are *all three of*: status `wanted`, monitored, and not
 excluded. A book that is `wanted` but unmonitored shows as "Not monitored" and
-is left alone.
+is left alone. Flip a single book from the switch next to the status badge on
+its own page, or many at once from the Books list (select, then **Monitor** /
+**Unmonitor**).
 
 Two related labels:
 

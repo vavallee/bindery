@@ -1069,3 +1069,49 @@ describe('BookDetailPage metadata source (#1707)', () => {
     expect(within(rows[1]).queryByText('Current')).not.toBeInTheDocument()
   })
 })
+
+describe('BookDetailPage — monitor toggle (#2417)', () => {
+  it('renders a switch carrying the monitored state', async () => {
+    renderBookDetailPage()
+    const toggle = await screen.findByRole('switch', { name: 'Unmonitor' })
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('unmonitors a monitored book and reflects it in the status badge', async () => {
+    renderBookDetailPage()
+
+    fireEvent.click(await screen.findByRole('switch', { name: 'Unmonitor' }))
+
+    await waitFor(() => expect(api.updateBook).toHaveBeenCalledWith(42, { monitored: false }))
+    expect(await screen.findByRole('switch', { name: 'Monitor' })).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getByText('Not monitored')).toBeInTheDocument()
+  })
+
+  it('monitors an unmonitored book', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({ monitored: false }))
+    renderBookDetailPage()
+
+    const toggle = await screen.findByRole('switch', { name: 'Monitor' })
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    fireEvent.click(toggle)
+
+    await waitFor(() => expect(api.updateBook).toHaveBeenCalledWith(42, { monitored: true }))
+    expect(await screen.findByRole('switch', { name: 'Unmonitor' })).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('disables the switch while the update is in flight, so one click sends one PUT', async () => {
+    let settle: ((book: Book) => void) | undefined
+    vi.mocked(api.updateBook).mockImplementation(() => new Promise<Book>(resolve => { settle = resolve }))
+
+    renderBookDetailPage()
+    const toggle = await screen.findByRole('switch', { name: 'Unmonitor' })
+    fireEvent.click(toggle)
+
+    await waitFor(() => expect(toggle).toBeDisabled())
+    fireEvent.click(toggle)
+    expect(api.updateBook).toHaveBeenCalledTimes(1)
+
+    await act(async () => { settle?.(makeBook({ monitored: false })) })
+    expect(await screen.findByRole('switch', { name: 'Monitor' })).toBeEnabled()
+  })
+})
