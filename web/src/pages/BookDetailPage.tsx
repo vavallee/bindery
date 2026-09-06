@@ -553,18 +553,36 @@ export default function BookDetailPage() {
         ? t('bookDetail.searchBothIndexers')
         : t('bookDetail.searchEbookIndexers')
 
-  // Format-scoped whenever the rows carry a real format: the format-less
-  // endpoint falls back to the legacy file_path, which on a mislabelled book
-  // points at the other format. The one exception is the bare legacy
-  // file_path row (see FileRow.legacyUntyped): its displayed format is only a
-  // proxy, the server resolves ?format= against the path's on-disk shape, and
-  // the two can disagree — so that row's group goes format-less, which is
-  // exact because the row only exists when it is the book's only file.
   const groupIsUntyped = (g: { rows: FileRow[] }) => g.rows.some(r => r.legacyUntyped)
-  const downloadHref = (group: { format: 'ebook' | 'audiobook'; rows: FileRow[] }) =>
-    groupIsUntyped(group)
-      ? `${BINDERY_BASE}/api/v1/book/${book.id}/file`
-      : `${BINDERY_BASE}/api/v1/book/${book.id}/file?format=${group.format}`
+
+  // Download is per ROW, not per format group (#2408).
+  //
+  // It used to be per group, and that was the honest unit while ?format= was
+  // all the endpoint could answer: the server resolved one path out of
+  // ebook_file_path / audiobook_file_path, which are single columns, so a book
+  // holding three epubs had exactly one reachable file and the other two could
+  // not be named at all. A reporter with several ebooks on one book pressed
+  // Download and always got the same one.
+  //
+  // The endpoint now takes ?path= and resolves it against book_files, so each
+  // row can name itself. Three cases, and the fallbacks are not decoration:
+  //
+  //   tracked        ?path=, the exact row. The only case that can disambiguate
+  //                  siblings, and the reason this exists.
+  //   legacyUntyped  format-less. Its displayed format is a proxy the server
+  //                  may contradict (it stats the path's shape), and it has no
+  //                  book_files row for ?path= to resolve. Exact anyway,
+  //                  because this row only exists when it is the book's ONLY
+  //                  file.
+  //   untracked      ?format=. A row read off the legacy per-format columns
+  //                  with no book_files entry, so ?path= would 404. Exact
+  //                  because that fallback yields at most one row per format.
+  const downloadHref = (row: FileRow) => {
+    const base = `${BINDERY_BASE}/api/v1/book/${book.id}/file`
+    if (row.legacyUntyped) return base
+    if (row.tracked) return `${base}?path=${encodeURIComponent(row.path)}`
+    return `${base}?format=${row.format}`
+  }
 
   return (
     // One width shared with AuthorDetailPage. These two pages used to disagree
@@ -780,13 +798,12 @@ export default function BookDetailPage() {
                         <span className="text-xs text-slate-500 dark:text-zinc-500">
                           {t('bookDetail.fileCount', { count: group.rows.length })}
                         </span>
-                        <a
-                          href={downloadHref(group)}
-                          className={`ml-auto ${actionBtnCls}`}
-                          title={t('bookDetail.downloadFormatHint')}
-                        >
-                          {t('bookDetail.download')}
-                        </a>
+                        {/* No Download here any more: a group of three epubs
+                            has no single file to hand back, which is exactly
+                            how #2408 shipped. Each row carries its own. Delete
+                            stays, because deleting the whole format IS a
+                            group-level action and the per-row Deregister in
+                            the overflow menu is a different thing. */}
                         {/* Ghost-danger, not solid red. Deleting the file is
                             reversible by re-downloading; solid red stays
                             reserved for "Delete book + files" in the Danger
@@ -826,10 +843,22 @@ export default function BookDetailPage() {
                                 {formatBytes(row.sizeBytes)}
                               </span>
                             )}
+                            <a
+                              href={downloadHref(row)}
+                              data-testid={`download-${row.path}`}
+                              className={`ml-auto shrink-0 ${actionBtnCls}`}
+                              title={t('bookDetail.downloadFileHint')}
+                              // N links all reading "Download" are
+                              // indistinguishable to a screen reader, same
+                              // reasoning as the row MoreMenu below.
+                              aria-label={t('bookDetail.downloadNamed', { name: baseName(row.path) })}
+                            >
+                              {t('bookDetail.download')}
+                            </a>
                             <button
                               type="button"
                               onClick={() => copyPath(row.path)}
-                              className="ml-auto shrink-0 text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200 text-xs border border-slate-300 dark:border-zinc-700 rounded px-1.5 py-0.5"
+                              className="shrink-0 text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200 text-xs border border-slate-300 dark:border-zinc-700 rounded px-1.5 py-0.5"
                               aria-label={t('bookDetail.copyPath')}
                             >
                               <span aria-hidden>⧉</span>{' '}
