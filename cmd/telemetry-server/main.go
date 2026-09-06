@@ -40,6 +40,18 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// buildSHA is stamped at image build time with -X main.buildSHA=<git sha>.
+// It exists because nothing could previously tell which build was serving:
+// /health returns a bare 200 and the binary carries no version. The image
+// pin in deploy/telemetry-server.yaml sat 41 days behind the code once
+// (a July build serving after the August new_install logging landed) and
+// the only way anyone noticed was grepping pod logs for a line that could
+// not be there. Reported on the token-gated /api/stats rather than public
+// /health: a public exact build sha tells a stranger precisely which
+// advisories apply, and the drift check that reads it already holds the
+// stats token.
+var buildSHA = "unknown"
+
 var uuidRE = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // releaseVersionPattern matches semver-shaped release tags ("1.7.0", "v1.7.0").
@@ -772,6 +784,7 @@ type statsResponse struct {
 	Total      int            `json:"total"`
 	Cumulative int            `json:"cumulative"`
 	Versions   map[string]int `json:"versions"`
+	BuildSHA   string         `json:"build_sha"`
 }
 
 // statsJSON is the response shape for the public /stats.json endpoint. It
@@ -957,7 +970,7 @@ func main() {
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
-	slog.Info("telemetry-server starting", "addr", addr, "latest", latestVersion)
+	slog.Info("telemetry-server starting", "addr", addr, "latest", latestVersion, "build", buildSHA)
 	if err := srv.ListenAndServe(); err != nil {
 		slog.Error("listen", "error", err)
 		os.Exit(1)
@@ -1727,6 +1740,7 @@ func (s *server) handleStats(w http.ResponseWriter, r *http.Request) {
 		Total:      d.Total,
 		Cumulative: d.Cumulative,
 		Versions:   versions,
+		BuildSHA:   buildSHA,
 	})
 }
 

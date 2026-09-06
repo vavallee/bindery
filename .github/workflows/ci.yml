@@ -143,7 +143,7 @@ jobs:
         with:
           go-version: "1.26.6"
           cache: true
-      - run: go test -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/...
+      - run: go test -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/... ./tools/...
       - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: coverage.out
@@ -245,7 +245,7 @@ jobs:
         with:
           go-version: "1.26.6"
           cache: true
-      - run: go test -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/...
+      - run: go test -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/... ./tools/...
       - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: coverage.out

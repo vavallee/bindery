@@ -1663,3 +1663,42 @@ func TestHandlePing_PreservesFunnelFields(t *testing.T) {
 		t.Errorf("setup_client_day = %d, want nil (not sent)", *f.SetupClientDay)
 	}
 }
+
+// TestHandleStatsReportsBuildSHA covers the field the drift check reads.
+// The point of stamping the build is that something outside the cluster can
+// ask the running server which image it is; if this field ever silently
+// stops being populated, the drift check goes green while the deployment
+// rots, which is the exact failure it exists to catch.
+func TestHandleStatsReportsBuildSHA(t *testing.T) {
+	s := newTestServer(t, "v1.9.5")
+	s.statsToken = "s3cret"
+
+	old := buildSHA
+	buildSHA = "abc1234def"
+	t.Cleanup(func() { buildSHA = old })
+
+	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	req.Header.Set("Authorization", "Bearer s3cret")
+	rec := httptest.NewRecorder()
+	s.handleStats(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var got statsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.BuildSHA != "abc1234def" {
+		t.Errorf("build_sha = %q, want %q", got.BuildSHA, "abc1234def")
+	}
+}
+
+// An unstamped binary must report the "unknown" sentinel rather than an
+// empty string. The drift check treats both as drift, but "unknown" says
+// plainly that nobody passed BUILD_SHA, while "" reads like a bug.
+func TestBuildSHADefaultsToUnknown(t *testing.T) {
+	if buildSHA != "unknown" {
+		t.Errorf("buildSHA = %q at test time, want the unstamped default %q", buildSHA, "unknown")
+	}
+}
