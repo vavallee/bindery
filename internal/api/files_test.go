@@ -593,3 +593,199 @@ func TestFileDownload_FormatParamLegacyFilePath(t *testing.T) {
 		t.Errorf("format=audiobook on legacy ebook file: expected 404, got %d", rec.Code)
 	}
 }
+
+// ── ?path= selection among several files of one format (#2408) ──────────────
+
+// downloadReqPath is downloadReq with a ?path= query param.
+func downloadReqPath(id int64, path string) *http.Request {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/file/download?path="+url.QueryEscape(path), nil)
+	return withURLParam(req, "id", strconv.FormatInt(id, 10))
+}
+
+// A book holding several ebooks must be able to serve any of them. Before
+// #2408 the endpoint resolved a single path out of the two format columns, so
+// a book with three epubs had exactly one reachable download and the other two
+// could not be named at all.
+func TestFileDownload_PathParamSelectsAmongSeveralEbooks(t *testing.T) {
+	h, books, author, ctx, tmp := fileFixture(t)
+
+	book := &models.Book{ForeignID: "OL2408A", AuthorID: author.ID, Title: "T", MediaType: models.MediaTypeEbook}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	// Three real files, all tracked. SetFormatFilePath can only remember one,
+	// which is the whole shape of the bug.
+	names := []string{"retail.epub", "proper.epub", "v2.epub"}
+	paths := make([]string, len(names))
+	for i, n := range names {
+		p := filepath.Join(tmp, n)
+		if err := os.WriteFile(p, []byte("bytes of "+n), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, p); err != nil {
+			t.Fatal(err)
+		}
+		paths[i] = p
+	}
+	if err := books.SetFormatFilePath(ctx, book.ID, models.MediaTypeEbook, paths[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	for i, p := range paths {
+		rec := httptest.NewRecorder()
+		h.Download(rec, downloadReqPath(book.ID, p))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("path=%s: expected 200, got %d (%s)", names[i], rec.Code, rec.Body.String())
+		}
+		want := "bytes of " + names[i]
+		if rec.Body.String() != want {
+			t.Errorf("path=%s served the wrong file: got %q, want %q", names[i], rec.Body.String(), want)
+		}
+		if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, names[i]) {
+			t.Errorf("path=%s: Content-Disposition %q does not name the requested file", names[i], cd)
+		}
+	}
+}
+
+// A path the book does not track is refused rather than quietly falling back
+// to the format chain. A fallback would hand back a different file than the one
+// asked for, under a name the caller did not choose.
+func TestFileDownload_PathParamUntrackedRefused(t *testing.T) {
+	h, books, author, ctx, tmp := fileFixture(t)
+
+	mine := filepath.Join(tmp, "mine.epub")
+	if err := os.WriteFile(mine, []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A real file, inside the allowed root, that this book simply does not own.
+	// Being under the root is the point: the refusal has to come from the
+	// book_files check, not from isAllowedPath.
+	notMine := filepath.Join(tmp, "someone-elses.epub")
+	if err := os.WriteFile(notMine, []byte("not mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	book := &models.Book{ForeignID: "OL2408B", AuthorID: author.ID, Title: "T", MediaType: models.MediaTypeEbook}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, mine); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.SetFormatFilePath(ctx, book.ID, models.MediaTypeEbook, mine); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.Download(rec, downloadReqPath(book.ID, notMine))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("untracked path: expected 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() == "mine" {
+		t.Error("untracked path fell back to the format chain and served a different file")
+	}
+}
+
+// The endpoint must not become a way to read arbitrary paths. A traversal that
+// escapes the library root is refused even when spelled to look like a
+// subdirectory of it.
+func TestFileDownload_PathParamTraversalRefused(t *testing.T) {
+	h, books, author, ctx, tmp := fileFixture(t)
+
+	book := &models.Book{ForeignID: "OL2408C", AuthorID: author.ID, Title: "T", MediaType: models.MediaTypeEbook}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(tmp, "real.epub")
+	if err := os.WriteFile(real, []byte("real"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, real); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, attempt := range []string{
+		filepath.Join(tmp, "..", "..", "etc", "passwd"),
+		"/etc/passwd",
+		filepath.Join(tmp, "real.epub", "..", "..", "..", "etc", "passwd"),
+	} {
+		rec := httptest.NewRecorder()
+		h.Download(rec, downloadReqPath(book.ID, attempt))
+		if rec.Code == http.StatusOK {
+			t.Errorf("path=%q was served; it is not tracked against this book", attempt)
+		}
+	}
+}
+
+// book_files stores cleaned paths, but a caller round-tripping one through a
+// JSON dump can pick up a trailing separator on an audiobook directory. Same
+// tolerance deregisterBookFile already has.
+func TestFileDownload_PathParamToleratesTrailingSeparator(t *testing.T) {
+	h, books, author, ctx, tmp := fileFixture(t)
+
+	audioDir := filepath.Join(tmp, "Title (Audio)")
+	if err := os.MkdirAll(audioDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(audioDir, "part1.m4b"), []byte("m4b bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	book := &models.Book{ForeignID: "OL2408D", AuthorID: author.ID, Title: "T", MediaType: models.MediaTypeAudiobook}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.AddBookFile(ctx, book.ID, models.MediaTypeAudiobook, audioDir); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.Download(rec, downloadReqPath(book.ID, audioDir+string(filepath.Separator)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("trailing separator: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/zip" {
+		t.Errorf("audiobook directory: Content-Type got %q, want application/zip", ct)
+	}
+}
+
+// ?path= is the more specific of the two selectors, so it wins when both are
+// sent. Asserted so the precedence is a decision rather than an accident of
+// which branch happens to be written first.
+func TestFileDownload_PathParamBeatsFormatParam(t *testing.T) {
+	h, books, author, ctx, tmp := fileFixture(t)
+
+	first := filepath.Join(tmp, "first.epub")
+	second := filepath.Join(tmp, "second.epub")
+	for p, body := range map[string]string{first: "first bytes", second: "second bytes"} {
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	book := &models.Book{ForeignID: "OL2408E", AuthorID: author.ID, Title: "T", MediaType: models.MediaTypeEbook}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{first, second} {
+		if err := books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The format chain would reach `first`; the request asks for `second`.
+	if err := books.SetFormatFilePath(ctx, book.ID, models.MediaTypeEbook, first); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/file/download?format=ebook&path="+url.QueryEscape(second), nil)
+	rec := httptest.NewRecorder()
+	h.Download(rec, withURLParam(req, "id", strconv.FormatInt(book.ID, 10)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != "second bytes" {
+		t.Errorf("format= won over path=: got %q, want %q", rec.Body.String(), "second bytes")
+	}
+}

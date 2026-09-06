@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/indexer"
+	"github.com/vavallee/bindery/internal/isbnutil"
+	"github.com/vavallee/bindery/internal/textutil"
 
 	_ "modernc.org/sqlite"
 )
@@ -271,6 +273,14 @@ func migrate(database *sql.DB) error {
 		return err
 	}
 
+	// Whether this database existed before this call. Read before the apply
+	// loop, because after it every version is recorded either way. See
+	// stampBackfillRevisions for what it is used for.
+	fresh, err := isFreshDatabase(database)
+	if err != nil {
+		return err
+	}
+
 	for _, entry := range entries {
 		v, err := migrationVersion(entry.Name())
 		if err != nil {
@@ -313,6 +323,23 @@ func migrate(database *sql.DB) error {
 		return fmt.Errorf("repair legacy books.excluded column: %w", err)
 	}
 
+	// A database created by this call has no legacy rows: every row written into
+	// it from here on goes through the repositories, which compute each derived
+	// key with the current normalizer. So the backfills have nothing to repair,
+	// and recording their revisions now is the same answer they would reach
+	// after four table scans of an empty schema.
+	//
+	// This is not a micro-optimisation. Every test in this package opens a fresh
+	// database, so scans that can only ever find nothing are paid hundreds of
+	// times per run for no result; a fresh install pays them once for the same
+	// nothing. It is not enough on its own: the race shard needed its timeout
+	// raised as well, because it was already running at 840 to 847 seconds
+	// against a 900 second ceiling on main.
+	if fresh {
+		stampBackfillRevisions(database)
+		return nil
+	}
+
 	// Post-migration Go-side backfill. Migration 051's SQL backfill is a coarse
 	// approximation of indexer.CanonicalDedupKey (SQLite cannot run the Go
 	// normalizer); recompute the exact key for any row whose stored key is
@@ -332,6 +359,34 @@ func migrate(database *sql.DB) error {
 	// tells the marker gate to go and do.
 	if err := runBackfillOnce(database, backfillRevKeySortKeys, authorSortKeyRev, backfillAuthorSortKeys); err != nil {
 		return fmt.Errorf("backfill author sort keys: %w", err)
+	}
+
+	// Migration 083's books.sort_key is the same story as 058's authors.sort_key
+	// one table over: SQLite ships the column empty because it cannot fold, and
+	// the Books A–Z list needs it populated to stop sorting "Ödland" after "Z"
+	// (#1347 was only ever fixed for Authors).
+	if err := runBackfillOnce(database, backfillRevKeyBookSortKeys, bookSortKeyRev, backfillBookSortKeys); err != nil {
+		return fmt.Errorf("backfill book sort keys: %w", err)
+	}
+
+	// Migration 083's three search_key columns, likewise. Until these hold a
+	// key the search box matches nothing at all, so this is not an optimisation
+	// that can be deferred — it is what makes the feature work on an existing
+	// library (#1660).
+	if err := runBackfillOnce(database, backfillRevKeySearchKeys, textutil.FoldForSearchRev, backfillSearchKeys); err != nil {
+		return fmt.Errorf("backfill search keys: %w", err)
+	}
+
+	// The Audiobookshelf import used to store an ASIN with only its whitespace
+	// trimmed while every metadata provider upper-cased it, so one book could
+	// hold "b08xyz" from ABS and "B08XYZ" from Audible. Both sides now go
+	// through isbnutil.NormalizeASIN, but the rows already written have to be
+	// brought up to it: an ASIN is compared as an exact string (importer.Lookup
+	// matches a filename's ASIN against books.asin with ==), so a stored
+	// lowercase one silently matches nothing and would keep doing so until the
+	// book happened to be re-imported.
+	if err := runBackfillOnce(database, backfillRevKeyASINCase, isbnutil.NormalizeASINRev, backfillASINCase); err != nil {
+		return fmt.Errorf("backfill asin case: %w", err)
 	}
 
 	return nil
@@ -373,8 +428,11 @@ func ensureBooksExcludedColumn(database *sql.DB) error {
 // Settings keys holding the normalizer revision each startup backfill last
 // ran at. See backfillRevisionCurrent.
 const (
-	backfillRevKeyDedup    = "backfill.dedup_key_rev"
-	backfillRevKeySortKeys = "backfill.sort_key_rev"
+	backfillRevKeyDedup        = "backfill.dedup_key_rev"
+	backfillRevKeySortKeys     = "backfill.sort_key_rev"
+	backfillRevKeyBookSortKeys = "backfill.book_sort_key_rev"
+	backfillRevKeySearchKeys   = "backfill.search_key_rev"
+	backfillRevKeyASINCase     = "backfill.asin_case_rev"
 )
 
 // backfillRevisionCurrent reports whether the stored marker for key already
@@ -953,4 +1011,288 @@ func multiuserPreFlight(database *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// backfillBookSortKeys recomputes books.sort_key for every row whose stored
+// value differs from bookSortKey(sort_title, title). Migration 083 adds the
+// column empty because SQLite cannot accent-fold, so without this pass the
+// Books A–Z list would order every existing row under the empty string.
+//
+// Unconditional and idempotent, like its author-side sibling: migrate() gates
+// how often it is called on the backfill.book_sort_key_rev marker, and deleting
+// that row is always a safe way to force a recompute.
+func backfillBookSortKeys(database *sql.DB) error {
+	type pending struct {
+		id  int64
+		key string
+	}
+	// Read phase in its own scope so the cursor closes before the write tx
+	// opens — holding a read cursor across Begin() risks "database is locked".
+	updates, err := func() ([]pending, error) {
+		rows, err := database.Query("SELECT id, title, COALESCE(sort_title, ''), COALESCE(sort_key, '') FROM books")
+		if err != nil {
+			return nil, fmt.Errorf("read books for sort_key backfill: %w", err)
+		}
+		defer rows.Close()
+		var out []pending
+		for rows.Next() {
+			var id int64
+			var title, sortTitle, stored string
+			if err := rows.Scan(&id, &title, &sortTitle, &stored); err != nil {
+				return nil, fmt.Errorf("scan book for sort_key backfill: %w", err)
+			}
+			if want := bookSortKey(sortTitle, title); want != stored {
+				out = append(out, pending{id: id, key: want})
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate books for sort_key backfill: %w", err)
+		}
+		return out, nil
+	}()
+	if err != nil {
+		return err
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+
+	tx, err := database.Begin()
+	if err != nil {
+		return fmt.Errorf("begin book sort_key backfill tx: %w", err)
+	}
+	stmt, err := tx.Prepare("UPDATE books SET sort_key = ? WHERE id = ?")
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("prepare book sort_key backfill: %w", err)
+	}
+	defer stmt.Close()
+	for _, u := range updates {
+		if _, err := stmt.Exec(u.key, u.id); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("update sort_key for book %d: %w", u.id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit book sort_key backfill: %w", err)
+	}
+	slog.Info("backfilled book sort keys", "rows", len(updates))
+	return nil
+}
+
+// backfillSearchKeys populates the three columns migration 083 adds for the
+// library search box: books.search_key, authors.search_key and
+// author_aliases.search_key, each folded from the text the box used to match
+// with `LIKE ? COLLATE NOCASE` (#1660).
+//
+// All three are folded by the SAME function the query folder uses. That is the
+// whole point of the column: the failure this replaces was not that LIKE is
+// slow, it was that the row and the query were reduced through different
+// alphabets — SQLite's ASCII-only case fold on one side and nothing at all on
+// the other — so "Müller" and "muller" could never meet.
+//
+// Unconditional and idempotent; migrate() gates it on backfill.search_key_rev
+// against textutil.FoldForSearchRev, so it runs on the first boot after the
+// upgrade, again after that constant is bumped, and never otherwise.
+func backfillSearchKeys(database *sql.DB) error {
+	// Table and column names are compile-time constants from this file, never
+	// user input, so interpolating them is safe; only the values are bound.
+	for _, target := range []struct{ table, source string }{
+		{"books", "title"},
+		{"authors", "name"},
+		{"author_aliases", "name"},
+	} {
+		n, err := backfillFoldedSearchColumn(database, target.table, target.source)
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			slog.Info("backfilled search keys", "table", target.table, "rows", n)
+		}
+	}
+	return nil
+}
+
+// backfillASINCase re-normalizes every stored ASIN through
+// isbnutil.NormalizeASIN, in books.asin and editions.asin.
+//
+// It exists because an ASIN is stored data that is compared as an exact string:
+// importer.Lookup's first matching tier is `books[i].ASIN == parsed.ASIN`, and
+// the parsed side comes from a filename regexp that only ever yields upper
+// case. An ASIN written by the Audiobookshelf import before it normalized
+// casing therefore matches nothing at all, and normalizing new writes alone
+// would leave those rows unreachable until the book was re-imported. Case is
+// the only difference at stake, so re-normalizing is safe: it can turn a dead
+// identifier into a live one but cannot point an existing match somewhere new.
+//
+// The recompute runs in Go rather than as `UPDATE … SET asin = UPPER(asin)` so
+// it stays exactly what the ingest paths apply, including the trim. It is
+// unconditional and idempotent; migrate() gates it on
+// backfill.asin_case_rev against isbnutil.NormalizeASINRev.
+func backfillASINCase(database *sql.DB) error {
+	total := 0
+	for _, table := range []string{"books", "editions"} {
+		n, err := backfillASINColumn(database, table)
+		if err != nil {
+			return err
+		}
+		total += n
+	}
+	if total > 0 {
+		slog.Info("backfilled ASIN casing", "rows", total)
+	}
+	return nil
+}
+
+// backfillASINColumn rewrites <table>.asin for every row whose stored value
+// differs from isbnutil.NormalizeASIN of itself, and reports how many rows it
+// touched. Table names are compile-time constants from this file, never user
+// input, so interpolating them is safe; only the values are bound.
+func backfillASINColumn(database *sql.DB, table string) (int, error) {
+	type pending struct {
+		id   int64
+		asin string
+	}
+	// Read phase in its own scope so the cursor closes before the write tx
+	// opens — holding a read cursor across Begin() risks "database is locked".
+	updates, err := func() ([]pending, error) {
+		rows, err := database.Query(fmt.Sprintf(
+			"SELECT id, COALESCE(asin, '') FROM %s WHERE COALESCE(asin, '') != ''", table))
+		if err != nil {
+			return nil, fmt.Errorf("read %s for asin backfill: %w", table, err)
+		}
+		defer rows.Close()
+		var out []pending
+		for rows.Next() {
+			var id int64
+			var stored string
+			if err := rows.Scan(&id, &stored); err != nil {
+				return nil, fmt.Errorf("scan %s row for asin backfill: %w", table, err)
+			}
+			if want := isbnutil.NormalizeASIN(stored); want != stored {
+				out = append(out, pending{id: id, asin: want})
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate %s for asin backfill: %w", table, err)
+		}
+		return out, nil
+	}()
+	if err != nil {
+		return 0, err
+	}
+	if len(updates) == 0 {
+		return 0, nil
+	}
+
+	tx, err := database.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin %s asin backfill tx: %w", table, err)
+	}
+	stmt, err := tx.Prepare(fmt.Sprintf("UPDATE %s SET asin = ? WHERE id = ?", table))
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, fmt.Errorf("prepare %s asin backfill: %w", table, err)
+	}
+	defer stmt.Close()
+	for _, u := range updates {
+		if _, err := stmt.Exec(u.asin, u.id); err != nil {
+			_ = tx.Rollback()
+			return 0, fmt.Errorf("update asin for %s %d: %w", table, u.id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit %s asin backfill: %w", table, err)
+	}
+	return len(updates), nil
+}
+
+// backfillFoldedSearchColumn rewrites <table>.search_key from <table>.<source>
+// for every row where the two disagree, and reports how many rows it touched.
+func backfillFoldedSearchColumn(database *sql.DB, table, source string) (int, error) {
+	type pending struct {
+		id  int64
+		key string
+	}
+	updates, err := func() ([]pending, error) {
+		rows, err := database.Query(fmt.Sprintf(
+			"SELECT id, COALESCE(%s, ''), COALESCE(search_key, '') FROM %s", source, table))
+		if err != nil {
+			return nil, fmt.Errorf("read %s for search_key backfill: %w", table, err)
+		}
+		defer rows.Close()
+		var out []pending
+		for rows.Next() {
+			var id int64
+			var text, stored string
+			if err := rows.Scan(&id, &text, &stored); err != nil {
+				return nil, fmt.Errorf("scan %s for search_key backfill: %w", table, err)
+			}
+			if want := textutil.FoldForSearch(text); want != stored {
+				out = append(out, pending{id: id, key: want})
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate %s for search_key backfill: %w", table, err)
+		}
+		return out, nil
+	}()
+	if err != nil {
+		return 0, err
+	}
+	if len(updates) == 0 {
+		return 0, nil
+	}
+
+	tx, err := database.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin %s search_key backfill tx: %w", table, err)
+	}
+	stmt, err := tx.Prepare(fmt.Sprintf("UPDATE %s SET search_key = ? WHERE id = ?", table))
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, fmt.Errorf("prepare %s search_key backfill: %w", table, err)
+	}
+	defer stmt.Close()
+	for _, u := range updates {
+		if _, err := stmt.Exec(u.key, u.id); err != nil {
+			_ = tx.Rollback()
+			return 0, fmt.Errorf("update search_key for %s %d: %w", table, u.id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit %s search_key backfill: %w", table, err)
+	}
+	return len(updates), nil
+}
+
+// isFreshDatabase reports whether schema_migrations was empty when migrate()
+// began, i.e. whether this call is creating the database rather than opening an
+// existing one.
+//
+// It is deliberately conservative about what counts as fresh. A restored backup
+// or a downgraded install carries its migration history, so it answers false
+// and takes the full backfill path — which is the answer that matters, because
+// those are exactly the databases that can hold rows keyed by an older
+// normalizer.
+func isFreshDatabase(database *sql.DB) (bool, error) {
+	var applied int
+	if err := database.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&applied); err != nil {
+		return false, fmt.Errorf("count applied migrations: %w", err)
+	}
+	return applied == 0, nil
+}
+
+// stampBackfillRevisions records every backfill's current revision without
+// running it. Only safe on a database that has just been created; see the call
+// site in migrate.
+//
+// Failures are ignored for the same reason backfillRevisionCurrent fails open:
+// a missing marker costs a table scan on the next boot, never a stale key.
+func stampBackfillRevisions(database *sql.DB) {
+	markBackfillRevision(database, backfillRevKeyDedup, indexer.CanonicalDedupKeyRev)
+	markBackfillRevision(database, backfillRevKeySortKeys, authorSortKeyRev)
+	markBackfillRevision(database, backfillRevKeyBookSortKeys, bookSortKeyRev)
+	markBackfillRevision(database, backfillRevKeySearchKeys, textutil.FoldForSearchRev)
+	markBackfillRevision(database, backfillRevKeyASINCase, isbnutil.NormalizeASINRev)
 }

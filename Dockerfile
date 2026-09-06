@@ -7,6 +7,12 @@ WORKDIR /app/web
 COPY web/package*.json ./
 RUN npm ci
 COPY web/ .
+# The web test suite asserts its Unicode fold against the same fixture the Go
+# test uses (see docs/search-design.md): one corpus, so the key written into the
+# database and the fold applied to the query cannot drift apart. `npm run build`
+# type-checks the tests too, so the fixture has to exist here even though
+# nothing at runtime reads it.
+COPY internal/textutil/testdata/ /app/internal/textutil/testdata/
 RUN npm run build
 
 # Stage 2: Build Go binary (native on BUILDPLATFORM, cross-compile to TARGETOS/TARGETARCH)

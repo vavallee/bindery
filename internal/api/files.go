@@ -56,8 +56,23 @@ func (h *FileHandler) WithRootFolders(rf *db.RootFolderRepo) *FileHandler {
 //   - Ebook (FilePath is a file): streams the file with its original name.
 //   - Audiobook (FilePath is a directory): streams a zip of the folder so
 //     multi-part m4b/mp3 + cover art come down as one bundle.
+//   - ?path= serves one specific tracked file, for a book that holds several
+//     of the same format.
 //   - ?format=ebook|audiobook picks that format's file on dual-format books;
 //     without it the legacy FilePath wins, then ebook, then audiobook.
+//
+// ?path= exists because the two format columns cannot express a book with more
+// than one file of a format (#2408). EbookFilePath is a single column, so a
+// book holding three epubs had exactly one reachable download, and the book
+// page could only offer a per-format link because that was all the endpoint
+// could answer. book_files has carried the full inventory since migration 028;
+// this is the selector that reaches it.
+//
+// Same contract as DeleteFile's ?path= (see deregisterBookFile in books.go):
+// the value is resolved against this book's book_files rows and refused if it
+// is not one of them, so the query string selects among a known set rather
+// than naming a path on disk. When both are supplied ?path= wins, being the
+// more specific of the two; the UI sends one or the other, never both.
 func (h *FileHandler) Download(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
@@ -75,6 +90,32 @@ func (h *FileHandler) Download(w http.ResponseWriter, r *http.Request) {
 	// do not leak existence to non-owners.
 	if !auth.CheckOwnership(r.Context(), book.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
+		return
+	}
+
+	// Optional ?path= selects one specific file the book actually holds. The
+	// requested value is matched against this book's book_files rows and the
+	// STORED spelling is what gets served, so a caller that cleaned the path
+	// (or copied one with a trailing slash off an audiobook directory out of a
+	// JSON dump) still resolves, and a caller that invented one does not.
+	//
+	// Refusing with 404 rather than falling back to the format chain is
+	// deliberate: a silent fallback would hand back a different file than the
+	// one asked for, under a filename the caller did not choose, which is a
+	// worse failure than an error for anything scripted against this endpoint.
+	if requested := r.URL.Query().Get("path"); requested != "" {
+		resolved, err := h.trackedFilePath(r.Context(), id, requested)
+		if err != nil {
+			writeServerError(w, r, err)
+			return
+		}
+		if resolved == "" {
+			writeJSON(w, http.StatusNotFound, map[string]string{
+				"error": "path is not tracked against this book",
+			})
+			return
+		}
+		h.serveFile(w, r, resolved)
 		return
 	}
 
@@ -111,9 +152,45 @@ func (h *FileHandler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.serveFile(w, r, filePath)
+}
+
+// trackedFilePath resolves requested against the book's book_files rows and
+// returns the STORED spelling, or "" when the book does not track that path.
+// Comparison is on filepath.Clean of both sides, matching deregisterBookFile:
+// book_files stores cleaned paths, but a caller round-tripping one through JSON
+// can pick up a trailing separator on an audiobook directory.
+//
+// This is the authorisation step for ?path=, not a convenience. It is what
+// keeps a client-supplied path from naming a file on disk: the value only ever
+// selects among rows already recorded against this book, which the ownership
+// check above has already confirmed belongs to the caller.
+func (h *FileHandler) trackedFilePath(ctx context.Context, bookID int64, requested string) (string, error) {
+	files, err := h.books.ListFiles(ctx, bookID)
+	if err != nil {
+		return "", err
+	}
+	want := filepath.Clean(requested)
+	for _, f := range files {
+		if filepath.Clean(f.Path) == want {
+			return f.Path, nil
+		}
+	}
+	return "", nil
+}
+
+// serveFile streams one resolved path: a directory as a zip bundle, a regular
+// file with its own name. Shared by the ?path= and format-chain branches so
+// both go through the same allow-list check rather than one growing a bypass.
+func (h *FileHandler) serveFile(w http.ResponseWriter, r *http.Request, filePath string) {
 	// Defence-in-depth: refuse to serve paths that aren't under a configured
 	// library root, even if a tampered DB row or importer bug set a path
 	// to something outside the library (e.g. /etc/passwd, /config/*).
+	//
+	// This runs for a ?path= request too, even though the path came out of
+	// book_files rather than off the wire. A row written by an older importer
+	// bug is exactly the case the check exists for, and "it was in the
+	// database" is not the same as "it is inside the library".
 	if !h.isAllowedPath(r.Context(), filePath) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})
 		return

@@ -6,6 +6,7 @@ import BulkActionBar from '../components/BulkActionBar'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
+import { foldedIncludes } from '../util/foldForSearch'
 import { usePolling } from '../components/usePolling'
 import { safeHref } from '../util/safeHref'
 import { formatBytes } from '../util/format'
@@ -80,10 +81,12 @@ export default function WantedPage() {
 
   const filtered = useMemo(() => {
     if (!search.trim()) return books
-    const q = search.trim().toLowerCase()
+    // Folded on both sides, so this filter agrees with the server's search
+    // instead of being the stricter of the two. toLowerCase() alone folds case
+    // but not accents, so "cafe" never matched "Café" here (#1660).
     return books.filter(b =>
-      b.title.toLowerCase().includes(q) ||
-      (b.author?.authorName && b.author.authorName.toLowerCase().includes(q))
+      foldedIncludes(b.title, search) ||
+      foldedIncludes(b.author?.authorName, search)
     )
   }, [books, search])
 

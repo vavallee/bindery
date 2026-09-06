@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
@@ -789,7 +790,7 @@ func (i *Importer) queueReviewItem(ctx context.Context, runID int64, cfg ImportC
 		ItemID:        item.ItemID,
 		Title:         strings.TrimSpace(item.Title),
 		PrimaryAuthor: primaryAuthorName(item),
-		ASIN:          strings.TrimSpace(item.ASIN),
+		ASIN:          isbnutil.NormalizeASIN(item.ASIN),
 		MediaType:     deriveMediaType(item),
 		ReviewReason:  reason,
 		PayloadJSON:   payloadJSON,
