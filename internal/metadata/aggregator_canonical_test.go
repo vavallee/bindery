@@ -1876,3 +1876,102 @@ func TestAggregator_GetBookByISBN_KeepsSecondaryForIndistinguishablePrimaryDupli
 		t.Fatalf("GetBook calls=%d ids=%v, want no ambiguous primary fetch", primary.getBookCalls, primary.gotBookIDs)
 	}
 }
+
+// TestAggregator_CanonicalPrimaryBookDeclinesWhenRunnerUpIsClose covers the
+// runner-up gap. compareBookCandidate is a lexicographic ordering, so before
+// this it would pick a candidate one point of fuzzy title score ahead of
+// another and report no ambiguity at all: a confident answer resting on
+// nothing.
+//
+// Two provider results, neither an exact title, scoring 96 and 92. The titles
+// are constructed rather than drawn from a real catalogue, because the window
+// this rule adds is narrow and deliberately so: candidates that score EQUALLY
+// were already declined as ambiguous, and edition variants of one work escape
+// through the shared dedup key. What is left is the 1-to-4-point band, and
+// that is what this pins.
+//
+// The right answer there is to decline. The book stays unmatched and can be
+// matched by hand; attaching the wrong work's metadata to it is not something
+// the user can undo by noticing later.
+func TestAggregator_CanonicalPrimaryBookDeclinesWhenRunnerUpIsClose(t *testing.T) {
+	primary := &mockProvider{
+		name: "openlibrary",
+		searchBooksByQuery: map[string][]models.Book{
+			"The Silver Chair C. S. Lewis": {
+				{
+					ForeignID:    "OL-SILVER-A",
+					Title:        "The Silver Chairs",
+					Author:       &models.Author{Name: "C. S. Lewis"},
+					EditionCount: 40,
+				},
+				{
+					ForeignID:    "OL-SILVER-B",
+					Title:        "The Silvor Chair",
+					Author:       &models.Author{Name: "C. S. Lewis"},
+					EditionCount: 40,
+				},
+			},
+		},
+	}
+	agg := newTestAggregator(primary)
+	source := models.Book{
+		Title:  "The Silver Chair",
+		Author: &models.Author{Name: "C. S. Lewis"},
+	}
+
+	got, ok := agg.canonicalPrimaryBook(context.Background(), "", source)
+	if ok {
+		t.Fatalf("canonicalPrimaryBook ok = true (got %+v), want false: neither candidate is far enough ahead of the other to be trusted", got)
+	}
+	if got != nil {
+		t.Fatalf("got %+v, want no canonical match", got)
+	}
+}
+
+// TestAggregator_CanonicalPrimaryBookAcceptsAClearWinner is the other side of
+// the same rule, and the reason it is not simply "decline whenever there are
+// two results". A candidate that is far enough clear of the runner-up is still
+// accepted, so the gap narrows what gets auto-matched rather than stopping it.
+func TestAggregator_CanonicalPrimaryBookAcceptsAClearWinner(t *testing.T) {
+	primary := &mockProvider{
+		name: "openlibrary",
+		searchBooksByQuery: map[string][]models.Book{
+			"The Silver Chair C. S. Lewis": {
+				{
+					ForeignID:    "OL-SILVER-A",
+					Title:        "The Silver Chair",
+					Author:       &models.Author{Name: "C. S. Lewis"},
+					EditionCount: 40,
+				},
+				{
+					ForeignID:    "OL-SILVER-C",
+					Title:        "The Silver Chair Companion Reader and Study Guide",
+					Author:       &models.Author{Name: "C. S. Lewis"},
+					EditionCount: 40,
+				},
+			},
+		},
+		getBookByID: map[string]*models.Book{
+			"OL-SILVER-A": {
+				ForeignID:        "OL-SILVER-A",
+				Title:            "The Silver Chair",
+				Description:      "Canonical OpenLibrary description long enough to avoid enrichment.",
+				MetadataProvider: "openlibrary",
+				Author:           &models.Author{Name: "C. S. Lewis"},
+			},
+		},
+	}
+	agg := newTestAggregator(primary)
+	source := models.Book{
+		Title:  "The Silver Chair",
+		Author: &models.Author{Name: "C. S. Lewis"},
+	}
+
+	got, ok := agg.canonicalPrimaryBook(context.Background(), "", source)
+	if !ok || got == nil {
+		t.Fatal("canonicalPrimaryBook declined a candidate with an exact title and a distant runner-up")
+	}
+	if got.ForeignID != "OL-SILVER-A" {
+		t.Fatalf("picked %q, want OL-SILVER-A", got.ForeignID)
+	}
+}
