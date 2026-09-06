@@ -163,19 +163,15 @@ func TestSearchBooksIncludesNormalizedProviderISBNs(t *testing.T) {
 	}
 }
 
-func TestBookSearchResultCapsISBNsAndKeepsQueryFirst(t *testing.T) {
+func TestBookSearchResultCapsISBNs(t *testing.T) {
 	providerISBNs := make([]string, maxBookSearchISBNs+5)
 	for i := range providerISBNs {
 		providerISBNs[i] = fmt.Sprintf("978%010d", i)
 	}
 
-	const queriedISBN = "9789999999999"
-	got := newBookSearchResult(models.Book{ProviderISBNs: providerISBNs}, queriedISBN)
+	got := newBookSearchResult(models.Book{ProviderISBNs: providerISBNs})
 	if len(got.ISBNs) != maxBookSearchISBNs {
 		t.Fatalf("len(isbns) = %d, want cap %d", len(got.ISBNs), maxBookSearchISBNs)
-	}
-	if got.ISBNs[0] != queriedISBN {
-		t.Fatalf("first ISBN = %q, want queried ISBN %q", got.ISBNs[0], queriedISBN)
 	}
 }
 
@@ -237,8 +233,8 @@ func TestLookup_ISBN(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&lookupResult); err != nil {
 		t.Fatalf("decode lookup response: %v", err)
 	}
-	if fmt.Sprint(lookupResult.ISBNs) != "[9780553283686 9780316769488]" {
-		t.Fatalf("lookup isbns = %v, want queried ISBN first", lookupResult.ISBNs)
+	if fmt.Sprint(lookupResult.ISBNs) != "[9780316769488]" {
+		t.Fatalf("lookup isbns = %v, want only provider-reported ISBNs", lookupResult.ISBNs)
 	}
 
 	// Not found — fresh aggregator so nothing is cached
