@@ -94,13 +94,6 @@ describe('AuthorSyncNotice', () => {
     expect(screen.getByText(/2 skipped for having no release date/)).toBeInTheDocument()
   })
 
-  it('renders when only skippedMinPopularity is nonzero', () => {
-    renderNotice(summary({ skippedMinPopularity: 4 }))
-    expect(screen.getByTestId('author-sync-notice')).toBeInTheDocument()
-    openDetails()
-    expect(screen.getByText(/4 skipped for falling below the minimum popularity floor/)).toBeInTheDocument()
-  })
-
   it('renders when only skippedMinPages is nonzero', () => {
     renderNotice(summary({ skippedMinPages: 1 }))
     expect(screen.getByTestId('author-sync-notice')).toBeInTheDocument()
@@ -180,8 +173,6 @@ describe('AuthorSyncNotice', () => {
         skippedPartBooksSample: [{ title: 'Part Book A', language: '' }],
         skippedMissingDate: 1,
         skippedMissingDateSample: [{ title: 'Undated A', language: '' }],
-        skippedMinPopularity: 1,
-        skippedMinPopularitySample: [{ title: 'Unpopular A', language: '' }],
         skippedMinPages: 1,
         skippedMinPagesSample: [{ title: 'Short A', language: '' }],
         skippedMissingIsbn: 1,
@@ -194,11 +185,11 @@ describe('AuthorSyncNotice', () => {
     expect(titles).toHaveLength(5)
     // One from each non-language filter must appear despite language having
     // 3 candidates and being listed first — round-robin, not a head slice.
-    for (const want of ['Part Book A', 'Undated A', 'Unpopular A', 'Short A']) {
+    for (const want of ['Part Book A', 'Undated A', 'Short A', 'No ISBN A']) {
       expect(examples.textContent).toContain(want)
     }
     // Only the round's worth of language examples fit before the cap — with
-    // 5 non-language sources also contributing one each in round 0, only one
+    // 4 non-language sources also contributing one each in round 0, only one
     // language slot remains in round 0 and the cap is hit before round 1.
     expect(examples.textContent).not.toContain('Lang C')
   })

@@ -54,7 +54,6 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
   const notAccepted = sync.skippedNotAccepted ?? 0
   const partBooks = sync.skippedPartBooks ?? 0
   const missingDate = sync.skippedMissingDate ?? 0
-  const minPopularity = sync.skippedMinPopularity ?? 0
   const minPages = sync.skippedMinPages ?? 0
   const missingIsbn = sync.skippedMissingIsbn ?? 0
   const failed = sync.failed ?? 0
@@ -69,7 +68,6 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
     notAccepted +
     partBooks +
     missingDate +
-    minPopularity +
     minPages +
     missingIsbn
   // A sync that dropped nothing and lost nothing has nothing to explain; the
@@ -98,7 +96,6 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
       ),
       (sync.skippedPartBooksSample ?? []).map(b => b.title),
       (sync.skippedMissingDateSample ?? []).map(b => b.title),
-      (sync.skippedMinPopularitySample ?? []).map(b => b.title),
       (sync.skippedMinPagesSample ?? []).map(b => b.title),
       (sync.skippedMissingIsbnSample ?? []).map(b => b.title),
     ],
@@ -193,14 +190,6 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
                 {t('authorDetail.lastSync.missingDate', {
                   count: missingDate,
                   defaultValue: '{{count}} skipped for having no release date',
-                })}
-              </li>
-            )}
-            {minPopularity > 0 && (
-              <li>
-                {t('authorDetail.lastSync.minPopularity', {
-                  count: minPopularity,
-                  defaultValue: '{{count}} skipped for falling below the minimum popularity floor',
                 })}
               </li>
             )}

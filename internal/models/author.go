@@ -176,11 +176,6 @@ type AuthorSyncSummary struct {
 	// enabled.
 	SkippedMissingDate       int                     `json:"skippedMissingDate,omitempty"`
 	SkippedMissingDateSample []AuthorSyncSkippedBook `json:"skippedMissingDateSample,omitempty"`
-	// SkippedMinPopularity is the number of works dropped because their
-	// RatingsCount fell below the metadata profile's MinPopularity floor.
-	// A work that hasn't released yet is exempt.
-	SkippedMinPopularity       int                     `json:"skippedMinPopularity,omitempty"`
-	SkippedMinPopularitySample []AuthorSyncSkippedBook `json:"skippedMinPopularitySample,omitempty"`
 	// SkippedMinPages is the number of works dropped because every edition
 	// with a known page count fell below the metadata profile's MinPages
 	// floor. A work whose editions report no page count at all is treated as
@@ -263,7 +258,7 @@ func (s *AuthorSyncSummary) SkippedTotal() int {
 		return 0
 	}
 	return s.SkippedLanguage + s.SkippedJunk + s.SkippedMediaType + s.SkippedNotAccepted +
-		s.SkippedPartBooks + s.SkippedMissingDate + s.SkippedMinPopularity + s.SkippedMinPages + s.SkippedMissingISBN
+		s.SkippedPartBooks + s.SkippedMissingDate + s.SkippedMinPages + s.SkippedMissingISBN
 }
 
 // AuthorProviderFromForeignID returns the metadata provider implied by a

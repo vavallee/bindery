@@ -284,7 +284,6 @@ export default function MetadataTab() {
                     <div className="min-w-0">
                       <h4 className="font-medium text-sm">{p.name}</h4>
                       <div className="flex flex-wrap gap-3 mt-2 text-xs text-slate-600 dark:text-zinc-400">
-                        <span>{t('settings.metadata.minPopularity')} <span className="text-slate-800 dark:text-zinc-200">{p.minPopularity === 0 ? 'none' : p.minPopularity}</span></span>
                         <span>{t('settings.metadata.minPages')} <span className="text-slate-800 dark:text-zinc-200">{p.minPages === 0 ? 'none' : p.minPages}</span></span>
                         <span>{t('settings.metadata.languages')} <span className="text-slate-800 dark:text-zinc-200">{formatLanguageList(p.allowedLanguages)}</span></span>
                       </div>
@@ -325,7 +324,12 @@ export default function MetadataTab() {
 function MetadataProfileForm({ profile, onClose, onSaved }: { profile?: MetadataProfile; onClose: () => void; onSaved: () => void }) {
   const { t } = useTranslation()
   const [name, setName] = useState(profile?.name ?? '')
-  const [minPopularity, setMinPopularity] = useState(profile?.minPopularity ?? 0)
+  // Round-tripped, not edited. MinPopularity is no longer enforced anywhere
+  // (#2450) and has no control, but the field is still accepted over the API,
+  // so sending the stored value back keeps a profile saved from this form from
+  // silently blanking a value a third-party client may still be reading. Same
+  // shape as #2373, which kept quality_profiles.cutoff for the same reason.
+  const minPopularity = profile?.minPopularity ?? 0
   const [minPages, setMinPages] = useState(profile?.minPages ?? 0)
   const [skipMissingDate, setSkipMissingDate] = useState(profile?.skipMissingDate ?? false)
   const [skipMissingIsbn, setSkipMissingIsbn] = useState(profile?.skipMissingIsbn ?? false)
@@ -414,10 +418,6 @@ function MetadataProfileForm({ profile, onClose, onSaved }: { profile?: Metadata
         </p>
       </div>
       <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.metadata.formMinPopularity')}</label>
-          <input type="number" min={0} value={minPopularity} onChange={e => setMinPopularity(Number(e.target.value))} className={inputCls} />
-        </div>
         <div>
           <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.metadata.formMinPages')}</label>
           <input type="number" min={0} value={minPages} onChange={e => setMinPages(Number(e.target.value))} className={inputCls} />

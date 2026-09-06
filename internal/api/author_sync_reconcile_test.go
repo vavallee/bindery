@@ -42,7 +42,6 @@ func TestAuthorSyncSummaryReconciles(t *testing.T) {
 		UnknownLanguageBehavior: models.UnknownLanguageFail,
 		SkipPartBooks:           true,
 		SkipMissingDate:         true,
-		MinPopularity:           10,
 		MinPages:                100,
 		SkipMissingISBN:         true,
 	}
@@ -94,7 +93,6 @@ func TestAuthorSyncSummaryReconciles(t *testing.T) {
 		work("OL-junk", "Prolix Author", "eng", &released, 500),
 		work("OL-part", "The Saga: Books 1-3", "eng", &released, 500),
 		work("OL-nodate", "A Book With No Date", "eng", nil, 500),
-		work("OL-unpop", "A Book Nobody Rated", "eng", &released, 2),
 		work("OL-thin", "A Very Short Book", "eng", &released, 500),
 		work("OL-noisbn", "A Book With No ISBN", "eng", &released, 500),
 		// The two already-held works. The second arrives under a foreign id the
@@ -142,7 +140,6 @@ func TestAuthorSyncSummaryReconciles(t *testing.T) {
 			"\n  skippedExcluded       " + itoa(sync.SkippedExcluded) +
 			"\n  skippedPartBooks      " + itoa(sync.SkippedPartBooks) +
 			"\n  skippedMissingDate    " + itoa(sync.SkippedMissingDate) +
-			"\n  skippedMinPopularity  " + itoa(sync.SkippedMinPopularity) +
 			"\n  skippedMinPages       " + itoa(sync.SkippedMinPages) +
 			"\n  skippedMissingIsbn    " + itoa(sync.SkippedMissingISBN) +
 			"\n  UNACCOUNTED           " + itoa(sync.Unaccounted())
@@ -161,7 +158,6 @@ func TestAuthorSyncSummaryReconciles(t *testing.T) {
 		{"skippedJunk", sync.SkippedJunk, 1},
 		{"skippedPartBooks", sync.SkippedPartBooks, 1},
 		{"skippedMissingDate", sync.SkippedMissingDate, 1},
-		{"skippedMinPopularity", sync.SkippedMinPopularity, 1},
 		{"skippedMinPages", sync.SkippedMinPages, 1},
 		{"skippedMissingIsbn", sync.SkippedMissingISBN, 1},
 	} {

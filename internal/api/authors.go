@@ -1870,7 +1870,6 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	allowedLangs, unknownFail := h.resolveAllowedLanguages(ctx, author)
 	skipPartBooks := h.resolveSkipPartBooks(ctx, author)
 	skipMissingDate := h.resolveSkipMissingDate(ctx, author)
-	minPopularity := h.resolveMinPopularity(ctx, author)
 	minPages, skipMissingISBN := h.resolveEditionFilters(ctx, author)
 	// Both minPages>0 and skipMissingISBN require a real edition lookup per
 	// candidate work (page count and ISBN live on Edition, not Book, and
@@ -2079,7 +2078,7 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// the write. Both were invisible, which made Total minus everything else
 	// look like a hole.
 	var added, matched, failed, skippedLang, skippedJunk, skippedMediaType, skippedNotAccepted, skippedExcluded int
-	var skippedPartBooks, skippedMissingDate, skippedMinPopularity, skippedMinPages, skippedMissingISBN int
+	var skippedPartBooks, skippedMissingDate, skippedMinPages, skippedMissingISBN int
 	// Names of the first few language-rejected works, reported to the user
 	// alongside the count (#1889): "65 books skipped" is alarming, but it is
 	// the titles and their language codes that tell them whether the profile
@@ -2089,7 +2088,6 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// cap as skippedLangSample (#1889 established the pattern; requested
 	// again for these filters specifically in PR review, vavallee).
 	var skippedPartBooksSample, skippedMissingDateSample []models.AuthorSyncSkippedBook
-	var skippedMinPopularitySample []models.AuthorSyncSkippedBook
 	var skippedMinPagesSample, skippedMissingISBNSample []models.AuthorSyncSkippedBook
 	// candidates accumulates every work that survives the free (in-memory)
 	// filters below and would otherwise reach the MinPages/SkipMissingISBN
@@ -2244,33 +2242,6 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 				skippedMissingDateSample = append(skippedMissingDateSample, models.AuthorSyncSkippedBook{Title: b.Title})
 			}
 			slog.Debug("skipping work with no release date", "title", b.Title, "foreignId", b.ForeignID)
-			continue
-		}
-
-		// Filter works whose RatingsCount falls below the metadata profile's
-		// MinPopularity floor. A work that hasn't released yet is exempt — it
-		// can't have accumulated ratings, so judging it by a rating count
-		// would only ever penalize forthcoming books, never the intended
-		// "low-interest backlist noise" target.
-		//
-		// hasRatingSignal distinguishes "confirmed unpopular" from "unknown":
-		// RatingsCount is not something OpenLibrary reliably supplies (it
-		// arrives via the Hardcover supplement in mergeAuthorWorks), so on an
-		// install with no Hardcover token — or for any work Hardcover
-		// doesn't know — RatingsCount is 0 because nobody told us, not
-		// because the work has zero ratings. AverageRating==0 alongside it
-		// is indistinguishable from missing data, so a work with no rating
-		// signal at all is treated as unknown and passes, mirroring how
-		// MinPages treats a work with no page data as unknown rather than
-		// zero (vavallee, PR review).
-		hasRatingSignal := b.RatingsCount > 0 || b.AverageRating > 0
-		if existing == nil && minPopularity > 0 && hasRatingSignal && b.RatingsCount < minPopularity &&
-			(b.ReleaseDate == nil || !b.ReleaseDate.After(time.Now())) {
-			skippedMinPopularity++
-			if len(skippedMinPopularitySample) < authorSyncSkippedSampleLimit {
-				skippedMinPopularitySample = append(skippedMinPopularitySample, models.AuthorSyncSkippedBook{Title: b.Title})
-			}
-			slog.Debug("skipping below-popularity-floor work", "title", b.Title, "ratingsCount", b.RatingsCount, "minPopularity", minPopularity)
 			continue
 		}
 
@@ -2600,29 +2571,27 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// just ones that dropped something: "nothing was filtered out" is the
 	// answer to "where are my books?" as often as a count is.
 	summary := models.AuthorSyncSummary{
-		CompletedAt:                time.Now().UTC(),
-		Total:                      len(books),
-		Added:                      added,
-		Matched:                    matched,
-		Failed:                     failed,
-		SkippedExcluded:            skippedExcluded,
-		SkippedLanguage:            skippedLang,
-		SkippedJunk:                skippedJunk,
-		SkippedMediaType:           skippedMediaType,
-		SkippedNotAccepted:         skippedNotAccepted,
-		SkippedPartBooks:           skippedPartBooks,
-		SkippedPartBooksSample:     skippedPartBooksSample,
-		SkippedMissingDate:         skippedMissingDate,
-		SkippedMissingDateSample:   skippedMissingDateSample,
-		SkippedMinPopularity:       skippedMinPopularity,
-		SkippedMinPopularitySample: skippedMinPopularitySample,
-		SkippedMinPages:            skippedMinPages,
-		SkippedMinPagesSample:      skippedMinPagesSample,
-		SkippedMissingISBN:         skippedMissingISBN,
-		SkippedMissingISBNSample:   skippedMissingISBNSample,
-		AllowedLanguages:           allowedLangs,
-		UnknownLanguageFail:        unknownFail,
-		SkippedLanguageSample:      skippedLangSample,
+		CompletedAt:              time.Now().UTC(),
+		Total:                    len(books),
+		Added:                    added,
+		Matched:                  matched,
+		Failed:                   failed,
+		SkippedExcluded:          skippedExcluded,
+		SkippedLanguage:          skippedLang,
+		SkippedJunk:              skippedJunk,
+		SkippedMediaType:         skippedMediaType,
+		SkippedNotAccepted:       skippedNotAccepted,
+		SkippedPartBooks:         skippedPartBooks,
+		SkippedPartBooksSample:   skippedPartBooksSample,
+		SkippedMissingDate:       skippedMissingDate,
+		SkippedMissingDateSample: skippedMissingDateSample,
+		SkippedMinPages:          skippedMinPages,
+		SkippedMinPagesSample:    skippedMinPagesSample,
+		SkippedMissingISBN:       skippedMissingISBN,
+		SkippedMissingISBNSample: skippedMissingISBNSample,
+		AllowedLanguages:         allowedLangs,
+		UnknownLanguageFail:      unknownFail,
+		SkippedLanguageSample:    skippedLangSample,
 	}
 	h.syncSummaries.record(author.ID, summary)
 
@@ -2635,7 +2604,7 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 		"skipped_language", skippedLang, "skipped_junk", skippedJunk, "skipped_media_type", skippedMediaType,
 		"skipped_not_accepted", skippedNotAccepted, "skipped_excluded", skippedExcluded,
 		"skipped_part_books", skippedPartBooks,
-		"skipped_missing_date", skippedMissingDate, "skipped_min_popularity", skippedMinPopularity,
+		"skipped_missing_date", skippedMissingDate,
 		"skipped_min_pages", skippedMinPages, "skipped_missing_isbn", skippedMissingISBN,
 		"total", len(books),
 	}
@@ -2648,7 +2617,7 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// filter dropping a work is a setting doing its job, while a create that
 	// lost its write is the run failing at the thing it exists to do.
 	if failed+skippedLang+skippedJunk+skippedMediaType+skippedPartBooks+skippedMissingDate+
-		skippedMinPopularity+skippedMinPages+skippedMissingISBN > 0 {
+		skippedMinPages+skippedMissingISBN > 0 {
 		slog.Warn("author books synced", logArgs...)
 		return
 	}
@@ -3681,23 +3650,6 @@ func (h *AuthorHandler) resolveSkipMissingDate(ctx context.Context, author *mode
 		return false
 	}
 	return p.SkipMissingDate
-}
-
-// resolveMinPopularity returns the author's effective metadata profile's
-// MinPopularity floor. Zero (the field's default) means "no filter" —
-// matches the profile settings UI, which renders 0 as "none". Defaults to
-// zero on any lookup failure, so an unresolvable profile never causes
-// unexpected catalogue loss.
-func (h *AuthorHandler) resolveMinPopularity(ctx context.Context, author *models.Author) int {
-	id := models.DefaultMetadataProfileID
-	if author.MetadataProfileID != nil {
-		id = *author.MetadataProfileID
-	}
-	p, err := h.profiles.GetByID(ctx, id)
-	if err != nil || p == nil {
-		return 0
-	}
-	return p.MinPopularity
 }
 
 // resolveEditionFilters returns the author's effective metadata profile's

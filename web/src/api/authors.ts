@@ -135,7 +135,6 @@ export type CatalogueReconciliationReason =
   | 'language_not_allowed'
   | 'part_book'
   | 'missing_release_date'
-  | 'below_minimum_popularity'
   | 'below_minimum_pages'
   | 'missing_isbn'
   | 'catalogue_filter'
