@@ -163,3 +163,80 @@ func TestDifferentVolumes(t *testing.T) {
 		}
 	}
 }
+
+// TestTitleScoreWeightsLengthDifference pins the WRatio weighting. Every row
+// is a rule about what a containment is worth, not an example, so moving one
+// is a change to how confidently two titles are called the same book.
+//
+// The bug it replaces: TitleScore took a flat maximum of four ratios, and
+// partialRatio returns 100 whenever the shorter title appears verbatim in the
+// longer one. So "Dune" scored a perfect 100 against "Dune Messiah".
+func TestTitleScoreWeightsLengthDifference(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+		rule string
+	}{
+		{"Dune", "Dune", 100, "identical"},
+		{"The Hobbit", "Hobbit, The", 100, "article inversion is the same title"},
+		{"The Lord of the Rings", "Lord of the Rings, The", 100, "same"},
+		{"Dune", "Dune Messiah", 90, "containment, 3x length: was 100, a different book scoring perfect"},
+		{"It", "It: A Novel by Stephen King, Complete and Unabridged", 60, "containment, extreme length gap gets the harsher discount"},
+		{"The Way of Kings", "Kings", 90, "sharing one word is not a match"},
+		{"The Way of Kings", "Words of Radiance", 48, "unrelated"},
+		{"Mistborn: The Final Empire", "Mistborn: The Well of Ascension", 57, "same series, different books"},
+	}
+	for _, c := range cases {
+		if got := TitleScore(c.a, c.b); got != c.want {
+			t.Errorf("TitleScore(%q, %q) = %d, want %d (%s)", c.a, c.b, got, c.want, c.rule)
+		}
+	}
+}
+
+// TestTitleScoreQualifierFloor pins the other half: a title differing only by
+// a cataloguing note is the same book, and the length weighting alone would
+// punish it exactly as hard as it punishes "Dune" against "Dune Messiah".
+//
+// The floor is 97 rather than 100 because beets down-weights a parenthetical
+// instead of deleting it: "(Abridged)" really can be a different product, so
+// an exact title still has to win.
+func TestTitleScoreQualifierFloor(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+		rule string
+	}{
+		{"The Hobbit (Illustrated Edition)", "The Hobbit", 97, "parenthesised qualifier"},
+		{"The Hobbit [Unabridged]", "The Hobbit", 97, "bracketed qualifier"},
+		{"The Hobbit (Illustrated Edition) [Unabridged]", "The Hobbit", 97, "both, stripped repeatedly"},
+		{"The Eye of the World [Dramatized Adaptation]", "The Eye of the World", 97, "the ABS shape"},
+		{"The Way of Kings", "The Way of Kings: The Stormlight Archive, Book One", 97, "series position appended by Calibre or ABS scanning"},
+		{"Mistborn: The Final Empire", "The Final Empire", 90, "a subtitle with no position marker is part of the title and is NOT stripped"},
+	}
+	for _, c := range cases {
+		if got := TitleScore(c.a, c.b); got != c.want {
+			t.Errorf("TitleScore(%q, %q) = %d, want %d (%s)", c.a, c.b, got, c.want, c.rule)
+		}
+	}
+}
+
+// TestQualifierFloorNeverMergesVolumes is the guard that makes the strip safe.
+// "Overlord, Vol. 1" and "Overlord, Vol. 13" both reduce to "overlord" once a
+// series-position suffix is removed, and handing them a near-perfect score is
+// the #2343 collapse this package already fights: owning Vol. 13 showed
+// catalog Vol. 1 as present, carrying Vol. 13's title.
+func TestQualifierFloorNeverMergesVolumes(t *testing.T) {
+	for _, c := range [][2]string{
+		{"Overlord, Vol. 1", "Overlord, Vol. 13"},
+		{"Overlord, Vol. 1", "Overlord, Vol. 9"},
+		{"Overlord, Book 2", "Overlord, Book 12"},
+	} {
+		if got := qualifierOnlyScore(c[0], c[1]); got != 0 {
+			t.Errorf("qualifierOnlyScore(%q, %q) = %d, want 0; stripping must never merge two volumes", c[0], c[1], got)
+		}
+	}
+	// And it does fire when the positions agree, which is the whole point.
+	if got := qualifierOnlyScore("Overlord, Vol. 1", "Overlord, Vol. 1 [Unabridged]"); got == 0 {
+		t.Error("qualifierOnlyScore refused a pair at the same position; the volume guard is too wide")
+	}
+}
