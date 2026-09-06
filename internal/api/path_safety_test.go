@@ -367,3 +367,65 @@ func TestSafeRemoveBookPath_SiblingOwnedByAnotherBook(t *testing.T) {
 		t.Error("a sibling another book tracks must survive the stem sweep")
 	}
 }
+
+func TestSafeRemoveBookPathExact_DeletesOnlyTarget(t *testing.T) {
+	dir := t.TempDir()
+	target := mustWrite(t, filepath.Join(dir, "Book.epub"))
+	sibling := mustWrite(t, filepath.Join(dir, "Book.mobi"))
+
+	skipped, err := safeRemoveBookPathExact(context.Background(), nil, nil, 1, target, "ebook")
+	if err != nil || skipped {
+		t.Fatalf("safeRemoveBookPathExact = skipped %v, err %v; want false, nil", skipped, err)
+	}
+	if exists(target) {
+		t.Error("target should be removed")
+	}
+	if !exists(sibling) {
+		t.Error("exact deletion must leave sibling untouched")
+	}
+}
+
+func TestSafeRemoveBookPathExact_SafetyBranches(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	outside := mustWrite(t, filepath.Join(t.TempDir(), "outside.epub"))
+	roots := NewLibraryRoots(nil, root)
+
+	if skipped, err := safeRemoveBookPathExact(ctx, roots, nil, 1, outside, "ebook"); err != nil || !skipped {
+		t.Errorf("outside path = skipped %v, err %v; want true, nil", skipped, err)
+	}
+
+	target := mustWrite(t, filepath.Join(root, "owned.epub"))
+	if skipped, err := safeRemoveBookPathExact(ctx, nil, stubOwner{err: os.ErrPermission}, 1, target, "ebook"); err != nil || !skipped {
+		t.Errorf("ownership error = skipped %v, err %v; want true, nil", skipped, err)
+	}
+	if !exists(target) {
+		t.Error("ownership failure must preserve the file")
+	}
+
+	other := mustWrite(t, filepath.Join(root, "other.epub"))
+	if skipped, err := safeRemoveBookPathExact(ctx, nil, stubOwner{owned: map[string]bool{other: true}}, 1, other, "ebook"); err != nil || !skipped {
+		t.Errorf("other owner = skipped %v, err %v; want true, nil", skipped, err)
+	}
+	if !exists(other) {
+		t.Error("a file owned by another book must survive")
+	}
+
+	missing := filepath.Join(root, "missing.epub")
+	if skipped, err := safeRemoveBookPathExact(ctx, nil, nil, 1, missing, "ebook"); err != nil || skipped {
+		t.Errorf("missing path = skipped %v, err %v; want false, nil", skipped, err)
+	}
+}
+
+func TestSafeRemoveBookPathExact_AudiobookDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "Book")
+	mustWrite(t, filepath.Join(dir, "Book.m4b"))
+
+	skipped, err := safeRemoveBookPathExact(context.Background(), nil, nil, 1, dir, "audiobook")
+	if err != nil || skipped {
+		t.Fatalf("safeRemoveBookPathExact = skipped %v, err %v; want false, nil", skipped, err)
+	}
+	if exists(dir) {
+		t.Error("audiobook directory should be removed when no sibling format remains")
+	}
+}

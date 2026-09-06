@@ -736,6 +736,27 @@ func TestBookDeleteFile_IndividualPath(t *testing.T) {
 	}
 }
 
+func TestBookDeleteFile_IndividualPathRequiresTrackedRow(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	book := &models.Book{
+		ForeignID: "B-INDIVIDUAL-MISSING", AuthorID: author.ID, Title: "Missing", SortTitle: "missing",
+		Status: models.BookStatusImported, Genres: []string{}, MediaType: models.MediaTypeEbook,
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	req := withURLParam(httptest.NewRequest(http.MethodDelete,
+		"/api/v1/book/"+strconv.FormatInt(book.ID, 10)+"/file?path=%2Flibrary%2Fmissing.epub&delete=true", nil),
+		"id", strconv.FormatInt(book.ID, 10))
+	rec := httptest.NewRecorder()
+	h.DeleteFile(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for an untracked path, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 // TestBookDeleteFile_FormatScopedKeepsSibling is the #715 finding 2 data-loss
 // guard: deleting ?format=ebook must leave the same-stem audiobook on disk.
 func TestBookDeleteFile_FormatScopedKeepsSibling(t *testing.T) {
