@@ -1984,3 +1984,59 @@ func TestVideoMarkerReNoFalsePositives(t *testing.T) {
 		}
 	}
 }
+
+// TestFilterByAllowedLanguagesAgreesWithBookFilter is the drift guard for the
+// two halves of one setting. A metadata profile's allowed_languages list is
+// consulted twice on the way to a grab: models.IsLanguageAllowed decides
+// whether the *book* may be added, and FilterByAllowedLanguages decides
+// whether a *release* of it may be grabbed. Both must read the profile with
+// the same vocabulary, or a profile can accept a book and then reject every
+// release of it, leaving the book permanently wanted with no explanation.
+//
+// The four spellings below are the ones the two sides used to disagree on:
+// a region subtag ("pt-BR"), a script subtag ("zh-Hans"), an ISO 639-2/T code
+// ("deu", "fra", "zho") and a language name ("German"). Only the book filter
+// stripped subtags, and only it knew 639-2/T, so a profile written in any of
+// them filtered releases as if the code were an unknown language and dropped
+// every tagged release.
+func TestFilterByAllowedLanguagesAgreesWithBookFilter(t *testing.T) {
+	cases := []struct {
+		allowed string // one profile entry, as stored in allowed_languages
+		keep    string // a release tagged with that same language
+		drop    string // a release tagged with a different one
+	}{
+		{"pt-BR", "O.Livro.PORTUGUESE.epub", "The.Book.ENGLISH.epub"},
+		{"pt_BR", "O.Livro.PORTUGUESE.epub", "The.Book.ENGLISH.epub"},
+		{"zh-Hans", "Shu.CHINESE.epub", "The.Book.ENGLISH.epub"},
+		{"deu", "Das.Buch.GERMAN.epub", "The.Book.ENGLISH.epub"},
+		{"fra", "Le.Livre.FRENCH.epub", "The.Book.ENGLISH.epub"},
+		{"zho", "Shu.CHINESE.epub", "The.Book.ENGLISH.epub"},
+		{"German", "Das.Buch.GERMAN.epub", "The.Book.ENGLISH.epub"},
+		{"en-US", "The.Book.ENGLISH.epub", "Das.Buch.GERMAN.epub"},
+	}
+	for _, tc := range cases {
+		allowed := models.ParseAllowedLanguages(tc.allowed)
+		kept := resultTitles(FilterByAllowedLanguages(toResults(tc.keep, tc.drop), allowed))
+
+		// What the book filter says about the same profile, for the language
+		// the kept release is tagged with.
+		keepCode := releaseLanguageCodes(NormalizeRelease(tc.keep))
+		if len(keepCode) != 1 {
+			t.Fatalf("%q: test fixture must carry exactly one language tag, got %v", tc.keep, keepCode)
+		}
+		bookAllows := models.IsLanguageAllowed(keepCode[0], allowed, false)
+
+		if !bookAllows {
+			t.Errorf("profile %q: models.IsLanguageAllowed rejects a %s book, so this fixture is wrong", tc.allowed, keepCode[0])
+			continue
+		}
+		if !slices.Contains(kept, tc.keep) {
+			t.Errorf("profile %q accepts a %s book but FilterByAllowedLanguages drops %q (kept %v) — "+
+				"the book would stay wanted forever with every release of it filtered away",
+				tc.allowed, keepCode[0], tc.keep, kept)
+		}
+		if slices.Contains(kept, tc.drop) {
+			t.Errorf("profile %q must still drop %q, kept %v", tc.allowed, tc.drop, kept)
+		}
+	}
+}
