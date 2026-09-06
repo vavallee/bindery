@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -160,7 +161,7 @@ func TestLiveBuildSHA(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		got, err := liveBuildSHA(srv.URL, "s3cret")
+		got, err := liveBuildSHA(context.Background(), srv.URL, "s3cret")
 		if err != nil {
 			t.Fatalf("liveBuildSHA: %v", err)
 		}
@@ -178,7 +179,7 @@ func TestLiveBuildSHA(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		got, err := liveBuildSHA(srv.URL, "s3cret")
+		got, err := liveBuildSHA(context.Background(), srv.URL, "s3cret")
 		if err != nil {
 			t.Fatalf("liveBuildSHA: %v", err)
 		}
@@ -193,10 +194,52 @@ func TestLiveBuildSHA(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		if _, err := liveBuildSHA(srv.URL, "wrong"); err == nil {
+		if _, err := liveBuildSHA(context.Background(), srv.URL, "wrong"); err == nil {
 			t.Error("liveBuildSHA = nil error on HTTP 401, want an error")
 		} else if !strings.Contains(err.Error(), "401") {
 			t.Errorf("err = %v, want it to name the status", err)
 		}
 	})
+}
+
+// PING_STATS_URL is a test seam, which makes it a taint source: it decides
+// where a live bearer token gets sent. These are the cases that matter.
+func TestCheckStatsURL(t *testing.T) {
+	cases := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		{name: "the real endpoint", url: "https://api.getbindery.dev/api/stats"},
+		{name: "https anywhere is allowed", url: "https://example.test/api/stats"},
+		{name: "loopback over http, the test stub", url: "http://127.0.0.1:18711/api/stats"},
+		{name: "localhost over http", url: "http://localhost:18711/api/stats"},
+		{name: "ipv6 loopback", url: "http://[::1]:18711/api/stats"},
+		// The token must not leave the machine in the clear, and must not go
+		// to a host someone picked by setting an environment variable.
+		{name: "plain http to a remote host", url: "http://example.test/api/stats", wantErr: true},
+		{name: "http to a non-loopback ip", url: "http://10.0.0.5/api/stats", wantErr: true},
+		{name: "a scheme that is not http", url: "file:///etc/passwd", wantErr: true},
+		{name: "no host", url: "https:///api/stats", wantErr: true},
+		{name: "empty", url: "", wantErr: true},
+		{name: "not a url", url: "://nope", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkStatsURL(tc.url)
+			if tc.wantErr && err == nil {
+				t.Errorf("checkStatsURL(%q) = nil, want an error", tc.url)
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("checkStatsURL(%q) = %v, want nil", tc.url, err)
+			}
+		})
+	}
+}
+
+// liveBuildSHA must refuse before it sends anything, not after.
+func TestLiveBuildSHA_RefusesABadURLWithoutDialling(t *testing.T) {
+	if _, err := liveBuildSHA(context.Background(), "http://example.test/api/stats", "s3cret"); err == nil {
+		t.Error("liveBuildSHA accepted plain http to a remote host")
+	}
 }

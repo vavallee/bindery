@@ -13,10 +13,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"time"
@@ -77,30 +80,77 @@ func compareSHA(pinned, live string) error {
 	return nil
 }
 
+// checkStatsURL constrains where the bearer token may be sent.
+//
+// The URL is overridable through PING_STATS_URL so the tests can point at a
+// stub, which makes it a taint source: without this, anyone who can set the
+// environment of this job redirects a live credential to a host of their
+// choosing. https everywhere, except a loopback host, which is the only
+// shape the test seam needs and cannot leave the machine.
+func checkStatsURL(raw string) error {
+	u, err := parseURL(raw)
+	if err != nil {
+		return fmt.Errorf("PING_STATS_URL is not a valid URL: %w", err)
+	}
+	if u.Scheme == "https" {
+		return nil
+	}
+	if u.Scheme == "http" && isLoopbackHost(u.Hostname()) {
+		return nil
+	}
+	return fmt.Errorf("PING_STATS_URL must be https, or http on loopback for tests, got %q", raw)
+}
+
+func parseURL(raw string) (*url.URL, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	if u.Host == "" {
+		return nil, errors.New("no host")
+	}
+	return u, nil
+}
+
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // liveBuildSHA reads build_sha from the token-gated stats endpoint. The sha
 // is not on public /health deliberately: an exact build identifier tells a
 // stranger which advisories apply, and this caller already holds the token.
-func liveBuildSHA(url, token string) (string, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+func liveBuildSHA(ctx context.Context, statsURL, token string) (string, error) {
+	if err := checkStatsURL(statsURL); err != nil {
+		return "", err
+	}
+
+	// #nosec G704 -- statsURL is checked by checkStatsURL above: https, or
+	// http on loopback for the test stub. Nothing here reaches an arbitrary
+	// host with the token.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, statsURL, nil)
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req) // #nosec G704 -- see above
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("%s returned HTTP %d", url, resp.StatusCode)
+		return "", fmt.Errorf("%s returned HTTP %d", statsURL, resp.StatusCode)
 	}
 
 	var body struct {
 		BuildSHA string `json:"build_sha"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return "", fmt.Errorf("decode %s: %w", url, err)
+		return "", fmt.Errorf("decode %s: %w", statsURL, err)
 	}
 	return body.BuildSHA, nil
 }
@@ -128,7 +178,7 @@ func main() {
 		fail("%s: %v", manifestPath, err)
 	}
 
-	live, err := liveBuildSHA(statsURL, token)
+	live, err := liveBuildSHA(context.Background(), statsURL, token)
 	if err != nil {
 		fail("%v", err)
 	}
