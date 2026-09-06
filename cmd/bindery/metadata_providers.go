@@ -23,16 +23,37 @@ const metadataPrimaryProviderDefault = "openlibrary"
 //     author and book lookup. The settings API refuses to store that
 //     combination, but the token can still be removed out-of-band, so the
 //     boot path degrades loudly instead of silently breaking metadata.
-func resolveMetadataPrimaryProvider(configured string, hardcoverTokenConfigured bool) string {
+func resolveMetadataPrimaryProvider(configured string, hardcoverTokenConfigured, openLibraryEnabled bool) string {
+	if !openLibraryEnabled && configured == "openlibrary" {
+		if hardcoverTokenConfigured {
+			return "hardcover"
+		}
+		return "dnb"
+	}
 	if configured == "" {
+		if !openLibraryEnabled {
+			if hardcoverTokenConfigured {
+				return "hardcover"
+			}
+			return "dnb"
+		}
 		return metadataPrimaryProviderDefault
 	}
 	if !api.IsMetadataPrimaryProviderValid(configured) {
 		slog.Warn("unknown metadata.primary_provider — falling back to openlibrary",
 			"configured", configured)
+		if !openLibraryEnabled {
+			if hardcoverTokenConfigured {
+				return "hardcover"
+			}
+			return "dnb"
+		}
 		return metadataPrimaryProviderDefault
 	}
 	if configured == "hardcover" && !hardcoverTokenConfigured {
+		if !openLibraryEnabled {
+			return "dnb"
+		}
 		slog.Warn("metadata.primary_provider is hardcover but no Hardcover API token is configured — falling back to openlibrary (Hardcover authenticates every query, including search)")
 		return metadataPrimaryProviderDefault
 	}
