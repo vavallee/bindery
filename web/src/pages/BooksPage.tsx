@@ -54,6 +54,8 @@ export default function BooksPage() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
   const [showAddBook, setShowAddBook] = useState(false)
+  const addBookButtonRef = useRef<HTMLButtonElement>(null)
+  const addBookWasOpenRef = useRef(false)
   const selectAllRef = useRef<HTMLInputElement>(null)
   const loadRequestRef = useRef(0)
 
@@ -117,6 +119,11 @@ export default function BooksPage() {
     document.title = 'Books · Bindery'
     return () => { document.title = 'Bindery' }
   }, [])
+
+  useEffect(() => {
+    if (addBookWasOpenRef.current && !showAddBook) addBookButtonRef.current?.focus()
+    addBookWasOpenRef.current = showAddBook
+  }, [showAddBook])
 
   const toggleSelect = (id: number) => {
     setSelectedIds(prev => {
@@ -199,6 +206,7 @@ export default function BooksPage() {
           <span className="text-sm text-fg-muted">{t('books.countLabel', { count: total, defaultValue: '{{count}} books' })}</span>
           <ViewToggle view={view} onChange={setView} />
           <button
+            ref={addBookButtonRef}
             type="button"
             onClick={() => setShowAddBook(true)}
             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-md text-sm font-medium text-white transition-colors"

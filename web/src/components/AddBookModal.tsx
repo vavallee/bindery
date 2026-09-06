@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, Book } from '../api/client'
-import { resolveBookQuery } from '../api/booklookup'
+import { isbnFromQuery, resolveBookQuery } from '../api/booklookup'
 import { metadataSourceLink, providerDisplayName, providerFromBookForeignId } from '../util/metadataSource'
 import MetadataLinksMenu from './MetadataLinksMenu'
 
@@ -18,8 +18,10 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
   const [addError, setAddError] = useState<string | null>(null)
+  const [searchedISBN, setSearchedISBN] = useState<string | null>(null)
   const [adding, setAdding] = useState<string | null>(null)
   const [searchOnAdd, setSearchOnAdd] = useState(true)
+  const dialogRef = useRef<HTMLDivElement>(null)
   const confirmationHeadingRef = useRef<HTMLHeadingElement>(null)
   // '' = keep the provider's media type / the default.media_type setting.
   const [mediaType, setMediaType] = useState('')
@@ -30,17 +32,21 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
 
   const search = async () => {
     const q = query.trim()
-    if (!q) return
+    if (!q || searching) return
     setSearching(true)
+    setResults([])
     setSearchError(null)
     setAddError(null)
     try {
       // ISBN / ASIN / free-text dispatch lives in resolveBookQuery so Manual
       // Import's metadata search accepts exactly the same inputs.
-      setResults(await resolveBookQuery(q))
+      const nextResults = await resolveBookQuery(q)
+      setResults(nextResults)
+      setSearchedISBN(isbnFromQuery(q))
     } catch (err) {
       setSearchError(err instanceof Error ? err.message : t('addBookModal.searchFailed'))
       setResults([])
+      setSearchedISBN(null)
     } finally {
       setSearching(false)
     }
@@ -99,9 +105,34 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
     return value
   }
 
+  const handleDialogKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      onClose()
+      return
+    }
+    if (event.key !== 'Tab') return
+
+    const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), summary, textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )
+    if (!focusable?.length) return
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    const activeElement = document.activeElement as HTMLElement | null
+    const activeIsFocusable = activeElement ? Array.from(focusable).includes(activeElement) : false
+    if (event.shiftKey && (activeElement === first || !activeIsFocusable)) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
+
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50" onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-labelledby="add-book-title" className="bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="add-book-title" className="bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()} onKeyDown={handleDialogKeyDown}>
         <div className="p-4 border-b border-slate-200 dark:border-zinc-800">
           <h3 id="add-book-title" className="text-lg font-semibold">{t('addBookModal.title')}</h3>
           <p className="text-xs text-fg-muted mt-0.5">{t('addBookModal.description')}</p>
@@ -214,6 +245,13 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
                 </dl>
               </div>
             </div>
+
+            {searchedISBN && (
+              <div className="mt-3 text-[11px] leading-5 text-slate-500 dark:text-zinc-500">
+                <div className="font-medium">{t('addBookModal.searchedIsbn')}</div>
+                <div className="font-mono">{searchedISBN}</div>
+              </div>
+            )}
 
             {visibleISBNs.length > 0 && (
               <div

@@ -32,6 +32,7 @@ vi.mock('react-i18next', () => ({
       'addBookModal.source': 'Source',
       'addBookModal.providerId': 'Source ID',
       'addBookModal.asin': 'ASIN',
+      'addBookModal.searchedIsbn': 'Searched ISBN',
       'addBookModal.isbns': 'ISBNs',
       'addBookModal.identifiersHint': 'Identifiers reported by the metadata source.',
       'addBookModal.adding': 'Adding...',
@@ -73,6 +74,20 @@ describe('AddBookModal — null search results (#1188)', () => {
 
     expect(screen.getByRole('dialog', { name: 'Add Book' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes on Escape and keeps Tab focus inside the dialog', () => {
+    render(<AddBookModal onClose={onClose} onAdded={onAdded} />)
+
+    const input = screen.getByPlaceholderText(/Title, ISBN, or ASIN/i)
+    const cancel = screen.getByRole('button', { name: 'Cancel' })
+    input.focus()
+    fireEvent.keyDown(input, { key: 'Tab', shiftKey: true })
+    expect(cancel).toHaveFocus()
+    fireEvent.keyDown(cancel, { key: 'Tab' })
+    expect(input).toHaveFocus()
+    fireEvent.keyDown(input, { key: 'Escape' })
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
@@ -142,6 +157,25 @@ describe('AddBookModal — ASIN lookup (#1189)', () => {
       expect(screen.getByText(/not found/i)).toBeInTheDocument()
     )
     expect(api.searchBooks).not.toHaveBeenCalled()
+  })
+
+  it('does not overlap searches started with Enter', async () => {
+    let resolveLookup!: (book: Awaited<ReturnType<typeof api.lookupISBN>>) => void
+    vi.mocked(api.lookupISBN).mockReturnValue(new Promise(resolve => { resolveLookup = resolve }))
+
+    render(<AddBookModal onClose={onClose} onAdded={onAdded} />)
+    const input = screen.getByPlaceholderText(/Title, ISBN, or ASIN/i)
+    fireEvent.change(input, { target: { value: '9780553283686' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.change(input, { target: { value: '9780140328721' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(api.lookupISBN).toHaveBeenCalledTimes(1)
+    resolveLookup({ foreignBookId: 'OL2W', title: 'Hyperion' } as never)
+    await screen.findByRole('button', { name: 'Select Hyperion' })
+    fireEvent.click(screen.getByRole('button', { name: 'Select Hyperion' }))
+    expect(screen.getByText('9780553283686')).toBeInTheDocument()
+    expect(screen.queryByText('9780140328721')).not.toBeInTheDocument()
   })
 
   it('still routes a plain title query to searchBooks', async () => {
@@ -262,16 +296,27 @@ describe('AddBookModal — confirmation step (#1227)', () => {
     await screen.findByText('Dune')
     fireEvent.click(screen.getByRole('button', { name: 'Select Dune' }))
 
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Dune' })).toHaveFocus())
+    const confirmationHeading = screen.getByRole('heading', { name: 'Dune' })
+    await waitFor(() => expect(confirmationHeading).toHaveFocus())
+    fireEvent.keyDown(confirmationHeading, { key: 'Tab', shiftKey: true })
+    expect(screen.getByRole('button', { name: 'Add book' })).toHaveFocus()
     const cover = screen.getByRole('img', { name: 'Dune cover' })
     expect(cover.className).toContain('w-28')
     expect(screen.getByText('9780441172719')).toBeInTheDocument()
-    expect(screen.getByText('Show 2 more identifiers')).toBeInTheDocument()
+    const identifiersSummary = screen.getByText('Show 2 more identifiers')
+    expect(identifiersSummary).toBeInTheDocument()
+    identifiersSummary.focus()
+    fireEvent.keyDown(identifiersSummary, { key: 'Tab', shiftKey: true })
+    expect(identifiersSummary).toHaveFocus()
     fireEvent.click(screen.getByRole('button', { name: 'Links' }))
     const sourceLink = screen.getByRole('link', { name: 'View on OpenLibrary ↗' })
     expect(sourceLink).toHaveAttribute('href', 'https://openlibrary.org/works/OL1W')
     expect(sourceLink).toHaveAttribute('target', '_blank')
     expect(sourceLink).toHaveAttribute('rel', 'noopener noreferrer')
+    fireEvent.keyDown(sourceLink, { key: 'Escape' })
+    expect(screen.getByRole('button', { name: 'Links' })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByRole('dialog', { name: 'Add Book' })).toBeInTheDocument()
+    expect(onClose).not.toHaveBeenCalled()
     expect(screen.getByLabelText('Format to add')).toBeInTheDocument()
     expect(screen.getByText('Search indexers after adding')).toBeInTheDocument()
 
@@ -280,6 +325,30 @@ describe('AddBookModal — confirmation step (#1227)', () => {
     expect(screen.getByPlaceholderText(/Title, ISBN, or ASIN/i)).toHaveValue('Dune')
     expect(screen.getByRole('button', { name: 'Select Dune' })).toBeInTheDocument()
     expect(screen.queryByLabelText('Format to add')).not.toBeInTheDocument()
+  })
+
+  it('shows the searched ISBN separately from provider-reported identifiers', async () => {
+    vi.mocked(api.lookupISBN).mockResolvedValue({
+      foreignBookId: 'OL2W',
+      title: 'Hyperion',
+      isbns: ['9780316769488'],
+    } as never)
+
+    render(<AddBookModal onClose={onClose} onAdded={onAdded} />)
+    const queryInput = screen.getByPlaceholderText(/Title, ISBN, or ASIN/i)
+    fireEvent.change(queryInput, {
+      target: { value: '978-0-553-28368-6' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
+    await screen.findByText('Hyperion')
+    fireEvent.change(queryInput, { target: { value: '978-0-14-032872-1' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Select Hyperion' }))
+
+    expect(screen.getByText('Searched ISBN')).toBeInTheDocument()
+    expect(screen.getByText('9780553283686')).toBeInTheDocument()
+    expect(screen.queryByText('9780140328721')).not.toBeInTheDocument()
+    expect(screen.getByText('ISBNs')).toBeInTheDocument()
+    expect(screen.getByText('9780316769488')).toBeInTheDocument()
   })
 
   it('hides Links when the result has no trustworthy upstream URL', async () => {

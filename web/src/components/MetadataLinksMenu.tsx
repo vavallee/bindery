@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { MetadataSourceLink } from '../util/metadataSource'
 
@@ -14,13 +14,28 @@ export default function MetadataLinksMenu({ links }: { links: MetadataSourceLink
   const { t } = useTranslation()
   const [hovered, setHovered] = useState(false)
   const [expanded, setExpanded] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelId = useId()
   const open = hovered || expanded
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setHovered(false)
+        setExpanded(false)
+      }
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [open])
+
   if (links.length === 0) return null
 
   return (
     <div
+      ref={rootRef}
       className="relative inline-flex"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -30,6 +45,7 @@ export default function MetadataLinksMenu({ links }: { links: MetadataSourceLink
       onKeyDown={event => {
         if (event.key === 'Escape' && open) {
           event.preventDefault()
+          event.stopPropagation()
           setHovered(false)
           setExpanded(false)
           triggerRef.current?.focus()
