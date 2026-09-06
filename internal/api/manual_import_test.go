@@ -1192,6 +1192,43 @@ func TestManualImportScan_EnumeratesBookUnits(t *testing.T) {
 	}
 }
 
+func TestDirectoryMatchesTracked(t *testing.T) {
+	root := t.TempDir()
+	trackedPath := filepath.Join(root, "tracked.epub")
+	otherTrackedPath := filepath.Join(root, "tracked.mobi")
+	if err := os.WriteFile(trackedPath, []byte("epub"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(otherTrackedPath, []byte("mobi"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tracked := map[string]struct{}{
+		filepath.Clean(trackedPath):      {},
+		filepath.Clean(otherTrackedPath): {},
+	}
+	trackedFiles := []os.FileInfo{}
+	for _, path := range []string{trackedPath, otherTrackedPath} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		trackedFiles = append(trackedFiles, info)
+	}
+
+	if !directoryMatchesTracked(root, tracked, trackedFiles) {
+		t.Fatal("fully tracked directory should be skipped")
+	}
+
+	untrackedPath := filepath.Join(root, "new.epub")
+	if err := os.WriteFile(untrackedPath, []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if directoryMatchesTracked(root, tracked, trackedFiles) {
+		t.Fatal("directory with an untracked importable file should remain eligible")
+	}
+}
+
 func TestManualImportScan_SkipsAlreadyTrackedFiles(t *testing.T) {
 	t.Parallel()
 	database, err := db.OpenMemory()

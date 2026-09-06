@@ -431,6 +431,31 @@ func fileMatchesTracked(path string, tracked []os.FileInfo) bool {
 	return false
 }
 
+// directoryMatchesTracked reports whether every importable file below path is
+// already registered in book_files. Directory units represent either a
+// multi-format ebook or a folder audiobook, so checking only the directory's
+// own path cannot identify an already-imported unit. A directory with even one
+// untracked ebook/audio file remains eligible for import.
+func directoryMatchesTracked(path string, tracked map[string]struct{}, trackedFiles []os.FileInfo) bool {
+	found := false
+	allTracked := true
+	_ = filepath.WalkDir(path, func(p string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			allTracked = false
+			return nil
+		}
+		if entry.IsDir() || (!importer.IsEbookFile(p) && !importer.IsAudioFile(p)) {
+			return nil
+		}
+		found = true
+		if _, ok := tracked[filepath.Clean(p)]; !ok && !fileMatchesTracked(p, trackedFiles) {
+			allTracked = false
+		}
+		return nil
+	})
+	return found && allTracked
+}
+
 // ScanItem is one candidate book unit discovered under a folder during Scan.
 type ScanItem struct {
 	Path           string        `json:"path"`
@@ -527,7 +552,14 @@ func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
 	}
 	filteredCands := cands[:0]
 	for _, c := range cands {
-		if _, ok := tracked[filepath.Clean(c.path)]; ok || fileMatchesTracked(c.path, trackedFiles) {
+		alreadyTracked := false
+		if c.isDir {
+			alreadyTracked = directoryMatchesTracked(c.path, tracked, trackedFiles)
+		} else {
+			_, alreadyTracked = tracked[filepath.Clean(c.path)]
+			alreadyTracked = alreadyTracked || fileMatchesTracked(c.path, trackedFiles)
+		}
+		if alreadyTracked {
 			continue
 		}
 		filteredCands = append(filteredCands, c)
