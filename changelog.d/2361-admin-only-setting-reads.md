@@ -1,2 +1,0 @@
-### Security
-- **Server filesystem paths in Settings are now admin only** (#2361). `GET /setting` and `GET /setting/{key}` handed the Calibre library and binary paths, the import drop folder, the CWA ingest path, the ABS and Calibre path remaps and the last library scan summary to every authenticated account, including OPDS only readers, while `GET /system/storage` has always been admin gated for revealing exactly that. Reads of those keys now match the admin gate that already guarded writing them; admins see the real values and Settings is unchanged for them.
