@@ -3462,15 +3462,11 @@ func (h *AuthorHandler) saveAlternateNames(ctx context.Context, author *models.A
 	// reached by a latin release name (e.g. "Murakami" -> "村上春樹"). For a
 	// latin-script author every alternate name is just another latin name, and
 	// minting it as an alias would file unrelated real authors (a pen name, or a
-	// co-author credit) under this one. Only save them when the author's own name
-	// is non-latin, mirroring the read-side guard in aliasBindsAuthor
-	// (importer.go), which binds an unattributed latin alias only when the
-	// canonical name is non-latin.
-	if isAllASCII(author.Name) {
-		return
-	}
+	// co-author credit) under this one. textutil.LatinAliasBinds is the shared
+	// rule: the same test the Calibre importer applies when it reads an
+	// unattributed alias back, and the search path when it expands one (#2419).
 	for _, name := range author.AlternateNames {
-		if !isAllASCII(name) {
+		if !textutil.LatinAliasBinds(author.Name, name) {
 			continue
 		}
 		alias := &models.AuthorAlias{AuthorID: author.ID, Name: name}
@@ -3478,16 +3474,6 @@ func (h *AuthorHandler) saveAlternateNames(ctx context.Context, author *models.A
 			slog.Debug("saveAlternateNames: could not save alias", "name", name, "authorId", author.ID, "error", err)
 		}
 	}
-}
-
-// isAllASCII returns true when every byte of s is a 7-bit ASCII character.
-func isAllASCII(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] > 127 {
-			return false
-		}
-	}
-	return true
 }
 
 // canUpgradeToBoth reports whether combining existingMediaType and
