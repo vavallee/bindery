@@ -42,11 +42,12 @@ import (
 
 // buildSHA is stamped at image build time with -X main.buildSHA=<git sha>.
 // It exists because nothing could previously tell which build was serving:
-// /health returns a bare 200 and the binary carries no version. The image
-// pin in deploy/telemetry-server.yaml sat 41 days behind the code once
-// (a July build serving after the August new_install logging landed) and
-// the only way anyone noticed was grepping pod logs for a line that could
-// not be there. Reported on the token-gated /api/stats rather than public
+// /health returns a bare 200 and the binary carries no version. The deployed
+// image sat 41 days behind this tree once, a July build still serving after
+// the August new_install logging landed, and the only way anyone noticed was
+// grepping pod logs for a line that could not be there. The deployment lives
+// in a private infrastructure repo, so this is the only handle this repo has
+// on what is actually running. Reported on the token-gated /api/stats rather than public
 // /health: a public exact build sha tells a stranger precisely which
 // advisories apply, and the drift check that reads it already holds the
 // stats token.

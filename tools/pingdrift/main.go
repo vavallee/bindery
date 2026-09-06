@@ -1,15 +1,18 @@
-// Command pingdrift compares the bindery-ping image pinned in
-// deploy/telemetry-server.yaml against the build the live server reports.
+// Command pingdrift compares the build api.getbindery.dev reports against the
+// newest commit here that would have produced a bindery-ping image.
 //
-// It exists because that deployment is applied by hand: the host is not in
-// the ArgoCD application (which tracks charts/bindery only) and CI has no
-// kubectl or SSH to it, only an HTTPS token. The pin sat at the 2026-07-11
-// build for 41 days while main shipped a new ping log line, a Debian 13 base
-// and a crypto bump, and nothing said so. This turns that into a daily
-// failure.
+// The deployment lives in a private infrastructure repo and is synced by
+// ArgoCD with selfHeal, so this repo cannot see, read or change what is
+// deployed. It can see two things: what the running server says it is, and
+// what the newest build from this tree would be. When those part company,
+// someone has to bump the image over there.
 //
-// It is a Go tool rather than shell in a workflow step so the parsing and
-// comparison are unit-testable, matching tools/licensegen.
+// It exists because that gap ran to 41 days once. The service served an end
+// of life base with two High advisories for weeks after the fix landed here,
+// and the only reason anyone noticed was a log line missing from a pod.
+//
+// It is a Go tool rather than shell in a workflow step so the comparison and
+// the HTTP read are unit-testable, matching tools/licensegen.
 package main
 
 import (
@@ -22,44 +25,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"time"
 )
 
-// imageRE matches the pinned bindery-ping image line and captures the sha.
+// compareSHA reports whether the running build matches the one expected.
 //
-// A regexp rather than a YAML parse on purpose: pulling in a YAML library
-// for one line would make it a direct dependency, with the licence check and
-// THIRD_PARTY_LICENSES regeneration that implies, to read a field whose
-// shape this repo controls. The hazards a parser would have handled are
-// covered instead: `^\s*image:` will not match a `#` commented line, and
-// pinnedImageSHA refuses a file with more than one match rather than
-// silently taking the first, so adding a second bindery-ping container fails
-// loudly here instead of being ignored.
-var imageRE = regexp.MustCompile(`(?m)^\s*image:\s*ghcr\.io/[^/\s]+/bindery-ping:sha-([0-9a-f]{7,40})\s*$`)
-
-// errNoPin distinguishes "the manifest does not pin a sha" (someone moved it
-// back to :latest, which defeats the whole check) from a read failure.
-var errNoPin = errors.New("no sha-pinned bindery-ping image found")
-
-// pinnedImageSHA returns the sha the manifest pins bindery-ping to.
-func pinnedImageSHA(manifest []byte) (string, error) {
-	m := imageRE.FindAllSubmatch(manifest, -1)
-	switch len(m) {
-	case 0:
-		return "", errNoPin
-	case 1:
-		return string(m[0][1]), nil
-	default:
-		return "", fmt.Errorf("found %d sha-pinned bindery-ping images, expected exactly one", len(m))
-	}
-}
-
-// compareSHA reports whether the running build matches the pin.
-//
-// The comparison is on the shorter of the two, because the manifest may
-// carry a short sha while the server reports the full one (or the reverse).
-func compareSHA(pinned, live string) error {
+// The comparison is on the shorter of the two, so a short sha and a full one
+// still compare equal.
+func compareSHA(expected, live string) error {
 	// A build from before the stamping change reports the "unknown" default,
 	// or nothing at all on a build from before the field existed. Both mean
 	// the running image is older than the change that added the field, so
@@ -71,12 +44,12 @@ func compareSHA(pinned, live string) error {
 		return errors.New("the running server reports build sha \"unknown\", so it was built without BUILD_SHA and predates the stamping")
 	}
 
-	n := len(pinned)
+	n := len(expected)
 	if len(live) < n {
 		n = len(live)
 	}
-	if pinned[:n] != live[:n] {
-		return fmt.Errorf("running %s but the manifest pins %s", live, pinned)
+	if expected[:n] != live[:n] {
+		return fmt.Errorf("running %s but this tree's newest bindery-ping build is %s", live, expected)
 	}
 	return nil
 }
@@ -160,20 +133,17 @@ func liveBuildSHA(ctx context.Context, statsURL, token string) (string, error) {
 // path is reachable from a test. main is the only part that cannot be, and
 // it is now three lines.
 func run(ctx context.Context, out io.Writer) error {
-	manifestPath := env("PING_MANIFEST", "deploy/telemetry-server.yaml")
+	// The workflow computes this with a single git command, because "the
+	// newest commit touching cmd/telemetry-server" is git's question, not
+	// this tool's. Everything worth testing stays here.
+	expected := os.Getenv("PING_EXPECTED_SHA")
+	if expected == "" {
+		return errors.New("PING_EXPECTED_SHA is not set, so there is nothing to compare the running build against")
+	}
 	statsURL := env("PING_STATS_URL", "https://api.getbindery.dev/api/stats")
 	token := os.Getenv("TELEMETRY_STATS_TOKEN")
 	if token == "" {
 		return errors.New("TELEMETRY_STATS_TOKEN is not set, cannot read the running build")
-	}
-
-	raw, err := os.ReadFile(manifestPath) // #nosec G304 -- a repo file named by the operator, not by a request
-	if err != nil {
-		return fmt.Errorf("read %s: %w", manifestPath, err)
-	}
-	pinned, err := pinnedImageSHA(raw)
-	if err != nil {
-		return fmt.Errorf("%s: %w", manifestPath, err)
 	}
 
 	live, err := liveBuildSHA(ctx, statsURL, token)
@@ -181,11 +151,11 @@ func run(ctx context.Context, out io.Writer) error {
 		return err
 	}
 
-	_, _ = fmt.Fprintf(out, "pinned in %s: %s\n", manifestPath, pinned)
-	_, _ = fmt.Fprintf(out, "running:     %s\n", orPlaceholder(live))
+	_, _ = fmt.Fprintf(out, "newest bindery-ping build in this tree: %s\n", expected)
+	_, _ = fmt.Fprintf(out, "running on api.getbindery.dev:           %s\n", orPlaceholder(live))
 
-	if err := compareSHA(pinned, live); err != nil {
-		return fmt.Errorf("bindery-ping drift: %w. Deploy the pinned image: kubectl apply -f %s", err, manifestPath)
+	if err := compareSHA(expected, live); err != nil {
+		return fmt.Errorf("bindery-ping drift: %w. The deployment is in the homelab repo at kubernetes/apps/default/bindery-ping/deployment.yaml; bump the image there and ArgoCD syncs it", err)
 	}
 	_, _ = fmt.Fprintln(out, "in step")
 	return nil
