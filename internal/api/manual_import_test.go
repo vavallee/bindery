@@ -1192,6 +1192,49 @@ func TestManualImportScan_EnumeratesBookUnits(t *testing.T) {
 	}
 }
 
+func TestManualImportScan_SkipsAlreadyTrackedFiles(t *testing.T) {
+	t.Parallel()
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	ctx := context.Background()
+	authors := db.NewAuthorRepo(database)
+	books := db.NewBookRepo(database)
+	downloads := db.NewDownloadRepo(database)
+	stub := &stubManualImportScanner{lookupResult: importer.LookupResult{Match: "none"}}
+	h := NewManualImportHandler(stub, downloads, books)
+
+	trackedBook := seedBook(t, authors, books, ctx)
+	root := t.TempDir()
+	tracked := filepath.Join(root, "already-imported.epub")
+	newFile := filepath.Join(root, "new-book.epub")
+	writeTestFile(t, tracked)
+	writeTestFile(t, newFile)
+	if err := books.AddBookFile(ctx, trackedBook.ID, models.MediaTypeEbook, tracked); err != nil {
+		t.Fatalf("attach tracked file: %v", err)
+	}
+	h.WithRoots(NewLibraryRoots(nil, root))
+
+	rec := httptest.NewRecorder()
+	h.Scan(rec, scanRequest(root))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+	var resp ScanResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].Path != newFile {
+		t.Fatalf("items = %+v, want only the new file %q", resp.Items, newFile)
+	}
+	if stub.lookupBatchCalls != 1 {
+		t.Fatalf("LookupBatch called %d times, want 1", stub.lookupBatchCalls)
+	}
+}
+
 // TestManualImportScan_AllowsConfiguredRootItself reproduces #1373: pasting a
 // configured root ("/books") or an allow-listed download dir ("/downloads")
 // into bulk import must scan it, not 403. Before the fix, ResolveContained

@@ -486,6 +486,28 @@ func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
 	for i, c := range cands {
 		paths[i] = c.path
 	}
+	trackedPaths, err := h.books.ListAllFilePaths(r.Context())
+	if err != nil {
+		slog.Error("bulk folder import scan failed to load tracked files", "path", path, "error", err)
+		writeServerError(w, r, err)
+		return
+	}
+	tracked := make(map[string]struct{}, len(trackedPaths))
+	for _, trackedPath := range trackedPaths {
+		tracked[filepath.Clean(trackedPath)] = struct{}{}
+	}
+	filteredCands := cands[:0]
+	for _, c := range cands {
+		if _, ok := tracked[filepath.Clean(c.path)]; ok {
+			continue
+		}
+		filteredCands = append(filteredCands, c)
+	}
+	cands = filteredCands
+	paths = paths[:0]
+	for _, c := range cands {
+		paths = append(paths, c.path)
+	}
 	results, err := h.scanner.LookupBatchLayout(r.Context(), path, paths)
 	if err != nil {
 		slog.Error("bulk folder import scan failed to load catalogue", "path", path, "error", err)

@@ -109,6 +109,13 @@ func NewBookRepo(db *sql.DB) *BookRepo {
 	return r
 }
 
+// ListAllFilePaths returns every path currently tracked by a book. It is used
+// by the manual folder importer to avoid presenting already-imported files as
+// new candidates.
+func (r *BookRepo) ListAllFilePaths(ctx context.Context) ([]string, error) {
+	return r.files.ListAllPaths(ctx)
+}
+
 // WithTx returns a clone of this repo whose tx-aware methods (the ones
 // rolled into calibre.Rollback's single transaction) route through tx
 // instead of the bare *sql.DB. Methods outside that set keep using *sql.DB
