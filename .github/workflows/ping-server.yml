@@ -15,8 +15,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write # move the image pin in deploy/telemetry-server.yaml
       packages: write # push the image to GHCR
+      pull-requests: write # the pin lands through an auto-merged PR
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -45,8 +46,49 @@ jobs:
           file: cmd/telemetry-server/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
+          build-args: |
+            BUILD_SHA=${{ github.sha }}
           tags: |
             ghcr.io/${{ github.repository_owner }}/bindery-ping:latest
             ghcr.io/${{ github.repository_owner }}/bindery-ping:sha-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # The manifest pin used to be moved by hand, and was not moved for 41
+      # days: deploy/telemetry-server.yaml pointed at the #1521 build while
+      # main had already shipped the new_install ping log (#2155), the
+      # Debian 13 base and x/crypto v0.56.0 (#2425). Writing it here means
+      # `kubectl apply -f deploy/telemetry-server.yaml` always applies the
+      # image this workflow just pushed. Applying it is still manual: this
+      # host is not in the ArgoCD app and CI has no credentials for it.
+      - name: Pin the new image in deploy/telemetry-server.yaml
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          FILE_PATH="deploy/telemetry-server.yaml"
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER}/bindery-ping:sha-${GITHUB_SHA}"
+          PIN_BRANCH="auto/ping-pin-${GITHUB_SHA::7}"
+
+          MAIN_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/refs/heads/main" --jq .object.sha)
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/heads/${PIN_BRANCH}" -f sha="${MAIN_SHA}"
+
+          FILE_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}?ref=${PIN_BRANCH}" --jq .sha)
+          CONTENT=$(gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}?ref=${PIN_BRANCH}" --jq .content \
+            | base64 -d \
+            | sed "s|image: ghcr.io/.*/bindery-ping:.*|image: ${IMAGE}|" \
+            | base64 -w0)
+
+          # No [skip ci] on the branch commit: the required checks have to
+          # run on the PR head or the merge below is blocked forever. It
+          # goes in the squash subject instead, matching deploy-prod.
+          gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}" -X PUT \
+            -f message="chore(ping): pin bindery-ping to sha-${GITHUB_SHA::7}" \
+            -f content="${CONTENT}" -f sha="${FILE_SHA}" -f branch="${PIN_BRANCH}"
+
+          gh pr create --repo "${GITHUB_REPOSITORY}" --head "${PIN_BRANCH}" --base main \
+            --title "chore(ping): pin bindery-ping to sha-${GITHUB_SHA::7}" \
+            --body "Automated: pins \`${FILE_PATH}\` to the image this build pushed. Apply with \`kubectl apply -f ${FILE_PATH}\`." 2>/dev/null || true
+          gh pr merge "${PIN_BRANCH}" --repo "${GITHUB_REPOSITORY}" --squash --admin --delete-branch \
+            --subject "chore(ping): pin bindery-ping to sha-${GITHUB_SHA::7} [skip ci]" 
