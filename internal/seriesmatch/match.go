@@ -62,18 +62,162 @@ func NormalizeSeriesName(name string) string {
 	return strings.Join(words, " ")
 }
 
+// TitleScore scores two titles for similarity in [0, 100].
+//
+// It weights its four components the way RapidFuzz's WRatio does (MIT, ideas
+// only, no code taken), rather than taking a flat maximum of all four. The flat
+// maximum let partialRatio decide every comparison where one title contains the
+// other verbatim, and partialRatio returns 100 for exactly that case by design.
+// So a title scored a perfect 100 against a different book:
+//
+//	TitleScore("Dune", "Dune Messiah")     = 100
+//	TitleScore("Vol. 1", "Vol. 13")        = 100
+//	TitleScore("The Hobbit (Illustrated)", "The Hobbit") = 100
+//
+// The weighting makes the length difference pay for itself. When the two are of
+// comparable length there is no containment story worth telling, so partialRatio
+// is excluded outright and the token ratios are discounted. When one is much
+// longer, partialRatio is admitted but scaled down, hard, and the more extreme
+// the length gap the harder: a four-character title inside a forty-character one
+// says very little about whether they are the same work.
+//
+// This does NOT make TitleScore a decision. A high score on a containment still
+// happens and still should: "The Hobbit" really is inside "The Hobbit
+// (Illustrated Edition)". Distinguishing that from "Dune" inside "Dune Messiah"
+// needs the runner-up gap in BestWithGap, because the evidence is not in the
+// pair, it is in whether something else scored nearly as well.
 func TitleScore(a, b string) int {
 	cleanA := CleanTitle(a)
 	cleanB := CleanTitle(b)
 	if cleanA == "" || cleanB == "" {
 		return 0
 	}
-	return max(
+
+	whole := safeFuzzyScore(ratio, cleanA, cleanB)
+	tokens := max(
 		safeFuzzyScore(tokenSetRatio, cleanA, cleanB),
 		safeFuzzyScore(tokenSortRatio, cleanA, cleanB),
-		safeFuzzyScore(ratio, cleanA, cleanB),
-		safeFuzzyScore(partialRatio, cleanA, cleanB),
 	)
+
+	shorter, longer := len([]rune(cleanA)), len([]rune(cleanB))
+	if shorter > longer {
+		shorter, longer = longer, shorter
+	}
+	if shorter == 0 {
+		return 0
+	}
+
+	// Comparable length: a containment match carries no information the whole
+	// string ratio has not already scored, so partialRatio is left out.
+	if float64(longer)/float64(shorter) < titleLengthRatioCutoff {
+		return max(whole, scaleScore(tokens, titleTokenScale))
+	}
+
+	// Different lengths: admit the containment, discounted by how extreme the
+	// difference is.
+	partialScale := titlePartialScaleNear
+	if float64(longer)/float64(shorter) >= titleLengthRatioFar {
+		partialScale = titlePartialScaleFar
+	}
+	score := max(
+		whole,
+		scaleScore(safeFuzzyScore(partialRatio, cleanA, cleanB), partialScale),
+		scaleScore(tokens, titleTokenScale*partialScale),
+	)
+	return max(score, qualifierOnlyScore(a, b))
+}
+
+// qualifierOnlyScore returns titleQualifierScore when the two titles are the
+// same work distinguished only by a trailing edition qualifier, and 0
+// otherwise.
+//
+// "The Hobbit (Illustrated Edition)" and "The Hobbit" are one book, and the
+// length weighting above scores them 90 because one contains the other and is
+// three times longer. That is the right answer for "Dune" inside "Dune
+// Messiah" and the wrong one here, and nothing in the character sequence tells
+// the two cases apart: the difference is that a bracketed suffix is a
+// CATALOGUING note rather than part of the title.
+//
+// So the qualifier is removed from both sides and, if what remains is
+// identical, the pair earns a floor just short of a perfect match. Short of it
+// deliberately: beets down-weights a parenthetical rather than deleting it, on
+// the grounds that "(Abridged)" really can be a different product, so a
+// qualifier still costs something and an exact title still wins.
+func qualifierOnlyScore(a, b string) int {
+	// Stripping must never be allowed to merge two volumes of one series.
+	// "Overlord, Vol. 1" and "Overlord, Vol. 13" both reduce to "overlord",
+	// and awarding them a near-perfect score is precisely the #2343 collapse
+	// this file already fights elsewhere.
+	if DifferentVolumes(a, b) {
+		return 0
+	}
+	sa, sb := stripQualifiers(a), stripQualifiers(b)
+	if sa == "" || sa != sb {
+		return 0
+	}
+	return titleQualifierScore
+}
+
+// stripQualifiers removes the trailing notes a cataloguer or a scanner appends
+// to a title, and cleans what is left. "The Hobbit [Unabridged] (Illustrated
+// Edition)" and "The Hobbit" both reduce to "hobbit".
+//
+// It also removes a trailing series-position segment, because Calibre and
+// Audiobookshelf routinely write one into the title itself: "The Way of Kings:
+// The Stormlight Archive, Book One" is the same book as "The Way of Kings".
+// The segment has to CARRY a position marker to be removed, so an ordinary
+// subtitle survives: "Mistborn: The Final Empire" keeps its subtitle, because
+// dropping it would make it indistinguishable from "Mistborn: The Well of
+// Ascension".
+func stripQualifiers(title string) string {
+	stripped := indexer.StripBracketSuffixes(strings.TrimSpace(title))
+	for {
+		trimmed := parenSuffixRe.ReplaceAllString(stripped, "")
+		trimmed = strings.TrimSpace(trimmed)
+		if trimmed == stripped || trimmed == "" {
+			break
+		}
+		stripped = trimmed
+	}
+	if trimmed := seriesPositionSuffixRe.ReplaceAllString(stripped, ""); strings.TrimSpace(trimmed) != "" {
+		stripped = strings.TrimSpace(trimmed)
+	}
+	return CleanTitle(stripped)
+}
+
+// parenSuffixRe matches one trailing parenthesised qualifier. Anchored at the
+// end so a parenthetical in the middle of a title, which is part of the title
+// rather than a note about it, is left alone.
+var parenSuffixRe = regexp.MustCompile(`\s*\([^()]*\)\s*$`)
+
+// seriesPositionSuffixRe matches a trailing segment, introduced by a colon or
+// comma, that carries an explicit series position: ": The Stormlight Archive,
+// Book One", ", Book 3", ": Discworld Novel 5". The position marker is what
+// makes it a note about the title rather than part of it, so a plain subtitle
+// with no marker is left alone.
+var seriesPositionSuffixRe = regexp.MustCompile(
+	`(?i)\s*[:,]\s*.*\b(?:book|vol|volume|bk|part|pt)\b\.?\s*` +
+		`(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*$`)
+
+// titleQualifierScore is the floor for two titles that differ only by an
+// edition qualifier. Below 100 so an exact match still beats it.
+const titleQualifierScore = 97
+
+// The WRatio constants. Named rather than inlined because every one of them is
+// a threshold someone will want to move, and moving one without the fixtures in
+// match_test.go is how a scoring change ships a wrong grab.
+const (
+	titleLengthRatioCutoff = 1.5  // below this, partialRatio is not consulted
+	titleLengthRatioFar    = 8.0  // above this, the discount gets much harsher
+	titleTokenScale        = 0.95 // token ratios never quite beat a whole-string match
+	titlePartialScaleNear  = 0.90
+	titlePartialScaleFar   = 0.60
+)
+
+// scaleScore multiplies a [0,100] score by a scale and rounds to nearest, so
+// the discount cannot be lost to truncation on a boundary.
+func scaleScore(score int, scale float64) int {
+	return int(float64(score)*scale + 0.5)
 }
 
 func safeFuzzyScore(score func(string, string) int, a, b string) (value int) {
