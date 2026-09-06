@@ -687,6 +687,55 @@ func TestBookUpdate_RejectsRetiredDownloadStatuses(t *testing.T) {
 	}
 }
 
+// TestBookDeleteFile_IndividualPath removes only the selected tracked row and
+// leaves a sibling file untouched.
+func TestBookDeleteFile_IndividualPath(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	tmp := t.TempDir()
+	first := filepath.Join(tmp, "first.epub")
+	second := filepath.Join(tmp, "second.epub")
+	for _, p := range []string{first, second} {
+		if err := os.WriteFile(p, []byte(p), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	book := &models.Book{
+		ForeignID: "B-INDIVIDUAL", AuthorID: author.ID, Title: "Individual", SortTitle: "individual",
+		Status: models.BookStatusImported, Genres: []string{}, MediaType: models.MediaTypeEbook,
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{first, second} {
+		if err := books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	req := withURLParam(httptest.NewRequest(http.MethodDelete,
+		"/api/v1/book/"+strconv.FormatInt(book.ID, 10)+"/file?path="+url.QueryEscape(first)+"&delete=true", nil),
+		"id", strconv.FormatInt(book.ID, 10))
+	rec := httptest.NewRecorder()
+	h.DeleteFile(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(first); !os.IsNotExist(err) {
+		t.Errorf("selected file should be deleted, stat err=%v", err)
+	}
+	if _, err := os.Stat(second); err != nil {
+		t.Errorf("sibling file must survive, stat err=%v", err)
+	}
+	files, err := books.ListFiles(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Path != second {
+		t.Errorf("expected only sibling row to remain, got %+v", files)
+	}
+}
+
 // TestBookDeleteFile_FormatScopedKeepsSibling is the #715 finding 2 data-loss
 // guard: deleting ?format=ebook must leave the same-stem audiobook on disk.
 func TestBookDeleteFile_FormatScopedKeepsSibling(t *testing.T) {

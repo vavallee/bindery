@@ -544,6 +544,27 @@ describe('BookDetailPage — file section actions', () => {
     )
   })
 
+  it('deletes one tracked row by path without deleting siblings', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(
+      makeBook({
+        bookFiles: [
+          makeFile({ id: 1, format: 'ebook', path: '/library/keep.epub' }),
+          makeFile({ id: 2, format: 'ebook', path: '/library/delete.epub' }),
+        ],
+      }),
+    )
+    renderBookDetailPage()
+    const group = within(await screen.findByTestId('file-group-ebook'))
+    fireEvent.click(group.getByRole('button', { name: 'More actions for delete.epub' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete this file' }))
+    expect(await screen.findByText('Delete this file')).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('checkbox'))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete from disk' }))
+    await waitFor(() =>
+      expect(api.deleteBookFile).toHaveBeenCalledWith(42, '?path=%2Flibrary%2Fdelete.epub&delete=true'),
+    )
+  })
+
   // Legacy rows predate migration 028 and have no book_files entry, so
   // deregister would 404 against a path the server cannot resolve.
   it('disables deregister for untracked legacy rows', async () => {

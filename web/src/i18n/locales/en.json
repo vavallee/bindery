@@ -1302,6 +1302,8 @@
     "excludeHint": "Exclude this book from searches and the Wanted page",
     "unexcludeHint": "Un-exclude this book from searches and the Wanted page",
     "deleteFile": "Delete file",
+    "deleteThisFile": "Delete this file",
+    "deleteThisFileHint": "Permanently delete only this file from disk",
     "deletingFile": "Deleting…",
     "fixMatch": {
       "button": "Fix match",
