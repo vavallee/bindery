@@ -329,10 +329,11 @@ func migrate(database *sql.DB) error {
 	// after four table scans of an empty schema.
 	//
 	// This is not a micro-optimisation. Every test in this package opens a fresh
-	// database, and the race-enabled suite runs within a couple of percent of
-	// its 15 minute timeout, so scans that can only ever find nothing are paid
-	// hundreds of times for no result. A fresh install pays them once for the
-	// same nothing.
+	// database, so scans that can only ever find nothing are paid hundreds of
+	// times per run for no result; a fresh install pays them once for the same
+	// nothing. It is not enough on its own: the race shard needed its timeout
+	// raised as well, because it was already running at 840 to 847 seconds
+	// against a 900 second ceiling on main.
 	if fresh {
 		stampBackfillRevisions(database)
 		return nil
