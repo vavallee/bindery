@@ -33,29 +33,92 @@ func ParseAllowedLanguages(csv string) []string {
 	return out
 }
 
-// iso639TwoLetterToB maps common ISO 639-1 two-letter codes to the ISO 639-2/B
+// The three tables below are the only ISO 639 tables in the codebase, and
+// NormalizeLanguageCode is the only thing that reads them. There used to be
+// four such tables (here, in the indexer's release filter, and twice over in
+// the Audible ingestion paths) and they disagreed with each other, so the same
+// language filtered differently depending on which code path happened to be
+// consulted. Add a language here and every caller learns it at once.
+
+// iso639TwoLetterToB maps ISO 639-1 two-letter codes to the ISO 639-2/B
 // three-letter vocabulary Bindery stores in Book.Language and metadata-profile
-// allowed_languages. Deliberately scoped to the languages users actually filter
-// on; anything not listed passes through unchanged so a rarer language still
-// round-trips rather than being silently dropped. Mirrors the indexer's
-// release-tag alias table (internal/indexer/searcher.go).
+// allowed_languages. Anything not listed passes through unchanged so a rarer
+// language still round-trips rather than being silently dropped.
 var iso639TwoLetterToB = map[string]string{
 	"en": "eng", "fr": "fre", "de": "ger", "nl": "dut", "es": "spa",
 	"it": "ita", "pt": "por", "ja": "jpn", "zh": "chi", "ru": "rus",
 	"sv": "swe", "no": "nor", "da": "dan", "pl": "pol", "cs": "cze",
-	"tr": "tur", "hi": "hin", "ko": "kor", "ar": "ara",
+	"tr": "tur", "hi": "hin", "ko": "kor", "ar": "ara", "fi": "fin",
+	"el": "gre", "hu": "hun", "ro": "rum", "ca": "cat", "la": "lat",
 }
 
-// NormalizeLanguageCode canonicalizes a language code from any source (an EPUB's
-// dc:language, provider metadata) into the lowercased ISO 639-2/B form the
-// language filter compares against. It drops a region/script subtag
-// ("en-US" → "en" → "eng", "zh-Hans" → "chi"), maps known two-letter codes to
-// their three-letter equivalent, and passes anything already three-letter (or
-// unrecognised) through lowercased so it still round-trips. Empty in, empty out.
+// iso639TermToB maps the ISO 639-2/T (terminology) code onto the 639-2/B
+// (bibliographic) code for the twenty languages where the two standards
+// disagree. Both spellings are legal ISO 639-2 and providers emit either, but
+// Bindery stores and filters on the /B form, so /T has to fold onto it or a
+// profile allowing "ger" rejects every book a provider reported as "deu".
+// This is a closed set: ISO 639-2 defines exactly these twenty pairs.
+var iso639TermToB = map[string]string{
+	"sqi": "alb", "hye": "arm", "eus": "baq", "bod": "tib", "mya": "bur",
+	"ces": "cze", "cym": "wel", "deu": "ger", "ell": "gre", "fas": "per",
+	"fra": "fre", "isl": "ice", "kat": "geo", "mkd": "mac", "mri": "mao",
+	"msa": "may", "nld": "dut", "ron": "rum", "slk": "slo", "zho": "chi",
+}
+
+// iso639NameToB maps a language written out as a word onto its 639-2/B code.
+// Audible reports languages this way ("english", "german"), and release names
+// carry them in English and in the language's own spelling.
+//
+// Only genuine names of languages belong here. The release filter also
+// recognises words that merely imply a language (the local word for
+// "audiobook", say), but those are evidence read off a release title rather
+// than a language a provider reported, so they stay in releaseLanguageTags in
+// internal/indexer/searcher.go.
+var iso639NameToB = map[string]string{
+	"english": "eng",
+	"french":  "fre", "francais": "fre", "français": "fre",
+	"german": "ger", "deutsch": "ger",
+	"spanish": "spa", "espanol": "spa", "español": "spa",
+	"italian": "ita", "italiano": "ita",
+	"dutch": "dut", "nederlands": "dut",
+	"portuguese": "por", "portugues": "por", "português": "por",
+	"japanese": "jpn",
+	"russian":  "rus",
+	"chinese":  "chi", "mandarin": "chi",
+	"danish": "dan", "dansk": "dan",
+	"swedish": "swe", "svenska": "swe",
+	"norwegian": "nor", "norsk": "nor",
+	"polish": "pol", "polski": "pol",
+	"finnish": "fin", "suomi": "fin",
+	"hindi":   "hin",
+	"turkish": "tur", "turkce": "tur", "türkçe": "tur",
+	"arabic": "ara",
+	"korean": "kor",
+	"czech":  "cze", "cestina": "cze", "čeština": "cze",
+	"greek": "gre", "ellinika": "gre",
+	"hungarian": "hun", "magyar": "hun",
+	"romanian": "rum", "romana": "rum", "română": "rum",
+	"catalan": "cat", "catala": "cat", "català": "cat",
+	"latin": "lat",
+}
+
+// NormalizeLanguageCode canonicalizes a language code from any source (an
+// EPUB's dc:language, provider metadata, a hand-edited metadata profile) into
+// the lowercased ISO 639-2/B form the language filter compares against. It
+// resolves a written-out language name ("German", "Deutsch"), drops a region
+// or script subtag ("en-US" to "en" to "eng", "zh-Hans" to "chi"), maps a
+// known two-letter code to its three-letter equivalent, folds ISO 639-2/T onto
+// 639-2/B ("deu" to "ger"), and passes anything unrecognised through
+// lowercased so it still round-trips. Empty in, empty out.
 func NormalizeLanguageCode(code string) string {
 	code = strings.ToLower(strings.TrimSpace(code))
 	if code == "" {
 		return ""
+	}
+	// Names are matched whole. A name is not a code carrying a subtag, so the
+	// stripping below must not run before this lookup.
+	if b, ok := iso639NameToB[code]; ok {
+		return b
 	}
 	// Drop a region/script subtag: "en-US", "pt_BR", "zh-Hans".
 	if i := strings.IndexAny(code, "-_"); i > 0 {
@@ -65,6 +128,10 @@ func NormalizeLanguageCode(code string) string {
 		if b, ok := iso639TwoLetterToB[code]; ok {
 			return b
 		}
+		return code
+	}
+	if b, ok := iso639TermToB[code]; ok {
+		return b
 	}
 	return code
 }
