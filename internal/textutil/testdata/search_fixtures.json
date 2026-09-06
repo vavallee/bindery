@@ -1,0 +1,257 @@
+[
+ {
+  "input": "Müller",
+  "want": "muller",
+  "issue": "1347",
+  "note": "the umlaut case users report most"
+ },
+ {
+  "input": "Müller",
+  "want": "muller",
+  "issue": "1646",
+  "note": "decomposed, as macOS hands back filenames"
+ },
+ {
+  "input": "Phönix",
+  "want": "phonix",
+  "issue": "1610"
+ },
+ {
+  "input": "Harry Potter und der Orden des Phönix",
+  "want": "harry potter und der orden des phonix",
+  "issue": "1610"
+ },
+ {
+  "input": "Jo Nesbø",
+  "want": "jo nesbo",
+  "issue": "1642",
+  "note": "ø has no decomposition"
+ },
+ {
+  "input": "Åsa Larsson",
+  "want": "asa larsson",
+  "issue": "1642"
+ },
+ {
+  "input": "Łukasz Orbitowski",
+  "want": "lukasz orbitowski",
+  "issue": "1642",
+  "note": "ł has no decomposition"
+ },
+ {
+  "input": "刘慈欣",
+  "want": "刘慈欣",
+  "issue": "1642",
+  "note": "Han survives untouched"
+ },
+ {
+  "input": "三体",
+  "want": "三体",
+  "issue": "1642",
+  "note": "two code points: shorter than a trigram"
+ },
+ {
+  "input": "村上春樹",
+  "want": "村上春樹",
+  "issue": "1642"
+ },
+ {
+  "input": "ハリー・ポッター",
+  "want": "ハリーポッター",
+  "issue": "1645",
+  "note": "middle dot deleted, not separated"
+ },
+ {
+  "input": "ﾊﾘｰ･ﾎﾟｯﾀｰ",
+  "want": "ハリーポッター",
+  "issue": "1645",
+  "note": "halfwidth reaches the same key via NFKC"
+ },
+ {
+  "input": "Poseidon's Arrow",
+  "want": "poseidons arrow",
+  "issue": "2042"
+ },
+ {
+  "input": "Poseidon’s Arrow",
+  "want": "poseidons arrow",
+  "issue": "2042",
+  "note": "curly apostrophe"
+ },
+ {
+  "input": "Poseidons Arrow",
+  "want": "poseidons arrow",
+  "issue": "2042"
+ },
+ {
+  "input": "Östergaard, Anne",
+  "want": "ostergaard anne",
+  "issue": "1347"
+ },
+ {
+  "input": "Foundation & Empire",
+  "want": "foundation and empire",
+  "issue": "2042",
+  "note": "& expands so both spellings meet"
+ },
+ {
+  "input": "Foundation and Empire",
+  "want": "foundation and empire",
+  "issue": "2042"
+ },
+ {
+  "input": "Q&A",
+  "want": "q and a",
+  "issue": "2042",
+  "note": "spaces both sides, not qanda"
+ },
+ {
+  "input": "Straße",
+  "want": "strasse",
+  "issue": "1660",
+  "note": "full case folding; ToLower would leave ß"
+ },
+ {
+  "input": "STRASSE",
+  "want": "strasse",
+  "issue": "1660"
+ },
+ {
+  "input": "ﬁre",
+  "want": "fire",
+  "issue": "1660",
+  "note": "ligature, NFKC only"
+ },
+ {
+  "input": "ＴＯＫＹＯ",
+  "want": "tokyo",
+  "issue": "1660",
+  "note": "full-width, NFKC only"
+ },
+ {
+  "input": "İstanbul",
+  "want": "istanbul",
+  "issue": "1660",
+  "note": "dotted capital I folds to i + U+0307, mark dropped"
+ },
+ {
+  "input": "Istanbul",
+  "want": "istanbul",
+  "issue": "1660"
+ },
+ {
+  "input": "İlber Ortaylı",
+  "want": "ilber ortayli",
+  "issue": "1660",
+  "note": "dotless i has no decomposition"
+ },
+ {
+  "input": "ёж",
+  "want": "еж",
+  "issue": "1660",
+  "note": "the one deliberate Cyrillic fold"
+ },
+ {
+  "input": "Ёж",
+  "want": "еж",
+  "issue": "1660"
+ },
+ {
+  "input": "Толстой",
+  "want": "толстой",
+  "issue": "1645",
+  "note": "й must NOT fold onto и: separate letters"
+ },
+ {
+  "input": "Преступление и наказание",
+  "want": "преступление и наказание",
+  "issue": "1642"
+ },
+ {
+  "input": "Việt Nam",
+  "want": "viet nam",
+  "issue": "1660",
+  "note": "two stacked marks, both dropped"
+ },
+ {
+  "input": "Café Society",
+  "want": "cafe society",
+  "issue": "1642"
+ },
+ {
+  "input": "Dvořák",
+  "want": "dvorak",
+  "issue": "1642"
+ },
+ {
+  "input": "Ο Άρχοντας των Δαχτυλιδιών",
+  "want": "ο αρχοντασ των δαχτυλιδιων",
+  "issue": "1645",
+  "note": "Greek folds: tonos dropped, final sigma normalised"
+ },
+ {
+  "input": "ΝΊΚΟΣ",
+  "want": "νικοσ",
+  "issue": "1645"
+ },
+ {
+  "input": "Νίκος",
+  "want": "νικοσ",
+  "issue": "1645"
+ },
+ {
+  "input": "The Hobbit",
+  "want": "the hobbit",
+  "issue": "1660",
+  "note": "articles are kept: the exact tier needs them"
+ },
+ {
+  "input": "The Hobbit: Illustrated Edition",
+  "want": "the hobbit illustrated edition",
+  "issue": "1660"
+ },
+ {
+  "input": "  Spaced   Out  ",
+  "want": "spaced out",
+  "issue": "1660"
+ },
+ {
+  "input": "!!!",
+  "want": "",
+  "issue": "1660",
+  "note": "punctuation-only folds away"
+ },
+ {
+  "input": "   ",
+  "want": "",
+  "issue": "1660"
+ },
+ {
+  "input": "",
+  "want": "",
+  "issue": "1660"
+ },
+ {
+  "input": "कमला",
+  "want": "कमला",
+  "issue": "1645",
+  "note": "Devanagari vowel sign is a spacing mark (Mc), not a separator"
+ },
+ {
+  "input": "गोदान",
+  "want": "गोदान",
+  "issue": "1645"
+ },
+ {
+  "input": "עם הרוח",
+  "want": "עם הרוח",
+  "issue": "1645",
+  "note": "Hebrew niqqud and letters survive"
+ },
+ {
+  "input": "ハード",
+  "want": "ハード",
+  "issue": "1645",
+  "note": "dakuten kept: ハード is not ハート"
+ }
+]

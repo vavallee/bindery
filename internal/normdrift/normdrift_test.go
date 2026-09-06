@@ -99,6 +99,7 @@ var stringFolds = []struct {
 	{"seriesmatch.NormalizeSeriesName", seriesmatch.NormalizeSeriesName},
 	{"newznab.NormalizeQueryTitle", newznab.NormalizeQueryTitle},
 	{"newznab.TransliterateQuery", newznab.TransliterateQuery},
+	{"textutil.FoldForSearch", textutil.FoldForSearch},
 }
 
 // TestNormalizersAgreeAcrossUnicodeForm is the single most valuable property
@@ -112,7 +113,7 @@ var stringFolds = []struct {
 // separator branch and truncating the word at the accent — the shared title
 // fold itself.
 func TestNormalizersAgreeAcrossUnicodeForm(t *testing.T) {
-	inputs := append(append([]string{}, adversarialTitles...), adversarialAuthors...)
+	inputs := append(append(append([]string{}, adversarialTitles...), adversarialAuthors...), adversarialSearchInputs...)
 	for _, fold := range stringFolds {
 		for _, in := range inputs {
 			nfc, nfd := norm.NFC.String(in), norm.NFD.String(in)
@@ -133,7 +134,7 @@ func TestNormalizersAgreeAcrossUnicodeForm(t *testing.T) {
 // already-normalized release, a series name built from a dedup key), and a
 // fold that keeps changing its own output makes those chains order-dependent.
 func TestNormalizersAreIdempotent(t *testing.T) {
-	inputs := append(append([]string{}, adversarialTitles...), adversarialAuthors...)
+	inputs := append(append(append([]string{}, adversarialTitles...), adversarialAuthors...), adversarialSearchInputs...)
 	for _, fold := range stringFolds {
 		for _, in := range inputs {
 			once := fold.fn(in)
@@ -263,6 +264,22 @@ func TestDiacriticSchemesAreTheDocumentedOnes(t *testing.T) {
 		// Author identity also collapses punctuation to token boundaries,
 		// which is what makes dotted initials work.
 		{"NormalizeAuthorName", textutil.NormalizeAuthorName, "J.R.R. Tolkien", "j r r tolkien"},
+		// Library search STRIPS like author identity rather than expanding like
+		// title matching, because the person typing the box is not reading a
+		// release name. It is the only alphabet that folds the letters with no
+		// decomposition (ø, ł, ß) as well as the marks, the only one that
+		// NFKC-normalises, and the only one that expands "&".
+		{"FoldForSearch", textutil.FoldForSearch, "Höhle", "hohle"},
+		{"FoldForSearch", textutil.FoldForSearch, "Miéville", "mieville"},
+		{"FoldForSearch", textutil.FoldForSearch, "Nesbø", "nesbo"},
+		{"FoldForSearch", textutil.FoldForSearch, "Straße", "strasse"},
+		{"FoldForSearch", textutil.FoldForSearch, "ＴＯＫＹＯ", "tokyo"},
+		{"FoldForSearch", textutil.FoldForSearch, "Foundation & Empire", "foundation and empire"},
+		// ...but it is still script-aware: the kana middle dot goes because
+		// catalogues disagree about writing it, while the dakuten stays because
+		// it is part of the letter (#1645).
+		{"FoldForSearch", textutil.FoldForSearch, "ハリー・ポッター", "ハリーポッター"},
+		{"FoldForSearch", textutil.FoldForSearch, "ハード", "ハード"},
 	}
 	for _, tc := range cases {
 		if got := tc.fn(tc.in); got != tc.want {
@@ -271,6 +288,25 @@ func TestDiacriticSchemesAreTheDocumentedOnes(t *testing.T) {
 				tc.fold, tc.in, got, tc.want)
 		}
 	}
+}
+
+// adversarialSearchInputs are spellings that only reach a normalizer through
+// the search box, so they are not in adversarialTitles (which is a corpus of
+// things providers and release names produce). Compatibility forms in
+// particular arrive from a user's IME or a paste out of a PDF, never from an
+// indexer.
+var adversarialSearchInputs = []string{
+	"ＴＯＫＹＯ",         // full-width, folded only by NFKC
+	"ﬁre",           // ligature, likewise
+	"ハリー・ポッター",      // katakana middle dot
+	"ﾊﾘｰ･ﾎﾟｯﾀｰ",     // halfwidth katakana
+	"Straße",        // full case folding, not ToLower
+	"İlber Ortaylı", // dotted capital I and dotless i
+	"ёж",            // the one deliberate Cyrillic fold
+	"Толстой",       // ...which must not touch й
+	"कमला",          // Devanagari spacing vowel sign (Mc)
+	"Foundation & Empire",
+	"Q&A",
 }
 
 // adversarialLanguageCodes is the corpus for the language alphabet: every
