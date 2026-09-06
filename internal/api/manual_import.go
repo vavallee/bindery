@@ -414,6 +414,23 @@ func (h *ManualImportHandler) removeStaleSource(ctx context.Context, src string,
 	_ = os.Remove(filepath.Dir(src)) // best-effort: prune the now-empty folder
 }
 
+// fileMatchesTracked reports whether path is another directory entry for a
+// file already registered in book_files. Imports may hard-link the source into
+// its canonical library destination, so comparing path strings alone is not
+// sufficient to keep a repeated scan from presenting the same file again.
+func fileMatchesTracked(path string, tracked []os.FileInfo) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	for _, trackedInfo := range tracked {
+		if os.SameFile(info, trackedInfo) {
+			return true
+		}
+	}
+	return false
+}
+
 // ScanItem is one candidate book unit discovered under a folder during Scan.
 type ScanItem struct {
 	Path           string        `json:"path"`
@@ -493,12 +510,17 @@ func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tracked := make(map[string]struct{}, len(trackedPaths))
+	trackedFiles := make([]os.FileInfo, 0, len(trackedPaths))
 	for _, trackedPath := range trackedPaths {
-		tracked[filepath.Clean(trackedPath)] = struct{}{}
+		cleaned := filepath.Clean(trackedPath)
+		tracked[cleaned] = struct{}{}
+		if info, statErr := os.Stat(cleaned); statErr == nil {
+			trackedFiles = append(trackedFiles, info)
+		}
 	}
 	filteredCands := cands[:0]
 	for _, c := range cands {
-		if _, ok := tracked[filepath.Clean(c.path)]; ok {
+		if _, ok := tracked[filepath.Clean(c.path)]; ok || fileMatchesTracked(c.path, trackedFiles) {
 			continue
 		}
 		filteredCands = append(filteredCands, c)

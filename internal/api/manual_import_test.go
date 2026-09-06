@@ -1213,7 +1213,14 @@ func TestManualImportScan_SkipsAlreadyTrackedFiles(t *testing.T) {
 	newFile := filepath.Join(root, "new-book.epub")
 	writeTestFile(t, tracked)
 	writeTestFile(t, newFile)
-	if err := books.AddBookFile(ctx, trackedBook.ID, models.MediaTypeEbook, tracked); err != nil {
+	canonical := filepath.Join(root, "canonical", "already-imported.epub")
+	if err := os.MkdirAll(filepath.Dir(canonical), 0o755); err != nil {
+		t.Fatalf("mkdir canonical path: %v", err)
+	}
+	if err := os.Link(tracked, canonical); err != nil {
+		t.Fatalf("hard-link tracked file: %v", err)
+	}
+	if err := books.AddBookFile(ctx, trackedBook.ID, models.MediaTypeEbook, canonical); err != nil {
 		t.Fatalf("attach tracked file: %v", err)
 	}
 	h.WithRoots(NewLibraryRoots(nil, root))
