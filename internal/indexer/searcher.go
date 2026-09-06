@@ -1167,14 +1167,6 @@ var releaseLanguageTags = map[string]string{
 	"hindi":   "hin",
 }
 
-// iso639TwoLetterAliases maps common two-letter (ISO 639-1) codes to the
-// 639-2/B codes used by releaseLanguageTags and the profile editor, so a
-// hand-edited profile like "it,en" still filters correctly.
-var iso639TwoLetterAliases = map[string]string{
-	"en": "eng", "fr": "fre", "de": "ger", "nl": "dut", "es": "spa",
-	"it": "ita", "pt": "por", "ja": "jpn", "zh": "chi", "ru": "rus",
-}
-
 // releaseLanguageCodes returns the distinct language codes indicated by
 // markers in the normalized release title. Empty means the release carries no
 // recognisable language tag.
@@ -1197,20 +1189,27 @@ func releaseLanguageCodes(norm string) []string {
 // language outside the metadata profile's allowed set. Untagged releases
 // always pass — most releases carry no language marker, and dropping them
 // would empty nearly every search; the tag check can only ever be a negative
-// signal. An empty allowed list disables the filter, and codes are normalized
-// to the ISO 639-2/B vocabulary the profile editor writes ("en" → "eng").
+// signal. An empty allowed list disables the filter.
+//
+// Profile codes are reduced through models.NormalizeLanguageCode, the same
+// canonicaliser models.IsLanguageAllowed runs the book-level filter through,
+// so both halves of one setting read it with one vocabulary: "en", "en-US",
+// "deu" and "German" all mean "eng"/"ger" on both sides. This filter kept its
+// own two-letter table until #2463, which knew neither region subtags nor
+// ISO 639-2/T, so a profile written "pt-BR" accepted the book and then dropped
+// every Portuguese release of it.
 func FilterByAllowedLanguages(results []newznab.SearchResult, allowed []string) []newznab.SearchResult {
 	if len(allowed) == 0 {
 		return results
 	}
 	set := make(map[string]bool, len(allowed))
 	for _, code := range allowed {
-		code = strings.ToLower(strings.TrimSpace(code))
-		if alias, ok := iso639TwoLetterAliases[code]; ok {
-			code = alias
-		}
-		if code == "any" {
+		if strings.ToLower(strings.TrimSpace(code)) == "any" {
 			return results
+		}
+		code = models.NormalizeLanguageCode(code)
+		if code == "" {
+			continue
 		}
 		set[code] = true
 	}

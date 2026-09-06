@@ -306,13 +306,12 @@ func canonicalTitleVariantKey(title string) string {
 	return b.String()
 }
 
+// isGermanBookLanguage reports whether a book's reported language is German,
+// in any of the spellings a provider might use. It matched only "ger", "deu"
+// and "de" until #2463, so a record whose language arrived as "German",
+// "Deutsch" or "de-DE" missed the German-specific title handling entirely.
 func isGermanBookLanguage(language string) bool {
-	switch strings.ToLower(strings.TrimSpace(language)) {
-	case "ger", "deu", "de":
-		return true
-	default:
-		return false
-	}
+	return models.NormalizeLanguageCode(language) == "ger"
 }
 
 func cleanCanonicalTitleVariant(title string) string {
