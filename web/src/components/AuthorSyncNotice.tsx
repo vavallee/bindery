@@ -1,6 +1,7 @@
 import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import type { AuthorSyncSummary } from '../api/client'
+import Alert from './Alert'
 
 // authorSyncSampleLimit mirrors the server's per-filter cap
 // (authorSyncSkippedSampleLimit, internal/api/author_sync_summary.go) — that
@@ -39,6 +40,13 @@ function roundRobinSample(sources: string[][], limit: number): string[] {
 // This is the same information the sync already had, put where the missing
 // books are. It is informational rather than an error — the filter did what it
 // was configured to do — so it reads as a note, not a failure.
+//
+// It shipped in an amber box anyway, which said the opposite: a profile doing
+// its job looked like a fault every time an author page loaded. It is the info
+// tier now. Nothing was cut. The count and the settings link stay on screen,
+// and the per-filter breakdown plus the example titles moved behind the
+// disclosure, which is where the answer to "which books, and why" belongs
+// rather than in a permanent amber wall.
 export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary }) {
   const { t } = useTranslation()
   if (!sync) return null
@@ -91,108 +99,119 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
   )
 
   return (
-    <div
-      data-testid="author-sync-notice"
-      className="mb-4 px-3 py-2 rounded border text-sm border-amber-300 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200"
+    // Keyed on the refresh it describes, so a dismissal covers that refresh
+    // and not the next one: a later sync that skips a different set of books
+    // gets its own chance to be seen.
+    <Alert
+      key={sync.completedAt}
+      tier="info"
+      testId="author-sync-notice"
+      dismissible
+      className="mb-4"
+      title={t('authorDetail.lastSync.heading', {
+        count: skipped,
+        defaultValue: 'Last refresh skipped {{count}} of this author’s {{total}} works',
+        total: sync.total,
+      })}
+      details={
+        <>
+          <ul className="list-disc list-inside space-y-0.5">
+            {sync.skippedLanguage > 0 && (
+              <li>
+                {t('authorDetail.lastSync.language', {
+                  count: sync.skippedLanguage,
+                  defaultValue: '{{count}} skipped by the language filter (allowed: {{languages}})',
+                  languages,
+                })}
+                {sync.unknownLanguageFail
+                  ? ' ' +
+                    t(
+                      'authorDetail.lastSync.unknownFail',
+                      'Works the metadata provider reported no language for were skipped too, because this author’s metadata profile is set to reject unknown languages.',
+                    )
+                  : ''}
+              </li>
+            )}
+            {sync.skippedJunk > 0 && (
+              <li>
+                {t('authorDetail.lastSync.junk', {
+                  count: sync.skippedJunk,
+                  defaultValue: '{{count}} skipped as untitled provider records',
+                })}
+              </li>
+            )}
+            {sync.skippedMediaType > 0 && (
+              <li>
+                {t('authorDetail.lastSync.mediaType', {
+                  count: sync.skippedMediaType,
+                  defaultValue: '{{count}} skipped as the wrong format for your default media type',
+                })}
+              </li>
+            )}
+            {/* A refresh only adds books for an author you monitor and have set to
+                take new items (#1815). Saying so here is the difference between
+                "the refresh is broken" and "it did what I configured". */}
+            {notAccepted > 0 && (
+              <li>
+                {t('authorDetail.lastSync.notAccepted', {
+                  count: notAccepted,
+                  defaultValue:
+                    '{{count}} not added, because this author is not taking newly discovered books — the author is unmonitored, or "Monitor newly discovered books" is set to don’t add them. Books already in your library were still refreshed.',
+                })}
+              </li>
+            )}
+            {partBooks > 0 && (
+              <li>
+                {t('authorDetail.lastSync.partBooks', {
+                  count: partBooks,
+                  defaultValue: '{{count}} skipped as box sets, omnibuses, or other multi-book bundles',
+                })}
+              </li>
+            )}
+            {missingDate > 0 && (
+              <li>
+                {t('authorDetail.lastSync.missingDate', {
+                  count: missingDate,
+                  defaultValue: '{{count}} skipped for having no release date',
+                })}
+              </li>
+            )}
+            {minPopularity > 0 && (
+              <li>
+                {t('authorDetail.lastSync.minPopularity', {
+                  count: minPopularity,
+                  defaultValue: '{{count}} skipped for falling below the minimum popularity floor',
+                })}
+              </li>
+            )}
+            {minPages > 0 && (
+              <li>
+                {t('authorDetail.lastSync.minPages', {
+                  count: minPages,
+                  defaultValue: '{{count}} skipped for falling below the minimum page count',
+                })}
+              </li>
+            )}
+            {missingIsbn > 0 && (
+              <li>
+                {t('authorDetail.lastSync.missingIsbn', {
+                  count: missingIsbn,
+                  defaultValue: '{{count}} skipped for having no ISBN on any edition',
+                })}
+              </li>
+            )}
+          </ul>
+          {sample.length > 0 && (
+            <div className="mt-1">
+              {t('authorDetail.lastSync.examples', 'For example: {{titles}}', { titles: sample.join(', ') })}
+            </div>
+          )}
+        </>
+      }
     >
-      <div className="font-medium">
-        {t('authorDetail.lastSync.heading', {
-          count: skipped,
-          defaultValue: 'Last refresh skipped {{count}} of this author’s {{total}} works',
-          total: sync.total,
-        })}
-      </div>
-      <ul className="mt-1 list-disc list-inside space-y-0.5">
-        {sync.skippedLanguage > 0 && (
-          <li>
-            {t('authorDetail.lastSync.language', {
-              count: sync.skippedLanguage,
-              defaultValue: '{{count}} skipped by the language filter (allowed: {{languages}})',
-              languages,
-            })}
-            {sync.unknownLanguageFail
-              ? ' ' +
-                t(
-                  'authorDetail.lastSync.unknownFail',
-                  'Works the metadata provider reported no language for were skipped too, because this author’s metadata profile is set to reject unknown languages.',
-                )
-              : ''}
-          </li>
-        )}
-        {sync.skippedJunk > 0 && (
-          <li>
-            {t('authorDetail.lastSync.junk', {
-              count: sync.skippedJunk,
-              defaultValue: '{{count}} skipped as untitled provider records',
-            })}
-          </li>
-        )}
-        {sync.skippedMediaType > 0 && (
-          <li>
-            {t('authorDetail.lastSync.mediaType', {
-              count: sync.skippedMediaType,
-              defaultValue: '{{count}} skipped as the wrong format for your default media type',
-            })}
-          </li>
-        )}
-        {/* A refresh only adds books for an author you monitor and have set to
-            take new items (#1815). Saying so here is the difference between
-            "the refresh is broken" and "it did what I configured". */}
-        {notAccepted > 0 && (
-          <li>
-            {t('authorDetail.lastSync.notAccepted', {
-              count: notAccepted,
-              defaultValue:
-                '{{count}} not added, because this author is not taking newly discovered books — the author is unmonitored, or "Monitor newly discovered books" is set to don’t add them. Books already in your library were still refreshed.',
-            })}
-          </li>
-        )}
-        {partBooks > 0 && (
-          <li>
-            {t('authorDetail.lastSync.partBooks', {
-              count: partBooks,
-              defaultValue: '{{count}} skipped as box sets, omnibuses, or other multi-book bundles',
-            })}
-          </li>
-        )}
-        {missingDate > 0 && (
-          <li>
-            {t('authorDetail.lastSync.missingDate', {
-              count: missingDate,
-              defaultValue: '{{count}} skipped for having no release date',
-            })}
-          </li>
-        )}
-        {minPopularity > 0 && (
-          <li>
-            {t('authorDetail.lastSync.minPopularity', {
-              count: minPopularity,
-              defaultValue: '{{count}} skipped for falling below the minimum popularity floor',
-            })}
-          </li>
-        )}
-        {minPages > 0 && (
-          <li>
-            {t('authorDetail.lastSync.minPages', {
-              count: minPages,
-              defaultValue: '{{count}} skipped for falling below the minimum page count',
-            })}
-          </li>
-        )}
-        {missingIsbn > 0 && (
-          <li>
-            {t('authorDetail.lastSync.missingIsbn', {
-              count: missingIsbn,
-              defaultValue: '{{count}} skipped for having no ISBN on any edition',
-            })}
-          </li>
-        )}
-      </ul>
-      {sample.length > 0 && (
-        <div className="mt-1">
-          {t('authorDetail.lastSync.examples', 'For example: {{titles}}', { titles: sample.join(', ') })}
-        </div>
-      )}
+      {/* Kept on screen rather than folded away: the link is the fix for the
+          count in the title, and the timestamp is what tells you whether the
+          count is stale. */}
       <div className="mt-1 text-xs">
         <Link to="/settings?tab=metadata" className="underline">
           {t('authorDetail.lastSync.settingsLink', 'Metadata profile settings')}
@@ -202,6 +221,6 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
           when: new Date(sync.completedAt).toLocaleString(),
         })}
       </div>
-    </div>
+    </Alert>
   )
 }
