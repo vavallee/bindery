@@ -453,6 +453,32 @@ type ScanResponse struct {
 // an enormous tree can't produce an unbounded response or stall the request.
 const maxScanEntries = 1000
 
+// resolveImportFolder validates the user-selected scan folder and returns the
+// symlink-resolved path that is safe for subsequent filesystem operations.
+// The caller may select any configured library subfolder, but the raw query
+// value must never reach the filesystem before ResolveContained approves it.
+func (h *ManualImportHandler) resolveImportFolder(ctx context.Context, rawPath string) (string, int, string) {
+	path := filepath.Clean(rawPath)
+	if path == "" || path == "." {
+		return "", http.StatusBadRequest, "path parameter required"
+	}
+	if !filepath.IsAbs(path) {
+		return "", http.StatusBadRequest, "path must be absolute"
+	}
+	resolved, ok := h.roots.ResolveContained(ctx, path)
+	if !ok {
+		return "", http.StatusForbidden, "path is outside the configured library roots"
+	}
+	info, err := os.Stat(resolved) //nolint:gosec // #nosec G304 -- resolved by ResolveContained after symlink-aware root containment; route requires admin
+	if err != nil {
+		return "", http.StatusBadRequest, fmt.Sprintf("path not accessible: %v", err)
+	}
+	if !info.IsDir() {
+		return "", http.StatusBadRequest, "path must be a folder; use lookup for a single book"
+	}
+	return resolved, 0, ""
+}
+
 // Scan handles GET /api/v1/queue/manual-import/scan?path=...
 // It walks a folder RECURSIVELY (issue #1434), enumerating individual ebook
 // files as units at whatever depth they live while keeping a genuine
@@ -461,28 +487,9 @@ const maxScanEntries = 1000
 // filename alone — returning a per-unit match list to review and bulk-import. No
 // state is modified.
 func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
-	path := filepath.Clean(r.URL.Query().Get("path"))
-	if path == "" || path == "." {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path parameter required"})
-		return
-	}
-	if !filepath.IsAbs(path) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path must be absolute"})
-		return
-	}
-	resolved, ok := h.roots.ResolveContained(r.Context(), path)
-	if !ok {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "path is outside the configured library roots"})
-		return
-	}
-	path = resolved
-	info, err := os.Stat(path) //nolint:gosec // #nosec G304 -- symlink-resolved and confirmed inside a configured library root; RequireAdmin enforced at route level
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("path not accessible: %v", err)})
-		return
-	}
-	if !info.IsDir() {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path must be a folder; use lookup for a single book"})
+	path, status, message := h.resolveImportFolder(r.Context(), r.URL.Query().Get("path"))
+	if status != 0 {
+		writeJSON(w, status, map[string]string{"error": message})
 		return
 	}
 	start := time.Now()
