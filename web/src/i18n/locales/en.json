@@ -249,6 +249,9 @@
     },
     "lastSync": {
       "heading": "Last refresh skipped {{count}} of this author’s {{total}} works",
+      "headingFailedOnly": "Last refresh could not save {{count}} of this author’s {{total}} works",
+      "accounting": "{{added}} added, {{matched}} already in your library.",
+      "failed": "{{count}} could not be saved. This is an error rather than a filter, so the details are in Settings, then Logs.",
       "language": "{{count}} skipped by the language filter (allowed: {{languages}})",
       "unknownFail": "Works the metadata provider reported no language for were skipped too, because this author’s metadata profile is set to reject unknown languages.",
       "junk": "{{count}} skipped as untitled provider records",
