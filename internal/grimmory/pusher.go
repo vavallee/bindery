@@ -167,3 +167,9 @@ func (p *Pusher) pushTracked(ctx context.Context, cfg PushConfig, bookID int64, 
 // ErrSyncAlreadyRunning is returned when a bulk sync is started while a
 // previous one is still executing. Maps to 409 Conflict at the API layer.
 var ErrSyncAlreadyRunning = errors.New("grimmory sync already running")
+
+// ErrShuttingDown is returned by Start when the sync could not be launched
+// because the process is already draining its background jobs. The running flag
+// and progress snapshot are rolled back before it is returned, so a restarted
+// process starts clean. Matches hardcoverlistsyncer.ErrShuttingDown.
+var ErrShuttingDown = errors.New("server is shutting down")

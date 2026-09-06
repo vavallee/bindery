@@ -366,3 +366,33 @@ func TestSyncer_RemovesStaleIndexerWhenOthersStillMatch(t *testing.T) {
 		t.Errorf("Removed = %d, want 1", res.Removed)
 	}
 }
+
+// TestSyncer_PreservesDailyQueryLimit: the per-indexer daily query cap (#2312)
+// is a user setting Prowlarr knows nothing about, and the syncer writes back the
+// whole row it loaded. A cap silently wiped on the next sync would be the worst
+// kind of failure here, because the symptom is an unbounded sweep rather than an
+// error message.
+func TestSyncer_PreservesDailyQueryLimit(t *testing.T) {
+	pID := 10
+	instID := int64(1)
+	limit := 750
+	existing := []models.Indexer{{
+		ID: 10, Name: "IndexerA", Type: "torznab", Categories: []int{7020},
+		DailyQueryLimit: &limit, ProwlarrInstanceID: &instID, ProwlarrIndexerID: &pID,
+	}}
+	srv := prowlarrStub(t, `[{"id":10,"name":"IndexerA","enable":true,"protocol":"torrent","supportsSearch":true,"categories":[{"id":7020},{"id":7030}]}]`)
+	defer srv.Close()
+	existing[0].URL = srv.URL + "/10/api"
+	store := &fakeIndexerStore{existing: existing}
+
+	if _, err := NewSyncer(New(srv.URL, "k"), store, fakeInstanceStore{}).Sync(context.Background(), 1); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(store.updated) != 1 {
+		t.Fatalf("updated = %d, want 1", len(store.updated))
+	}
+	got := store.updated[0].DailyQueryLimit
+	if got == nil || *got != 750 {
+		t.Errorf("DailyQueryLimit = %v, want 750", got)
+	}
+}

@@ -1,6 +1,10 @@
 package metadata
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/vavallee/bindery/internal/models"
+)
 
 func (a *Aggregator) providerForForeignID(foreignID string) Provider {
 	if a == nil {
@@ -35,18 +39,17 @@ func sameProvider(a, b Provider) bool {
 	return normalizedProviderName(providerName(a)) == normalizedProviderName(providerName(b))
 }
 
+// providerNameForForeignID classifies a foreign ID by its prefix. It delegates
+// to models rather than repeating the switch: this copy had drifted to four
+// branches and was missing "calibre:" and "abs:", so an importer's synthetic ID
+// fell through to the openlibrary default and providerForForeignID handed it to
+// the OpenLibrary client, which 404s on it (#2352).
+//
+// It routes author and book IDs both, which is fine: AuthorProviderFromForeignID
+// and BookProviderFromForeignID agree branch for branch, and the prefixes are a
+// single shared namespace precisely so one classifier can answer for either.
 func providerNameForForeignID(foreignID string) string {
-	foreignID = strings.TrimSpace(foreignID)
-	switch {
-	case strings.HasPrefix(foreignID, "gb:"):
-		return "googlebooks"
-	case strings.HasPrefix(foreignID, "hc:"):
-		return "hardcover"
-	case strings.HasPrefix(foreignID, "dnb:"):
-		return "dnb"
-	default:
-		return "openlibrary"
-	}
+	return models.AuthorProviderFromForeignID(foreignID)
 }
 
 func normalizedProviderName(name string) string {

@@ -806,14 +806,10 @@ func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book, nameIn
 	return author.ID, nil
 }
 
+// sortName delegates to textutil.SortName so list-sync authors sort the same
+// way as authors created by every other path (#2363).
 func sortName(name string) string {
-	parts := strings.Fields(name)
-	if len(parts) < 2 {
-		return name
-	}
-	last := parts[len(parts)-1]
-	rest := strings.Join(parts[:len(parts)-1], " ")
-	return last + ", " + rest
+	return textutil.SortName(name)
 }
 
 // HCListSyncer is satisfied by *ListSyncer — the scheduler uses this

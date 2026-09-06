@@ -6196,7 +6196,7 @@ func TestFetchAuthorBooks_AuthorDeletedDuringFetch_AbortsWithoutFKBurst(t *testi
 	}
 
 	logs := captureSlog(t)
-	h.fetchAuthorBooks(&snapshot, catalogueSyncOptions{mediaType: models.MediaTypeEbook, discovery: true})
+	h.fetchAuthorBooks(context.Background(), &snapshot, catalogueSyncOptions{mediaType: models.MediaTypeEbook, discovery: true})
 
 	if got := logs.String(); strings.Contains(got, "failed to create book") {
 		t.Errorf("sync against deleted author emitted per-book create failures:\n%s", got)
@@ -8069,5 +8069,132 @@ func TestFetchAuthorBooks_StillWidensAnUnownedBook(t *testing.T) {
 	}
 	if books[0].MediaType != models.MediaTypeBoth {
 		t.Errorf("mediaType = %q, want both — an unowned book still merges", books[0].MediaType)
+	}
+}
+
+// TestSaveAlternateNames_OnlyBindsNonLatinAuthor is the regression test for
+// #2268: saveAlternateNames minted every all-ASCII OpenLibrary alternate name
+// as an alias without checking the author's own name, so a latin-script author
+// (a pen name, or a two-author collaboration credit) had unrelated real
+// authors' names filed under it as aliases. Latin aliases must only be saved
+// when the author's primary name is non-latin, mirroring aliasBindsAuthor on
+// the read side.
+func TestSaveAlternateNames_OnlyBindsNonLatinAuthor(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	ctx := context.Background()
+	authorRepo := db.NewAuthorRepo(database)
+	aliasRepo := db.NewAuthorAliasRepo(database)
+	h := &AuthorHandler{authors: authorRepo, aliases: aliasRepo}
+
+	// A latin-script author (here a pen name) whose OpenLibrary "alternate
+	// names" are in fact other real authors. None of these may become aliases.
+	penName := &models.Author{
+		ForeignID:      "ol:kem-antilles",
+		Name:           "Kem Antilles",
+		SortName:       "Antilles, Kem",
+		AlternateNames: []string{"Kevin J. Anderson", "Rebecca Moesta"},
+	}
+	if err := authorRepo.Create(ctx, penName); err != nil {
+		t.Fatalf("create latin-script author: %v", err)
+	}
+	h.saveAlternateNames(ctx, penName)
+	if got, err := aliasRepo.ListByAuthor(ctx, penName.ID); err != nil {
+		t.Fatalf("list aliases for latin-script author: %v", err)
+	} else if len(got) != 0 {
+		t.Fatalf("latin-script author minted %d aliases, want 0: %+v", len(got), got)
+	}
+
+	// A non-latin author still gets its latin alternate names as aliases, so a
+	// latin release name can reach the non-latin primary name (the feature).
+	murakami := &models.Author{
+		ForeignID:      "ol:murakami",
+		Name:           "村上春樹",
+		SortName:       "村上春樹",
+		AlternateNames: []string{"Haruki Murakami", "Murakami"},
+	}
+	if err := authorRepo.Create(ctx, murakami); err != nil {
+		t.Fatalf("create non-latin author: %v", err)
+	}
+	h.saveAlternateNames(ctx, murakami)
+	got, err := aliasRepo.ListByAuthor(ctx, murakami.ID)
+	if err != nil {
+		t.Fatalf("list aliases for non-latin author: %v", err)
+	}
+	names := map[string]bool{}
+	for _, a := range got {
+		names[a.Name] = true
+	}
+	if len(got) != 2 || !names["Haruki Murakami"] || !names["Murakami"] {
+		t.Fatalf("non-latin author aliases = %+v, want exactly [Haruki Murakami, Murakami] (feature regressed)", got)
+	}
+}
+
+// TestSaveAlternateNames_SharedLatinRule pins saveAlternateNames to the shared
+// textutil.LatinAliasBinds rule (#2419). The old guard tested for 7-bit ASCII,
+// so an accented latin author counted as non-latin and had every unrelated
+// alternate name minted as an alias — the exact bug #2268 fixed for "Kem
+// Antilles" was still live for "Jo Nesbø". The rule must separate the two kinds
+// of alternate name an accented author has: a different person's name is
+// refused, while the ASCII transliteration of the author's OWN name is kept,
+// because it is the only alias that can reach a scene release. The same rule
+// makes an accented romanisation of a non-latin author savable, which ASCII
+// refused outright.
+func TestSaveAlternateNames_SharedLatinRule(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	ctx := context.Background()
+	authorRepo := db.NewAuthorRepo(database)
+	aliasRepo := db.NewAuthorAliasRepo(database)
+	h := &AuthorHandler{authors: authorRepo, aliases: aliasRepo}
+
+	// Accented latin author. "Karin Fossum" is a different person and must be
+	// refused; "Jo Nesbo" is this author's own name transliterated and must be
+	// kept, because "nesbø" never meets a release named "Jo.Nesbo.-.…".
+	nesbo := &models.Author{
+		ForeignID:      "ol:jo-nesbo",
+		Name:           "Jo Nesbø",
+		SortName:       "Nesbo, Jo",
+		AlternateNames: []string{"Karin Fossum", "Jo Nesbo"},
+	}
+	if err := authorRepo.Create(ctx, nesbo); err != nil {
+		t.Fatalf("create accented latin author: %v", err)
+	}
+	h.saveAlternateNames(ctx, nesbo)
+	got, err := aliasRepo.ListByAuthor(ctx, nesbo.ID)
+	if err != nil {
+		t.Fatalf("list aliases for accented latin author: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "Jo Nesbo" {
+		t.Fatalf("accented latin author %q aliases = %+v, want exactly [Jo Nesbo] "+
+			"(the transliteration kept, the unrelated author refused)", nesbo.Name, got)
+	}
+
+	// Non-latin author with an accented latin romanisation: latin script, so
+	// it binds. The old ASCII test dropped it over the "ø".
+	kim := &models.Author{
+		ForeignID:      "ol:mixed-script",
+		Name:           "村上 Haruki",
+		SortName:       "村上 Haruki",
+		AlternateNames: []string{"Haruki Murakamø", "村上春樹"},
+	}
+	if err := authorRepo.Create(ctx, kim); err != nil {
+		t.Fatalf("create mixed-script author: %v", err)
+	}
+	h.saveAlternateNames(ctx, kim)
+	got, err = aliasRepo.ListByAuthor(ctx, kim.ID)
+	if err != nil {
+		t.Fatalf("list aliases for mixed-script author: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "Haruki Murakamø" {
+		t.Fatalf("mixed-script author aliases = %+v, want exactly [Haruki Murakamø]", got)
 	}
 }

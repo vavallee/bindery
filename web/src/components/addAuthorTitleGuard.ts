@@ -1,18 +1,19 @@
 import type { Author, Book } from '../api/client'
 
+import { foldForSearch } from '../util/foldForSearch'
+
 export interface AuthorResultSplit {
   visible: Author[]
   hidden: Author[]
 }
 
+// Delegates to the shared fold so this guard and the search box agree about
+// what "the same text" means. It used to carry its own copy, which was the only
+// NFKC normalizer in the project and had no Go counterpart; the shared one adds
+// accent folding and apostrophe deletion, so "José" now meets "Jose" and
+// "Ender's Game" meets "Enders Game" (#1660).
 function normalizeMetadataText(value: string | undefined): string {
-  return (value ?? '')
-    .normalize('NFKC')
-    .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .trim()
-    .replace(/\s+/g, ' ')
+  return foldForSearch(value)
 }
 
 function isDifferentKnownAuthor(candidate: Author, bookAuthor: Author): boolean {

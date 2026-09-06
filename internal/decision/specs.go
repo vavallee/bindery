@@ -74,44 +74,6 @@ func (s QualityAllowed) IsSatisfiedBy(r Release, _ models.Book) (bool, string) {
 	return false, fmt.Sprintf("format %q not in quality profile %q", r.Format, s.Profile.Name)
 }
 
-// --- QualityCutoff ---
-
-// QualityCutoff rejects releases for books that already have a file at or
-// above the quality profile's cutoff format. This prevents grabbing a worse
-// copy of a book the user already owns. CurrentQuality is the existing file's
-// format (empty string when unknown or no file exists).
-type QualityCutoff struct {
-	Profile        *models.QualityProfile
-	CurrentQuality string
-}
-
-func (s QualityCutoff) IsSatisfiedBy(r Release, book models.Book) (bool, string) {
-	if s.Profile == nil || s.Profile.Cutoff == "" {
-		return true, ""
-	}
-	if book.FilePath == "" || s.CurrentQuality == "" {
-		return true, "" // no file yet — grab allowed
-	}
-	itemQuality := func(name string) int {
-		for i, item := range s.Profile.Items {
-			if strings.EqualFold(item.Quality, name) {
-				return i
-			}
-		}
-		return -1
-	}
-	cutoffIdx := itemQuality(s.Profile.Cutoff)
-	currentIdx := itemQuality(s.CurrentQuality)
-	if cutoffIdx < 0 || currentIdx < 0 {
-		return true, "" // unknown format — let it through
-	}
-	// Higher index = better quality in the profile's ordered list.
-	if currentIdx >= cutoffIdx {
-		return false, fmt.Sprintf("book already has %q which meets quality cutoff %q", s.CurrentQuality, s.Profile.Cutoff)
-	}
-	return true, ""
-}
-
 // --- DelayProfile ---
 
 // DelayProfileSpec rejects releases that haven't aged past the configured

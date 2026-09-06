@@ -93,6 +93,27 @@ func TestLibraryScan_AlreadyRunningReturns409(t *testing.T) {
 	}
 }
 
+// TestLibraryScan_ShuttingDownReturns503 pins the answer for a scan the jobs
+// group refused because the process is draining (#2372). 202 there would tell
+// the user a scan started when nothing did.
+func TestLibraryScan_ShuttingDownReturns503(t *testing.T) {
+	fake := &fakeScanner{err: importer.ErrShuttingDown}
+	h := &LibraryHandler{scanner: fake}
+
+	rec := httptest.NewRecorder()
+	h.Scan(rec, httptest.NewRequest(http.MethodPost, "/library/scan", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 while shutting down, got %d", rec.Code)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("response is not valid JSON: %v", err)
+	}
+	if body["error"] == "" {
+		t.Error("expected non-empty error in response body")
+	}
+}
+
 func TestLibraryScan_Returns202(t *testing.T) {
 	h := newLibraryHandler(t)
 	rec := httptest.NewRecorder()

@@ -12,8 +12,13 @@ import (
 // both packages delegate.
 
 // SortName converts a display name to "Last, First Middle" sort form, leaving
-// single-token names untouched. It was copied into internal/api,
-// internal/abs, openlibrary and hardcover; all four were identical.
+// single-token names untouched. Nine packages delegate here rather than keep a
+// copy: internal/api, internal/abs, openlibrary and hardcover from the first
+// consolidation, then internal/calibre, internal/hardcoverlistsyncer,
+// internal/importer, internal/migrate and googlebooks (#2363). Keep it that
+// way. importer/renamer.go's authorSortName feeds the {SortAuthor} naming
+// token, so a change here renames folders on disk, and a divergent copy means
+// the library layout and the UI disagree about the same author.
 //
 // Deliberately naive: it flips on the last whitespace-separated token and does
 // no particle handling ("van", "de", "von") or script awareness. That is fine

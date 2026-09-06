@@ -4,9 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
-	"strconv"
-
-	"github.com/go-chi/chi/v5"
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
@@ -74,7 +71,10 @@ func (h *RootFolderHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *RootFolderHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r)
+	if !ok {
+		return
+	}
 	// Tier-1 cross-user IDOR guard (D1). Pre-fetch so non-owners cannot
 	// delete a root folder belonging to a different user, and cannot
 	// distinguish "exists but not mine" from "does not exist".

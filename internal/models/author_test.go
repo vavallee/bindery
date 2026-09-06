@@ -1,6 +1,9 @@
 package models
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 // TestAuthorSyncSummary_SkippedTotal verifies SkippedTotal sums every skip
 // reason, including the five metadata-profile-filter fields (#1968, #2005,
@@ -78,5 +81,69 @@ func TestCanReplaceAuthorIdentity(t *testing.T) {
 		if got := CanReplaceAuthorIdentity(tc.author); got != tc.want {
 			t.Fatalf("%s: CanReplaceAuthorIdentity(%+v) = %v, want %v", tc.name, tc.author, got, tc.want)
 		}
+	}
+}
+
+// Every int counter on AuthorSyncSummary except Total has to be part of
+// AccountedFor, or Total stops reconciling and the difference reads as lost
+// books. That is exactly what happened in #2449: Matched and Failed had no
+// field at all, and a reader doing the arithmetic on a real author concluded
+// the sync was silently dropping 13 works.
+//
+// Reflection rather than a hand-written sum, because a hand-written sum is the
+// thing that drifted. Set every counter to 1 and AccountedFor must equal the
+// number of counters; a new Skipped* field added without wiring fails here
+// rather than on someone's author page.
+func TestAuthorSyncSummaryAccountedForCoversEveryCounter(t *testing.T) {
+	var summary AuthorSyncSummary
+	v := reflect.ValueOf(&summary).Elem()
+	typ := v.Type()
+
+	counters := 0
+	for i := range typ.NumField() {
+		field := typ.Field(i)
+		if field.Type.Kind() != reflect.Int || field.Name == "Total" {
+			continue
+		}
+		v.Field(i).SetInt(1)
+		counters++
+	}
+	if counters < 13 {
+		t.Fatalf("found %d counter fields, expected at least 13: the reflection walk is not seeing the struct", counters)
+	}
+	if got := summary.AccountedFor(); got != counters {
+		t.Errorf("AccountedFor() = %d with every one of %d counters set to 1.\n"+
+			"A counter is missing from the sum, so Total will not reconcile and the shortfall will look like data loss (#2449).", got, counters)
+	}
+
+	summary.Total = counters
+	if got := summary.Unaccounted(); got != 0 {
+		t.Errorf("Unaccounted() = %d, want 0 when Total equals the sum of every counter", got)
+	}
+}
+
+// SkippedExcluded is the deliberate asymmetry: out of SkippedTotal because the
+// notice does not render a book the user excluded on purpose, in AccountedFor
+// because Total still has to add up. Asserted so a later tidy-up cannot quietly
+// collapse the two.
+func TestAuthorSyncSummarySkippedExcludedIsAccountedButNotNoticed(t *testing.T) {
+	summary := AuthorSyncSummary{Total: 3, Added: 1, Matched: 1, SkippedExcluded: 1}
+	if got := summary.SkippedTotal(); got != 0 {
+		t.Errorf("SkippedTotal() = %d, want 0: the notice must not count a hand-excluded book as something to explain", got)
+	}
+	if got := summary.Unaccounted(); got != 0 {
+		t.Errorf("Unaccounted() = %d, want 0: an excluded work still has to be part of the arithmetic", got)
+	}
+}
+
+// A nil summary is the "this process has not synced that author" case the
+// detail endpoint hands straight to the template.
+func TestAuthorSyncSummaryNilIsSafe(t *testing.T) {
+	var summary *AuthorSyncSummary
+	if got := summary.AccountedFor(); got != 0 {
+		t.Errorf("nil AccountedFor() = %d, want 0", got)
+	}
+	if got := summary.Unaccounted(); got != 0 {
+		t.Errorf("nil Unaccounted() = %d, want 0", got)
 	}
 }

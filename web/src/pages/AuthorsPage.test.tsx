@@ -27,6 +27,7 @@ vi.mock('../api/client', async importOriginal => {
       createSeries: vi.fn(),
       bulkActionAuthors: vi.fn(),
       bulkSetAuthorMonitorMode: vi.fn(),
+      refreshAuthor: vi.fn(),
     },
   }
 })
@@ -70,6 +71,7 @@ vi.mock('react-i18next', () => ({
         'common.unmonitor': 'Unmonitor',
         'common.search': 'Search',
         'common.delete': 'Delete',
+        'common.refresh': 'Refresh',
         'common.cancel': 'Cancel',
         'bulkActionBar.clear': 'Clear',
         'bulkActionBar.selected': 'Selected',
@@ -383,6 +385,205 @@ describe('AuthorsPage', () => {
     // checkmark is visible instead of white-on-white.
     expect(checkbox).toBeChecked()
     expect(checkbox.className).not.toContain('bg-white/80')
+  })
+})
+
+// Secondary row actions moved behind the shared MoreMenu so the row is not a
+// wall of buttons. The governing constraint is that decluttering must not cost
+// discoverability of a control people use: Refresh and Delete are rare and can
+// go behind a menu, the monitored toggle is not and must stay on the row.
+// Only OpenLibrary supplies author-level ratings, and only for authors it
+// resolved by search. A Hardcover or DNB library saw a full column of em
+// dashes. Hiding it outright would have cost OpenLibrary users a real sort
+// key, so it is conditional on the page having anything to show.
+// The filter and sort pills moved behind two disclosures. The rule this is
+// built under is that decluttering must not cost discoverability, so these
+// pin the parts that keep an applied filter visible: a count on the trigger
+// and a removable chip beside it.
+describe('AuthorsPage — filter and sort popovers', () => {
+  const seed = () => {
+    vi.mocked(api.listAuthors).mockResolvedValue({
+      items: [
+        {
+          id: 7,
+          foreignAuthorId: 'OL7',
+          authorName: 'Andy Weir',
+          sortName: 'Weir, Andy',
+          description: '',
+          imageUrl: '',
+          disambiguation: '',
+          ratingsCount: 0,
+          averageRating: 0,
+          monitored: true,
+        },
+      ],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    })
+  }
+
+  const renderPage = async () => {
+    seed()
+    render(<MemoryRouter><AuthorsPage /></MemoryRouter>)
+    await screen.findByText('Andy Weir')
+  }
+
+  it('keeps every filter option reachable, just one click further in', async () => {
+    await renderPage()
+
+    expect(screen.queryByRole('radio', { name: 'Unmonitored' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /Filters/ }))
+
+    expect(screen.getByRole('radio', { name: 'All' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Monitored' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Unmonitored' })).toBeInTheDocument()
+  })
+
+  it('shows an applied filter on the trigger and as a chip, so it is never hidden', async () => {
+    await renderPage()
+
+    fireEvent.click(screen.getByRole('button', { name: /Filters/ }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Unmonitored' }))
+
+    // The count rides on the trigger itself.
+    expect(screen.getByRole('button', { name: /Filters/ })).toHaveTextContent('1')
+    // And the value is spelled out beside it, without opening anything.
+    expect(screen.getByRole('button', { name: /Clear filter/ })).toHaveTextContent('Unmonitored')
+  })
+
+  it('clears the filter from its chip', async () => {
+    await renderPage()
+
+    fireEvent.click(screen.getByRole('button', { name: /Filters/ }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Unmonitored' }))
+    fireEvent.click(screen.getByRole('button', { name: /Clear filter/ }))
+
+    expect(screen.queryByRole('button', { name: /Clear filter/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /Filters/ })).not.toHaveTextContent('1')
+  })
+
+  it('closes on Escape', async () => {
+    await renderPage()
+
+    fireEvent.click(screen.getByRole('button', { name: /Filters/ }))
+    expect(screen.getByRole('radio', { name: 'Unmonitored' })).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('radio', { name: 'Unmonitored' })).toBeNull()
+  })
+
+  // The column headers already sort in table view. Offering a sort control as
+  // well invites the two to disagree about what is active.
+  it('drops the sort control in table view, where the headers do the job', async () => {
+    localStorage.setItem('bindery.view.authors', 'table')
+    await renderPage()
+
+    expect(screen.queryByRole('button', { name: /Sort/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /Filters/ })).toBeInTheDocument()
+  })
+
+  it('offers sort in grid view, where nothing else does', async () => {
+    localStorage.setItem('bindery.view.authors', 'grid')
+    await renderPage()
+
+    fireEvent.click(screen.getByRole('button', { name: /Sort/ }))
+    expect(screen.getByRole('radio', { name: 'Recent' })).toBeInTheDocument()
+  })
+})
+
+describe('AuthorsPage — rating column', () => {
+  const authorWith = (averageRating: number) => ({
+    id: 7,
+    foreignAuthorId: 'OL7',
+    authorName: 'Andy Weir',
+    sortName: 'Weir, Andy',
+    description: '',
+    imageUrl: '',
+    disambiguation: '',
+    ratingsCount: averageRating > 0 ? 10 : 0,
+    averageRating,
+    monitored: true,
+  })
+
+  const renderTable = async (averageRating: number) => {
+    localStorage.setItem('bindery.view.authors', 'table')
+    vi.mocked(api.listAuthors).mockResolvedValue({
+      items: [authorWith(averageRating)],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    })
+    render(<MemoryRouter><AuthorsPage /></MemoryRouter>)
+    await screen.findByText('Andy Weir')
+  }
+
+  it('is hidden when no author on the page has a rating', async () => {
+    await renderTable(0)
+    expect(screen.queryByRole('columnheader', { name: /Rating/ })).toBeNull()
+  })
+
+  it('is shown when an author on the page has one', async () => {
+    await renderTable(4.25)
+    expect(screen.getByRole('columnheader', { name: /Rating/ })).toBeInTheDocument()
+    expect(screen.getByText('★ 4.25')).toBeInTheDocument()
+  })
+})
+
+describe('AuthorsPage — row actions behind an overflow menu', () => {
+  beforeEach(() => {
+    vi.mocked(api.listAuthors).mockResolvedValue({
+      items: [
+        {
+          id: 7,
+          foreignAuthorId: 'OL7',
+          authorName: 'Andy Weir',
+          sortName: 'Weir, Andy',
+          description: '',
+          imageUrl: '',
+          disambiguation: '',
+          ratingsCount: 0,
+          averageRating: 0,
+          monitored: true,
+        },
+      ],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    })
+    vi.mocked(api.refreshAuthor).mockResolvedValue(undefined as never)
+  })
+
+  const renderPage = async () => {
+    render(<MemoryRouter><AuthorsPage /></MemoryRouter>)
+    await screen.findByText('Andy Weir')
+  }
+
+  it('keeps the monitored toggle visible without opening anything', async () => {
+    await renderPage()
+    expect(screen.getByRole('switch')).toBeInTheDocument()
+  })
+
+  it('hides refresh and delete until the menu is opened', async () => {
+    await renderPage()
+
+    expect(screen.queryByRole('menuitem', { name: 'Refresh' })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: 'Delete' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /More actions/ }))
+
+    expect(screen.getByRole('menuitem', { name: 'Refresh' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument()
+  })
+
+  it('still refreshes the author from the menu', async () => {
+    await renderPage()
+
+    fireEvent.click(screen.getByRole('button', { name: /More actions/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Refresh' }))
+
+    await waitFor(() => expect(api.refreshAuthor).toHaveBeenCalledWith(7))
   })
 })
 

@@ -41,6 +41,34 @@ type Indexer struct {
 	// choice. See the SeedRatioSource* constants. The empty string means "unset"
 	// and is eligible for Prowlarr auto-population.
 	SeedRatioSource string `json:"seedRatioSource,omitempty"`
+	// DailyQueryLimit caps how many requests Bindery will send this indexer in
+	// the last 24 hours (#2312). nil, and any value <= 0, means no cap.
+	//
+	// Requests are counted in hourly blocks and the window boundary rounds down
+	// to the hour, so the block straddling the 24-hour mark is counted in full
+	// and the effective window is up to 25 hours. The limit therefore binds
+	// slightly early rather than slightly late, which is the right direction
+	// for a cap whose job is not to overspend an allowance Bindery does not
+	// own.
+	//
+	// The unit is outbound HTTP requests, not books: one book on one indexer
+	// costs a single request when the structured tier-1 query matches and up to
+	// eight when it falls all the way through the text tiers and the
+	// transliteration retry. Counting books would understate the cost by up to
+	// 8x, which is the opposite of useful when the whole point is not to exceed
+	// a tracker's allowance.
+	//
+	// Requests served from the per-client query cache never leave the process
+	// and are not counted. Neither is the Settings "Test" button, which builds
+	// its own client outside the searcher — it costs two requests and stays
+	// available precisely when an indexer has capped out and someone is trying
+	// to work out why.
+	DailyQueryLimit *int `json:"dailyQueryLimit,omitempty"`
+	// DailyQueriesUsed is a response-only field, like APIKeyConfigured: the API
+	// fills it from the query-count table so the Indexers tab can show how much
+	// of the cap is spent. It is never persisted and anything a client sends in
+	// it is ignored. nil on an indexer with no cap set.
+	DailyQueriesUsed *int `json:"dailyQueriesUsed,omitempty"`
 	// Search health, written by the searcher rather than by the user (#1935).
 	// All four are nil on an indexer that has never been searched.
 	//

@@ -50,8 +50,15 @@ type RootFolder struct {
 }
 
 type QualityProfile struct {
-	ID             int64         `json:"id"`
-	Name           string        `json:"name"`
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	// UpgradeAllowed and Cutoff are kept for wire and schema compatibility
+	// only and are consulted by nothing. Their Settings controls were removed
+	// in #2373 because no code path has ever read them: there is no upgrade
+	// re-grab sweep for a cutoff to gate, so the form was promising behaviour
+	// that did not exist. The quality_profiles columns and these JSON fields
+	// stay so existing rows still load and a third-party client that sends
+	// them still works. Wiring an upgrade path is tracked separately.
 	UpgradeAllowed bool          `json:"upgradeAllowed"`
 	Cutoff         string        `json:"cutoff"`
 	Items          []QualityItem `json:"items"`

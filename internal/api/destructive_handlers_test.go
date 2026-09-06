@@ -132,6 +132,9 @@ func TestBackupRestore_RequiresConfirmationHeader(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d body = %s, want 400 without confirm header", rec.Code, rec.Body.String())
 	}
+	if _, err := os.Stat(db.PendingRestorePath(dbPath)); !os.IsNotExist(err) {
+		t.Fatalf("an unconfirmed restore must not stage anything, stat err = %v", err)
+	}
 }
 
 func TestBackupRestore_MissingFileReturns404(t *testing.T) {
@@ -147,25 +150,30 @@ func TestBackupRestore_MissingFileReturns404(t *testing.T) {
 	}
 }
 
-func TestBackupRestore_HappyPathCopiesBackupOverDBPath(t *testing.T) {
+// TestBackupRestore_HappyPathStagesPendingFile pins the contract Restore
+// actually has now. It used to assert the opposite: that Restore byte-copies
+// the backup over h.dbPath. That is the bug. The live database is open in WAL
+// mode while the request runs, so overwriting the main file leaves the old
+// -wal alongside it and SQLite replays those frames back over the restored
+// pages at the next checkpoint. Restore therefore stages the file and
+// db.ApplyPendingRestore swaps it in at the next start.
+func TestBackupRestore_HappyPathStagesPendingFile(t *testing.T) {
 	database, dbPath, dataDir := backupTestDB(t)
 	h := NewBackupHandler(database, dbPath, dataDir)
 
-	// Stage a known-content backup file. Restore is a byte copy from the backup
-	// onto h.dbPath, so we can assert the destructive overwrite by content.
-	backupsDir := filepath.Join(dataDir, "backups")
-	if err := os.MkdirAll(backupsDir, 0o700); err != nil {
-		t.Fatalf("mkdir backups: %v", err)
+	// A real SQLite file, because Restore now validates the backup before it
+	// stages it. Create writes one for us with the right shape.
+	if _, err := database.Exec(`INSERT INTO notes (body) VALUES ('from the backup')`); err != nil {
+		t.Fatalf("insert: %v", err)
 	}
-	name := "bindery_20240102_030405.db"
-	const marker = "RESTORED-BACKUP-CONTENT"
-	if err := os.WriteFile(filepath.Join(backupsDir, name), []byte(marker), 0o600); err != nil {
-		t.Fatalf("write backup: %v", err)
+	if rec := callCreate(t, h); rec.Code != http.StatusCreated {
+		t.Fatalf("create: status = %d body = %s", rec.Code, rec.Body.String())
 	}
+	name := latestBackupName(t, dataDir)
 
-	// Pre-existing DB content the restore should clobber.
-	if err := os.WriteFile(dbPath, []byte("STALE-LIVE-DB"), 0o600); err != nil {
-		t.Fatalf("write live db: %v", err)
+	liveBefore, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Fatalf("read live db: %v", err)
 	}
 
 	rec := httptest.NewRecorder()
@@ -176,12 +184,41 @@ func TestBackupRestore_HappyPathCopiesBackupOverDBPath(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s, want 200", rec.Code, rec.Body.String())
 	}
-	got, err := os.ReadFile(dbPath)
+
+	// The live file must be byte-identical: nothing may write it while the
+	// pool is open.
+	liveAfter, err := os.ReadFile(dbPath)
 	if err != nil {
-		t.Fatalf("read dbPath after restore: %v", err)
+		t.Fatalf("read live db after restore: %v", err)
 	}
-	if string(got) != marker {
-		t.Fatalf("dbPath content = %q, want backup content %q", string(got), marker)
+	if !bytes.Equal(liveBefore, liveAfter) {
+		t.Fatalf("Restore modified the live database file")
+	}
+
+	// The staged copy must match the backup, and must not be readable by
+	// anyone but the owner: it carries the same hashes and secrets.
+	staged, err := os.Stat(db.PendingRestorePath(dbPath))
+	if err != nil {
+		t.Fatalf("expected a staged restore file: %v", err)
+	}
+	if perm := staged.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("staged restore perm = %o, want 0600", perm)
+	}
+	backupBytes, err := os.ReadFile(filepath.Join(dataDir, "backups", name))
+	if err != nil {
+		t.Fatalf("read backup: %v", err)
+	}
+	stagedBytes, err := os.ReadFile(db.PendingRestorePath(dbPath))
+	if err != nil {
+		t.Fatalf("read staged restore: %v", err)
+	}
+	if !bytes.Equal(backupBytes, stagedBytes) {
+		t.Fatalf("staged restore does not match the backup it came from")
+	}
+
+	// No .tmp left behind by the stage-and-rename.
+	if _, err := os.Stat(db.PendingRestorePath(dbPath) + ".tmp"); !os.IsNotExist(err) {
+		t.Fatalf("staging .tmp not cleaned up, stat err = %v", err)
 	}
 }
 

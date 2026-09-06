@@ -23,7 +23,8 @@ cd web && npm ci && npm run lint && npm run typecheck && npm run build && npm te
 
 Make wrappers for convenience:
 - `make lint` — Go + frontend linters
-- `make test` — Go race + coverage
+- `make test` — Go tests + coverage, no race, same as the CI gate
+- `make test-race` — the race detector in CI's six shards (#2293)
 - `make test-web` — `vitest` + coverage
 
 For wiring-level changes (handlers, scheduler jobs, downloader integrations, import flows), unit tests aren't enough. Escalate to `make smoke` — see the `smoke-testing` skill for the decision tree.

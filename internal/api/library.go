@@ -34,13 +34,18 @@ func (h *LibraryHandler) WithSettings(sr *db.SettingsRepo) *LibraryHandler {
 // returns 202 Accepted. The scan runs asynchronously; clients can monitor
 // progress via the book list. If a scan is already in flight (manual or the
 // scheduled 6-hourly job) it returns 409 Conflict instead of starting a
-// second concurrent full walk (#1460).
+// second concurrent full walk (#1460). If the process is shutting down it
+// returns 503 rather than 202 for a scan that will never run (#2372).
 func (h *LibraryHandler) Scan(w http.ResponseWriter, r *http.Request) {
 	// context.WithoutCancel so the scan goroutine isn't killed when the HTTP
 	// response is sent and the request context is cancelled.
 	err := h.scanner.StartScan(context.WithoutCancel(r.Context()))
 	if errors.Is(err, importer.ErrScanAlreadyRunning) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	if errors.Is(err, importer.ErrShuttingDown) {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"message": "library scan started"})

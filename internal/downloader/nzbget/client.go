@@ -32,6 +32,28 @@ var categoryNameKey = regexp.MustCompile(`^Category\d+\.Name$`)
 // a category's other fields (DestDir) can be located by the same index.
 var categoryIndexKey = regexp.MustCompile(`^Category(\d+)\.`)
 
+// maxRPCResponseBytes caps an NZBGet JSON-RPC reply. history and listgroups
+// return the whole set in one document, the same shape that made a 1 MiB cap
+// on Transmission's torrent-get too small for a large session (#1524), so this
+// matches the 64 MiB the Transmission and rTorrent clients settled on
+// afterwards. Before this the success path read the body with no cap at all
+// (#2357).
+const maxRPCResponseBytes int64 = 64 << 20
+
+// readRPCBody reads an RPC response under maxRPCResponseBytes. Unlike a bare
+// io.LimitReader it reports an over-limit body as an explicit error rather
+// than a half-JSON document that fails to parse (#1524).
+func readRPCBody(r io.Reader) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(r, maxRPCResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > maxRPCResponseBytes {
+		return nil, fmt.Errorf("NZBGet RPC response exceeded %d bytes — too many items to fetch in one request", maxRPCResponseBytes)
+	}
+	return body, nil
+}
+
 // Client interacts with the NZBGet JSON-RPC API.
 type Client struct {
 	baseURL   string
@@ -477,7 +499,7 @@ func (c *Client) call(ctx context.Context, method string, params []any, target a
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
-	raw, err := io.ReadAll(resp.Body)
+	raw, err := readRPCBody(resp.Body)
 	if err != nil {
 		return err
 	}

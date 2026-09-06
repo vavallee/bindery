@@ -641,7 +641,7 @@ func TestBookUpdate_AcceptsValidStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := bytes.NewBufferString(`{"status":"downloaded"}`)
+	body := bytes.NewBufferString(`{"status":"skipped"}`)
 	req := withURLParam(httptest.NewRequest(http.MethodPut, "/api/v1/book/"+strconv.FormatInt(book.ID, 10), body), "id", strconv.FormatInt(book.ID, 10))
 	rec := httptest.NewRecorder()
 	h.Update(rec, req)
@@ -649,8 +649,41 @@ func TestBookUpdate_AcceptsValidStatus(t *testing.T) {
 		t.Fatalf("expected 200 for valid status, got %d: %s", rec.Code, rec.Body.String())
 	}
 	got, _ := books.GetByID(ctx, book.ID)
-	if got.Status != models.BookStatusDownloaded {
-		t.Errorf("status should be 'downloaded', got %q", got.Status)
+	if got.Status != models.BookStatusSkipped {
+		t.Errorf("status should be 'skipped', got %q", got.Status)
+	}
+}
+
+// TestBookUpdate_RejectsRetiredDownloadStatuses pins the API half of #2374.
+// 'downloading' and 'downloaded' used to validate here even though no Bindery
+// code path ever wrote them, so this endpoint was the only way either value
+// could reach the column. Migration 082 rewrites the rows that got in that way,
+// and this is the guard that stops new ones arriving.
+func TestBookUpdate_RejectsRetiredDownloadStatuses(t *testing.T) {
+	for _, status := range []string{"downloading", "downloaded"} {
+		t.Run(status, func(t *testing.T) {
+			h, books, _, author, ctx := bookFixture(t)
+			book := &models.Book{
+				ForeignID: "B-RETIRED", AuthorID: author.ID, Title: "T", SortTitle: "t",
+				Status: models.BookStatusWanted, Genres: []string{},
+				MetadataProvider: "openlibrary", Monitored: true,
+			}
+			if err := books.Create(ctx, book); err != nil {
+				t.Fatal(err)
+			}
+
+			body := bytes.NewBufferString(`{"status":"` + status + `"}`)
+			req := withURLParam(httptest.NewRequest(http.MethodPut, "/api/v1/book/"+strconv.FormatInt(book.ID, 10), body), "id", strconv.FormatInt(book.ID, 10))
+			rec := httptest.NewRecorder()
+			h.Update(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400 for retired status %q, got %d: %s", status, rec.Code, rec.Body.String())
+			}
+			got, _ := books.GetByID(ctx, book.ID)
+			if got.Status != models.BookStatusWanted {
+				t.Errorf("status should be unchanged, got %q", got.Status)
+			}
+		})
 	}
 }
 

@@ -22,9 +22,10 @@ const (
 	// tool (import.mode=external). It is deliberately NON-terminal: the file
 	// has not yet been reconciled into the library, so the download is not
 	// "imported". The book stays Wanted so ScanLibrary can reconcile the file
-	// once the external tool places it; searchWanted skips books that have a
-	// download in this state so the release is not re-grabbed forever while the
-	// hand-off is outstanding (issue #706 finding 3).
+	// once the external tool places it; searchWanted skips the FORMAT this
+	// download is working toward so the release is not re-grabbed forever while
+	// the hand-off is outstanding (issue #706 finding 3). The book's other
+	// format, if it wants one, is still searched (#2365).
 	StateImportExternal DownloadState = "importExternal"
 	// StateImportHeld marks a completed drop-folder download whose format is
 	// being held back under pair gating (#942): a media_type=both book only
@@ -34,8 +35,10 @@ const (
 	// import_path — until the sibling completes and releases both together, or
 	// the pair-gating timeout drops it alone. Like StateImportExternal it is
 	// deliberately NON-terminal and is NOT swept by RecoverInterruptedImports;
-	// searchWanted skips books with a download in this state so the release is
-	// not re-grabbed while the hold is outstanding.
+	// searchWanted skips the held FORMAT so the release is not re-grabbed while
+	// the hold is outstanding. It must not skip the whole book: the sibling the
+	// hold is waiting for can only arrive via a search, so blocking both
+	// formats made the gate wait for something it had just prevented (#2365).
 	StateImportHeld DownloadState = "importHeld"
 )
 

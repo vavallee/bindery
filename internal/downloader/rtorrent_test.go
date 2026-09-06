@@ -190,6 +190,20 @@ func TestSendDownload_Rtorrent(t *testing.T) {
 	}
 }
 
+// resolvedTempDir is t.TempDir() with every symlink in the path resolved.
+// macOS hands back /var/... , which is an alias for /private/var/... , and
+// resolveRtorrentDataPath deliberately refuses any path whose parents contain
+// a symlink. Without this the deletion tests fail on macOS only (#2294), and
+// CI never sees it because every job runs on ubuntu-latest.
+func resolvedTempDir(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
 func TestRemoveDownload_Rtorrent(t *testing.T) {
 	t.Run("erases the torrent", func(t *testing.T) {
 		stub := newRtorrentStub(t, "1", "")
@@ -219,7 +233,7 @@ func TestRemoveDownload_Rtorrent(t *testing.T) {
 	t.Run("deletes the data when asked", func(t *testing.T) {
 		// rTorrent has no delete-with-data command, so Bindery removes the
 		// payload itself at the remapped local path before erasing.
-		root := t.TempDir()
+		root := resolvedTempDir(t)
 		payload := filepath.Join(root, "the-book")
 		if err := os.MkdirAll(payload, 0o755); err != nil {
 			t.Fatal(err)
@@ -344,13 +358,7 @@ func TestRtorrentStatus(t *testing.T) {
 // resolveRtorrentDataPath is the only place Bindery deletes a tree at a path a
 // remote service chose, so every guard gets an explicit negative case.
 func TestResolveRtorrentDataPath(t *testing.T) {
-	// Resolve the temp root up front: some platforms hand back a path that is
-	// itself reached through a symlink (/tmp → /private/tmp), and the guard
-	// under test deliberately refuses any symlinked component.
-	root, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	root := resolvedTempDir(t)
 	payload := filepath.Join(root, "downloads", "The Hobbit")
 	if err := os.MkdirAll(payload, 0o755); err != nil {
 		t.Fatal(err)

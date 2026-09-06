@@ -2323,6 +2323,27 @@ func (s *Scanner) SnapshotFinder() *LibrarySnapshot {
 // spell the same title differently: "Enders Game" vs "Ender's Game", "Die
 // Hoehle" vs "Die Höhle", "Der Prozess" vs "Der Prozeß" (#1646). It runs AFTER
 // the comma-suffix inversion, which needs the comma the fold would remove.
+//
+// Why this is not indexer.CanonicalDedupKey, despite the #1648 consolidation
+// that exists so these alphabets stop drifting: the article handling above is
+// deliberate and specific to filesystem names. Library layouts really do carry
+// inverted articles as folder and file names, "Darker Shade of Magic, A" being
+// the case PR #517 was opened for, and Calibre's own sort-title convention
+// produces them by default. CanonicalDedupKey does neither the inversion nor
+// the strip, and must not: it is stored verbatim in books.dedup_key and
+// compared with =, so every side of every comparison has to compute it the
+// same way.
+//
+// That is also the constraint on this function. The output of normalizeTitle
+// MUST NOT be compared against a stored dedup_key, or used to look one up.
+// Stripping the article guarantees a miss on any title that starts with one:
+// "The Fragile Threads of Power" keys as "the fragile threads of power" in the
+// database and normalizes to "fragile threads of power" here. Every caller
+// today (scanner.go titleMatch and the scanBook precompute, lookup.go's exact
+// title check) compares two in-memory strings that it normalized itself, which
+// is the only safe shape. Reach for indexer.CanonicalDedupKey or
+// indexer.MainTitleKey when the other side of the comparison came out of the
+// database.
 func normalizeTitle(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	// Invert comma-suffix form: check ", an" before ", a" to avoid prefix collision.
@@ -2351,8 +2372,13 @@ var titleStopwords = map[string]bool{
 	"and": true, "in": true, "to": true, "for": true,
 }
 
-// titleSigTokens returns the significant (2+ char, non-stopword) tokens of a
-// title, reduced through the shared title-comparison alphabet.
+// titleSigTokens returns the significant (long enough, non-stopword) tokens of
+// a title, reduced through the shared title-comparison alphabet.
+//
+// The floor is two BYTES of UTF-8, not two characters, and like the three-byte
+// one in newznab.SigWords that is deliberate: it scales the character
+// requirement by how much a script packs into a character. Do not rewrite it as
+// a rune count; see SigWords for what that would break.
 //
 // This used to keep only [a-z0-9] and treat every other rune as a separator,
 // which quietly destroyed non-ASCII titles: "Die Höhle" tokenised to
@@ -2588,6 +2614,12 @@ func authorTitleFromLayout(path string, roots ...string) (author, title string, 
 // ErrAlreadyRunning / Grimmory syncer's ErrSyncAlreadyRunning pattern.
 var ErrScanAlreadyRunning = errors.New("library scan already running")
 
+// ErrShuttingDown is returned by StartScan when the scan could not be launched
+// because the process is already draining its background jobs. The single-flight
+// gate is released before it is returned, so a restarted process starts clean.
+// Matches hardcoverlistsyncer.ErrShuttingDown.
+var ErrShuttingDown = errors.New("server is shutting down")
+
 // StartScan launches a library scan in the background and returns
 // immediately. If a scan is already in flight it returns
 // ErrScanAlreadyRunning so callers (the manual-scan endpoint) can surface a
@@ -2603,10 +2635,18 @@ func (s *Scanner) StartScan(ctx context.Context) error {
 	// never-cancelled WithoutCancel(request) context. Fall back to an untracked
 	// goroutine for tests/non-wired callers (#1458).
 	if s.jobs != nil {
-		s.jobs.Go("library-scan", func(ctx context.Context) {
+		// Go is a documented no-op once the group has begun shutting down, and
+		// the single-flight gate is already claimed above. Ignoring the return
+		// left scanRunning true for the rest of the process's life and answered
+		// the manual-scan endpoint with success for a scan that never ran
+		// (#2372).
+		if !s.jobs.Go("library-scan", func(ctx context.Context) {
 			defer s.scanRunning.Store(false)
 			s.scanLibrary(ctx)
-		})
+		}) {
+			s.scanRunning.Store(false)
+			return ErrShuttingDown
+		}
 	} else {
 		go func() {
 			defer s.scanRunning.Store(false)
@@ -3412,6 +3452,10 @@ func (s *Scanner) writeScanError(ctx context.Context, message string) {
 
 // writeScanResult persists the scan summary to the settings table under
 // "library.lastScan" so the UI can surface the result without polling logs.
+// The key is written as a string literal to avoid an import cycle; it is
+// api.SettingLibraryLastScan on the read side, where the settings endpoints
+// reserve it for admins because the blob carries absolute paths (#2361). Keep
+// the two spellings in sync.
 func (s *Scanner) writeScanResult(ctx context.Context, filesFound, reconciled, unmatched, alreadyTracked, tagReadFailed int, unmatchedFiles []unmatchedFile) {
 	s.writeScanResultWithError(ctx, filesFound, reconciled, unmatched, alreadyTracked, tagReadFailed, unmatchedFiles, "")
 }

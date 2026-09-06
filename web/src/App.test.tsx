@@ -57,7 +57,11 @@ vi.mock('./theme', () => ({ useTheme: () => {} }))
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string) => {
+    // Resolves like real i18next does: the label table wins, then the inline
+    // default the caller passed, then the bare key. Honouring the default
+    // matters because components written with t(key, 'Fallback') would
+    // otherwise render their key here and read as missing.
+    t: (key: string, fallback?: unknown, vars?: Record<string, unknown>) => {
       const m: Record<string, string> = {
         'nav.authors': 'Authors', 'nav.books': 'Books', 'nav.wanted': 'Wanted',
         'nav.import': 'Import',
@@ -66,7 +70,12 @@ vi.mock('react-i18next', () => ({
         'nav.search': 'Search',
         'login.signOut': 'Sign out', 'login.signedInAs': 'Signed in as',
       }
-      return m[key] ?? key
+      if (m[key]) return m[key]
+      if (typeof fallback !== 'string') return key
+      const interpolations = (vars ?? (typeof fallback === 'string' ? undefined : fallback)) as Record<string, unknown> | undefined
+      return interpolations
+        ? fallback.replace(/\{\{(\w+)\}\}/g, (_m, name: string) => String(interpolations[name] ?? ''))
+        : fallback
     },
   }),
 }))
@@ -118,16 +127,64 @@ describe('App — /authors alias', () => {
     expect(window.location.pathname).toBe('/')
   })
 
-  // Guards the failure the alias fixes: a path with no route and no catch-all
-  // renders the shell with nothing inside it. If someone later removes the
-  // alias, this is the shape the regression takes.
-  it('still renders the shell chrome around an unrouted path', () => {
+  // The alias is still the right answer for /authors specifically, because it
+  // means something. Everything else now lands on the catch-all below.
+  it('does not send an unrouted path to the authors page', () => {
     window.history.pushState(null, '', '/definitely-not-a-route')
 
     renderShell()
 
     expect(screen.queryByTestId('page-authors')).not.toBeInTheDocument()
     expect(screen.queryByTestId('page-books')).not.toBeInTheDocument()
+  })
+})
+
+describe('App — catch-all route', () => {
+  // Before the catch-all, an unrouted path rendered the header and nav around
+  // an empty <main>. That reads as a broken app rather than a wrong address,
+  // which is exactly how the /authors report arrived.
+  it('says the page was not found instead of rendering an empty main', () => {
+    window.history.pushState(null, '', '/definitely-not-a-route')
+
+    renderShell()
+
+    expect(screen.getByText('Page not found')).toBeInTheDocument()
+    expect(screen.getByText(/definitely-not-a-route/)).toBeInTheDocument()
+  })
+
+  it('offers a way back rather than stranding the user', () => {
+    window.history.pushState(null, '', '/nope')
+
+    renderShell()
+
+    expect(screen.getByRole('link', { name: 'Go to Authors' })).toHaveAttribute('href', '/')
+  })
+})
+
+describe('App — /settings/:tab deep links', () => {
+  // Settings addresses tabs with ?tab=, but /settings/indexers is the shape
+  // people type and share. It matched no route, so before the catch-all it was
+  // a blank page and after it would have been a 404 for a URL that plainly
+  // means something.
+  it('redirects the path form to the canonical query form', async () => {
+    window.history.pushState(null, '', '/settings/indexers')
+
+    renderShell()
+
+    expect(await screen.findByTestId('page-settings')).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/settings')
+    expect(window.location.search).toBe('?tab=indexers')
+  })
+
+  // SettingsPage validates the value against ALL_TABS and falls back to
+  // General, so an unknown tab must still reach Settings rather than the 404.
+  it('still reaches settings for an unrecognised tab', async () => {
+    window.history.pushState(null, '', '/settings/not-a-tab')
+
+    renderShell()
+
+    expect(await screen.findByTestId('page-settings')).toBeInTheDocument()
+    expect(screen.queryByText('Page not found')).not.toBeInTheDocument()
   })
 })
 

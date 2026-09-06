@@ -10,11 +10,36 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/useragent"
 )
+
+// maxResponseBytes caps a Prowlarr API reply. GET /api/v1/indexer returns
+// every configured indexer with its full definition in one document, so the
+// cap has to be generous — the 1 MiB cap on Transmission's torrent-get was too
+// small for exactly this shape of response (#1524) — but it must exist: the
+// success path here read the body with no cap at all, so only the client
+// timeout bounded how much a misbehaving host could make Bindery hold (#2357).
+// 32 MiB matches the cap the newznab client uses on indexer feeds. A var so
+// tests can lower it instead of allocating 32 MiB.
+var maxResponseBytes int64 = 32 << 20
+
+// readCapped reads a Prowlarr response under maxResponseBytes. Unlike a bare
+// io.LimitReader it reports an over-limit body as an explicit error rather
+// than a truncated document that fails to decode (#1524).
+func readCapped(r io.Reader) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(r, maxResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > maxResponseBytes {
+		return nil, fmt.Errorf("prowlarr response exceeded %d bytes", maxResponseBytes)
+	}
+	return body, nil
+}
 
 // Client calls the Prowlarr HTTP API.
 type Client struct {
@@ -38,8 +63,54 @@ func NewWithTimeout(baseURL, apiKey string, timeout time.Duration) *Client {
 		// to the same Prowlarr/Jackett hosts. Without the proxy transport, a
 		// Prowlarr reachable only through the configured egress proxy fails on
 		// the sync/test path while indexer searches succeed (#proxy-bypass).
-		http: &http.Client{Timeout: timeout, Transport: httpsec.DefaultProxyTransport()},
+		http: &http.Client{Timeout: timeout, Transport: sharedGuardedTransport()},
 	}
+}
+
+var (
+	guardedTransportOnce   sync.Once
+	guardedTransportShared http.RoundTripper
+)
+
+// sharedGuardedTransport returns the process-wide Prowlarr transport, built
+// once so every client keeps sharing a single connection pool the way they did
+// when they all held httpsec.DefaultProxyTransport directly. A syncer builds a
+// client per run, and a pool per run is not something to trade for the dial
+// guard.
+//
+// Building it once is safe because ConfigureOutboundProxy runs at startup,
+// before any outbound client is constructed, so the proxy decision baked in
+// here is the final one.
+func sharedGuardedTransport() http.RoundTripper {
+	guardedTransportOnce.Do(func() { guardedTransportShared = guardedTransport() })
+	return guardedTransportShared
+}
+
+// guardedTransport mirrors the image proxy and notifier transports. On the
+// direct path it installs a per-dial SSRF re-validation, closing the DNS-rebind
+// TOCTOU between the up-front ValidateOutboundURL in the Prowlarr handlers
+// (internal/api/prowlarr.go) and the connect that actually happens (#2353).
+//
+// When an outbound proxy is configured the dial targets the operator-trusted
+// proxy rather than the Prowlarr host, so a per-dial check would re-validate
+// the proxy's own address and reject a LAN or loopback proxy. In that shape we
+// return the shared proxy transport unchanged and the up-front validation
+// carries the guard, which is all a rebind check could see past a proxy anyway.
+//
+// PolicyLANLoopback matches what the create and update handlers validate
+// against: a Prowlarr on the LAN, or on the Bindery host itself, is the normal
+// deployment.
+func guardedTransport() http.RoundTripper {
+	base := httpsec.DefaultProxyTransport()
+	if httpsec.ProxyFunc() != nil {
+		return base
+	}
+	if t, ok := base.(*http.Transport); ok {
+		c := t.Clone()
+		c.DialContext = httpsec.NewDialContext(httpsec.PolicyLANLoopback)
+		return c
+	}
+	return &http.Transport{DialContext: httpsec.NewDialContext(httpsec.PolicyLANLoopback)}
 }
 
 // remoteIndexer is the shape of each element in GET /api/v1/indexer.
@@ -439,5 +510,5 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
-	return io.ReadAll(resp.Body)
+	return readCapped(resp.Body)
 }

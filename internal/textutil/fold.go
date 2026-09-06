@@ -2,8 +2,11 @@ package textutil
 
 import (
 	"strings"
+	"sync"
 	"unicode"
+	"unicode/utf8"
 
+	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -26,6 +29,26 @@ import (
 //     separator. Unicode letters survive so CJK/Cyrillic titles still tokenise.
 //     Used by indexer.NormalizeRelease, newznab.SigWords, importer title
 //     matching. Producers and consumers of a title comparison MUST share it.
+//
+//  1a. EDITION DEDUP — indexer.CanonicalDedupKey / NormalizeTitleForDedup.
+//     Alphabet (1)'s sibling, and the one place the two deliberately DISAGREE:
+//     an ampersand EXPANDS to " and " here and is a SEPARATOR in (1). That is
+//     not an oversight to tidy up. Dedup asks "are these the same book", and
+//     providers send "Foundation & Empire" and "Foundation and Empire" for one
+//     book, so the two spellings must produce one key.
+//     Alphabet (1) must NOT expand, and the reason is an asymmetry rather than
+//     the fold. Both the phrase and the haystack fold through (1), so expanding
+//     on both sides would be symmetric and harmless on its own. What breaks is
+//     that the keyword side then drops "and" as a stop word (newznab.SigWords)
+//     and the haystack side does not, while indexer.phraseRegex joins its parts
+//     with a separator run that no letter may interrupt. Under expansion a
+//     release named "Foundation.&.Empire" folds to a haystack reading
+//     "foundation and empire" while its phrase stays [foundation, empire], and
+//     the "and" between them loses the hit.
+//     Nothing may compare a key from (1) against a key from (1a). Today
+//     nothing does: every caller stays inside one or the other. Before making
+//     them agree, read TestDedupAndTitleMatchAlphabetsDifferOnAmpersand, which
+//     exists to explain why they do not.
 //
 //  2. AUTHOR IDENTITY — NormalizeAuthorName (author.go).
 //     Diacritics are STRIPPED (ö→o) rather than expanded, because author names
@@ -59,8 +82,28 @@ import (
 //     newznab package (an import cycle keeps it out of here) but is registered in
 //     internal/normdrift alongside the folds above.
 //
+//  6. LIBRARY SEARCH — FoldForSearch.
+//     The recall alphabet for the search box, and the only one that is STORED
+//     and matched with SQL LIKE (books.search_key, authors.search_key,
+//     author_aliases.search_key). SQLite folds ASCII A–Z and nothing else, in
+//     LIKE and in COLLATE NOCASE alike, so "muller" never found "Müller" and a
+//     decomposed query never found a composed row (#1660). This fold is
+//     deliberately the most aggressive one here: NFKC (so full-width ＴＯＫＹＯ
+//     and the ﬁ ligature reach the same key as their plain spellings), FULL
+//     Unicode case folding rather than ToLower (so Straße meets STRASSE),
+//     Latin and Greek diacritics stripped, "&" expanded to "and".
+//     It is lossy BY DESIGN and is a RECALL key, never an identity: two
+//     distinct works may share one search_key, which only means both are
+//     offered to someone who typed either spelling. Never compare identities
+//     with it, never store it as a foreign ID, never show it to a user.
+//
 // If you are about to write a `strings.ToLower` next to a comparison, one of
-// the first four above is what you actually want.
+// the first four above is what you actually want. If you are about to write one
+// next to a SQL LIKE, it is (6).
+//
+// docs/search-design.md carries the reasoning behind each choice and the
+// primary sources it rests on, and internal/normdrift asserts the differences
+// so a future edit cannot quietly erase one.
 
 // TransliterateUmlauts maps German umlaut characters to their common ASCII
 // two-letter equivalents (ä→ae, ö→oe, ü→ue, ß→ss). German NZB indexers almost
@@ -169,15 +212,43 @@ func FoldForSlug(s string) string {
 	}
 	s = strings.ToLower(s)
 	s = greekFinalSigma.Replace(s)
-	s = FoldNonDecomposableLatin(s)
+	// Marks first, table second, for the reason given in FoldForSearch: the
+	// table keys on the bare æ ø œ ł ß, and a precomposed ǣ ǽ ǿ only becomes
+	// one of them once NFD has dropped its accent. Run the other way round,
+	// this function was not idempotent (ǣ went to æ, and æ to ae), which is a
+	// defect in a function whose whole contract is a stable identity.
+	//
+	// This does change the slug for a title containing one of those six code
+	// points, and seriesSlug builds a stored series ForeignID from it, so such
+	// a series re-keys once. The set is Old English and Old Norse scholarly
+	// orthography and the alternative was leaving an identity function that
+	// gives two answers for one name.
+	s = stripLatinGreekMarks(s)
+	return FoldNonDecomposableLatin(s)
+}
 
+// stripLatinGreekMarks removes the combining marks that sit on a Latin or Greek
+// base and leaves every other script's marks in place. Shared by FoldForSlug
+// (4) and FoldForSearch (6) so the two cannot drift apart on the one decision
+// that matters here: WHICH scripts have their marks dropped. See FoldForSlug
+// for why the answer is Latin and Greek and nothing else.
+//
+// Input must already be lowercased and NFC-composed. Runes are decomposed one
+// at a time rather than by normalizing the whole string, so a mark that never
+// composed — and therefore belongs to whatever precedes it — is judged by its
+// base's script rather than by its own, which has none.
+func stripLatinGreekMarks(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
 	prevFoldable := false
 	for _, r := range s {
 		switch {
 		case foldsDiacritics(r):
-			// Composed accented letter: decompose and keep only the base.
+			// Composed accented letter: decompose and keep only the base. NFD
+			// is a FULL decomposition, so a Vietnamese letter carrying two
+			// stacked marks (ộ) loses both — the case SQLite's own
+			// remove_diacritics=1 documents as a bug it cannot fix without
+			// breaking existing indexes.
 			for _, dr := range norm.NFD.String(string(r)) {
 				if !unicode.Is(unicode.Mn, dr) {
 					b.WriteRune(dr)
@@ -220,3 +291,217 @@ var nonDecomposableFolder = strings.NewReplacer(
 	"ı", "i",
 	"ŀ", "l",
 )
+
+// FoldForSearch reduces s to alphabet (6): the key stored in books.search_key,
+// authors.search_key and author_aliases.search_key, and matched against a
+// query folded by this same function.
+//
+// Each step earns its place:
+//
+//	NFKC                     ＴＯＫＹＯ→tokyo, ﬁre→fire, Ⅷ→viii, halfwidth
+//	                         ﾊﾘｰ･ﾎﾟｯﾀｰ→ハリー・ポッター. Compatibility folding is
+//	                         lossy and UAX #15 §1.2 warns against applying it to
+//	                         arbitrary text, which is exactly why it is confined
+//	                         to a key nobody ever displays.
+//	cases.Fold               FULL case folding, not ToLower: ß→ss, ẞ→ss, ς→σ,
+//	                         İ→i+U+0307 (the mark goes below). Unicode §3.13 is
+//	                         explicit that lowercasing is not caseless matching —
+//	                         ToLower leaves ß alone, so "Straße" and "STRASSE"
+//	                         would never meet.
+//	FoldNonDecomposableLatin ø ł æ œ ß þ ð đ ħ ı ŀ have NO decomposition, so NFD
+//	                         alone leaves "Nesbø" unreachable by "nesbo". This is
+//	                         the withdrawn UTR #30 distinction between accent
+//	                         removal and diacritic removal, and it is also the
+//	                         gap in SQLite's own remove_diacritics.
+//	stripLatinGreekMarks     Latin and Greek only, for the reason spelled out on
+//	                         FoldForSlug: a kana dakuten or a Devanagari nukta is
+//	                         category Mn but part of the letter, and dropping it
+//	                         merges unrelated words.
+//	ё→е                      Cyrillic does not fold as a script here, but Russian
+//	                         is routinely typed with е for ё, so this ONE pair
+//	                         folds for recall. й stays distinct from и, because
+//	                         those are two letters of the alphabet.
+//	NFC                      Recompose. NFD leaves Hangul as conjoining jamo,
+//	                         which would never meet a composed syllable stored
+//	                         from a provider.
+//	apostrophes, U+30FB      DELETED, not turned into separators, so "Poseidon's"
+//	                         meets "Poseidons" (#2042) and "ハリー・ポッター" meets
+//	                         "ハリーポッター" (#1645).
+//	& → " and "              So "Foundation & Empire" meets "Foundation and
+//	                         Empire". Deliberately NOT done in FoldForTitleMatch:
+//	                         its keyword side drops "and" as a stop word and its
+//	                         haystack side does not, so expanding there would
+//	                         leave an "and" sitting inside a phrase that no
+//	                         longer contains it, and ContainsPhrase requires the
+//	                         parts uninterrupted by any letter. See alphabet 1a
+//	                         in the header.
+//
+// The result is folded, single-space separated and trimmed. Callers own
+// tokenisation policy, as with FoldForTitleMatch — only the character rewriting
+// is shared.
+func FoldForSearch(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if isASCII(s) {
+		return foldASCIIForSearch(s)
+	}
+	s = norm.NFKC.String(s)
+	s = foldCase(s)
+	// Marks first, table second. The table keys on the bare letters (æ ø œ ł
+	// ß), and a precomposed form like ǣ (U+01E3, ae with macron) only becomes
+	// one of them after NFD decomposition drops the macron. Running the table
+	// first meant ǣ, ǽ and ǿ never reached it: "Ǣlfric" folded to "ælfric"
+	// while the commoner spelling "Ælfric" folded to "aelfric", so the two
+	// were mutually unreachable, and FoldForSearch was not idempotent on those
+	// six code points. The table's own outputs are ASCII, so it has nothing
+	// left to strip afterwards and the order costs nothing.
+	s = stripLatinGreekMarks(s)
+	s = FoldNonDecomposableLatin(s)
+	s = cyrillicYoFolder.Replace(s)
+	s = norm.NFC.String(s)
+	s = strings.Map(func(r rune) rune {
+		if IsApostrophe(r) || r == katakanaMiddleDot {
+			return -1
+		}
+		return r
+	}, s)
+	s = ampersandExpander.Replace(s)
+	mapped := strings.Map(func(r rune) rune {
+		// Marks are word characters here, unlike in FoldForTitleMatch. Any mark
+		// still standing has already survived stripLatinGreekMarks, so it is one
+		// of the meaning-bearing kind, and in several scripts it is not even
+		// combining: a Devanagari vowel sign (ा, category Mc) is a SPACING mark,
+		// so treating it as a separator silently deleted it and folded "कमला"
+		// onto "कमल" — the #1645 collapse arriving through the separator branch
+		// instead of the diacritic one. openlibrary.seriesSlug makes the same
+		// call for the same reason.
+		if unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.IsMark(r) {
+			return r
+		}
+		return ' '
+	}, s)
+	return strings.Join(strings.Fields(mapped), " ")
+}
+
+// isASCII reports whether s is entirely 7-bit ASCII.
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
+}
+
+// foldASCIIForSearch is FoldForSearch for input that is already 7-bit ASCII,
+// which most of an English-language catalogue is. Every Unicode step in the
+// general path is provably the identity on ASCII — NFKC and NFC leave it alone,
+// case folding agrees with ToLower over A-Z, there are no marks to strip, and
+// no ASCII character appears in the non-decomposable table — so this shortcut
+// changes nothing except the cost, which matters because the general path runs
+// on every book and author write and again on every keystroke in the search box.
+//
+// TestFoldForSearchASCIIFastPathAgrees proves the equivalence over the fixture
+// corpus and an exhaustive sweep of ASCII, rather than asking a reader to take
+// the paragraph above on trust.
+func foldASCIIForSearch(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 8)
+	space := false
+	write := func(r byte) {
+		if space && b.Len() > 0 {
+			b.WriteByte(' ')
+		}
+		space = false
+		b.WriteByte(r)
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\'' || c == '`':
+			// Apostrophes are deleted, not separated, so "Poseidon's" meets
+			// "Poseidons". Deliberately not a separator and not a word char.
+		case c == '&':
+			// Expands to a word of its own, spaces on both sides.
+			if b.Len() > 0 {
+				b.WriteByte(' ')
+			}
+			b.WriteString("and")
+			space = true
+		case c >= 'A' && c <= 'Z':
+			write(c + ('a' - 'A'))
+		case (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'):
+			write(c)
+		default:
+			space = true
+		}
+	}
+	return b.String()
+}
+
+// foldCasers hands out Unicode case folders one goroutine at a time.
+//
+// A cases.Caser is stateful, so sharing one across goroutines corrupts its
+// buffers — the trap #1374 hit with a shared accent stripper. Building one per
+// call is the safe answer and was the first one here, but it is also the
+// expensive part of this function: it made FoldForSearch four times the cost of
+// FoldForTitleMatch, on a path that runs for every book and author write and
+// again for every keystroke in the search box. A pool keeps the safety property
+// (a Caser is only ever held by one goroutine) without paying to rebuild the
+// tables. Caser.String resets before it transforms, so a pooled instance needs
+// no cleanup on the way in or out.
+var foldCasers = sync.Pool{New: func() any { c := cases.Fold(); return &c }}
+
+func foldCase(s string) string {
+	c := foldCasers.Get().(*cases.Caser)
+	defer foldCasers.Put(c)
+	return c.String(s)
+}
+
+// FoldForSearchRev is the revision of FoldForSearch. db.backfillSearchKeys
+// records it after rewriting the search_key columns and skips its table scans
+// while the stored value still matches, so a scan runs on the first boot after
+// this function's output can change and never otherwise (#2346's pattern).
+//
+// BUMP THIS whenever a change to FoldForSearch, stripLatinGreekMarks or
+// FoldNonDecomposableLatin can produce a different key for the same input.
+// Missing a bump leaves existing rows folded by the old rules while queries are
+// folded by the new ones — the two-alphabet failure this whole file exists to
+// prevent. Bumping when nothing changed costs three table scans once, so when
+// in doubt, bump.
+const FoldForSearchRev = 1
+
+// IsApostrophe reports whether r is one of the apostrophe forms that appear in
+// book titles: ASCII, backtick (a common mojibake for the curly form), both
+// curly quotes, and MODIFIER LETTER APOSTROPHE, which is what some providers
+// emit for Irish and Hawaiian names.
+//
+// The set is shared so the folds cannot disagree about what an apostrophe is.
+// Note that FoldForTitleMatch still uses the narrower two-form apostropheStripper
+// above; widening it changes release matching and is tracked separately (#1660).
+func IsApostrophe(r rune) bool {
+	switch r {
+	case '\'', '`', '‘', '’', 'ʼ':
+		return true
+	}
+	return false
+}
+
+// katakanaMiddleDot separates the parts of a transliterated foreign name in
+// Japanese ("ハリー・ポッター"). Catalogues are inconsistent about writing it, so
+// for search it is deleted rather than treated as a separator: deleting makes
+// the two spellings converge, whereas separating leaves them two tokens apart.
+const katakanaMiddleDot = '・'
+
+// cyrillicYoFolder folds ё onto е. Applied after case folding, so only the
+// lowercase pair needs handling. This is the single deliberate exception to
+// "Cyrillic marks are letters": Russian keyboards and Russian publishing both
+// treat ё as optional, so a catalogue and a searcher routinely disagree about it.
+var cyrillicYoFolder = strings.NewReplacer("ё", "е")
+
+// ampersandExpander spells out "&" so it survives the non-alphanumeric pass as
+// a word rather than a separator. Spaces on both sides: "Q&A" must become
+// "q and a", not "qanda".
+var ampersandExpander = strings.NewReplacer("&", " and ")

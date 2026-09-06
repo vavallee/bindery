@@ -1,15 +1,20 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useConfirmDialog } from '../components/useConfirmDialog'
 import { api, Book, PendingRelease, QueueItem } from '../api/client'
 import BookAuthorLink from '../components/BookAuthorLink'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
+import { usePolling } from '../components/usePolling'
 import { summarizeError, ERROR_SUMMARY_LEN } from './queueError'
 import { btn, btnSize } from '../components/buttons'
+import { formatBytes } from '../util/format'
+import { downloadStatusBadge, isFailed, isMatchable, isRetryable } from '../components/downloadStatus'
 
 export default function QueuePage() {
   const { t } = useTranslation()
+  const { confirm, confirmDialog } = useConfirmDialog()
   const [queue, setQueue] = useState<QueueItem[]>([])
   const [pending, setPending] = useState<PendingRelease[]>([])
   const [loading, setLoading] = useState(true)
@@ -30,36 +35,32 @@ export default function QueuePage() {
   const [bulkResult, setBulkResult] = useState<string | null>(null)
   const selectAllRef = useRef<HTMLInputElement>(null)
 
-  const load = () => {
+  // Guard against stale responses and set-state-after-unmount: `mounted` is
+  // checked before every setState and flipped on unmount, so a poll that
+  // resolves after a newer tick or after unmount is ignored. Mirrors
+  // AuthorsPage's poll guard.
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
+
+  const load = useCallback(() => {
     Promise.all([
       api.listQueue(),
       api.listPending(),
     ]).then(([q, p]) => {
+      if (!mounted.current) return
       setQueue(q)
       setPending(p)
-    }).catch(console.error).finally(() => setLoading(false))
-  }
-
-  // Guard against stale responses and set-state-after-unmount: a `cancelled`
-  // flag captured in the effect is checked before every setState and flipped in
-  // cleanup, so a poll that resolves after a newer tick or after unmount is
-  // ignored. Mirrors AuthorsPage's poll guard.
-  useEffect(() => {
-    let cancelled = false
-    const run = () => {
-      Promise.all([
-        api.listQueue(),
-        api.listPending(),
-      ]).then(([q, p]) => {
-        if (cancelled) return
-        setQueue(q)
-        setPending(p)
-      }).catch(console.error).finally(() => { if (!cancelled) setLoading(false) })
-    }
-    run()
-    const interval = setInterval(run, 5000)
-    return () => { cancelled = true; clearInterval(interval) }
+    }).catch(console.error).finally(() => { if (mounted.current) setLoading(false) })
   }, [])
+
+  useEffect(() => { load() }, [load])
+
+  // Poll while the tab is visible. usePolling pauses on document.hidden, so a
+  // queue left open in a background window stops asking (#2360).
+  usePolling(load, 5000)
 
   useEffect(() => {
     document.title = 'Queue · Bindery'
@@ -194,44 +195,25 @@ export default function QueuePage() {
   }
 
 
-  const statusLabels: Record<string, string> = {
-    grabbed: 'Grabbed',
-    downloading: 'Downloading',
-    completed: 'Completed',
-    importPending: 'Import Pending',
-    importing: 'Importing',
-    imported: 'Imported',
-    failed: 'Failed',
-    importFailed: 'Import Failed',
-    importBlocked: 'Import Blocked',
-  }
-
-  // Status pill (chip) styles. Saturated red is reserved for these small chips
-  // — error detail below is rendered muted, not as a full red row.
-  const statusChip: Record<string, string> = {
-    grabbed: 'bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300',
-    downloading: 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300',
-    completed: 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300',
-    importPending: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300',
-    importing: 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300',
-    imported: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
-    failed: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300',
-    importFailed: 'bg-orange-100 text-orange-900 dark:bg-orange-950 dark:text-orange-300',
-    importBlocked: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300',
-  }
-  const FAILED_STATUSES = new Set(['failed', 'importFailed', 'importBlocked'])
-  const failedItems = queue.filter(q => FAILED_STATUSES.has(q.status))
-  // A download can be manually matched/retried when its files are waiting: an
-  // unmatched import failure, or one blocked after exhausting its retry budget
-  // ("stuck after three attempts", #1589). A plain 'failed' download never got
-  // files, so it isn't matchable.
-  const isMatchable = (status: string) => status === 'importFailed' || status === 'importBlocked'
+  // Labels, chip colours and the failed/retryable/matchable predicates all come
+  // from one table keyed by every state internal/models/download_state.go
+  // defines, so they cannot drift apart (#2342).
+  const failedItems = queue.filter(q => isFailed(q.status))
 
   // Bulk actions over failed/blocked items, done client-side over the existing
-  // per-item endpoints (no new API). Retry only applies to importFailed.
+  // per-item endpoints (no new API). Retry covers every state the retry-import
+  // endpoint accepts, which is importFailed AND importBlocked. The button used
+  // to act on importFailed alone while the count beside it included all three
+  // failed states (#2336). A plain 'failed' grab produced no file, so there is
+  // nothing to re-import and it stays out.
   const [bulkBusy, setBulkBusy] = useState(false)
   const clearAllFailed = async () => {
-    if (failedItems.length === 0 || !confirm(t('queue.clearAllConfirm', { count: failedItems.length, defaultValue: 'Remove {{count}} failed item(s) from the queue?' }))) return
+    if (failedItems.length === 0) return
+    if (!await confirm({
+      title: t('common.confirmTitle'),
+      body: t('queue.clearAllConfirm', { count: failedItems.length, defaultValue: 'Remove {{count}} failed item(s) from the queue?' }),
+      confirmLabel: t('common.remove'),
+    })) return
     setBulkBusy(true)
     try {
       await Promise.all(failedItems.map(it => api.deleteFromQueue(it.id, false).catch(() => {})))
@@ -241,7 +223,7 @@ export default function QueuePage() {
     }
   }
   const retryAllFailed = async () => {
-    const retryable = queue.filter(q => q.status === 'importFailed')
+    const retryable = queue.filter(q => isRetryable(q.status))
     if (retryable.length === 0) return
     setBulkBusy(true)
     try {
@@ -257,7 +239,11 @@ export default function QueuePage() {
   // immediately re-grab them — the recovery path for an accidental mass import.
   const removeSelected = async () => {
     if (selectedIds.size === 0) return
-    if (!confirm(t('queue.removeSelectedConfirm', { count: selectedIds.size, defaultValue: 'Remove {{count}} item(s) from the queue?' }))) return
+    if (!await confirm({
+      title: t('common.confirmTitle'),
+      body: t('queue.removeSelectedConfirm', { count: selectedIds.size, defaultValue: 'Remove {{count}} item(s) from the queue?' }),
+      confirmLabel: t('common.remove'),
+    })) return
     setBulkBusy(true)
     setBulkResult(null)
     try {
@@ -276,12 +262,6 @@ export default function QueuePage() {
     } finally {
       setBulkBusy(false)
     }
-  }
-
-  const formatSize = (bytes: number) => {
-    if (bytes > 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB'
-    if (bytes > 1048576) return (bytes / 1048576).toFixed(1) + ' MB'
-    return (bytes / 1024).toFixed(0) + ' KB'
   }
 
   const formatRelativeTime = (timestamp: string): string => {
@@ -317,6 +297,7 @@ export default function QueuePage() {
 
   return (
     <div>
+      {confirmDialog}
       <h2 className="text-2xl font-bold mb-6">{t('queue.title')}</h2>
 
       {loading ? (
@@ -336,7 +317,7 @@ export default function QueuePage() {
                     {t('queue.failedCount', { count: failedItems.length, defaultValue: '{{count}} failed' })}
                   </span>
                   <div className="flex gap-2">
-                    {queue.some(q => q.status === 'importFailed') && (
+                    {queue.some(q => isRetryable(q.status)) && (
                       <button
                         onClick={retryAllFailed}
                         disabled={bulkBusy}
@@ -426,10 +407,8 @@ export default function QueuePage() {
                     <h3 className="font-medium text-sm truncate">{item.title}</h3>
                     <BookAuthorLink book={item.book} />
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs">
-                      <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium ${statusChip[item.status] ?? 'bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300'}`}>
-                        {statusLabels[item.status] ?? item.status}
-                      </span>
-                      <span className="text-slate-600 dark:text-zinc-500">{formatSize(item.size)}</span>
+                      <DownloadStatusChip status={item.status} />
+                      <span className="text-slate-600 dark:text-zinc-500">{formatBytes(item.size)}</span>
                       {item.percentage && (
                         <span className="text-blue-400">{item.percentage}%</span>
                       )}
@@ -448,6 +427,7 @@ export default function QueuePage() {
                         ) : null
                       })()}
                     </div>
+                    <DownloadStatusHint status={item.status} />
                     {/* Retry import clears error_message, so a re-armed row would
                         otherwise show an "Import Failed" pill with no explanation
                         until the next scanner check writes a new one. */}
@@ -564,7 +544,7 @@ export default function QueuePage() {
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs">
                         <span className="text-amber-600 dark:text-amber-400">{item.reason}</span>
                         {item.size > 0 && (
-                          <span className="text-slate-500 dark:text-zinc-500">{formatSize(item.size)}</span>
+                          <span className="text-slate-500 dark:text-zinc-500">{formatBytes(item.size)}</span>
                         )}
                         {item.quality && (
                           <span className="text-slate-500 dark:text-zinc-500">{item.quality}</span>
@@ -641,6 +621,38 @@ export default function QueuePage() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// DownloadStatusChip renders the status pill from the shared download-state
+// table, so the queue can never show a raw enum for a state the backend knows
+// about (#2339). The tooltip carries the explanation for the two non-terminal
+// hand-off states.
+function DownloadStatusChip({ status }: { status: string }) {
+  const { t } = useTranslation()
+  const badge = downloadStatusBadge(status, t)
+  return (
+    <span
+      title={badge.description}
+      className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium ${badge.chip}`}
+    >
+      {badge.label}
+    </span>
+  )
+}
+
+// DownloadStatusHint is the secondary line under a row for states whose name
+// does not explain itself: importExternal ("waiting for the external importer")
+// and importHeld ("held until the paired format arrives"). Both sit in the
+// queue indefinitely by design, so the row has to say why.
+function DownloadStatusHint({ status }: { status: string }) {
+  const { t } = useTranslation()
+  const { description } = downloadStatusBadge(status, t)
+  if (!description) return null
+  return (
+    <div className="mt-1 text-xs text-slate-600 dark:text-zinc-400 bg-slate-200/60 dark:bg-zinc-800/60 rounded px-2 py-1">
+      {description}
     </div>
   )
 }

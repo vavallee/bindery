@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, useLocation } from 'react-router'
+import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, useLocation, useParams } from 'react-router'
 import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from './api/client'
@@ -60,6 +60,41 @@ function PageLoadingFallback() {
   return (
     <div className="py-10 text-center text-sm text-slate-600 dark:text-zinc-500">
       {t('common.loading')}
+    </div>
+  )
+}
+
+// Settings addresses its tabs with ?tab=, but /settings/indexers is the shape
+// people type and paste. It matched no route, and with the catch-all below it
+// would now render "not found" for a URL that plainly means something. Redirect
+// it to the canonical query form instead. SettingsPage validates the value
+// against ALL_TABS, so an unknown tab lands on General rather than breaking.
+function SettingsTabRedirect() {
+  const { tab } = useParams<{ tab: string }>()
+  return <Navigate to={`/settings?tab=${encodeURIComponent(tab ?? '')}`} replace />
+}
+
+// Catch-all. Without it an unrouted path rendered the header and nav around an
+// empty <main>, which reads as a broken app rather than a wrong address. That is
+// the failure /authors used to have (see the comment on its alias below).
+function NotFoundPage() {
+  const { t } = useTranslation()
+  const location = useLocation()
+
+  return (
+    <div className="py-16 text-center">
+      <p className="text-lg font-semibold text-slate-800 dark:text-zinc-200">
+        {t('notFound.title', 'Page not found')}
+      </p>
+      <p className="mt-2 text-sm text-fg-muted">
+        {t('notFound.body', 'There is nothing at {{path}}.', { path: location.pathname })}
+      </p>
+      <Link
+        to="/"
+        className="inline-block mt-6 px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium"
+      >
+        {t('notFound.home', 'Go to Authors')}
+      </Link>
     </div>
   )
 }
@@ -272,7 +307,9 @@ function Shell() {
             <Route path="/search" element={<SearchPage />} />
             <Route path="/blocklist" element={<Navigate to="/settings?tab=blocklist" replace />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/settings/:tab" element={<SettingsTabRedirect />} />
             {isAdmin && <Route path="/users" element={<UsersPage />} />}
+            <Route path="*" element={<NotFoundPage />} />
           </Routes>
           </RoutedErrorBoundary>
         </Suspense>

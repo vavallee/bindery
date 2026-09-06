@@ -59,8 +59,17 @@ func NormalizeTitleForDedup(title string) string {
 //     forms) are INTRA-word and are DELETED, so "Poseidon's Arrow" folds onto
 //     "Poseidons Arrow". Replacing them with a space instead yields
 //     "poseidon s arrow", which matches neither spelling.
+//   - An ampersand is a SPELLING of the word "and", not punctuation, so it
+//     expands rather than separating. "Foundation & Empire" and "Foundation
+//     and Empire" are the same book and providers disagree about which form to
+//     send; as a separator they produced "foundation empire" and "foundation
+//     and empire" and never met. beets makes the same call in its own
+//     string_dist. Note this is deliberately NOT done in
+//     textutil.FoldForTitleMatch, which feeds ContainsPhrase: that alphabet
+//     needs its keywords contiguous, and an injected "and" token would break
+//     every phrase hit on a release named "Foundation.&.Empire".
 //   - Every other non-alphanumeric rune (colon, hyphen, comma, '#', em dash,
-//     ampersand, …) is a SEPARATOR and becomes a space. This is what lets
+//     …) is a SEPARATOR and becomes a space. This is what lets
 //     "Journey of the Pharaohs: Numa Files #17" and
 //     "Journey of the Pharaohs Numa Files #17" produce one key: the colon
 //     stops being a distinction rather than becoming a truncation point.
@@ -73,8 +82,12 @@ func foldPunctuation(title string) string {
 	b.Grow(len(title))
 	for _, r := range title {
 		switch {
-		case isApostrophe(r):
+		case textutil.IsApostrophe(r):
 			// Deleted, not replaced — see the doc comment.
+		case r == '&':
+			// Expanded, not separated — see the doc comment. The spaces are
+			// unconditional; strings.Fields collapses whatever they duplicate.
+			b.WriteString(" and ")
 		case unicode.IsLetter(r) || unicode.IsDigit(r):
 			b.WriteRune(r)
 		default:
@@ -82,14 +95,6 @@ func foldPunctuation(title string) string {
 		}
 	}
 	return strings.Join(strings.Fields(b.String()), " ")
-}
-
-func isApostrophe(r rune) bool {
-	switch r {
-	case '\'', '`', '‘', '’', 'ʼ':
-		return true
-	}
-	return false
 }
 
 // bracketSuffixRe matches one trailing square-bracketed qualifier. Provider
@@ -132,6 +137,21 @@ func StripBracketSuffixes(title string) string {
 func CanonicalDedupKey(title string) string {
 	return NormalizeTitleForDedup(StripBracketSuffixes(strings.TrimSpace(title)))
 }
+
+// CanonicalDedupKeyRev is the revision of the normalizer above. The startup
+// backfill in internal/db records it after rewriting books.dedup_key and skips
+// its table scan while the stored value still matches, so the scan only runs
+// on the boot after this function's output changes (#2346).
+//
+// BUMP THIS whenever a change to CanonicalDedupKey, NormalizeTitleForDedup or
+// StripBracketSuffixes can produce a different key for the same title. Missing
+// a bump leaves existing rows on the old key with nothing to correct them,
+// which is the asymmetry #940 and #2042 were both about. Bumping when nothing
+// changed costs one extra table scan, so when in doubt, bump.
+// Revision 2 expanded the ampersand to " and " in foldPunctuation, which
+// changes the key for every title containing one. Stored books.dedup_key
+// values hold revision 1, so the bump is what makes the next boot repair them.
+const CanonicalDedupKeyRev = 2
 
 // MainTitleKey is the canonical key of the title with any ": subtitle" tail
 // removed. It is the BLOCKING key: two rows for the same work always share it,

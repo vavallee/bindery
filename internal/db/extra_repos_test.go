@@ -422,7 +422,8 @@ func TestQualityProfileRepo_CRUD(t *testing.T) {
 	if len(got.Items) != 4 {
 		t.Fatalf("expected 4 items, got %d", len(got.Items))
 	}
-	// Order matters — QualityCutoff uses item index to compare formats.
+	// Item order is the user's preference order and must survive the round
+	// trip in the order it was written.
 	want := []string{"pdf", "mobi", "epub", "azw3"}
 	for i, w := range want {
 		if got.Items[i].Quality != w {

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, ABSConfig, ABSImportProgress, ABSImportRun, ABSLibrary, ABSMetadataConflict, ABSReviewItem, ABSRollbackAction, ABSRollbackResult, ABSTestResult, Author, Book } from '../../api/client'
 import ABSConflictPanel from '../../components/ABSAuthorConflictsPanel'
 import { inputCls } from './formStyles'
@@ -38,6 +39,7 @@ export default function ABSTab() {
 
 function AudiobookshelfSection() {
   const { t } = useTranslation()
+  const { confirm, confirmDialog } = useConfirmDialog()
   const [config, setConfig] = useState<ABSConfig | null>(null)
   const [draft, setDraft] = useState({ baseUrl: '', apiKey: '', label: 'Audiobookshelf', enabled: false, libraryIds: [] as string[], pathRemap: '' })
   const [libraries, setLibraries] = useState<ABSLibrary[]>([])
@@ -331,7 +333,10 @@ function AudiobookshelfSection() {
   }
 
   const dismissReviewRun = async (runId: number, count: number) => {
-    if (!confirm(t('settings.abs.review.dismissRunConfirm', { count, runId, defaultValue: 'Dismiss {{count}} review items from run #{{runId}}? This cannot be undone.' }))) return
+    if (!await confirm({
+      title: t('common.confirmTitle'),
+      body: t('settings.abs.review.dismissRunConfirm', { count, runId, defaultValue: 'Dismiss {{count}} review items from run #{{runId}}? This cannot be undone.' }),
+    })) return
     setDismissingRunId(runId)
     setReviewError(null)
     try {
@@ -518,6 +523,7 @@ function AudiobookshelfSection() {
 
   return (
     <section>
+      {confirmDialog}
       <div className="flex items-center justify-between mb-2 gap-4">
         <div>
           <h3 className="text-base font-semibold text-slate-800 dark:text-zinc-200">Audiobookshelf</h3>

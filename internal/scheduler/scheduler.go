@@ -593,6 +593,33 @@ func (s *Scheduler) Stop() {
 // It is the same logic the 12-hour wanted-scan uses, promoted so on-add and
 // status-transition hooks can trigger a search without waiting for the next run.
 func (s *Scheduler) SearchAndGrabBook(ctx context.Context, book models.Book) {
+	s.searchAndGrabFormats(ctx, book, neededFormats(&book), nil)
+}
+
+// neededFormats returns the media types a book still wants and does not have
+// on disk, ebook first. It is the whole-book answer; the wanted sweep narrows
+// it further by removing formats that already have a grab in flight (#2365).
+func neededFormats(book *models.Book) []string {
+	formats := make([]string, 0, 2)
+	if book.NeedsEbook() {
+		formats = append(formats, models.MediaTypeEbook)
+	}
+	if book.NeedsAudiobook() {
+		formats = append(formats, models.MediaTypeAudiobook)
+	}
+	return formats
+}
+
+// searchAndGrabFormats runs the search for an explicit list of media types.
+// SearchAndGrabBook passes everything the book needs; the wanted sweep passes
+// only the formats that are not already being downloaded.
+// The sweep snapshot is threaded through as well: sweep is nil for every
+// one-off caller, which makes each invariant load happen lazily exactly as it
+// used to (#2370).
+func (s *Scheduler) searchAndGrabFormats(ctx context.Context, book models.Book, formats []string, sweep *sweepContext) {
+	if len(formats) == 0 {
+		return
+	}
 	// The global auto-grab kill switch is enforced here, at the single point
 	// where a grab is actually dispatched, rather than at each caller (#2256).
 	// Every caller reaches a download through this function, so a new dispatch
@@ -603,12 +630,134 @@ func (s *Scheduler) SearchAndGrabBook(ctx context.Context, book models.Book) {
 			"book_id", book.ID, "title", book.Title)
 		return
 	}
-	if book.NeedsEbook() {
-		s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook)
+	for _, mediaType := range formats {
+		s.searchAndGrabFormat(ctx, book, mediaType, sweep)
 	}
-	if book.NeedsAudiobook() {
-		s.searchAndGrabFormat(ctx, book, models.MediaTypeAudiobook)
+}
+
+// sweepContext is a snapshot of the tables an automatic search reads that
+// cannot change while one sweep runs. searchWanted loads them once and hands
+// the same snapshot to every book, instead of every book reloading the indexer
+// list, the whole blocklist, the delay profiles and the preferred-language
+// setting for itself. The blocklist grows monotonically, so the old shape cost
+// O(wanted books x blocklist rows) of decoding per tick (#2370).
+//
+// A nil *sweepContext means "no sweep in progress": each value is loaded on
+// demand, which is what SearchAndGrabBook's other callers (the on-add hook, the
+// stall re-search, the API) get, and what keeps a one-off search reading fresh
+// state.
+type sweepContext struct {
+	indexers []models.Indexer
+	// blocklistLoaded distinguishes "the blocklist is empty" from "the
+	// blocklist could not be read", because only the first should still build
+	// the spec. Same distinction the per-book code made with its err check.
+	blocklist       []models.BlocklistEntry
+	blocklistLoaded bool
+	delayProfiles   []models.DelayProfile
+	preferredLang   string
+}
+
+// newSweepContext loads the sweep-invariant tables once. It returns nil when
+// the indexer list cannot be read, which drops the sweep back to the per-book
+// lazy path so each book reports (and fails on) the error the way it always
+// has, rather than the whole sweep silently searching no indexers.
+func (s *Scheduler) newSweepContext(ctx context.Context) *sweepContext {
+	sweep := &sweepContext{}
+	if s.indexers != nil {
+		idxs, err := s.indexers.List(ctx)
+		if err != nil {
+			slog.Error("wanted sweep: failed to list indexers, falling back to a per-book load", "error", err)
+			return nil
+		}
+		sweep.indexers = idxs
 	}
+	if s.blocklist != nil {
+		if entries, err := s.blocklist.List(ctx); err != nil {
+			slog.Warn("wanted sweep: failed to load the blocklist", "error", err)
+		} else {
+			sweep.blocklist = entries
+			sweep.blocklistLoaded = true
+		}
+	}
+	if s.delayProfiles != nil {
+		if profiles, err := s.delayProfiles.List(ctx); err != nil {
+			slog.Warn("wanted sweep: failed to load delay profiles", "error", err)
+		} else {
+			sweep.delayProfiles = profiles
+		}
+	}
+	sweep.preferredLang = s.loadPreferredLanguage(ctx)
+	return sweep
+}
+
+// sweepIndexers returns the indexer list for one search: the sweep snapshot
+// when there is one, a fresh load otherwise.
+func (s *Scheduler) sweepIndexers(ctx context.Context, sweep *sweepContext) ([]models.Indexer, error) {
+	if sweep != nil {
+		return sweep.indexers, nil
+	}
+	if s.indexers == nil {
+		return nil, nil
+	}
+	return s.indexers.List(ctx)
+}
+
+// sweepBlocklist returns the blocklist entries and whether they were readable.
+// A false second value means the blocklist spec must not be built, matching the
+// pre-snapshot behaviour of skipping the spec when the load errored.
+func (s *Scheduler) sweepBlocklist(ctx context.Context, sweep *sweepContext) ([]models.BlocklistEntry, bool) {
+	if sweep != nil {
+		return sweep.blocklist, sweep.blocklistLoaded
+	}
+	if s.blocklist == nil {
+		return nil, false
+	}
+	entries, err := s.blocklist.List(ctx)
+	if err != nil {
+		return nil, false
+	}
+	return entries, true
+}
+
+// sweepDelayProfiles returns the delay profiles for one search.
+func (s *Scheduler) sweepDelayProfiles(ctx context.Context, sweep *sweepContext) []models.DelayProfile {
+	if sweep != nil {
+		return sweep.delayProfiles
+	}
+	if s.delayProfiles == nil {
+		return nil
+	}
+	profiles, err := s.delayProfiles.List(ctx)
+	if err != nil {
+		return nil
+	}
+	return profiles
+}
+
+// sweepPreferredLanguage returns the search.preferredLanguage setting for one
+// search.
+func (s *Scheduler) sweepPreferredLanguage(ctx context.Context, sweep *sweepContext) string {
+	if sweep != nil {
+		return sweep.preferredLang
+	}
+	return s.loadPreferredLanguage(ctx)
+}
+
+// loadPreferredLanguage reads the global search.preferredLanguage setting,
+// falling back to "" (no filter) when it is unset or unreadable.
+func (s *Scheduler) loadPreferredLanguage(ctx context.Context) string {
+	if s.settings == nil {
+		return ""
+	}
+	langSetting, err := s.settings.Get(ctx, "search.preferredLanguage")
+	if err != nil {
+		slog.Warn("failed to load preferred search language", "error", err)
+		return ""
+	}
+	if langSetting == nil {
+		return ""
+	}
+	return langSetting.Value
 }
 
 // autoGrabEnabled reports whether the global autoGrab.enabled kill switch is
@@ -689,25 +838,39 @@ func freeleechOnlyIndexerIDs(idxs []models.Indexer) map[int64]bool {
 
 // searchAndGrabFormat searches for and grabs a specific format of a book.
 // mediaType must be MediaTypeEbook or MediaTypeAudiobook.
-func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, mediaType string) {
-	var idxs []models.Indexer
-	if s.indexers != nil {
-		var err error
-		idxs, err = s.indexers.List(ctx)
-		if err != nil {
-			slog.Error("SearchAndGrabBook: failed to list indexers", "error", err)
-			return
-		}
-	}
+func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, mediaType string, sweep *sweepContext) {
+	// #2154: a search that found nothing used to log nothing at all, so "the
+	// sweep never ran" and "the sweep ran and found nothing" were
+	// indistinguishable from the outside. Every return path below now leaves
+	// exactly one INFO line. The counters are filled in as the search
+	// progresses, so a path that returns early leaves them at zero, which is
+	// the honest reading of how far it got.
+	started := time.Now()
+	outcome := "aborted"
+	var indexerCount, rawResults, afterFilters, approved int
+	defer func() {
+		slog.Info("book search finished",
+			"origin", string(indexer.SearchOriginFrom(ctx)),
+			"book", book.Title,
+			"book_id", book.ID,
+			"format", mediaType,
+			"indexers", indexerCount,
+			"raw_results", rawResults,
+			"after_filters", afterFilters,
+			"approved", approved,
+			"outcome", outcome,
+			"elapsed_ms", time.Since(started).Milliseconds())
+	}()
 
-	lang := ""
-	if s.settings != nil {
-		if langSetting, err := s.settings.Get(ctx, "search.preferredLanguage"); err != nil {
-			slog.Warn("failed to load preferred search language", "error", err)
-		} else if langSetting != nil {
-			lang = langSetting.Value
-		}
+	idxs, err := s.sweepIndexers(ctx, sweep)
+	if err != nil {
+		slog.Error("SearchAndGrabBook: failed to list indexers", "error", err)
+		outcome = "indexer list failed"
+		return
 	}
+	indexerCount = len(idxs)
+
+	lang := s.sweepPreferredLanguage(ctx, sweep)
 
 	authorName := ""
 	var authorAliases []string
@@ -749,6 +912,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	}
 
 	results, outcomes := s.searchBookWithOutcomes(ctx, idxs, crit)
+	rawResults = len(results)
 	// An indexer that failed contributed zero results and is otherwise
 	// indistinguishable from one that answered with nothing, so a grab decided
 	// on a shrunken pool used to leave no trace at all. Recording only: what
@@ -774,12 +938,11 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	} else {
 		results = indexer.FilterByLanguage(results, lang)
 	}
+	afterFilters = len(results)
 
 	var specs []decision.Specification
-	if s.blocklist != nil {
-		if entries, err := s.blocklist.List(ctx); err == nil {
-			specs = append(specs, decision.NewBlocklistedSpec(entries))
-		}
+	if entries, ok := s.sweepBlocklist(ctx, sweep); ok {
+		specs = append(specs, decision.NewBlocklistedSpec(entries))
 	}
 	// Multi-book pack guard (#2276). A download row carries one BookID and the
 	// importer computes one destination from it, so an explicit "Books 1-4"
@@ -802,11 +965,9 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		specs = append(specs, decision.QualityAllowed{Profile: qualityProfile})
 	}
 	var delayProfile *models.DelayProfile
-	if s.delayProfiles != nil {
-		if profiles, err := s.delayProfiles.List(ctx); err == nil && len(profiles) > 0 {
-			delayProfile = &profiles[0]
-			specs = append(specs, decision.DelayProfileSpec{Profile: delayProfile})
-		}
+	if profiles := s.sweepDelayProfiles(ctx, sweep); len(profiles) > 0 {
+		delayProfile = &profiles[0]
+		specs = append(specs, decision.DelayProfileSpec{Profile: delayProfile})
 	}
 	// Per-indexer freeleech-only policy: releases that would cost download
 	// ratio on a flagged indexer are rejected here and parked in
@@ -857,13 +1018,20 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		// Re-evaluate any existing pending releases for this book/format with the current age.
 		best = s.checkPendingReleases(ctx, book, mediaType, dm)
 		if best == nil {
+			if rawResults == 0 {
+				outcome = "no results"
+			} else {
+				outcome = "nothing approved"
+			}
 			return
 		}
 	}
+	approved = 1
 
 	candidates, err := s.clients.GetEnabledByProtocol(ctx, best.Protocol)
 	if err != nil {
 		slog.Error("SearchAndGrabBook: failed to list download clients", "protocol", best.Protocol, "error", err)
+		outcome = "download client lookup failed"
 		return
 	}
 	client := db.PickClientForMediaType(candidates, mediaType)
@@ -872,7 +1040,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	// as a torrent, and report "hash could not be determined"), and vice versa.
 	if client == nil {
 		slog.Warn("SearchAndGrabBook: no enabled download client for protocol", "book", book.Title, "protocol", best.Protocol)
-
+		outcome = "no download client for protocol"
 		return
 	}
 
@@ -890,9 +1058,11 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	existing, err := s.downloads.GetByGUID(ctx, best.GUID)
 	if err != nil {
 		slog.Warn("failed to check existing download", "guid", best.GUID, "error", err)
+		outcome = "duplicate check failed"
 		return
 	}
 	if existing != nil {
+		outcome = "already grabbed"
 		return
 	}
 
@@ -912,6 +1082,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 
 	if err := s.downloads.Create(ctx, dl); err != nil {
 		slog.Error("SearchAndGrabBook: failed to create download record", "error", err)
+		outcome = "download record failed"
 		return
 	}
 
@@ -926,6 +1097,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		if setErr := s.downloads.SetError(ctx, dl.ID, err.Error()); setErr != nil {
 			slog.Warn("failed to persist download error", "download_id", dl.ID, "error", setErr)
 		}
+		outcome = "send to downloader failed"
 		return
 	}
 	if sendRes.RemoteID != "" {
@@ -943,6 +1115,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	if err := s.downloads.UpdateStatus(ctx, dl.ID, models.StateDownloading); err != nil {
 		slog.Warn("failed to update download status", "download_id", dl.ID, "status", models.StateDownloading, "error", err)
 	}
+	outcome = "grabbed"
 	slog.Info("sent to downloader", "client", client.Type, "title", best.Title)
 	// Record history for the auto-grab. Without this the History tab is
 	// empty for every scheduler-initiated grab (manual grabs via the queue
@@ -976,10 +1149,6 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	// shape mirrors the queue.go manual-grab Send so existing webhook
 	// templates keep working without modification; "author" is added because
 	// we have it here and it costs nothing.
-	//
-	// TODO(#849): when an upgrade-grab code path exists (the quality cutoff
-	// is currently used only to reject, not to trigger an upgrade re-grab),
-	// emit EventUpgrade here instead of EventGrabbed for upgrade grabs.
 	s.notify(ctx, notifierEventGrabbed, map[string]interface{}{
 		"title":  best.Title,
 		"size":   best.Size,
@@ -1087,19 +1256,38 @@ func (s *Scheduler) searchWanted() {
 	if len(searchQueue) == 0 {
 		return
 	}
-	concurrency.RunBoundedPaced(ctx, searchQueue, scheduledWantedSearchConcurrency, searchPaceInterval, func(ctx context.Context, book models.Book) {
-		s.SearchAndGrabBook(ctx, book)
+	// Load the tables that cannot change during this sweep once, rather than
+	// once per book (#2370).
+	sweep := s.newSweepContext(ctx)
+	concurrency.RunBoundedPaced(ctx, searchQueue, scheduledWantedSearchConcurrency, searchPaceInterval, func(ctx context.Context, w wantedSearch) {
+		s.searchAndGrabFormats(indexer.WithSearchOrigin(ctx, indexer.OriginScheduled), w.book, w.formats, sweep)
 	})
 }
 
+// wantedSearch is one unit of work for the sweep: a Wanted book plus the media
+// types that still need searching for it. The formats are the book's needed
+// formats minus those that already have a download in flight, so a dual-format
+// book whose ebook is parked still gets its audiobook searched (#2365).
+type wantedSearch struct {
+	book    models.Book
+	formats []string
+}
+
 // inFlightDownloadStates are the states in which a download is actively working
-// toward a completed import. A Wanted book with a download in any of these must
-// not be re-searched: nothing flips the book off Wanted when it's grabbed (that
-// happens only once the file is imported and reconciled), so a re-search would
-// grab a *second* release for the same book, and even a same-GUID hit burns
-// indexer calls. Dead states (failed / import-failed / import-blocked) are
-// intentionally excluded from this list — those are the recovery path where
-// re-searching for a different release is correct.
+// toward a completed import. A Wanted book's FORMAT with a download in any of
+// these must not be re-searched: nothing flips the book off Wanted when it's
+// grabbed (that happens only once the file is imported and reconciled), so a
+// re-search would grab a *second* release for the same format, and even a
+// same-GUID hit burns indexer calls. Dead states (failed / import-failed /
+// import-blocked) are intentionally excluded from this list — those are the
+// recovery path where re-searching for a different release is correct.
+//
+// The filter is per (book, format), not per book: StateImportExternal and
+// StateImportHeld have no automatic exit, so treating them as a whole-book
+// block left a media_type='both' book with one format parked and the other
+// never searched — which under pair gating is a deadlock, because the sibling
+// the hold is waiting for can only arrive via the search the hold disabled
+// (#2365).
 var inFlightDownloadStates = []models.DownloadState{
 	models.StateGrabbed,
 	models.StateDownloading,
@@ -1110,10 +1298,11 @@ var inFlightDownloadStates = []models.DownloadState{
 	models.StateImportHeld,     // drop-folder format held awaiting its pair (#942)
 }
 
-// wantedSearchQueue returns the Wanted books eligible for an auto-grab this
-// sweep, excluding user-excluded books and any book with a grab already in
-// flight (see inFlightDownloadStates).
-func (s *Scheduler) wantedSearchQueue(ctx context.Context) []models.Book {
+// wantedSearchQueue returns this sweep's work: the Wanted books eligible for an
+// auto-grab, each paired with the formats that still need searching. It
+// excludes user-excluded books, formats that already have a grab in flight
+// (see inFlightDownloadStates), and books left with nothing to search.
+func (s *Scheduler) wantedSearchQueue(ctx context.Context) []wantedSearch {
 	wanted, err := s.books.ListByStatus(ctx, models.BookStatusWanted)
 	if err != nil {
 		slog.Error("failed to list wanted books", "error", err)
@@ -1123,34 +1312,123 @@ func (s *Scheduler) wantedSearchQueue(ctx context.Context) []models.Book {
 		return nil
 	}
 
-	inFlightBooks := make(map[int64]bool)
-	if s.downloads != nil {
-		for _, st := range inFlightDownloadStates {
-			active, derr := s.downloads.ListByStatus(ctx, st)
-			if derr != nil {
-				slog.Warn("failed to list in-flight downloads", "state", st, "error", derr)
-				continue
-			}
-			for _, d := range active {
-				if d.BookID != nil {
-					inFlightBooks[*d.BookID] = true
-				}
-			}
-		}
-	}
+	inFlight := s.inFlightFormatsByBook(ctx)
 
-	searchQueue := make([]models.Book, 0, len(wanted))
+	searchQueue := make([]wantedSearch, 0, len(wanted))
 	for _, book := range wanted {
 		if book.Excluded {
 			continue
 		}
-		if inFlightBooks[book.ID] {
-			slog.Debug("skipping wanted search — a grab is already in flight for this book", "book", book.Title)
+		held := inFlight[book.ID]
+		// A book monitored for a SINGLE format has only one slot a download can
+		// be filling, whatever container tokens the release title happens to
+		// carry, so the book's own media type settles it and inference is not
+		// consulted at all. This is the precedence importer.downloadFormat
+		// already applies to the same question (#1885). Without it an audiobook
+		// release that names a PDF booklet but no audio container ("(Unabridged)
+		// [64kbps] [PDF]") resolves to "ebook", the audiobook slot reads as
+		// free, and the sweep grabs a second copy of the release that is
+		// already downloading.
+		if book.MediaType == models.MediaTypeEbook || book.MediaType == models.MediaTypeAudiobook {
+			if len(held) > 0 {
+				slog.Debug("skipping wanted search: a grab is already in flight for this single-format book", "book", book.Title)
+				continue
+			}
+		}
+		// An unresolvable format blocks the whole book: guessing wrong here
+		// means grabbing a second release for a format that is already on its
+		// way, which is the bug the in-flight filter exists to prevent.
+		if held[""] {
+			slog.Debug("skipping wanted search — a grab of an undetermined format is already in flight for this book", "book", book.Title)
 			continue
 		}
-		searchQueue = append(searchQueue, book)
+		formats := make([]string, 0, 2)
+		for _, mediaType := range neededFormats(&book) {
+			if held[mediaType] {
+				continue
+			}
+			formats = append(formats, mediaType)
+		}
+		if len(formats) == 0 {
+			slog.Debug("skipping wanted search — every format this book needs already has a grab in flight", "book", book.Title)
+			continue
+		}
+		searchQueue = append(searchQueue, wantedSearch{book: book, formats: formats})
 	}
 	return searchQueue
+}
+
+// inFlightFormatsByBook maps a book id to the set of media types that already
+// have a download working toward an import. The empty-string key is the
+// catch-all for a download whose format could not be determined; the caller
+// treats it as blocking every format of that book.
+func (s *Scheduler) inFlightFormatsByBook(ctx context.Context) map[int64]map[string]bool {
+	inFlight := make(map[int64]map[string]bool)
+	if s.downloads == nil {
+		return inFlight
+	}
+	// One query over all the in-flight states, not one per state (#2370).
+	active, derr := s.downloads.ListByStatuses(ctx, inFlightDownloadStates...)
+	if derr != nil {
+		slog.Warn("failed to list in-flight downloads", "error", derr)
+	}
+	for i := range active {
+		d := &active[i]
+		if d.BookID == nil {
+			continue
+		}
+		if inFlight[*d.BookID] == nil {
+			inFlight[*d.BookID] = make(map[string]bool, 2)
+		}
+		inFlight[*d.BookID][downloadMediaType(d)] = true
+	}
+	return inFlight
+}
+
+// downloadMediaType resolves which format slot a download is working toward,
+// or "" when the release names containers of both kinds or none at all.
+//
+// A download row carries no media type of its own, so this reads the same two
+// sources importer.formatForRelease does: the container tokens in the release
+// title, plus the Quality token the grab recorded. It is deliberately the more
+// cautious of the two — where the importer breaks a both-kinds tie on an
+// "unabridged"/"audiobook" marker in the title, this returns "" and lets the
+// caller block the whole book. The importer is deciding where a file it already
+// has should go; this is deciding whether to spend a grab, and a wrong guess
+// here buys a duplicate release.
+//
+// It reads the download alone and can still be wrong: an audiobook naming only
+// a PDF booklet, or a book whose own title contains a container token ("Lit"),
+// reads as an ebook. wantedSearchQueue therefore consults it only for a
+// media_type=both book, where the release is the sole per-download signal. For
+// a single-format book the book's own media type settles the slot.
+func downloadMediaType(dl *models.Download) string {
+	if dl == nil {
+		return ""
+	}
+	var audiobook, ebook bool
+	mark := func(mediaType string) {
+		switch mediaType {
+		case models.MediaTypeAudiobook:
+			audiobook = true
+		case models.MediaTypeEbook:
+			ebook = true
+		}
+	}
+	for _, token := range indexer.ReleaseFormats(dl.Title) {
+		mark(indexer.MediaTypeForFormat(token))
+	}
+	// Quality is normally one of the title's own tokens, but it is what the
+	// grab actually recorded and a title can be edited or absent, so it counts.
+	mark(indexer.MediaTypeForFormat(dl.Quality))
+	switch {
+	case audiobook && !ebook:
+		return models.MediaTypeAudiobook
+	case ebook && !audiobook:
+		return models.MediaTypeEbook
+	default:
+		return ""
+	}
 }
 
 func (s *Scheduler) refreshMetadata() {
@@ -1357,7 +1635,7 @@ func (s *Scheduler) handleStalledDownload(ctx context.Context, dl *models.Downlo
 	s.bgWg.Add(1)
 	go func() {
 		defer s.bgWg.Done()
-		s.SearchAndGrabBook(ctx, *book)
+		s.SearchAndGrabBook(indexer.WithSearchOrigin(ctx, indexer.OriginRequeue), *book)
 	}()
 }
 

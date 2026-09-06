@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/vavallee/bindery/internal/isbnutil"
 )
 
 // writeTestEpub builds a minimal valid-enough EPUB (zip with container.xml +
@@ -132,11 +134,43 @@ func TestExtractISBN(t *testing.T) {
 		{"0-345-47219-5", "", "0345472195"},
 		{"urn:uuid:1234", "", ""},
 		{"123456789X", "", "123456789X"},
+		// An ISBN pasted into an OPF with a Unicode dash instead of a hyphen,
+		// and a Calibre-style value with the ISBN split by spaces.
+		{"urn:isbn:978–0–345–47219–9", "9780345472199", ""},
+		{"ISBN 978 0 345 47219 9", "9780345472199", ""},
+		// A full UUID's hex tail contains a ten-digit run; it is glued to
+		// letters, so it is not an ISBN-10.
+		{"urn:uuid:1e2b3c4d-5678-90ab-cdef-1234567890ab", "", ""},
 	}
 	for _, c := range cases {
 		g13, g10 := extractISBN(c.in)
 		if g13 != c.want13 || g10 != c.want10 {
 			t.Errorf("extractISBN(%q) = (%q,%q), want (%q,%q)", c.in, g13, g10, c.want13, c.want10)
+		}
+	}
+}
+
+// TestExtractISBNMatchesISBNUtil pins extractISBN to the shared scanner. The
+// twin of this test lives in internal/metadata/dnb: an ISBN must come out the
+// same whether Bindery read it from an EPUB's OPF or from a DNB MARC record,
+// and the only way to keep that true is for neither to own a scanner.
+func TestExtractISBNMatchesISBNUtil(t *testing.T) {
+	for _, in := range []string{
+		"urn:isbn:9780345472199",
+		"isbn:0345472195",
+		"0-345-47219-5",
+		"9783499015717 (pbk.)",
+		"978 3 446 12345 6",
+		"3-499-01571-X",
+		"urn:uuid:1e2b3c4d-5678-90ab-cdef-1234567890ab",
+		"123456789X",
+		"no digits here",
+		"",
+	} {
+		g13, g10 := extractISBN(in)
+		w13, w10 := isbnutil.Extract(in)
+		if g13 != w13 || g10 != w10 {
+			t.Errorf("extractISBN(%q) = (%q,%q), isbnutil.Extract = (%q,%q)", in, g13, g10, w13, w10)
 		}
 	}
 }

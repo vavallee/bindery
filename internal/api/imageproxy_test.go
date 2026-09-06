@@ -146,6 +146,91 @@ func TestImageProxy_NonImageRejected(t *testing.T) {
 	}
 }
 
+// TestImageProxy_SVGRejected covers #2355. SVG is a scripting document, and
+// /api/v1/images serves it same-origin with the app, so it does not get to
+// count as an image however the upstream labels it. Nothing legitimate is
+// lost: provider cover art is JPEG, PNG or WebP.
+func TestImageProxy_SVGRejected(t *testing.T) {
+	for _, ct := range []string{"image/svg+xml", "IMAGE/SVG+XML", "image/svg+xml; charset=utf-8"} {
+		t.Run(ct, func(t *testing.T) {
+			upstream := newFakeUpstream(ct, []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`), http.StatusOK)
+			defer upstream.Close()
+
+			dir := t.TempDir()
+			h := newTestHandler(dir, upstream)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/images?url="+upstream.URL+"/cover.svg", nil)
+			rr := httptest.NewRecorder()
+			h.Serve(rr, req)
+			if rr.Code != http.StatusBadGateway {
+				t.Errorf("status = %d, want 502 for %q", rr.Code, ct)
+			}
+
+			// A refused response must not leave anything behind for the cache
+			// path to serve on the next request.
+			entries, err := os.ReadDir(filepath.Join(dir, "image-cache"))
+			if err == nil && len(entries) > 0 {
+				t.Errorf("refused svg left %d cache entries behind", len(entries))
+			}
+		})
+	}
+}
+
+// TestImageProxy_CacheHitSVGRejected checks the other half: an SVG cached
+// before the refusal landed must not keep being served for the rest of its
+// 30-day TTL.
+func TestImageProxy_CacheHitSVGRejected(t *testing.T) {
+	dir := t.TempDir()
+	cacheDir := filepath.Join(dir, "image-cache")
+
+	const rawURL = "https://example.com/legacy.svg"
+	sum := sha256.Sum256([]byte(rawURL))
+	key := fmt.Sprintf("%x", sum)
+	shardDir := filepath.Join(cacheDir, key[:2])
+	if err := os.MkdirAll(shardDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(shardDir, key), []byte("<svg/>"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(shardDir, key+".ct"), []byte("image/svg+xml"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewImageProxyHandler(dir)
+	h.validateURL = func(_ string) error { return nil }
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/images?url="+rawURL, nil)
+	rr := httptest.NewRecorder()
+	h.Serve(rr, req)
+	if rr.Code != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502 for a cached svg", rr.Code)
+	}
+}
+
+// TestAllowedImageContentType pins the rule the two paths share.
+func TestAllowedImageContentType(t *testing.T) {
+	cases := map[string]bool{
+		"image/jpeg":                   true,
+		"image/png":                    true,
+		"image/webp":                   true,
+		"image/jpeg; charset=binary":   true,
+		"IMAGE/PNG":                    true,
+		"image/svg+xml":                false,
+		"image/svg+xml; charset=utf-8": false,
+		"image/svg":                    false,
+		"IMAGE/SVG+XML":                false,
+		"text/html":                    false,
+		"":                             false,
+		"application/xml":              false,
+	}
+	for ct, want := range cases {
+		if got := allowedImageContentType(ct); got != want {
+			t.Errorf("allowedImageContentType(%q) = %v, want %v", ct, got, want)
+		}
+	}
+}
+
 // TestImageProxy_UpstreamNon200 ensures a non-200 from upstream returns 502.
 func TestImageProxy_UpstreamNon200(t *testing.T) {
 	upstream := newFakeUpstream("image/jpeg", nil, http.StatusNotFound)

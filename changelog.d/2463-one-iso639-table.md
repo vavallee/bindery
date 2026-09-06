@@ -1,0 +1,9 @@
+### Fixed
+
+- **A metadata profile no longer accepts a book and then hides every release of it** (#2463) — the language list was read twice on the way to a download, and the two readings did not agree. The book side understood a language written with a region or script on it (`pt-BR`, `pt_BR`, `zh-Hans`, and the very common `en-US`), the release side did not. So a profile set to Brazilian Portuguese let the book in, then dropped every Portuguese release found for it, and the book sat wanted forever with no explanation. Both sides now read the profile the same way.
+- **Books reported in the other legal spelling of a language are filtered as that language** (#2463) — ISO 639 gives many languages two three-letter codes, and providers use either, so a profile allowing German (`ger`) rejected any book a provider reported as `deu`, French rejected `fra`, Dutch rejected `nld`, Chinese rejected `zho`, and the same for Czech, Romanian and Greek. All twenty affected languages now match either spelling.
+- **Audiobooks whose language arrives as a word are matched correctly** (#2463) — Audible reports a language as `German` or `English` rather than as a code. Two copies of the translation table existed and one had fallen five languages behind, so the same audiobook could be filed under a different language depending on which lookup path reached it first. Hungarian, Romanian, Catalan and Latin audiobooks were affected. German edition matching also now recognises `German`, `Deutsch` and `de-DE`, not only `ger`, `deu` and `de`.
+
+### Changed
+
+- **Language handling comes from one table** (#2463) — the four separate and disagreeing lists of language codes are now one, so a language Bindery understands in one place it understands everywhere: in the book filter, in the release filter, and when importing from Audible. A new test fails the build if a language can be normalised to a code the profile editor does not offer.

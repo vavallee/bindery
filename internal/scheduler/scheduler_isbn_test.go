@@ -60,7 +60,7 @@ func TestSearchAndGrabFormat_PopulatesISBNFromEdition(t *testing.T) {
 		editions:  editions,
 	}
 
-	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook)
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
 
 	// The criteria the scheduler built must be the same string the release
 	// parser pulls out of a matching release name — that equality is the

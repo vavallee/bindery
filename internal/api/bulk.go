@@ -11,6 +11,7 @@ import (
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -372,7 +373,7 @@ func (h *BulkHandler) fanOutSearches(books []models.Book) {
 	}
 	bgCtx := h.bgCtx()
 	go concurrency.RunBoundedPaced(bgCtx, books, bulkSearchConcurrency, searchPaceInterval, func(ctx context.Context, b models.Book) {
-		h.searcher.SearchAndGrabBook(ctx, b)
+		h.searcher.SearchAndGrabBook(indexer.WithSearchOrigin(ctx, indexer.OriginBulk), b)
 	})
 }
 
@@ -651,17 +652,20 @@ func (h *BulkHandler) setBookMediaType(ctx context.Context, id int64, mediaType 
 	return h.books.Update(ctx, book)
 }
 
-// reevaluateBookStatus recomputes the wanted↔imported boundary after a
+// reevaluateBookStatus recomputes the wanted/imported boundary after a
 // media-type change so the book lands on the right list: switching a book
 // from 'ebook' to 'audiobook' when only the ebook is on disk must flip it
 // back to 'wanted' so it reappears on the Wanted page (and vice versa when
-// a file already satisfies the new type). Mid-pipeline ('downloading',
-// 'downloaded') and explicitly-skipped books are left alone — retriggering
-// a search on a book the download client is already working would duplicate
-// effort, and 'skipped' encodes a user decision we don't want to override.
+// a file already satisfies the new type). Only 'skipped' is left alone,
+// because it encodes a user decision we don't want to override.
+//
+// A book with a grab already in flight is indistinguishable here: it is
+// 'wanted' like any other unsatisfied book, since download progress is
+// tracked in the downloads table and never on books.status (#2374). The
+// media-type change is the reason to search again anyway, so flipping it
+// back to 'wanted' is the right answer even mid-download.
 func reevaluateBookStatus(b *models.Book) {
-	switch b.Status {
-	case models.BookStatusSkipped, models.BookStatusDownloading, models.BookStatusDownloaded:
+	if b.Status == models.BookStatusSkipped {
 		return
 	}
 	if b.NeedsEbook() || b.NeedsAudiobook() {

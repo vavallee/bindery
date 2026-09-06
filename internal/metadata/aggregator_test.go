@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 func TestAggregator_SearchAuthors(t *testing.T) {
@@ -229,7 +230,7 @@ func TestBookSearchRelevance_NoAuthorRegression(t *testing.T) {
 	// A plain title query (no author tokens) must score exactly as title-only.
 	q := "the meaning of your life"
 	b := models.Book{Title: "The Meaning of Your Life", Author: &models.Author{Name: "Arthur C. Brooks"}}
-	if got, want := bookSearchRelevance(b, q), searchRelevance(b.Title, normalizeForDedup(q)); got != want {
+	if got, want := bookSearchRelevance(b, q), searchRelevance(b.Title, textutil.FoldForSearch(q)); got != want {
 		t.Errorf("title-only query should equal title relevance: got %.3f want %.3f", got, want)
 	}
 }

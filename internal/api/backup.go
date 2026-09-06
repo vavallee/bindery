@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/vavallee/bindery/internal/db"
 )
 
 // backupFilenameRe matches files produced by Create: the timestamp name
@@ -137,8 +139,8 @@ func (h *BackupHandler) List(w http.ResponseWriter, r *http.Request) {
 // data with no warning. VACUUM INTO reads the live database through SQLite's
 // query layer (so it sees the WAL pages), and writes a fresh, self-contained
 // database file in a single read transaction. The output is a regular
-// SQLite file with no -wal/-shm sidecar, so the existing Restore path (a
-// file copy back to h.dbPath) keeps working.
+// SQLite file with no -wal/-shm sidecar, which is what lets Restore stage it
+// as a plain file copy and swap it in at the next start.
 //
 // Cost: VACUUM INTO rebuilds the database into a new file, so it is O(db size)
 // rather than the O(file size) of the old copy. For a multi-gigabyte library
@@ -242,7 +244,25 @@ func (h *BackupHandler) vacuumInto(ctx context.Context, dst string) error {
 	return nil
 }
 
-// Restore copies a backup file back to the DB path. Dangerous — requires confirmation header.
+// Restore stages a backup file to be swapped in at the next start. Dangerous,
+// so it requires the X-Confirm-Restore: true header.
+//
+// It does NOT write the live database. Bindery runs SQLite in WAL mode
+// (internal/db setPragmas), so the live database is the main file plus
+// <db>-wal and <db>-shm. The previous implementation copied the backup
+// straight over the main file while this process still held the pool open,
+// which truncated the file underneath open connections and left the old WAL
+// intact. SQLite validates WAL frames against the WAL header's salt rather
+// than against the main file, so those stale frames stayed valid and were
+// replayed over the restored pages at the next checkpoint. An admin was told
+// the restore succeeded and then got back a blend of the backup and whatever
+// was live, or a file that failed integrity_check.
+//
+// Instead: verify the backup opens read-only and passes integrity_check and
+// quick_check, copy it to <dbPath>.restore-pending, and let
+// db.ApplyPendingRestore swap it in on the next start, when there is provably
+// no open connection. The response says so, so nobody assumes the running
+// process is already serving the restored data.
 func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	filename := chi.URLParam(r, "filename")
 	if !backupFilenameRe.MatchString(filename) {
@@ -263,14 +283,50 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := copyFile(srcPath, h.dbPath); err != nil {
-		slog.Error("restore failed", "error", err)
+	// Validate before staging, so a corrupt backup is rejected while the admin
+	// is still looking at the response rather than on a restart they may not
+	// connect to the restore. db.ApplyPendingRestore re-checks at startup: this
+	// file sits on disk in between and the check there is what keeps a bad
+	// file away from the live database.
+	if err := db.CheckSQLiteFile(r.Context(), srcPath); err != nil {
+		slog.Warn("restore refused: backup failed its integrity check", "file", filename, "error", err)
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "backup file is not a valid SQLite database, refusing to restore it",
+		})
+		return
+	}
+
+	// Stage under a .tmp name and rename, the same shape Create uses: a
+	// process death mid-copy would otherwise leave a half-written pending
+	// file that the next start would try to apply.
+	pendingPath := db.PendingRestorePath(h.dbPath)
+	tmpPath := pendingPath + ".tmp"
+	_ = os.Remove(tmpPath)
+	if err := copyFile(srcPath, tmpPath); err != nil {
+		_ = os.Remove(tmpPath)
+		slog.Error("restore staging failed", "error", err)
+		writeServerError(w, r, err)
+		return
+	}
+	// Match the live DB file's mode: the staged copy carries the same bcrypt
+	// hashes, session secrets and API key.
+	if err := os.Chmod(tmpPath, 0o600); err != nil {
+		_ = os.Remove(tmpPath)
+		slog.Error("restore staging chmod failed", "error", err)
+		writeServerError(w, r, err)
+		return
+	}
+	if err := os.Rename(tmpPath, pendingPath); err != nil {
+		_ = os.Remove(tmpPath)
+		slog.Error("restore staging rename failed", "error", err)
 		writeServerError(w, r, err)
 		return
 	}
 
-	slog.Warn("database restored from backup", "file", filename)
-	writeJSON(w, http.StatusOK, map[string]string{"message": "database restored — restart the server"})
+	slog.Warn("database restore staged", "file", filename, "pending", pendingPath)
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message": "restore staged: restart the server to swap this backup in",
+	})
 }
 
 // Delete removes a backup file.

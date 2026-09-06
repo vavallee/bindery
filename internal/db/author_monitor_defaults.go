@@ -7,7 +7,7 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
-// Install-wide author monitor defaults, surfaced in Settings → Metadata as
+// Install-wide author monitor defaults, surfaced in Settings → Metadata Profiles as
 // "Default monitor mode" with the hint "Applied to newly added authors".
 //
 // The keys live here rather than in internal/api because the create paths that

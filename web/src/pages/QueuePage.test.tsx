@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router'
 import QueuePage, { MatchBookControl } from './QueuePage'
 import { summarizeError, ERROR_SUMMARY_LEN } from './queueError'
 import { api } from '../api/client'
+import { acceptConfirm } from '../test-utils'
 import type { Download, PendingRelease, QueueItem } from '../api/client'
 
 vi.mock('../api/client', async importOriginal => {
@@ -41,6 +42,21 @@ vi.mock('react-i18next', () => ({
         'queue.errorDetails': 'Show full error',
         'queue.clearAllFailed': 'Clear all failed',
         'queue.retryAllFailed': 'Retry all failed',
+        // Download-state chip labels now come from the shared table in
+        // components/downloadStatus.ts (#2342), so the mock has to resolve them.
+        'history.events.grabbed': 'Grabbed',
+        'history.events.importFailed': 'Import Failed',
+        'queue.status.downloading': 'Downloading',
+        'queue.status.completed': 'Completed',
+        'queue.status.importPending': 'Import Pending',
+        'queue.status.importing': 'Importing',
+        'queue.status.imported': 'Imported',
+        'queue.status.failed': 'Failed',
+        'queue.status.importBlocked': 'Import Blocked',
+        'queue.status.importExternal': 'External Import',
+        'queue.status.importExternalHint': 'Handed off to the external import tool.',
+        'queue.status.importHeld': 'Held for Pair',
+        'queue.status.importHeldHint': 'Held until the paired format arrives.',
         'queue.selectAll': 'Select all',
         'queue.removeSelected': 'Remove selected',
         'queue.clearSelection': 'Clear selection',
@@ -257,16 +273,14 @@ describe('QueuePage', () => {
       makeQueueItem({ id: 2, title: 'Bad A', status: 'importFailed', errorMessage: 'x' }),
       makeQueueItem({ id: 3, title: 'Bad B', status: 'failed', errorMessage: 'y' }),
     ])
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
-
     renderQueuePage()
     fireEvent.click(await screen.findByRole('button', { name: 'Clear all failed' }))
+    await acceptConfirm()
 
     await waitFor(() => expect(api.deleteFromQueue).toHaveBeenCalledWith(2, false))
     expect(api.deleteFromQueue).toHaveBeenCalledWith(3, false)
     // The healthy downloading item must NOT be cleared.
     expect(api.deleteFromQueue).not.toHaveBeenCalledWith(1, false)
-    confirmSpy.mockRestore()
   })
 
   it('bulk-removes arbitrarily selected items and unmonitors their books by default', async () => {
@@ -277,7 +291,6 @@ describe('QueuePage', () => {
         makeQueueItem({ id: 3, title: 'Keep', status: 'downloading' }),
       ])
       .mockResolvedValueOnce([])
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
 
     renderQueuePage()
 
@@ -287,11 +300,11 @@ describe('QueuePage', () => {
     fireEvent.click(within(b.closest('div')!.parentElement!).getByRole('checkbox'))
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove selected' }))
+    await acceptConfirm()
 
     // unmonitorBooks defaults ON (undo a mass import); deleteFiles defaults OFF.
     // The unselected "Keep" item is not touched.
     await waitFor(() => expect(api.bulkDeleteQueue).toHaveBeenCalledWith([1, 2], { deleteFiles: false, unmonitorBooks: true }))
-    confirmSpy.mockRestore()
   })
 
   it('select-all covers the whole queue and can also delete downloaded files', async () => {
@@ -299,7 +312,6 @@ describe('QueuePage', () => {
       makeQueueItem({ id: 1, title: 'A', status: 'downloading' }),
       makeQueueItem({ id: 2, title: 'B', status: 'downloading' }),
     ])
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
 
     renderQueuePage()
 
@@ -307,9 +319,9 @@ describe('QueuePage', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select all' }))
     fireEvent.click(screen.getByRole('checkbox', { name: 'Delete downloaded files' }))
     fireEvent.click(screen.getByRole('button', { name: 'Remove selected' }))
+    await acceptConfirm()
 
     await waitFor(() => expect(api.bulkDeleteQueue).toHaveBeenCalledWith([1, 2], { deleteFiles: true, unmonitorBooks: true }))
-    confirmSpy.mockRestore()
   })
 
   it('retries an import-failed queue item and reloads the queue', async () => {
@@ -596,6 +608,52 @@ describe('QueuePage manual match (#1589)', () => {
     fireEvent.click(await screen.findByText('Retry import'))
     await waitFor(() => expect(api.retryImport).toHaveBeenCalledWith(10))
     expect(api.matchDownload).not.toHaveBeenCalled()
+  })
+
+  it('retries every state the retry endpoint accepts, not just importFailed (#2336)', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue([
+      makeQueueItem({ id: 20, title: 'Failed Import', status: 'importFailed' }),
+      makeQueueItem({ id: 21, title: 'Blocked Import', status: 'importBlocked' }),
+      // A plain failed grab produced no file, so there is nothing to re-import.
+      makeQueueItem({ id: 22, title: 'Failed Grab', status: 'failed' }),
+    ])
+
+    renderQueuePage()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry all failed' }))
+    await waitFor(() => expect(api.retryImport).toHaveBeenCalledWith(20))
+    expect(api.retryImport).toHaveBeenCalledWith(21)
+    expect(api.retryImport).not.toHaveBeenCalledWith(22)
+    expect(api.retryImport).toHaveBeenCalledTimes(2)
+  })
+
+  it('offers Retry all failed when only blocked imports are queued (#2336)', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue([
+      makeQueueItem({ id: 23, title: 'Blocked Import', status: 'importBlocked' }),
+    ])
+
+    renderQueuePage()
+
+    expect(await screen.findByRole('button', { name: 'Retry all failed' })).toBeInTheDocument()
+  })
+
+  it('labels importExternal and importHeld instead of showing the raw enum (#2339)', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue([
+      makeQueueItem({ id: 30, title: 'Handed Off', status: 'importExternal' }),
+      makeQueueItem({ id: 31, title: 'Waiting For Sibling', status: 'importHeld' }),
+    ])
+
+    renderQueuePage()
+
+    expect(await screen.findByText('External Import')).toBeInTheDocument()
+    expect(screen.getByText('Held for Pair')).toBeInTheDocument()
+    expect(screen.queryByText('importExternal')).not.toBeInTheDocument()
+    expect(screen.queryByText('importHeld')).not.toBeInTheDocument()
+    // Both states sit in the queue indefinitely by design, so the row says why.
+    expect(screen.getByText('Handed off to the external import tool.')).toBeInTheDocument()
+    expect(screen.getByText('Held until the paired format arrives.')).toBeInTheDocument()
+    // Neither is a failure, so they stay out of the failed bar and its actions.
+    expect(screen.queryByRole('button', { name: 'Clear all failed' })).not.toBeInTheDocument()
   })
 
   it('surfaces an error when the match request fails', async () => {
