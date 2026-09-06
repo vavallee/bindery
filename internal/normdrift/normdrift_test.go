@@ -8,6 +8,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/indexer/newznab"
+	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/seriesmatch"
 	"github.com/vavallee/bindery/internal/textutil"
@@ -100,6 +101,9 @@ var stringFolds = []struct {
 	{"newznab.NormalizeQueryTitle", newznab.NormalizeQueryTitle},
 	{"newznab.TransliterateQuery", newznab.TransliterateQuery},
 	{"textutil.FoldForSearch", textutil.FoldForSearch},
+	{"textutil.FoldForSlug", textutil.FoldForSlug},
+	{"seriesmatch.CleanTitle", seriesmatch.CleanTitle},
+	{"metadata.CanonicalAuthorKey", metadata.CanonicalAuthorKey},
 }
 
 // TestNormalizersAgreeAcrossUnicodeForm is the single most valuable property

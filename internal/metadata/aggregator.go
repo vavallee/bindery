@@ -17,6 +17,7 @@ import (
 	"github.com/vavallee/bindery/internal/metadata/audible"
 	"github.com/vavallee/bindery/internal/metadata/audnex"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 // Aggregator fans out requests to multiple providers and merges results.
@@ -240,8 +241,16 @@ func searchFanOutWithFailures[T any](ctx context.Context, providers []Provider, 
 // canonicalAuthorKey normalizes an author name to a comparison key, treating
 // "Last, First" the same as "First Last" so a person's inverted and natural
 // forms collapse together.
+//
+// It folds through textutil.NormalizeAuthorName — the author-identity alphabet
+// — rather than a local normalizer. The local one kept only letters and digits,
+// and a combining mark is neither, so a decomposed "José Saramago" was cut at
+// the accent into "jos e saramago" while the composed spelling became
+// "josé saramago". Two keys for one person, and every provider disagrees with
+// macOS about which form to send (#1647). internal/normdrift now holds this
+// function to the same Unicode-form invariance as the rest.
 func canonicalAuthorKey(name string) string {
-	key := normalizeForDedup(uninvertAuthorName(name))
+	key := textutil.NormalizeAuthorName(uninvertAuthorName(name))
 	if folded, ok := foldDuplicatedAuthorKey(key); ok {
 		return folded
 	}
@@ -364,7 +373,7 @@ func preferNonDuplicatedAuthorName(a, b string) int {
 }
 
 func duplicatedAuthorName(name string) bool {
-	_, ok := foldDuplicatedAuthorKey(normalizeForDedup(name))
+	_, ok := foldDuplicatedAuthorKey(textutil.NormalizeAuthorName(name))
 	return ok
 }
 
@@ -541,7 +550,7 @@ var searchStopwords = map[string]bool{
 // into their title. Taking the max with the plain title score means author
 // awareness can only help, never hurt.
 func bookSearchRelevance(b models.Book, query string) float64 {
-	q := normalizeForDedup(query)
+	q := textutil.FoldForSearch(query)
 	if q == "" {
 		return 0
 	}
@@ -549,7 +558,7 @@ func bookSearchRelevance(b models.Book, query string) float64 {
 		return searchRelevance(b.Title, q)
 	}
 	authorTokens := make(map[string]bool)
-	for _, tok := range strings.Fields(normalizeForDedup(b.Author.Name)) {
+	for _, tok := range strings.Fields(textutil.FoldForSearch(b.Author.Name)) {
 		authorTokens[tok] = true
 	}
 	titleToks := make([]string, 0, len(strings.Fields(q)))
@@ -576,12 +585,14 @@ func bookSearchRelevance(b models.Book, query string) float64 {
 const authorQueryMatchBonus = 0.05
 
 // searchRelevance scores how well a book title matches the query (0..1, higher
-// is better). Both are normalized (lowercase, alnum, single spaces). The score
+// is better). Both sides pass through textutil.FoldForSearch, the same alphabet
+// the library search box uses, so a provider title spelled "Phönix" is reachable
+// from a query typed "phonix" and the two searches behave alike. The score
 // is continuous within each tier — a tighter (shorter) title outranks a looser
 // one at the same tier — so title length, not provider order, separates matches.
 func searchRelevance(title, query string) float64 {
-	t := normalizeForDedup(title)
-	q := normalizeForDedup(query)
+	t := textutil.FoldForSearch(title)
+	q := textutil.FoldForSearch(query)
 	if t == "" || q == "" {
 		return 0
 	}
@@ -692,13 +703,13 @@ func searchBookSeen(b models.Book, seenISBN, seenTA map[string]bool) bool {
 // titleAuthorKey builds a normalized "title|author" dedup key, or "" when the
 // title is empty (in which case the caller falls back to ISBN-only dedup).
 func titleAuthorKey(b models.Book) string {
-	title := normalizeForDedup(b.Title)
+	title := textutil.FoldForSearch(b.Title)
 	if title == "" {
 		return ""
 	}
 	author := ""
 	if b.Author != nil {
-		author = normalizeForDedup(b.Author.Name)
+		author = textutil.NormalizeAuthorName(b.Author.Name)
 	}
 	// Include the format so the same work in different formats (an ebook edition
 	// from one provider, an audiobook from another) is NOT collapsed — the user
@@ -718,27 +729,6 @@ func searchFormatKey(mediaType string) string {
 	default:
 		return "ebook"
 	}
-}
-
-// normalizeForDedup lowercases s and keeps only letters and digits separated by
-// single spaces, so trivial punctuation, spacing, and case differences between
-// providers collapse to the same key.
-func normalizeForDedup(s string) string {
-	var b strings.Builder
-	space := false
-	for _, r := range strings.ToLower(s) {
-		switch {
-		case unicode.IsLetter(r) || unicode.IsDigit(r):
-			if space && b.Len() > 0 {
-				b.WriteByte(' ')
-			}
-			space = false
-			b.WriteRune(r)
-		default:
-			space = true
-		}
-	}
-	return b.String()
 }
 
 func (a *Aggregator) GetAuthor(ctx context.Context, foreignID string) (*models.Author, error) {
