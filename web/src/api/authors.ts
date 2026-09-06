@@ -55,6 +55,19 @@ export interface AuthorSyncSummary {
   completedAt: string
   total: number
   added: number
+  // Works that resolved to a book already in the library, by foreign id, by
+  // Hardcover id, or by normalised title. On an established author this is
+  // most of `total`, and until #2449 there was no field for it, so
+  // total - added - skipped* read as a hole rather than as the shelf.
+  matched: number
+  // Works that reached the create step and lost the write. Not a policy
+  // outcome: the one genuine loss a sync can suffer, and the only counter
+  // here that means something went wrong.
+  failed?: number
+  // Newly discovered works dropped because an excluded book under this author
+  // already carries the title. Reported so `total` reconciles, deliberately
+  // NOT rendered by the notice: the user excluded that book on purpose.
+  skippedExcluded?: number
   skippedLanguage: number
   skippedJunk: number
   skippedMediaType: number
@@ -122,7 +135,6 @@ export type CatalogueReconciliationReason =
   | 'language_not_allowed'
   | 'part_book'
   | 'missing_release_date'
-  | 'below_minimum_popularity'
   | 'below_minimum_pages'
   | 'missing_isbn'
   | 'catalogue_filter'

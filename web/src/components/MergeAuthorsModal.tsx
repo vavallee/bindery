@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useConfirmDialog } from './useConfirmDialog'
 import { api, Author } from '../api/client'
 
 interface Props {
@@ -18,6 +19,7 @@ interface Props {
 // committing.
 export default function MergeAuthorsModal({ authors, initialTargetId, onClose, onMerged }: Props) {
   const { t } = useTranslation()
+  const { confirm, confirmDialog } = useConfirmDialog()
   const [targetId, setTargetId] = useState<number | ''>(initialTargetId ?? '')
   const [sourceId, setSourceId] = useState<number | ''>('')
   const [sourceBookCount, setSourceBookCount] = useState<number | null>(null)
@@ -48,11 +50,16 @@ export default function MergeAuthorsModal({ authors, initialTargetId, onClose, o
 
   const submit = async () => {
     if (!canSubmit || !source || !target) return
-    const msg = `Merge "${source.authorName}" into "${target.authorName}"?\n\n` +
-      `• ${sourceBookCount ?? '?'} book(s) will be reparented.\n` +
-      `• "${source.authorName}" will be kept as an alias of "${target.authorName}".\n` +
-      `• This cannot be undone.`
-    if (!confirm(msg)) return
+    if (!await confirm({
+      title: t('mergeAuthorsModal.title'),
+      body: t('mergeAuthorsModal.confirmBody', {
+        source: source.authorName,
+        target: target.authorName,
+        count: sourceBookCount ?? 0,
+      }),
+      confirmLabel: t('mergeAuthorsModal.mergeButton'),
+      acknowledgeLabel: t('mergeAuthorsModal.confirmAcknowledge'),
+    })) return
     setBusy(true)
     setError(null)
     try {
@@ -68,6 +75,7 @@ export default function MergeAuthorsModal({ authors, initialTargetId, onClose, o
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50" onClick={onClose}>
+      {confirmDialog}
       <div
         className="bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg w-full max-w-lg shadow-2xl"
         onClick={e => e.stopPropagation()}

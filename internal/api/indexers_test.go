@@ -1107,3 +1107,117 @@ func TestIndexerUpdate_WriteOnlyAPIKey(t *testing.T) {
 		}
 	})
 }
+
+// TestIndexerDailyQueryLimit_API covers the #2312 field end to end through the
+// handler: it round-trips, an update that omits it keeps the stored value, zero
+// clears it, and a negative cap is rejected rather than stored as an indexer
+// that can never be searched.
+func TestIndexerDailyQueryLimit_API(t *testing.T) {
+	h := indexerFixture(t)
+
+	rec := httptest.NewRecorder()
+	h.Create(rec, httptest.NewRequest(http.MethodPost, "/indexer",
+		bytes.NewBufferString(`{"name":"Capped","url":"https://api.nzbgeek.info","apiKey":"k","dailyQueryLimit":500}`)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var created models.Indexer
+	if err := json.NewDecoder(rec.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if created.DailyQueryLimit == nil || *created.DailyQueryLimit != 500 {
+		t.Fatalf("created DailyQueryLimit = %v, want 500", created.DailyQueryLimit)
+	}
+
+	// An update that says nothing about the cap must keep it. The web app
+	// spreads the stored object back into its payload, but a client that
+	// predates the field would otherwise silently clear it.
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/indexer/"+strconv.FormatInt(created.ID, 10),
+		bytes.NewBufferString(`{"name":"Capped Renamed"}`))
+	h.Update(rec, withURLParam(req, "id", strconv.FormatInt(created.ID, 10)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var updated models.Indexer
+	if err := json.NewDecoder(rec.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if updated.DailyQueryLimit == nil || *updated.DailyQueryLimit != 500 {
+		t.Errorf("an update that omitted the cap cleared it: %v", updated.DailyQueryLimit)
+	}
+
+	// Zero is how the UI clears the field, and means unlimited rather than
+	// "never search this indexer".
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPut, "/indexer/"+strconv.FormatInt(created.ID, 10),
+		bytes.NewBufferString(`{"dailyQueryLimit":0}`))
+	h.Update(rec, withURLParam(req, "id", strconv.FormatInt(created.ID, 10)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clear cap: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// A negative cap is rejected on both write paths.
+	rec = httptest.NewRecorder()
+	h.Create(rec, httptest.NewRequest(http.MethodPost, "/indexer",
+		bytes.NewBufferString(`{"name":"Bad","url":"https://api.nzbfinder.ws","dailyQueryLimit":-5}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("create with a negative cap: expected 400, got %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPut, "/indexer/"+strconv.FormatInt(created.ID, 10),
+		bytes.NewBufferString(`{"dailyQueryLimit":-1}`))
+	h.Update(rec, withURLParam(req, "id", strconv.FormatInt(created.ID, 10)))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("update with a negative cap: expected 400, got %d", rec.Code)
+	}
+}
+
+// TestIndexerDailyQueryUsage_SurvivesASave: the web app splices the write
+// response back into its list state, so an indexer sitting at its cap would
+// have dropped to "0 of 1000" the moment anyone renamed it, while the searcher
+// was still skipping it.
+func TestIndexerDailyQueryUsage_SurvivesASave(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	repo := db.NewIndexerRepo(database)
+	h := NewIndexerHandler(repo, db.NewBookRepo(database), db.NewAuthorRepo(database),
+		db.NewMetadataProfileRepo(database), nil, db.NewSettingsRepo(database), db.NewBlocklistRepo(database))
+
+	rec := httptest.NewRecorder()
+	h.Create(rec, httptest.NewRequest(http.MethodPost, "/indexer",
+		bytes.NewBufferString(`{"name":"Capped","url":"https://api.nzbgeek.info","apiKey":"k","dailyQueryLimit":1000}`)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var created models.Indexer
+	if err := json.NewDecoder(rec.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+	if created.DailyQueriesUsed == nil || *created.DailyQueriesUsed != 0 {
+		t.Errorf("create response DailyQueriesUsed = %v, want 0", created.DailyQueriesUsed)
+	}
+
+	ctx := context.Background()
+	if err := repo.AddQueryCount(ctx, created.ID, time.Now(), 950); err != nil {
+		t.Fatalf("record usage: %v", err)
+	}
+
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/indexer/"+strconv.FormatInt(created.ID, 10),
+		bytes.NewBufferString(`{"name":"Capped Renamed"}`))
+	h.Update(rec, withURLParam(req, "id", strconv.FormatInt(created.ID, 10)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var updated models.Indexer
+	if err := json.NewDecoder(rec.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode update: %v", err)
+	}
+	if updated.DailyQueriesUsed == nil || *updated.DailyQueriesUsed != 950 {
+		t.Errorf("update response DailyQueriesUsed = %v, want 950", updated.DailyQueriesUsed)
+	}
+}

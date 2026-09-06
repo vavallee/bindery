@@ -100,7 +100,7 @@ func TestAutoGrab_SkipsMultiBookPack(t *testing.T) {
 	t.Run("pack is the only candidate: nothing is grabbed", func(t *testing.T) {
 		s, downloads, book, ctx := packGrabFixture(t, []newznab.SearchResult{packRelease()})
 
-		s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook)
+		s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
 
 		if dl, err := downloads.GetByGUID(ctx, "guid-pack"); err != nil {
 			t.Fatal(err)
@@ -112,7 +112,7 @@ func TestAutoGrab_SkipsMultiBookPack(t *testing.T) {
 	t.Run("pack ranked first: the single-book release is grabbed instead", func(t *testing.T) {
 		s, downloads, book, ctx := packGrabFixture(t, []newznab.SearchResult{packRelease(), singleRelease()})
 
-		s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook)
+		s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
 
 		if dl, err := downloads.GetByGUID(ctx, "guid-pack"); err != nil {
 			t.Fatal(err)
@@ -134,7 +134,7 @@ func TestAutoGrab_SkipsMultiBookPack(t *testing.T) {
 	t.Run("a pack is not stored as a pending release", func(t *testing.T) {
 		s, _, book, ctx := packGrabFixture(t, []newznab.SearchResult{packRelease()})
 
-		s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook)
+		s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
 
 		got, err := s.pending.ListByBook(ctx, book.ID)
 		if err != nil {

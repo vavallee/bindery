@@ -5,8 +5,13 @@ interface Props {
   title: string
   /** Explanatory body. A string, or arbitrary nodes for emphasis/markup. */
   body: React.ReactNode
-  /** Label for the checkbox the user must tick before confirming. */
-  acknowledgeLabel: string
+  /**
+   * Label for an "I understand" checkbox the user must tick before confirming.
+   * Omit it for routine confirmations: the checkbox is then not rendered and
+   * the confirm button is enabled straight away. Keep it for the irreversible
+   * ones (deleting files off disk, rotating a secret).
+   */
+  acknowledgeLabel?: string
   /** Confirm button text. */
   confirmLabel: string
   /** Confirm button text while the action is in flight. */
@@ -17,8 +22,14 @@ interface Props {
 }
 
 /**
- * A guarded confirmation modal: the confirm button stays disabled until the
- * user ticks an "I understand" checkbox. Built on the shared modal shell.
+ * A confirmation modal, used everywhere the app used to call window.confirm
+ * (#2359). Pass acknowledgeLabel to make it a guarded confirmation: the confirm
+ * button then stays disabled until the user ticks an "I understand" checkbox.
+ * Without it the button is live immediately, which is the right weight for a
+ * routine "delete this profile".
+ *
+ * Most callers reach this through useConfirmDialog rather than rendering it
+ * directly.
  */
 export default function ConfirmDialog({
   title,
@@ -32,6 +43,7 @@ export default function ConfirmDialog({
 }: Props) {
   const { t } = useTranslation()
   const [acknowledged, setAcknowledged] = useState(false)
+  const needsAcknowledgement = acknowledgeLabel !== undefined
 
   return (
     <div
@@ -39,24 +51,30 @@ export default function ConfirmDialog({
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-dialog-title"
+        data-testid="confirm-dialog"
         className="bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg w-full max-w-md shadow-2xl max-h-[90vh] flex flex-col"
         onClick={e => e.stopPropagation()}
       >
         <div className="p-4 border-b border-slate-200 dark:border-zinc-800">
-          <h3 className="text-lg font-semibold text-slate-800 dark:text-zinc-200">{title}</h3>
+          <h3 id="confirm-dialog-title" className="text-lg font-semibold text-slate-800 dark:text-zinc-200">{title}</h3>
         </div>
         <div className="p-4 flex-1 overflow-y-auto space-y-4">
           <div className="text-sm text-slate-600 dark:text-zinc-400 leading-relaxed">{body}</div>
-          <label className="flex items-start gap-2 text-sm text-slate-700 dark:text-zinc-300 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={acknowledged}
-              onChange={e => setAcknowledged(e.target.checked)}
-              disabled={confirming}
-              className="mt-0.5 rounded border-slate-300 dark:border-zinc-700 text-emerald-600 focus:ring-emerald-500"
-            />
-            <span>{acknowledgeLabel}</span>
-          </label>
+          {needsAcknowledgement && (
+            <label className="flex items-start gap-2 text-sm text-slate-700 dark:text-zinc-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={acknowledged}
+                onChange={e => setAcknowledged(e.target.checked)}
+                disabled={confirming}
+                className="mt-0.5 rounded border-slate-300 dark:border-zinc-700 text-emerald-600 focus:ring-emerald-500"
+              />
+              <span>{acknowledgeLabel}</span>
+            </label>
+          )}
         </div>
         <div className="p-4 border-t border-slate-200 dark:border-zinc-800 flex justify-end gap-2">
           <button
@@ -70,7 +88,7 @@ export default function ConfirmDialog({
           <button
             type="button"
             onClick={onConfirm}
-            disabled={!acknowledged || confirming}
+            disabled={(needsAcknowledgement && !acknowledged) || confirming}
             className="px-3 py-1.5 text-sm font-medium rounded bg-red-600 hover:bg-red-500 text-white disabled:opacity-50"
           >
             {confirming ? confirmingLabel ?? confirmLabel : confirmLabel}

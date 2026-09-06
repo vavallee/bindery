@@ -24,7 +24,9 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/vavallee/bindery/internal/httpsec"
+	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/textutil"
 	"github.com/vavallee/bindery/internal/useragent"
 )
 
@@ -32,6 +34,13 @@ const (
 	sruBase      = "https://services.dnb.de/sru/dnb"
 	idPrefix     = "dnb:"
 	recordSchema = "MARC21-xml"
+	// maxResponseBytes caps the SRU document handed to the XML decoder. The
+	// request bounds itself with maximumRecords so a well-behaved response is
+	// far under this; the cap is there because the decode read straight off
+	// the socket with no limit, leaving only the 15 s client timeout to bound
+	// what a misbehaving host could make Bindery hold (#2357). Same ceiling as
+	// the newznab XML path.
+	maxResponseBytes = 32 << 20
 )
 
 // Client implements metadata.Provider for DNB via the public SRU endpoint.
@@ -246,7 +255,7 @@ func (c *Client) sruQuery(ctx context.Context, cql string, maxRecords int) ([]ma
 	}
 
 	var result sruResponse
-	if err := xml.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := xml.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode SRU response: %w", err)
 	}
 
@@ -309,16 +318,13 @@ func recordToBook(rec marcRecord) *models.Book {
 	// add-book endpoint can use them for cross-provider author resolution
 	// when the DNB record has only an author name and no foreign author ID.
 	for _, raw := range rec.subfieldAll("020", "a") {
-		digits := stripISBNQualifier(raw)
-		if digits == "" {
-			continue
-		}
+		isbn13, isbn10 := stripISBNQualifier(raw)
 		ed := models.Edition{}
-		switch len(digits) {
-		case 13:
-			ed.ISBN13 = &digits
-		case 10:
-			ed.ISBN10 = &digits
+		switch {
+		case isbn13 != "":
+			ed.ISBN13 = &isbn13
+		case isbn10 != "":
+			ed.ISBN10 = &isbn10
 		default:
 			continue
 		}
@@ -328,24 +334,18 @@ func recordToBook(rec marcRecord) *models.Book {
 	return b
 }
 
-// stripISBNQualifier extracts the digit-run from a MARC 020 $a value. Real
-// values look like "9783499015717", "3-499-01571-X", or
-// "9783499015717 (pbk.)" — keep the digits (and a trailing X for ISBN-10
-// check digits), drop everything else.
-func stripISBNQualifier(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		} else if r == 'X' || r == 'x' {
-			// ISBN-10 check digit can be 'X' (value 10).
-			b.WriteRune('X')
-		} else if b.Len() > 0 && (r == ' ' || r == '(' || r == ',') {
-			// Stop at the first delimiter after digits — qualifier text follows.
-			break
-		}
-	}
-	return b.String()
+// stripISBNQualifier extracts the ISBN from a MARC 020 $a value and classifies
+// it. Real values look like "9783499015717", "3-499-01571-X", or
+// "9783499015717 (pbk.)" — the parenthesised qualifier naming the binding has
+// to be dropped without taking any digits inside it for part of the ISBN.
+//
+// The scanning is isbnutil's, shared with the EPUB OPF reader, so a book
+// catalogued by the DNB and the same book read out of an EPUB yield the same
+// identifier string. Delegating also fixed the limitation this function used to
+// document: it stopped at the first space, so a space-separated
+// "978 3 446 12345 6" came back as "978" and the ISBN was dropped.
+func stripISBNQualifier(s string) (isbn13, isbn10 string) {
+	return isbnutil.Extract(s)
 }
 
 // extractAuthor builds an Author from a MARC bib record. Lookup order:
@@ -693,7 +693,32 @@ func trimGNDID(s string) string {
 // authors).
 //
 // Example: "Müller, Thomas" → "muller-thomas".
+//
+// The ASCII reduction is deliberately kept byte-for-byte, because its output is
+// a stored ForeignID: changing it for a name it already handles would orphan
+// every DNB-only author created before the change. It is lossy in ways that do
+// not matter for uniqueness ("Nesbø, Jo" loses the ø and becomes "nesb-jo"),
+// with one exception that matters a great deal — a name written in any
+// non-Latin script has NO characters in [a-z0-9] and reduces to the EMPTY
+// string, so every Chinese, Japanese, Cyrillic, Greek, Hebrew and Arabic author
+// collided on the single ForeignID "dnb:author:". That is data corruption
+// rather than a missed match, and it is the same collapse #1645 removed from
+// the series slugs.
+//
+// So the ASCII path is unchanged and the empty result now falls back to
+// textutil.FoldForSlug, the alphabet built for exactly this job: stable,
+// collision-free, and script-preserving, because two scripts must never produce
+// one key. No existing ID moves, since the fallback only fires where the old
+// function produced nothing usable.
 func slug(name string) string {
+	if out := asciiSlug(name); out != "" {
+		return out
+	}
+	return nonLatinSlug(name)
+}
+
+// asciiSlug is the original reduction, preserved verbatim. See slug.
+func asciiSlug(name string) string {
 	folded := norm.NFD.String(strings.TrimSpace(name))
 	var b strings.Builder
 	b.Grow(len(folded))
@@ -719,6 +744,35 @@ func slug(name string) string {
 	out := b.String()
 	out = strings.TrimRight(out, "-")
 	return out
+}
+
+// nonLatinSlug derives an identifier for a name the ASCII reduction cannot
+// represent at all. It keeps the script rather than transliterating: a
+// romanisation would have to pick one scheme per script, and picking wrongly
+// merges two people instead of merely writing an ugly ID.
+//
+// Marks are kept as word characters because in these scripts they are part of
+// the letter — the point FoldForSlug makes at length. An empty result is still
+// possible in principle (a name of nothing but punctuation), and the caller
+// treats that the way it always has.
+func nonLatinSlug(name string) string {
+	folded := textutil.FoldForSlug(name)
+	var b strings.Builder
+	b.Grow(len(folded))
+	prevDash := false
+	for _, r := range folded {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Mc, r):
+			b.WriteRune(r)
+			prevDash = false
+		default:
+			if !prevDash && b.Len() > 0 {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		}
+	}
+	return strings.TrimRight(b.String(), "-")
 }
 
 // parseYear extracts the first 4-digit year from a MARC date string such as

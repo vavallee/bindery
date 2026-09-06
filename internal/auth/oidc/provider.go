@@ -6,10 +6,12 @@ package oidc
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -646,15 +648,16 @@ func NewNonce() (string, error) {
 
 // --- State cookie value (state + nonce + codeVerifier packed as JSON) --------
 
-// flowState is the encrypted-at-rest blob the browser carries between the
-// /login and /callback hops. RedirectBase is included so the token-exchange
-// in /callback uses the exact redirect_uri the IdP saw at /login — a
-// requirement of the OAuth2 spec.
+// flowState is the signed blob the browser carries between the /login and
+// /callback hops. RedirectBase is included so the token-exchange in /callback
+// uses the exact redirect_uri the IdP saw at /login — a requirement of the
+// OAuth2 spec. ProviderID pins the flow to the provider it was started for.
 type flowState struct {
 	State        string    `json:"s"`
 	Nonce        string    `json:"n"`
 	CodeVerifier string    `json:"cv"`
 	RedirectBase string    `json:"rb,omitempty"`
+	ProviderID   string    `json:"p,omitempty"`
 	Expiry       time.Time `json:"exp"`
 }
 
@@ -667,15 +670,57 @@ type FlowState struct {
 	RedirectBase string
 }
 
-func EncodeFlowState(state, nonce, codeVerifier, redirectBase string) (string, error) {
+// Flow-cookie wire format (#2362):
+//
+//	<base64url(json payload)>.<base64url(hmac-sha256 over the payload)>
+//
+// The signature is keyed by the install's session secret, the same key the
+// session cookie and the CSRF token are derived from, under its own
+// domain-separation label so a flow blob can never be replayed as either.
+//
+// Before this the value was bare base64 JSON. Everything the callback trusts
+// comes out of it — the state it compares ?state against, the PKCE verifier,
+// the expiry — so anyone able to write a cookie on the origin could hand a
+// victim a flow they had started themselves and sign them in as the attacker's
+// IdP identity.
+//
+// An unsigned cookie minted before the upgrade fails verification. That costs a
+// login already in flight one retry, which is what a restart costs today.
+const (
+	flowStateSigLabel = "bindery-oidc-flow.v1."
+
+	// minFlowSecretLen mirrors the session package's own minimum. A secret
+	// shorter than this cannot sign a session cookie either, so refusing to
+	// sign a flow with it fails the login at /login rather than at /callback.
+	minFlowSecretLen = 32
+)
+
+// ErrFlowStateUnsigned reports a flow cookie carrying no signature, which is
+// what a cookie minted before #2362 looks like. Distinguished from a bad
+// signature so the "in flight across an upgrade" case is legible in a log.
+var ErrFlowStateUnsigned = errors.New("flow state is not signed")
+
+// EncodeFlowState packs the flow into a cookie value signed with secret and
+// bound to providerID. secret must be the install's current session secret;
+// a missing or too-short one is refused rather than silently producing an
+// unauthenticated cookie.
+func EncodeFlowState(secret []byte, providerID, state, nonce, codeVerifier, redirectBase string) (string, error) {
 	fs := flowState{
 		State:        state,
 		Nonce:        nonce,
 		CodeVerifier: codeVerifier,
 		RedirectBase: redirectBase,
+		ProviderID:   providerID,
 		Expiry:       time.Now().Add(10 * time.Minute),
 	}
-	return encodeFlowStateRaw(fs)
+	return encodeFlowStateRaw(secret, fs)
+}
+
+// flowStateSignature returns the base64url MAC over an encoded payload.
+func flowStateSignature(secret []byte, payload string) string {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(flowStateSigLabel + payload))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 func configEqual(a, b ProviderConfig) bool {
@@ -684,16 +729,59 @@ func configEqual(a, b ProviderConfig) bool {
 	return string(aj) == string(bj)
 }
 
-func encodeFlowStateRaw(fs flowState) (string, error) {
+func encodeFlowStateRaw(secret []byte, fs flowState) (string, error) {
+	if len(secret) < minFlowSecretLen {
+		return "", fmt.Errorf("sign flow state: session secret is missing or shorter than %d bytes", minFlowSecretLen)
+	}
 	b, err := json.Marshal(fs)
 	if err != nil {
 		return "", err
 	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
+	payload := base64.RawURLEncoding.EncodeToString(b)
+	return payload + "." + flowStateSignature(secret, payload), nil
 }
 
-func DecodeFlowState(encoded string) (*FlowState, error) {
-	b, err := base64.RawURLEncoding.DecodeString(encoded)
+// DecodeFlowState verifies and unpacks a flow cookie.
+//
+// secrets is the ordered candidate set {current, previous} the rest of the auth
+// stack already uses, so a flow started just before a session-secret rotation
+// still completes. Verification is never weakened: the cookie is accepted only
+// if some candidate reproduces its MAC in constant time.
+//
+// providerID is the provider the callback is running for. It must match the one
+// baked in at /login, or a flow started against one IdP could be completed
+// against another.
+//
+// The signature is checked before the payload is parsed, so a forged Expiry no
+// longer removes the ten-minute replay window and no attacker-supplied bytes
+// reach the JSON decoder.
+func DecodeFlowState(secrets [][]byte, providerID, encoded string) (*FlowState, error) {
+	payload, sig, ok := strings.Cut(encoded, ".")
+	if !ok {
+		return nil, ErrFlowStateUnsigned
+	}
+
+	var usable [][]byte
+	for _, s := range secrets {
+		if len(s) >= minFlowSecretLen {
+			usable = append(usable, s)
+		}
+	}
+	if len(usable) == 0 {
+		return nil, errors.New("verify flow state: no usable session secret")
+	}
+	verified := false
+	for _, secret := range usable {
+		if hmac.Equal([]byte(sig), []byte(flowStateSignature(secret, payload))) {
+			verified = true
+			break
+		}
+	}
+	if !verified {
+		return nil, errors.New("flow state signature mismatch")
+	}
+
+	b, err := base64.RawURLEncoding.DecodeString(payload)
 	if err != nil {
 		return nil, fmt.Errorf("decode flow state: %w", err)
 	}
@@ -703,6 +791,9 @@ func DecodeFlowState(encoded string) (*FlowState, error) {
 	}
 	if time.Now().After(fs.Expiry) {
 		return nil, fmt.Errorf("flow state expired")
+	}
+	if fs.ProviderID != providerID {
+		return nil, fmt.Errorf("flow state was started for a different provider")
 	}
 	return &FlowState{
 		State:        fs.State,

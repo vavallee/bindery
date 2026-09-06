@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
@@ -112,6 +113,66 @@ func indexerResponses(idxs []models.Indexer) []models.Indexer {
 	return out
 }
 
+// indexerQueryWindow must match indexer.quotaWindow: the number the UI renders
+// against the cap has to be summed over the same period the searcher enforces
+// it over, or the tab would say 400 of 1000 about an indexer that is refusing
+// searches.
+const indexerQueryWindow = 24 * time.Hour
+
+// withQueryUsage fills the response-only DailyQueriesUsed on every indexer that
+// has a cap set, so the Indexers tab can show how much of it is spent (#2312).
+//
+// The stored counts lag the live tally by up to one flush interval, so this is a
+// display figure and not the value the cap is enforced against. A failed read
+// leaves the field nil, which renders as "no usage known" rather than failing
+// the whole list request over a decoration.
+func (h *IndexerHandler) withQueryUsage(ctx context.Context, idxs []models.Indexer) []models.Indexer {
+	capped := false
+	for _, idx := range idxs {
+		if idx.DailyQueryLimit != nil && *idx.DailyQueryLimit > 0 {
+			capped = true
+			break
+		}
+	}
+	if !capped {
+		return idxs
+	}
+	usage, err := h.indexers.QueryUsage(ctx, time.Now().Add(-indexerQueryWindow))
+	if err != nil {
+		slog.Warn("failed to read indexer query usage", "error", err)
+		return idxs
+	}
+	for i := range idxs {
+		if idxs[i].DailyQueryLimit == nil || *idxs[i].DailyQueryLimit <= 0 {
+			continue
+		}
+		used := usage[idxs[i].ID]
+		idxs[i].DailyQueriesUsed = &used
+	}
+	return idxs
+}
+
+// withQueryUsageOne is withQueryUsage for a single row. Every response that
+// carries an indexer goes through one of the two, including Create and Update:
+// the web app splices the response straight back into its list state, so an
+// indexer showing "950 of 1000, limit reached" would drop to "0 of 1000" the
+// moment someone renamed it or flipped its enable toggle, while the searcher
+// was still skipping it. That is exactly the looks-idle-but-is-not state the
+// banner exists to prevent.
+func (h *IndexerHandler) withQueryUsageOne(ctx context.Context, idx models.Indexer) models.Indexer {
+	return h.withQueryUsage(ctx, []models.Indexer{idx})[0]
+}
+
+// validateDailyQueryLimit rejects a negative cap. Zero is allowed and means the
+// same as unset — "no cap" — so a user who types 0 to clear the field gets what
+// they expect rather than an indexer that can never be searched.
+func validateDailyQueryLimit(idx models.Indexer) error {
+	if idx.DailyQueryLimit != nil && *idx.DailyQueryLimit < 0 {
+		return errors.New("dailyQueryLimit must be zero or greater")
+	}
+	return nil
+}
+
 // indexerResponse strips the stored API key and reports whether one is set.
 // Indexer credentials are write-only over the API: the client needs to know
 // that a key exists so it can render "leave blank to keep the existing key",
@@ -160,7 +221,7 @@ func (h *IndexerHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, indexerResponses(idxs))
+	writeJSON(w, http.StatusOK, h.withQueryUsage(r.Context(), indexerResponses(idxs)))
 }
 
 func (h *IndexerHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -173,7 +234,7 @@ func (h *IndexerHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "indexer not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, indexerResponse(*idx))
+	writeJSON(w, http.StatusOK, h.withQueryUsageOne(r.Context(), indexerResponse(*idx)))
 }
 
 func (h *IndexerHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -187,6 +248,10 @@ func (h *IndexerHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := httpsec.ValidateOutboundURL(idx.URL, httpsec.PolicyLANLoopback); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := validateDailyQueryLimit(idx); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -220,7 +285,7 @@ func (h *IndexerHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	telemetry.MarkFirst(r.Context(), h.settings, telemetry.SettingFirstIndexerAt)
-	writeJSON(w, http.StatusCreated, indexerResponse(idx))
+	writeJSON(w, http.StatusCreated, h.withQueryUsageOne(r.Context(), indexerResponse(idx)))
 }
 
 func (h *IndexerHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -274,6 +339,10 @@ func (h *IndexerHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if err := validateDailyQueryLimit(idx); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	idx.ID = id
 	// A user editing the indexer takes ownership of the seed-ratio override, so
 	// the Prowlarr syncer (#1065) will not overwrite it on the next sync. This
@@ -284,7 +353,7 @@ func (h *IndexerHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, indexerResponse(idx))
+	writeJSON(w, http.StatusOK, h.withQueryUsageOne(r.Context(), indexerResponse(idx)))
 }
 
 func (h *IndexerHandler) Delete(w http.ResponseWriter, r *http.Request) {

@@ -667,3 +667,82 @@ func TestAuthorRepo_GetByForeignIDNotFound(t *testing.T) {
 		t.Errorf("expected nil for missing author, got %+v", got)
 	}
 }
+
+// TestDownloadRepo_ListByStatuses covers the multi-status list the wanted
+// sweep's in-flight filter uses in place of one query per state (#2370):
+// it returns the union of the requested states, nothing else, and answers
+// empty for no statuses without touching the database.
+func TestDownloadRepo_ListByStatuses(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewDownloadRepo(database)
+
+	seed := func(guid string, status models.DownloadState) {
+		dl := &models.Download{
+			GUID: guid, Title: guid, Status: models.StateGrabbed, Protocol: "torrent",
+		}
+		if err := repo.Create(ctx, dl); err != nil {
+			t.Fatalf("create %s: %v", guid, err)
+		}
+		if status == models.StateGrabbed {
+			return
+		}
+		if _, err := database.ExecContext(ctx,
+			"UPDATE downloads SET status=? WHERE id=?", status, dl.ID); err != nil {
+			t.Fatalf("set %s to %s: %v", guid, status, err)
+		}
+	}
+	seed("dl-grabbed", models.StateGrabbed)
+	seed("dl-downloading", models.StateDownloading)
+	seed("dl-held", models.StateImportHeld)
+	seed("dl-failed", models.StateFailed)
+	seed("dl-imported", models.StateImported)
+
+	got, err := repo.ListByStatuses(ctx,
+		models.StateGrabbed, models.StateDownloading, models.StateImportHeld)
+	if err != nil {
+		t.Fatalf("ListByStatuses: %v", err)
+	}
+	guids := make(map[string]bool, len(got))
+	for _, d := range got {
+		guids[d.GUID] = true
+	}
+	for _, want := range []string{"dl-grabbed", "dl-downloading", "dl-held"} {
+		if !guids[want] {
+			t.Errorf("%s missing from the multi-status result", want)
+		}
+	}
+	for _, unwanted := range []string{"dl-failed", "dl-imported"} {
+		if guids[unwanted] {
+			t.Errorf("%s was returned for statuses it is not in", unwanted)
+		}
+	}
+	if len(got) != 3 {
+		t.Errorf("expected 3 rows, got %d", len(got))
+	}
+
+	// A single status must agree with ListByStatus, so callers can swap freely.
+	one, err := repo.ListByStatuses(ctx, models.StateDownloading)
+	if err != nil {
+		t.Fatalf("ListByStatuses(one): %v", err)
+	}
+	single, err := repo.ListByStatus(ctx, models.StateDownloading)
+	if err != nil {
+		t.Fatalf("ListByStatus: %v", err)
+	}
+	if len(one) != len(single) || len(one) != 1 {
+		t.Errorf("single-status result disagrees with ListByStatus: %d vs %d", len(one), len(single))
+	}
+
+	none, err := repo.ListByStatuses(ctx)
+	if err != nil {
+		t.Fatalf("ListByStatuses(): %v", err)
+	}
+	if len(none) != 0 {
+		t.Errorf("no statuses should return no rows, got %d", len(none))
+	}
+}

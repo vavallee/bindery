@@ -1020,6 +1020,37 @@ func TestAddTorrent_TorrentURL_RedirectToMagnetUsesURLForm(t *testing.T) {
 	}
 }
 
+// TestGetTorrents_OversizedAPIResponseIsRejected covers #2357. Client.get read
+// the success body with a bare io.ReadAll, so a qBittorrent that streamed
+// until the client timeout could make Bindery hold the whole reply. The cap is
+// lowered here rather than served 64 MiB; what matters is that going over
+// surfaces as a named error instead of a truncated document that fails to
+// unmarshal, which is how #1524 presented on the Transmission side.
+func TestGetTorrents_OversizedAPIResponseIsRejected(t *testing.T) {
+	orig := maxAPIResponseBytes
+	maxAPIResponseBytes = 32
+	t.Cleanup(func() { maxAPIResponseBytes = orig })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			_, _ = w.Write([]byte(`[{"hash":"` + strings.Repeat("a", 4096) + `"}]`))
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	_, err := c.GetTorrents(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected an error for an over-limit qBittorrent API response")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("expected the cap to be named in the error, got: %v", err)
+	}
+}
+
 func TestAddTorrent_TorrentURL_OversizedResponseDoesNotCallQbitAdd(t *testing.T) {
 	orig := maxTorrentFileBytes
 	maxTorrentFileBytes = 8

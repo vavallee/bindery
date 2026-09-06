@@ -277,7 +277,64 @@ func (c *Client) GetBook(ctx context.Context, foreignID string) (*models.Book, e
 		}
 	}
 
+	// The work record carries neither a publication date nor a language, so
+	// fill both from the search index before returning (#2306).
+	c.enrichWorkFromSearch(ctx, foreignID, b)
+
 	return b, nil
+}
+
+// enrichWorkFromSearch fills the fields /works/{id}.json does not carry.
+//
+// An OpenLibrary work record has no publication date and no language. For
+// OL1000175W ("Paying the Piper") the endpoint returns only authors, covers,
+// description, key, subjects and title, while the search index reports
+// first_publish_year 2002 and language ["eng"] for that same work. Because
+// GetBook is what Re-bind fetches through, a re-bound book kept whatever stale
+// date and language the record it replaced had left behind (#2306).
+//
+// This is the same enrichment GetAuthorWorks already applies to every work it
+// returns, so a re-bound book now agrees with what an author sync would have
+// produced for it rather than being a second-class record.
+//
+// Best-effort by design: the search index is a secondary source, so a failed
+// or empty lookup leaves the fields as they were instead of failing the whole
+// GetBook. Existing values are never overwritten.
+func (c *Client) enrichWorkFromSearch(ctx context.Context, foreignID string, b *models.Book) {
+	if b == nil || foreignID == "" {
+		return
+	}
+	if b.ReleaseDate != nil && b.Language != "" {
+		return
+	}
+	q := url.Values{
+		"q":      {"key:/works/" + foreignID},
+		"fields": {"key,first_publish_year,language"},
+		"limit":  {"1"},
+	}
+	var resp searchResponse
+	if err := c.getJSON(ctx, baseURL+"/search.json?"+q.Encode(), &resp); err != nil {
+		slog.Debug("openlibrary: work search enrichment failed", "foreignId", foreignID, "error", err)
+		return
+	}
+	if len(resp.Docs) == 0 {
+		return
+	}
+	doc := resp.Docs[0]
+	// The search index matches on more than an exact key, so confirm the doc
+	// returned is the work asked for before copying anything off it.
+	if strings.TrimPrefix(doc.Key, "/works/") != foreignID {
+		slog.Debug("openlibrary: work search enrichment returned a different work",
+			"want", foreignID, "got", doc.Key)
+		return
+	}
+	if b.ReleaseDate == nil && doc.FirstPublishYear > 0 {
+		t := time.Date(doc.FirstPublishYear, 1, 1, 0, 0, 0, 0, time.UTC)
+		b.ReleaseDate = &t
+	}
+	if b.Language == "" {
+		b.Language = pickPreferredLanguage(doc.Language)
+	}
 }
 
 // GetAuthorWorks fetches all works by an author. It merges two OpenLibrary

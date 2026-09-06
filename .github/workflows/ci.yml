@@ -143,7 +143,7 @@ jobs:
         with:
           go-version: "1.26.6"
           cache: true
-      - run: go test -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/...
+      - run: go test -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/... ./tools/...
       - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: coverage.out
@@ -155,12 +155,27 @@ jobs:
   # remaining Go packages run in parallel so large packages do not dominate
   # PR feedback.
   # The post-merge race job uses the same shard layout.
+  #
+  # On the timeouts: measured on four consecutive green main runs in September
+  # 2026, internal/db printed 840 to 847 seconds and internal/importer reached
+  # 886, against the 900 second -timeout=15m that used to be here. Six percent
+  # and one and a half percent of headroom is not a timeout, it is a coin flip
+  # on runner speed, and both shards were failing main-quality branches for it.
+  # 25m keeps the detector's real job (catching a deadlock, with a Go stack
+  # dump rather than a job kill) while leaving room for the suites to grow.
+  # timeout-minutes sits above it so go test, not the runner, is what fires.
+  #
+  # fail-fast is off because these shards are independent evidence. With it on,
+  # one shard timing out cancelled the others mid-run and reported them as
+  # failures, which sent two PRs chasing a slowdown in a package that had
+  # simply never been allowed to finish.
   validate-race-go:
     name: validate (Go race) (${{ matrix.shard }})
-    timeout-minutes: 20
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     strategy:
+      fail-fast: false
       matrix:
         include:
           - shard: api-a-b
@@ -194,15 +209,15 @@ jobs:
           cache: true
       - name: Run API race shard
         if: matrix.scope == 'api'
-        run: go test -race -timeout=15m -run '${{ matrix.pattern }}' ./internal/api
+        run: go test -race -timeout=25m -run '${{ matrix.pattern }}' ./internal/api
       - name: Run database race shard
         if: matrix.scope == 'db'
-        run: go test -race -timeout=15m ./internal/db
+        run: go test -race -timeout=25m ./internal/db
       - name: Run non-API race shard
         if: matrix.scope == 'non-api'
         run: |
           set -o pipefail
-          go list ./cmd/... ./internal/... | grep -v -e '/internal/api$' -e '/internal/db$' | xargs go test -race -timeout=15m
+          go list ./cmd/... ./internal/... | grep -v -e '/internal/api$' -e '/internal/db$' | xargs go test -race -timeout=25m
 
   validate-frontend:
     name: validate (frontend)
@@ -245,7 +260,7 @@ jobs:
         with:
           go-version: "1.26.6"
           cache: true
-      - run: go test -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/...
+      - run: go test -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/... ./tools/...
       - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: coverage.out
@@ -263,12 +278,14 @@ jobs:
 
   # Race-detector run — the same six shards as PR validation, parallel with
   # image/goreleaser and not a deploy gate. Fix failures before the next release.
+  # Timeouts and fail-fast match validate-race-go; see the note on that job.
   race:
     name: race (${{ matrix.shard }})
-    timeout-minutes: 20
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     strategy:
+      fail-fast: false
       matrix:
         include:
           - shard: api-a-b
@@ -302,15 +319,15 @@ jobs:
           cache: true
       - name: Run API race shard
         if: matrix.scope == 'api'
-        run: go test -race -timeout=15m -run '${{ matrix.pattern }}' ./internal/api
+        run: go test -race -timeout=25m -run '${{ matrix.pattern }}' ./internal/api
       - name: Run database race shard
         if: matrix.scope == 'db'
-        run: go test -race -timeout=15m ./internal/db
+        run: go test -race -timeout=25m ./internal/db
       - name: Run non-API race shard
         if: matrix.scope == 'non-api'
         run: |
           set -o pipefail
-          go list ./cmd/... ./internal/... | grep -v -e '/internal/api$' -e '/internal/db$' | xargs go test -race -timeout=15m
+          go list ./cmd/... ./internal/... | grep -v -e '/internal/api$' -e '/internal/db$' | xargs go test -race -timeout=25m
 
   # ── Docker image — runs after test passes ──────────────────────────────────
   image:
@@ -527,7 +544,7 @@ jobs:
       - name: Install Syft
         uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
       - name: GoReleaser (release binaries)
-        uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           version: "~> v2"
           args: release --clean

@@ -2,7 +2,9 @@ package oidc
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -62,17 +64,26 @@ func TestPKCEChallengeRoundtrip(t *testing.T) {
 
 // --- Flow state cookie -------------------------------------------------------
 
+// flowSecret and flowSecretAlt are two distinct signing keys of the length the
+// session package requires, used to exercise the rotation window.
+var (
+	flowSecret    = []byte("0123456789abcdef0123456789abcdef")
+	flowSecretAlt = []byte("fedcba9876543210fedcba9876543210")
+)
+
+func candidates(secrets ...[]byte) [][]byte { return secrets }
+
 func TestEncodeDecodeFlowState(t *testing.T) {
 	state, _ := NewState()
 	nonce, _ := NewNonce()
 	verifier, _ := NewVerifier()
 	base := "https://bindery.example.com"
 
-	encoded, err := EncodeFlowState(state, nonce, verifier, base)
+	encoded, err := EncodeFlowState(flowSecret, "authelia", state, nonce, verifier, base)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fs, err := DecodeFlowState(encoded)
+	fs, err := DecodeFlowState(candidates(flowSecret), "authelia", encoded)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,48 +92,166 @@ func TestEncodeDecodeFlowState(t *testing.T) {
 	}
 }
 
-func TestDecodeFlowState_LegacyCookieWithoutRedirectBase(t *testing.T) {
-	// Old flow cookies (pre-1.4) didn't carry a redirect_base field. Make
-	// sure decoding still works — callers fall back to live-resolving from
-	// the request when RedirectBase is empty.
-	encoded, err := encodeFlowStateRaw(flowState{
+func TestDecodeFlowState_CookieWithoutRedirectBase(t *testing.T) {
+	// Flow cookies from before the redirect_base field existed didn't carry
+	// one. Make sure decoding still works — callers fall back to live-resolving
+	// from the request when RedirectBase is empty.
+	encoded, err := encodeFlowStateRaw(flowSecret, flowState{
 		State:        "s",
 		Nonce:        "n",
 		CodeVerifier: "cv",
+		ProviderID:   "authelia",
 		Expiry:       time.Now().Add(time.Minute),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	fs, err := DecodeFlowState(encoded)
+	fs, err := DecodeFlowState(candidates(flowSecret), "authelia", encoded)
 	if err != nil {
-		t.Fatalf("legacy cookie should still decode: %v", err)
+		t.Fatalf("cookie without a redirect base should still decode: %v", err)
 	}
 	if fs.RedirectBase != "" {
-		t.Fatalf("legacy cookie should report empty RedirectBase, got %q", fs.RedirectBase)
+		t.Fatalf("want empty RedirectBase, got %q", fs.RedirectBase)
 	}
 }
 
 func TestDecodeFlowState_expired(t *testing.T) {
-	encoded, err := encodeFlowStateRaw(flowState{
+	encoded, err := encodeFlowStateRaw(flowSecret, flowState{
 		State:        "s",
 		Nonce:        "n",
 		CodeVerifier: "cv",
+		ProviderID:   "authelia",
 		Expiry:       time.Now().Add(-time.Second),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = DecodeFlowState(encoded)
+	_, err = DecodeFlowState(candidates(flowSecret), "authelia", encoded)
 	if err == nil {
 		t.Fatal("want error for expired flow state")
 	}
 }
 
-func TestDecodeFlowState_tampered(t *testing.T) {
-	_, err := DecodeFlowState("not-valid-base64!!!")
-	if err == nil {
+func TestDecodeFlowState_malformed(t *testing.T) {
+	if _, err := DecodeFlowState(candidates(flowSecret), "authelia", "not-valid-base64!!!"); err == nil {
 		t.Fatal("want error for invalid encoded state")
+	}
+}
+
+// --- #2362: the cookie is signed --------------------------------------------
+
+// An unsigned value is what a cookie minted before #2362 looks like, and what
+// an attacker writing a cookie by hand would produce. Both are refused.
+func TestDecodeFlowState_UnsignedRefused(t *testing.T) {
+	raw, err := json.Marshal(flowState{
+		State: "attacker-state", Nonce: "n", CodeVerifier: "cv",
+		ProviderID: "authelia", Expiry: time.Now().Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsigned := base64.RawURLEncoding.EncodeToString(raw)
+
+	_, err = DecodeFlowState(candidates(flowSecret), "authelia", unsigned)
+	if !errors.Is(err, ErrFlowStateUnsigned) {
+		t.Fatalf("err = %v, want ErrFlowStateUnsigned", err)
+	}
+}
+
+// The whole point: an attacker who can write a cookie on the origin must not be
+// able to swap in a flow they started themselves.
+func TestDecodeFlowState_TamperedPayloadRefused(t *testing.T) {
+	encoded, err := EncodeFlowState(flowSecret, "authelia", "victim-state", "n", "cv", "https://bindery.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, sig, _ := strings.Cut(encoded, ".")
+
+	forged, err := json.Marshal(flowState{
+		State: "attacker-state", Nonce: "n", CodeVerifier: "attacker-verifier",
+		ProviderID: "authelia", Expiry: time.Now().Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Keep the signature from a real flow, swap the payload underneath it.
+	tampered := base64.RawURLEncoding.EncodeToString(forged) + "." + sig
+
+	if _, err := DecodeFlowState(candidates(flowSecret), "authelia", tampered); err == nil {
+		t.Fatal("a re-signed-looking payload must be refused")
+	}
+}
+
+// A forged Expiry used to remove the ten-minute replay window, because the
+// expiry was read out of a payload nothing had authenticated.
+func TestDecodeFlowState_ForgedExpiryRefused(t *testing.T) {
+	forged, err := json.Marshal(flowState{
+		State: "s", Nonce: "n", CodeVerifier: "cv",
+		ProviderID: "authelia", Expiry: time.Now().Add(100 * 365 * 24 * time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Signed with a key the install does not hold, which is the best an
+	// attacker can do without the session secret.
+	payload := base64.RawURLEncoding.EncodeToString(forged)
+	attacker := payload + "." + flowStateSignature(flowSecretAlt, payload)
+
+	if _, err := DecodeFlowState(candidates(flowSecret), "authelia", attacker); err == nil {
+		t.Fatal("a flow signed with an unknown key must be refused however far in the future its expiry is")
+	}
+}
+
+// A flow started for one provider must not complete against another.
+func TestDecodeFlowState_ProviderMismatchRefused(t *testing.T) {
+	encoded, err := EncodeFlowState(flowSecret, "authelia", "s", "n", "cv", "https://bindery.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeFlowState(candidates(flowSecret), "keycloak", encoded); err == nil {
+		t.Fatal("want error when the callback provider differs from the one the flow was started for")
+	}
+	if _, err := DecodeFlowState(candidates(flowSecret), "authelia", encoded); err != nil {
+		t.Fatalf("matching provider should still decode: %v", err)
+	}
+}
+
+// A login started just before a session-secret rotation still completes: the
+// verifier is handed {current, previous} the same way the session and CSRF
+// verifiers are.
+func TestDecodeFlowState_PreviousSecretStillVerifies(t *testing.T) {
+	encoded, err := EncodeFlowState(flowSecretAlt, "authelia", "s", "n", "cv", "https://bindery.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// flowSecret is now current, flowSecretAlt the rotated-out previous.
+	if _, err := DecodeFlowState(candidates(flowSecret, flowSecretAlt), "authelia", encoded); err != nil {
+		t.Fatalf("a flow signed under the previous secret must still verify: %v", err)
+	}
+	// ... but only while it is still in the candidate set.
+	if _, err := DecodeFlowState(candidates(flowSecret), "authelia", encoded); err == nil {
+		t.Fatal("once the previous secret is dropped the flow must stop verifying")
+	}
+}
+
+// Fail closed rather than sign or verify with nothing.
+func TestFlowState_RefusesUnusableSecret(t *testing.T) {
+	if _, err := EncodeFlowState(nil, "authelia", "s", "n", "cv", ""); err == nil {
+		t.Error("encoding with no secret must fail rather than mint an unauthenticated cookie")
+	}
+	if _, err := EncodeFlowState([]byte("too-short"), "authelia", "s", "n", "cv", ""); err == nil {
+		t.Error("encoding with a short secret must fail")
+	}
+
+	encoded, err := EncodeFlowState(flowSecret, "authelia", "s", "n", "cv", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeFlowState(nil, "authelia", encoded); err == nil {
+		t.Error("verifying with no candidate secret must fail")
+	}
+	if _, err := DecodeFlowState(candidates([]byte("too-short")), "authelia", encoded); err == nil {
+		t.Error("a too-short candidate must not be used to verify")
 	}
 }
 

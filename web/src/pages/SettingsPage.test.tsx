@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import SettingsPage from './SettingsPage'
+import { acceptConfirm } from '../test-utils'
 import { api, type ABSImportRun, type DownloadClient, type HardcoverList, type ImportList, type ImportListSyncProgress, type Indexer, type OidcProvider, type ProwlarrInstance, type RootFolder, type SystemStatus } from '../api/client'
 
 const mockAuthContext = vi.hoisted(() => ({
@@ -448,7 +449,7 @@ describe('SettingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save Hardcover API token' }))
 
     await waitFor(() => {
-      expect(api.setSetting).toHaveBeenCalledWith('hardcover.api_token', 'hc-secret')
+    expect(api.setSetting).toHaveBeenCalledWith('hardcover.api_token', 'hc-secret')
     })
   })
 
@@ -460,17 +461,17 @@ describe('SettingsPage', () => {
     fireEvent.click(apiKeys.getByTitle('common.enable'))
 
     await waitFor(() => {
-      expect(api.setSetting).toHaveBeenCalledWith('hardcover.enhanced_series_enabled', 'true')
+    expect(api.setSetting).toHaveBeenCalledWith('hardcover.enhanced_series_enabled', 'true')
     })
   })
 
   it('tests the configured Hardcover token without exposing it', async () => {
     vi.mocked(api.status).mockResolvedValue({
-      version: 'dev',
-      commit: 'unknown',
-      buildDate: '',
-      enhancedHardcoverApi: true,
-      hardcoverTokenConfigured: true,
+    version: 'dev',
+    commit: 'unknown',
+    buildDate: '',
+    enhancedHardcoverApi: true,
+    hardcoverTokenConfigured: true,
     })
 
     renderSettings()
@@ -479,7 +480,7 @@ describe('SettingsPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Test Hardcover API' }))
 
     await waitFor(() => {
-      expect(api.testHardcover).toHaveBeenCalled()
+    expect(api.testHardcover).toHaveBeenCalled()
     })
     expect(await screen.findByText('Found 2 series; catalog "Dune" has 8 books')).toBeInTheDocument()
     expect(screen.queryByText('hc-secret')).not.toBeInTheDocument()
@@ -487,39 +488,39 @@ describe('SettingsPage', () => {
 
   it('adds global-token Hardcover lists disabled by default from the import picker', async () => {
     renderSettings({
-      status: {
-        version: 'dev',
-        commit: 'unknown',
-        buildDate: '',
-        enhancedHardcoverApi: false,
-        hardcoverTokenConfigured: true,
-      },
-      hardcoverLists: [makeHardcoverList({ name: 'Sci-Fi Backlog', slug: 'sci-fi-backlog', booksCount: 7 })],
+    status: {
+      version: 'dev',
+      commit: 'unknown',
+      buildDate: '',
+      enhancedHardcoverApi: false,
+      hardcoverTokenConfigured: true,
+    },
+    hardcoverLists: [makeHardcoverList({ name: 'Sci-Fi Backlog', slug: 'sci-fi-backlog', booksCount: 7 })],
     })
 
     await openImportTab()
     expect(await screen.findByText('Sci-Fi Backlog')).toBeInTheDocument()
     await waitFor(() => {
-      expect(api.hardcoverLists).toHaveBeenCalledWith(undefined)
+    expect(api.hardcoverLists).toHaveBeenCalledWith(undefined)
     })
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'settings.import.hardcoverImportList' }))
 
     await waitFor(() => {
-      expect(api.addImportList).toHaveBeenCalledWith(expect.objectContaining({
-        name: 'Sci-Fi Backlog',
-        type: 'hardcover',
-        url: 'sci-fi-backlog',
-        apiKey: '',
-        enabled: false,
-      }))
+    expect(api.addImportList).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'Sci-Fi Backlog',
+      type: 'hardcover',
+      url: 'sci-fi-backlog',
+      apiKey: '',
+      enabled: false,
+    }))
     })
   })
 
   it('toggles a Hardcover list between downloading and cataloguing its books (#2124)', async () => {
     renderSettings({
-      importLists: [makeImportList({ id: 44, name: 'Want to Read', url: 'want-to-read', enabled: true, monitorNew: true })],
-      hardcoverLists: [makeHardcoverList()],
+    importLists: [makeImportList({ id: 44, name: 'Want to Read', url: 'want-to-read', enabled: true, monitorNew: true })],
+    hardcoverLists: [makeHardcoverList()],
     })
 
     await openImportTab()
@@ -528,7 +529,7 @@ describe('SettingsPage', () => {
 
     fireEvent.click(toggle)
     await waitFor(() => {
-      expect(api.updateImportList).toHaveBeenCalledWith(44, { monitorNew: false })
+    expect(api.updateImportList).toHaveBeenCalledWith(44, { monitorNew: false })
     })
     // The row reflects the saved value, so the next click sends true again.
     expect(await screen.findByRole('checkbox', { name: 'Download books from this list' })).not.toBeChecked()
@@ -536,8 +537,8 @@ describe('SettingsPage', () => {
 
   it('keeps per-list Hardcover override tokens write-only in the import picker', async () => {
     renderSettings({
-      importLists: [makeImportList({ id: 44, name: 'Want to Read', url: 'want-to-read', apiKeyConfigured: true, enabled: true })],
-      hardcoverLists: [makeHardcoverList()],
+    importLists: [makeImportList({ id: 44, name: 'Want to Read', url: 'want-to-read', apiKeyConfigured: true, enabled: true })],
+    hardcoverLists: [makeHardcoverList()],
     })
 
     await openImportTab()
@@ -549,20 +550,20 @@ describe('SettingsPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear override' }))
     await waitFor(() => {
-      expect(api.updateImportList).toHaveBeenCalledWith(44, { clearApiKey: true })
+    expect(api.updateImportList).toHaveBeenCalledWith(44, { clearApiKey: true })
     })
   })
 
   it('starts a Hardcover sync in the background and shows it running (#1854)', async () => {
     renderSettings({
-      importLists: [makeImportList({ id: 44, name: 'Want to Read', url: 'want-to-read', enabled: true })],
-      hardcoverLists: [makeHardcoverList()],
-      syncStart: makeSyncProgress({
-        running: true,
-        listId: 44,
-        trigger: 'manual',
-        message: 'reading list from Hardcover…',
-      }),
+    importLists: [makeImportList({ id: 44, name: 'Want to Read', url: 'want-to-read', enabled: true })],
+    hardcoverLists: [makeHardcoverList()],
+    syncStart: makeSyncProgress({
+      running: true,
+      listId: 44,
+      trigger: 'manual',
+      message: 'reading list from Hardcover…',
+    }),
     })
 
     await openImportTab()
@@ -571,7 +572,7 @@ describe('SettingsPage', () => {
     // The request returns 202 immediately: the row switches to "Syncing…" and
     // the button locks, without the click awaiting the whole sync.
     await waitFor(() => {
-      expect(api.syncImportList).toHaveBeenCalledWith(44)
+    expect(api.syncImportList).toHaveBeenCalledWith(44)
     })
     const syncing = await screen.findByRole('button', { name: 'Syncing…' })
     expect(syncing).toBeDisabled()
@@ -580,15 +581,15 @@ describe('SettingsPage', () => {
 
   it('adopts a Hardcover sync already running when the tab mounts', async () => {
     renderSettings({
-      importLists: [makeImportList({ id: 44, name: 'Want to Read', url: 'want-to-read', enabled: true })],
-      hardcoverLists: [makeHardcoverList()],
-      syncStatus: makeSyncProgress({
-        running: true,
-        listId: 44,
-        trigger: 'scheduled',
-        message: 'importing 40 books from Want to Read…',
-        stats: { total: 40, processed: 12, imported: 9, skipped: 3, failed: 0 },
-      }),
+    importLists: [makeImportList({ id: 44, name: 'Want to Read', url: 'want-to-read', enabled: true })],
+    hardcoverLists: [makeHardcoverList()],
+    syncStatus: makeSyncProgress({
+      running: true,
+      listId: 44,
+      trigger: 'scheduled',
+      message: 'importing 40 books from Want to Read…',
+      stats: { total: 40, processed: 12, imported: 9, skipped: 3, failed: 0 },
+    }),
     })
 
     await openImportTab()
@@ -598,11 +599,11 @@ describe('SettingsPage', () => {
 
   it('keeps duplicate saved Hardcover lists with the same slug visible and actionable', async () => {
     renderSettings({
-      importLists: [
-        makeImportList({ id: 44, name: 'Global Want to Read', url: 'want-to-read', apiKeyConfigured: false, enabled: false }),
-        makeImportList({ id: 45, name: 'Override Want to Read', url: 'want-to-read', apiKeyConfigured: true, enabled: true }),
-      ],
-      hardcoverLists: [makeHardcoverList({ name: 'Remote Want to Read', slug: 'want-to-read', booksCount: 12 })],
+    importLists: [
+      makeImportList({ id: 44, name: 'Global Want to Read', url: 'want-to-read', apiKeyConfigured: false, enabled: false }),
+      makeImportList({ id: 45, name: 'Override Want to Read', url: 'want-to-read', apiKeyConfigured: true, enabled: true }),
+    ],
+    hardcoverLists: [makeHardcoverList({ name: 'Remote Want to Read', slug: 'want-to-read', booksCount: 12 })],
     })
 
     await openImportTab()
@@ -617,7 +618,7 @@ describe('SettingsPage', () => {
     fireEvent.click(within(globalRow as HTMLElement).getByRole('checkbox'))
 
     await waitFor(() => {
-      expect(api.updateImportList).toHaveBeenCalledWith(44, { enabled: true })
+    expect(api.updateImportList).toHaveBeenCalledWith(44, { enabled: true })
     })
   })
 
@@ -627,11 +628,11 @@ describe('SettingsPage', () => {
     // list, and clicking it creates a NEW import list carrying account bob —
     // not a toggle of Alice's row.
     renderSettings({
-      importLists: [
-        makeImportList({ id: 61, name: "Alice Want to Read", url: 'want-to-read', account: 'alice', apiKeyConfigured: true, enabled: true }),
-      ],
-      hardcoverLists: [makeHardcoverList({ name: 'Want to Read', slug: 'want-to-read', booksCount: 4 })],
-      hardcoverAccount: 'bob',
+    importLists: [
+      makeImportList({ id: 61, name: "Alice Want to Read", url: 'want-to-read', account: 'alice', apiKeyConfigured: true, enabled: true }),
+    ],
+    hardcoverLists: [makeHardcoverList({ name: 'Want to Read', slug: 'want-to-read', booksCount: 4 })],
+    hardcoverAccount: 'bob',
     })
 
     await openImportTab()
@@ -645,16 +646,16 @@ describe('SettingsPage', () => {
     fireEvent.click(within(remoteRow as HTMLElement).getByRole('checkbox'))
 
     await waitFor(() => {
-      expect(api.addImportList).toHaveBeenCalledWith(
-        expect.objectContaining({ url: 'want-to-read', account: 'bob' }),
-      )
+    expect(api.addImportList).toHaveBeenCalledWith(
+      expect.objectContaining({ url: 'want-to-read', account: 'bob' }),
+    )
     })
     expect(api.updateImportList).not.toHaveBeenCalled()
   })
 
   it('can load Hardcover list picker results from a per-list override token', async () => {
     renderSettings({
-      hardcoverLists: [makeHardcoverList({ id: 51, name: 'Other Account', slug: 'other-account', booksCount: 3 })],
+    hardcoverLists: [makeHardcoverList({ id: 51, name: 'Other Account', slug: 'other-account', booksCount: 3 })],
     })
 
     await openImportTab()
@@ -663,19 +664,19 @@ describe('SettingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Load token lists' }))
 
     await waitFor(() => {
-      expect(api.hardcoverLists).toHaveBeenCalledWith('override-token')
+    expect(api.hardcoverLists).toHaveBeenCalledWith('override-token')
     })
   })
 
   it('persists import mode, naming templates, and preferred language', async () => {
     renderSettings({
-      settings: [
-        { key: 'import.mode', value: 'move' },
-        { key: 'naming.bookTemplate', value: '{OldBook}' },
-        { key: 'naming_template_audiobook', value: '{OldAudio}' },
-        { key: 'search.preferredLanguage', value: 'en' },
-        { key: 'hardcover.enhanced_series_enabled', value: 'false' },
-      ],
+    settings: [
+      { key: 'import.mode', value: 'move' },
+      { key: 'naming.bookTemplate', value: '{OldBook}' },
+      { key: 'naming_template_audiobook', value: '{OldAudio}' },
+      { key: 'search.preferredLanguage', value: 'en' },
+      { key: 'hardcover.enhanced_series_enabled', value: 'false' },
+    ],
     })
 
     expect(await screen.findByText('Import Mode')).toBeInTheDocument()
@@ -685,29 +686,29 @@ describe('SettingsPage', () => {
     await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('import.mode', 'copy'))
 
     fireEvent.change(fileNaming.getByPlaceholderText('{Author}/{Title} ({Year})/{Title} - {Author}.{ext}'), {
-      target: { value: '{Author}/{Title}/{Title}.{ext}' },
+    target: { value: '{Author}/{Title}/{Title}.{ext}' },
     })
     // Selected by test id, not index: once the first save lands the button
     // relabels to "Saved ✓" for two seconds, which shifts every index-based
     // lookup after it (#1668).
     fireEvent.click(fileNaming.getByTestId('naming-save-book'))
     await waitFor(() => {
-      expect(api.setSetting).toHaveBeenCalledWith('naming.bookTemplate', '{Author}/{Title}/{Title}.{ext}')
+    expect(api.setSetting).toHaveBeenCalledWith('naming.bookTemplate', '{Author}/{Title}/{Title}.{ext}')
     })
 
     fireEvent.change(fileNaming.getByPlaceholderText('{Author}/{Title} ({Year})'), {
-      target: { value: '{Author}/{Title}' },
+    target: { value: '{Author}/{Title}' },
     })
     fireEvent.click(fileNaming.getByTestId('naming-save-audiobook'))
     await waitFor(() => {
-      expect(api.setSetting).toHaveBeenCalledWith('naming_template_audiobook', '{Author}/{Title}')
+    expect(api.setSetting).toHaveBeenCalledWith('naming_template_audiobook', '{Author}/{Title}')
     })
 
     const downloads = sectionForHeading('settings.general.downloads')
     fireEvent.change(downloads.getByRole('combobox'), { target: { value: 'any' } })
     fireEvent.click(downloads.getByRole('button', { name: 'common.save' }))
     await waitFor(() => {
-      expect(api.setSetting).toHaveBeenCalledWith('search.preferredLanguage', 'any')
+    expect(api.setSetting).toHaveBeenCalledWith('search.preferredLanguage', 'any')
     })
   })
 
@@ -734,8 +735,8 @@ describe('SettingsPage', () => {
 
   it('refreshes library scan status', async () => {
     vi.mocked(api.libraryScanStatus)
-      .mockResolvedValueOnce({ ran_at: new Date(Date.now() - 10_000).toISOString(), files_found: 2, reconciled: 1, unmatched: 1 })
-      .mockResolvedValueOnce({ ran_at: new Date(Date.now() + 10_000).toISOString(), files_found: 9, reconciled: 5, unmatched: 4 })
+    .mockResolvedValueOnce({ ran_at: new Date(Date.now() - 10_000).toISOString(), files_found: 2, reconciled: 1, unmatched: 1 })
+    .mockResolvedValueOnce({ ran_at: new Date(Date.now() + 10_000).toISOString(), files_found: 9, reconciled: 5, unmatched: 4 })
 
     renderSettings()
 
@@ -754,14 +755,14 @@ describe('SettingsPage', () => {
 
   it('surfaces scanned paths and warns when no files were found', async () => {
     vi.mocked(api.libraryScanStatus).mockResolvedValue({
-      ran_at: new Date().toISOString(),
-      files_found: 0,
-      reconciled: 0,
-      unmatched: 0,
-      library_dir: '/books',
-      audiobook_dir: '',
-      scanned_paths: ['/books'],
-      no_files_found: true,
+    ran_at: new Date().toISOString(),
+    files_found: 0,
+    reconciled: 0,
+    unmatched: 0,
+    library_dir: '/books',
+    audiobook_dir: '',
+    scanned_paths: ['/books'],
+    no_files_found: true,
     })
 
     renderSettings()
@@ -776,13 +777,13 @@ describe('SettingsPage', () => {
 
   it('hints to populate catalogue when files found but none matched', async () => {
     vi.mocked(api.libraryScanStatus).mockResolvedValue({
-      ran_at: new Date().toISOString(),
-      files_found: 12,
-      reconciled: 0,
-      unmatched: 12,
-      library_dir: '/books',
-      scanned_paths: ['/books'],
-      no_files_found: false,
+    ran_at: new Date().toISOString(),
+    files_found: 12,
+    reconciled: 0,
+    unmatched: 12,
+    library_dir: '/books',
+    scanned_paths: ['/books'],
+    no_files_found: false,
     })
 
     renderSettings()
@@ -799,19 +800,19 @@ describe('SettingsPage', () => {
     // reports author_not_in_library, the hint must name the parsed author and
     // the old advice must not be shown.
     vi.mocked(api.libraryScanStatus).mockResolvedValue({
-      ran_at: new Date().toISOString(),
-      files_found: 1,
-      reconciled: 0,
-      unmatched: 1,
-      library_dir: '/books',
-      scanned_paths: ['/books'],
-      no_files_found: false,
-      unmatched_files: [{
-        path: '/books/Álvaro Enrigue/You Dreamed of Empires/You Dreamed of Empires.m4b',
-        parsed_title: 'You Dreamed of Empires',
-        parsed_author: 'Álvaro Enrigue, Natasha Wimmer - translator, Gabriel Porras',
-        reason: 'author_not_in_library',
-      }],
+    ran_at: new Date().toISOString(),
+    files_found: 1,
+    reconciled: 0,
+    unmatched: 1,
+    library_dir: '/books',
+    scanned_paths: ['/books'],
+    no_files_found: false,
+    unmatched_files: [{
+      path: '/books/Álvaro Enrigue/You Dreamed of Empires/You Dreamed of Empires.m4b',
+      parsed_title: 'You Dreamed of Empires',
+      parsed_author: 'Álvaro Enrigue, Natasha Wimmer - translator, Gabriel Porras',
+      reason: 'author_not_in_library',
+    }],
     })
 
     renderSettings()
@@ -828,19 +829,19 @@ describe('SettingsPage', () => {
     // proves nothing about the other 4000, so the specific "your authors don't
     // match" hint must fall back to the generic advice when the list is capped.
     vi.mocked(api.libraryScanStatus).mockResolvedValue({
-      ran_at: new Date().toISOString(),
-      files_found: 5000,
-      reconciled: 0,
-      unmatched: 5000,
-      library_dir: '/books',
-      scanned_paths: ['/books'],
-      no_files_found: false,
-      unmatched_files: [{
-        path: '/books/Becky Chambers/A Psalm for the Wild-Built.epub',
-        parsed_title: 'A Psalm for the Wild-Built',
-        parsed_author: 'Becky Chambers',
-        reason: 'author_not_in_library',
-      }],
+    ran_at: new Date().toISOString(),
+    files_found: 5000,
+    reconciled: 0,
+    unmatched: 5000,
+    library_dir: '/books',
+    scanned_paths: ['/books'],
+    no_files_found: false,
+    unmatched_files: [{
+      path: '/books/Becky Chambers/A Psalm for the Wild-Built.epub',
+      parsed_title: 'A Psalm for the Wild-Built',
+      parsed_author: 'Becky Chambers',
+      reason: 'author_not_in_library',
+    }],
     })
 
     renderSettings()
@@ -855,17 +856,17 @@ describe('SettingsPage', () => {
     // diagnosis must still produce it — the fix narrows the message, it doesn't
     // replace it.
     vi.mocked(api.libraryScanStatus).mockResolvedValue({
-      ran_at: new Date().toISOString(),
-      files_found: 2,
-      reconciled: 0,
-      unmatched: 2,
-      library_dir: '/books',
-      scanned_paths: ['/books'],
-      no_files_found: false,
-      unmatched_files: [
-        { path: '/books/Andy Weir/Project Hail Mary.epub', parsed_title: 'Project Hail Mary', parsed_author: 'Andy Weir', reason: 'no_candidate_books' },
-        { path: '/books/Andy Weir/The Martian.epub', parsed_title: 'The Martian', parsed_author: 'Andy Weir', reason: 'author_not_in_library' },
-      ],
+    ran_at: new Date().toISOString(),
+    files_found: 2,
+    reconciled: 0,
+    unmatched: 2,
+    library_dir: '/books',
+    scanned_paths: ['/books'],
+    no_files_found: false,
+    unmatched_files: [
+      { path: '/books/Andy Weir/Project Hail Mary.epub', parsed_title: 'Project Hail Mary', parsed_author: 'Andy Weir', reason: 'no_candidate_books' },
+      { path: '/books/Andy Weir/The Martian.epub', parsed_title: 'The Martian', parsed_author: 'Andy Weir', reason: 'author_not_in_library' },
+    ],
     })
 
     renderSettings()
@@ -880,11 +881,11 @@ describe('SettingsPage', () => {
     // the Root Folders tab. The link must switch tabs in place (soft nav) rather
     // than full-page-reload.
     renderSettings({
-      rootFolders: [makeRootFolder({ id: 7, path: '/mnt/books' })],
-      settings: [
-        { key: 'default.media_type', value: 'ebook' },
-        { key: 'hardcover.enhanced_series_enabled', value: 'false' },
-      ],
+    rootFolders: [makeRootFolder({ id: 7, path: '/mnt/books' })],
+    settings: [
+      { key: 'default.media_type', value: 'ebook' },
+      { key: 'hardcover.enhanced_series_enabled', value: 'false' },
+    ],
     })
 
     await screen.findByRole('heading', { name: 'settings.general.defaultLibraryLocation' })
@@ -903,11 +904,11 @@ describe('SettingsPage', () => {
   // the importer reads to place authors without an explicit root folder.
   it('persists the default root folder from the Root Folders tab', async () => {
     renderSettings({
-      rootFolders: [makeRootFolder({ id: 7, path: '/mnt/books' })],
-      settings: [
-        { key: 'library.defaultRootFolderId', value: '' },
-        { key: 'hardcover.enhanced_series_enabled', value: 'false' },
-      ],
+    rootFolders: [makeRootFolder({ id: 7, path: '/mnt/books' })],
+    settings: [
+      { key: 'library.defaultRootFolderId', value: '' },
+      { key: 'hardcover.enhanced_series_enabled', value: 'false' },
+    ],
     })
     vi.mocked(api.addRootFolder).mockResolvedValue(makeRootFolder({ id: 8, path: '/mnt/audiobooks' }))
 
@@ -919,7 +920,7 @@ describe('SettingsPage', () => {
 
     fireEvent.change(select, { target: { value: '7' } })
     await waitFor(() => {
-      expect(api.setSetting).toHaveBeenCalledWith('library.defaultRootFolderId', '7')
+    expect(api.setSetting).toHaveBeenCalledWith('library.defaultRootFolderId', '7')
     })
 
     // A newly added folder becomes selectable as the default.
@@ -929,7 +930,7 @@ describe('SettingsPage', () => {
 
     fireEvent.change(screen.getByLabelText('settings.rootfolders.defaultLabel'), { target: { value: '8' } })
     await waitFor(() => {
-      expect(api.setSetting).toHaveBeenCalledWith('library.defaultRootFolderId', '8')
+    expect(api.setSetting).toHaveBeenCalledWith('library.defaultRootFolderId', '8')
     })
     expect(screen.getByLabelText('settings.rootfolders.defaultLabel')).toHaveValue('8')
   })
@@ -940,11 +941,11 @@ describe('SettingsPage', () => {
     vi.mocked(api.deleteRootFolder).mockResolvedValue(undefined)
 
     renderSettings({
-      rootFolders: [a, b],
-      settings: [
-        { key: 'library.defaultRootFolderId', value: '7' },
-        { key: 'hardcover.enhanced_series_enabled', value: 'false' },
-      ],
+    rootFolders: [a, b],
+    settings: [
+      { key: 'library.defaultRootFolderId', value: '7' },
+      { key: 'hardcover.enhanced_series_enabled', value: 'false' },
+    ],
     })
 
     await openRootFoldersTab()
@@ -955,16 +956,16 @@ describe('SettingsPage', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'common.remove' })[0])
     await waitFor(() => expect(api.deleteRootFolder).toHaveBeenCalledWith(7))
     await waitFor(() => {
-      expect(api.setSetting).toHaveBeenCalledWith('library.defaultRootFolderId', '')
+    expect(api.setSetting).toHaveBeenCalledWith('library.defaultRootFolderId', '')
     })
   })
 
   it('persists author/metadata default choices from the Metadata tab', async () => {
     renderSettings({
-      settings: [
-        { key: 'default.media_type', value: 'ebook' },
-        { key: 'hardcover.enhanced_series_enabled', value: 'false' },
-      ],
+    settings: [
+      { key: 'default.media_type', value: 'ebook' },
+      { key: 'hardcover.enhanced_series_enabled', value: 'false' },
+    ],
     })
 
     await openMetadataTab()
@@ -974,25 +975,25 @@ describe('SettingsPage', () => {
     // [0] metadata provider, [1] default media type, [2] default monitor mode.
     fireEvent.change(selects[1], { target: { value: 'audiobook' } })
     await waitFor(() => {
-      expect(api.setSetting).toHaveBeenCalledWith('default.media_type', 'audiobook')
+    expect(api.setSetting).toHaveBeenCalledWith('default.media_type', 'audiobook')
     })
     fireEvent.change(selects[2], { target: { value: 'latest' } })
     await waitFor(() => {
-      expect(api.setSetting).toHaveBeenCalledWith('author.default_monitor_mode', 'latest')
+    expect(api.setSetting).toHaveBeenCalledWith('author.default_monitor_mode', 'latest')
     })
     fireEvent.change(authorDefaults.getByRole('spinbutton'), { target: { value: '3' } })
     await waitFor(() => {
-      expect(api.setSetting).toHaveBeenCalledWith('author.default_monitor_latest_count', '3')
+    expect(api.setSetting).toHaveBeenCalledWith('author.default_monitor_latest_count', '3')
     })
   })
 
   it('persists auto-grab and recommendations toggles', async () => {
     renderSettings({
-      settings: [
-        { key: 'autoGrab.enabled', value: 'true' },
-        { key: 'recommendations.enabled', value: 'false' },
-        { key: 'hardcover.enhanced_series_enabled', value: 'false' },
-      ],
+    settings: [
+      { key: 'autoGrab.enabled', value: 'true' },
+      { key: 'recommendations.enabled', value: 'false' },
+      { key: 'hardcover.enhanced_series_enabled', value: 'false' },
+    ],
     })
 
     // Auto-grab + recommendations moved to the Metadata tab's Library Defaults.
@@ -1007,19 +1008,19 @@ describe('SettingsPage', () => {
 
     fireEvent.click(autoGrabToggle)
     await waitFor(() => {
-      expect(api.setSetting).toHaveBeenCalledWith('autoGrab.enabled', 'false')
+    expect(api.setSetting).toHaveBeenCalledWith('autoGrab.enabled', 'false')
     })
 
     fireEvent.click(recommendationsToggle)
     await waitFor(() => {
-      expect(api.setSetting).toHaveBeenCalledWith('recommendations.enabled', 'true')
+    expect(api.setSetting).toHaveBeenCalledWith('recommendations.enabled', 'true')
     })
   })
 
   it('persists authentication mode changes and refreshes auth status', async () => {
     vi.mocked(api.authConfig)
-      .mockResolvedValueOnce({ mode: 'enabled', apiKey: 'api-secret', username: 'admin' })
-      .mockResolvedValue({ mode: 'local-only', apiKey: 'api-secret', username: 'admin' })
+    .mockResolvedValueOnce({ mode: 'enabled', apiKey: 'api-secret', username: 'admin' })
+    .mockResolvedValue({ mode: 'local-only', apiKey: 'api-secret', username: 'admin' })
     vi.mocked(api.authSetMode).mockResolvedValue({ mode: 'local-only' })
 
     renderSettings()
@@ -1036,33 +1037,30 @@ describe('SettingsPage', () => {
   it('shows, copies, and regenerates the security API key', async () => {
     vi.mocked(api.authConfig).mockResolvedValue({ mode: 'enabled', apiKey: 'api-secret', username: 'admin' })
     vi.mocked(api.authRegenerateApiKey).mockResolvedValue({ apiKey: 'rotated-secret' })
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
 
-    try {
-      renderSettings()
+    renderSettings()
 
-      await screen.findByRole('heading', { name: 'Security' })
-      const security = sectionForHeading('Security')
-      expect(security.queryByText('api-secret')).not.toBeInTheDocument()
+    await screen.findByRole('heading', { name: 'Security' })
+    const security = sectionForHeading('Security')
+    expect(security.queryByText('api-secret')).not.toBeInTheDocument()
 
-      fireEvent.click(security.getByRole('button', { name: 'Show' }))
-      expect(security.getByText('api-secret')).toBeInTheDocument()
-      fireEvent.click(security.getByRole('button', { name: 'Hide' }))
-      expect(security.queryByText('api-secret')).not.toBeInTheDocument()
+    fireEvent.click(security.getByRole('button', { name: 'Show' }))
+    expect(security.getByText('api-secret')).toBeInTheDocument()
+    fireEvent.click(security.getByRole('button', { name: 'Hide' }))
+    expect(security.queryByText('api-secret')).not.toBeInTheDocument()
 
-      fireEvent.click(security.getByRole('button', { name: 'Copy' }))
-      await waitFor(() => {
-        expect(navigator.clipboard.writeText).toHaveBeenCalledWith('api-secret')
-      })
-      expect(await security.findByRole('button', { name: 'Copied' })).toBeInTheDocument()
+    fireEvent.click(security.getByRole('button', { name: 'Copy' }))
+    await waitFor(() => {
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith('api-secret')
+    })
+    expect(await security.findByRole('button', { name: 'Copied' })).toBeInTheDocument()
 
-      fireEvent.click(security.getByRole('button', { name: 'Regenerate' }))
-      await waitFor(() => expect(api.authRegenerateApiKey).toHaveBeenCalled())
-      expect(confirmSpy).toHaveBeenCalledWith('Regenerate the API key? Existing integrations using the old key will stop working.')
-      expect(await security.findByText('rotated-secret')).toBeInTheDocument()
-    } finally {
-      confirmSpy.mockRestore()
-    }
+    fireEvent.click(security.getByRole('button', { name: 'Regenerate' }))
+    // In-app modal since #2359. The message is an i18n key here because this
+    // suite stubs t to return keys.
+    await acceptConfirm()
+    await waitFor(() => expect(api.authRegenerateApiKey).toHaveBeenCalled())
+    expect(await security.findByText('rotated-secret')).toBeInTheDocument()
   })
 
   it('shows manual copy fallback when security API key clipboard access is blocked', async () => {
@@ -1189,7 +1187,11 @@ describe('SettingsPage', () => {
     await openApiKeysTab()
     const apiKeys = sectionForHeading('settings.general.apiKeys')
 
-    fireEvent.change(apiKeys.getByPlaceholderText('AIza...'), { target: { value: 'AIza-test-key' } })
+    // The key is write-only (#2351), so the field is always empty on load and
+    // its placeholder says so rather than showing an example key.
+    const googleKeyInput = apiKeys.getByPlaceholderText('Saved key is hidden. Enter a new key to replace it.')
+    expect(apiKeys.getByTestId('save-googlebooks-key')).toBeDisabled()
+    fireEvent.change(googleKeyInput, { target: { value: 'AIza-test-key' } })
     fireEvent.click(apiKeys.getByRole('button', { name: 'common.save' }))
     await waitFor(() => {
       expect(api.setSetting).toHaveBeenCalledWith('googlebooks.apiKey', 'AIza-test-key')
@@ -1416,6 +1418,7 @@ describe('SettingsPage', () => {
         enabled: true,
         seedRatio: null,
         freeleechOnly: false,
+        dailyQueryLimit: null,
       })
     })
     expect(await screen.findByText('SceneNZBs')).toBeInTheDocument()
@@ -1446,6 +1449,7 @@ describe('SettingsPage', () => {
         includeParentCategories: false,
         seedRatio: null,
         freeleechOnly: false,
+        dailyQueryLimit: null,
       })
     })
     expect(await screen.findByText('DrunkenSlug')).toBeInTheDocument()
@@ -1503,6 +1507,76 @@ describe('SettingsPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
     expect(screen.getByLabelText('settings.indexers.form.seedRatioUnlimited')).toBeChecked()
+  })
+
+  it('saves a per-indexer daily query limit', async () => {
+    const indexer = makeIndexer({ id: 21, name: 'CappedIdx' })
+    renderSettings({ indexers: [indexer] })
+    await openIndexersTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
+    fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.dailyQueryLimitPlaceholder'), { target: { value: '1000' } })
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
+
+    await waitFor(() => {
+      expect(api.updateIndexer).toHaveBeenCalledWith(21, expect.objectContaining({ dailyQueryLimit: 1000 }))
+    })
+  })
+
+  it('clears a daily query limit back to unlimited', async () => {
+    const indexer = makeIndexer({ id: 22, name: 'UncapMe', dailyQueryLimit: 500 })
+    renderSettings({ indexers: [indexer] })
+    await openIndexersTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
+    const field = screen.getByPlaceholderText('settings.indexers.form.dailyQueryLimitPlaceholder')
+    expect(field).toHaveValue(500)
+    fireEvent.change(field, { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
+
+    await waitFor(() => {
+      expect(api.updateIndexer).toHaveBeenCalledWith(22, expect.objectContaining({ dailyQueryLimit: null }))
+    })
+  })
+
+  it('shows daily query usage on a capped indexer, and says so once the cap is reached', async () => {
+    renderSettings({
+      indexers: [
+        makeIndexer({ id: 23, name: 'PartlySpent', dailyQueryLimit: 1000, dailyQueriesUsed: 412 }),
+        makeIndexer({ id: 24, name: 'FullySpent', dailyQueryLimit: 300, dailyQueriesUsed: 300 }),
+        makeIndexer({ id: 25, name: 'Uncapped' }),
+      ],
+    })
+    await openIndexersTab()
+
+    expect(await screen.findByText('settings.indexers.quotaUsage')).toBeInTheDocument()
+    // The i18n mock returns the key, so the interpolated numbers are not
+    // visible here. What is worth pinning is the styling difference: the
+    // reached row is amber, the partly spent one is not, because a capped
+    // indexer that looks idle is the failure this line exists to prevent.
+    const reached = screen.getByText('settings.indexers.quotaReached')
+    expect(reached.parentElement?.className).toContain('amber')
+    expect(screen.getByText('settings.indexers.quotaUsage').parentElement?.className).not.toContain('amber')
+    // One usage line and one reached line, so the uncapped indexer rendered
+    // neither rather than "0 of 0".
+    expect(screen.getAllByText(/settings\.indexers\.quota/)).toHaveLength(2)
+  })
+
+  it('rounds a fractional daily query limit down instead of silently keeping the old one', async () => {
+    const indexer = makeIndexer({ id: 26, name: 'FractionIdx', dailyQueryLimit: 500 })
+    renderSettings({ indexers: [indexer] })
+    await openIndexersTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
+    const field = screen.getByPlaceholderText('settings.indexers.form.dailyQueryLimitPlaceholder')
+    fireEvent.change(field, { target: { value: '1.5' } })
+    fireEvent.blur(field)
+    expect(field).toHaveValue(1)
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
+
+    await waitFor(() => {
+      expect(api.updateIndexer).toHaveBeenCalledWith(26, expect.objectContaining({ dailyQueryLimit: 1 }))
+    })
   })
 
   it('saves the freeleech-only auto-grab toggle', async () => {
@@ -1618,31 +1692,26 @@ describe('SettingsPage', () => {
 
   it('tests, syncs, and deletes an existing Prowlarr instance', async () => {
     const prowlarr = makeProwlarr({ id: 33, name: 'Library Prowlarr', lastSyncAt: '2026-05-06T12:00:00Z' })
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
 
-    try {
-      renderSettings({ prowlarr: [prowlarr], indexers: [makeIndexer({ id: 11, prowlarrInstanceId: 33 })] })
-      vi.mocked(api.syncProwlarr).mockResolvedValue({ added: 1, updated: 2, removed: 3 })
-      vi.mocked(api.listProwlarr).mockResolvedValue([{ ...prowlarr, lastSyncAt: '2026-05-06T13:00:00Z' }])
-      await openIndexersTab()
+    renderSettings({ prowlarr: [prowlarr], indexers: [makeIndexer({ id: 11, prowlarrInstanceId: 33 })] })
+    vi.mocked(api.syncProwlarr).mockResolvedValue({ added: 1, updated: 2, removed: 3 })
+    vi.mocked(api.listProwlarr).mockResolvedValue([{ ...prowlarr, lastSyncAt: '2026-05-06T13:00:00Z' }])
+    await openIndexersTab()
 
-      fireEvent.click(screen.getByRole('button', { name: 'settings.prowlarr.test' }))
-      await waitFor(() => expect(api.testProwlarr).toHaveBeenCalledWith(33))
-      expect(await screen.findByText('settings.prowlarr.connectedVersion')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'settings.prowlarr.test' }))
+    await waitFor(() => expect(api.testProwlarr).toHaveBeenCalledWith(33))
+    expect(await screen.findByText('settings.prowlarr.connectedVersion')).toBeInTheDocument()
 
-      fireEvent.click(screen.getByRole('button', { name: 'settings.prowlarr.syncNow' }))
-      await waitFor(() => expect(api.syncProwlarr).toHaveBeenCalledWith(33))
-      expect(await screen.findByText('settings.prowlarr.synced')).toBeInTheDocument()
-      await waitFor(() => expect(api.listIndexers).toHaveBeenCalledTimes(2))
-      await waitFor(() => expect(api.listProwlarr).toHaveBeenCalledTimes(2))
+    fireEvent.click(screen.getByRole('button', { name: 'settings.prowlarr.syncNow' }))
+    await waitFor(() => expect(api.syncProwlarr).toHaveBeenCalledWith(33))
+    expect(await screen.findByText('settings.prowlarr.synced')).toBeInTheDocument()
+    await waitFor(() => expect(api.listIndexers).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(api.listProwlarr).toHaveBeenCalledTimes(2))
 
-      fireEvent.click(screen.getByRole('button', { name: 'settings.prowlarr.delete' }))
-      await waitFor(() => expect(api.deleteProwlarr).toHaveBeenCalledWith(33))
-      expect(confirmSpy).toHaveBeenCalledWith('settings.prowlarr.confirmDelete')
-      await waitFor(() => expect(screen.queryByText('Library Prowlarr')).not.toBeInTheDocument())
-    } finally {
-      confirmSpy.mockRestore()
-    }
+    fireEvent.click(screen.getByRole('button', { name: 'settings.prowlarr.delete' }))
+    await acceptConfirm()
+    await waitFor(() => expect(api.deleteProwlarr).toHaveBeenCalledWith(33))
+    await waitFor(() => expect(screen.queryByText('Library Prowlarr')).not.toBeInTheDocument())
   })
 
   it('adds a SABnzbd download client with API key, SSL, URL Base, and category mapping', async () => {
@@ -1904,20 +1973,16 @@ describe('SettingsPage', () => {
   it('deletes a backup from the list', async () => {
     const backup = { name: 'bindery_20260513_120000.db', size: 1024 * 512, modTime: new Date().toISOString() }
     vi.mocked(api.listBackups).mockResolvedValue([backup])
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
-    try {
-      renderSettings()
-      await openLogsTab()
+    renderSettings()
+    await openLogsTab()
 
-      expect(await screen.findByText(backup.name)).toBeInTheDocument()
+    expect(await screen.findByText(backup.name)).toBeInTheDocument()
 
-      const deleteBtn = screen.getByRole('button', { name: 'common.delete' })
-      fireEvent.click(deleteBtn)
+    const deleteBtn = screen.getByRole('button', { name: 'common.delete' })
+    fireEvent.click(deleteBtn)
+    await acceptConfirm()
 
-      await waitFor(() => expect(api.deleteBackup).toHaveBeenCalledWith(backup.name))
-      await waitFor(() => expect(screen.queryByText(backup.name)).not.toBeInTheDocument())
-    } finally {
-      confirmSpy.mockRestore()
-    }
+    await waitFor(() => expect(api.deleteBackup).toHaveBeenCalledWith(backup.name))
+    await waitFor(() => expect(screen.queryByText(backup.name)).not.toBeInTheDocument())
   })
 })

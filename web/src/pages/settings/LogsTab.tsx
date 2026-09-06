@@ -1,16 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, LogEntry, LogQuery } from '../../api/client'
+import { formatBytesZero } from '../../util/format'
 import SaveButton from './SaveButton'
 import Toggle from './Toggle'
 import { useSaveResult } from './useSaveResult'
-
-function formatBackupSize(bytes: number): string {
-  if (!bytes || bytes <= 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)))
-  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
-}
+import { usePolling } from '../../components/usePolling'
 
 // <input type="datetime-local"> produces "2026-08-12T14:03" — no zone, which
 // the API's RFC3339 parse rejects, so the range was silently ignored. The
@@ -37,6 +33,7 @@ function formatRelativeTime(iso: string): string {
 
 export default function LogsTab() {
   const { t, i18n } = useTranslation()
+  const { confirm, confirmDialog } = useConfirmDialog()
   const [logEntries, setLogEntries] = useState<LogEntry[]>([])
   const [logLevel, setLogLevel] = useState<string>('info')
   const [logFilter, setLogFilter] = useState<string>('all')
@@ -114,7 +111,11 @@ export default function LogsTab() {
   }
 
   const handleDeleteBackup = async (filename: string) => {
-    if (!confirm(`Delete backup ${filename}?`)) return
+    if (!await confirm({
+      title: t('settings.logs.deleteBackupTitle'),
+      body: t('settings.logs.deleteBackupConfirm', { filename }),
+      confirmLabel: t('common.delete'),
+    })) return
     setDeletingBackup(filename)
     try {
       await api.deleteBackup(filename)
@@ -137,15 +138,15 @@ export default function LogsTab() {
     api.listBackups().then(setBackups).catch(console.error)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-refresh logs every 5 s while the toggle is on.
-  useEffect(() => {
-    if (!logAutoRefresh) return
-    const id = setInterval(() => { fetchLogs(logPage) }, 5000)
-    return () => clearInterval(id)
-  }, [logAutoRefresh, logPage, logFilter, logComponent, logFrom, logTo, logSearch]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Auto-refresh logs every 5 s while the toggle is on and the tab is visible
+  // (#2360). The filter state used to be listed as effect deps purely so the
+  // interval captured fresh values; usePolling holds the callback in a ref, so
+  // changing a filter no longer restarts the 5 s window.
+  usePolling(() => { fetchLogs(logPage) }, 5000, logAutoRefresh)
 
   return (
     <div>
+      {confirmDialog}
       {/* Toolbar row 1: heading + level pills + runtime level + auto-refresh */}
       <div className="flex flex-wrap items-center gap-3 mb-3">
         <h3 className="text-lg font-semibold mr-auto">{t('settings.logs.heading')}</h3>
@@ -427,7 +428,7 @@ export default function LogsTab() {
                   <li key={b.name} className="flex items-center justify-between text-xs text-slate-600 dark:text-zinc-400">
                     <span>
                       <span className="font-mono">{b.name}</span>
-                      <span className="ml-2 text-slate-500 dark:text-zinc-500">{formatBackupSize(b.size)} · {formatRelativeTime(b.modTime)}</span>
+                      <span className="ml-2 text-slate-500 dark:text-zinc-500">{formatBytesZero(b.size)} · {formatRelativeTime(b.modTime)}</span>
                     </span>
                     <button
                       onClick={() => handleDeleteBackup(b.name)}

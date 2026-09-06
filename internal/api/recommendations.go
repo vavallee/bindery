@@ -12,6 +12,7 @@ import (
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/bookhydrate"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -245,7 +246,7 @@ func (h *RecommendationHandler) Add(w http.ResponseWriter, r *http.Request) {
 	// Use the process-lifecycle context so the goroutine is cancelled on
 	// shutdown rather than running forever on context.Background(). See #550.
 	if h.searcher != nil && !fileFound {
-		go h.searcher.SearchAndGrabBook(h.appCtx, *book) // #nosec G118 -- intentional: search must outlive the request
+		go h.searcher.SearchAndGrabBook(indexer.WithSearchOrigin(h.appCtx, indexer.OriginRecommendation), *book) // #nosec G118 -- intentional: search must outlive the request
 	}
 
 	writeJSON(w, http.StatusCreated, book)

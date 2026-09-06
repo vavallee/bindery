@@ -1,4 +1,4 @@
-.PHONY: build dev test lint clean docker-build web-build web-dev help security helm-lint sbom smoke predeploy-smoke abs-contract check changelog licenses licenses-check
+.PHONY: build dev test test-race lint clean docker-build web-build web-dev help security helm-lint sbom smoke predeploy-smoke abs-contract check changelog licenses licenses-check
 
 # Pinned so local regeneration and the CI drift check classify licenses
 # identically — a classifier bump would otherwise look like dependency drift.
@@ -31,8 +31,26 @@ web-dev: ## Run frontend dev server
 web-build: ## Build frontend for embedding
 	cd web && npm ci && npm run build
 
-test: ## Run unit tests (use `make smoke` for the HTTP-level smoke suite)
-	go test -race -timeout=30m -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/...
+# Mirrors the gating CI `test` job, which also runs without -race. The race
+# detector lives in `test-race` because internal/api cannot finish under it in
+# one timeout budget: CI splits that package into four shards that take 9-12
+# minutes each, so a single un-sharded `go test -race ./internal/api` runs past
+# any per-package limit and dies in a goroutine dump instead of a test failure
+# (#2293). Every CI job runs on ubuntu-latest, so this was only ever hit locally.
+test: ## Run unit tests, mirroring the CI gate (no -race; see `make test-race`)
+	go test -timeout=15m -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/...
+
+# The same six shards, patterns and 15m budget as the `validate` and `race` CI
+# matrices in .github/workflows/ci.yml. Keep them in step: a shard pattern that
+# drifts here silently stops covering some tests in one place or the other.
+test-race: ## Run the race detector in CI's six shards (internal/api overruns a single budget)
+	go test -race -timeout=15m -run '^Test[A-B]' ./internal/api
+	go test -race -timeout=15m -run '^Test[C-K]' ./internal/api
+	go test -race -timeout=15m -run '^Test[L-Q]' ./internal/api
+	go test -race -timeout=15m -run '^(Test([^A-Q]|$$)|Fuzz|Example)' ./internal/api
+	go test -race -timeout=15m ./internal/db
+	pkgs=$$(go list ./cmd/... ./internal/... | grep -v -e '/internal/api$$' -e '/internal/db$$') && \
+		test -n "$$pkgs" && go test -race -timeout=15m $$pkgs
 
 test-web: ## Run frontend tests
 	cd web && npm test -- --coverage
@@ -52,7 +70,8 @@ check: ## Run everything the gating CI checks run (do this before opening a PR)
 	go vet ./...
 	golangci-lint run ./...
 	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
-	go test -race -timeout=30m ./cmd/... ./internal/...
+	$(MAKE) test
+	$(MAKE) test-race
 	cd web && npm ci && npm run typecheck && npm run lint && npm run build && npm test
 
 changelog: ## Preview the unreleased changelog assembled from changelog.d/*.md

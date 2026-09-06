@@ -2,11 +2,17 @@
 # in sync on a weekly cadence (see .github/dependabot.yml).
 
 # Stage 1: Build frontend (runs on the builder's native arch — output is arch-agnostic JS)
-FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS frontend
+FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:2d984a15c9b54fd0aeb608b8e0d0d83529eb34d2966db27a1fb4f1edc3d298a3 AS frontend
 WORKDIR /app/web
 COPY web/package*.json ./
 RUN npm ci
 COPY web/ .
+# The web test suite asserts its Unicode fold against the same fixture the Go
+# test uses (see docs/search-design.md): one corpus, so the key written into the
+# database and the fold applied to the query cannot drift apart. `npm run build`
+# type-checks the tests too, so the fixture has to exist here even though
+# nothing at runtime reads it.
+COPY internal/textutil/testdata/ /app/internal/textutil/testdata/
 RUN npm run build
 
 # Stage 2: Build Go binary (native on BUILDPLATFORM, cross-compile to TARGETOS/TARGETARCH)
@@ -26,7 +32,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -o /bindery ./cmd/bindery
 
 # Stage 3: Minimal runtime
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:1b7b9f0f0e0a1d2155f531db587cc48ec26aaf97ab64364225f5bf18a054e66a
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:1c2c046bc09ed40fad370b599a0b1ae7987f55b01e247cf27a7c27cd97e5bbc7
 # OCI image metadata so registries and `docker inspect` surface the MIT license
 # and source, matching the repo's LICENSE.
 LABEL org.opencontainers.image.title="Bindery" \

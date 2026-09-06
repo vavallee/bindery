@@ -6,7 +6,10 @@ import BulkActionBar from '../components/BulkActionBar'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
+import { foldedIncludes } from '../util/foldForSearch'
+import { usePolling } from '../components/usePolling'
 import { safeHref } from '../util/safeHref'
+import { formatBytes } from '../util/format'
 
 // Shared grid template so the header row and every list row line up exactly.
 // columns: checkbox · cover · title+author · format · actions
@@ -47,18 +50,26 @@ export default function WantedPage() {
     return () => { cancelled = true }
   }, [showExcluded])
 
+  // Set-state-after-unmount guard for the poll, which outlives any one effect.
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
+
   // Poll the wanted list so background auto-grabs (and books leaving as they
   // import) show up without a manual reload (#1161). Mirrors QueuePage's 5s
-  // poll. Pauses while the user is mid-interaction — a results panel is open or
-  // a grab/search is running — so the list doesn't reshuffle under them.
-  useEffect(() => {
-    let cancelled = false
-    const interval = setInterval(() => {
-      if (showResults !== null || grabbingGuid !== null || searchingId !== null) return
-      api.listWanted({ includeExcluded: showExcluded }).then(b => { if (!cancelled) setBooks(b) }).catch(() => {})
-    }, 5000)
-    return () => { cancelled = true; clearInterval(interval) }
-  }, [showExcluded, showResults, grabbingGuid, searchingId])
+  // poll. Skips a tick while the user is mid-interaction, a results panel open
+  // or a grab/search running, so the list doesn't reshuffle under them.
+  //
+  // That interaction state used to sit in the effect's deps, which tore the
+  // timer down and restarted the 5s window on every hover; usePolling holds the
+  // callback in a ref, so the timer survives and only the tick is skipped
+  // (#2360). It also pauses entirely while the tab is hidden.
+  usePolling(() => {
+    if (showResults !== null || grabbingGuid !== null || searchingId !== null) return
+    api.listWanted({ includeExcluded: showExcluded }).then(b => { if (mounted.current) setBooks(b) }).catch(() => {})
+  }, 5000)
 
   useEffect(() => {
     if (!toast) return
@@ -70,10 +81,12 @@ export default function WantedPage() {
 
   const filtered = useMemo(() => {
     if (!search.trim()) return books
-    const q = search.trim().toLowerCase()
+    // Folded on both sides, so this filter agrees with the server's search
+    // instead of being the stricter of the two. toLowerCase() alone folds case
+    // but not accents, so "cafe" never matched "Café" here (#1660).
     return books.filter(b =>
-      b.title.toLowerCase().includes(q) ||
-      (b.author?.authorName && b.author.authorName.toLowerCase().includes(q))
+      foldedIncludes(b.title, search) ||
+      foldedIncludes(b.author?.authorName, search)
     )
   }, [books, search])
 
@@ -179,12 +192,6 @@ export default function WantedPage() {
     } finally {
       setBulkBusy(false)
     }
-  }
-
-  const formatSize = (bytes: number) => {
-    if (bytes > 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB'
-    if (bytes > 1048576) return (bytes / 1048576).toFixed(1) + ' MB'
-    return (bytes / 1024).toFixed(0) + ' KB'
   }
 
   const checkboxCls = 'rounded border-slate-400 dark:border-zinc-600 text-emerald-600 focus:ring-emerald-500 focus:ring-offset-0'
@@ -374,7 +381,7 @@ export default function WantedPage() {
                         <div className="min-w-0 mr-3">
                           <span className="truncate block">{r.title}</span>
                           <span className="text-slate-600 dark:text-zinc-500 truncate block">
-                            {r.indexerName} &middot; {formatSize(r.size)} &middot; {r.grabs} grabs
+                            {r.indexerName} &middot; {formatBytes(r.size)} &middot; {r.grabs} grabs
                             {safeHref(r.infoUrl) && (
                               <>
                                 {' '}&middot;{' '}

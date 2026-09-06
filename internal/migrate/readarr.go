@@ -109,44 +109,10 @@ func importReadarrAuthors(ctx context.Context, src *sql.DB, repo *db.AuthorRepo,
 		}
 		res.Requested++
 
-		matches, serr := agg.SearchAuthors(ctx, name)
-		if serr != nil {
-			res.fail(name, "metadata lookup failed: "+serr.Error())
+		full := resolveAndCreateAuthor(ctx, "readarr", name, monitored, repo, settings, agg, res)
+		if full == nil {
 			continue
 		}
-		if len(matches) == 0 {
-			res.fail(name, "no OpenLibrary match")
-			continue
-		}
-		top := matches[0]
-
-		if existing, _ := repo.GetByAnyForeignID(ctx, top.ForeignID); existing != nil {
-			res.Skipped++
-			continue
-		}
-
-		full, ferr := agg.GetAuthor(ctx, top.ForeignID)
-		if ferr != nil || full == nil {
-			full = &top
-		}
-		full.Monitored = monitored
-		full.MetadataProvider = "openlibrary"
-		// Readarr hands over a monitored flag but no monitor mode, so take the
-		// install-wide default rather than the column default "all" (#1666).
-		db.ApplyAuthorMonitorDefaults(ctx, settings, full)
-
-		if cerr := repo.Create(ctx, full); cerr != nil {
-			if isAuthorCreateConflict(cerr) {
-				if existing, _ := repo.GetByAnyForeignID(ctx, full.ForeignID); existing != nil {
-					res.Skipped++
-					continue
-				}
-			}
-			res.fail(name, cerr.Error())
-			continue
-		}
-		res.Added++
-		res.AddedNames = append(res.AddedNames, full.Name)
 		newlyAdded = append(newlyAdded, full)
 	}
 	rowsErr := rows.Err()
@@ -238,6 +204,14 @@ func importReadarrIndexers(ctx context.Context, src *sql.DB, repo *db.IndexerRep
 			Categories: cats,
 			Enabled:    enableRss,
 		}
+		// Same SSRF check the Add Indexer form runs (#2349). A Readarr
+		// database is a file, not a form, so a row pointing at
+		// 169.254.169.254 would otherwise be created and then polled with
+		// whatever API key came with it.
+		if err := validateMigratedURL(idx.URL); err != nil {
+			res.fail(name, err.Error())
+			continue
+		}
 		if err := repo.Create(ctx, idx); err != nil {
 			res.fail(name, err.Error())
 			continue
@@ -300,6 +274,13 @@ func importReadarrDownloadClients(ctx context.Context, src *sql.DB, repo *db.Dow
 			Category: cat,
 			UseSSL:   s.UseSsl,
 			Enabled:  enable,
+		}
+		// Same SSRF check the Add Download Client form runs (#2349). The RPC
+		// clients have no dial-time guard of their own, so an unvalidated host
+		// here is polled with its credentials attached.
+		if err := validateMigratedURL(clienthost.URL(c.Host, c.Port, c.UseSSL)); err != nil {
+			res.fail(name, err.Error())
+			continue
 		}
 		if err := repo.Create(ctx, c); err != nil {
 			res.fail(name, err.Error())

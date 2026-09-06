@@ -16,7 +16,6 @@ const reasonDefaults: Record<CatalogueReconciliationReason, string> = {
   language_not_allowed: 'Rejected by the language filter',
   part_book: 'Rejected as a box set or part-book',
   missing_release_date: 'Rejected because the release date is missing',
-  below_minimum_popularity: 'Below the minimum popularity',
   below_minimum_pages: 'Below the minimum page count',
   missing_isbn: 'No edition has an ISBN',
   catalogue_filter: 'Rejected by the catalogue filter',

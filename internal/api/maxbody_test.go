@@ -175,29 +175,44 @@ func TestMaxBody_GetIsExempt(t *testing.T) {
 	}
 }
 
-func TestMaxBody_DeleteIsExempt(t *testing.T) {
-	// DELETE bodies are unusual in REST; Bindery never reads them. Confirm
-	// the middleware does not wrap them so a hypothetical larger body would
-	// pass through. Reading 2 MiB on DELETE must not produce a MaxBytesError.
+// TestMaxBody_DeleteCapped replaces TestMaxBody_DeleteIsExempt, which pinned
+// the premise behind the old exclusion: that no Bindery handler reads a DELETE
+// body. BlocklistHandler.BulkDelete does, on a route open to every
+// authenticated user, so the exclusion left that decode uncapped (#2354).
+func TestMaxBody_DeleteCapped(t *testing.T) {
+	if !hasRequestBody(http.MethodDelete) {
+		t.Fatal("hasRequestBody(DELETE) = false; DELETE /blocklist/bulk decodes a body, so it must be capped")
+	}
+
 	var readErr error
 	var readN int
-	h := PreserveRawBody(MaxRequestBody(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		buf, err := io.ReadAll(r.Body)
-		readErr = err
-		readN = len(buf)
-		w.WriteHeader(http.StatusOK)
-	})))
+	h := PreserveRawBody(MaxRequestBody(readAllHandler(t, &readErr, &readN)))
 
 	body := bytes.Repeat([]byte("e"), 2<<20)
 	req := httptest.NewRequest(http.MethodDelete, "/z", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
-	if readErr != nil {
-		t.Fatalf("DELETE read returned error: %v", readErr)
+	if readErr == nil {
+		t.Fatal("expected DELETE body to be capped")
 	}
-	if readN != len(body) {
-		t.Errorf("DELETE read %d bytes, want %d (must pass through)", readN, len(body))
+	var mbe *http.MaxBytesError
+	if !errors.As(readErr, &mbe) {
+		t.Fatalf("expected *http.MaxBytesError, got %T", readErr)
+	}
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want 413", rr.Code)
+	}
+}
+
+// TestMaxBody_GetStaysExempt keeps the other half honest: only DELETE moved.
+// GET, HEAD, and OPTIONS carry no body in any handler and must not pay for a
+// wrapper on the read-mostly traffic that dominates the request mix.
+func TestMaxBody_GetStaysExempt(t *testing.T) {
+	for _, m := range []string{http.MethodGet, http.MethodHead, http.MethodOptions} {
+		if hasRequestBody(m) {
+			t.Errorf("hasRequestBody(%s) = true; want false", m)
+		}
 	}
 }
 

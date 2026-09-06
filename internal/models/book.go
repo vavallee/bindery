@@ -184,12 +184,16 @@ func (b *Book) NeedsAudiobook() bool {
 	return b.WantsAudiobook() && b.AudiobookFilePath == ""
 }
 
+// Book acquisition statuses. This is the whole set: a book is wanted until
+// every monitored format is on disk, then imported, or skipped when the user
+// has decided against it. There is deliberately no in-flight status here.
+// Download progress lives in the downloads table under its own state machine
+// (DownloadState) and is never projected onto books.status, so the Queue page
+// is the single place a grab in flight is visible (#2374).
 const (
-	BookStatusWanted      = "wanted"
-	BookStatusDownloading = "downloading"
-	BookStatusDownloaded  = "downloaded"
-	BookStatusImported    = "imported"
-	BookStatusSkipped     = "skipped"
+	BookStatusWanted   = "wanted"
+	BookStatusImported = "imported"
+	BookStatusSkipped  = "skipped"
 )
 
 // MediaType distinguishes ebook from audiobook editions so the search,

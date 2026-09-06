@@ -22,6 +22,7 @@ import (
 	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/indexer"
+	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/telemetry"
@@ -80,6 +81,11 @@ type AuthorHandler struct {
 	// context.Background() when not set; see #846 and recommendations.go.
 	lifetimeCtx context.Context
 
+	// jobs tracks the catalogue-sync goroutine so shutdown can drain it before
+	// the database closes (#1458, #2371). Optional: without it the sync runs as
+	// an untracked goroutine, which is what tests and non-wired callers get.
+	jobs *jobs.Group
+
 	// syncSummaries records what each catalogue sync added and dropped so the
 	// detail endpoint can report it instead of leaving the drops to a Debug
 	// log line nobody reads (#1889).
@@ -88,6 +94,17 @@ type AuthorHandler struct {
 
 func NewAuthorHandler(authors *db.AuthorRepo, aliases *db.AuthorAliasRepo, books *db.BookRepo, series *db.SeriesRepo, meta *metadata.Aggregator, settings *db.SettingsRepo, profiles *db.MetadataProfileRepo, searcher BookSearcher) *AuthorHandler {
 	return &AuthorHandler{authors: authors, aliases: aliases, books: books, series: series, meta: meta, settings: settings, profiles: profiles, searcher: searcher}
+}
+
+// WithJobs registers the process-wide background-jobs group so the async
+// catalogue sync an author add kicks off is tracked and drained on shutdown
+// before the database closes, mirroring Scanner.WithJobs (#1458, #2371).
+// Without it the sync is a bare goroutine that a SIGTERM cuts off mid-write,
+// leaving the author with a partial catalogue and "database is closed" in the
+// log.
+func (h *AuthorHandler) WithJobs(g *jobs.Group) *AuthorHandler {
+	h.jobs = g
+	return h
 }
 
 // WithFinder attaches a LibraryFinder to the handler. When set, FetchAuthorBooks
@@ -407,27 +424,11 @@ func (h *AuthorHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthorHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+	author, ok := h.loadOwnedAuthor(w, r)
+	if !ok {
 		return
 	}
-
-	author, err := h.authors.GetByID(r.Context(), id)
-	if err != nil {
-		writeServerError(w, r, err)
-		return
-	}
-	if author == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
-		return
-	}
-	// Tier-1 cross-user IDOR guard (D1). Return 404 (not 403) on mismatch so
-	// non-owners cannot probe for the existence of another user's authors.
-	if !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
-		return
-	}
+	id := author.ID
 
 	// Attach books, owner-scoped (#1416): the embedded list must apply the
 	// same tenancy predicate as GET /book?authorId=, or a co-author book
@@ -469,22 +470,13 @@ func (h *AuthorHandler) Get(w http.ResponseWriter, r *http.Request) {
 // picker (#810) so the edit modal can render a checkbox list scoped to this
 // author rather than the global /series collection.
 func (h *AuthorHandler) ListSeries(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+	// The ownership check has to run before we list series belonging to the
+	// author, hence the load here rather than a bare parseID.
+	author, ok := h.loadOwnedAuthor(w, r)
+	if !ok {
 		return
 	}
-	// Tier-1 cross-user IDOR guard (D1). Look the author up so the ownership
-	// check runs before we list series belonging to it.
-	author, err := h.authors.GetByID(r.Context(), id)
-	if err != nil {
-		writeServerError(w, r, err)
-		return
-	}
-	if author == nil || !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
-		return
-	}
+	id := author.ID
 	if h.series == nil {
 		writeJSON(w, http.StatusOK, []models.Series{})
 		return
@@ -691,7 +683,23 @@ func (h *AuthorHandler) fetchAuthorBooksAsync(author *models.Author, opts catalo
 		return
 	}
 	snapshot := *author
-	go h.fetchAuthorBooks(&snapshot, opts)
+	// With a jobs group wired the sync runs on the shutdown-scoped context, so
+	// SIGTERM cancels and drains it before the DB closes rather than cutting it
+	// off mid-write. Fall back to an untracked goroutine for tests and
+	// non-wired callers, the same shape StartScan uses (#1458, #2371).
+	if h.jobs != nil {
+		if !h.jobs.Go("author-catalogue-sync", func(ctx context.Context) {
+			h.fetchAuthorBooks(ctx, &snapshot, opts)
+		}) {
+			// Go is a documented no-op once the group is shutting down. Nothing
+			// to roll back here (no running flag is published), but the drop is
+			// worth a line: the author was created and its catalogue was not.
+			slog.Warn("author catalogue sync not started: server is shutting down",
+				"author", snapshot.Name, "foreignId", snapshot.ForeignID)
+		}
+		return
+	}
+	go h.fetchAuthorBooks(h.bgCtx(), &snapshot, opts)
 }
 
 func (h *AuthorHandler) fetchAuthorForCreate(ctx context.Context, foreignID, fallbackName string) (*models.Author, error) {
@@ -1001,20 +1009,8 @@ func (h *AuthorHandler) recordAuthorRelinkAlias(ctx context.Context, author *mod
 }
 
 func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
-		return
-	}
-
-	author, err := h.authors.GetByID(r.Context(), id)
-	if err != nil || author == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
-		return
-	}
-	// Tier-1 cross-user IDOR guard (D1).
-	if !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
+	author, ok := h.loadOwnedAuthor(w, r)
+	if !ok {
 		return
 	}
 
@@ -1381,24 +1377,13 @@ func (h *AuthorHandler) RelinkCandidates(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+	// The load has to happen before any destructive work, so the ownership
+	// check runs first.
+	author, ok := h.loadOwnedAuthor(w, r)
+	if !ok {
 		return
 	}
-
-	// Tier-1 cross-user IDOR guard (D1). Look the author up so the ownership
-	// check can run before any destructive work; return 404 on mismatch or
-	// missing row so non-owners cannot probe for existence by status code.
-	author, err := h.authors.GetByID(r.Context(), id)
-	if err != nil {
-		writeServerError(w, r, err)
-		return
-	}
-	if author == nil || !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
-		return
-	}
+	id := author.ID
 
 	// Opt-in `?deleteFiles=true` sweeps every book's on-disk path after the
 	// DB delete. We must collect the paths *before* deleting the author —
@@ -1465,20 +1450,8 @@ func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthorHandler) Refresh(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
-		return
-	}
-
-	author, err := h.authors.GetByID(r.Context(), id)
-	if err != nil || author == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
-		return
-	}
-	// Tier-1 cross-user IDOR guard (D1).
-	if !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
+	author, ok := h.loadOwnedAuthor(w, r)
+	if !ok {
 		return
 	}
 
@@ -1721,7 +1694,7 @@ func mergeAuthorProfileFields(author, upstream *models.Author) bool {
 // must use RefreshAuthorBooks instead so the author's MonitorNewItems policy
 // applies to later-discovered works (issue #1348).
 func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool, mediaType string) {
-	h.fetchAuthorBooks(author, catalogueSyncOptions{autoSearch: autoSearch, mediaType: mediaType})
+	h.fetchAuthorBooks(h.bgCtx(), author, catalogueSyncOptions{autoSearch: autoSearch, mediaType: mediaType})
 }
 
 // RefreshAuthorBooks is the discovery variant of FetchAuthorBooks used by the
@@ -1731,7 +1704,7 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 // for them (authorAcceptsDiscoveredBooks) — a refresh must never grow the
 // library behind the user's back (issues #1348, #1815).
 func (h *AuthorHandler) RefreshAuthorBooks(author *models.Author, autoSearch bool, mediaType string) {
-	h.fetchAuthorBooks(author, catalogueSyncOptions{autoSearch: autoSearch, mediaType: mediaType, discovery: true})
+	h.fetchAuthorBooks(h.bgCtx(), author, catalogueSyncOptions{autoSearch: autoSearch, mediaType: mediaType, discovery: true})
 }
 
 // authorAcceptsDiscoveredBooks reports whether a refresh-path catalogue sync
@@ -1788,7 +1761,9 @@ func (h *AuthorHandler) authorAwaitsFirstCatalogue(ctx context.Context, author *
 	return populatedAt == nil
 }
 
-func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSyncOptions) {
+// ctx is the background context the sync runs on: the jobs group's
+// shutdown-scoped one when the async path launched it, h.bgCtx() otherwise.
+func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Author, opts catalogueSyncOptions) {
 	autoSearch, mediaType, discovery := opts.autoSearch, opts.mediaType, opts.discovery
 	// singleWork: the caller picked one specific book and the direct insert
 	// couldn't produce it. This run exists only to create that one row, so it
@@ -1796,7 +1771,6 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// Calibre re-link, no sync summary — and it is exempt from the
 	// catalogue-sync heuristics that may veto a work (#1612).
 	singleWork := opts.onlyForeignID != ""
-	ctx := h.bgCtx()
 	slog.Info("fetching books for author", "author", author.Name, "foreignId", author.ForeignID)
 
 	// Calibre-imported authors carry a synthetic "calibre:author:N" foreign ID
@@ -1896,7 +1870,6 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	allowedLangs, unknownFail := h.resolveAllowedLanguages(ctx, author)
 	skipPartBooks := h.resolveSkipPartBooks(ctx, author)
 	skipMissingDate := h.resolveSkipMissingDate(ctx, author)
-	minPopularity := h.resolveMinPopularity(ctx, author)
 	minPages, skipMissingISBN := h.resolveEditionFilters(ctx, author)
 	// Both minPages>0 and skipMissingISBN require a real edition lookup per
 	// candidate work (page count and ISBN live on Edition, not Book, and
@@ -2094,11 +2067,18 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// (or audiobook-only) user never accumulates rows they can't grab.
 	strictMediaType := h.resolveDefaultMediaTypeStrict(ctx)
 
-	// skippedExcluded is logged but deliberately kept out of AuthorSyncSummary:
-	// the author page's notice explains works the user did NOT expect to lose,
-	// and a book they excluded by hand is not one of them.
-	var added, skippedLang, skippedJunk, skippedMediaType, skippedNotAccepted, skippedExcluded int
-	var skippedPartBooks, skippedMissingDate, skippedMinPopularity, skippedMinPages, skippedMissingISBN int
+	// skippedExcluded is carried in AuthorSyncSummary but not rendered by the
+	// notice: the notice explains works the user did NOT expect to lose, and a
+	// book they excluded by hand is not one of them. It is still reported so
+	// Total reconciles (#2449).
+	//
+	// matched and failed are the two outcomes that had no counter at all until
+	// #2449. matched is the ordinary "this work is already a book" path and on
+	// an established author it is most of the run; failed is a create that lost
+	// the write. Both were invisible, which made Total minus everything else
+	// look like a hole.
+	var added, matched, failed, skippedLang, skippedJunk, skippedMediaType, skippedNotAccepted, skippedExcluded int
+	var skippedPartBooks, skippedMissingDate, skippedMinPages, skippedMissingISBN int
 	// Names of the first few language-rejected works, reported to the user
 	// alongside the count (#1889): "65 books skipped" is alarming, but it is
 	// the titles and their language codes that tell them whether the profile
@@ -2108,7 +2088,6 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// cap as skippedLangSample (#1889 established the pattern; requested
 	// again for these filters specifically in PR review, vavallee).
 	var skippedPartBooksSample, skippedMissingDateSample []models.AuthorSyncSkippedBook
-	var skippedMinPopularitySample []models.AuthorSyncSkippedBook
 	var skippedMinPagesSample, skippedMissingISBNSample []models.AuthorSyncSkippedBook
 	// candidates accumulates every work that survives the free (in-memory)
 	// filters below and would otherwise reach the MinPages/SkipMissingISBN
@@ -2266,33 +2245,6 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 			continue
 		}
 
-		// Filter works whose RatingsCount falls below the metadata profile's
-		// MinPopularity floor. A work that hasn't released yet is exempt — it
-		// can't have accumulated ratings, so judging it by a rating count
-		// would only ever penalize forthcoming books, never the intended
-		// "low-interest backlist noise" target.
-		//
-		// hasRatingSignal distinguishes "confirmed unpopular" from "unknown":
-		// RatingsCount is not something OpenLibrary reliably supplies (it
-		// arrives via the Hardcover supplement in mergeAuthorWorks), so on an
-		// install with no Hardcover token — or for any work Hardcover
-		// doesn't know — RatingsCount is 0 because nobody told us, not
-		// because the work has zero ratings. AverageRating==0 alongside it
-		// is indistinguishable from missing data, so a work with no rating
-		// signal at all is treated as unknown and passes, mirroring how
-		// MinPages treats a work with no page data as unknown rather than
-		// zero (vavallee, PR review).
-		hasRatingSignal := b.RatingsCount > 0 || b.AverageRating > 0
-		if existing == nil && minPopularity > 0 && hasRatingSignal && b.RatingsCount < minPopularity &&
-			(b.ReleaseDate == nil || !b.ReleaseDate.After(time.Now())) {
-			skippedMinPopularity++
-			if len(skippedMinPopularitySample) < authorSyncSkippedSampleLimit {
-				skippedMinPopularitySample = append(skippedMinPopularitySample, models.AuthorSyncSkippedBook{Title: b.Title})
-			}
-			slog.Debug("skipping below-popularity-floor work", "title", b.Title, "ratingsCount", b.RatingsCount, "minPopularity", minPopularity)
-			continue
-		}
-
 		// MinPages / SkipMissingISBN both need edition data (page count and
 		// ISBN live on Edition, not Book) fetched in the prefetch pass above.
 		// A book with no entry in editionsByForeignID is either not gated by
@@ -2407,6 +2359,7 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 			// sync from either provider resolves it exactly rather than
 			// relying on a title comparison (#1705).
 			h.recordBookIdentities(ctx, existing, b.ForeignID, b.HardcoverForeignID)
+			matched++
 			continue
 		}
 
@@ -2489,6 +2442,11 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 			if hydrateExistingFromMatchedHardcover {
 				h.hydrateMatchedHardcoverEditions(ctx, existing, b.HardcoverForeignID, nil)
 			}
+			// Same bucket as the id-resolved branch above. From the user's side
+			// there is no difference worth a separate number: the work is in
+			// their library, Bindery found it, and it did not need creating.
+			// Which of the two lookups got there is an implementation detail.
+			matched++
 			continue
 		}
 		// Everything from here on CREATES a book the library does not have.
@@ -2531,6 +2489,9 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 						slog.Warn("authors: re-link after unique conflict", "error", uerr, "book_id", raced.ID)
 					}
 				}
+				// A losing race still ends with the book present, so this is a
+				// match and not a failure.
+				matched++
 				continue
 			}
 			// A FOREIGN KEY failure here almost always means the author row
@@ -2546,6 +2507,7 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 				}
 			}
 			slog.Warn("failed to create book", "title", b.Title, "error", err)
+			failed++
 			continue
 		}
 		// Hydration and the on-disk check happen in the pass below, once the
@@ -2609,26 +2571,27 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// just ones that dropped something: "nothing was filtered out" is the
 	// answer to "where are my books?" as often as a count is.
 	summary := models.AuthorSyncSummary{
-		CompletedAt:                time.Now().UTC(),
-		Total:                      len(books),
-		Added:                      added,
-		SkippedLanguage:            skippedLang,
-		SkippedJunk:                skippedJunk,
-		SkippedMediaType:           skippedMediaType,
-		SkippedNotAccepted:         skippedNotAccepted,
-		SkippedPartBooks:           skippedPartBooks,
-		SkippedPartBooksSample:     skippedPartBooksSample,
-		SkippedMissingDate:         skippedMissingDate,
-		SkippedMissingDateSample:   skippedMissingDateSample,
-		SkippedMinPopularity:       skippedMinPopularity,
-		SkippedMinPopularitySample: skippedMinPopularitySample,
-		SkippedMinPages:            skippedMinPages,
-		SkippedMinPagesSample:      skippedMinPagesSample,
-		SkippedMissingISBN:         skippedMissingISBN,
-		SkippedMissingISBNSample:   skippedMissingISBNSample,
-		AllowedLanguages:           allowedLangs,
-		UnknownLanguageFail:        unknownFail,
-		SkippedLanguageSample:      skippedLangSample,
+		CompletedAt:              time.Now().UTC(),
+		Total:                    len(books),
+		Added:                    added,
+		Matched:                  matched,
+		Failed:                   failed,
+		SkippedExcluded:          skippedExcluded,
+		SkippedLanguage:          skippedLang,
+		SkippedJunk:              skippedJunk,
+		SkippedMediaType:         skippedMediaType,
+		SkippedNotAccepted:       skippedNotAccepted,
+		SkippedPartBooks:         skippedPartBooks,
+		SkippedPartBooksSample:   skippedPartBooksSample,
+		SkippedMissingDate:       skippedMissingDate,
+		SkippedMissingDateSample: skippedMissingDateSample,
+		SkippedMinPages:          skippedMinPages,
+		SkippedMinPagesSample:    skippedMinPagesSample,
+		SkippedMissingISBN:       skippedMissingISBN,
+		SkippedMissingISBNSample: skippedMissingISBNSample,
+		AllowedLanguages:         allowedLangs,
+		UnknownLanguageFail:      unknownFail,
+		SkippedLanguageSample:    skippedLangSample,
 	}
 	h.syncSummaries.record(author.ID, summary)
 
@@ -2637,11 +2600,11 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// and Info is the default level the in-app log view captures — a reporter
 	// running rootless couldn't reach the Debug per-book lines at all.
 	logArgs := []any{
-		"author", author.Name, "added", added,
+		"author", author.Name, "added", added, "matched", matched, "failed", failed,
 		"skipped_language", skippedLang, "skipped_junk", skippedJunk, "skipped_media_type", skippedMediaType,
 		"skipped_not_accepted", skippedNotAccepted, "skipped_excluded", skippedExcluded,
 		"skipped_part_books", skippedPartBooks,
-		"skipped_missing_date", skippedMissingDate, "skipped_min_popularity", skippedMinPopularity,
+		"skipped_missing_date", skippedMissingDate,
 		"skipped_min_pages", skippedMinPages, "skipped_missing_isbn", skippedMissingISBN,
 		"total", len(books),
 	}
@@ -2649,8 +2612,12 @@ func (h *AuthorHandler) fetchAuthorBooks(author *models.Author, opts catalogueSy
 	// Warn. The discovery-policy skip is not: the user configured it, the run
 	// already said so once at Info above, and a "Refresh all authors" pass
 	// over an ABS-imported library would otherwise emit one Warn per author.
-	if skippedLang+skippedJunk+skippedMediaType+skippedPartBooks+skippedMissingDate+
-		skippedMinPopularity+skippedMinPages+skippedMissingISBN > 0 {
+	//
+	// failed joins the Warn side, and it is the strongest member of the set: a
+	// filter dropping a work is a setting doing its job, while a create that
+	// lost its write is the run failing at the thing it exists to do.
+	if failed+skippedLang+skippedJunk+skippedMediaType+skippedPartBooks+skippedMissingDate+
+		skippedMinPages+skippedMissingISBN > 0 {
 		slog.Warn("author books synced", logArgs...)
 		return
 	}
@@ -2766,7 +2733,7 @@ func runBookSearches(ctx context.Context, searcher BookSearcher, books []models.
 	// once as slots free up (#1515); shares the package pace with the bulk
 	// "search all" and series-fill fan-outs.
 	concurrency.RunBoundedPaced(ctx, books, maxConcurrent, searchPaceInterval, func(ctx context.Context, book models.Book) {
-		searcher.SearchAndGrabBook(ctx, book)
+		searcher.SearchAndGrabBook(indexer.WithSearchOrigin(ctx, indexer.OriginAuthor), book)
 	})
 }
 
@@ -3365,7 +3332,7 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	// context so the search goroutine is cancelled on shutdown rather than
 	// running against context.Background(). See #846.
 	if req.SearchOnAdd && h.searcher != nil {
-		go h.searcher.SearchAndGrabBook(h.bgCtx(), *book) // #nosec G118 -- intentional: search must outlive the request
+		go h.searcher.SearchAndGrabBook(indexer.WithSearchOrigin(h.bgCtx(), indexer.OriginAuthor), *book) // #nosec G118 -- intentional: search must outlive the request
 	}
 
 	writeJSON(w, http.StatusCreated, book)
@@ -3484,8 +3451,15 @@ func (h *AuthorHandler) saveAlternateNames(ctx context.Context, author *models.A
 	if h.aliases == nil || len(author.AlternateNames) == 0 {
 		return
 	}
+	// These latin-script aliases exist only so a non-latin primary name can be
+	// reached by a latin release name (e.g. "Murakami" -> "村上春樹"). For a
+	// latin-script author every alternate name is just another latin name, and
+	// minting it as an alias would file unrelated real authors (a pen name, or a
+	// co-author credit) under this one. textutil.LatinAliasBinds is the shared
+	// rule: the same test the Calibre importer applies when it reads an
+	// unattributed alias back, and the search path when it expands one (#2419).
 	for _, name := range author.AlternateNames {
-		if !isAllASCII(name) {
+		if !textutil.LatinAliasBinds(author.Name, name) {
 			continue
 		}
 		alias := &models.AuthorAlias{AuthorID: author.ID, Name: name}
@@ -3493,16 +3467,6 @@ func (h *AuthorHandler) saveAlternateNames(ctx context.Context, author *models.A
 			slog.Debug("saveAlternateNames: could not save alias", "name", name, "authorId", author.ID, "error", err)
 		}
 	}
-}
-
-// isAllASCII returns true when every byte of s is a 7-bit ASCII character.
-func isAllASCII(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] > 127 {
-			return false
-		}
-	}
-	return true
 }
 
 // canUpgradeToBoth reports whether combining existingMediaType and
@@ -3686,23 +3650,6 @@ func (h *AuthorHandler) resolveSkipMissingDate(ctx context.Context, author *mode
 		return false
 	}
 	return p.SkipMissingDate
-}
-
-// resolveMinPopularity returns the author's effective metadata profile's
-// MinPopularity floor. Zero (the field's default) means "no filter" —
-// matches the profile settings UI, which renders 0 as "none". Defaults to
-// zero on any lookup failure, so an unresolvable profile never causes
-// unexpected catalogue loss.
-func (h *AuthorHandler) resolveMinPopularity(ctx context.Context, author *models.Author) int {
-	id := models.DefaultMetadataProfileID
-	if author.MetadataProfileID != nil {
-		id = *author.MetadataProfileID
-	}
-	p, err := h.profiles.GetByID(ctx, id)
-	if err != nil || p == nil {
-		return 0
-	}
-	return p.MinPopularity
 }
 
 // resolveEditionFilters returns the author's effective metadata profile's

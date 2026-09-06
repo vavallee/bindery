@@ -1,0 +1,54 @@
+name: Ping Server drift
+
+# The bindery-ping deployment is applied by hand: it is not in the ArgoCD
+# application (that tracks charts/bindery only) and CI has no kubectl or SSH
+# to that host, just an HTTPS token. So the running container can fall behind
+# the repo indefinitely and nothing says so.
+#
+# It did. deploy/telemetry-server.yaml pinned the #1521 build from 2026-07-11
+# while main had shipped the new_install ping log (#2155, 2026-08-21), the
+# Debian 13 base and x/crypto v0.56.0 (#2425). The service was serving an
+# end-of-life base with two High advisories for weeks, on the public
+# internet, and it surfaced only because someone went looking in pod logs for
+# a line that could not be there.
+#
+# This job asks the running server which build it is and compares that with
+# the pin on main. It cannot deploy; it can make the gap visible the day it
+# opens instead of six weeks later.
+
+on:
+  schedule:
+    - cron: "41 6 * * *" # daily, off-hour and off-minute to dodge runner contention
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: Compare the running build against the pin
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.26.6"
+          cache: true
+
+      # The comparison lives in tools/pingdrift rather than inline here so it
+      # is unit-testable: the parser and deploy/telemetry-server.yaml are a
+      # pair, and a reformat of that file has to break a PR rather than turn
+      # this nightly job into a permanent red nobody reads.
+      - name: Compare the running build against the pin
+        env:
+          TELEMETRY_STATS_TOKEN: ${{ secrets.TELEMETRY_STATS_TOKEN }}
+        run: go run ./tools/pingdrift

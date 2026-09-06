@@ -101,7 +101,7 @@ func TestSearchAndGrabFormat_DropsDisallowedLanguage(t *testing.T) {
 		{GUID: "g-ger", Title: "Das.Buch.GERMAN.epub", NZBURL: "http://127.0.0.1:1/1", Protocol: "usenet"},
 	})
 
-	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook)
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
 
 	if got := ss.lastCrit.AllowedLanguages; len(got) != 1 || got[0] != "ita" {
 		t.Errorf("expected profile languages [ita] on the search criteria, got %v", got)
@@ -123,7 +123,7 @@ func TestSearchAndGrabFormat_GrabsAllowedLanguage(t *testing.T) {
 		{GUID: "g-ita", Title: "Il.Libro.ITALIANO.epub", NZBURL: "http://127.0.0.1:1/2", Protocol: "usenet"},
 	})
 
-	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook)
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
 
 	rows, err := downloads.List(ctx)
 	if err != nil {

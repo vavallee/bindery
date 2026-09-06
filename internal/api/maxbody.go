@@ -35,8 +35,8 @@ type origBodyCtxKey struct{}
 // Wired at the router root, before MaxRequestBody, so that WithMaxBody can
 // retrieve the unwrapped reader and re-wrap with a higher per-route limit.
 //
-// The snapshot is only taken for methods that carry a body (POST, PUT,
-// PATCH); other methods pass through without touching the context.
+// The snapshot is only taken for methods that carry a body (POST, PUT, PATCH,
+// DELETE); other methods pass through without touching the context.
 func PreserveRawBody(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if hasRequestBody(r.Method) && r.Body != nil {
@@ -52,8 +52,8 @@ func PreserveRawBody(next http.Handler) http.Handler {
 // Without this an authenticated client can POST a 10 GB body and pin the
 // process inside json.Decode while Go grows its decode buffers.
 //
-// Only methods that carry a body (POST, PUT, PATCH) are wrapped. GET, HEAD,
-// DELETE, and OPTIONS pass through untouched so the wrapper does not allocate
+// Only methods that carry a body (POST, PUT, PATCH, DELETE) are wrapped. GET,
+// HEAD, and OPTIONS pass through untouched so the wrapper does not allocate
 // for the read-mostly traffic that dominates the request mix.
 //
 // Per-route overrides use WithMaxBody. Because chi runs r.With middleware
@@ -117,11 +117,19 @@ func WithMaxBody(n int64) func(http.Handler) http.Handler {
 var warnMissingPreserveRawBody sync.Once
 
 // hasRequestBody reports whether the HTTP method routinely carries a request
-// body. GET, HEAD, DELETE, and OPTIONS do not in any handler Bindery
-// registers, so wrapping their body would only cost an allocation.
+// body. GET, HEAD, and OPTIONS do not in any handler Bindery registers, so
+// wrapping their body would only cost an allocation.
+//
+// DELETE is included even though a body on DELETE is unusual in REST:
+// BlocklistHandler.BulkDelete decodes a JSON `{"ids":[...]}` body on
+// DELETE /blocklist/bulk, a route open to every authenticated user, and the
+// exclusion meant that decode ran with no cap at all — the exact case this
+// middleware exists to prevent (#2354). It is the only DELETE handler with a
+// decoder today; the cost of wrapping the rest is one allocation on a request
+// whose body is empty anyway.
 func hasRequestBody(method string) bool {
 	switch method {
-	case http.MethodPost, http.MethodPut, http.MethodPatch:
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
 		return true
 	default:
 		return false

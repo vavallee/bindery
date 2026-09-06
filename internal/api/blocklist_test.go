@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -118,6 +120,60 @@ func TestBlocklistBulkDelete_BadBody(t *testing.T) {
 	h.BulkDelete(rec, httptest.NewRequest(http.MethodPost, "/api/v1/blocklist/bulk-delete", bytes.NewBufferString("not-json")))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+// TestBlocklistBulkDelete_OversizedBodyReturns413 is the end-to-end check on
+// #2354. BulkDelete is the only DELETE handler with a decoder, and
+// hasRequestBody excluded DELETE, so this decode ran with no cap at all: any
+// authenticated user could post an arbitrarily large body and pin the process
+// inside json.Decode. The route is mounted here the way cmd/bindery mounts it,
+// with PreserveRawBody and MaxRequestBody at the router root, because the cap
+// is a property of that chain rather than of the handler.
+func TestBlocklistBulkDelete_OversizedBodyReturns413(t *testing.T) {
+	h, _, _ := blocklistFixture(t)
+	r := chi.NewRouter()
+	r.Use(PreserveRawBody)
+	r.Use(MaxRequestBody)
+	r.Delete("/api/v1/blocklist/bulk", h.BulkDelete)
+
+	// 2 MiB of padding inside otherwise valid JSON, twice the 1 MiB default.
+	body := `{"ids":[1],"pad":"` + strings.Repeat("a", 2<<20) + `"}`
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/blocklist/bulk", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d; want 413 (oversized DELETE body must be capped): %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestBlocklistBulkDelete_NormalBodyStillWorksThroughTheChain guards the
+// obvious over-correction: capping DELETE must not break the route it exists
+// to protect.
+func TestBlocklistBulkDelete_NormalBodyStillWorksThroughTheChain(t *testing.T) {
+	h, repo, ctx := blocklistFixture(t)
+	e := &models.BlocklistEntry{GUID: "g1", Title: "g1", Reason: "x"}
+	if err := repo.Create(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	r := chi.NewRouter()
+	r.Use(PreserveRawBody)
+	r.Use(MaxRequestBody)
+	r.Delete("/api/v1/blocklist/bulk", h.BulkDelete)
+
+	body, _ := json.Marshal(map[string][]int64{"ids": {e.ID}})
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/blocklist/bulk", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d; want 204: %s", rec.Code, rec.Body.String())
+	}
+	remaining, _ := repo.List(ctx)
+	if len(remaining) != 0 {
+		t.Errorf("expected the entry deleted, %d remain", len(remaining))
 	}
 }
 

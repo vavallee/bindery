@@ -4,6 +4,8 @@ import { MemoryRouter } from 'react-router'
 import SeriesPage from './SeriesPage'
 import { api } from '../api/client'
 import type { Series, SeriesHardcoverLink, SeriesHardcoverSearchResult, SystemStatus } from '../api/client'
+import '../i18n'
+import { acceptConfirm } from '../test-utils'
 
 vi.mock('../api/client', async importOriginal => {
   const actual = await importOriginal<typeof import('../api/client')>()
@@ -471,29 +473,28 @@ describe('SeriesPage', () => {
     vi.mocked(api.updateSeries).mockResolvedValue(renamed)
     vi.mocked(api.deleteSeries).mockResolvedValue(undefined)
     vi.mocked(api.deleteBook).mockResolvedValue(undefined)
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
 
-    try {
-      renderSeriesPage([initial])
+    renderSeriesPage([initial])
 
-      expect(await screen.findByRole('heading', { name: 'Old Series' })).toBeInTheDocument()
-      fireEvent.click(screen.getByRole('button', { name: 'Rename' }))
-      const dialog = await screen.findByRole('dialog', { name: 'Rename Series' })
-      fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'New Series' } })
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(await screen.findByRole('heading', { name: 'Old Series' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Rename' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Rename Series' })
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'New Series' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
 
-      fireEvent.click(await screen.findByRole('heading', { name: 'New Series' }))
-      expect(await screen.findByRole('link', { name: /Existing Linked Book/ })).toHaveAttribute('href', '/book/201')
-      fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    fireEvent.click(await screen.findByRole('heading', { name: 'New Series' }))
+    expect(await screen.findByRole('link', { name: /Existing Linked Book/ })).toHaveAttribute('href', '/book/201')
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
 
-      await waitFor(() => expect(api.deleteSeries).toHaveBeenCalledWith(20))
-      expect(api.deleteSeries).toHaveBeenCalledTimes(1)
-      expect(api.deleteBook).not.toHaveBeenCalled()
-      expect(confirmSpy).toHaveBeenCalledWith('Delete "New Series" from Series? Linked books will stay in your library.')
-      await waitFor(() => expect(screen.queryByRole('heading', { name: 'New Series' })).not.toBeInTheDocument())
-    } finally {
-      confirmSpy.mockRestore()
-    }
+    // In-app modal since #2359: the warning that linked books survive is on
+    // screen instead of inside a window.confirm string.
+    expect(await screen.findByText('Delete "New Series" from Series? Linked books will stay in your library.')).toBeInTheDocument()
+    await acceptConfirm()
+
+    await waitFor(() => expect(api.deleteSeries).toHaveBeenCalledWith(20))
+    expect(api.deleteSeries).toHaveBeenCalledTimes(1)
+    expect(api.deleteBook).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'New Series' })).not.toBeInTheDocument())
   })
 
   it('links an existing library book to an expanded series', async () => {

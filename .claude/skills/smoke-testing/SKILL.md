@@ -11,7 +11,8 @@ Bindery has three out-of-process test layers in `tests/` that complement `go tes
 
 | Suite | Command | When to run | Cost |
 |-------|---------|-------------|------|
-| Unit + integration | `make test` | Every change. In-memory SQLite via `db.OpenMemory`. | Seconds |
+| Unit + integration | `make test` | Every change. In-memory SQLite via `db.OpenMemory`. | ~2-3 min |
+| Race detector | `make test-race` | Before opening a PR that touches concurrency: goroutines, background pools, shared caches. Sharded like CI. | ~45 min |
 | HTTP smoke (real binary) | `make smoke` | Before opening a PR that touches handlers, routing, auth, scheduler wiring, embed, or `cmd/bindery/`. Boots the actual binary on a real port. | ~30–60s; requires `make build` first (the target chains it) |
 | ABS contract | `make abs-contract` | Touching anything under `internal/abs/`, `tests/abscontract/`, or the ABS import flow. Pinned upstream contract — flakes here usually mean upstream drift, not your bug. | Up to 15 min |
 | Predeploy | `make predeploy-smoke` | Only against a live instance. Requires `BINDERY_URL` and `BINDERY_API_KEY` env vars. Use after a deploy, not during development. | ~2 min, needs network |

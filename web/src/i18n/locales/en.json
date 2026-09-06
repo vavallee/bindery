@@ -43,7 +43,16 @@
     "clipboardTextLabel": "Text to copy",
     "saved": "Saved ✓",
     "saveError": "Error",
-    "more": "More"
+    "more": "More",
+    "confirm": "Confirm",
+    "confirmTitle": "Are you sure?",
+    "moreActions": "More",
+    "filters": "Filters",
+    "sort": "Sort",
+    "clearFilter": "Clear filter",
+    "dismiss": "Dismiss",
+    "showDetails": "Show details",
+    "hideDetails": "Hide details"
   },
   "monitorMode": {
     "all": "All books",
@@ -71,6 +80,11 @@
     "settings": "Settings",
     "users": "Users",
     "updateAvailable": "Update available"
+  },
+  "notFound": {
+    "title": "Page not found",
+    "body": "There is nothing at {{path}}.",
+    "home": "Go to Authors"
   },
   "manualImport": {
     "title": "Manual Import",
@@ -209,7 +223,9 @@
     "bulkSetMonitorModeApply": "Apply monitor mode",
     "bulkSetMonitorModeFailed": "Bulk monitor mode update failed",
     "bulkSetMonitorModePartial": "Monitor mode was not updated for author {{id}}: {{error}}",
-    "sortByColumn": "Sort by {{column}}"
+    "sortByColumn": "Sort by {{column}}",
+    "moreActionsFor": "More actions for {{name}}",
+    "refreshMetadata": "Refresh metadata"
   },
   "authorDetail": {
     "description": {
@@ -236,6 +252,9 @@
     },
     "lastSync": {
       "heading": "Last refresh skipped {{count}} of this author’s {{total}} works",
+      "headingFailedOnly": "Last refresh could not save {{count}} of this author’s {{total}} works",
+      "accounting": "{{added}} added, {{matched}} already in your library.",
+      "failed": "{{count}} could not be saved. This is an error rather than a filter, so the details are in Settings, then Logs.",
       "language": "{{count}} skipped by the language filter (allowed: {{languages}})",
       "unknownFail": "Works the metadata provider reported no language for were skipped too, because this author’s metadata profile is set to reject unknown languages.",
       "junk": "{{count}} skipped as untitled provider records",
@@ -243,7 +262,6 @@
       "notAccepted": "{{count}} not added, because this author is not taking newly discovered books — the author is unmonitored, or \"Monitor newly discovered books\" is set to don’t add them. Books already in your library were still refreshed.",
       "partBooks": "{{count}} skipped as box sets, omnibuses, or other multi-book bundles",
       "missingDate": "{{count}} skipped for having no release date",
-      "minPopularity": "{{count}} skipped for falling below the minimum popularity floor",
       "minPages": "{{count}} skipped for falling below the minimum page count",
       "missingIsbn": "{{count}} skipped for having no ISBN on any edition",
       "examples": "For example: {{titles}}",
@@ -288,12 +306,14 @@
       "released": "Released",
       "upcoming": "Upcoming",
       "status_wanted": "Wanted",
-      "status_downloading": "Downloading",
-      "status_downloaded": "Downloaded",
       "status_imported": "Imported",
       "status_skipped": "Skipped",
       "status_excluded": "Excluded"
-    }
+    },
+    "deleteConfirm": "Delete {{author}} and all {{count}} book(s)?",
+    "deleteWithFilesConfirm": "Delete {{author}}, all {{count}} book(s), AND {{withFiles}} file(s) or folder(s) on disk?\n\nThis cannot be undone.",
+    "deleteTitle": "Delete author",
+    "deleteFilesAcknowledge": "I understand the files on disk will be deleted."
   },
   "catalogueReconciliation": {
     "title": "Reconcile catalogue",
@@ -319,7 +339,6 @@
       "language_not_allowed": "Rejected by the language filter",
       "part_book": "Rejected as a box set or part-book",
       "missing_release_date": "Rejected because the release date is missing",
-      "below_minimum_popularity": "Below the minimum popularity",
       "below_minimum_pages": "Below the minimum page count",
       "missing_isbn": "No edition has an ISBN",
       "catalogue_filter": "Rejected by the catalogue filter"
@@ -358,8 +377,6 @@
     "mediaBoth": "📖🎧 Both",
     "deleteConfirm": "Delete {{count}} book(s)?",
     "statusWanted": "Wanted",
-    "statusDownloading": "Downloading",
-    "statusDownloaded": "Downloaded",
     "statusImported": "In Library",
     "statusSkipped": "Skipped",
     "audioLabel": "🎧 Audio",
@@ -452,7 +469,24 @@
     "removeDeleteFiles": "Also delete downloaded files from disk",
     "removeDeleteFilesHint": "Deletes the data in the download client. For torrents this also stops seeding. Leave unchecked to keep the files.",
     "removeConfirm": "Remove",
-    "removeCancel": "Cancel"
+    "removeCancel": "Cancel",
+    "status": {
+      "downloading": "Downloading",
+      "completed": "Completed",
+      "importPending": "Import Pending",
+      "importing": "Importing",
+      "imported": "Imported",
+      "failed": "Failed",
+      "importBlocked": "Import Blocked",
+      "importExternal": "External Import",
+      "importExternalHint": "Handed off to the external import tool. Bindery is waiting for the external importer to place the file, so this row stays here until it does.",
+      "importHeld": "Held for Pair",
+      "importHeldHint": "Held until the paired format arrives. This book wants both an ebook and an audiobook, and both are imported together."
+    }
+  },
+  "series": {
+    "deleteConfirm": "Delete \"{{title}}\" from Series? Linked books will stay in your library.",
+    "deleteTitle": "Remove series"
   },
   "importHints": {
     "heading": "Already have files on disk?",
@@ -593,8 +627,13 @@
         "seedRatioFromProwlarr": "Auto-filled from Prowlarr. Edit and save to override; Prowlarr won't change it again.",
         "seedRatioHint": "Per-indexer seed-ratio limit applied to torrents grabbed from this indexer (qBittorrent, Transmission, Deluge). Leave blank to use the download client's global rule, or check Unlimited to seed forever. Ignored for Usenet, and for rTorrent, which has no per-torrent ratio limit — configure a ratio group in .rtorrent.rc instead.",
         "freeleechOnly": "Only auto-grab freeleech releases",
-        "freeleechOnlyHint": "Automatic grabs from this indexer are limited to freeleech releases; anything else is held in the Pending queue for manual approval. Interactive search still shows everything. For private trackers where ratio matters — leave off for public trackers and Usenet."
+        "freeleechOnlyHint": "Automatic grabs from this indexer are limited to freeleech releases; anything else is held in the Pending queue for manual approval. Interactive search still shows everything. For private trackers where ratio matters — leave off for public trackers and Usenet.",
+        "dailyQueryLimit": "Daily query limit",
+        "dailyQueryLimitPlaceholder": "e.g. 1000",
+        "dailyQueryLimitHint": "Stop searching this indexer once it has been sent this many requests in the last 24 hours. Leave blank for no limit. Requests are counted in hourly blocks, so capacity comes back an hour at a time rather than all at once, and a block is only released after it is a full hour outside the window. The unit is requests, not books: one book costs between one and eight depending on how far the search has to fall back. Use it on trackers with a daily API allowance, so one scheduled sweep over a large library cannot spend the whole thing. The Test button is exempt and never counts."
       },
+      "quotaUsage": "{{used}} of {{limit}} queries in the last 24 hours",
+      "quotaReached": "Daily query limit of {{limit}} reached. This indexer is being skipped until the oldest hour of queries falls out of the window.",
       "healthAuthFail": "This indexer rejected the last search and will keep rejecting until someone fixes it: {{error}}",
       "healthFail": "Last search failed: {{error}}"
     },
@@ -657,10 +696,8 @@
     "quality": {
       "heading": "Quality Profiles",
       "newProfile": "+ New Profile",
-      "description": "A profile picks which file formats Bindery will grab and which counts as \"good enough\" to stop searching. Order the list worst-to-best — releases are scored by index.",
+      "description": "A profile picks which file formats Bindery will grab. The list is ordered worst to best.",
       "empty": "No quality profiles configured.",
-      "cutoff": "Cutoff:",
-      "upgradesAllowed": "Upgrades allowed",
       "deleteConfirm": "Delete quality profile \"{{name}}\"?",
       "deleteFail": "Failed to delete profile",
       "saveFail": "Failed to save profile",
@@ -669,17 +706,11 @@
       "formPreference": "Allowed formats and preference order",
       "formPreferenceHint": "Tick a format to allow it. Reorder worst → best — releases ranked higher in the list win.",
       "formAddFormat": "Add format:",
-      "formCutoff": "Cutoff",
-      "formCutoffHint": "Once a book is stored at the cutoff format or better, Bindery stops searching for upgrades.",
-      "formCutoffNoOptions": "Allow at least one format first",
-      "formUpgradeAllowed": "Allow upgrading to a better format",
       "saveChanges": "Save changes",
       "createProfile": "Create profile",
       "errorName": "Name is required",
       "errorNoFormats": "At least one format is required",
       "errorNoAllowed": "At least one format must be allowed",
-      "errorCutoffRequired": "Cutoff is required",
-      "errorCutoffNotAllowed": "Cutoff must be one of the allowed formats",
       "moveUp": "Move up",
       "moveDown": "Move down"
     },
@@ -688,7 +719,6 @@
       "newProfile": "+ New Profile",
       "empty": "No metadata profiles configured.",
       "description": "Books in languages outside the profile's allowed list are filtered out when an author is added or refreshed. Leave the list empty to accept any language.",
-      "minPopularity": "Min popularity:",
       "minPages": "Min pages:",
       "languages": "Languages:",
       "skipMissingDate": "Skip missing date",
@@ -703,7 +733,6 @@
       "formUnknownLanguagePass": "Pass — import anyway (default)",
       "formUnknownLanguageFail": "Fail — skip the book",
       "formUnknownLanguageHint": "Some metadata sources (notably OpenLibrary) omit the language on some works. Pass imports them silently; Fail rejects them with a log entry.",
-      "formMinPopularity": "Min popularity",
       "formMinPages": "Min pages",
       "formSkipMissingDate": "Skip missing release date",
       "formSkipMissingIsbn": "Skip missing ISBN",
@@ -739,7 +768,9 @@
       "download": "Download",
       "downloadHint": "Download the entries matching the current filters as a text file",
       "downloadNote": "Download saves the entries matching the filters the table is showing as a plain-text file you can attach to a bug report. Large exports are capped; the file says so in its footer when that happens.",
-      "page": "Page {{page}}"
+      "page": "Page {{page}}",
+      "deleteBackupConfirm": "Delete backup {{filename}}?",
+      "deleteBackupTitle": "Delete backup"
     },
     "general": {
       "appearance": "Appearance",
@@ -793,6 +824,7 @@
       },
       "apiKeys": "External API Keys",
       "googleBooksKey": "Google Books API Key",
+      "googleBooksKeyHiddenPlaceholder": "Saved key is hidden. Enter a new key to replace it.",
       "storage": "Storage",
       "storageHint": "Paths Bindery reads from and writes to. Configure via environment variables (or your config file) before starting the container; the running process captures them at startup.",
       "downloadDir": "Download directory",
@@ -873,7 +905,12 @@
       "hardcoverSync": "Hardcover list sync",
       "hardcoverSyncIntervalLabel": "Hardcover list sync interval",
       "hardcoverSyncIntervalHint": "How often Bindery re-syncs your enabled Hardcover import lists. Lower it if you curate a Hardcover list as your main way of adding books. Use Sync now on the Import tab for an immediate run.",
-      "restartRequired": "Takes effect after the next Bindery restart."
+      "restartRequired": "Takes effect after the next Bindery restart.",
+      "regenerateApiKeyConfirm": "Regenerate the API key? Existing integrations using the old key will stop working.",
+      "regenerateApiKeyTitle": "Regenerate API key",
+      "rotateSessionSecretConfirm": "Rotate the session signing secret? Existing logins keep working during a rotation window via the previous secret; a second rotation closes that window.",
+      "rotateSessionSecretTitle": "Rotate session secret",
+      "rotateSessionSecretAcknowledge": "I understand a second rotation will sign everyone out."
     },
     "import": {
       "csvHeading": "CSV of author names",
@@ -1074,7 +1111,9 @@
     "removeLabel": "Remove",
     "mergeButton": "Merge",
     "merging": "Merging...",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "confirmBody": "Merge \"{{source}}\" into \"{{target}}\"?\n\n• {{count}} book(s) will be reparented.\n• \"{{source}}\" will be kept as an alias of \"{{target}}\".\n• This cannot be undone.",
+    "confirmAcknowledge": "I understand this cannot be undone."
   },
   "pagination": {
     "previous": "Previous",
@@ -1109,7 +1148,8 @@
       "disabled": "Recommendations are disabled. Enable them in Settings to start discovering new books.",
       "coldStart": "Add more books to unlock personalized genre recommendations.",
       "goToSettings": "Go to Settings"
-    }
+    },
+    "moreActionsFor": "More actions for {{title}}"
   },
   "gettingStarted": {
     "title": "Getting started",
@@ -1133,7 +1173,9 @@
     "client": "Add a download client",
     "author": "Add an author",
     "grab": "Grab a book",
-    "import": "First book imported"
+    "import": "First book imported",
+    "progress": "{{done}} of {{total}} steps done",
+    "next": "Next:"
   },
   "protocolMismatch": {
     "torrent": "A Torznab indexer is enabled but no torrent download client (qBittorrent, Transmission, Deluge, rTorrent) is — its releases can be found but never downloaded.",
@@ -1180,8 +1222,6 @@
   },
   "bookStatus": {
     "wanted": "Wanted",
-    "downloading": "Downloading",
-    "downloaded": "Downloaded",
     "imported": "Imported",
     "skipped": "Skipped",
     "notMonitored": "Not monitored"
@@ -1218,7 +1258,8 @@
     "rowMore": "More actions for {{name}}",
     "deleteFiles": "Delete files",
     "deleteFilesAcknowledge": "I understand these files will be removed from disk",
-    "downloadFormatHint": "Download this format",
+    "downloadFileHint": "Download this file",
+    "downloadNamed": "Download {{name}}",
     "deleteFilesTitle": "Delete {{format}} files",
     "deleteFilesBody": "Permanently delete {{count}} file(s) from disk:",
     "deleteFilesConfirm": "Delete from disk",
@@ -1307,8 +1348,6 @@
     "deleteBookConfirm": "Delete book + files",
     "status": {
       "wanted": "Wanted",
-      "downloading": "Downloading",
-      "downloaded": "Downloaded",
       "imported": "Imported",
       "skipped": "Skipped"
     },

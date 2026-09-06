@@ -231,10 +231,11 @@ func TestAuthorsBulk_SetMediaType_ReevaluatesToImported(t *testing.T) {
 	}
 }
 
-// Skipped and mid-pipeline books must survive a media-type flip unchanged —
-// skipped encodes an explicit user decision, and disturbing a downloading
-// book would duplicate work the download client is already doing.
-func TestAuthorsBulk_SetMediaType_PreservesSkippedAndInFlight(t *testing.T) {
+// Skipped is the one status a media-type flip must not disturb: it encodes an
+// explicit user decision. Every other book is recomputed from what is on disk.
+// This test used to also cover a 'downloading' book, a status nothing in
+// Bindery ever wrote, so that half asserted a guard that could not fire (#2374).
+func TestAuthorsBulk_SetMediaType_PreservesSkipped(t *testing.T) {
 	h, _, books, author, ctx := bulkFixture(t)
 
 	skipped := mustCreateBook(t, books, ctx, &models.Book{
@@ -243,9 +244,9 @@ func TestAuthorsBulk_SetMediaType_PreservesSkippedAndInFlight(t *testing.T) {
 		MediaType: models.MediaTypeEbook,
 		Genres:    []string{}, MetadataProvider: "openlibrary",
 	})
-	downloading := mustCreateBook(t, books, ctx, &models.Book{
-		ForeignID: "OL_DL", AuthorID: author.ID, Title: "Downloading",
-		SortTitle: "downloading", Status: models.BookStatusDownloading,
+	wanted := mustCreateBook(t, books, ctx, &models.Book{
+		ForeignID: "OL_WANT", AuthorID: author.ID, Title: "Wanted",
+		SortTitle: "wanted", Status: models.BookStatusWanted,
 		MediaType: models.MediaTypeEbook,
 		Genres:    []string{}, MetadataProvider: "openlibrary", Monitored: true,
 	})
@@ -260,9 +261,9 @@ func TestAuthorsBulk_SetMediaType_PreservesSkippedAndInFlight(t *testing.T) {
 	if gotSkipped.Status != models.BookStatusSkipped {
 		t.Errorf("skipped: want status preserved, got %q", gotSkipped.Status)
 	}
-	gotDL, _ := books.GetByID(ctx, downloading.ID)
-	if gotDL.Status != models.BookStatusDownloading {
-		t.Errorf("downloading: want status preserved, got %q", gotDL.Status)
+	gotWanted, _ := books.GetByID(ctx, wanted.ID)
+	if gotWanted.Status != models.BookStatusWanted {
+		t.Errorf("wanted: want status preserved, got %q", gotWanted.Status)
 	}
 }
 

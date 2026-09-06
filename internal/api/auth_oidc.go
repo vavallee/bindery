@@ -17,9 +17,53 @@ import (
 )
 
 const (
+	// oidcFlowCookie is the name used on installs that cannot carry a
+	// __Host- cookie, which means plain HTTP. See oidcFlowCookieName.
 	oidcFlowCookie = "bindery_oidc_flow"
-	oidcFlowMaxAge = 10 * 60 // 10 minutes
+	// oidcFlowCookieHost is the __Host- prefixed name, and it is the one that
+	// actually closes #2362.
+	//
+	// Signing the flow blob (the rest of this change) stops an attacker
+	// FORGING one. It does not stop the attack the issue describes, because
+	// forging was never necessary: /api/v1/auth/oidc/{provider}/login is in
+	// AllowUnauthPath — it has to be, the IdP round trip precedes any session
+	// — and it hands a genuine, correctly signed cookie to anyone who asks.
+	// An attacker curls it, authenticates at the IdP as themselves, keeps the
+	// code, plants the real cookie in the victim's browser with the same
+	// write primitive the issue already grants, and sends them the callback
+	// link. Signature verifies, provider binding matches, expiry is fresh,
+	// and the PKCE verifier is in the cookie, so the exchange completes and
+	// the victim is signed in as the attacker.
+	//
+	// The __Host- prefix is what removes the write primitive rather than the
+	// forgery. A browser refuses to store a __Host- cookie unless it is
+	// Secure, has Path=/, and carries no Domain attribute, and it refuses to
+	// let a request set one over plain HTTP. That is exactly the pair of
+	// holes #2362 leans on: a sibling subdomain cannot set it because Domain
+	// scoping is forbidden, and a plaintext hop cannot set it at all.
+	oidcFlowCookieHost = "__Host-" + oidcFlowCookie
+	oidcFlowMaxAge     = 10 * 60 // 10 minutes
 )
+
+// oidcFlowCookieName returns the flow cookie name this request can use, and
+// the Path that name requires.
+//
+// __Host- forces Path=/, so the cookie stops being scoped to
+// /api/v1/auth/oidc and is sent on every same-origin request instead. That is
+// a real widening and it is the price of the prefix: the spec does not allow
+// a narrower path. It stays HttpOnly, signed, and ten minutes long, and the
+// alternative is a cookie any sibling subdomain can overwrite.
+//
+// A plain-HTTP install cannot use the prefix at all, since __Host- implies
+// Secure. Those installs keep the old name and the narrow path and remain
+// exposed to #2362 — which is honest, because an attacker who can inject over
+// a plaintext hop has better options than cookie-planting anyway.
+func oidcFlowCookieName(r *http.Request) (name, path string) {
+	if cookieSecure(r) {
+		return oidcFlowCookieHost, "/"
+	}
+	return oidcFlowCookie, "/api/v1/auth/oidc"
+}
 
 var oidcProviderIDRe = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
 
@@ -91,6 +135,31 @@ func NewOIDCHandler(mgr *oidc.Manager, users *db.UserRepo, settings *db.Settings
 		oidcDefaultRole:   "user",
 		oidcGroupClaim:    "groups",
 	}
+}
+
+// flowSecret returns the key the OIDC flow cookie is signed with: the
+// install's current session secret, the same one the session cookie and the
+// CSRF token are derived from (#2362). The flow signature carries its own
+// domain-separation label, so sharing the key does not let a value from one
+// stand in for the other.
+//
+// The secrets live on AuthHandler, which is in this package, so nothing has to
+// be plumbed into internal/auth/oidc. Nil when no AuthHandler is attached,
+// which EncodeFlowState refuses rather than treating as "sign with nothing".
+func (h *OIDCHandler) flowSecret(ctx context.Context) []byte {
+	if h.auth == nil {
+		return nil
+	}
+	return h.auth.sessionSecret(ctx)
+}
+
+// flowSecrets returns the ordered verification candidates {current, previous},
+// so a login started just before a session-secret rotation still completes.
+func (h *OIDCHandler) flowSecrets(ctx context.Context) [][]byte {
+	if h.auth == nil {
+		return nil
+	}
+	return h.auth.sessionSecrets(ctx)
 }
 
 // WithBaseConfigured sets the baseConfigured flag, indicating that
@@ -195,15 +264,16 @@ func (h *OIDCHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// redirectBase is round-tripped because the IdP requires the redirect_uri
 	// in the token exchange to match the one used in the authorize request,
 	// and we resolve it from the request rather than a static env var.
-	flowVal, err := oidc.EncodeFlowState(state, nonce, verifier, redirectBase)
+	flowVal, err := oidc.EncodeFlowState(h.flowSecret(r.Context()), providerID, state, nonce, verifier, redirectBase)
 	if err != nil {
 		writeServerError(w, r, err)
 		return
 	}
+	flowName, flowPath := oidcFlowCookieName(r)
 	http.SetCookie(w, &http.Cookie{
-		Name:     oidcFlowCookie,
+		Name:     flowName,
 		Value:    flowVal,
-		Path:     "/api/v1/auth/oidc",
+		Path:     flowPath,
 		HttpOnly: true,
 		Secure:   cookieSecure(r),
 		SameSite: http.SameSiteLaxMode,
@@ -224,27 +294,67 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Retrieve and validate the flow state cookie.
-	flowCookie, err := r.Cookie(oidcFlowCookie)
+	//
+	// Read by the ONE name this request's scheme mandates, never both. On an
+	// HTTPS install the unprefixed name is not accepted as a fallback, and
+	// that refusal is the entire protection: a sibling subdomain or a
+	// plaintext hop can still plant `bindery_oidc_flow`, so honouring it here
+	// would leave #2362 open while looking fixed.
+	//
+	// The cost is one failed login for anyone who was mid-flow across the
+	// upgrade that introduced this. Their cookie carries the old name, the
+	// callback does not see it, and they get "missing flow cookie" and press
+	// the button again. A ten-minute window, one retry, in exchange for the
+	// hole actually closing.
+	flowName, flowPath := oidcFlowCookieName(r)
+	flowCookie, err := r.Cookie(flowName)
 	if err != nil {
+		slog.Warn("oidc callback: no flow cookie under the expected name", // #nosec -- providerID validated by oidcProviderIDRe at handler entry
+			"provider", providerID,
+			"expected", flowName,
+		)
 		writeErr(w, http.StatusBadRequest, "missing flow cookie")
 		return
 	}
-	fs, err := oidc.DecodeFlowState(flowCookie.Value)
+	fs, err := oidc.DecodeFlowState(h.flowSecrets(ctx), providerID, flowCookie.Value)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid flow state: "+err.Error())
+		// The signature, the expiry and the provider binding are all server-side
+		// facts; the caller gets one message for all of them. The detail goes to
+		// the log, where an operator can tell an upgrade-in-flight cookie
+		// (ErrFlowStateUnsigned) apart from a tampered one.
+		slog.Warn("oidc callback: flow state rejected", // #nosec -- providerID validated by oidcProviderIDRe at handler entry
+			"provider", providerID,
+			"error", err,
+		)
+		writeErr(w, http.StatusBadRequest, "invalid flow state")
 		return
 	}
 
-	// Clear the flow cookie.
+	// Clear the flow cookie under the name in use, and also under the legacy
+	// name and path. The second expiry is not redundant: a browser that still
+	// holds a pre-upgrade `bindery_oidc_flow` would otherwise keep it for the
+	// full ten minutes with nothing left that reads it, and a stale credential
+	// nobody consumes is still a credential sitting in a browser.
 	http.SetCookie(w, &http.Cookie{
-		Name:     oidcFlowCookie,
+		Name:     flowName,
 		Value:    "",
-		Path:     "/api/v1/auth/oidc",
+		Path:     flowPath,
 		HttpOnly: true,
 		Secure:   cookieSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
+	if flowName != oidcFlowCookie {
+		http.SetCookie(w, &http.Cookie{
+			Name:     oidcFlowCookie,
+			Value:    "",
+			Path:     "/api/v1/auth/oidc",
+			HttpOnly: true,
+			Secure:   cookieSecure(r),
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   -1,
+		})
+	}
 
 	// Validate state parameter.
 	if r.URL.Query().Get("state") != fs.State {

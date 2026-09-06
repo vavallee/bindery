@@ -700,6 +700,104 @@ func TestGetBook_HTTP_NoAuthor(t *testing.T) {
 	}
 }
 
+// TestGetBook_HTTP_EnrichesDateAndLanguageFromSearch is the #2306 case. An
+// OpenLibrary work record carries neither a publication date nor a language
+// (the live /works/OL1000175W.json returns only authors, covers, description,
+// key, subjects and title), so GetBook returned a book with neither and
+// Re-bind left the stale values of the record it replaced in place. The search
+// index has both for the same work, and GetBook now reads them from there.
+func TestGetBook_HTTP_EnrichesDateAndLanguageFromSearch(t *testing.T) {
+	workResp := workResponse{
+		Key:   "/works/OL1000175W",
+		Title: "Paying the Piper",
+	}
+	var gotQuery string
+	c := newClientWithPaths(t, map[string]interface{}{
+		"/works/OL1000175W.json": jsonStr(workResp),
+		"/search.json": func(r *http.Request) string {
+			gotQuery = r.URL.Query().Get("q")
+			return jsonStr(searchResponse{NumFound: 1, Docs: []searchDoc{{
+				Key:              "/works/OL1000175W",
+				Title:            "Paying the Piper",
+				FirstPublishYear: 2002,
+				Language:         []string{"eng"},
+			}}})
+		},
+	})
+
+	book, err := c.GetBook(context.Background(), "OL1000175W")
+	if err != nil {
+		t.Fatalf("GetBook: %v", err)
+	}
+	if gotQuery != "key:/works/OL1000175W" {
+		t.Errorf("search q: want %q, got %q", "key:/works/OL1000175W", gotQuery)
+	}
+	if book.ReleaseDate == nil {
+		t.Fatal("ReleaseDate: want 2002, got nil")
+	}
+	if got := book.ReleaseDate.Year(); got != 2002 {
+		t.Errorf("ReleaseDate year: want 2002, got %d", got)
+	}
+	if book.Language != "eng" {
+		t.Errorf("Language: want %q, got %q", "eng", book.Language)
+	}
+}
+
+// TestGetBook_HTTP_SearchEnrichmentIsBestEffort pins that the search index is
+// a secondary source: when it is unreachable, GetBook still returns the work
+// it did fetch rather than failing the Re-bind that called it.
+func TestGetBook_HTTP_SearchEnrichmentIsBestEffort(t *testing.T) {
+	workResp := workResponse{Key: "/works/OL1000175W", Title: "Paying the Piper"}
+	c := newClientWithStatus(t,
+		map[string]interface{}{
+			"/works/OL1000175W.json": jsonStr(workResp),
+			"/search.json":           `{"error":"upstream down"}`,
+		},
+		map[string]int{"/search.json": http.StatusInternalServerError},
+	)
+
+	book, err := c.GetBook(context.Background(), "OL1000175W")
+	if err != nil {
+		t.Fatalf("GetBook must survive a failed search enrichment: %v", err)
+	}
+	if book.Title != "Paying the Piper" {
+		t.Errorf("Title: want %q, got %q", "Paying the Piper", book.Title)
+	}
+	if book.ReleaseDate != nil {
+		t.Errorf("ReleaseDate: want nil when enrichment failed, got %v", book.ReleaseDate)
+	}
+	if book.Language != "" {
+		t.Errorf("Language: want empty when enrichment failed, got %q", book.Language)
+	}
+}
+
+// TestGetBook_HTTP_SearchEnrichmentRejectsDifferentWork guards the copy: the
+// search index matches on more than an exact key, so a doc for another work
+// must not donate its date and language to the one that was asked for.
+func TestGetBook_HTTP_SearchEnrichmentRejectsDifferentWork(t *testing.T) {
+	workResp := workResponse{Key: "/works/OL1000175W", Title: "Paying the Piper"}
+	c := newClientWithPaths(t, map[string]interface{}{
+		"/works/OL1000175W.json": jsonStr(workResp),
+		"/search.json": jsonStr(searchResponse{NumFound: 1, Docs: []searchDoc{{
+			Key:              "/works/OL9999999W",
+			Title:            "Some Other Book",
+			FirstPublishYear: 1974,
+			Language:         []string{"fre"},
+		}}}),
+	})
+
+	book, err := c.GetBook(context.Background(), "OL1000175W")
+	if err != nil {
+		t.Fatalf("GetBook: %v", err)
+	}
+	if book.ReleaseDate != nil {
+		t.Errorf("ReleaseDate: want nil, got %v from a different work", book.ReleaseDate)
+	}
+	if book.Language != "" {
+		t.Errorf("Language: want empty, got %q from a different work", book.Language)
+	}
+}
+
 func TestGetBook_HTTP_Error(t *testing.T) {
 	c := newClientWithStatus(t,
 		map[string]interface{}{"/works/OL404W.json": "not found"},

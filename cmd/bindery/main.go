@@ -58,9 +58,13 @@ var (
 	date    = "unknown"
 )
 
+// Aliases for the two spellings the Google Books API key has been stored
+// under. They live in internal/api so isSecretSetting and this reader cannot
+// drift apart again: a copy here is what let the key stay readable through
+// GET /setting (#2351).
 const (
-	settingGoogleBooksAPIKey       = "googlebooks.apiKey"
-	legacySettingGoogleBooksAPIKey = "google_books_api_key"
+	settingGoogleBooksAPIKey       = api.SettingGoogleBooksAPIKey
+	legacySettingGoogleBooksAPIKey = api.LegacySettingGoogleBooksAPIKey
 )
 
 func main() {
@@ -266,6 +270,14 @@ func main() {
 	// the TCP peer is then the proxy's own private address.
 	auth.WarnIfLocalOnlyWithoutTrustedProxy(bootAuthMode, trustedCIDRs)
 
+	// Same shape, different assumption: an operator who added a second account
+	// through Settings has no way to learn that the two accounts share one
+	// library until they look at it. A count read failure is not worth a line
+	// of its own here; the rest of startup will report it soon enough.
+	if n, err := userRepo.Count(ctxBoot); err == nil {
+		auth.WarnIfMultiUserWithoutTenancy(n)
+	}
+
 	// Login rate limiter: thresholds are configurable via BINDERY_RATE_LIMIT_MAX_FAILURES
 	// and BINDERY_RATE_LIMIT_WINDOW_MINUTES; defaults match the original Sonarr-style posture.
 	loginLimiter := auth.NewLoginLimiter(cfg.RateLimitMaxFailures, time.Duration(cfg.RateLimitWindowMinutes)*time.Minute)
@@ -368,7 +380,8 @@ func main() {
 	// search panel nobody opens unless they already suspect a problem (#1935).
 	idxSearcher := indexer.NewSearcher().
 		WithHealth(indexerRepo).
-		WithHealthNotifier(notif)
+		WithHealthNotifier(notif).
+		WithQuota(indexerRepo)
 
 	// Import scanner
 	namingTemplate := defaultNamingTemplate(settingsRepo)
@@ -604,7 +617,8 @@ func main() {
 		WithHardcoverFeatureSettings(settingsRepo, cfg.EnhancedHardcoverAPI).
 		WithEditionHydration(editionRepo).
 		WithRoots(libraryRoots).
-		WithLifetimeCtx(appCtx)
+		WithLifetimeCtx(appCtx).
+		WithJobs(bgJobs) // drain an in-flight author catalogue sync on shutdown (#2371)
 	authorAliasHandler := api.NewAuthorAliasHandler(authorRepo, authorAliasRepo)
 	bookHandler := api.NewBookHandler(bookRepo, metaAgg, historyRepo, sched).
 		WithSettings(settingsRepo).
@@ -642,7 +656,8 @@ func main() {
 	// download dirs) still gates the delete handlers.
 	importRoots := api.NewLibraryRoots(rootFolderRepo, cfg.LibraryDir, cfg.AudiobookDir, cfg.DownloadDir, cfg.AudiobookDownloadDir)
 	manualImportHandler := api.NewManualImportHandler(importScanner, downloadRepo, bookRepo).
-		WithRoots(importRoots)
+		WithRoots(importRoots).
+		WithJobs(bgJobs) // drain in-flight batch imports and reassigns on shutdown (#2371)
 	pendingHandler := api.NewPendingHandler(pendingReleaseRepo, queueHandler, downloadRepo, bookRepo)
 	reorganizeHandler := api.NewReorganizeHandler(importScanner)
 	importScanner.WithSettings(settingsRepo)
@@ -858,7 +873,9 @@ func main() {
 		// OIDC — login/callback are unauthenticated; provider management requires auth.
 		r.Get("/auth/oidc/providers", oidcHandler.GetProviders)
 		r.Get("/auth/oidc/redirect-base", oidcHandler.GetRedirectBase)
-		r.Post("/auth/oidc/test-discovery", oidcHandler.TestDiscovery)
+		// The discovery probe is admin-only: it is an outbound fetch oracle
+		// against the container's own network (see registerOIDCDiscoveryRoutes).
+		registerOIDCDiscoveryRoutes(r, oidcHandler)
 		r.Get("/auth/oidc/{provider}/login", oidcHandler.Login)
 		r.Get("/auth/oidc/{provider}/callback", oidcHandler.Callback)
 		// Admin-only auth mutations.
@@ -997,6 +1014,11 @@ func main() {
 		r.Get("/setting/{key}", settingsHandler.Get)
 		r.Group(func(r chi.Router) {
 			r.Use(auth.RequireAdmin)
+			// The descriptor registry: key names, types, defaults and
+			// descriptions, never stored values. Admin only for the same
+			// reason the mutations are, and see SettingsHandler.Descriptors
+			// for why the path is plural.
+			r.Get("/settings/descriptors", settingsHandler.Descriptors)
 			r.Put("/setting/{key}", settingsHandler.Set)
 			r.Delete("/setting/{key}", settingsHandler.Delete)
 			r.Post("/hardcover/test", settingsHandler.TestHardcover)
@@ -1076,7 +1098,8 @@ func main() {
 		r.Put("/metadataprofile/{id}", metadataProfileHandler.Update)
 		r.Delete("/metadataprofile/{id}", metadataProfileHandler.Delete)
 
-		// Backups — Restore overwrites the live database, Delete removes
+		// Backups — Restore replaces the live database (staged now, swapped
+		// in by db.ApplyPendingRestore at the next start), Delete removes
 		// stored backups, and List leaks filenames containing timestamps that
 		// help an attacker target Restore. Admin-only across the whole
 		// surface.

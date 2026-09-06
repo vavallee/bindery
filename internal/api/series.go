@@ -19,6 +19,7 @@ import (
 	"github.com/vavallee/bindery/internal/bookhydrate"
 	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/seriesmatch"
@@ -166,10 +167,51 @@ func validateSeriesTitle(title string) (string, string) {
 	return title, ""
 }
 
+const (
+	seriesListDefaultLimit = 100
+	seriesListMaxLimit     = 500
+)
+
+// seriesListResponse is the paginated wrapper GET /series returns when the
+// caller asks for a page. Same shape as authorListResponse.
+type seriesListResponse struct {
+	Items  []models.Series `json:"items"`
+	Total  int             `json:"total"`
+	Limit  int             `json:"limit"`
+	Offset int             `json:"offset"`
+}
+
+// List returns the series collection with each series' linked books attached.
+//
+// Pagination is opt-in (#2345): pass limit and/or offset and the response is a
+// seriesListResponse envelope; pass neither and it stays the bare array it has
+// always been. Authors and books got the envelope unconditionally and that was
+// a breaking change for every client; there is no reason to repeat it here
+// when the only in-tree consumer (web/src/pages/SeriesPage.tsx) still wants
+// the whole collection. Switching that page to paged loads, and then making
+// the envelope the default, is the follow-up.
 func (h *SeriesHandler) List(w http.ResponseWriter, r *http.Request) {
 	// Owner-scoped books (#1457): a non-admin must not enumerate other
 	// users' titles through the series view. Series rows stay global.
-	series, err := h.series.ListWithBooksForUser(r.Context(), auth.ListScopeUserID(r.Context()))
+	userID := auth.ListScopeUserID(r.Context())
+
+	q := r.URL.Query()
+	paged := strings.TrimSpace(q.Get("limit")) != "" || strings.TrimSpace(q.Get("offset")) != ""
+	if !paged {
+		series, err := h.series.ListWithBooksForUser(r.Context(), userID)
+		if err != nil {
+			writeServerError(w, r, err)
+			return
+		}
+		if series == nil {
+			series = []models.Series{}
+		}
+		writeJSON(w, http.StatusOK, series)
+		return
+	}
+
+	limit, offset := parseLimitOffset(r, seriesListDefaultLimit, seriesListMaxLimit)
+	series, total, err := h.series.ListPageWithBooksForUser(r.Context(), userID, limit, offset)
 	if err != nil {
 		writeServerError(w, r, err)
 		return
@@ -177,7 +219,12 @@ func (h *SeriesHandler) List(w http.ResponseWriter, r *http.Request) {
 	if series == nil {
 		series = []models.Series{}
 	}
-	writeJSON(w, http.StatusOK, series)
+	writeJSON(w, http.StatusOK, seriesListResponse{
+		Items:  series,
+		Total:  total,
+		Limit:  limit,
+		Offset: offset,
+	})
 }
 
 func (h *SeriesHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -555,21 +602,25 @@ func (h *SeriesHandler) fanOutSeriesSearches(ctx context.Context, books []models
 	// there is nothing on the request ctx that the search needs.
 	bgCtx := h.bgCtx()
 	go concurrency.RunBoundedPaced(bgCtx, books, seriesFillSearchConcurrency, searchPaceInterval, func(ctx context.Context, b models.Book) {
-		h.searcher.SearchAndGrabBook(ctx, b)
+		h.searcher.SearchAndGrabBook(indexer.WithSearchOrigin(ctx, indexer.OriginSeriesFill), b)
 	})
 }
 
 // queueSeriesBook marks a series book wanted+monitored and returns the
 // reloaded book (the second return value) so the caller can hand it to a
 // bounded indexer fan-out. The boolean reports whether the book was newly
-// queued (false for already-satisfied / in-flight books, which are
-// skipped without touching the DB and without scheduling a search).
+// queued (false for already-satisfied books, which are skipped without
+// touching the DB and without scheduling a search).
 func (h *SeriesHandler) queueSeriesBook(ctx context.Context, b models.Book) (bool, models.Book, error) {
-	// Only act on books that are not already satisfied or in flight. Re-queuing
-	// a book that is downloading or downloaded would reset it to wanted and fire
-	// a second grab for a download already underway.
-	switch b.Status {
-	case models.BookStatusImported, models.BookStatusDownloading, models.BookStatusDownloaded:
+	// Only act on books that are not already satisfied. A book with a grab
+	// already in flight is not distinguishable here: it reads as 'wanted' like
+	// any other unsatisfied book, because download progress lives in the
+	// downloads table and never on books.status (#2374). This has always been
+	// the real behaviour; the status test that claimed to catch in-flight books
+	// could never match. SearchAndGrabBook does not dedupe either, only the
+	// scheduler's wanted sweep does (#2365), so a series fill on a book that is
+	// already downloading can still grab a second release.
+	if b.Status == models.BookStatusImported {
 		return false, models.Book{}, nil
 	}
 	if err := h.books.MarkWantedMonitored(ctx, b.ID); err != nil {
@@ -975,7 +1026,7 @@ func hardcoverCandidateHasBookOverlap(series *models.Series, result seriesHardco
 		if local.Book == nil {
 			continue
 		}
-		if catalog != nil && bestCatalogMatch(local, catalog.Books).score >= 85 {
+		if catalog != nil && bestCatalogMatch(local, catalog.Books, nil).score >= 85 {
 			return true
 		}
 		for _, title := range result.Books {
@@ -1060,7 +1111,7 @@ func scoreHardcoverCandidate(series *models.Series, result seriesHardcoverSearch
 				continue
 			}
 			checked++
-			if bestCatalogMatch(local, catalog.Books).score >= 85 {
+			if bestCatalogMatch(local, catalog.Books, nil).score >= 85 {
 				matches++
 			}
 		}
@@ -1147,12 +1198,21 @@ func buildHardcoverDiff(ctx context.Context, books *db.BookRepo, userID int64, s
 		LocalOnly: []seriesHardcoverDiffBook{},
 		Uncertain: []seriesHardcoverDiffBook{},
 	}
+	// matchedCatalog doubles as the exclusion set for bestCatalogMatch: a
+	// catalog entry a previous local book already claimed is off the table for
+	// every later one (#2343). Without it two locals could resolve to the same
+	// index, which duplicated the row in Present, over-counted PresentCount,
+	// and pushed the second local's real catalog entry into Missing behind an
+	// Add button that ensureHardcoverCatalogBook's guards then refuse. A local
+	// whose best candidate is taken falls through to its next best, and to
+	// LocalOnly when it has none. First local seen wins the tie, matching the
+	// order this loop has always used.
 	matchedCatalog := make(map[int]struct{})
 	for _, local := range series.Books {
 		if local.Book == nil {
 			continue
 		}
-		match := bestCatalogMatch(local, catalog.Books)
+		match := bestCatalogMatch(local, catalog.Books, matchedCatalog)
 		localItem := localDiffBook(local)
 		if match.index < 0 {
 			diff.LocalOnly = append(diff.LocalOnly, localItem)
@@ -1192,18 +1252,45 @@ type catalogMatch struct {
 	foreignID bool
 }
 
-func bestCatalogMatch(local models.SeriesBook, books []metadata.SeriesCatalogBook) catalogMatch {
+// bestCatalogMatch picks the catalog entry a local series book corresponds to.
+// claimed holds the indices earlier local books already took; they are skipped
+// so one catalog entry cannot back two Present rows (#2343). Pass nil when
+// there is nothing to exclude.
+func bestCatalogMatch(local models.SeriesBook, books []metadata.SeriesCatalogBook, claimed map[int]struct{}) catalogMatch {
 	best := catalogMatch{index: -1}
 	if local.Book == nil {
 		return best
 	}
 	for i, candidate := range books {
+		if _, taken := claimed[i]; taken {
+			continue
+		}
+		candidateTitle := firstNonEmpty(candidate.Title, candidate.Book.Title)
 		foreignMatch := local.Book.ForeignID != "" && (local.Book.ForeignID == candidate.ForeignID || local.Book.ForeignID == candidate.Book.ForeignID)
 		score := 0
 		if foreignMatch {
 			score = 100
 		} else {
-			score = seriesmatch.TitleScore(local.Book.Title, firstNonEmpty(candidate.Title, candidate.Book.Title))
+			// Volume numbers veto the similarity score, the same way the add
+			// path at ensureHardcoverCatalogBook does (#1682). TitleScore
+			// cannot separate the volumes of a light novel or manga series:
+			// "… Vol. 1" against "… Vol. 13" scores 100 because PartialRatio
+			// reads "vol 1" as a substring of "vol 13". A local book imported
+			// from ABS or Calibre usually carries no PositionInSeries, so the
+			// SamePosition boost below never fires and nothing else separates
+			// them. Because `score > best.score` keeps the first index on a
+			// tie, the collapse runs toward the low volume: owning Vol. 13
+			// showed catalog Vol. 1 as Present carrying Vol. 13's local
+			// title, while Vol. 13 itself stayed in Missing (#2343). Only
+			// numbers that carry an earlier number as a digit prefix collide
+			// this way, 10 through 19 against 1, 21 against 2, and so on.
+			//
+			// Only on the title path. A foreign-ID match is an explicit
+			// identity and outranks any title heuristic.
+			if seriesmatch.DifferentVolumes(local.Book.Title, candidateTitle) {
+				continue
+			}
+			score = seriesmatch.TitleScore(local.Book.Title, candidateTitle)
 			if seriesmatch.SamePosition(local.PositionInSeries, candidate.Position) && score >= 70 {
 				score = max(score, 90)
 			}

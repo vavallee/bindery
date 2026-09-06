@@ -154,7 +154,13 @@ func RefreshDownloadClientHealthAsync(parent context.Context, g *jobs.Group, sto
 			store.Set(client.ID, CheckDownloadClientHealth(ctx, &client, downloadDir, audiobookDownloadDir, globalRemap))
 		}
 		if g != nil {
-			g.Go("download-health-refresh", probe)
+			// Go is a documented no-op once the group has begun shutting down.
+			// The Checking placeholder is published above, so a dropped probe
+			// has to take it back down or the client shows "Checking download
+			// client paths" for the rest of the process's life (#2372).
+			if !g.Go("download-health-refresh", probe) {
+				store.Delete(client.ID)
+			}
 		} else {
 			go probe(parent)
 		}

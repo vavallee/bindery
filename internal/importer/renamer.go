@@ -17,6 +17,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 // downloadArtifactExts are download-client receipt and repair files that ride
@@ -1641,14 +1642,18 @@ func sanitizePath(s string) string {
 	return strings.Join(kept, string(filepath.Separator))
 }
 
+// authorSortName backs the {SortAuthor} naming token, so its output becomes a
+// folder name on disk. It delegates to textutil.SortName: a private copy here
+// would mean the library layout and the author pages disagree about the same
+// person, which is what #2363 closed.
+//
+// That helper has since learned about particles, which is the rename #2363
+// anticipated. The decision taken was that new imports use the corrected form
+// and existing folders move only when the user runs a reorganize, the same way
+// every other file move here works. Nothing renames automatically on upgrade.
+// TestRenamerSortAuthorFolder carries the reasoning.
 func authorSortName(name string) string {
-	parts := strings.Fields(name)
-	if len(parts) < 2 {
-		return name
-	}
-	last := parts[len(parts)-1]
-	rest := strings.Join(parts[:len(parts)-1], " ")
-	return last + ", " + rest
+	return textutil.SortName(name)
 }
 
 // DefaultNamingTemplate returns the default naming template for reference.

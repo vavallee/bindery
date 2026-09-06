@@ -19,13 +19,7 @@ import { safeHref } from '../util/safeHref'
 import { metadataSourceLink, providerDisplayName, providerFromBookForeignId } from '../util/metadataSource'
 import FixMatchModal from '../components/FixMatchModal'
 import EditBookModal from '../components/EditBookModal'
-
-function formatSize(n: number): string {
-  if (!n || n <= 0) return ''
-  if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB'
-  if (n >= 1048576) return (n / 1048576).toFixed(0) + ' MB'
-  return (n / 1024).toFixed(0) + ' KB'
-}
+import { formatBytes } from '../util/format'
 
 function formatDuration(seconds?: number): string {
   if (!seconds || seconds <= 0) return ''
@@ -185,7 +179,7 @@ export function SearchResultsSection({
           <span className="truncate text-slate-800 dark:text-zinc-200">{r.title}</span>
         </div>
         <span className="text-slate-500 dark:text-zinc-500 truncate block">
-          {r.indexerName} · {formatSize(r.size)} · {r.grabs} grabs
+          {r.indexerName} · {formatBytes(r.size)} · {r.grabs} grabs
           {safeHref(r.infoUrl) && (
             <>
               {' · '}
@@ -339,28 +333,6 @@ export default function BookDetailPage() {
       .catch(() => { /* no series row */ })
     return () => { cancelled = true }
   }, [book?.authorId, book?.id])
-
-  // While a grab is in flight, the download → import pipeline finishes
-  // asynchronously on the backend. Poll the book + history so the file and
-  // status appear without a manual page reload (#1161). Only polls while the
-  // book is actively downloading/importing; the dependency on book?.status
-  // tears the interval down the moment it settles. Mirrors QueuePage's 5s poll.
-  useEffect(() => {
-    const s = book?.status
-    if (s !== 'downloading' && s !== 'downloaded') return
-    let cancelled = false
-    const interval = setInterval(() => {
-      Promise.all([
-        api.getBook(bookId),
-        api.listHistory({ bookId }),
-      ]).then(([b, h]) => {
-        if (cancelled) return
-        setBook(b)
-        setEvents(h.items)
-      }).catch(() => {})
-    }, 5000)
-    return () => { cancelled = true; clearInterval(interval) }
-  }, [book?.status, bookId])
 
   const saveField = async (patch: Partial<Book>) => {
     if (!book) return
@@ -581,18 +553,36 @@ export default function BookDetailPage() {
         ? t('bookDetail.searchBothIndexers')
         : t('bookDetail.searchEbookIndexers')
 
-  // Format-scoped whenever the rows carry a real format: the format-less
-  // endpoint falls back to the legacy file_path, which on a mislabelled book
-  // points at the other format. The one exception is the bare legacy
-  // file_path row (see FileRow.legacyUntyped): its displayed format is only a
-  // proxy, the server resolves ?format= against the path's on-disk shape, and
-  // the two can disagree — so that row's group goes format-less, which is
-  // exact because the row only exists when it is the book's only file.
   const groupIsUntyped = (g: { rows: FileRow[] }) => g.rows.some(r => r.legacyUntyped)
-  const downloadHref = (group: { format: 'ebook' | 'audiobook'; rows: FileRow[] }) =>
-    groupIsUntyped(group)
-      ? `${BINDERY_BASE}/api/v1/book/${book.id}/file`
-      : `${BINDERY_BASE}/api/v1/book/${book.id}/file?format=${group.format}`
+
+  // Download is per ROW, not per format group (#2408).
+  //
+  // It used to be per group, and that was the honest unit while ?format= was
+  // all the endpoint could answer: the server resolved one path out of
+  // ebook_file_path / audiobook_file_path, which are single columns, so a book
+  // holding three epubs had exactly one reachable file and the other two could
+  // not be named at all. A reporter with several ebooks on one book pressed
+  // Download and always got the same one.
+  //
+  // The endpoint now takes ?path= and resolves it against book_files, so each
+  // row can name itself. Three cases, and the fallbacks are not decoration:
+  //
+  //   tracked        ?path=, the exact row. The only case that can disambiguate
+  //                  siblings, and the reason this exists.
+  //   legacyUntyped  format-less. Its displayed format is a proxy the server
+  //                  may contradict (it stats the path's shape), and it has no
+  //                  book_files row for ?path= to resolve. Exact anyway,
+  //                  because this row only exists when it is the book's ONLY
+  //                  file.
+  //   untracked      ?format=. A row read off the legacy per-format columns
+  //                  with no book_files entry, so ?path= would 404. Exact
+  //                  because that fallback yields at most one row per format.
+  const downloadHref = (row: FileRow) => {
+    const base = `${BINDERY_BASE}/api/v1/book/${book.id}/file`
+    if (row.legacyUntyped) return base
+    if (row.tracked) return `${base}?path=${encodeURIComponent(row.path)}`
+    return `${base}?format=${row.format}`
+  }
 
   return (
     // One width shared with AuthorDetailPage. These two pages used to disagree
@@ -808,13 +798,12 @@ export default function BookDetailPage() {
                         <span className="text-xs text-slate-500 dark:text-zinc-500">
                           {t('bookDetail.fileCount', { count: group.rows.length })}
                         </span>
-                        <a
-                          href={downloadHref(group)}
-                          className={`ml-auto ${actionBtnCls}`}
-                          title={t('bookDetail.downloadFormatHint')}
-                        >
-                          {t('bookDetail.download')}
-                        </a>
+                        {/* No Download here any more: a group of three epubs
+                            has no single file to hand back, which is exactly
+                            how #2408 shipped. Each row carries its own. Delete
+                            stays, because deleting the whole format IS a
+                            group-level action and the per-row Deregister in
+                            the overflow menu is a different thing. */}
                         {/* Ghost-danger, not solid red. Deleting the file is
                             reversible by re-downloading; solid red stays
                             reserved for "Delete book + files" in the Danger
@@ -851,13 +840,25 @@ export default function BookDetailPage() {
                             </code>
                             {!!row.sizeBytes && (
                               <span className="shrink-0 text-xs text-slate-400 dark:text-zinc-600">
-                                {formatSize(row.sizeBytes)}
+                                {formatBytes(row.sizeBytes)}
                               </span>
                             )}
+                            <a
+                              href={downloadHref(row)}
+                              data-testid={`download-${row.path}`}
+                              className={`ml-auto shrink-0 ${actionBtnCls}`}
+                              title={t('bookDetail.downloadFileHint')}
+                              // N links all reading "Download" are
+                              // indistinguishable to a screen reader, same
+                              // reasoning as the row MoreMenu below.
+                              aria-label={t('bookDetail.downloadNamed', { name: baseName(row.path) })}
+                            >
+                              {t('bookDetail.download')}
+                            </a>
                             <button
                               type="button"
                               onClick={() => copyPath(row.path)}
-                              className="ml-auto shrink-0 text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200 text-xs border border-slate-300 dark:border-zinc-700 rounded px-1.5 py-0.5"
+                              className="shrink-0 text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200 text-xs border border-slate-300 dark:border-zinc-700 rounded px-1.5 py-0.5"
                               aria-label={t('bookDetail.copyPath')}
                             >
                               <span aria-hidden>⧉</span>{' '}

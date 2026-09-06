@@ -581,7 +581,7 @@ func TestBuildCatalogueReconciliation_UsesConservativeEditionAndIdentityEvidence
 	titleMatch := f.createBook(t, "OL-title", "Accepted Work", "openlibrary", models.BookStatusWanted)
 	rejectedTitle := f.createBook(t, "OL-spanish", "Matched Spanish", "openlibrary", models.BookStatusWanted)
 	fallbackProvider := f.createBook(t, "OL-stale", "Stale Work", "", models.BookStatusWanted)
-	downloading := f.createBook(t, "hc:downloading", "Downloading", "hardcover", models.BookStatusDownloading)
+	skippedStatus := f.createBook(t, "hc:skipped", "Skipped", "hardcover", models.BookStatusSkipped)
 	otherOwner, err := db.NewUserRepo(f.database).Create(context.Background(), "other-owner", "password-hash")
 	if err != nil {
 		t.Fatal(err)
@@ -618,9 +618,9 @@ func TestBuildCatalogueReconciliation_UsesConservativeEditionAndIdentityEvidence
 		t.Errorf("indeterminate = %d, want no-ID, DNB, and edition-error rows protected", got.Summary.Indeterminate)
 	}
 	if got.Summary.ProtectedStatus < 2 {
-		t.Errorf("protected status = %d, want downloading and other-owner rows", got.Summary.ProtectedStatus)
+		t.Errorf("protected status = %d, want skipped and other-owner rows", got.Summary.ProtectedStatus)
 	}
-	for _, protected := range []*models.Book{noID, dnb, editionUnknown, alias, titleMatch, downloading, nonOwner} {
+	for _, protected := range []*models.Book{noID, dnb, editionUnknown, alias, titleMatch, skippedStatus, nonOwner} {
 		if book, err := f.books.GetByID(context.Background(), protected.ID); err != nil || book == nil {
 			t.Errorf("protected book %q missing: book=%+v err=%v", protected.Title, book, err)
 		}
@@ -658,10 +658,6 @@ func TestReconciliationRejectReason_ProfileReasonsAndIndeterminateEvidence(t *te
 		{
 			name: "missing date", work: models.Book{Title: "Undated"},
 			profile: reconciliationProfile{skipMissingDate: true}, wantReason: reconcileReasonMissingDate,
-		},
-		{
-			name: "below popularity", work: models.Book{Title: "Unpopular", RatingsCount: 1, AverageRating: 2},
-			profile: reconciliationProfile{minPopularity: 10}, wantReason: reconcileReasonPopularity,
 		},
 		{
 			name: "edition lookup unavailable", work: models.Book{Title: "Unresolved"},

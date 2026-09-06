@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { BINDERY_BASE, Recommendation } from '../api/client'
+import MoreMenu from './MoreMenu'
 
 interface RecommendationCardProps {
   rec: Recommendation
@@ -11,19 +11,6 @@ interface RecommendationCardProps {
 
 export default function RecommendationCard({ rec, onDismiss, onAdd, onExcludeAuthor }: RecommendationCardProps) {
   const { t } = useTranslation()
-  const [menuOpen, setMenuOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!menuOpen) return
-    const handleClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [menuOpen])
 
   const imageUrl = rec.imageUrl
     ? `${BINDERY_BASE}/api/v1/images?url=${encodeURIComponent(rec.imageUrl)}`
@@ -104,24 +91,17 @@ export default function RecommendationCard({ rec, onDismiss, onAdd, onExcludeAut
           >
             ✕
           </button>
-          <div className="relative" ref={menuRef}>
-            <button
-              onClick={() => setMenuOpen(o => !o)}
-              className="px-1.5 py-1.5 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded text-xs text-slate-600 dark:text-zinc-400 transition-colors"
-            >
-              &middot;&middot;&middot;
-            </button>
-            {menuOpen && (
-              <div className="absolute right-0 bottom-full mb-1 w-48 bg-white dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-lg shadow-lg z-10">
-                <button
-                  onClick={() => { onExcludeAuthor(rec.authorName); setMenuOpen(false) }}
-                  className="w-full text-left px-3 py-2 text-xs text-slate-700 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-700 rounded-lg transition-colors"
-                >
-                  {t('discover.dontSuggestAuthor', { author: rec.authorName })}
-                </button>
-              </div>
-            )}
-          </div>
+          <MoreMenu
+            label={t('common.moreActions', 'More')}
+            ariaLabel={t('discover.moreActionsFor', 'More actions for {{title}}', { title: rec.title })}
+            buttonClassName="px-1.5 py-1.5 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded text-xs text-slate-600 dark:text-zinc-400 transition-colors"
+            items={[
+              {
+                label: t('discover.dontSuggestAuthor', { author: rec.authorName }),
+                onSelect: () => onExcludeAuthor(rec.authorName),
+              },
+            ]}
+          />
         </div>
       </div>
     </div>

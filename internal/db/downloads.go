@@ -39,6 +39,27 @@ func (r *DownloadRepo) ListByStatus(ctx context.Context, status models.DownloadS
 	return r.query(ctx, "SELECT "+downloadSelectColumns+" FROM downloads WHERE status=? ORDER BY added_at DESC", status)
 }
 
+// ListByStatuses returns the downloads in any of the given states, in one
+// query. Callers that care about several states at once (the wanted sweep's
+// in-flight filter) used to loop ListByStatus and scan the table once per
+// state (#2370). No statuses returns no rows and no query.
+//
+// The placeholders are generated from the argument count and every value is
+// bound, so nothing from the caller reaches the SQL text.
+func (r *DownloadRepo) ListByStatuses(ctx context.Context, statuses ...models.DownloadState) ([]models.Download, error) {
+	if len(statuses) == 0 {
+		return nil, nil
+	}
+	args := make([]any, len(statuses))
+	for i, st := range statuses {
+		args[i] = st
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(statuses)), ",")
+	return r.query(ctx,
+		"SELECT "+downloadSelectColumns+" FROM downloads WHERE status IN ("+placeholders+") ORDER BY added_at DESC",
+		args...)
+}
+
 func (r *DownloadRepo) ListByStatusAndUser(ctx context.Context, status models.DownloadState, userID int64) ([]models.Download, error) {
 	where, args := QueryScope("WHERE status=?", userID, status)
 	return r.query(ctx, "SELECT "+downloadSelectColumns+" FROM downloads "+where+" ORDER BY added_at DESC", args...)

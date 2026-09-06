@@ -35,9 +35,82 @@ var (
 
 	formatTokens = []string{"epub", "azw3", "azw", "mobi", "pdf", "djvu", "cbr", "cbz", "fb2", "lit", "rtf", "txt", "m4b", "m4a", "flac", "mp3", "ogg"}
 
-	regexCache = sync.Map{} // map[string]*regexp.Regexp
+	regexCache = newBoundedRegexCache(regexCacheMaxEntries)
 	articleSet = map[string]bool{"a": true, "an": true, "the": true, "and": true, "or": true, "of": true}
 )
+
+// regexCacheMaxEntries caps the compiled-regex cache (#2344). It used to be an
+// unbounded sync.Map keyed by title tokens and generated phrase patterns, so
+// every distinct token an instance had ever searched stayed resident with its
+// compiled regex for the life of the process. Every other cache in the tree is
+// capped (internal/metadata/ttl_cache.go on entries,
+// internal/indexer/newznab/querycache.go on bytes); this one was missed.
+//
+// 2048 comfortably covers the working set of a single sweep — one book
+// contributes a handful of title/author tokens plus one phrase and one
+// in-order pattern — so the cache still absorbs the repeats it exists for.
+const regexCacheMaxEntries = 2048
+
+// compileRegex is regexp.MustCompile behind a package variable so tests can
+// count how often a compile actually happens. It exists because the bug in
+// #2341 was invisible from the outside: LoadOrStore(pattern,
+// regexp.MustCompile(pattern)) returns the cached value but compiles the
+// pattern first, every time, so the cache hit rate looked perfect while every
+// call paid full price.
+var compileRegex = regexp.MustCompile
+
+// boundedRegexCache memoises compiled regexes with a hard cap on entry count.
+//
+// Eviction is FIFO, not LRU: a miss costs one regexp compile, which is cheap
+// enough that tracking recency is not worth the extra bookkeeping on a path
+// that runs once per release in the search filter loop. The ring holds the
+// insertion order of the keys currently in entries; once it is full, the
+// oldest key is the one at next.
+type boundedRegexCache struct {
+	mu      sync.Mutex
+	entries map[string]*regexp.Regexp
+	ring    []string
+	next    int
+}
+
+func newBoundedRegexCache(max int) *boundedRegexCache {
+	return &boundedRegexCache{
+		entries: make(map[string]*regexp.Regexp, max),
+		ring:    make([]string, 0, max),
+	}
+}
+
+func (c *boundedRegexCache) load(key string) (*regexp.Regexp, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	re, ok := c.entries[key]
+	return re, ok
+}
+
+func (c *boundedRegexCache) store(key string, re *regexp.Regexp) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.entries[key]; ok {
+		// Already cached (two goroutines missed on the same key and both
+		// compiled). Keep the existing entry so its ring slot stays valid.
+		return
+	}
+	if len(c.ring) < cap(c.ring) {
+		c.ring = append(c.ring, key)
+	} else {
+		delete(c.entries, c.ring[c.next])
+		c.ring[c.next] = key
+		c.next = (c.next + 1) % len(c.ring)
+	}
+	c.entries[key] = re
+}
+
+// len reports the number of cached entries. Test helper.
+func (c *boundedRegexCache) len() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.entries)
+}
 
 // NormalizeRelease lowercases s and replaces every run of non-alphanumeric
 // characters with a single space, so all punctuation (dots, dashes, brackets,
@@ -109,11 +182,11 @@ func umlautFlexRegex(kw string) string {
 // flexible so the regex matches both the expanded (ae) and compact (a)
 // NZB-name conventions. See wordSep for why this is not `\b` (#1642).
 func WordBoundaryRegex(kw string) *regexp.Regexp {
-	if v, ok := regexCache.Load(kw); ok {
-		return v.(*regexp.Regexp)
+	if re, ok := regexCache.load(kw); ok {
+		return re
 	}
-	re := regexp.MustCompile(`(?i)(?:^|` + wordSep + `)` + umlautFlexRegex(regexp.QuoteMeta(kw)) + `(?:` + wordSep + `|$)`)
-	regexCache.Store(kw, re)
+	re := compileRegex(`(?i)(?:^|` + wordSep + `)` + umlautFlexRegex(regexp.QuoteMeta(kw)) + `(?:` + wordSep + `|$)`)
+	regexCache.store(kw, re)
 	return re
 }
 
@@ -130,8 +203,15 @@ func phraseRegex(phrase []string) *regexp.Regexp {
 	// wordSep rather than \b/\W so non-ASCII words match (#1642). The inner
 	// separator stays a + run, matching the previous \W+ behaviour.
 	pattern := `(?i)(?:^|` + wordSep + `)` + strings.Join(parts, wordSep+`+`) + `(?:` + wordSep + `|$)`
-	re, _ := regexCache.LoadOrStore(pattern, regexp.MustCompile(pattern))
-	return re.(*regexp.Regexp)
+	// Load then Store, matching WordBoundaryRegex above. The LoadOrStore form
+	// this replaces compiled the pattern before the lookup and discarded the
+	// result on a hit, so a 500-result search paid 500 compiles (#2341).
+	if re, ok := regexCache.load(pattern); ok {
+		return re
+	}
+	re := compileRegex(pattern)
+	regexCache.store(pattern, re)
+	return re
 }
 
 // ContainsPhrase returns true if all words in phrase appear in haystack in the

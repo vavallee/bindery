@@ -5,6 +5,7 @@ import BookAuthorLink from '../components/BookAuthorLink'
 import Pagination from '../components/Pagination'
 import { useServerPagination } from '../components/usePagination'
 import { dangerLink } from '../components/buttons'
+import { formatBytes } from '../util/format'
 
 const EVENT_TYPE_COLORS: Record<string, string> = {
   grabbed: 'bg-blue-500/20 text-blue-400',
@@ -51,13 +52,6 @@ function eventDetail(type: string, parsed: ReturnType<typeof parseEventData>): s
     if (from && to) return `${from} → ${to}`
   }
   return parsed.message || parsed.path || ''
-}
-
-function formatSize(n: number): string {
-  if (!n || n <= 0) return ''
-  if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB'
-  if (n >= 1048576) return (n / 1048576).toFixed(0) + ' MB'
-  return (n / 1024).toFixed(0) + ' KB'
 }
 
 // Detect media type from the release title — ebook formats vs audiobook
@@ -225,7 +219,7 @@ export default function HistoryPage() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-slate-600 dark:text-zinc-400 whitespace-nowrap align-top text-xs font-mono">
-                          {formatSize(size) || <span className="text-slate-500 dark:text-zinc-600">—</span>}
+                          {formatBytes(size) || <span className="text-slate-500 dark:text-zinc-600">—</span>}
                         </td>
                         <td className="px-4 py-3 text-slate-600 dark:text-zinc-400 whitespace-nowrap align-top text-xs">
                           {formatDate(event.createdAt)}
@@ -277,7 +271,7 @@ export default function HistoryPage() {
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-[10px] font-medium">📖</span>
                       )}
                       {size > 0 && (
-                        <span className="text-[10px] text-slate-600 dark:text-zinc-500 font-mono">{formatSize(size)}</span>
+                        <span className="text-[10px] text-slate-600 dark:text-zinc-500 font-mono">{formatBytes(size)}</span>
                       )}
                     </div>
                     <span className="text-[10px] text-slate-600 dark:text-zinc-500">{formatDate(event.createdAt)}</span>

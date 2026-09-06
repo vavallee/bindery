@@ -292,8 +292,8 @@ func TestIsReconcileCandidate(t *testing.T) {
 			t.Error("dual-format book with both formats on disk should not be a candidate")
 		}
 	})
-	t.Run("downloading and downloaded are not candidates", func(t *testing.T) {
-		for _, s := range []string{models.BookStatusDownloading, models.BookStatusDownloaded, models.BookStatusSkipped} {
+	t.Run("only wanted and imported are candidates", func(t *testing.T) {
+		for _, s := range []string{models.BookStatusSkipped, "some-status-from-the-future"} {
 			if isReconcileCandidate(&models.Book{Status: s}) {
 				t.Errorf("status %q should not be a candidate", s)
 			}

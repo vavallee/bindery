@@ -292,3 +292,55 @@ func TestUniqueDir(t *testing.T) {
 		t.Errorf("second collision: got %q want %q", got, want)
 	}
 }
+
+// TestRenamerSortAuthorFolder pins the on-disk shape of the {SortAuthor}
+// naming token, which is a folder name in a user's library.
+//
+// This test used to assert that the #2363 delegation moved nothing, with
+// "Ursula K. Le Guin" filed as "Guin, Ursula K. Le" — wrong as a sort name and
+// deliberately pinned so that a future particle-aware SortName would fail here
+// first and be taken as a rename decision rather than a display fix.
+//
+// That decision has now been taken. SortName is particle-aware, so the folder
+// is "Le Guin, Ursula K.", and the pin moves with it. What was decided, so it
+// is not re-litigated from the diff alone:
+//
+//   - New imports use the correct form immediately.
+//   - Existing folders are NOT renamed automatically. They move when the user
+//     runs a reorganize, which is how every other file move in Bindery works.
+//     A library can therefore hold both spellings until then, and only for
+//     authors whose names carry a particle.
+//   - The renamer keeps delegating rather than pinning its own copy, because a
+//     divergent copy is what #2363 closed and would make the library layout and
+//     the author pages disagree about the same person permanently.
+//
+// "Vincent van Gogh" is here because it does NOT move: a lowercase particle
+// trailed under the naive flip too, so most of the affected names are stable
+// and only the leading-particle ones change.
+func TestRenamerSortAuthorFolder(t *testing.T) {
+	r := NewRenamer("{SortAuthor}/{Title}.{ext}")
+
+	cases := []struct {
+		name string
+		want string
+	}{
+		{"Ursula K. Le Guin", "Le Guin, Ursula K."},
+		{"Brandon Sanderson", "Sanderson, Brandon"},
+		{"Homer", "Homer"},
+		{"Vincent van Gogh", "Gogh, Vincent van"},
+	}
+
+	for _, tc := range cases {
+		author := &models.Author{Name: tc.name}
+		book := &models.Book{Title: "A Book"}
+
+		got, err := r.DestPath("/lib", author, book, "", "", "in.epub")
+		if err != nil {
+			t.Fatalf("DestPath(%q): %v", tc.name, err)
+		}
+		want := filepath.Join("/lib", tc.want, "A Book.epub")
+		if got != want {
+			t.Errorf("author %q:\n got  %q\n want %q", tc.name, got, want)
+		}
+	}
+}

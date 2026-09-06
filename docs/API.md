@@ -129,7 +129,7 @@ entirely.
 ### Books
 
 ```
-GET    /api/v1/book?status=wanted                 filter by status (wanted, downloaded, …)
+GET    /api/v1/book?status=wanted                 filter by status (wanted, imported, skipped)
 POST   /api/v1/book/bulk                          bulk monitor / status flip
 GET    /api/v1/book/{id}                          book detail (with editions, history, formats)
 PUT    /api/v1/book/{id}                          update monitor / status / metadata
@@ -139,7 +139,7 @@ PUT    /api/v1/book/{id}/exclude                  exclude from future searches
 POST   /api/v1/book/{id}/rebind                   re-link to a different metadata record
 POST   /api/v1/book/{id}/enrich-audiobook         pull narrator/duration/cover from Audnex
 POST   /api/v1/book/{id}/search                   manual indexer search
-GET    /api/v1/book/{id}/file                     download the imported file (auth required; `?format=ebook|audiobook` picks the format on dual-format books)
+GET    /api/v1/book/{id}/file                     download the imported file (auth required; `?path=…` serves one specific tracked file, for a book holding several of a format; `?format=ebook|audiobook` picks the format on dual-format books; `?path=` wins when both are sent)
 ```
 
 ### Search & discovery
@@ -171,6 +171,14 @@ GET    /api/v1/rootfolder                         list library roots
 POST   /api/v1/rootfolder                         add a new root
 DELETE /api/v1/rootfolder/{id}                    remove
 ```
+
+#### Per-indexer daily query cap
+
+`dailyQueryLimit` on an indexer caps how many requests Bindery will send it in a
+rolling 24 hours (#2312). Omitted, `null` and `0` all mean no cap. A negative
+value is rejected with 400. `GET /indexer` and `GET /indexer/{id}` also return
+`dailyQueriesUsed` on capped indexers, which is a display figure summed from the
+stored hourly buckets and lags the live tally by up to one flush interval.
 
 #### Indexer and Prowlarr API keys are write-only
 
@@ -306,6 +314,9 @@ POST   /api/v1/notification                       create
 POST   /api/v1/notification/{id}/test             fire a test event
 
 POST   /api/v1/backup                             snapshot the SQLite database (optional {"label": "..."})
+GET    /api/v1/backup                             list stored backups
+DELETE /api/v1/backup/{filename}                  delete one backup
+POST   /api/v1/backup/{filename}/restore          stage a backup for the next restart (admin, X-Confirm-Restore: true)
 GET    /api/v1/system/status                      version, uptime, build info
 PUT    /api/v1/system/loglevel                    runtime log-level switch (debug/info/warn/error)
 GET    /api/v1/images?url=<encoded>               proxied + cached cover image (30-day TTL)
@@ -332,6 +343,46 @@ server root (e.g. `https://ntfy.sh`). Bindery then POSTs the JSON body with a
 `topic` field to the root, which ntfy renders natively. Without a topic it POSTs
 to the URL as-is, so a topic URL would show the raw JSON — use the topic field
 or ntfy message-templating headers (`X-Title`, `X-Message`) instead.
+
+### Settings
+
+```
+GET    /api/v1/setting                            list stored settings
+GET    /api/v1/setting/{key}                      read one stored setting
+PUT    /api/v1/setting/{key}                      write one setting (admin), body {"value": "..."}
+DELETE /api/v1/setting/{key}                      delete one setting (admin)
+GET    /api/v1/settings/descriptors               describe every key Bindery knows (admin)
+```
+
+Secrets (`*.api_key`, `*.api_token`, `auth.*`, and the rest of
+`isSecretSetting`) never appear in a list or a read, and settings whose value is
+a server filesystem path are returned to admins only.
+
+**`PUT` refuses a key Bindery does not know**, with `400` and the key named.
+Before this, an unrecognised key was stored and then read by nothing, so a typo
+such as `serch.interval` saved, reported success and silently did nothing
+forever. Reads and deletes are unchanged, so a row written by a different build
+is still listed and can still be removed.
+
+`GET /api/v1/settings/descriptors` is the list of keys that will be accepted. It
+carries no stored values, only the shape of each key:
+
+| Field | Meaning |
+|-------|---------|
+| `key` | the settings key |
+| `type` | `string` \| `bool` \| `int` \| `duration` \| `enum` |
+| `default` | what Bindery behaves as if the key held when it is unset |
+| `values` | accepted values, for `enum` keys |
+| `min`, `max` | bounds, for `int` and `duration` keys |
+| `description` | one line explaining what the key does |
+| `restartRequired` | `true` when the key is read once at startup, so a change is stored now and takes effect at the next restart |
+| `state` | `active` (something reads it), `internal` (Bindery writes it as its own bookkeeping, not a knob), `inert` (accepted and stored and read by nothing) |
+| `secret` | the value is never returned, not even to an admin |
+| `adminOnly` | only an admin may read the value |
+| `writable` | `PUT /api/v1/setting/{key}` accepts this key |
+
+A key marked `inert` is kept so existing rows and existing clients keep working.
+Do not offer it as a control: nothing will happen.
 
 ### Auth and users (admin)
 
@@ -431,6 +482,21 @@ The label is sanitised server-side before it reaches the filename: only
 non-ASCII) collapses to `-`, and the result is capped at 40 characters. A label
 that sanitises to nothing — an all-CJK label, for example — is dropped and the
 snapshot keeps the plain timestamp name.
+
+**Restore a snapshot:**
+
+```bash
+curl -X POST -H "X-Api-Key: $KEY" -H 'X-Confirm-Restore: true' \
+  http://bindery:8787/api/v1/backup/bindery_20260101_120000_pre-upgrade.db/restore
+```
+
+Admin only, and the `X-Confirm-Restore: true` header is required. A `200` means
+the backup passed its integrity check and is staged, not that it is live:
+Bindery runs SQLite in WAL mode, so writing the running database out from under
+its own write-ahead log would replay stale pages over the restored ones.
+The file is copied to `<database>.restore-pending` and swapped in on the **next
+start**, so restart Bindery to finish the restore. A backup that is not a sound
+SQLite database is rejected with `400` and nothing is staged.
 
 **Fire a test webhook:**
 

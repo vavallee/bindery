@@ -655,8 +655,8 @@ func (r *ABSReviewItemRepo) ResolveAuthorForPrimary(ctx context.Context, sourceI
 			return updated, fmt.Errorf("lookup canonical author %q: %w", foreignID, err)
 		case canonicalID > 0:
 			if _, err := r.db.ExecContext(ctx, `
-				INSERT OR IGNORE INTO author_aliases (author_id, name, created_at)
-				VALUES (?, ?, ?)`, canonicalID, primaryAuthor, now); err != nil {
+				INSERT OR IGNORE INTO author_aliases (author_id, name, search_key, created_at)
+				VALUES (?, ?, ?, ?)`, canonicalID, primaryAuthor, textutil.FoldForSearch(primaryAuthor), now); err != nil {
 				return updated, fmt.Errorf("record alias %q for author %d: %w", primaryAuthor, canonicalID, err)
 			}
 		}

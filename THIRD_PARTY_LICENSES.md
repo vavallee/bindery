@@ -47,7 +47,7 @@ does ship is the failure that matters.
 | [github.com/coreos/go-oidc/v3](https://github.com/coreos/go-oidc/blob/v3.20.0/LICENSE) | v3.20.0 | Apache-2.0 | yes |
 | [github.com/dhowden/tag](https://github.com/dhowden/tag/blob/3d75831295e8/LICENSE) | v0.0.0-20240417053706-3d75831295e8 | BSD-2-Clause | — |
 | [github.com/dustin/go-humanize](https://github.com/dustin/go-humanize/blob/v1.0.1/LICENSE) | v1.0.1 | MIT | — |
-| [github.com/go-chi/chi/v5](https://github.com/go-chi/chi/blob/v5.3.1/LICENSE) | v5.3.1 | MIT | — |
+| [github.com/go-chi/chi/v5](https://github.com/go-chi/chi/blob/v5.3.2/LICENSE) | v5.3.2 | MIT | — |
 | [github.com/go-jose/go-jose/v4](https://github.com/go-jose/go-jose/blob/v4.1.4/LICENSE) | v4.1.4 | Apache-2.0 | — |
 | [github.com/google/uuid](https://github.com/google/uuid/blob/v1.6.0/LICENSE) | v1.6.0 | BSD-3-Clause | — |
 | [github.com/mattn/go-isatty](https://github.com/mattn/go-isatty/blob/v0.0.24/LICENSE) | v0.0.24 | MIT | — |
@@ -59,7 +59,7 @@ does ship is the failure that matters.
 | [github.com/prometheus/procfs](https://github.com/prometheus/procfs/blob/v0.21.1/LICENSE) | v0.21.1 | Apache-2.0 | yes |
 | [github.com/remyoudompheng/bigfft](https://github.com/remyoudompheng/bigfft/blob/24d4a6f8daec/LICENSE) | v0.0.0-20230129092748-24d4a6f8daec | BSD-3-Clause | — |
 | [github.com/robfig/cron/v3](https://github.com/robfig/cron/blob/v3.0.1/LICENSE) | v3.0.1 | MIT | — |
-| [golang.org/x/crypto](https://cs.opensource.google/go/x/crypto/+/v0.55.0:LICENSE) | v0.55.0 | BSD-3-Clause | — |
+| [golang.org/x/crypto](https://cs.opensource.google/go/x/crypto/+/v0.56.0:LICENSE) | v0.56.0 | BSD-3-Clause | — |
 | [golang.org/x/oauth2](https://cs.opensource.google/go/x/oauth2/+/v0.36.0:LICENSE) | v0.36.0 | BSD-3-Clause | — |
 | [golang.org/x/sys](https://cs.opensource.google/go/x/sys/+/v0.47.0:LICENSE) | v0.47.0 | BSD-3-Clause | — |
 | [golang.org/x/text](https://cs.opensource.google/go/x/text/+/v0.41.0:LICENSE) | v0.41.0 | BSD-3-Clause | — |
@@ -67,7 +67,7 @@ does ship is the failure that matters.
 | [modernc.org/libc](https://gitlab.com/cznic/libc/-/blob/v1.74.4/LICENSE) | v1.74.4 | BSD-3-Clause | — |
 | [modernc.org/mathutil](https://gitlab.com/cznic/mathutil/-/blob/v1.7.1/LICENSE) | v1.7.1 | BSD-3-Clause | — |
 | [modernc.org/memory](https://gitlab.com/cznic/memory/blob/v1.11.0/LICENSE-GO) | v1.11.0 | BSD-3-Clause | — |
-| [modernc.org/sqlite](https://gitlab.com/cznic/sqlite/blob/v1.56.0/LICENSE) | v1.56.0 | BSD-3-Clause | — |
+| [modernc.org/sqlite](https://gitlab.com/cznic/sqlite/blob/v1.57.0/LICENSE) | v1.57.0 | BSD-3-Clause | — |
 
 ### Notes on specific modules
 
@@ -78,15 +78,15 @@ does ship is the failure that matters.
 
 | Package | Version | License |
 | --- | --- | --- |
-| @babel/runtime | 7.29.2 | MIT |
+| @babel/runtime | 7.29.7 | MIT |
 | cookie-es | 3.1.1 | MIT |
 | html-parse-stringify | 4.0.1 | MIT |
-| i18next | 26.3.6 | MIT |
+| i18next | 26.4.2 | MIT |
 | i18next-browser-languagedetector | 8.2.1 | MIT |
 | react | 19.2.8 | MIT |
 | react-dom | 19.2.8 | MIT |
-| react-i18next | 17.0.11 | MIT |
-| react-router | 8.3.0 | MIT |
+| react-i18next | 17.0.13 | MIT |
+| react-router | 8.3.1 | MIT |
 | scheduler | 0.27.0 | MIT |
 | typescript | 6.0.3 | Apache-2.0 |
 | use-sync-external-store | 1.6.0 | MIT |
@@ -1022,12 +1022,12 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### 10. BSD-3-Clause — golang.org/x/crypto@v0.55.0 (LICENSE)
+### 10. BSD-3-Clause — golang.org/x/crypto@v0.56.0 (LICENSE)
 
 <details>
 <summary>Applies to 4 dependencies</summary>
 
-- golang.org/x/crypto@v0.55.0 (LICENSE)
+- golang.org/x/crypto@v0.56.0 (LICENSE)
 - golang.org/x/oauth2@v0.36.0 (LICENSE)
 - golang.org/x/sys@v0.47.0 (LICENSE)
 - golang.org/x/text@v0.41.0 (LICENSE)
@@ -1502,7 +1502,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### 16. BSD-3-Clause — modernc.org/sqlite@v1.56.0 (LICENSE)
+### 16. BSD-3-Clause — modernc.org/sqlite@v1.57.0 (LICENSE)
 
 ```
 Copyright (c) 2017 The Sqlite Authors. All rights reserved.
@@ -1611,7 +1611,7 @@ SOFTWARE.
 <http://www.opensource.org/licenses/mit-license.php>
 ```
 
-### 20. MIT — github.com/go-chi/chi/v5@v5.3.1 (LICENSE)
+### 20. MIT — github.com/go-chi/chi/v5@v5.3.2 (LICENSE)
 
 ```
 Copyright (c) 2015-present Peter Kieltyka (https://github.com/pkieltyka), Google Inc.
@@ -1702,7 +1702,7 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### 24. MIT — npm:@babel/runtime@7.29.2 (LICENSE)
+### 24. MIT — npm:@babel/runtime@7.29.7 (LICENSE)
 
 ```
 MIT License
@@ -1815,7 +1815,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 28. MIT — npm:i18next@26.3.6 (LICENSE)
+### 28. MIT — npm:i18next@26.4.2 (LICENSE)
 
 ```
 The MIT License (MIT)
@@ -1841,7 +1841,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 29. MIT — npm:react-i18next@17.0.11 (LICENSE)
+### 29. MIT — npm:react-i18next@17.0.13 (LICENSE)
 
 ```
 The MIT License (MIT)
@@ -1867,7 +1867,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 30. MIT — npm:react-router@8.3.0 (LICENSE.md)
+### 30. MIT — npm:react-router@8.3.1 (LICENSE.md)
 
 ```
 MIT License
