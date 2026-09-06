@@ -26,9 +26,10 @@ type bookSearchResult struct {
 
 const maxBookSearchISBNs = 100
 
-func newBookSearchResult(book models.Book, queriedISBN string) bookSearchResult {
-	isbns := make([]string, 0, maxBookSearchISBNs)
-	seen := make(map[string]bool, maxBookSearchISBNs)
+func newBookSearchResult(book models.Book) bookSearchResult {
+	capacity := min(maxBookSearchISBNs, len(book.ProviderISBNs)+len(book.Editions)*2)
+	isbns := make([]string, 0, capacity)
+	seen := make(map[string]bool, capacity)
 	add := func(raw string) {
 		if len(isbns) >= maxBookSearchISBNs {
 			return
@@ -41,7 +42,6 @@ func newBookSearchResult(book models.Book, queriedISBN string) bookSearchResult 
 		isbns = append(isbns, normalized)
 	}
 
-	add(queriedISBN)
 	for _, isbn := range book.ProviderISBNs {
 		add(isbn)
 	}
@@ -111,7 +111,7 @@ func (h *SearchHandler) SearchBooks(w http.ResponseWriter, r *http.Request) {
 
 	results := make([]bookSearchResult, len(books))
 	for i := range books {
-		results[i] = newBookSearchResult(books[i], "")
+		results[i] = newBookSearchResult(books[i])
 	}
 	writeJSON(w, http.StatusOK, results)
 }
@@ -147,7 +147,7 @@ func (h *SearchHandler) lookupByISBN(w http.ResponseWriter, r *http.Request, isb
 		return
 	}
 
-	writeJSON(w, http.StatusOK, newBookSearchResult(*book, isbn))
+	writeJSON(w, http.StatusOK, newBookSearchResult(*book))
 }
 
 func (h *SearchHandler) lookupByASIN(w http.ResponseWriter, r *http.Request, asin string) {
@@ -172,7 +172,7 @@ func (h *SearchHandler) lookupByASIN(w http.ResponseWriter, r *http.Request, asi
 	}
 	book.MediaType = models.MediaTypeAudiobook
 
-	writeJSON(w, http.StatusOK, newBookSearchResult(*book, ""))
+	writeJSON(w, http.StatusOK, newBookSearchResult(*book))
 }
 
 // writeServerError logs the underlying error server-side (with request
