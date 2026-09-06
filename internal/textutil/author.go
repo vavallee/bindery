@@ -387,7 +387,7 @@ func MatchAuthorName(a, b string) AuthorMatchResult {
 	// Order-preserving equality: the same name, spelled or abbreviated
 	// differently. This is the tier alias binding and every dedupe path rests
 	// on, and it is unchanged. It is also the common case on a rescan, so it is
-	// settled before the swapped variants are built at all.
+	// settled before any scoring happens.
 	ao, av := authorNameFormSets(a)
 	bo, bv := authorNameFormSets(b)
 	if len(ao) == 0 || len(bo) == 0 {
