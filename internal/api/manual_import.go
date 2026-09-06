@@ -456,6 +456,33 @@ func directoryMatchesTracked(path string, tracked map[string]struct{}, trackedFi
 	return found && allTracked
 }
 
+// bookHasImportedFormat reports whether the matched book already has an
+// on-disk file or directory for format. Manual import's idempotency guard will
+// skip such a candidate, so presenting it in the scan only creates a row that
+// appears importable but can never change state.
+func bookHasImportedFormat(book *models.Book, format string) bool {
+	if book == nil {
+		return false
+	}
+	var path string
+	switch format {
+	case models.MediaTypeAudiobook:
+		path = book.AudiobookFilePath
+	case models.MediaTypeEbook:
+		path = book.EbookFilePath
+		if path == "" {
+			path = book.FilePath
+		}
+	default:
+		return false
+	}
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 // ScanItem is one candidate book unit discovered under a folder during Scan.
 type ScanItem struct {
 	Path           string        `json:"path"`
@@ -548,6 +575,16 @@ func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
 		tracked[cleaned] = struct{}{}
 		if info, statErr := os.Stat(cleaned); statErr == nil {
 			trackedFiles = append(trackedFiles, info)
+			if info.IsDir() {
+				_ = filepath.WalkDir(cleaned, func(p string, entry os.DirEntry, walkErr error) error {
+					if walkErr == nil && !entry.IsDir() && (importer.IsEbookFile(p) || importer.IsAudioFile(p)) {
+						if childInfo, childErr := os.Stat(p); childErr == nil {
+							trackedFiles = append(trackedFiles, childInfo)
+						}
+					}
+					return nil
+				})
+			}
 		}
 	}
 	filteredCands := cands[:0]
@@ -575,6 +612,17 @@ func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err)
 		return
 	}
+	filteredCands = cands[:0]
+	filteredResults := results[:0]
+	for i, res := range results {
+		if res.Match == "confident" && bookHasImportedFormat(res.Book, res.DetectedFormat) {
+			continue
+		}
+		filteredCands = append(filteredCands, cands[i])
+		filteredResults = append(filteredResults, res)
+	}
+	cands = filteredCands
+	results = filteredResults
 
 	resp := ScanResponse{Items: make([]ScanItem, 0, len(cands)), Truncated: truncated}
 	matched := 0
