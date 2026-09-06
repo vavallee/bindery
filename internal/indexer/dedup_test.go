@@ -196,10 +196,10 @@ func TestNormalizeTitleForDedupExpandsAmpersand(t *testing.T) {
 // drift apart again.
 func TestFoldPunctuationUsesTheSharedApostropheSet(t *testing.T) {
 	for _, spelling := range []string{
-		"Poseidon's Arrow",  // ASCII
+		"Poseidon's Arrow", // ASCII
 		"Poseidon’s Arrow", // right single quotation mark
 		"Poseidon‘s Arrow", // left single quotation mark
-		"Poseidon`s Arrow",  // backtick
+		"Poseidon`s Arrow", // backtick
 		"Poseidonʼs Arrow", // modifier letter apostrophe
 	} {
 		if got := NormalizeTitleForDedup(spelling); got != "poseidons arrow" {
