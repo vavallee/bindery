@@ -660,10 +660,6 @@ func TestReconciliationRejectReason_ProfileReasonsAndIndeterminateEvidence(t *te
 			profile: reconciliationProfile{skipMissingDate: true}, wantReason: reconcileReasonMissingDate,
 		},
 		{
-			name: "below popularity", work: models.Book{Title: "Unpopular", RatingsCount: 1, AverageRating: 2},
-			profile: reconciliationProfile{minPopularity: 10}, wantReason: reconcileReasonPopularity,
-		},
-		{
 			name: "edition lookup unavailable", work: models.Book{Title: "Unresolved"},
 			profile: reconciliationProfile{minPages: 200}, indeterminate: true,
 		},

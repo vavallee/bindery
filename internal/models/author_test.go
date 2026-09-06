@@ -19,17 +19,16 @@ func TestAuthorSyncSummary_SkippedTotal(t *testing.T) {
 	}
 
 	s := &AuthorSyncSummary{
-		SkippedLanguage:      1,
-		SkippedJunk:          2,
-		SkippedMediaType:     3,
-		SkippedNotAccepted:   4,
-		SkippedPartBooks:     5,
-		SkippedMissingDate:   6,
-		SkippedMinPopularity: 7,
-		SkippedMinPages:      8,
-		SkippedMissingISBN:   9,
+		SkippedLanguage:    1,
+		SkippedJunk:        2,
+		SkippedMediaType:   3,
+		SkippedNotAccepted: 4,
+		SkippedPartBooks:   5,
+		SkippedMissingDate: 6,
+		SkippedMinPages:    8,
+		SkippedMissingISBN: 9,
 	}
-	if want, got := 1+2+3+4+5+6+7+8+9, s.SkippedTotal(); got != want {
+	if want, got := 1+2+3+4+5+6+8+9, s.SkippedTotal(); got != want {
 		t.Errorf("SkippedTotal() = %d, want %d", got, want)
 	}
 
@@ -108,8 +107,12 @@ func TestAuthorSyncSummaryAccountedForCoversEveryCounter(t *testing.T) {
 		v.Field(i).SetInt(1)
 		counters++
 	}
-	if counters < 13 {
-		t.Fatalf("found %d counter fields, expected at least 13: the reflection walk is not seeing the struct", counters)
+	// A floor, not an assertion on the exact count: fields come and go (#2450
+	// removed one) and pinning the number would turn every such change into a
+	// failure here. What it is guarding is the reflection walk itself, which
+	// would silently pass with zero counters found.
+	if counters < 10 {
+		t.Fatalf("found %d counter fields, expected at least 10: the reflection walk is not seeing the struct", counters)
 	}
 	if got := summary.AccountedFor(); got != counters {
 		t.Errorf("AccountedFor() = %d with every one of %d counters set to 1.\n"+
