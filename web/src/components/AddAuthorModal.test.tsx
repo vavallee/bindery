@@ -294,6 +294,50 @@ describe('AddAuthorModal — search error handling', () => {
     alertSpy.mockRestore()
   })
 
+  it('offers find metadata when the conflicting canonical author is already linked with a full record', async () => {
+    vi.mocked(api.searchAuthors).mockResolvedValue([
+      author({
+        id: 0,
+        foreignAuthorId: 'OL13200512A',
+        authorName: 'Emilia Jae',
+      }),
+    ])
+    const err = Object.assign(new Error('author already exists'), {
+      status: 409,
+      body: {
+        error: 'author already exists',
+        canonicalAuthorId: 60,
+        canonicalAuthor: author({
+          id: 60,
+          foreignAuthorId: 'OL13200512A',
+          authorName: 'Emilia Jae',
+          metadataProvider: 'openlibrary',
+          description: 'A bio',
+          imageUrl: 'https://example.com/emilia.jpg',
+          ratingsCount: 12,
+          averageRating: 4.1,
+        }),
+      },
+    })
+    vi.mocked(api.addAuthor).mockRejectedValue(err)
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+
+    render(<AddAuthorModal onClose={onClose} onAdded={onAdded} />)
+
+    fireEvent.change(screen.getByPlaceholderText('Search by author name...'), {
+      target: { value: 'emilia jae' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
+    await waitFor(() => expect(screen.getByText('Emilia Jae')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
+
+    await waitFor(() => expect(screen.getByText('author already exists')).toBeInTheDocument())
+    expect(screen.getByRole('link', { name: 'Find metadata' })).toHaveAttribute('href', '/author/60?linkMetadata=1')
+    alertSpy.mockRestore()
+  })
+
   it('loads global monitor defaults and lets the backend apply them when unchanged', async () => {
     vi.mocked(api.getSetting).mockImplementation(async (key: string) => {
       if (key === 'default.media_type') return { key, value: 'ebook' }

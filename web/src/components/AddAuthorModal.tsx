@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { api, AddAuthorRequest, Author, AuthorConflictBody, AuthorMonitorMode, MediaType, MetadataProfile, RootFolder } from '../api/client'
 import { splitAuthorSearchResults } from './addAuthorTitleGuard'
 import { useNeedsSetup } from './useNeedsSetup'
-import { authorProviderKey, canLinkAuthorMetadata, hasSparseMetadata } from '../util/authorMetadata'
+import { authorProviderKey } from '../util/authorMetadata'
 import { providerDisplayName } from '../util/metadataSource'
 
 interface Props {
@@ -200,7 +200,9 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
     }
   }
 
-  const showConflictFindMetadata = addConflict?.canonicalAuthorId && (canLinkAuthorMetadata(addConflict.canonicalAuthor) || hasSparseMetadata(addConflict.canonicalAuthor))
+  // A conflict always involves an existing author the user may want to point at
+  // a richer provider, regardless of how complete that record is.
+  const showConflictFindMetadata = !!addConflict?.canonicalAuthorId
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50" onClick={onClose}>
