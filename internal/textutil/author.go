@@ -11,8 +11,15 @@ import (
 // NormalizeAuthorName lower-cases the name, strips punctuation/diacritics-adjacent
 // characters, and collapses whitespace. Returned form is suitable for key-style
 // equality comparisons but still preserves token spacing.
+//
+// The decomposition is NFKD rather than NFD, so the compatibility forms fold
+// too. Providers and scraped catalogues carry full-width Latin ("Ｍｕｒａｋａｍｉ")
+// and typographic ligatures ("ﬁ"), which NFD leaves alone and which therefore
+// used to key as a different author from the ordinary spelling. NFKD is lossy,
+// but this is a comparison key and never a displayed value, which is the
+// condition UAX #15 attaches to using a compatibility form at all.
 func NormalizeAuthorName(name string) string {
-	name = norm.NFD.String(strings.TrimSpace(name))
+	name = norm.NFKD.String(strings.TrimSpace(name))
 	if name == "" {
 		return ""
 	}

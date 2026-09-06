@@ -57,6 +57,11 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
   const minPopularity = sync.skippedMinPopularity ?? 0
   const minPages = sync.skippedMinPages ?? 0
   const missingIsbn = sync.skippedMissingIsbn ?? 0
+  const failed = sync.failed ?? 0
+  // skippedExcluded is deliberately absent from this sum and from the list
+  // below. The user excluded that book on purpose, so it is not something the
+  // page owes them an explanation for. It is still in the payload, because
+  // total has to reconcile (#2449).
   const skipped =
     sync.skippedLanguage +
     sync.skippedJunk +
@@ -67,9 +72,11 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
     minPopularity +
     minPages +
     missingIsbn
-  // A sync that dropped nothing has nothing to explain; the book list already
-  // says what happened.
-  if (skipped <= 0) return null
+  // A sync that dropped nothing and lost nothing has nothing to explain; the
+  // book list already says what happened. A failed write is worth saying even
+  // when no filter fired, because it is the one outcome here that is a fault
+  // rather than a setting.
+  if (skipped <= 0 && failed <= 0) return null
 
   const languages = sync.allowedLanguages?.length
     ? sync.allowedLanguages.join(', ')
@@ -104,15 +111,28 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
     // gets its own chance to be seen.
     <Alert
       key={sync.completedAt}
-      tier="info"
+      // The tier follows the worst thing that happened. A filter doing its job
+      // is info; a book the sync failed to save is a fault and reads red,
+      // which is the distinction the tier vocabulary exists to make. An error
+      // tier whose reason was folded into a disclosure would be the weaker
+      // half of both ideas, so the failure line is on screen too.
+      tier={failed > 0 ? 'error' : 'info'}
       testId="author-sync-notice"
       dismissible
       className="mb-4"
-      title={t('authorDetail.lastSync.heading', {
-        count: skipped,
-        defaultValue: 'Last refresh skipped {{count}} of this author’s {{total}} works',
-        total: sync.total,
-      })}
+      title={
+        skipped > 0
+          ? t('authorDetail.lastSync.heading', {
+              count: skipped,
+              defaultValue: 'Last refresh skipped {{count}} of this author’s {{total}} works',
+              total: sync.total,
+            })
+          : t('authorDetail.lastSync.headingFailedOnly', {
+              count: failed,
+              defaultValue: 'Last refresh could not save {{count}} of this author’s {{total}} works',
+              total: sync.total,
+            })
+      }
       details={
         <>
           <ul className="list-disc list-inside space-y-0.5">
@@ -209,6 +229,35 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
         </>
       }
     >
+      {/* The sentence that makes the numbers add up, and it stays on screen
+          rather than folding into the disclosure. Without it the notice
+          reports a skip count against a total and leaves the reader to guess
+          at the gap, which reads as loss even when every one of those works
+          is already on the shelf (#2449). Folding the reconciliation away
+          would recreate that bug in a calmer colour. */}
+      <div>
+        {t('authorDetail.lastSync.accounting', {
+          defaultValue: '{{added}} added, {{matched}} already in your library.',
+          added: sync.added,
+          // `?? 0` despite `matched` being required in AuthorSyncSummary. The
+          // type describes what a current server sends; this value is decoded
+          // from JSON, and `npm run dev` proxies to whatever backend is on
+          // :8787, which may predate the field.
+          matched: sync.matched ?? 0,
+        })}
+      </div>
+      {/* A failed write is the one thing here that is a fault rather than a
+          setting, so it is never folded away and it is what turns the tier
+          red. */}
+      {failed > 0 && (
+        <div className="mt-1 font-medium">
+          {t('authorDetail.lastSync.failed', {
+            count: failed,
+            defaultValue:
+              '{{count}} could not be saved. This is an error rather than a filter, so the details are in Settings, then Logs.',
+          })}
+        </div>
+      )}
       {/* Kept on screen rather than folded away: the link is the fix for the
           count in the title, and the timestamp is what tells you whether the
           count is stale. */}

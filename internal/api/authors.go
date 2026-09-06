@@ -2068,10 +2068,17 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// (or audiobook-only) user never accumulates rows they can't grab.
 	strictMediaType := h.resolveDefaultMediaTypeStrict(ctx)
 
-	// skippedExcluded is logged but deliberately kept out of AuthorSyncSummary:
-	// the author page's notice explains works the user did NOT expect to lose,
-	// and a book they excluded by hand is not one of them.
-	var added, skippedLang, skippedJunk, skippedMediaType, skippedNotAccepted, skippedExcluded int
+	// skippedExcluded is carried in AuthorSyncSummary but not rendered by the
+	// notice: the notice explains works the user did NOT expect to lose, and a
+	// book they excluded by hand is not one of them. It is still reported so
+	// Total reconciles (#2449).
+	//
+	// matched and failed are the two outcomes that had no counter at all until
+	// #2449. matched is the ordinary "this work is already a book" path and on
+	// an established author it is most of the run; failed is a create that lost
+	// the write. Both were invisible, which made Total minus everything else
+	// look like a hole.
+	var added, matched, failed, skippedLang, skippedJunk, skippedMediaType, skippedNotAccepted, skippedExcluded int
 	var skippedPartBooks, skippedMissingDate, skippedMinPopularity, skippedMinPages, skippedMissingISBN int
 	// Names of the first few language-rejected works, reported to the user
 	// alongside the count (#1889): "65 books skipped" is alarming, but it is
@@ -2381,6 +2388,7 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 			// sync from either provider resolves it exactly rather than
 			// relying on a title comparison (#1705).
 			h.recordBookIdentities(ctx, existing, b.ForeignID, b.HardcoverForeignID)
+			matched++
 			continue
 		}
 
@@ -2463,6 +2471,11 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 			if hydrateExistingFromMatchedHardcover {
 				h.hydrateMatchedHardcoverEditions(ctx, existing, b.HardcoverForeignID, nil)
 			}
+			// Same bucket as the id-resolved branch above. From the user's side
+			// there is no difference worth a separate number: the work is in
+			// their library, Bindery found it, and it did not need creating.
+			// Which of the two lookups got there is an implementation detail.
+			matched++
 			continue
 		}
 		// Everything from here on CREATES a book the library does not have.
@@ -2505,6 +2518,9 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 						slog.Warn("authors: re-link after unique conflict", "error", uerr, "book_id", raced.ID)
 					}
 				}
+				// A losing race still ends with the book present, so this is a
+				// match and not a failure.
+				matched++
 				continue
 			}
 			// A FOREIGN KEY failure here almost always means the author row
@@ -2520,6 +2536,7 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 				}
 			}
 			slog.Warn("failed to create book", "title", b.Title, "error", err)
+			failed++
 			continue
 		}
 		// Hydration and the on-disk check happen in the pass below, once the
@@ -2586,6 +2603,9 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 		CompletedAt:                time.Now().UTC(),
 		Total:                      len(books),
 		Added:                      added,
+		Matched:                    matched,
+		Failed:                     failed,
+		SkippedExcluded:            skippedExcluded,
 		SkippedLanguage:            skippedLang,
 		SkippedJunk:                skippedJunk,
 		SkippedMediaType:           skippedMediaType,
@@ -2611,7 +2631,7 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// and Info is the default level the in-app log view captures — a reporter
 	// running rootless couldn't reach the Debug per-book lines at all.
 	logArgs := []any{
-		"author", author.Name, "added", added,
+		"author", author.Name, "added", added, "matched", matched, "failed", failed,
 		"skipped_language", skippedLang, "skipped_junk", skippedJunk, "skipped_media_type", skippedMediaType,
 		"skipped_not_accepted", skippedNotAccepted, "skipped_excluded", skippedExcluded,
 		"skipped_part_books", skippedPartBooks,
@@ -2623,7 +2643,11 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// Warn. The discovery-policy skip is not: the user configured it, the run
 	// already said so once at Info above, and a "Refresh all authors" pass
 	// over an ABS-imported library would otherwise emit one Warn per author.
-	if skippedLang+skippedJunk+skippedMediaType+skippedPartBooks+skippedMissingDate+
+	//
+	// failed joins the Warn side, and it is the strongest member of the set: a
+	// filter dropping a work is a setting doing its job, while a create that
+	// lost its write is the run failing at the thing it exists to do.
+	if failed+skippedLang+skippedJunk+skippedMediaType+skippedPartBooks+skippedMissingDate+
 		skippedMinPopularity+skippedMinPages+skippedMissingISBN > 0 {
 		slog.Warn("author books synced", logArgs...)
 		return
@@ -3462,15 +3486,11 @@ func (h *AuthorHandler) saveAlternateNames(ctx context.Context, author *models.A
 	// reached by a latin release name (e.g. "Murakami" -> "村上春樹"). For a
 	// latin-script author every alternate name is just another latin name, and
 	// minting it as an alias would file unrelated real authors (a pen name, or a
-	// co-author credit) under this one. Only save them when the author's own name
-	// is non-latin, mirroring the read-side guard in aliasBindsAuthor
-	// (importer.go), which binds an unattributed latin alias only when the
-	// canonical name is non-latin.
-	if isAllASCII(author.Name) {
-		return
-	}
+	// co-author credit) under this one. textutil.LatinAliasBinds is the shared
+	// rule: the same test the Calibre importer applies when it reads an
+	// unattributed alias back, and the search path when it expands one (#2419).
 	for _, name := range author.AlternateNames {
-		if !isAllASCII(name) {
+		if !textutil.LatinAliasBinds(author.Name, name) {
 			continue
 		}
 		alias := &models.AuthorAlias{AuthorID: author.ID, Name: name}
@@ -3478,16 +3498,6 @@ func (h *AuthorHandler) saveAlternateNames(ctx context.Context, author *models.A
 			slog.Debug("saveAlternateNames: could not save alias", "name", name, "authorId", author.ID, "error", err)
 		}
 	}
-}
-
-// isAllASCII returns true when every byte of s is a 7-bit ASCII character.
-func isAllASCII(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] > 127 {
-			return false
-		}
-	}
-	return true
 }
 
 // canUpgradeToBoth reports whether combining existingMediaType and

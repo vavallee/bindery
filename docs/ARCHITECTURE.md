@@ -56,6 +56,8 @@ The `internal/` tree is organised by domain, not by layer:
 | `scheduler` | Cron loops for auto-grab, refresh, recommendations, cleanup. |
 | `recommender` | Discover engine — taste profile, candidate filters, multi-source signals. |
 | `seriesmatch` | Four-tier reconciliation (ASIN → title+author → series+position → fuzzy). |
+| `textutil` | The character-level folds every string comparison shares, and the reasons they differ — see [search-design.md](search-design.md). |
+| `normdrift` | No production code: property tests asserting the folds above agree where they must and differ where they should. |
 | `calibre` | `calibredb` CLI integration, plugin-bridge HTTP client, `metadata.db` direct ingest. |
 | `abs` | Audiobookshelf import — runs, provenance, conflicts, review queue. |
 | `prowlarr` | Prowlarr server registration and indexer sync. |

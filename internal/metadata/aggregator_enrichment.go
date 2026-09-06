@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/metadata/audnex"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
@@ -141,43 +142,20 @@ func firstAudnexAuthorName(authors []audnex.Person) string {
 	return ""
 }
 
+// normalizeASIN is the aggregator's name for the shared ASIN normalizer. The
+// rule (trim, upper-case) lives in isbnutil so the Audiobookshelf import
+// applies the same one — it used to only trim, so an ABS item's "b08xyz" and a
+// provider's "B08XYZ" were stored as two identifiers for one book.
 func normalizeASIN(asin string) string {
-	return strings.ToUpper(strings.TrimSpace(asin))
+	return isbnutil.NormalizeASIN(asin)
 }
 
+// normalizeAudibleLanguage canonicalizes the language an Audnex record
+// reports. It used to carry its own copy of the Audible name table, which had
+// drifted five languages behind the copy in internal/metadata/audible; both
+// now defer to models.NormalizeLanguageCode (#2463).
 func normalizeAudibleLanguage(language string) string {
-	language = strings.ToLower(strings.TrimSpace(language))
-	if language == "" {
-		return ""
-	}
-	if normalized, ok := audibleLanguageAliases[language]; ok {
-		return normalized
-	}
-	return language
-}
-
-var audibleLanguageAliases = map[string]string{
-	"english":    "eng",
-	"german":     "ger",
-	"french":     "fre",
-	"spanish":    "spa",
-	"italian":    "ita",
-	"dutch":      "dut",
-	"portuguese": "por",
-	"japanese":   "jpn",
-	"russian":    "rus",
-	"chinese":    "chi",
-	"danish":     "dan",
-	"swedish":    "swe",
-	"norwegian":  "nor",
-	"polish":     "pol",
-	"finnish":    "fin",
-	"hindi":      "hin",
-	"turkish":    "tur",
-	"arabic":     "ara",
-	"korean":     "kor",
-	"czech":      "cze",
-	"greek":      "gre",
+	return models.NormalizeLanguageCode(language)
 }
 
 // GetAuthorAudiobooks queries the Audible catalogue directly for the given

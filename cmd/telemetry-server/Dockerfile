@@ -3,7 +3,13 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /telemetry-server ./cmd/telemetry-server
+# BUILD_SHA is stamped into the binary and reported on /api/stats, so the
+# drift check can ask the running server which build it is. Defaults to
+# "unknown" for a local build that does not pass it.
+ARG BUILD_SHA=unknown
+RUN CGO_ENABLED=0 go build -trimpath \
+      -ldflags="-s -w -X main.buildSHA=${BUILD_SHA}" \
+      -o /telemetry-server ./cmd/telemetry-server
 
 # Distroless runtime — parity with the main Dockerfile. The binary is a static
 # CGO-free build (modernc.org/sqlite is pure Go), so distroless/static is

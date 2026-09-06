@@ -341,15 +341,52 @@ describe('BookDetailPage — header & metadata', () => {
 })
 
 describe('BookDetailPage — file section actions', () => {
-  // ?format=-scoped whenever the row carries a real format: the format-less
-  // endpoint falls back to the legacy file_path, which on a mislabelled book
-  // points at the other format.
-  it('renders a format-scoped download link for a single-format book', async () => {
+  // A tracked row names itself with ?path=, which is the only form that can
+  // pick one file out of several of the same format (#2408).
+  it('links a tracked row to its own path', async () => {
     vi.mocked(api.getBook).mockResolvedValue(
       makeBook({ bookFiles: [makeFile({ id: 1, format: 'ebook', path: '/library/book.epub' })] }),
     )
     renderBookDetailPage()
-    const download = await screen.findByRole('link', { name: 'Download' })
+    const download = await screen.findByRole('link', { name: 'Download book.epub' })
+    expect(download).toHaveAttribute('href', '/api/v1/book/42/file?path=%2Flibrary%2Fbook.epub')
+  })
+
+  // The bug as reported: three ebooks on one book, Download always served the
+  // first. Every row must reach its own file.
+  it('gives every file of one format its own download link', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(
+      makeBook({
+        bookFiles: [
+          makeFile({ id: 1, format: 'ebook', path: '/library/retail.epub' }),
+          makeFile({ id: 2, format: 'ebook', path: '/library/proper.epub' }),
+          makeFile({ id: 3, format: 'ebook', path: '/library/v2.epub' }),
+        ],
+      }),
+    )
+    renderBookDetailPage()
+    await screen.findByTestId('file-group-ebook')
+    const hrefs = ['retail.epub', 'proper.epub', 'v2.epub'].map(
+      name => screen.getByRole('link', { name: `Download ${name}` }).getAttribute('href'),
+    )
+    expect(hrefs).toEqual([
+      '/api/v1/book/42/file?path=%2Flibrary%2Fretail.epub',
+      '/api/v1/book/42/file?path=%2Flibrary%2Fproper.epub',
+      '/api/v1/book/42/file?path=%2Flibrary%2Fv2.epub',
+    ])
+    // Three distinct targets, not one link repeated three times.
+    expect(new Set(hrefs).size).toBe(3)
+  })
+
+  // A row read off the legacy per-format columns has no book_files entry, so
+  // ?path= would 404. ?format= is exact there because that fallback yields at
+  // most one row per format.
+  it('falls back to ?format= for an untracked per-format row', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(
+      makeBook({ bookFiles: [], ebookFilePath: '/library/legacy.epub' }),
+    )
+    renderBookDetailPage()
+    const download = await screen.findByRole('link', { name: 'Download legacy.epub' })
     expect(download).toHaveAttribute('href', '/api/v1/book/42/file?format=ebook')
   })
 
@@ -363,7 +400,7 @@ describe('BookDetailPage — file section actions', () => {
       makeBook({ mediaType: 'audiobook', filePath: '/library/legacy-thing' }),
     )
     renderBookDetailPage()
-    const download = await screen.findByRole('link', { name: 'Download' })
+    const download = await screen.findByRole('link', { name: 'Download legacy-thing' })
     expect(download).toHaveAttribute('href', '/api/v1/book/42/file')
 
     const group = within(screen.getByTestId('file-group-audiobook'))
@@ -394,11 +431,13 @@ describe('BookDetailPage — file section actions', () => {
     await waitFor(() => expect(api.toggleExcluded).toHaveBeenCalledWith(42))
   })
 
-  it('keeps Download and Delete on the format group, Re-bind on the section', async () => {
+  it('keeps Download on the row and Delete on the format group, Re-bind on the section', async () => {
     vi.mocked(api.getBook).mockResolvedValue(makeBook({ filePath: '/library/book.epub' }))
     renderBookDetailPage()
     const group = within(await screen.findByTestId('file-group-ebook'))
-    expect(group.getByRole('link', { name: 'Download' })).toBeInTheDocument()
+    // Download moved to the row (#2408): a group of several files has no one
+    // file to hand back, so the group header cannot honestly offer it.
+    expect(group.getByRole('link', { name: 'Download book.epub' })).toBeInTheDocument()
     expect(group.getByRole('button', { name: /Delete file/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Re-bind' })).toBeInTheDocument()
     // One file → nothing to disambiguate, so Fix match stays at the surface.
@@ -658,9 +697,11 @@ describe('BookDetailPage — dual-format book', () => {
     renderBookDetailPage()
 
     const audio = within(await screen.findByTestId('file-group-audiobook'))
-    expect(audio.getByRole('link', { name: 'Download' })).toHaveAttribute(
+    // Download is per row and tracked, so it names its own path; Delete stays
+    // format-scoped because deleting the whole format IS a group action.
+    expect(audio.getByRole('link', { name: 'Download book-audio' })).toHaveAttribute(
       'href',
-      '/api/v1/book/42/file?format=audiobook',
+      '/api/v1/book/42/file?path=%2Flibrary%2Fbook-audio',
     )
     fireEvent.click(audio.getByRole('button', { name: /Delete file/ }))
     fireEvent.click(await screen.findByRole('checkbox'))

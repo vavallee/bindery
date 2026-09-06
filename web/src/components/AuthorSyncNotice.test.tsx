@@ -39,6 +39,7 @@ function summary(overrides: Partial<AuthorSyncSummary> = {}): AuthorSyncSummary 
     completedAt: '2026-08-15T00:00:00Z',
     total: 10,
     added: 10,
+    matched: 0,
     skippedLanguage: 0,
     skippedJunk: 0,
     skippedMediaType: 0,
@@ -200,5 +201,61 @@ describe('AuthorSyncNotice', () => {
     // 5 non-language sources also contributing one each in round 0, only one
     // language slot remains in round 0 and the cap is hit before round 1.
     expect(examples.textContent).not.toContain('Lang C')
+  })
+
+  // #2449. The notice reported "skipped 2 of 106" and said nothing about the
+  // other 103, so a reader doing the subtraction concluded the sync had lost
+  // books. It had not: they were already on the shelf, and the notice had no
+  // sentence for that.
+  it('says how many works were added and how many were already in the library', () => {
+    renderNotice(summary({ total: 106, added: 1, matched: 103, skippedLanguage: 2 }))
+    expect(screen.getByText(/1 added, 103 already in your library/)).toBeInTheDocument()
+  })
+
+  it('accounts for the whole total once the skips are added in', () => {
+    renderNotice(summary({ total: 106, added: 1, matched: 103, skippedLanguage: 2 }))
+    // heading + accounting line together have to name all 106.
+    expect(screen.getByText(/skipped 2 of this author’s 106 works/)).toBeInTheDocument()
+    expect(screen.getByText(/1 added, 103 already in your library/)).toBeInTheDocument()
+  })
+
+  // A failed write is the one outcome in this component that is a fault
+  // rather than a setting, so it shows on its own with no filter involved.
+  it('reports failed writes even when no filter dropped anything', () => {
+    renderNotice(summary({ total: 10, added: 9, matched: 0, failed: 1 }))
+    expect(screen.getByTestId('author-sync-notice')).toBeInTheDocument()
+    expect(screen.getByText(/could not save 1 of this author’s 10 works/)).toBeInTheDocument()
+    expect(screen.getByText(/1 could not be saved/)).toBeInTheDocument()
+  })
+
+  // The failure stays on screen while the filter reasons fold into the
+  // disclosure. An error tier whose reason is one click away is the weaker
+  // half of both ideas: the colour says something is wrong and the page does
+  // not say what.
+  it('shows a failed write without opening the disclosure, and folds the filters away', () => {
+    renderNotice(summary({ total: 10, added: 7, matched: 0, failed: 1, skippedLanguage: 2 }))
+    expect(screen.getByText(/1 could not be saved/)).toBeInTheDocument()
+    expect(screen.queryByText(/language filter/)).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /Show details/ }))
+    expect(screen.getByText(/language filter/)).toBeInTheDocument()
+  })
+
+  // A lost write is a fault, which is what the error tier is for. A run that
+  // only tripped filters is not.
+  it('reads as an error only when a write failed', () => {
+    const { unmount } = renderNotice(summary({ total: 10, added: 7, matched: 0, failed: 1, skippedLanguage: 2 }))
+    expect(screen.getByTestId('author-sync-notice')).toHaveAttribute('role', 'alert')
+    unmount()
+
+    renderNotice(summary({ total: 10, added: 8, matched: 0, skippedLanguage: 2 }))
+    expect(screen.getByTestId('author-sync-notice')).toHaveAttribute('role', 'status')
+  })
+
+  // skippedExcluded exists so the server's total reconciles. Rendering it
+  // would ask the user to justify a decision they already made.
+  it('does not mention works dropped for matching an excluded book', () => {
+    const { container } = renderNotice(summary({ total: 10, added: 8, matched: 1, skippedExcluded: 1 }))
+    expect(container).toBeEmptyDOMElement()
   })
 })

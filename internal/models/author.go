@@ -106,8 +106,26 @@ type AuthorProviderMismatch struct {
 type AuthorSyncSummary struct {
 	CompletedAt time.Time `json:"completedAt"`
 	// Total is the number of works the providers returned, before filtering.
-	Total            int `json:"total"`
-	Added            int `json:"added"`
+	Total int `json:"total"`
+	Added int `json:"added"`
+	// Matched is the number of works that resolved to a book already in the
+	// library, by foreign id, by Hardcover id, or by normalised title. These
+	// are the works a refresh UPDATES rather than creates: ratings, covers,
+	// genres, re-parenting and dual-format merges all happen on this path.
+	//
+	// It exists because it was the missing term (#2449). Total counts every
+	// work the providers returned, so on a well-established author almost all
+	// of it lands here, and with no field naming it, Total minus Added minus
+	// the Skipped* counts read as a hole big enough to look like data loss.
+	// It is not a hole, it is the normal case with no name. Reported for every
+	// sync, not just ones that skipped something.
+	Matched int `json:"matched"`
+	// Failed is the number of works that reached the create step and did not
+	// become a book because the write failed. Unlike every Skipped* field this
+	// is not a policy outcome, it is the one genuine silent loss the sync can
+	// suffer, and before #2449 it existed only as a Warn line that a rootless
+	// container never shows the user. Same argument as #1889.
+	Failed           int `json:"failed,omitempty"`
 	SkippedLanguage  int `json:"skippedLanguage"`
 	SkippedJunk      int `json:"skippedJunk"`
 	SkippedMediaType int `json:"skippedMediaType"`
@@ -117,6 +135,13 @@ type AuthorSyncSummary struct {
 	// "the refresh added nothing" needs to say why, or it reads as a failure
 	// (#1815).
 	SkippedNotAccepted int `json:"skippedNotAccepted,omitempty"`
+	// SkippedExcluded is the number of newly discovered works dropped because
+	// an excluded book under this author already carries the same title. The
+	// notice deliberately does not render it: it explains works the user did
+	// not expect to lose, and a hand excluded book is not one of those. It is
+	// carried in the struct anyway so Total reconciles (#2449); leaving it out
+	// of the JSON entirely is what made the arithmetic look broken.
+	SkippedExcluded int `json:"skippedExcluded,omitempty"`
 	// AllowedLanguages is the language set the run actually applied, so the UI
 	// can name the setting that did the dropping rather than making the user
 	// guess which profile the author is on. Empty means "no language filter".
@@ -169,6 +194,41 @@ type AuthorSyncSummary struct {
 	SkippedMissingISBNSample []AuthorSyncSkippedBook `json:"skippedMissingIsbnSample,omitempty"`
 }
 
+// AccountedFor is the number of works the summary can name an outcome for.
+// Every provider work leaves the sync loop through exactly one of these, so a
+// correct run has AccountedFor() == Total and the difference, if any, is the
+// count of works that fell out of a path nobody added a counter to.
+//
+// Two tests hold this: api.TestAuthorSyncSummaryReconciles runs the real sync
+// loop over a catalogue that trips every filter and asserts Unaccounted() is
+// zero, and TestAuthorSyncSummaryAccountedForCoversEveryCounter in this package
+// walks the struct by reflection so a counter added without being summed here
+// fails at build time rather than on someone's author page. That is the actual
+// point of the method: the counters drifted apart silently for long enough that
+// a reader with the numbers in front of them concluded books were being lost
+// (#2449).
+func (s *AuthorSyncSummary) AccountedFor() int {
+	if s == nil {
+		return 0
+	}
+	// Built on SkippedTotal rather than re-listing the Skipped* fields, so a
+	// new filter can only be added to one sum and forgotten from the other if
+	// it is also forgotten from the notice, where it would be obvious.
+	// SkippedExcluded is added back here because SkippedTotal deliberately
+	// leaves it out.
+	return s.Added + s.Matched + s.Failed + s.SkippedTotal() + s.SkippedExcluded
+}
+
+// Unaccounted is Total minus everything the summary can explain. Zero on a
+// correct run. Never negative in practice, but returned signed so a test that
+// double counts fails loudly rather than underflowing to a huge positive.
+func (s *AuthorSyncSummary) Unaccounted() int {
+	if s == nil {
+		return 0
+	}
+	return s.Total - s.AccountedFor()
+}
+
 // AuthorSyncSkippedBook is one dropped work, named so the user can tell a
 // mis-set filter from a correctly-set one.
 type AuthorSyncSkippedBook struct {
@@ -193,6 +253,11 @@ type AuthorSyncSkippedBook struct {
 // {{total}} works" heading sum independently in TypeScript rather than
 // reading this value over the wire — the two have to be kept in step by
 // hand. Adding a Skipped* field here means adding it to that sum too.
+//
+// SkippedExcluded is the one Skipped* field NOT counted here, for the same
+// reason the notice does not render it: the user excluded that book on
+// purpose. AccountedFor adds it back, because reconciling Total is a
+// different question from deciding what to put on the page (#2449).
 func (s *AuthorSyncSummary) SkippedTotal() int {
 	if s == nil {
 		return 0
