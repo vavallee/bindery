@@ -1,0 +1,2 @@
+### Fixed
+- **A book that gains a second format is searched for it again** (#1634) — a book you already owned as an ebook could be widened to dual-format by Hardcover list sync or edition hydration. The book kept its "imported" status, so the Wanted page, the scheduled search sweep and the author bulk search all treated it as complete and the newly monitored format was never searched. Widening now reopens the book as wanted, and an upgrade repairs any book already left in that state.

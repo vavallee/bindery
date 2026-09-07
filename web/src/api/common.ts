@@ -1,18 +1,11 @@
-// Shared cross-domain types: the pagination envelopes used by several List
-// endpoints, and BookRef (the minimal book+author projection embedded in
+// Shared cross-domain types: the pagination envelope used by every List
+// endpoint, and BookRef (the minimal book+author projection embedded in
 // queue/pending/history/download items).
 
-export interface PaginatedResponse<T> {
-  items: T[]
-  total: number
-  limit: number
-  offset: number
-}
-
-// Page<T> is the envelope returned by the paginated List endpoints introduced
-// in PR #902 (GET /book, /author, /history). Shape matches PaginatedResponse
-// above and the two will likely be unified later; kept distinct for now so
-// the diff stays scoped to the three new endpoints.
+// Page<T> is the envelope returned by every paginated List endpoint
+// (GET /book, /author, /history, /abs/review, /abs/conflicts). It was briefly
+// duplicated as PaginatedResponse<T> when PR #902 added the first three; the
+// two declarations were identical and are now one (#1000).
 export interface Page<T> {
   items: T[]
   total: number

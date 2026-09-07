@@ -1,0 +1,2 @@
+### Fixed
+- **Rolling back a Calibre import no longer leaves its file rows behind** (#1635). The library import registers a tracked file for every format Calibre reports, but those rows were not covered by the run's rollback, so undoing a run against books that already existed left the files it had claimed still attached. Rollback now untracks them, and only the rows that run actually created, so a path a download placed is never touched. The files on disk are never modified.
