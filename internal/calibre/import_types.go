@@ -12,6 +12,7 @@ const (
 	entityTypeBook           = "book"
 	entityTypeEdition        = "edition"
 	entityTypeSeriesLink     = "series_link"
+	entityTypeBookFile       = "book_file"
 	runStatusRunning         = "running"
 	runStatusCompleted       = "completed"
 	runStatusFailed          = "failed"

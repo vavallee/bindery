@@ -177,6 +177,9 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 
 	deletedBooks := map[int64]struct{}{}
 	filesTouched := 0
+	// Books already counted towards filesTouched, so a book that has both a
+	// file row untracked and its own row deleted is warned about once.
+	filesCounted := map[int64]struct{}{}
 
 	// abortOnFail wraps an error path inside the !preview loop. With the
 	// whole rollback inside one tx a single repo failure is fatal: every
@@ -248,6 +251,56 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 		}
 
 		switch {
+		case entity.EntityType == entityTypeBookFile:
+			// book_files rows this run inserted (#1635). The file on disk is
+			// never touched: for a library-import Calibre setup the path points
+			// into a library Bindery does not manage, so the only thing to undo
+			// is Bindery's claim on it. RemoveBookFile refreshes the owning
+			// book's aggregate status, which matters when dropping the row
+			// leaves a monitored format with nothing behind it.
+			path, parsed := parseCalibreBookFileExternalID(entity.ExternalID)
+			switch {
+			case entity.Outcome != outcomeCreated:
+				action.Action = "skip"
+				action.Reason = "book file was not created by this run"
+			case !ownedByRun:
+				action.Action = "skip"
+				action.Reason = "run is no longer the current provenance owner for this book file"
+			case books == nil:
+				action.Action = "skip"
+				action.Reason = "book repository not configured"
+			case !parsed:
+				action.Action = "skip"
+				action.Reason = "unparseable book file provenance key"
+			}
+			if action.Action == "skip" {
+				result.Stats.Skipped++
+				result.Actions = append(result.Actions, action)
+				continue
+			}
+			action.Action = "untrack_file"
+			result.Stats.ActionsPlanned++
+			// Untracking is exactly the case the on-disk warning exists for:
+			// Bindery drops its record of a file that is still on the
+			// filesystem. Counted here as well as on delete_book, because a
+			// pre-existing book keeps its row and would otherwise be silently
+			// detached from a file nobody deleted.
+			if _, seen := filesCounted[entity.LocalID]; !seen {
+				filesCounted[entity.LocalID] = struct{}{}
+				filesTouched++
+			}
+			if !preview {
+				if _, err := books.UntrackFilePath(ctx, path); err != nil {
+					rollbackErr = fmt.Errorf("untrack book file %s: %w", path, err)
+					continue
+				}
+				if err := provenance.DeleteByExternal(ctx, entity.SourceID, entity.EntityType, entity.ExternalID); err != nil {
+					rollbackErr = fmt.Errorf("untrack book file %s provenance: %w", entity.ExternalID, err)
+					continue
+				}
+				result.Stats.ProvenanceUnlinked++
+			}
+
 		case entity.EntityType == entityTypeSeriesLink:
 			// Book-to-series memberships this run created (#1635). The
 			// series row itself is left alone — a shared series must
@@ -357,7 +410,11 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 			// removed by rollback. Metadata-only rollback is deliberate —
 			// see PR description.
 			if book, lookupErr := books.GetByID(ctx, entity.LocalID); lookupErr == nil && book != nil {
-				if strings.TrimSpace(book.FilePath) != "" || strings.TrimSpace(book.EbookFilePath) != "" || strings.TrimSpace(book.AudiobookFilePath) != "" {
+				hasPath := strings.TrimSpace(book.FilePath) != "" ||
+					strings.TrimSpace(book.EbookFilePath) != "" ||
+					strings.TrimSpace(book.AudiobookFilePath) != ""
+				if _, seen := filesCounted[entity.LocalID]; hasPath && !seen {
+					filesCounted[entity.LocalID] = struct{}{}
 					filesTouched++
 				}
 			}
@@ -619,8 +676,9 @@ func rollbackDisplayName(ctx context.Context, books *db.BookRepo, authors *db.Au
 		return ""
 	}
 	switch entity.EntityType {
-	case entityTypeBook, entityTypeSeriesLink:
-		// A series link's local_id is the book, so both label the same way.
+	case entityTypeBook, entityTypeSeriesLink, entityTypeBookFile:
+		// A series link's and a book file's local_id are both the book, so all
+		// three label the same way.
 		if books == nil {
 			return ""
 		}
@@ -658,16 +716,18 @@ func rollbackDisplayName(ctx context.Context, books *db.BookRepo, authors *db.Au
 // link be unwound explicitly rather than disappearing with its book.
 func rollbackEntityRank(entity models.CalibreEntitySnapshot) int {
 	switch entity.EntityType {
-	case entityTypeSeriesLink:
+	case entityTypeBookFile:
 		return 0
-	case entityTypeEdition:
+	case entityTypeSeriesLink:
 		return 1
-	case entityTypeBook:
+	case entityTypeEdition:
 		return 2
-	case entityTypeAuthor:
+	case entityTypeBook:
 		return 3
-	default:
+	case entityTypeAuthor:
 		return 4
+	default:
+		return 5
 	}
 }
 

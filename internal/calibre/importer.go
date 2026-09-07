@@ -391,7 +391,7 @@ func (i *Importer) importOne(ctx context.Context, runID int64, cb CalibreBook, s
 	// book with none, and there was no supported way to re-point a stale row
 	// for a Calibre library: a folder scan fights the Calibre-shaped layout,
 	// and manual-import/match needs a downloadId a Calibre book never has.
-	i.registerBookFiles(ctx, book.row, cb)
+	i.registerBookFiles(ctx, runID, book.row, cb)
 
 	// Series persistence (#905). Calibre's books_series_link plus series
 	// table is read by the cursor as cb.Series; we propagate the membership
@@ -434,16 +434,21 @@ func calibreFormatMediaType(format string) string {
 // than a choice between them; registering only the first would leave the
 // audiobook untracked on exactly the libraries most likely to hold both.
 //
-// AddBookFile is INSERT OR IGNORE on a globally unique path, so re-running an
-// import is a no-op and a path another book already owns is left alone rather
-// than stolen. A file that has MOVED inside the Calibre library appends the
-// new row beside the old one; which of the two the book then renders is
-// decided by the file-tracking rules in #2186, not here.
+// The insert is OR IGNORE on a globally unique path, so re-running an import is
+// a no-op and a path another book already owns is left alone rather than
+// stolen. A file that has MOVED inside the Calibre library appends the new row
+// beside the old one; which of the two the book then renders is decided by the
+// file-tracking rules in #2186, not here.
+//
+// Ownership is narrowed the way #1868 narrowed series links: a row is claimed,
+// and therefore eligible for rollback, only when this run is the one that
+// inserted it. A path a real download placed, or an earlier run created, gets
+// its provenance refreshed but is never unwound by this run's rollback.
 //
 // Failures are logged and never abort the import: the book and its metadata
 // are already committed, and losing the whole row over a file-tracking write
 // would be a worse outcome than an untracked path.
-func (i *Importer) registerBookFiles(ctx context.Context, book *models.Book, cb CalibreBook) {
+func (i *Importer) registerBookFiles(ctx context.Context, runID int64, book *models.Book, cb CalibreBook) {
 	if i.books == nil || book == nil || book.ID == 0 {
 		return
 	}
@@ -452,11 +457,38 @@ func (i *Importer) registerBookFiles(ctx context.Context, book *models.Book, cb 
 		if path == "" {
 			continue
 		}
-		if err := i.books.SetFormatFilePath(ctx, book.ID, calibreFormatMediaType(f.Format), path); err != nil {
+		created, err := i.books.AddBookFileIfMissing(ctx, book.ID, calibreFormatMediaType(f.Format), path)
+		if err != nil {
 			slog.Warn("calibre import: could not track book file",
 				"calibre_id", cb.CalibreID, "book_id", book.ID, "format", f.Format, "path", path, "error", err)
+			continue
+		}
+		externalID := calibreBookFileExternalID(path)
+		i.upsertProvenance(ctx, runID, entityTypeBookFile, externalID, book.ID)
+		if created {
+			i.recordCreateSnapshot(ctx, runID, entityTypeBookFile, externalID, book.ID)
 		}
 	}
+}
+
+const bookFileExternalIDPrefix = "calibre:book-file:"
+
+// calibreBookFileExternalID is the provenance key for a book_files row created
+// during a Calibre import run. The path is the natural key: book_files.path is
+// globally UNIQUE, and rollback deletes by path rather than by row id, which
+// the provenance row's local_id (the book) does not carry.
+func calibreBookFileExternalID(path string) string {
+	return bookFileExternalIDPrefix + path
+}
+
+// parseCalibreBookFileExternalID recovers the on-disk path a book-file
+// provenance key was built from.
+func parseCalibreBookFileExternalID(externalID string) (path string, ok bool) {
+	rest, found := strings.CutPrefix(externalID, bookFileExternalIDPrefix)
+	if !found || rest == "" {
+		return "", false
+	}
+	return rest, true
 }
 
 // attachBookToSeries upserts the Bindery series row for cb.Series and links

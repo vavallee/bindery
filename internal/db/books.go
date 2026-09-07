@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -710,6 +711,17 @@ func (r *BookRepo) AddBookFile(ctx context.Context, bookID int64, format, path s
 	return r.refreshBookStatus(ctx, bookID)
 }
 
+// AddBookFileIfMissing records a new on-disk file and reports whether this call
+// inserted it, refreshing the book's aggregate status either way. See
+// BookFileRepo.AddIfMissing for why the caller needs to know (#1635).
+func (r *BookRepo) AddBookFileIfMissing(ctx context.Context, bookID int64, format, path string) (bool, error) {
+	created, err := r.files.AddIfMissing(ctx, bookID, format, path)
+	if err != nil {
+		return false, err
+	}
+	return created, r.refreshBookStatus(ctx, bookID)
+}
+
 // ListFiles returns all book_files rows for the given book.
 func (r *BookRepo) ListFiles(ctx context.Context, bookID int64) ([]models.BookFile, error) {
 	return r.files.ListByBook(ctx, bookID)
@@ -734,6 +746,34 @@ func (r *BookRepo) RemoveBookFile(ctx context.Context, path string) (*models.Boo
 		return nil, err
 	}
 	return r.GetByID(ctx, bookID)
+}
+
+// UntrackFilePath removes the book_files row for an on-disk path and refreshes
+// the owning book's aggregate status, returning the book id (0 when the path
+// was not tracked). The file on disk is never touched.
+//
+// Unlike RemoveBookFile this routes the delete through r.exec, so it is safe
+// inside calibre.Rollback's transaction. Rollback needs it to unwind a file row
+// a Calibre run inserted against a book that already existed, where the
+// book_files FK cascade does not apply because the book itself survives
+// (#1635). Refreshing the status matters: dropping the row can leave a
+// monitored format with nothing behind it.
+func (r *BookRepo) UntrackFilePath(ctx context.Context, path string) (int64, error) {
+	var bookID int64
+	err := r.exec.QueryRowContext(ctx, `SELECT book_id FROM book_files WHERE path = ?`, path).Scan(&bookID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("untrack file path lookup: %w", err)
+	}
+	if _, err := r.exec.ExecContext(ctx, `DELETE FROM book_files WHERE path = ?`, path); err != nil {
+		return 0, fmt.Errorf("untrack file path delete: %w", err)
+	}
+	if err := r.refreshBookStatus(ctx, bookID); err != nil {
+		return bookID, err
+	}
+	return bookID, nil
 }
 
 // PathOwnedByOtherBook reports whether an on-disk path is still registered in
@@ -895,7 +935,10 @@ func BookFilePathResolves(path string) bool {
 // and it runs only from refreshBookStatus (AddBookFile, RemoveBookFile,
 // UpdateBookFilePath), never on a read.
 func (r *BookRepo) derivedFormatPath(ctx context.Context, bookID int64, format string) (string, error) {
-	rows, err := r.db.QueryContext(ctx,
+	// r.exec, not r.db: refreshBookStatus runs inside calibre.Rollback's single
+	// transaction when a book file is untracked, and MaxOpenConns is 1, so a
+	// read on the bare pool would deadlock against the open writer (#1635).
+	rows, err := r.exec.QueryContext(ctx,
 		`SELECT COALESCE(path,'') FROM book_files WHERE book_id=? AND format=? ORDER BY id`,
 		bookID, format)
 	if err != nil {
