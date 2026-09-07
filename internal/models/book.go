@@ -156,6 +156,33 @@ func (b *Book) WantsAudiobook() bool {
 	return b.MediaType == MediaTypeAudiobook || b.MediaType == MediaTypeBoth
 }
 
+// ReevaluateStatus recomputes the wanted/imported boundary from the formats
+// this book still needs. Call it after anything changes MediaType, because
+// status is derived from media_type and the on-disk paths together: widening
+// an owned ebook to 'both' creates a real gap, and leaving status at
+// 'imported' hides that gap from every consumer that selects by status. The
+// wanted page, the scheduled sweep and the author bulk search all read
+// books.status and nothing else, so a stale value there means the missing
+// format is never searched (#1634).
+//
+// The book_files write path already does this inside refreshBookStatus. This
+// is the same rule for the callers that change media_type without touching
+// book_files.
+//
+// 'skipped' is left alone: it encodes a user decision, not a derived state.
+func (b *Book) ReevaluateStatus() {
+	if b.Status == BookStatusSkipped {
+		return
+	}
+	if b.NeedsEbook() || b.NeedsAudiobook() {
+		b.Status = BookStatusWanted
+		return
+	}
+	if b.EbookFilePath != "" || b.AudiobookFilePath != "" {
+		b.Status = BookStatusImported
+	}
+}
+
 // HasFileForCurrentFormat reports whether the book already holds a file for the
 // format it is currently set to, i.e. the user owns it as it stands.
 //
