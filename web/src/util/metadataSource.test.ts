@@ -27,11 +27,39 @@ describe('metadataSourceLink', () => {
     expect(metadataSourceLink('gb:zyTCAlFPjgYC', 'author')).toBeNull()
   })
 
-  it('returns null for providers without a reliable public URL', () => {
+  it('links unambiguous Hardcover book slugs', () => {
+    expect(metadataSourceLink('hc:project-hail-mary', 'book')).toEqual({
+      url: 'https://hardcover.app/books/project-hail-mary',
+      label: 'Hardcover',
+    })
+    expect(metadataSourceLink('HC:project-hail-mary', 'book')).toEqual({
+      url: 'https://hardcover.app/books/project-hail-mary',
+      label: 'Hardcover',
+    })
+  })
+
+  it('hides ambiguous numeric Hardcover identifiers', () => {
+    expect(metadataSourceLink('hc:1984', 'book')).toBeNull()
     expect(metadataSourceLink('hc:12345', 'book')).toBeNull()
-    expect(metadataSourceLink('dnb:123456789', 'book')).toBeNull()
+  })
+
+  it('links DNB book control numbers', () => {
+    expect(metadataSourceLink('dnb:123456789', 'book')).toEqual({
+      url: 'https://d-nb.info/123456789',
+      label: 'DNB',
+    })
+    expect(metadataSourceLink('DNB:123456789', 'book')).toEqual({
+      url: 'https://d-nb.info/123456789',
+      label: 'DNB',
+    })
+  })
+
+  it('returns null for local or malformed provider ids', () => {
     expect(metadataSourceLink('abs:abc', 'book')).toBeNull()
     expect(metadataSourceLink('calibre:7', 'book')).toBeNull()
+    expect(metadataSourceLink('hc:bad/value', 'book')).toBeNull()
+    expect(metadataSourceLink('dnb:gnd:118585665', 'book')).toBeNull()
+    expect(metadataSourceLink('hc:project-hail-mary', 'author')).toBeNull()
   })
 
   it('returns null for empty / malformed ids', () => {
