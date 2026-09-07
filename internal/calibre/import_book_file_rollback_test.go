@@ -221,3 +221,70 @@ func TestRollback_UntrackWarnsAboutFilesLeftOnDisk(t *testing.T) {
 		t.Errorf("FilesAffected = %d, want 1 (the book counted once, not per action)", result.Stats.FilesAffected)
 	}
 }
+
+// The safety property this whole change turns on. Run one inserts the row, run
+// two re-reports the same path and takes over its provenance. Rolling back run
+// one must then leave the row alone: the claim on that path now belongs to a
+// run the user is not undoing. Without the ownedByRun guard the older run would
+// happily untrack a file the newer one still depends on.
+func TestRollback_SkipsAFileALaterRunNowOwns(t *testing.T) {
+	imp, fr, _, bookRepo, runsRepo, _, _ := newSeriesRollbackFixture(t)
+	ctx := context.Background()
+
+	fr.books = []CalibreBook{sampleCalibreBook(1, "Book One", "Alice Author")}
+	if _, err := imp.Run(ctx, "/lib"); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	book, err := bookRepo.GetByCalibreID(ctx, 1)
+	if err != nil || book == nil {
+		t.Fatalf("book not found: %v", err)
+	}
+	path := filepath.Join("/lib", "Book One.epub")
+
+	if _, err := imp.Run(ctx, "/lib"); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+
+	runs, err := runsRepo.ListRecent(ctx, 2)
+	if err != nil {
+		t.Fatalf("ListRecent: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("expected 2 runs, got %d", len(runs))
+	}
+	firstRunID := runs[len(runs)-1].ID
+
+	preview, err := imp.PreviewRollback(ctx, firstRunID)
+	if err != nil {
+		t.Fatalf("PreviewRollback: %v", err)
+	}
+	if hasAction(preview.Actions, entityTypeBookFile, "untrack_file") {
+		t.Fatalf("the older run planned to untrack a file the newer run owns: %+v", preview.Actions)
+	}
+	var reason string
+	for _, a := range preview.Actions {
+		if a.EntityType == entityTypeBookFile {
+			reason = a.Reason
+		}
+	}
+	if reason != "run is no longer the current provenance owner for this book file" {
+		t.Errorf("want the ownership skip reason, got %q", reason)
+	}
+
+	if _, err := imp.Rollback(ctx, firstRunID); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	after, err := bookRepo.ListFiles(ctx, book.ID)
+	if err != nil {
+		t.Fatalf("ListFiles: %v", err)
+	}
+	found := false
+	for _, f := range after {
+		if f.Path == path {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("rollback untracked a file the newer run owns: %+v", after)
+	}
+}
