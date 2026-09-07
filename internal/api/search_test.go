@@ -166,7 +166,16 @@ func TestSearchBooksIncludesNormalizedProviderISBNs(t *testing.T) {
 func TestBookSearchResultCapsISBNs(t *testing.T) {
 	providerISBNs := make([]string, maxBookSearchISBNs+5)
 	for i := range providerISBNs {
-		providerISBNs[i] = fmt.Sprintf("978%010d", i)
+		body := fmt.Sprintf("978%09d", i)
+		sum := 0
+		for j := range body {
+			weight := 1
+			if j%2 == 1 {
+				weight = 3
+			}
+			sum += int(body[j]-'0') * weight
+		}
+		providerISBNs[i] = fmt.Sprintf("%s%d", body, (10-sum%10)%10)
 	}
 
 	got := newBookSearchResult(models.Book{ProviderISBNs: providerISBNs})
