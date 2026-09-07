@@ -4,7 +4,7 @@ All notable changes to Bindery are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com) and versions follow
 [Semantic Versioning](https://semver.org).
 
-## [v1.35.0] — 2026-09-06
+## [v1.35.0] — 2026-09-07
 
 **Search and author identity, largely rebuilt. Read the two warnings below before upgrading.**
 
