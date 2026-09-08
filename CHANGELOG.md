@@ -8,8 +8,8 @@ All notable changes to Bindery are documented here. Format loosely follows
 
 **Search and author identity, largely rebuilt. Read the two warnings below before upgrading.**
 
-Forty one entries from twenty one merged pull requests, and most of them are one
-piece of work. Bindery had four separate ideas about what makes two pieces of
+Forty three entries from twenty three merged pull requests, and most of them are
+one piece of work. Bindery had four separate ideas about what makes two pieces of
 text the same, and they disagreed with each other. Library search folded only the 26 ASCII
 letters, so `muller` never found *Müller*. There are now three alphabets, one
 each for search, identity and comparison, and the differences between them are
