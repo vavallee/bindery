@@ -18,24 +18,44 @@ import (
 // used to key as a different author from the ordinary spelling. NFKD is lossy,
 // but this is a comparison key and never a displayed value, which is the
 // condition UAX #15 attaches to using a compatibility form at all.
+//
+// Marks are dropped only on a Latin or Greek base, through the same
+// stripLatinGreekMarks that FoldForSlug and FoldForSearch use. This function
+// predates that helper and dropped every Mn unconditionally, which is right for
+// an acute on an e and wrong for kana: the dakuten and handakuten change the
+// letter rather than decorate it, so ズ keyed as ス, がっこう as かっこう and
+// ヴィクトル as ウィクトル (#2452). This is the identity alphabet, used at
+// nineteen call sites to decide whether two records are the same person, so a
+// collision here merges two authors.
+//
+// The NFC after the NFKD is what makes that judgement possible. NFKD leaves a
+// kana voicing mark standing on its own, where it has no script of its own to
+// be judged by; recomposing puts it back on its base so it is seen as part of
+// ズ. The output is not persisted anywhere, so nothing needs migrating, but it
+// does change which authors compare equal.
 func NormalizeAuthorName(name string) string {
-	name = norm.NFKD.String(strings.TrimSpace(name))
+	name = norm.NFC.String(norm.NFKD.String(strings.TrimSpace(name)))
 	if name == "" {
 		return ""
 	}
+	name = stripLatinGreekMarks(strings.ToLower(name))
 
 	var b strings.Builder
 	b.Grow(len(name))
 	spacePending := false
 	for _, r := range name {
 		switch {
-		case unicode.Is(unicode.Mn, r):
-			continue
 		case unicode.IsLetter(r) || unicode.IsDigit(r):
 			if spacePending && b.Len() > 0 {
 				b.WriteByte(' ')
 			}
 			b.WriteRune(unicode.ToLower(r))
+			spacePending = false
+		case unicode.Is(unicode.Mn, r):
+			// A mark stripLatinGreekMarks chose to keep, so it belongs to a
+			// script where the mark is part of the letter. It joins the word
+			// rather than breaking it, which is what the default arm would do.
+			b.WriteRune(r)
 			spacePending = false
 		default:
 			spacePending = true

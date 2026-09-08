@@ -172,3 +172,43 @@ func TestNormalizeAuthorNameFoldsCompatibilityForms(t *testing.T) {
 		t.Errorf("NormalizeAuthorName = %q, want %q", got, "jorg muller")
 	}
 }
+
+// #2452. NormalizeAuthorName is the identity alphabet, used to decide whether
+// two records are the same person, so a collision merges two authors. It used
+// to drop every non-spacing mark, which is right for an acute on an e and
+// wrong for kana: the dakuten and handakuten change the letter.
+func TestNormalizeAuthorName_KeepsMarksThatChangeTheLetter(t *testing.T) {
+	distinct := []struct {
+		a, b string
+		why  string
+	}{
+		{"ズ", "ス", "katakana dakuten"},
+		{"がっこう", "かっこう", "hiragana dakuten, and two real words"},
+		{"ヴィクトル", "ウィクトル", "the vu kana, which is how Viktor is written"},
+		{"パン", "ハン", "handakuten"},
+		{"Толстой", "Толстои", "Cyrillic breve on й"},
+	}
+	for _, d := range distinct {
+		if got, want := NormalizeAuthorName(d.a), NormalizeAuthorName(d.b); got == want {
+			t.Errorf("NormalizeAuthorName(%q) == NormalizeAuthorName(%q) == %q, so two authors merge (%s)",
+				d.a, d.b, got, d.why)
+		}
+	}
+}
+
+// The Latin and Greek half must not change: those marks decorate the letter,
+// and dropping them is what lets one author be found under either spelling.
+func TestNormalizeAuthorName_StillFoldsLatinAndGreek(t *testing.T) {
+	cases := map[string]string{
+		"Jörg Müller":       "jorg muller",
+		"José Saramago":     "jose saramago",
+		"Ｍｕｒａｋａｍｉ":          "murakami",
+		"ﬁnnegan":           "finnegan",
+		"Ursula K. Le Guin": "ursula k le guin",
+	}
+	for in, want := range cases {
+		if got := NormalizeAuthorName(in); got != want {
+			t.Errorf("NormalizeAuthorName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
