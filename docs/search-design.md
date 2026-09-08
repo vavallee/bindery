@@ -209,6 +209,52 @@ case-folding rows).
 Unicode-form invariance, idempotence, keyword-findability, and that distinct
 scripts keep distinct keys.
 
+## Known limit: the browser fold is not the Go fold
+
+`web/src/util/foldForSearch.ts` is a port of `internal/textutil.FoldForSearch`,
+pinned to it by `search_fixtures.json`. The two are not identical, and a
+differential over U+0020 to U+2FFFF found four systematic divergence classes
+that the fixtures do not cover (#2453). All four come from JavaScript having
+`toLowerCase` where Go has real Unicode case folding.
+
+| input | Go | TypeScript |
+|---|---|---|
+| iota subscript, `ᾳ ᾀ … ῷ` (~140 code points), bare U+0345 / U+037A | `αι`, `ηι`, `ι` | `α`, `η`, and a stripped mark |
+| Cherokee, U+13F8–13FD and U+AB70–ABBF | folds toward uppercase | left lowercase |
+| historic Cyrillic, U+1C80–1C88 | `в д о с т т ъ ѣ ꙋ` | unchanged |
+| recently assigned code points, e.g. U+1C89 | dropped as a separator | kept as a letter |
+
+**This is deliberate, and the reasoning is worth keeping so it is not
+rediscovered as a bug.**
+
+The server is self-consistent. It folds the query and the stored `search_key`
+with the same Go function, so library search is correct for every one of these.
+The divergence reaches only the three filters that fold in the browser and never
+ask the server: `WantedPage.tsx`, `AddSeriesBookModal.tsx` and
+`addAuthorTitleGuard.ts`. A polytonic Greek title can therefore be findable in
+the Books list and not findable in the Wanted list's local filter.
+
+Two fixes were considered and both cost more than the defect.
+
+Extending the TypeScript `NON_DECOMPOSABLE` table with the iota-subscript,
+Cherokee and historic-Cyrillic mappings is cheap to write and permanent to own:
+a second hand-maintained table that has to track the first, for scripts that
+essentially do not appear as book titles, and it still leaves the
+Unicode-version skew between Go's tables and V8's ICU.
+
+Moving those filters to the server removes the class rather than the instances,
+but costs a round trip on filters that are currently instant, for every user, to
+fix something almost none of them will meet.
+
+So the limit stands and is recorded here. If a real report ever arrives against
+it, the server-side option is the one to take, because it ends the divergence
+instead of chasing it.
+
+The one class that was NOT accepted is `\p{M}` versus `Mn` in the mark class,
+where the two sides disagreed about a spacing mark after a Latin letter. That
+reaches ordinary Indic and Vietnamese text rather than scholarly orthography,
+and it was fixed in #2447.
+
 ## Adding an alphabet
 
 1. Add it to the header list in `internal/textutil/fold.go`, saying what it
