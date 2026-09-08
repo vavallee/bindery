@@ -2,6 +2,21 @@
 
 Solutions to recurring problems, organised by symptom. Add new entries here as patterns come up in support.
 
+## A release names a different book or author
+
+Release matching rejects extra meaningful words inside a requested title and
+preserves its numbers: `12 More Rules for Life` cannot satisfy `12 Rules for Life`,
+even when both name the same author. An explicit trailing `by Author` or
+`Title - Author` credit that conflicts with the requested author is also rejected.
+Title-only releases, connecting words, file-format labels and narrator credits
+remain supported. Unrecognised trailing text can be conservatively rejected;
+inspect the release's title and author rather than relying only on shared words.
+
+These checks use the release name. They do not verify the contents of a download
+or repair an existing incorrect import. If a previously imported file is another
+book, use **Fix Match** to assign it to the correct book before requesting a
+replacement for the original.
+
 ## Bindery will not start after upgrading: "foreign_key_check found N violation(s)"
 
 ```
