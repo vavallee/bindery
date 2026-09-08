@@ -1622,8 +1622,18 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				// attempt instead — but only when the sources still exist.
 				// After a move they do not, and those files are the only
 				// copy, so they stay put and the error tells the user where.
-				if dirErr != nil && len(placed) > 0 {
-					if mode == "move" {
+				//
+				// The rollback runs even when nothing was placed (#2504).
+				// Failing on the FIRST file leaves placed empty, and gating on
+				// it skipped the cleanup for exactly the case where there is
+				// nothing to weigh against removing the folder: the MkdirAll
+				// above had already created it, so the empty directory
+				// survived, and the next attempt's UniqueDir read it as a
+				// collision and built "Title (2)" beside it. In move mode with
+				// files already placed the folder still stays, since removing
+				// it would take the only copy of them with it.
+				if dirErr != nil {
+					if mode == "move" && len(placed) > 0 {
 						slog.Warn("audiobook move failed partway; placed files left in place because their sources are already gone",
 							"dst", destDir, "placed", len(placed))
 					} else {
@@ -1735,7 +1745,8 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				if err := os.MkdirAll(destDir, 0o750); err != nil {
 					dirErr = fmt.Errorf("create audiobook dest dir: %w", err)
 				} else {
-					dstFile := filepath.Join(destDir, filepath.Base(audiobookSource))
+					name := filepath.Base(audiobookSource)
+					dstFile := filepath.Join(destDir, name)
 					switch mode {
 					case "hardlink":
 						dirErr = HardlinkFile(audiobookSource, dstFile)
@@ -1743,6 +1754,23 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 						dirErr = CopyFileCtx(importCtx, audiobookSource, dstFile)
 					default:
 						dirErr = MoveFileCtx(importCtx, audiobookSource, dstFile)
+					}
+					// A lone .m4b had no cleanup at all, so any failure here
+					// left the directory MkdirAll had just made, and the next
+					// attempt's UniqueDir built "Title (2)" beside the empty
+					// original (#2504). Move mode passes no name: the file
+					// either arrived or it did not, and a partial destination
+					// whose source is already gone is not ours to delete.
+					// rollbackPlacedFiles removes the folder through its
+					// parent, which only succeeds while it is empty, so a
+					// shared folder holding this book's ebook is safe either
+					// way.
+					if dirErr != nil {
+						if mode == "move" {
+							rollbackPlacedFiles(destDir, nil)
+						} else {
+							rollbackPlacedFiles(destDir, []string{name})
+						}
 					}
 				}
 			}
