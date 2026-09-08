@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -187,5 +188,50 @@ func TestParseReleaseASIN(t *testing.T) {
 	p3 := ParseRelease("title b0036s4b2g.mp3")
 	if p3.ASIN != "" {
 		t.Errorf("lowercase ASIN-shape should not match: %q", p3.ASIN)
+	}
+}
+
+// #2465. SigWords drops stop words and anything under three bytes, and nothing
+// dropped them from the haystack, so a release that spelled one out failed the
+// phrase against its own book. phraseRegex now allows exactly the words
+// SigWords would have removed to sit between the parts.
+func TestContainsPhrase_AllowsAWordSigWordsDropped(t *testing.T) {
+	cases := []struct {
+		name    string
+		title   string
+		release string
+	}{
+		{"and, spelled out both sides", "Foundation and Empire", "Foundation.and.Empire.1952.RETAIL.EPUB-GRP"},
+		{"and, ampersand in the title", "Foundation & Empire", "Foundation.and.Empire.1952.RETAIL.EPUB-GRP"},
+		{"and, ampersand in the release", "Foundation and Empire", "Foundation.&.Empire.1952.RETAIL.EPUB-GRP"},
+		{"of", "The Rise of Endymion", "The.Rise.of.Endymion.1997.EPUB-GRP"},
+		{"two in a row", "The Lord of the Rings", "The.Lord.of.the.Rings.EPUB"},
+		{"short words that are not stop words", "Bury My Heart at Wounded Knee", "Bury.My.Heart.at.Wounded.Knee.EPUB"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			kws := newznab.SigWords(c.title)
+			if !ContainsPhrase(NormalizeRelease(c.release), kws) {
+				t.Errorf("release %q does not match its own book %q (phrase %v)", c.release, c.title, kws)
+			}
+		})
+	}
+}
+
+// The gap admits only words SigWords would have dropped. A real word between
+// the keywords is still a different title, which is what keeps the phrase tier
+// worth having.
+func TestContainsPhrase_StillRejectsARealWordBetweenKeywords(t *testing.T) {
+	kws := newznab.SigWords("Foundation & Empire")
+	for _, release := range []string{
+		"Foundation.Destroys.Empire.EPUB",
+		"Foundation.Empire.Trilogy.Omnibus.EPUB-GRP",
+	} {
+		hay := NormalizeRelease(release)
+		got := ContainsPhrase(hay, kws)
+		want := release != "Foundation.Destroys.Empire.EPUB"
+		if got != want {
+			t.Errorf("ContainsPhrase(%q, %v) = %v, want %v", hay, kws, got, want)
+		}
 	}
 }

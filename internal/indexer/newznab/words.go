@@ -1,6 +1,7 @@
 package newznab
 
 import (
+	"sort"
 	"strings"
 
 	"golang.org/x/text/unicode/norm"
@@ -15,6 +16,27 @@ var stopWords = map[string]bool{
 	"of": true, "in": true, "to": true, "by": true, "for": true,
 	"with": true, "at": true, "from": true, "is": true, "it": true,
 	"as": true, "on": true, "be": true,
+}
+
+// LongStopWords returns the stop words SigWords drops that are three bytes or
+// longer, sorted, so a caller can build a pattern for "a word SigWords would
+// have removed".
+//
+// The shorter ones need no listing: every stop word under three bytes is also
+// dropped by the length rule, along with words like "my" and "up" that are not
+// stop words at all, so a caller covers the whole short class with a character
+// count instead. Exported for indexer.phraseRegex, which has to allow exactly
+// these words to sit inside a phrase (#2465). Keeping one list rather than a
+// second copy over there is the point.
+func LongStopWords() []string {
+	out := make([]string, 0, len(stopWords))
+	for w := range stopWords {
+		if len(w) >= 3 {
+			out = append(out, w)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // SigWords returns the meaningful (non-stop, long enough) words from s.

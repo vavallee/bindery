@@ -257,13 +257,22 @@ func TestDedupAndTitleMatchAlphabetsDifferOnAmpersand(t *testing.T) {
 // FoldForTitleMatch, so an expansion would be symmetric; symmetry is not what
 // saves the match.
 //
-// The asymmetry is the stop word list. SigWords drops "and" from the keywords
-// and nothing drops it from the haystack, so an expanded haystack gains a word
-// the phrase cannot account for, and phraseRegex admits only separators
+// The asymmetry WAS the stop word list. SigWords drops "and" from the keywords
+// and nothing drops it from the haystack, so an expanded haystack gained a word
+// the phrase could not account for, and phraseRegex admitted only separators
 // between its parts.
 //
-// The second assertion records a live false negative that is nobody's
-// regression: a release spelling the word out is already missed today.
+// That is no longer true. #2465 fixed the false negative this test used to
+// record: phraseRegex now lets a word SigWords itself dropped sit between the
+// parts, so both spellings match either haystack. The assertions below are the
+// positive ones the old version asked for by name.
+//
+// Which means the rule this test is evidence for now rests on something else.
+// Expanding "&" in alphabet 1 would no longer break the phrase, so the reason
+// not to do it is the one the dedup alphabet was drawn for in the first place
+// rather than this side effect. Changing that rule is not this test's call and
+// #2459 left it alone deliberately; what this records is that the argument
+// FROM here has expired.
 func TestAmpersandPhraseAsymmetry(t *testing.T) {
 	kws := newznab.SigWords("Foundation & Empire")
 	if len(kws) != 2 || kws[0] != "foundation" || kws[1] != "empire" {
@@ -284,14 +293,14 @@ func TestAmpersandPhraseAsymmetry(t *testing.T) {
 	if !ContainsPhrase(today, kws) {
 		t.Error("the ampersand release stopped matching its own phrase; alphabet 1 must be leaving & as a separator")
 	}
-	if ContainsPhrase(ifExpanded, kws) {
-		t.Error(`an expanded haystack still matched [foundation empire]; if this ever passes, the stop word asymmetry is gone and alphabet 1 could expand "&" after all`)
+	if !ContainsPhrase(ifExpanded, kws) {
+		t.Error(`a spelled-out haystack no longer matches [foundation empire]; #2465's gap in phraseRegex has regressed`)
 	}
 
-	// Live false negative, recorded so it is not mistaken for damage done by
-	// the dedup change. A release spelling the word out is missed regardless of
-	// which spelling the user asked for, because "and" interrupts the phrase.
-	if ContainsPhrase(ifExpanded, newznab.SigWords("Foundation and Empire")) {
-		t.Error("a release named \"Foundation and Empire\" now matches; if this passes, the miss recorded here has been fixed and this assertion should become the positive one")
+	// The miss this test used to record, now the positive assertion it asked
+	// to become. A release spelling the word out matches whichever spelling the
+	// user asked for.
+	if !ContainsPhrase(ifExpanded, newznab.SigWords("Foundation and Empire")) {
+		t.Error(`a release named "Foundation and Empire" does not match its own book (#2465)`)
 	}
 }
