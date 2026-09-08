@@ -317,3 +317,76 @@ func TestPendingList_RedactsIndexerAPIKey(t *testing.T) {
 		t.Errorf("stored releaseJson lost the apikey, breaking force-grab: %s", stored[0].ReleaseJSON)
 	}
 }
+
+// TestSignNZBURL_IndexerIDWithMismatchedHost is #2505.
+//
+// Prowlarr builds its download links from its own application URL, which need
+// not carry the same host:port as the indexer URL Bindery recorded. u.Host
+// includes the port, so an indexer stored as prowlarr:9696 does not match a
+// link emitted as prowlarr, and SignDownloadURLFor returns the URL untouched.
+//
+// signNZBURL used to return that unsigned URL and stop. The indexer answered
+// 401, the grab was still recorded as a success, and the queue item sat at
+// downloading with an empty errorMessage and no log line at any level. The web
+// UI always sends an indexer id, so this was the path every browser grab took,
+// while API clients that omit the id were saved by the host-match fallback.
+func TestSignNZBURL_IndexerIDWithMismatchedHost(t *testing.T) {
+	h, database, _, _, _, ctx := queueFixture(t)
+	indexers := db.NewIndexerRepo(database)
+	h.WithIndexers(indexers)
+
+	// Recorded with the port, as a Prowlarr indexer is.
+	withPort := &models.Indexer{
+		Name: "prowlarr-with-port", Type: "newznab",
+		URL: "http://prowlarr:9696/3/api", APIKey: "SECRET", Enabled: true,
+	}
+	if err := indexers.Create(ctx, withPort); err != nil {
+		t.Fatalf("create indexer: %v", err)
+	}
+	// Reachable on the host the link actually names, so the host match has a
+	// credential to find.
+	noPort := &models.Indexer{
+		Name: "prowlarr-no-port", Type: "newznab",
+		URL: "http://prowlarr/3/api", APIKey: "SECRET", Enabled: true,
+	}
+	if err := indexers.Create(ctx, noPort); err != nil {
+		t.Fatalf("create indexer: %v", err)
+	}
+
+	const dl = "http://prowlarr/3/download?file=Lee+Child&link=abc"
+	const signed = "http://prowlarr/3/download?apikey=SECRET&file=Lee+Child&link=abc"
+
+	got, _ := h.signNZBURL(ctx, dl, &withPort.ID)
+	if got == dl {
+		t.Fatal("named indexer could not sign and signNZBURL gave up, shipping an unsigned URL")
+	}
+	if got != signed {
+		t.Errorf("signNZBURL() = %q, want %q", got, signed)
+	}
+}
+
+// A URL that already carries a key is nobody's to re-sign, and the early
+// return for it is what stops the #2505 fallback from firing on the scheduler
+// and retry paths, which hand over signed URLs.
+func TestSignNZBURL_AlreadySignedIsUntouchedWithAMismatchedIndexerID(t *testing.T) {
+	h, database, _, _, _, ctx := queueFixture(t)
+	indexers := db.NewIndexerRepo(database)
+	h.WithIndexers(indexers)
+
+	other := &models.Indexer{
+		Name: "elsewhere", Type: "newznab",
+		URL: "http://elsewhere:9696/1/api", APIKey: "OTHER", Enabled: true,
+	}
+	if err := indexers.Create(ctx, other); err != nil {
+		t.Fatalf("create indexer: %v", err)
+	}
+
+	const already = "http://prowlarr/3/download?apikey=MINE&file=Lee+Child&link=abc"
+	got, matched := h.signNZBURL(ctx, already, &other.ID)
+	if got != already {
+		t.Errorf("signNZBURL() rewrote an already-signed URL: %q", got)
+	}
+	if matched != nil {
+		t.Errorf("an already-signed URL attributed an indexer: %v", matched)
+	}
+}

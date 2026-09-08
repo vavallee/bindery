@@ -964,10 +964,14 @@ func (s *Scanner) blockStaleImportFailures(
 	s.forgetImportSkipsExcept(stillFailing)
 	for i := range allDownloads {
 		dl := allDownloads[i]
-		if dl.Status != models.StateImportFailed {
+		if !belongsToClient(dl) {
 			continue
 		}
-		if !belongsToClient(dl) {
+		if dl.Status == models.StateDownloading {
+			s.failDownloadThatNeverArrived(ctx, &dl, seenSourceIDs, sourceListIsComplete)
+			continue
+		}
+		if dl.Status != models.StateImportFailed {
 			continue
 		}
 		var reason string
@@ -982,6 +986,64 @@ func (s *Scanner) blockStaleImportFailures(
 		slog.Warn("blocking unrecoverable import failure", "title", dl.Title, "download_id", dl.ID, "reason", reason)
 		s.failImport(ctx, &dl, models.StateImportBlocked, reason)
 	}
+}
+
+// neverArrivedGrace is how long a grabbed download may be absent from its
+// client before failDownloadThatNeverArrived gives up on it.
+//
+// It is generous on purpose. The window has to cover a client that accepts an
+// add and takes its time publishing the torrent (qBittorrent does this while it
+// resolves a magnet's metadata), plus the poll interval, plus a restart. Ten
+// minutes is far longer than any of those and still far shorter than "forever",
+// which is what the wait used to be.
+const neverArrivedGrace = 10 * time.Minute
+
+// failDownloadThatNeverArrived fails a download that Bindery reported as
+// grabbed but that never turned up in the download client (#2505).
+//
+// The grab path can report success without the client ever receiving anything:
+// the reporter's case was an unsigned indexer URL answered with 401, but a
+// client that drops the add, or a magnet whose metadata never resolves, land
+// here the same way. Every poll then found the torrent missing, logged
+// "download not found in torrent list" at Debug, and did nothing, because the
+// only thing that acts on a vanished source is the StateImportFailed arm above.
+// The queue item sat at downloading with an empty errorMessage indefinitely,
+// which on screen is indistinguishable from a torrent waiting on peers.
+//
+// Three guards, and all three matter:
+//
+//   - sourceListIsComplete, so absence is definitive. Under a degraded or
+//     category-filtered listing a healthy torrent can be missing from the view
+//     (#1461), and failing on that would be the same mistake in a new place.
+//   - not seen this cycle, the same signal the arm above uses.
+//   - grabbed longer ago than neverArrivedGrace, so a client that is merely
+//     slow to publish the torrent is left alone.
+//
+// The download is failed rather than blocked: nothing was placed on disk and
+// nothing needs unpicking, so this is recoverable by grabbing again. It
+// deliberately does not blocklist the release, because the usual cause is on
+// Bindery's side of the wire and blocklisting a good release for that would
+// cost the user the best copy.
+func (s *Scanner) failDownloadThatNeverArrived(
+	ctx context.Context,
+	dl *models.Download,
+	seenSourceIDs map[int64]bool,
+	sourceListIsComplete bool,
+) {
+	if !sourceListIsComplete || seenSourceIDs[dl.ID] {
+		return
+	}
+	since := dl.AddedAt
+	if dl.GrabbedAt != nil {
+		since = *dl.GrabbedAt
+	}
+	if since.IsZero() || time.Since(since) < neverArrivedGrace {
+		return
+	}
+	const reason = "never reached the download client — the client has no record of it, so nothing was downloaded. Check the indexer and the client are both reachable, then grab it again"
+	slog.Warn("failing a download the client never received",
+		"title", dl.Title, "download_id", dl.ID, "grabbed_at", since)
+	s.markDownloadFailed(ctx, dl, reason)
 }
 
 // alreadyImportedFormat reports whether book already has a tracked, on-disk
