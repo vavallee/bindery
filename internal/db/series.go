@@ -158,7 +158,7 @@ func (r *SeriesRepo) listWithBooksForUser(ctx context.Context, userID int64, ser
 		SELECT s.id, s.foreign_id, s.title, s.description, s.monitored, s.genre_override, s.created_at,
 		       sb.series_id, sb.book_id, sb.position_in_series, sb.primary_series,
 		       b.id, b.foreign_id, b.author_id, b.title, b.sort_title, b.status,
-		       b.monitored, b.image_url, b.release_date, b.created_at, b.updated_at
+		       b.monitored, b.image_url, b.release_date, b.created_at, b.updated_at, b.excluded
 		FROM series s
 		LEFT JOIN series_books sb ON sb.series_id = s.id
 		`+bookJoin+where+`
@@ -176,14 +176,14 @@ func (r *SeriesRepo) listWithBooksForUser(ctx context.Context, userID int64, ser
 		var genreOverride sql.NullString
 		var sbSeriesID, sbBookID, bookID, authorID sql.NullInt64
 		var position sql.NullString
-		var primarySeries, bookMonitored sql.NullInt64
+		var primarySeries, bookMonitored, bookExcluded sql.NullInt64
 		var foreignID, title, sortTitle, status, imageURL sql.NullString
 		var releaseDate, bookCreatedAt, bookUpdatedAt sql.NullTime
 		if err := rows.Scan(
 			&s.ID, &s.ForeignID, &s.Title, &s.Description, &monitored, &genreOverride, &s.CreatedAt,
 			&sbSeriesID, &sbBookID, &position, &primarySeries,
 			&bookID, &foreignID, &authorID, &title, &sortTitle, &status,
-			&bookMonitored, &imageURL, &releaseDate, &bookCreatedAt, &bookUpdatedAt,
+			&bookMonitored, &imageURL, &releaseDate, &bookCreatedAt, &bookUpdatedAt, &bookExcluded,
 		); err != nil {
 			return nil, fmt.Errorf("scan series with books: %w", err)
 		}
@@ -210,6 +210,7 @@ func (r *SeriesRepo) listWithBooksForUser(ctx context.Context, userID int64, ser
 			SortTitle: sortTitle.String,
 			Status:    status.String,
 			Monitored: bookMonitored.Int64 == 1,
+			Excluded:  bookExcluded.Int64 == 1,
 			ImageURL:  imageURL.String,
 		}
 		if releaseDate.Valid {
@@ -436,7 +437,7 @@ func (r *SeriesRepo) GetByIDForUser(ctx context.Context, id, userID int64) (*mod
 	q := `
 		SELECT sb.series_id, sb.book_id, sb.position_in_series, sb.primary_series,
 		       b.id, b.foreign_id, b.author_id, b.title, b.sort_title, b.status,
-		       b.monitored, b.image_url, b.created_at, b.updated_at
+		       b.monitored, b.image_url, b.created_at, b.updated_at, b.excluded
 		FROM series_books sb
 		JOIN books b ON b.id = sb.book_id
 		` + scope + `
@@ -450,16 +451,17 @@ func (r *SeriesRepo) GetByIDForUser(ctx context.Context, id, userID int64) (*mod
 	for bookRows.Next() {
 		var sb models.SeriesBook
 		var b models.Book
-		var monitored, primarySeries int
+		var monitored, excluded, primarySeries int
 		err := bookRows.Scan(
 			&sb.SeriesID, &sb.BookID, &sb.PositionInSeries, &primarySeries,
 			&b.ID, &b.ForeignID, &b.AuthorID, &b.Title, &b.SortTitle, &b.Status,
-			&monitored, &b.ImageURL, &b.CreatedAt, &b.UpdatedAt,
+			&monitored, &b.ImageURL, &b.CreatedAt, &b.UpdatedAt, &excluded,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan series book: %w", err)
 		}
 		b.Monitored = monitored == 1
+		b.Excluded = excluded == 1
 		sb.PrimarySeries = primarySeries == 1
 		sb.Book = &b
 		s.Books = append(s.Books, sb)
