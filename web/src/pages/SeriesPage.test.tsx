@@ -190,6 +190,76 @@ describe('SeriesPage', () => {
     expect(bookLink).toHaveAttribute('href', '/book/102')
   })
 
+  it('does not count an excluded book as missing and marks it excluded (#2324)', async () => {
+    renderSeriesPage(
+      [
+        {
+          id: 30,
+          foreignSeriesId: 'series-30',
+          title: 'Foundation',
+          description: '',
+          monitored: true,
+          books: [
+            {
+              seriesId: 30,
+              bookId: 201,
+              positionInSeries: '1',
+              book: {
+                id: 201,
+                foreignBookId: 'book-201',
+                authorId: 5,
+                title: 'Foundation',
+                description: '',
+                imageUrl: '',
+                releaseDate: '1951-01-01',
+                genres: [],
+                monitored: true,
+                status: 'imported',
+                filePath: '',
+                mediaType: 'ebook',
+                ebookFilePath: '',
+                audiobookFilePath: '',
+                excluded: false,
+              },
+            },
+            {
+              seriesId: 30,
+              bookId: 202,
+              positionInSeries: '2',
+              book: {
+                id: 202,
+                foreignBookId: 'book-202',
+                authorId: 5,
+                title: 'Second Foundation',
+                description: '',
+                imageUrl: '',
+                releaseDate: '1953-01-01',
+                genres: [],
+                monitored: true,
+                status: 'wanted',
+                filePath: '',
+                mediaType: 'ebook',
+                ebookFilePath: '',
+                audiobookFilePath: '',
+                excluded: true,
+              },
+            },
+          ],
+        },
+      ],
+      { version: 'dev', commit: 'unknown', buildDate: '', enhancedHardcoverApi: false, hardcoverTokenConfigured: true },
+    )
+
+    // The only outstanding book is one the user excluded, so the series is not
+    // missing anything and the amber "missing" pill must not show.
+    const heading = await screen.findByRole('heading', { name: 'Foundation' })
+    expect(screen.queryByText('1 missing')).not.toBeInTheDocument()
+
+    // The excluded book carries an "Excluded" marker, not shown as a plain wanted book.
+    fireEvent.click(heading)
+    expect(await screen.findByText('Excluded')).toBeInTheDocument()
+  })
+
   it('opens the Hardcover series link modal from the Search control', async () => {
     vi.mocked(api.autoLinkSeriesHardcover).mockResolvedValue({
       linked: false,

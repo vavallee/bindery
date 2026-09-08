@@ -277,7 +277,9 @@ export default function SeriesPage() {
           {seriesList.map(series => {
             const books = series.books ?? []
             const bookCount = books.length
-            const gapCount = books.filter(b => b.book && b.book.status !== 'imported').length
+            // Excluded books are not a gap: counting them showed a "missing" pill
+            // that Fill could not act on (#2324).
+            const gapCount = books.filter(b => b.book && b.book.status !== 'imported' && !b.book.excluded).length
             const diff = diffs[series.id]
             const hardcoverMissingEstimate = enhancedHardcoverApi ? Math.max(0, (series.hardcoverLink?.hardcoverBookCount ?? 0) - bookCount) : 0
             const hardcoverMissingCount = enhancedHardcoverApi ? (diff?.missingCount ?? hardcoverMissingEstimate) : 0
@@ -421,17 +423,24 @@ export default function SeriesPage() {
                             </p>
                           )}
                         </div>
-                        {entry.book?.status && (
-                          <span className={`ml-auto text-xs px-2 py-0.5 rounded flex-shrink-0 ${
-                            entry.book.status === 'imported'
-                              ? 'bg-emerald-500/20 text-emerald-400'
-                              : entry.book.status === 'wanted'
-                              ? 'bg-amber-500/20 text-amber-400'
-                              : 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400'
-                          }`}>
-                            {entry.book.status}
-                          </span>
-                        )}
+                        <span className="ml-auto flex items-center gap-1 flex-shrink-0">
+                          {entry.book?.status && (
+                            <span className={`text-xs px-2 py-0.5 rounded ${
+                              entry.book.status === 'imported'
+                                ? 'bg-emerald-500/20 text-emerald-400'
+                                : entry.book.status === 'wanted'
+                                ? 'bg-amber-500/20 text-amber-400'
+                                : 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400'
+                            }`}>
+                              {entry.book.status}
+                            </span>
+                          )}
+                          {entry.book?.excluded && (
+                            <span className="text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-400">
+                              Excluded
+                            </span>
+                          )}
+                        </span>
                       </Link>
                     ))}
                   </div>
