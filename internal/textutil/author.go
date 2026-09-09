@@ -51,12 +51,20 @@ func NormalizeAuthorName(name string) string {
 			}
 			b.WriteRune(unicode.ToLower(r))
 			spacePending = false
-		case unicode.Is(unicode.Mn, r):
-			// A mark stripLatinGreekMarks chose to keep, so it belongs to a
-			// script where the mark is part of the letter. It joins the word
-			// rather than breaking it, which is what the default arm would do.
+		case unicode.Is(unicode.Mn, r) && !spacePending && b.Len() > 0:
+			// A mark stripLatinGreekMarks chose to keep, sitting directly on
+			// the letter just written, so it belongs to a script where the mark
+			// is part of that letter. It joins the word rather than breaking
+			// it, which is what the default arm would do.
 			b.WriteRune(r)
-			spacePending = false
+		case unicode.Is(unicode.Mn, r):
+			// The same kind of mark, but floating: it follows a separator or
+			// opens the string, so there is no letter for it to belong to.
+			// Writing it here would swallow the pending boundary and glue two
+			// name tokens into one ("Tanaka ゙Suzuki" keyed as one word), which
+			// is the opposite of what #2452 is for. Dropped, and the boundary
+			// is kept.
+			continue
 		default:
 			spacePending = true
 		}

@@ -91,8 +91,11 @@ func TestCollapseSeriesPositionsPreservesOrder(t *testing.T) {
 // them under the position of the first book they contain and there is no way
 // to tell one from a volume once it has arrived.
 func TestSeriesCatalogQueryExcludesCompilations(t *testing.T) {
-	if !strings.Contains(seriesCatalogQuery, "compilation: {_eq: false}") {
+	if !strings.Contains(seriesCatalogQuery, "{compilation: {_eq: false}}") {
 		t.Error("GetBooksBySeries no longer excludes compilations")
+	}
+	if !strings.Contains(seriesCatalogQuery, "{compilation: {_is_null: true}}") {
+		t.Error("the compilation filter dropped its null arm: an _eq never matches a null in Hasura, so a book with the column unset would vanish from every series catalog")
 	}
 	if !strings.Contains(seriesCatalogQuery, "users_count: desc_nulls_last") {
 		t.Error("GetBooksBySeries no longer orders competing entries by reader count")

@@ -116,3 +116,38 @@ func TestNeverArrived_LeavesARecentGrabAlone(t *testing.T) {
 		t.Errorf("status = %q, want %q: a grab inside the grace period was failed early", got.Status, models.StateDownloading)
 	}
 }
+
+// A download with no recorded source id is unseen because no poller looked it
+// up, not because the client is missing it. Deluge and rTorrent skip such a row
+// before seenSourceIDs, and qBittorrent backfills the hash from a listing
+// match, so failing on absence here would kill a healthy download.
+func TestNeverArrived_LeavesADownloadWithNoRecordedHashAlone(t *testing.T) {
+	s, dlRepo, database, client, ctx := newNeverArrivedFixture(t)
+
+	dl := &models.Download{
+		GUID:             "guid-2505-nohash",
+		Title:            "a book whose hash was never recorded",
+		NZBURL:           "magnet:?xt=urn:btih:whatever",
+		Status:           models.StateDownloading,
+		Protocol:         "torrent",
+		DownloadClientID: &client.ID,
+	}
+	if err := dlRepo.Create(ctx, dl); err != nil {
+		t.Fatalf("create download: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, "UPDATE downloads SET added_at=? WHERE id=?",
+		time.Now().Add(-2*neverArrivedGrace).UTC(), dl.ID); err != nil {
+		t.Fatalf("back-date: %v", err)
+	}
+
+	s.checkQbittorrentDownloads(ctx, client)
+
+	got, err := dlRepo.GetByID(ctx, dl.ID)
+	if err != nil || got == nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Status != models.StateDownloading {
+		t.Errorf("status = %q, want %q: a download with no recorded hash was failed on absence it was never checked for",
+			got.Status, models.StateDownloading)
+	}
+}

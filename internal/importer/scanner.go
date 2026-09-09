@@ -1033,6 +1033,14 @@ func (s *Scanner) failDownloadThatNeverArrived(
 	if !sourceListIsComplete || seenSourceIDs[dl.ID] {
 		return
 	}
+	// No recorded source id means absence from the client's list proves
+	// nothing: every poller skips such a row before it reaches seenSourceIDs,
+	// so it is unseen because it was never looked up, not because it is
+	// missing. qBittorrent backfills the hash from a listing match; Deluge and
+	// rTorrent simply continue. Failing on that would kill a healthy download.
+	if dl.TorrentID == nil && dl.SABnzbdNzoID == nil {
+		return
+	}
 	since := dl.AddedAt
 	if dl.GrabbedAt != nil {
 		since = *dl.GrabbedAt

@@ -16,6 +16,13 @@ const seriesIDPrefix = "hc-series:"
 
 // seriesCatalogQuery fetches a series and the books filed under it.
 //
+// The compilation filter is written as an _or with _is_null rather than a bare
+// _eq: false, because in Hasura an _eq never matches a null. A book whose
+// compilation column is unset would otherwise drop out of every series catalog
+// silently, which is a worse failure than the one this filter is here to fix.
+// Same reasoning as canonical_id above it and authorContributionFilter in
+// client.go.
+//
 // Omnibus editions are excluded here rather than filtered after the fact:
 // Hardcover files a box set under the position of the first book it contains,
 // so "Harry Potter Collection #1-6", "Harry Potter Boxed Set" and "The Harry
@@ -39,7 +46,10 @@ const seriesCatalogQuery = `query GetBooksBySeries($seriesId: Int!) {
 				where: {
 					book: {
 						canonical_id: {_is_null: true}
-						compilation: {_eq: false}
+						_or: [
+							{compilation: {_eq: false}}
+							{compilation: {_is_null: true}}
+						]
 					}
 				}
 			) {

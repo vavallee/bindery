@@ -212,3 +212,31 @@ func TestNormalizeAuthorName_StillFoldsLatinAndGreek(t *testing.T) {
 		}
 	}
 }
+
+// A mark that follows a separator has no letter to belong to. Attaching it
+// anyway swallowed the boundary and glued two name tokens into one key, which
+// is the opposite of what #2452 is for.
+func TestNormalizeAuthorName_FloatingMarkKeepsTheWordBoundary(t *testing.T) {
+	cases := map[string]string{
+		"Tanaka ゙Suzuki": "tanaka suzuki",
+		"abc ́def":       "abc def",
+		"Ono ́ Yoko":     "ono yoko",
+		"゙abc":           "abc",
+	}
+	for in, want := range cases {
+		if got := NormalizeAuthorName(in); got != want {
+			t.Errorf("NormalizeAuthorName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// The mark still attaches when it sits on the letter before it, which is the
+// whole point of the change: ズ must not key as ス.
+func TestNormalizeAuthorName_AttachedMarkStillCounts(t *testing.T) {
+	if NormalizeAuthorName("ズ") == NormalizeAuthorName("ス") {
+		t.Error("ズ and ス share one identity key again")
+	}
+	if got, want := NormalizeAuthorName("ハード"), "ハード"; got != want {
+		t.Errorf("NormalizeAuthorName(ハード) = %q, want %q", got, want)
+	}
+}
