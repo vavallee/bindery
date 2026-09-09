@@ -961,6 +961,25 @@ export default function BookDetailPage() {
                   disabled: !hasAnyFile || deletingFile || deregistering || deletingBook,
                   onSelect: () => setDeleteTarget({ paths: rows.map(r => r.path) }),
                 },
+                {
+                  // Was a "Danger zone" section of its own: a heading, a
+                  // rose-tinted full-width card and the page's only solid red
+                  // button, for one action. AuthorDetailPage has always put the
+                  // equivalent Delete in this menu with danger styling, so the
+                  // two pages disagreed about what deleting a thing looks like
+                  // and the book page shouted.
+                  //
+                  // Nothing is hidden: the item is one click from where it
+                  // always was, it keeps its own confirm dialog, and unlike
+                  // every other item here it is NOT gated on hasAnyFile,
+                  // because a wanted book with no file is still a book you may
+                  // want to delete.
+                  label: t('bookDetail.deleteBook'),
+                  title: t('bookDetail.dangerBody'),
+                  danger: true,
+                  disabled: deletingBook || deletingFile,
+                  onSelect: () => setShowDeleteBook(true),
+                },
               ]}
             />
           </div>
@@ -1128,27 +1147,6 @@ export default function BookDetailPage() {
           </>
         </Section>
       )}
-
-      {/* ===== Danger zone ===== */}
-      <Section
-        title={t('bookDetail.dangerHeading')}
-        tone="danger"
-        cardClassName="p-4 flex flex-col sm:flex-row sm:items-center gap-4"
-      >
-        <p className="text-sm text-slate-600 dark:text-zinc-400 flex-1">
-          {t('bookDetail.dangerBody')}
-        </p>
-        {/* The only solid-red control on the page. Deleting the book and every
-            file on disk is the one genuinely irreversible action here. */}
-        <button
-          type="button"
-          onClick={() => setShowDeleteBook(true)}
-          disabled={deletingBook || deletingFile}
-          className={`shrink-0 ${btn.dangerSolid} ${btnSize.md}`}
-        >
-          {t('bookDetail.deleteBook')}
-        </button>
-      </Section>
 
       {showEdit && (
         <EditBookModal

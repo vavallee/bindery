@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import Alert from '../../components/Alert'
 import {
   api,
   CalibreImportProgress,
@@ -763,10 +764,13 @@ function CalibreRollbackModal({
               </div>
 
               {display.stats.filesAffected > 0 && (
-                <div className="rounded border border-amber-300 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
-                  <p className="font-medium">{t('settings.calibre.runs.filesAffected', { count: display.stats.filesAffected })}</p>
-                  <p>{display.filesOnDiskWarning || t('settings.calibre.runs.filesOnDiskWarning')}</p>
-                </div>
+                <Alert
+                  tier="warning"
+                  className="text-xs"
+                  title={t('settings.calibre.runs.filesAffected', { count: display.stats.filesAffected })}
+                >
+                  {display.filesOnDiskWarning || t('settings.calibre.runs.filesOnDiskWarning')}
+                </Alert>
               )}
 
               <div>

@@ -841,7 +841,8 @@ describe('BookDetailPage — danger zone', () => {
   it('opens the confirm modal and keeps confirm disabled until acknowledged', async () => {
     renderBookDetailPage()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Delete book + files…' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'More' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete book + files…' }))
 
     const confirm = await screen.findByRole('button', { name: 'Delete book + files' })
     expect(confirm).toBeDisabled()
@@ -853,7 +854,8 @@ describe('BookDetailPage — danger zone', () => {
   it('calls api.deleteBook only after acknowledging and confirming', async () => {
     renderBookDetailPage()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Delete book + files…' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'More' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete book + files…' }))
     fireEvent.click(screen.getByRole('checkbox', { name: /I understand/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Delete book + files' }))
 
@@ -863,7 +865,8 @@ describe('BookDetailPage — danger zone', () => {
   it('does not call api.deleteBook when the modal is cancelled', async () => {
     renderBookDetailPage()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Delete book + files…' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'More' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete book + files…' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
 
     await waitFor(() =>
@@ -876,7 +879,8 @@ describe('BookDetailPage — danger zone', () => {
     vi.mocked(api.getBook).mockResolvedValue(makeBook({ filePath: '/library/book.epub' }))
     renderBookDetailPage()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Delete book + files…' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'More' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete book + files…' }))
     fireEvent.click(screen.getByRole('checkbox', { name: /I understand/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Delete book + files' }))
 
@@ -994,14 +998,32 @@ describe('BookDetailPage — header', () => {
     ).toBeTruthy()
   })
 
-  it('keeps solid red for Delete book and ghost-danger for Delete file', async () => {
+  // Deleting the book used to own a "Danger zone" section: a heading, a
+  // rose-tinted full-width card and the page's only solid red button, for one
+  // action. AuthorDetailPage has always carried the equivalent Delete as a
+  // danger item in its More menu, so the two pages disagreed and the book page
+  // shouted. It now matches: red TEXT in the menu, no solid red anywhere on the
+  // page itself, and the solid red kept for the confirm dialog, which is where
+  // the decision is actually made.
+  it('carries Delete book as a danger menu item, with no solid red on the page', async () => {
     vi.mocked(api.getBook).mockResolvedValue(makeBook({ filePath: '/library/book.epub' }))
     renderBookDetailPage()
+
     const deleteFile = await screen.findByRole('button', { name: /Delete file/ })
-    const deleteBook = screen.getByRole('button', { name: /Delete book/ })
-    // Solid red is reserved for the irreversible one.
-    expect(deleteBook.className).toContain('bg-red-600')
     expect(deleteFile.className).not.toContain('bg-red-600')
+
+    fireEvent.click(screen.getByRole('button', { name: 'More' }))
+    const deleteBook = await screen.findByRole('menuitem', { name: 'Delete book + files…' })
+    expect(deleteBook.className).toContain('text-red-700')
+    expect(deleteBook.className).not.toContain('bg-red-600')
+  })
+
+  // The section is gone, not restyled. A heading that names a zone is the thing
+  // that made one action look like a region of the page.
+  it('no longer renders a Danger zone heading', async () => {
+    renderBookDetailPage()
+    await screen.findByRole('heading', { name: 'File' })
+    expect(screen.queryByRole('heading', { name: /Danger zone/i })).toBeNull()
   })
 })
 

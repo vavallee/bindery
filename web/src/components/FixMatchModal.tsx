@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, Book, ReassignPreview } from '../api/client'
+import Alert from './Alert'
 
 type Props = {
   sourceBookId: number
@@ -189,23 +190,24 @@ export default function FixMatchModal({ sourceBookId, path, format, onClose, onR
             </p>
 
             {movesOnDisk && (
-              <div className="mt-3 rounded border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/30 p-3">
-                <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
-                  {t('bookDetail.fixMatch.confirmHeading', 'This moves and renames the file on disk')}
-                </p>
-                <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">
+              <Alert
+                tier="warning"
+                className="mt-3"
+                title={t('bookDetail.fixMatch.confirmHeading', 'This moves and renames the file on disk')}
+              >
+                <p className="text-xs">
                   {t(
                     'bookDetail.fixMatch.confirmBody',
                     'Bindery runs the full import against the chosen book, so the file is moved into that book’s folder and renamed from your naming template. Whatever folder layout you had for this file is replaced.',
                   )}
                 </p>
-                <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
+                <p className="mt-2 text-xs">
                   {t(
                     'bookDetail.fixMatch.noUndo',
                     'The move starts in the background as soon as you confirm, and Bindery cannot undo it for you.',
                   )}
                 </p>
-              </div>
+              </Alert>
             )}
 
             {!movesOnDisk && (
