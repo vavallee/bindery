@@ -50,6 +50,8 @@ func TestFilterRelevantIdentityCompatibility(t *testing.T) {
 		{"The Lord of the Rings", "J.R.R. Tolkien", "Lord Rings EPUB", true},
 		{"The Lord of the Rings", "J.R.R. Tolkien", "The Lord of the Rings by J. R. R. Tolkien EPUB", true},
 		{"Death by Black Hole", "Neil deGrasse Tyson", "Death by Black Hole EPUB", true},
+		{"Death by Black Hole", "Neil deGrasse Tyson", "Death by Black Hole by Neil deGrasse Tyson EPUB", true},
+		{"Death by Black Hole", "Neil deGrasse Tyson", "Death by Black Hole by Edward Luttwak EPUB", false},
 	}
 	for _, c := range cases {
 		t.Run(c.release, func(t *testing.T) {

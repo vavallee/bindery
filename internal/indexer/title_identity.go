@@ -25,7 +25,7 @@ func conflictingTitleAuthor(release, title string, authorSets [][]string) bool {
 	normalizedTitle := NormalizeRelease(title)
 	normalizedRelease := NormalizeRelease(release)
 	var attribution string
-	if before, after, ok := strings.Cut(normalizedRelease, " by "); ok && before == normalizedTitle {
+	if after, ok := strings.CutPrefix(normalizedRelease, normalizedTitle+" by "); ok {
 		attribution = after
 	} else {
 		for _, separator := range []string{" - ", " – ", " — "} {
