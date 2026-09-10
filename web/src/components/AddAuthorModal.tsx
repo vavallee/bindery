@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, AddAuthorRequest, Author, AuthorConflictBody, AuthorMonitorMode, MediaType, MetadataProfile, RootFolder } from '../api/client'
+import { api, AddAuthorRequest, Author, AuthorConflictBody, AuthorMonitorMode, MonitorNewItems, MediaType, MetadataProfile, RootFolder } from '../api/client'
 import { splitAuthorSearchResults } from './addAuthorTitleGuard'
 import { useNeedsSetup } from './useNeedsSetup'
 import { authorProviderKey, canLinkAuthorMetadata, hasSparseMetadata } from '../util/authorMetadata'
@@ -67,6 +67,10 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
   const [monitorMode, setMonitorMode] = useState<AuthorMonitorMode>(DEFAULT_MONITOR_MODE)
   const [monitorLatestCount, setMonitorLatestCount] = useState(DEFAULT_MONITOR_LATEST_COUNT)
   const [monitorOptionsChanged, setMonitorOptionsChanged] = useState(false)
+  // Sent only when touched, so the install-wide default (#2217) still applies
+  // to an untouched dialog.
+  const [monitorNewItems, setMonitorNewItems] = useState<MonitorNewItems>('all')
+  const [monitorNewItemsChanged, setMonitorNewItemsChanged] = useState(false)
   // The configured primary metadata provider, when one is explicitly set.
   // Used to flag results that would sync from another provider (#2237):
   // Hardcover's author search misses some canonical records, and the add flow
@@ -184,6 +188,9 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
         request.monitorMode = monitorMode
         request.monitorLatestCount = monitorLatestCount
       }
+      if (monitorNewItemsChanged) {
+        request.monitorNewItems = monitorNewItems
+      }
       await api.addAuthor(request)
       try {
         localStorage.setItem(AUTO_GRAB_STORAGE_KEY, String(searchOnAdd))
@@ -291,10 +298,16 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
               </p>
             )}
 
-            <details className="mt-4 rounded-md border border-slate-300 dark:border-zinc-700">
-              <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium hover:bg-slate-200/60 dark:hover:bg-zinc-800/60">
+            {/* Not collapsed. These controls decide whether adding an author is
+                a trickle or a flood, and the product people arrive from
+                (Readarr) shows them directly with a help line each. Hidden
+                behind a closed disclosure they were found only by people who
+                already knew what to look for, and the recurring support
+                question "why do I have 100 wanted books" is what that cost. */}
+            <section className="mt-4 rounded-md border border-slate-300 dark:border-zinc-700" aria-labelledby="add-author-monitoring-heading">
+              <h4 id="add-author-monitoring-heading" className="px-3 py-2 text-sm font-medium">
                 {t('addAuthorModal.customizeMonitoring')}
-              </summary>
+              </h4>
               <div className="space-y-3 border-t border-slate-300 dark:border-zinc-700 p-3">
                 {profiles.length > 1 && (
                   <div>
@@ -324,7 +337,7 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
                   <label htmlFor="add-author-monitor-mode" className="block text-xs text-fg-muted mb-1">{t('addAuthorModal.monitorMode')}</label>
                   <select id="add-author-monitor-mode" value={monitorMode} onChange={e => { setMonitorMode(e.target.value as AuthorMonitorMode); setMonitorOptionsChanged(true) }} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500">
                     <option value="all">{t('monitorMode.all', 'All books')}</option>
-                    <option value="future">{t('monitorMode.future', 'Future books only')}</option>
+                    <option value="future">{t('monitorMode.future', 'Future books only (grows on refresh)')}</option>
                     <option value="latest">{t('monitorMode.latest', 'Latest only')}</option>
                     <option value="none">{t('monitorMode.none', 'None')}</option>
                   </select>
@@ -336,6 +349,25 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
                     <input id="add-author-latest-count" type="number" min={1} value={monitorLatestCount} onChange={e => { setMonitorLatestCount(Math.max(1, Number(e.target.value) || 1)); setMonitorOptionsChanged(true) }} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500" />
                   </div>
                 )}
+                <div>
+                  <label htmlFor="add-author-monitor-new-items" className="block text-xs text-fg-muted mb-1">{t('addAuthorModal.monitorNewItems')}</label>
+                  <select id="add-author-monitor-new-items" value={monitorNewItems} onChange={e => { setMonitorNewItems(e.target.value as MonitorNewItems); setMonitorNewItemsChanged(true) }} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500">
+                    <option value="all">{t('monitorNewItems.all', 'Follow monitor mode')}</option>
+                    <option value="none">{t('monitorNewItems.none', 'Don’t add them')}</option>
+                  </select>
+                  <span className="block text-xs text-fg-muted mt-1">{t('addAuthorModal.monitorNewItemsHint')}</span>
+                </div>
+                {/* The consequence, stated before the button is pressed. The
+                    count is the provider's raw work count from the search
+                    result; the catalogue that actually lands is smaller after
+                    dedup and filtering, hence "up to". */}
+                <p className="text-sm text-slate-700 dark:text-zinc-300 rounded-md bg-slate-200/60 dark:bg-zinc-800/60 px-3 py-2" data-testid="add-author-outcome">
+                  {(() => {
+                    const count = selectedAuthor.statistics?.bookCount ?? 0
+                    const key = count > 0 ? `addAuthorModal.outcome.${monitorMode}` : `addAuthorModal.outcomeNoCount.${monitorMode}`
+                    return t(key, { count, latest: monitorLatestCount })
+                  })()}
+                </p>
                 <label className="flex items-start gap-2 text-sm cursor-pointer select-none">
                   <input type="checkbox" checked={searchOnAdd} onChange={e => setSearchOnAdd(e.target.checked)} className="accent-emerald-500 mt-0.5 flex-shrink-0" />
                   <span>
@@ -351,7 +383,7 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
                   </p>
                 )}
               </div>
-            </details>
+            </section>
 
             {addError && (
               <div role="alert" className="mt-3 px-3 py-2 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900 rounded text-sm text-red-800 dark:text-red-300">

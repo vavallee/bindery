@@ -420,8 +420,13 @@ Knowing the edges saves time:
 
 **I added one author and now have 100+ wanted books.**
 Monitor mode *All books* on a prolific author. Bulk-select on the author page
-and Unmonitor or Exclude; set the default monitor mode to *Future books only*
-in Settings → Metadata Profiles → Library Defaults before adding more.
+and Unmonitor or Exclude. Before adding more, pick a different mode on the Add
+Author dialog (it shows how many books will arrive and what will be searched
+for), or change the default in Settings → Metadata Profiles → Library
+Defaults. *None* lists the catalogue and searches for nothing. *Future books
+only* searches only for unreleased titles, and note that new releases join
+the list when you refresh the author, not on their own
+([#2236](https://github.com/vavallee/bindery/issues/2236)).
 
 **Scan Library sees my files but imports nothing.**
 Rule 1 — the catalogue is empty or the authors don't exist yet. Populate

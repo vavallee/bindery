@@ -181,6 +181,7 @@ export interface AddAuthorRequest {
   monitored: boolean
   monitorMode?: AuthorMonitorMode
   monitorLatestCount?: number
+  monitorNewItems?: MonitorNewItems
   searchOnAdd: boolean
   metadataProfileId?: number | null
   qualityProfileId?: number | null

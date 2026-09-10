@@ -500,8 +500,13 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Monitored             bool    `json:"monitored"`
 		MonitorMode           *string `json:"monitorMode"`
 		MonitorLatestCount    *int    `json:"monitorLatestCount"`
-		SearchOnAdd           bool    `json:"searchOnAdd"`
-		MediaType             string  `json:"mediaType"`
+		// Settable at add time as of the Add Author redesign: before this it
+		// could only be changed on the author afterwards, so "catalogue this
+		// author once and never let a refresh grow it" was not expressible
+		// when adding. Same validation as Update.
+		MonitorNewItems *string `json:"monitorNewItems"`
+		SearchOnAdd     bool    `json:"searchOnAdd"`
+		MediaType       string  `json:"mediaType"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -512,6 +517,15 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	monitorMode, monitorLatestCount, err := h.resolveCreateMonitorOptions(r.Context(), req.MonitorMode, req.MonitorLatestCount)
+	monitorNewItems := models.DefaultAuthorMonitorNewItems
+	if req.MonitorNewItems != nil {
+		v := strings.TrimSpace(*req.MonitorNewItems)
+		if !models.IsAuthorMonitorNewItemsValid(v) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid monitorNewItems"})
+			return
+		}
+		monitorNewItems = v
+	}
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -546,7 +560,7 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if canonical != nil {
 		if canRelinkAuthorToUpstream(canonical) {
-			if err := h.relinkExistingAuthorToUpstream(r.Context(), canonical, author, req.Name, req.Monitored, monitorMode, monitorLatestCount, req.QualityProfileID, req.MetadataProfileID, req.RootFolderID, req.AudiobookRootFolderID); err != nil {
+			if err := h.relinkExistingAuthorToUpstream(r.Context(), canonical, author, req.Name, req.Monitored, monitorMode, monitorLatestCount, monitorNewItems, req.QualityProfileID, req.MetadataProfileID, req.RootFolderID, req.AudiobookRootFolderID); err != nil {
 				if isAuthorIdentityConflict(err) {
 					writeJSON(w, http.StatusConflict, map[string]string{"error": "upstream author already exists locally"})
 					return
@@ -573,6 +587,7 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	applyAuthorCreateOptions(author, req.Monitored, monitorMode, monitorLatestCount, req.QualityProfileID, req.MetadataProfileID, req.RootFolderID, req.AudiobookRootFolderID)
+	author.MonitorNewItems = monitorNewItems
 
 	if err := h.authors.CreateForUser(r.Context(), author, auth.UserIDFromContext(r.Context())); err != nil {
 		slog.Error("create author failed", "foreign_id", req.ForeignID, "error", err)
@@ -795,7 +810,7 @@ func isAuthorIdentityConflict(err error) bool {
 	return err != nil && (strings.Contains(err.Error(), "UNIQUE constraint failed") || errors.Is(err, db.ErrAuthorIdentifierConflict))
 }
 
-func (h *AuthorHandler) relinkExistingAuthorToUpstream(ctx context.Context, author, upstream *models.Author, requestedName string, monitored bool, monitorMode string, monitorLatestCount int, qualityProfileID, metadataProfileID, rootFolderID, audiobookRootFolderID *int64) error {
+func (h *AuthorHandler) relinkExistingAuthorToUpstream(ctx context.Context, author, upstream *models.Author, requestedName string, monitored bool, monitorMode string, monitorLatestCount int, monitorNewItems string, qualityProfileID, metadataProfileID, rootFolderID, audiobookRootFolderID *int64) error {
 	if author == nil || upstream == nil {
 		return errors.New("author relink requires local and upstream authors")
 	}
@@ -833,6 +848,7 @@ func (h *AuthorHandler) relinkExistingAuthorToUpstream(ctx context.Context, auth
 		author.MetadataProvider = "openlibrary"
 	}
 	applyAuthorCreateOptions(author, monitored, monitorMode, monitorLatestCount, qualityProfileID, metadataProfileID, rootFolderID, audiobookRootFolderID)
+	author.MonitorNewItems = monitorNewItems
 	if oldForeignID != "" {
 		if err := h.authors.UpsertAuthorIdentifier(ctx, author.ID, oldForeignID); err != nil {
 			return err
@@ -1294,7 +1310,7 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.relinkExistingAuthorToUpstream(r.Context(), author, upstream, author.Name, author.Monitored, author.MonitorMode, author.MonitorLatestCount, author.QualityProfileID, author.MetadataProfileID, author.RootFolderID, author.AudiobookRootFolderID); err != nil {
+	if err := h.relinkExistingAuthorToUpstream(r.Context(), author, upstream, author.Name, author.Monitored, author.MonitorMode, author.MonitorLatestCount, models.NormalizeAuthorMonitorNewItems(author.MonitorNewItems), author.QualityProfileID, author.MetadataProfileID, author.RootFolderID, author.AudiobookRootFolderID); err != nil {
 		if isAuthorIdentityConflict(err) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "upstream author already exists locally"})
 			return
