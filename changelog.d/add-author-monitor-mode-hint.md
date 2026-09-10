@@ -1,0 +1,2 @@
+### Changed
+- **Add Author now says what Monitor mode actually controls** — the dropdown offered All books, Future books only, Latest only and None with nothing explaining them, and the one sentence that resolves the usual confusion sat under the auto-grab toggle instead. A line under the control now says the whole catalogue is added either way and the mode only decides which of those books Bindery searches for and downloads.

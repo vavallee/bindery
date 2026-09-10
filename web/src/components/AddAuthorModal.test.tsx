@@ -13,6 +13,7 @@ vi.mock('react-i18next', () => ({
         'addAuthorModal.customizeMonitoring': 'Customize monitoring',
         'addAuthorModal.mediaType': 'Media type',
         'addAuthorModal.monitorMode': 'Monitor mode',
+        'addAuthorModal.monitorModeHint': 'The whole catalogue is added either way. This only decides which of those books Bindery searches for and downloads.',
         'addAuthorModal.monitorLatestCount': 'Latest book count',
         'addAuthorModal.noResults': 'No results found',
         'addAuthorModal.openExisting': 'Open existing author',
@@ -339,6 +340,39 @@ describe('AddAuthorModal — search error handling', () => {
     const callArg = vi.mocked(api.addAuthor).mock.calls[0][0]
     expect('monitorMode' in callArg).toBe(false)
     expect('monitorLatestCount' in callArg).toBe(false)
+  })
+
+  it('says the catalogue arrives whatever the monitor mode is', async () => {
+    // The most common confusion in support: monitor mode reads as "which
+    // books get added". It is not. Every book is catalogued either way and
+    // the mode only decides what gets searched for, which the auto-grab hint
+    // said in passing under a different control.
+    vi.mocked(api.searchAuthors).mockResolvedValue([
+      {
+        id: 0,
+        foreignAuthorId: 'OL26320A',
+        authorName: 'J.R.R. Tolkien',
+        sortName: 'Tolkien, J.R.R.',
+        description: '',
+        imageUrl: '',
+        disambiguation: '',
+        ratingsCount: 0,
+        averageRating: 0,
+        monitored: true,
+      },
+    ])
+
+    render(<AddAuthorModal onClose={onClose} onAdded={onAdded} />)
+    fireEvent.change(screen.getByPlaceholderText('Search by author name...'), {
+      target: { value: 'tolkien' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
+    await waitFor(() => expect(screen.getByText('J.R.R. Tolkien')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }))
+    fireEvent.click(screen.getByText('Customize monitoring'))
+
+    await waitFor(() => expect(screen.getByLabelText('Monitor mode')).toBeInTheDocument())
+    expect(screen.getByText(/whole catalogue is added either way/i)).toBeInTheDocument()
   })
 
   it('sends monitor overrides when the controls are changed', async () => {

@@ -328,6 +328,7 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
                     <option value="latest">{t('monitorMode.latest', 'Latest only')}</option>
                     <option value="none">{t('monitorMode.none', 'None')}</option>
                   </select>
+                  <span className="block text-xs text-fg-muted mt-1">{t('addAuthorModal.monitorModeHint')}</span>
                 </div>
                 {monitorMode === 'latest' && (
                   <div>

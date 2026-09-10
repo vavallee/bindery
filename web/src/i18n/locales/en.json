@@ -1041,6 +1041,7 @@
     "metadataProfile": "Metadata profile",
     "rootFolder": "Root folder",
     "monitorMode": "Monitor mode",
+    "monitorModeHint": "The whole catalogue is added either way. This only decides which of those books Bindery searches for and downloads.",
     "monitorLatestCount": "Latest book count",
     "mediaType": "Media type",
     "select": "Select",
