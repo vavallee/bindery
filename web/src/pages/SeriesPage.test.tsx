@@ -95,6 +95,29 @@ describe('SeriesPage', () => {
     expect(api.getSeriesHardcoverDiff).not.toHaveBeenCalled()
   })
 
+  it('does not promise automatic checks the code never runs', async () => {
+    // series.monitored is written by this toggle and read back for display,
+    // and nothing else consumes it: no scheduled job checks a series for new
+    // books and Fill gaps ignores the flag. The label used to say "Monitor
+    // series" / "Monitored", which is what led to #2523. It must not claim
+    // recurring attention until something actually schedules it.
+    renderSeriesPage([{
+      id: 13,
+      foreignSeriesId: 'series-13',
+      title: 'Mistborn',
+      description: '',
+      monitored: true,
+      books: [],
+    }])
+
+    await screen.findByRole('heading', { name: 'Mistborn' })
+    expect(screen.getByText('Shortlisted')).toBeInTheDocument()
+    expect(screen.queryByText('Monitored')).toBeNull()
+    expect(screen.queryByRole('switch', { name: /monitor/i })).toBeNull()
+    const toggle = screen.getByRole('switch', { name: /shortlist/i })
+    expect(toggle).toHaveAttribute('title', expect.stringContaining('does not yet check'))
+  })
+
   it('offers a genre override before a series has books', async () => {
     vi.mocked(api.applySeriesGenres).mockResolvedValue({ updated: 0 })
     const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('Fantasy, Epic')
