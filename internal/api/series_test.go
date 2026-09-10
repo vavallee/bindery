@@ -2044,6 +2044,97 @@ func TestSeriesFillSkipsExcludedHardcoverForeignIDMatch(t *testing.T) {
 	}
 }
 
+// TestSeriesFillMatchesASavedAlternateForeignID covers the identity half of
+// #2524: a book the library already holds under a different provider's id
+// carries that id in book_identifiers (#1705). Fill matched only the primary
+// foreign_id column, so the same work came back as a second row and got queued
+// for download.
+func TestSeriesFillMatchesASavedAlternateForeignID(t *testing.T) {
+	catalog := stormlightCatalog()
+	searcher := newMockBookSearcher()
+	h, seriesRepo, authorRepo, bookRepo := seriesFixtureWithProvider(t, &stubSeriesProvider{
+		catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
+	}, searcher)
+	ctx := context.Background()
+	series := &models.Series{ForeignID: "ol-series:stormlight", Title: "The Stormlight Archive"}
+	if err := seriesRepo.Create(ctx, series); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.UpsertHardcoverLink(ctx, &models.SeriesHardcoverLink{
+		SeriesID:            series.ID,
+		HardcoverSeriesID:   catalog.ForeignID,
+		HardcoverProviderID: catalog.ProviderID,
+		HardcoverTitle:      catalog.Title,
+		HardcoverAuthorName: catalog.AuthorName,
+		HardcoverBookCount:  catalog.BookCount,
+		Confidence:          1,
+		LinkedBy:            "manual",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	author := &models.Author{
+		ForeignID:        "hc:brandon-sanderson",
+		Name:             "Brandon Sanderson",
+		SortName:         "Sanderson, Brandon",
+		MetadataProvider: "hardcover",
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	// The library holds the book under its OpenLibrary identity, with the
+	// Hardcover id recorded as an alternate. The stored title is the German
+	// edition's, so the title-similarity fallback cannot rescue this: the
+	// saved identifier is the only thing that says these are one work, which
+	// is the case #2524 is about.
+	book := &models.Book{
+		ForeignID:        "ol:OL1W",
+		AuthorID:         author.ID,
+		Title:            "Der Weg der Koenige",
+		SortTitle:        "Weg der Koenige, Der",
+		Status:           models.BookStatusImported,
+		Genres:           []string{},
+		MetadataProvider: "openlibrary",
+	}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := bookRepo.UpsertBookIdentifier(ctx, book.ID, "hc:the-way-of-kings"); err != nil {
+		t.Fatal(err)
+	}
+
+	body := bytes.NewBufferString(`{"foreignBookId":"hc:the-way-of-kings","providerId":"101","position":"1"}`)
+	rec := httptest.NewRecorder()
+	h.Fill(rec, withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/series/1/fill", body), "id", strconv.FormatInt(series.ID, 10)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var response map[string]int
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response["queued"] != 0 {
+		t.Fatalf("an already-held book must not be queued, got %+v", response)
+	}
+	searcher.assertNoCall(t, 50*time.Millisecond)
+
+	// Exactly one book row, and it is the one already in the library, now
+	// linked into the series.
+	all, err := bookRepo.ListByAuthorIncludingExcluded(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 || all[0].ID != book.ID {
+		t.Fatalf("expected the existing row to be reused, got %+v", all)
+	}
+	linked, err := seriesRepo.ListBooksInSeries(ctx, series.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(linked) != 1 || linked[0].ID != book.ID {
+		t.Fatalf("expected the existing book linked into the series, got %+v", linked)
+	}
+}
+
 func TestSeriesFillSkipsExcludedHardcoverTitleMatch(t *testing.T) {
 	catalog := stormlightCatalog()
 	catalog.Books[0].ForeignID = "hc:the-way-of-kings-new"

@@ -1571,7 +1571,11 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 	if book.ForeignID == "" {
 		book.ForeignID = "hc:" + catalogBook.ProviderID
 	}
-	if existing, err := h.books.GetByForeignID(ctx, book.ForeignID); err != nil {
+	// GetByAnyForeignID, not GetByForeignID: a book the library already holds
+	// under a different provider's id carries that id in book_identifiers
+	// (#1705), and matching only the primary column made Fill create a second
+	// row for the same work and queue it for download. Raised in #2524.
+	if existing, err := h.books.GetByAnyForeignID(ctx, book.ForeignID); err != nil {
 		return nil, err
 	} else if existing != nil {
 		if existing.Excluded {

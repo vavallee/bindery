@@ -1,0 +1,2 @@
+### Fixed
+- **Series fill no longer re-adds a book you already have under another provider's id** (#2524) — filling gaps matched a catalogue entry against a book's primary identifier only, so a work already in the library under, say, its OpenLibrary identity was treated as missing and queued for download again. It now also checks the alternate identifiers Bindery records for each book, which is what catches translations and foreign editions where the titles do not match either. Thanks magrhino for the report.
