@@ -1297,6 +1297,14 @@ func buildHardcoverDiff(ctx context.Context, books *db.BookRepo, userID int64, s
 		if _, ok := matchedCatalog[i]; ok {
 			continue
 		}
+		// The same unconditional bundle prune the add path applies (#2239).
+		// Without it the diff offered an Add button on a box set that
+		// fillHardcoverCatalogBook then silently refused, and counted it in
+		// "N missing" so a complete series never read as complete. Reported
+		// by magrhino in #2524 against a real Stormlight catalogue.
+		if title := firstNonEmpty(book.Book.Title, book.Title); metadata.IsUnambiguousBundleTitle(title) {
+			continue
+		}
 		item := catalogDiffBook(book, catalog.AuthorName)
 		enrichMissingDiffBook(ctx, books, userID, book, &item)
 		diff.Missing = append(diff.Missing, item)

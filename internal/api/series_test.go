@@ -1189,6 +1189,82 @@ func TestBuildHardcoverDiffEnrichesMissingWithOwnedLibraryBook(t *testing.T) {
 	}
 }
 
+// TestSeriesHardcoverDiffPrunesBundleTitles covers the display half of #2524:
+// the diff listed every unclaimed catalogue entry as missing, including the
+// box sets that fillHardcoverCatalogBook refuses (#2239). The result was an
+// Add button that silently did nothing and a "N missing" count a complete
+// series could never clear.
+func TestSeriesHardcoverDiffPrunesBundleTitles(t *testing.T) {
+	catalog := stormlightCatalog()
+	catalog.Books = append(catalog.Books,
+		metadata.SeriesCatalogBook{
+			ForeignID:  "hc:stormlight-box-set",
+			ProviderID: "900",
+			Title:      "The Stormlight Archive 3 Books Collection Set",
+			Position:   "",
+			Book: models.Book{
+				ForeignID: "hc:stormlight-box-set",
+				Title:     "The Stormlight Archive 3 Books Collection Set",
+				Author:    catalog.Books[0].Book.Author,
+			},
+		},
+		metadata.SeriesCatalogBook{
+			ForeignID:  "hc:oathbringer",
+			ProviderID: "103",
+			Title:      "Oathbringer",
+			Position:   "3",
+			Book: models.Book{
+				ForeignID: "hc:oathbringer",
+				Title:     "Oathbringer",
+				Author:    catalog.Books[0].Book.Author,
+			},
+		},
+	)
+	catalog.BookCount = len(catalog.Books)
+	h, seriesRepo, _, _ := seriesFixtureWithProvider(t, &stubSeriesProvider{
+		catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
+	}, nil)
+	ctx := context.Background()
+	series := &models.Series{ForeignID: "manual:series:stormlight", Title: "Stormlight"}
+	if err := seriesRepo.Create(ctx, series); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.UpsertHardcoverLink(ctx, &models.SeriesHardcoverLink{
+		SeriesID:            series.ID,
+		HardcoverSeriesID:   catalog.ForeignID,
+		HardcoverProviderID: catalog.ProviderID,
+		HardcoverTitle:      catalog.Title,
+		HardcoverAuthorName: catalog.AuthorName,
+		HardcoverBookCount:  catalog.BookCount,
+		Confidence:          1,
+		LinkedBy:            "manual",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.HardcoverDiff(rec, withURLParam(httptest.NewRequest(http.MethodGet, "/api/v1/series/1/hardcover-diff", nil), "id", strconv.FormatInt(series.ID, 10)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var got seriesHardcoverDiffResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range got.Missing {
+		if item.ForeignBookID == "hc:stormlight-box-set" {
+			t.Fatalf("the box set the add path refuses must not be offered as missing: %+v", got.Missing)
+		}
+	}
+	if got.MissingCount != len(got.Missing) {
+		t.Fatalf("missingCount %d disagrees with the list length %d", got.MissingCount, len(got.Missing))
+	}
+	// The real books are untouched.
+	if len(got.Missing) != 2 {
+		t.Fatalf("missing = %+v, want The Way of Kings and Oathbringer", got.Missing)
+	}
+}
+
 func TestSeriesHardcoverDiffEndpointErrors(t *testing.T) {
 	catalog := stormlightCatalog()
 	h, seriesRepo, _, _ := seriesFixtureWithProvider(t, &stubSeriesProvider{
