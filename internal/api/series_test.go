@@ -2211,6 +2211,141 @@ func TestSeriesFillMatchesASavedAlternateForeignID(t *testing.T) {
 	}
 }
 
+// TestSeriesFillDoesNotResolveVolume17OntoVolume7 reproduces #2538. A LitRPG
+// series numbered with no volume marker at all scores 97 between volume 7 and
+// volume 17, so the fuzzy fallback picked the already-imported volume 7,
+// queueSeriesBook skipped it as satisfied, and Add answered queued:0 while the
+// missing volume stayed missing. Reported by magrhino against
+// hc-series:23984.
+func TestSeriesFillDoesNotResolveVolume17OntoVolume7(t *testing.T) {
+	catalog := &metadata.SeriesCatalog{
+		ForeignID:  "hc-series:23984",
+		ProviderID: "23984",
+		Title:      "Defiance of the Fall",
+		AuthorName: "TheFirstDefier",
+		Books:      []metadata.SeriesCatalogBook{},
+	}
+	author := &models.Author{
+		ForeignID:        "hc:thefirstdefier",
+		Name:             "TheFirstDefier",
+		SortName:         "TheFirstDefier",
+		MetadataProvider: "hardcover",
+	}
+	for i := 1; i <= 17; i++ {
+		title := fmt.Sprintf("Defiance of the Fall %d", i)
+		foreignID := fmt.Sprintf("hc:defiance-of-the-fall-%d", i)
+		catalog.Books = append(catalog.Books, metadata.SeriesCatalogBook{
+			ForeignID:  foreignID,
+			ProviderID: strconv.Itoa(2200700 + i),
+			Title:      title,
+			Position:   strconv.Itoa(i),
+			Book: models.Book{
+				ForeignID:        foreignID,
+				Title:            title,
+				SortTitle:        title,
+				MetadataProvider: "hardcover",
+				MediaType:        models.MediaTypeAudiobook,
+				Author:           author,
+			},
+		})
+	}
+	catalog.BookCount = len(catalog.Books)
+
+	searcher := newMockBookSearcher()
+	h, seriesRepo, authorRepo, bookRepo := seriesFixtureWithProvider(t, &stubSeriesProvider{
+		catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
+	}, searcher)
+	ctx := context.Background()
+	series := &models.Series{ForeignID: "hc-series:23984", Title: "Defiance of the Fall"}
+	if err := seriesRepo.Create(ctx, series); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.UpsertHardcoverLink(ctx, &models.SeriesHardcoverLink{
+		SeriesID:            series.ID,
+		HardcoverSeriesID:   catalog.ForeignID,
+		HardcoverProviderID: catalog.ProviderID,
+		HardcoverTitle:      catalog.Title,
+		HardcoverAuthorName: catalog.AuthorName,
+		HardcoverBookCount:  catalog.BookCount,
+		Confidence:          1,
+		LinkedBy:            "manual",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	storedAuthor := *author
+	if err := authorRepo.Create(ctx, &storedAuthor); err != nil {
+		t.Fatal(err)
+	}
+	// Volumes 1 to 16 are on disk. 17 is not.
+	for i := 1; i <= 16; i++ {
+		title := fmt.Sprintf("Defiance of the Fall %d", i)
+		book := &models.Book{
+			ForeignID:        fmt.Sprintf("hc:defiance-of-the-fall-%d", i),
+			AuthorID:         storedAuthor.ID,
+			Title:            title,
+			SortTitle:        title,
+			Status:           models.BookStatusImported,
+			MediaType:        models.MediaTypeAudiobook,
+			MetadataProvider: "hardcover",
+			Monitored:        true,
+			Genres:           []string{},
+		}
+		if err := bookRepo.Create(ctx, book); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := seriesRepo.LinkBookIfMissing(ctx, series.ID, book.ID, strconv.Itoa(i), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	body := bytes.NewBufferString(`{"foreignBookId":"hc:defiance-of-the-fall-17","providerId":"2200717","position":"17","mediaType":"audiobook"}`)
+	rec := httptest.NewRecorder()
+	h.Fill(rec, withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/series/1/fill", body), "id", strconv.FormatInt(series.ID, 10)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var response map[string]int
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response["queued"] != 1 {
+		t.Fatalf("volume 17 should have been created and queued, got %+v", response)
+	}
+
+	created, err := bookRepo.GetByForeignID(ctx, "hc:defiance-of-the-fall-17")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created == nil {
+		t.Fatal("volume 17 was not created")
+	}
+	if created.Title != "Defiance of the Fall 17" {
+		t.Fatalf("created book = %q, want Defiance of the Fall 17", created.Title)
+	}
+	if created.MediaType != models.MediaTypeAudiobook {
+		t.Fatalf("created media type = %q, want audiobook", created.MediaType)
+	}
+
+	// Volume 7 is untouched: still imported, still its own record, and it did
+	// not gain volume 17's position in the series.
+	seven, err := bookRepo.GetByForeignID(ctx, "hc:defiance-of-the-fall-7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seven == nil || seven.Status != models.BookStatusImported {
+		t.Fatalf("volume 7 = %+v, want an untouched imported book", seven)
+	}
+	linked, err := seriesRepo.GetByID(ctx, series.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, member := range linked.Books {
+		if member.BookID == seven.ID && member.PositionInSeries != "7" {
+			t.Fatalf("volume 7 was moved to position %q", member.PositionInSeries)
+		}
+	}
+}
+
 func TestSeriesFillSkipsExcludedHardcoverTitleMatch(t *testing.T) {
 	catalog := stormlightCatalog()
 	catalog.Books[0].ForeignID = "hc:the-way-of-kings-new"

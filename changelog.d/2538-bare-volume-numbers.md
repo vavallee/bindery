@@ -1,0 +1,5 @@
+### Fixed
+- **Adding a missing volume no longer resolves onto an earlier one you already have** (#2538) — in a series numbered without any "Vol." or "Book" marker, pressing Add on volume 17 matched the imported volume 7 on title similarity, so nothing was created and the page reported "Nothing to fill" while the volume stayed missing. Two titles that are the same words followed by different numbers are now treated as different books, the way titles carrying an explicit volume marker already were. Titles that merely contain a number, like Fahrenheit 451, are unaffected, because the words around the number have to match as well. Thanks magrhino for the report and the reproduction.
+
+### Changed
+- **Series Add explains itself in the logs** (#2538) — at DEBUG level, adding a book from a series catalogue now records which existing book a request resolved to, whether that was by identity or by title similarity and with what score, and why nothing was queued. Previously both of those paths returned silently, so an Add that quietly did nothing looked identical to one that had nothing to do.

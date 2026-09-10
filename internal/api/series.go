@@ -681,6 +681,12 @@ func (h *SeriesHandler) queueSeriesBook(ctx context.Context, b models.Book) (boo
 	// scheduler's wanted sweep does (#2365), so a series fill on a book that is
 	// already downloading can still grab a second release.
 	if b.Status == models.BookStatusImported {
+		// Say so. The handler answers queued:0 and the UI renders "Nothing to
+		// fill", which is indistinguishable from a fill that resolved onto the
+		// wrong book (#2538). Naming the book that satisfied the request is
+		// what makes the two tellable apart from the logs.
+		slog.Debug("series fill: nothing queued, the matched book is already imported",
+			"bookID", b.ID, "title", b.Title, "foreignID", b.ForeignID)
 		return false, models.Book{}, nil
 	}
 	if err := h.books.MarkWantedMonitored(ctx, b.ID); err != nil {
@@ -1591,6 +1597,16 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 		}
 		// The book already exists, so it may already be filed under its real
 		// series; do not promote this one over it (#2525).
+		slog.Debug("series fill: catalog entry resolved to an existing book by identity",
+			"seriesID", series.ID,
+			"requestedTitle", firstNonEmpty(book.Title, catalogBook.Title),
+			"requestedForeignID", book.ForeignID,
+			"requestedPosition", catalogBook.Position,
+			"matchedBookID", existing.ID,
+			"matchedTitle", existing.Title,
+			"matchedForeignID", existing.ForeignID,
+			"matchedStatus", existing.Status,
+			"matchedBy", "identity")
 		_, err := h.series.LinkBookPreservingPrimary(ctx, series.ID, existing.ID, catalogBook.Position)
 		return existing, err
 	}
@@ -1704,6 +1720,22 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 		}
 	}
 	if best != nil {
+		// #2538: this return is why "Add" on a missing volume answered
+		// queued:0 with nothing in the logs to say why. A fuzzy title match
+		// picking the wrong volume looks identical from outside to a book
+		// that genuinely already exists, so the score and both identities
+		// have to be on the record.
+		slog.Debug("series fill: catalog entry resolved to an existing book by title",
+			"seriesID", series.ID,
+			"requestedTitle", incomingTitle,
+			"requestedForeignID", book.ForeignID,
+			"requestedPosition", catalogBook.Position,
+			"matchedBookID", best.ID,
+			"matchedTitle", best.Title,
+			"matchedForeignID", best.ForeignID,
+			"matchedStatus", best.Status,
+			"matchedBy", "title",
+			"score", bestScore)
 		_, err := h.series.LinkBookPreservingPrimary(ctx, series.ID, best.ID, catalogBook.Position)
 		return best, err
 	}
