@@ -513,14 +513,15 @@ func (i *Importer) attachBookToSeries(ctx context.Context, runID int64, book *mo
 	if cs.Position > 0 {
 		position = strconv.FormatFloat(cs.Position, 'f', -1, 64)
 	}
-	// LinkBookIfMissing first so we learn whether this run actually created
-	// the membership. Only a link this run created may be unwound by a
+	// Link first so we learn whether this run actually created the
+	// membership. Only a link this run created may be unwound by a
 	// rollback — a membership the user (or an earlier run) already had must
-	// survive. When the link already existed, refresh position/primary the
-	// way UpsertBookLink always did.
-	created, err := i.series.LinkBookIfMissing(ctx, series.ID, book.ID, position, true)
+	// survive. When the link already existed, refresh the position only:
+	// rewriting primary_series here re-promoted a series the user had
+	// demoted, on every re-import (#2525).
+	created, err := i.series.LinkBookPreservingPrimary(ctx, series.ID, book.ID, position)
 	if err == nil && !created {
-		err = i.series.UpsertBookLink(ctx, series.ID, book.ID, position, true)
+		err = i.series.UpdateBookLinkPosition(ctx, series.ID, book.ID, position)
 	}
 	if err != nil {
 		slog.Warn("calibre import: series link failed", "name", cs.Name, "book_id", book.ID, "error", err)

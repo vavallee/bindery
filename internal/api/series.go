@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -370,6 +371,65 @@ func (h *SeriesHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 		primary = *body.PrimarySeries
 	}
 	if err := h.series.UpsertBookLink(r.Context(), id, body.BookID, body.PositionInSeries, primary); err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	updated, err := h.series.GetByID(r.Context(), id)
+	if err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+// RemoveBook drops a single book's membership of a series, leaving every other
+// membership and the book itself alone (#2525). Before this existed the only
+// way to correct a book filed under the wrong series was Re-bind metadata,
+// which wipes every membership and rebuilds them from the provider, re-adding
+// exactly the one the user was trying to remove.
+func (h *SeriesHandler) RemoveBook(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r)
+	if !ok {
+		return
+	}
+	bookID, err := strconv.ParseInt(chi.URLParam(r, "bookId"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid book id"})
+		return
+	}
+	series, err := h.series.GetByID(r.Context(), id)
+	if err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	if series == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "series not found"})
+		return
+	}
+	if err := h.series.UnlinkBook(r.Context(), id, bookID); err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// SetPrimaryBook makes this series the one the renamer uses for the given
+// book, demoting the book's other memberships (#2525).
+func (h *SeriesHandler) SetPrimaryBook(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r)
+	if !ok {
+		return
+	}
+	bookID, err := strconv.ParseInt(chi.URLParam(r, "bookId"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid book id"})
+		return
+	}
+	if err := h.series.SetPrimarySeries(r.Context(), id, bookID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "book is not in this series"})
+			return
+		}
 		writeServerError(w, r, err)
 		return
 	}
@@ -1517,7 +1577,9 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 		if existing.Excluded {
 			return nil, nil
 		}
-		_, err := h.series.LinkBookIfMissing(ctx, series.ID, existing.ID, catalogBook.Position, true)
+		// The book already exists, so it may already be filed under its real
+		// series; do not promote this one over it (#2525).
+		_, err := h.series.LinkBookPreservingPrimary(ctx, series.ID, existing.ID, catalogBook.Position)
 		return existing, err
 	}
 
@@ -1630,7 +1692,7 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 		}
 	}
 	if best != nil {
-		_, err := h.series.LinkBookIfMissing(ctx, series.ID, best.ID, catalogBook.Position, true)
+		_, err := h.series.LinkBookPreservingPrimary(ctx, series.ID, best.ID, catalogBook.Position)
 		return best, err
 	}
 	if blockedByExcludedTitle {

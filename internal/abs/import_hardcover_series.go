@@ -432,7 +432,7 @@ func (i *Importer) upsertHardcoverSeries(ctx context.Context, cfg ImportConfig, 
 		}
 	} else {
 		var err error
-		linkCreated, err = i.series.LinkBookIfMissing(ctx, existing.ID, bookID, strings.TrimSpace(matchedBook.Position), true)
+		linkCreated, err = i.series.LinkBookPreservingPrimary(ctx, existing.ID, bookID, strings.TrimSpace(matchedBook.Position))
 		if err != nil {
 			return seriesUpsertResult{}, err
 		}

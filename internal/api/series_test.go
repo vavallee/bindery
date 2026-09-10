@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
@@ -3393,5 +3395,111 @@ func TestBuildHardcoverDiffDoesNotDoubleClaimOneCatalogEntry(t *testing.T) {
 	}
 	if len(diff.Missing) != 0 {
 		t.Fatalf("Missing = %v, want empty", diffForeignIDs(diff.Missing))
+	}
+}
+
+// withURLParams is withURLParam for the two-segment routes
+// /series/{id}/books/{bookId}.
+func withURLParams(req *http.Request, kv map[string]string) *http.Request {
+	rctx := chi.NewRouteContext()
+	for k, v := range kv {
+		rctx.URLParams.Add(k, v)
+	}
+	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+}
+
+// TestSeriesMembershipRemoveAndSetPrimary covers #2525: a book in two series
+// needs a way to say which one names its files, and a way to leave the wrong
+// one, without Re-bind metadata wiping and rebuilding every membership.
+func TestSeriesMembershipRemoveAndSetPrimary(t *testing.T) {
+	h, seriesRepo, authorRepo, bookRepo := seriesFixture(t)
+	ctx := context.Background()
+
+	author := &models.Author{ForeignID: "hc:kel-kade", Name: "Kel Kade", SortName: "Kade, Kel"}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{
+		ForeignID: "hc:free-the-darkness", AuthorID: author.ID, Title: "Free the Darkness",
+		SortTitle: "Free the Darkness", Status: models.BookStatusImported,
+	}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	umbrella := &models.Series{ForeignID: "hc-series:universe", Title: "King's Dark Tidings Universe"}
+	if err := seriesRepo.Create(ctx, umbrella); err != nil {
+		t.Fatal(err)
+	}
+	real := &models.Series{ForeignID: "hc-series:kdt", Title: "King's Dark Tidings"}
+	if err := seriesRepo.Create(ctx, real); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.LinkBook(ctx, umbrella.ID, book.ID, "", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.LinkBook(ctx, real.ID, book.ID, "1", true); err != nil {
+		t.Fatal(err)
+	}
+
+	// Promote the umbrella: the renamer follows, and the sibling is demoted.
+	rec := httptest.NewRecorder()
+	h.SetPrimaryBook(rec, withURLParams(httptest.NewRequest(http.MethodPut, "/api/v1/series/1/books/1/primary", nil), map[string]string{
+		"id":     strconv.FormatInt(umbrella.ID, 10),
+		"bookId": strconv.FormatInt(book.ID, 10),
+	}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("set primary: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	title, _, err := seriesRepo.GetPrimarySeriesForBook(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if title != "King's Dark Tidings Universe" {
+		t.Fatalf("primary series = %q, want the umbrella", title)
+	}
+
+	// A book that is not a member of the series is a 404, not a silent write.
+	stray := &models.Series{ForeignID: "hc-series:none", Title: "Unrelated"}
+	if err := seriesRepo.Create(ctx, stray); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	h.SetPrimaryBook(rec, withURLParams(httptest.NewRequest(http.MethodPut, "/api/v1/series/1/books/1/primary", nil), map[string]string{
+		"id":     strconv.FormatInt(stray.ID, 10),
+		"bookId": strconv.FormatInt(book.ID, 10),
+	}))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("set primary on a non-member: expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Leaving the umbrella drops only that membership; the book and its other
+	// series survive.
+	rec = httptest.NewRecorder()
+	h.RemoveBook(rec, withURLParams(httptest.NewRequest(http.MethodDelete, "/api/v1/series/1/books/1", nil), map[string]string{
+		"id":     strconv.FormatInt(umbrella.ID, 10),
+		"bookId": strconv.FormatInt(book.ID, 10),
+	}))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("remove book: expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got, err := bookRepo.GetByID(ctx, book.ID); err != nil || got == nil {
+		t.Fatalf("remove membership should preserve the book, got %+v err=%v", got, err)
+	}
+	ids, err := seriesRepo.GetSeriesIDsForBook(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 || ids[0] != real.ID {
+		t.Fatalf("memberships after remove = %v, want only series %d", ids, real.ID)
+	}
+
+	// Removing from an unknown series is a 404 rather than a no-op 204.
+	rec = httptest.NewRecorder()
+	h.RemoveBook(rec, withURLParams(httptest.NewRequest(http.MethodDelete, "/api/v1/series/1/books/1", nil), map[string]string{
+		"id":     strconv.FormatInt(stray.ID+999, 10),
+		"bookId": strconv.FormatInt(book.ID, 10),
+	}))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("remove from a missing series: expected 404, got %d", rec.Code)
 	}
 }

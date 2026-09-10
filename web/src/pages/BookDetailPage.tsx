@@ -7,7 +7,7 @@ import CoverPlaceholder from '../components/CoverPlaceholder'
 import MarkdownDescription from '../components/MarkdownDescription'
 import MoreMenu from '../components/MoreMenu'
 import Section from '../components/Section'
-import { btn, btnSize } from '../components/buttons'
+import { btn, btnSize, dangerLink } from '../components/buttons'
 import MediaBadge from '../components/MediaBadge'
 import { bookStatusBadge } from '../components/bookStatus'
 import RebindModal from '../components/RebindModal'
@@ -287,8 +287,13 @@ export default function BookDetailPage() {
   const idClipboard = useClipboardCopy()
   const [copiedId, setCopiedId] = useState<string | null>(null)
   // Series membership for the meta row. series_books has been populated since
-  // v0.7.0 but this page never surfaced it.
-  const [series, setSeries] = useState<{ title: string; position: string }[]>([])
+  // v0.7.0 but this page never surfaced it. Carries the series id and the
+  // primary flag as of #2525, because a book in two series needs to say which
+  // one names its files and to leave the one it does not belong in.
+  const [series, setSeries] = useState<{ id: number; title: string; position: string; primary: boolean }[]>([])
+  const [seriesBusy, setSeriesBusy] = useState(false)
+  const [removeSeries, setRemoveSeries] = useState<{ id: number; title: string } | null>(null)
+  const [seriesNonce, setSeriesNonce] = useState(0)
 
   useEffect(() => {
     if (book?.title) {
@@ -322,17 +327,56 @@ export default function BookDetailPage() {
     api.listAuthorSeries(authorId)
       .then((list: Series[]) => {
         if (cancelled) return
-        const mine: { title: string; position: string }[] = []
+        const mine: { id: number; title: string; position: string; primary: boolean }[] = []
         for (const s of list) {
           for (const entry of s.books ?? []) {
-            if (entry.bookId === id) mine.push({ title: s.title, position: entry.positionInSeries })
+            if (entry.bookId === id) {
+              mine.push({
+                id: s.id,
+                title: s.title,
+                position: entry.positionInSeries,
+                primary: entry.primarySeries === true,
+              })
+            }
           }
         }
         setSeries(mine)
       })
       .catch(() => { /* no series row */ })
     return () => { cancelled = true }
-  }, [book?.authorId, book?.id])
+  }, [book?.authorId, book?.id, seriesNonce])
+
+  // #2525: the renamer reads one series per book. When a book sits in both its
+  // real series and an umbrella "Universe" one, these are how the user says
+  // which, and how they leave the one that should never have been linked.
+  const makePrimarySeries = async (seriesId: number) => {
+    if (!book) return
+    setSeriesBusy(true)
+    setError(null)
+    try {
+      await api.setPrimarySeriesForBook(seriesId, book.id)
+      setSeriesNonce(n => n + 1)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('bookDetail.series.setPrimaryFailed'))
+    } finally {
+      setSeriesBusy(false)
+    }
+  }
+
+  const confirmRemoveSeries = async () => {
+    if (!book || !removeSeries) return
+    setSeriesBusy(true)
+    setError(null)
+    try {
+      await api.removeBookFromSeries(removeSeries.id, book.id)
+      setRemoveSeries(null)
+      setSeriesNonce(n => n + 1)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('bookDetail.series.removeFailed'))
+    } finally {
+      setSeriesBusy(false)
+    }
+  }
 
   const saveField = async (patch: Partial<Book>) => {
     if (!book) return
@@ -681,7 +725,7 @@ export default function BookDetailPage() {
               </>
             ) : null}
             {series.map(s => (
-              <span key={`${s.title}-${s.position}`} className="contents">
+              <span key={s.id} className="contents">
                 <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
                 <span className="text-slate-600 dark:text-zinc-400">
                   {s.position
@@ -757,6 +801,51 @@ export default function BookDetailPage() {
         <div className="mt-6 px-3 py-2 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900 rounded text-sm text-red-800 dark:text-red-300">
           {error}
         </div>
+      )}
+
+      {/* ===== Series membership (#2525) =====
+          Only when a book is in more than one series. With a single membership
+          there is nothing to choose and nothing to correct, so the meta row
+          above already says everything. */}
+      {series.length > 1 && (
+        <Section title={t('bookDetail.series.heading')}>
+          <p className="text-xs text-slate-500 dark:text-zinc-500">{t('bookDetail.series.explainer')}</p>
+          <ul className="mt-3 space-y-2">
+            {series.map(s => (
+              <li key={s.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                <span className="text-slate-700 dark:text-zinc-300">
+                  {s.position
+                    ? t('bookDetail.seriesPosition', {
+                        series: s.title,
+                        position: s.position,
+                        defaultValue: '{{series}} #{{position}}',
+                      })
+                    : s.title}
+                </span>
+                {s.primary ? (
+                  <span className="text-xs text-slate-500 dark:text-zinc-500">{t('bookDetail.series.namesFiles')}</span>
+                ) : (
+                  <button
+                    type="button"
+                    className={`${btn.ghost} ${btnSize.sm}`}
+                    disabled={seriesBusy}
+                    onClick={() => makePrimarySeries(s.id)}
+                  >
+                    {t('bookDetail.series.useForNaming')}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={`${dangerLink} text-xs disabled:opacity-50`}
+                  disabled={seriesBusy}
+                  onClick={() => setRemoveSeries({ id: s.id, title: s.title })}
+                >
+                  {t('bookDetail.series.remove')}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Section>
       )}
 
       {/* ===== File section ===== */}
@@ -1238,6 +1327,23 @@ export default function BookDetailPage() {
           confirming={deregistering}
           onConfirm={deregisterFile}
           onClose={() => setDeregisterTarget(null)}
+        />
+      )}
+
+      {removeSeries && (
+        <ConfirmDialog
+          title={t('bookDetail.series.removeTitle')}
+          body={
+            <p>
+              {t('bookDetail.series.removeBody1')}{' '}
+              <span className="font-medium text-slate-800 dark:text-zinc-200">{removeSeries.title}</span>{' '}
+              {t('bookDetail.series.removeBody2')}
+            </p>
+          }
+          confirmLabel={t('bookDetail.series.remove')}
+          confirming={seriesBusy}
+          onConfirm={confirmRemoveSeries}
+          onClose={() => setRemoveSeries(null)}
         />
       )}
 

@@ -56,6 +56,8 @@ vi.mock('../api/client', async importOriginal => {
       toggleExcluded: vi.fn(),
       enrichAudiobook: vi.fn(),
       listAuthorSeries: vi.fn(),
+      setPrimarySeriesForBook: vi.fn(),
+      removeBookFromSeries: vi.fn(),
     },
   }
 })
@@ -969,6 +971,105 @@ describe('BookDetailPage — header', () => {
     renderBookDetailPage()
     expect(await screen.findByText('Discworld #3')).toBeInTheDocument()
     expect(screen.queryByText(/Long Earth/)).toBeNull()
+  })
+
+  it('offers no membership controls when the book is in one series', async () => {
+    // Nothing to choose between, so the section would be pure noise (#2525).
+    vi.mocked(api.listAuthorSeries).mockResolvedValue([
+      {
+        id: 7,
+        foreignSeriesId: 'ol:s7',
+        title: 'Discworld',
+        description: '',
+        monitored: true,
+        books: [{ seriesId: 7, bookId: 42, positionInSeries: '3', primarySeries: true }],
+      },
+    ] as unknown as Awaited<ReturnType<typeof api.listAuthorSeries>>)
+
+    renderBookDetailPage()
+    await screen.findByText('Discworld #3')
+    expect(screen.queryByText(resolveKey('bookDetail.series.heading')!)).toBeNull()
+  })
+
+  it('names the series the renamer uses and lets you change it', async () => {
+    // #2525: two primary rows meant the renamer picked one by query-plan order
+    // and nothing on the page said which, or let the user say otherwise.
+    const memberships = [
+      {
+        id: 7,
+        foreignSeriesId: 'hc-series:kdt',
+        title: "King's Dark Tidings",
+        description: '',
+        monitored: true,
+        books: [{ seriesId: 7, bookId: 42, positionInSeries: '1', primarySeries: true }],
+      },
+      {
+        id: 8,
+        foreignSeriesId: 'hc-series:universe',
+        title: "King's Dark Tidings Universe",
+        description: '',
+        monitored: true,
+        books: [{ seriesId: 8, bookId: 42, positionInSeries: '', primarySeries: false }],
+      },
+    ]
+    vi.mocked(api.listAuthorSeries).mockResolvedValue(
+      memberships as unknown as Awaited<ReturnType<typeof api.listAuthorSeries>>,
+    )
+    vi.mocked(api.setPrimarySeriesForBook).mockResolvedValue(
+      {} as Awaited<ReturnType<typeof api.setPrimarySeriesForBook>>,
+    )
+
+    renderBookDetailPage()
+    const heading = await screen.findByText(resolveKey('bookDetail.series.heading')!)
+    const section = heading.closest('section')!
+    const rows = within(section).getAllByRole('listitem')
+    expect(rows).toHaveLength(2)
+    // The primary one is labelled and offers no promote button.
+    expect(within(rows[0]).getByText(resolveKey('bookDetail.series.namesFiles')!)).toBeInTheDocument()
+    expect(
+      within(rows[0]).queryByRole('button', { name: resolveKey('bookDetail.series.useForNaming')! }),
+    ).toBeNull()
+
+    fireEvent.click(
+      within(rows[1]).getByRole('button', { name: resolveKey('bookDetail.series.useForNaming')! }),
+    )
+    await waitFor(() => expect(api.setPrimarySeriesForBook).toHaveBeenCalledWith(8, 42))
+  })
+
+  it('removes a single membership behind a confirmation, without touching the book', async () => {
+    vi.mocked(api.listAuthorSeries).mockResolvedValue([
+      {
+        id: 7,
+        foreignSeriesId: 'hc-series:kdt',
+        title: "King's Dark Tidings",
+        description: '',
+        monitored: true,
+        books: [{ seriesId: 7, bookId: 42, positionInSeries: '1', primarySeries: true }],
+      },
+      {
+        id: 8,
+        foreignSeriesId: 'hc-series:universe',
+        title: "King's Dark Tidings Universe",
+        description: '',
+        monitored: true,
+        books: [{ seriesId: 8, bookId: 42, positionInSeries: '', primarySeries: false }],
+      },
+    ] as unknown as Awaited<ReturnType<typeof api.listAuthorSeries>>)
+    vi.mocked(api.removeBookFromSeries).mockResolvedValue(
+      undefined as Awaited<ReturnType<typeof api.removeBookFromSeries>>,
+    )
+
+    renderBookDetailPage()
+    const heading = await screen.findByText(resolveKey('bookDetail.series.heading')!)
+    const section = heading.closest('section')!
+    const rows = within(section).getAllByRole('listitem')
+    fireEvent.click(within(rows[1]).getByRole('button', { name: resolveKey('bookDetail.series.remove')! }))
+
+    const dialog = await screen.findByTestId('confirm-dialog')
+    expect(within(dialog).getByText("King's Dark Tidings Universe")).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: resolveKey('bookDetail.series.remove')! }))
+    await waitFor(() => expect(api.removeBookFromSeries).toHaveBeenCalledWith(8, 42))
+    expect(api.deleteBook).not.toHaveBeenCalled()
   })
 
   it('renders no series row when the book is in none', async () => {

@@ -1369,6 +1369,18 @@
     },
     "renameFiles": {
       "button": "Rename files"
+    },
+    "series": {
+      "heading": "Series",
+      "explainer": "This book is in more than one series. File names use the one marked below.",
+      "namesFiles": "Names files",
+      "useForNaming": "Use for file naming",
+      "remove": "Remove",
+      "removeTitle": "Remove from series",
+      "removeBody1": "This takes the book out of",
+      "removeBody2": "It does not delete the book, its files, or the series itself.",
+      "setPrimaryFailed": "Could not change the series used for naming",
+      "removeFailed": "Could not remove the book from that series"
     }
   }
 }

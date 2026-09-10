@@ -105,6 +105,13 @@ export const seriesApi = {
   deleteSeries: (id: number) => request<void>(`/series/${id}`, { method: 'DELETE' }),
   linkBookToSeries: (id: number, data: { bookId: number; positionInSeries: string; primarySeries: boolean }) =>
     request<Series>(`/series/${id}/books`, { method: 'POST', body: JSON.stringify(data) }),
+  // #2525: a book can sit in several series, and only one of them names its
+  // files. These two are the only way to say which, and to leave a series the
+  // book should never have been filed under.
+  removeBookFromSeries: (id: number, bookId: number) =>
+    request<void>(`/series/${id}/books/${bookId}`, { method: 'DELETE' }),
+  setPrimarySeriesForBook: (id: number, bookId: number) =>
+    request<Series>(`/series/${id}/books/${bookId}/primary`, { method: 'PUT' }),
   fillSeries: (id: number, book?: SeriesFillBookRequest) =>
     request<{ queued: number }>(`/series/${id}/fill`, {
       method: 'POST',

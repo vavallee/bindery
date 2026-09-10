@@ -2,6 +2,8 @@ package db
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"strings"
 	"testing"
 
@@ -996,5 +998,184 @@ func TestEnsureHardcoverLinkFromForeignIDSurfacesReadError(t *testing.T) {
 	}
 	if linked {
 		t.Error("a failed read must not report a link")
+	}
+}
+
+// TestPrimarySeriesChoiceIsDeterministic covers #2525: a book that belongs to
+// both its real series and an umbrella "Universe" series carries two
+// primary_series=1 rows, and the renamer used to take whichever one the query
+// planner reached first. The umbrella here is created first, so it has the
+// lower series id and wins a naive scan; the tie break has to prefer the
+// membership that actually carries a position.
+func TestPrimarySeriesChoiceIsDeterministic(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	authorRepo := NewAuthorRepo(database)
+	bookRepo := NewBookRepo(database)
+	seriesRepo := NewSeriesRepo(database)
+
+	author := &models.Author{ForeignID: "hc:kel-kade", Name: "Kel Kade", SortName: "Kade, Kel"}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{
+		ForeignID: "hc:free-the-darkness", AuthorID: author.ID, Title: "Free the Darkness",
+		SortTitle: "Free the Darkness", Status: models.BookStatusWanted, Genres: []string{},
+	}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	umbrella := &models.Series{ForeignID: "hc-series:universe", Title: "King's Dark Tidings Universe"}
+	if err := seriesRepo.Create(ctx, umbrella); err != nil {
+		t.Fatal(err)
+	}
+	real := &models.Series{ForeignID: "hc-series:kdt", Title: "King's Dark Tidings"}
+	if err := seriesRepo.Create(ctx, real); err != nil {
+		t.Fatal(err)
+	}
+	if umbrella.ID >= real.ID {
+		t.Fatalf("test setup: umbrella id %d should be below real id %d", umbrella.ID, real.ID)
+	}
+	// Both stamp primary=1, which is what the Fill and ABS link sites do.
+	if err := seriesRepo.LinkBook(ctx, umbrella.ID, book.ID, "", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.LinkBook(ctx, real.ID, book.ID, "1", true); err != nil {
+		t.Fatal(err)
+	}
+
+	title, position, err := seriesRepo.GetPrimarySeriesForBook(ctx, book.ID)
+	if err != nil {
+		t.Fatalf("GetPrimarySeriesForBook: %v", err)
+	}
+	if title != "King's Dark Tidings" || position != "1" {
+		t.Fatalf("primary series = %q/%q, want King's Dark Tidings/1", title, position)
+	}
+
+	// HasPrimarySeries sees the ambiguity a link site needs to avoid adding to.
+	has, err := seriesRepo.HasPrimarySeries(ctx, book.ID)
+	if err != nil || !has {
+		t.Fatalf("HasPrimarySeries = %v err=%v, want true", has, err)
+	}
+
+	// The user's own choice overrides the tie break and leaves exactly one
+	// primary row behind.
+	if err := seriesRepo.SetPrimarySeries(ctx, umbrella.ID, book.ID); err != nil {
+		t.Fatalf("SetPrimarySeries: %v", err)
+	}
+	title, position, err = seriesRepo.GetPrimarySeriesForBook(ctx, book.ID)
+	if err != nil {
+		t.Fatalf("GetPrimarySeriesForBook after set: %v", err)
+	}
+	if title != "King's Dark Tidings Universe" || position != "" {
+		t.Fatalf("primary series after set = %q/%q, want the umbrella", title, position)
+	}
+	var primaries int
+	if err := database.QueryRowContext(ctx,
+		`SELECT count(*) FROM series_books WHERE book_id = ? AND primary_series = 1`, book.ID).Scan(&primaries); err != nil {
+		t.Fatal(err)
+	}
+	if primaries != 1 {
+		t.Fatalf("primary rows after set = %d, want 1", primaries)
+	}
+
+	// A book that is not in the series cannot be promoted into it.
+	orphan := &models.Series{ForeignID: "hc-series:other", Title: "Other"}
+	if err := seriesRepo.Create(ctx, orphan); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.SetPrimarySeries(ctx, orphan.ID, book.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("SetPrimarySeries on a non-member = %v, want sql.ErrNoRows", err)
+	}
+}
+
+// TestLinkBookPreservingPrimaryDoesNotPromote covers the other half of #2525:
+// the link sites that add an already-stored book to a further series used to
+// pass primary=true unconditionally, which is how a book ends up with two
+// primary rows in the first place. UpdateBookLinkPosition is the companion for
+// re-imports, which must not undo a demotion the user chose.
+func TestLinkBookPreservingPrimaryDoesNotPromote(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	authorRepo := NewAuthorRepo(database)
+	bookRepo := NewBookRepo(database)
+	seriesRepo := NewSeriesRepo(database)
+
+	author := &models.Author{ForeignID: "hc:kel-kade", Name: "Kel Kade", SortName: "Kade, Kel"}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{
+		ForeignID: "hc:free-the-darkness", AuthorID: author.ID, Title: "Free the Darkness",
+		SortTitle: "Free the Darkness", Status: models.BookStatusWanted, Genres: []string{},
+	}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	real := &models.Series{ForeignID: "hc-series:kdt", Title: "King's Dark Tidings"}
+	if err := seriesRepo.Create(ctx, real); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.LinkBook(ctx, real.ID, book.ID, "1", true); err != nil {
+		t.Fatal(err)
+	}
+
+	// The Fill of an umbrella series reaches an existing book.
+	umbrella := &models.Series{ForeignID: "hc-series:universe", Title: "King's Dark Tidings Universe"}
+	if err := seriesRepo.Create(ctx, umbrella); err != nil {
+		t.Fatal(err)
+	}
+	created, err := seriesRepo.LinkBookPreservingPrimary(ctx, umbrella.ID, book.ID, "")
+	if err != nil || !created {
+		t.Fatalf("LinkBookPreservingPrimary = %v err=%v, want created", created, err)
+	}
+	var primaries int
+	if err := database.QueryRowContext(ctx,
+		`SELECT count(*) FROM series_books WHERE book_id = ? AND primary_series = 1`, book.ID).Scan(&primaries); err != nil {
+		t.Fatal(err)
+	}
+	if primaries != 1 {
+		t.Fatalf("primary rows after umbrella fill = %d, want 1", primaries)
+	}
+	if title, _, err := seriesRepo.GetPrimarySeriesForBook(ctx, book.ID); err != nil || title != "King's Dark Tidings" {
+		t.Fatalf("primary series after umbrella fill = %q err=%v, want King's Dark Tidings", title, err)
+	}
+
+	// The book's first series is a fresh link, so it does take primary.
+	other := &models.Book{
+		ForeignID: "hc:reign", AuthorID: author.ID, Title: "Reign", SortTitle: "Reign",
+		Status: models.BookStatusWanted, Genres: []string{},
+	}
+	if err := bookRepo.Create(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seriesRepo.LinkBookPreservingPrimary(ctx, umbrella.ID, other.ID, "2"); err != nil {
+		t.Fatal(err)
+	}
+	if title, _, err := seriesRepo.GetPrimarySeriesForBook(ctx, other.ID); err != nil || title != "King's Dark Tidings Universe" {
+		t.Fatalf("first membership should be primary, got %q err=%v", title, err)
+	}
+
+	// A user demotes the umbrella; a re-import that refreshes the position
+	// must leave that decision alone.
+	if err := seriesRepo.SetPrimarySeries(ctx, real.ID, book.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.UpdateBookLinkPosition(ctx, umbrella.ID, book.ID, "1"); err != nil {
+		t.Fatal(err)
+	}
+	if title, _, err := seriesRepo.GetPrimarySeriesForBook(ctx, book.ID); err != nil || title != "King's Dark Tidings" {
+		t.Fatalf("re-import re-promoted the umbrella: got %q err=%v", title, err)
 	}
 }
