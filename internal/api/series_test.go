@@ -3503,3 +3503,32 @@ func TestSeriesMembershipRemoveAndSetPrimary(t *testing.T) {
 		t.Fatalf("remove from a missing series: expected 404, got %d", rec.Code)
 	}
 }
+
+// TestSeriesMembershipRejectsMalformedIDs pins the 400s. Both routes take two
+// path parameters, so either one can be junk.
+func TestSeriesMembershipRejectsMalformedIDs(t *testing.T) {
+	h, _, _, _ := seriesFixture(t)
+
+	cases := []struct {
+		name   string
+		params map[string]string
+	}{
+		{name: "bad series id", params: map[string]string{"id": "not-a-number", "bookId": "1"}},
+		{name: "bad book id", params: map[string]string{"id": "1", "bookId": "not-a-number"}},
+		{name: "missing book id", params: map[string]string{"id": "1"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.RemoveBook(rec, withURLParams(httptest.NewRequest(http.MethodDelete, "/api/v1/series/1/books/1", nil), tc.params))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("RemoveBook: expected 400, got %d: %s", rec.Code, rec.Body.String())
+			}
+			rec = httptest.NewRecorder()
+			h.SetPrimaryBook(rec, withURLParams(httptest.NewRequest(http.MethodPut, "/api/v1/series/1/books/1/primary", nil), tc.params))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("SetPrimaryBook: expected 400, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}

@@ -1179,3 +1179,32 @@ func TestLinkBookPreservingPrimaryDoesNotPromote(t *testing.T) {
 		t.Fatalf("re-import re-promoted the umbrella: got %q err=%v", title, err)
 	}
 }
+
+// TestPrimarySeriesHelpersSurfaceDBErrors pins the error branches of the #2525
+// helpers. A closed database is the cheapest way to make every statement fail;
+// the point is that each helper wraps and returns rather than swallowing.
+func TestPrimarySeriesHelpersSurfaceDBErrors(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seriesRepo := NewSeriesRepo(database)
+	database.Close()
+
+	ctx := context.Background()
+	if _, err := seriesRepo.HasPrimarySeries(ctx, 1); err == nil {
+		t.Error("HasPrimarySeries on a closed db: want an error")
+	}
+	if _, err := seriesRepo.LinkBookPreservingPrimary(ctx, 1, 1, "1"); err == nil {
+		t.Error("LinkBookPreservingPrimary on a closed db: want an error")
+	}
+	if err := seriesRepo.UpdateBookLinkPosition(ctx, 1, 1, "1"); err == nil {
+		t.Error("UpdateBookLinkPosition on a closed db: want an error")
+	}
+	if err := seriesRepo.SetPrimarySeries(ctx, 1, 1); err == nil {
+		t.Error("SetPrimarySeries on a closed db: want an error")
+	}
+	if _, _, err := seriesRepo.GetPrimarySeriesForBook(ctx, 1); err == nil {
+		t.Error("GetPrimarySeriesForBook on a closed db: want an error")
+	}
+}
