@@ -1208,3 +1208,79 @@ func TestPrimarySeriesHelpersSurfaceDBErrors(t *testing.T) {
 		t.Error("GetPrimarySeriesForBook on a closed db: want an error")
 	}
 }
+
+// TestSecondaryOnlyMembershipStillNamesFiles covers #2527: filtering on
+// primary_series = 1 gave a book whose every membership is secondary the same
+// empty answer as a book in no series, so the renamer dropped the series
+// segment while the UI kept showing the series. The ABS sibling-catalog walk
+// links books it is not importing with primary=false, so a book whose only
+// membership came from that walk had no series in its file name.
+func TestSecondaryOnlyMembershipStillNamesFiles(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	authorRepo := NewAuthorRepo(database)
+	bookRepo := NewBookRepo(database)
+	seriesRepo := NewSeriesRepo(database)
+
+	author := &models.Author{ForeignID: "hc:kel-kade", Name: "Kel Kade", SortName: "Kade, Kel"}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{
+		ForeignID: "hc:free-the-darkness", AuthorID: author.ID, Title: "Free the Darkness",
+		SortTitle: "Free the Darkness", Status: models.BookStatusImported, Genres: []string{},
+	}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	series := &models.Series{ForeignID: "hc-series:kdt", Title: "King's Dark Tidings"}
+	if err := seriesRepo.Create(ctx, series); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.LinkBook(ctx, series.ID, book.ID, "1", false); err != nil {
+		t.Fatal(err)
+	}
+
+	title, position, err := seriesRepo.GetPrimarySeriesForBook(ctx, book.ID)
+	if err != nil {
+		t.Fatalf("GetPrimarySeriesForBook: %v", err)
+	}
+	if title != "King's Dark Tidings" || position != "1" {
+		t.Fatalf("secondary-only membership = %q/%q, want King's Dark Tidings/1", title, position)
+	}
+
+	// A primary membership still outranks a secondary one, even when the
+	// secondary carries a position and the primary does not.
+	umbrella := &models.Series{ForeignID: "hc-series:universe", Title: "King's Dark Tidings Universe"}
+	if err := seriesRepo.Create(ctx, umbrella); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.LinkBook(ctx, umbrella.ID, book.ID, "", true); err != nil {
+		t.Fatal(err)
+	}
+	title, _, err = seriesRepo.GetPrimarySeriesForBook(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if title != "King's Dark Tidings Universe" {
+		t.Fatalf("primary should outrank secondary, got %q", title)
+	}
+
+	// A book in no series at all is still the empty answer.
+	orphan := &models.Book{
+		ForeignID: "hc:standalone", AuthorID: author.ID, Title: "Standalone", SortTitle: "Standalone",
+		Status: models.BookStatusWanted, Genres: []string{},
+	}
+	if err := bookRepo.Create(ctx, orphan); err != nil {
+		t.Fatal(err)
+	}
+	title, position, err = seriesRepo.GetPrimarySeriesForBook(ctx, orphan.ID)
+	if err != nil || title != "" || position != "" {
+		t.Fatalf("book in no series = %q/%q err=%v, want empty", title, position, err)
+	}
+}

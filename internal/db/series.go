@@ -942,8 +942,9 @@ func (r *SeriesRepo) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
-// GetPrimarySeriesForBook returns the title and position of the primary series
-// for the given book. Returns ("", "", nil) when the book has no primary series.
+// GetPrimarySeriesForBook returns the title and position of the series the
+// renamer should use for the given book. Returns ("", "", nil) only when the
+// book is in no series at all.
 //
 // The ORDER BY is load bearing (#2525). series_books has no unique index on
 // book_id, primary_series defaults to 1, and several link sites stamp 1
@@ -953,21 +954,32 @@ func (r *SeriesRepo) Delete(ctx context.Context, id int64) error {
 // {Series} segment of every renamed file and could flip on an index or
 // ANALYZE change. The tie break is:
 //
-//  1. a membership that carries a position beats one that does not, because
-//     a book with a number in a series is in the sequence rather than filed
-//     under an umbrella;
-//  2. then the lowest series id, which is the earliest linked series.
+//  1. a primary membership beats a secondary one;
+//  2. then a membership that carries a position beats one that does not,
+//     because a book with a number in a series is in the sequence rather
+//     than filed under an umbrella;
+//  3. then the lowest series id, which is the earliest linked series.
 //
-// This only decides the cases the user has not decided. SetPrimarySeries
-// demotes every sibling, so once someone picks, exactly one row survives and
-// the ordering never comes into play.
+// Rule 1 replaced a WHERE on primary_series = 1 (#2527). Filtering meant a
+// book whose every membership was secondary matched nothing and got the same
+// empty answer as a book in no series, so the renamer dropped its series
+// segment entirely while the UI went on showing the series. That is reachable
+// through the ABS sibling-catalog walk, which links books it is not importing
+// with primary = false. primary_series breaks a tie between several
+// memberships; with nothing else to choose it should not be able to suppress
+// the only series a book has.
+//
+// The ordering only decides the cases the user has not decided.
+// SetPrimarySeries demotes every sibling, so once someone picks, one row sorts
+// above every other and the rest of the tie break never comes into play.
 func (r *SeriesRepo) GetPrimarySeriesForBook(ctx context.Context, bookID int64) (seriesTitle, position string, err error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT s.title, sb.position_in_series
 		FROM series_books sb
 		JOIN series s ON s.id = sb.series_id
-		WHERE sb.book_id = ? AND sb.primary_series = 1
-		ORDER BY CASE WHEN trim(sb.position_in_series) = '' THEN 1 ELSE 0 END,
+		WHERE sb.book_id = ?
+		ORDER BY sb.primary_series DESC,
+		         CASE WHEN trim(sb.position_in_series) = '' THEN 1 ELSE 0 END,
 		         sb.series_id
 		LIMIT 1`, bookID)
 	err = row.Scan(&seriesTitle, &position)
