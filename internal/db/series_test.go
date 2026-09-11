@@ -217,6 +217,104 @@ func TestSeriesListBooksExcludesHidden(t *testing.T) {
 	}
 }
 
+// TestSeriesDisplayQueriesReturnExcludedFlag covers #2324: the two queries
+// behind GET /series and GET /series/{id} must carry books.excluded through to
+// models.Book.Excluded, so the series view can tell an excluded book from a
+// wanted one instead of counting it as a gap. Follow-up to #2302/#2310, which
+// fixed the action path (ListBooksInSeries) but left the display path reporting
+// "excluded": false for every book.
+func TestSeriesDisplayQueriesReturnExcludedFlag(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	authorRepo := NewAuthorRepo(database)
+	bookRepo := NewBookRepo(database)
+	seriesRepo := NewSeriesRepo(database)
+
+	author := &models.Author{
+		ForeignID: "OL-2324-A", Name: "Isaac Asimov", SortName: "Asimov, Isaac",
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	kept := &models.Book{
+		ForeignID: "OL-2324-K", AuthorID: author.ID, Title: "Foundation", SortTitle: "Foundation",
+		Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := bookRepo.Create(ctx, kept); err != nil {
+		t.Fatal(err)
+	}
+	hidden := &models.Book{
+		ForeignID: "OL-2324-H", AuthorID: author.ID, Title: "Second Foundation", SortTitle: "Second Foundation",
+		Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := bookRepo.Create(ctx, hidden); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &models.Series{ForeignID: "ol-series:foundation", Title: "Foundation"}
+	if err := seriesRepo.CreateOrGet(ctx, s); err != nil {
+		t.Fatalf("CreateOrGet: %v", err)
+	}
+	if err := seriesRepo.LinkBook(ctx, s.ID, kept.ID, "1", true); err != nil {
+		t.Fatalf("LinkBook kept: %v", err)
+	}
+	if err := seriesRepo.LinkBook(ctx, s.ID, hidden.ID, "2", true); err != nil {
+		t.Fatalf("LinkBook hidden: %v", err)
+	}
+	if err := bookRepo.SetExcluded(ctx, hidden.ID, true); err != nil {
+		t.Fatalf("SetExcluded: %v", err)
+	}
+
+	want := map[int64]bool{kept.ID: false, hidden.ID: true}
+
+	collect := func(books []models.SeriesBook) map[int64]bool {
+		got := map[int64]bool{}
+		for _, sb := range books {
+			if sb.Book != nil {
+				got[sb.Book.ID] = sb.Book.Excluded
+			}
+		}
+		return got
+	}
+
+	// GET /series path.
+	list, err := seriesRepo.ListWithBooksForUser(ctx, 0)
+	if err != nil {
+		t.Fatalf("ListWithBooksForUser: %v", err)
+	}
+	var found *models.Series
+	for i := range list {
+		if list[i].ID == s.ID {
+			found = &list[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("ListWithBooksForUser did not return series %d", s.ID)
+	}
+	if got := collect(found.Books); got[kept.ID] != want[kept.ID] || got[hidden.ID] != want[hidden.ID] {
+		t.Errorf("ListWithBooksForUser excluded flags = %+v, want %+v", got, want)
+	}
+
+	// GET /series/{id} path.
+	one, err := seriesRepo.GetByIDForUser(ctx, s.ID, 0)
+	if err != nil {
+		t.Fatalf("GetByIDForUser: %v", err)
+	}
+	if one == nil {
+		t.Fatalf("GetByIDForUser returned nil for series %d", s.ID)
+	}
+	if got := collect(one.Books); got[kept.ID] != want[kept.ID] || got[hidden.ID] != want[hidden.ID] {
+		t.Errorf("GetByIDForUser excluded flags = %+v, want %+v", got, want)
+	}
+}
+
 func TestSeriesManualManagement(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {
