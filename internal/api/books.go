@@ -638,6 +638,10 @@ func (h *BookHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	id := existing.ID
 
 	if path := r.URL.Query().Get("path"); path != "" {
+		if r.URL.Query().Get("delete") == "true" {
+			h.deleteTrackedBookFile(w, r, id, path)
+			return
+		}
 		h.deregisterBookFile(w, r, id, path)
 		return
 	}
@@ -734,6 +738,57 @@ func (h *BookHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	writeJSON(w, http.StatusOK, book)
+}
+
+// deleteTrackedBookFile removes exactly one tracked book_files row and its
+// on-disk payload. Unlike the format-scoped delete, an ebook never sweeps
+// same-stem siblings.
+func (h *BookHandler) deleteTrackedBookFile(w http.ResponseWriter, r *http.Request, id int64, requested string) {
+	files, err := h.books.ListFiles(r.Context(), id)
+	if err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	want := filepath.Clean(requested)
+	var target *models.BookFile
+	for i := range files {
+		if filepath.Clean(files[i].Path) == want {
+			target = &files[i]
+			break
+		}
+	}
+	if target == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "path is not tracked against this book"})
+		return
+	}
+
+	if _, err := safeRemoveBookPathExact(r.Context(), h.roots, h.books, id, target.Path, target.Format, "id", id); err != nil {
+		slog.Error("failed to remove individual book file", "id", id, "path", target.Path, "error", err)
+		writeServerError(w, r, err)
+		return
+	}
+	if _, err := h.books.RemoveBookFile(r.Context(), target.Path); err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+
+	book, err := h.books.GetByID(r.Context(), id)
+	if err != nil || book == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
+		return
+	}
+	h.attachBookFiles(r.Context(), book)
+	cleanBookDescription(book)
+	if h.history != nil {
+		data, marshalErr := json.Marshal(map[string]any{"paths": []string{target.Path}, "individual": true})
+		if marshalErr == nil {
+			_ = h.history.Create(r.Context(), &models.HistoryEvent{
+				BookID: &book.ID, EventType: models.HistoryEventBookFileDeleted,
+				SourceTitle: book.Title, Data: string(data),
+			})
+		}
+	}
 	writeJSON(w, http.StatusOK, book)
 }
 

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -288,6 +289,47 @@ func safeRemoveBookPath(ctx context.Context, roots *LibraryRoots, owner bookFile
 		return true, nil
 	}
 	return false, removeBookPathScoped(p, format, ownedByOther)
+}
+
+// safeRemoveBookPathExact is the single-row variant of safeRemoveBookPath.
+// Unlike the format-scoped delete, it never sweeps same-stem siblings. A
+// directory remains a unit because audiobook book_files rows represent the
+// complete bundle, but files beside a targeted ebook are left untouched.
+func safeRemoveBookPathExact(ctx context.Context, roots *LibraryRoots, owner bookFileOwner, excludeBookID int64, p, format string, logFields ...any) (skipped bool, err error) {
+	if !roots.Contains(ctx, p) {
+		fields := append([]any{"path", p, "operation", "book_file_delete"}, logFields...)
+		slog.Warn("path containment: refusing to delete file outside configured library roots", fields...)
+		return true, nil
+	}
+	ownedByOther := func(path string) bool {
+		if owner == nil {
+			return false
+		}
+		otherOwns, ownErr := owner.PathOwnedByOtherBook(ctx, path, excludeBookID)
+		if ownErr != nil {
+			fields := append([]any{"path", path, "operation", "book_file_delete", "error", ownErr}, logFields...)
+			slog.Warn("path ownership: could not verify book_files ownership; skipping disk delete", fields...)
+			return true
+		}
+		return otherOwns
+	}
+	if ownedByOther(p) {
+		return true, nil
+	}
+	info, statErr := os.Stat(p)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
+			return false, nil
+		}
+		return false, statErr
+	}
+	if info.IsDir() {
+		return false, removeBookDirScoped(p, format, ownedByOther)
+	}
+	if err := os.Remove(p); err != nil && !os.IsNotExist(err) { // #nosec G304 G703 -- p is gated by the configured library roots above
+		return false, err
+	}
+	return false, nil
 }
 
 // bookFileOwner reports whether an on-disk path is still registered in

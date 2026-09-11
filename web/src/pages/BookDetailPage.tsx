@@ -276,7 +276,7 @@ export default function BookDetailPage() {
   // book; `paths` is exactly what the dialog shows, so the confirmation and
   // the request can never disagree.
   const [deleteTarget, setDeleteTarget] = useState<
-    { format?: 'ebook' | 'audiobook'; paths: string[] } | null
+    { format?: 'ebook' | 'audiobook'; paths: string[]; singlePath?: string } | null
   >(null)
   // The pending DB-only deregistration (#1692).
   const [deregisterTarget, setDeregisterTarget] = useState<FileRow | null>(null)
@@ -456,7 +456,9 @@ export default function BookDetailPage() {
     setDeletingFile(true)
     setError(null)
     try {
-      const params = deleteTarget.format ? `?format=${deleteTarget.format}` : ''
+      const params = deleteTarget.singlePath
+        ? `?path=${encodeURIComponent(deleteTarget.singlePath)}&delete=true`
+        : deleteTarget.format ? `?format=${deleteTarget.format}` : ''
       const updated = await api.deleteBookFile(book.id, params)
       setBook(updated)
       setDeleteTarget(null)
@@ -969,6 +971,16 @@ export default function BookDetailPage() {
                                   disabled: !row.tracked || deletingFile || deregistering || deletingBook,
                                   onSelect: () => setDeregisterTarget(row),
                                 },
+                                {
+                                  label: t('bookDetail.deleteThisFile', 'Delete this file'),
+                                  title: t('bookDetail.deleteThisFileHint', 'Permanently delete only this file from disk'),
+                                  danger: true,
+                                  disabled: !row.tracked || deletingFile || deregistering || deletingBook,
+                                  onSelect: () => setDeleteTarget({
+                                    singlePath: row.path,
+                                    paths: [row.path],
+                                  }),
+                                },
                               ]}
                             />
                           </li>
@@ -1275,9 +1287,11 @@ export default function BookDetailPage() {
           type while a format-less DELETE removed every file on the book. */}
       {deleteTarget && (
         <ConfirmDialog
-          title={deleteTarget.format
-            ? t('bookDetail.deleteFilesTitle', { format: t(`common.${deleteTarget.format}`) })
-            : t('bookDetail.deleteAllFiles.button')}
+          title={deleteTarget.singlePath
+            ? t('bookDetail.deleteThisFile', 'Delete this file')
+            : deleteTarget.format
+              ? t('bookDetail.deleteFilesTitle', { format: t(`common.${deleteTarget.format}`) })
+              : t('bookDetail.deleteAllFiles.button')}
           body={
             <div className="space-y-2">
               <p>{t('bookDetail.deleteFilesBody', { count: deleteTarget.paths.length })}</p>
@@ -1288,7 +1302,7 @@ export default function BookDetailPage() {
                   </li>
                 ))}
               </ul>
-              <p>{t('bookDetail.deleteFilesSiblingNote')}</p>
+              {!deleteTarget.singlePath && <p>{t('bookDetail.deleteFilesSiblingNote')}</p>}
               <p>{t('bookDetail.deleteFilesStatusNote')}</p>
             </div>
           }
