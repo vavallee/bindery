@@ -40,7 +40,7 @@ vi.mock('react-i18next', () => ({
       // Generic {{var}} interpolation for the strings above, mirroring i18next.
       let out = strings[key] ?? key
       for (const [k, v] of Object.entries(options ?? {})) {
-        out = out.replace(new RegExp(`{{\\s*${k}\\s*}}`, 'g'), String(v))
+        out = out.split(`{{${k}}}`).join(String(v))
       }
       return out
     },
