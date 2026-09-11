@@ -1658,10 +1658,23 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 	}
 	blockedByExcludedTitle := false
 	incomingTitle := firstNonEmpty(book.Title, catalogBook.Title)
+	// Where each existing book already sits in THIS series. A book filed at
+	// position 1 cannot also be the catalogue's volume 13, however its title
+	// scores: "The Primal Hunter" against "The Primal Hunter 13" scores 95,
+	// and the bare-number veto below cannot fire because only one side
+	// carries a number (#2538, reported by magrhino).
+	seriesPosition := make(map[int64]string, len(series.Books))
+	for _, member := range series.Books {
+		seriesPosition[member.BookID] = strings.TrimSpace(member.PositionInSeries)
+	}
+	wantPosition := strings.TrimSpace(catalogBook.Position)
 	var best *models.Book
 	bestScore := 0
 	for i := range existingByTitle {
 		existing := &existingByTitle[i]
+		if have := seriesPosition[existing.ID]; have != "" && wantPosition != "" && !seriesmatch.SamePosition(have, wantPosition) {
+			continue
+		}
 		// Volume numbers veto the similarity score (#1682). Fuzzy title
 		// matching cannot separate the volumes of a light novel or manga
 		// series — they differ by one number in an otherwise identical string,
