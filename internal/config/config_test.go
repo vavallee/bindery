@@ -21,6 +21,9 @@ func TestLoadDefaults(t *testing.T) {
 	if !cfg.EnhancedHardcoverAPI {
 		t.Error("expected enhanced Hardcover API to default to enabled")
 	}
+	if cfg.DisableOpenLibrary {
+		t.Error("expected OpenLibrary to default to enabled")
+	}
 
 	// DBPath/DataDir are platform-dependent as of #7. CI runs on linux so
 	// here we only assert the linux invariant; per-platform coverage lives
@@ -39,6 +42,7 @@ func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("BINDERY_PORT", "9999")
 	t.Setenv("BINDERY_LOG_LEVEL", "debug")
 	t.Setenv("BINDERY_ENHANCED_HARDCOVER_API", "false")
+	t.Setenv("BINDERY_DISABLE_OPENLIBRARY", "true")
 
 	cfg := Load()
 
@@ -50,6 +54,9 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 	if cfg.EnhancedHardcoverAPI {
 		t.Error("expected enhanced Hardcover API to respect BINDERY_ENHANCED_HARDCOVER_API=false")
+	}
+	if !cfg.DisableOpenLibrary {
+		t.Error("expected OpenLibrary disable switch to respect BINDERY_DISABLE_OPENLIBRARY=true")
 	}
 }
 

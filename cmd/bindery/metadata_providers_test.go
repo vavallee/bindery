@@ -22,10 +22,26 @@ func TestResolveMetadataPrimaryProvider(t *testing.T) {
 		{"unknown value falls back", "goodreads", true, "openlibrary"},
 		{"enricher-only provider falls back", "googlebooks", true, "openlibrary"},
 	}
+	disabledCases := []struct {
+		name, configured, want string
+		hasToken               bool
+	}{
+		{"disabled default uses hardcover when token exists", "", "hardcover", true},
+		{"disabled explicit openlibrary uses hardcover when token exists", "openlibrary", "hardcover", true},
+		{"disabled default uses dnb without hardcover token", "", "dnb", false},
+	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := resolveMetadataPrimaryProvider(tc.configured, tc.hasToken); got != tc.want {
+			if got := resolveMetadataPrimaryProvider(tc.configured, tc.hasToken, true); got != tc.want {
 				t.Errorf("resolveMetadataPrimaryProvider(%q, %v) = %q, want %q",
+					tc.configured, tc.hasToken, got, tc.want)
+			}
+		})
+	}
+	for _, tc := range disabledCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveMetadataPrimaryProvider(tc.configured, tc.hasToken, false); got != tc.want {
+				t.Errorf("disabled OpenLibrary: resolveMetadataPrimaryProvider(%q, %v) = %q, want %q",
 					tc.configured, tc.hasToken, got, tc.want)
 			}
 		})
