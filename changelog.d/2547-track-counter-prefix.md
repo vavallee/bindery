@@ -1,0 +1,2 @@
+### Fixed
+- **Library Scan now matches audiobooks whose tracks are named "001-190 - Title"** (#2547). The track counter was read as the title and the real title as the author, so every file in a numbered rip came back unmatched. A leading "track of total" counter is now stripped before the title is read, and a tag title that is only a counter no longer overrides the folder name. Titles that merely start with a number, like 1984 or 11-22-63, are unaffected. Thanks ReynoldsProductions for the report.

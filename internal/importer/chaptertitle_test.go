@@ -47,3 +47,19 @@ func TestLooksLikeChapterTitle(t *testing.T) {
 		}
 	}
 }
+
+// TestLooksLikeChapterTitleBareTrackCounter covers the tag side of #2547:
+// some rips tag each track's title as just its counter, "001-190", and that
+// tag used to override a real folder-derived book title.
+func TestLooksLikeChapterTitleBareTrackCounter(t *testing.T) {
+	for _, title := range []string{"001-190", "07 of 12", "3/10", "190-190"} {
+		if !looksLikeChapterTitle(title) {
+			t.Errorf("looksLikeChapterTitle(%q) = false, want true", title)
+		}
+	}
+	for _, title := range []string{"1984", "11-22-63", "The Girl with All the Gifts", "Catch-22"} {
+		if looksLikeChapterTitle(title) {
+			t.Errorf("looksLikeChapterTitle(%q) = true, want false", title)
+		}
+	}
+}
