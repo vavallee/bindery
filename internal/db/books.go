@@ -789,6 +789,21 @@ func (r *BookRepo) ListAllBookFilePaths(ctx context.Context) ([]string, error) {
 	return r.files.ListAllPaths(ctx)
 }
 
+// BookFilesVersion returns a counter that increments on every book_files
+// mutation. A cheap atomic load — no query — so a cache derived from
+// book_files (the manual-import scan's tracked-file index, #2480) can tell
+// whether it needs to rebuild.
+func (r *BookRepo) BookFilesVersion() int64 {
+	return r.files.Version()
+}
+
+// ListFilesForBooks returns every book_files row for the given book IDs in a
+// single query, grouped by book_id. Replaces an N+1 ListFiles-per-book call
+// (the manual-import scan's confident-match format check, #2480).
+func (r *BookRepo) ListFilesForBooks(ctx context.Context, bookIDs []int64) (map[int64][]models.BookFile, error) {
+	return r.files.ListByBooks(ctx, bookIDs)
+}
+
 // ListBookFiles returns the book_files rows for a single book.
 func (r *BookRepo) ListBookFiles(ctx context.Context, bookID int64) ([]models.BookFile, error) {
 	return r.files.ListByBook(ctx, bookID)

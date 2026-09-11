@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -12,11 +14,23 @@ import (
 // BookFileRepo manages the book_files table.
 type BookFileRepo struct {
 	db *sql.DB
+	// version bumps on every mutation (Add, UpdatePath, DeleteByPath,
+	// DeleteByBook), so callers that cache a derived view of book_files (the
+	// manual-import scan's tracked-file index, #2480) can tell cheaply,
+	// without a query, whether that view is stale.
+	version atomic.Int64
 }
 
 // NewBookFileRepo creates a new BookFileRepo backed by the given database.
 func NewBookFileRepo(db *sql.DB) *BookFileRepo {
 	return &BookFileRepo{db: db}
+}
+
+// Version returns a counter that increments on every book_files mutation made
+// through this repo (the only writer — see the mutating methods below). A
+// cache keyed on this value only needs to rebuild when it changes.
+func (r *BookFileRepo) Version() int64 {
+	return r.version.Load()
 }
 
 // Add inserts a book_files row. Duplicate paths are silently ignored (INSERT OR IGNORE).
@@ -28,6 +42,7 @@ func (r *BookFileRepo) Add(ctx context.Context, bookID int64, format, path strin
 	if err != nil {
 		return fmt.Errorf("book_files add: %w", err)
 	}
+	r.version.Add(1)
 	return nil
 }
 
@@ -72,6 +87,7 @@ func (r *BookFileRepo) UpdatePath(ctx context.Context, id int64, newPath string)
 	if n == 0 {
 		return fmt.Errorf("book_files update path: no row with id %d", id)
 	}
+	r.version.Add(1)
 	return nil
 }
 
@@ -113,12 +129,47 @@ func (r *BookFileRepo) ListByBook(ctx context.Context, bookID int64) ([]models.B
 	return files, rows.Err()
 }
 
+// ListByBooks returns every book_files row for any of the given book IDs, in
+// one query, grouped by book_id. Used by the manual-import scan
+// (ManualImportHandler.Scan, #2480) to replace an N+1 ListByBook call per
+// confident catalogue match with a single round trip. Duplicate IDs collapse
+// naturally (IN ignores repeats); an empty bookIDs returns an empty map.
+func (r *BookFileRepo) ListByBooks(ctx context.Context, bookIDs []int64) (map[int64][]models.BookFile, error) {
+	result := make(map[int64][]models.BookFile, len(bookIDs))
+	if len(bookIDs) == 0 {
+		return result, nil
+	}
+	placeholders := make([]string, len(bookIDs))
+	args := make([]any, len(bookIDs))
+	for i, id := range bookIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := `SELECT id, book_id, format, path, size_bytes, created_at
+		FROM book_files WHERE book_id IN (` + strings.Join(placeholders, ",") + `) ORDER BY id` // #nosec G202 -- placeholders are generated from fixed ? tokens; book IDs remain bound args
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("book_files list by books: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var f models.BookFile
+		if err := rows.Scan(&f.ID, &f.BookID, &f.Format, &f.Path, &f.SizeBytes, &f.CreatedAt); err != nil {
+			return nil, fmt.Errorf("book_files scan: %w", err)
+		}
+		result[f.BookID] = append(result[f.BookID], f)
+	}
+	return result, rows.Err()
+}
+
 // DeleteByBook removes all book_files rows for the given book.
 func (r *BookFileRepo) DeleteByBook(ctx context.Context, bookID int64) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM book_files WHERE book_id = ?`, bookID)
 	if err != nil {
 		return fmt.Errorf("book_files delete by book: %w", err)
 	}
+	r.version.Add(1)
 	return nil
 }
 
@@ -137,6 +188,7 @@ func (r *BookFileRepo) DeleteByPath(ctx context.Context, path string) (int64, er
 	if _, err := r.db.ExecContext(ctx, `DELETE FROM book_files WHERE path = ?`, path); err != nil {
 		return 0, fmt.Errorf("book_files delete by path: %w", err)
 	}
+	r.version.Add(1)
 	return bookID, nil
 }
 

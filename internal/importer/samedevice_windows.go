@@ -2,13 +2,13 @@
 
 package importer
 
-// sameDevice always returns false on Windows because device-ID comparison
+// SameDevice always returns false on Windows because device-ID comparison
 // via syscall.Stat_t is not available. importMode will fall back to "copy".
-func sameDevice(_, _ string) bool {
+func SameDevice(_, _ string) bool {
 	return false
 }
 
-// hardlinkable mirrors sameDevice on Windows: device comparison is unavailable,
+// hardlinkable mirrors SameDevice on Windows: device comparison is unavailable,
 // so the auto import mode falls back to "copy" rather than risk a failing
 // hardlink.
 func hardlinkable(_, _ string) bool {

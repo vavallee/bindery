@@ -224,6 +224,132 @@ func TestBookRepo_MigrationBackfill(t *testing.T) {
 	}
 }
 
+// TestBookFileRepo_ListByBooks verifies the batch lookup groups rows by
+// book_id in one query (#2480: replaces an N+1 ListByBook-per-book call in
+// the manual-import scan's confident-match format check).
+func TestBookFileRepo_ListByBooks(t *testing.T) {
+	database, author, book := openTestDB(t)
+	ctx := context.Background()
+	repo := NewBookRepo(database)
+	files := NewBookFileRepo(database)
+
+	_ = repo.AddBookFile(ctx, book.ID, models.MediaTypeEbook, "/lib/one.epub")
+
+	b2 := &models.Book{
+		ForeignID: "OL-LB-B2", AuthorID: author.ID,
+		Title: "Second Book", SortTitle: "Second Book",
+		Status: models.BookStatusWanted, Monitored: true,
+	}
+	if err := repo.Create(ctx, b2); err != nil {
+		t.Fatalf("create b2: %v", err)
+	}
+	_ = repo.AddBookFile(ctx, b2.ID, models.MediaTypeEbook, "/lib/two.epub")
+	_ = repo.AddBookFile(ctx, b2.ID, models.MediaTypeAudiobook, "/lib/two.m4b")
+
+	// A third book with no files at all should simply be absent from the map.
+	b3 := &models.Book{
+		ForeignID: "OL-LB-B3", AuthorID: author.ID,
+		Title: "Third Book", SortTitle: "Third Book",
+		Status: models.BookStatusWanted, Monitored: true,
+	}
+	if err := repo.Create(ctx, b3); err != nil {
+		t.Fatalf("create b3: %v", err)
+	}
+
+	got, err := files.ListByBooks(ctx, []int64{book.ID, b2.ID, b3.ID})
+	if err != nil {
+		t.Fatalf("ListByBooks: %v", err)
+	}
+	if len(got[book.ID]) != 1 || got[book.ID][0].Path != "/lib/one.epub" {
+		t.Errorf("book1 files = %+v, want just one.epub", got[book.ID])
+	}
+	if len(got[b2.ID]) != 2 {
+		t.Errorf("book2 files = %+v, want 2 rows", got[b2.ID])
+	}
+	if _, ok := got[b3.ID]; ok {
+		t.Errorf("book3 has no files and should be absent from the map, got %+v", got[b3.ID])
+	}
+
+	empty, err := files.ListByBooks(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListByBooks(nil): %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("ListByBooks(nil) = %+v, want empty map", empty)
+	}
+}
+
+// TestBookFileRepo_Version verifies the version counter bumps on every
+// mutating method and is stable across pure reads (#2480: lets a cache
+// derived from book_files know cheaply, without a query, when it must
+// rebuild). Exercises BookFileRepo's own methods directly rather than going
+// through BookRepo, which owns a separate BookFileRepo instance (and so a
+// separate counter) internally.
+func TestBookFileRepo_Version(t *testing.T) {
+	database, _, book := openTestDB(t)
+	ctx := context.Background()
+	files := NewBookFileRepo(database)
+
+	v0 := files.Version()
+
+	if err := files.Add(ctx, book.ID, models.MediaTypeEbook, "/lib/v.epub"); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	v1 := files.Version()
+	if v1 == v0 {
+		t.Errorf("Version did not change after Add: %d", v1)
+	}
+
+	if _, err := files.ListByBook(ctx, book.ID); err != nil {
+		t.Fatalf("ListByBook: %v", err)
+	}
+	if files.Version() != v1 {
+		t.Errorf("Version changed on a pure read: %d -> %d", v1, files.Version())
+	}
+
+	if _, err := files.DeleteByPath(ctx, "/lib/v.epub"); err != nil {
+		t.Fatalf("DeleteByPath: %v", err)
+	}
+	v2 := files.Version()
+	if v2 == v1 {
+		t.Errorf("Version did not change after DeleteByPath: %d", v2)
+	}
+
+	_ = files.Add(ctx, book.ID, models.MediaTypeEbook, "/lib/v2.epub")
+	if err := files.DeleteByBook(ctx, book.ID); err != nil {
+		t.Fatalf("DeleteByBook: %v", err)
+	}
+	if files.Version() == v2 {
+		t.Errorf("Version did not change after DeleteByBook")
+	}
+}
+
+// TestBookRepo_BookFilesVersion verifies BookRepo.BookFilesVersion reflects
+// mutations made through BookRepo's own AddBookFile/RemoveBookFile methods
+// (#2480), which is the path ManualImportHandler's cache actually observes.
+func TestBookRepo_BookFilesVersion(t *testing.T) {
+	database, _, book := openTestDB(t)
+	ctx := context.Background()
+	repo := NewBookRepo(database)
+
+	v0 := repo.BookFilesVersion()
+
+	if err := repo.AddBookFile(ctx, book.ID, models.MediaTypeEbook, "/lib/bv.epub"); err != nil {
+		t.Fatalf("AddBookFile: %v", err)
+	}
+	v1 := repo.BookFilesVersion()
+	if v1 == v0 {
+		t.Errorf("BookFilesVersion did not change after AddBookFile: %d", v1)
+	}
+
+	if _, err := repo.RemoveBookFile(ctx, "/lib/bv.epub"); err != nil {
+		t.Fatalf("RemoveBookFile: %v", err)
+	}
+	if repo.BookFilesVersion() == v1 {
+		t.Errorf("BookFilesVersion did not change after RemoveBookFile")
+	}
+}
+
 // TestBookRepo_RemoveBookFile_StatusFlips verifies removing the last file
 // flips the book back to "wanted".
 func TestBookRepo_RemoveBookFile_StatusFlips(t *testing.T) {

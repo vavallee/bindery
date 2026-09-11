@@ -51,7 +51,15 @@ const (
 //
 // Enumeration stops once `limit` units are collected (truncated=true) or the
 // entry/depth guards trip. Units are returned in a stable, name-sorted order.
-func enumerateImportUnits(root string, limit int) (units []scanUnit, truncated bool) {
+//
+// skip, when non-nil, is consulted for every unit the walk would otherwise
+// emit; a unit it reports true for is dropped without counting toward limit
+// or truncation, so the walk keeps descending past it in search of `limit`
+// units skip accepts. Callers use this to filter out already-tracked units
+// during the walk itself, rather than capping first and filtering the capped
+// result — the latter can starve the cap entirely when most of a large,
+// already-imported folder sits ahead of any new files in walk order.
+func enumerateImportUnits(root string, limit int, skip func(path string, isDir bool) bool) (units []scanUnit, truncated bool) {
 	entriesSeen := 0
 	var walk func(dir string, depth int, isRoot bool)
 	walk = func(dir string, depth int, isRoot bool) {
@@ -86,6 +94,9 @@ func enumerateImportUnits(root string, limit int) (units []scanUnit, truncated b
 		sort.Strings(ebookFiles)
 
 		emit := func(path string, isDir bool) {
+			if skip != nil && skip(path, isDir) {
+				return
+			}
 			if len(units) >= limit {
 				truncated = true
 				return

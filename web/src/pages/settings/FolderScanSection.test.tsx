@@ -39,6 +39,7 @@ function scanResult(): FolderScanResponse {
         path: '/dl/Confident Book', name: 'Confident Book', match: 'confident',
         parsedTitle: 'Confident Book', parsedAuthor: 'A. Writer', detectedFormat: 'ebook',
         book: { id: 11, title: 'Confident Book', author: { authorName: 'A. Writer' } } as never,
+        alreadyImported: false,
       },
       {
         path: '/dl/Maybe Book', name: 'Maybe Book', match: 'ambiguous',
@@ -47,10 +48,12 @@ function scanResult(): FolderScanResponse {
           { id: 21, title: 'Maybe Book (1)', author: { authorName: 'X' } } as never,
           { id: 22, title: 'Maybe Book (2)', author: { authorName: 'Y' } } as never,
         ],
+        alreadyImported: false,
       },
       {
         path: '/dl/Orphan', name: 'Orphan', match: 'none',
         parsedTitle: 'Orphan', parsedAuthor: '', detectedFormat: 'audiobook',
+        alreadyImported: false,
       },
     ],
   }
@@ -71,12 +74,13 @@ describe('FolderScanSection', () => {
 
   it('pre-selects only confident matches and imports them', async () => {
     await scan()
-    expect(mockScan).toHaveBeenCalledWith('/dl')
+    expect(mockScan).toHaveBeenCalledWith('/dl', { includeImported: false })
 
+    // checkboxes[0] is the "show already imported" toggle, above the item list.
     const checkboxes = screen.getAllByRole('checkbox') as HTMLInputElement[]
-    expect(checkboxes[0].checked).toBe(true)  // confident
-    expect(checkboxes[1].checked).toBe(false) // ambiguous, no pick yet
-    expect(checkboxes[2].disabled).toBe(true) // none, not selectable
+    expect(checkboxes[1].checked).toBe(true)  // confident
+    expect(checkboxes[2].checked).toBe(false) // ambiguous, no pick yet
+    expect(checkboxes[3].disabled).toBe(true) // none, not selectable
 
     // Import button reflects 1 selected (the confident one).
     expect(screen.getByText(/settings\.import\.bulkImport count=1/)).toBeInTheDocument()
@@ -102,5 +106,49 @@ describe('FolderScanSection', () => {
       { path: '/dl/Confident Book', bookId: 11, format: 'ebook' },
       { path: '/dl/Maybe Book', bookId: 22, format: 'ebook' },
     ])
+  })
+
+  it('re-scans with includeImported when "show already imported" is toggled on', async () => {
+    await scan()
+    mockScan.mockClear()
+    mockScan.mockResolvedValue({
+      truncated: false,
+      items: [{
+        path: '/dl/Already Imported', name: 'Already Imported', match: 'confident',
+        parsedTitle: 'Already Imported', parsedAuthor: '', detectedFormat: 'ebook',
+        book: { id: 33, title: 'Already Imported' } as never, alreadyImported: true,
+      }],
+    })
+
+    fireEvent.click(screen.getByLabelText('settings.import.bulkShowImported'))
+
+    expect(mockScan).toHaveBeenCalledWith('/dl', { includeImported: true })
+    await waitFor(() => expect(screen.getByText('settings.import.bulkAlreadyImported')).toBeInTheDocument())
+  })
+
+  it('shows the truncation banner even when filtering leaves no items (#2480)', async () => {
+    mockScan.mockResolvedValue({ truncated: true, items: [] })
+    render(<FolderScanSection />)
+    fireEvent.change(screen.getByPlaceholderText('settings.import.bulkPathPlaceholder'), {
+      target: { value: '/dl' },
+    })
+    fireEvent.click(screen.getByText('settings.import.bulkScan'))
+
+    await waitFor(() => expect(screen.getByText('settings.import.bulkEmpty')).toBeInTheDocument())
+    expect(screen.getByText('settings.import.bulkTruncated')).toBeInTheDocument()
+  })
+
+  it('clears a stale truncation banner once a later scan reports untruncated', async () => {
+    mockScan.mockResolvedValue({ truncated: true, items: [] })
+    render(<FolderScanSection />)
+    fireEvent.change(screen.getByPlaceholderText('settings.import.bulkPathPlaceholder'), {
+      target: { value: '/dl' },
+    })
+    fireEvent.click(screen.getByText('settings.import.bulkScan'))
+    await waitFor(() => expect(screen.getByText('settings.import.bulkTruncated')).toBeInTheDocument())
+
+    mockScan.mockResolvedValue({ truncated: false, items: [] })
+    fireEvent.click(screen.getByText('settings.import.bulkScan'))
+    await waitFor(() => expect(screen.queryByText('settings.import.bulkTruncated')).not.toBeInTheDocument())
   })
 })
