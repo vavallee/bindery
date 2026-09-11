@@ -3463,7 +3463,10 @@ func (s *Scanner) refreshStaleRenderedPaths(ctx context.Context) {
 // this only suppresses the tag title when the folder hierarchy already resolved
 // a title to fall back to (see the caller), so the worst case is using the
 // folder's title for such a book rather than the tag's.
-var chapterTitleRe = regexp.MustCompile(`(?i)^(\d{1,3}\s*[-._]\s*\D|(chapter|track|part|disc|cd)\b\s*\.?\s*\d)`)
+// The last branch is a bare track counter with nothing else, "001-190" or
+// "07 of 12": some rips tag every track's title that way, and letting it win
+// over a folder-derived book title left every file unmatched (#2547).
+var chapterTitleRe = regexp.MustCompile(`(?i)^(\d{1,3}\s*[-._]\s*\D|(chapter|track|part|disc|cd)\b\s*\.?\s*\d|\d{1,4}\s*(?:-|/|of)\s*\d{1,4}$)`)
 
 // looksLikeChapterTitle reports whether an embedded-tag title looks like a
 // per-track chapter name rather than a book title (#1239).

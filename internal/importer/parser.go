@@ -54,6 +54,11 @@ var (
 	seriesParenRe = regexp.MustCompile(`(?i)\(([A-Za-z][^)]*?),?\s*(?:book|vol(?:ume)?|part)?\.?\s*#?(\d+(?:\.\d+)?)\)`)
 	// Leading position number at start of base name: "01 - Title" or "1. Title"
 	leadingNumRe = regexp.MustCompile(`^(\d+(?:\.\d+)?)\s*[-–.]\s+`)
+	// trackCounterPrefixRe matches a leading "track of total" counter and the
+	// separator after it: "001-190 - ", "07 of 12 - ", "3/10 - ". Both numbers
+	// are required, so a real title that merely starts with a number ("1984 -
+	// George Orwell", "11-22-63 - Stephen King" has three) is left alone.
+	trackCounterPrefixRe = regexp.MustCompile(`^\d{1,4}\s*(?:-|/|of)\s*\d{1,4}\s+-\s+`)
 	// "Series Book N - Title" or "Series Book N: Title" inline pattern (after dot/underscore expansion).
 	// Captures: series name, book number, title (and optional author after another " - ").
 	seriesBookInlineRe = regexp.MustCompile(`(?i)^(.+?)\s+(?:book|vol(?:ume)?|part)\.?\s*(\d+(?:\.\d+)?)\s*[-–:]\s*(.+)$`)
@@ -119,6 +124,14 @@ func ParseFilename(path string) ParsedFile {
 	// dash-based separator below (Title - Author, Author - [Series] - Title,
 	// leading position number, ...) matches an em dash the same as a hyphen.
 	name = dashNormalizer.Replace(name)
+
+	// Numbered audiobook rips prefix every track with "NNN-TOTAL - " (or
+	// "NNN of TOTAL - "), then repeat the book title: "001-190 - The Girl with
+	// All the Gifts". The Title - Author split below would otherwise take the
+	// track counter as the title and the real title as the author, so every
+	// file in the folder parsed as a different non-title and none matched
+	// (#2547). A counter pair followed by the separator is never a title.
+	name = trackCounterPrefixRe.ReplaceAllString(name, "")
 
 	// Extract ASIN if present and strip it so it doesn't pollute the title
 	if asin := asinRe.FindString(name); asin != "" {
